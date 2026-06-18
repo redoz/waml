@@ -1,6 +1,7 @@
 import type { ModelGraph, ModelNode, ModelEdge } from "@mc/okf";
-let counter = 0; const uid = (p: string) => `${p}${++counter}`;
 export function createModelStore(initial?: Partial<ModelGraph>) {
+  // Per-store counter so independent stores (and HMR reloads) don't share ids.
+  let counter = 0; const uid = (p: string) => `${p}${++counter}`;
   let g: ModelGraph = { storageId: null, nodes: [], edges: [], ...initial } as ModelGraph;
   const subs = new Set<() => void>(); const emit = () => subs.forEach(f => f());
   return {

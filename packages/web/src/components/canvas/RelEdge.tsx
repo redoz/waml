@@ -10,14 +10,14 @@ import type { ModelEdge } from "@mc/okf";
 export type RelEdgeData = Pick<ModelEdge, "keys" | "bidirectional">;
 
 function RelEdgeInner(props: EdgeProps) {
+  // Custom <marker> defs are built inline below; RF's markerEnd/markerStart
+  // props are intentionally not used.
   const {
     id,
     sourceX, sourceY, targetX, targetY,
     sourcePosition, targetPosition,
     data,
     selected,
-    markerEnd,
-    markerStart,
   } = props;
 
   const edgeData = data as unknown as RelEdgeData | undefined;

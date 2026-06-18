@@ -96,9 +96,10 @@ function CanvasInner() {
 
   // ── Node changes (drag / select / remove) ──────────────────────────────────
   const onNodesChange = useCallback((changes: NodeChange[]) => {
-    // Persist position changes back to store on drag
+    // Persist position only at drag end (dragging === false) to avoid a store
+    // write — and a re-render + global-listener churn — on every drag-move tick.
     changes.forEach(change => {
-      if (change.type === "position" && change.position) {
+      if (change.type === "position" && change.position && !change.dragging) {
         store.updateNode(change.id, { position: change.position });
       }
     });
@@ -131,14 +132,17 @@ function CanvasInner() {
   }, []);
 
   // ── Auto-layout + tool handler ─────────────────────────────────────────────
+  // Read the graph from the store at call time so this stays stable and doesn't
+  // re-create (and churn the Dock keydown listener) on every drag-move tick.
   const handleToolChange = useCallback((t: Tool) => {
     if (t === "layout") {
-      const positions = runDagreLayout(graph.nodes, graph.edges);
+      const { nodes, edges } = store.get();
+      const positions = runDagreLayout(nodes, edges);
       positions.forEach((pos, key) => store.updateNode(key, { position: pos }));
       return;
     }
     setTool(t);
-  }, [graph.nodes, graph.edges]);
+  }, []);
 
   // ── Keyboard delete ────────────────────────────────────────────────────────
   const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
@@ -151,9 +155,9 @@ function CanvasInner() {
     }
   }, [selection]);
 
-  // ── Double-click on pane wrapper → add node (when in add mode) ────────────
+  // ── Double-click on empty pane → add node (works in any tool, like the prototype) ──
   const handleWrapperDoubleClick = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
-    // Only fire when clicking the pane (not on a node card)
+    // Only fire when clicking the pane (not on a node card or edge)
     const target = e.target as HTMLElement;
     if (target.closest(".react-flow__node") || target.closest(".react-flow__edge")) return;
     const position = screenToFlowPosition({ x: e.clientX, y: e.clientY });
@@ -233,8 +237,8 @@ function CanvasInner() {
           selection={selection}
           nodes={graph.nodes}
           edges={graph.edges}
-          onUpdateNode={(key, patch) => store.updateNode(key, patch)}
-          onUpdateEdge={(id, patch) => store.updateEdge(id, patch)}
+          onUpdateNode={store.updateNode}
+          onUpdateEdge={store.updateEdge}
           onClose={() => setSelection(null)}
         />
       </div>
