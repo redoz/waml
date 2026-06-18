@@ -1,0 +1,14 @@
+{
+  "name": "owox-model-canvas",
+  "private": true,
+  "scripts": {
+    "dev": "pnpm --filter @mc/server dev",
+    "dev:web": "pnpm --filter @mc/web dev",
+    "build": "pnpm --filter @mc/okf build && pnpm --filter @mc/web build && pnpm --filter @mc/server build",
+    "test": "pnpm -r test"
+  },
+  "devDependencies": { "typescript": "^5.6.0", "vitest": "^2.1.0" },
+  "pnpm": {
+    "onlyBuiltDependencies": ["esbuild"]
+  }
+}
