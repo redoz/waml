@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" fill="none">
+  <!-- OWOX Model Canvas — hub-and-spoke node graph, OWOX corporate blue -->
+  <g stroke="#0046F9" stroke-width="4" stroke-linecap="round">
+    <line x1="24" y1="24" x2="24" y2="7.5"/>
+    <line x1="24" y1="24" x2="39.7" y2="18.9"/>
+    <line x1="24" y1="24" x2="33.7" y2="37.3"/>
+    <line x1="24" y1="24" x2="14.3" y2="37.3"/>
+    <line x1="24" y1="24" x2="8.3" y2="18.9"/>
+  </g>
+  <g fill="#0046F9">
+    <circle cx="24" cy="7.5" r="6"/>
+    <circle cx="39.7" cy="18.9" r="6"/>
+    <circle cx="33.7" cy="37.3" r="6"/>
+    <circle cx="14.3" cy="37.3" r="6"/>
+    <circle cx="8.3" cy="18.9" r="6"/>
+    <circle cx="24" cy="24" r="7.5"/>
+  </g>
+</svg>
