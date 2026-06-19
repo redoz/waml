@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useSyncExternalStore, useState } from "react";
+import { useCallback, useEffect, useMemo, useSyncExternalStore, useState } from "react";
 import type { FC } from "react";
 import {
   ReactFlow as ReactFlowBase,
@@ -25,8 +25,9 @@ import type { ModelNode, ModelEdge, ModelGraph } from "@mc/okf";
 import { graphToBundleFiles, downloadBundle } from "../../okf/io";
 import { pushModel } from "../../sync/push";
 
+import { api } from "../../lib/api";
 import { useAuth } from "../../lib/auth";
-import { TopBar } from "../TopBar";
+import { TopBar, type StorageOption } from "../TopBar";
 import { ImportDialog } from "../ImportDialog";
 import { Dock, type Tool } from "./Dock";
 import { MartNode } from "./MartNode";
@@ -96,6 +97,17 @@ function CanvasInner() {
   const [tool, setTool] = useState<Tool>("select");
   const [showImport, setShowImport] = useState(false);
   const [pushStatus, setPushStatus] = useState<string | null>(null);
+  const [storages, setStorages] = useState<StorageOption[]>([]);
+
+  // Load the project's storages once; default the model to the first one so a
+  // fresh canvas can push immediately (one storage per model — joinable needs it).
+  useEffect(() => {
+    void api<StorageOption[]>("/api/storages").then(list => {
+      setStorages(list);
+      if (!store.get().storageId && list[0]) store.set({ ...store.get(), storageId: list[0].id });
+    }).catch(() => {});
+  }, []);
+  const handleStorageChange = useCallback((id: string) => { store.set({ ...store.get(), storageId: id }); }, []);
   const { me } = useAuth();
 
   // Convert model → RF nodes/edges
@@ -215,6 +227,9 @@ function CanvasInner() {
     >
       <TopBar
         pendingCount={pendingCount}
+        storages={storages}
+        storageId={graph.storageId}
+        onStorageChange={handleStorageChange}
         onImport={() => setShowImport(true)}
         onExport={handleExport}
         onPush={() => { void handlePush(); }}

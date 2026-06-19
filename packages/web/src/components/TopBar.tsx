@@ -1,7 +1,12 @@
 import { useAuth } from "../lib/auth";
 
+export interface StorageOption { id: string; title: string; type: string; }
+
 export interface TopBarProps {
   pendingCount?: number;
+  storages?: StorageOption[];
+  storageId?: string | null;
+  onStorageChange?: (id: string) => void;
   onImport?: () => void;
   onExport?: () => void;
   onPush?: () => void;
@@ -30,7 +35,7 @@ const LOGO = (
   </svg>
 );
 
-export function TopBar({ pendingCount = 0, onImport, onExport, onPush }: TopBarProps) {
+export function TopBar({ pendingCount = 0, storages = [], storageId, onStorageChange, onImport, onExport, onPush }: TopBarProps) {
   const { me, signOut } = useAuth();
 
   return (
@@ -46,10 +51,18 @@ export function TopBar({ pendingCount = 0, onImport, onExport, onPush }: TopBarP
         📁 Project: <span className="text-slate-900 font-semibold">{me?.projectTitle ?? "—"}</span> ▾
       </button>
 
-      {/* Storage picker chip */}
-      <button className="flex items-center gap-[7px] text-[13px] text-slate-500 border border-[#d8dee8] rounded-lg px-[10px] py-[5px] bg-white cursor-pointer hover:bg-[#f1f3f7]">
-        🗄️ Storage: <span className="text-slate-900 font-semibold">BigQuery</span> ▾
-      </button>
+      {/* Storage picker — one storage per model (joinable requires same storage) */}
+      <label className="flex items-center gap-[7px] text-[13px] text-slate-500 border border-[#d8dee8] rounded-lg px-[10px] py-[5px] bg-white" title="One storage per model — joinable relationships require all marts on the same storage">
+        🗄️ Storage:
+        <select
+          value={storageId ?? ""}
+          onChange={e => onStorageChange?.(e.target.value)}
+          className="text-slate-900 font-semibold bg-white outline-none cursor-pointer"
+        >
+          {storages.length === 0 && <option value="">—</option>}
+          {storages.map(s => <option key={s.id} value={s.id}>{s.title}</option>)}
+        </select>
+      </label>
 
       <div className="flex-1" />
 

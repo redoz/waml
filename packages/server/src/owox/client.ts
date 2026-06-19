@@ -20,8 +20,12 @@ export async function exchangeToken(p: OwoxKeyParts, f: FetchFn = fetch): Promis
   return data.accessToken;
 }
 
-export function decodeProjectFromToken(token: string): { projectTitle?: string; fullName?: string } {
-  try { return JSON.parse(Buffer.from(token.split(".")[1], "base64url").toString("utf8")); } catch { return {}; }
+export function decodeProjectFromToken(token: string): { projectTitle?: string; fullName?: string; email?: string } {
+  // JWT payload fields confirmed against the live API: projectTitle, userFullName, userEmail.
+  try {
+    const p = JSON.parse(Buffer.from(token.split(".")[1], "base64url").toString("utf8"));
+    return { projectTitle: p.projectTitle, fullName: p.userFullName, email: p.userEmail };
+  } catch { return {}; }
 }
 
 export class OwoxClient {
@@ -49,5 +53,10 @@ export class OwoxClient {
   updateDescription(id: string, description: string) { return this.json("PUT", `/api/data-marts/${id}/description`, { description }); }
   updateSchema(id: string, fields: { name: string; type: string; isPrimaryKey?: boolean }[]) { return this.json("PUT", `/api/data-marts/${id}/schema`, { fields }); }
   deleteDataMart(id: string) { return this.json("DELETE", `/api/data-marts/${id}`); }
-  listStorages() { return this.json<any[]>("GET", "/api/storages"); }
+  listStorages() { return this.json<any[]>("GET", "/api/data-storages"); }
+  // Joinable relationship (confirmed live): POST .../{sourceId}/relationships,
+  // body { targetDataMartId, targetAlias (required), joinConditions:[{sourceFieldName,targetFieldName}] }.
+  createRelationship(sourceId: string, body: { targetDataMartId: string; targetAlias: string; joinConditions: { sourceFieldName: string; targetFieldName: string }[] }) {
+    return this.json<{ id: string }>("POST", `/api/data-marts/${encodeURIComponent(sourceId)}/relationships`, body);
+  }
 }
