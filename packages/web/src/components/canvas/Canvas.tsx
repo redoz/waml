@@ -107,13 +107,22 @@ function CanvasInner() {
   const [pushResult, setPushResult] = useState<PushResult | null>(null);
   const [storages, setStorages] = useState<StorageOption[]>([]);
 
-  // Load the project's storages once; default the model to the first one so a
-  // fresh canvas can push immediately (one storage per model — joinable needs it).
+  // Load the project's storages and default the model to the first one so a fresh
+  // canvas can push immediately. Retry on failure — OWOX's API occasionally 500s
+  // transiently, and a one-shot fetch would otherwise leave the picker empty.
   useEffect(() => {
-    void api<StorageOption[]>("/api/storages").then(list => {
-      setStorages(list);
-      if (!store.get().storageId && list[0]) store.set({ ...store.get(), storageId: list[0].id });
-    }).catch(() => {});
+    let cancelled = false;
+    const load = (attempt = 0) => {
+      api<StorageOption[]>("/api/storages")
+        .then(list => {
+          if (cancelled) return;
+          setStorages(list);
+          if (!store.get().storageId && list[0]) store.set({ ...store.get(), storageId: list[0].id });
+        })
+        .catch(() => { if (!cancelled && attempt < 5) setTimeout(() => load(attempt + 1), 1500); });
+    };
+    load();
+    return () => { cancelled = true; };
   }, []);
   const handleStorageChange = useCallback((id: string) => { store.set({ ...store.get(), storageId: id }); }, []);
   const { me } = useAuth();
@@ -138,6 +147,15 @@ function CanvasInner() {
   }, [onRfNodesChange]);
 
   // ── Connect handler ────────────────────────────────────────────────────────
+  // Drag an existing edge end onto another port/node to re-route it (for a tidy picture).
+  const onReconnect = useCallback((oldEdge: Edge, conn: Connection) => {
+    if (!conn.source || !conn.target || conn.source === conn.target) return;
+    store.updateEdge(oldEdge.id, {
+      from: conn.source, to: conn.target,
+      sourceHandle: conn.sourceHandle, targetHandle: conn.targetHandle,
+    });
+  }, []);
+
   const onConnect = useCallback((connection: Connection) => {
     if (!connection.source || !connection.target) return;
     store.addEdge(connection.source, connection.target, connection.sourceHandle, connection.targetHandle);
@@ -296,6 +314,7 @@ function CanvasInner() {
             onNodesChange={onNodesChange}
             onEdgesChange={onRfEdgesChange}
             onConnect={onConnect}
+            onReconnect={onReconnect}
             onPaneClick={onPaneClick}
             onNodeClick={onNodeClick}
             onEdgeClick={onEdgeClick}

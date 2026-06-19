@@ -15,7 +15,7 @@ export function LibraryDialog({ onUse, onClose }: Props) {
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30" onClick={onClose}>
       <div
-        className="w-[620px] max-h-[82vh] overflow-hidden flex flex-col rounded-2xl border border-[#d8dee8] bg-white shadow-2xl"
+        className="w-[620px] flex flex-col rounded-2xl border border-[#d8dee8] bg-white shadow-2xl"
         onClick={e => e.stopPropagation()}
       >
         <div className="flex items-center gap-2 px-5 py-4 border-b border-[#d8dee8] flex-shrink-0">
@@ -24,7 +24,7 @@ export function LibraryDialog({ onUse, onClose }: Props) {
           <button onClick={onClose} className="text-slate-400 hover:text-slate-700"><X size={18} /></button>
         </div>
 
-        <div className="flex-1 min-h-0 overflow-y-auto p-3 flex flex-col gap-2">
+        <div className="overflow-y-auto p-3 flex flex-col gap-2" style={{ maxHeight: "calc(85vh - 64px)" }}>
           {TEMPLATES.map(t => (
             <TemplateRow
               key={t.id}
