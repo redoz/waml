@@ -5,10 +5,22 @@ const KEY = "owox_key_" + Buffer.from(JSON.stringify({
   apiOrigin: "https://app.owox.com", apiKeyId: "kid_1", apiKeySecret: "sec_1",
 })).toString("base64url");
 
+const keyFor = (apiOrigin: string) =>
+  "owox_key_" + Buffer.from(JSON.stringify({ apiOrigin, apiKeyId: "kid_1", apiKeySecret: "sec_1" })).toString("base64url");
+
 describe("parseApiKey", () => {
   it("decodes origin/id/secret", () =>
     expect(parseApiKey(KEY)).toEqual({ apiOrigin: "https://app.owox.com", apiKeyId: "kid_1", apiKeySecret: "sec_1" }));
   it("rejects malformed keys", () => expect(() => parseApiKey("nope")).toThrow());
+  // SSRF guard: apiOrigin must be an https owox.com host.
+  it("rejects a non-owox apiOrigin", () => expect(() => parseApiKey(keyFor("https://evil.com"))).toThrow(/allowed OWOX host/));
+  it("rejects an owox look-alike host", () => expect(() => parseApiKey(keyFor("https://evilowox.com"))).toThrow(/allowed OWOX host/));
+  it("rejects the cloud metadata IP", () => expect(() => parseApiKey(keyFor("http://169.254.169.254"))).toThrow());
+  it("rejects http (non-tls) origins", () => expect(() => parseApiKey(keyFor("http://app.owox.com"))).toThrow(/https/));
+  it("accepts the apex and subdomains of owox.com", () => {
+    expect(parseApiKey(keyFor("https://owox.com")).apiOrigin).toBe("https://owox.com");
+    expect(parseApiKey(keyFor("https://app.owox.com")).apiOrigin).toBe("https://app.owox.com");
+  });
 });
 
 describe("exchangeToken", () => {

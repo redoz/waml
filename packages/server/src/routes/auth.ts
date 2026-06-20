@@ -3,7 +3,11 @@ import * as client from "../owox/client";
 import { createSession, getSession, dropSession } from "../auth/session";
 
 export async function authRoutes(app: FastifyInstance) {
-  app.post<{ Body: { apiKey: string } }>("/api/auth/connect", async (req, reply) => {
+  app.post<{ Body: { apiKey: string } }>("/api/auth/connect", {
+    // Tight per-IP cap: this is the only endpoint that makes an outbound OWOX
+    // token exchange, so it's the brute-force / abuse / DoS-amplification target.
+    config: { rateLimit: { max: Number(process.env.CONNECT_RATE_LIMIT_MAX) || 10, timeWindow: "1 minute" } },
+  }, async (req, reply) => {
     try {
       const parts = client.parseApiKey(req.body.apiKey);
       const token = await client.exchangeToken(parts);

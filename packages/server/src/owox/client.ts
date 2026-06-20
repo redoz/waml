@@ -1,12 +1,32 @@
 import type { OwoxKeyParts, DataMartListItem, CreateDataMartInput } from "./types";
 type FetchFn = typeof fetch;
 
+// Allowlist for the apiOrigin embedded in a user-supplied key. Without this,
+// a crafted key could point apiOrigin at internal hosts (cloud metadata,
+// localhost, private IPs) and the server would fetch them — a classic SSRF.
+// Suffixes starting with "." also match the bare apex (".owox.com" → owox.com).
+const ALLOWED_ORIGIN_SUFFIXES = (process.env.OWOX_ALLOWED_ORIGIN_SUFFIXES || ".owox.com")
+  .split(",").map((s) => s.trim()).filter(Boolean);
+
+export function assertAllowedOrigin(origin: string): void {
+  let u: URL;
+  try { u = new URL(origin); } catch { throw new Error("API key has an invalid apiOrigin"); }
+  if (u.protocol !== "https:") throw new Error("apiOrigin must use https");
+  const host = u.hostname;
+  const ok = ALLOWED_ORIGIN_SUFFIXES.some((suf) =>
+    suf.startsWith(".") ? host === suf.slice(1) || host.endsWith(suf) : host === suf,
+  );
+  if (!ok) throw new Error("apiOrigin is not an allowed OWOX host");
+}
+
 export function parseApiKey(key: string): OwoxKeyParts {
   const k = key.trim();
   if (!k.startsWith("owox_key_")) throw new Error("API key must start with owox_key_");
   const json = JSON.parse(Buffer.from(k.slice("owox_key_".length), "base64url").toString("utf8"));
   if (!json.apiOrigin || !json.apiKeyId || !json.apiKeySecret) throw new Error("API key missing fields");
-  return { apiOrigin: String(json.apiOrigin).replace(/\/$/, ""), apiKeyId: json.apiKeyId, apiKeySecret: json.apiKeySecret };
+  const apiOrigin = String(json.apiOrigin).replace(/\/$/, "");
+  assertAllowedOrigin(apiOrigin);
+  return { apiOrigin, apiKeyId: json.apiKeyId, apiKeySecret: json.apiKeySecret };
 }
 
 export async function exchangeToken(p: OwoxKeyParts, f: FetchFn = fetch): Promise<string> {
