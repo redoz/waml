@@ -1,0 +1,53 @@
+import { describe, it, expect } from "vitest";
+import type { ModelNode, ModelEdge } from "@mc/okf";
+import { buildRfEdges } from "./edges";
+
+const field = (name: string) => ({ name, type: "STRING", pk: false });
+const node = (key: string, fields: string[]): ModelNode => ({
+  key, title: key, inputSource: "VIEW", schema: fields.map(field),
+  position: { x: 0, y: 0 }, status: "created", owoxId: null,
+});
+
+const nodes = [node("a", ["id", "x"]), node("b", ["a_id", "y"])];
+
+function edge(keys: { left: string; right: string }[]): ModelEdge {
+  return { id: "e1", from: "a", to: "b", keys, bidirectional: false, sourceHandle: "right", targetHandle: "left" };
+}
+
+describe("buildRfEdges", () => {
+  it("compact: one edge per model edge using the stored handles", () => {
+    const out = buildRfEdges([edge([{ left: "id", right: "a_id" }])], nodes, "compact");
+    expect(out).toHaveLength(1);
+    expect(out[0].id).toBe("e1");
+    expect(out[0].sourceHandle).toBe("right");
+    expect(out[0].targetHandle).toBe("left");
+  });
+
+  it("erd: one edge per join key anchored to the field handles", () => {
+    const out = buildRfEdges(
+      [edge([{ left: "id", right: "a_id" }, { left: "x", right: "y" }])],
+      nodes, "erd",
+    );
+    expect(out).toHaveLength(2);
+    expect(out[0].id).toBe("e1::0");
+    expect(out[0].sourceHandle).toBe("fr:id");
+    expect(out[0].targetHandle).toBe("fl:a_id");
+    expect(out[1].sourceHandle).toBe("fr:x");
+    expect(out[1].targetHandle).toBe("fl:y");
+  });
+
+  it("erd: falls back to node-level handles when a key field is missing", () => {
+    const out = buildRfEdges([edge([{ left: "id", right: "nope" }])], nodes, "erd");
+    expect(out).toHaveLength(1);
+    expect(out[0].sourceHandle).toBe("fr:id");
+    expect(out[0].targetHandle).toBe("left");
+  });
+
+  it("erd: an edge with no usable keys yields a single node-level fallback edge", () => {
+    const out = buildRfEdges([edge([{ left: "", right: "" }])], nodes, "erd");
+    expect(out).toHaveLength(1);
+    expect(out[0].id).toBe("e1");
+    expect(out[0].sourceHandle).toBe("right");
+    expect(out[0].targetHandle).toBe("left");
+  });
+});

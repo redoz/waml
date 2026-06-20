@@ -40,6 +40,7 @@ import { pushIntent } from "../../sync/pushGate";
 import { Dock, type Tool } from "./Dock";
 import { MartNode } from "./MartNode";
 import { RelEdge } from "./RelEdge";
+import { buildRfEdges } from "./edges";
 import { Inspector } from "../inspector/Inspector";
 
 // Cast to FC to avoid generic component JSX typing issues with @types/react 18.3
@@ -56,18 +57,6 @@ function toRFNode(n: ModelNode, viewMode: ViewMode): Node {
     type: "mart",
     position: n.position,
     data: { ...n, _viewMode: viewMode } as unknown as Record<string, unknown>,
-  };
-}
-
-function toRFEdge(e: ModelEdge): Edge {
-  return {
-    id: e.id,
-    source: e.from,
-    target: e.to,
-    sourceHandle: e.sourceHandle ?? undefined,
-    targetHandle: e.targetHandle ?? undefined,
-    type: "rel",
-    data: { keys: e.keys, bidirectional: e.bidirectional } as unknown as Record<string, unknown>,
   };
 }
 
@@ -147,7 +136,7 @@ function CanvasInner() {
   const [rfEdges, setRfEdges, onRfEdgesChange] = useEdgesState<Edge>([]);
 
   useEffect(() => { setRfNodes(graph.nodes.map(n => toRFNode(n, viewMode))); }, [graph.nodes, viewMode, setRfNodes]);
-  useEffect(() => { setRfEdges(graph.edges.map(toRFEdge)); }, [graph.edges, setRfEdges]);
+  useEffect(() => { setRfEdges(buildRfEdges(graph.edges, graph.nodes, viewMode)); }, [graph.edges, graph.nodes, viewMode, setRfEdges]);
 
   // Mirror the model to localStorage on every change so a refresh/crash doesn't
   // lose work (Push to OWOX remains the real save).
@@ -210,8 +199,10 @@ function CanvasInner() {
   }, []);
 
   // ── Edge click → select ────────────────────────────────────────────────────
+  // ERD mode may render several RF edges per model edge (e.g. "e1::0"); strip
+  // the suffix so the inspector still selects the underlying model edge.
   const onEdgeClick = useCallback((_: React.MouseEvent, edge: Edge) => {
-    setSelection({ type: "edge", id: edge.id });
+    setSelection({ type: "edge", id: edge.id.split("::")[0] });
   }, []);
 
   // ── Auto-layout + tool handler ─────────────────────────────────────────────
