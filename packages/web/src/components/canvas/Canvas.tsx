@@ -50,12 +50,12 @@ const ReactFlow = ReactFlowBase as unknown as FC<ReactFlowProps>;
 export const store = createModelStore(loadPersistedGraph());
 
 // ── helpers to convert between model and RF types ───────────────────────────
-function toRFNode(n: ModelNode): Node {
+function toRFNode(n: ModelNode, viewMode: ViewMode): Node {
   return {
     id: n.key,
     type: "mart",
     position: n.position,
-    data: { ...n } as unknown as Record<string, unknown>,
+    data: { ...n, _viewMode: viewMode } as unknown as Record<string, unknown>,
   };
 }
 
@@ -146,7 +146,7 @@ function CanvasInner() {
   const [rfNodes, setRfNodes, onRfNodesChange] = useNodesState<Node>([]);
   const [rfEdges, setRfEdges, onRfEdgesChange] = useEdgesState<Edge>([]);
 
-  useEffect(() => { setRfNodes(graph.nodes.map(toRFNode)); }, [graph.nodes, setRfNodes]);
+  useEffect(() => { setRfNodes(graph.nodes.map(n => toRFNode(n, viewMode))); }, [graph.nodes, viewMode, setRfNodes]);
   useEffect(() => { setRfEdges(graph.edges.map(toRFEdge)); }, [graph.edges, setRfEdges]);
 
   // Mirror the model to localStorage on every change so a refresh/crash doesn't
