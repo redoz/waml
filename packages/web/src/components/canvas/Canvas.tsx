@@ -41,6 +41,7 @@ import { Dock, type Tool } from "./Dock";
 import { MartNode } from "./MartNode";
 import { RelEdge } from "./RelEdge";
 import { buildRfEdges } from "./edges";
+import { erdAwareNodeSize } from "./layoutSize";
 import { Inspector } from "../inspector/Inspector";
 
 // Cast to FC to avoid generic component JSX typing issues with @types/react 18.3
@@ -64,17 +65,18 @@ function toRFNode(n: ModelNode, viewMode: ViewMode): Node {
 const NODE_W = 200;
 const NODE_H = 90;
 
-function runDagreLayout(nodes: ModelNode[], edges: ModelEdge[]): Map<string, { x: number; y: number }> {
+function runDagreLayout(nodes: ModelNode[], edges: ModelEdge[], viewMode: ViewMode): Map<string, { x: number; y: number }> {
   const g = new dagre.graphlib.Graph();
   g.setDefaultEdgeLabel(() => ({}));
   g.setGraph({ rankdir: "LR", nodesep: 60, ranksep: 150 });
-  nodes.forEach(n => g.setNode(n.key, { width: NODE_W, height: NODE_H }));
+  nodes.forEach(n => { const s = erdAwareNodeSize(n, viewMode); g.setNode(n.key, { width: s.width, height: s.height }); });
   edges.forEach(e => g.setEdge(e.from, e.to));
   dagre.layout(g);
   const positions = new Map<string, { x: number; y: number }>();
   nodes.forEach(n => {
     const pos = g.node(n.key);
-    positions.set(n.key, { x: pos.x - NODE_W / 2, y: pos.y - NODE_H / 2 });
+    const s = erdAwareNodeSize(n, viewMode);
+    positions.set(n.key, { x: pos.x - s.width / 2, y: pos.y - s.height / 2 });
   });
   return positions;
 }
@@ -211,12 +213,12 @@ function CanvasInner() {
   const handleToolChange = useCallback((t: Tool) => {
     if (t === "layout") {
       const { nodes, edges } = store.get();
-      const positions = runDagreLayout(nodes, edges);
+      const positions = runDagreLayout(nodes, edges, viewMode);
       positions.forEach((pos, key) => store.updateNode(key, { position: pos }));
       return;
     }
     setTool(t);
-  }, []);
+  }, [viewMode]);
 
   const handleToggleView = useCallback(() => {
     setViewMode(prev => {
@@ -262,11 +264,11 @@ function CanvasInner() {
 
   const handleUseTemplate = useCallback((g: ModelGraph) => {
     // Keep the model on the currently selected storage; auto-layout the template.
-    const positions = runDagreLayout(g.nodes, g.edges);
+    const positions = runDagreLayout(g.nodes, g.edges, viewMode);
     const nodes = g.nodes.map(n => ({ ...n, position: positions.get(n.key) ?? n.position }));
     store.set({ ...g, storageId: store.get().storageId, nodes });
     setShowLibrary(false);
-  }, []);
+  }, [viewMode]);
 
   const runPush = useCallback(async (storagesList: StorageOption[] = storages) => {
     setPushResult(null);
