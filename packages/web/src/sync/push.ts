@@ -1,6 +1,7 @@
 import type { ModelStore } from "../state/model";
 import { api as defaultApi } from "../lib/api";
-import { slugify, type ModelNode } from "@mc/okf";
+import { type ModelNode } from "@mc/okf";
+import { joinFieldType } from "./joinFieldType";
 
 type Api = typeof defaultApi;
 
@@ -34,11 +35,16 @@ export async function pushModel(store: ModelStore, api: Api = defaultApi, storag
 
   // ── 0. Ensure every join-key field exists in its mart's output schema ───────
   // Joining on a field that isn't defined is meaningless, so auto-add missing
-  // ones (default STRING) before we push schemas.
-  for (const e of store.get().edges) {
-    for (const k of e.keys) {
-      if (k.left) ensureField(store, e.from, k.left);
-      if (k.right) ensureField(store, e.to, k.right);
+  // ones before we push schemas. Infer the new field's type from the other side
+  // of the join (a key matching an INTEGER PK must not be created as STRING, or
+  // OWOX rejects the relationship with "Incompatible types").
+  {
+    const g0 = store.get();
+    for (const e of g0.edges) {
+      for (const k of e.keys) {
+        if (k.left) ensureField(store, e.from, k.left, joinFieldType(g0.nodes, g0.edges, e.from, k.left));
+        if (k.right) ensureField(store, e.to, k.right, joinFieldType(g0.nodes, g0.edges, e.to, k.right));
+      }
     }
   }
 
@@ -122,7 +128,7 @@ export async function pushModel(store: ModelStore, api: Api = defaultApi, storag
           // view-only modeling annotation; OWOX's generated SQL aggregates joins.
           body: JSON.stringify({
             targetDataMartId: toId,
-            targetAlias: slugify(titleByKey.get(toKey) || toKey, toKey),
+            targetAlias: aliasify(titleByKey.get(toKey) || toKey, toKey),
             joinConditions: ks.map(k => ({ sourceFieldName: k.left, targetFieldName: k.right })),
           }),
         });
@@ -153,10 +159,20 @@ function definitionBody(n: ModelNode): unknown | null {
   }
 }
 
+// OWOX join aliases are used as SQL identifiers, so they must be alphanumeric +
+// underscore (NOT the hyphens slugify() produces) and must not start with a
+// digit. A hyphenated alias like "posts-questions" makes OWOX reject the
+// relationship with a generic 400.
+function aliasify(title: string, fallback: string): string {
+  const s = (title || "").toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "");
+  const safe = /^[0-9]/.test(s) ? `t_${s}` : s;
+  return safe || fallback;
+}
+
 // Add a field to a node's output schema if it isn't there yet (default STRING).
-function ensureField(store: ModelStore, nodeKey: string, fieldName: string) {
+function ensureField(store: ModelStore, nodeKey: string, fieldName: string, type = "STRING") {
   const node = store.get().nodes.find(n => n.key === nodeKey);
   if (!node) return;
   if (node.schema.some(f => f.name === fieldName)) return;
-  store.updateNode(nodeKey, { schema: [...node.schema, { name: fieldName, type: "STRING", pk: false }] });
+  store.updateNode(nodeKey, { schema: [...node.schema, { name: fieldName, type, pk: false }] });
 }

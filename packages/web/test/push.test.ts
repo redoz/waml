@@ -85,4 +85,41 @@ describe("pushModel", () => {
     expect(relationshipBodies.length).toBeGreaterThan(0);
     for (const b of relationshipBodies) expect(b).not.toContain("cardinality");
   });
+
+  it("uses an underscore identifier (not a hyphenated slug) for targetAlias", async () => {
+    const s = createModelStore({ storageId: "stor_1" });
+    s.set({
+      storageId: "stor_1",
+      nodes: [
+        { key: "n1", title: "Comments", inputSource: "TABLE", schema: [{ name: "post_id", type: "INTEGER", pk: false }], position: { x: 0, y: 0 }, status: "created", owoxId: "owox_a" },
+        { key: "n2", title: "Posts Questions", inputSource: "TABLE", schema: [{ name: "id", type: "INTEGER", pk: true }], position: { x: 100, y: 0 }, status: "created", owoxId: "owox_b" },
+      ],
+      edges: [{ id: "e1", from: "n1", to: "n2", keys: [{ left: "post_id", right: "id" }], bidirectional: false }],
+    });
+    const bodies: any[] = [];
+    const apiMock = vi.fn(async (path: string, init?: any) => {
+      if (path.includes("/relationships") && init?.body) bodies.push(JSON.parse(init.body));
+      return { id: "owox_rel" };
+    });
+    await pushModel(s, apiMock as any);
+    expect(bodies[0].targetAlias).toBe("posts_questions");
+    expect(bodies[0].targetAlias).not.toContain("-");
+  });
+
+  it("creates a missing join field with the counterpart's type, not STRING", async () => {
+    const s = createModelStore({ storageId: "stor_1" });
+    s.set({
+      storageId: "stor_1",
+      // newobj has an empty schema; the join pairs newobj.id with badges.id (INTEGER).
+      nodes: [
+        { key: "newobj", title: "New object", inputSource: "SQL", schema: [], position: { x: 0, y: 0 }, status: "created", owoxId: "owox_a" },
+        { key: "badges", title: "Badges", inputSource: "TABLE", schema: [{ name: "id", type: "INTEGER", pk: true }], position: { x: 100, y: 0 }, status: "created", owoxId: "owox_b" },
+      ],
+      edges: [{ id: "e1", from: "newobj", to: "badges", keys: [{ left: "id", right: "id" }], bidirectional: false }],
+    });
+    const apiMock = vi.fn(async () => ({ id: "owox_rel" }));
+    await pushModel(s, apiMock as any);
+    const added = s.get().nodes.find(n => n.key === "newobj")!.schema.find(f => f.name === "id");
+    expect(added?.type).toBe("INTEGER");
+  });
 });

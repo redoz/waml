@@ -141,14 +141,17 @@ function CanvasInner() {
   useEffect(() => { setRfEdges(buildRfEdges(graph.edges, graph.nodes, viewMode)); }, [graph.edges, graph.nodes, viewMode, setRfEdges]);
 
   // Mark only the selected relationship as reconnectable so dragging an endpoint
-  // moves the line the user picked (not whichever overlapping edge RF would grab).
-  // Patches `reconnectable` in place — never touches `selected` — and re-applies
-  // after any rebuild of the edges array above.
+  // moves the line the user picked (not whichever overlapping edge RF would grab),
+  // and raise it above the others so its reconnect anchor isn't buried under an
+  // overlapping line (otherwise the drag handle never appears). Patches in place —
+  // never touches `selected` — and re-applies after any rebuild of the edges array.
   useEffect(() => {
     const selId = selection?.type === "edge" ? selection.id : null;
     setRfEdges(eds => eds.map(e => {
-      const want = isEdgeReconnectable((e.data as { modelEdgeId?: string } | undefined)?.modelEdgeId, selId, viewMode);
-      return e.reconnectable === want ? e : { ...e, reconnectable: want };
+      const modelEdgeId = (e.data as { modelEdgeId?: string } | undefined)?.modelEdgeId;
+      const reconnectable = isEdgeReconnectable(modelEdgeId, selId, viewMode);
+      const zIndex = modelEdgeId != null && modelEdgeId === selId ? 1000 : 0;
+      return (e.reconnectable === reconnectable && e.zIndex === zIndex) ? e : { ...e, reconnectable, zIndex };
     }));
   }, [selection, viewMode, graph.edges, graph.nodes, setRfEdges]);
 
