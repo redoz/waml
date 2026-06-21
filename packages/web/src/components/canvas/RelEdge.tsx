@@ -7,7 +7,7 @@ import {
 } from "@xyflow/react";
 import type { ModelEdge } from "@mc/okf";
 
-export type RelEdgeData = Pick<ModelEdge, "keys" | "bidirectional">;
+export type RelEdgeData = Pick<ModelEdge, "keys" | "bidirectional" | "cardinality">;
 
 function RelEdgeInner(props: EdgeProps) {
   // Custom <marker> defs are built inline below; RF's markerEnd/markerStart
@@ -23,6 +23,7 @@ function RelEdgeInner(props: EdgeProps) {
   const edgeData = data as unknown as RelEdgeData | undefined;
   const keys = edgeData?.keys ?? [];
   const bidirectional = edgeData?.bidirectional ?? false;
+  const cardinality = edgeData?.cardinality;
 
   const [edgePath, labelX, labelY] = getBezierPath({
     sourceX, sourceY, sourcePosition,
@@ -71,7 +72,7 @@ function RelEdgeInner(props: EdgeProps) {
         markerStart={bidirectional ? `url(#arr-start-${id})` : undefined}
         style={{ stroke: strokeColor, strokeWidth }}
       />
-      {label && (
+      {(label || cardinality) && (
         <EdgeLabelRenderer>
           <div
             style={{
@@ -87,10 +88,27 @@ function RelEdgeInner(props: EdgeProps) {
               color: "#0f172a",
               whiteSpace: "nowrap",
               boxShadow: "0 1px 4px rgba(15,23,42,0.06)",
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 6,
             }}
             className="nodrag nopan"
           >
             {label}
+            {cardinality && (
+              <span
+                style={{
+                  padding: "0 5px",
+                  borderRadius: 4,
+                  background: "#eef0fe",
+                  color: "#4f46e5",
+                  fontSize: 10,
+                  fontWeight: 700,
+                }}
+              >
+                {cardinality}
+              </span>
+            )}
           </div>
         </EdgeLabelRenderer>
       )}
