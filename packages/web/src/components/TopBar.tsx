@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Download, Upload } from "lucide-react";
+import { Download, Upload, ChevronDown } from "lucide-react";
 import { ProjectIcon, StorageIcon, LibraryIcon } from "../lib/icons";
 
 // First-visit onboarding hint pointing at the Library. Persisted so it only
@@ -52,6 +52,8 @@ export function TopBar({
   onImport, onImportFromOwox, onExport, onPush, onLibrary,
   signedIn, projectTitle, onSignIn, onSignOut,
 }: TopBarProps) {
+  // Push split-button menu (holds the signed-in "Import from OWOX project" action).
+  const [menuOpen, setMenuOpen] = useState(false);
   // Show the Library hint on first ever visit; stays lit until hovered.
   const [showLibraryHint, setShowLibraryHint] = useState(false);
   useEffect(() => {
@@ -119,16 +121,6 @@ export function TopBar({
         )}
       </div>
 
-      {/* Import from OWOX project */}
-      {signedIn && (
-        <button
-          onClick={onImportFromOwox}
-          className="text-[13px] font-[550] border border-[#d8dee8] bg-white text-slate-900 rounded-lg px-3 py-[7px] cursor-pointer flex items-center gap-[6px] hover:bg-[#f1f3f7]"
-        >
-          <Download size={15} /> Import from OWOX project
-        </button>
-      )}
-
       {/* Import OKF */}
       <button
         onClick={onImport}
@@ -145,16 +137,46 @@ export function TopBar({
         <Upload size={15} /> Export OKF
       </button>
 
-      {/* Push to OWOX */}
-      <button
-        onClick={onPush}
-        className="text-[13px] font-[550] bg-[#4f46e5] text-white border border-[#4f46e5] rounded-lg px-3 py-[7px] cursor-pointer flex items-center gap-[6px] hover:bg-[#4338ca]"
-      >
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.2} width={15} height={15}>
-          <path d="M5 12h14M13 6l6 6-6 6"/>
-        </svg>
-        Push to OWOX{pendingCount > 0 && <span className="opacity-80">({pendingCount})</span>}
-      </button>
+      {/* Push to OWOX — split button: primary push + caret menu (signed-in only)
+          holding the less-common "Import from OWOX project" action. */}
+      <div className="relative flex items-center">
+        <button
+          onClick={onPush}
+          className={`text-[13px] font-[550] bg-[#4f46e5] text-white border border-[#4f46e5] px-3 py-[7px] cursor-pointer flex items-center gap-[6px] hover:bg-[#4338ca] ${signedIn ? "rounded-l-lg border-r-0" : "rounded-lg"}`}
+        >
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.2} width={15} height={15}>
+            <path d="M5 12h14M13 6l6 6-6 6"/>
+          </svg>
+          Push to OWOX{pendingCount > 0 && <span className="opacity-80">({pendingCount})</span>}
+        </button>
+        {signedIn && (
+          <>
+            <button
+              onClick={() => setMenuOpen(o => !o)}
+              aria-label="More OWOX actions"
+              aria-haspopup="menu"
+              aria-expanded={menuOpen}
+              className="text-white bg-[#4f46e5] border border-[#4f46e5] border-l border-l-[#6d64ee] rounded-r-lg px-[7px] py-[9px] cursor-pointer hover:bg-[#4338ca] flex items-center"
+            >
+              <ChevronDown size={15} />
+            </button>
+            {menuOpen && (
+              <>
+                <div className="fixed inset-0 z-40" onClick={() => setMenuOpen(false)} />
+                <div role="menu" className="absolute top-[calc(100%+6px)] right-0 z-50 w-[230px] rounded-lg border border-[#d8dee8] bg-white shadow-[0_8px_24px_rgba(15,23,42,0.18)] py-1">
+                  <button
+                    role="menuitem"
+                    onClick={() => { setMenuOpen(false); onImportFromOwox?.(); }}
+                    className="w-full text-left text-[13px] text-slate-900 px-3 py-2 cursor-pointer flex items-center gap-[8px] hover:bg-[#f1f3f7]"
+                  >
+                    <Download size={15} /> Import from OWOX project
+                  </button>
+                </div>
+              </>
+            )}
+          </>
+        )}
+      </div>
 
       {signedIn ? (
         <button

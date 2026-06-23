@@ -50,8 +50,13 @@ export async function pushModel(store: ModelStore, api: Api = defaultApi, storag
   }
 
   // ── 1. Create pending marts, then push their output schema ──────────────────
+  // Track marts we skip because they already exist IN THIS STORAGE — a "created"
+  // mart whose owoxStorageId points at a different storage (e.g. imported from
+  // another project, then signed into this one) is NOT in the active storage, so
+  // it must be recreated here rather than silently skipped.
+  const skippedKeys = new Set<string>();
   for (const n of store.get().nodes) {
-    if (n.status === "created") continue;
+    if (n.status === "created" && n.owoxStorageId === storageId) { skippedKeys.add(n.key); continue; }
     store.updateNode(n.key, { status: "creating", error: null });
     try {
       // Create a draft with just { title, storageId } — confirmed to always 201.
@@ -92,7 +97,7 @@ export async function pushModel(store: ModelStore, api: Api = defaultApi, storag
           res.errors.push(`Schema for "${n.title}": ${(e as Error).message}`);
         }
       }
-      store.updateNode(n.key, { status: "created", owoxId: out.id, createdAt: new Date().toISOString() });
+      store.updateNode(n.key, { status: "created", owoxId: out.id, owoxStorageId: storageId, createdAt: new Date().toISOString() });
       res.created++;
     } catch (e) {
       const msg = (e as Error).message;
@@ -108,9 +113,11 @@ export async function pushModel(store: ModelStore, api: Api = defaultApi, storag
   const titleByKey = new Map(g.nodes.map(n => [n.key, n.title]));
 
   for (const e of g.edges) {
-    // Imported edges already exist in OWOX (they came from a real relationship
-    // there) — pushing them again would create duplicate joins or error out.
-    if (e.existing) continue;
+    // Imported edges already exist in OWOX — but only in the storage they were
+    // imported from. Skip them only when BOTH endpoints were skipped (i.e. still
+    // live in the active storage). If an endpoint was recreated here (different
+    // storage/project), the relationship doesn't exist yet and must be pushed.
+    if (e.existing && skippedKeys.has(e.from) && skippedKeys.has(e.to)) continue;
     const keys = e.keys.filter(k => k.left && k.right);
     const directions: Array<[string, string, { left: string; right: string }[]]> = e.bidirectional
       ? [[e.from, e.to, keys], [e.to, e.from, keys.map(k => ({ left: k.right, right: k.left }))]]

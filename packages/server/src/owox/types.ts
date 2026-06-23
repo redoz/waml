@@ -8,6 +8,7 @@ export interface ImportMart {
   id: string;
   title: string;
   status?: string;
+  description?: string;
   schema: { name: string; type: string; pk: boolean; alias?: string; description?: string }[];
   inputSource: "SQL" | "CONNECTOR" | "VIEW" | "TABLE";
   definition: string | null;

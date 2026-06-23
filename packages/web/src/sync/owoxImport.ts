@@ -3,7 +3,7 @@ import type { ModelGraph, ModelNode, ModelEdge, InputSource } from "@mc/okf";
 export type ImportFilter = "all" | "published" | "with-relationships";
 
 export interface ImportMart {
-  id: string; title: string; status?: string;
+  id: string; title: string; status?: string; description?: string;
   schema: { name: string; type: string; pk: boolean; alias?: string; description?: string }[];
   inputSource: InputSource; definition: string | null;
 }
@@ -46,8 +46,11 @@ export function payloadToGraph(payload: ImportPayload, filter: ImportFilter): Mo
 
   const nodes: ModelNode[] = marts.map((m, i) => ({
     key: `n${i + 1}`, title: m.title, inputSource: m.inputSource, definition: m.definition,
+    ...(m.description ? { description: m.description } : {}),
     schema: m.schema.map(f => ({ name: f.name, type: f.type, pk: f.pk, ...(f.alias ? { alias: f.alias } : {}), ...(f.description ? { description: f.description } : {}) })),
-    position: { x: 0, y: 0 }, status: "created", owoxId: m.id, createdAt: null,
+    // Tag the storage this owoxId belongs to — push compares it to the active
+    // storage so the mart isn't treated as "already created" in another project.
+    position: { x: 0, y: 0 }, status: "created", owoxId: m.id, owoxStorageId: payload.storageId, createdAt: null,
   }));
   const keyByOwoxId = new Map(nodes.map(n => [n.owoxId!, n.key]));
 
@@ -82,7 +85,7 @@ export function mergeGraphs(current: ModelGraph, incoming: ModelGraph): { graph:
     if (match) {
       keyRemap.set(inc.key, match.key);
       const idx = nodes.indexOf(match);
-      nodes[idx] = { ...match, title: inc.title, schema: inc.schema, inputSource: inc.inputSource, definition: inc.definition, status: "created", owoxId: inc.owoxId };
+      nodes[idx] = { ...match, title: inc.title, description: inc.description, schema: inc.schema, inputSource: inc.inputSource, definition: inc.definition, status: "created", owoxId: inc.owoxId, owoxStorageId: inc.owoxStorageId };
     } else {
       const key = `n${++counter}`;
       keyRemap.set(inc.key, key);

@@ -104,6 +104,7 @@ export class OwoxClient {
     const inputSource = (dt === "SQL" || dt === "TABLE" || dt === "VIEW" || dt === "CONNECTOR") ? dt : "SQL";
     return {
       id: d.id ?? id, title: d.title ?? "", status: d.status,
+      ...(d.description ? { description: d.description } : {}),
       schema: fields.map(f => ({
         name: f.name, type: f.type, pk: !!f.isPrimaryKey,
         ...(f.alias ? { alias: f.alias } : {}),

@@ -22,11 +22,21 @@ describe("selectMartIds", () => {
 });
 
 describe("payloadToGraph", () => {
-  it("marts become created nodes with owoxId", () => {
+  it("marts become created nodes with owoxId + owoxStorageId", () => {
     const g = payloadToGraph(base, "all");
     const a = g.nodes.find(n => n.owoxId === "a")!;
     expect(a.status).toBe("created");
+    expect(a.owoxStorageId).toBe("st_1"); // tagged so push can detect a project/storage switch
     expect(g.storageId).toBe("st_1");
+  });
+  it("carries the mart description onto the node", () => {
+    const withDesc: ImportPayload = {
+      storageId: "st_1", total: 1, truncated: false,
+      marts: [{ ...mart("a", "PUBLISHED"), description: "A gold-layer mart" }],
+      relationships: [],
+    };
+    const g = payloadToGraph(withDesc, "all");
+    expect(g.nodes[0].description).toBe("A gold-layer mart");
   });
   it("collapses A→B and B→A into one bidirectional edge", () => {
     const g = payloadToGraph(base, "all");

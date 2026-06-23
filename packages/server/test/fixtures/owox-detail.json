@@ -2,6 +2,7 @@
   "id": "b4f59656-d52e-4ae3-847e-c34c025956bf",
   "title": "🥇 Growth (E-Commerce)",
   "status": "PUBLISHED",
+  "description": "Demo guide — a gold-layer Data Mart: a thin SQL base enriched entirely through Joinable Data Marts.",
   "storage": {
     "id": "c9aefbda-59f5-49e6-9e6b-fe29015b90ce",
     "title": "BigQuery [Common]",

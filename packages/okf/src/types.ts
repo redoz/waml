@@ -15,6 +15,10 @@ export interface ModelNode {
   position: { x: number; y: number };
   status: NodeStatus;
   owoxId?: string | null;
+  // The OWOX storage this owoxId lives in. Push treats a "created" mart as
+  // already-in-OWOX only when this matches the active storage, so switching
+  // project/storage recreates a stale mart instead of silently skipping it.
+  owoxStorageId?: string | null;
   createdAt?: string | null;
   createdBy?: string | null;
   error?: string | null;

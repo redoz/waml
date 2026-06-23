@@ -67,6 +67,7 @@ describe("OwoxClient read methods", () => {
     const { c } = clientWith(detail);
     const m = await c.getImportMart(detail.id);
     expect(m).toMatchObject({ id: detail.id, title: detail.title, inputSource: "SQL" });
+    expect(m.description).toContain("Demo guide"); // mart-level description must be imported
     expect(m.definition).toContain("SELECT");
     // session_id is the primary key in the fixture
     expect(m.schema.find(f => f.name === "session_id")).toMatchObject({ type: "STRING", pk: true });

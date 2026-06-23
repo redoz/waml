@@ -39,6 +39,7 @@ import { mergeGraphs } from "../../sync/owoxImport";
 import { LibraryDialog } from "../LibraryDialog";
 import { SignInModal } from "../SignInModal";
 import { pushIntent } from "../../sync/pushGate";
+import { reconcileStorageId } from "../../sync/storageReconcile";
 import { Dock, type Tool } from "./Dock";
 import { MartNode } from "./MartNode";
 import { RelEdge } from "./RelEdge";
@@ -117,7 +118,11 @@ function CanvasInner() {
       try {
         const list = await api<StorageOption[]>("/api/storages");
         setStorages(list);
-        if (!store.get().storageId && list[0]) store.set({ ...store.get(), storageId: list[0].id });
+        // Keep the current storage only if it's still in this project; otherwise
+        // fall back to the first available so we never push to a stale storage
+        // (e.g. after signing into a different project).
+        const reconciled = reconcileStorageId(store.get().storageId, list);
+        if (reconciled !== store.get().storageId) store.set({ ...store.get(), storageId: reconciled });
         return list;
       } catch {
         await new Promise(r => setTimeout(r, 1200));

@@ -12,6 +12,7 @@ describe("pushModel", () => {
     expect(calls).toContain("/api/data-marts");
     expect(s.get().nodes[0].status).toBe("created");
     expect(s.get().nodes[0].owoxId).toBe("owox_a");
+    expect(s.get().nodes[0].owoxStorageId).toBe("stor_1"); // tagged with the storage it was created in
     expect(res.created).toBe(1); expect(res.failed).toBe(0);
   });
   it("pushes the input-source type in the definition envelope", async () => {
@@ -69,8 +70,8 @@ describe("pushModel", () => {
     s.set({
       storageId: "stor_1",
       nodes: [
-        { key: "n1", title: "Orders", inputSource: "SQL", schema: [{ name: "customer_id", type: "STRING", pk: false }], position: { x: 0, y: 0 }, status: "created", owoxId: "owox_a" },
-        { key: "n2", title: "Customers", inputSource: "SQL", schema: [{ name: "id", type: "STRING", pk: true }], position: { x: 100, y: 0 }, status: "created", owoxId: "owox_b" },
+        { key: "n1", title: "Orders", inputSource: "SQL", schema: [{ name: "customer_id", type: "STRING", pk: false }], position: { x: 0, y: 0 }, status: "created", owoxId: "owox_a", owoxStorageId: "stor_1" },
+        { key: "n2", title: "Customers", inputSource: "SQL", schema: [{ name: "id", type: "STRING", pk: true }], position: { x: 100, y: 0 }, status: "created", owoxId: "owox_b", owoxStorageId: "stor_1" },
       ],
       edges: [
         { id: "e1", from: "n1", to: "n2", keys: [{ left: "customer_id", right: "id" }], bidirectional: false, cardinality: "N:1" },
@@ -91,8 +92,8 @@ describe("pushModel", () => {
     s.set({
       storageId: "stor_1",
       nodes: [
-        { key: "n1", title: "Orders", inputSource: "SQL", schema: [{ name: "customer_id", type: "STRING", pk: false }], position: { x: 0, y: 0 }, status: "created", owoxId: "owox_a" },
-        { key: "n2", title: "Customers", inputSource: "SQL", schema: [{ name: "id", type: "STRING", pk: true }], position: { x: 100, y: 0 }, status: "created", owoxId: "owox_b" },
+        { key: "n1", title: "Orders", inputSource: "SQL", schema: [{ name: "customer_id", type: "STRING", pk: false }], position: { x: 0, y: 0 }, status: "created", owoxId: "owox_a", owoxStorageId: "stor_1" },
+        { key: "n2", title: "Customers", inputSource: "SQL", schema: [{ name: "id", type: "STRING", pk: true }], position: { x: 100, y: 0 }, status: "created", owoxId: "owox_b", owoxStorageId: "stor_1" },
       ],
       edges: [
         { id: "e1", from: "n1", to: "n2", keys: [{ left: "customer_id", right: "id" }], bidirectional: false, existing: true },
@@ -110,13 +111,52 @@ describe("pushModel", () => {
     expect(res.errors).toHaveLength(0);
   });
 
+  it("recreates a 'created' mart whose owoxStorageId is a different storage (project/storage switch)", async () => {
+    const s = createModelStore({ storageId: "stor_NEW" });
+    s.set({
+      storageId: "stor_NEW",
+      // Imported from another project: created + owoxId, but tagged to a different storage.
+      nodes: [
+        { key: "n1", title: "Orders", inputSource: "SQL", schema: [], position: { x: 0, y: 0 }, status: "created", owoxId: "old_id", owoxStorageId: "stor_OLD" },
+      ],
+      edges: [],
+    });
+    const calls: string[] = [];
+    const apiMock = vi.fn(async (path: string) => { calls.push(path); return { id: "new_id" }; });
+    const res = await pushModel(s, apiMock as any);
+    expect(calls).toContain("/api/data-marts");        // recreated, not skipped
+    expect(res.created).toBe(1);
+    expect(s.get().nodes[0].owoxId).toBe("new_id");
+    expect(s.get().nodes[0].owoxStorageId).toBe("stor_NEW"); // re-tagged to the active storage
+  });
+
+  it("pushes an imported (existing) edge when an endpoint was recreated in a different storage", async () => {
+    const s = createModelStore({ storageId: "stor_NEW" });
+    s.set({
+      storageId: "stor_NEW",
+      nodes: [
+        { key: "n1", title: "Orders", inputSource: "SQL", schema: [{ name: "customer_id", type: "STRING", pk: false }], position: { x: 0, y: 0 }, status: "created", owoxId: "old_a", owoxStorageId: "stor_OLD" },
+        { key: "n2", title: "Customers", inputSource: "SQL", schema: [{ name: "id", type: "STRING", pk: true }], position: { x: 100, y: 0 }, status: "created", owoxId: "old_b", owoxStorageId: "stor_OLD" },
+      ],
+      edges: [
+        { id: "e1", from: "n1", to: "n2", keys: [{ left: "customer_id", right: "id" }], bidirectional: false, existing: true },
+      ],
+    });
+    const relationshipCalls: string[] = [];
+    const apiMock = vi.fn(async (path: string) => { if (path.includes("/relationships")) relationshipCalls.push(path); return { id: "x" }; });
+    const res = await pushModel(s, apiMock as any);
+    // Marts were recreated in stor_NEW, so the join doesn't exist there yet → must be pushed.
+    expect(relationshipCalls.length).toBeGreaterThan(0);
+    expect(res.relationshipsCreated).toBeGreaterThan(0);
+  });
+
   it("uses an underscore identifier (not a hyphenated slug) for targetAlias", async () => {
     const s = createModelStore({ storageId: "stor_1" });
     s.set({
       storageId: "stor_1",
       nodes: [
-        { key: "n1", title: "Comments", inputSource: "TABLE", schema: [{ name: "post_id", type: "INTEGER", pk: false }], position: { x: 0, y: 0 }, status: "created", owoxId: "owox_a" },
-        { key: "n2", title: "Posts Questions", inputSource: "TABLE", schema: [{ name: "id", type: "INTEGER", pk: true }], position: { x: 100, y: 0 }, status: "created", owoxId: "owox_b" },
+        { key: "n1", title: "Comments", inputSource: "TABLE", schema: [{ name: "post_id", type: "INTEGER", pk: false }], position: { x: 0, y: 0 }, status: "created", owoxId: "owox_a", owoxStorageId: "stor_1" },
+        { key: "n2", title: "Posts Questions", inputSource: "TABLE", schema: [{ name: "id", type: "INTEGER", pk: true }], position: { x: 100, y: 0 }, status: "created", owoxId: "owox_b", owoxStorageId: "stor_1" },
       ],
       edges: [{ id: "e1", from: "n1", to: "n2", keys: [{ left: "post_id", right: "id" }], bidirectional: false }],
     });
@@ -136,8 +176,8 @@ describe("pushModel", () => {
       storageId: "stor_1",
       // newobj has an empty schema; the join pairs newobj.id with badges.id (INTEGER).
       nodes: [
-        { key: "newobj", title: "New object", inputSource: "SQL", schema: [], position: { x: 0, y: 0 }, status: "created", owoxId: "owox_a" },
-        { key: "badges", title: "Badges", inputSource: "TABLE", schema: [{ name: "id", type: "INTEGER", pk: true }], position: { x: 100, y: 0 }, status: "created", owoxId: "owox_b" },
+        { key: "newobj", title: "New object", inputSource: "SQL", schema: [], position: { x: 0, y: 0 }, status: "created", owoxId: "owox_a", owoxStorageId: "stor_1" },
+        { key: "badges", title: "Badges", inputSource: "TABLE", schema: [{ name: "id", type: "INTEGER", pk: true }], position: { x: 100, y: 0 }, status: "created", owoxId: "owox_b", owoxStorageId: "stor_1" },
       ],
       edges: [{ id: "e1", from: "newobj", to: "badges", keys: [{ left: "id", right: "id" }], bidirectional: false }],
     });
@@ -153,8 +193,8 @@ describe("pushModel", () => {
       storageId: "stor_1",
       // newobj.id ALREADY exists as STRING (created in an earlier session); tags.id is an INTEGER PK.
       nodes: [
-        { key: "newobj", title: "New object", inputSource: "SQL", schema: [{ name: "id", type: "STRING", pk: false }], position: { x: 0, y: 0 }, status: "created", owoxId: "owox_a" },
-        { key: "tags", title: "Tags", inputSource: "TABLE", schema: [{ name: "id", type: "INTEGER", pk: true }], position: { x: 100, y: 0 }, status: "created", owoxId: "owox_b" },
+        { key: "newobj", title: "New object", inputSource: "SQL", schema: [{ name: "id", type: "STRING", pk: false }], position: { x: 0, y: 0 }, status: "created", owoxId: "owox_a", owoxStorageId: "stor_1" },
+        { key: "tags", title: "Tags", inputSource: "TABLE", schema: [{ name: "id", type: "INTEGER", pk: true }], position: { x: 100, y: 0 }, status: "created", owoxId: "owox_b", owoxStorageId: "stor_1" },
       ],
       edges: [{ id: "e1", from: "newobj", to: "tags", keys: [{ left: "id", right: "id" }], bidirectional: true }],
     });

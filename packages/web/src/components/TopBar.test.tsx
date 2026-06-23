@@ -19,16 +19,24 @@ describe("TopBar", () => {
     expect(screen.getByRole("combobox")).toBeTruthy();
   });
 
-  it("shows 'Import from OWOX project' only when signed in", () => {
-    const { rerender } = render(<TopBar signedIn={false} />);
+  it("hides the Push caret menu (and its Import option) when anonymous", () => {
+    render(<TopBar signedIn={false} onImportFromOwox={() => {}} />);
+    expect(screen.queryByLabelText(/More OWOX actions/i)).toBeNull(); // no caret
     expect(screen.queryByText(/Import from OWOX project/i)).toBeNull();
-    rerender(<TopBar signedIn={true} onImportFromOwox={() => {}} />);
+  });
+
+  it("reveals 'Import from OWOX project' in the Push caret menu when signed in", () => {
+    render(<TopBar signedIn={true} onImportFromOwox={() => {}} />);
+    // hidden until the caret menu is opened
+    expect(screen.queryByText(/Import from OWOX project/i)).toBeNull();
+    fireEvent.click(screen.getByLabelText(/More OWOX actions/i));
     expect(screen.getByText(/Import from OWOX project/i)).toBeTruthy();
   });
 
-  it("invokes onImportFromOwox when clicked", () => {
+  it("invokes onImportFromOwox from the caret menu", () => {
     const fn = vi.fn();
     render(<TopBar signedIn={true} onImportFromOwox={fn} />);
+    fireEvent.click(screen.getByLabelText(/More OWOX actions/i));
     fireEvent.click(screen.getByText(/Import from OWOX project/i));
     expect(fn).toHaveBeenCalledTimes(1);
   });
