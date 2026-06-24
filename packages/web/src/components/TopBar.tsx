@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Download, Upload, ChevronDown, Target } from "lucide-react";
+import { Download, Upload, ChevronDown, Target, Share2 } from "lucide-react";
 import { ProjectIcon, StorageIcon, LibraryIcon } from "../lib/icons";
 
 // First-visit onboarding hint pointing at the Library. Persisted so it only
@@ -16,6 +16,8 @@ export interface TopBarProps {
   onImport?: () => void;
   onImportFromOwox?: () => void;
   onExport?: () => void;
+  onShare?: () => void;
+  shareDisabled?: boolean;
   onPush?: () => void;
   onLibrary?: () => void;
   signedIn: boolean;
@@ -52,7 +54,7 @@ const LOGO = (
 
 export function TopBar({
   pendingCount = 0, storages = [], storageId, onStorageChange,
-  onImport, onImportFromOwox, onExport, onPush, onLibrary,
+  onImport, onImportFromOwox, onExport, onShare, shareDisabled = false, onPush, onLibrary,
   signedIn, projectTitle, onSignIn, onSignOut,
   onOpenGoal, goalSet = false, questionsEnabled = false,
 }: TopBarProps) {
@@ -162,6 +164,16 @@ export function TopBar({
         className="text-[13px] font-[550] border border-[#d8dee8] bg-white text-slate-900 rounded-lg px-3 py-[7px] cursor-pointer flex items-center gap-[6px] hover:bg-[#f1f3f7]"
       >
         <Upload size={15} /> Export OKF
+      </button>
+
+      {/* Share — copy a link that reopens this exact model (no sign-in needed) */}
+      <button
+        onClick={onShare}
+        disabled={shareDisabled}
+        title={shareDisabled ? "Add a mart first, then share" : "Copy a shareable link to this model"}
+        className="text-[13px] font-[550] border border-[#d8dee8] bg-white text-slate-900 rounded-lg px-3 py-[7px] cursor-pointer flex items-center gap-[6px] hover:bg-[#f1f3f7] disabled:opacity-50 disabled:cursor-not-allowed"
+      >
+        <Share2 size={15} /> Share
       </button>
 
       {/* Push to OWOX — split button: primary push + caret menu (signed-in only)
