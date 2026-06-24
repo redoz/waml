@@ -62,6 +62,42 @@ describe("buildRfEdges", () => {
   });
 });
 
+describe("buildRfEdges geometry-derived sides (no stored handle)", () => {
+  const at = (key: string, x: number): ModelNode => ({
+    key, title: key, inputSource: "VIEW", schema: [field("id")],
+    position: { x, y: 0 }, status: "created", owoxId: null,
+  });
+  // Import/template edges carry no stored handle — the case that used to jump.
+  const bare: ModelEdge = { id: "e1", from: "a", to: "b", keys: [{ left: "id", right: "id" }], bidirectional: false };
+
+  it("compact: target to the right → source exits right, target enters left", () => {
+    const out = buildRfEdges([bare], [at("a", 0), at("b", 600)], "compact");
+    expect(out[0].sourceHandle).toBe("right");
+    expect(out[0].targetHandle).toBe("left");
+  });
+
+  it("compact: target to the left → source exits left, target enters right", () => {
+    const out = buildRfEdges([bare], [at("a", 600), at("b", 0)], "compact");
+    expect(out[0].sourceHandle).toBe("left");
+    expect(out[0].targetHandle).toBe("right");
+  });
+
+  it("erd uses the SAME geometry side as compact (no jump on toggle)", () => {
+    // a is to the right of b → source exits left, target enters right
+    const out = buildRfEdges([bare], [at("a", 600), at("b", 0)], "erd");
+    expect(out[0].sourceHandle).toBe("fl:id");
+    expect(out[0].targetHandle).toBe("fr:id");
+  });
+
+  it("an explicit stored handle still wins over geometry", () => {
+    const e: ModelEdge = { ...bare, sourceHandle: "left", targetHandle: "right" };
+    // geometry alone would say source right / target left here
+    const out = buildRfEdges([e], [at("a", 0), at("b", 600)], "compact");
+    expect(out[0].sourceHandle).toBe("left");
+    expect(out[0].targetHandle).toBe("right");
+  });
+});
+
 describe("buildRfEdges cardinality passthrough", () => {
   const nodes: ModelNode[] = [
     { key: "a", title: "A", inputSource: "TABLE", status: "pending", owoxId: null, position: { x: 0, y: 0 }, schema: [{ name: "x", type: "STRING", pk: true }] },

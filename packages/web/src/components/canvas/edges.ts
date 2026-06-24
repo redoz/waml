@@ -1,14 +1,45 @@
 import type { Edge } from "@xyflow/react";
 import type { ModelNode, ModelEdge } from "@mc/okf";
 import type { ViewMode } from "../../state/viewMode";
+import { erdAwareNodeSize } from "./layoutSize";
 
-function compactEdge(e: ModelEdge): Edge {
+type Side = "left" | "right";
+
+// Pick the horizontal side each end of an edge attaches to.
+//
+// A handle the user explicitly chose (stored on the edge from a manual drag)
+// always wins, so their choice is preserved. Otherwise the side is derived from
+// the nodes' relative position: each end exits *toward* the other node — the
+// shortest route, no loop-around. The SAME rule runs in compact and ERD mode, so
+// the side never jumps when toggling views (imported/template edges carry no
+// stored handle, which is exactly the case that used to disagree between modes).
+// A hub's edges naturally split across both sides because each one faces its own
+// neighbour.
+function edgeSides(
+  src: ModelNode | undefined,
+  tgt: ModelNode | undefined,
+  e: ModelEdge,
+  viewMode: ViewMode,
+): { source: Side; target: Side } {
+  let source: Side = "right";
+  let target: Side = "left";
+  if (src && tgt) {
+    const sx = src.position.x + erdAwareNodeSize(src, viewMode).width / 2;
+    const tx = tgt.position.x + erdAwareNodeSize(tgt, viewMode).width / 2;
+    if (tx < sx) { source = "left"; target = "right"; }
+  }
+  const storedSource = e.sourceHandle === "left" || e.sourceHandle === "right" ? e.sourceHandle : null;
+  const storedTarget = e.targetHandle === "left" || e.targetHandle === "right" ? e.targetHandle : null;
+  return { source: storedSource ?? source, target: storedTarget ?? target };
+}
+
+function compactEdge(e: ModelEdge, sides: { source: Side; target: Side }): Edge {
   return {
     id: e.id,
     source: e.from,
     target: e.to,
-    sourceHandle: e.sourceHandle ?? undefined,
-    targetHandle: e.targetHandle ?? undefined,
+    sourceHandle: sides.source,
+    targetHandle: sides.target,
     type: "rel",
     data: { keys: e.keys, bidirectional: e.bidirectional, cardinality: e.cardinality, modelEdgeId: e.id } as unknown as Record<string, unknown>,
   };
@@ -27,32 +58,34 @@ export function isEdgeReconnectable(
 }
 
 export function buildRfEdges(edges: ModelEdge[], nodes: ModelNode[], viewMode: ViewMode): Edge[] {
-  if (viewMode !== "erd") return edges.map(compactEdge);
+  const byKey = new Map(nodes.map(n => [n.key, n]));
+
+  if (viewMode !== "erd") {
+    return edges.map(e => compactEdge(e, edgeSides(byKey.get(e.from), byKey.get(e.to), e, viewMode)));
+  }
 
   const fieldsByKey = new Map<string, Set<string>>(
     nodes.map(n => [n.key, new Set(n.schema.map(f => f.name))]),
   );
 
   return edges.flatMap(e => {
+    const sides = edgeSides(byKey.get(e.from), byKey.get(e.to), e, viewMode);
     const usable = e.keys.filter(k => k.left || k.right);
-    if (usable.length === 0) return [compactEdge(e)];
+    if (usable.length === 0) return [compactEdge(e, sides)];
 
     const srcFields = fieldsByKey.get(e.from);
     const tgtFields = fieldsByKey.get(e.to);
-
-    // Keep the same side the edge uses in compact mode — the stored
-    // sourceHandle/targetHandle ("left"/"right") — and only move the anchor
-    // vertically onto the field row. Otherwise the arrow would jump sides when
-    // toggling views. fr:<field> = right edge of the row, fl:<field> = left edge.
-    const srcSide = e.sourceHandle === "left" ? "fl" : "fr";
-    const tgtSide = e.targetHandle === "right" ? "fr" : "fl";
+    // Move the anchor vertically onto the field row, keeping the side chosen
+    // above. fr:<field> = right edge of the row, fl:<field> = left edge.
+    const srcSide = sides.source === "left" ? "fl" : "fr";
+    const tgtSide = sides.target === "left" ? "fl" : "fr";
 
     return usable.map((k, i): Edge => ({
       id: `${e.id}::${i}`,
       source: e.from,
       target: e.to,
-      sourceHandle: k.left && srcFields?.has(k.left) ? `${srcSide}:${k.left}` : (e.sourceHandle ?? "right"),
-      targetHandle: k.right && tgtFields?.has(k.right) ? `${tgtSide}:${k.right}` : (e.targetHandle ?? "left"),
+      sourceHandle: k.left && srcFields?.has(k.left) ? `${srcSide}:${k.left}` : sides.source,
+      targetHandle: k.right && tgtFields?.has(k.right) ? `${tgtSide}:${k.right}` : sides.target,
       type: "rel",
       data: { keys: [k], bidirectional: e.bidirectional, cardinality: e.cardinality, modelEdgeId: e.id } as unknown as Record<string, unknown>,
     }));
