@@ -89,7 +89,7 @@ export function ImportDialog({ onConfirm, onClose }: ImportDialogProps) {
               {copied ? <><Check size={14} /> Copied — paste into Claude</> : <><Copy size={14} /> Copy AI instructions</>}
             </button>
             <a
-              href="/okf-format.md"
+              href="/ai-instructions.html"
               target="_blank"
               rel="noopener"
               className="text-[12.5px] text-[#1e88e5] hover:text-[#1976d2] underline underline-offset-2"

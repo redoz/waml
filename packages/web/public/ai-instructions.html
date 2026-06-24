@@ -29,6 +29,16 @@
   a { color:var(--accent); }
   .note { background:#eef0fe; border:1px solid #c7d2fe; border-radius:10px; padding:12px 16px; font-size:13.5px; margin:14px 0; }
   .chip { display:inline-block; background:#fff; border:1px solid var(--line); border-radius:6px; padding:1px 7px; font-size:12px; margin:2px 3px 2px 0; font-family:ui-monospace,monospace; }
+  .copy-row { display:flex; align-items:center; gap:14px; flex-wrap:wrap; margin:18px 0 8px; }
+  .btn { display:inline-flex; align-items:center; gap:7px; background:#1e88e5; color:#fff; border:none; border-radius:9px;
+    padding:9px 14px; font-size:13.5px; font-weight:600; cursor:pointer; font-family:inherit; }
+  .btn:hover { background:#1976d2; }
+  .btn svg { width:15px; height:15px; }
+  .copy-hint { color:var(--muted); font-size:13px; }
+  .rules { background:#fff7ed; border:1px solid #fed7aa; border-radius:10px; padding:14px 18px; margin:14px 0; }
+  .rules b { color:#9a3412; }
+  .rules ol { margin:8px 0 0; padding-left:20px; }
+  .rules li { margin:5px 0; }
   footer { margin-top:48px; color:var(--muted); font-size:13px; }
 </style>
 </head>
@@ -38,7 +48,24 @@
     <svg class="logo" viewBox="0 0 512 512" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M421.311 119.85C435.258 133.807 440.996 157.327 440.996 157.327C440.996 157.327 449.53 204.69 449.53 268.995C449.53 177.972 418.65 162.348 311.314 162.348H212.327C157.38 162.348 161.097 217.57 157.38 243.85L152.865 283.556C150.697 325.33 157.951 351.215 200.811 351.215C111.444 351.215 61.806 365.847 61.8062 239.866C61.8061 182.846 70.4043 157.327 70.4043 157.327C70.4043 157.327 76.1419 133.807 90.1183 119.85C104.095 105.877 124.809 104.475 124.809 104.475C124.809 104.475 167.579 98.0374 252.066 98.0374C336.554 98.0374 384.285 104.475 384.285 104.475C384.285 104.475 407.321 105.877 421.311 119.85Z" fill="#1E88E5"/><path d="M449.515 271.888C449.52 273.026 449.523 274.174 449.523 275.333C449.523 329.946 441.393 351.201 441.393 351.201C441.393 351.201 435.03 376.952 424.167 388.075C406.929 405.725 388.495 406.71 388.495 406.71C388.495 406.71 348.836 413.061 263.502 413.061C181.632 413.061 127.111 406.749 127.111 406.749C127.111 406.749 104.091 405.337 90.1144 391.377C76.1379 377.394 70.4004 351.201 70.4004 351.201C70.4004 351.201 61.8062 297.401 61.8062 238.506C61.806 352.055 102.131 351.374 175.525 350.133C183.56 349.998 191.992 349.855 200.811 349.855H299.787C343.122 349.855 352.906 318.315 354.792 282.196L359.32 227.093C360.526 204.443 357.608 188.362 350.507 178.012C342.765 166.722 329.575 160.987 311.314 160.987C424.974 160.987 448.73 176.216 449.515 271.888Z" fill="#0046F9"/></svg>
     <h1>OWOX Model Canvas — OKF authoring guide</h1>
   </header>
-  <p class="lead">Instructions for an AI agent (Claude, Codex, Gemini, …) to generate a data model in <b>OKF</b> that imports cleanly into OWOX Model Canvas and pushes to OWOX Data Marts in one click.</p>
+  <p class="lead">Instructions for an AI agent (Claude, Codex, Gemini, …) to generate a data model in <b>OKF</b> that imports cleanly into <a href="https://model.owox.com" target="_blank" rel="noopener">OWOX Model Canvas</a> and pushes to <a href="https://www.owox.com" target="_blank" rel="noopener">OWOX Data Marts</a> in one click.</p>
+
+  <div class="copy-row">
+    <button class="btn" id="copy-btn" type="button">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+      <span id="copy-label">Copy these instructions</span>
+    </button>
+    <span class="copy-hint">Paste into Claude / ChatGPT, then describe your data — it returns a model you import below.</span>
+  </div>
+
+  <div class="rules">
+    <b>⚠️ Read first — the 3 rules that make relationships (Joins) work.</b> Most failed imports trip on these.
+    <ol>
+      <li><b>One file per Data Mart</b>, separated by <code>&lt;!-- path/slug.md --&gt;</code> markers. A single blob with no markers is read as one mart, so nothing can join.</li>
+      <li><b>A Join link must point to the target mart's exact file name:</b> <code>- [Customers](./customers.md) — …</code>. The slug in <code>(./customers.md)</code> must equal the target's file name (not <code>customer.md</code>, not <code>customers-ecommerce.md</code>).</li>
+      <li><b>Join keys must be backticked:</b> <code>`customer_id = id`</code>. Without backticks the keys are not parsed.</li>
+    </ol>
+  </div>
 
   <div class="note">
     <b>Goal.</b> Produce one or more Markdown documents in the format below. The user pastes or uploads them into <b>Import OKF</b> on the canvas, reviews the rendered graph, then clicks <b>Push to OWOX</b> to create draft Data Marts and joinable relationships.
@@ -205,7 +232,8 @@ tags: ["owox", "view"]
     <b>Rules of thumb.</b> Keep titles distinct (the slug wires relationships). Use only the allowed schema types. Mark one <code>PK.</code> per mart and reference real fields in joins. Leave <b>ID</b>/<b>Storage</b> as <code>—</code> — the canvas fills them.
   </div>
 
-  <footer>OWOX Model Canvas · OKF authoring profile. Built on the Open Knowledge Format.</footer>
+  <footer>OWOX Model Canvas · OKF authoring profile. Built on the Open Knowledge Format. The raw guide for AI agents is at <a href="https://model.owox.com/okf-format.md">model.owox.com/okf-format.md</a>.</footer>
 </div>
+<script src="/ai-instructions.js" defer></script>
 </body>
 </html>
