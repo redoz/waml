@@ -30,7 +30,7 @@ import { loadModelName, persistModelName, DEFAULT_MODEL_NAME, templateModelName 
 import type { ModelNode, ModelEdge, ModelGraph } from "@mc/okf";
 
 import { graphToBundleFiles, downloadBundle } from "../../okf/io";
-import { buildShareUrl, readSharedModel, clearSharedModelFromUrl } from "../../share/url";
+import { buildShareUrl, readSharedModel, readSharedName, clearSharedModelFromUrl } from "../../share/url";
 import { readTemplateModel, clearTemplateFromUrl } from "../../lib/templateLink";
 import { exportCanvasSvg } from "../../share/exportImage";
 import { pushModel, pushPreview, type PushResult } from "../../sync/push";
@@ -85,6 +85,7 @@ if (templateGraph) {
 }
 
 const sharedGraph = readSharedModel();
+const sharedModelName = readSharedName(); // name carried alongside a shared link, if any
 const persistedGraph = loadPersistedGraph();
 export const store = createModelStore(templateInitial ?? sharedGraph ?? persistedGraph);
 if (templateInitial || sharedGraph) {
@@ -222,7 +223,9 @@ function CanvasInner() {
   // creating a duplicate). Reset on Clear / opening a different model.
   const [savedModelId, setSavedModelId] = useState<string | null>(null);
   // Editable model name (shown in the top bar, used as the Save default).
-  const [modelName, setModelName] = useState(loadModelName());
+  // A shared link's name wins on first load (opening someone's named model);
+  // otherwise restore the locally-persisted name.
+  const [modelName, setModelName] = useState(sharedModelName ?? loadModelName());
   useEffect(() => { persistModelName(modelName); }, [modelName]);
 
   // Load the project's storages once signed in; retry through OWOX's transient
@@ -437,7 +440,7 @@ function CanvasInner() {
   // Copy a shareable link that reopens this exact model. Falls back to a prompt
   // if the clipboard API is blocked (insecure context / permissions).
   const handleShare = useCallback(async () => {
-    const url = buildShareUrl(store.get());
+    const url = buildShareUrl(store.get(), modelName);
     // The whole model rides in the link's #hash, so it works on whatever origin
     // serves the app. On localhost that's only this machine — flag it so a local
     // dev doesn't think the link is broken; on model.owox.com it just works.
@@ -451,7 +454,7 @@ function CanvasInner() {
     } catch {
       window.prompt("Copy this shareable link:", url);
     }
-  }, []);
+  }, [modelName]);
 
   // Auto-layout a freshly loaded graph (import or template). The OKF format does
   // not persist node positions (Dagre re-lays out on load, by design), so without

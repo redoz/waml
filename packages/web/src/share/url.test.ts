@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { encodeModel, decodeModel } from "./url";
+import { encodeModel, decodeModel, buildShareUrl, readSharedName } from "./url";
 import type { ModelGraph } from "@mc/okf";
 
 const graph: ModelGraph = {
@@ -39,5 +39,20 @@ describe("share url", () => {
   it("returns null for a corrupt payload", () => {
     expect(decodeModel("not-a-real-payload")).toBeNull();
     expect(decodeModel("")).toBeNull();
+  });
+
+  it("carries the model name in the link and reads it back", () => {
+    const url = buildShareUrl(graph, "My SaaS / Subscription OKF with OWOX");
+    expect(url).toContain("&n=");
+    // Load the hash as if the recipient opened the link.
+    history.replaceState(null, "", url.slice(url.indexOf("#")));
+    expect(readSharedName()).toBe("My SaaS / Subscription OKF with OWOX");
+  });
+
+  it("omits the name param when no name is given, and reads null", () => {
+    const url = buildShareUrl(graph);
+    expect(url).not.toContain("&n=");
+    history.replaceState(null, "", url.slice(url.indexOf("#")));
+    expect(readSharedName()).toBeNull();
   });
 });
