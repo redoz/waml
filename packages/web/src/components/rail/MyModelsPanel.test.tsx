@@ -46,6 +46,20 @@ describe("MyModelsPanel", () => {
     expect(screen.getByText("Ecommerce OKF")).toBeTruthy();
   });
 
+  it("does NOT commit rename when blur fires after Escape (race condition)", () => {
+    const onRename = vi.fn();
+    render(<MyModelsPanel models={models} currentModelId={null} onOpen={() => {}} onNew={() => {}} onRename={onRename} onDelete={() => {}} />);
+    fireEvent.click(screen.getByRole("button", { name: /rename ecommerce okf/i }));
+    const input = screen.getByDisplayValue("Ecommerce OKF");
+    fireEvent.change(input, { target: { value: "Should Not Save" } });
+    // Simulate Escape followed by a synchronous blur (as the input unmounts)
+    fireEvent.keyDown(input, { key: "Escape" });
+    fireEvent.blur(input);
+    expect(onRename).not.toHaveBeenCalled();
+    // original name still rendered, not the typed value
+    expect(screen.getByText("Ecommerce OKF")).toBeTruthy();
+  });
+
   it("calls onNew when New model is clicked", () => {
     const onNew = vi.fn();
     render(<MyModelsPanel models={models} currentModelId={null} onOpen={() => {}} onNew={onNew} onRename={() => {}} onDelete={() => {}} />);

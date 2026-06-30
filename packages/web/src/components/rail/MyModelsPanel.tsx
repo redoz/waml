@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useRef } from "react";
 import { Save, Pencil, Trash2 } from "lucide-react";
 import type { SavedModel } from "../../lib/models";
 
@@ -18,9 +18,10 @@ export function MyModelsPanel({
   onDelete(id: string): void;
 }) {
   const [renaming, setRenaming] = useState<{ id: string; value: string } | null>(null);
+  const cancellingRef = useRef(false);
 
   function commitRename() {
-    if (!renaming) return;
+    if (!renaming || cancellingRef.current) { cancellingRef.current = false; return; }
     onRename(renaming.id, renaming.value.trim() || "Untitled model");
     setRenaming(null);
   }
@@ -67,7 +68,7 @@ export function MyModelsPanel({
                 onBlur={commitRename}
                 onKeyDown={e => {
                   if (e.key === "Enter") { commitRename(); }
-                  if (e.key === "Escape") { setRenaming(null); }
+                  if (e.key === "Escape") { cancellingRef.current = true; setRenaming(null); }
                 }}
                 className="flex-1 rounded-md border border-[#1e88e5] px-2 py-1 text-[14px] outline-none"
               />
