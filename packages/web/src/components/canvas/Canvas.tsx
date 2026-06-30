@@ -63,7 +63,7 @@ import { erdAwareNodeSize } from "./layoutSize";
 import { Inspector } from "../inspector/Inspector";
 import { RightRail } from "../rail/RightRail";
 import { ModelSheet } from "../rail/ModelSheet";
-import { useRightPanel, type RightPanelId } from "../rail/useRightPanel";
+import { useRightPanel, gatedPanelId, type RightPanelId } from "../rail/useRightPanel";
 import { EnablePanel } from "../rail/EnablePanel";
 import { AccountPanel } from "../rail/AccountPanel";
 import { MyModelsPanel } from "../rail/MyModelsPanel";
@@ -672,11 +672,7 @@ function CanvasInner() {
   // stays highlighted via visualRailId regardless of where panel.active routes to.
   const handleRailOpen = useCallback((id: RightPanelId) => {
     setVisualRailId(id);
-    if ((id === "models" || id === "history") && !account) {
-      panel.open("enable");
-    } else {
-      panel.open(id);
-    }
+    panel.open(gatedPanelId(id, !!account));
   }, [account, panel]);
 
   // Confirmed start-new: wipe to a fresh model (clearCanvas resets id + name).
