@@ -1018,7 +1018,7 @@ function CanvasInner() {
             <EnablePanel
               onGoogle={() => void signInWithGoogle()}
               onGitHub={() => void signInWithGitHub()}
-              onEmail={(email) => void signInWithEmail(email)}
+              onEmail={(email) => signInWithEmail(email)}
             />
           )}
           {panel.active === "account" && account && (

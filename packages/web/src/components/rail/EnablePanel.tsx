@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Save, Clock, Layers } from "lucide-react";
+import { Save, Clock, Layers, MailCheck } from "lucide-react";
 
 // SVGs reused from AccountDialog.tsx
 function GoogleMark() {
@@ -46,9 +46,66 @@ export function EnablePanel({
 }: {
   onGoogle(): void;
   onGitHub(): void;
-  onEmail(email: string): void;
+  onEmail(email: string): void | Promise<void>;
 }) {
   const [email, setEmail] = useState("");
+  const [status, setStatus] = useState<"idle" | "sending" | "sent" | "error">("idle");
+  const [sentTo, setSentTo] = useState("");
+  const [errorMsg, setErrorMsg] = useState("");
+
+  const submit = async () => {
+    const value = email.trim();
+    if (!value || status === "sending") return;
+    setStatus("sending");
+    setErrorMsg("");
+    try {
+      await onEmail(value);
+      setSentTo(value);
+      setStatus("sent");
+    } catch (err) {
+      setErrorMsg(err instanceof Error ? err.message : "Something went wrong. Please try again.");
+      setStatus("error");
+    }
+  };
+
+  // Confirmation view — replaces the form once the link is on its way so the user
+  // gets unambiguous feedback and knows what to do next.
+  if (status === "sent") {
+    return (
+      <div className="flex flex-col items-center gap-4 py-4 text-center">
+        <div className="flex h-12 w-12 items-center justify-center rounded-full bg-[#e6f1fb] text-[#1e88e5]">
+          <MailCheck size={24} />
+        </div>
+        <div className="flex flex-col gap-1.5">
+          <h3 className="text-[15px] font-[600] text-slate-900">Check your email</h3>
+          <p className="text-[13px] leading-relaxed text-slate-600">
+            We sent a sign-in link to{" "}
+            <span className="font-[550] text-slate-900">{sentTo}</span>. Open it on
+            this device to finish enabling your account — then you can close this
+            panel.
+          </p>
+        </div>
+        <p className="text-[12px] leading-relaxed text-slate-400">
+          Didn&apos;t get it? Check your spam folder, or{" "}
+          <button
+            type="button"
+            onClick={() => void submit()}
+            className="underline hover:text-slate-600 cursor-pointer"
+          >
+            resend the link
+          </button>
+          .
+        </p>
+        <button
+          type="button"
+          onClick={() => { setStatus("idle"); setEmail(""); }}
+          className="text-[12px] text-slate-500 underline hover:text-slate-700 cursor-pointer"
+        >
+          Use a different email
+        </button>
+      </div>
+    );
+  }
 
   return (
     <div className="flex flex-col gap-5">
@@ -102,23 +159,29 @@ export function EnablePanel({
       </div>
 
       {/* Magic-link email */}
-      <div className="flex gap-2">
-        <input
-          type="email"
-          value={email}
-          onChange={e => setEmail(e.target.value)}
-          onKeyDown={e => {
-            if (e.key === "Enter" && email.trim()) onEmail(email.trim());
-          }}
-          placeholder="you@company.com"
-          className="flex-1 rounded-lg border border-[#d8dee8] px-3 py-2.5 text-[14px] outline-none focus:border-[#1e88e5]"
-        />
-        <button
-          onClick={() => { if (email.trim()) onEmail(email.trim()); }}
-          className="rounded-lg bg-[#1e88e5] px-4 py-2.5 text-[14px] font-[550] text-white hover:bg-[#1976d2] cursor-pointer"
-        >
-          Send link
-        </button>
+      <div className="flex flex-col gap-2">
+        <div className="flex gap-2">
+          <input
+            type="email"
+            value={email}
+            onChange={e => { setEmail(e.target.value); if (status === "error") setStatus("idle"); }}
+            onKeyDown={e => { if (e.key === "Enter") void submit(); }}
+            placeholder="you@company.com"
+            className="flex-1 rounded-lg border border-[#d8dee8] px-3 py-2.5 text-[14px] outline-none focus:border-[#1e88e5]"
+          />
+          <button
+            onClick={() => void submit()}
+            disabled={status === "sending" || !email.trim()}
+            className="rounded-lg bg-[#1e88e5] px-4 py-2.5 text-[14px] font-[550] text-white hover:bg-[#1976d2] cursor-pointer disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            {status === "sending" ? "Sending…" : "Send link"}
+          </button>
+        </div>
+        {status === "error" && (
+          <p className="text-[12px] leading-relaxed text-red-600" role="alert">
+            {errorMsg}
+          </p>
+        )}
       </div>
 
       {/* Legal note — 12 px muted, links open new tab */}
