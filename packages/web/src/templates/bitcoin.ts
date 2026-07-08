@@ -35,7 +35,7 @@ const graph: ModelGraph = {
       f("fee", "NUMERIC", false, "Transaction fee paid to the miner in BTC."),
     ], "Bitcoin transactions: one row per transaction with value and fee details."),
     mart("inputs", "Inputs", "TABLE", [
-      f("transaction_hash", "STRING", false, "Hash of the transaction this input belongs to."),
+      f("transaction_hash", "STRING", true, "Hash of the transaction this input belongs to."),
       f("block_hash", "STRING", false, "Hash of the block containing this input."),
       f("block_number", "INTEGER", false, "Height of the block containing this input."),
       f("block_timestamp", "TIMESTAMP", false, "Timestamp of the block containing this input."),
@@ -48,7 +48,7 @@ const graph: ModelGraph = {
       f("value", "NUMERIC", false, "Value of the spent output in BTC."),
     ], "Bitcoin transaction inputs: one row per input referencing a spent output."),
     mart("outputs", "Outputs", "TABLE", [
-      f("transaction_hash", "STRING", false, "Hash of the transaction this output belongs to."),
+      f("transaction_hash", "STRING", true, "Hash of the transaction this output belongs to."),
       f("block_hash", "STRING", false, "Hash of the block containing this output."),
       f("block_number", "INTEGER", false, "Height of the block containing this output."),
       f("block_timestamp", "TIMESTAMP", false, "Timestamp of the block containing this output."),

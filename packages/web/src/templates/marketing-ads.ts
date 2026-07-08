@@ -25,7 +25,7 @@ const graph: ModelGraph = {
       f("ad_group", "STRING", false, "Ad group or ad set within the campaign."),
       f("impressions", "INTEGER", false, "Number of times ads were shown."),
       f("clicks", "INTEGER", false, "Number of clicks the ads received."),
-      f("cost", "FLOAT", false, "Money spent on this ad group for the day."),
+      f("cost", "NUMERIC", false, "Money spent on this ad group for the day."),
     ], "One row per campaign × ad-group × day. Cross-channel cost, impressions, clicks."),
     mart("dim_lead", "Lead", "VIEW", [
       f("lead_id", "STRING", true, "Unique identifier for each lead or contact."),
@@ -55,7 +55,7 @@ const graph: ModelGraph = {
       f("stage", "STRING", false, "Current stage in the sales pipeline."),
       f("is_mql", "BOOLEAN", false, "True if the lead reached marketing-qualified status."),
       f("is_sql", "BOOLEAN", false, "True if the lead reached sales-qualified status."),
-      f("amount", "FLOAT", false, "ACV / deal size."),
+      f("amount", "NUMERIC", false, "ACV / deal size."),
       f("close_date", "DATE", false, "Date the opportunity was won or lost."),
       f("is_won", "BOOLEAN", false, "True if the deal was won."),
       f("sales_cycle_days", "INTEGER", false, "Number of days from creation to close."),
