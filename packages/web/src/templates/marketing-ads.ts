@@ -5,6 +5,13 @@ import { f, mart, rel, type Template } from "./helpers";
 // side by channel/campaign; fct_touchpoints records each marketing touch with a
 // per-touch credit weight; the funnel runs dim_lead → fct_opportunities
 // (MQL → SQL → Closed-Won) so spend can be tied to closed revenue.
+//
+// Goal coverage (niche "leadgen"):
+//   MQL→SQL→Won conversion  → fct_opportunities (is_mql, is_sql, is_won) by cohort
+//   cost per SQL by channel → fct_ad_spend.cost × fct_opportunities.is_sql via lead source
+//   touch → closed revenue  → fct_touchpoints.touch_credit × fct_opportunities.amount
+//   mid-market cycle length → fct_stage_transitions × dim_account.employee_band
+//   pipeline velocity       → fct_stage_transitions.days_in_from_stage × win-rate × ACV
 const graph: ModelGraph = {
   storageId: null,
   nodes: [
@@ -27,8 +34,17 @@ const graph: ModelGraph = {
       f("clicks", "INTEGER", false, "Number of clicks the ads received."),
       f("cost", "NUMERIC", false, "Money spent on this ad group for the day."),
     ], "One row per campaign × ad-group × day. Cross-channel cost, impressions, clicks."),
+    mart("dim_account", "Account", "VIEW", [
+      f("account_id", "STRING", true, "Unique identifier for the target company."),
+      f("name", "STRING", false, "Company name."),
+      f("industry", "STRING", false, "Industry the company operates in."),
+      f("employee_band", "STRING", false, "Company-size bucket — the mid-market segmentation axis."),
+      f("region", "STRING", false, "Geographic region of the company."),
+      f("is_target_account", "BOOLEAN", false, "Whether the company is on the ABM target list."),
+    ], "One row per company. Firmographics for segment and ABM cuts."),
     mart("dim_lead", "Lead", "VIEW", [
       f("lead_id", "STRING", true, "Unique identifier for each lead or contact."),
+      f("account_id", "STRING", false, "Company the lead belongs to."),
       f("created_at", "TIMESTAMP", false, "When the lead first entered the system."),
       f("source_channel", "STRING", false, "Channel that first brought in the lead."),
       f("lead_score", "INTEGER", false, "Fit + engagement score for MQL gating."),
@@ -61,12 +77,35 @@ const graph: ModelGraph = {
       f("sales_cycle_days", "INTEGER", false, "Number of days from creation to close."),
       f("owner", "STRING", false, "Sales rep who owns the opportunity."),
     ], "One row per sales opportunity. Pipeline stage, ACV and win/loss."),
+    mart("fct_web_sessions", "Web Sessions", "CONNECTOR", [
+      f("session_id", "STRING", true, "Unique identifier for the web session."),
+      f("lead_id", "STRING", false, "Known lead on the session; null for anonymous visitors."),
+      f("started_at", "TIMESTAMP", false, "When the session began."),
+      f("campaign_id", "STRING", false, "Campaign that drove the session."),
+      f("source", "STRING", false, "Traffic source that referred the session."),
+      f("medium", "STRING", false, "Marketing medium (e.g. organic, cpc, email)."),
+      f("landing_page", "STRING", false, "First page viewed in the session."),
+      f("form_submits", "INTEGER", false, "Number of forms submitted during the session."),
+      f("is_conversion", "BOOLEAN", false, "Whether the session produced a lead or demo request."),
+    ], "One row per web session — the top of the funnel before a lead exists."),
+    mart("fct_stage_transitions", "Stage Transitions", "VIEW", [
+      f("transition_id", "STRING", true, "Unique identifier for the stage change."),
+      f("opportunity_id", "STRING", false, "Opportunity that moved stage."),
+      f("from_stage", "STRING", false, "Stage the opportunity left."),
+      f("to_stage", "STRING", false, "Stage the opportunity entered."),
+      f("transitioned_at", "TIMESTAMP", false, "When the stage change happened."),
+      f("days_in_from_stage", "INTEGER", false, "Days spent in the previous stage — the velocity bottleneck driver."),
+    ], "One row per pipeline stage change. Sales-cycle length and stage bottlenecks."),
   ],
   edges: [
     rel("e1", "fct_ad_spend", "dim_campaign", "campaign_id", "campaign_id"),
     rel("e2", "fct_touchpoints", "dim_campaign", "campaign_id", "campaign_id"),
     rel("e3", "fct_touchpoints", "dim_lead", "lead_id", "lead_id"),
     rel("e4", "fct_opportunities", "dim_lead", "lead_id", "lead_id"),
+    rel("e5", "dim_lead", "dim_account", "account_id", "account_id"),
+    rel("e6", "fct_web_sessions", "dim_lead", "lead_id", "lead_id"),
+    rel("e7", "fct_web_sessions", "dim_campaign", "campaign_id", "campaign_id"),
+    rel("e8", "fct_stage_transitions", "fct_opportunities", "opportunity_id", "opportunity_id"),
   ],
 };
 
@@ -75,6 +114,6 @@ export const marketing_ads: Template = {
   nicheId: "leadgen",
   category: "industry",
   name: "Marketing / Lead-gen",
-  description: "B2B funnel: cross-channel ad spend, campaigns, marketing touchpoints, leads and pipeline opportunities.",
+  description: "B2B funnel: cross-channel ad spend, web sessions, touchpoints, leads & accounts, opportunities and stage velocity.",
   graph,
 };
