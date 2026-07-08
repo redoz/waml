@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { ChevronRight, ChevronDown, X, Rocket } from "lucide-react";
 import type { ModelGraph } from "@mc/okf";
-import { TEMPLATES, type Template } from "../templates";
+import { TEMPLATES, INDUSTRY_TEMPLATES, DATASET_TEMPLATES, type Template } from "../templates";
 import { DataMartIcon, JoinIcon, LibraryIcon } from "../lib/icons";
 
 interface Props {
@@ -25,7 +25,18 @@ export function LibraryDialog({ onUse, onClose }: Props) {
         </div>
 
         <div className="flex-1 min-h-0 overflow-y-auto p-3 flex flex-col gap-2">
-          {TEMPLATES.map(t => (
+          <div className="px-1 text-[10.5px] font-semibold uppercase tracking-wide text-slate-500">Industry templates</div>
+          {INDUSTRY_TEMPLATES.map(t => (
+            <TemplateRow
+              key={t.id}
+              template={t}
+              open={openId === t.id}
+              onToggle={() => setOpenId(openId === t.id ? null : t.id)}
+              onUse={() => onUse(structuredClone(t.graph), t.name)}
+            />
+          ))}
+          <div className="px-1 pt-2 text-[10.5px] font-semibold uppercase tracking-wide text-slate-500">Public datasets</div>
+          {DATASET_TEMPLATES.map(t => (
             <TemplateRow
               key={t.id}
               template={t}
