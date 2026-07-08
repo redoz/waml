@@ -6,7 +6,7 @@ import { serializeBundle, parseBundle } from "@mc/okf";
 // Grows as template tasks land; the assertion pins the full expected library.
 const EXPECTED_INDUSTRY_IDS = [
   "ecommerce", "saas", "marketplace", "marketing_ads", "mobile_gaming", "finance", "medical",
-  "ott_media", "delivery_logistics", "insurance", "b2b_sales",
+  "ott_media", "delivery_logistics", "insurance", "b2b_sales", "customer_support",
 ];
 const EXPECTED_DATASET_IDS = ["crypto_bitcoin", "stackoverflow"];
 
