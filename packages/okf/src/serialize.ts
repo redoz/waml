@@ -21,7 +21,7 @@ export function serializeBundle(graph: ModelGraph, projectTitle = "Data Marts"):
   const rows = graph.nodes.map(n =>
     `| [${n.title}](./${slugByKey.get(n.key)}.md) | ${n.inputSource} | ${graph.storageId ?? "—"} |`).join("\n");
   files[`${folder}/index.md`] =
-    `---\n${renderFrontmatter({ type: "index", title: projectTitle, description: "Index of exported OWOX data marts.", tags: ["owox", "index"] })}\n---\n\n# ${projectTitle}\n\n| Data Mart | Type | Storage |\n|-----------|------|---------|\n${rows}\n`;
+    `---\n${renderFrontmatter({ type: "index", title: projectTitle, description: "Index of exported data marts.", tags: ["index"] })}\n---\n\n# ${projectTitle}\n\n| Data Mart | Type | Storage |\n|-----------|------|---------|\n${rows}\n`;
   return { files };
 }
 
@@ -43,8 +43,8 @@ function fkColumns(n: ModelNode, g: ModelGraph, slugByKey: Map<string, string>):
 
 function renderNode(n: ModelNode, g: ModelGraph, slugByKey: Map<string, string>): string {
   const fm = renderFrontmatter({
-    type: "OWOX Data Mart", title: n.title, description: n.description || undefined,
-    tags: ["owox", n.inputSource.toLowerCase()],
+    type: "Data Mart", title: n.title, description: n.description || undefined,
+    tags: [n.inputSource.toLowerCase()],
   });
   const overview = [
     "## Overview", "",

@@ -27,15 +27,18 @@ describe("serializeBundle (OWOX superset)", () => {
     expect(Object.keys(files).sort()).toEqual(["demo/customers.md", "demo/index.md", "demo/orders.md"]);
   });
 
-  it("index uses the OWOX columns", () => {
+  it("index uses the neutral columns and an unbranded description", () => {
     expect(index).toContain("| Data Mart | Type | Storage |");
     expect(index).toContain("[Orders](./orders.md) | VIEW |");
+    expect(index).toContain("Index of exported data marts.");
+    expect(index).not.toContain("owox");
   });
 
-  it("mart frontmatter is OWOX-shaped with no owox block", () => {
-    expect(orders).toContain(`type: "OWOX Data Mart"`);
+  it("mart frontmatter uses the neutral type token with no owox block or tags", () => {
+    expect(orders).toContain(`type: "Data Mart"`);
     expect(orders).not.toContain("owox:");
-    expect(orders).toContain(`tags: ["owox", "view"]`);
+    expect(orders).not.toContain("owox");
+    expect(orders).toContain(`tags: ["view"]`);
   });
 
   it("has an Overview section", () => {
