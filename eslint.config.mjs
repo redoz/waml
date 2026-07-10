@@ -20,8 +20,8 @@ export default tseslint.config(
   // Repo-wide rule tuning
   {
     rules: {
-      // Intentional at boundaries (Fastify req.body, React Flow data). Kept
-      // visible as a warning to tighten over time, not block the build.
+      // Intentional at boundaries (React Flow data). Kept visible as a
+      // warning to tighten over time, not block the build.
       "@typescript-eslint/no-explicit-any": "warn",
       "@typescript-eslint/no-unused-vars": [
         "error",
@@ -42,9 +42,9 @@ export default tseslint.config(
     },
   },
 
-  // Node code (server + shared lib)
+  // Node code (shared lib)
   {
-    files: ["packages/server/**/*.ts", "packages/okf/**/*.ts"],
+    files: ["packages/okf/**/*.ts"],
     languageOptions: { globals: { ...globals.node } },
   },
 
