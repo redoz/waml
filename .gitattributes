@@ -1,0 +1,3 @@
+# Normalize line endings to LF on checkout for all platforms. The OKF parser is
+# line based and its test fixtures are LF; Windows autocrlf must not inject CRLF.
+* text=auto eol=lf
