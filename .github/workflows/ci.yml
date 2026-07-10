@@ -39,8 +39,10 @@ jobs:
       - name: Lint
         run: pnpm lint
 
-      - name: Test
-        run: pnpm -r test
-
+      # Build first: web/server tests import @mc/okf, which resolves to its
+      # compiled dist/. Without this the test job can't resolve the package.
       - name: Build
         run: pnpm build
+
+      - name: Test
+        run: pnpm -r test
