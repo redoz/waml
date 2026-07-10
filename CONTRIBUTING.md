@@ -1,34 +1,42 @@
 # Contributing to OKF Canvas
 
-Thanks for your interest! OKF Canvas is a free, open-source visual editor for data models in the **Open Knowledge Format (OKF)**. Bug reports, fixes, templates, and OKF-compatibility improvements are all welcome.
+Thanks for your interest! OKF Canvas is a free, open-source, in-browser visual editor for data models in the **Open Knowledge Format (OKF)**. Bug reports, fixes, templates, and OKF-compatibility improvements are all welcome.
 
 By contributing, you agree that your contributions are licensed under the project's [Apache License 2.0](LICENSE), and that you follow our [Code of Conduct](CODE_OF_CONDUCT.md).
 
 ## Project layout (pnpm monorepo)
 
-- `packages/okf` — pure shared lib: `ModelGraph` ⇄ OKF markdown bundle (parse/serialize). No I/O.
-- `packages/server` — Fastify BFF: proxies the OWOX API, serves the built SPA, holds the OWOX token in an in-memory session.
-- `packages/web` — React + Vite + React Flow SPA: the canvas, ERD view, inspector, OKF import/export, templates.
+The repo has exactly two packages — there is no backend:
+
+- `packages/okf` — pure shared lib: `ModelGraph` ⇄ OKF Markdown bundle (parse/serialize). No I/O.
+- `packages/web` — React + Vite + React Flow SPA: the canvas, ERD view, inspector, template library, OKF import/export, URL sharing, and `localStorage` persistence. Consumes `okf`'s built `dist/`.
 
 ## Local setup
 
 ```bash
-pnpm install
-pnpm --filter @mc/okf build      # web/server consume okf's built dist
-pnpm dev:web                     # Vite dev server (SPA) on :5173
-pnpm dev                         # BFF (tsx watch) on :3000
+corepack pnpm install
+corepack pnpm --filter @mc/okf build   # web consumes okf's built dist — build okf first
+corepack pnpm --filter @mc/web dev      # Vite dev server on :5173
 ```
 
-Quick integrated check: `pnpm build`, then `PORT=3111 pnpm --filter @mc/server start`, and open http://localhost:3111. The canvas works fully anonymously — an OWOX API key is only needed to **Push**.
+Open http://localhost:5173. The canvas is fully client-side — no server, no sign-in.
+
+To check the production build:
+
+```bash
+corepack pnpm --filter @mc/web build     # emits packages/web/dist
+corepack pnpm --filter @mc/web preview    # serves the built dist/
+```
 
 ## Tests & checks
 
 ```bash
-pnpm -r test     # okf + server + web (Vitest)
-pnpm build       # builds okf + web, typechecks server
+corepack pnpm -r test    # okf + web (Vitest)
+corepack pnpm lint       # eslint
+corepack pnpm build      # builds okf, then web
 ```
 
-Please make sure tests and the build pass before opening a PR. Add or update tests for behavior changes — the OKF parser/serializer in `packages/okf` is well covered, and new parsing rules should come with a fixture.
+Please make sure tests, lint and the build pass before opening a PR. Add or update tests for behavior changes — the OKF parser/serializer in `packages/okf` is well covered, and new parsing rules should come with a fixture.
 
 ## Pull requests
 
