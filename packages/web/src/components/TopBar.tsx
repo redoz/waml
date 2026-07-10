@@ -1,18 +1,12 @@
 import { useEffect, useState } from "react";
 import { Download, Upload, ChevronDown, Target, FileText, Image as ImageIcon } from "lucide-react";
-import { ProjectIcon, StorageIcon, LibraryIcon } from "../lib/icons";
-import { EnableControl } from "./EnableControl";
+import { LibraryIcon } from "../lib/icons";
 
 // First-visit onboarding hint pointing at the Library. Persisted so it only
 // ever shows once per browser; dismissed as soon as the user hovers it.
 const LIBRARY_HINT_KEY = "mc.libraryHint.v1";
 
-export interface StorageOption { id: string; title: string; type: string; }
-
 export interface TopBarProps {
-  storages?: StorageOption[];
-  storageId?: string | null;
-  onStorageChange?: (id: string) => void;
   onImport?: () => void;
   onExport?: () => void;
   onExportSvg?: () => void;
@@ -20,21 +14,8 @@ export interface TopBarProps {
   onShare?: () => void;
   shareDisabled?: boolean;
   onLibrary?: () => void;
-  signedIn: boolean;
-  projectTitle?: string;
   onOpenGoal?: () => void;
   goalSet?: boolean;
-  // Model name — passed to EnableControl as subtext when signed in.
-  modelName?: string;
-  // Supabase account ("Save"). Independent of the OWOX connect/sign-in above.
-  supabaseEnabled?: boolean;
-  accountEmail?: string | null;
-  onSave?: () => void;
-  saving?: boolean;
-  // Save state caption under the Save button: "saved" | "unsaved" | null (hidden).
-  saveState?: "saved" | "unsaved" | null;
-  // Opens the Enable (signed-out) or Account (signed-in) Sheet panel.
-  onEnable?: () => void;
 }
 
 const LOGO = (
@@ -61,14 +42,9 @@ const LOGO = (
 );
 
 export function TopBar({
-  storages = [], storageId, onStorageChange,
   onImport, onExport, onExportSvg, exportDisabled = false,
   onLibrary,
-  signedIn, projectTitle,
   onOpenGoal, goalSet = false,
-  modelName,
-  supabaseEnabled = false, accountEmail,
-  onEnable,
 }: TopBarProps) {
   // Export dropdown (OKF markdown / PNG / SVG).
   const [exportMenuOpen, setExportMenuOpen] = useState(false);
@@ -109,28 +85,6 @@ export function TopBar({
       >
         <Target size={16} /> {goalSet ? "Business goal" : "Set business goal"}
       </button>
-
-      {/* Project picker chip */}
-      {signedIn && (
-        <button className="flex items-center gap-[7px] text-[13px] text-slate-500 border border-[#d8dee8] rounded-lg px-[10px] py-[5px] bg-white cursor-pointer hover:bg-[#f1f3f7]">
-          <ProjectIcon size={14} /> Project: <span className="text-slate-900 font-semibold">{projectTitle ?? "—"}</span> ▾
-        </button>
-      )}
-
-      {/* Storage picker — one storage per model (joinable requires same storage) */}
-      {signedIn && (
-        <label className="flex items-center gap-[7px] text-[13px] text-slate-500 border border-[#d8dee8] rounded-lg px-[10px] py-[5px] bg-white" title="One storage per model — joinable relationships require all marts on the same storage">
-          <StorageIcon size={14} /> Storage:
-          <select
-            value={storageId ?? ""}
-            onChange={e => onStorageChange?.(e.target.value)}
-            className="text-slate-900 font-semibold bg-white outline-none cursor-pointer"
-          >
-            {storages.length === 0 && <option value="">—</option>}
-            {storages.map(s => <option key={s.id} value={s.id}>{s.title}</option>)}
-          </select>
-        </label>
-      )}
 
       <div className="flex-1" />
 
@@ -194,18 +148,7 @@ export function TopBar({
         )}
       </div>
 
-      {/* Share and Save both live in the right rail now — no top-bar buttons. */}
-
-      {/* Enable control — opens the Enable (signed-out) or Account (signed-in)
-          Sheet panel. Replaces the old OWOX sign-in button and account chip.
-          Shown only when Supabase is configured. */}
-      {supabaseEnabled && (
-        <EnableControl
-          signedIn={!!accountEmail}
-          modelName={modelName}
-          onClick={onEnable ?? (() => {})}
-        />
-      )}
+      {/* Share lives in the right rail now — no top-bar buttons. */}
     </div>
   );
 }

@@ -33,10 +33,10 @@ describe("ModelSheet", () => {
     expect(overlay).toBeNull();
   });
 
-  it("DOES render the dimming overlay for a modal panel (enable)", () => {
+  it("DOES render the dimming overlay for a modal panel (share)", () => {
     const { container } = render(
-      <ModelSheet active="enable" modal={true} title="Enable Model Canvas" onClose={() => {}}>
-        <div>enable panel</div>
+      <ModelSheet active="share" modal={true} title="Share model" onClose={() => {}}>
+        <div>share panel</div>
       </ModelSheet>,
     );
     const overlay = container.querySelector(".bg-black\\/50");
@@ -46,8 +46,8 @@ describe("ModelSheet", () => {
   it("overlay click triggers onClose", () => {
     const onClose = vi.fn();
     const { container } = render(
-      <ModelSheet active="enable" modal={true} title="Enable Model Canvas" onClose={onClose}>
-        <div>enable panel</div>
+      <ModelSheet active="share" modal={true} title="Share model" onClose={onClose}>
+        <div>share panel</div>
       </ModelSheet>,
     );
     const overlay = container.querySelector(".bg-black\\/50") as HTMLElement;
