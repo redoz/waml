@@ -6,6 +6,7 @@ pub mod multiplicity;
 pub mod slug;
 pub mod grammar;
 pub mod parse;
+pub mod serialize;
 pub mod syntax;
 
 #[cfg(test)]
