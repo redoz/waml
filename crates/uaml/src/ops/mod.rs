@@ -204,7 +204,11 @@ fn build_name(work: &Bundle, spec: &Option<NameSpec>) -> Option<ParsedName> {
 fn rel_matches(r: &ParsedRel, by: &RelBy) -> bool {
     match by {
         RelBy::Endpoint { kind, target } => r.kind == *kind && r.target_slug == *target,
-        RelBy::Named(name) => matches!(&r.name, Some(ParsedName::Label(l)) if l == name),
+        RelBy::Named(name) => match &r.name {
+            Some(ParsedName::Label(l)) => l == name,
+            Some(ParsedName::Ref { title, .. }) => title == name,
+            None => false,
+        },
     }
 }
 
@@ -582,11 +586,36 @@ mod tests {
     }
 
     #[test]
-    fn rel_set_on_missing_rel_errors() {
+    fn rel_rm_on_missing_rel_errors() {
         let b = vec![("a/order.md".to_string(), "---\ntype: uml.Class\ntitle: Order\n---\n# Order\n".to_string())];
         let sel = Selector::Rel { source:"order".into(), by: RelBy::Named("nope".into()) };
         let err = apply(&b, &[Op::RelRm { selector: sel }]).unwrap_err();
         assert!(err.reason.contains("no relationship"));
         assert!(err.selector.is_some());
+    }
+
+    #[test]
+    fn rel_set_on_missing_rel_errors() {
+        let b = vec![("a/order.md".to_string(), "---\ntype: uml.Class\ntitle: Order\n---\n# Order\n".to_string())];
+        let sel = Selector::Rel { source:"order".into(), by: RelBy::Named("nope".into()) };
+        let err = apply(&b, &[Op::RelSet { selector: sel, ends: None, name: None }]).unwrap_err();
+        assert!(err.reason.contains("no relationship"));
+        assert!(err.selector.is_some());
+    }
+
+    #[test]
+    fn rel_matches_ref_named_selector() {
+        let b = vec![
+            ("a/order.md".to_string(), "---\ntype: uml.Class\ntitle: Order\n---\n# Order\n".to_string()),
+            ("a/customer.md".to_string(), "---\ntype: uml.Class\ntitle: Customer\n---\n# Customer\n".to_string()),
+            ("a/order-line.md".to_string(), "---\ntype: uml.Class\ntitle: OrderLine\n---\n# OrderLine\n".to_string()),
+        ];
+        let added = apply(&b, &[Op::RelAdd {
+            source: "order".into(), kind: RelationshipKind::Depends, target: "order-line".into(),
+            name: Some(NameSpec::Ref("customer".into())), ends: None,
+        }]).unwrap();
+        let sel = Selector::Rel { source: "order".into(), by: RelBy::Named("Customer".into()) };
+        let rm = apply(&added, &[Op::RelRm { selector: sel }]).unwrap();
+        assert!(!rm[0].1.contains("depends"), "Ref-named relationship must be reachable via RelBy::Named on its resolved title");
     }
 }
