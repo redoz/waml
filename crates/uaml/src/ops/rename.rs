@@ -78,10 +78,7 @@ pub(crate) fn op_node_rename(work: &mut Bundle, from: &str, to: &str) -> Result<
     if work.iter().any(|(p, _)| slug_of(p) == to) {
         return Err(OpError::at("node.rename", format!("target slug '{to}' already exists")));
     }
-    for (p, text) in work.iter_mut() {
-        if slug_of(p) == from {
-            continue; // the renamed doc's own body doesn't reference itself
-        }
+    for (_, text) in work.iter_mut() {
         let mut doc = parse_document(text);
         if rename_in_doc(&mut doc, from, to) {
             *text = serialize_document(&doc);
@@ -125,6 +122,22 @@ mod tests {
         let diagram = &out.iter().find(|(p, _)| p == "shop/diagram.md").unwrap().1;
         assert!(diagram.contains("(./line-item.md)"), "member + collapse repointed");
         assert!(diagram.contains("emphasize: line-item, order"), "bare-slug emphasize repointed");
+    }
+
+    #[test]
+    fn rename_rewrites_self_references_in_the_renamed_doc_itself() {
+        let b = vec![
+            // self-referencing doc: attribute type-ref, rel target + name, emphasize
+            ("shop/tree-node.md".to_string(),
+             "---\ntype: uml.Class\ntitle: TreeNode\n---\n# TreeNode\n\n## Attributes\n- parent: [TreeNode](./tree-node.md)\n\n## Relationships\n- composes [TreeNode](./tree-node.md) as [TreeNode](./tree-node.md): 1 to 0..* children\n\n## Render hints\n- emphasize: tree-node\n".to_string()),
+        ];
+        let out = apply(&b, &[Op::NodeRename { from: "tree-node".into(), to: "node".into() }]).unwrap();
+
+        let doc = &out.iter().find(|(p, _)| p == "shop/node.md").unwrap().1;
+        assert!(doc.contains("(./node.md)"), "self-reference repointed to new slug");
+        assert!(!doc.contains("(./tree-node.md)"), "no stale self-reference left");
+        assert!(doc.contains("emphasize: node"), "bare-slug self-reference repointed");
+        assert!(doc.contains("[TreeNode]"), "title preserved");
     }
 
     #[test]
