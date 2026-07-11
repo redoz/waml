@@ -28,3 +28,23 @@ test("export button disabled when exportDisabled", () => {
     (screen.getByRole("button", { name: /Export/ }) as HTMLButtonElement).disabled
   ).toBe(true);
 });
+
+test("renders a Share button immediately right of Export and fires onShare", async () => {
+  const onShare = vi.fn();
+  render(TopBar, { props: { onShare } });
+  const exportBtn = screen.getByRole("button", { name: /Export/ });
+  const shareBtn = screen.getByRole("button", { name: /^Share$/ });
+  // Share must follow Export in document order (sits to its right).
+  expect(
+    exportBtn.compareDocumentPosition(shareBtn) & Node.DOCUMENT_POSITION_FOLLOWING
+  ).toBeTruthy();
+  await fireEvent.click(shareBtn);
+  expect(onShare).toHaveBeenCalledTimes(1);
+});
+
+test("Share button disabled when shareDisabled", () => {
+  render(TopBar, { props: { shareDisabled: true } });
+  expect(
+    (screen.getByRole("button", { name: /^Share$/ }) as HTMLButtonElement).disabled
+  ).toBe(true);
+});

@@ -1,20 +1,21 @@
 <script lang="ts">
   // Mirrors packages/web/src/components/TopBar.tsx.
-  import { Download, Upload, ChevronDown, Target, FileText, Image as ImageIcon } from "lucide-svelte";
+  import { Download, Upload, ChevronDown, Target, FileText, Image as ImageIcon, Share2 } from "lucide-svelte";
   import { LibraryIcon } from "../lib/icons";
 
   // First-visit onboarding hint pointing at the Library. Persisted so it only
   // ever shows once per browser; dismissed as soon as the user hovers it.
   const LIBRARY_HINT_KEY = "mc.libraryHint.v1";
 
-  // onShare / shareDisabled are part of the prop contract (parity with
-  // TopBarProps) but, exactly as in TopBar.tsx, are not destructured or
-  // rendered here — Share lives in the right rail.
+  // Share is now a first-class top-bar button (immediately right of Export) that
+  // opens the modal Share dialog — it no longer lives in the right rail.
   let {
     onImport,
     onExport,
     onExportSvg,
     exportDisabled = false,
+    onShare,
+    shareDisabled = false,
     onLibrary,
     onOpenGoal,
     goalSet = false,
@@ -178,5 +179,14 @@
     {/if}
   </div>
 
-  <!-- Share lives in the right rail now — no top-bar buttons. -->
+  <!-- Share — first-class button, immediately right of Export. Opens the modal
+       Share dialog (link + share-as-image). -->
+  <button
+    onclick={onShare}
+    disabled={shareDisabled}
+    title={shareDisabled ? "Add something to share" : "Share this model"}
+    class="text-[13px] font-[550] bg-[#1e88e5] text-white rounded-lg px-3 py-[7px] cursor-pointer flex items-center gap-[6px] hover:bg-[#1976d2] disabled:opacity-50 disabled:cursor-not-allowed"
+  >
+    <Share2 size={15} /> Share
+  </button>
 </div>

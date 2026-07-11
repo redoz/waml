@@ -25,9 +25,9 @@ describe("ModelSheet", () => {
     expect(container.querySelector(".bg-black\\/50")).toBeNull();
   });
 
-  it("DOES render the dimming overlay by default (modal defaults true)", () => {
+  it("DOES render the dimming overlay when modal is true", () => {
     const { container } = render(ModelSheet, {
-      props: { active: "share", title: "Share model", onClose: vi.fn() },
+      props: { active: "inspect", modal: true, title: "Inspect", onClose: vi.fn() },
     });
     expect(container.querySelector(".bg-black\\/50")).not.toBeNull();
   });
@@ -35,7 +35,7 @@ describe("ModelSheet", () => {
   it("overlay click triggers onClose", async () => {
     const onClose = vi.fn();
     const { container } = render(ModelSheet, {
-      props: { active: "share", modal: true, title: "Share model", onClose },
+      props: { active: "inspect", modal: true, title: "Inspect", onClose },
     });
     const overlay = container.querySelector(".bg-black\\/50") as HTMLElement;
     await fireEvent.click(overlay);

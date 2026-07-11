@@ -65,10 +65,23 @@ function captureOptions(rfNodes: BoundsNode[]) {
   return { width, height, style: { width: `${width}px`, height: `${height}px`, transform } };
 }
 
-/** Export the model as an SVG with the OWOX watermark embedded bottom-right. */
-export async function exportCanvasSvg(rfNodes: BoundsNode[], filename = "model", viewportSelector: string): Promise<void> {
+export type CanvasSvg = { svg: string; width: number; height: number };
+
+/**
+ * Build the model's SVG markup (whole model, transparent background, OWOX
+ * watermark bottom-right) without touching the DOM to download it. Returns null
+ * when there's nothing to export (no viewport element or empty diagram).
+ *
+ * html-to-image's `toSvg` clones the flow viewport and inlines every element's
+ * *computed* CSS into the SVG's <foreignObject>, so colours/borders/layout are
+ * baked in (the raster is not unstyled). `skipFonts: true` only skips embedding
+ * @font-face web fonts — the app renders in the system font stack, so text still
+ * rasterizes styled. This is the SVG string a PNG rasterizer can draw onto a
+ * canvas (see @uaml/web src/share/rasterize.ts).
+ */
+export async function buildCanvasSvg(rfNodes: BoundsNode[], viewportSelector: string): Promise<CanvasSvg | null> {
   const el = document.querySelector<HTMLElement>(viewportSelector);
-  if (!el || rfNodes.length === 0) return;
+  if (!el || rfNodes.length === 0) return null;
   const { width, height, style } = captureOptions(rfNodes);
   // Don't pass `backgroundColor` here: we want a transparent background so the
   // exported SVG drops cleanly onto any canvas. (html-to-image would otherwise
@@ -77,9 +90,15 @@ export async function exportCanvasSvg(rfNodes: BoundsNode[], filename = "model",
   // toSvg returns a data: URI — decode, then inject the watermark before </svg>.
   const raw = decodeURIComponent(dataUrl.replace(/^data:image\/svg\+xml;charset=utf-8,/, ""));
   const wm = watermarkGroup(width - WM_W - 14, height - WM_H - 14);
-  const withWm = raw.replace(/<\/svg>\s*$/, `${wm}</svg>`);
+  const svg = raw.replace(/<\/svg>\s*$/, `${wm}</svg>`);
+  return { svg, width, height };
+}
 
-  const blob = new Blob([withWm], { type: "image/svg+xml" });
+/** Export the model as an SVG with the OWOX watermark embedded bottom-right. */
+export async function exportCanvasSvg(rfNodes: BoundsNode[], filename = "model", viewportSelector: string): Promise<void> {
+  const built = await buildCanvasSvg(rfNodes, viewportSelector);
+  if (!built) return;
+  const blob = new Blob([built.svg], { type: "image/svg+xml" });
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;
