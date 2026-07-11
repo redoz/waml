@@ -1,4 +1,2 @@
 User-agent: *
 Allow: /
-
-Sitemap: https://model.owox.com/sitemap.xml

@@ -1,7 +1,7 @@
 <script lang="ts">
   // Mirrors packages/web/src/components/TemplateApplyDialog.tsx.
   // Shown when "Use" is clicked on a template while the canvas already has
-  // content. Mirrors the OKF / OWOX import dialogs: choose Replace vs Merge
+  // content. Mirrors the OKF import dialogs: choose Replace vs Merge
   // and see how many marts and relationships will be added before committing.
   import type { ModelGraph } from "@uaml/okf";
 

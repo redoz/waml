@@ -93,7 +93,7 @@
           {/if}
         </button>
         <a
-          href="/ai-instructions.html"
+          href="/okf-format.md"
           target="_blank"
           rel="noopener"
           class="text-[12.5px] text-[#1e88e5] hover:text-[#1976d2] underline underline-offset-2"
@@ -140,7 +140,7 @@
       </p>
     {/if}
 
-    <!-- Apply mode + count — mirrors the OWOX-import dialog -->
+    <!-- Apply mode + count — mirrors the OKF import dialog -->
     {#if preview}
       <div class="flex flex-col gap-1.5 border-t border-slate-100 pt-3">
         <span class="text-[12px] font-medium text-slate-500">When applying to the canvas</span>

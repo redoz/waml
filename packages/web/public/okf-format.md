@@ -1,6 +1,6 @@
-# OKF Canvas — OKF authoring guide for AI agents
+# UAML — OKF authoring guide for AI agents
 
-Use this to generate a domain model in **OKF (Open Knowledge Format)** that imports cleanly into **OKF Canvas** (https://model.owox.com).
+Use this to generate a domain model in **OKF (Open Knowledge Format)** that imports cleanly into **UAML** (https://github.com/redoz/uaml).
 
 **How the user will use your output:** they open **Import** on the canvas, paste your text (or upload a `.zip`), and review the rendered UML diagram.
 
