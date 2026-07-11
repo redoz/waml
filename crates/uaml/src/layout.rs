@@ -154,8 +154,8 @@ pub fn parse_layout_line(line: &str) -> Option<LayoutStatement> {
     if toks.is_empty() {
         return None;
     }
-    if let Some(stmt) = parse_alignment(&toks) {
-        return Some(stmt);
+    if top_level_seq_index(&toks, &["aligned", "with"]).is_some() {
+        return parse_alignment(&toks);
     }
     if let Some(stmt) = try_parse_placement(&toks) {
         return Some(stmt);
@@ -307,18 +307,9 @@ fn top_level_seq_index(toks: &[Tok], seq: &[&str]) -> Option<usize> {
 }
 
 fn parse_alignment(toks: &[Tok]) -> Option<LayoutStatement> {
-    let idx = top_level_seq_index(toks, &["aligned"])?;
+    let idx = top_level_seq_index(toks, &["aligned", "with"])?;
     let left = parse_anchored(&toks[..idx])?;
-    let mut right_start = idx + 1;
-    // Skip optional "with" keyword
-    if right_start < toks.len() {
-        if let Some(Tok::Word(w)) = toks.get(right_start) {
-            if w.eq_ignore_ascii_case("with") {
-                right_start += 1;
-            }
-        }
-    }
-    let right = parse_anchored(&toks[right_start..])?;
+    let right = parse_anchored(&toks[idx + 2..])?;
     Some(LayoutStatement::Alignment { left, right })
 }
 
@@ -336,9 +327,9 @@ fn parse_anchored(toks: &[Tok]) -> Option<Anchored> {
             };
             match e {
                 Some(e) => {
+                    let save = cur.pos;
                     cur.bump();
-                    let _ = cur.eat_word("of");  // consume "of" if present, but don't require it
-                    Some(e)
+                    if cur.eat_word("of") { Some(e) } else { cur.pos = save; None }
                 }
                 None => None,
             }
@@ -527,7 +518,7 @@ mod tests {
     #[test]
     fn parses_anchored_alignment() {
         use crate::syntax::*;
-        let stmt = parse_layout_line("- top VIP aligned top Orders").unwrap();
+        let stmt = parse_layout_line("- top of VIP aligned with top of Orders").unwrap();
         let LayoutStatement::Alignment { left, right } = stmt else { panic!("expected alignment") };
         assert_eq!(left.edge, Some(Edge::Top));
         assert_eq!(right.edge, Some(Edge::Top));
@@ -538,15 +529,17 @@ mod tests {
     fn parses_bare_center_to_center_alignment() {
         use crate::syntax::*;
         let stmt = parse_layout_line("- X aligned with Y").unwrap();
-        let LayoutStatement::Alignment { left, right: _ } = stmt else { panic!() };
+        let LayoutStatement::Alignment { left, right } = stmt else { panic!() };
         assert_eq!(left.edge, None);
+        assert_eq!(right.edge, None);
     }
 
     #[test]
     fn edge_left_is_not_read_as_placement_direction() {
         use crate::syntax::*;
-        let stmt = parse_layout_line("- left X aligned with Y").unwrap();
-        let LayoutStatement::Alignment { left, right } = stmt else { panic!() };
+        let stmt = parse_layout_line("- left of X aligned with right of Y").unwrap();
+        let LayoutStatement::Alignment { left, right } = stmt else { panic!("expected alignment, not placement") };
         assert_eq!(left.edge, Some(Edge::Left));
+        assert_eq!(right.edge, Some(Edge::Right));
     }
 }
