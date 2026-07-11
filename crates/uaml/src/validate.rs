@@ -6,6 +6,8 @@ use crate::diagnostic::{DiagCode, Diagnostic};
 use crate::frontmatter::parse_frontmatter;
 use crate::grammar::{parse_attribute_line, parse_member_line, parse_relationship_line};
 use crate::model::ClassifierType;
+use crate::parse::parse_document;
+use crate::syntax::{LayoutStatement, MemberGroup, NameRef, Operand, OperandRef, Section};
 
 fn has_metadata_block(text: &str) -> bool {
     let mut opts = Options::empty();
@@ -124,10 +126,11 @@ fn validate_doc(path: &str, text: &str, keyset: &HashSet<String>, diags: &mut Ve
         // parsers use `filter_map`, which drops anything that doesn't match).
         if !trimmed.is_empty() {
             let is_h1 = trimmed.starts_with('#') && !trimmed.starts_with("##");
-            if !is_h1 {
+            let is_member_group_heading = section == "members" && trimmed.starts_with("###");
+            if !is_h1 && !is_member_group_heading {
                 let in_bullet_section = matches!(
                     section.as_str(),
-                    "attributes" | "values" | "relationships" | "members" | "render hints"
+                    "attributes" | "values" | "relationships" | "members" | "layout"
                 );
                 if (!seen_section || in_bullet_section) && !trimmed.starts_with("- ") {
                     diags.push(Diagnostic::new(
@@ -175,7 +178,94 @@ fn validate_doc(path: &str, text: &str, keyset: &HashSet<String>, diags: &mut Ve
                     }
                 }
             }
+            "layout" => {
+                if crate::layout::parse_layout_line(trimmed).is_none() {
+                    diags.push(Diagnostic::new(
+                        DiagCode::MalformedLayout,
+                        "malformed layout statement",
+                        path,
+                        n,
+                    ));
+                }
+            }
             _ => {}
+        }
+    }
+}
+
+/// Collect every group's heading name (recursively) into `names`.
+fn collect_group_names(g: &MemberGroup, names: &mut HashSet<String>) {
+    if !g.name.is_empty() {
+        names.insert(g.name.clone());
+    }
+    for c in &g.children {
+        collect_group_names(c, names);
+    }
+}
+
+/// Walk an operand, reporting each `Name` ref that resolves to neither a
+/// member key nor a declared group name.
+fn check_operand_refs(
+    op: &Operand,
+    keyset: &HashSet<String>,
+    group_names: &HashSet<String>,
+    path: &str,
+    line: usize,
+    diags: &mut Vec<Diagnostic>,
+) {
+    match &op.ref_ {
+        OperandRef::Name(name) => {
+            let (label, resolved) = match name {
+                NameRef::Link { slug, .. } => (slug.clone(), keyset.contains(slug)),
+                NameRef::Bare(s) => (s.clone(), keyset.contains(s) || group_names.contains(s)),
+            };
+            if !resolved {
+                diags.push(Diagnostic::warn(
+                    DiagCode::UnresolvedLayoutRef,
+                    format!("layout operand '{label}' resolves no member group"),
+                    path,
+                    line,
+                ));
+            }
+        }
+        OperandRef::InlineGroup { items, .. } => {
+            for it in items {
+                check_operand_refs(it, keyset, group_names, path, line, diags);
+            }
+        }
+        OperandRef::Paren(inner) => check_operand_refs(inner, keyset, group_names, path, line, diags),
+    }
+}
+
+fn validate_diagram_refs(path: &str, text: &str, keyset: &HashSet<String>, diags: &mut Vec<Diagnostic>) {
+    if doc_type(text) != "Diagram" {
+        return;
+    }
+    let doc = parse_document(text);
+    let mut group_names = HashSet::new();
+    let mut layout: &[LayoutStatement] = &[];
+    for s in &doc.sections {
+        match s {
+            Section::Members(block) => {
+                for g in &block.groups {
+                    collect_group_names(g, &mut group_names);
+                }
+            }
+            Section::Layout(stmts) => layout = stmts,
+            _ => {}
+        }
+    }
+    // Line number is approximate (the layout statement's exact position within
+    // the doc is not tracked here); use the `## Layout` heading line as anchor.
+    let layout_line = text.lines().position(|l| l.trim().to_lowercase() == "## layout").map(|i| i + 1).unwrap_or(1);
+    for stmt in layout {
+        let ops: Vec<&Operand> = match stmt {
+            LayoutStatement::Standalone(op) => vec![op],
+            LayoutStatement::Placement { operands, .. } => operands.iter().collect(),
+            LayoutStatement::Alignment { left, right } => vec![&left.operand, &right.operand],
+        };
+        for op in ops {
+            check_operand_refs(op, keyset, &group_names, path, layout_line, diags);
         }
     }
 }
@@ -204,6 +294,7 @@ pub fn validate(bundle: &[(String, String)]) -> Vec<Diagnostic> {
             ));
         }
         validate_doc(path, text, &keyset, &mut diags);
+        validate_diagram_refs(path, text, &keyset, &mut diags);
     }
     diags
 }
@@ -373,6 +464,41 @@ mod tests {
         let d = validate(&b);
         let rel = d.iter().find(|x| x.code == DiagCode::MalformedRelationship).unwrap();
         assert!(rel.message.contains("requires"), "got: {}", rel.message);
+    }
+
+    #[test]
+    fn malformed_layout_line_is_an_error() {
+        let bundle = vec![(
+            "d.md".to_string(),
+            "---\ntype: Diagram\ntitle: D\n---\n# D\n\n## Layout\n- Users nonsense Orders\n".to_string(),
+        )];
+        let diags = validate(&bundle);
+        assert!(diags.iter().any(|d| d.code == DiagCode::MalformedLayout));
+    }
+
+    #[test]
+    fn member_subheading_is_not_droppable() {
+        let bundle = vec![(
+            "d.md".to_string(),
+            "---\ntype: Diagram\ntitle: D\n---\n# D\n\n## Members\n\n### Users\n- [Customer](./customer.md)\n".to_string(),
+        )];
+        let diags = validate(&bundle);
+        assert!(!diags.iter().any(|d| d.code == DiagCode::DroppableContent),
+            "### group heading must not be flagged droppable");
+    }
+
+    #[test]
+    fn unknown_layout_ref_is_a_warning() {
+        let bundle = vec![
+            ("customer.md".to_string(), "---\ntype: uml.Class\ntitle: Customer\n---\n# Customer\n".to_string()),
+            ("d.md".to_string(),
+             "---\ntype: Diagram\ntitle: D\n---\n# D\n\n## Members\n\n### Users\n- [Customer](./customer.md)\n\n## Layout\n- Users left of Ghosts\n".to_string()),
+        ];
+        let diags = validate(&bundle);
+        // "Users" is a declared group, "Ghosts" resolves to nothing -> one warning.
+        let refs: Vec<_> = diags.iter().filter(|d| d.code == DiagCode::UnresolvedLayoutRef).collect();
+        assert_eq!(refs.len(), 1);
+        assert!(refs[0].message.contains("Ghosts"));
     }
 
     #[test]
