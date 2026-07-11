@@ -1,5 +1,6 @@
 //! Core library for UAML: a UML-profile authoring format layered on CommonMark.
 
+pub mod diagnostic;
 pub mod frontmatter;
 pub mod model;
 pub mod multiplicity;
