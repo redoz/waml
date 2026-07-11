@@ -23,9 +23,13 @@ this cut — diagram shape is still undecided.
    as JSON, and hand it to `uaml apply` to replay onto the on-disk bundle. So the `Op` schema
    must be language-neutral and stable: op names and field shapes are shared between the Rust
    engine and the TS web side (`packages/okf`). The web side is **not** built in this cut, but
-   the schema is designed now to serve it. The export is an **envelope** — `{ "uamlOps": 1, "ops":
-   [ … ] }` — carrying a schema version so replay can reject or migrate an incompatible log;
-   `apply` accepts either the bare `Op[]` or the envelope.
+   the schema is designed now to serve it. The op-log is **NDJSON / JSONL — one `Op` object per
+   line** — so the web UI appends a single line per user action with no array-bracket
+   bookkeeping, `apply` streams it line-by-line from a file or stdin, and it diffs cleanly in git.
+   An **optional leading header line** `{ "uamlOps": 1 }` carries the schema version: if the first
+   line is an object with a `uamlOps` key it is consumed as the header (and replay rejects an
+   unknown version); otherwise version 1 is assumed and every line is an op. Blank lines are
+   ignored.
 2. **Addressing: a shared `Selector` type built on the `NoteAnchor` vocabulary.** `NoteAnchor`
    is already a pointer-to-model-element vocabulary (a classifier by slug; a relationship by
    source+name or source+verb+target). `Selector` adopts those forms for nodes and
@@ -82,8 +86,8 @@ New `ops` module (plus small additions to `grammar`):
   The node/rel variants correspond one-to-one with `NoteAnchor::{Classifier, NamedAssoc,
   EndpointAssoc}`; keep them convertible so note resolution can share the parser.
 
-- **`Op`** — one variant per sugar command, `serde`-(de)serializable (this is the `apply` JSON
-  schema):
+- **`Op`** — one variant per sugar command, `serde`-(de)serializable (each line of the NDJSON
+  op-log is one of these):
   ```
   NodeNew { slug, ty, title, stereotype?, description?, abstract? }
   NodeRename { from, to }              // to = new slug; new title inferred/settable
@@ -129,7 +133,8 @@ link changes. Covered by a golden test on the orders-domain fixture.
 
 - New subcommands under the existing clap enum, one arm per sugar command; each constructs a
   single `Op` and calls `apply` on the bundle read from the target paths.
-- `apply` subcommand: read `Op[]` JSON from a file or stdin (`-`), call `apply`.
+- `apply` subcommand: read the NDJSON op-log from a file or stdin (`-`), parse the optional
+  header line + one `Op` per line, call `apply`.
 - Shared flags on mutating commands: `--dry-run`, `--stdout`, `--format human|json`.
 - New `io` helpers: write-back of only the changed entries, unified-diff rendering for
   `--dry-run`, bundle emission for `--stdout`.
@@ -177,7 +182,7 @@ uaml rel rm  order --as "places"
 # Query
 uaml show  <slug> [--json]
 uaml refs  <slug>
-uaml apply <ops.json | ->    [--dry-run|--stdout] [--format human|json]   # bare Op[] or {uamlOps,ops} envelope
+uaml apply <ops.ndjson | ->  [--dry-run|--stdout] [--format human|json]   # NDJSON: one Op/line, optional {uamlOps:1} header line
 
 # Global on mutating commands
 --dry-run   # print diff, write nothing
@@ -197,8 +202,9 @@ uaml apply <ops.json | ->    [--dry-run|--stdout] [--format human|json]   # bare
 - Pure `apply` unit tests, one per op plus its refusal cases (dup attr, dup literal, bad/missing
   ends, slug collision), no I/O.
 - `Selector` parse/render round-trip tests over all three anchor forms.
-- `apply` accepts both a bare `Op[]` and the `{uamlOps, ops}` envelope; an unknown `uamlOps`
-  version is rejected with a clear error (replay-compat guard for the web op-log).
+- `apply` parses NDJSON: one `Op` per line, blank lines ignored, optional leading `{uamlOps:1}`
+  header; an unknown `uamlOps` version is rejected with a clear error (replay-compat guard for
+  the web op-log). A malformed line names its line number in the error.
 - Apply-then-serialize is a canonical fixpoint (an edit leaves the file in canonical form).
 - Cross-file rename golden on `tests/fixtures/orders-domain.md`: every referrer (rel target,
   attribute type-ref, `as [Ref]`, diagram member, hint) rewritten; unrelated content untouched.
