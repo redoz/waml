@@ -83,7 +83,7 @@ Each line is one statement in the language below.
 ```markdown
 ## Layout
 - Users left of Orders
-- column of Customer, Account with roomy
+- column of Customer, Account with large margin
 - top of VIP aligned with top of Orders
 - Orders with frame
 ```
@@ -136,29 +136,32 @@ Inline `row`/`column` are anonymous groups usable anywhere a name is; they nest:
 row of (column of Customer, Account), Orders
 ```
 
-#### Render hints (`with …`)
+#### Render hints (`as …` / `with …`)
 
-Any operand may carry a `with` clause. Named groups and elements may instead be
-targeted by-reference on their own `## Layout` line (`Orders with frame`); an
-**anonymous** inline group can *only* be treated inline, since it has no name to
-reference.
+An operand carries treatment through two optional clauses, in this order:
+an **`as <axis>`** clause (groups only) then a **`with <hints>`** clause — e.g.
+`Users as column with frame and large margin`. Named groups and elements may be
+treated by-reference on their own `## Layout` line; an **anonymous** inline group
+can *only* be treated inline, since it has no name to reference.
 
-- **axis** (groups only): `as row` · `as column` — lays the group's members out
-  in **list order** along that axis. With **no axis hint the members just clump**
-  (the default). This is the only way to set the internal axis of a *named*
-  heading group, since its members aren't restated inline. `Users as column`
-  stacks Customer over Account; `Users as row` flows them horizontally.
+- **axis** — `as row` · `as column` (its own clause, before `with`; groups only).
+  Lays the group's members out in **list order** along that axis. With **no axis
+  clause the members just clump** (the default). This is the only way to set the
+  internal axis of a *named* heading group, since its members aren't restated
+  inline. `Users as column` stacks Customer over Account; `Users as row` flows
+  them horizontally.
 - **shape** (groups only): `frame` (visible titled box) · `box` (square bounding
   box, invisible) · `shrink` (shrink-wrapped hull, invisible). **Default =
   invisible shrink-wrap** — a group clusters its members without drawing unless
   it opts into `frame`/`box`.
-- **spacing** (any operand): qualitative levels — `snug` · (normal, default) ·
-  `roomy`. Additive breathing room around the operand; no numbers.
+- **margin** (any operand): `no` · `small` · `medium` (default) · `large` margin
+  — qualitative breathing room around the operand; no numbers. `with large
+  margin`, `with no margin`. `margin`/`margins` both accepted.
 - **emphasize** · **collapse** — carried over from the existing render hints
   (`collapse` renders a node as a reference chip rather than a full box).
 
-**Shape vs spacing are orthogonal.** The old `wide` / `thin` / `none` idea was
-really `shrink` + {more, less, no} spacing; splitting them means spacing applies
+**Shape vs margin are orthogonal.** The old `wide` / `thin` / `none` idea was
+really `shrink` + {large, small, no} margin; splitting them means margin applies
 to a `box` or a bare element too, not just to a hull.
 
 **Keep-out geometry.** `box` reserves a rectangle (wastes corner space); `shrink`
@@ -202,7 +205,8 @@ standalone    ::= operand                     ; lone operand — meaningful when
                                               ; group with hints is an anonymous
                                               ; group treatment
 
-operand       ::= ref [ "with" hints ]
+operand       ::= ref [ "as" axis ] [ "with" hints ]
+axis          ::= "row" | "column"
 ref           ::= name
                 | inline-group
                 | "(" operand ")"
@@ -210,10 +214,9 @@ inline-group  ::= ("column" | "row") "of" operand-list
 operand-list  ::= operand { "," operand }
 
 hints         ::= hint { ("," | "and") hint }
-hint          ::= axis | shape | spacing | flag
-axis          ::= "as row" | "as column"
+hint          ::= shape | margin | flag
 shape         ::= "frame" | "box" | "shrink"
-spacing       ::= "snug" | "roomy"
+margin        ::= ("no" | "small" | "medium" | "large") ("margin" | "margins")
 flag          ::= "emphasized" | "collapsed"
 
 name          ::= identifier | markdown-link | quoted-string
@@ -224,14 +227,14 @@ complete operand to its left. To attach a `with` clause to an entire inline
 group rather than to its last member, parenthesize:
 
 ```
-column of Customer, Account with roomy          ; roomy attaches to Account
-(column of Customer, Account) with roomy         ; roomy attaches to the column
+column of Customer, Account with large margin     ; margin attaches to Account
+(column of Customer, Account) with large margin    ; margin attaches to the column
 ```
 
 The parser applies the same rule to a trailing relation:
 `(column of Customer, Account) left of Orders` is unambiguous; a bare
-`column of Customer, Account with roomy left of Orders` requires the parens to
-express "the roomy column, left of Orders".
+`column of Customer, Account with large margin left of Orders` requires the
+parens to express "the large-margin column, left of Orders".
 
 ## Worked example
 
@@ -253,18 +256,18 @@ profile: uml-domain
 - [OrderStatus](./order-status.md)
 
 ## Layout
-- Users with frame and as column
+- Users as column with frame
 - Users left of Orders
 - top of Users aligned with top of Orders
-- column of Order, OrderLine, OrderStatus with roomy
+- column of Order, OrderLine, OrderStatus with large margin
 - collapse [Money](./money.md)
 ```
 
 Renders: a titled **Users** frame with Customer stacked over Account (`as column`
 imposes the list-order stack) to the left of the **Orders** group; the two
-groups' tops aligned; Orders' three members in a roomy column; Money shown as a
-reference chip. Without the `as column` hint, Customer and Account would simply
-clump inside the frame.
+groups' tops aligned; Orders' three members in a column with large margins; Money
+shown as a reference chip. Without the `as column` clause, Customer and Account
+would simply clump inside the frame.
 
 ## Integration with existing spec
 
@@ -278,8 +281,8 @@ clump inside the frame.
 
 ## Open questions
 
-- Exact spelling of qualitative spacing beyond `snug` / `roomy` (need a third
-  "very roomy"? make it repeatable?).
+- Whether the four margin levels (`no`/`small`/`medium`/`large`) are enough, or
+  a fifth is wanted; whether margin should be repeatable/additive.
 - Whether `## Layout` is the final section name or folds back into a renamed
   `## Render hints`.
 - Conflict handling when inferred/authored relations over-constrain (solver
