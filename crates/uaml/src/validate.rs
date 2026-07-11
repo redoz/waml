@@ -52,18 +52,20 @@ fn validate_doc(path: &str, text: &str, keyset: &HashSet<String>, diags: &mut Ve
 
     let mut in_fm = false;
     let mut fm_done = false;
-    let mut in_fence = false;
+    let mut fence: Option<char> = None;
     let mut section = String::new();
 
     for (i, raw) in text.lines().enumerate() {
         let n = i + 1;
         let trimmed = raw.trim_end_matches('\r').trim();
 
-        if !fm_done && trimmed == "---" {
-            if in_fm {
-                fm_done = true;
-            }
-            in_fm = !in_fm;
+        if !in_fm && !fm_done && trimmed == "---" {
+            in_fm = true;
+            continue;
+        }
+        if in_fm && (trimmed == "---" || trimmed == "...") {
+            in_fm = false;
+            fm_done = true;
             continue;
         }
         if in_fm {
@@ -80,11 +82,19 @@ fn validate_doc(path: &str, text: &str, keyset: &HashSet<String>, diags: &mut Ve
             }
             continue;
         }
-        if trimmed.starts_with("```") || trimmed.starts_with("~~~") {
-            in_fence = !in_fence;
+        if let Some(marker) = fence {
+            let delim = if marker == '`' { "```" } else { "~~~" };
+            if trimmed.starts_with(delim) {
+                fence = None;
+            }
             continue;
         }
-        if in_fence {
+        if trimmed.starts_with("```") {
+            fence = Some('`');
+            continue;
+        }
+        if trimmed.starts_with("~~~") {
+            fence = Some('~');
             continue;
         }
         if let Some(h) = trimmed.strip_prefix("## ") {
@@ -242,5 +252,27 @@ mod tests {
         let b = vec![("a/x.md".into(),
             "---\ntype: uml.Class\ntitle: X\n---\n# X\n\n## Attributes\n- id: XId\n".into())];
         assert!(validate(&b).is_empty());
+    }
+
+    #[test]
+    fn flags_malformed_line_after_yaml_dots_close() {
+        // Frontmatter opens with `---` but closes with `...` (both are valid
+        // YAML-style metadata block closers). The body after it must still be
+        // scanned — it must not be silently skipped.
+        let b = vec![("a/x.md".into(),
+            "---\ntype: uml.Class\ntitle: X\n...\n# X\n\n## Attributes\n- bad line without colon\n".into())];
+        let d = validate(&b);
+        assert!(d.iter().any(|x| x.code == DiagCode::MalformedAttribute));
+    }
+
+    #[test]
+    fn mismatched_fence_styles_do_not_hide_diagnostics() {
+        // A `~~~`-fenced block containing a literal ``` line must not desync
+        // the fence tracker: only a matching `~~~` should close it, and the
+        // malformed line after the real close must still be flagged.
+        let b = vec![("a/x.md".into(),
+            "---\ntype: uml.Class\ntitle: X\n---\n# X\n\n## Attributes\n~~~\nsome code\n```\nmore code\n~~~\n- bad line without colon\n".into())];
+        let d = validate(&b);
+        assert!(d.iter().any(|x| x.code == DiagCode::MalformedAttribute));
     }
 }
