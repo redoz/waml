@@ -154,6 +154,9 @@ pub fn parse_layout_line(line: &str) -> Option<LayoutStatement> {
     if toks.is_empty() {
         return None;
     }
+    if let Some(stmt) = parse_alignment(&toks) {
+        return Some(stmt);
+    }
     if let Some(stmt) = try_parse_placement(&toks) {
         return Some(stmt);
     }
@@ -281,6 +284,72 @@ fn parse_operand_list(cur: &mut Cur) -> Option<Vec<Operand>> {
         items.push(parse_operand(cur)?);
     }
     Some(items)
+}
+
+fn top_level_seq_index(toks: &[Tok], seq: &[&str]) -> Option<usize> {
+    let mut depth = 0;
+    for (i, tok) in toks.iter().enumerate() {
+        match tok {
+            Tok::LParen => depth += 1,
+            Tok::RParen => depth -= 1,
+            Tok::Word(w) if depth == 0 && w.eq_ignore_ascii_case(seq[0]) => {
+                let matched = seq.iter().enumerate().all(|(k, s)| {
+                    matches!(toks.get(i + k), Some(Tok::Word(x)) if x.eq_ignore_ascii_case(s))
+                });
+                if matched {
+                    return Some(i);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+fn parse_alignment(toks: &[Tok]) -> Option<LayoutStatement> {
+    let idx = top_level_seq_index(toks, &["aligned"])?;
+    let left = parse_anchored(&toks[..idx])?;
+    let mut right_start = idx + 1;
+    // Skip optional "with" keyword
+    if right_start < toks.len() {
+        if let Some(Tok::Word(w)) = toks.get(right_start) {
+            if w.eq_ignore_ascii_case("with") {
+                right_start += 1;
+            }
+        }
+    }
+    let right = parse_anchored(&toks[right_start..])?;
+    Some(LayoutStatement::Alignment { left, right })
+}
+
+fn parse_anchored(toks: &[Tok]) -> Option<Anchored> {
+    let mut cur = Cur { toks, pos: 0 };
+    let edge = match cur.peek_word() {
+        Some(w) => {
+            let e = match w.to_ascii_lowercase().as_str() {
+                "top" => Some(Edge::Top),
+                "bottom" => Some(Edge::Bottom),
+                "left" => Some(Edge::Left),
+                "right" => Some(Edge::Right),
+                "center" => Some(Edge::Center),
+                _ => None,
+            };
+            match e {
+                Some(e) => {
+                    cur.bump();
+                    let _ = cur.eat_word("of");  // consume "of" if present, but don't require it
+                    Some(e)
+                }
+                None => None,
+            }
+        }
+        None => None,
+    };
+    let operand = parse_operand(&mut cur)?;
+    if !cur.done() {
+        return None;
+    }
+    Some(Anchored { edge, operand })
 }
 
 #[cfg(test)]
@@ -453,5 +522,31 @@ mod tests {
         let LayoutStatement::Placement { operands, directions } = stmt else { panic!() };
         assert_eq!(directions, vec![Direction::LeftOf]);
         assert_eq!(operands[0].hints, vec![Hint::Shape(Shape::Frame)]);
+    }
+
+    #[test]
+    fn parses_anchored_alignment() {
+        use crate::syntax::*;
+        let stmt = parse_layout_line("- top VIP aligned top Orders").unwrap();
+        let LayoutStatement::Alignment { left, right } = stmt else { panic!("expected alignment") };
+        assert_eq!(left.edge, Some(Edge::Top));
+        assert_eq!(right.edge, Some(Edge::Top));
+        assert_eq!(left.operand.ref_, OperandRef::Name(NameRef::Bare("VIP".into())));
+    }
+
+    #[test]
+    fn parses_bare_center_to_center_alignment() {
+        use crate::syntax::*;
+        let stmt = parse_layout_line("- X aligned with Y").unwrap();
+        let LayoutStatement::Alignment { left, right: _ } = stmt else { panic!() };
+        assert_eq!(left.edge, None);
+    }
+
+    #[test]
+    fn edge_left_is_not_read_as_placement_direction() {
+        use crate::syntax::*;
+        let stmt = parse_layout_line("- left X aligned with Y").unwrap();
+        let LayoutStatement::Alignment { left, right } = stmt else { panic!() };
+        assert_eq!(left.edge, Some(Edge::Left));
     }
 }
