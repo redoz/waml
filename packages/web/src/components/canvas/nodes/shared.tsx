@@ -3,7 +3,7 @@ import { Handle, Position } from "@xyflow/react";
 import { ChevronDown, ChevronRight } from "lucide-react";
 import type { Attribute, ModelNode } from "@mc/okf";
 import type { ViewMode } from "@mc/core/state/viewMode";
-import { ERD_COLLAPSED_ROWS } from "../layoutSize";
+import { ERD_COLLAPSED_ROWS } from "@mc/core/canvas/layoutSize";
 import { getProfile, stereotypeStyle } from "@mc/core/profiles";
 
 export type OkfNodeData = ModelNode & { _viewMode?: ViewMode; _profile?: string; _collapsed?: boolean };
