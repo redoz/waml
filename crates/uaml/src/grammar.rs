@@ -10,7 +10,7 @@ static ATTR_RE: LazyLock<Regex> =
 static LINK_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^\[([^\]]+)\]\(\./(.+?)\.md\)$").unwrap());
 static MULT_TAIL_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"^(.*?)\s+\[([^\]]+)\]$").unwrap());
+    LazyLock::new(|| Regex::new(r"^(.*?)\s+\{([^{}]*)\}$").unwrap());
 static VALUE_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^- (\S.*)$").unwrap());
 // verb · target-title · target-slug · name-label · name-link-title · name-link-slug · ends
@@ -27,7 +27,7 @@ static END_RE: LazyLock<Regex> =
 static MEMBER_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^- \[([^\]]*)\]\(\./(.+?)\.md\)\s*$").unwrap());
 static STRAY_BRACKET_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"[\[\]()]").unwrap());
+    LazyLock::new(|| Regex::new(r"[\[\](){}]").unwrap());
 
 /// Strip a directory prefix and the `.md` suffix from a link path.
 fn basename(path: &str) -> &str {
@@ -43,10 +43,10 @@ pub fn parse_attribute_line(line: &str) -> Option<Attribute> {
     let mut rest = caps[3].trim().to_string();
     let mut multiplicity = Multiplicity::default();
     if let Some(mm) = MULT_TAIL_RE.captures(&rest) {
-        if let Some(m) = Multiplicity::parse(&mm[2]) {
-            multiplicity = m;
-            rest = mm[1].trim().to_string();
-        }
+        // A trailing `{…}` token must hold a valid multiplicity; anything else
+        // (malformed braces) makes the whole line not an attribute.
+        multiplicity = Multiplicity::parse(&mm[2])?;
+        rest = mm[1].trim().to_string();
     }
     let ty = if let Some(link) = LINK_RE.captures(&rest) {
         TypeRef { name: link[1].to_string(), ref_: Some(basename(&link[2]).to_string()) }
@@ -202,7 +202,7 @@ pub fn render_attribute_line(a: &Attribute) -> String {
     let mult = if a.multiplicity.as_str() == "1" {
         String::new()
     } else {
-        format!(" [{}]", a.multiplicity.as_str())
+        format!(" {{{}}}", a.multiplicity.as_str())
     };
     format!("- {vis}{}: {ty}{mult}", a.name)
 }
@@ -244,7 +244,7 @@ mod tests {
 
     #[test]
     fn parses_attribute_with_link_and_multiplicity() {
-        let a = parse_attribute_line("- status: [OrderStatus](./order-status.md) [0..1]").unwrap();
+        let a = parse_attribute_line("- status: [OrderStatus](./order-status.md) {0..1}").unwrap();
         assert_eq!(a.name, "status");
         assert_eq!(a.ty, TypeRef { name: "OrderStatus".to_string(), ref_: Some("order-status".to_string()) });
         assert_eq!(a.multiplicity.as_str(), "0..1");
@@ -263,6 +263,19 @@ mod tests {
     #[test]
     fn rejects_bare_type_with_stray_brackets() {
         assert!(parse_attribute_line("- x: [Broken]").is_none());
+    }
+
+    #[test]
+    fn rejects_legacy_bracket_multiplicity() {
+        // Hard migration: `[…]` attribute multiplicity is no longer accepted.
+        assert!(parse_attribute_line("- id: OrderId [1]").is_none());
+        assert!(parse_attribute_line("- status: [OrderStatus](./order-status.md) [0..1]").is_none());
+    }
+
+    #[test]
+    fn rejects_malformed_brace_multiplicity() {
+        assert!(parse_attribute_line("- id: OrderId {nope}").is_none());
+        assert!(parse_attribute_line("- id: OrderId {}").is_none());
     }
 
     #[test]

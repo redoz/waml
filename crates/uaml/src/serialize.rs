@@ -69,7 +69,7 @@ mod tests {
     use super::*;
     use crate::parse::parse_document;
 
-    const ORDER: &str = "---\ntype: uml.Class\nstereotype: [aggregateRoot, entity]\ntitle: Order\n---\n# Order\n\n## Attributes\n- id: OrderId\n- status: [OrderStatus](./order-status.md) [0..1]\n\n## Relationships\n- composes [OrderLine](./order-line.md): 1 to 1..* lines\n\n## Provenance\nHand-authored. Keep me.\n";
+    const ORDER: &str = "---\ntype: uml.Class\nstereotype: [aggregateRoot, entity]\ntitle: Order\n---\n# Order\n\n## Attributes\n- id: OrderId\n- status: [OrderStatus](./order-status.md) {0..1}\n\n## Relationships\n- composes [OrderLine](./order-line.md): 1 to 1..* lines\n\n## Provenance\nHand-authored. Keep me.\n";
 
     #[test]
     fn serialize_is_a_semantic_fixpoint() {
@@ -88,7 +88,7 @@ mod tests {
     fn serialize_omits_default_multiplicity() {
         let out = serialize_document(&parse_document(ORDER));
         assert!(out.contains("- id: OrderId\n"));
-        assert!(out.contains("- status: [OrderStatus](./order-status.md) [0..1]"));
+        assert!(out.contains("- status: [OrderStatus](./order-status.md) {0..1}"));
     }
 
     #[test]

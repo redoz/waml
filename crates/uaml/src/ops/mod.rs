@@ -652,7 +652,7 @@ mod tests {
             visibility: Some(crate::model::Visibility::Private),
             rename: None,
         }]).unwrap();
-        assert!(out[0].1.contains("- id: String [0..1]"));
+        assert!(out[0].1.contains("- id: String {0..1}"));
         let doc = parse_document(&out[0].1);
         let attrs = doc.sections.iter().find_map(|s| match s {
             Section::Attributes(a) => Some(a),

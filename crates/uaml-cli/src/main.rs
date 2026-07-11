@@ -465,7 +465,7 @@ fn run_show(slug: &str, q: &QueryArgs) -> i32 {
         Format::Human => {
             println!("{} ({})", node.title, node.ty.as_str());
             for a in &node.attributes {
-                println!("  - {}: {} [{}]", a.name, a.ty.name, a.multiplicity.as_str());
+                println!("  - {}: {} {{{}}}", a.name, a.ty.name, a.multiplicity.as_str());
             }
             for v in &node.values {
                 println!("  = {v}");
