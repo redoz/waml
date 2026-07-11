@@ -1,6 +1,6 @@
 use crate::frontmatter::render_frontmatter;
 use crate::grammar::{
-    render_attribute_line, render_hint_line, render_member_line, render_relationship_line,
+    render_attribute_line, render_hint_line, render_members_block, render_relationship_line,
 };
 use crate::syntax::{Document, Section};
 
@@ -37,10 +37,7 @@ fn render_section(s: &Section) -> String {
             let body = notes.iter().map(|n| format!("- {n}")).collect::<Vec<_>>().join("\n");
             format!("## Notes\n{body}")
         }
-        Section::Members(members) => {
-            let body = members.iter().map(render_member_line).collect::<Vec<_>>().join("\n");
-            format!("## Members\n{body}")
-        }
+        Section::Members(block) => render_members_block(block),
         Section::Layout(stmts) => {
             let body = stmts
                 .iter()

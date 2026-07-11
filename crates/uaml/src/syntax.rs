@@ -15,7 +15,7 @@ pub enum Section {
     Relationships(Vec<ParsedRel>),
     Body(String),
     Notes(Vec<String>),
-    Members(Vec<MemberLine>),
+    Members(MembersBlock),
     Layout(Vec<LayoutStatement>),
     RenderHints(Vec<HintLine>),
     /// An unrecognized `## Section`, preserved verbatim (graceful degradation).
@@ -45,7 +45,23 @@ pub struct ParsedRel {
 pub struct MemberLine {
     pub title: String,
     pub slug: String,
-    pub position: Option<(f64, f64)>,
+}
+
+/// The `## Members` section: a forest of groups. A flat bullet list (no
+/// sub-headings) is a single implicit top-level group (name `""`, depth 0).
+#[derive(Debug, Clone, PartialEq)]
+pub struct MembersBlock {
+    pub groups: Vec<MemberGroup>,
+}
+
+/// A membership group. `name` is the heading text (`""` for the implicit
+/// top-level group); `depth` is the heading level (3 for `###`, 0 implicit).
+#[derive(Debug, Clone, PartialEq)]
+pub struct MemberGroup {
+    pub name: String,
+    pub depth: u8,
+    pub members: Vec<MemberLine>,
+    pub children: Vec<MemberGroup>,
 }
 
 /// One `## Render hints` bullet.

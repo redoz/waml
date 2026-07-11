@@ -3,7 +3,7 @@ use regex::Regex;
 
 use crate::model::{Attribute, RelEnd, RelationshipKind, TypeRef, Visibility};
 use crate::multiplicity::Multiplicity;
-use crate::syntax::{HintLine, MemberLine, ParsedName, ParsedRel};
+use crate::syntax::{HintLine, MemberGroup, MemberLine, MembersBlock, ParsedName, ParsedRel};
 
 static ATTR_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^- (?:([+\-#~]) )?([A-Za-z_][A-Za-z0-9_]*): (.+)$").unwrap());
@@ -24,9 +24,8 @@ static REL_RE: LazyLock<Regex> = LazyLock::new(|| {
 });
 static END_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^(\S+)(?:\s+([A-Za-z][A-Za-z0-9_]*))?$").unwrap());
-static MEMBER_RE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"^- \[([^\]]*)\]\(\./(.+?)\.md\)(?:\s+at\s+(-?\d+)\s*,\s*(-?\d+))?\s*$").unwrap()
-});
+static MEMBER_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^- \[([^\]]*)\]\(\./(.+?)\.md\)\s*$").unwrap());
 static EMPHASIZE_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^- emphasize:\s*(.+)$").unwrap());
 static COLLAPSE_RE: LazyLock<Regex> =
@@ -121,11 +120,81 @@ pub fn parse_relationship_line(line: &str) -> Option<ParsedRel> {
 pub fn parse_member_line(line: &str) -> Option<MemberLine> {
     let line = line.trim_end_matches('\r').trim();
     let m = MEMBER_RE.captures(line)?;
-    let position = match (m.get(3), m.get(4)) {
-        (Some(x), Some(y)) => Some((x.as_str().parse().ok()?, y.as_str().parse().ok()?)),
-        _ => None,
-    };
-    Some(MemberLine { title: m[1].to_string(), slug: basename(&m[2]).to_string(), position })
+    Some(MemberLine { title: m[1].to_string(), slug: basename(&m[2]).to_string() })
+}
+
+fn heading_depth(line: &str) -> Option<(u8, String)> {
+    if !line.starts_with("###") {
+        return None; // `##` is the section itself; groups start at `###`
+    }
+    let hashes = line.chars().take_while(|&c| c == '#').count();
+    let name = line[hashes..].trim().to_string();
+    Some((hashes as u8, name))
+}
+
+/// Parse the raw text under `## Members` into a group forest.
+pub fn parse_members_block(content: &str) -> MembersBlock {
+    fn close_to(stack: &mut Vec<MemberGroup>, groups: &mut Vec<MemberGroup>, depth: u8) {
+        while let Some(top) = stack.last() {
+            if top.depth >= depth {
+                let g = stack.pop().unwrap();
+                match stack.last_mut() {
+                    Some(parent) => parent.children.push(g),
+                    None => groups.push(g),
+                }
+            } else {
+                break;
+            }
+        }
+    }
+
+    let mut groups: Vec<MemberGroup> = Vec::new();
+    let mut implicit = MemberGroup { name: String::new(), depth: 0, members: vec![], children: vec![] };
+    let mut stack: Vec<MemberGroup> = Vec::new();
+
+    for raw in content.lines() {
+        let line = raw.trim_end_matches('\r');
+        let t = line.trim_start();
+        if let Some((depth, name)) = heading_depth(t) {
+            close_to(&mut stack, &mut groups, depth);
+            stack.push(MemberGroup { name, depth, members: vec![], children: vec![] });
+        } else if let Some(m) = parse_member_line(t) {
+            match stack.last_mut() {
+                Some(g) => g.members.push(m),
+                None => implicit.members.push(m),
+            }
+        }
+        // blank / unrecognized lines are ignored here (validate flags droppable content)
+    }
+    close_to(&mut stack, &mut groups, 0);
+
+    if !implicit.members.is_empty() {
+        groups.insert(0, implicit);
+    } else if groups.is_empty() {
+        groups.push(implicit); // empty `## Members` yields one empty implicit group
+    }
+    MembersBlock { groups }
+}
+
+/// Render a members block, heading included, as valid `## Members` Markdown.
+pub fn render_members_block(block: &MembersBlock) -> String {
+    fn render_group(out: &mut String, g: &MemberGroup) {
+        if g.depth > 0 {
+            out.push_str(&format!("\n\n{} {}", "#".repeat(g.depth as usize), g.name));
+        }
+        for m in &g.members {
+            out.push('\n');
+            out.push_str(&render_member_line(m));
+        }
+        for c in &g.children {
+            render_group(out, c);
+        }
+    }
+    let mut out = String::from("## Members");
+    for g in &block.groups {
+        render_group(&mut out, g);
+    }
+    out
 }
 
 pub fn parse_hint_line(line: &str) -> Option<HintLine> {
@@ -182,11 +251,7 @@ pub fn render_relationship_line(r: &ParsedRel) -> String {
 }
 
 pub fn render_member_line(m: &MemberLine) -> String {
-    let at = match m.position {
-        Some((x, y)) => format!(" at {},{}", x.round() as i64, y.round() as i64),
-        None => String::new(),
-    };
-    format!("- [{}](./{}.md){at}", m.title, m.slug)
+    format!("- [{}](./{}.md)", m.title, m.slug)
 }
 
 pub fn render_hint_line(h: &HintLine) -> String {
@@ -265,11 +330,37 @@ mod tests {
     }
 
     #[test]
-    fn parses_and_renders_member_with_position() {
-        let m = parse_member_line("- [Order](./order.md) at 40,80").unwrap();
+    fn parses_nested_member_groups() {
+        let content = "### Users\n- [Customer](./customer.md)\n\n#### VIP\n- [Platinum](./platinum.md)\n\n### Orders\n- [Order](./order.md)";
+        let block = parse_members_block(content);
+        assert_eq!(block.groups.len(), 2);
+        assert_eq!(block.groups[0].name, "Users");
+        assert_eq!(block.groups[0].depth, 3);
+        assert_eq!(block.groups[0].members[0].slug, "customer");
+        assert_eq!(block.groups[0].children[0].name, "VIP");
+        assert_eq!(block.groups[0].children[0].depth, 4);
+        assert_eq!(block.groups[1].name, "Orders");
+    }
+
+    #[test]
+    fn flat_list_is_one_implicit_group_and_round_trips() {
+        let content = "- [Order](./order.md)\n- [Customer](./customer.md)";
+        let block = parse_members_block(content);
+        assert_eq!(block.groups.len(), 1);
+        assert_eq!(block.groups[0].name, "");
+        assert_eq!(block.groups[0].depth, 0);
+        assert_eq!(block.groups[0].members.len(), 2);
+
+        let rendered = render_members_block(&block);
+        let reparsed = parse_members_block(rendered.strip_prefix("## Members\n").unwrap());
+        assert_eq!(block, reparsed);
+    }
+
+    #[test]
+    fn member_line_has_no_position() {
+        let m = parse_member_line("- [Order](./order.md)").unwrap();
         assert_eq!(m.slug, "order");
-        assert_eq!(m.position, Some((40.0, 80.0)));
-        assert_eq!(render_member_line(&m), "- [Order](./order.md) at 40,80");
+        assert_eq!(render_member_line(&m), "- [Order](./order.md)");
     }
 
     #[test]

@@ -39,12 +39,20 @@ fn rename_in_doc(doc: &mut Document, from: &str, to: &str) -> bool {
                     }
                 }
             }
-            Section::Members(ms) => {
-                for m in ms {
-                    if m.slug == from {
-                        m.slug = to.to_string();
-                        changed = true;
+            Section::Members(block) => {
+                fn rename_in_group(g: &mut crate::syntax::MemberGroup, from: &str, to: &str, changed: &mut bool) {
+                    for m in &mut g.members {
+                        if m.slug == from {
+                            m.slug = to.to_string();
+                            *changed = true;
+                        }
                     }
+                    for c in &mut g.children {
+                        rename_in_group(c, from, to, changed);
+                    }
+                }
+                for g in &mut block.groups {
+                    rename_in_group(g, from, to, &mut changed);
                 }
             }
             Section::RenderHints(hs) => {
@@ -102,7 +110,7 @@ mod tests {
              "---\ntype: uml.Class\ntitle: Order\n---\n# Order\n\n## Attributes\n- first: [OrderLine](./order-line.md)\n\n## Relationships\n- composes [OrderLine](./order-line.md) as [OrderLine](./order-line.md): 1 to 1..* lines\n".to_string()),
             // a diagram referrer: member + emphasize (bare slug) + collapse (link)
             ("shop/diagram.md".to_string(),
-             "---\ntype: Diagram\ntitle: D\nprofile: uml-domain\n---\n# D\n\n## Members\n- [OrderLine](./order-line.md) at 10,20\n\n## Render hints\n- emphasize: order-line, order\n- collapse [OrderLine](./order-line.md)\n".to_string()),
+             "---\ntype: Diagram\ntitle: D\nprofile: uml-domain\n---\n# D\n\n## Members\n- [OrderLine](./order-line.md)\n\n## Render hints\n- emphasize: order-line, order\n- collapse [OrderLine](./order-line.md)\n".to_string()),
         ]
     }
 

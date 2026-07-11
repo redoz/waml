@@ -213,11 +213,10 @@ pub struct Node {
     pub annotates: Vec<NoteAnchor>,
 }
 
-/// A diagram member: a classifier slug and an optional `x,y` position.
+/// A diagram member: a classifier slug drawn in a view.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Member {
     pub key: String,
-    pub position: Option<(f64, f64)>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq)]

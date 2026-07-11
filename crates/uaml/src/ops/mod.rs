@@ -276,7 +276,13 @@ pub fn referrers(work: &Bundle, slug: &str) -> Vec<String> {
                 r.target_slug == slug
                     || matches!(&r.name, Some(ParsedName::Ref { slug: rs, .. }) if rs == slug)
             }),
-            Section::Members(ms) => ms.iter().any(|m| m.slug == slug),
+            Section::Members(block) => {
+                fn group_has(g: &crate::syntax::MemberGroup, slug: &str) -> bool {
+                    g.members.iter().any(|m| m.slug == slug)
+                        || g.children.iter().any(|c| group_has(c, slug))
+                }
+                block.groups.iter().any(|g| group_has(g, slug))
+            }
             Section::RenderHints(hs) => hs.iter().any(|h| match h {
                 HintLine::Emphasize(list) => list.iter().any(|x| x == slug),
                 HintLine::Collapse { slug: cs, .. } => cs == slug,

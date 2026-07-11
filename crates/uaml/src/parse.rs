@@ -2,7 +2,7 @@ use pulldown_cmark::{Event, HeadingLevel, Options, Parser, Tag, TagEnd};
 
 use crate::frontmatter::parse_frontmatter;
 use crate::grammar::{
-    parse_attribute_line, parse_hint_line, parse_member_line, parse_relationship_line,
+    parse_attribute_line, parse_hint_line, parse_relationship_line,
     parse_value_line,
 };
 use crate::syntax::{Document, Section};
@@ -31,9 +31,7 @@ fn classify(title: &str, content: &str, raw_full: &str) -> Section {
         "relationships" => {
             Section::Relationships(lines(content).iter().filter_map(|l| parse_relationship_line(l)).collect())
         }
-        "members" => {
-            Section::Members(lines(content).iter().filter_map(|l| parse_member_line(l)).collect())
-        }
+        "members" => Section::Members(crate::grammar::parse_members_block(content)),
         "render hints" => {
             Section::RenderHints(lines(content).iter().filter_map(|l| parse_hint_line(l)).collect())
         }
@@ -288,11 +286,19 @@ fn build_diagrams(parsed: &[ParsedDoc], keyset: &HashSet<&str>) -> Vec<Diagram> 
         let mut hints = RenderHints::default();
         for s in &p.doc.sections {
             match s {
-                Section::Members(ms) => {
-                    for mem in ms {
-                        if keyset.contains(mem.slug.as_str()) {
-                            members.push(Member { key: mem.slug.clone(), position: mem.position });
+                Section::Members(block) => {
+                    fn collect(g: &crate::syntax::MemberGroup, keyset: &HashSet<&str>, out: &mut Vec<Member>) {
+                        for m in &g.members {
+                            if keyset.contains(m.slug.as_str()) {
+                                out.push(Member { key: m.slug.clone() });
+                            }
                         }
+                        for c in &g.children {
+                            collect(c, keyset, out);
+                        }
+                    }
+                    for g in &block.groups {
+                        collect(g, keyset, &mut members);
                     }
                 }
                 Section::RenderHints(hs) => {
@@ -484,7 +490,7 @@ mod model_tests {
             ("d/order.md".into(), "---\ntype: uml.Class\ntitle: Order\n---\n# Order\n".into()),
             ("d/pricing.md".into(), "---\ntype: uml.Class\ntitle: Pricing\n---\n# Pricing\n".into()),
             ("d/orders-domain.md".into(),
-             "---\ntype: Diagram\ntitle: Orders Domain\nprofile: uml-domain\n---\n# Orders Domain\n\n## Members\n- [Order](./order.md) at 40,80\n- [Pricing](./pricing.md)\n- [Ghost](./ghost.md)\n\n## Render hints\n- emphasize: order\n- collapse [Pricing](./pricing.md)\n".into()),
+             "---\ntype: Diagram\ntitle: Orders Domain\nprofile: uml-domain\n---\n# Orders Domain\n\n## Members\n- [Order](./order.md)\n- [Pricing](./pricing.md)\n- [Ghost](./ghost.md)\n\n## Render hints\n- emphasize: order\n- collapse [Pricing](./pricing.md)\n".into()),
         ]
     }
 
@@ -498,7 +504,6 @@ mod model_tests {
         assert_eq!(d.profile, "uml-domain");
         // resolvable members only; ghost is dropped
         assert_eq!(d.members.iter().map(|x| x.key.as_str()).collect::<Vec<_>>(), vec!["order", "pricing"]);
-        assert_eq!(d.members[0].position, Some((40.0, 80.0)));
         assert_eq!(d.hints.emphasize, vec!["order"]);
         assert_eq!(d.hints.collapse, vec!["pricing"]);
     }
