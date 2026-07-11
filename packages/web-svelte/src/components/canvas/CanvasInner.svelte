@@ -32,6 +32,7 @@
   import LibraryDialog from "../LibraryDialog.svelte";
   import TemplateApplyDialog from "../TemplateApplyDialog.svelte";
   import GoalDialog from "../GoalDialog.svelte";
+import ShareToast from "../ShareToast.svelte";
   import Inspector from "../inspector/Inspector.svelte";
   import ExternalRefs from "../inspector/ExternalRefs.svelte";
   import ModelSheet from "../rail/ModelSheet.svelte";
@@ -179,17 +180,9 @@
     persistGraph($model);
   });
 
-  // 7) Share-confirmation toast auto-dismiss (mirrors React's <ShareToast>
-  // useEffect(() => { const t = setTimeout(onClose, 3500); return () =>
-  // clearTimeout(t); }, [onClose])) — implemented inline rather than as a
-  // separate component since Svelte components can't be declared in-file.
-  $effect(() => {
-    if (!shareToast) return;
-    const t = setTimeout(() => {
-      shareToast = null;
-    }, 3500);
-    return () => clearTimeout(t);
-  });
+  // Share-confirmation toast auto-dismiss now lives in the <ShareToast> component
+  // (Task 3), which owns its own setTimeout(onClose, 3500) effect — mirrors
+  // React's <ShareToast>. No inline effect needed here.
 
   // ── Drag write-back ──────────────────────────────────────────────────────────
   // Confirmed via node_modules/.../@xyflow/svelte/dist/lib/types/events.d.ts:
@@ -430,10 +423,7 @@
   />
 
   {#if shareToast}
-    <div class="fixed bottom-4 right-4 z-50 flex items-center gap-2 rounded-xl border border-emerald-300 bg-white px-4 py-3 text-[13px] shadow-2xl">
-      <span class="h-2 w-2 rounded-full bg-emerald-500 flex-shrink-0"></span>
-      <span class="text-slate-800">{shareToast}</span>
-    </div>
+    <ShareToast message={shareToast} onClose={() => (shareToast = null)} />
   {/if}
 
   {#if showImport}
