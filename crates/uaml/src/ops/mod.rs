@@ -265,6 +265,13 @@ mod tests {
             rename: None,
         }]).unwrap();
         assert!(out[0].1.contains("- id: String [0..1]"));
+        let doc = parse_document(&out[0].1);
+        let attrs = doc.sections.iter().find_map(|s| match s {
+            Section::Attributes(a) => Some(a),
+            _ => None,
+        }).expect("attributes section present");
+        let id = attrs.iter().find(|a| a.name == "id").expect("id attribute present");
+        assert_eq!(id.visibility, Some(crate::model::Visibility::Private));
     }
 
     #[test]
