@@ -293,6 +293,9 @@ impl OpDto {
         }
     }
 
+    /// Reverse of `to_op`; not yet wired to any CLI surface (future `uaml serve`/`--emit`
+    /// round-trip work) but kept alongside `to_op` and covered by its own round-trip test.
+    #[allow(dead_code)]
     pub fn from_op(op: &Op) -> OpDto {
         let ends_str = |e: &Option<(RelEnd, RelEnd)>| e.as_ref().map(|(f, t)| render_ends(f, t));
         let name_parts = |n: &Option<NameSpec>| match n {
@@ -367,6 +370,7 @@ impl OpDto {
 }
 
 /// Decompose a `Selector::Rel` into wire fields for `from_op`.
+#[allow(dead_code)]
 fn sel_parts(sel: &Selector) -> (String, Option<String>, Option<String>, Option<String>) {
     match sel {
         Selector::Rel { source, by: RelBy::Endpoint { kind, target } } =>

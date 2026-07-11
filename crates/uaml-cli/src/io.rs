@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::fs;
 use std::io::Read;
 use std::path::{Path, PathBuf};
@@ -61,6 +62,27 @@ pub fn read_files(paths: &[PathBuf]) -> std::io::Result<Vec<(String, String)>> {
         out.push((path_key(&file), text));
     }
     Ok(out)
+}
+
+/// Write only changed/added entries; delete entries dropped from the bundle.
+/// Returns a human list of what happened.
+pub fn write_back(old: &[(String, String)], new: &[(String, String)]) -> std::io::Result<Vec<String>> {
+    let om: BTreeMap<&str, &str> = old.iter().map(|(p, c)| (p.as_str(), c.as_str())).collect();
+    let nm: BTreeMap<&str, &str> = new.iter().map(|(p, c)| (p.as_str(), c.as_str())).collect();
+    let mut touched = Vec::new();
+    for (p, c) in &nm {
+        if om.get(p) != Some(c) {
+            fs::write(p, c)?;
+            touched.push(format!("wrote {p}"));
+        }
+    }
+    for p in om.keys() {
+        if !nm.contains_key(p) {
+            let _ = fs::remove_file(p);
+            touched.push(format!("deleted {p}"));
+        }
+    }
+    Ok(touched)
 }
 
 #[cfg(test)]
