@@ -1,6 +1,6 @@
 //! Native (non-wasm) tests over the pure `*_json` cores. The `#[wasm_bindgen]`
 //! surface is a thin serde-wasm-bindgen shell around these, exercised in JS.
-use uaml_wasm::{apply_ops_bundle, build_model_json, validate_json};
+use uaml_wasm::{apply_ops_bundle, build_model_json, fmt_bundle, validate_json};
 
 fn bundle() -> Vec<(String, String)> {
     vec![(
@@ -56,4 +56,16 @@ fn apply_ops_surfaces_op_errors() {
     let ops = r#"[{"op":"attr.add","node":"ghost","name":"id","ty":"AId"}]"#;
     let err = apply_ops_bundle(&src, ops).unwrap_err();
     assert!(err.starts_with("op 0:"), "got: {err}");
+}
+
+#[test]
+fn fmt_is_idempotent() {
+    // A document with loose spacing; fmt canonicalizes, and re-fmt is a no-op.
+    let src = vec![(
+        "m/a.md".to_string(),
+        "---\ntype: uml.Class\ntitle: A\n---\n# A\n\n## Attributes\n- id: AId {1}\n".to_string(),
+    )];
+    let once = fmt_bundle(&src);
+    let twice = fmt_bundle(&once);
+    assert_eq!(once, twice, "fmt is not idempotent");
 }

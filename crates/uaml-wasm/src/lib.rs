@@ -29,6 +29,19 @@ fn dtos_to_ops(dtos: Vec<uaml_ops_dto::OpDto>) -> Result<Vec<uaml::ops::Op>, Str
     dtos.into_iter().map(|d| d.to_op()).collect()
 }
 
+/// Canonicalize each document (serialize IS fmt). Idempotent by construction.
+pub fn fmt_bundle(bundle: &[(String, String)]) -> Vec<(String, String)> {
+    bundle
+        .iter()
+        .map(|(p, t)| {
+            (
+                p.clone(),
+                uaml::serialize::serialize_document(&uaml::parse::parse_document(t)),
+            )
+        })
+        .collect()
+}
+
 // ── wasm-bindgen surface (structured JS values via serde-wasm-bindgen) ────────
 
 #[wasm_bindgen]
@@ -61,4 +74,17 @@ pub fn apply_ops(bundle: JsValue, ops: JsValue) -> Result<JsValue, JsValue> {
     let out = uaml::ops::apply(&b, &parsed)
         .map_err(|e| JsValue::from_str(&format!("op {}: {}", e.index, e.reason)))?;
     Ok(serde_wasm_bindgen::to_value(&out)?)
+}
+
+/// `bundle`: a `[path, markdown][]`. Returns the canonicalized bundle.
+#[wasm_bindgen]
+pub fn fmt(bundle: JsValue) -> Result<JsValue, JsValue> {
+    let b: Vec<(String, String)> = serde_wasm_bindgen::from_value(bundle)?;
+    Ok(serde_wasm_bindgen::to_value(&fmt_bundle(&b))?)
+}
+
+/// Split a multi-document bundle string into `[path, markdown][]`.
+#[wasm_bindgen]
+pub fn split_bundle(text: &str) -> Result<JsValue, JsValue> {
+    Ok(serde_wasm_bindgen::to_value(&uaml::parse::split_bundle(text))?)
 }
