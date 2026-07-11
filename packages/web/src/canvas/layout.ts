@@ -1,6 +1,5 @@
 import dagre from "@dagrejs/dagre";
-import type { ModelNode, ModelEdge } from "@uaml/okf";
-import type { ViewMode } from "@uaml/core/state/viewMode";
+import type { ModelNode, ModelEdge, DiagramDisplay } from "@uaml/okf";
 import { erdAwareNodeSize } from "@uaml/core/canvas/layoutSize";
 
 // ── Dagre auto-layout ────────────────────────────────────────────────────────
@@ -13,13 +12,13 @@ export const NODE_H = 90;
 export function runDagreLayout(
   nodes: ModelNode[],
   edges: ModelEdge[],
-  viewMode: ViewMode,
+  display: DiagramDisplay,
 ): Map<string, { x: number; y: number }> {
   const g = new dagre.graphlib.Graph();
   g.setDefaultEdgeLabel(() => ({}));
   g.setGraph({ rankdir: "LR", nodesep: 60, ranksep: 150 });
   nodes.forEach((n) => {
-    const s = erdAwareNodeSize(n, viewMode);
+    const s = erdAwareNodeSize(n, display);
     g.setNode(n.key, { width: s.width, height: s.height });
   });
   edges.forEach((e) => g.setEdge(e.from, e.to));
@@ -27,7 +26,7 @@ export function runDagreLayout(
   const positions = new Map<string, { x: number; y: number }>();
   nodes.forEach((n) => {
     const pos = g.node(n.key);
-    const s = erdAwareNodeSize(n, viewMode);
+    const s = erdAwareNodeSize(n, display);
     positions.set(n.key, { x: pos.x - s.width / 2, y: pos.y - s.height / 2 });
   });
   return positions;

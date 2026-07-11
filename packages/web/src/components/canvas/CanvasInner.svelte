@@ -53,9 +53,7 @@ import ShareToast from "../ShareToast.svelte";
     loadActiveDiagramKey,
     persistActiveDiagramKey,
   } from "@uaml/core/state/diagrams";
-  import { getProfile } from "@uaml/core/profiles";
-  import { loadViewMode, persistViewMode, type ViewMode } from "@uaml/core/state/viewMode";
-  import { loadRelLabelMode, persistRelLabelMode, type RelLabelMode } from "@uaml/core/state/relLabels";
+  import { resolveDisplay, type DiagramDisplay } from "@uaml/okf";
   import { loadModelName, persistModelName, DEFAULT_MODEL_NAME, templateModelName } from "@uaml/core/state/modelName";
   import { persistGraph } from "@uaml/core/state/persist";
   import { graphToBundleFiles, downloadBundle } from "@uaml/core/okf/io";
@@ -76,8 +74,6 @@ import ShareToast from "../ShareToast.svelte";
   // Screen anchor for the floating SelectionToolbar (null ⇒ hidden).
   let toolbarPos = $state<{ x: number; y: number } | null>(null);
   let tool = $state<Tool>("select");
-  let viewMode = $state<ViewMode>(loadViewMode());
-  let relLabelMode = $state<RelLabelMode>(loadRelLabelMode());
   // True briefly during auto-layout so nodes glide (CSS transition) to their new
   // positions instead of snapping.
   let layoutAnimating = $state(false);
@@ -128,7 +124,9 @@ import ShareToast from "../ShareToast.svelte";
   const focused = $derived(focusedSelection(selectionSet));
   const diagrams = $derived(effectiveDiagrams($model));
   const activeDiagram = $derived(diagrams.find((d) => d.key === activeDiagramKey) ?? diagrams[0]);
-  const profile = $derived(getProfile(activeDiagram.profile));
+  // The active diagram's resolved per-diagram render settings (absent ⇒ defaults).
+  // Replaces the old global viewMode/relLabelMode browser preferences.
+  const activeDisplay = $derived(resolveDisplay(activeDiagram.display));
   const memberSet = $derived(new Set(activeDiagram.members));
   const imageName = $derived(modelName.trim() || "model");
   const canvasClass = $derived(
@@ -141,13 +139,13 @@ import ShareToast from "../ShareToast.svelte";
   // 1) Rebuild rfNodes from the model, filtered to the active diagram's members.
   $effect(() => {
     const nodes = $model.nodes;
-    const vm = viewMode;
+    const disp = activeDisplay;
     const diag = activeDiagram;
     const selNodes = selectionSet.nodes;
     rfNodes = nodes
       .filter((n) => memberSet.has(n.key))
       .map((n) => ({
-        ...toRFNode(n, vm, diag.profile, diag.hints?.collapse?.includes(n.key) ?? false),
+        ...toRFNode(n, disp, diag.profile, diag.hints?.collapse?.includes(n.key) ?? false),
         selected: selNodes.includes(n.key),
       }));
   });
@@ -162,16 +160,11 @@ import ShareToast from "../ShareToast.svelte";
   $effect(() => {
     const nodes = $model.nodes;
     const edges = $model.edges;
-    const vm = viewMode;
-    const rlm = relLabelMode;
-    const diag = activeDiagram;
+    const disp = activeDisplay;
     const visibleNodes = nodes.filter((n) => memberSet.has(n.key));
     const visibleEdges = edges.filter((e) => memberSet.has(e.from) && memberSet.has(e.to));
-    const emphasizeMultiplicity =
-      profile.emphasize.includes("multiplicity") &&
-      !(diag.hints?.emphasize && !diag.hints.emphasize.includes("multiplicity"));
     const selEdges = selectionSet.edges;
-    rfEdges = [...buildRfEdges(visibleEdges, nodes, vm, rlm, emphasizeMultiplicity), ...buildAnchorEdges(visibleNodes, visibleEdges)].map(
+    rfEdges = [...buildRfEdges(visibleEdges, nodes, disp), ...buildAnchorEdges(visibleNodes, visibleEdges)].map(
       (e) => {
         const modelEdgeId = (e.data as { modelEdgeId?: string } | undefined)?.modelEdgeId;
         const isSelected = modelEdgeId != null && selEdges.includes(modelEdgeId);
@@ -286,7 +279,7 @@ import ShareToast from "../ShareToast.svelte";
   function handleToolChange(t: Tool) {
     if (t === "layout") {
       const { nodes, edges } = store.get();
-      const positions = runDagreLayout(nodes, edges, viewMode);
+      const positions = runDagreLayout(nodes, edges, activeDisplay);
       // Turn on node transitions, move everything, then frame the result — so
       // the model visibly "organizes itself" instead of snapping. Cleared after
       // the glide so dragging stays instant.
@@ -301,10 +294,11 @@ import ShareToast from "../ShareToast.svelte";
     tool = t;
   }
 
-  function handleToggleView() {
-    const next = viewMode === "erd" ? "compact" : "erd";
-    persistViewMode(next);
-    viewMode = next;
+  // Merge a single-field edit into the active diagram's display and persist it on
+  // the diagram (per-diagram, not per-browser). For the implicit "All" diagram
+  // (no real diagram in the model yet) updateDiagram is a no-op, mirroring rename.
+  function handleDisplayChange(p: Partial<DiagramDisplay>) {
+    store.updateDiagram(activeDiagram.key, { display: { ...activeDisplay, ...p } });
   }
 
   // ── Keyboard delete ────────────────────────────────────────────────────────
@@ -393,7 +387,7 @@ import ShareToast from "../ShareToast.svelte";
   // does not persist node positions, so without this every imported node piles
   // up at the origin.
   function withLayout(g: ModelGraph): ModelGraph {
-    const positions = runDagreLayout(g.nodes, g.edges, viewMode);
+    const positions = runDagreLayout(g.nodes, g.edges, activeDisplay);
     return { ...g, nodes: g.nodes.map((n) => ({ ...n, position: positions.get(n.key) ?? n.position })) };
   }
 
@@ -401,7 +395,7 @@ import ShareToast from "../ShareToast.svelte";
   // so the existing layout isn't reshuffled. Shared by OKF import + templates.
   function applyMergeWithLayout(g: ModelGraph) {
     const { graph, newKeys } = mergeGraphs(store.get(), g);
-    const positions = runDagreLayout(graph.nodes, graph.edges, viewMode);
+    const positions = runDagreLayout(graph.nodes, graph.edges, activeDisplay);
     store.set({ ...graph, nodes: graph.nodes.map((n) => (newKeys.has(n.key) ? { ...n, position: positions.get(n.key) ?? n.position } : n)) });
   }
 
@@ -442,11 +436,6 @@ import ShareToast from "../ShareToast.svelte";
     }
     pendingTemplate = null;
     showLibrary = false;
-  }
-
-  function handleRelLabelModeChange(mode: RelLabelMode) {
-    relLabelMode = mode;
-    persistRelLabelMode(mode);
   }
 </script>
 
@@ -534,12 +523,10 @@ import ShareToast from "../ShareToast.svelte";
       <Dock
         activeTool={tool}
         onToolChange={handleToolChange}
-        viewMode={viewMode}
-        onToggleView={handleToggleView}
         onClear={() => (showClear = true)}
         clearDisabled={$model.nodes.length === 0}
-        relLabelMode={relLabelMode}
-        onRelLabelModeChange={handleRelLabelModeChange}
+        display={activeDisplay}
+        onDisplayChange={handleDisplayChange}
       />
       <SvelteFlow
         bind:nodes={rfNodes}

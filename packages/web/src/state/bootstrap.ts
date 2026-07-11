@@ -1,7 +1,7 @@
 import type { ModelGraph } from "@uaml/okf";
+import { DEFAULT_DISPLAY } from "@uaml/okf";
 import { createModelStore } from "@uaml/core/state/model";
 import { loadPersistedGraph, persistGraph } from "@uaml/core/state/persist";
-import { loadViewMode } from "@uaml/core/state/viewMode";
 import { readSharedModel, readSharedName, clearSharedModelFromUrl } from "@uaml/core/share/url";
 import { readTemplateModel, clearTemplateFromUrl } from "@uaml/core/lib/templateLink";
 import { runDagreLayout } from "../canvas/layout";
@@ -18,7 +18,7 @@ const templateGraph = readTemplateModel();
 clearTemplateFromUrl(); // strip the param (clean URL on refresh) even if the id was unknown
 let templateInitial: ModelGraph | undefined;
 if (templateGraph) {
-  const positions = runDagreLayout(templateGraph.nodes, templateGraph.edges, loadViewMode());
+  const positions = runDagreLayout(templateGraph.nodes, templateGraph.edges, DEFAULT_DISPLAY);
   templateInitial = {
     ...templateGraph,
     nodes: templateGraph.nodes.map((n) => ({ ...n, position: positions.get(n.key) ?? n.position })),

@@ -1,5 +1,4 @@
-import type { ModelNode } from "@uaml/okf";
-import type { ViewMode } from "../state/viewMode";
+import type { ModelNode, DiagramDisplay } from "@uaml/okf";
 
 const COMPACT = { width: 200, height: 90 };
 const ERD_WIDTH = 250;
@@ -13,8 +12,11 @@ const ERD_EXPAND_ROW = 26; // "show N more / less" toggle row
 // is tidy (an expanded node may overlap below until the user re-runs layout).
 export const ERD_COLLAPSED_ROWS = 4;
 
-export function erdAwareNodeSize(node: ModelNode, viewMode: ViewMode): { width: number; height: number } {
-  if (viewMode !== "erd") return { ...COMPACT };
+// Node footprint depends on the active diagram's resolved display: when attributes
+// are hidden the box is the fixed compact size; when shown it grows with the
+// (capped) field/value count so dagre can reserve room for the rows.
+export function erdAwareNodeSize(node: ModelNode, display: DiagramDisplay): { width: number; height: number } {
+  if (!display.showAttributes) return { ...COMPACT };
   const total = node.values ? node.values.length : node.attributes.length;
   const rows = Math.max(Math.min(total, ERD_COLLAPSED_ROWS), 1);
   const expandRow = total > ERD_COLLAPSED_ROWS ? ERD_EXPAND_ROW : 0;

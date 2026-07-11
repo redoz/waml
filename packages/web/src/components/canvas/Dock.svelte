@@ -1,63 +1,32 @@
 <script module lang="ts">
-  // Mirrors packages/web/src/components/canvas/Dock.tsx.
-  import type { RelLabelMode } from "@uaml/core/state/relLabels";
-
   export type Tool = "select" | "add" | "connect" | "layout";
-
-  const REL_LABEL_GLYPH: Record<RelLabelMode, string> = { all: "≡", hidden: "⊘" };
-
-  const REL_LABEL_OPTIONS: { mode: RelLabelMode; label: string; helper: string }[] = [
-    { mode: "all", label: "Show labels", helper: "Multiplicities and roles on every relationship" },
-    { mode: "hidden", label: "Hide all labels", helper: "Just the connector lines" },
-  ];
 </script>
 
 <script lang="ts">
   import type { Snippet } from "svelte";
-  import type { ViewMode } from "@uaml/core/state/viewMode";
+  import { DEFAULT_DISPLAY, type DiagramDisplay } from "@uaml/okf";
 
   let {
     activeTool,
     onToolChange,
-    viewMode,
-    onToggleView,
     onClear,
     clearDisabled,
-    relLabelMode = "all",
-    onRelLabelModeChange,
+    display = DEFAULT_DISPLAY,
+    onDisplayChange,
   }: {
     activeTool: Tool;
     onToolChange: (tool: Tool) => void;
-    viewMode: ViewMode;
-    onToggleView: () => void;
     onClear: () => void;
     clearDisabled?: boolean;
-    relLabelMode?: RelLabelMode;
-    onRelLabelModeChange?: (mode: RelLabelMode) => void;
+    // The ACTIVE diagram's resolved render settings, and a patch handler that
+    // writes changes back onto that diagram's `display`.
+    display?: DiagramDisplay;
+    onDisplayChange?: (patch: Partial<DiagramDisplay>) => void;
   } = $props();
 
-  // Connect-button hover flyout: revealed after a 500ms hover delay; clicking
-  // the button itself still activates the Connect tool immediately.
-  let connectFlyoutOpen = $state(false);
-  let connectFlyoutTimer: ReturnType<typeof setTimeout> | null = null;
-
-  function clearConnectFlyoutTimer() {
-    if (connectFlyoutTimer) {
-      clearTimeout(connectFlyoutTimer);
-      connectFlyoutTimer = null;
-    }
-  }
-  function handleConnectEnter() {
-    clearConnectFlyoutTimer();
-    connectFlyoutTimer = setTimeout(() => {
-      connectFlyoutOpen = true;
-    }, 500);
-  }
-  function handleConnectLeave() {
-    clearConnectFlyoutTimer();
-    connectFlyoutOpen = false;
-  }
-  $effect(() => () => clearConnectFlyoutTimer());
+  // "Diagram properties" flyout: a left-anchored popover off the dock configuring
+  // how the active diagram renders. Toggled by the sliders button.
+  let propsOpen = $state(false);
 
   // Keyboard shortcuts V/N/C
   $effect(() => {
@@ -71,6 +40,10 @@
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
   });
+
+  function patch(p: Partial<DiagramDisplay>) {
+    onDisplayChange?.(p);
+  }
 </script>
 
 {#snippet dockTip(label: string)}
@@ -111,11 +84,12 @@
   </svg>
 {/snippet}
 
-{#snippet erdIcon()}
-  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="19" height="19">
-    <rect x="3" y="4" width="8" height="16" rx="1" />
-    <rect x="14" y="4" width="7" height="9" rx="1" />
-    <path d="M11 8h3M7 9v6M17 13v3M17 16h-6" />
+{#snippet slidersIcon()}
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" width="19" height="19">
+    <path d="M4 6h9M17 6h3M4 12h3M11 12h9M4 18h13M19 18h1" />
+    <circle cx="15" cy="6" r="2" />
+    <circle cx="9" cy="12" r="2" />
+    <circle cx="17" cy="18" r="2" />
   </svg>
 {/snippet}
 
@@ -152,6 +126,59 @@
   </div>
 {/snippet}
 
+<!-- A labelled on/off toggle row inside the properties flyout. -->
+{#snippet toggleRow(label: string, checked: boolean, onToggle: () => void, disabled = false)}
+  <button
+    type="button"
+    role="switch"
+    aria-checked={checked}
+    aria-label={label}
+    disabled={disabled}
+    onclick={() => { if (!disabled) onToggle(); }}
+    class="flex w-full items-center justify-between gap-3 rounded-lg px-2 py-1.5 text-left transition-colors {disabled
+      ? 'opacity-40 cursor-not-allowed'
+      : 'hover:bg-[#f1f3f7]'}"
+  >
+    <span class="text-[13px] font-medium text-slate-800">{label}</span>
+    <span
+      class="relative inline-flex h-[18px] w-[32px] flex-shrink-0 items-center rounded-full transition-colors {checked
+        ? 'bg-[#1e88e5]'
+        : 'bg-slate-300'}"
+    >
+      <span
+        class="inline-block h-[14px] w-[14px] rounded-full bg-white shadow transition-transform {checked
+          ? 'translate-x-[16px]'
+          : 'translate-x-[2px]'}"
+      ></span>
+    </span>
+  </button>
+{/snippet}
+
+<!-- A two-option segmented control (radio group) inside the properties flyout. -->
+{#snippet segmented(label: string, options: { value: string; label: string }[], value: string, onPick: (v: string) => void, disabled = false)}
+  <div class="px-2 py-1.5 {disabled ? 'opacity-40' : ''}">
+    <div class="mb-1 text-[13px] font-medium text-slate-800">{label}</div>
+    <div role="radiogroup" aria-label={label} class="flex gap-1 rounded-lg bg-[#f1f3f7] p-0.5">
+      {#each options as opt (opt.value)}
+        {@const selected = opt.value === value}
+        <button
+          type="button"
+          role="radio"
+          aria-checked={selected}
+          aria-label={opt.label}
+          disabled={disabled}
+          onclick={() => { if (!disabled) onPick(opt.value); }}
+          class="flex-1 rounded-md px-2 py-1 text-[12px] font-semibold transition-colors {disabled
+            ? 'cursor-not-allowed'
+            : 'cursor-pointer'} {selected ? 'bg-white text-[#1e88e5] shadow-sm' : 'text-slate-500 hover:text-slate-800'}"
+        >
+          {opt.label}
+        </button>
+      {/each}
+    </div>
+  </div>
+{/snippet}
+
 <div
   data-dock
   class="absolute left-[14px] top-[calc(50%-34px)] -translate-y-1/2 bg-white border border-[#d8dee8] rounded-xl p-[6px] flex flex-col gap-1 z-20 shadow-[0_4px_16px_rgba(15,23,42,0.06)]"
@@ -164,91 +191,84 @@
     activeTool === "add",
     () => onToolChange("add"),
   )}
-
-  <!-- Connect tool: click activates the tool; hover (after 500ms) reveals the
-       relationship-labels flyout. These are separate concerns on one button. -->
-  <div
-    class="relative group"
-    onmouseenter={handleConnectEnter}
-    onmouseleave={handleConnectLeave}
-    role="group"
-  >
-    <button
-      onclick={() => onToolChange("connect")}
-      aria-label="Connect (C) — or drag from a node's port"
-      class="relative w-[38px] h-[38px] rounded-[9px] border-none flex items-center justify-center cursor-pointer transition-colors {activeTool ===
-      'connect'
-        ? 'bg-[#e6f1fb] text-[#1e88e5]'
-        : 'bg-transparent text-slate-500 hover:bg-[#f1f3f7] hover:text-slate-900'}"
-    >
-      {@render connectIcon()}
-      <span
-        data-testid="rel-label-badge"
-        aria-hidden="true"
-        class="absolute -top-[3px] -right-[3px] min-w-[14px] h-[14px] px-[2px] rounded-full bg-slate-900 text-white text-[9px] leading-[14px] font-semibold text-center shadow-[0_1px_2px_rgba(15,23,42,0.4)]"
-      >
-        {REL_LABEL_GLYPH[relLabelMode]}
-      </span>
-    </button>
-
-    {#if !connectFlyoutOpen}
-      {@render dockTip("Connect (C) — or drag from a node's port")}
-    {/if}
-
-    {#if connectFlyoutOpen}
-      <div class="absolute left-[calc(100%+10px)] top-1/2 -translate-y-1/2 z-50">
-        <!-- invisible bridge so the cursor can travel from button to menu without closing -->
-        <span class="absolute right-full top-0 h-full w-[12px]"></span>
-        <div class="w-[260px] rounded-xl border border-[#d8dee8] bg-white p-1.5 shadow-[0_8px_24px_rgba(15,23,42,0.14)]">
-          <div class="px-2 pt-1 pb-1.5 text-[11px] font-semibold uppercase tracking-wide text-slate-400">
-            Relationship labels
-          </div>
-          {#each REL_LABEL_OPTIONS as opt (opt.mode)}
-            {@const selected = opt.mode === relLabelMode}
-            <button
-              onclick={() => {
-                onRelLabelModeChange?.(opt.mode);
-                connectFlyoutOpen = false;
-              }}
-              class="flex w-full items-start gap-2 rounded-lg px-2 py-1.5 text-left transition-colors {selected
-                ? 'bg-[#e6f1fb]'
-                : 'hover:bg-[#f1f3f7]'}"
-            >
-              <span
-                class="mt-[1px] w-[16px] flex-shrink-0 text-center text-[12px] font-bold {selected
-                  ? 'text-[#1e88e5]'
-                  : 'text-slate-400'}"
-              >
-                {REL_LABEL_GLYPH[opt.mode]}
-              </span>
-              <span class="flex flex-col">
-                <span class="text-[13px] font-semibold {selected ? 'text-[#1e88e5]' : 'text-slate-800'}">{opt.label}</span>
-                <span class="text-[11px] leading-snug text-slate-500">{opt.helper}</span>
-              </span>
-            </button>
-          {/each}
-        </div>
-      </div>
-    {/if}
-  </div>
+  {@render toolButton(
+    connectIcon,
+    "Connect (C) — or drag from a node's port",
+    activeTool === "connect",
+    () => onToolChange("connect"),
+  )}
 
   <div class="h-px bg-[#d8dee8] mx-1 my-[3px]"></div>
   {@render toolButton(layoutIcon, "Auto-layout (Dagre)", false, () => onToolChange("layout"))}
 
   <div class="h-px bg-[#d8dee8] mx-1 my-[3px]"></div>
+
+  <!-- Diagram properties: left-anchored flyout configuring the active diagram's
+       per-diagram render settings. -->
   <div class="relative group">
     <button
-      onclick={onToggleView}
-      aria-label="ERD view — show fields & field-level links"
-      aria-pressed={viewMode === "erd"}
-      class="w-[38px] h-[38px] rounded-[9px] border-none flex items-center justify-center cursor-pointer transition-colors {viewMode ===
-      'erd'
+      onclick={() => (propsOpen = !propsOpen)}
+      aria-label="Diagram properties"
+      aria-expanded={propsOpen}
+      class="w-[38px] h-[38px] rounded-[9px] border-none flex items-center justify-center cursor-pointer transition-colors {propsOpen
         ? 'bg-[#e6f1fb] text-[#1e88e5]'
         : 'bg-transparent text-slate-500 hover:bg-[#f1f3f7] hover:text-slate-900'}"
     >
-      {@render erdIcon()}
+      {@render slidersIcon()}
     </button>
-    {@render dockTip(viewMode === "erd" ? "ERD view — fields & field-level links (on)" : "ERD view — show fields & field-level links")}
+    {#if !propsOpen}
+      {@render dockTip("Diagram properties")}
+    {/if}
+
+    {#if propsOpen}
+      <div class="absolute left-[calc(100%+10px)] top-1/2 -translate-y-1/2 z-50">
+        <span class="absolute right-full top-0 h-full w-[12px]"></span>
+        <div
+          role="dialog"
+          aria-label="Diagram properties"
+          class="w-[268px] rounded-xl border border-[#d8dee8] bg-white p-1.5 shadow-[0_8px_24px_rgba(15,23,42,0.14)]"
+        >
+          <div class="px-2 pt-1 pb-1.5 text-[11px] font-semibold uppercase tracking-wide text-slate-400">
+            Diagram properties
+          </div>
+
+          {@render toggleRow("Show attributes", display.showAttributes, () =>
+            patch({ showAttributes: !display.showAttributes }),
+          )}
+          {@render segmented(
+            "Attribute detail",
+            [
+              { value: "name-only", label: "Name only" },
+              { value: "name-type", label: "Name + type" },
+            ],
+            display.attributeDetail,
+            (v) => patch({ attributeDetail: v as DiagramDisplay["attributeDetail"] }),
+            !display.showAttributes,
+          )}
+
+          <div class="h-px bg-[#eef1f5] mx-1 my-1"></div>
+
+          {@render segmented(
+            "Associations",
+            [
+              { value: "all", label: "Show labels" },
+              { value: "hidden", label: "Hide labels" },
+            ],
+            display.associationLabels,
+            (v) => patch({ associationLabels: v as DiagramDisplay["associationLabels"] }),
+          )}
+          {@render toggleRow("Emphasize multiplicity", display.emphasizeMultiplicity, () =>
+            patch({ emphasizeMultiplicity: !display.emphasizeMultiplicity }),
+          )}
+
+          <div class="h-px bg-[#eef1f5] mx-1 my-1"></div>
+
+          {@render toggleRow("Show stereotype", display.showStereotype, () =>
+            patch({ showStereotype: !display.showStereotype }),
+          )}
+        </div>
+      </div>
+    {/if}
   </div>
 
   <div class="h-px bg-[#d8dee8] mx-1 my-[3px]"></div>

@@ -1,4 +1,5 @@
 import { test, expect } from "vitest";
+import { DEFAULT_DISPLAY } from "@uaml/okf";
 import { createModelStore } from "@uaml/core/state/model";
 import { runDagreLayout, NODE_W, NODE_H } from "./layout";
 
@@ -9,7 +10,7 @@ test("runDagreLayout returns a distinct position per node", () => {
   s.addEdge(a.key, b.key);
 
   const { nodes, edges } = s.get();
-  const positions = runDagreLayout(nodes, edges, "compact");
+  const positions = runDagreLayout(nodes, edges, DEFAULT_DISPLAY);
 
   expect(positions.size).toBe(2);
   expect(positions.has(a.key)).toBe(true);

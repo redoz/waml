@@ -1,12 +1,11 @@
 <script lang="ts">
   // Mirrors packages/web/src/components/canvas/RelEdge.tsx.
   import { BaseEdge, EdgeLabel, EdgeReconnectAnchor, getSmoothStepPath, useInternalNode, type EdgeProps, type Position } from "@xyflow/svelte";
-  import type { ModelEdge, RelEnd, RelationshipKind } from "@uaml/okf";
-  import type { RelLabelMode } from "@uaml/core/state/relLabels";
+  import type { ModelEdge, RelEnd, RelationshipKind, DiagramDisplay } from "@uaml/okf";
   import { getEdgeParams, portPoint, type NodeGeom, type Rect, type Slot } from "./floating";
 
   type RelEdgeData = Pick<ModelEdge, "kind" | "fromEnd" | "toEnd" | "bidirectional"> & {
-    relLabelMode?: RelLabelMode;
+    associationLabels?: DiagramDisplay["associationLabels"];
     modelEdgeId?: string;
     emphasizeMultiplicity?: boolean;
     // Pre-assigned by edges.ts so a hub's edges space themselves along each border.
@@ -37,7 +36,7 @@
   const kind = $derived<RelationshipKind>(d?.kind ?? "associates");
   const fromEnd = $derived<RelEnd>(d?.fromEnd ?? {});
   const toEnd = $derived<RelEnd>(d?.toEnd ?? {});
-  const mode = $derived<RelLabelMode>(d?.relLabelMode ?? "all");
+  const mode = $derived<DiagramDisplay["associationLabels"]>(d?.associationLabels ?? "all");
 
   // Floating endpoints. When edges.ts has assigned a side + slot (and both nodes
   // are measured), place the point on that border spaced by the slot so a hub's
@@ -110,7 +109,10 @@
   });
 
   const endText = (e: RelEnd) => [e.multiplicity, e.role].filter(Boolean).join(" ");
-  const showLabels = $derived(mode !== "hidden" && (d?.emphasizeMultiplicity ?? true));
+  // `associationLabels` alone decides whether labels show; `emphasizeMultiplicity`
+  // is a separate visual emphasis (bolder/larger multiplicity text) applied to them.
+  const showLabels = $derived(mode !== "hidden");
+  const emphasize = $derived(d?.emphasizeMultiplicity ?? false);
   const lerp = (a: number, b: number, t: number) => a + (b - a) * t;
 
   const labels = $derived.by(() => {
@@ -164,7 +166,9 @@
       x={l.x}
       y={l.y}
       class="nodrag nopan"
-      style="background:rgba(255,255,255,0.9);border-radius:4px;padding:0 4px;font-size:10.5px;font-weight:600;color:#334155;white-space:nowrap;"
+      style="background:rgba(255,255,255,0.9);border-radius:4px;padding:0 4px;font-size:{emphasize
+        ? 12
+        : 10.5}px;font-weight:{emphasize ? 800 : 600};color:{emphasize ? '#0f172a' : '#334155'};white-space:nowrap;"
     >
       {l.text}
     </EdgeLabel>

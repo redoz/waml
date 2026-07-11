@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { Snippet } from "svelte";
   import { getProfile, stereotypeStyle } from "@uaml/core/profiles";
+  import { resolveDisplay } from "@uaml/okf";
   import NodePorts from "./NodePorts.svelte";
   import StereotypeRow from "./StereotypeRow.svelte";
   import AttributeRow from "./AttributeRow.svelte";
@@ -11,7 +12,11 @@
 
   let profile = $derived(getProfile(data._profile));
   let st = $derived(stereotypeStyle(profile, data.stereotypes));
-  let isDetailed = $derived((data._viewMode ?? "compact") === "erd");
+  // Per-diagram render settings (resolved: absent ⇒ defaults).
+  let display = $derived(resolveDisplay(data._display));
+  let isDetailed = $derived(display.showAttributes);
+  let showTypes = $derived(display.attributeDetail === "name-type");
+  let showStereotype = $derived(display.showStereotype);
   let showVisibility = $derived(!profile.hide.includes("visibility"));
   let hasStereotypeStyle = $derived(Object.keys(st).length > 0);
 
@@ -34,7 +39,9 @@
   <NodePorts />
   <div class="relative z-[1]">
     {@render header?.()}
-    <StereotypeRow stereotypes={data.stereotypes} {keyword} />
+    {#if showStereotype}
+      <StereotypeRow stereotypes={data.stereotypes} {keyword} />
+    {/if}
     <div class={`px-3 pb-[9px] pt-[3px] text-center text-[13.5px] font-semibold text-slate-900 ${data.abstract ? "italic" : ""}`}>
       {data.title}
     </div>
@@ -50,7 +57,7 @@
     {#if isDetailed && !data.values}
       <RowsCompartment rows={data.attributes.length}>
         {#snippet render(i: number)}
-          <AttributeRow a={data.attributes[i]} {showVisibility} />
+          <AttributeRow a={data.attributes[i]} {showVisibility} {showTypes} />
         {/snippet}
       </RowsCompartment>
     {/if}
