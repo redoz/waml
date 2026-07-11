@@ -376,42 +376,7 @@ fn run_mutation(common: &Common, dto: OpDto) -> i32 {
             return 1;
         }
     };
-    let bundle = match io::read_files(std::slice::from_ref(&common.dir)) {
-        Ok(b) => b,
-        Err(e) => {
-            eprintln!("uaml: {e}");
-            return 2;
-        }
-    };
-    match uaml::ops::apply(&bundle, std::slice::from_ref(&op)) {
-        Ok(new) => {
-            if common.stdout {
-                print!("{}", to_blob(&new));
-                0
-            } else if common.dry_run {
-                print!("{}", commands::render_diff(&bundle, &new));
-                0
-            } else {
-                match io::write_back(&bundle, &new) {
-                    Ok(touched) => {
-                        for t in touched {
-                            println!("uaml: {t}");
-                        }
-                        0
-                    }
-                    Err(e) => {
-                        eprintln!("uaml: {e}");
-                        2
-                    }
-                }
-            }
-        }
-        Err(e) => {
-            let sel = e.selector.as_ref().map(|s| format!(" [{s}]")).unwrap_or_default();
-            eprintln!("uaml: op {}: {}{sel}", e.index, e.reason);
-            1
-        }
-    }
+    run_batch(common, vec![op])
 }
 
 fn run_batch(common: &Common, ops: Vec<uaml::ops::Op>) -> i32 {
