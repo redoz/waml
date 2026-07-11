@@ -124,6 +124,9 @@ Control nodes come in matched split/join pairs:
 - `initial`, `final`
 - `decision` (1→N, guarded branch) / `merge` (N→1, rejoin) — both render as a diamond ◇
 - `fork` (1→N, concurrent split) / `join` (N→1, concurrent sync) — both render as a bar
+- `object` — an object/data node, typed by a link
+  (`### object [Order](./order.md)`); renders as a rectangle. Edges touching it
+  are **object flows** (see below)
 - (no keyword) → action / state
 
 Under a node heading:
@@ -131,9 +134,12 @@ Under a node heading:
 - **transitions** — bullets leading with `to` (outgoing edges; source is the
   enclosing node, implicit, mirroring how `## Relationships` attach to their
   declaring classifier). Grammar:
-  `- to <target> [on <trigger>] [when <guard>] [/ <effect>]`.
-  `on`/`when`/`/` clauses are each optional; the guard is delimited by the
+  `- to <target> [as <name>] [on <trigger>] [when <guard>] [/ <effect>]`.
+  `as`/`on`/`when`/`/` clauses are each optional; the guard is delimited by the
   word `when` — **never `[...]`**, which collides with markdown link syntax.
+  `as <name>` is an optional edge label (reusing the association-name idiom);
+  when the name is a **link**, the edge carries that object type — an **object
+  flow** (`- to Ship as [Order](./order.md)`).
 - **state internals** — `- entry / <effect>`, `- do / <effect>`,
   `- exit / <effect>`.
 - **composite / call behavior** — `- refines [SubFlow](./sub.md)`. A composite
@@ -243,7 +249,7 @@ no syntax. Self, found, and lost messages are deferred.
 |---|---|---|
 | class | structure | existing seven metaclasses |
 | use case | structure | `uml.Actor`, `uml.UseCase`; `includes`/`extends`; `frame` = system boundary |
-| activity | flow | heading nodes + `to` transitions; `when` guards; `decision`/`merge`, `fork`/`join` |
+| activity | flow | heading nodes + `to` transitions; `when` guards; `decision`/`merge`, `fork`/`join`; `object` nodes + object flows (`as` link) |
 | state machine | flow | same grammar; `entry`/`do`/`exit`; `describes` a Class |
 | sequence | interaction | `## Lifelines` links + ordered `## Messages` verbs + fragments |
 
@@ -272,6 +278,10 @@ word-clauses, and graceful degradation for anything unrecognized.
   verbs, transition clause order, and the entry/do/exit bullet-vs-bare-line
   choice are candidates for refinement before BNF is frozen.
 - **Swimlanes / partitions.** Only sketched (`partition:` field).
+- **Object flow detail.** Input/output **pins** on actions, and rendering an
+  object flow when it appears on a *class* diagram (the same directed,
+  nameable, no-roles/no-multiplicity edge primitive, surfaced as a stereotyped
+  edge). Only object nodes + `as`-link object-flow edges are specified now.
 - **Advanced sequence features.** Self/found/lost messages, gates, coregions.
 - **State machine details.** History pseudostates, deferred events,
   entry/exit points on composite states, and cross-boundary transitions
