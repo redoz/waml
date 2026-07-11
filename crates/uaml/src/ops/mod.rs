@@ -1,2 +1,192 @@
+use crate::model::{Attribute, TypeRef, Visibility};
+use crate::multiplicity::Multiplicity;
+use crate::parse::parse_document;
+use crate::serialize::serialize_document;
+use crate::syntax::{Document, Section};
+
+pub type Bundle = Vec<(String, String)>;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OpError {
+    pub index: usize,
+    pub op: String,
+    pub selector: Option<String>,
+    pub reason: String,
+}
+
+impl OpError {
+    pub(crate) fn at(op: &str, reason: impl Into<String>) -> OpError {
+        OpError { index: 0, op: op.to_string(), selector: None, reason: reason.into() }
+    }
+}
+
+/// One mutation. One variant per sugar command; grows task by task.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Op {
+    AttrAdd {
+        node: String,
+        name: String,
+        ty_token: String,
+        multiplicity: Multiplicity,
+        visibility: Option<Visibility>,
+    },
+}
+
+pub fn apply(bundle: &[(String, String)], ops: &[Op]) -> Result<Bundle, OpError> {
+    let mut work: Bundle = bundle.to_vec();
+    for (i, op) in ops.iter().enumerate() {
+        apply_one(&mut work, op).map_err(|mut e| {
+            e.index = i;
+            e
+        })?;
+    }
+    Ok(work)
+}
+
+fn apply_one(work: &mut Bundle, op: &Op) -> Result<(), OpError> {
+    match op {
+        Op::AttrAdd { node, name, ty_token, multiplicity, visibility } => {
+            op_attr_add(work, node, name, ty_token, multiplicity, *visibility)
+        }
+    }
+}
+
+// ---- shared helpers (reused by every later op) ----
+
+pub(crate) fn slug_of(path: &str) -> String {
+    let seg = path.rsplit(['/', '\\']).next().unwrap_or(path);
+    seg.strip_suffix(".md").unwrap_or(seg).to_string()
+}
+
+pub(crate) fn find_doc(work: &Bundle, slug: &str, op: &str) -> Result<usize, OpError> {
+    work.iter()
+        .position(|(p, _)| slug_of(p) == slug)
+        .ok_or_else(|| OpError::at(op, format!("no document '{slug}'")))
+}
+
+/// Parse the target file, mutate via `f`, re-serialize canonically.
+pub(crate) fn edit_doc<F>(work: &mut Bundle, slug: &str, op: &str, f: F) -> Result<(), OpError>
+where
+    F: FnOnce(&mut Document) -> Result<(), OpError>,
+{
+    let i = find_doc(work, slug, op)?;
+    let mut doc = parse_document(&work[i].1);
+    f(&mut doc)?;
+    work[i].1 = serialize_document(&doc);
+    Ok(())
+}
+
+/// Get the `## Attributes` list, creating an empty section if absent
+/// (canonical serialize re-orders sections, so append position is irrelevant).
+pub(crate) fn attrs_mut(doc: &mut Document) -> &mut Vec<Attribute> {
+    if !doc.sections.iter().any(|s| matches!(s, Section::Attributes(_))) {
+        doc.sections.push(Section::Attributes(Vec::new()));
+    }
+    doc.sections
+        .iter_mut()
+        .find_map(|s| match s {
+            Section::Attributes(a) => Some(a),
+            _ => None,
+        })
+        .expect("attributes section just ensured")
+}
+
+/// Forward-ref-safe: a token matching an existing doc slug links to it (using
+/// that doc's title); otherwise it is a bare type token. Mirrors build_model.
+pub(crate) fn resolve_type(work: &Bundle, token: &str) -> TypeRef {
+    if let Some((_, text)) = work.iter().find(|(p, _)| slug_of(p) == token) {
+        let title = parse_document(text)
+            .frontmatter
+            .get_str("title")
+            .map(String::from)
+            .unwrap_or_else(|| token.to_string());
+        TypeRef { name: title, ref_: Some(token.to_string()) }
+    } else {
+        TypeRef { name: token.to_string(), ref_: None }
+    }
+}
+
+fn op_attr_add(
+    work: &mut Bundle,
+    node: &str,
+    name: &str,
+    ty_token: &str,
+    multiplicity: &Multiplicity,
+    visibility: Option<Visibility>,
+) -> Result<(), OpError> {
+    let ty = resolve_type(work, ty_token);
+    edit_doc(work, node, "attr.add", |doc| {
+        let attrs = attrs_mut(doc);
+        if attrs.iter().any(|a| a.name == name) {
+            return Err(OpError::at("attr.add", format!("attribute '{name}' already exists in {node}")));
+        }
+        attrs.push(Attribute {
+            name: name.to_string(),
+            ty,
+            multiplicity: multiplicity.clone(),
+            visibility,
+            description: None,
+        });
+        Ok(())
+    })
+}
+
 pub mod selector;
 pub use selector::{parse_selector, render_selector, RelBy, Selector};
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::multiplicity::Multiplicity;
+
+    fn attr_add(node: &str, name: &str, ty: &str) -> Op {
+        Op::AttrAdd { node: node.into(), name: name.into(), ty_token: ty.into(),
+            multiplicity: Multiplicity::default(), visibility: None }
+    }
+
+    #[test]
+    fn attr_add_appends_a_bare_attribute() {
+        let b = vec![("shop/order.md".to_string(),
+            "---\ntype: uml.Class\ntitle: Order\n---\n# Order\n\n## Attributes\n- id: OrderId\n".to_string())];
+        let out = apply(&b, &[attr_add("order", "total", "Money")]).unwrap();
+        assert!(out[0].1.contains("- total: Money"));
+        assert!(out[0].1.contains("- id: OrderId"), "existing attr kept");
+    }
+
+    #[test]
+    fn attr_add_links_a_known_slug() {
+        let b = vec![
+            ("a/order.md".to_string(), "---\ntype: uml.Class\ntitle: Order\n---\n# Order\n".to_string()),
+            ("a/money.md".to_string(), "---\ntype: uml.DataType\ntitle: Money\n---\n# Money\n".to_string()),
+        ];
+        let out = apply(&b, &[attr_add("order", "total", "money")]).unwrap();
+        assert!(out[0].1.contains("- total: [Money](./money.md)"), "known slug links with target title");
+    }
+
+    #[test]
+    fn attr_add_refuses_a_duplicate_name() {
+        let b = vec![("a/order.md".to_string(),
+            "---\ntype: uml.Class\ntitle: Order\n---\n# Order\n\n## Attributes\n- id: OrderId\n".to_string())];
+        let err = apply(&b, &[attr_add("order", "id", "X")]).unwrap_err();
+        assert_eq!(err.index, 0);
+        assert_eq!(err.op, "attr.add");
+        assert!(err.reason.contains("already exists"));
+    }
+
+    #[test]
+    fn attr_add_on_missing_node_errors() {
+        let b: Bundle = vec![];
+        let err = apply(&b, &[attr_add("ghost", "x", "Y")]).unwrap_err();
+        assert!(err.reason.contains("no document 'ghost'"));
+    }
+
+    #[test]
+    fn apply_is_atomic_on_a_later_failure() {
+        let b = vec![("a/order.md".to_string(),
+            "---\ntype: uml.Class\ntitle: Order\n---\n# Order\n\n## Attributes\n- id: OrderId\n".to_string())];
+        let ops = vec![attr_add("order", "total", "Money"), attr_add("order", "id", "X")]; // 2nd is a dup
+        let err = apply(&b, &ops).unwrap_err();
+        assert_eq!(err.index, 1, "failing op index reported");
+        assert!(!b[0].1.contains("total"), "input bundle untouched; caller writes nothing");
+    }
+}
