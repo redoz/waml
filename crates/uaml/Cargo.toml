@@ -9,3 +9,11 @@ description = "Core library for parsing, serializing, and validating UAML docume
 [dependencies]
 regex.workspace = true
 pulldown-cmark.workspace = true
+serde = { workspace = true, optional = true }
+
+[features]
+default = []
+serde = ["dep:serde"]
+
+[dev-dependencies]
+serde_json = { workspace = true }

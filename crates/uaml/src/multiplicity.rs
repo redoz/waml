@@ -9,7 +9,24 @@ static RANGE_RE: LazyLock<Regex> =
 
 /// A UML multiplicity, validated against the BNF and stored in canonical string form.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(into = "String", try_from = "String"))]
 pub struct Multiplicity(String);
+
+#[cfg(feature = "serde")]
+impl From<Multiplicity> for String {
+    fn from(m: Multiplicity) -> String {
+        m.0
+    }
+}
+
+#[cfg(feature = "serde")]
+impl TryFrom<String> for Multiplicity {
+    type Error = String;
+    fn try_from(s: String) -> Result<Multiplicity, String> {
+        Multiplicity::parse(&s).ok_or_else(|| format!("invalid multiplicity '{s}'"))
+    }
+}
 
 impl Multiplicity {
     pub fn parse(s: &str) -> Option<Multiplicity> {
