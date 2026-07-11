@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import type { ModelNode, ModelEdge } from "@mc/okf";
-import { buildRfEdges, isEdgeReconnectable } from "./edges";
+import { buildRfEdges, isEdgeReconnectable, buildAnchorEdges } from "./edges";
 
 const node = (key: string, x = 0): ModelNode =>
   ({ key, title: key, type: "uml.Class", stereotypes: [], attributes: [], position: { x, y: 0 } });
@@ -75,6 +75,32 @@ describe("buildRfEdges data passthrough", () => {
   it("defaults the mode to 'all' when the arg is omitted", () => {
     const out = buildRfEdges([edge()], nodes, "compact");
     expect((out[0].data as { relLabelMode?: string }).relLabelMode).toBe("all");
+  });
+});
+
+describe("buildAnchorEdges (dashed connectors for association classes + notes)", () => {
+  it("synthesises a dashed anchor from a uml.Association node to the association it names", () => {
+    const ns: ModelNode[] = [node("order"), node("customer"), { ...node("places"), type: "uml.Association" }];
+    const es: ModelEdge[] = [edge({ id: "e1", from: "order", to: "customer", name: { ref: "places" } })];
+    const anchors = buildAnchorEdges(ns, es);
+    expect(anchors).toEqual([{ id: "ac-e1", source: "places", target: "order", type: "anchor", selectable: false }]);
+  });
+
+  it("synthesises a dashed anchor from a uml.Note to each annotated target", () => {
+    const ns: ModelNode[] = [node("order"),
+      { ...node("n"), type: "uml.Note", annotates: [{ targetKey: "order" }, { sourceKey: "order", name: "places" }] }];
+    const anchors = buildAnchorEdges(ns, []);
+    expect(anchors.map(a => `${a.source}->${a.target}`)).toEqual(["n->order", "n->order"]);
+    expect(anchors.every(a => a.type === "anchor")).toBe(true);
+  });
+
+  it("skips anchors whose endpoints are not present nodes", () => {
+    const ns: ModelNode[] = [node("order"), { ...node("places"), type: "uml.Association" }];
+    const es: ModelEdge[] = [edge({ id: "e1", from: "order", to: "missing", name: { ref: "places" } })];
+    // target present (order) so this one lands; a note pointing at a missing key is dropped
+    expect(buildAnchorEdges(ns, es)).toEqual([{ id: "ac-e1", source: "places", target: "order", type: "anchor", selectable: false }]);
+    const notes: ModelNode[] = [{ ...node("n"), type: "uml.Note", annotates: [{ targetKey: "gone" }] }];
+    expect(buildAnchorEdges(notes, [])).toEqual([]);
   });
 });
 

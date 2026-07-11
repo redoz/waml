@@ -1,51 +1,44 @@
 import { describe, it, expect } from "vitest";
 import { render } from "@testing-library/react";
-import { ReactFlow, ReactFlowProvider } from "@xyflow/react";
 import { RelEdge } from "./RelEdge";
+import type { EdgeProps } from "@xyflow/react";
+import { Position } from "@xyflow/react";
 
-const edgeTypes = { rel: RelEdge };
+const base: EdgeProps = {
+  id: "e1", source: "a", target: "b",
+  sourceX: 0, sourceY: 0, targetX: 100, targetY: 0,
+  sourcePosition: Position.Right, targetPosition: Position.Left,
+  selected: false,
+} as unknown as EdgeProps;
 
-// `EdgeLabelRenderer` portals into a DOM node that the real `<ReactFlow>`
-// renderer creates on mount (it does not exist with `<ReactFlowProvider>`
-// alone), and the edge path itself is only computed once each node's handle
-// bounds are known. jsdom has no real layout/ResizeObserver, so handle
-// measurement never happens automatically; providing static `handles` on
-// each node (matching the `NodeBase["handles"]` fallback @xyflow/react reads
-// when `internals.handleBounds` is unset) satisfies `isNodeInitialized`
-// without depending on layout. This is purely test scaffolding — it renders
-// the same `RelEdge` component the app uses, via the real edge type wiring.
-const handles = [
-  { id: null, type: "source" as const, position: "bottom" as const, x: 0, y: 0, width: 1, height: 1 },
-  { id: null, type: "target" as const, position: "top" as const, x: 0, y: 0, width: 1, height: 1 },
-];
+const draw = (data: Record<string, unknown>) =>
+  render(<svg><RelEdge {...base} data={data} /></svg>);
 
-const nodes = [
-  { id: "a", position: { x: 0, y: 0 }, data: {}, width: 100, height: 50, measured: { width: 100, height: 50 }, handles },
-  { id: "b", position: { x: 100, y: 0 }, data: {}, width: 100, height: 50, measured: { width: 100, height: 50 }, handles },
-];
-
-function renderEdge(data: any) {
-  return render(
-    <ReactFlowProvider>
-      <div style={{ width: 400, height: 400 }}>
-        <ReactFlow
-          nodes={nodes as any}
-          edges={[{ id: "e1", source: "a", target: "b", type: "rel", data }]}
-          edgeTypes={edgeTypes}
-        />
-      </div>
-    </ReactFlowProvider>,
-  );
-}
-
-describe("RelEdge multiplicity label", () => {
-  it("shows the end multiplicities when labels are on", () => {
-    const { container } = renderEdge({ kind: "associates", fromEnd: { multiplicity: "1" }, toEnd: { multiplicity: "*" }, bidirectional: false, relLabelMode: "all" });
-    expect(container.textContent).toContain("1");
-    expect(container.textContent).toContain("*");
+describe("RelEdge UML adornments", () => {
+  it("composes draws a filled diamond marker at the source", () => {
+    const { container } = draw({ kind: "composes", fromEnd: {}, toEnd: {}, bidirectional: false, relLabelMode: "hidden" });
+    const marker = container.querySelector("marker#diamond-filled-e1");
+    expect(marker).toBeTruthy();
+    expect(container.innerHTML).toContain("marker-start");
   });
-  it("renders no label div when labels are hidden", () => {
-    const { container } = renderEdge({ kind: "associates", fromEnd: { multiplicity: "1" }, toEnd: { multiplicity: "*" }, bidirectional: false, relLabelMode: "hidden" });
-    expect(container.textContent).not.toContain("→");
+  it("aggregates draws a hollow diamond", () => {
+    const { container } = draw({ kind: "aggregates", fromEnd: {}, toEnd: {}, bidirectional: false, relLabelMode: "hidden" });
+    expect(container.querySelector("marker#diamond-hollow-e1")).toBeTruthy();
+  });
+  it("specializes draws a hollow triangle at the target on a solid line", () => {
+    const { container } = draw({ kind: "specializes", fromEnd: {}, toEnd: {}, bidirectional: false, relLabelMode: "hidden" });
+    expect(container.querySelector("marker#triangle-e1")).toBeTruthy();
+    expect(container.innerHTML).not.toContain("stroke-dasharray");
+  });
+  it("implements and depends are dashed", () => {
+    const { container } = draw({ kind: "implements", fromEnd: {}, toEnd: {}, bidirectional: false, relLabelMode: "hidden" });
+    expect(container.innerHTML).toContain("stroke-dasharray");
+  });
+  it("associates puts an arrowhead only on navigable ends", () => {
+    const one = draw({ kind: "associates", fromEnd: {}, toEnd: { navigable: true }, bidirectional: false, relLabelMode: "hidden" });
+    expect(one.container.innerHTML).toContain("marker-end");
+    expect(one.container.innerHTML).not.toContain("marker-start");
+    const both = draw({ kind: "associates", fromEnd: { navigable: true }, toEnd: { navigable: true }, bidirectional: true, relLabelMode: "hidden" });
+    expect(both.container.innerHTML).toContain("marker-start");
   });
 });

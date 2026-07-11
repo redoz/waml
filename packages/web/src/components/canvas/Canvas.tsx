@@ -44,7 +44,8 @@ import { ClearCanvasDialog } from "../ClearCanvasDialog";
 import { Dock, type Tool } from "./Dock";
 import { OkfNode } from "./nodes/OkfNode";
 import { RelEdge } from "./RelEdge";
-import { buildRfEdges, isEdgeReconnectable } from "./edges";
+import { AnchorEdge } from "./AnchorEdge";
+import { buildRfEdges, buildAnchorEdges, isEdgeReconnectable } from "./edges";
 import { erdAwareNodeSize } from "./layoutSize";
 import { Inspector } from "../inspector/Inspector";
 import { RightRail } from "../rail/RightRail";
@@ -131,7 +132,7 @@ const SHEET_TITLES: Record<NonNullable<ReturnType<typeof useRightPanel>["active"
 
 // ── Inner canvas (needs ReactFlowProvider context) ────────────────────────────
 const nodeTypes = { okf: OkfNode };
-const edgeTypes = { rel: RelEdge };
+const edgeTypes = { rel: RelEdge, anchor: AnchorEdge };
 
 function CanvasInner() {
   const graph = useSyncExternalStore(store.subscribe, store.get);
@@ -181,7 +182,12 @@ function CanvasInner() {
   useEffect(() => {
     setRfNodes(graph.nodes.map(n => toRFNode(n, viewMode)));
   }, [graph.nodes, viewMode, setRfNodes]);
-  useEffect(() => { setRfEdges(buildRfEdges(graph.edges, graph.nodes, viewMode, relLabelMode)); }, [graph.edges, graph.nodes, viewMode, relLabelMode, setRfEdges]);
+  useEffect(() => {
+    setRfEdges([
+      ...buildRfEdges(graph.edges, graph.nodes, viewMode, relLabelMode),
+      ...buildAnchorEdges(graph.nodes, graph.edges),
+    ]);
+  }, [graph.edges, graph.nodes, viewMode, relLabelMode, setRfEdges]);
 
   // Mark only the selected relationship as reconnectable so dragging an endpoint
   // moves the line the user picked (not whichever overlapping edge RF would grab),

@@ -52,3 +52,29 @@ export function buildRfEdges(edges: ModelEdge[], nodes: ModelNode[], viewMode: V
   const byKey = new Map(nodes.map(n => [n.key, n]));
   return edges.map(e => compactEdge(e, edgeSides(byKey.get(e.from), byKey.get(e.to), e, viewMode), relLabelMode));
 }
+
+// Synthesise the dashed connectors that tie annotation elements to what they
+// annotate: an association-class box to the association line it names, and a
+// uml.Note to each element it annotates. RF edges attach only to nodes, so an
+// edge-midpoint anchor is approximated by anchoring to the association's source
+// node. Endpoints that reference missing nodes are dropped (never error).
+export function buildAnchorEdges(nodes: ModelNode[], edges: ModelEdge[]): Edge[] {
+  const has = new Set(nodes.map(n => n.key));
+  const out: Edge[] = [];
+  const anchor = (id: string, source: string, target: string): void => {
+    if (has.has(source) && has.has(target)) out.push({ id, source, target, type: "anchor", selectable: false });
+  };
+  // Association class → the association line it names (approx: the association's source node).
+  for (const e of edges) {
+    if (e.name && typeof e.name === "object") anchor(`ac-${e.id}`, e.name.ref, e.from);
+  }
+  // uml.Note → each annotated element.
+  for (const n of nodes) {
+    if (n.type !== "uml.Note") continue;
+    (n.annotates ?? []).forEach((a, i) => {
+      const target = "targetKey" in a && !("sourceKey" in a) ? a.targetKey : (a as { sourceKey: string }).sourceKey;
+      anchor(`note-${n.key}-${i}`, n.key, target);
+    });
+  }
+  return out;
+}
