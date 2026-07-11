@@ -1,6 +1,6 @@
 //! Native (non-wasm) tests over the pure `*_json` cores. The `#[wasm_bindgen]`
 //! surface is a thin serde-wasm-bindgen shell around these, exercised in JS.
-use uaml_wasm::{build_model_json, validate_json};
+use uaml_wasm::{apply_ops_bundle, build_model_json, validate_json};
 
 fn bundle() -> Vec<(String, String)> {
     vec![(
@@ -31,4 +31,29 @@ fn validate_json_flags_unresolved_relationship_target() {
         arr.iter().any(|d| d["code"] == "unresolved-target"),
         "expected an unresolved-target diagnostic, got: {json}"
     );
+}
+
+#[test]
+fn apply_ops_adds_attribute() {
+    let src = vec![(
+        "m/a.md".to_string(),
+        "---\ntype: uml.Class\ntitle: A\n---\n# A\n".to_string(),
+    )];
+    let ops = r#"[{"op":"attr.add","node":"a","name":"id","ty":"AId"}]"#;
+    let out = apply_ops_bundle(&src, ops).unwrap();
+    let a = &out.iter().find(|(p, _)| p == "m/a.md").unwrap().1;
+    assert!(a.contains("## Attributes"), "got:\n{a}");
+    assert!(a.contains("- id: AId"), "got:\n{a}");
+}
+
+#[test]
+fn apply_ops_surfaces_op_errors() {
+    let src = vec![(
+        "m/a.md".to_string(),
+        "---\ntype: uml.Class\ntitle: A\n---\n# A\n".to_string(),
+    )];
+    // attr.add on a non-existent node ⇒ Err, message carries the op index.
+    let ops = r#"[{"op":"attr.add","node":"ghost","name":"id","ty":"AId"}]"#;
+    let err = apply_ops_bundle(&src, ops).unwrap_err();
+    assert!(err.starts_with("op 0:"), "got: {err}");
 }

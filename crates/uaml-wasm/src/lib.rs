@@ -13,6 +13,22 @@ pub fn validate_json(bundle: &[(String, String)]) -> String {
     serde_json::to_string(&uaml::validate::validate(bundle)).unwrap()
 }
 
+/// Apply a JSON `OpDto[]` to a bundle, returning the edited bundle (or a
+/// `op {index}: {reason}` error string).
+pub fn apply_ops_bundle(
+    bundle: &[(String, String)],
+    ops_json: &str,
+) -> Result<Vec<(String, String)>, String> {
+    let dtos: Vec<uaml_ops_dto::OpDto> =
+        serde_json::from_str(ops_json).map_err(|e| e.to_string())?;
+    let ops = dtos_to_ops(dtos)?;
+    uaml::ops::apply(bundle, &ops).map_err(|e| format!("op {}: {}", e.index, e.reason))
+}
+
+fn dtos_to_ops(dtos: Vec<uaml_ops_dto::OpDto>) -> Result<Vec<uaml::ops::Op>, String> {
+    dtos.into_iter().map(|d| d.to_op()).collect()
+}
+
 // ── wasm-bindgen surface (structured JS values via serde-wasm-bindgen) ────────
 
 #[wasm_bindgen]
@@ -34,4 +50,15 @@ pub fn validate(bundle: JsValue) -> Result<JsValue, JsValue> {
     let b: Vec<(String, String)> = serde_wasm_bindgen::from_value(bundle)?;
     let diags = uaml::validate::validate(&b);
     Ok(serde_wasm_bindgen::to_value(&diags)?)
+}
+
+/// `bundle`: a `[path, markdown][]`; `ops`: an `OpDto[]`. Returns the edited bundle.
+#[wasm_bindgen]
+pub fn apply_ops(bundle: JsValue, ops: JsValue) -> Result<JsValue, JsValue> {
+    let b: Vec<(String, String)> = serde_wasm_bindgen::from_value(bundle)?;
+    let dtos: Vec<uaml_ops_dto::OpDto> = serde_wasm_bindgen::from_value(ops)?;
+    let parsed = dtos_to_ops(dtos).map_err(|e| JsValue::from_str(&e))?;
+    let out = uaml::ops::apply(&b, &parsed)
+        .map_err(|e| JsValue::from_str(&format!("op {}: {}", e.index, e.reason)))?;
+    Ok(serde_wasm_bindgen::to_value(&out)?)
 }
