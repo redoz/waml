@@ -12,6 +12,9 @@ export default tseslint.config(
       "**/.superpowers/**",
       "packages/okf/test/fixtures/**",
       "packages/web/public/**",
+      // Vendored wasm-bindgen glue (browser globals, machine-generated).
+      "packages/okf/src/generated/**",
+      "**/pkg/**",
     ],
   },
   js.configs.recommended,
@@ -39,6 +42,12 @@ export default tseslint.config(
   // Node code (shared lib)
   {
     files: ["packages/okf/**/*.ts"],
+    languageOptions: { globals: { ...globals.node } },
+  },
+
+  // Node build scripts.
+  {
+    files: ["scripts/**/*.mjs"],
     languageOptions: { globals: { ...globals.node } },
   },
 

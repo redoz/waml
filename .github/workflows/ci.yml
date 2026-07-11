@@ -36,6 +36,26 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install wasm-pack
+        uses: jetli/wasm-pack-action@v0.4.0
+
+      # The Rust crates are the source of truth for parse/model/validate/ops.
+      - name: Cargo test
+        run: cargo test --workspace
+
+      # Regenerate the inlined wasm module so a stale commit can't hide a drift
+      # between the Rust core and the checked-in packages/okf/src/generated files.
+      - name: Build wasm
+        run: pnpm build:wasm
+
       - name: Lint
         run: pnpm lint
 
