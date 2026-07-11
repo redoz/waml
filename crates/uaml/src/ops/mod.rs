@@ -283,6 +283,26 @@ pub fn referrers(work: &Bundle, slug: &str) -> Vec<String> {
                 }
                 block.groups.iter().any(|g| group_has(g, slug))
             }
+            Section::Layout(stmts) => {
+                fn operand_refs(op: &crate::syntax::Operand, slug: &str) -> bool {
+                    use crate::syntax::{NameRef, OperandRef};
+                    match &op.ref_ {
+                        OperandRef::Name(NameRef::Link { slug: rs, .. }) => rs == slug,
+                        OperandRef::Name(NameRef::Bare(s)) => s == slug,
+                        OperandRef::InlineGroup { items, .. } => items.iter().any(|it| operand_refs(it, slug)),
+                        OperandRef::Paren(inner) => operand_refs(inner, slug),
+                    }
+                }
+                stmts.iter().any(|stmt| match stmt {
+                    crate::syntax::LayoutStatement::Standalone(op) => operand_refs(op, slug),
+                    crate::syntax::LayoutStatement::Placement { operands, .. } => {
+                        operands.iter().any(|op| operand_refs(op, slug))
+                    }
+                    crate::syntax::LayoutStatement::Alignment { left, right } => {
+                        operand_refs(&left.operand, slug) || operand_refs(&right.operand, slug)
+                    }
+                })
+            }
             _ => false,
         });
         if hit {
@@ -820,5 +840,28 @@ mod tests {
         let b = vec![("a/lonely.md".to_string(), "---\ntype: uml.Class\ntitle: Lonely\n---\n# Lonely\n".to_string())];
         let out = apply(&b, &[Op::NodeRm { slug:"lonely".into(), cascade: false }]).unwrap();
         assert!(out.is_empty());
+    }
+
+    #[test]
+    fn referrers_includes_layout_link_reference() {
+        let b = vec![
+            ("a/order.md".to_string(), "---\ntype: uml.Class\ntitle: Order\n---\n# Order\n".to_string()),
+            ("a/diagram.md".to_string(),
+             "---\ntype: Diagram\ntitle: D\nprofile: uml-domain\n---\n# D\n\n## Layout\n- [Order](./order.md) with collapsed\n".to_string()),
+        ];
+        let refs = referrers(&b, "order");
+        assert!(refs.contains(&"diagram".to_string()), "diagram referencing 'order' only via a Layout link must be reported: {refs:?}");
+    }
+
+    #[test]
+    fn referrers_includes_layout_bare_reference() {
+        let b = vec![
+            ("a/order.md".to_string(), "---\ntype: uml.Class\ntitle: Order\n---\n# Order\n".to_string()),
+            ("a/customer.md".to_string(), "---\ntype: uml.Class\ntitle: Customer\n---\n# Customer\n".to_string()),
+            ("a/diagram.md".to_string(),
+             "---\ntype: Diagram\ntitle: D\nprofile: uml-domain\n---\n# D\n\n## Layout\n- order left of customer\n".to_string()),
+        ];
+        let refs = referrers(&b, "order");
+        assert!(refs.contains(&"diagram".to_string()), "diagram referencing 'order' only via a bare Layout operand must be reported: {refs:?}");
     }
 }

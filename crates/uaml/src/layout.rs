@@ -358,7 +358,9 @@ fn parse_ref(cur: &mut Cur) -> Option<OperandRef> {
                 let axis = if lw == "column" { Axis::Column } else { Axis::Row };
                 cur.bump();
                 if !cur.eat_word("of") {
-                    // Not a group; backtrack and treat as bare word
+                    // `column`/`row` are reserved keywords: a bare occurrence not
+                    // followed by `of` is not a valid operand (no backtrack to a
+                    // bare-word reading — see render_bare_name, which always quotes them).
                     return None;
                 }
                 let items = parse_operand_list(cur)?;
