@@ -67,9 +67,11 @@ depth. The heading declares *membership only* — no visual treatment rides on i
 
 - Groups and elements are **operands of the same kind** — anything you can say
   about an element you can say about a group.
-- **Member list order within a group implies a top-to-bottom stack** (a column)
-  by default. An `as row` / `as column` hint (see Render hints) flips the axis;
-  an explicit relation overrides individual placements.
+- **By default a group's members just clump together** — the solver packs them
+  compactly with no imposed axis or order. Member *list order* carries no layout
+  meaning until the group is given an axis. An `as row` / `as column` hint (see
+  Render hints) lays members out in list order along that axis; explicit
+  relations position individual members.
 - A diagram with no group headings is a single implicit top-level group.
 
 ### 2. Layout — the relation language
@@ -141,11 +143,11 @@ targeted by-reference on their own `## Layout` line (`Orders with frame`); an
 **anonymous** inline group can *only* be treated inline, since it has no name to
 reference.
 
-- **axis** (groups only): `as row` · `as column` — lays the group's members
-  along that axis in list order. Default is `as column` (the list-order stack);
-  this is the only way to set the internal axis of a *named* heading group, since
-  its members aren't restated inline. `Users as row` flows Customer, Account
-  horizontally instead of stacking them.
+- **axis** (groups only): `as row` · `as column` — lays the group's members out
+  in **list order** along that axis. With **no axis hint the members just clump**
+  (the default). This is the only way to set the internal axis of a *named*
+  heading group, since its members aren't restated inline. `Users as column`
+  stacks Customer over Account; `Users as row` flows them horizontally.
 - **shape** (groups only): `frame` (visible titled box) · `box` (square bounding
   box, invisible) · `shrink` (shrink-wrapped hull, invisible). **Default =
   invisible shrink-wrap** — a group clusters its members without drawing unless
@@ -251,16 +253,18 @@ profile: uml-domain
 - [OrderStatus](./order-status.md)
 
 ## Layout
-- Users with frame
+- Users with frame and as column
 - Users left of Orders
 - top of Users aligned with top of Orders
 - column of Order, OrderLine, OrderStatus with roomy
 - collapse [Money](./money.md)
 ```
 
-Renders: a titled **Users** frame (Customer stacked on Account by list order) to
-the left of the **Orders** group; the two groups' tops aligned; Orders' three
-members in a roomy column; Money shown as a reference chip.
+Renders: a titled **Users** frame with Customer stacked over Account (`as column`
+imposes the list-order stack) to the left of the **Orders** group; the two
+groups' tops aligned; Orders' three members in a roomy column; Money shown as a
+reference chip. Without the `as column` hint, Customer and Account would simply
+clump inside the frame.
 
 ## Integration with existing spec
 
