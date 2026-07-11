@@ -1,7 +1,7 @@
 use super::{find_doc, slug_of, Bundle, OpError};
 use crate::parse::parse_document;
 use crate::serialize::serialize_document;
-use crate::syntax::{Document, ParsedName, Section};
+use crate::syntax::{Document, NameRef, Operand, OperandRef, ParsedName, Section};
 
 /// Swap the basename of `path` to `to.md`, preserving any directory prefix.
 fn replace_basename(path: &str, to: &str) -> String {
@@ -55,7 +55,54 @@ fn rename_in_doc(doc: &mut Document, from: &str, to: &str) -> bool {
                     rename_in_group(g, from, to, &mut changed);
                 }
             }
+            Section::Layout(stmts) => {
+                for stmt in stmts {
+                    match stmt {
+                        crate::syntax::LayoutStatement::Standalone(op) => {
+                            changed |= rename_in_operand(op, from, to);
+                        }
+                        crate::syntax::LayoutStatement::Placement { operands, .. } => {
+                            for op in operands {
+                                changed |= rename_in_operand(op, from, to);
+                            }
+                        }
+                        crate::syntax::LayoutStatement::Alignment { left, right } => {
+                            changed |= rename_in_operand(&mut left.operand, from, to);
+                            changed |= rename_in_operand(&mut right.operand, from, to);
+                        }
+                    }
+                }
+            }
             _ => {}
+        }
+    }
+    changed
+}
+
+/// Repoint a `from`-slug reference inside one layout operand to `to`, recursing
+/// through inline groups and parens. Returns whether anything changed.
+fn rename_in_operand(op: &mut Operand, from: &str, to: &str) -> bool {
+    let mut changed = false;
+    match &mut op.ref_ {
+        OperandRef::Name(NameRef::Link { slug, .. }) => {
+            if slug == from {
+                *slug = to.to_string();
+                changed = true;
+            }
+        }
+        OperandRef::Name(NameRef::Bare(s)) => {
+            if s == from {
+                *s = to.to_string();
+                changed = true;
+            }
+        }
+        OperandRef::InlineGroup { items, .. } => {
+            for item in items {
+                changed |= rename_in_operand(item, from, to);
+            }
+        }
+        OperandRef::Paren(inner) => {
+            changed |= rename_in_operand(inner, from, to);
         }
     }
     changed
@@ -132,5 +179,43 @@ mod tests {
         b.push(("shop/line-item.md".to_string(), "---\ntype: uml.Class\ntitle: LineItem\n---\n# LineItem\n".to_string()));
         let err = apply(&b, &[Op::NodeRename { from: "order-line".into(), to: "line-item".into() }]).unwrap_err();
         assert!(err.reason.contains("already exists"));
+    }
+
+    #[test]
+    fn rename_rewrites_layout_operand_links() {
+        let b = vec![
+            ("shop/order.md".to_string(),
+             "---\ntype: uml.Class\ntitle: Order\n---\n# Order\n".to_string()),
+            ("shop/diagram.md".to_string(),
+             "---\ntype: Diagram\ntitle: D\nprofile: uml-domain\n---\n# D\n\n## Members\n- [Order](./order.md)\n\n## Layout\n- [Order](./order.md) with collapsed\n".to_string()),
+        ];
+        let out = apply(&b, &[Op::NodeRename { from: "order".into(), to: "invoice".into() }]).unwrap();
+
+        let diagram = &out.iter().find(|(p, _)| p == "shop/diagram.md").unwrap().1;
+        assert!(diagram.contains("## Layout\n- [Order](./invoice.md) with collapsed"), "layout link repointed: {diagram}");
+        assert!(!diagram.contains("(./order.md)"), "no stale layout link left: {diagram}");
+
+        let diags = crate::validate::validate(&out);
+        assert!(
+            diags.iter().all(|d| d.code != crate::diagnostic::DiagCode::UnresolvedLayoutRef),
+            "renamed bundle must validate cleanly: {diags:?}"
+        );
+    }
+
+    #[test]
+    fn rename_rewrites_bare_layout_operand() {
+        let b = vec![
+            ("shop/order.md".to_string(),
+             "---\ntype: uml.Class\ntitle: Order\n---\n# Order\n".to_string()),
+            ("shop/customer.md".to_string(),
+             "---\ntype: uml.Class\ntitle: Customer\n---\n# Customer\n".to_string()),
+            ("shop/diagram.md".to_string(),
+             "---\ntype: Diagram\ntitle: D\nprofile: uml-domain\n---\n# D\n\n## Members\n- [Order](./order.md)\n- [Customer](./customer.md)\n\n## Layout\n- order left of customer\n".to_string()),
+        ];
+        let out = apply(&b, &[Op::NodeRename { from: "order".into(), to: "invoice".into() }]).unwrap();
+
+        let diagram = &out.iter().find(|(p, _)| p == "shop/diagram.md").unwrap().1;
+        assert!(diagram.contains("invoice left of customer"), "bare layout operand repointed: {diagram}");
+        assert!(!diagram.contains("order left of"), "no stale bare layout operand left: {diagram}");
     }
 }
