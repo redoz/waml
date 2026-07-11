@@ -7,6 +7,14 @@ use crate::grammar::{
 };
 use crate::syntax::{Document, Section};
 
+#[allow(unused_imports)]
+use std::collections::{HashMap, HashSet};
+
+#[allow(unused_imports)]
+use crate::model::{
+    Attribute, ClassifierType, Diagram, Edge, Member, Model, Node, RenderHints,
+};
+
 struct Head {
     title: String,
     heading_start: usize,
@@ -114,6 +122,90 @@ pub fn split_bundle(text: &str) -> Vec<(String, String)> {
     out
 }
 
+/// A classifier's filename slug (the node key): last path segment, `.md` stripped.
+fn doc_slug(path: &str) -> String {
+    let seg = path.rsplit(['/', '\\']).next().unwrap_or(path);
+    seg.strip_suffix(".md").unwrap_or(seg).to_string()
+}
+
+struct ParsedDoc {
+    slug: String,
+    ty: ClassifierType,
+    doc: Document,
+}
+
+fn parse_bundle(bundle: &[(String, String)]) -> Vec<ParsedDoc> {
+    bundle
+        .iter()
+        .map(|(path, text)| {
+            let doc = parse_document(text);
+            let ty = ClassifierType::parse(doc.frontmatter.get_str("type").unwrap_or("uml.Class"));
+            ParsedDoc { slug: doc_slug(path), ty, doc }
+        })
+        .collect()
+}
+
+fn resolve_attr(attr: &Attribute, keyset: &HashSet<&str>) -> Attribute {
+    let mut a = attr.clone();
+    if let Some(slug) = &a.ty.ref_ {
+        if !keyset.contains(slug.as_str()) {
+            a.ty.ref_ = None; // degrade to a bare token
+        }
+    }
+    a
+}
+
+fn build_node(p: &ParsedDoc, keyset: &HashSet<&str>) -> Node {
+    let fm = &p.doc.frontmatter;
+    let title = fm.get_str("title").map(String::from).unwrap_or_else(|| {
+        if p.doc.title.is_empty() { "Untitled".to_string() } else { p.doc.title.clone() }
+    });
+    let mut attributes = Vec::new();
+    let mut values = Vec::new();
+    let mut body = None;
+    for s in &p.doc.sections {
+        match s {
+            Section::Attributes(a) => attributes = a.iter().map(|x| resolve_attr(x, keyset)).collect(),
+            Section::Values(v) => values = v.clone(),
+            Section::Body(b) => body = Some(b.clone()),
+            _ => {}
+        }
+    }
+    Node {
+        key: p.slug.clone(),
+        ty: p.ty.clone(),
+        title,
+        stereotypes: fm.get_string_list("stereotype"),
+        abstract_: fm.get_bool("abstract") == Some(true),
+        description: fm.get_str("description").map(String::from),
+        attributes,
+        values,
+        body,
+        annotates: Vec::new(), // deferred: uml.Note anchors
+    }
+}
+
+pub fn build_model(bundle: &[(String, String)]) -> Model {
+    let parsed = parse_bundle(bundle);
+    let classifiers: Vec<&ParsedDoc> =
+        parsed.iter().filter(|p| p.ty != ClassifierType::Diagram).collect();
+    let keyset: HashSet<&str> = classifiers.iter().map(|p| p.slug.as_str()).collect();
+
+    let nodes = classifiers.iter().map(|p| build_node(p, &keyset)).collect();
+    let edges: Vec<Edge> = build_edges(&classifiers, &keyset);
+    let diagrams: Vec<Diagram> = build_diagrams(&parsed, &keyset);
+
+    Model { nodes, edges, diagrams }
+}
+
+// Filled in by Tasks 2 and 3; stubs keep the crate compiling now.
+fn build_edges(_classifiers: &[&ParsedDoc], _keyset: &HashSet<&str>) -> Vec<Edge> {
+    Vec::new()
+}
+fn build_diagrams(_parsed: &[ParsedDoc], _keyset: &HashSet<&str>) -> Vec<Diagram> {
+    Vec::new()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -175,5 +267,48 @@ mod tests {
         let parts = split_bundle("# Just one doc\n");
         assert_eq!(parts.len(), 1);
         assert_eq!(parts[0].0, "pasted/doc.md");
+    }
+}
+
+#[cfg(test)]
+mod model_tests {
+    use super::*;
+    use crate::model::{ClassifierType, UmlMetaclass};
+
+    fn bundle() -> Vec<(String, String)> {
+        vec![
+            ("shop/order.md".into(),
+             "---\ntype: uml.Class\nstereotype: [aggregateRoot, entity]\ntitle: Order\n---\n# Order\n\n## Attributes\n- id: OrderId\n- status: [OrderStatus](./order-status.md) [0..1]\n- ghost: [Missing](./missing.md)\n".into()),
+            ("shop/order-status.md".into(),
+             "---\ntype: uml.Enum\ntitle: OrderStatus\n---\n# OrderStatus\n\n## Values\n- DRAFT\n- PLACED\n".into()),
+        ]
+    }
+
+    #[test]
+    fn builds_classifier_nodes() {
+        let m = build_model(&bundle());
+        assert_eq!(m.nodes.len(), 2);
+        let order = m.node("order").unwrap();
+        assert_eq!(order.title, "Order");
+        assert_eq!(order.ty, ClassifierType::Uml(UmlMetaclass::Class));
+        assert_eq!(order.stereotypes, vec!["aggregateRoot", "entity"]);
+        assert_eq!(order.attributes.len(), 3);
+    }
+
+    #[test]
+    fn resolves_and_degrades_attribute_refs() {
+        let m = build_model(&bundle());
+        let order = m.node("order").unwrap();
+        // resolvable link keeps its ref
+        assert_eq!(order.attributes[1].ty.ref_.as_deref(), Some("order-status"));
+        // unresolvable link degrades to a bare token (ref dropped), name preserved
+        assert_eq!(order.attributes[2].ty.name, "Missing");
+        assert_eq!(order.attributes[2].ty.ref_, None);
+    }
+
+    #[test]
+    fn collects_enum_values() {
+        let m = build_model(&bundle());
+        assert_eq!(m.node("order-status").unwrap().values, vec!["DRAFT", "PLACED"]);
     }
 }
