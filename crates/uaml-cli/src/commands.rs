@@ -151,4 +151,20 @@ mod tests {
         assert!(plan[0].skipped);
         assert!(!plan[0].changed);
     }
+
+    #[test]
+    fn skips_a_file_with_pre_section_prose_instead_of_dropping_it() {
+        // Regression: prose between the H1 title and the first `## ` section
+        // used to be silently dropped by parse -> serialize with no
+        // diagnostic, so `fmt` would rewrite the file and delete it. Now
+        // `validate` flags it as an Error, so `plan_fmt` must skip the file
+        // and leave its content byte-for-byte untouched.
+        let original = "---\ntype: uml.Class\ntitle: A\n---\n# A\n\nDo not lose this sentence.\n\n## Attributes\n- id: AId\n";
+        let files = vec![("x/a.md".to_string(), original.to_string())];
+        let plan = plan_fmt(&files);
+        assert_eq!(plan.len(), 1);
+        assert!(plan[0].skipped, "expected the file to be skipped, not silently rewritten");
+        assert!(!plan[0].changed);
+        assert_eq!(plan[0].formatted, original, "skipped content must be byte-for-byte untouched");
+    }
 }

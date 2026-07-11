@@ -89,4 +89,15 @@ mod tests {
         assert!(out.contains("- id: OrderId\n"));
         assert!(out.contains("- status: [OrderStatus](./order-status.md) [0..1]"));
     }
+
+    #[test]
+    fn serialize_is_a_semantic_fixpoint_with_nested_bracket_frontmatter() {
+        // Regression for the fmt panic: a nested-bracket frontmatter value
+        // (e.g. `stereotype: [a, [b]]`) must serialize without panicking, and
+        // the whole document must still be a semantic fixpoint.
+        let text = "---\ntype: uml.Class\ntitle: Order\nstereotype: [aggregateRoot, [nested]]\n---\n# Order\n\n## Attributes\n- id: OrderId\n";
+        let once = serialize_document(&parse_document(text));
+        let twice = serialize_document(&parse_document(&once));
+        assert_eq!(once, twice);
+    }
 }

@@ -97,7 +97,11 @@ pub fn parse_frontmatter(text: &str) -> (Frontmatter, String) {
     (Frontmatter { entries }, caps[2].to_string())
 }
 
-fn scalar(v: &FmValue) -> String {
+/// Render any `FmValue` in its canonical form. Total over parsed input: a
+/// `List` renders each item recursively (so a nested `List` renders in its
+/// own bracket form), so this never panics on anything `parse_value` can
+/// produce — including the nested-bracket case (`x: [a, [b]]`).
+fn render_value(v: &FmValue) -> String {
     match v {
         FmValue::Num(n) => {
             if n.fract() == 0.0 {
@@ -108,20 +112,17 @@ fn scalar(v: &FmValue) -> String {
         }
         FmValue::Bool(b) => b.to_string(),
         FmValue::Str(s) => format!("\"{}\"", s.replace('\\', "\\\\").replace('"', "\\\"")),
-        FmValue::List(_) => unreachable!("lists are not scalars"),
+        FmValue::List(items) => {
+            let inner = items.iter().map(render_value).collect::<Vec<_>>().join(", ");
+            format!("[{inner}]")
+        }
     }
 }
 
 pub fn render_frontmatter(fm: &Frontmatter) -> String {
     fm.entries
         .iter()
-        .map(|(k, v)| match v {
-            FmValue::List(items) => {
-                let inner = items.iter().map(scalar).collect::<Vec<_>>().join(", ");
-                format!("{k}: [{inner}]")
-            }
-            other => format!("{k}: {}", scalar(other)),
-        })
+        .map(|(k, v)| format!("{k}: {}", render_value(v)))
         .collect::<Vec<_>>()
         .join("\n")
 }
@@ -162,5 +163,17 @@ mod tests {
             render_frontmatter(&fm),
             "type: \"uml.Class\"\nstereotype: [\"a\", \"b\"]\ntitle: \"Order\""
         );
+    }
+
+    #[test]
+    fn render_does_not_panic_on_nested_list() {
+        // `x: [a, [b]]` parses to a nested List value (parse_value recurses on
+        // comma-split bracket items). render_frontmatter/scalar() must be total
+        // over parsed input — it must render this, not panic.
+        let text = "---\nx: [a, [b]]\n---\n";
+        let (fm, _) = parse_frontmatter(text);
+        let rendered = render_frontmatter(&fm);
+        let (fm2, _) = parse_frontmatter(&format!("---\n{rendered}\n---\n"));
+        assert_eq!(fm, fm2, "round-trip must preserve the nested structure");
     }
 }
