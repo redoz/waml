@@ -1,6 +1,7 @@
 #![cfg(feature = "serde")]
 //! Pins the JSON shape of `Model` to the TS field names in
 //! `packages/okf/src/types.ts`. If a rename drifts, this fails.
+use uaml::diagnostic::{DiagCode, Diagnostic, Severity};
 use uaml::model::{AssocName, Visibility};
 use uaml::multiplicity::Multiplicity;
 use uaml::parse::build_model;
@@ -63,5 +64,21 @@ fn assoc_name_matches_ts_union_shape() {
     assert_eq!(
         serde_json::to_value(AssocName::Assoc("employment".into())).unwrap(),
         serde_json::json!({ "ref": "employment" })
+    );
+}
+
+#[test]
+fn diagnostic_serializes_with_kebab_code_and_lowercase_severity() {
+    let d = Diagnostic::new(DiagCode::UnresolvedTarget, "gone", "a.md", 3);
+    let v = serde_json::to_value(&d).unwrap();
+    assert_eq!(v["severity"], "error");
+    assert_eq!(v["code"], "unresolved-target");
+    assert_eq!(v["message"], "gone");
+    assert_eq!(v["file"], "a.md");
+    assert_eq!(v["line"], 3);
+    // Severity round-trips as its lowercase string.
+    assert_eq!(
+        serde_json::to_value(Severity::Warning).unwrap(),
+        serde_json::json!("warning")
     );
 }
