@@ -95,8 +95,8 @@ if (sharedGraph) clearSharedModelFromUrl();
 const isFirstVisit = !templateInitial && !sharedGraph && persistedGraph === undefined;
 
 // ── helpers to convert between model and RF types ───────────────────────────
-function toRFNode(n: ModelNode, viewMode: ViewMode): Node {
-  return { id: n.key, type: "okf", position: n.position, data: { ...n, _viewMode: viewMode } as unknown as Record<string, unknown> };
+function toRFNode(n: ModelNode, viewMode: ViewMode, profileName: string): Node {
+  return { id: n.key, type: "okf", position: n.position, data: { ...n, _viewMode: viewMode, _profile: profileName } as unknown as Record<string, unknown> };
 }
 
 // ── Dagre auto-layout ────────────────────────────────────────────────────────
@@ -180,7 +180,7 @@ function CanvasInner() {
   const [rfEdges, setRfEdges, onRfEdgesChange] = useEdgesState<Edge>([]);
 
   useEffect(() => {
-    setRfNodes(graph.nodes.map(n => toRFNode(n, viewMode)));
+    setRfNodes(graph.nodes.map(n => toRFNode(n, viewMode, "uml-domain")));
   }, [graph.nodes, viewMode, setRfNodes]);
   useEffect(() => {
     setRfEdges([
