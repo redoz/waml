@@ -198,10 +198,78 @@ pub fn build_model(bundle: &[(String, String)]) -> Model {
     Model { nodes, edges, diagrams }
 }
 
-// Filled in by Tasks 2 and 3; stubs keep the crate compiling now.
-fn build_edges(_classifiers: &[&ParsedDoc], _keyset: &HashSet<&str>) -> Vec<Edge> {
-    Vec::new()
+use crate::model::{AssocName, RelationshipKind};
+use crate::syntax::ParsedName;
+
+fn build_edges(classifiers: &[&ParsedDoc], keyset: &HashSet<&str>) -> Vec<Edge> {
+    let mut edges: Vec<Edge> = Vec::new();
+    let mut assoc_pair: HashMap<(String, String), usize> = HashMap::new();
+    let mut seen_other: HashSet<(String, String, String)> = HashSet::new();
+
+    for p in classifiers {
+        let from = &p.slug;
+        for s in &p.doc.sections {
+            let Section::Relationships(rels) = s else { continue };
+            for r in rels {
+                let to = &r.target_slug;
+                if !keyset.contains(to.as_str()) || to == from {
+                    continue;
+                }
+                let name = match &r.name {
+                    None => None,
+                    Some(ParsedName::Label(l)) => Some(AssocName::Label(l.clone())),
+                    Some(ParsedName::Ref { slug, .. }) => {
+                        keyset.contains(slug.as_str()).then(|| AssocName::Assoc(slug.clone()))
+                    }
+                };
+
+                if r.kind == RelationshipKind::Associates {
+                    let mut pair = [from.clone(), to.clone()];
+                    pair.sort();
+                    let key = (pair[0].clone(), pair[1].clone());
+                    if let Some(&idx) = assoc_pair.get(&key) {
+                        let e = &mut edges[idx];
+                        e.bidirectional = true;
+                        e.from_end.navigable = Some(true);
+                        e.to_end.navigable = Some(true);
+                        if e.name.is_none() && name.is_some() {
+                            e.name = name;
+                        }
+                        continue;
+                    }
+                    let mut to_end = r.to_end.clone();
+                    to_end.navigable = Some(true);
+                    edges.push(Edge {
+                        source: from.clone(),
+                        target: to.clone(),
+                        kind: RelationshipKind::Associates,
+                        name,
+                        from_end: r.from_end.clone(),
+                        to_end,
+                        bidirectional: false,
+                    });
+                    assoc_pair.insert(key, edges.len() - 1);
+                } else {
+                    let dedup = (r.kind.as_str().to_string(), from.clone(), to.clone());
+                    if !seen_other.insert(dedup) {
+                        continue;
+                    }
+                    edges.push(Edge {
+                        source: from.clone(),
+                        target: to.clone(),
+                        kind: r.kind,
+                        name,
+                        from_end: r.from_end.clone(),
+                        to_end: r.to_end.clone(),
+                        bidirectional: false,
+                    });
+                }
+            }
+        }
+    }
+    edges
 }
+
 fn build_diagrams(_parsed: &[ParsedDoc], _keyset: &HashSet<&str>) -> Vec<Diagram> {
     Vec::new()
 }
@@ -310,5 +378,44 @@ mod model_tests {
     fn collects_enum_values() {
         let m = build_model(&bundle());
         assert_eq!(m.node("order-status").unwrap().values, vec!["DRAFT", "PLACED"]);
+    }
+
+    fn rel_bundle() -> Vec<(String, String)> {
+        vec![
+            ("a/order.md".into(),
+             "---\ntype: uml.Class\ntitle: Order\n---\n# Order\n\n## Relationships\n- composes [OrderLine](./order-line.md): 1 to 1..* lines\n- associates [Customer](./customer.md): 1 to 1\n".into()),
+            ("a/order-line.md".into(),
+             "---\ntype: uml.Class\ntitle: OrderLine\n---\n# OrderLine\n".into()),
+            ("a/customer.md".into(),
+             "---\ntype: uml.Class\ntitle: Customer\n---\n# Customer\n\n## Relationships\n- associates [Order](./order.md): 1 to 1\n".into()),
+        ]
+    }
+
+    #[test]
+    fn builds_composition_edge() {
+        let m = build_model(&rel_bundle());
+        let comp = m.edges.iter().find(|e| e.kind == crate::model::RelationshipKind::Composes).unwrap();
+        assert_eq!(comp.source, "order");
+        assert_eq!(comp.target, "order-line");
+        assert_eq!(comp.to_end.role.as_deref(), Some("lines"));
+        assert!(!comp.bidirectional);
+    }
+
+    #[test]
+    fn reciprocal_associates_collapse_to_one_bidirectional_edge() {
+        let m = build_model(&rel_bundle());
+        let assocs: Vec<_> = m.edges.iter().filter(|e| e.kind == crate::model::RelationshipKind::Associates).collect();
+        assert_eq!(assocs.len(), 1, "reciprocal associates must collapse to one edge");
+        assert!(assocs[0].bidirectional);
+        assert_eq!(assocs[0].from_end.navigable, Some(true));
+        assert_eq!(assocs[0].to_end.navigable, Some(true));
+    }
+
+    #[test]
+    fn skips_unresolved_targets() {
+        let b = vec![("x/a.md".into(),
+            "---\ntype: uml.Class\ntitle: A\n---\n# A\n\n## Relationships\n- depends [Ghost](./ghost.md)\n".into())];
+        let m = build_model(&b);
+        assert!(m.edges.is_empty());
     }
 }
