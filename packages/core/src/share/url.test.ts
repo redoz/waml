@@ -45,11 +45,11 @@ describe("share url", () => {
   });
 
   it("carries the model name in the link and reads it back", () => {
-    const url = buildShareUrl(graph, "My SaaS / Subscription OKF with OWOX");
+    const url = buildShareUrl(graph, "My SaaS / Subscription model");
     expect(url).toContain("&n=");
     // Load the hash as if the recipient opened the link.
     history.replaceState(null, "", url.slice(url.indexOf("#")));
-    expect(readSharedName()).toBe("My SaaS / Subscription OKF with OWOX");
+    expect(readSharedName()).toBe("My SaaS / Subscription model");
   });
 
   it("omits the name param when no name is given, and reads null", () => {

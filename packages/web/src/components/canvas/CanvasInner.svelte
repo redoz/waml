@@ -364,7 +364,7 @@ import ShareToast from "../ShareToast.svelte";
     clearCanvas();
   }
 
-  // Export the canvas as an SVG (whole model, OWOX watermark). Uses the live RF
+  // Export the canvas as an SVG (whole model, UAML watermark). Uses the live RF
   // node list (measured sizes) to frame the export. exportCanvasSvg's 3rd arg
   // (viewportSelector) was made required by Plan 1; Svelte passes the
   // `.svelte-flow__` viewport class.
@@ -418,7 +418,7 @@ import ShareToast from "../ShareToast.svelte";
     // Empty canvas → drop the template straight in. Non-empty → ask Replace vs
     // Merge first so existing work isn't silently wiped.
     if (store.get().nodes.length === 0) {
-      modelName = templateModelName(name); // "My {template} OKF with OWOX"
+      modelName = templateModelName(name); // "My {template} model"
       applyTemplate(g, "replace");
       showLibrary = false;
     } else {

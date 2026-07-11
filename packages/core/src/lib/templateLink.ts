@@ -1,7 +1,7 @@
 import type { ModelGraph } from "@uaml/okf";
 import { TEMPLATES } from "@uaml/core/templates";
 
-// Deep-link: `model.owox.com/?template=<id>` opens a named built-in template
+// Deep-link: `?template=<id>` opens a named built-in template
 // straight onto the canvas. It's the CTA target for the blog template gallery,
 // launch emails and social posts — one click from "here's a model" to "you're
 // editing it". An unknown/missing id falls through to the normal first-run flow.

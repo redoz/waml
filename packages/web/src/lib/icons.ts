@@ -1,4 +1,4 @@
-// Canonical entity icons — kept consistent with the OWOX product UI.
+// Canonical entity icons — kept consistent across the product UI.
 // Data Mart = Box, Storage = Database, Input Source = Code (</>),
 // Output Schema = Columns3, Joinable/relationship = Link2, Library = Library.
 export {

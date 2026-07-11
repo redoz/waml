@@ -4,7 +4,6 @@
   import type { ModelGraph } from "@uaml/okf";
   import { INDUSTRY_TEMPLATES, DATASET_TEMPLATES, type Template } from "@uaml/core/templates";
   import { LibraryIcon } from "../lib/icons";
-  import { IMPORT_GUIDE_URL } from "@uaml/core/lib/links";
 
   // First-screen chooser shown to brand-new visitors: pick a template (value
   // first), start blank, or import an existing model. Dismissing (X / backdrop)
@@ -89,7 +88,7 @@
       </button>
       <div class="flex-1"></div>
       <a
-        href={IMPORT_GUIDE_URL}
+        href="/okf-format.md"
         target="_blank"
         rel="noopener"
         class="flex items-center gap-[5px] text-[12.5px] font-[550] text-[#1e88e5] hover:underline"
