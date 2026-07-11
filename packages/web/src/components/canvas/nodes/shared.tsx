@@ -6,7 +6,7 @@ import type { ViewMode } from "../../../state/viewMode";
 import { ERD_COLLAPSED_ROWS } from "../layoutSize";
 import { getProfile, stereotypeStyle } from "../../../profiles";
 
-export type OkfNodeData = ModelNode & { _viewMode?: ViewMode; _profile?: string };
+export type OkfNodeData = ModelNode & { _viewMode?: ViewMode; _profile?: string; _collapsed?: boolean };
 export interface OkfNodeProps { data: OkfNodeData }
 
 export const NODE_FONT = "-apple-system, BlinkMacSystemFont, 'Segoe UI', Inter, system-ui, sans-serif";
