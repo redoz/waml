@@ -59,6 +59,40 @@ Document `type` for a behavior doc names the whole behavior and selects the
 flavor: `uml.Activity`, `uml.StateMachine`, `uml.Sequence`. Structure-tier docs
 keep per-node `type: uml.Class`, `uml.Actor`, etc.
 
+## Surface grammar — one sentence, three markers
+
+Every statement across all four families is the same sentence shape, so a reader
+who learns one substrate can read the rest:
+
+```
+[fronted clauses] <verb> <target> [: <detail>]
+```
+
+- The **verb** is a closed-set, third-person-singular word (`associates`,
+  `composes`, `includes`, `transitions`, `calls`, …). The **subject** is
+  implicit — the enclosing document (structure) or the enclosing node (flow) —
+  and is stated explicitly only where document order forbids grouping by subject
+  (sequence messages: `Sender calls Receiver`).
+- **Fronted clauses** are optional English adverbials that precede the verb
+  (`on <trigger>`, `when <guard>`); a trailing `: <detail>` carries the payload
+  (an effect, a signature, the ends of a relationship).
+
+Three visual markers tell the reader what kind of token they are looking at.
+This is the single rule that governs every bullet:
+
+| marker | means | examples |
+|---|---|---|
+| **bare word** | UAML grammar keyword, **or** a local model reference | `transitions`, `to`, `on`; state target `Placed`; attribute type `OrderId`; role `order` |
+| **`` `backtick` ``** | an **expression** — behavior-language, opaque to the model | event `` `place` ``, guard `` `items > 0` ``, effect `` `reserveStock` ``, signature `` `place(items)` `` |
+| **`[link](path)`** | a **cross-document** reference | `refines [SubFlow](./sub.md)`, `carries [Order](./order.md)`, `describes: [Order](./order.md)` |
+
+Expressions are new to the behavioral tier (structural documents carry only
+references and grammar), so backticks introduce no change to the structural
+surface: an attribute type or a role name is a *reference*, not an expression,
+and stays bare. Backticks also bound arbitrary content unambiguously — a guard
+`` `x > 0` `` or an event literally named `` `to` `` cannot collide with the
+clause keywords — the same disambiguation job `{…}` does for multiplicity.
+
 ## Substrate 1 — structure (class + use case)
 
 Keeps all seven existing structural metaclasses (`uml.Class`, `uml.Interface`,
@@ -85,7 +119,14 @@ adornment** — no new line logic.
 | `extends` | dependency | dashed | open → + `«extend»` | no | extension → base |
 | `specializes` | generalization | solid | hollow ▷ | no | child → parent |
 
-`associates` and `specializes` are existing verbs, reused. Actor and use-case
+`associates` and `specializes` are existing verbs, reused. One context rule
+differs by metaclass: an `associates` ends clause (`: <near> to <far>`) is
+**required between classifiers** (as in `uaml-spec.md`) but **optional on an
+actor↔use-case communication link** — a bare `- associates [Customer](./customer.md)`
+implies no multiplicity. This is a rule keyed on the participating metaclasses,
+not a contradiction of the structural requirement.
+
+Actor and use-case
 documents are ordinary node documents (frontmatter + optional `## Attributes` +
 `## Relationships` + `## Notes`) curated into a `Diagram` exactly like classes.
 **Class and use case diagrams share one substrate and one renderer path** — they
@@ -107,18 +148,23 @@ title: Place Order
 ## Substrate 2 — flow (activity + state machine)
 
 One directed graph per document. `type: uml.Activity` or `uml.StateMachine`
-selects the flavor; both parse identically. Optional frontmatter `describes:`
-links the behavior to the entity it belongs to (a state machine describes a
-Class; an activity realizes a use case or operation).
+selects the flavor; both parse identically. One frontmatter field, `describes:`,
+links the behavior to the entity it belongs to for both flavors — a state
+machine describes a Class, an activity describes (realizes) the use case or
+operation it carries out.
 
 ### Nodes
 
 Each node is a `###` heading, making it a mini-classifier that can own its own
-sub-sections (transitions, internals, `#### Notes`). The heading text is the
-node's label and local identity.
+sub-sections (transitions, internals, `#### Notes`).
 
-Node kind is a **closed set**, marked by a leading keyword on the heading;
-absent keyword means a plain action (activity) or state (state machine).
+Node kind is a **closed set**, marked by a leading keyword on the heading; an
+absent keyword means a plain action (activity) or state (state machine). A
+node's **identity** is its heading text with the leading kind-keyword removed —
+so `### decision Ready to ship?` has identity *Ready to ship?*, and
+`### object [Order](./order.md)` has identity *Order* (the link title). A
+keyword-only heading (`### initial`) uses the keyword as its identity. That
+identity is the name a `transitions to <target>` bullet resolves against.
 Control nodes come in matched split/join pairs:
 
 - `initial`, `final`
@@ -129,27 +175,34 @@ Control nodes come in matched split/join pairs:
   are **object flows** (see below)
 - (no keyword) → action / state
 
-Under a node heading:
+Under a node heading, each bullet leads with its own keyword or verb:
 
-- **transitions** — bullets leading with `to` (outgoing edges; source is the
-  enclosing node, implicit, mirroring how `## Relationships` attach to their
-  declaring classifier). Grammar:
-  `- to <target> [as <name>] [on <trigger>] [when <guard>] [/ <effect>]`.
-  `as`/`on`/`when`/`/` clauses are each optional; the guard is delimited by the
-  word `when` — **never `[...]`**, which collides with markdown link syntax.
-  `as <name>` is an optional edge label (reusing the association-name idiom);
-  when the name is a **link**, the edge carries that object type — an **object
-  flow** (`- to Ship as [Order](./order.md)`).
-- **state internals** — `- entry / <effect>`, `- do / <effect>`,
-  `- exit / <effect>`.
+- **transitions** — the outgoing-edge verb. The source is the enclosing node
+  (implicit, mirroring how `## Relationships` attach to their declaring
+  classifier). Grammar:
+  `- [on <trigger>] [when <guard>] transitions to <target> [: <effect>]`.
+  All firing conditions front the verb: `on <trigger>` names the event,
+  `when <guard>` the guard. The `transitions to <target>` core is the anchor,
+  and the effect trails after `:`. A completion transition (no event) starts at
+  the verb: `- transitions to final`. Trigger, guard, and effect are
+  **expressions** and are backticked; the target is a **reference** and stays
+  bare (or a link when it lives in another document). The guard is delimited by
+  the word `when` — **never `[...]`**, which collides with markdown link syntax.
+- **object flow** — a transition may carry a typed object with `carries <link>`:
+  `- transitions to Ship carries [Order](./order.md)`. (`carries`, not `as` —
+  `as` is reserved for names, e.g. lifeline aliases.)
+- **state internals** — `- entry: <effect>`, `- do: <effect>`,
+  `- exit: <effect>`; each effect is a backticked expression, and the colon
+  reuses the "detail follows" idiom (attribute type, message signature).
 - **composite / call behavior** — `- refines [SubFlow](./sub.md)`. A composite
   state or structured/call-behavior action never inlines its interior; it always
   points at a **separate** flow document via `refines` (a submachine state or
   call-behavior action). This keeps every flow document one flat graph.
 - **`#### Notes`** — free-text notes on the node.
 
-A transition **target** follows the same rule as node references generally:
-a bare label for a local vertex, or a link when the target is a real element.
+A transition **target** follows the general reference rule: a bare label for a
+local vertex (the editor resolves it to the matching `###` heading and makes it
+navigable), or a link when the target is a real element in another document.
 
 ```markdown
 ---
@@ -162,31 +215,45 @@ describes: [Order](./order.md)
 ## Nodes
 
 ### initial
-- to Draft
+- transitions to Draft
 
 ### Draft
-- to Placed on place when items > 0
-- to Cancelled on cancel
+- on `place` when `items > 0` transitions to Placed
+- on `cancel` transitions to Cancelled
 
 #### Notes
 - Auto-expires after 24h.
 
 ### Placed
-- entry / reserveStock
-- to Shipped on ship / notify
+- entry: `reserveStock`
+- on `ship` transitions to Shipped: `notify`
 
 ### Shipped
-- to final on deliver
+- on `deliver` transitions to final
 
 ### Cancelled
-- to final
+- transitions to final
 
 ### final
 ```
 
 The same document with `type: uml.Activity` reads the plain headings as
 actions, uses `decision` nodes for branches, and renders an activity-final
-shape — identical grammar.
+shape — identical grammar. Activity edges lean on guards rather than events, and
+`else` marks a decision's default branch:
+
+```markdown
+### decision Ready to ship?
+- when `paid and inStock` transitions to Ship
+- else transitions to Hold
+
+### Ship
+- transitions to Deliver carries [Order](./order.md)
+```
+
+(`transitions` is used for both flavors even though UML names activity edges
+"flows" and state-machine edges "transitions" — the flow substrate is one
+grammar, so it gets one verb.)
 
 **Swimlanes / regions** — optional `partition: <name>` on a node; the renderer
 draws activity swimlanes or state-machine orthogonal regions. Detail beyond
@@ -223,21 +290,26 @@ the message kind** and fixes the line and arrowhead.
 | `creates` | create | dashed → to new lifeline head |
 | `destroys` | delete | → ending in ✕ |
 
-Sender and Receiver are lifeline aliases or links; the signature trails after
-`:`.
+Sender and Receiver are lifeline aliases or links (bare references); the
+**signature** is an expression and is backticked after the `:`.
 
-**Combined fragments** (`alt`, `opt`, `loop`, `par`) are keyword bullets with a
-`when <guard>` clause; their messages nest underneath; `else` splits `alt`
-operands — mirroring the nested-operand style of the layout language.
+**Combined fragments** (`alt`, `opt`, `loop`, `par`) are keyword bullets that
+**own operands**. Each operand is a header bullet — `when <guard>` (a guarded
+operand) or `else` (an `alt`'s default) — and the operand's messages nest under
+*it*. `else` is therefore a proper operand sibling of `when`, not a bare
+separator floating among the messages. `opt` / `loop` take a single guarded
+operand; `par`'s concurrent operands defer to the advanced-sequence open
+question.
 
 ```markdown
 ## Messages
-- Customer calls order: place(items)
-- alt when paid
-  - order calls wh: ship()
+- Customer calls order: `place(items)`
+- alt
+  - when `paid`
+    - order calls wh: `ship()`
   - else
-  - order sends Customer: paymentFailed()
-- order replies Customer: confirmation
+    - order sends Customer: `paymentFailed()`
+- order replies Customer: `confirmation`
 ```
 
 Execution/activation bars derive automatically from `calls`/`replies` nesting —
@@ -249,14 +321,15 @@ no syntax. Self, found, and lost messages are deferred.
 |---|---|---|
 | class | structure | existing seven metaclasses |
 | use case | structure | `uml.Actor`, `uml.UseCase`; `includes`/`extends`; `frame` = system boundary |
-| activity | flow | heading nodes + `to` transitions; `when` guards; `decision`/`merge`, `fork`/`join`; `object` nodes + object flows (`as` link) |
-| state machine | flow | same grammar; `entry`/`do`/`exit`; `describes` a Class |
-| sequence | interaction | `## Lifelines` links + ordered `## Messages` verbs + fragments |
+| activity | flow | heading nodes + `transitions to` edges; `when` guards; `decision`/`merge`, `fork`/`join`; `object` nodes + object flows (`carries` link) |
+| state machine | flow | same grammar; `on`/`when`/`transitions to`/`: effect`; `entry`/`do`/`exit`; `describes` a Class |
+| sequence | interaction | `## Lifelines` links + ordered `## Messages` verbs + operand-owning fragments |
 
 Four families, three grammars. Every construct is a recombination of grammar
 UAML already has: frontmatter `type` dispatch, bare-name lists, verb/keyword-led
-bullets, binary `X <op> Y`, links as references, `when`/`as`/`with`/`to`
-word-clauses, and graceful degradation for anything unrecognized.
+bullets, the `[fronted clauses] <verb> <target> [: detail]` sentence, links as
+references, `when`/`as`/`on`/`to` word-clauses, backticked expressions, and
+graceful degradation for anything unrecognized.
 
 ## Design principles carried over unchanged
 
@@ -274,14 +347,17 @@ word-clauses, and graceful degradation for anything unrecognized.
 
 ## Open questions (deferred, not blocking)
 
-- **Surface grammar polish.** The concrete syntax above is a first pass. Message
-  verbs, transition clause order, and the entry/do/exit bullet-vs-bare-line
-  choice are candidates for refinement before BNF is frozen.
+- **Surface grammar polish.** The behavioral sentence shape, three markers,
+  clause order, and colon-effect are now settled (this revision). Remaining
+  candidates: the message-verb set and whether edges take an optional `as
+  <name>` label are open before BNF is frozen.
 - **Swimlanes / partitions.** Only sketched (`partition:` field).
 - **Object flow detail.** Input/output **pins** on actions, and rendering an
   object flow when it appears on a *class* diagram (the same directed,
   nameable, no-roles/no-multiplicity edge primitive, surfaced as a stereotyped
-  edge). Only object nodes + `as`-link object-flow edges are specified now.
+  edge). Only object nodes + `carries`-link object-flow edges are specified now.
+- **`par` operands.** How concurrent operands of a `par` fragment are separated
+  (the `alt`/`else` operand model covers the guarded fragments).
 - **Advanced sequence features.** Self/found/lost messages, gates, coregions.
 - **State machine details.** History pseudostates, deferred events,
   entry/exit points on composite states, and cross-boundary transitions
