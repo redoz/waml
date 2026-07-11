@@ -131,11 +131,10 @@ pub fn parse_layout_line(line: &str) -> Option<LayoutStatement> {
 
 fn parse_operand(cur: &mut Cur) -> Option<Operand> {
     let ref_ = parse_ref(cur)?;
-    let axis = if cur.eat_word("as") {
-        parse_axis(cur)
-    } else {
-        None
-    };
+    let mut axis = None;
+    if cur.eat_word("as") {
+        axis = Some(parse_axis(cur)?);
+    }
     let hints = if cur.eat_word("with") {
         parse_hints(cur)?
     } else {
@@ -311,5 +310,11 @@ mod tests {
         assert_eq!(op.ref_, OperandRef::Name(NameRef::Bare("My Group".into())));
         assert_eq!(op.axis, None);
         assert_eq!(op.hints, vec![]);
+    }
+
+    #[test]
+    fn rejects_dangling_as_without_axis() {
+        assert!(parse_layout_line("- Users as").is_none());
+        assert!(parse_layout_line("- Users as with frame").is_none());
     }
 }
