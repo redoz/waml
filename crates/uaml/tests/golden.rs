@@ -11,7 +11,7 @@ fn orders_domain_builds_the_expected_model() {
     // Five classifiers, one diagram.
     assert_eq!(m.nodes.len(), 5);
     assert_eq!(m.diagrams.len(), 1);
-    assert_eq!(m.diagrams[0].members.len(), 5);
+    assert_eq!(m.diagrams[0].groups.iter().map(|g| g.members.len()).sum::<usize>(), 5);
 
     // Two edges: composes + associates.
     assert_eq!(m.edges.len(), 2);

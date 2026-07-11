@@ -213,10 +213,12 @@ pub struct Node {
     pub annotates: Vec<NoteAnchor>,
 }
 
-/// A diagram member: a classifier slug drawn in a view.
+/// A resolved membership group in a diagram (heading text + resolved keys).
 #[derive(Debug, Clone, PartialEq)]
-pub struct Member {
-    pub key: String,
+pub struct DiagramGroup {
+    pub name: String,
+    pub members: Vec<String>,
+    pub children: Vec<DiagramGroup>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -224,7 +226,8 @@ pub struct Diagram {
     pub key: String,
     pub title: String,
     pub profile: String,
-    pub members: Vec<Member>,
+    pub groups: Vec<DiagramGroup>,
+    pub layout: Vec<crate::syntax::LayoutStatement>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq)]
