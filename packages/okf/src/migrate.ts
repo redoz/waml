@@ -17,6 +17,20 @@ interface LegacyEdge {
 
 const MULT = (t: string) => (t === "N" ? "*" : "1");
 
+// One-shot document rewrite: attribute multiplicity delimiter `[…]` → `{…}`.
+// Readers understand only `{…}`; there is no legacy-bracket fallback, so every
+// stored document is migrated once before the new reader ships. The match is
+// anchored to end-of-line and constrained to the multiplicity grammar itself, so
+// it only ever fires on an attribute's trailing multiplicity — markdown type
+// links end in `)`, and relationship ends carry bare (unbracketed) multiplicities.
+const ATTR_MULT_BRACKET_RE =
+  /\[((?:[1-9]\d*|\*|(?:0|[1-9]\d*)\.\.(?:[1-9]\d*|\*)))\][^\S\n]*$/gm;
+
+/** Rewrite trailing attribute multiplicity `[mult]` tokens to `{mult}` across a document. */
+export function migrateAttributeMultiplicityDelimiter(text: string): string {
+  return text.replace(ATTR_MULT_BRACKET_RE, "{$1}");
+}
+
 /** Legacy "X:Y" cardinality → per-end multiplicities + navigability. */
 export function endsFromCardinality(
   cardinality: string | undefined,

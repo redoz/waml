@@ -19,7 +19,7 @@ function basename(path: string): string {
   return path.split(/[\\/]/).pop()!.replace(/\.md$/i, "");
 }
 
-// - [visibility ]name: Type-or-link [multiplicity]
+// - [visibility ]name: Type-or-link {multiplicity}
 const ATTR_RE = /^- (?:([+\-#~]) )?([A-Za-z_][A-Za-z0-9_]*): (.+)$/;
 const LINK_RE = /^\[([^\]]+)\]\(\.\/(.+?)\.md\)$/;
 
@@ -28,15 +28,21 @@ export function parseAttributeLine(line: string, resolveSlug: (slug: string) => 
   if (!m) return null;
   let rest = m[3].trim();
   let multiplicity = "1";
-  const mm = /^(.*?)\s+\[([^\]]+)\]$/.exec(rest);
-  if (mm && isValidMultiplicity(mm[2])) { rest = mm[1].trim(); multiplicity = mm[2]; }
+  // Multiplicity is a trailing `{…}` token whose contents are a valid multiplicity.
+  // A `{…}` with any other contents is malformed — not silently accepted.
+  const mm = /^(.*?)\s+\{([^{}]*)\}$/.exec(rest);
+  if (mm) {
+    if (!isValidMultiplicity(mm[2])) return null;
+    rest = mm[1].trim();
+    multiplicity = mm[2];
+  }
   const link = LINK_RE.exec(rest);
   let type: Attribute["type"];
   if (link) {
     const ref = resolveSlug(basename(link[2]));
     type = ref ? { name: link[1], ref } : { name: link[1] };
   } else {
-    if (!rest || /[[\]()]/.test(rest)) return null; // malformed link / brackets → not an attribute
+    if (!rest || /[[\](){}]/.test(rest)) return null; // stray link/bracket/brace punctuation → not an attribute
     type = { name: rest };
   }
   const attr: Attribute = { name: m[2], type, multiplicity };
@@ -94,7 +100,7 @@ export function renderAttributeLine(a: Attribute, slugForRef: (key: string) => s
   const slug = a.type.ref ? slugForRef(a.type.ref) : undefined;
   const type = slug ? `[${a.type.name}](./${slug}.md)` : a.type.name;
   const vis = a.visibility ? `${a.visibility} ` : "";
-  const mult = a.multiplicity && a.multiplicity !== "1" ? ` [${a.multiplicity}]` : "";
+  const mult = a.multiplicity && a.multiplicity !== "1" ? ` {${a.multiplicity}}` : "";
   return `- ${vis}${a.name}: ${type}${mult}`;
 }
 
