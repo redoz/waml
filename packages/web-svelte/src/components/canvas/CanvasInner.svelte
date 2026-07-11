@@ -121,9 +121,13 @@
     const nodes = $model.nodes;
     const vm = viewMode;
     const diag = activeDiagram;
+    const sel = selection;
     rfNodes = nodes
       .filter((n) => memberSet.has(n.key))
-      .map((n) => toRFNode(n, vm, diag.profile, diag.hints?.collapse?.includes(n.key) ?? false));
+      .map((n) => ({
+        ...toRFNode(n, vm, diag.profile, diag.hints?.collapse?.includes(n.key) ?? false),
+        selected: sel?.type === "node" && sel.id === n.key,
+      }));
   });
 
   // 2) Rebuild rfEdges from the model's visible edges + anchor edges, folding in
@@ -148,7 +152,8 @@
     rfEdges = [...buildRfEdges(visibleEdges, nodes, vm, rlm, emphasizeMultiplicity), ...buildAnchorEdges(visibleNodes, visibleEdges)].map(
       (e) => {
         const modelEdgeId = (e.data as { modelEdgeId?: string } | undefined)?.modelEdgeId;
-        return { ...e, zIndex: modelEdgeId != null && modelEdgeId === selId ? 1000 : 0 };
+        const isSelected = modelEdgeId != null && modelEdgeId === selId;
+        return { ...e, zIndex: isSelected ? 1000 : 0, selected: isSelected };
       },
     );
   });
