@@ -65,3 +65,35 @@ export function getEdgeParams(source: NodeGeom, target: NodeGeom) {
     targetPos: okTarget ? getEdgePosition(target, tp) : Position.Left,
   };
 }
+
+// ── Port distribution ────────────────────────────────────────────────────────
+// The plain floating attach point is the geometric border intersection, so
+// several edges leaving a node in roughly the same direction land on nearly the
+// same spot and overlap. Instead we treat each border side as a strip of ports:
+// edges sharing a (node, side) are spread evenly along that side. `slot` is the
+// edge's position within that group; the ordering is decided upstream (edges.ts)
+// to keep the fan from crossing itself.
+export type Rect = { x: number; y: number; w: number; h: number };
+export type Slot = { index: number; count: number };
+
+export const oppositeSide: Record<Position, Position> = {
+  [Position.Left]: Position.Right,
+  [Position.Right]: Position.Left,
+  [Position.Top]: Position.Bottom,
+  [Position.Bottom]: Position.Top,
+};
+
+// A point on `side` of `rect`, offset along that side by the slot. A single edge
+// (count 1) sits at the midpoint; N edges divide the central `band` fraction of
+// the side into N evenly-spaced ports, leaving the rounded corners clear.
+export function portPoint(rect: Rect, side: Position, slot: Slot = { index: 0, count: 1 }): { x: number; y: number } {
+  const f = slot.count > 1 ? (slot.index + 1) / (slot.count + 1) : 0.5;
+  const band = 0.72;
+  const t = 0.5 + (f - 0.5) * band;
+  switch (side) {
+    case Position.Left: return { x: rect.x, y: rect.y + rect.h * t };
+    case Position.Right: return { x: rect.x + rect.w, y: rect.y + rect.h * t };
+    case Position.Top: return { x: rect.x + rect.w * t, y: rect.y };
+    default: return { x: rect.x + rect.w * t, y: rect.y + rect.h }; // Bottom
+  }
+}
