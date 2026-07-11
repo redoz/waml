@@ -26,10 +26,10 @@ this cut — diagram shape is still undecided.
    the schema is designed now to serve it. The op-log is **NDJSON / JSONL — one `Op` object per
    line** — so the web UI appends a single line per user action with no array-bracket
    bookkeeping, `apply` streams it line-by-line from a file or stdin, and it diffs cleanly in git.
-   An **optional leading header line** `{ "uamlOps": 1 }` carries the schema version: if the first
-   line is an object with a `uamlOps` key it is consumed as the header (and replay rejects an
-   unknown version); otherwise version 1 is assumed and every line is an op. Blank lines are
-   ignored.
+   **Each op is versioned individually** (a `"v": 1` field on every op record) rather than a
+   log-wide header/prelude: every line is self-describing, a log may mix op versions, and an
+   op whose shape later changes bumps only its own `v`. `apply` rejects a line whose `v` is
+   unknown for that op, naming the line number. Blank lines are ignored.
 2. **Addressing: a shared `Selector` type built on the `NoteAnchor` vocabulary.** `NoteAnchor`
    is already a pointer-to-model-element vocabulary (a classifier by slug; a relationship by
    source+name or source+verb+target). `Selector` adopts those forms for nodes and
@@ -87,7 +87,8 @@ New `ops` module (plus small additions to `grammar`):
   EndpointAssoc}`; keep them convertible so note resolution can share the parser.
 
 - **`Op`** — one variant per sugar command, `serde`-(de)serializable (each line of the NDJSON
-  op-log is one of these):
+  op-log is one of these). Every serialized op carries a `v` (version) field and an `op`
+  discriminator (e.g. `{"v":1,"op":"attr.add","node":"order","name":"total","ty":"Money"}`):
   ```
   NodeNew { slug, ty, title, stereotype?, description?, abstract? }
   NodeRename { from, to }              // to = new slug; new title inferred/settable
@@ -133,8 +134,8 @@ link changes. Covered by a golden test on the orders-domain fixture.
 
 - New subcommands under the existing clap enum, one arm per sugar command; each constructs a
   single `Op` and calls `apply` on the bundle read from the target paths.
-- `apply` subcommand: read the NDJSON op-log from a file or stdin (`-`), parse the optional
-  header line + one `Op` per line, call `apply`.
+- `apply` subcommand: read the NDJSON op-log from a file or stdin (`-`), parse one `Op` per
+  line (each self-versioned via its `v` field), call `apply`.
 - Shared flags on mutating commands: `--dry-run`, `--stdout`, `--emit`, `--format human|json`.
   Each sugar command builds exactly one `Op`, so `--emit` just serializes that `Op` as an
   NDJSON line and writes nothing — making the CLI a producer of the same op-log the web UI
@@ -185,7 +186,7 @@ uaml rel rm  order --as "places"
 # Query
 uaml show  <slug> [--json]
 uaml refs  <slug>
-uaml apply <ops.ndjson | ->  [--dry-run|--stdout] [--format human|json]   # NDJSON: one Op/line, optional {uamlOps:1} header line
+uaml apply <ops.ndjson | ->  [--dry-run|--stdout] [--format human|json]   # NDJSON: one self-versioned Op per line ({"v":1,"op":...})
 
 # Global on mutating commands
 --dry-run   # print unified diff of the touched files, write nothing
@@ -206,9 +207,9 @@ uaml apply <ops.ndjson | ->  [--dry-run|--stdout] [--format human|json]   # NDJS
 - Pure `apply` unit tests, one per op plus its refusal cases (dup attr, dup literal, bad/missing
   ends, slug collision), no I/O.
 - `Selector` parse/render round-trip tests over all three anchor forms.
-- `apply` parses NDJSON: one `Op` per line, blank lines ignored, optional leading `{uamlOps:1}`
-  header; an unknown `uamlOps` version is rejected with a clear error (replay-compat guard for
-  the web op-log). A malformed line names its line number in the error.
+- `apply` parses NDJSON: one self-versioned `Op` per line, blank lines ignored; a line whose
+  `v` is unknown for that op is rejected with a clear error (replay-compat guard for the web
+  op-log). A malformed line names its line number in the error.
 - Apply-then-serialize is a canonical fixpoint (an edit leaves the file in canonical form).
 - Command↔op parity: for each sugar command, the `Op` it emits under `--emit`, applied via
   `apply`, produces the same bundle as running the command directly.
