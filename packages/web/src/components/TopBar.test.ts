@@ -2,13 +2,84 @@ import { test, expect, vi } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/svelte";
 import TopBar from "./TopBar.svelte";
 
-test("goal button label reflects goalSet and fires onOpenGoal", async () => {
-  const onOpenGoal = vi.fn();
-  render(TopBar, { props: { goalSet: false, onOpenGoal } });
-  const btn = screen.getByRole("button", { name: "Business goal" });
-  expect(btn.textContent).toContain("Set business goal");
-  await fireEvent.click(btn);
-  expect(onOpenGoal).toHaveBeenCalledTimes(1);
+const diagram = (key: string, title: string) => ({
+  key,
+  title,
+  profile: "uml-domain",
+  members: [] as string[],
+});
+
+const switcherProps = (over: Record<string, unknown> = {}) => ({
+  diagrams: [diagram("d1", "Overview"), diagram("d2", "Details")],
+  activeDiagramKey: "d1",
+  onSelectDiagram: vi.fn(),
+  onRenameDiagram: vi.fn(),
+  onCreateDiagram: vi.fn(),
+  ...over,
+});
+
+test("renders the active diagram title with the blue treatment (no Target icon)", () => {
+  render(TopBar, { props: switcherProps() });
+  const btn = screen.getByRole("button", { name: /switch diagram/i });
+  // Shows the active diagram's title.
+  expect(btn.textContent).toContain("Overview");
+  // Keeps the blue background treatment carried over from the old goal button.
+  expect(btn.className).toContain("bg-[#e6f1fb]");
+  expect(btn.className).toContain("text-[#1e88e5]");
+});
+
+test("no longer renders the Business Goal button", () => {
+  render(TopBar, { props: switcherProps() });
+  expect(screen.queryByRole("button", { name: "Business goal" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Set business goal" })).toBeNull();
+});
+
+test("dropdown lists every diagram, checkmarks the active one, and switches on click", async () => {
+  const onSelectDiagram = vi.fn();
+  render(TopBar, { props: switcherProps({ onSelectDiagram }) });
+  await fireEvent.click(screen.getByRole("button", { name: /switch diagram/i }));
+
+  const active = screen.getByRole("menuitemradio", { name: "Overview" });
+  const other = screen.getByRole("menuitemradio", { name: "Details" });
+  expect(active.getAttribute("aria-checked")).toBe("true");
+  expect(other.getAttribute("aria-checked")).toBe("false");
+
+  await fireEvent.click(other);
+  expect(onSelectDiagram).toHaveBeenCalledWith("d2");
+});
+
+test("rename current diagram submits the trimmed title", async () => {
+  const onRenameDiagram = vi.fn();
+  render(TopBar, { props: switcherProps({ onRenameDiagram }) });
+  await fireEvent.click(screen.getByRole("button", { name: /switch diagram/i }));
+
+  const input = screen.getByLabelText("Rename diagram") as HTMLInputElement;
+  await fireEvent.input(input, { target: { value: "  Renamed  " } });
+  await fireEvent.click(screen.getByRole("button", { name: "Rename" }));
+  expect(onRenameDiagram).toHaveBeenCalledWith("Renamed");
+});
+
+test("empty / whitespace rename is rejected (keeps previous title)", async () => {
+  const onRenameDiagram = vi.fn();
+  render(TopBar, { props: switcherProps({ onRenameDiagram }) });
+  await fireEvent.click(screen.getByRole("button", { name: /switch diagram/i }));
+
+  const input = screen.getByLabelText("Rename diagram") as HTMLInputElement;
+  await fireEvent.input(input, { target: { value: "   " } });
+  await fireEvent.click(screen.getByRole("button", { name: "Rename" }));
+  expect(onRenameDiagram).not.toHaveBeenCalled();
+});
+
+test("+ New diagram creates a diagram via an inline name input (not window.prompt)", async () => {
+  const onCreateDiagram = vi.fn();
+  render(TopBar, { props: switcherProps({ onCreateDiagram }) });
+  await fireEvent.click(screen.getByRole("button", { name: /switch diagram/i }));
+
+  await fireEvent.click(screen.getByRole("button", { name: /New diagram/i }));
+  const input = screen.getByLabelText("New diagram name") as HTMLInputElement;
+  await fireEvent.input(input, { target: { value: "  Fresh  " } });
+  await fireEvent.click(screen.getByRole("button", { name: "Create" }));
+  expect(onCreateDiagram).toHaveBeenCalledWith("Fresh");
 });
 
 test("export dropdown opens and routes OKF vs SVG", async () => {

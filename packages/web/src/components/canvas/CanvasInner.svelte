@@ -23,7 +23,6 @@
   import { buildRfEdges, buildAnchorEdges } from "./edges";
   import type { Selection } from "./selection";
   import Dock, { type Tool } from "./Dock.svelte";
-  import DiagramTabs from "./DiagramTabs.svelte";
 
   import TopBar from "../TopBar.svelte";
   import ImportDialog from "../ImportDialog.svelte";
@@ -31,7 +30,6 @@
   import WelcomeDialog from "../WelcomeDialog.svelte";
   import LibraryDialog from "../LibraryDialog.svelte";
   import TemplateApplyDialog from "../TemplateApplyDialog.svelte";
-  import GoalDialog from "../GoalDialog.svelte";
 import ShareToast from "../ShareToast.svelte";
   import ShareDialog from "../share/ShareDialog.svelte";
   import Inspector from "../inspector/Inspector.svelte";
@@ -49,7 +47,6 @@ import ShareToast from "../ShareToast.svelte";
   import { loadViewMode, persistViewMode, type ViewMode } from "@uaml/core/state/viewMode";
   import { loadRelLabelMode, persistRelLabelMode, type RelLabelMode } from "@uaml/core/state/relLabels";
   import { loadModelName, persistModelName, DEFAULT_MODEL_NAME, templateModelName } from "@uaml/core/state/modelName";
-  import { loadGoal, persistGoal, type BusinessGoal } from "@uaml/core/state/goal";
   import { persistGraph } from "@uaml/core/state/persist";
   import { graphToBundleFiles, downloadBundle } from "@uaml/core/okf/io";
   import { buildShareUrl } from "@uaml/core/share/url";
@@ -66,8 +63,6 @@ import ShareToast from "../ShareToast.svelte";
   // True briefly during auto-layout so nodes glide (CSS transition) to their new
   // positions instead of snapping.
   let layoutAnimating = $state(false);
-  // Business goal — a stored objective ({niche, goal}) persisted in localStorage.
-  let goal = $state<BusinessGoal | null>(loadGoal());
   // Computed once at mount (mirrors React's useState initializer, evaluated only
   // on first render): effectiveDiagrams($model) synthesizes the implicit "All"
   // diagram when the model has none yet.
@@ -75,7 +70,6 @@ import ShareToast from "../ShareToast.svelte";
   // A shared link's name wins on first load (opening someone's named model);
   // otherwise restore the locally-persisted name.
   let modelName = $state(sharedModelName ?? loadModelName());
-  let showGoal = $state(false);
   let showImport = $state(false);
   let showLibrary = $state(false);
   // A template chosen from the library while the canvas already had content —
@@ -416,8 +410,14 @@ import ShareToast from "../ShareToast.svelte";
     exportDisabled={$model.nodes.length === 0}
     onShare={() => (showShare = true)}
     onLibrary={() => (showLibrary = true)}
-    onOpenGoal={() => (showGoal = true)}
-    goalSet={!!goal}
+    diagrams={diagrams}
+    activeDiagramKey={activeDiagram.key}
+    onSelectDiagram={(key) => (activeDiagramKey = key)}
+    onRenameDiagram={(title) => store.updateDiagram(activeDiagram.key, { title })}
+    onCreateDiagram={(name) => {
+      const d = store.addDiagram(name);
+      activeDiagramKey = d.key;
+    }}
   />
 
   {#if shareToast}
@@ -459,21 +459,6 @@ import ShareToast from "../ShareToast.svelte";
       onClose={() => (pendingTemplate = null)}
     />
   {/if}
-  {#if showGoal}
-    <GoalDialog
-      current={goal}
-      onConfirm={(g) => {
-        goal = g;
-        persistGoal(g);
-      }}
-      onClear={() => {
-        goal = null;
-        persistGoal(null);
-        showGoal = false;
-      }}
-      onClose={() => (showGoal = false)}
-    />
-  {/if}
   {#if showShare}
     <ShareDialog
       shareUrl={buildShareUrl(store.get(), modelName)}
@@ -488,20 +473,9 @@ import ShareToast from "../ShareToast.svelte";
     <!-- SvelteFlow canvas -->
     <!-- svelte-ignore a11y_no_static_element_interactions -->
     <div class="flex-1 relative {canvasClass}" ondblclick={handleWrapperDoubleClick}>
-      <!-- Tool dock / diagram tabs — anchored to the canvas (not the outer row)
-           so they sit just inside the canvas edge and slide over as the rail opens. -->
-      <DiagramTabs
-        diagrams={diagrams}
-        activeKey={activeDiagram.key}
-        onSelect={(key) => (activeDiagramKey = key)}
-        onCreate={() => {
-          const name = window.prompt("Diagram name?", "New diagram");
-          if (name) {
-            const d = store.addDiagram(name);
-            activeDiagramKey = d.key;
-          }
-        }}
-      />
+      <!-- Tool dock — anchored to the canvas (not the outer row) so it sits just
+           inside the canvas edge and slides over as the rail opens. The diagram
+           switcher now lives in the TopBar title control. -->
       <Dock
         activeTool={tool}
         onToolChange={handleToolChange}

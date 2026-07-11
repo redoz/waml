@@ -13,6 +13,30 @@ test("mounts the TopBar; clicking top-bar Share opens the Share dialog", async (
   expect(screen.getByLabelText("Share URL")).toBeTruthy();
 });
 
+describe("diagram title switcher (replaces the goal button + DiagramTabs pill)", () => {
+  it("renders the diagram title switcher and no longer renders the Business Goal button", () => {
+    render(Canvas);
+    // The centered title switcher shows the implicit diagram's default label.
+    const switcher = screen.getByRole("button", { name: /switch diagram/i });
+    expect(switcher.textContent).toContain("All");
+    // The Business Goal button is gone.
+    expect(screen.queryByRole("button", { name: "Business goal" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Set business goal" })).toBeNull();
+  });
+
+  it("creates a new empty diagram from the switcher and makes it active", async () => {
+    render(Canvas);
+    await fireEvent.click(screen.getByRole("button", { name: /switch diagram/i }));
+    await fireEvent.click(screen.getByRole("button", { name: /New diagram/i }));
+    const input = screen.getByLabelText("New diagram name") as HTMLInputElement;
+    await fireEvent.input(input, { target: { value: "Flows" } });
+    await fireEvent.click(screen.getByRole("button", { name: "Create" }));
+    await tick();
+    // The switcher now reflects the freshly-created, active diagram.
+    expect(screen.getByRole("button", { name: /switch diagram/i }).textContent).toContain("Flows");
+  });
+});
+
 describe("right-edge flags", () => {
   it("renders a Feedback flag linking to the GitHub new-issue page in a new tab", () => {
     render(Canvas);

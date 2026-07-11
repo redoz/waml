@@ -1,7 +1,8 @@
 <script lang="ts">
   // Mirrors packages/web/src/components/TopBar.tsx.
-  import { Download, Upload, ChevronDown, Target, FileText, Image as ImageIcon, Share2 } from "lucide-svelte";
+  import { Download, Upload, ChevronDown, Check, Plus, FileText, Image as ImageIcon, Share2 } from "lucide-svelte";
   import { LibraryIcon } from "../lib/icons";
+  import type { Diagram } from "@uaml/okf";
 
   // First-visit onboarding hint pointing at the Library. Persisted so it only
   // ever shows once per browser; dismissed as soon as the user hovers it.
@@ -17,8 +18,11 @@
     onShare,
     shareDisabled = false,
     onLibrary,
-    onOpenGoal,
-    goalSet = false,
+    diagrams = [],
+    activeDiagramKey = "",
+    onSelectDiagram,
+    onRenameDiagram,
+    onCreateDiagram,
   }: {
     onImport?: () => void;
     onExport?: () => void;
@@ -27,14 +31,62 @@
     onShare?: () => void;
     shareDisabled?: boolean;
     onLibrary?: () => void;
-    onOpenGoal?: () => void;
-    goalSet?: boolean;
+    // Diagram title switcher — replaces the old Business Goal button and the
+    // floating DiagramTabs pill. The active diagram's title doubles as the
+    // dropdown trigger (switch / rename-current / create-new).
+    diagrams?: Diagram[];
+    activeDiagramKey?: string;
+    onSelectDiagram?: (key: string) => void;
+    onRenameDiagram?: (title: string) => void;
+    onCreateDiagram?: (name: string) => void;
   } = $props();
 
   // Export dropdown (OKF markdown / SVG).
   let exportMenuOpen = $state(false);
   // Show the Library hint on first ever visit; stays lit until hovered.
   let showLibraryHint = $state(false);
+
+  // ── Diagram title switcher ─────────────────────────────────────────────────
+  let switcherOpen = $state(false);
+  // Inline rename field, seeded from the active title each time the menu opens.
+  let renameValue = $state("");
+  // "+ New diagram" reveals an inline name input (never window.prompt).
+  let newMode = $state(false);
+  let newName = $state("");
+
+  const activeTitle = $derived(
+    diagrams.find((d) => d.key === activeDiagramKey)?.title ?? diagrams[0]?.title ?? "Untitled diagram",
+  );
+
+  function openSwitcher() {
+    switcherOpen = !switcherOpen;
+    if (switcherOpen) {
+      renameValue = activeTitle;
+      newMode = false;
+      newName = "";
+    }
+  }
+
+  function selectDiagram(key: string) {
+    onSelectDiagram?.(key);
+    switcherOpen = false;
+  }
+
+  function submitRename() {
+    const title = renameValue.trim();
+    if (!title) return; // reject empty/whitespace — keeps the previous title
+    onRenameDiagram?.(title);
+    switcherOpen = false;
+  }
+
+  function submitNew() {
+    const name = newName.trim();
+    if (!name) return;
+    onCreateDiagram?.(name);
+    newName = "";
+    newMode = false;
+    switcherOpen = false;
+  }
 
   $effect(() => {
     try {
@@ -90,16 +142,96 @@
     <span>Model Canvas</span>
   </div>
 
-  <!-- Business Goal — capture the objective behind the model. Stored locally
-       alongside the model; a standalone entry point (no server dependency). -->
-  <button
-    onclick={onOpenGoal}
-    aria-label="Business goal"
-    title="Set the business goal behind this model"
-    class={`flex items-center gap-[6px] rounded-lg px-[10px] py-[6px] text-[13px] font-[550] cursor-pointer transition-colors ${goalSet ? "text-[#1e88e5] bg-[#e6f1fb]" : "text-slate-500 hover:bg-[#f1f3f7] hover:text-slate-900"}`}
-  >
-    <Target size={16} /> {goalSet ? "Business goal" : "Set business goal"}
-  </button>
+  <div class="flex-1"></div>
+
+  <!-- Diagram title & switcher — centered. The active diagram's title doubles as
+       the switcher trigger; the dropdown switches diagram, renames the current
+       one, or creates a new (empty) diagram. Keeps the blue treatment carried
+       over from the old Business Goal button (Target icon dropped). -->
+  <div class="relative">
+    <button
+      onclick={openSwitcher}
+      aria-label={`Diagram: ${activeTitle} — switch diagram`}
+      aria-haspopup="menu"
+      aria-expanded={switcherOpen}
+      title="Switch, rename, or create a diagram"
+      class="flex items-center gap-[6px] rounded-lg px-[10px] py-[6px] text-[13px] font-[600] cursor-pointer transition-colors text-[#1e88e5] bg-[#e6f1fb] hover:bg-[#d8e8f9]"
+    >
+      <span class="max-w-[240px] truncate">{activeTitle}</span>
+      <ChevronDown size={14} class="text-[#1e88e5]/70" />
+    </button>
+    {#if switcherOpen}
+      <!-- svelte-ignore a11y_click_events_have_key_events -->
+      <!-- svelte-ignore a11y_no_static_element_interactions -->
+      <div class="fixed inset-0 z-40" onclick={() => (switcherOpen = false)}></div>
+      <div
+        role="menu"
+        class="absolute top-[calc(100%+6px)] left-1/2 -translate-x-1/2 z-50 w-[248px] rounded-lg border border-[#d8dee8] bg-white shadow-[0_8px_24px_rgba(15,23,42,0.18)] py-1"
+      >
+        <!-- Diagram list — switch on click; the active one is checkmarked. -->
+        {#each diagrams as d (d.key)}
+          <button
+            role="menuitemradio"
+            aria-checked={d.key === activeDiagramKey}
+            onclick={() => selectDiagram(d.key)}
+            class="w-full text-left text-[13px] px-3 py-2 cursor-pointer flex items-center gap-[8px] hover:bg-[#f1f3f7] {d.key === activeDiagramKey ? 'text-[#1e88e5] font-[600]' : 'text-slate-900'}"
+          >
+            <span class="w-[15px] flex-shrink-0">
+              {#if d.key === activeDiagramKey}<Check size={15} class="text-[#1e88e5]" />{/if}
+            </span>
+            <span class="truncate">{d.title}</span>
+          </button>
+        {/each}
+
+        <div class="my-1 border-t border-[#eef1f5]"></div>
+
+        <!-- Rename the current diagram — inline; empty/whitespace is rejected. -->
+        <form class="px-2 py-1 flex items-center gap-1.5" onsubmit={(e) => { e.preventDefault(); submitRename(); }}>
+          <input
+            aria-label="Rename diagram"
+            bind:value={renameValue}
+            placeholder="Rename diagram"
+            class="flex-1 min-w-0 text-[13px] px-2 py-[6px] border border-[#d8dee8] rounded-md text-slate-900 focus:outline-none focus:border-[#1e88e5] focus:ring-2 focus:ring-[#e6f1fb]"
+          />
+          <button
+            type="submit"
+            class="text-[12.5px] font-[550] text-slate-600 px-2 py-[6px] rounded-md cursor-pointer hover:bg-[#f1f3f7]"
+          >
+            Rename
+          </button>
+        </form>
+
+        <div class="my-1 border-t border-[#eef1f5]"></div>
+
+        <!-- Create a new (empty) diagram — inline name input, not window.prompt. -->
+        {#if newMode}
+          <form class="px-2 py-1 flex items-center gap-1.5" onsubmit={(e) => { e.preventDefault(); submitNew(); }}>
+            <!-- svelte-ignore a11y_autofocus -->
+            <input
+              aria-label="New diagram name"
+              bind:value={newName}
+              placeholder="New diagram name"
+              autofocus
+              class="flex-1 min-w-0 text-[13px] px-2 py-[6px] border border-[#d8dee8] rounded-md text-slate-900 focus:outline-none focus:border-[#1e88e5] focus:ring-2 focus:ring-[#e6f1fb]"
+            />
+            <button
+              type="submit"
+              class="text-[12.5px] font-[550] text-[#1e88e5] px-2 py-[6px] rounded-md cursor-pointer hover:bg-[#e6f1fb]"
+            >
+              Create
+            </button>
+          </form>
+        {:else}
+          <button
+            onclick={() => (newMode = true)}
+            class="w-full text-left text-[13px] text-slate-900 px-3 py-2 cursor-pointer flex items-center gap-[8px] hover:bg-[#f1f3f7]"
+          >
+            <Plus size={15} class="text-slate-500" /> New diagram
+          </button>
+        {/if}
+      </div>
+    {/if}
+  </div>
 
   <div class="flex-1"></div>
 
