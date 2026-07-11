@@ -17,6 +17,12 @@ describe("effectiveDiagrams", () => {
     const g: ModelGraph = { nodes: [node("a")], edges: [], diagrams: [{ key: "d1", title: "D", profile: "p", members: ["a"] }] };
     expect(effectiveDiagrams(g)).toEqual(g.diagrams);
   });
+  it("returns a referentially stable result for the same graph (implicit All)", () => {
+    // Canvas passes this into effect deps; a fresh object each call would re-fire
+    // the setRfNodes effect every render, leaving React Flow nodes visibility:hidden.
+    const g: ModelGraph = { nodes: [node("a"), node("b")], edges: [], diagrams: [] };
+    expect(effectiveDiagrams(g)).toBe(effectiveDiagrams(g));
+  });
 });
 
 describe("store diagram CRUD", () => {
