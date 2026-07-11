@@ -1,4 +1,4 @@
-import type { ModelGraph } from "@mc/okf";
+import type { ModelGraph } from "@uaml/okf";
 import { f, mart, rel, type Template } from "./helpers";
 
 // Customer Support / Service — service-desk model, the shape of a Zendesk

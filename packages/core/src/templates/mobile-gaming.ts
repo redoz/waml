@@ -1,4 +1,4 @@
-import type { ModelGraph } from "@mc/okf";
+import type { ModelGraph } from "@uaml/okf";
 import { f, mart, rel, type Template } from "./helpers";
 
 // Mobile / Gaming — free-to-play telemetry model. fct_sessions/fct_events are

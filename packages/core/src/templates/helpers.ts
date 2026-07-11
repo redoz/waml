@@ -1,5 +1,5 @@
-import type { ModelGraph, ModelNode, ModelEdge, Attribute } from "@mc/okf";
-import { endsFromCardinality } from "@mc/okf";
+import type { ModelGraph, ModelNode, ModelEdge, Attribute } from "@uaml/okf";
+import { endsFromCardinality } from "@uaml/okf";
 
 // ── tiny authoring helpers ─────────────────────────────────────────────────
 // Signatures kept from the mart era so the 22 template files stay untouched:

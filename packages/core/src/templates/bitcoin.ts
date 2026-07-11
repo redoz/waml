@@ -1,4 +1,4 @@
-import type { ModelGraph } from "@mc/okf";
+import type { ModelGraph } from "@uaml/okf";
 import { f, mart, rel, type Template } from "./helpers";
 
 // Public-dataset templates (kept schema-faithful to the real BigQuery tables).

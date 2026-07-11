@@ -1,4 +1,4 @@
-import type { ModelGraph } from "@mc/okf";
+import type { ModelGraph } from "@uaml/okf";
 import { f, mart, rel, type Template } from "./helpers";
 
 // Healthcare provider — operational + revenue-cycle model. fct_appointments

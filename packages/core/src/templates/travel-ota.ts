@@ -1,4 +1,4 @@
-import type { ModelGraph } from "@mc/okf";
+import type { ModelGraph } from "@uaml/okf";
 import { f, mart, rel, type Template } from "./helpers";
 
 // Travel / OTA — booking-funnel model. fct_searches is the shopping stream

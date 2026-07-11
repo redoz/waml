@@ -1,5 +1,5 @@
-import type { ModelGraph } from "@mc/okf";
-import { TEMPLATES } from "@mc/core/templates";
+import type { ModelGraph } from "@uaml/okf";
+import { TEMPLATES } from "@uaml/core/templates";
 
 // Deep-link: `model.owox.com/?template=<id>` opens a named built-in template
 // straight onto the canvas. It's the CTA target for the blog template gallery,

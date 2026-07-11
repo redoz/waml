@@ -1,4 +1,4 @@
-import type { ModelGraph } from "@mc/okf";
+import type { ModelGraph } from "@uaml/okf";
 
 // Merge incoming into current (OKF import / template "merge" mode): every
 // incoming node is appended under a fresh key; edges, diagrams and members are

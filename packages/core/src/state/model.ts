@@ -1,4 +1,4 @@
-import type { ModelGraph, ModelNode, ModelEdge, Diagram } from "@mc/okf";
+import type { ModelGraph, ModelNode, ModelEdge, Diagram } from "@uaml/okf";
 export function createModelStore(initial?: Partial<ModelGraph>) {
   let g: ModelGraph = { nodes: [], edges: [], diagrams: [], ...initial } as ModelGraph;
   // Per-store counter so independent stores (and HMR reloads) don't share ids.

@@ -34,21 +34,22 @@ That's what sets the canvas apart from generic ERD tools: the diagram is just a 
 
 # Development
 
-A static React Flow canvas for sketching data models, with OKF Markdown import/export and URL-based sharing. Everything runs in the browser — there is no server, no auth, and no external API.
+A static SvelteFlow canvas for sketching data models, with OKF Markdown import/export and URL-based sharing. Everything runs in the browser — there is no server, no auth, and no external API.
 
 ## Layout (pnpm monorepo)
 
-The repo has exactly two packages:
+The repo has three packages:
 
 - `packages/okf` — pure shared lib: `ModelGraph` ⇄ OKF Markdown bundle (parse/serialize). No I/O.
-- `packages/web` — React + Vite + React Flow SPA: the canvas, ERD view toggle, inspector, template library, OKF import/export, URL sharing, and `localStorage` persistence. Consumes `okf`'s built `dist/`.
+- `packages/core` — framework-free app logic shared across the UI: OKF I/O, model state, sync/merge, URL sharing, templates, profiles, layout sizing, and image export. No React/Svelte/React-Flow/Svelte-Flow dependencies.
+- `packages/web` — Svelte 5 + Vite + SvelteFlow SPA: the canvas, ERD view toggle, inspector, template library, OKF import/export, URL sharing, and `localStorage` persistence. Consumes `okf` and `core`.
 
 ## Develop
 
 ```bash
 corepack pnpm install
-corepack pnpm --filter @mc/okf build   # web consumes okf's built dist — build okf first
-corepack pnpm --filter @mc/web dev      # Vite dev server on :5173
+corepack pnpm --filter @uaml/okf build   # web consumes okf's built dist — build okf first
+corepack pnpm --filter @uaml/web dev      # Vite dev server on :5173
 ```
 
 Open http://localhost:5173 — the canvas loads immediately, no sign-in.
@@ -56,16 +57,16 @@ Open http://localhost:5173 — the canvas loads immediately, no sign-in.
 To build and serve the production static bundle locally:
 
 ```bash
-corepack pnpm --filter @mc/web build     # emits packages/web/dist
-corepack pnpm --filter @mc/web preview    # serves the built dist/
+corepack pnpm --filter @uaml/web build     # emits packages/web/dist
+corepack pnpm --filter @uaml/web preview    # serves the built dist/
 ```
 
-The root `corepack pnpm build` runs the two in order (okf, then web); the per-package commands above are the ones to reach for during local work.
+The root `corepack pnpm build` runs the three in order (okf, core, then web); the per-package commands above are the ones to reach for during local work.
 
 ## Test
 
 ```bash
-corepack pnpm -r test    # okf + web (Vitest)
+corepack pnpm -r test    # okf + core + web (Vitest)
 corepack pnpm lint       # eslint
 ```
 

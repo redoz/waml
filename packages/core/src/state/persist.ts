@@ -1,5 +1,5 @@
-import type { ModelGraph } from "@mc/okf";
-import { migrateGraph } from "@mc/okf";
+import type { ModelGraph } from "@uaml/okf";
+import { migrateGraph } from "@uaml/okf";
 
 // The whole model lives in memory for the session, so a refresh or an
 // accidental tab close would otherwise wipe it. We mirror it into localStorage

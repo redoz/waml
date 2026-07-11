@@ -1,4 +1,4 @@
-import { serializeBundle, parseBundle, type ModelGraph } from "@mc/okf";
+import { serializeBundle, parseBundle, type ModelGraph } from "@uaml/okf";
 import { zipSync, unzipSync, strToU8, strFromU8 } from "fflate";
 
 // Branded footer appended to the bundle index — every exported model carries an

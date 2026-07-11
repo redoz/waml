@@ -1,4 +1,4 @@
-import type { Diagram, ModelGraph } from "@mc/okf";
+import type { Diagram, ModelGraph } from "@uaml/okf";
 
 export const ALL_DIAGRAM_KEY = "__all__";
 

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { RELATIONSHIP_KINDS } from "@mc/okf";
+import { RELATIONSHIP_KINDS } from "@uaml/okf";
 import { TEMPLATES } from "./index";
 import { ordersDomain } from "./orders-domain";
 

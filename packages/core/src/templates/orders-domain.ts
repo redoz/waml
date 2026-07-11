@@ -1,4 +1,4 @@
-import type { ModelGraph } from "@mc/okf";
+import type { ModelGraph } from "@uaml/okf";
 import { attr, cls, enumOf, edge, type Template } from "./helpers";
 
 // The spec's Order domain worked example — doubles as the living demo of the

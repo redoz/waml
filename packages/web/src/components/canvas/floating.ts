@@ -1,4 +1,4 @@
-import { Position } from "@xyflow/react";
+import { Position } from "@xyflow/svelte";
 
 // Standard React Flow floating-edge math: each edge computes its own attach point
 // on a node's border facing the other node, so a hub's many edges fan out across

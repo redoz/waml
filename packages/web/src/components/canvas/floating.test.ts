@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { Position } from "@xyflow/react";
+import { Position } from "@xyflow/svelte";
 import { getEdgeParams, portPoint } from "./floating";
 
 // InternalNode-shaped plain objects (measured + internals.positionAbsolute).
