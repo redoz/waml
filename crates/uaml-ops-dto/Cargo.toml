@@ -1,18 +1,14 @@
 [package]
-name = "uaml-cli"
+name = "uaml-ops-dto"
 version = "0.0.0"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
-description = "Command-line tools (check, fmt) for UAML documents."
-
-[[bin]]
-name = "uaml"
-path = "src/main.rs"
+description = "Serde wire contract (OpDto) for UAML ops, shared by CLI and WASM."
 
 [dependencies]
 uaml = { path = "../uaml" }
-uaml-ops-dto = { path = "../uaml-ops-dto" }
-clap = { workspace = true }
 serde = { workspace = true }
+
+[dev-dependencies]
 serde_json = { workspace = true }
