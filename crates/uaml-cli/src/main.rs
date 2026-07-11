@@ -2,6 +2,8 @@ use std::path::PathBuf;
 
 use clap::{Parser, Subcommand, ValueEnum};
 
+mod io;
+
 #[derive(Parser)]
 #[command(name = "uaml", about = "Tools for UAML documents")]
 struct Cli {
