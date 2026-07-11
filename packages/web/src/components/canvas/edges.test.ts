@@ -76,6 +76,16 @@ describe("buildRfEdges data passthrough", () => {
     const out = buildRfEdges([edge()], nodes, "compact");
     expect((out[0].data as { relLabelMode?: string }).relLabelMode).toBe("all");
   });
+
+  it("threads emphasizeMultiplicity=false into every edge's data", () => {
+    const out = buildRfEdges([edge(), edge({ id: "e2" })], nodes, "compact", "all", false);
+    expect(out.every(e => (e.data as { emphasizeMultiplicity?: boolean }).emphasizeMultiplicity === false)).toBe(true);
+  });
+
+  it("defaults emphasizeMultiplicity to true when the arg is omitted", () => {
+    const out = buildRfEdges([edge()], nodes, "compact");
+    expect((out[0].data as { emphasizeMultiplicity?: boolean }).emphasizeMultiplicity).toBe(true);
+  });
 });
 
 describe("buildAnchorEdges (dashed connectors for association classes + notes)", () => {

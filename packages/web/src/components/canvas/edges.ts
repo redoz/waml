@@ -34,12 +34,12 @@ function edgeSides(
   return { source: storedSource ?? source, target: storedTarget ?? target };
 }
 
-function compactEdge(e: ModelEdge, sides: { source: Side; target: Side }, relLabelMode: RelLabelMode): Edge {
+function compactEdge(e: ModelEdge, sides: { source: Side; target: Side }, relLabelMode: RelLabelMode, emphasizeMultiplicity: boolean): Edge {
   return {
     id: e.id, source: e.from, target: e.to,
     sourceHandle: sides.source, targetHandle: sides.target,
     type: "rel",
-    data: { kind: e.kind, fromEnd: e.fromEnd, toEnd: e.toEnd, bidirectional: e.bidirectional, modelEdgeId: e.id, relLabelMode } as unknown as Record<string, unknown>,
+    data: { kind: e.kind, fromEnd: e.fromEnd, toEnd: e.toEnd, bidirectional: e.bidirectional, modelEdgeId: e.id, relLabelMode, emphasizeMultiplicity } as unknown as Record<string, unknown>,
   };
 }
 
@@ -48,9 +48,9 @@ export function isEdgeReconnectable(modelEdgeId: string | undefined, selectedEdg
   return modelEdgeId != null && modelEdgeId === selectedEdgeId;
 }
 
-export function buildRfEdges(edges: ModelEdge[], nodes: ModelNode[], viewMode: ViewMode, relLabelMode: RelLabelMode = "all"): Edge[] {
+export function buildRfEdges(edges: ModelEdge[], nodes: ModelNode[], viewMode: ViewMode, relLabelMode: RelLabelMode = "all", emphasizeMultiplicity = true): Edge[] {
   const byKey = new Map(nodes.map(n => [n.key, n]));
-  return edges.map(e => compactEdge(e, edgeSides(byKey.get(e.from), byKey.get(e.to), e, viewMode), relLabelMode));
+  return edges.map(e => compactEdge(e, edgeSides(byKey.get(e.from), byKey.get(e.to), e, viewMode), relLabelMode, emphasizeMultiplicity));
 }
 
 // Synthesise the dashed connectors that tie annotation elements to what they

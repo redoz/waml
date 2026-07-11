@@ -41,4 +41,8 @@ describe("RelEdge UML adornments", () => {
     const both = draw({ kind: "associates", fromEnd: { navigable: true }, toEnd: { navigable: true }, bidirectional: true, relLabelMode: "hidden" });
     expect(both.container.innerHTML).toContain("marker-start");
   });
+  it("emphasizeMultiplicity=false hides the end labels even in 'all' mode", () => {
+    const { container } = draw({ kind: "associates", fromEnd: { multiplicity: "1" }, toEnd: { multiplicity: "*" }, bidirectional: false, relLabelMode: "all", emphasizeMultiplicity: false });
+    expect(container.querySelector(".nodrag.nopan")).toBeNull();
+  });
 });

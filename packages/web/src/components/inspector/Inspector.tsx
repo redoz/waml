@@ -16,6 +16,8 @@ interface InspectorProps {
   onUpdateNode: (key: string, patch: Partial<ModelNode>) => void;
   onUpdateEdge: (id: string, patch: Partial<ModelEdge>) => void;
   onClose: () => void;
+  /** Active diagram's profile name — drives the ObjectInspector palette. */
+  profileName?: string;
   /**
    * When true, render ONLY the selection body (ObjectInspector / RelationshipInspector /
    * EmptyState) — no outer drawer wrapper, border, width, resize handle, header, or
@@ -66,7 +68,7 @@ function ReopenTab({ onClick }: { onClick: () => void }) {
 }
 
 export function Inspector({
-  selection, nodes, edges, onUpdateNode, onUpdateEdge, onClose, embedded = false,
+  selection, nodes, edges, onUpdateNode, onUpdateEdge, onClose, embedded = false, profileName,
 }: InspectorProps) {
   const [open, setOpen] = useState(true);
   const [width, setWidth] = useState(320);
@@ -127,6 +129,7 @@ export function Inspector({
     <ObjectInspector
       node={selectedNode}
       onUpdate={patch => onUpdateNode(selectedNode.key, patch)}
+      profileName={profileName}
     />
   ) : selectedEdge ? (
     <RelationshipInspector

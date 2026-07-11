@@ -6,6 +6,7 @@ import type { RelLabelMode } from "../../state/relLabels";
 export type RelEdgeData = Pick<ModelEdge, "kind" | "fromEnd" | "toEnd" | "bidirectional"> & {
   relLabelMode?: RelLabelMode;
   modelEdgeId?: string;
+  emphasizeMultiplicity?: boolean;
 };
 
 const DASHED: ReadonlySet<RelationshipKind> = new Set(["implements", "depends"]);
@@ -52,7 +53,7 @@ function RelEdgeInner(props: EdgeProps) {
   }
 
   const endText = (e: RelEnd) => [e.multiplicity, e.role].filter(Boolean).join(" ");
-  const showLabels = mode !== "hidden";
+  const showLabels = mode !== "hidden" && (d?.emphasizeMultiplicity ?? true);
   const lerp = (a: number, b: number, t: number) => a + (b - a) * t;
   const labels: { x: number; y: number; text: string }[] = [];
   if (showLabels) {

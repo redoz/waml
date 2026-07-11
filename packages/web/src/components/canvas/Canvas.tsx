@@ -48,6 +48,7 @@ import { AnchorEdge } from "./AnchorEdge";
 import { buildRfEdges, buildAnchorEdges, isEdgeReconnectable } from "./edges";
 import { erdAwareNodeSize } from "./layoutSize";
 import { Inspector } from "../inspector/Inspector";
+import { getProfile } from "../../profiles";
 import { RightRail } from "../rail/RightRail";
 import { ModelSheet } from "../rail/ModelSheet";
 import { useRightPanel } from "../rail/useRightPanel";
@@ -183,8 +184,9 @@ function CanvasInner() {
     setRfNodes(graph.nodes.map(n => toRFNode(n, viewMode, "uml-domain")));
   }, [graph.nodes, viewMode, setRfNodes]);
   useEffect(() => {
+    const emphasizeMultiplicity = getProfile("uml-domain").emphasize.includes("multiplicity");
     setRfEdges([
-      ...buildRfEdges(graph.edges, graph.nodes, viewMode, relLabelMode),
+      ...buildRfEdges(graph.edges, graph.nodes, viewMode, relLabelMode, emphasizeMultiplicity),
       ...buildAnchorEdges(graph.nodes, graph.edges),
     ]);
   }, [graph.edges, graph.nodes, viewMode, relLabelMode, setRfEdges]);
@@ -559,6 +561,7 @@ function CanvasInner() {
               onUpdateNode={store.updateNode}
               onUpdateEdge={store.updateEdge}
               onClose={() => { setSelection(null); panel.close(); }}
+              profileName="uml-domain"
               embedded
             />
           )}

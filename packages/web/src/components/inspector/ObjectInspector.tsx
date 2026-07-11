@@ -1,22 +1,19 @@
 import type { ModelNode, Attribute } from "@mc/okf";
 import { AttributeEditor } from "./AttributeEditor";
 import { InfoTip } from "./InfoTip";
-
-// Task 14 (stage 4) replaces this hardcoded list with the active profile's palette.
-// `uml.Association` and `uml.Note` are intentionally NOT offered here: association classes
-// are authored via an `as [link]` name on a relationship, and notes via the `## Notes`
-// shorthand / a standalone note doc — not by adding a bare node. Both still render if imported.
-const METACLASSES = ["uml.Class", "uml.Interface", "uml.Enum", "uml.DataType", "uml.Package"];
+import { getProfile } from "../../profiles";
 
 interface ObjectInspectorProps {
   node: ModelNode;
   onUpdate: (patch: Partial<ModelNode>) => void;
+  profileName?: string;
 }
 
 const inputCls = "w-full text-[13px] px-[10px] py-2 border border-[#d8dee8] rounded-lg text-slate-900 focus:outline-none focus:border-[#1e88e5] focus:ring-2 focus:ring-[#e6f1fb]";
 const labelCls = "block text-[11px] font-semibold text-slate-500 uppercase tracking-[0.3px] mb-[6px]";
 
-export function ObjectInspector({ node, onUpdate }: ObjectInspectorProps) {
+export function ObjectInspector({ node, onUpdate, profileName }: ObjectInspectorProps) {
+  const palette = getProfile(profileName).palette;
   const isEnum = node.type === "uml.Enum";
   return (
     <div className="flex flex-col gap-[15px]">
@@ -37,7 +34,7 @@ export function ObjectInspector({ node, onUpdate }: ObjectInspectorProps) {
           </label>
           <input type="text" list="okf-metaclasses" value={node.type}
             onChange={e => onUpdate({ type: e.target.value })} className={inputCls} />
-          <datalist id="okf-metaclasses">{METACLASSES.map(t => <option key={t} value={t} />)}</datalist>
+          <datalist id="okf-metaclasses">{palette.metaclasses.map(t => <option key={t} value={t} />)}</datalist>
         </div>
         <label className="flex items-end gap-[7px] pb-[9px] cursor-pointer text-[12.5px] text-slate-700">
           <input type="checkbox" checked={node.abstract ?? false}
@@ -50,9 +47,10 @@ export function ObjectInspector({ node, onUpdate }: ObjectInspectorProps) {
         <label className={`${labelCls} flex items-center gap-[5px]`}>
           Stereotypes <InfoTip text="Comma-separated, open set: entity, valueObject, aggregateRoot, service, domainEvent — invent any. Rendered as «guillemets»." />
         </label>
-        <input type="text" value={node.stereotypes.join(", ")}
+        <input type="text" list="okf-stereotypes" value={node.stereotypes.join(", ")}
           onChange={e => onUpdate({ stereotypes: e.target.value.split(",").map(s => s.trim()).filter(Boolean) })}
           placeholder="aggregateRoot, entity" className={inputCls} />
+        <datalist id="okf-stereotypes">{palette.stereotypes.map(s => <option key={s} value={s} />)}</datalist>
       </div>
       {isEnum ? (
         <div>
