@@ -237,6 +237,47 @@ fn check_operand_refs(
     }
 }
 
+/// A stable key for a named operand (its slug or bare name); `None` for an
+/// anonymous inline group.
+fn operand_key(op: &Operand) -> Option<String> {
+    match &op.ref_ {
+        OperandRef::Name(NameRef::Link { slug, .. }) => Some(slug.clone()),
+        OperandRef::Name(NameRef::Bare(s)) => Some(s.clone()),
+        OperandRef::Paren(inner) => operand_key(inner),
+        OperandRef::InlineGroup { .. } => None,
+    }
+}
+
+/// Depth-first cycle check over a directed adjacency map.
+fn has_cycle(graph: &HashMap<String, Vec<String>>) -> bool {
+    // 0 = unvisited, 1 = on stack, 2 = done
+    fn dfs(node: &str, graph: &HashMap<String, Vec<String>>, state: &mut HashMap<String, u8>) -> bool {
+        state.insert(node.to_string(), 1);
+        if let Some(succs) = graph.get(node) {
+            for s in succs {
+                match state.get(s).copied().unwrap_or(0) {
+                    1 => return true,
+                    0 => {
+                        if dfs(s, graph, state) {
+                            return true;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+        state.insert(node.to_string(), 2);
+        false
+    }
+    let mut state: HashMap<String, u8> = HashMap::new();
+    for node in graph.keys() {
+        if state.get(node).copied().unwrap_or(0) == 0 && dfs(node, graph, &mut state) {
+            return true;
+        }
+    }
+    false
+}
+
 fn validate_diagram_refs(path: &str, text: &str, keyset: &HashSet<String>, diags: &mut Vec<Diagnostic>) {
     if doc_type(text) != "Diagram" {
         return;
@@ -267,6 +308,35 @@ fn validate_diagram_refs(path: &str, text: &str, keyset: &HashSet<String>, diags
         for op in ops {
             check_operand_refs(op, keyset, &group_names, path, layout_line, diags);
         }
+    }
+
+    use crate::syntax::Direction;
+    let mut horizontal: HashMap<String, Vec<String>> = HashMap::new();
+    let mut vertical: HashMap<String, Vec<String>> = HashMap::new();
+    for stmt in layout {
+        if let LayoutStatement::Placement { operands, directions } = stmt {
+            for (i, dir) in directions.iter().enumerate() {
+                let (a, b) = (operand_key(&operands[i]), operand_key(&operands[i + 1]));
+                let (Some(a), Some(b)) = (a, b) else { continue };
+                // Edge points from the operand that must come first to the one after it.
+                let (graph, from, to) = match dir {
+                    Direction::LeftOf => (&mut horizontal, a, b),
+                    Direction::RightOf => (&mut horizontal, b, a),
+                    Direction::Above => (&mut vertical, a, b),
+                    Direction::Below => (&mut vertical, b, a),
+                };
+                graph.entry(from).or_default().push(to);
+            }
+        }
+    }
+    if has_cycle(&horizontal) || has_cycle(&vertical) {
+        let layout_line = text.lines().position(|l| l.trim().to_lowercase() == "## layout").map(|i| i + 1).unwrap_or(1);
+        diags.push(Diagnostic::new(
+            DiagCode::LayoutCycle,
+            "layout placement constraints form a cycle (contradictory ordering)",
+            path,
+            layout_line,
+        ));
     }
 }
 
@@ -499,6 +569,26 @@ mod tests {
         let refs: Vec<_> = diags.iter().filter(|d| d.code == DiagCode::UnresolvedLayoutRef).collect();
         assert_eq!(refs.len(), 1);
         assert!(refs[0].message.contains("Ghosts"));
+    }
+
+    #[test]
+    fn contradictory_placement_is_a_cycle_error() {
+        let bundle = vec![(
+            "d.md".to_string(),
+            "---\ntype: Diagram\ntitle: D\n---\n# D\n\n## Layout\n- A left of B\n- B left of A\n".to_string(),
+        )];
+        let diags = validate(&bundle);
+        assert!(diags.iter().any(|d| d.code == DiagCode::LayoutCycle));
+    }
+
+    #[test]
+    fn consistent_placement_has_no_cycle() {
+        let bundle = vec![(
+            "d.md".to_string(),
+            "---\ntype: Diagram\ntitle: D\n---\n# D\n\n## Layout\n- A left of B left of C\n- A above D\n".to_string(),
+        )];
+        let diags = validate(&bundle);
+        assert!(!diags.iter().any(|d| d.code == DiagCode::LayoutCycle));
     }
 
     #[test]

@@ -15,6 +15,7 @@ pub enum DiagCode {
     DroppableContent,
     MalformedLayout,
     UnresolvedLayoutRef,
+    LayoutCycle,
 }
 
 impl DiagCode {
@@ -29,6 +30,7 @@ impl DiagCode {
             DiagCode::DroppableContent => "droppable-content",
             DiagCode::MalformedLayout => "malformed-layout",
             DiagCode::UnresolvedLayoutRef => "unresolved-layout-ref",
+            DiagCode::LayoutCycle => "layout-cycle",
         }
     }
     /// Default severity for this code (a specific site may downgrade to a warning).
