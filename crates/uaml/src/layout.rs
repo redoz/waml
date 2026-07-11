@@ -3,7 +3,7 @@
 
 use std::sync::LazyLock;
 use regex::Regex;
-use crate::syntax::LayoutStatement;
+use crate::syntax::*;
 
 /// Render one `## Layout` statement back to its `- …` bullet text.
 pub fn render_layout_line(_stmt: &LayoutStatement) -> String {
@@ -85,6 +85,82 @@ fn lex_layout(body: &str) -> Option<Vec<Tok>> {
     Some(out)
 }
 
+struct Cur<'a> { toks: &'a [Tok], pos: usize }
+
+impl<'a> Cur<'a> {
+    fn peek(&self) -> Option<&Tok> { self.toks.get(self.pos) }
+    fn peek_word(&self) -> Option<&str> {
+        match self.toks.get(self.pos) {
+            Some(Tok::Word(w)) => Some(w.as_str()),
+            _ => None,
+        }
+    }
+    fn bump(&mut self) -> Option<&Tok> {
+        let t = self.toks.get(self.pos);
+        if t.is_some() { self.pos += 1; }
+        t
+    }
+    /// Consume the next token iff it is `Word(w)` (case-insensitive).
+    fn eat_word(&mut self, w: &str) -> bool {
+        if self.peek_word().map(|x| x.eq_ignore_ascii_case(w)) == Some(true) {
+            self.pos += 1;
+            true
+        } else {
+            false
+        }
+    }
+    fn done(&self) -> bool { self.pos >= self.toks.len() }
+}
+
+/// Parse one `## Layout` bullet (leading `- ` required). Returns `None` if the
+/// bullet is malformed or has unconsumed trailing tokens.
+pub fn parse_layout_line(line: &str) -> Option<LayoutStatement> {
+    let body = line.trim().strip_prefix("- ")?;
+    let toks = lex_layout(body)?;
+    if toks.is_empty() {
+        return None;
+    }
+    // Standalone only, for now. Placement/alignment dispatch arrives in Tasks 6–7.
+    let mut cur = Cur { toks: &toks, pos: 0 };
+    let op = parse_operand(&mut cur)?;
+    if !cur.done() {
+        return None;
+    }
+    Some(LayoutStatement::Standalone(op))
+}
+
+fn parse_operand(cur: &mut Cur) -> Option<Operand> {
+    let ref_ = parse_ref(cur)?;
+    // `as` / `with` clauses are added in Task 4.
+    Some(Operand { ref_, axis: None, hints: vec![] })
+}
+
+fn parse_ref(cur: &mut Cur) -> Option<OperandRef> {
+    match cur.peek()? {
+        Tok::Link { .. } => {
+            if let Some(Tok::Link { title, slug }) = cur.bump() {
+                Some(OperandRef::Name(NameRef::Link { title: title.clone(), slug: slug.clone() }))
+            } else {
+                None
+            }
+        }
+        Tok::Quoted(_) => {
+            if let Some(Tok::Quoted(v)) = cur.bump() {
+                Some(OperandRef::Name(NameRef::Bare(v.clone())))
+            } else {
+                None
+            }
+        }
+        Tok::Word(w) => {
+            // Inline groups + parens are added in Task 5. For now a lone bare word.
+            let name = w.clone();
+            cur.bump();
+            Some(OperandRef::Name(NameRef::Bare(name)))
+        }
+        _ => None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -109,5 +185,32 @@ mod tests {
     fn rejects_unterminated_quote_and_bad_link() {
         assert!(lex_layout("\"oops").is_none());
         assert!(lex_layout("[Order](./order.md").is_none());
+    }
+
+    #[test]
+    fn parses_standalone_bare_and_link() {
+        use crate::syntax::*;
+        assert_eq!(
+            parse_layout_line("- Orders"),
+            Some(LayoutStatement::Standalone(Operand {
+                ref_: OperandRef::Name(NameRef::Bare("Orders".into())),
+                axis: None,
+                hints: vec![],
+            }))
+        );
+        assert_eq!(
+            parse_layout_line("- [Order](./order.md)"),
+            Some(LayoutStatement::Standalone(Operand {
+                ref_: OperandRef::Name(NameRef::Link { title: "Order".into(), slug: "order".into() }),
+                axis: None,
+                hints: vec![],
+            }))
+        );
+    }
+
+    #[test]
+    fn rejects_line_without_bullet_and_trailing_garbage() {
+        assert!(parse_layout_line("Orders").is_none());       // no "- " bullet
+        assert!(parse_layout_line("- Orders Extra").is_none()); // two bare words, no relation
     }
 }
