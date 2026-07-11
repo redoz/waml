@@ -79,6 +79,16 @@ fn parse_end(part: &str) -> Option<RelEnd> {
     })
 }
 
+/// Parse a `<near> to <far>` ends clause into two `RelEnd`s. `None` if it is
+/// not exactly two ` to `-separated, individually-valid ends.
+pub fn parse_ends(raw: &str) -> Option<(RelEnd, RelEnd)> {
+    let parts: Vec<&str> = raw.split(" to ").collect();
+    if parts.len() != 2 {
+        return None;
+    }
+    Some((parse_end(parts[0])?, parse_end(parts[1])?))
+}
+
 pub fn parse_relationship_line(line: &str) -> Option<ParsedRel> {
     let line = line.trim_end_matches('\r').trim();
     let m = REL_RE.captures(line)?;
@@ -94,14 +104,9 @@ pub fn parse_relationship_line(line: &str) -> Option<ParsedRel> {
     } else {
         None
     };
-    let (from_end, to_end) = if let Some(raw) = ends_raw {
-        let parts: Vec<&str> = raw.split(" to ").collect();
-        if parts.len() != 2 {
-            return None;
-        }
-        (parse_end(parts[0])?, parse_end(parts[1])?)
-    } else {
-        (RelEnd::default(), RelEnd::default())
+    let (from_end, to_end) = match ends_raw {
+        Some(raw) => parse_ends(raw)?,
+        None => (RelEnd::default(), RelEnd::default()),
     };
     Some(ParsedRel {
         kind,

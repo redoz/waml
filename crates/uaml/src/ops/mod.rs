@@ -1,8 +1,8 @@
-use crate::model::{Attribute, TypeRef, Visibility};
+use crate::model::{Attribute, RelEnd, RelationshipKind, TypeRef, Visibility};
 use crate::multiplicity::Multiplicity;
 use crate::parse::parse_document;
 use crate::serialize::serialize_document;
-use crate::syntax::{Document, Section};
+use crate::syntax::{Document, ParsedName, ParsedRel, Section};
 
 pub type Bundle = Vec<(String, String)>;
 
@@ -18,6 +18,18 @@ impl OpError {
     pub(crate) fn at(op: &str, reason: impl Into<String>) -> OpError {
         OpError { index: 0, op: op.to_string(), selector: None, reason: reason.into() }
     }
+
+    pub(crate) fn with_sel(mut self, sel: String) -> OpError {
+        self.selector = Some(sel);
+        self
+    }
+}
+
+/// How a relationship's name is given on an op (a `Ref`'s title is resolved at apply time).
+#[derive(Debug, Clone, PartialEq)]
+pub enum NameSpec {
+    Label(String),
+    Ref(String), // target slug
 }
 
 /// One mutation. One variant per sugar command; grows task by task.
@@ -41,6 +53,15 @@ pub enum Op {
     AttrRm { node: String, name: String },
     ValueAdd { node: String, literal: String },
     ValueRm { node: String, literal: String },
+    RelAdd {
+        source: String,
+        kind: RelationshipKind,
+        target: String,
+        name: Option<NameSpec>,
+        ends: Option<(RelEnd, RelEnd)>,
+    },
+    RelSet { selector: Selector, ends: Option<(RelEnd, RelEnd)>, name: Option<NameSpec> },
+    RelRm { selector: Selector },
 }
 
 pub fn apply(bundle: &[(String, String)], ops: &[Op]) -> Result<Bundle, OpError> {
@@ -65,6 +86,11 @@ fn apply_one(work: &mut Bundle, op: &Op) -> Result<(), OpError> {
         Op::AttrRm { node, name } => op_attr_rm(work, node, name),
         Op::ValueAdd { node, literal } => op_value_add(work, node, literal),
         Op::ValueRm { node, literal } => op_value_rm(work, node, literal),
+        Op::RelAdd { source, kind, target, name, ends } => {
+            op_rel_add(work, source, *kind, target, name, ends)
+        }
+        Op::RelSet { selector, ends, name } => op_rel_set(work, selector, ends, name),
+        Op::RelRm { selector } => op_rel_rm(work, selector),
     }
 }
 
@@ -135,6 +161,59 @@ pub(crate) fn resolve_type(work: &Bundle, token: &str) -> TypeRef {
         TypeRef { name: title, ref_: Some(token.to_string()) }
     } else {
         TypeRef { name: token.to_string(), ref_: None }
+    }
+}
+
+/// Get the `## Relationships` list, creating an empty section if absent
+/// (canonical serialize re-orders sections, so append position is irrelevant).
+pub(crate) fn rels_mut(doc: &mut Document) -> &mut Vec<ParsedRel> {
+    if !doc.sections.iter().any(|s| matches!(s, Section::Relationships(_))) {
+        doc.sections.push(Section::Relationships(Vec::new()));
+    }
+    doc.sections
+        .iter_mut()
+        .find_map(|s| match s {
+            Section::Relationships(r) => Some(r),
+            _ => None,
+        })
+        .expect("relationships section just ensured")
+}
+
+/// Look up a document's `title` by slug, falling back to the slug itself
+/// (forward-ref-safe, mirrors `resolve_type`).
+pub(crate) fn resolve_title(work: &Bundle, slug: &str) -> String {
+    work.iter()
+        .find(|(p, _)| slug_of(p) == slug)
+        .and_then(|(_, t)| parse_document(t).frontmatter.get_str("title").map(String::from))
+        .unwrap_or_else(|| slug.to_string())
+}
+
+/// Resolve an op's `NameSpec` into the `ParsedName` stored on the document
+/// (a `Ref`'s title is resolved against the bundle at apply time).
+fn build_name(work: &Bundle, spec: &Option<NameSpec>) -> Option<ParsedName> {
+    match spec {
+        None => None,
+        Some(NameSpec::Label(l)) => Some(ParsedName::Label(l.clone())),
+        Some(NameSpec::Ref(slug)) => {
+            Some(ParsedName::Ref { title: resolve_title(work, slug), slug: slug.clone() })
+        }
+    }
+}
+
+/// Does a parsed relationship match a selector's `RelBy` address?
+fn rel_matches(r: &ParsedRel, by: &RelBy) -> bool {
+    match by {
+        RelBy::Endpoint { kind, target } => r.kind == *kind && r.target_slug == *target,
+        RelBy::Named(name) => matches!(&r.name, Some(ParsedName::Label(l)) if l == name),
+    }
+}
+
+/// Extract `(source, by)` from a `Selector::Rel`, erroring for any other selector shape.
+fn rel_target<'a>(selector: &'a Selector, op: &str) -> Result<(&'a str, &'a RelBy), OpError> {
+    match selector {
+        Selector::Rel { source, by } => Ok((source.as_str(), by)),
+        _ => Err(OpError::at(op, format!("selector '{}' does not address a relationship", render_selector(selector)))
+            .with_sel(render_selector(selector))),
     }
 }
 
@@ -236,6 +315,92 @@ fn op_value_rm(work: &mut Bundle, node: &str, literal: &str) -> Result<(), OpErr
     })
 }
 
+fn op_rel_add(
+    work: &mut Bundle,
+    source: &str,
+    kind: RelationshipKind,
+    target: &str,
+    name: &Option<NameSpec>,
+    ends: &Option<(RelEnd, RelEnd)>,
+) -> Result<(), OpError> {
+    if kind.is_ended() != ends.is_some() {
+        let msg = if kind.is_ended() {
+            format!("relationship '{}' requires ends", kind.as_str())
+        } else {
+            format!("relationship '{}' does not take ends", kind.as_str())
+        };
+        return Err(OpError::at("rel.add", msg));
+    }
+    let target_title = resolve_title(work, target);
+    let name = build_name(work, name);
+    let ends = ends.clone();
+    edit_doc(work, source, "rel.add", |doc| {
+        let rels = rels_mut(doc);
+        if rels.iter().any(|r| r.kind == kind && r.target_slug == target) {
+            return Err(OpError::at(
+                "rel.add",
+                format!("relationship '{} {target}' already exists in {source}", kind.as_str()),
+            ));
+        }
+        let (from_end, to_end) = ends.unwrap_or_default();
+        rels.push(ParsedRel {
+            kind,
+            target_title,
+            target_slug: target.to_string(),
+            name,
+            from_end,
+            to_end,
+        });
+        Ok(())
+    })
+}
+
+fn op_rel_set(
+    work: &mut Bundle,
+    selector: &Selector,
+    ends: &Option<(RelEnd, RelEnd)>,
+    name: &Option<NameSpec>,
+) -> Result<(), OpError> {
+    let (source, by) = rel_target(selector, "rel.set")?;
+    let (source, by) = (source.to_string(), by.clone());
+    let disp = render_selector(selector);
+    let new_ends = ends.clone();
+    let new_name = build_name(work, name);
+    edit_doc(work, &source, "rel.set", |doc| {
+        let rels = rels_mut(doc);
+        let r = rels
+            .iter_mut()
+            .find(|r| rel_matches(r, &by))
+            .ok_or_else(|| OpError::at("rel.set", format!("no relationship '{disp}'")).with_sel(disp.clone()))?;
+        if let Some((f, t)) = new_ends {
+            if !r.kind.is_ended() {
+                return Err(OpError::at("rel.set", format!("'{}' does not take ends", r.kind.as_str())));
+            }
+            r.from_end = f;
+            r.to_end = t;
+        }
+        if let Some(n) = new_name {
+            r.name = Some(n);
+        }
+        Ok(())
+    })
+}
+
+fn op_rel_rm(work: &mut Bundle, selector: &Selector) -> Result<(), OpError> {
+    let (source, by) = rel_target(selector, "rel.rm")?;
+    let (source, by) = (source.to_string(), by.clone());
+    let disp = render_selector(selector);
+    edit_doc(work, &source, "rel.rm", |doc| {
+        let rels = rels_mut(doc);
+        let before = rels.len();
+        rels.retain(|r| !rel_matches(r, &by));
+        if rels.len() == before {
+            return Err(OpError::at("rel.rm", format!("no relationship '{disp}'")).with_sel(disp.clone()));
+        }
+        Ok(())
+    })
+}
+
 pub mod selector;
 pub use selector::{parse_selector, render_selector, RelBy, Selector};
 
@@ -243,6 +408,9 @@ pub use selector::{parse_selector, render_selector, RelBy, Selector};
 mod tests {
     use super::*;
     use crate::multiplicity::Multiplicity;
+    use crate::ops::selector::{RelBy, Selector};
+    use crate::model::RelationshipKind;
+    use crate::grammar::parse_ends;
 
     fn attr_add(node: &str, name: &str, ty: &str) -> Op {
         Op::AttrAdd { node: node.into(), name: name.into(), ty_token: ty.into(),
@@ -364,5 +532,61 @@ mod tests {
         assert!(out[0].1.contains("- PLACED"));
         let err = apply(&b, &[Op::ValueRm { node:"order-status".into(), literal:"GONE".into() }]).unwrap_err();
         assert!(err.reason.contains("no value 'GONE'"));
+    }
+
+    #[test]
+    fn rel_add_composes_with_ends() {
+        let b = vec![
+            ("a/order.md".to_string(), "---\ntype: uml.Class\ntitle: Order\n---\n# Order\n".to_string()),
+            ("a/order-line.md".to_string(), "---\ntype: uml.Class\ntitle: OrderLine\n---\n# OrderLine\n".to_string()),
+        ];
+        let out = apply(&b, &[Op::RelAdd {
+            source: "order".into(), kind: RelationshipKind::Composes, target: "order-line".into(),
+            name: None, ends: parse_ends("1 to 1..* lines"),
+        }]).unwrap();
+        assert!(out[0].1.contains("- composes [OrderLine](./order-line.md): 1 to 1..* lines"));
+    }
+
+    #[test]
+    fn rel_add_enforces_ends_xor_verb() {
+        let b = vec![("a/order.md".to_string(), "---\ntype: uml.Class\ntitle: Order\n---\n# Order\n".to_string())];
+        // composes requires ends
+        let e1 = apply(&b, &[Op::RelAdd { source:"order".into(), kind:RelationshipKind::Composes, target:"x".into(), name:None, ends:None }]).unwrap_err();
+        assert!(e1.reason.contains("requires ends"));
+        // depends forbids ends
+        let e2 = apply(&b, &[Op::RelAdd { source:"order".into(), kind:RelationshipKind::Depends, target:"x".into(), name:None, ends: parse_ends("1 to 1") }]).unwrap_err();
+        assert!(e2.reason.contains("does not take ends"));
+    }
+
+    #[test]
+    fn rel_add_allows_forward_ref_and_refuses_duplicate() {
+        let b = vec![("a/order.md".to_string(), "---\ntype: uml.Class\ntitle: Order\n---\n# Order\n".to_string())];
+        // forward ref (ghost.md absent) is allowed; title falls back to the slug
+        let out = apply(&b, &[Op::RelAdd { source:"order".into(), kind:RelationshipKind::Depends, target:"ghost".into(), name:None, ends:None }]).unwrap();
+        assert!(out[0].1.contains("- depends [ghost](./ghost.md)"));
+        let dup = apply(&out, &[Op::RelAdd { source:"order".into(), kind:RelationshipKind::Depends, target:"ghost".into(), name:None, ends:None }]).unwrap_err();
+        assert!(dup.reason.contains("already exists"));
+    }
+
+    #[test]
+    fn rel_set_updates_ends_and_rel_rm_removes() {
+        let b = vec![
+            ("a/order.md".to_string(), "---\ntype: uml.Class\ntitle: Order\n---\n# Order\n\n## Relationships\n- composes [OrderLine](./order-line.md): 1 to 1..* lines\n".to_string()),
+            ("a/order-line.md".to_string(), "---\ntype: uml.Class\ntitle: OrderLine\n---\n# OrderLine\n".to_string()),
+        ];
+        let sel = Selector::Rel { source:"order".into(), by: RelBy::Endpoint { kind: RelationshipKind::Composes, target:"order-line".into() } };
+        let set = apply(&b, &[Op::RelSet { selector: sel.clone(), ends: parse_ends("1 to *"), name: None }]).unwrap();
+        assert!(set[0].1.contains(": 1 to *"));
+        let rm = apply(&b, &[Op::RelRm { selector: sel }]).unwrap();
+        assert!(!rm[0].1.contains("composes"));
+    }
+
+    #[test]
+    fn rel_set_on_missing_rel_errors() {
+        let b = vec![("a/order.md".to_string(), "---\ntype: uml.Class\ntitle: Order\n---\n# Order\n".to_string())];
+        let sel = Selector::Rel { source:"order".into(), by: RelBy::Named("nope".into()) };
+        let err = apply(&b, &[Op::RelRm { selector: sel }]).unwrap_err();
+        assert!(err.reason.contains("no relationship"));
+        assert!(err.selector.is_some());
     }
 }
