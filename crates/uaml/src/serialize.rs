@@ -109,4 +109,13 @@ mod tests {
         let twice = serialize_document(&parse_document(&once));
         assert_eq!(once, twice);
     }
+
+    #[test]
+    fn serialize_round_trips_layout_section() {
+        let src = "---\ntype: Diagram\ntitle: D\nprofile: uml-domain\n---\n# D\n\n## Layout\n- Users left of Orders\n- top of Users aligned with top of Orders\n";
+        let once = serialize_document(&parse_document(src));
+        let twice = serialize_document(&parse_document(&once));
+        assert_eq!(once, twice);
+        assert!(once.contains("## Layout\n- Users left of Orders"));
+    }
 }

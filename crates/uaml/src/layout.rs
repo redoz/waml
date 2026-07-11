@@ -6,8 +6,102 @@ use regex::Regex;
 use crate::syntax::*;
 
 /// Render one `## Layout` statement back to its `- …` bullet text.
-pub fn render_layout_line(_stmt: &LayoutStatement) -> String {
-    String::new() // implemented in Task 8
+pub fn render_layout_line(stmt: &LayoutStatement) -> String {
+    let body = match stmt {
+        LayoutStatement::Standalone(op) => render_operand(op),
+        LayoutStatement::Placement { operands, directions } => {
+            let mut s = render_operand(&operands[0]);
+            for (d, op) in directions.iter().zip(&operands[1..]) {
+                s.push_str(&format!(" {} {}", dir_str(*d), render_operand(op)));
+            }
+            s
+        }
+        LayoutStatement::Alignment { left, right } => {
+            format!("{} aligned with {}", render_anchored(left), render_anchored(right))
+        }
+    };
+    format!("- {body}")
+}
+
+fn render_anchored(a: &Anchored) -> String {
+    match a.edge {
+        Some(e) => format!("{} of {}", edge_str(e), render_operand(&a.operand)),
+        None => render_operand(&a.operand),
+    }
+}
+
+fn render_operand(op: &Operand) -> String {
+    let mut s = render_ref(&op.ref_);
+    if let Some(ax) = op.axis {
+        s.push_str(&format!(" as {}", axis_str(ax)));
+    }
+    if !op.hints.is_empty() {
+        let hs = op.hints.iter().map(render_hint).collect::<Vec<_>>().join(", ");
+        s.push_str(&format!(" with {hs}"));
+    }
+    s
+}
+
+fn render_ref(r: &OperandRef) -> String {
+    match r {
+        OperandRef::Name(NameRef::Link { title, slug }) => format!("[{title}](./{slug}.md)"),
+        OperandRef::Name(NameRef::Bare(name)) => render_bare_name(name),
+        OperandRef::InlineGroup { axis, items } => {
+            let list = items.iter().map(render_operand).collect::<Vec<_>>().join(", ");
+            format!("{} of {list}", axis_str(*axis))
+        }
+        OperandRef::Paren(inner) => format!("({})", render_operand(inner)),
+    }
+}
+
+/// A bare name re-quotes iff it is empty or contains a character the lexer
+/// would split on (whitespace or a delimiter).
+fn render_bare_name(name: &str) -> String {
+    let needs_quote = name.is_empty()
+        || name.chars().any(|c| c.is_whitespace() || matches!(c, '(' | ')' | ',' | '[' | ']' | '"'));
+    if needs_quote { format!("\"{name}\"") } else { name.to_string() }
+}
+
+fn render_hint(h: &Hint) -> String {
+    match h {
+        Hint::Shape(Shape::Frame) => "frame".to_string(),
+        Hint::Shape(Shape::Box) => "box".to_string(),
+        Hint::Shape(Shape::Shrink) => "shrink".to_string(),
+        Hint::Flag(Flag::Emphasized) => "emphasized".to_string(),
+        Hint::Flag(Flag::Collapsed) => "collapsed".to_string(),
+        Hint::Margin(m) => {
+            let level = match m {
+                Margin::No => "no",
+                Margin::Small => "small",
+                Margin::Medium => "medium",
+                Margin::Large => "large",
+            };
+            format!("{level} margin")
+        }
+    }
+}
+
+fn dir_str(d: Direction) -> &'static str {
+    match d {
+        Direction::LeftOf => "left of",
+        Direction::RightOf => "right of",
+        Direction::Above => "above",
+        Direction::Below => "below",
+    }
+}
+
+fn edge_str(e: Edge) -> &'static str {
+    match e {
+        Edge::Top => "top",
+        Edge::Bottom => "bottom",
+        Edge::Left => "left",
+        Edge::Right => "right",
+        Edge::Center => "center",
+    }
+}
+
+fn axis_str(a: Axis) -> &'static str {
+    match a { Axis::Row => "row", Axis::Column => "column" }
 }
 
 // Anchored at the start: `[title](./slug.md)`. Slug may contain a directory prefix.
@@ -541,5 +635,31 @@ mod tests {
         let LayoutStatement::Alignment { left, right } = stmt else { panic!("expected alignment, not placement") };
         assert_eq!(left.edge, Some(Edge::Left));
         assert_eq!(right.edge, Some(Edge::Right));
+    }
+
+    #[test]
+    fn layout_lines_round_trip() {
+        for line in [
+            "- Orders",
+            "- Users as column with frame, large margin",
+            "- Users left of Orders",
+            "- Order above OrderLine above Payment",
+            "- top of VIP aligned with top of Orders",
+            "- X aligned with Y",
+            "- (column of Customer, Account) with large margin",
+            "- row of (column of Customer, Account), Orders",
+            "- [Money](./money.md) with collapsed",
+        ] {
+            let parsed = parse_layout_line(line).unwrap_or_else(|| panic!("failed to parse: {line}"));
+            let rendered = render_layout_line(&parsed);
+            let reparsed = parse_layout_line(&rendered).unwrap_or_else(|| panic!("failed to reparse: {rendered}"));
+            assert_eq!(parsed, reparsed, "not a fixpoint: {line} -> {rendered}");
+        }
+    }
+
+    #[test]
+    fn hint_joiner_normalizes_to_comma() {
+        let parsed = parse_layout_line("- Users with frame and large margin").unwrap();
+        assert_eq!(render_layout_line(&parsed), "- Users with frame, large margin");
     }
 }
