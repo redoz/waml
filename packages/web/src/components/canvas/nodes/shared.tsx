@@ -4,8 +4,9 @@ import { ChevronDown, ChevronRight } from "lucide-react";
 import type { Attribute, ModelNode } from "@mc/okf";
 import type { ViewMode } from "../../../state/viewMode";
 import { ERD_COLLAPSED_ROWS } from "../layoutSize";
+import { getProfile, stereotypeStyle } from "../../../profiles";
 
-export type OkfNodeData = ModelNode & { _viewMode?: ViewMode };
+export type OkfNodeData = ModelNode & { _viewMode?: ViewMode; _profile?: string };
 export interface OkfNodeProps { data: OkfNodeData }
 
 export const NODE_FONT = "-apple-system, BlinkMacSystemFont, 'Segoe UI', Inter, system-ui, sans-serif";
@@ -67,10 +68,20 @@ export function RowsCompartment({ rows, render }: { rows: number; render: (i: nu
 }
 
 export function ClassifierBox({ data, keyword, header }: { data: OkfNodeData; keyword?: string; header?: React.ReactNode }) {
+  const profile = getProfile(data._profile);
+  const st = stereotypeStyle(profile, data.stereotypes);
   const isDetailed = (data._viewMode ?? "compact") === "erd";
+  const showVisibility = !profile.hide.includes("visibility");
+  const boxStyle: React.CSSProperties = {
+    fontFamily: NODE_FONT,
+    ...(st.header ? { borderTopColor: st.header, borderTopWidth: 4 } : {}),
+    ...(st.border === "thick" ? { borderColor: st.header ?? "#334155", borderWidth: 2.5 } : {}),
+    ...(st.shape === "hexagon" ? { clipPath: "polygon(8% 0, 92% 0, 100% 50%, 92% 100%, 8% 100%, 0 50%)", borderRadius: 0 } : {}),
+  };
   return (
-    <div className="relative bg-white border-[1.5px] border-[#d8dee8] rounded-xl shadow-[0_2px_8px_rgba(15,23,42,0.05)] cursor-grab hover:border-[#c2cad8] select-none w-[230px]"
-      style={{ fontFamily: NODE_FONT }}>
+    <div data-stereotyped={Object.keys(st).length > 0 || undefined}
+      className="relative bg-white border-[1.5px] border-[#d8dee8] rounded-xl shadow-[0_2px_8px_rgba(15,23,42,0.05)] cursor-grab hover:border-[#c2cad8] select-none w-[230px]"
+      style={boxStyle}>
       {header}
       <StereotypeRow stereotypes={data.stereotypes} keyword={keyword} />
       <div className={`px-3 pb-[9px] pt-[3px] text-center text-[13.5px] font-semibold text-slate-900 ${data.abstract ? "italic" : ""}`}>
@@ -86,7 +97,7 @@ export function ClassifierBox({ data, keyword, header }: { data: OkfNodeData; ke
       )}
       {isDetailed && !data.values && (
         <RowsCompartment rows={data.attributes.length}
-          render={i => <AttributeRow key={data.attributes[i].name + i} a={data.attributes[i]} />} />
+          render={i => <AttributeRow key={data.attributes[i].name + i} a={data.attributes[i]} showVisibility={showVisibility} />} />
       )}
       {!isDetailed && (
         <div className="px-3 pb-[10px] text-center text-[11px] text-slate-500">

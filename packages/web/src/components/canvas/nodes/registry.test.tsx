@@ -55,4 +55,14 @@ describe("metaclass renderer registry", () => {
     expect(screen.getByText("Order")).toBeTruthy();
     expect(screen.getByText("x")).toBeTruthy();
   });
+  it("stereotype styles from the profile decorate the box", () => {
+    const C = resolveNodeRenderer("uml.Class");
+    const { container } = render(
+      <ReactFlowProvider>
+        <C data={{ ...node({ stereotypes: ["aggregateRoot"] }), _viewMode: "erd", _profile: "uml-domain" }} />
+      </ReactFlowProvider>,
+    );
+    const box = container.querySelector("[data-stereotyped]") as HTMLElement;
+    expect(box.style.borderColor).toBe("rgb(234, 179, 8)");
+  });
 });
