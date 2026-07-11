@@ -51,7 +51,7 @@ Add every AST type the layout language needs, plus a new `Section::Layout` varia
   ```
 - Produces: `Section::Layout(Vec<LayoutStatement>)`.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Append to the `tests` module in `crates/uaml/src/syntax.rs`:
 
@@ -75,12 +75,12 @@ Append to the `tests` module in `crates/uaml/src/syntax.rs`:
     }
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `cargo test -p uaml layout_statement_is_constructible`
 Expected: FAIL — compile error, `LayoutStatement`/`Operand`/etc. not found.
 
-- [ ] **Step 3: Add the AST types and the `Section` variant**
+- [x] **Step 3: Add the AST types and the `Section` variant**
 
 In `crates/uaml/src/syntax.rs`, add these type definitions (place them after the existing `HintLine` enum, before the `tests` module):
 
@@ -190,12 +190,12 @@ pub fn render_layout_line(_stmt: &LayoutStatement) -> String {
 }
 ```
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 Run: `cargo test -p uaml`
 Expected: PASS (whole crate still compiles and green; `layout_statement_is_constructible` passes).
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add crates/uaml/src/syntax.rs crates/uaml/src/parse.rs crates/uaml/src/serialize.rs crates/uaml/src/lib.rs crates/uaml/src/layout.rs
@@ -214,7 +214,7 @@ Tokenize one layout bullet body into atoms: parenthesis, comma, `[title](./slug.
 **Interfaces:**
 - Produces (used by Tasks 3–7, module-private): `enum Tok { Word(String), Link { title, slug }, Quoted(String), LParen, RParen, Comma }` and `fn lex_layout(body: &str) -> Option<Vec<Tok>>`.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Add a `tests` module at the bottom of `crates/uaml/src/layout.rs`:
 
@@ -247,12 +247,12 @@ mod tests {
 }
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `cargo test -p uaml layout::tests::lexes_link_word_paren_comma_and_quote`
 Expected: FAIL — `Tok` / `lex_layout` not found.
 
-- [ ] **Step 3: Implement the tokenizer**
+- [x] **Step 3: Implement the tokenizer**
 
 In `crates/uaml/src/layout.rs`, add above the `tests` module:
 
@@ -336,12 +336,12 @@ fn lex_layout(body: &str) -> Option<Vec<Tok>> {
 }
 ```
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 Run: `cargo test -p uaml layout::tests::`
 Expected: PASS (both new tests).
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add crates/uaml/src/layout.rs
@@ -361,7 +361,7 @@ Introduce the parser cursor and `parse_layout_line`, handling the simplest state
 - Produces (used by Tasks 4–13): `pub fn parse_layout_line(line: &str) -> Option<LayoutStatement>`. The `line` includes the leading `- ` bullet.
 - Produces (module-private, extended by later tasks): `struct Cur`, `fn parse_operand(&mut Cur) -> Option<Operand>`, `fn parse_ref(&mut Cur) -> Option<OperandRef>`.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Add to the `tests` module in `crates/uaml/src/layout.rs`:
 
@@ -394,12 +394,12 @@ Add to the `tests` module in `crates/uaml/src/layout.rs`:
     }
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `cargo test -p uaml layout::tests::parses_standalone_bare_and_link`
 Expected: FAIL — `parse_layout_line` not found.
 
-- [ ] **Step 3: Implement the cursor, `parse_ref`, `parse_operand`, and `parse_layout_line`**
+- [x] **Step 3: Implement the cursor, `parse_ref`, `parse_operand`, and `parse_layout_line`**
 
 In `crates/uaml/src/layout.rs`, add above the `tests` module. Import the AST at the top of the file (replace the existing `use crate::syntax::LayoutStatement;` line with the glob):
 
@@ -487,12 +487,12 @@ fn parse_ref(cur: &mut Cur) -> Option<OperandRef> {
 }
 ```
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 Run: `cargo test -p uaml layout::tests::`
 Expected: PASS (standalone + reject tests, plus Task 2 lexer tests).
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add crates/uaml/src/layout.rs
@@ -511,7 +511,7 @@ Extend `parse_operand` to consume an optional `as row|column` clause then an opt
 **Interfaces:**
 - Produces (module-private): `fn parse_axis(&mut Cur) -> Option<Axis>`, `fn parse_hints(&mut Cur) -> Option<Vec<Hint>>`, `fn parse_hint(&mut Cur) -> Option<Hint>`.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Add to the `tests` module:
 
@@ -547,12 +547,12 @@ Add to the `tests` module:
     }
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `cargo test -p uaml layout::tests::parses_as_axis_and_with_hints`
 Expected: FAIL — assertion fails (`op.axis` is `None`, `op.hints` is empty).
 
-- [ ] **Step 3: Extend `parse_operand` and add hint parsing**
+- [x] **Step 3: Extend `parse_operand` and add hint parsing**
 
 In `crates/uaml/src/layout.rs`, replace the body of `parse_operand` with:
 
@@ -625,12 +625,12 @@ fn parse_hint(cur: &mut Cur) -> Option<Hint> {
 }
 ```
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 Run: `cargo test -p uaml layout::tests::`
 Expected: PASS (all three new tests + earlier tests).
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add crates/uaml/src/layout.rs
@@ -649,7 +649,7 @@ Extend `parse_ref` to handle inline `column of …` / `row of …` groups (anony
 **Interfaces:**
 - Produces (module-private): `fn parse_operand_list(&mut Cur) -> Option<Vec<Operand>>`.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Add to the `tests` module:
 
@@ -690,12 +690,12 @@ Add to the `tests` module:
     }
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `cargo test -p uaml layout::tests::parses_inline_group_and_greedy_with_binding`
 Expected: FAIL — current `parse_ref` treats `column` as a bare word, leaving `of Customer …` unconsumed, so `parse_layout_line` returns `None`.
 
-- [ ] **Step 3: Extend `parse_ref` and add `parse_operand_list`**
+- [x] **Step 3: Extend `parse_ref` and add `parse_operand_list`**
 
 In `crates/uaml/src/layout.rs`, replace the whole `parse_ref` function with:
 
@@ -755,12 +755,12 @@ fn parse_operand_list(cur: &mut Cur) -> Option<Vec<Operand>> {
 }
 ```
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 Run: `cargo test -p uaml layout::tests::`
 Expected: PASS (three new tests + earlier tests).
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add crates/uaml/src/layout.rs
@@ -779,7 +779,7 @@ Dispatch `parse_layout_line` to a placement branch: an operand followed by one o
 **Interfaces:**
 - Produces (module-private): `fn eat_direction(&mut Cur) -> Option<Direction>`, `fn try_parse_placement(&[Tok]) -> Option<LayoutStatement>`.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Add to the `tests` module:
 
@@ -823,12 +823,12 @@ Add to the `tests` module:
     }
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `cargo test -p uaml layout::tests::parses_single_and_chained_placement`
 Expected: FAIL — `parse_layout_line` currently returns `None` (trailing `left of Orders` unconsumed by the standalone branch).
 
-- [ ] **Step 3: Add the placement branch**
+- [x] **Step 3: Add the placement branch**
 
 In `crates/uaml/src/layout.rs`, add these functions above the `tests` module:
 
@@ -882,12 +882,12 @@ Then update `parse_layout_line` to try placement before falling back to standalo
     Some(LayoutStatement::Standalone(op))
 ```
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 Run: `cargo test -p uaml layout::tests::`
 Expected: PASS (three new tests + earlier tests, including `rejects_line_without_bullet_and_trailing_garbage` — `- Orders Extra` still has no direction, so placement fails and standalone leaves `Extra` unconsumed → `None`).
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add crates/uaml/src/layout.rs
@@ -906,7 +906,7 @@ Add the alignment branch: `[<edge> of] X aligned with [<edge> of] Y`, edges `top
 **Interfaces:**
 - Produces (module-private): `fn parse_alignment(&[Tok]) -> Option<LayoutStatement>`, `fn parse_anchored(&[Tok]) -> Option<Anchored>`, `fn top_level_seq_index(&[Tok], &[&str]) -> Option<usize>`.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Add to the `tests` module:
 
@@ -940,12 +940,12 @@ Add to the `tests` module:
     }
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `cargo test -p uaml layout::tests::parses_anchored_alignment`
 Expected: FAIL — no alignment branch; `parse_layout_line` returns `None`.
 
-- [ ] **Step 3: Add the alignment branch**
+- [x] **Step 3: Add the alignment branch**
 
 In `crates/uaml/src/layout.rs`, add above the `tests` module:
 
@@ -1018,12 +1018,12 @@ Then, in `parse_layout_line`, add the alignment dispatch **before** the placemen
     }
 ```
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 Run: `cargo test -p uaml layout::tests::`
 Expected: PASS (three new tests + all earlier tests).
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add crates/uaml/src/layout.rs
@@ -1044,7 +1044,7 @@ Implement `render_layout_line` (replacing the Task 1 stub) and wire real parsing
 - Consumes: `parse_layout_line` (Tasks 3–7), the AST (Task 1).
 - Produces: working `pub fn render_layout_line(&LayoutStatement) -> String`.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Add to the `tests` module in `crates/uaml/src/layout.rs`:
 
@@ -1089,12 +1089,12 @@ Also add a `## Layout` round-trip test to `crates/uaml/src/serialize.rs`'s `test
     }
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `cargo test -p uaml layout_lines_round_trip`
 Expected: FAIL — `render_layout_line` returns `""` (stub).
 
-- [ ] **Step 3: Implement the renderer and wire real parsing**
+- [x] **Step 3: Implement the renderer and wire real parsing**
 
 In `crates/uaml/src/layout.rs`, replace the stub `render_layout_line` with:
 
@@ -1206,12 +1206,12 @@ In `crates/uaml/src/parse.rs`, change the `"layout"` arm in `classify` from the 
         ),
 ```
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 Run: `cargo test -p uaml`
 Expected: PASS (layout round-trip, joiner normalization, serialize layout round-trip, plus the whole crate).
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add crates/uaml/src/layout.rs crates/uaml/src/parse.rs crates/uaml/src/serialize.rs
@@ -1240,7 +1240,7 @@ Replace the flat `Section::Members(Vec<MemberLine>)` with a nested-group tree (`
   pub fn render_members_block(block: &MembersBlock) -> String;    // in grammar.rs
   ```
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Add to the `tests` module in `crates/uaml/src/grammar.rs`:
 
@@ -1282,12 +1282,12 @@ Add to the `tests` module in `crates/uaml/src/grammar.rs`:
 
 Delete the obsolete `parses_and_renders_member_with_position` test in the same module (lines ~257–263).
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `cargo test -p uaml parses_nested_member_groups`
 Expected: FAIL — `parse_members_block` / `MembersBlock` not found; `MemberLine` still has `position`.
 
-- [ ] **Step 3: Implement the grouped members**
+- [x] **Step 3: Implement the grouped members**
 
 In `crates/uaml/src/syntax.rs`: drop `position` from `MemberLine`, and add the group types after it:
 
@@ -1472,12 +1472,12 @@ In `crates/uaml/src/serialize.rs`, change the Members arm of `render_section` to
 
 In `crates/uaml/src/validate.rs`, the `"members"` line-lint arm (lines ~166–177) calls `parse_member_line`; leave it — it still parses individual bullet lines. (Sub-heading exemption is handled in Task 12.)
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 Run: `cargo test -p uaml`
 Expected: PASS (grouped-member tests + whole crate; the old position test is gone).
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add crates/uaml/src/syntax.rs crates/uaml/src/grammar.rs crates/uaml/src/parse.rs crates/uaml/src/serialize.rs crates/uaml/src/model.rs
@@ -1500,7 +1500,7 @@ git commit -m "feat(uaml): grouped Members tree; drop stored coordinates"
 **Interfaces:**
 - Removes: `Section::RenderHints`, `HintLine`, `RenderHints`, `parse_hint_line`, `render_hint_line`.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Add to the `tests` module in `crates/uaml/src/serialize.rs`:
 
@@ -1514,12 +1514,12 @@ Add to the `tests` module in `crates/uaml/src/serialize.rs`:
     }
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `cargo test -p uaml render_hints_section_degrades_to_preserved_unknown`
 Expected: FAIL — `## Render hints` is currently classified as `Section::RenderHints` and re-rendered through `render_hint_line`, so the assertion may pass by coincidence OR the crate still references removed symbols after Step 3. Run first to confirm current behavior; the meaningful check is that after Step 3 the section flows through `Unknown`.
 
-- [ ] **Step 3: Remove RenderHints throughout**
+- [x] **Step 3: Remove RenderHints throughout**
 
 In `crates/uaml/src/syntax.rs`: delete the `RenderHints(Vec<HintLine>)` variant from `Section`, and delete the `HintLine` enum (lines ~50–55).
 
@@ -1539,12 +1539,12 @@ Resulting `section_order`:
 
 In `crates/uaml/src/model.rs`: delete the `RenderHints` struct (lines ~223–227) and the `hints: RenderHints` field from `Diagram` (Task 11 finalizes `Diagram`).
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 Run: `cargo test -p uaml`
 Expected: PASS (the degrade test + whole crate compiles with no `RenderHints`/`HintLine` references).
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add crates/uaml/src/syntax.rs crates/uaml/src/grammar.rs crates/uaml/src/parse.rs crates/uaml/src/serialize.rs crates/uaml/src/model.rs
@@ -1572,7 +1572,7 @@ Finalize the resolved model: `Diagram` carries a resolved group forest (`groups`
   }
   ```
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Add to the `model_tests` module in `crates/uaml/src/parse.rs` (adapt the existing diagram test fixture, or add a new test):
 
@@ -1597,12 +1597,12 @@ Add to the `model_tests` module in `crates/uaml/src/parse.rs` (adapt the existin
 
 Delete the old flat-members diagram test in `model_tests` that referenced `d.members` (it no longer compiles).
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `cargo test -p uaml builds_diagram_groups_and_layout`
 Expected: FAIL — `Diagram` has no `groups`/`layout` fields.
 
-- [ ] **Step 3: Finalize the model and `build_diagrams`**
+- [x] **Step 3: Finalize the model and `build_diagrams`**
 
 In `crates/uaml/src/model.rs`, delete the `Member` struct and replace the `Diagram` struct with:
 
@@ -1671,12 +1671,12 @@ fn build_diagrams(parsed: &[ParsedDoc], keyset: &HashSet<&str>) -> Vec<Diagram> 
 }
 ```
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 Run: `cargo test -p uaml`
 Expected: PASS (`builds_diagram_groups_and_layout` + whole crate).
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add crates/uaml/src/model.rs crates/uaml/src/parse.rs
@@ -1697,7 +1697,7 @@ Add diagnostics: a malformed `## Layout` bullet is an error; a `## Members` sub-
 - Consumes: `parse_layout_line`, `parse_members_block`, `parse_document`, the AST.
 - Produces (validate.rs, module-private): `fn validate_diagram_refs(path, text, keyset, diags)`.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Add to the `tests` module in `crates/uaml/src/validate.rs`:
 
@@ -1738,12 +1738,12 @@ Add to the `tests` module in `crates/uaml/src/validate.rs`:
     }
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `cargo test -p uaml malformed_layout_line_is_an_error`
 Expected: FAIL — `DiagCode::MalformedLayout` not found.
 
-- [ ] **Step 3: Add codes, the lint arm, the exemption, and the ref pass**
+- [x] **Step 3: Add codes, the lint arm, the exemption, and the ref pass**
 
 In `crates/uaml/src/diagnostic.rs`, add to the `DiagCode` enum and `as_str`:
 
@@ -1899,12 +1899,12 @@ Wire the pass into `validate()`. In the per-document loop (after `validate_doc(.
         validate_diagram_refs(path, text, &keyset, &mut diags);
 ```
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 Run: `cargo test -p uaml`
 Expected: PASS (three new validation tests + whole crate).
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add crates/uaml/src/diagnostic.rs crates/uaml/src/validate.rs
@@ -1925,7 +1925,7 @@ Detect contradictory placement constraints: `A left of B` and `B left of A` (or 
 - Consumes: the layout AST, `validate_diagram_refs`'s parsed statements.
 - Produces (module-private): `fn operand_key(&Operand) -> Option<String>`, `fn has_cycle(&HashMap<String, Vec<String>>) -> bool`.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Add to the `tests` module in `crates/uaml/src/validate.rs`:
 
@@ -1951,12 +1951,12 @@ Add to the `tests` module in `crates/uaml/src/validate.rs`:
     }
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `cargo test -p uaml contradictory_placement_is_a_cycle_error`
 Expected: FAIL — `DiagCode::LayoutCycle` not found.
 
-- [ ] **Step 3: Add the code and cycle detection**
+- [x] **Step 3: Add the code and cycle detection**
 
 In `crates/uaml/src/diagnostic.rs`, add `LayoutCycle` to `DiagCode` and `as_str` (it is an error — the default severity, no change needed):
 
@@ -2045,12 +2045,12 @@ Extend `validate_diagram_refs` to also build the two graphs and report a cycle. 
     }
 ```
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 Run: `cargo test -p uaml`
 Expected: PASS (both cycle tests + whole crate).
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add crates/uaml/src/diagnostic.rs crates/uaml/src/validate.rs
@@ -2061,9 +2061,9 @@ git commit -m "feat(uaml): detect contradictory layout placement cycles"
 
 ## Final verification
 
-- [ ] Run the full crate suite: `cargo test -p uaml` — all green.
-- [ ] Run `cargo clippy -p uaml` — no new warnings (in particular, no dead-code warnings from removed `RenderHints`/`position` symbols).
-- [ ] Confirm the spec's worked example parses and round-trips: add a temporary test (or a `cargo run` scratch) feeding the `docs/uaml-spec.md` "Worked example" diagram (lines ~680+) through `parse_document` → `serialize_document` twice and assert a fixpoint. Remove the scratch after confirming.
+- [x] Run the full crate suite: `cargo test -p uaml` — all green.
+- [x] Run `cargo clippy -p uaml` — no new warnings (in particular, no dead-code warnings from removed `RenderHints`/`position` symbols).
+- [x] Confirm the spec's worked example parses and round-trips: add a temporary test (or a `cargo run` scratch) feeding the `docs/uaml-spec.md` "Worked example" diagram (lines ~680+) through `parse_document` → `serialize_document` twice and assert a fixpoint. Remove the scratch after confirming.
 
 ## Spec-coverage map (self-review)
 
