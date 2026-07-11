@@ -22,8 +22,10 @@ this cut — diagram shape is still undecided.
    every user action (add attribute, rename node, draw relationship…) as an `Op`, export the log
    as JSON, and hand it to `uaml apply` to replay onto the on-disk bundle. So the `Op` schema
    must be language-neutral and stable: op names and field shapes are shared between the Rust
-   engine and the TS web side (`packages/okf`). The web side is **not** built in this cut, but
-   the schema is designed now to serve it. The op-log is **NDJSON / JSONL — one `Op` object per
+   CLI's `OpDto` serde layer and the TS web side (`packages/okf`), mirrored by hand the same way
+   the TS and Rust cores are already kept in parity. (The core `uaml` crate itself stays
+   serde-free — see the `Op` type below.) The web side is **not** built in this cut, but the
+   schema is designed now to serve it. The op-log is **NDJSON / JSONL — one `Op` object per
    line** — so the web UI appends a single line per user action with no array-bracket
    bookkeeping, `apply` streams it line-by-line from a file or stdin, and it diffs cleanly in git.
    **Each op is versioned individually** (a `"v": 1` field on every op record) rather than a
@@ -86,9 +88,12 @@ New `ops` module (plus small additions to `grammar`):
   The node/rel variants correspond one-to-one with `NoteAnchor::{Classifier, NamedAssoc,
   EndpointAssoc}`; keep them convertible so note resolution can share the parser.
 
-- **`Op`** — one variant per sugar command, `serde`-(de)serializable (each line of the NDJSON
-  op-log is one of these). Every serialized op carries a `v` (version) field and an `op`
-  discriminator (e.g. `{"v":1,"op":"attr.add","node":"order","name":"total","ty":"Money"}`):
+- **`Op`** — one variant per sugar command, a **plain core enum with no serde derive** (the core
+  crate stays on `regex` + `pulldown-cmark` only). JSON (de)serialization lives in the CLI as an
+  `OpDto` layer — exactly the pattern `commands.rs` already uses for `DiagDto` ↔ core
+  `Diagnostic`. The wire form each `OpDto` produces carries a `v` (version) field and an `op`
+  discriminator (e.g. `{"v":1,"op":"attr.add","node":"order","name":"total","ty":"Money"}`).
+  Core `Op` variants:
   ```
   NodeNew { slug, ty, title, stereotype?, description?, abstract? }
   NodeRename { from, to }              // to = new slug; new title inferred/settable
@@ -134,10 +139,15 @@ link changes. Covered by a golden test on the orders-domain fixture.
 
 - New subcommands under the existing clap enum, one arm per sugar command; each constructs a
   single `Op` and calls `apply` on the bundle read from the target paths.
-- `apply` subcommand: read the NDJSON op-log from a file or stdin (`-`), parse one `Op` per
-  line (each self-versioned via its `v` field), call `apply`.
+- `OpDto` (serde) in a new `ops_dto` CLI module: the wire ⇄ core mapping. `OpDto::to_op()`
+  converts a parsed line to a core `Op` (rejecting an unknown `v`/`op`); `OpDto::from_op(&Op)`
+  renders a core `Op` back to the wire form for `--emit`. This is the only place serde touches
+  ops — mirrors the existing `DiagDto` pattern.
+- `apply` subcommand: read the NDJSON op-log from a file or stdin (`-`), `serde_json`-parse each
+  non-blank line to an `OpDto`, map to `Op` (unknown `v` → error naming the line number), call
+  `apply`.
 - Shared flags on mutating commands: `--dry-run`, `--stdout`, `--emit`, `--format human|json`.
-  Each sugar command builds exactly one `Op`, so `--emit` just serializes that `Op` as an
+  Each sugar command builds exactly one `Op`, so `--emit` renders it via `OpDto::from_op` to an
   NDJSON line and writes nothing — making the CLI a producer of the same op-log the web UI
   emits. The three "write nothing" flags are mutually exclusive.
 - New `io` helpers: write-back of only the changed entries, unified-diff rendering for
