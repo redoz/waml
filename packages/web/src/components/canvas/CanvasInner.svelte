@@ -13,7 +13,7 @@
     type Edge,
     type Connection,
   } from "@xyflow/svelte";
-  import { MessageSquare } from "lucide-svelte";
+  import { MessageSquare, PanelRight } from "lucide-svelte";
 
   import { model, store } from "../../state/model.svelte";
   import { sharedModelName, isFirstVisit } from "../../state/bootstrap";
@@ -36,9 +36,8 @@ import ShareToast from "../ShareToast.svelte";
   import ShareDialog from "../share/ShareDialog.svelte";
   import Inspector from "../inspector/Inspector.svelte";
   import ExternalRefs from "../inspector/ExternalRefs.svelte";
-  import ModelSheet from "../rail/ModelSheet.svelte";
-  import RightRail from "../rail/RightRail.svelte";
-  import { createRightPanel, type RightPanelId } from "../rail/rightPanel.svelte";
+  import InspectorPanel from "../inspector/InspectorPanel.svelte";
+  import EdgeFlag from "../chrome/EdgeFlag.svelte";
 
   import {
     effectiveDiagrams,
@@ -58,10 +57,6 @@ import ShareToast from "../ShareToast.svelte";
   import { svgToPngBlob } from "../../share/rasterize";
   import { mergeGraphs } from "@uaml/core/sync/merge";
   import type { ModelGraph } from "@uaml/okf";
-
-  // Titles shown in the right Sheet header per active panel. Share moved to the
-  // top bar + modal dialog, so the sheet now hosts only Inspect.
-  const SHEET_TITLES: Record<RightPanelId, string> = { inspect: "Inspect" };
 
   // ── State (one $state per React useState) ───────────────────────────────────
   let selection = $state<Selection>(null);
@@ -93,8 +88,14 @@ import ShareToast from "../ShareToast.svelte";
   // Modal Share dialog (link + share-as-image). Replaces the old rail Share panel.
   let showShare = $state(false);
 
-  // Single right-side panel state (which rail entry is open in the Sheet).
-  const panel = createRightPanel();
+  // Inspector visibility + pin state. The Inspect edge-flag toggles `open`; the
+  // selection effect below also opens it. When pinned the InspectorPanel stays
+  // open and dims (translucent) while idle, fading back opaque on hover/focus.
+  let inspectorOpen = $state(false);
+  let inspectorPinned = $state(false);
+  // Bound to the InspectorPanel's resizable width so the edge-flags can slide
+  // left, clear of the open panel, instead of sitting on top of it.
+  let inspectorWidth = $state(380);
 
   // SvelteFlow owns the live node/edge arrays so dragging follows the cursor
   // smoothly. The model store stays the source of truth: we sync store → RF on
@@ -168,9 +169,10 @@ import ShareToast from "../ShareToast.svelte";
     persistActiveDiagramKey(activeDiagram.key);
   });
 
-  // 4) Selecting a node/edge auto-opens the Inspect panel — preserves current UX.
+  // 4) Selecting a node/edge auto-opens the Inspector — preserves current UX.
+  // (A later multiselect spec removes this; the Inspect flag opens it explicitly.)
   $effect(() => {
-    if (selection) panel.open("inspect");
+    if (selection) inspectorOpen = true;
   });
 
   // 5) Persist the model name on change.
@@ -538,22 +540,11 @@ import ShareToast from "../ShareToast.svelte";
              patternColor, no `color`). -->
         <Background variant={BackgroundVariant.Dots} gap={22} size={1.3} patternColor="#e2e6ec" />
         <!-- Controls `position` accepts PanelPosition ("bottom-left" etc.),
-             confirmed via @xyflow/system dist/esm/types/general.d.ts. Nudged up
-             to leave room for the feedback link directly below. -->
-        <Controls position="bottom-left" style="bottom:60px;left:15px;margin:0;" />
+             confirmed via @xyflow/system dist/esm/types/general.d.ts. The
+             feedback link moved to a right-edge flag, so the zoom controls
+             return to their normal bottom-left resting position. -->
+        <Controls position="bottom-left" style="bottom:15px;left:15px;margin:0;" />
       </SvelteFlow>
-
-      <!-- Feedback link — bottom-left, directly under the zoom controls. Opens
-           the Google Form in a new tab. -->
-      <a
-        href="https://forms.gle/CRLzZzdvHRqErkfG7"
-        target="_blank"
-        rel="noreferrer"
-        title="Share your feedback on Model Canvas"
-        class="absolute bottom-[16px] left-[15px] z-[5] flex items-center gap-[6px] rounded-lg bg-white/90 px-[10px] py-[6px] text-[12px] font-[550] text-slate-500 shadow-[0_1px_3px_rgba(15,23,42,0.1)] backdrop-blur-sm transition-colors hover:text-slate-900"
-      >
-        <MessageSquare size={14} /> Feedback
-      </a>
 
       <!-- Empty canvas CTA -->
       {#if $model.nodes.length === 0}
@@ -570,49 +561,69 @@ import ShareToast from "../ShareToast.svelte";
       {/if}
     </div>
 
-    <!-- Right region: a unified Sheet hosting the active panel + the always-on icon rail -->
-    <ModelSheet
-      active={panel.active}
-      modal={panel.active !== "inspect"}
-      title={SHEET_TITLES[panel.active ?? "inspect"]}
+    <!-- Right-edge flag tabs (mid-height, stacked). Inspect sits above Feedback.
+         Both slide left by the panel width while the Inspector is open so they
+         stay clear of it. -->
+    <EdgeFlag
+      label="Inspect"
+      offset={-62}
+      rightOffset={inspectorOpen ? inspectorWidth : 0}
+      active={inspectorOpen}
+      onClick={() => (inspectorOpen = !inspectorOpen)}
+    >
+      {#snippet icon()}<PanelRight size={16} />{/snippet}
+    </EdgeFlag>
+    <EdgeFlag
+      label="Feedback"
+      offset={62}
+      rightOffset={inspectorOpen ? inspectorWidth : 0}
+      href="https://github.com/redoz/uaml/issues/new"
+    >
+      {#snippet icon()}<MessageSquare size={16} />{/snippet}
+    </EdgeFlag>
+
+    <!-- Pinnable Inspector host (translucent when pinned + idle, opaque on hover). -->
+    <InspectorPanel
+      open={inspectorOpen}
+      pinned={inspectorPinned}
+      title="Inspect"
+      bind:width={inspectorWidth}
+      onTogglePin={() => (inspectorPinned = !inspectorPinned)}
       onClose={() => {
-        const wasInspect = panel.active === "inspect";
-        panel.close();
-        if (wasInspect) selection = null;
+        inspectorOpen = false;
+        inspectorPinned = false;
+        selection = null;
       }}
     >
-      {#if panel.active === "inspect"}
-        <Inspector
-          selection={selection}
-          nodes={$model.nodes}
-          edges={$model.edges}
-          onUpdateNode={store.updateNode}
-          onUpdateEdge={store.updateEdge}
-          onClose={() => {
-            selection = null;
-            panel.close();
-          }}
-          profileName={activeDiagram.profile}
-          embedded
-        >
-          {#snippet externalRefs()}
-            {#if selection?.type === "node"}
-              <ExternalRefs
-                nodeKey={selection.id}
-                nodes={$model.nodes}
-                edges={$model.edges}
-                members={activeDiagram.members}
-                diagrams={diagrams}
-                onNavigate={(diagramKey, nodeKey) => {
-                  activeDiagramKey = diagramKey;
-                  selection = { type: "node", id: nodeKey };
-                }}
-              />
-            {/if}
-          {/snippet}
-        </Inspector>
-      {/if}
-    </ModelSheet>
-    <RightRail active={panel.active} onOpen={panel.open} />
+      <Inspector
+        selection={selection}
+        nodes={$model.nodes}
+        edges={$model.edges}
+        onUpdateNode={store.updateNode}
+        onUpdateEdge={store.updateEdge}
+        onClose={() => {
+          selection = null;
+          inspectorOpen = false;
+        }}
+        profileName={activeDiagram.profile}
+        embedded
+      >
+        {#snippet externalRefs()}
+          {#if selection?.type === "node"}
+            <ExternalRefs
+              nodeKey={selection.id}
+              nodes={$model.nodes}
+              edges={$model.edges}
+              members={activeDiagram.members}
+              diagrams={diagrams}
+              onNavigate={(diagramKey, nodeKey) => {
+                activeDiagramKey = diagramKey;
+                selection = { type: "node", id: nodeKey };
+              }}
+            />
+          {/if}
+        {/snippet}
+      </Inspector>
+    </InspectorPanel>
   </div>
 </div>
