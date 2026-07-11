@@ -68,7 +68,8 @@ depth. The heading declares *membership only* — no visual treatment rides on i
 - Groups and elements are **operands of the same kind** — anything you can say
   about an element you can say about a group.
 - **Member list order within a group implies a top-to-bottom stack** (a column)
-  by default. This is the low-noise default; an explicit relation overrides it.
+  by default. An `as row` / `as column` hint (see Render hints) flips the axis;
+  an explicit relation overrides individual placements.
 - A diagram with no group headings is a single implicit top-level group.
 
 ### 2. Layout — the relation language
@@ -140,6 +141,11 @@ targeted by-reference on their own `## Layout` line (`Orders with frame`); an
 **anonymous** inline group can *only* be treated inline, since it has no name to
 reference.
 
+- **axis** (groups only): `as row` · `as column` — lays the group's members
+  along that axis in list order. Default is `as column` (the list-order stack);
+  this is the only way to set the internal axis of a *named* heading group, since
+  its members aren't restated inline. `Users as row` flows Customer, Account
+  horizontally instead of stacking them.
 - **shape** (groups only): `frame` (visible titled box) · `box` (square bounding
   box, invisible) · `shrink` (shrink-wrapped hull, invisible). **Default =
   invisible shrink-wrap** — a group clusters its members without drawing unless
@@ -202,7 +208,8 @@ inline-group  ::= ("column" | "row") "of" operand-list
 operand-list  ::= operand { "," operand }
 
 hints         ::= hint { ("," | "and") hint }
-hint          ::= shape | spacing | flag
+hint          ::= axis | shape | spacing | flag
+axis          ::= "as row" | "as column"
 shape         ::= "frame" | "box" | "shrink"
 spacing       ::= "snug" | "roomy"
 flag          ::= "emphasized" | "collapsed"
