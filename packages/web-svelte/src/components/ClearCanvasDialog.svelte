@@ -28,11 +28,10 @@
     </div>
 
     <div class="rounded-lg border border-[#f4caca] bg-[#fdf2f2] px-4 py-3 text-[13px] leading-relaxed text-[#7f1d1d]">
-      This permanently deletes everything on the canvas
-      {#if !empty}
-        — <span class="font-semibold">{counts.marts} {counts.marts === 1 ? "mart" : "marts"}</span> and <span class="font-semibold">{counts.relationships} {counts.relationships === 1 ? "relationship" : "relationships"}</span>
-      {/if}
-      . This can't be undone.
+      <!-- Whitespace butts directly against the {#if}/{/if} tags so Svelte's
+           whitespace-collapse doesn't inject a stray space before the period
+           (empty case) or after the counts (matches ClearCanvasDialog.tsx). -->
+      This permanently deletes everything on the canvas{#if !empty}{" "}— <span class="font-semibold">{counts.marts} {counts.marts === 1 ? "mart" : "marts"}</span> and <span class="font-semibold">{counts.relationships} {counts.relationships === 1 ? "relationship" : "relationships"}</span>{/if}. This can't be undone.
     </div>
 
     <p class="text-[13px] text-slate-600">
@@ -51,7 +50,7 @@
           onclick={onExportAndDelete}
           class="text-[13px] font-[550] border border-[#dc2626] bg-white text-[#dc2626] rounded-lg px-4 py-[7px] cursor-pointer hover:bg-[#fdf2f2]"
         >
-          Export OKF &amp; delete
+          Export OKF & delete
         </button>
         <button
           onclick={onDelete}
