@@ -64,6 +64,24 @@ pub fn read_files(paths: &[PathBuf]) -> std::io::Result<Vec<(String, String)>> {
     Ok(out)
 }
 
+/// Read an NDJSON op-log: `(line_number, trimmed_line)` per non-blank line.
+/// `src == "-"` reads stdin.
+pub fn read_ndjson(src: &str) -> std::io::Result<Vec<(usize, String)>> {
+    let text = if src == "-" {
+        let mut buf = String::new();
+        std::io::stdin().read_to_string(&mut buf)?;
+        buf
+    } else {
+        fs::read_to_string(src)?
+    };
+    Ok(text
+        .lines()
+        .enumerate()
+        .map(|(i, l)| (i + 1, l.trim().to_string()))
+        .filter(|(_, l)| !l.is_empty())
+        .collect())
+}
+
 /// Write only changed/added entries; delete entries dropped from the bundle.
 /// Returns a human list of what happened.
 pub fn write_back(old: &[(String, String)], new: &[(String, String)]) -> std::io::Result<Vec<String>> {
@@ -116,5 +134,18 @@ mod tests {
         assert_eq!(docs.len(), 1, "a stray non-.md comment must not split the document");
         assert_eq!(docs[0].0, "shop/order.md");
         assert_eq!(docs[0].1, text, "content must be kept intact, nothing discarded");
+    }
+
+    #[test]
+    fn read_ndjson_skips_blanks_and_numbers_lines() {
+        // write a temp file
+        let dir = std::env::temp_dir().join(format!("uaml_ndjson_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let f = dir.join("ops.ndjson");
+        std::fs::write(&f, "{\"op\":\"a\"}\n\n{\"op\":\"b\"}\n").unwrap();
+        let lines = read_ndjson(f.to_str().unwrap()).unwrap();
+        assert_eq!(lines.len(), 2);
+        assert_eq!(lines[0].0, 1);
+        assert_eq!(lines[1].0, 3, "blank line 2 skipped, numbering preserved");
     }
 }

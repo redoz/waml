@@ -262,7 +262,7 @@ fn str_list(items: &[String]) -> FmValue {
 
 /// Slugs of every document that references `slug` (rel target, attribute
 /// type-ref, `as [Ref]` name, diagram member/hint). Sorted, deduped.
-pub(crate) fn referrers(work: &Bundle, slug: &str) -> Vec<String> {
+pub fn referrers(work: &Bundle, slug: &str) -> Vec<String> {
     let mut out = Vec::new();
     for (p, text) in work {
         let s = slug_of(p);

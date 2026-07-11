@@ -67,6 +67,32 @@ enum Command {
         #[command(flatten)]
         common: Common,
     },
+    /// Apply a batch of ops from an NDJSON op-log.
+    Apply {
+        /// NDJSON op-log file, or `-` for stdin.
+        ops: String,
+        #[command(flatten)]
+        common: Common,
+    },
+    /// Show a resolved classifier.
+    Show {
+        slug: String,
+        #[command(flatten)]
+        query: QueryArgs,
+    },
+    /// List referrers of a classifier.
+    Refs {
+        slug: String,
+        #[command(flatten)]
+        query: QueryArgs,
+    },
+    /// List classifiers, optionally filtered by type.
+    List {
+        #[arg(long)]
+        r#type: Option<String>,
+        #[command(flatten)]
+        query: QueryArgs,
+    },
 }
 
 /// Flags shared by all mutating (node/attr/value/rel) subcommands.
@@ -81,6 +107,16 @@ struct Common {
     stdout: bool,
     #[arg(long)]
     emit: bool,
+    #[arg(long, value_enum, default_value_t = Format::Human)]
+    format: Format,
+}
+
+/// Flags shared by the read-only query subcommands (show/refs/list).
+#[derive(Args)]
+struct QueryArgs {
+    /// Bundle root; recursively collects *.md. Default: current directory.
+    #[arg(long, default_value = ".")]
+    dir: PathBuf,
     #[arg(long, value_enum, default_value_t = Format::Human)]
     format: Format,
 }
@@ -260,6 +296,10 @@ fn main() {
         Command::Attr { action, common } => run_mutation(&common, attr_dto(action)),
         Command::Value { action, common } => run_mutation(&common, value_dto(action)),
         Command::Rel { action, common } => run_mutation(&common, rel_dto(action)),
+        Command::Apply { ops, common } => run_apply(&ops, &common),
+        Command::Show { slug, query } => run_show(&slug, &query),
+        Command::Refs { slug, query } => run_refs(&slug, &query),
+        Command::List { r#type, query } => run_list(&r#type, &query),
     };
     std::process::exit(code);
 }
@@ -374,6 +414,162 @@ fn run_mutation(common: &Common, dto: OpDto) -> i32 {
     }
 }
 
+fn run_batch(common: &Common, ops: Vec<uaml::ops::Op>) -> i32 {
+    let bundle = match io::read_files(std::slice::from_ref(&common.dir)) {
+        Ok(b) => b,
+        Err(e) => {
+            eprintln!("uaml: {e}");
+            return 2;
+        }
+    };
+    match uaml::ops::apply(&bundle, &ops) {
+        Ok(new) => {
+            if common.stdout {
+                print!("{}", to_blob(&new));
+                0
+            } else if common.dry_run {
+                print!("{}", commands::render_diff(&bundle, &new));
+                0
+            } else {
+                match io::write_back(&bundle, &new) {
+                    Ok(touched) => {
+                        for t in touched {
+                            println!("uaml: {t}");
+                        }
+                        0
+                    }
+                    Err(e) => {
+                        eprintln!("uaml: {e}");
+                        2
+                    }
+                }
+            }
+        }
+        Err(e) => {
+            let sel = e.selector.as_ref().map(|s| format!(" [{s}]")).unwrap_or_default();
+            eprintln!("uaml: op {}: {}{sel}", e.index, e.reason);
+            1
+        }
+    }
+}
+
+fn run_apply(ops_src: &str, common: &Common) -> i32 {
+    let lines = match io::read_ndjson(ops_src) {
+        Ok(l) => l,
+        Err(e) => {
+            eprintln!("uaml: {e}");
+            return 2;
+        }
+    };
+    let mut ops = Vec::new();
+    for (n, line) in lines {
+        let dto: OpDto = match serde_json::from_str(&line) {
+            Ok(d) => d,
+            Err(e) => {
+                eprintln!("uaml: line {n}: {e}");
+                return 1;
+            }
+        };
+        match dto.to_op() {
+            Ok(o) => ops.push(o),
+            Err(e) => {
+                eprintln!("uaml: line {n}: {e}");
+                return 1;
+            }
+        }
+    }
+    run_batch(common, ops)
+}
+
+fn run_show(slug: &str, q: &QueryArgs) -> i32 {
+    let bundle = match io::read_files(std::slice::from_ref(&q.dir)) {
+        Ok(b) => b,
+        Err(e) => {
+            eprintln!("uaml: {e}");
+            return 2;
+        }
+    };
+    let model = uaml::parse::build_model(&bundle);
+    let Some(node) = model.node(slug) else {
+        eprintln!("uaml: no classifier '{slug}'");
+        return 1;
+    };
+    match q.format {
+        Format::Human => {
+            println!("{} ({})", node.title, node.ty.as_str());
+            for a in &node.attributes {
+                println!("  - {}: {} [{}]", a.name, a.ty.name, a.multiplicity.as_str());
+            }
+            for v in &node.values {
+                println!("  = {v}");
+            }
+            for e in model.edges.iter().filter(|e| e.source == slug || e.target == slug) {
+                println!("  {} {} {}", e.source, e.kind.as_str(), e.target);
+            }
+            0
+        }
+        Format::Json => {
+            let refs = uaml::ops::referrers(&bundle, slug);
+            let dto = serde_json::json!({
+                "slug": slug, "title": node.title, "type": node.ty.as_str(),
+                "attributes": node.attributes.iter().map(|a| serde_json::json!({
+                    "name": a.name, "type": a.ty.name, "ref": a.ty.ref_, "multiplicity": a.multiplicity.as_str()
+                })).collect::<Vec<_>>(),
+                "values": node.values,
+                "referrers": refs,
+            });
+            println!("{}", serde_json::to_string_pretty(&dto).unwrap_or_else(|_| "{}".into()));
+            0
+        }
+    }
+}
+
+fn run_refs(slug: &str, q: &QueryArgs) -> i32 {
+    let bundle = match io::read_files(std::slice::from_ref(&q.dir)) {
+        Ok(b) => b,
+        Err(e) => {
+            eprintln!("uaml: {e}");
+            return 2;
+        }
+    };
+    let refs = uaml::ops::referrers(&bundle, slug);
+    match q.format {
+        Format::Human => {
+            if refs.is_empty() {
+                println!("no referrers of '{slug}'");
+            } else {
+                for r in refs {
+                    println!("{r}");
+                }
+            }
+        }
+        Format::Json => println!("{}", serde_json::to_string(&refs).unwrap_or_else(|_| "[]".into())),
+    }
+    0
+}
+
+fn run_list(ty: &Option<String>, q: &QueryArgs) -> i32 {
+    let bundle = match io::read_files(std::slice::from_ref(&q.dir)) {
+        Ok(b) => b,
+        Err(e) => {
+            eprintln!("uaml: {e}");
+            return 2;
+        }
+    };
+    let model = uaml::parse::build_model(&bundle);
+    for n in &model.nodes {
+        if ty.as_deref().map(|t| t == n.ty.as_str()).unwrap_or(true) {
+            match q.format {
+                Format::Human => println!("{}\t{}\t{}", n.key, n.ty.as_str(), n.title),
+                Format::Json => {
+                    println!("{}", serde_json::json!({"slug": n.key, "type": n.ty.as_str(), "title": n.title}))
+                }
+            }
+        }
+    }
+    0
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -410,5 +606,11 @@ mod tests {
         ])
         .unwrap();
         assert!(matches!(cli.command, Command::Rel { .. }));
+    }
+
+    #[test]
+    fn parses_apply_and_show() {
+        assert!(matches!(Cli::try_parse_from(["uaml", "apply", "ops.ndjson"]).unwrap().command, Command::Apply { .. }));
+        assert!(matches!(Cli::try_parse_from(["uaml", "show", "order"]).unwrap().command, Command::Show { .. }));
     }
 }
