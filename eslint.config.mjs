@@ -48,6 +48,12 @@ export default tseslint.config(
     languageOptions: { globals: { ...globals.node } },
   },
 
+  // Framework-free core (browser-coupled: localStorage, document, location, …)
+  {
+    files: ["packages/core/**/*.{ts,tsx}"],
+    languageOptions: { globals: { ...globals.browser } },
+  },
+
   // Tests: fixtures and boundary mocks legitimately need `any`
   {
     files: ["**/*.test.{ts,tsx}", "**/test/**/*.{ts,tsx}"],

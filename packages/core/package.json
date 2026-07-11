@@ -1,0 +1,26 @@
+{
+  "name": "@mc/core",
+  "version": "0.0.0",
+  "type": "module",
+  "license": "Apache-2.0",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "vitest run --passWithNoTests"
+  },
+  "exports": {
+    "./profiles": { "types": "./dist/profiles/index.d.ts", "default": "./dist/profiles/index.js" },
+    "./templates": { "types": "./dist/templates/index.d.ts", "default": "./dist/templates/index.js" },
+    "./*": { "types": "./dist/*.d.ts", "default": "./dist/*.js" }
+  },
+  "dependencies": {
+    "@dagrejs/dagre": "^1.1.0",
+    "@mc/okf": "workspace:*",
+    "fflate": "^0.8.3",
+    "html-to-image": "^1.11.13"
+  },
+  "devDependencies": {
+    "jsdom": "^25.0.0",
+    "typescript": "^5.6.0",
+    "vitest": "^2.1.0"
+  }
+}
