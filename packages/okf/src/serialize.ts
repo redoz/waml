@@ -77,12 +77,14 @@ export function serializeBundle(graph: ModelGraph, projectTitle = "Model"): OkfB
   const folder = slugify(projectTitle, "model");
 
   // A self-anchored note (its only anchor is one classifier) rides on that host's
-  // `## Notes` list instead of getting its own doc.
+  // `## Notes` list instead of getting its own doc — but ONLY when its body is a
+  // single line. A multi-line body (or one with an embedded `- ` bullet) cannot
+  // survive as one `## Notes` bullet (re-parse would split it), so it keeps its own doc.
   const notesByHost = new Map<string, string[]>();
   const collapsed = new Set<string>();
   for (const n of graph.nodes) {
     const host = selfAnchorHost(n);
-    if (host && n.body) {
+    if (host && n.body && !n.body.includes("\n")) {
       (notesByHost.get(host) ?? notesByHost.set(host, []).get(host)!).push(n.body);
       collapsed.add(n.key);
     }
