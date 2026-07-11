@@ -1,6 +1,6 @@
 <script lang="ts">
   // Mirrors packages/web/src/components/canvas/RelEdge.tsx.
-  import { BaseEdge, EdgeLabel, getSmoothStepPath, useInternalNode, type EdgeProps, type Position } from "@xyflow/svelte";
+  import { BaseEdge, EdgeLabel, EdgeReconnectAnchor, getSmoothStepPath, useInternalNode, type EdgeProps, type Position } from "@xyflow/svelte";
   import type { ModelEdge, RelEnd, RelationshipKind } from "@mc/okf";
   import type { RelLabelMode } from "@mc/core/state/relLabels";
   import { getEdgeParams, portPoint, type NodeGeom, type Rect, type Slot } from "./floating";
@@ -152,6 +152,13 @@
     {/each}
   </defs>
   <BaseEdge {id} path={edgePath} markerStart={markerInfo.markerStart} markerEnd={markerInfo.markerEnd} style={edgeStyle} />
+  {#if selected && geometry}
+    <!-- Drag either endpoint to rewire this relationship onto a different node
+         (SvelteFlow's v1 reconnect mechanism — no React-Flow-style `reconnectable`
+         edge/flow flags exist here, so scope to selected via this local gate). -->
+    <EdgeReconnectAnchor type="source" position={{ x: geometry.sx, y: geometry.sy }} />
+    <EdgeReconnectAnchor type="target" position={{ x: geometry.tx, y: geometry.ty }} />
+  {/if}
   {#each labels as l, i (i)}
     <EdgeLabel
       x={l.x}

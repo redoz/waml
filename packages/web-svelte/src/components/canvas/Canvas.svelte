@@ -1,22 +1,11 @@
 <script lang="ts">
-  import { SvelteFlow, Background, Controls } from "@xyflow/svelte";
-  import type { Node, Edge } from "@xyflow/svelte";
-
-  // SvelteFlow owns the live node/edge arrays (smooth dragging). Empty for the
-  // blank shell — Plan 3a syncs these from the model store (store → arrays on
-  // structural change, positions written back on drag end).
-  //
-  // Plan 3a note: `useSvelteFlow()` (for screenToFlowPosition/fitView) must be
-  // called from inside a <SvelteFlowProvider>. When that is added, wrap this
-  // component's <SvelteFlow> in <SvelteFlowProvider> (mirrors React's
-  // <ReactFlowProvider> around <CanvasInner>).
-  let nodes = $state<Node[]>([]);
-  let edges = $state<Edge[]>([]);
+  // Mirrors packages/web/src/components/canvas/Canvas.tsx's `CanvasApp` — a thin
+  // provider wrapper so CanvasInner's `useSvelteFlow()` (screenToFlowPosition,
+  // fitView) has flow context to attach to.
+  import { SvelteFlowProvider } from "@xyflow/svelte";
+  import CanvasInner from "./CanvasInner.svelte";
 </script>
 
-<div class="h-screen w-screen">
-  <SvelteFlow bind:nodes bind:edges fitView>
-    <Background gap={22} />
-    <Controls />
-  </SvelteFlow>
-</div>
+<SvelteFlowProvider>
+  <CanvasInner />
+</SvelteFlowProvider>
