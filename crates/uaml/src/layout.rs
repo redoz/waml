@@ -131,8 +131,67 @@ pub fn parse_layout_line(line: &str) -> Option<LayoutStatement> {
 
 fn parse_operand(cur: &mut Cur) -> Option<Operand> {
     let ref_ = parse_ref(cur)?;
-    // `as` / `with` clauses are added in Task 4.
-    Some(Operand { ref_, axis: None, hints: vec![] })
+    let axis = if cur.eat_word("as") {
+        parse_axis(cur)
+    } else {
+        None
+    };
+    let hints = if cur.eat_word("with") {
+        parse_hints(cur)?
+    } else {
+        vec![]
+    };
+    Some(Operand { ref_, axis, hints })
+}
+
+fn parse_axis(cur: &mut Cur) -> Option<Axis> {
+    let w = cur.peek_word()?.to_ascii_lowercase();
+    match w.as_str() {
+        "row" => { cur.bump(); Some(Axis::Row) }
+        "column" => { cur.bump(); Some(Axis::Column) }
+        _ => None,
+    }
+}
+
+fn parse_hints(cur: &mut Cur) -> Option<Vec<Hint>> {
+    let mut hints = vec![parse_hint(cur)?];
+    loop {
+        if cur.peek() == Some(&Tok::Comma) {
+            cur.bump();
+        } else if cur.peek_word().map(|w| w.eq_ignore_ascii_case("and")) == Some(true) {
+            cur.bump();
+        } else {
+            break;
+        }
+        hints.push(parse_hint(cur)?);
+    }
+    Some(hints)
+}
+
+fn parse_hint(cur: &mut Cur) -> Option<Hint> {
+    let w = cur.peek_word()?.to_ascii_lowercase();
+    match w.as_str() {
+        "frame" => { cur.bump(); Some(Hint::Shape(Shape::Frame)) }
+        "box" => { cur.bump(); Some(Hint::Shape(Shape::Box)) }
+        "shrink" => { cur.bump(); Some(Hint::Shape(Shape::Shrink)) }
+        "emphasized" => { cur.bump(); Some(Hint::Flag(Flag::Emphasized)) }
+        "collapsed" => { cur.bump(); Some(Hint::Flag(Flag::Collapsed)) }
+        "no" | "small" | "medium" | "large" => {
+            let m = match w.as_str() {
+                "no" => Margin::No,
+                "small" => Margin::Small,
+                "medium" => Margin::Medium,
+                _ => Margin::Large,
+            };
+            cur.bump();
+            if cur.eat_word("margin") || cur.eat_word("margins") {
+                Some(Hint::Margin(m))
+            } else {
+                None // margin level must be followed by `margin`/`margins`
+            }
+        }
+        _ => None,
+    }
 }
 
 fn parse_ref(cur: &mut Cur) -> Option<OperandRef> {
@@ -212,5 +271,45 @@ mod tests {
     fn rejects_line_without_bullet_and_trailing_garbage() {
         assert!(parse_layout_line("Orders").is_none());       // no "- " bullet
         assert!(parse_layout_line("- Orders Extra").is_none()); // two bare words, no relation
+    }
+
+    #[test]
+    fn parses_as_axis_and_with_hints() {
+        use crate::syntax::*;
+        let stmt = parse_layout_line("- Users as column with frame and large margin").unwrap();
+        let LayoutStatement::Standalone(op) = stmt else { panic!("expected standalone") };
+        assert_eq!(op.axis, Some(Axis::Column));
+        assert_eq!(op.hints, vec![
+            Hint::Shape(Shape::Frame),
+            Hint::Margin(Margin::Large),
+        ]);
+    }
+
+    #[test]
+    fn parses_all_hint_kinds_and_margins_word() {
+        use crate::syntax::*;
+        let stmt = parse_layout_line("- Order with box, no margins, emphasized, collapsed").unwrap();
+        let LayoutStatement::Standalone(op) = stmt else { panic!("expected standalone") };
+        assert_eq!(op.hints, vec![
+            Hint::Shape(Shape::Box),
+            Hint::Margin(Margin::No),
+            Hint::Flag(Flag::Emphasized),
+            Hint::Flag(Flag::Collapsed),
+        ]);
+    }
+
+    #[test]
+    fn rejects_margin_level_without_margin_keyword() {
+        assert!(parse_layout_line("- Order with large").is_none());
+    }
+
+    #[test]
+    fn parses_quoted_standalone_operand() {
+        use crate::syntax::*;
+        let stmt = parse_layout_line("- \"My Group\"").unwrap();
+        let LayoutStatement::Standalone(op) = stmt else { panic!("expected standalone") };
+        assert_eq!(op.ref_, OperandRef::Name(NameRef::Bare("My Group".into())));
+        assert_eq!(op.axis, None);
+        assert_eq!(op.hints, vec![]);
     }
 }
