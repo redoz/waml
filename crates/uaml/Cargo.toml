@@ -8,3 +8,4 @@ description = "Core library for parsing, serializing, and validating UAML docume
 
 [dependencies]
 regex.workspace = true
+pulldown-cmark.workspace = true
