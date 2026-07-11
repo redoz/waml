@@ -13,6 +13,8 @@ pub enum DiagCode {
     MalformedRelationship,
     UnresolvedTarget,
     DroppableContent,
+    MalformedLayout,
+    UnresolvedLayoutRef,
 }
 
 impl DiagCode {
@@ -25,12 +27,14 @@ impl DiagCode {
             DiagCode::MalformedRelationship => "malformed-relationship",
             DiagCode::UnresolvedTarget => "unresolved-target",
             DiagCode::DroppableContent => "droppable-content",
+            DiagCode::MalformedLayout => "malformed-layout",
+            DiagCode::UnresolvedLayoutRef => "unresolved-layout-ref",
         }
     }
     /// Default severity for this code (a specific site may downgrade to a warning).
     pub fn severity(self) -> Severity {
         match self {
-            DiagCode::UnknownType => Severity::Warning,
+            DiagCode::UnknownType | DiagCode::UnresolvedLayoutRef => Severity::Warning,
             _ => Severity::Error,
         }
     }
