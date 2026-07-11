@@ -31,6 +31,33 @@ describe("buildRfEdges", () => {
     expect((out[0].data as { kind?: string }).kind).toBe("associates");
     expect((out[0].data as { modelEdgeId?: string }).modelEdgeId).toBe("e1");
   });
+
+  it("assigns an exit side per end from node geometry", () => {
+    // b sits to the right of a → a exits Right, b receives on Left.
+    const out = buildRfEdges([edge()], nodes, "compact");
+    const d = out[0].data as { sourceSide?: string; targetSide?: string };
+    expect(d.sourceSide).toBe("right");
+    expect(d.targetSide).toBe("left");
+  });
+
+  it("spaces edges sharing a (node, side) into distinct ordered slots", () => {
+    const a = node("a"); // at x0,y0
+    const hi = { ...node("b"), position: { x: 600, y: -200 } };  // right & above a's center
+    const lo = { ...node("c"), position: { x: 600, y: 200 } };   // right & below
+    const out = buildRfEdges(
+      [edge({ id: "e1", from: "a", to: "b" }), edge({ id: "e2", from: "a", to: "c" })],
+      [a, hi, lo], "compact",
+    );
+    const d1 = out.find(e => e.id === "e1")!.data as { sourceSide?: string; sourceSlot?: { index: number; count: number } };
+    const d2 = out.find(e => e.id === "e2")!.data as { sourceSide?: string; sourceSlot?: { index: number; count: number } };
+    expect(d1.sourceSide).toBe("right");
+    expect(d2.sourceSide).toBe("right");
+    expect(d1.sourceSlot!.count).toBe(2);
+    expect(d2.sourceSlot!.count).toBe(2);
+    // The higher target (b, y=-200) orders first on the right side.
+    expect(d1.sourceSlot!.index).toBe(0);
+    expect(d2.sourceSlot!.index).toBe(1);
+  });
 });
 
 describe("buildRfEdges data passthrough", () => {

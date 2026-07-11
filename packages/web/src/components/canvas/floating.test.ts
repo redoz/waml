@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { Position } from "@xyflow/react";
-import { getEdgeParams } from "./floating";
+import { getEdgeParams, portPoint } from "./floating";
 
 // InternalNode-shaped plain objects (measured + internals.positionAbsolute).
 const geom = (x: number, y: number, w = 100, h = 100) => ({
@@ -58,5 +58,28 @@ describe("getEdgeParams (floating-edge border intersection)", () => {
     const p = getEdgeParams(source, target);
     expect(Number.isNaN(p.sx)).toBe(false);
     expect(Number.isNaN(p.ty)).toBe(false);
+  });
+});
+
+describe("portPoint (spread edges along a border)", () => {
+  const rect = { x: 0, y: 0, w: 100, h: 200 };
+  it("a lone edge sits at the side midpoint", () => {
+    expect(portPoint(rect, Position.Right)).toEqual({ x: 100, y: 100 });
+    expect(portPoint(rect, Position.Bottom)).toEqual({ x: 50, y: 200 });
+  });
+  it("a group spreads in order along the side, inside the border band", () => {
+    const a = portPoint(rect, Position.Right, { index: 0, count: 3 });
+    const b = portPoint(rect, Position.Right, { index: 1, count: 3 });
+    const c = portPoint(rect, Position.Right, { index: 2, count: 3 });
+    expect(a.x).toBe(100); expect(b.x).toBe(100); expect(c.x).toBe(100); // all on the right edge
+    expect(a.y).toBeLessThan(b.y); expect(b.y).toBeLessThan(c.y);        // ordered by slot
+    expect(b.y).toBe(100);                                              // middle slot at center
+    expect(a.y).toBeGreaterThan(0); expect(c.y).toBeLessThan(200);       // never on the corners
+  });
+  it("horizontal sides vary X", () => {
+    const a = portPoint(rect, Position.Top, { index: 0, count: 2 });
+    const b = portPoint(rect, Position.Top, { index: 1, count: 2 });
+    expect(a.y).toBe(0); expect(b.y).toBe(0);
+    expect(a.x).toBeLessThan(b.x);
   });
 });

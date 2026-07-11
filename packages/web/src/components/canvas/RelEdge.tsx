@@ -1,14 +1,22 @@
 import { memo } from "react";
-import { BaseEdge, EdgeLabelRenderer, getSmoothStepPath, useInternalNode, type EdgeProps } from "@xyflow/react";
+import { BaseEdge, EdgeLabelRenderer, getSmoothStepPath, useInternalNode, Position, type EdgeProps } from "@xyflow/react";
 import type { ModelEdge, RelEnd, RelationshipKind } from "@mc/okf";
 import type { RelLabelMode } from "../../state/relLabels";
-import { getEdgeParams } from "./floating";
+import { getEdgeParams, portPoint, type Rect, type Slot } from "./floating";
 
 export type RelEdgeData = Pick<ModelEdge, "kind" | "fromEnd" | "toEnd" | "bidirectional"> & {
   relLabelMode?: RelLabelMode;
   modelEdgeId?: string;
   emphasizeMultiplicity?: boolean;
+  // Pre-assigned by edges.ts so a hub's edges space themselves along each border.
+  sourceSide?: Position;
+  targetSide?: Position;
+  sourceSlot?: Slot;
+  targetSlot?: Slot;
 };
+
+const rectOf = (n: { internals: { positionAbsolute: { x: number; y: number } }; measured?: { width?: number; height?: number } }): Rect =>
+  ({ x: n.internals.positionAbsolute.x, y: n.internals.positionAbsolute.y, w: n.measured?.width ?? 0, h: n.measured?.height ?? 0 });
 
 const DASHED: ReadonlySet<RelationshipKind> = new Set(["implements", "depends"]);
 
@@ -24,8 +32,19 @@ function RelEdgeInner(props: EdgeProps) {
 
   if (!s || !t) return null;
 
-  // Floating endpoints: each end attaches to the border facing the other node.
-  const { sx, sy, tx, ty, sourcePos, targetPos } = getEdgeParams(s, t);
+  // Floating endpoints. When edges.ts has assigned a side + slot (and both nodes
+  // are measured), place the point on that border spaced by the slot so a hub's
+  // edges fan out; otherwise fall back to the plain geometric border intersection.
+  const measured = !!s.measured?.width && !!s.measured?.height && !!t.measured?.width && !!t.measured?.height;
+  let sx: number, sy: number, tx: number, ty: number, sourcePos: Position, targetPos: Position;
+  if (measured && d?.sourceSide && d?.targetSide) {
+    const sp = portPoint(rectOf(s), d.sourceSide, d.sourceSlot);
+    const tp = portPoint(rectOf(t), d.targetSide, d.targetSlot);
+    sx = sp.x; sy = sp.y; tx = tp.x; ty = tp.y;
+    sourcePos = d.sourceSide; targetPos = d.targetSide;
+  } else {
+    ({ sx, sy, tx, ty, sourcePos, targetPos } = getEdgeParams(s, t));
+  }
   const [edgePath] = getSmoothStepPath({
     sourceX: sx, sourceY: sy, sourcePosition: sourcePos,
     targetX: tx, targetY: ty, targetPosition: targetPos,
