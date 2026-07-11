@@ -4,6 +4,7 @@ pub mod frontmatter;
 pub mod model;
 pub mod multiplicity;
 pub mod slug;
+pub mod syntax;
 
 #[cfg(test)]
 mod smoke {
