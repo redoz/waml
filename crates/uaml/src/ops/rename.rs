@@ -1,7 +1,7 @@
 use super::{find_doc, slug_of, Bundle, OpError};
 use crate::parse::parse_document;
 use crate::serialize::serialize_document;
-use crate::syntax::{Document, HintLine, ParsedName, Section};
+use crate::syntax::{Document, ParsedName, Section};
 
 /// Swap the basename of `path` to `to.md`, preserving any directory prefix.
 fn replace_basename(path: &str, to: &str) -> String {
@@ -55,26 +55,6 @@ fn rename_in_doc(doc: &mut Document, from: &str, to: &str) -> bool {
                     rename_in_group(g, from, to, &mut changed);
                 }
             }
-            Section::RenderHints(hs) => {
-                for h in hs {
-                    match h {
-                        HintLine::Emphasize(list) => {
-                            for x in list.iter_mut() {
-                                if x == from {
-                                    *x = to.to_string();
-                                    changed = true;
-                                }
-                            }
-                        }
-                        HintLine::Collapse { slug, .. } => {
-                            if slug == from {
-                                *slug = to.to_string();
-                                changed = true;
-                            }
-                        }
-                    }
-                }
-            }
             _ => {}
         }
     }
@@ -108,9 +88,9 @@ mod tests {
             // a referrer: rel target + attribute type-ref + as-ref name link
             ("shop/order.md".to_string(),
              "---\ntype: uml.Class\ntitle: Order\n---\n# Order\n\n## Attributes\n- first: [OrderLine](./order-line.md)\n\n## Relationships\n- composes [OrderLine](./order-line.md) as [OrderLine](./order-line.md): 1 to 1..* lines\n".to_string()),
-            // a diagram referrer: member + emphasize (bare slug) + collapse (link)
+            // a diagram referrer: member link
             ("shop/diagram.md".to_string(),
-             "---\ntype: Diagram\ntitle: D\nprofile: uml-domain\n---\n# D\n\n## Members\n- [OrderLine](./order-line.md)\n\n## Render hints\n- emphasize: order-line, order\n- collapse [OrderLine](./order-line.md)\n".to_string()),
+             "---\ntype: Diagram\ntitle: D\nprofile: uml-domain\n---\n# D\n\n## Members\n- [OrderLine](./order-line.md)\n".to_string()),
         ]
     }
 
@@ -128,23 +108,21 @@ mod tests {
         assert!(order.contains("[OrderLine]"), "titles preserved");
 
         let diagram = &out.iter().find(|(p, _)| p == "shop/diagram.md").unwrap().1;
-        assert!(diagram.contains("(./line-item.md)"), "member + collapse repointed");
-        assert!(diagram.contains("emphasize: line-item, order"), "bare-slug emphasize repointed");
+        assert!(diagram.contains("(./line-item.md)"), "member repointed");
     }
 
     #[test]
     fn rename_rewrites_self_references_in_the_renamed_doc_itself() {
         let b = vec![
-            // self-referencing doc: attribute type-ref, rel target + name, emphasize
+            // self-referencing doc: attribute type-ref, rel target + name
             ("shop/tree-node.md".to_string(),
-             "---\ntype: uml.Class\ntitle: TreeNode\n---\n# TreeNode\n\n## Attributes\n- parent: [TreeNode](./tree-node.md)\n\n## Relationships\n- composes [TreeNode](./tree-node.md) as [TreeNode](./tree-node.md): 1 to 0..* children\n\n## Render hints\n- emphasize: tree-node\n".to_string()),
+             "---\ntype: uml.Class\ntitle: TreeNode\n---\n# TreeNode\n\n## Attributes\n- parent: [TreeNode](./tree-node.md)\n\n## Relationships\n- composes [TreeNode](./tree-node.md) as [TreeNode](./tree-node.md): 1 to 0..* children\n".to_string()),
         ];
         let out = apply(&b, &[Op::NodeRename { from: "tree-node".into(), to: "node".into() }]).unwrap();
 
         let doc = &out.iter().find(|(p, _)| p == "shop/node.md").unwrap().1;
         assert!(doc.contains("(./node.md)"), "self-reference repointed to new slug");
         assert!(!doc.contains("(./tree-node.md)"), "no stale self-reference left");
-        assert!(doc.contains("emphasize: node"), "bare-slug self-reference repointed");
         assert!(doc.contains("[TreeNode]"), "title preserved");
     }
 

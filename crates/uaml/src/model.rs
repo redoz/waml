@@ -219,19 +219,12 @@ pub struct Member {
     pub key: String,
 }
 
-#[derive(Debug, Clone, Default, PartialEq)]
-pub struct RenderHints {
-    pub emphasize: Vec<String>,
-    pub collapse: Vec<String>,
-}
-
 #[derive(Debug, Clone, PartialEq)]
 pub struct Diagram {
     pub key: String,
     pub title: String,
     pub profile: String,
     pub members: Vec<Member>,
-    pub hints: RenderHints,
 }
 
 #[derive(Debug, Clone, Default, PartialEq)]

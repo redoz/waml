@@ -17,7 +17,6 @@ pub enum Section {
     Notes(Vec<String>),
     Members(MembersBlock),
     Layout(Vec<LayoutStatement>),
-    RenderHints(Vec<HintLine>),
     /// An unrecognized `## Section`, preserved verbatim (graceful degradation).
     Unknown { title: String, raw: String },
 }
@@ -62,13 +61,6 @@ pub struct MemberGroup {
     pub depth: u8,
     pub members: Vec<MemberLine>,
     pub children: Vec<MemberGroup>,
-}
-
-/// One `## Render hints` bullet.
-#[derive(Debug, Clone, PartialEq)]
-pub enum HintLine {
-    Emphasize(Vec<String>),
-    Collapse { title: String, slug: String },
 }
 
 #[derive(Debug, Clone, PartialEq)]

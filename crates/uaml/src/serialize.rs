@@ -1,6 +1,6 @@
 use crate::frontmatter::render_frontmatter;
 use crate::grammar::{
-    render_attribute_line, render_hint_line, render_members_block, render_relationship_line,
+    render_attribute_line, render_members_block, render_relationship_line,
 };
 use crate::syntax::{Document, Section};
 
@@ -13,8 +13,7 @@ fn section_order(s: &Section) -> u8 {
         Section::Notes(_) => 4,
         Section::Members(_) => 5,
         Section::Layout(_) => 6,
-        Section::RenderHints(_) => 7,
-        Section::Unknown { .. } => 8,
+        Section::Unknown { .. } => 7,
     }
 }
 
@@ -45,10 +44,6 @@ fn render_section(s: &Section) -> String {
                 .collect::<Vec<_>>()
                 .join("\n");
             if body.is_empty() { "## Layout".to_string() } else { format!("## Layout\n{body}") }
-        }
-        Section::RenderHints(hints) => {
-            let body = hints.iter().map(render_hint_line).collect::<Vec<_>>().join("\n");
-            format!("## Render hints\n{body}")
         }
         Section::Unknown { raw, .. } => raw.trim_end().to_string(),
     }
@@ -105,6 +100,14 @@ mod tests {
         let once = serialize_document(&parse_document(text));
         let twice = serialize_document(&parse_document(&once));
         assert_eq!(once, twice);
+    }
+
+    #[test]
+    fn render_hints_section_degrades_to_preserved_unknown() {
+        let src = "---\ntype: Diagram\ntitle: D\n---\n# D\n\n## Render hints\n- emphasize: order\n";
+        let out = serialize_document(&parse_document(src));
+        // Preserved verbatim as an Unknown section, not silently dropped.
+        assert!(out.contains("## Render hints\n- emphasize: order"));
     }
 
     #[test]

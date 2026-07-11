@@ -3,7 +3,7 @@ use crate::model::{Attribute, ClassifierType, RelEnd, RelationshipKind, TypeRef,
 use crate::multiplicity::Multiplicity;
 use crate::parse::parse_document;
 use crate::serialize::serialize_document;
-use crate::syntax::{Document, HintLine, ParsedName, ParsedRel, Section};
+use crate::syntax::{Document, ParsedName, ParsedRel, Section};
 
 pub type Bundle = Vec<(String, String)>;
 
@@ -261,7 +261,7 @@ fn str_list(items: &[String]) -> FmValue {
 }
 
 /// Slugs of every document that references `slug` (rel target, attribute
-/// type-ref, `as [Ref]` name, diagram member/hint). Sorted, deduped.
+/// type-ref, `as [Ref]` name, diagram member). Sorted, deduped.
 pub fn referrers(work: &Bundle, slug: &str) -> Vec<String> {
     let mut out = Vec::new();
     for (p, text) in work {
@@ -283,10 +283,6 @@ pub fn referrers(work: &Bundle, slug: &str) -> Vec<String> {
                 }
                 block.groups.iter().any(|g| group_has(g, slug))
             }
-            Section::RenderHints(hs) => hs.iter().any(|h| match h {
-                HintLine::Emphasize(list) => list.iter().any(|x| x == slug),
-                HintLine::Collapse { slug: cs, .. } => cs == slug,
-            }),
             _ => false,
         });
         if hit {

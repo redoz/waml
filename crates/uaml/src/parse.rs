@@ -2,7 +2,7 @@ use pulldown_cmark::{Event, HeadingLevel, Options, Parser, Tag, TagEnd};
 
 use crate::frontmatter::parse_frontmatter;
 use crate::grammar::{
-    parse_attribute_line, parse_hint_line, parse_relationship_line,
+    parse_attribute_line, parse_relationship_line,
     parse_value_line,
 };
 use crate::syntax::{Document, Section};
@@ -10,7 +10,7 @@ use crate::syntax::{Document, Section};
 use std::collections::{HashMap, HashSet};
 
 use crate::model::{
-    Attribute, ClassifierType, Diagram, Edge, Member, Model, Node, RenderHints,
+    Attribute, ClassifierType, Diagram, Edge, Member, Model, Node,
 };
 
 struct Head {
@@ -32,9 +32,6 @@ fn classify(title: &str, content: &str, raw_full: &str) -> Section {
             Section::Relationships(lines(content).iter().filter_map(|l| parse_relationship_line(l)).collect())
         }
         "members" => Section::Members(crate::grammar::parse_members_block(content)),
-        "render hints" => {
-            Section::RenderHints(lines(content).iter().filter_map(|l| parse_hint_line(l)).collect())
-        }
         "body" => Section::Body(content.trim().to_string()),
         "notes" => {
             Section::Notes(lines(content).iter().filter_map(|l| parse_value_line(l)).collect())
@@ -269,8 +266,6 @@ fn build_edges(classifiers: &[&ParsedDoc], keyset: &HashSet<&str>) -> Vec<Edge> 
     edges
 }
 
-use crate::syntax::HintLine;
-
 fn build_diagrams(parsed: &[ParsedDoc], keyset: &HashSet<&str>) -> Vec<Diagram> {
     let mut out = Vec::new();
     for p in parsed.iter().filter(|p| p.ty == ClassifierType::Diagram) {
@@ -283,7 +278,6 @@ fn build_diagrams(parsed: &[ParsedDoc], keyset: &HashSet<&str>) -> Vec<Diagram> 
             .to_string();
 
         let mut members = Vec::new();
-        let mut hints = RenderHints::default();
         for s in &p.doc.sections {
             match s {
                 Section::Members(block) => {
@@ -301,22 +295,10 @@ fn build_diagrams(parsed: &[ParsedDoc], keyset: &HashSet<&str>) -> Vec<Diagram> 
                         collect(g, keyset, &mut members);
                     }
                 }
-                Section::RenderHints(hs) => {
-                    for h in hs {
-                        match h {
-                            HintLine::Emphasize(list) => hints.emphasize = list.clone(),
-                            HintLine::Collapse { slug, .. } => {
-                                if keyset.contains(slug.as_str()) {
-                                    hints.collapse.push(slug.clone());
-                                }
-                            }
-                        }
-                    }
-                }
                 _ => {}
             }
         }
-        out.push(Diagram { key: p.slug.clone(), title, profile, members, hints });
+        out.push(Diagram { key: p.slug.clone(), title, profile, members });
     }
     out
 }
@@ -504,7 +486,5 @@ mod model_tests {
         assert_eq!(d.profile, "uml-domain");
         // resolvable members only; ghost is dropped
         assert_eq!(d.members.iter().map(|x| x.key.as_str()).collect::<Vec<_>>(), vec!["order", "pricing"]);
-        assert_eq!(d.hints.emphasize, vec!["order"]);
-        assert_eq!(d.hints.collapse, vec!["pricing"]);
     }
 }

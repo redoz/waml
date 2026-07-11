@@ -3,7 +3,7 @@ use regex::Regex;
 
 use crate::model::{Attribute, RelEnd, RelationshipKind, TypeRef, Visibility};
 use crate::multiplicity::Multiplicity;
-use crate::syntax::{HintLine, MemberGroup, MemberLine, MembersBlock, ParsedName, ParsedRel};
+use crate::syntax::{MemberGroup, MemberLine, MembersBlock, ParsedName, ParsedRel};
 
 static ATTR_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^- (?:([+\-#~]) )?([A-Za-z_][A-Za-z0-9_]*): (.+)$").unwrap());
@@ -26,10 +26,6 @@ static END_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^(\S+)(?:\s+([A-Za-z][A-Za-z0-9_]*))?$").unwrap());
 static MEMBER_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^- \[([^\]]*)\]\(\./(.+?)\.md\)\s*$").unwrap());
-static EMPHASIZE_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"^- emphasize:\s*(.+)$").unwrap());
-static COLLAPSE_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"^- collapse \[([^\]]*)\]\(\./(.+?)\.md\)\s*$").unwrap());
 static STRAY_BRACKET_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"[\[\]()]").unwrap());
 
@@ -197,18 +193,6 @@ pub fn render_members_block(block: &MembersBlock) -> String {
     out
 }
 
-pub fn parse_hint_line(line: &str) -> Option<HintLine> {
-    let line = line.trim_end_matches('\r').trim();
-    if let Some(m) = EMPHASIZE_RE.captures(line) {
-        let items = m[1].split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect();
-        return Some(HintLine::Emphasize(items));
-    }
-    if let Some(m) = COLLAPSE_RE.captures(line) {
-        return Some(HintLine::Collapse { title: m[1].to_string(), slug: basename(&m[2]).to_string() });
-    }
-    None
-}
-
 pub fn render_attribute_line(a: &Attribute) -> String {
     let vis = a.visibility.map(|v| format!("{} ", v.marker())).unwrap_or_default();
     let ty = match &a.ty.ref_ {
@@ -252,13 +236,6 @@ pub fn render_relationship_line(r: &ParsedRel) -> String {
 
 pub fn render_member_line(m: &MemberLine) -> String {
     format!("- [{}](./{}.md)", m.title, m.slug)
-}
-
-pub fn render_hint_line(h: &HintLine) -> String {
-    match h {
-        HintLine::Emphasize(items) => format!("- emphasize: {}", items.join(", ")),
-        HintLine::Collapse { title, slug } => format!("- collapse [{title}](./{slug}.md)"),
-    }
 }
 
 #[cfg(test)]
@@ -361,13 +338,5 @@ mod tests {
         let m = parse_member_line("- [Order](./order.md)").unwrap();
         assert_eq!(m.slug, "order");
         assert_eq!(render_member_line(&m), "- [Order](./order.md)");
-    }
-
-    #[test]
-    fn parses_hint_lines() {
-        assert_eq!(parse_hint_line("- emphasize: order, customer"),
-            Some(HintLine::Emphasize(vec!["order".to_string(), "customer".to_string()])));
-        assert_eq!(parse_hint_line("- collapse [Pricing](./pricing-service.md)"),
-            Some(HintLine::Collapse { title: "Pricing".to_string(), slug: "pricing-service".to_string() }));
     }
 }
