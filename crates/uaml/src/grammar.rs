@@ -162,6 +162,11 @@ fn render_end(e: &RelEnd) -> String {
     }
 }
 
+/// Render a `<near> to <far>` ends clause (inverse of `parse_ends`).
+pub fn render_ends(from: &RelEnd, to: &RelEnd) -> String {
+    format!("{} to {}", render_end(from), render_end(to))
+}
+
 pub fn render_relationship_line(r: &ParsedRel) -> String {
     let link = format!("[{}](./{}.md)", r.target_title, r.target_slug);
     let name = match &r.name {

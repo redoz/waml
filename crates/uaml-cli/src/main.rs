@@ -4,6 +4,10 @@ use clap::{Parser, Subcommand, ValueEnum};
 
 mod commands;
 mod io;
+// Wire layer for a future `--emit`/apply CLI surface (Task 8 only adds the DTO + its
+// own round-trip tests; nothing in this binary calls it yet).
+#[allow(dead_code)]
+mod ops_dto;
 
 #[derive(Parser)]
 #[command(name = "uaml", about = "Tools for UAML documents")]
