@@ -5,7 +5,7 @@
   "scripts": {
     "dev": "pnpm --filter @mc/web dev",
     "dev:web": "pnpm --filter @mc/web dev",
-    "build": "pnpm --filter @mc/okf build && pnpm --filter @mc/core build && pnpm --filter @mc/web build",
+    "build": "pnpm --filter @mc/okf build && pnpm --filter @mc/core build && pnpm --filter @mc/web build && pnpm --filter @mc/web-svelte build",
     "serve": "pnpm build && pnpm --filter @mc/web preview",
     "test": "pnpm -r test",
     "lint": "eslint .",
