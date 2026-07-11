@@ -2,6 +2,7 @@ use std::path::PathBuf;
 
 use clap::{Parser, Subcommand, ValueEnum};
 
+mod commands;
 mod io;
 
 #[derive(Parser)]
@@ -46,7 +47,22 @@ enum Format {
 fn main() {
     let cli = Cli::parse();
     let code = match cli.command {
-        Command::Check { .. } => 0,
+        Command::Check { paths, stdin, format } => {
+            let bundle = match io::read_bundle(&paths, stdin) {
+                Ok(b) => b,
+                Err(e) => {
+                    eprintln!("uaml: {e}");
+                    std::process::exit(2);
+                }
+            };
+            let diags = uaml::validate::validate(&bundle);
+            let out = match format {
+                Format::Human => commands::render_human(&diags),
+                Format::Json => commands::render_json(&diags),
+            };
+            println!("{out}");
+            commands::check_exit_code(&diags)
+        }
         Command::Fmt { .. } => 0,
     };
     std::process::exit(code);
