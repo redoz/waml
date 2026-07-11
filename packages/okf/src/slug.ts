@@ -1,5 +1,10 @@
 export function slugify(text: string, fallback = ""): string {
-  const s = (text || "").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+  const s = (text || "")
+    .replace(/([a-z0-9])([A-Z])/g, "$1-$2")      // camelCase boundary: OrderStatus → Order-Status
+    .replace(/([A-Z]+)([A-Z][a-z])/g, "$1-$2")   // acronym boundary: HTTPServer → HTTP-Server
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
   return s || fallback;
 }
 export function renderFrontmatter(obj: Record<string, unknown>, indent = ""): string {

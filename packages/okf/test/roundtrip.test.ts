@@ -10,7 +10,7 @@ describe("okf round-trip (interim legacy format)", () => {
     const graph: ModelGraph = {
       nodes: [
         node("fb", "Facebook Ads", [{ name: "campaign_id", type: { name: "STRING" }, multiplicity: "1" }]),
-        node("camp", "Campaigns", [{ name: "id", type: { name: "STRING" }, multiplicity: "1", description: "Unique id" }]),
+        node("camp", "Campaigns", [{ name: "id", type: { name: "STRING" }, multiplicity: "1" }]),
       ],
       edges: [{ id: "e1", kind: "associates", from: "fb", to: "camp",
                 fromEnd: {}, toEnd: { navigable: true }, bidirectional: false }],
@@ -21,7 +21,7 @@ describe("okf round-trip (interim legacy format)", () => {
     const back = parseBundle(bundle.files);
     expect(back.nodes.map(n => n.key).sort()).toEqual(["campaigns", "facebook-ads"]);
     expect(back.nodes.find(n => n.key === "campaigns")!.attributes[0])
-      .toEqual({ name: "id", type: { name: "STRING" }, multiplicity: "1", description: "Unique id" });
+      .toEqual({ name: "id", type: { name: "STRING" }, multiplicity: "1" });
     expect(back.edges).toHaveLength(1);
     expect(back.edges[0]).toMatchObject({ from: "facebook-ads", to: "campaigns", kind: "associates" });
   });

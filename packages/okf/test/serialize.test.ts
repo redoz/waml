@@ -17,7 +17,7 @@ const graph: ModelGraph = {
   diagrams: [],
 };
 
-describe("serializeBundle (interim legacy emission)", () => {
+describe("serializeBundle (UML emission)", () => {
   const { files } = serializeBundle(graph, "Demo");
   const index = files["demo/index.md"];
   const orders = files["demo/orders.md"];
@@ -36,12 +36,13 @@ describe("serializeBundle (interim legacy emission)", () => {
     expect(orders).not.toContain("tags:");
     expect(orders).not.toContain("## Overview");
   });
-  it("schema table renders from attributes", () => {
-    expect(orders).toContain("# Schema\n\n| Column | Type | Description |");
-    expect(orders).toContain("| `order_id` | STRING | Unique order id |");
+  it("attributes render as a ## Attributes list", () => {
+    expect(orders).toContain("## Attributes");
+    expect(orders).toContain("- order_id: STRING");
+    expect(orders).toContain("- customer_id: INTEGER");
   });
-  it("joins render with a cardinality suffix from end multiplicities", () => {
-    expect(orders).toContain("## Joins");
-    expect(orders).toContain("- [Customers](./customers.md) [N:1]");
+  it("relationships render with a verb and ends from the edge multiplicities", () => {
+    expect(orders).toContain("## Relationships");
+    expect(orders).toContain("- associates [Customers](./customers.md): * to 1");
   });
 });
