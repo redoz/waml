@@ -7,10 +7,8 @@ use crate::grammar::{
 };
 use crate::syntax::{Document, Section};
 
-#[allow(unused_imports)]
 use std::collections::{HashMap, HashSet};
 
-#[allow(unused_imports)]
 use crate::model::{
     Attribute, ClassifierType, Diagram, Edge, Member, Model, Node, RenderHints,
 };
@@ -270,8 +268,48 @@ fn build_edges(classifiers: &[&ParsedDoc], keyset: &HashSet<&str>) -> Vec<Edge> 
     edges
 }
 
-fn build_diagrams(_parsed: &[ParsedDoc], _keyset: &HashSet<&str>) -> Vec<Diagram> {
-    Vec::new()
+use crate::syntax::HintLine;
+
+fn build_diagrams(parsed: &[ParsedDoc], keyset: &HashSet<&str>) -> Vec<Diagram> {
+    let mut out = Vec::new();
+    for p in parsed.iter().filter(|p| p.ty == ClassifierType::Diagram) {
+        let fm = &p.doc.frontmatter;
+        let title = fm.get_str("title").map(String::from).unwrap_or_else(|| "Untitled diagram".to_string());
+        let profile = fm
+            .get_str("profile")
+            .filter(|s| !s.is_empty())
+            .unwrap_or("uml-domain")
+            .to_string();
+
+        let mut members = Vec::new();
+        let mut hints = RenderHints::default();
+        for s in &p.doc.sections {
+            match s {
+                Section::Members(ms) => {
+                    for mem in ms {
+                        if keyset.contains(mem.slug.as_str()) {
+                            members.push(Member { key: mem.slug.clone(), position: mem.position });
+                        }
+                    }
+                }
+                Section::RenderHints(hs) => {
+                    for h in hs {
+                        match h {
+                            HintLine::Emphasize(list) => hints.emphasize = list.clone(),
+                            HintLine::Collapse { slug, .. } => {
+                                if keyset.contains(slug.as_str()) {
+                                    hints.collapse.push(slug.clone());
+                                }
+                            }
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+        out.push(Diagram { key: p.slug.clone(), title, profile, members, hints });
+    }
+    out
 }
 
 #[cfg(test)]
@@ -417,5 +455,29 @@ mod model_tests {
             "---\ntype: uml.Class\ntitle: A\n---\n# A\n\n## Relationships\n- depends [Ghost](./ghost.md)\n".into())];
         let m = build_model(&b);
         assert!(m.edges.is_empty());
+    }
+
+    fn diagram_bundle() -> Vec<(String, String)> {
+        vec![
+            ("d/order.md".into(), "---\ntype: uml.Class\ntitle: Order\n---\n# Order\n".into()),
+            ("d/pricing.md".into(), "---\ntype: uml.Class\ntitle: Pricing\n---\n# Pricing\n".into()),
+            ("d/orders-domain.md".into(),
+             "---\ntype: Diagram\ntitle: Orders Domain\nprofile: uml-domain\n---\n# Orders Domain\n\n## Members\n- [Order](./order.md) at 40,80\n- [Pricing](./pricing.md)\n- [Ghost](./ghost.md)\n\n## Render hints\n- emphasize: order\n- collapse [Pricing](./pricing.md)\n".into()),
+        ]
+    }
+
+    #[test]
+    fn builds_diagram_with_members_and_hints() {
+        let m = build_model(&diagram_bundle());
+        assert_eq!(m.nodes.len(), 2, "diagram doc is not a node");
+        assert_eq!(m.diagrams.len(), 1);
+        let d = &m.diagrams[0];
+        assert_eq!(d.title, "Orders Domain");
+        assert_eq!(d.profile, "uml-domain");
+        // resolvable members only; ghost is dropped
+        assert_eq!(d.members.iter().map(|x| x.key.as_str()).collect::<Vec<_>>(), vec!["order", "pricing"]);
+        assert_eq!(d.members[0].position, Some((40.0, 80.0)));
+        assert_eq!(d.hints.emphasize, vec!["order"]);
+        assert_eq!(d.hints.collapse, vec!["pricing"]);
     }
 }
