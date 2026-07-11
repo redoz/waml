@@ -78,7 +78,7 @@ pub fn write_back(old: &[(String, String)], new: &[(String, String)]) -> std::io
     }
     for p in om.keys() {
         if !nm.contains_key(p) {
-            let _ = fs::remove_file(p);
+            fs::remove_file(p)?;
             touched.push(format!("deleted {p}"));
         }
     }
