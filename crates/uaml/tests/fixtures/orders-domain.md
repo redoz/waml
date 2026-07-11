@@ -8,12 +8,13 @@ description: "A customer's placed order."
 # Order
 
 ## Attributes
-- id: OrderId
-- status: [OrderStatus](./order-status.md)
+- id: OrderId [1]
+- status: [OrderStatus](./order-status.md) [1]
+- total: [Money](./money.md) [1]
 
 ## Relationships
+- associates [Customer](./customer.md): 1 order to 1 customer
 - composes [OrderLine](./order-line.md): 1 to 1..* lines
-- associates [Customer](./customer.md): 1 to 1
 
 <!-- shop/order-line.md -->
 ---
@@ -24,8 +25,8 @@ title: OrderLine
 # OrderLine
 
 ## Attributes
-- quantity: Int
-- unitPrice: [Money](./money.md)
+- quantity: Int [1]
+- unitPrice: [Money](./money.md) [1]
 
 <!-- shop/customer.md -->
 ---
@@ -36,8 +37,8 @@ title: Customer
 # Customer
 
 ## Attributes
-- id: CustomerId
-- name: String
+- id: CustomerId [1]
+- name: String [1]
 
 <!-- shop/order-status.md -->
 ---
@@ -61,8 +62,8 @@ title: Money
 # Money
 
 ## Attributes
-- amount: Decimal
-- currency: CurrencyCode
+- amount: Decimal [1]
+- currency: CurrencyCode [1]
 
 <!-- shop/orders-domain.md -->
 ---

@@ -25,10 +25,25 @@ fn orders_domain_builds_the_expected_model() {
     assert_eq!(comp.target, "order-line");
     assert_eq!(comp.to_end.role.as_deref(), Some("lines"));
 
-    // The Money value-object's attribute types are bare tokens (no matching docs).
+    // The associates edge (declared on order.md as "1 order to 1 customer")
+    // resolves order -> customer, near role "order" and far role "customer".
+    let assoc = m.edges.iter().find(|e| e.kind.as_str() == "associates").unwrap();
+    assert_eq!(assoc.source, "order");
+    assert_eq!(assoc.target, "customer");
+    assert_eq!(assoc.from_end.role.as_deref(), Some("order"));
+    assert_eq!(assoc.to_end.role.as_deref(), Some("customer"));
+
+    // The Money value-object's own attribute types are bare tokens (no matching docs).
     let money = m.node("money").unwrap();
     assert_eq!(money.attributes[0].ty.name, "Decimal");
     assert_eq!(money.attributes[0].ty.ref_, None);
+
+    // Order has 3 attributes (id, status, total); total resolves to Money.
+    let order = m.node("order").unwrap();
+    assert_eq!(order.attributes.len(), 3);
+    let total = order.attributes.iter().find(|a| a.name == "total").unwrap();
+    assert_eq!(total.ty.name, "Money");
+    assert_eq!(total.ty.ref_.as_deref(), Some("money"));
 }
 
 #[test]
