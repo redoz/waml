@@ -118,9 +118,12 @@ sub-sections (transitions, internals, `#### Notes`). The heading text is the
 node's label and local identity.
 
 Node kind is a **closed set**, marked by a leading keyword on the heading;
-absent keyword means a plain action (activity) or state (state machine):
+absent keyword means a plain action (activity) or state (state machine).
+Control nodes come in matched split/join pairs:
 
-- `initial`, `final`, `decision`, `fork`, `join`
+- `initial`, `final`
+- `decision` (1→N, guarded branch) / `merge` (N→1, rejoin) — both render as a diamond ◇
+- `fork` (1→N, concurrent split) / `join` (N→1, concurrent sync) — both render as a bar
 - (no keyword) → action / state
 
 Under a node heading:
@@ -239,7 +242,7 @@ no syntax. Self, found, and lost messages are deferred.
 |---|---|---|
 | class | structure | existing seven metaclasses |
 | use case | structure | `uml.Actor`, `uml.UseCase`; `includes`/`extends`; `frame` = system boundary |
-| activity | flow | heading nodes + `to` transitions; `when` guards; `decision`/`fork`/`join` |
+| activity | flow | heading nodes + `to` transitions; `when` guards; `decision`/`merge`, `fork`/`join` |
 | state machine | flow | same grammar; `entry`/`do`/`exit`; `describes` a Class |
 | sequence | interaction | `## Lifelines` links + ordered `## Messages` verbs + fragments |
 
