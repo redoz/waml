@@ -267,3 +267,32 @@ describe("UML format round-trip — association classes & notes (lossless)", () 
     expect(desugared[0].annotates).toEqual([{ targetKey: "order" }]);
   });
 });
+
+describe("UML format round-trip — self-anchored note with a multi-line body (lossless)", () => {
+  const body = "First line.\n- A bulleted caveat.\nThird line.";
+  const graph: ModelGraph = {
+    nodes: [
+      { key: "order", type: "uml.Class", title: "Order", stereotypes: [], attributes: [], position: { x: 0, y: 0 } },
+      // Single anchor on `order`, so selfAnchorHost would collapse it — but its body is
+      // multi-line, which cannot round-trip through a single `## Notes` bullet.
+      { key: "order--note-1", type: "uml.Note", title: "Note on Order", stereotypes: [], attributes: [],
+        body, annotates: [{ targetKey: "order" }], position: { x: 0, y: 0 } },
+    ],
+    edges: [],
+    diagrams: [],
+  };
+  const files = serializeBundle(graph, "Shop").files;
+  const back = parseBundle(files);
+
+  it("keeps its own doc rather than flattening lossily into `## Notes`", () => {
+    expect(files["shop/order.md"]).not.toContain("## Notes");
+    expect(files["shop/note-on-order.md"]).toContain("## Body\n" + body);
+    expect(files["shop/note-on-order.md"]).toContain("## Relationships\n- annotates [Order](./order.md)");
+  });
+  it("preserves every line of the multi-line body across serialize -> parse", () => {
+    const notes = back.nodes.filter(n => n.type === "uml.Note");
+    expect(notes).toHaveLength(1);
+    expect(notes[0].body).toBe(body);
+    expect(notes[0].annotates).toEqual([{ targetKey: "order" }]);
+  });
+});
