@@ -1,5 +1,8 @@
 use serde::Serialize;
 use uaml::diagnostic::{Diagnostic, Severity};
+use uaml::parse::parse_document;
+use uaml::serialize::serialize_document;
+use uaml::validate::validate;
 
 #[derive(Serialize)]
 struct DiagDto<'a> {
@@ -66,6 +69,31 @@ pub fn check_exit_code(diags: &[Diagnostic]) -> i32 {
     }
 }
 
+pub struct FmtResult {
+    pub path: String,
+    pub formatted: String,
+    pub changed: bool,
+    pub skipped: bool,
+}
+
+pub fn plan_fmt(files: &[(String, String)]) -> Vec<FmtResult> {
+    let diags = validate(files);
+    let mut out = Vec::new();
+    for (path, text) in files {
+        let has_error = diags
+            .iter()
+            .any(|d| d.file == *path && d.severity == Severity::Error);
+        if has_error {
+            out.push(FmtResult { path: path.clone(), formatted: text.clone(), changed: false, skipped: true });
+            continue;
+        }
+        let formatted = serialize_document(&parse_document(text));
+        let changed = formatted != *text;
+        out.push(FmtResult { path: path.clone(), formatted, changed, skipped: false });
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -100,5 +128,27 @@ mod tests {
         let only_warn = vec![Diagnostic::warn(DiagCode::UnknownType, "w", "a.md", 1)];
         assert_eq!(check_exit_code(&only_warn), 0);
         assert_eq!(check_exit_code(&[]), 0);
+    }
+
+    #[test]
+    fn formats_a_clean_file_and_detects_change() {
+        // A default `[1]` is dropped by canonical form → the file changes.
+        let files = vec![("x/a.md".to_string(),
+            "---\ntype: uml.Class\ntitle: A\n---\n# A\n\n## Attributes\n- id: AId [1]\n".to_string())];
+        let plan = plan_fmt(&files);
+        assert_eq!(plan.len(), 1);
+        assert!(!plan[0].skipped);
+        assert!(plan[0].changed);
+        assert!(plan[0].formatted.contains("- id: AId\n"));
+        assert!(!plan[0].formatted.contains("[1]"));
+    }
+
+    #[test]
+    fn skips_a_file_with_errors() {
+        let files = vec![("x/a.md".to_string(),
+            "---\ntype: uml.Class\ntitle: A\n---\n# A\n\n## Attributes\n- broken line\n".to_string())];
+        let plan = plan_fmt(&files);
+        assert!(plan[0].skipped);
+        assert!(!plan[0].changed);
     }
 }

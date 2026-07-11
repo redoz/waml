@@ -63,7 +63,39 @@ fn main() {
             println!("{out}");
             commands::check_exit_code(&diags)
         }
-        Command::Fmt { .. } => 0,
+        Command::Fmt { paths, check, stdout } => {
+            let files = match io::read_files(&paths) {
+                Ok(f) => f,
+                Err(e) => {
+                    eprintln!("uaml: {e}");
+                    std::process::exit(2);
+                }
+            };
+            let plan = commands::plan_fmt(&files);
+            let mut exit = 0;
+            for r in &plan {
+                if r.skipped {
+                    eprintln!("uaml: skipped {} (has errors; run `uaml check`)", r.path);
+                    exit = 1;
+                    continue;
+                }
+                if stdout {
+                    println!("{}", r.formatted);
+                } else if check {
+                    if r.changed {
+                        eprintln!("uaml: {} is not formatted", r.path);
+                        exit = 1;
+                    }
+                } else if r.changed {
+                    if let Err(e) = std::fs::write(&r.path, &r.formatted) {
+                        eprintln!("uaml: failed to write {}: {e}", r.path);
+                        std::process::exit(2);
+                    }
+                    println!("uaml: formatted {}", r.path);
+                }
+            }
+            exit
+        }
     };
     std::process::exit(code);
 }
