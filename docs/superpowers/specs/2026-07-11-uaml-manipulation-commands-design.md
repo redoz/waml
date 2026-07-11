@@ -63,6 +63,16 @@ diagram `## Members` and `## Render hints`, and `refs` still reports diagram mem
 referrers — diagrams are read-and-rewritten-as-referrers even though no command edits them
 directly.
 
+### Future sibling: `uaml serve` / `uaml edit` (its own spec)
+
+A planned second front-end over this same engine — an HTTP REST API so the web canvas can talk
+to a running `uaml` process directly instead of only exporting an op-log. `uaml serve` = API
+only; `uaml edit` = API **plus** the static frontend served alongside. It is deliberately **not**
+designed here (separate subsystem, separate brainstorm + spec), but this cut is built to serve
+it: the pure `apply(bundle, &[Op])` engine and the `OpDto` wire layer must stay callable from an
+HTTP handler exactly as they are from the CLI (no CLI-only assumptions, no `std::io` reached
+from inside `apply`). Keep `OpDto` in a module a future `serve` command can import unchanged.
+
 ## Architecture
 
 ### Core (`uaml` crate, pure — no std::fs / threads / OS)
