@@ -58,7 +58,9 @@ fn render_ref(r: &OperandRef) -> String {
 /// would split on (whitespace or a delimiter).
 fn render_bare_name(name: &str) -> String {
     let needs_quote = name.is_empty()
-        || name.chars().any(|c| c.is_whitespace() || matches!(c, '(' | ')' | ',' | '[' | ']' | '"'));
+        || name.chars().any(|c| c.is_whitespace() || matches!(c, '(' | ')' | ',' | '[' | ']' | '"'))
+        || name.eq_ignore_ascii_case("column")
+        || name.eq_ignore_ascii_case("row");
     if needs_quote { format!("\"{name}\"") } else { name.to_string() }
 }
 
@@ -653,6 +655,19 @@ mod tests {
             let parsed = parse_layout_line(line).unwrap_or_else(|| panic!("failed to parse: {line}"));
             let rendered = render_layout_line(&parsed);
             let reparsed = parse_layout_line(&rendered).unwrap_or_else(|| panic!("failed to reparse: {rendered}"));
+            assert_eq!(parsed, reparsed, "not a fixpoint: {line} -> {rendered}");
+        }
+    }
+
+    #[test]
+    fn reserved_keyword_bare_name_round_trips_quoted() {
+        // A quoted operand whose name equals a reserved axis keyword must
+        // render back in quoted form so it re-parses to the same AST.
+        for line in ["- \"column\"", "- \"row\""] {
+            let parsed = parse_layout_line(line).unwrap();
+            let rendered = render_layout_line(&parsed);
+            let reparsed = parse_layout_line(&rendered)
+                .unwrap_or_else(|| panic!("reparse failed: {rendered}"));
             assert_eq!(parsed, reparsed, "not a fixpoint: {line} -> {rendered}");
         }
     }
