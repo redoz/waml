@@ -1,8 +1,17 @@
 use std::collections::{HashMap, HashSet};
 
+use pulldown_cmark::{Event, Options, Parser, Tag};
+
 use crate::diagnostic::{DiagCode, Diagnostic};
 use crate::frontmatter::parse_frontmatter;
 use crate::grammar::{parse_attribute_line, parse_member_line, parse_relationship_line};
+use crate::model::ClassifierType;
+
+fn has_metadata_block(text: &str) -> bool {
+    let mut opts = Options::empty();
+    opts.insert(Options::ENABLE_YAML_STYLE_METADATA_BLOCKS);
+    Parser::new_ext(text, opts).any(|e| matches!(e, Event::Start(Tag::MetadataBlock(_))))
+}
 
 fn slug_of(path: &str) -> String {
     let seg = path.rsplit(['/', '\\']).next().unwrap_or(path);
@@ -32,6 +41,15 @@ fn rel_error_message(line: &str) -> String {
 }
 
 fn validate_doc(path: &str, text: &str, keyset: &HashSet<String>, diags: &mut Vec<Diagnostic>) {
+    if text.trim_start().starts_with("---") && !has_metadata_block(text) {
+        diags.push(Diagnostic::new(
+            DiagCode::FrontmatterNotClean,
+            "frontmatter is not a clean CommonMark metadata block (would render as a thematic break + heading)",
+            path,
+            1,
+        ));
+    }
+
     let mut in_fm = false;
     let mut fm_done = false;
     let mut in_fence = false;
@@ -49,6 +67,17 @@ fn validate_doc(path: &str, text: &str, keyset: &HashSet<String>, diags: &mut Ve
             continue;
         }
         if in_fm {
+            if let Some(rest) = trimmed.strip_prefix("type:") {
+                let ty = rest.trim().trim_matches('"');
+                if ty != "Diagram" && matches!(ClassifierType::parse(ty), ClassifierType::Unknown(_)) {
+                    diags.push(Diagnostic::warn(
+                        DiagCode::UnknownType,
+                        format!("unknown type '{ty}' — rendered as a generic box"),
+                        path,
+                        n,
+                    ));
+                }
+            }
             continue;
         }
         if trimmed.starts_with("```") || trimmed.starts_with("~~~") {
@@ -186,5 +215,32 @@ mod tests {
         assert_eq!(d.len(), 1);
         assert_eq!(d[0].code, DiagCode::UnresolvedTarget);
         assert_eq!(d[0].severity, Severity::Warning);
+    }
+
+    #[test]
+    fn flags_frontmatter_that_is_not_a_metadata_block() {
+        // A missing closing fence breaks metadata-block recognition (pulldown-cmark
+        // 0.12.2 tolerates a leading blank line, but not an unterminated block).
+        let b = vec![("a/x.md".into(),
+            "---\ntype: uml.Class\ntitle: X\n# X\n".into())];
+        let d = validate(&b);
+        assert!(d.iter().any(|x| x.code == DiagCode::FrontmatterNotClean));
+    }
+
+    #[test]
+    fn warns_on_unknown_type() {
+        let b = vec![("a/x.md".into(),
+            "---\ntype: bpmn.Task\ntitle: X\n---\n# X\n".into())];
+        let d = validate(&b);
+        let w = d.iter().find(|x| x.code == DiagCode::UnknownType).unwrap();
+        assert_eq!(w.severity, crate::diagnostic::Severity::Warning);
+        assert_eq!(w.line, 2);
+    }
+
+    #[test]
+    fn clean_document_has_no_diagnostics() {
+        let b = vec![("a/x.md".into(),
+            "---\ntype: uml.Class\ntitle: X\n---\n# X\n\n## Attributes\n- id: XId\n".into())];
+        assert!(validate(&b).is_empty());
     }
 }
