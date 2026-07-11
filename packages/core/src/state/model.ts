@@ -31,6 +31,15 @@ export function createModelStore(initial?: Partial<ModelGraph>) {
       const d: Diagram = { key: uid("d"), title, profile: "uml-domain", members: g.nodes.map(n => n.key) };
       g = { ...g, diagrams: [...g.diagrams, d] }; emit(); return d;
     },
+    // Like addDiagram, but seeds `members` from an EXPLICIT id list instead of
+    // every node — backs "New diagram from selection". Copies the array so a
+    // later mutation of the caller's list can't leak in. Rejects an empty name.
+    addDiagramFromMembers(title: string, memberIds: string[]): Diagram {
+      const t = title.trim();
+      if (!t) throw new Error("Diagram title must not be empty");
+      const d: Diagram = { key: uid("d"), title: t, profile: "uml-domain", members: [...memberIds] };
+      g = { ...g, diagrams: [...g.diagrams, d] }; emit(); return d;
+    },
     updateDiagram(key: string, patch: Partial<Diagram>) {
       g = { ...g, diagrams: g.diagrams.map(d => d.key === key ? { ...d, ...patch } : d) }; emit();
     },

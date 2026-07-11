@@ -12,6 +12,7 @@
     type Node,
     type Edge,
     type Connection,
+    type Viewport,
   } from "@xyflow/svelte";
   import { MessageSquare, PanelRight } from "lucide-svelte";
 
@@ -21,8 +22,17 @@
   import { toRFNode } from "./toRFNode";
   import { nodeTypes, edgeTypes } from "./flowTypes";
   import { buildRfEdges, buildAnchorEdges } from "./edges";
-  import type { Selection } from "./selection";
+  import {
+    type SelectionSet,
+    EMPTY_SELECTION,
+    isSelectionEmpty,
+    focusedSelection,
+    selectionFromFlow,
+    anchorNodeIds,
+    deleteSelection,
+  } from "./selection";
   import Dock, { type Tool } from "./Dock.svelte";
+  import SelectionToolbar from "./SelectionToolbar.svelte";
 
   import TopBar from "../TopBar.svelte";
   import ImportDialog from "../ImportDialog.svelte";
@@ -56,7 +66,15 @@ import ShareToast from "../ShareToast.svelte";
   import type { ModelGraph } from "@uaml/okf";
 
   // ── State (one $state per React useState) ───────────────────────────────────
-  let selection = $state<Selection>(null);
+  // Full multi-selection (node keys + model edge ids). SvelteFlow owns the live
+  // click/shift-click/marquee selection and reports it via onselectionchange; we
+  // mirror it here so it drives the toolbar, delete, and — via `focused` — the
+  // single-element Inspector.
+  let selectionSet = $state<SelectionSet>(EMPTY_SELECTION);
+  // Bound to SvelteFlow's viewport so the toolbar re-anchors on pan/zoom.
+  let viewport = $state<Viewport>();
+  // Screen anchor for the floating SelectionToolbar (null ⇒ hidden).
+  let toolbarPos = $state<{ x: number; y: number } | null>(null);
   let tool = $state<Tool>("select");
   let viewMode = $state<ViewMode>(loadViewMode());
   let relLabelMode = $state<RelLabelMode>(loadRelLabelMode());
@@ -82,9 +100,10 @@ import ShareToast from "../ShareToast.svelte";
   // Modal Share dialog (link + share-as-image). Replaces the old rail Share panel.
   let showShare = $state(false);
 
-  // Inspector visibility + pin state. The Inspect edge-flag toggles `open`; the
-  // selection effect below also opens it. When pinned the InspectorPanel stays
-  // open and dims (translucent) while idle, fading back opaque on hover/focus.
+  // Inspector visibility + pin state. Opened ONLY by the Inspect edge-flag
+  // (selection no longer auto-opens it — the multi-select toolbar owns selection
+  // actions now). When pinned the InspectorPanel stays open and dims (translucent)
+  // while idle, fading back opaque on hover/focus.
   let inspectorOpen = $state(false);
   let inspectorPinned = $state(false);
   // Bound to the InspectorPanel's resizable width so the edge-flags can slide
@@ -101,9 +120,12 @@ import ShareToast from "../ShareToast.svelte";
   // useSvelteFlow() (confirmed via hooks/useSvelteFlow.svelte.d.ts) requires flow
   // context — available because Canvas.svelte wraps this component in
   // <SvelteFlowProvider>.
-  const { screenToFlowPosition, fitView } = useSvelteFlow();
+  const { screenToFlowPosition, fitView, flowToScreenPosition, getNodesBounds } = useSvelteFlow();
 
   // ── Derived ──────────────────────────────────────────────────────────────────
+  // Single "focused" element (the sole selected node/edge) for the Inspector; a
+  // multi-selection focuses nothing.
+  const focused = $derived(focusedSelection(selectionSet));
   const diagrams = $derived(effectiveDiagrams($model));
   const activeDiagram = $derived(diagrams.find((d) => d.key === activeDiagramKey) ?? diagrams[0]);
   const profile = $derived(getProfile(activeDiagram.profile));
@@ -121,12 +143,12 @@ import ShareToast from "../ShareToast.svelte";
     const nodes = $model.nodes;
     const vm = viewMode;
     const diag = activeDiagram;
-    const sel = selection;
+    const selNodes = selectionSet.nodes;
     rfNodes = nodes
       .filter((n) => memberSet.has(n.key))
       .map((n) => ({
         ...toRFNode(n, vm, diag.profile, diag.hints?.collapse?.includes(n.key) ?? false),
-        selected: sel?.type === "node" && sel.id === n.key,
+        selected: selNodes.includes(n.key),
       }));
   });
 
@@ -148,11 +170,11 @@ import ShareToast from "../ShareToast.svelte";
     const emphasizeMultiplicity =
       profile.emphasize.includes("multiplicity") &&
       !(diag.hints?.emphasize && !diag.hints.emphasize.includes("multiplicity"));
-    const selId = selection?.type === "edge" ? selection.id : null;
+    const selEdges = selectionSet.edges;
     rfEdges = [...buildRfEdges(visibleEdges, nodes, vm, rlm, emphasizeMultiplicity), ...buildAnchorEdges(visibleNodes, visibleEdges)].map(
       (e) => {
         const modelEdgeId = (e.data as { modelEdgeId?: string } | undefined)?.modelEdgeId;
-        const isSelected = modelEdgeId != null && modelEdgeId === selId;
+        const isSelected = modelEdgeId != null && selEdges.includes(modelEdgeId);
         return { ...e, zIndex: isSelected ? 1000 : 0, selected: isSelected };
       },
     );
@@ -163,10 +185,34 @@ import ShareToast from "../ShareToast.svelte";
     persistActiveDiagramKey(activeDiagram.key);
   });
 
-  // 4) Selecting a node/edge auto-opens the Inspector — preserves current UX.
-  // (A later multiselect spec removes this; the Inspect flag opens it explicitly.)
+  // 4) Toolbar anchor: screen position of the top-center of the selection's
+  // bounding box. Depends on the selection, the live node positions (rfNodes) and
+  // the viewport, so it re-anchors on drag/pan/zoom. Client coords → the toolbar
+  // is position:fixed. Falls back to a top-center default if bounds can't be
+  // measured yet (e.g. brand-new node before layout).
   $effect(() => {
-    if (selection) inspectorOpen = true;
+    const set = selectionSet;
+    void viewport;
+    void rfNodes;
+    if (isSelectionEmpty(set)) {
+      toolbarPos = null;
+      return;
+    }
+    const wanted = anchorNodeIds(set, $model.edges);
+    const present = wanted.filter((id) => rfNodes.some((n) => n.id === id));
+    try {
+      const bounds = getNodesBounds(present.length > 0 ? present : wanted);
+      if (bounds && Number.isFinite(bounds.x) && Number.isFinite(bounds.width) && bounds.width >= 0) {
+        const p = flowToScreenPosition({ x: bounds.x + bounds.width / 2, y: bounds.y });
+        if (Number.isFinite(p.x) && Number.isFinite(p.y)) {
+          toolbarPos = { x: p.x, y: p.y };
+          return;
+        }
+      }
+    } catch {
+      // fall through to the default below
+    }
+    toolbarPos = { x: window.innerWidth / 2, y: 120 };
   });
 
   // 5) Persist the model name on change.
@@ -206,14 +252,24 @@ import ShareToast from "../ShareToast.svelte";
   // onconnect: OnConnect = (connection: Connection) => void.
   function onConnect(connection: Connection) {
     if (!connection.source || !connection.target) return;
-    // Open the new edge in the inspector right away so the user can set join
-    // keys without an extra click to select the freshly-drawn line.
+    // Select the freshly-drawn edge (shows the toolbar). The Inspector no longer
+    // auto-opens on selection — open it via the Inspect flag to set join keys.
     const e = store.addEdge(connection.source, connection.target, connection.sourceHandle, connection.targetHandle);
-    if (e) selection = { type: "edge", id: e.id };
+    if (e) selectionSet = { nodes: [], edges: [e.id] };
   }
 
-  // ── Pane click → add (in Add tool) or deselect ────────────────────────────
-  // onpaneclick: ({ event }: { event: MouseEvent }) => void.
+  // ── Selection change ───────────────────────────────────────────────────────
+  // onselectionchange: ({ nodes, edges }) => void. SvelteFlow owns the live
+  // selection (plain click, Shift/Ctrl-click accumulation via multiSelectionKey,
+  // and the drag marquee via selectionOnDrag); we mirror the result into our
+  // model-keyed set (collapsing ERD's per-model-edge RF edges).
+  function onSelectionChange({ nodes, edges }: { nodes: Node[]; edges: Edge[] }) {
+    selectionSet = selectionFromFlow(nodes, edges);
+  }
+
+  // ── Pane click → add (in Add tool) ─────────────────────────────────────────
+  // onpaneclick: ({ event }: { event: MouseEvent }) => void. Deselection on a
+  // plain pane click is handled by SvelteFlow itself (→ onselectionchange).
   function onPaneClick({ event }: { event: MouseEvent }) {
     if (tool === "add") {
       const pos = screenToFlowPosition({ x: event.clientX, y: event.clientY });
@@ -221,25 +277,9 @@ import ShareToast from "../ShareToast.svelte";
         { x: pos.x - NODE_W / 2, y: pos.y - NODE_H / 2 },
         activeDiagram.key === ALL_DIAGRAM_KEY ? undefined : activeDiagram.key,
       );
-      selection = { type: "node", id: n.key };
+      selectionSet = { nodes: [n.key], edges: [] };
       tool = "select";
-      return;
     }
-    selection = null;
-  }
-
-  // ── Node click → select ────────────────────────────────────────────────────
-  // onnodeclick: ({ node, event }) => void.
-  function onNodeClick({ node }: { node: Node }) {
-    selection = { type: "node", id: node.id };
-  }
-
-  // ── Edge click → select ────────────────────────────────────────────────────
-  // onedgeclick: ({ edge, event }) => void. ERD mode may render several RF edges
-  // per model edge (e.g. "e1::0"); strip the suffix so the inspector still
-  // selects the underlying model edge.
-  function onEdgeClick({ edge }: { edge: Edge }) {
-    selection = { type: "edge", id: edge.id.split("::")[0] };
   }
 
   // ── Auto-layout + tool handler ─────────────────────────────────────────────
@@ -269,13 +309,28 @@ import ShareToast from "../ShareToast.svelte";
 
   // ── Keyboard delete ────────────────────────────────────────────────────────
   function handleKeyDown(e: KeyboardEvent) {
-    if ((e.key === "Delete" || e.key === "Backspace") && selection) {
+    if ((e.key === "Delete" || e.key === "Backspace") && !isSelectionEmpty(selectionSet)) {
       const tag = (e.target as HTMLElement).tagName;
       if (["INPUT", "TEXTAREA", "SELECT"].includes(tag)) return;
-      if (selection.type === "node") store.removeNode(selection.id);
-      else store.removeEdge(selection.id);
-      selection = null;
+      handleDeleteSelection();
     }
+  }
+
+  // ── Selection-toolbar actions ──────────────────────────────────────────────
+  // Remove every selected node + edge (shared by the Delete key and the toolbar's
+  // "Delete selection").
+  function handleDeleteSelection() {
+    deleteSelection(store, selectionSet);
+    selectionSet = EMPTY_SELECTION;
+  }
+
+  // "New diagram from selection": seed a diagram with EXACTLY the selected node
+  // ids (edges follow implicitly via membership) and activate it. Disabled by the
+  // toolbar when no nodes are selected, so `nodes` is non-empty here.
+  function handleNewDiagramFromSelection(name: string) {
+    const d = store.addDiagramFromMembers(name, selectionSet.nodes);
+    activeDiagramKey = d.key;
+    selectionSet = EMPTY_SELECTION;
   }
 
   // ── Double-click on empty pane → add node (works in any tool) ──────────────
@@ -290,7 +345,7 @@ import ShareToast from "../ShareToast.svelte";
       { x: position.x - NODE_W / 2, y: position.y - NODE_H / 2 },
       activeDiagram.key === ALL_DIAGRAM_KEY ? undefined : activeDiagram.key,
     );
-    selection = { type: "node", id: n.key };
+    selectionSet = { nodes: [n.key], edges: [] };
     tool = "select";
   }
 
@@ -305,7 +360,7 @@ import ShareToast from "../ShareToast.svelte";
   // warns and offers an OKF export first.
   function clearCanvas() {
     store.set({ nodes: [], edges: [], diagrams: [] });
-    selection = null;
+    selectionSet = EMPTY_SELECTION;
     showClear = false;
     modelName = DEFAULT_MODEL_NAME;
   }
@@ -472,7 +527,7 @@ import ShareToast from "../ShareToast.svelte";
   <div class="flex flex-1 min-h-0 relative">
     <!-- SvelteFlow canvas -->
     <!-- svelte-ignore a11y_no_static_element_interactions -->
-    <div class="flex-1 relative {canvasClass}" ondblclick={handleWrapperDoubleClick}>
+    <div class="flex-1 relative {canvasClass}" data-canvas-wrapper ondblclick={handleWrapperDoubleClick}>
       <!-- Tool dock — anchored to the canvas (not the outer row) so it sits just
            inside the canvas edge and slides over as the rail opens. The diagram
            switcher now lives in the TopBar title control. -->
@@ -491,12 +546,12 @@ import ShareToast from "../ShareToast.svelte";
         bind:edges={rfEdges}
         {nodeTypes}
         {edgeTypes}
+        bind:viewport={viewport}
         onnodedragstop={onNodeDragStop}
         onconnect={onConnect}
         onreconnect={onReconnect}
         onpaneclick={onPaneClick}
-        onnodeclick={onNodeClick}
-        onedgeclick={onEdgeClick}
+        onselectionchange={onSelectionChange}
         connectionMode={ConnectionMode.Loose}
         fitView={false}
         minZoom={0.4}
@@ -504,7 +559,11 @@ import ShareToast from "../ShareToast.svelte";
         nodesDraggable={tool === "select"}
         nodesConnectable={true}
         selectNodesOnDrag={false}
-        panOnDrag={tool === "select"}
+        selectionOnDrag={tool === "select"}
+        selectionKey="Shift"
+        multiSelectionKey={["Meta", "Control", "Shift"]}
+        panActivationKey="Space"
+        panOnDrag={tool === "select" ? [1, 2] : false}
         zoomOnScroll={true}
         zoomOnDoubleClick={false}
         deleteKey={null}
@@ -532,6 +591,19 @@ import ShareToast from "../ShareToast.svelte";
             Drag from a node's port to create a relationship.
           </div>
         </div>
+      {/if}
+
+      <!-- Floating toolbar anchored above the selection's bounding box. Shown
+           whenever ≥1 element is selected. -->
+      {#if !isSelectionEmpty(selectionSet) && toolbarPos}
+        <SelectionToolbar
+          x={toolbarPos.x}
+          y={toolbarPos.y}
+          nodeCount={selectionSet.nodes.length}
+          edgeCount={selectionSet.edges.length}
+          onNewDiagram={handleNewDiagramFromSelection}
+          onDelete={handleDeleteSelection}
+        />
       {/if}
     </div>
 
@@ -566,33 +638,33 @@ import ShareToast from "../ShareToast.svelte";
       onClose={() => {
         inspectorOpen = false;
         inspectorPinned = false;
-        selection = null;
+        selectionSet = EMPTY_SELECTION;
       }}
     >
       <Inspector
-        selection={selection}
+        selection={focused}
         nodes={$model.nodes}
         edges={$model.edges}
         onUpdateNode={store.updateNode}
         onUpdateEdge={store.updateEdge}
         onClose={() => {
-          selection = null;
+          selectionSet = EMPTY_SELECTION;
           inspectorOpen = false;
         }}
         profileName={activeDiagram.profile}
         embedded
       >
         {#snippet externalRefs()}
-          {#if selection?.type === "node"}
+          {#if focused?.type === "node"}
             <ExternalRefs
-              nodeKey={selection.id}
+              nodeKey={focused.id}
               nodes={$model.nodes}
               edges={$model.edges}
               members={activeDiagram.members}
               diagrams={diagrams}
               onNavigate={(diagramKey, nodeKey) => {
                 activeDiagramKey = diagramKey;
-                selection = { type: "node", id: nodeKey };
+                selectionSet = { nodes: [nodeKey], edges: [] };
               }}
             />
           {/if}

@@ -41,3 +41,35 @@ describe("store diagram CRUD", () => {
     expect(store.get().nodes).toHaveLength(1);
   });
 });
+
+describe("addDiagramFromMembers", () => {
+  it("seeds members with EXACTLY the passed ids (not all nodes)", () => {
+    const store = createModelStore({ nodes: [node("a"), node("b"), node("c")], edges: [], diagrams: [] });
+    const d = store.addDiagramFromMembers("Subset", ["a", "c"]);
+    expect(d.members).toEqual(["a", "c"]);
+    // Persisted on the graph as a new diagram.
+    expect(store.get().diagrams).toHaveLength(1);
+    expect(store.get().diagrams[0].members).toEqual(["a", "c"]);
+    // Contrast with addDiagram, which would seed every node.
+    expect(store.addDiagram("All").members).toEqual(["a", "b", "c"]);
+  });
+  it("trims the title and returns a fresh key", () => {
+    const store = createModelStore({ nodes: [node("a")], edges: [], diagrams: [] });
+    const d = store.addDiagramFromMembers("  Trimmed  ", ["a"]);
+    expect(d.title).toBe("Trimmed");
+    expect(d.key).toBeTruthy();
+  });
+  it("copies the members array (later mutation of the input does not leak in)", () => {
+    const store = createModelStore({ nodes: [node("a"), node("b")], edges: [], diagrams: [] });
+    const input = ["a"];
+    store.addDiagramFromMembers("Copy", input);
+    input.push("b");
+    expect(store.get().diagrams[0].members).toEqual(["a"]);
+  });
+  it("rejects an empty / whitespace name", () => {
+    const store = createModelStore({ nodes: [node("a")], edges: [], diagrams: [] });
+    expect(() => store.addDiagramFromMembers("", ["a"])).toThrow();
+    expect(() => store.addDiagramFromMembers("   ", ["a"])).toThrow();
+    expect(store.get().diagrams).toEqual([]);
+  });
+});
