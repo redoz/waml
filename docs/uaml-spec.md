@@ -130,11 +130,11 @@ description: A customer's placed order.
 # Order
 
 ## Attributes
-- id: OrderId [1]
-- placedAt: Timestamp [1]
-- status: [OrderStatus](./order-status.md) [1]
-- shippingAddress: [Address](./address.md) [0..1]
-- total: [Money](./money.md) [1]
+- id: OrderId {1}
+- placedAt: Timestamp {1}
+- status: [OrderStatus](./order-status.md) {1}
+- shippingAddress: [Address](./address.md) {0..1}
+- total: [Money](./money.md) {1}
 
 ## Relationships
 - associates [Customer](./customer.md) as "places": 1 order to 1 customer
@@ -156,16 +156,17 @@ description: A customer's placed order.
 
 One bullet per attribute, following the grammar:
 
-`- [visibility ]name: Type [multiplicity]`
+`- [visibility ]name: Type {multiplicity}`
 
 - **name** — the attribute name.
 - **Type** — either a bare token (a primitive or otherwise unmodeled type, e.g.
   `String`, `OrderId`, `Timestamp`) **or** a markdown link to another classifier
   document (e.g. `[Money](./money.md)`). A linked type is navigable; a bare token
   is plain text.
-- **multiplicity** — optional trailing `[…]` using full UML multiplicity strings
+- **multiplicity** — optional trailing `{…}` using full UML multiplicity strings
   (`1`, `0..1`, `*`, `1..*`, `0..*`, `2..5`). Absent multiplicity is treated as
-  `[1]`.
+  `{1}`. The braces avoid colliding with Markdown's `[…]` link/reference syntax;
+  relationship-end multiplicities stay bare (see `## Relationships`).
 - **visibility** — optional leading `+`, `-`, `#`, or `~`
   (public / private / protected / package). Permitted but omittable; a
   domain-oriented profile typically hides it.
@@ -329,8 +330,8 @@ title: Places
 # Places
 
 ## Attributes
-- placedAt: Timestamp [1]
-- channel: [Channel](./channel.md) [1]
+- placedAt: Timestamp {1}
+- channel: [Channel](./channel.md) {1}
 ```
 
 The ends live on the inline bullet, so `order.md` → `customer.md` remains a
@@ -758,7 +759,7 @@ preserved on round-trip rather than discarded.
   echoed as the document's `#` heading.
 - **Multiplicity** — full UML strings (`1`, `0..1`, `*`, `1..*`, `0..*`,
   `2..5`); `*` is unbounded, bare `*` ≡ `0..*`, and absent multiplicity on an
-  attribute ≡ `[1]`.
+  attribute ≡ `{1}`.
 - **Group** — a sub-heading under a diagram's `## Members`, declaring membership
   only; nesting is heading depth. A flat `## Members` list is one implicit
   top-level group. A group's members clump by default; list order carries no

@@ -18,15 +18,15 @@ describe("parseAttributeLine", () => {
       .toEqual({ name: "placedAt", type: { name: "Timestamp" }, multiplicity: "1" });
   });
   it("linked type with multiplicity", () => {
-    expect(parseAttributeLine("- total: [Money](./money.md) [1]", resolve))
+    expect(parseAttributeLine("- total: [Money](./money.md) {1}", resolve))
       .toEqual({ name: "total", type: { name: "Money", ref: "money" }, multiplicity: "1" });
   });
   it("unresolvable link keeps the display name as a token", () => {
-    expect(parseAttributeLine("- addr: [Address](./address.md) [0..1]", resolve))
+    expect(parseAttributeLine("- addr: [Address](./address.md) {0..1}", resolve))
       .toEqual({ name: "addr", type: { name: "Address" }, multiplicity: "0..1" });
   });
   it("leading visibility", () => {
-    expect(parseAttributeLine("- + id: OrderId [1]", resolve))
+    expect(parseAttributeLine("- + id: OrderId {1}", resolve))
       .toEqual({ name: "id", type: { name: "OrderId" }, multiplicity: "1", visibility: "+" });
   });
   it("tolerates CRLF", () => {
@@ -34,6 +34,37 @@ describe("parseAttributeLine", () => {
   });
   it("rejects non-attribute lines", () => {
     expect(parseAttributeLine("- just prose", resolve)).toBeNull();
+  });
+});
+
+describe("attribute multiplicity delimiter is {…} (not [ … ])", () => {
+  const resolve = (slug: string) => (slug === "money" ? "money" : undefined);
+  it("parses a bare-token type with brace multiplicity", () => {
+    expect(parseAttributeLine("- tags: String {0..*}", resolve))
+      .toEqual({ name: "tags", type: { name: "String" }, multiplicity: "0..*" });
+  });
+  it("parses a linked type with brace multiplicity, keeping the markdown link", () => {
+    expect(parseAttributeLine("- status: [OrderStatus](./order-status.md) {0..1}", resolve))
+      .toEqual({ name: "status", type: { name: "OrderStatus" }, multiplicity: "0..1" });
+  });
+  it("no longer treats a trailing [mult] as multiplicity (bracket makes the type malformed)", () => {
+    expect(parseAttributeLine("- id: OrderId [1]", resolve)).toBeNull();
+    expect(parseAttributeLine("- tags: String [0..*]", resolve)).toBeNull();
+  });
+  it("rejects a brace token whose contents are not a valid multiplicity", () => {
+    expect(parseAttributeLine("- x: Foo {bogus}", resolve)).toBeNull();
+    expect(parseAttributeLine("- x: Foo {0}", resolve)).toBeNull();
+  });
+  it("type-guard rejects a stray { or } in type position", () => {
+    expect(parseAttributeLine("- x: Foo{", resolve)).toBeNull();
+    expect(parseAttributeLine("- x: Foo}", resolve)).toBeNull();
+  });
+  it("renders multiplicity with braces; omits the default 1", () => {
+    const slugFor = (key: string) => (key === "money" ? "money" : undefined);
+    expect(renderAttributeLine({ name: "tags", type: { name: "String" }, multiplicity: "0..*" }, slugFor))
+      .toBe("- tags: String {0..*}");
+    expect(renderAttributeLine({ name: "total", type: { name: "Money", ref: "money" }, multiplicity: "1" }, slugFor))
+      .toBe("- total: [Money](./money.md)");
   });
 });
 
@@ -89,7 +120,7 @@ describe("render round-trip", () => {
     expect(renderAttributeLine({ name: "total", type: { name: "Money", ref: "money" }, multiplicity: "1" }, slugFor))
       .toBe("- total: [Money](./money.md)");
     expect(renderAttributeLine({ name: "addr", type: { name: "Address" }, multiplicity: "0..1", visibility: "-" }, slugFor))
-      .toBe("- - addr: Address [0..1]");
+      .toBe("- - addr: Address {0..1}");
   });
   it("relationship line", () => {
     expect(renderRelationshipLine("composes", "OrderLine", "order-line", { multiplicity: "1" }, { multiplicity: "1..*", role: "lines" }))
