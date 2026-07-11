@@ -767,6 +767,9 @@ pub struct Edge {
     pub name: Option<AssocName>,
     pub from_end: RelEnd,
     pub to_end: RelEnd,
+    /// True when a reciprocal `associates` was declared from both ends; both
+    /// ends are then navigable. Set during Model resolution (Plan 3).
+    pub bidirectional: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
