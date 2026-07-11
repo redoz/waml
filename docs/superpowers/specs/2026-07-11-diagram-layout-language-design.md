@@ -1,12 +1,12 @@
 # Diagram Layout Language
 
 **Date:** 2026-07-11
-**Product:** OKF-UML / Model Canvas (`docs/okf-uml.md`, `packages/okf`, `packages/web`)
+**Product:** OKF-UML / Model Canvas (`docs/uaml-spec.md`, `packages/okf`, `packages/web`)
 **Scope:** The declarative layout + grouping language for **Diagram** documents. Replaces per-element saved coordinates with human-readable, relation-based positioning.
 
 ## Context
 
-A **Diagram** document (`docs/okf-uml.md` — "Diagram documents") is a curated,
+A **Diagram** document (`docs/uaml-spec.md` — "Diagram documents") is a curated,
 profiled *view* over a set of nodes. Today it carries a flat `## Members` list
 and a `## Render hints` section whose positioning support is a single optional
 saved coordinate per node:
@@ -271,7 +271,7 @@ would simply clump inside the frame.
 
 ## Integration with existing spec
 
-- `docs/okf-uml.md` "Diagram documents": `## Members` gains optional group
+- `docs/uaml-spec.md` "Diagram documents": `## Members` gains optional group
   sub-headings; the flat list remains valid as one implicit group.
 - `## Render hints` positional `at x,y` is **removed**; its `emphasize` /
   `collapse` semantics move into `## Layout` (inline `with` or by-reference).

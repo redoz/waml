@@ -405,7 +405,9 @@ back to a `## Notes` bullet.
 ## Diagram documents
 
 A diagram is a curated, profiled **view** over nodes — not a classifier. It is
-identified by `type: Diagram` together with a `## Members` list.
+identified by `type: Diagram` together with a `## Members` list. It carries three
+deliberately separate concerns: **membership** (`## Members`, optionally organised
+into groups), **presentation lens** (`profile`), and **arrangement** (`## Layout`).
 
 ```markdown
 ---
@@ -416,21 +418,311 @@ profile: uml-domain
 # Orders Domain Model
 
 ## Members
+
+### Users
+- [Customer](./customer.md)
+- [Account](./account.md)
+
+### Orders
 - [Order](./order.md)
 - [OrderLine](./order-line.md)
-- [Customer](./customer.md)
 - [OrderStatus](./order-status.md)
 
-## Render hints
-- emphasize: multiplicity, composition
-- collapse [Money](./money.md)        # show as a reference chip, not a full box
-- [Order](./order.md) at 0,0          # optional saved position
+## Layout
+- Users as column with frame
+- Users left of Orders
+- top of Users aligned with top of Orders
+- column of Order, OrderLine, OrderStatus with large margin
+- [Money](./money.md) with collapsed
 ```
 
-- **`## Members`** — the set of nodes drawn in this view (curated, reorderable).
+- **`## Members`** — the set of nodes drawn in this view (curated, reorderable),
+  optionally organised into **groups** (see [Members and
+  groups](#members-and-groups)).
 - **`profile`** — selects the render lens, stereotype styles, and palette.
-- **`## Render hints`** (optional) — per-diagram emphasis overrides, collapse
-  flags, and saved positions.
+- **`## Layout`** (optional) — the arrangement statements. Positions are always
+  expressed **relationally, never as coordinates** (see [The `## Layout`
+  section](#the--layout-section)).
+
+Arrangement of this kind always needs human judgement, but nobody should
+hand-compute pixels: the author states *how things sit relative to one another* in
+near-English, a deterministic solver produces the pixels at render time, and the
+editor round-trips direct manipulation back into the same language. **No
+coordinate is ever stored.**
+
+### Members and groups
+
+`## Members` declares membership only. It may be a flat bullet list, or it may be
+organised into **groups**:
+
+- A **group** is a sub-heading under `## Members` with a member list beneath it.
+  **Nesting is heading depth** — a deeper heading is a nested group. The heading
+  **declares membership only**; it carries no visual treatment (treatment is a
+  `## Layout` concern).
+- A flat bullet list directly under `## Members`, with no group sub-headings, is a
+  single **implicit top-level group**.
+- Groups and elements are **operands of the same kind**: anything the layout
+  language can say about an element it can also say about a group, referenced by
+  the group's heading text.
+- **By default a group's members clump** — the solver packs them compactly with
+  no imposed axis or order. Member **list order carries no layout meaning** until
+  the group is given an axis with an `as row` / `as column` clause (see [Treatment
+  clauses](#treatment-clauses-as--with)).
+
+```markdown
+## Members
+
+### Users
+- [Customer](./customer.md)
+- [Account](./account.md)
+
+#### VIP                       # nested group = deeper heading
+- [Platinum](./platinum.md)
+
+### Orders
+- [Order](./order.md)
+- [OrderLine](./order-line.md)
+```
+
+### The `## Layout` section
+
+`## Layout` supersedes the former `## Render hints` section, and in particular its
+per-node saved coordinate (`[Order](./order.md) at 0,0`), which is **removed**: no
+coordinate is ever stored. The former per-node `emphasize` / `collapse` flags move
+here as operand treatment (see [Treatment clauses](#treatment-clauses-as--with)).
+Selecting *which adornments* a diagram surfaces remains a [profile](#profiles)
+concern, as before.
+
+Each bullet in `## Layout` is one statement — a **placement**, an **alignment**,
+or a **standalone** treated operand. All arrangement is relative: the solver reads
+the statements as constraints and produces the pixels.
+
+#### Relations
+
+Two families, both plain English.
+
+**Placement** positions one operand on a side of another and is **chainable**:
+
+```
+- Users left of Orders
+- Order above OrderLine above Payment
+```
+
+| direction | places left operand … |
+|---|---|
+| `left of` | to the left of the right operand |
+| `right of` | to the right of the right operand |
+| `above` | above the right operand |
+| `below` | below the right operand |
+
+Adjacency — **tight and aligned** — is the default, and is how rows and columns
+are built. There is **no loose/far variant**; separation is controlled by margin
+hints, not by the relation.
+
+**Alignment** lines up an edge or a centre, independent of ordering, with a named
+anchor on each side:
+
+```
+- top of VIP aligned with top of Orders
+- center of X aligned with center of Y
+- X aligned with Y                       # bare = center-to-center
+```
+
+The form is `[<edge> of] X aligned with [<edge> of] Y`, with `<edge>` one of
+`top` / `bottom` / `left` / `right` / `center`. The anchor selects the axis it
+constrains:
+
+| anchor | constrains |
+|---|---|
+| `top` / `bottom` | the **Y** position |
+| `left` / `right` | the **X** position |
+| `center` | **both** (concentric) |
+
+A bare `X aligned with Y` (no edges) is centre-to-centre. Placement (`left of`,
+`above`, …) is the ergonomic path; anchor-alignment is the precise escape hatch
+(e.g. `bottom of X aligned with top of Y` stacks X on Y explicitly).
+
+#### Operands
+
+An operand is any of:
+
+- an **element** — a name or link, e.g. `Customer` or `[Customer](./customer.md)`;
+- a **group** — its heading text, e.g. `Users`;
+- an inline **`column of …`** — an anonymous ordered vertical stack (adjacency);
+- an inline **`row of …`** — an anonymous ordered horizontal run (adjacency);
+- a **parenthesized** operand — `( … )` for nesting and disambiguation.
+
+Inline `row` / `column` are anonymous groups usable anywhere a name is, and they
+nest:
+
+```
+- row of (column of Customer, Account), Orders
+```
+
+#### Treatment clauses (`as …` / `with …`)
+
+An operand carries treatment through two optional clauses, in this order — an
+**`as <axis>`** clause, then a **`with <hints>`** clause:
+
+```
+- Users as column with frame and large margin
+```
+
+A named group or element may be treated **by reference** on its own `## Layout`
+line (a standalone statement, e.g. `Orders with frame`); an **anonymous** inline
+group has no name, so it can only be treated **inline**.
+
+**Axis** — `as row` / `as column`, groups only. Lays the group's members out in
+**list order** along that axis. With no axis clause the members just clump (the
+default). This is the only way to set the internal axis of a *named* heading
+group, since its members are not restated inline: `Users as column` stacks
+Customer over Account; `Users as row` flows them horizontally.
+
+**`with` hints** are shape, margin, and flags, joined by `,` or `and`:
+
+*Shape* (groups only) sets the group's keep-out geometry and whether it is drawn:
+
+| shape | drawn? | reserves |
+|---|---|---|
+| `frame` | visible, titled box | a rectangle, drawn with the group's title |
+| `box` | invisible | a square/rectangular bounding box (corner space wasted) |
+| `shrink` *(default)* | invisible | the minimal concave hull hugging its members |
+
+The **default is invisible `shrink`-wrap**: a group clusters its members without
+drawing unless it opts into `frame` or `box`. Because `shrink` reserves the
+minimal polygon, neighbouring groups tuck into its concave notches — the
+compactness win; `box` reserves a full rectangle; `frame` reserves a rectangle and
+draws it titled.
+
+*Margin* (any operand) is qualitative breathing room around the operand — no
+numbers: `no` / `small` / `medium` *(default)* / `large`, written `with large
+margin` or `with no margin` (`margin` and `margins` both accepted). Shape and
+margin are **orthogonal**: the old wide / thin / none idea is just `shrink` plus a
+{large, small, no} margin, and splitting them lets margin apply to a `box` or a
+bare element too.
+
+*Flags* (any operand) are `emphasized` and `collapsed`. `collapsed` renders a node
+as a reference chip rather than a full box; `emphasized` surfaces it. These are the
+former `## Render hints` per-node flags.
+
+**`with` binds greedily** to the nearest complete operand on its left. To attach a
+`with` clause to a whole inline group rather than to its last member,
+parenthesize:
+
+```
+- column of Customer, Account with large margin      # margin attaches to Account
+- (column of Customer, Account) with large margin    # margin attaches to the column
+```
+
+The same rule governs a trailing relation: `(column of Customer, Account) left of
+Orders` is unambiguous, whereas expressing "the large-margin column, left of
+Orders" requires the parentheses.
+
+#### BNF
+
+Each `## Layout` bullet is one `<statement>`. Terminals are quoted; `{ … }` is
+zero-or-more, `[ … ]` optional; `<link>`, `<quoted>`, and `<ident>` are as in the
+[Relationships BNF](#bnf).
+
+```bnf
+<layout>        ::= { <statement> }
+<statement>     ::= "- " ( <placement> | <alignment> | <standalone> )
+
+<placement>     ::= <operand> " " <direction> " " <operand>
+                    { " " <direction> " " <operand> }
+<direction>     ::= "left of" | "right of" | "above" | "below"
+
+<alignment>     ::= <anchored> " aligned with " <anchored>
+<anchored>      ::= [ <edge> " of " ] <operand>
+<edge>          ::= "top" | "bottom" | "left" | "right" | "center"
+
+<standalone>    ::= <operand>          ; a lone operand — meaningful when it
+                                       ; carries `with` hints: by-reference
+                                       ; treatment of a named operand
+                                       ; (`Orders with frame`), or treatment of
+                                       ; an anonymous inline group
+
+<operand>       ::= <ref> [ " as " <axis> ] [ " with " <hints> ]
+<axis>          ::= "row" | "column"
+<ref>           ::= <name> | <inline-group> | "(" <operand> ")"
+<inline-group>  ::= ( "column" | "row" ) " of " <operand-list>
+<operand-list>  ::= <operand> { ", " <operand> }
+
+<hints>         ::= <hint> { ( ", " | " and " ) <hint> }
+<hint>          ::= <shape> | <margin> | <flag>
+<shape>         ::= "frame" | "box" | "shrink"
+<margin>        ::= ( "no" | "small" | "medium" | "large" )
+                    ( " margin" | " margins" )
+<flag>          ::= "emphasized" | "collapsed"
+
+<name>          ::= <ident> | <link> | <quoted>   ; element or group name
+```
+
+##### Context rules (parser-enforced, not expressible in the BNF)
+
+- `as <axis>` is valid on **groups only** (a named heading group or an inline
+  `row`/`column`); it orders members along the axis in **list order**. Absent, a
+  group's members clump.
+- `<shape>` (`frame` / `box` / `shrink`) applies to **groups only**; the default
+  is invisible `shrink`.
+- `<margin>` applies to **any** operand; the default is `medium`.
+- `<flag>`s apply to any operand.
+- Placement adjacency is always tight and aligned; qualitative separation is a
+  `<margin>` concern, not a relation.
+- Anchor → axis: `top`/`bottom` → **Y**, `left`/`right` → **X**, `center` →
+  **both**; a bare `<operand> aligned with <operand>` is centre-to-centre.
+- A `with` clause binds to the **nearest complete operand on its left**;
+  parenthesize to bind it to a whole inline group. The same rule disambiguates a
+  trailing `<direction>`.
+
+#### Worked example
+
+```markdown
+---
+type: Diagram
+title: Orders Domain Model
+profile: uml-domain
+---
+# Orders Domain Model
+
+## Members
+
+### Users
+- [Customer](./customer.md)
+- [Account](./account.md)
+
+### Orders
+- [Order](./order.md)
+- [OrderLine](./order-line.md)
+- [OrderStatus](./order-status.md)
+
+## Layout
+- Users as column with frame
+- Users left of Orders
+- top of Users aligned with top of Orders
+- column of Order, OrderLine, OrderStatus with large margin
+- [Money](./money.md) with collapsed
+```
+
+Renders as a titled **Users** frame with Customer stacked over Account (`as
+column` imposes the list-order stack) to the left of the **Orders** group; the two
+groups' tops aligned; Orders' three members in a column with large margins; and
+`Money` drawn as a reference chip. Without the `as column` clause Customer and
+Account would simply clump inside the frame.
+
+### Editing round-trip
+
+The stored form is relations, and the UI editor is a relation generator, not a
+coordinate store:
+
+1. The user drags a node or group in the canvas.
+2. On release the editor **infers** the relation(s) the new position implies —
+   nearest neighbour plus side, or an alignment.
+3. It **writes the sentence** into `## Layout`.
+4. The solver **re-solves** and the node **snaps** into the solved position.
+
+No coordinate is ever written. A human who never touches the text still produces
+readable relations, and an LLM editing the text sees exactly what the human sees.
 
 ### External references
 
@@ -467,3 +759,13 @@ preserved on round-trip rather than discarded.
 - **Multiplicity** — full UML strings (`1`, `0..1`, `*`, `1..*`, `0..*`,
   `2..5`); `*` is unbounded, bare `*` ≡ `0..*`, and absent multiplicity on an
   attribute ≡ `[1]`.
+- **Group** — a sub-heading under a diagram's `## Members`, declaring membership
+  only; nesting is heading depth. A flat `## Members` list is one implicit
+  top-level group. A group's members clump by default; list order carries no
+  layout meaning until an `as row` / `as column` axis is set.
+- **Layout** — positions are **relational, never coordinates**. A diagram's
+  `## Layout` section holds placement (`left of` / `right of` / `above` /
+  `below`), alignment (`[<edge> of] X aligned with [<edge> of] Y`), and per-operand
+  treatment (`as` axis; `with` shape / margin / `emphasized` / `collapsed`). A
+  solver produces the pixels at render time; none are stored. This supersedes the
+  former `## Render hints` section (including its `at x,y` saved coordinate).
