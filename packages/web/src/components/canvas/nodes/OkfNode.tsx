@@ -10,8 +10,8 @@ function OkfNodeInner({ data }: NodeProps) {
   if (node._collapsed) {
     return (
       <div className="relative rounded-full border border-[#d8dee8] bg-white px-3 py-[6px] text-[12px] font-[600] text-slate-600 shadow-sm">
-        {node.title}
         <NodePorts />
+        <span className="relative z-[1]">{node.title}</span>
       </div>
     );
   }

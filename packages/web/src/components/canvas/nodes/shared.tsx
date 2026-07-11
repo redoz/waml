@@ -11,17 +11,30 @@ export interface OkfNodeProps { data: OkfNodeData }
 
 export const NODE_FONT = "-apple-system, BlinkMacSystemFont, 'Segoe UI', Inter, system-ui, sans-serif";
 
-// Node-level connectable ports (the only way to draw a new relationship).
+// Connection ports — a small dot at each side, revealed on node hover/selection
+// (.mart-handle in canvas.css). They're the drag-to-connect affordance and the
+// reconnect drop target; ConnectionMode.Loose lets any source handle also receive.
+// Floating edges compute their own border attach point, so which dot a connection
+// lands on never affects routing — the four dots just give the user a port to grab
+// on whichever side faces the target. They sit ABOVE the content (zIndex 10) so a
+// drag that starts on a dot begins a connection, while a drag on the node body
+// still moves the node and clicks on rows/buttons still register.
 export function NodePorts() {
-  const common = {
-    width: 13, height: 13, borderRadius: "50%",
+  // Centre each dot exactly on its border midpoint (half in / half out) with an
+  // explicit transform, overriding React Flow's per-side default offsets so all
+  // four straddle the edge symmetrically and stay grabbable from just inside.
+  const dot = {
+    width: 11, height: 11, borderRadius: "50%",
     background: "#fff", border: "2px solid #1e88e5",
-    top: 24, opacity: 0, transition: "opacity 0.12s",
+    opacity: 0, transition: "opacity 0.12s", zIndex: 10,
+    transform: "translate(-50%, -50%)",
   } as const;
   return (
     <>
-      <Handle type="source" position={Position.Left} id="left" style={{ ...common, left: -7 }} className="mart-handle" />
-      <Handle type="source" position={Position.Right} id="right" style={{ ...common, right: -7 }} className="mart-handle" />
+      <Handle type="source" position={Position.Left} id="l" isConnectable className="mart-handle" style={{ ...dot, left: 0, top: "50%" }} />
+      <Handle type="source" position={Position.Right} id="r" isConnectable className="mart-handle" style={{ ...dot, left: "100%", top: "50%" }} />
+      <Handle type="source" position={Position.Top} id="t" isConnectable className="mart-handle" style={{ ...dot, left: "50%", top: 0 }} />
+      <Handle type="source" position={Position.Bottom} id="b" isConnectable className="mart-handle" style={{ ...dot, left: "50%", top: "100%" }} />
     </>
   );
 }
@@ -82,29 +95,31 @@ export function ClassifierBox({ data, keyword, header }: { data: OkfNodeData; ke
     <div data-stereotyped={Object.keys(st).length > 0 || undefined}
       className="relative bg-white border-[1.5px] border-[#d8dee8] rounded-xl shadow-[0_2px_8px_rgba(15,23,42,0.05)] cursor-grab hover:border-[#c2cad8] select-none w-[230px]"
       style={boxStyle}>
-      {header}
-      <StereotypeRow stereotypes={data.stereotypes} keyword={keyword} />
-      <div className={`px-3 pb-[9px] pt-[3px] text-center text-[13.5px] font-semibold text-slate-900 ${data.abstract ? "italic" : ""}`}>
-        {data.title}
-      </div>
-      {isDetailed && data.values && data.values.length > 0 && (
-        <RowsCompartment rows={data.values.length}
-          render={i => (
-            <div key={data.values![i]} className="px-3 py-[5px] text-[11.5px] text-slate-800 border-b border-[#f3f5f8] last:border-b-0">
-              {data.values![i]}
-            </div>
-          )} />
-      )}
-      {isDetailed && !data.values && (
-        <RowsCompartment rows={data.attributes.length}
-          render={i => <AttributeRow key={data.attributes[i].name + i} a={data.attributes[i]} showVisibility={showVisibility} />} />
-      )}
-      {!isDetailed && (
-        <div className="px-3 pb-[10px] text-center text-[11px] text-slate-500">
-          {data.values ? `${data.values.length} values` : `${data.attributes.length} attribute${data.attributes.length === 1 ? "" : "s"}`}
-        </div>
-      )}
       <NodePorts />
+      <div className="relative z-[1]">
+        {header}
+        <StereotypeRow stereotypes={data.stereotypes} keyword={keyword} />
+        <div className={`px-3 pb-[9px] pt-[3px] text-center text-[13.5px] font-semibold text-slate-900 ${data.abstract ? "italic" : ""}`}>
+          {data.title}
+        </div>
+        {isDetailed && data.values && data.values.length > 0 && (
+          <RowsCompartment rows={data.values.length}
+            render={i => (
+              <div key={data.values![i]} className="px-3 py-[5px] text-[11.5px] text-slate-800 border-b border-[#f3f5f8] last:border-b-0">
+                {data.values![i]}
+              </div>
+            )} />
+        )}
+        {isDetailed && !data.values && (
+          <RowsCompartment rows={data.attributes.length}
+            render={i => <AttributeRow key={data.attributes[i].name + i} a={data.attributes[i]} showVisibility={showVisibility} />} />
+        )}
+        {!isDetailed && (
+          <div className="px-3 pb-[10px] text-center text-[11px] text-slate-500">
+            {data.values ? `${data.values.length} values` : `${data.attributes.length} attribute${data.attributes.length === 1 ? "" : "s"}`}
+          </div>
+        )}
+      </div>
     </div>
   );
 }
