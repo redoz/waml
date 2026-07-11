@@ -136,47 +136,14 @@ Under a node heading:
   word `when` — **never `[...]`**, which collides with markdown link syntax.
 - **state internals** — `- entry / <effect>`, `- do / <effect>`,
   `- exit / <effect>`.
+- **composite / call behavior** — `- refines [SubFlow](./sub.md)`. A composite
+  state or structured/call-behavior action never inlines its interior; it always
+  points at a **separate** flow document via `refines` (a submachine state or
+  call-behavior action). This keeps every flow document one flat graph.
 - **`#### Notes`** — free-text notes on the node.
 
 A transition **target** follows the same rule as node references generally:
 a bare label for a local vertex, or a link when the target is a real element.
-
-### Composite nodes (nested sub-diagrams)
-
-A state or action can contain its own sub-diagram — a composite state or a
-structured activity node, with its own `initial`/`final`, child nodes, and
-transitions. Two equivalent forms, mirroring the Notes shorthand↔`uml.Note`
-duality:
-
-- **Inline** — the node carries a nested `#### Nodes` region. Its children are
-  one heading level deeper (`#####`) and each carries its own `- to`
-  transitions, exactly like top-level nodes. Best for small regions.
-- **Refined** — `- refines [SubFlow](./sub.md)` points at a separate flow
-  document (submachine state or call-behavior action). Best when the interior
-  is large or reused across behaviors.
-
-```markdown
-### Placed
-- entry / reserveStock
-
-#### Nodes
-
-##### initial
-- to AwaitingPayment
-
-##### AwaitingPayment
-- to Paid on pay
-
-##### Paid
-- to final
-
-#### Notes
-- Composite: encloses the payment sub-flow.
-```
-
-A transition may target the composite as a whole (enters via its `initial`) or,
-where UML allows, a specific child by label. Deep cross-boundary transition
-semantics are deferred; nest one level inline and use `refines` beyond that.
 
 ```markdown
 ---
@@ -308,7 +275,6 @@ word-clauses, and graceful degradation for anything unrecognized.
 - **Advanced sequence features.** Self/found/lost messages, gates, coregions.
 - **State machine details.** History pseudostates, deferred events,
   entry/exit points on composite states, and cross-boundary transitions
-  (targeting a specific substate from outside, or deep inline nesting beyond
-  one level).
+  (targeting a specific substate inside a `refines`d submachine from outside).
 - **BNF.** Parser-grade grammar and context rules for all three substrates,
   to be written in the implementation plan and folded into `uaml-spec.md`.
