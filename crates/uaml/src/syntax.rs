@@ -16,6 +16,7 @@ pub enum Section {
     Body(String),
     Notes(Vec<String>),
     Members(Vec<MemberLine>),
+    Layout(Vec<LayoutStatement>),
     RenderHints(Vec<HintLine>),
     /// An unrecognized `## Section`, preserved verbatim (graceful degradation).
     Unknown { title: String, raw: String },
@@ -54,6 +55,60 @@ pub enum HintLine {
     Collapse { title: String, slug: String },
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub enum LayoutStatement {
+    /// `A left of B above C` — N operands, N-1 directions.
+    Placement { operands: Vec<Operand>, directions: Vec<Direction> },
+    /// `top of X aligned with top of Y`
+    Alignment { left: Anchored, right: Anchored },
+    /// A lone operand — meaningful when it carries `as`/`with` treatment.
+    Standalone(Operand),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Direction { LeftOf, RightOf, Above, Below }
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Anchored { pub edge: Option<Edge>, pub operand: Operand }
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Edge { Top, Bottom, Left, Right, Center }
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Operand {
+    pub ref_: OperandRef,
+    pub axis: Option<Axis>,
+    pub hints: Vec<Hint>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Axis { Row, Column }
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum OperandRef {
+    Name(NameRef),
+    InlineGroup { axis: Axis, items: Vec<Operand> },
+    Paren(Box<Operand>),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum NameRef {
+    Link { title: String, slug: String },
+    Bare(String),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Hint { Shape(Shape), Margin(Margin), Flag(Flag) }
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Shape { Frame, Box, Shrink }
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Margin { No, Small, Medium, Large }
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Flag { Emphasized, Collapsed }
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -74,5 +129,23 @@ mod tests {
         };
         assert_eq!(doc.title, "Order");
         assert_eq!(doc.sections.len(), 1);
+    }
+
+    #[test]
+    fn layout_statement_is_constructible() {
+        let stmt = LayoutStatement::Placement {
+            operands: vec![
+                Operand { ref_: OperandRef::Name(NameRef::Bare("Users".into())), axis: None, hints: vec![] },
+                Operand { ref_: OperandRef::Name(NameRef::Bare("Orders".into())), axis: None, hints: vec![] },
+            ],
+            directions: vec![Direction::LeftOf],
+        };
+        match stmt {
+            LayoutStatement::Placement { operands, directions } => {
+                assert_eq!(operands.len(), 2);
+                assert_eq!(directions, vec![Direction::LeftOf]);
+            }
+            _ => panic!("wrong variant"),
+        }
     }
 }

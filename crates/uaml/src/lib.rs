@@ -7,6 +7,7 @@ pub mod ops;
 pub mod multiplicity;
 pub mod slug;
 pub mod grammar;
+pub mod layout;
 pub mod parse;
 pub mod serialize;
 pub mod syntax;

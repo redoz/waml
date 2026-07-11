@@ -12,8 +12,9 @@ fn section_order(s: &Section) -> u8 {
         Section::Relationships(_) => 3,
         Section::Notes(_) => 4,
         Section::Members(_) => 5,
-        Section::RenderHints(_) => 6,
-        Section::Unknown { .. } => 7,
+        Section::Layout(_) => 6,
+        Section::RenderHints(_) => 7,
+        Section::Unknown { .. } => 8,
     }
 }
 
@@ -39,6 +40,14 @@ fn render_section(s: &Section) -> String {
         Section::Members(members) => {
             let body = members.iter().map(render_member_line).collect::<Vec<_>>().join("\n");
             format!("## Members\n{body}")
+        }
+        Section::Layout(stmts) => {
+            let body = stmts
+                .iter()
+                .map(crate::layout::render_layout_line)
+                .collect::<Vec<_>>()
+                .join("\n");
+            if body.is_empty() { "## Layout".to_string() } else { format!("## Layout\n{body}") }
         }
         Section::RenderHints(hints) => {
             let body = hints.iter().map(render_hint_line).collect::<Vec<_>>().join("\n");

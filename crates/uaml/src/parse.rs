@@ -41,6 +41,7 @@ fn classify(title: &str, content: &str, raw_full: &str) -> Section {
         "notes" => {
             Section::Notes(lines(content).iter().filter_map(|l| parse_value_line(l)).collect())
         }
+        "layout" => Section::Layout(Vec::new()),
         _ => Section::Unknown { title: title.to_string(), raw: raw_full.trim_end().to_string() },
     }
 }
