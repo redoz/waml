@@ -1,8 +1,9 @@
-use crate::model::{Attribute, RelEnd, RelationshipKind, TypeRef, Visibility};
+use crate::frontmatter::{FmValue, Frontmatter};
+use crate::model::{Attribute, ClassifierType, RelEnd, RelationshipKind, TypeRef, Visibility};
 use crate::multiplicity::Multiplicity;
 use crate::parse::parse_document;
 use crate::serialize::serialize_document;
-use crate::syntax::{Document, ParsedName, ParsedRel, Section};
+use crate::syntax::{Document, HintLine, ParsedName, ParsedRel, Section};
 
 pub type Bundle = Vec<(String, String)>;
 
@@ -62,6 +63,23 @@ pub enum Op {
     },
     RelSet { selector: Selector, ends: Option<(RelEnd, RelEnd)>, name: Option<NameSpec> },
     RelRm { selector: Selector },
+    NodeNew {
+        slug: String,
+        ty: ClassifierType,
+        title: String,
+        stereotype: Vec<String>,
+        description: Option<String>,
+        abstract_: bool,
+    },
+    NodeSet {
+        slug: String,
+        title: Option<String>,
+        description: Option<String>,
+        stereotype: Option<Vec<String>>,
+        abstract_: Option<bool>,
+        ty: Option<ClassifierType>,
+    },
+    NodeRm { slug: String, cascade: bool },
 }
 
 pub fn apply(bundle: &[(String, String)], ops: &[Op]) -> Result<Bundle, OpError> {
@@ -91,6 +109,13 @@ fn apply_one(work: &mut Bundle, op: &Op) -> Result<(), OpError> {
         }
         Op::RelSet { selector, ends, name } => op_rel_set(work, selector, ends, name),
         Op::RelRm { selector } => op_rel_rm(work, selector),
+        Op::NodeNew { slug, ty, title, stereotype, description, abstract_ } => {
+            op_node_new(work, slug, ty, title, stereotype, description, *abstract_)
+        }
+        Op::NodeSet { slug, title, description, stereotype, abstract_, ty } => {
+            op_node_set(work, slug, title, description, stereotype, abstract_, ty)
+        }
+        Op::NodeRm { slug, cascade } => op_node_rm(work, slug, *cascade),
     }
 }
 
@@ -219,6 +244,50 @@ fn rel_target<'a>(selector: &'a Selector, op: &str) -> Result<(&'a str, &'a RelB
         _ => Err(OpError::at(op, format!("selector '{}' does not address a relationship", render_selector(selector)))
             .with_sel(render_selector(selector))),
     }
+}
+
+fn fm_set(fm: &mut Frontmatter, key: &str, val: FmValue) {
+    if let Some(e) = fm.entries.iter_mut().find(|(k, _)| k == key) {
+        e.1 = val;
+    } else {
+        fm.entries.push((key.to_string(), val));
+    }
+}
+
+fn str_list(items: &[String]) -> FmValue {
+    FmValue::List(items.iter().map(|s| FmValue::Str(s.clone())).collect())
+}
+
+/// Slugs of every document that references `slug` (rel target, attribute
+/// type-ref, `as [Ref]` name, diagram member/hint). Sorted, deduped.
+pub(crate) fn referrers(work: &Bundle, slug: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    for (p, text) in work {
+        let s = slug_of(p);
+        if s == slug {
+            continue;
+        }
+        let doc = parse_document(text);
+        let hit = doc.sections.iter().any(|sec| match sec {
+            Section::Attributes(attrs) => attrs.iter().any(|a| a.ty.ref_.as_deref() == Some(slug)),
+            Section::Relationships(rels) => rels.iter().any(|r| {
+                r.target_slug == slug
+                    || matches!(&r.name, Some(ParsedName::Ref { slug: rs, .. }) if rs == slug)
+            }),
+            Section::Members(ms) => ms.iter().any(|m| m.slug == slug),
+            Section::RenderHints(hs) => hs.iter().any(|h| match h {
+                HintLine::Emphasize(list) => list.iter().any(|x| x == slug),
+                HintLine::Collapse { slug: cs, .. } => cs == slug,
+            }),
+            _ => false,
+        });
+        if hit {
+            out.push(s);
+        }
+    }
+    out.sort();
+    out.dedup();
+    out
 }
 
 fn op_attr_add(
@@ -405,6 +474,85 @@ fn op_rel_rm(work: &mut Bundle, selector: &Selector) -> Result<(), OpError> {
     })
 }
 
+#[allow(clippy::too_many_arguments)]
+fn op_node_new(
+    work: &mut Bundle,
+    slug: &str,
+    ty: &ClassifierType,
+    title: &str,
+    stereotype: &[String],
+    description: &Option<String>,
+    abstract_: bool,
+) -> Result<(), OpError> {
+    if work.iter().any(|(p, _)| slug_of(p) == slug) {
+        return Err(OpError::at("node.new", format!("document '{slug}' already exists")));
+    }
+    let mut entries: Vec<(String, FmValue)> = vec![("type".into(), FmValue::Str(ty.as_str()))];
+    if !stereotype.is_empty() {
+        entries.push(("stereotype".into(), str_list(stereotype)));
+    }
+    if abstract_ {
+        entries.push(("abstract".into(), FmValue::Bool(true)));
+    }
+    entries.push(("title".into(), FmValue::Str(title.to_string())));
+    if let Some(d) = description {
+        entries.push(("description".into(), FmValue::Str(d.clone())));
+    }
+    let doc = Document {
+        frontmatter: Frontmatter { entries },
+        title: title.to_string(),
+        sections: Vec::new(),
+    };
+    work.push((format!("{slug}.md"), serialize_document(&doc)));
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn op_node_set(
+    work: &mut Bundle,
+    slug: &str,
+    title: &Option<String>,
+    description: &Option<String>,
+    stereotype: &Option<Vec<String>>,
+    abstract_: &Option<bool>,
+    ty: &Option<ClassifierType>,
+) -> Result<(), OpError> {
+    edit_doc(work, slug, "node.set", |doc| {
+        if let Some(t) = title {
+            fm_set(&mut doc.frontmatter, "title", FmValue::Str(t.clone()));
+            doc.title = t.clone();
+        }
+        if let Some(d) = description {
+            fm_set(&mut doc.frontmatter, "description", FmValue::Str(d.clone()));
+        }
+        if let Some(list) = stereotype {
+            fm_set(&mut doc.frontmatter, "stereotype", str_list(list));
+        }
+        if let Some(a) = abstract_ {
+            fm_set(&mut doc.frontmatter, "abstract", FmValue::Bool(*a));
+        }
+        if let Some(t) = ty {
+            fm_set(&mut doc.frontmatter, "type", FmValue::Str(t.as_str()));
+        }
+        Ok(())
+    })
+}
+
+fn op_node_rm(work: &mut Bundle, slug: &str, cascade: bool) -> Result<(), OpError> {
+    let i = find_doc(work, slug, "node.rm")?;
+    if !cascade {
+        let refs = referrers(work, slug);
+        if !refs.is_empty() {
+            return Err(OpError::at(
+                "node.rm",
+                format!("'{slug}' referenced by: {} (use --cascade)", refs.join(", ")),
+            ));
+        }
+    }
+    work.remove(i);
+    Ok(())
+}
+
 pub mod selector;
 pub use selector::{parse_selector, render_selector, RelBy, Selector};
 
@@ -415,6 +563,7 @@ mod tests {
     use crate::ops::selector::{RelBy, Selector};
     use crate::model::RelationshipKind;
     use crate::grammar::parse_ends;
+    use crate::model::ClassifierType;
 
     fn attr_add(node: &str, name: &str, ty: &str) -> Op {
         Op::AttrAdd { node: node.into(), name: name.into(), ty_token: ty.into(),
@@ -617,5 +766,54 @@ mod tests {
         let sel = Selector::Rel { source: "order".into(), by: RelBy::Named("Customer".into()) };
         let rm = apply(&added, &[Op::RelRm { selector: sel }]).unwrap();
         assert!(!rm[0].1.contains("depends"), "Ref-named relationship must be reachable via RelBy::Named on its resolved title");
+    }
+
+    #[test]
+    fn node_new_writes_frontmatter_and_title_and_refuses_dup() {
+        let b: Bundle = vec![];
+        let out = apply(&b, &[Op::NodeNew {
+            slug: "order".into(), ty: ClassifierType::parse("uml.Class"), title: "Order".into(),
+            stereotype: vec!["entity".into()], description: Some("An order.".into()), abstract_: false,
+        }]).unwrap();
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].0, "order.md");
+        assert!(out[0].1.contains("type: \"uml.Class\""));
+        assert!(out[0].1.contains("title: \"Order\""));
+        assert!(out[0].1.contains("# Order"));
+        let dup = apply(&out, &[Op::NodeNew { slug:"order".into(), ty: ClassifierType::parse("uml.Class"), title:"X".into(), stereotype: vec![], description: None, abstract_: false }]).unwrap_err();
+        assert!(dup.reason.contains("already exists"));
+    }
+
+    #[test]
+    fn node_set_updates_title_frontmatter_in_place() {
+        let b = vec![("a/order.md".to_string(), "---\ntype: uml.Class\ntitle: Order\n---\n# Order\n".to_string())];
+        let out = apply(&b, &[Op::NodeSet {
+            slug: "order".into(), title: Some("Sales Order".into()), description: None,
+            stereotype: Some(vec!["aggregateRoot".into()]), abstract_: None, ty: None,
+        }]).unwrap();
+        assert_eq!(out[0].0, "a/order.md", "node.set never moves the file");
+        assert!(out[0].1.contains("title: \"Sales Order\""));
+        assert!(out[0].1.contains("# Sales Order"));
+        assert!(out[0].1.contains("stereotype: [\"aggregateRoot\"]"));
+    }
+
+    #[test]
+    fn node_rm_refuses_referenced_then_allows_cascade() {
+        let b = vec![
+            ("a/order.md".to_string(), "---\ntype: uml.Class\ntitle: Order\n---\n# Order\n\n## Relationships\n- depends [Money](./money.md)\n".to_string()),
+            ("a/money.md".to_string(), "---\ntype: uml.DataType\ntitle: Money\n---\n# Money\n".to_string()),
+        ];
+        let err = apply(&b, &[Op::NodeRm { slug:"money".into(), cascade: false }]).unwrap_err();
+        assert!(err.reason.contains("referenced by"));
+        assert!(err.reason.contains("order"));
+        let out = apply(&b, &[Op::NodeRm { slug:"money".into(), cascade: true }]).unwrap();
+        assert!(out.iter().all(|(p, _)| slug_of(p) != "money"));
+    }
+
+    #[test]
+    fn node_rm_deletes_unreferenced() {
+        let b = vec![("a/lonely.md".to_string(), "---\ntype: uml.Class\ntitle: Lonely\n---\n# Lonely\n".to_string())];
+        let out = apply(&b, &[Op::NodeRm { slug:"lonely".into(), cascade: false }]).unwrap();
+        assert!(out.is_empty());
     }
 }
