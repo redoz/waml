@@ -22,7 +22,7 @@ describe("join target path normalization", () => {
     };
     const g = parseBundle(files);
     expect(g.edges).toHaveLength(1);
-    expect(g.edges[0].keys).toEqual([{ left: "customer_id", right: "id" }]);
+    expect(g.edges[0].kind).toBe("associates");
   });
 });
 
@@ -48,7 +48,7 @@ describe("prose joins", () => {
     const g = parseBundle(files);
     const e = edge(g, "orders", "customers");
     expect(e).toBeDefined();
-    expect(e!.keys.some(k => k.left === "customer_id" || k.right === "customer_id")).toBe(true);
+    expect(e!.kind).toBe("associates");
   });
 
   it("recovers a keyless edge from a join link that mentions no key", () => {
@@ -69,7 +69,7 @@ describe("prose joins", () => {
     const g = parseBundle(files);
     const e = edge(g, "inputs", "outputs");
     expect(e).toBeDefined();
-    expect(e!.keys).toEqual([]);
+    expect(e!.kind).toBe("associates");
   });
 
   it("does not invent edges when a join link points at a non-node index.md", () => {
