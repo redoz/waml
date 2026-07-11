@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { CheckCircle2 } from "lucide-react";
-import { NICHE_PRESETS, type BusinessGoal, type NichePreset } from "../state/goal";
+import { NICHE_PRESETS, type BusinessGoal, type NichePreset } from "@mc/core/state/goal";
 
 const DISCLAIMER =
   "Capture the business objective behind this model — the niche you operate in and the " +

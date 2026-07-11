@@ -22,11 +22,11 @@ import "./canvas.css";
 import dagre from "@dagrejs/dagre";
 import { MessageSquare } from "lucide-react";
 
-import { createModelStore } from "../../state/model";
-import { loadPersistedGraph, persistGraph } from "../../state/persist";
-import { loadViewMode, persistViewMode, type ViewMode } from "../../state/viewMode";
-import { loadRelLabelMode, persistRelLabelMode, type RelLabelMode } from "../../state/relLabels";
-import { loadModelName, persistModelName, DEFAULT_MODEL_NAME, templateModelName } from "../../state/modelName";
+import { createModelStore } from "@mc/core/state/model";
+import { loadPersistedGraph, persistGraph } from "@mc/core/state/persist";
+import { loadViewMode, persistViewMode, type ViewMode } from "@mc/core/state/viewMode";
+import { loadRelLabelMode, persistRelLabelMode, type RelLabelMode } from "@mc/core/state/relLabels";
+import { loadModelName, persistModelName, DEFAULT_MODEL_NAME, templateModelName } from "@mc/core/state/modelName";
 import type { ModelNode, ModelEdge, ModelGraph } from "@mc/okf";
 
 import { graphToBundleFiles, downloadBundle } from "@mc/core/okf/io";
@@ -43,7 +43,7 @@ import { WelcomeDialog } from "../WelcomeDialog";
 import { ClearCanvasDialog } from "../ClearCanvasDialog";
 import { Dock, type Tool } from "./Dock";
 import { DiagramTabs } from "./DiagramTabs";
-import { effectiveDiagrams, ALL_DIAGRAM_KEY, loadActiveDiagramKey, persistActiveDiagramKey } from "../../state/diagrams";
+import { effectiveDiagrams, ALL_DIAGRAM_KEY, loadActiveDiagramKey, persistActiveDiagramKey } from "@mc/core/state/diagrams";
 import { OkfNode } from "./nodes/OkfNode";
 import { RelEdge } from "./RelEdge";
 import { AnchorEdge } from "./AnchorEdge";
@@ -57,7 +57,7 @@ import { ModelSheet } from "../rail/ModelSheet";
 import { useRightPanel } from "../rail/useRightPanel";
 import { SharePanel } from "../rail/SharePanel";
 import { GoalDialog } from "../GoalDialog";
-import { loadGoal, persistGoal, type BusinessGoal } from "../../state/goal";
+import { loadGoal, persistGoal, type BusinessGoal } from "@mc/core/state/goal";
 
 // Cast to FC to avoid generic component JSX typing issues with @types/react 18.3
 const ReactFlow = ReactFlowBase as unknown as FC<ReactFlowProps>;

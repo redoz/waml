@@ -1,5 +1,5 @@
 import type { ModelNode } from "@mc/okf";
-import type { ViewMode } from "../../state/viewMode";
+import type { ViewMode } from "@mc/core/state/viewMode";
 
 const COMPACT = { width: 200, height: 90 };
 const ERD_WIDTH = 250;

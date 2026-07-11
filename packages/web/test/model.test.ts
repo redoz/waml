@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { createModelStore } from "../src/state/model";
+import { createModelStore } from "@mc/core/state/model";
 describe("model store", () => {
   it("adds a node defaulting to a uml.Class classifier", () => {
     const s = createModelStore();

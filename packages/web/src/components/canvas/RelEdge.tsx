@@ -1,7 +1,7 @@
 import { memo } from "react";
 import { BaseEdge, EdgeLabelRenderer, getSmoothStepPath, useInternalNode, Position, type EdgeProps } from "@xyflow/react";
 import type { ModelEdge, RelEnd, RelationshipKind } from "@mc/okf";
-import type { RelLabelMode } from "../../state/relLabels";
+import type { RelLabelMode } from "@mc/core/state/relLabels";
 import { getEdgeParams, portPoint, type Rect, type Slot } from "./floating";
 
 export type RelEdgeData = Pick<ModelEdge, "kind" | "fromEnd" | "toEnd" | "bidirectional"> & {

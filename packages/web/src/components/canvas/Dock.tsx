@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
-import type { ViewMode } from "../../state/viewMode";
-import type { RelLabelMode } from "../../state/relLabels";
+import type { ViewMode } from "@mc/core/state/viewMode";
+import type { RelLabelMode } from "@mc/core/state/relLabels";
 
 export type Tool = "select" | "add" | "connect" | "layout";
 

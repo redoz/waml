@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { graphToBundleFiles, filesToGraph } from "@mc/core/okf/io";
-import { createModelStore } from "../src/state/model";
+import { createModelStore } from "@mc/core/state/model";
 describe("okf io", () => {
   it("exports a populated model to markdown files and re-imports it", () => {
     const s = createModelStore({ storageId: "stor_1" });

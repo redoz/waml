@@ -1,7 +1,7 @@
 import { Position, type Edge } from "@xyflow/react";
 import type { ModelNode, ModelEdge } from "@mc/okf";
-import type { ViewMode } from "../../state/viewMode";
-import type { RelLabelMode } from "../../state/relLabels";
+import type { ViewMode } from "@mc/core/state/viewMode";
+import type { RelLabelMode } from "@mc/core/state/relLabels";
 import { erdAwareNodeSize } from "./layoutSize";
 import { oppositeSide, type Slot } from "./floating";
 

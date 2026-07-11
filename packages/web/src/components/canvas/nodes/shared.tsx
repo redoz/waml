@@ -2,7 +2,7 @@ import { useState } from "react";
 import { Handle, Position } from "@xyflow/react";
 import { ChevronDown, ChevronRight } from "lucide-react";
 import type { Attribute, ModelNode } from "@mc/okf";
-import type { ViewMode } from "../../../state/viewMode";
+import type { ViewMode } from "@mc/core/state/viewMode";
 import { ERD_COLLAPSED_ROWS } from "../layoutSize";
 import { getProfile, stereotypeStyle } from "../../../profiles";
 
