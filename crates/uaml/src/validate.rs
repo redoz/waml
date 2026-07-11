@@ -22,11 +22,25 @@ fn doc_type(text: &str) -> String {
     parse_frontmatter(text).0.get_str("type").unwrap_or("uml.Class").to_string()
 }
 
+/// Whether a relationship line supplies multiplicity ends (`: <near> to <far>`).
+/// Only a `:` that appears AFTER the target link's closing `)` counts — a `:`
+/// inside the link's `[Title]` (e.g. `[OrderLine: v2]`) must not be misread
+/// as the ends separator.
+fn has_multiplicity_ends(line: &str) -> bool {
+    match line.find("](") {
+        Some(link_start) => match line[link_start..].find(')') {
+            Some(close_offset) => line[link_start + close_offset + 1..].contains(':'),
+            None => line.contains(':'), // no closing paren found; fall back to whole line
+        },
+        None => line.contains(':'), // no target link found; fall back to whole line
+    }
+}
+
 fn rel_error_message(line: &str) -> String {
     const ENDED: [&str; 3] = ["associates", "aggregates", "composes"];
     const OTHER: [&str; 3] = ["specializes", "implements", "depends"];
     let verb = line.trim_start_matches("- ").split_whitespace().next().unwrap_or("");
-    let has_ends = line.contains(':');
+    let has_ends = has_multiplicity_ends(line);
     if ENDED.contains(&verb) && !has_ends {
         format!("'{verb}' requires ': <near> to <far>' multiplicity ends")
     } else if OTHER.contains(&verb) && has_ends {
@@ -54,6 +68,7 @@ fn validate_doc(path: &str, text: &str, keyset: &HashSet<String>, diags: &mut Ve
     let mut fm_done = false;
     let mut fence: Option<char> = None;
     let mut section = String::new();
+    let mut seen_section = false;
 
     for (i, raw) in text.lines().enumerate() {
         let n = i + 1;
@@ -99,8 +114,32 @@ fn validate_doc(path: &str, text: &str, keyset: &HashSet<String>, diags: &mut Ve
         }
         if let Some(h) = trimmed.strip_prefix("## ") {
             section = h.trim().to_lowercase();
+            seen_section = true;
             continue;
         }
+
+        // Content the parse→serialize round-trip would silently drop:
+        // non-blank, non-H1 lines before the first `## ` section, and
+        // non-bullet lines inside the five bullet-list sections (their
+        // parsers use `filter_map`, which drops anything that doesn't match).
+        if !trimmed.is_empty() {
+            let is_h1 = trimmed.starts_with('#') && !trimmed.starts_with("##");
+            if !is_h1 {
+                let in_bullet_section = matches!(
+                    section.as_str(),
+                    "attributes" | "values" | "relationships" | "members" | "render hints"
+                );
+                if (!seen_section || in_bullet_section) && !trimmed.starts_with("- ") {
+                    diags.push(Diagnostic::new(
+                        DiagCode::DroppableContent,
+                        "content here is outside the recognized document structure and would be silently dropped by fmt",
+                        path,
+                        n,
+                    ));
+                }
+            }
+        }
+
         if !trimmed.starts_with("- ") {
             continue;
         }
@@ -282,6 +321,58 @@ mod tests {
             d.iter().any(|x| x.code == DiagCode::UnresolvedTarget),
             "unresolved-target must still be reported (content before a stray comment must not be discarded), got: {d:?}"
         );
+    }
+
+    #[test]
+    fn flags_prose_before_first_section() {
+        // A non-blank prose line after the frontmatter and the H1 title but
+        // before the first `## ` section is silently dropped by parse/serialize
+        // today. It must be flagged as an Error so `fmt` skips the file.
+        let b = vec![("a/x.md".into(),
+            "---\ntype: uml.Class\ntitle: X\n---\n# X\n\nSome stray prose here.\n\n## Attributes\n- id: XId\n".into())];
+        let d = validate(&b);
+        assert_eq!(d.len(), 1, "expected exactly one diagnostic, got: {d:?}");
+        assert_eq!(d[0].code, DiagCode::DroppableContent);
+        assert_eq!(d[0].severity, Severity::Error);
+    }
+
+    #[test]
+    fn flags_non_bullet_line_in_attributes() {
+        // A stray non-bullet line inside a bullet section (e.g. `## Attributes`)
+        // is neither preserved nor flagged today — `filter_map` just drops it.
+        let b = vec![("a/x.md".into(),
+            "---\ntype: uml.Class\ntitle: X\n---\n# X\n\n## Attributes\n- id: XId\nA stray comment line.\n".into())];
+        let d = validate(&b);
+        assert!(
+            d.iter().any(|x| x.code == DiagCode::DroppableContent),
+            "expected a DroppableContent diagnostic, got: {d:?}"
+        );
+    }
+
+    #[test]
+    fn allows_prose_in_body_and_unknown_sections() {
+        // Free prose in `## Body` and in an unrecognized `## Provenance` section
+        // is preserved verbatim by serialize — it must never be flagged.
+        let b = vec![("a/x.md".into(),
+            "---\ntype: uml.Class\ntitle: X\n---\n# X\n\n## Body\nSome free prose.\nMore prose.\n\n## Provenance\nHand-authored. Keep me.\n".into())];
+        let d = validate(&b);
+        assert!(
+            !d.iter().any(|x| x.code == DiagCode::DroppableContent),
+            "prose in Body/unknown sections must never be flagged, got: {d:?}"
+        );
+    }
+
+    #[test]
+    fn rel_error_message_ignores_colon_inside_link_title() {
+        // A malformed `composes` line with no multiplicity ends, but whose
+        // bracketed target title happens to contain a colon, must still get
+        // the "requires ends" message — the colon inside `[Title]` must not
+        // be misread as the ends separator by a whole-line colon scan.
+        let b = vec![("a/x.md".into(),
+            "---\ntype: uml.Class\ntitle: X\n---\n# X\n\n## Relationships\n- composes [OrderLine: v2](./order-line.md)\n".into())];
+        let d = validate(&b);
+        let rel = d.iter().find(|x| x.code == DiagCode::MalformedRelationship).unwrap();
+        assert!(rel.message.contains("requires"), "got: {}", rel.message);
     }
 
     #[test]

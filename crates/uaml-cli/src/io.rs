@@ -1,6 +1,6 @@
 use std::fs;
 use std::io::Read;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use uaml::parse::split_bundle;
 
@@ -34,7 +34,7 @@ pub fn collect_md(paths: &[PathBuf]) -> std::io::Result<Vec<PathBuf>> {
     Ok(out)
 }
 
-fn path_key(p: &PathBuf) -> String {
+fn path_key(p: &Path) -> String {
     p.to_string_lossy().replace('\\', "/")
 }
 

@@ -12,6 +12,7 @@ pub enum DiagCode {
     MalformedAttribute,
     MalformedRelationship,
     UnresolvedTarget,
+    DroppableContent,
 }
 
 impl DiagCode {
@@ -23,6 +24,7 @@ impl DiagCode {
             DiagCode::MalformedAttribute => "malformed-attribute",
             DiagCode::MalformedRelationship => "malformed-relationship",
             DiagCode::UnresolvedTarget => "unresolved-target",
+            DiagCode::DroppableContent => "droppable-content",
         }
     }
     /// Default severity for this code (a specific site may downgrade to a warning).
