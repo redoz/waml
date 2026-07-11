@@ -53,6 +53,34 @@ rendered node).
 - Enum `## Values` (name-only literals, never carried a multiplicity).
 - Visibility, type tokens, type links, roles, association names, notes.
 
+## Why attribute and end multiplicity share a vocabulary but not a delimiter
+
+In UML an attribute and an association end are the **same** metamodel
+element (`Property`): an attribute typed by a classifier *is* a directed
+association to that classifier. A linked-type attribute and a drawn
+relationship line are therefore the **same edge in two notations** —
+
+```
+# inline, in the owner's ## Attributes compartment
+- status: [OrderStatus](./order-status.md) {1}
+
+# equivalent relationship line, in ## Relationships
+- associates [OrderStatus](./order-status.md): 1 status to 1 order
+```
+
+Because they are one concept, they carry the **same multiplicity
+vocabulary** (`1`, `0..1`, `1..*`, `*`, …) — and this spec keeps that
+identical across both.
+
+The *delimiter*, however, is surface notation, and UML deliberately keeps
+it different even though the concept is unified: attribute multiplicity is
+bracketed (`[…]`, here `{…}`), association-end multiplicity is a bare
+label beside the line. This profile follows suit — the delimiter change is
+confined to attributes; ends stay bare — because the two sit in different
+grammatical positions (a trailing adornment on one token vs a positional
+field in a `: <near> to <far>` clause that also carries a role). Same
+concept, same vocabulary; position-appropriate notation.
+
 ## Grammar change
 
 The attribute-line grammar changes in exactly one production — the
