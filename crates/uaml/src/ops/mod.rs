@@ -80,6 +80,7 @@ pub enum Op {
         ty: Option<ClassifierType>,
     },
     NodeRm { slug: String, cascade: bool },
+    NodeRename { from: String, to: String },
 }
 
 pub fn apply(bundle: &[(String, String)], ops: &[Op]) -> Result<Bundle, OpError> {
@@ -116,6 +117,7 @@ fn apply_one(work: &mut Bundle, op: &Op) -> Result<(), OpError> {
             op_node_set(work, slug, title, description, stereotype, abstract_, ty)
         }
         Op::NodeRm { slug, cascade } => op_node_rm(work, slug, *cascade),
+        Op::NodeRename { from, to } => rename::op_node_rename(work, from, to),
     }
 }
 
@@ -553,6 +555,7 @@ fn op_node_rm(work: &mut Bundle, slug: &str, cascade: bool) -> Result<(), OpErro
     Ok(())
 }
 
+pub mod rename;
 pub mod selector;
 pub use selector::{parse_selector, render_selector, RelBy, Selector};
 
