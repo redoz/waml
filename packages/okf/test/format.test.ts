@@ -1,5 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { parseBundle } from "../src/parse";
+import { serializeBundle } from "../src/serialize";
+import type { ModelGraph } from "../src/types";
 
 const order = `---
 type: uml.Class
@@ -148,5 +150,120 @@ describe("parseBundle — notes (uml.Note)", () => {
     expect(shorthand.annotates).toEqual([{ targetKey: "order" }]);
     // The host node does NOT keep ## Notes on `extra` (it desugared, not unknown-carried).
     expect(g.nodes.find(n => n.key === "order")!.extra ?? "").not.toContain("## Notes");
+  });
+});
+
+describe("UML format round-trip (lossless)", () => {
+  const graph: ModelGraph = {
+    nodes: [
+      { key: "order", type: "uml.Class", title: "Order", stereotypes: ["aggregateRoot", "entity"],
+        description: "A customer's placed order.",
+        attributes: [
+          { name: "id", type: { name: "OrderId" }, multiplicity: "1" },
+          { name: "status", type: { name: "OrderStatus", ref: "order-status" }, multiplicity: "1" },
+          { name: "note", type: { name: "String" }, multiplicity: "0..1", visibility: "-" },
+        ],
+        position: { x: 0, y: 0 }, extra: "## Glossary\nKeep me." },
+      { key: "order-line", type: "uml.Class", title: "OrderLine", stereotypes: [], attributes: [], position: { x: 0, y: 0 } },
+      { key: "customer", type: "uml.Class", title: "Customer", stereotypes: [], attributes: [], position: { x: 0, y: 0 } },
+      { key: "order-status", type: "uml.Enum", title: "OrderStatus", stereotypes: [], attributes: [],
+        values: ["DRAFT", "PLACED"], position: { x: 0, y: 0 } },
+      { key: "base", type: "uml.Class", title: "Base", stereotypes: [], abstract: true, attributes: [], position: { x: 0, y: 0 } },
+    ],
+    edges: [
+      { id: "e1", kind: "composes", from: "order", to: "order-line",
+        fromEnd: { multiplicity: "1" }, toEnd: { multiplicity: "1..*", role: "lines" }, bidirectional: false },
+      { id: "e2", kind: "associates", from: "order", to: "customer", name: "places",
+        fromEnd: { multiplicity: "1", navigable: true }, toEnd: { multiplicity: "1", navigable: true }, bidirectional: true },
+      { id: "e3", kind: "specializes", from: "order", to: "base", fromEnd: {}, toEnd: {}, bidirectional: false },
+    ],
+    diagrams: [],
+  };
+
+  const files = serializeBundle(graph, "Shop").files;
+  const back = parseBundle(files);
+  const order2 = back.nodes.find(n => n.key === "order")!;
+
+  it("emits the spec sections", () => {
+    const doc = files["shop/order.md"];
+    expect(doc).toContain("stereotype: [\"aggregateRoot\", \"entity\"]");
+    expect(doc).toContain("## Attributes");
+    expect(doc).toContain("- id: OrderId");
+    expect(doc).toContain("- status: [OrderStatus](./order-status.md)");
+    expect(doc).toContain("- - note: String [0..1]");
+    expect(doc).toContain("## Relationships");
+    expect(doc).toContain("- composes [OrderLine](./order-line.md): 1 to 1..* lines");
+    expect(doc).toContain("- specializes [Base](./base.md)");
+    expect(doc).toContain("## Glossary\nKeep me.");
+    expect(files["shop/order-status.md"]).toContain("## Values\n- DRAFT\n- PLACED");
+    expect(files["shop/base.md"]).toContain("abstract: true");
+  });
+  it("bidirectional associates (with a string name) appears in BOTH docs and merges back", () => {
+    expect(files["shop/order.md"]).toContain("- associates [Customer](./customer.md) as \"places\": 1 to 1");
+    expect(files["shop/customer.md"]).toContain("- associates [Order](./order.md) as \"places\": 1 to 1");
+    const assoc = back.edges.find(e => e.kind === "associates")!;
+    expect(assoc.bidirectional).toBe(true);
+    expect(assoc.name).toBe("places");
+  });
+  it("round-trips node substance losslessly", () => {
+    expect(order2.stereotypes).toEqual(["aggregateRoot", "entity"]);
+    expect(order2.attributes).toEqual(graph.nodes[0].attributes);
+    expect(order2.extra).toContain("## Glossary");
+    expect(back.nodes.find(n => n.key === "base")!.abstract).toBe(true);
+    expect(back.nodes.find(n => n.key === "order-status")!.values).toEqual(["DRAFT", "PLACED"]);
+  });
+  it("round-trips edge kinds and ends", () => {
+    const compose = back.edges.find(e => e.kind === "composes")!;
+    expect(compose.fromEnd.multiplicity).toBe("1");
+    expect(compose.toEnd).toMatchObject({ multiplicity: "1..*", role: "lines" });
+    expect(back.edges.find(e => e.kind === "specializes")).toMatchObject({ from: "order", to: "base" });
+  });
+});
+
+describe("UML format round-trip — association classes & notes (lossless)", () => {
+  const graph: ModelGraph = {
+    nodes: [
+      { key: "order", type: "uml.Class", title: "Order", stereotypes: [], attributes: [], position: { x: 0, y: 0 } },
+      { key: "customer", type: "uml.Class", title: "Customer", stereotypes: [], attributes: [], position: { x: 0, y: 0 } },
+      { key: "places", type: "uml.Association", title: "Places", stereotypes: [],
+        attributes: [{ name: "placedAt", type: { name: "Timestamp" }, multiplicity: "1" }], position: { x: 0, y: 0 } },
+      // A standalone note keeps its own doc because it anchors MORE THAN its host
+      // (multi-target ⇒ not collapsible); the self-anchored note collapses to `## Notes`.
+      { key: "domestic", type: "uml.Note", title: "Domestic-only", stereotypes: [], attributes: [],
+        body: "Only valid for domestic customers.",
+        annotates: [{ targetKey: "order" }, { targetKey: "customer" }], position: { x: 0, y: 0 } },
+      { key: "order--note-1", type: "uml.Note", title: "Note on Order", stereotypes: [], attributes: [],
+        body: "Drafts expire after 24h.", annotates: [{ targetKey: "order" }], position: { x: 0, y: 0 } },
+    ],
+    edges: [
+      { id: "e1", kind: "associates", from: "order", to: "customer", name: { ref: "places" },
+        fromEnd: { multiplicity: "1" }, toEnd: { multiplicity: "1", navigable: true }, bidirectional: false },
+    ],
+    diagrams: [],
+  };
+  const files = serializeBundle(graph, "Shop").files;
+  const back = parseBundle(files);
+
+  it("emits the association-class link name and re-resolves it to { ref }", () => {
+    expect(files["shop/order.md"]).toContain("- associates [Customer](./customer.md) as [Places](./places.md): 1 to 1");
+    expect(files["shop/places.md"]).toContain("type: \"uml.Association\"");
+    expect(files["shop/places.md"]).toContain("- placedAt: Timestamp");
+    expect(back.edges.find(e => e.from === "order" && e.to === "customer")!.name).toEqual({ ref: "places" });
+  });
+  it("emits a multi-target note's ## Body + annotates and reads it back (not collapsed)", () => {
+    const note = files["shop/domestic-only.md"];   // file slug derives from the title "Domestic-only"
+    expect(note).toContain("type: \"uml.Note\"");
+    expect(note).toContain("## Body\nOnly valid for domestic customers.");
+    expect(note).toContain("## Relationships\n- annotates [Order](./order.md)\n- annotates [Customer](./customer.md)");
+    expect(back.nodes.find(n => n.type === "uml.Note" && n.title === "Domestic-only")!.annotates)
+      .toEqual([{ targetKey: "order" }, { targetKey: "customer" }]);
+  });
+  it("collapses a self-anchored note back to `## Notes` on the host (lossless)", () => {
+    // The self-anchored note is NOT emitted as its own doc; it rides on order.md.
+    expect(files["shop/order--note-1.md"]).toBeUndefined();
+    expect(files["shop/order.md"]).toContain("## Notes\n- Drafts expire after 24h.");
+    const desugared = back.nodes.filter(n => n.type === "uml.Note" && n.body === "Drafts expire after 24h.");
+    expect(desugared).toHaveLength(1);
+    expect(desugared[0].annotates).toEqual([{ targetKey: "order" }]);
   });
 });
