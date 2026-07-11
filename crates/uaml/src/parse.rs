@@ -91,6 +91,29 @@ pub fn parse_document(src: &str) -> Document {
     Document { frontmatter, title: title.trim().to_string(), sections }
 }
 
+static MARKER_RE: std::sync::LazyLock<regex::Regex> =
+    std::sync::LazyLock::new(|| regex::Regex::new(r"(?m)^<!--\s*(.+?)\s*-->[ \t]*\n").unwrap());
+
+/// Split a concatenated bundle blob into `(path, content)` pairs on
+/// `<!-- path/slug.md -->` markers. An unmarked blob is a single document.
+pub fn split_bundle(text: &str) -> Vec<(String, String)> {
+    let mut marks: Vec<(usize, usize, String)> = Vec::new(); // (marker_start, content_start, path)
+    for m in MARKER_RE.captures_iter(text) {
+        let whole = m.get(0).unwrap();
+        let path = m[1].to_string();
+        marks.push((whole.start(), whole.end(), path));
+    }
+    if marks.is_empty() {
+        return vec![("pasted/doc.md".to_string(), text.to_string())];
+    }
+    let mut out = Vec::new();
+    for (i, (_, content_start, path)) in marks.iter().enumerate() {
+        let end = marks.get(i + 1).map(|m| m.0).unwrap_or(text.len());
+        out.push((path.clone(), text[*content_start..end].to_string()));
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -135,5 +158,22 @@ mod tests {
         // The fenced `## Not a section` must not open a section.
         assert_eq!(doc.sections.len(), 1);
         assert!(matches!(doc.sections[0], Section::Body(_)));
+    }
+
+    #[test]
+    fn splits_blob_on_markers() {
+        let blob = "<!-- shop/order.md -->\n# Order\n\n<!-- shop/customer.md -->\n# Customer\n";
+        let parts = split_bundle(blob);
+        assert_eq!(parts.len(), 2);
+        assert_eq!(parts[0].0, "shop/order.md");
+        assert!(parts[0].1.contains("# Order"));
+        assert_eq!(parts[1].0, "shop/customer.md");
+    }
+
+    #[test]
+    fn unmarked_blob_is_a_single_doc() {
+        let parts = split_bundle("# Just one doc\n");
+        assert_eq!(parts.len(), 1);
+        assert_eq!(parts[0].0, "pasted/doc.md");
     }
 }
