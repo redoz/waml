@@ -4,11 +4,11 @@ import { ReactFlowProvider } from "@xyflow/react";
 import { MartNode } from "./MartNode";
 
 const node = {
-  key: "n1", title: "Users", inputSource: "VIEW", status: "created", owoxId: "x",
+  key: "n1", title: "Users", type: "uml.Class", stereotypes: [],
   position: { x: 0, y: 0 },
-  schema: [
-    { name: "id", type: "INT64", pk: true },
-    { name: "email", type: "STRING", pk: false },
+  attributes: [
+    { name: "id", type: { name: "INT64" }, multiplicity: "1" },
+    { name: "email", type: { name: "STRING" }, multiplicity: "1" },
   ],
 };
 
@@ -22,14 +22,17 @@ function renderNode(viewMode: "compact" | "erd") {
   );
 }
 
-describe("MartNode ERD rendering", () => {
-  it("shows the field count (not rows) in compact mode", () => {
-    renderNode("compact");
+describe("MartNode rendering", () => {
+  it("shows the title and field count (not rows) in compact mode", () => {
+    const { container } = renderNode("compact");
+    expect(screen.getByText("Users")).toBeTruthy();
     expect(screen.getByText("2 fields")).toBeTruthy();
     expect(screen.queryByText("INT64")).toBeNull();
+    // No status dot markup (status is a data-profile concern, dropped).
+    expect(container.querySelector(".animate-pulse")).toBeNull();
   });
 
-  it("shows each field name and type in ERD mode", () => {
+  it("shows each attribute name and type token in ERD mode", () => {
     renderNode("erd");
     expect(screen.getByText("id")).toBeTruthy();
     expect(screen.getByText("INT64")).toBeTruthy();

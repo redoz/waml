@@ -13,7 +13,7 @@ import { f, mart, rel, type Template } from "./helpers";
 //   activation & deposits   → fct_accounts (activated_at) + fct_balances_monthly.avg_balance
 //   yield / NIM per segment → fct_balances_monthly (interest_earned − interest_paid) × risk_band
 const graph: ModelGraph = {
-  storageId: null,
+  diagrams: [],
   nodes: [
     mart("dim_customer", "Customer", "VIEW", [
       f("customer_id", "STRING", true, "Unique customer identifier."),

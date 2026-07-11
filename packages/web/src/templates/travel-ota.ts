@@ -13,7 +13,7 @@ import { f, mart, rel, type Template } from "./helpers";
 //   take-rate & margin mix  → fct_bookings (take_rate_pct, commission_revenue) × dim_supplier
 //   repeat & app share      → dim_traveler (bookings_count, is_app_user) + fct_bookings.booking_channel
 const graph: ModelGraph = {
-  storageId: null,
+  diagrams: [],
   nodes: [
     mart("dim_traveler", "Traveler", "VIEW", [
       f("traveler_id", "STRING", true, "Unique traveler identifier."),

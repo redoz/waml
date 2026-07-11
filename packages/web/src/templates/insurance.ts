@@ -13,7 +13,7 @@ import { f, mart, rel, type Template } from "./helpers";
 //   quote-to-bind           → fct_quotes (is_bound, premium_quoted) × dim_agent.channel
 //   claims cycle & leakage  → fct_claims.cycle_days + fct_claim_payments.leakage_amount
 const graph: ModelGraph = {
-  storageId: null,
+  diagrams: [],
   nodes: [
     mart("dim_policyholder", "Policyholder", "VIEW", [
       f("policyholder_id", "STRING", true, "Unique policyholder identifier."),

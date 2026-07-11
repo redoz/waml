@@ -15,7 +15,7 @@ export const ERD_COLLAPSED_ROWS = 4;
 
 export function erdAwareNodeSize(node: ModelNode, viewMode: ViewMode): { width: number; height: number } {
   if (viewMode !== "erd") return { ...COMPACT };
-  const total = node.schema.length;
+  const total = node.attributes.length;
   const rows = Math.max(Math.min(total, ERD_COLLAPSED_ROWS), 1);
   const expandRow = total > ERD_COLLAPSED_ROWS ? ERD_EXPAND_ROW : 0;
   return { width: ERD_WIDTH, height: ERD_HEADER + rows * ERD_ROW + expandRow };

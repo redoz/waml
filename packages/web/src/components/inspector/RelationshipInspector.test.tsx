@@ -1,27 +1,28 @@
 import { describe, it, expect, vi } from "vitest";
-import { render, fireEvent } from "@testing-library/react";
+import { render, screen, fireEvent } from "@testing-library/react";
 import { RelationshipInspector } from "./RelationshipInspector";
 import type { ModelEdge, ModelNode } from "@mc/okf";
 
-const from: ModelNode = { key: "tx", title: "Transactions", inputSource: "TABLE", status: "pending", owoxId: null, position: { x: 0, y: 0 }, schema: [{ name: "block_hash", type: "STRING", pk: true }] };
-const to: ModelNode = { key: "blocks", title: "Blocks", inputSource: "TABLE", status: "pending", owoxId: null, position: { x: 0, y: 0 }, schema: [{ name: "hash", type: "STRING", pk: true }] };
-const edge: ModelEdge = { id: "e1", from: "tx", to: "blocks", keys: [{ left: "block_hash", right: "hash" }], bidirectional: false };
+const node = (key: string, title: string): ModelNode =>
+  ({ key, title, type: "uml.Class", stereotypes: [], attributes: [], position: { x: 0, y: 0 } });
+const edge: ModelEdge = { id: "e1", kind: "associates", from: "a", to: "b",
+  fromEnd: { multiplicity: "1" }, toEnd: { multiplicity: "*", navigable: true }, bidirectional: false };
 
-describe("RelationshipInspector cardinality", () => {
-  it("has an Advanced section and a cardinality select that patches the edge", () => {
+describe("RelationshipInspector", () => {
+  it("changes the kind through the verb select", () => {
     const onUpdate = vi.fn();
-    const { getByText, getByLabelText } = render(
-      <RelationshipInspector edge={edge} fromNode={from} toNode={to} onUpdate={onUpdate} onEnsureField={() => {}} />,
-    );
-    expect(getByText("Advanced")).toBeTruthy();
-    fireEvent.change(getByLabelText("Cardinality"), { target: { value: "N:1" } });
-    expect(onUpdate).toHaveBeenCalledWith({ cardinality: "N:1" });
+    render(<RelationshipInspector edge={edge} fromNode={node("a", "Order")} toNode={node("b", "OrderLine")} onUpdate={onUpdate} />);
+    fireEvent.change(screen.getByLabelText("Kind"), { target: { value: "composes" } });
+    expect(onUpdate).toHaveBeenCalledWith({ kind: "composes" });
   });
-
-  it("shows a side-labeled caption when set", () => {
-    const { getByText } = render(
-      <RelationshipInspector edge={{ ...edge, cardinality: "N:1" }} fromNode={from} toNode={to} onUpdate={() => {}} onEnsureField={() => {}} />,
-    );
-    expect(getByText("Transactions (N) → Blocks (1)")).toBeTruthy();
+  it("edits the near-end multiplicity", () => {
+    const onUpdate = vi.fn();
+    render(<RelationshipInspector edge={edge} fromNode={node("a", "Order")} toNode={node("b", "OrderLine")} onUpdate={onUpdate} />);
+    fireEvent.change(screen.getByLabelText("Order multiplicity"), { target: { value: "0..1" } });
+    expect(onUpdate).toHaveBeenCalledWith({ fromEnd: { multiplicity: "0..1" } });
+  });
+  it("hides end editors for specializes", () => {
+    render(<RelationshipInspector edge={{ ...edge, kind: "specializes", fromEnd: {}, toEnd: {} }} fromNode={node("a", "A")} toNode={node("b", "B")} onUpdate={() => {}} />);
+    expect(screen.queryByLabelText("A multiplicity")).toBeNull();
   });
 });

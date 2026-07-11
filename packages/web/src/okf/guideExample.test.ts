@@ -111,19 +111,18 @@ describe("okf authoring guide — worked example imports", () => {
     expect(graph.nodes.map(n => n.key).sort()).toEqual(["customers", "order-items", "orders", "products"]);
   });
 
-  it("parses all 3 relationships with correct keys and direction", () => {
-    const j = graph.edges.map(e => `${e.from}->${e.to}:${e.keys.map(k => `${k.left}=${k.right}`).join(",")}`).sort();
+  it("parses all 3 relationships with correct direction", () => {
+    const j = graph.edges.map(e => `${e.from}->${e.to}:${e.kind}`).sort();
     expect(j).toEqual([
-      "order-items->orders:order_id=id",
-      "order-items->products:product_id=id",
-      "orders->customers:customer_id=id",
+      "order-items->orders:associates",
+      "order-items->products:associates",
+      "orders->customers:associates",
     ]);
   });
 
-  it("marks primary keys and parses cardinality", () => {
-    const orders = graph.nodes.find(n => n.key === "orders")!;
-    expect(orders.schema.find(f => f.name === "id")?.pk).toBe(true);
-    const oiToOrders = graph.edges.find(e => e.from === "order-items" && e.to === "orders")!;
-    expect(oiToOrders.cardinality).toBe("N:1");
+  it("parses the [N:1] suffix onto end multiplicities", () => {
+    const e = graph.edges.find(x => x.from === "order-items" && x.to === "orders")!;
+    expect(e.fromEnd.multiplicity).toBe("*");
+    expect(e.toEnd.multiplicity).toBe("1");
   });
 });

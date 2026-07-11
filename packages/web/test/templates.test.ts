@@ -25,31 +25,25 @@ for (const t of TEMPLATES) {
       expect(new Set(t.graph.edges.map(e => e.id)).size).toBe(t.graph.edges.length);
     });
 
-    it("every node has a PK and fully described fields", () => {
+    it("every node has fully described attributes", () => {
       for (const n of t.graph.nodes) {
-        expect(n.schema.length, `${n.title} has fields`).toBeGreaterThan(0);
-        expect(n.schema.some(f => f.pk), `${n.title} has a PK`).toBe(true);
+        expect(n.attributes.length, `${n.title} has attributes`).toBeGreaterThan(0);
         expect(n.description?.trim(), `${n.title} has a description`).toBeTruthy();
-        for (const f of n.schema) {
-          expect(f.description?.trim(), `${n.title}.${f.name} is described`).toBeTruthy();
+        for (const a of n.attributes) {
+          expect(a.description?.trim(), `${n.title}.${a.name} is described`).toBeTruthy();
         }
       }
     });
 
-    it("every edge resolves with matching join-key types and a cardinality", () => {
+    it("every edge resolves and is an associates relationship", () => {
       for (const e of t.graph.edges) {
         const from = byKey.get(e.from);
         const to = byKey.get(e.to);
         expect(from, `${e.id} from ${e.from}`).toBeTruthy();
         expect(to, `${e.id} to ${e.to}`).toBeTruthy();
-        expect(e.cardinality, `${e.id} has cardinality`).toBeTruthy();
-        for (const k of e.keys) {
-          const l = from!.schema.find(s => s.name === k.left);
-          const r = to!.schema.find(s => s.name === k.right);
-          expect(l, `${e.id}: ${e.from}.${k.left} exists`).toBeTruthy();
-          expect(r, `${e.id}: ${e.to}.${k.right} exists`).toBeTruthy();
-          expect(l!.type, `${e.id}: ${k.left} type matches ${k.right}`).toBe(r!.type);
-        }
+        expect(e.kind, `${e.id} kind`).toBe("associates");
+        expect(e.fromEnd, `${e.id} has a fromEnd`).toBeTruthy();
+        expect(e.toEnd, `${e.id} has a toEnd`).toBeTruthy();
       }
     });
 
@@ -69,8 +63,8 @@ const EXEMPT = /pct|rate|score|ratio|band|count|qty|quantity|_id$|days|mins|secs
 for (const t of INDUSTRY_TEMPLATES) {
   it(`${t.id}: money fields are NUMERIC`, () => {
     for (const n of t.graph.nodes) {
-      for (const f of n.schema) {
-        if (f.type === "FLOAT" && MONEY.test(f.name) && !EXEMPT.test(f.name)) {
+      for (const f of n.attributes) {
+        if (f.type.name === "FLOAT" && MONEY.test(f.name) && !EXEMPT.test(f.name)) {
           throw new Error(`${t.id}.${n.key}.${f.name} is FLOAT — money must be NUMERIC`);
         }
       }

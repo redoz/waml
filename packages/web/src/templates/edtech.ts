@@ -13,7 +13,7 @@ import { f, mart, rel, type Template } from "./helpers";
 //   assessment pass rate    → fct_assessments (is_passed, score, attempt_number)
 //   engaged learning time   → fct_engagement_daily (active_mins, streak_days)
 const graph: ModelGraph = {
-  storageId: null,
+  diagrams: [],
   nodes: [
     mart("dim_learner", "Learner", "VIEW", [
       f("learner_id", "STRING", true, "Unique learner identifier."),

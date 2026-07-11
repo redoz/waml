@@ -46,28 +46,21 @@ tags: ["owox", "view"]
 - [Customers](./customers.md) — \`customer_id = id\`
 `;
 
-// Faithful-OWOX: Joins bullet has NO keys; recovered from FK note + target PK.
-const ordersFaithful = ordersSuperset.replace("— `customer_id = id`", "");
-
-describe("parseBundle (OWOX format)", () => {
-  it("reads PK from the PK. token and identity from Overview", () => {
+describe("parseBundle (legacy OWOX format)", () => {
+  it("maps a legacy mart doc onto a generic classifier with attributes", () => {
     const g = parseBundle({ "b/customers.md": customers });
     const n = g.nodes[0];
-    expect(n.owoxId).toBe("abc-123");
-    expect(n.status).toBe("created");
-    expect(n.inputSource).toBe("VIEW");
-    expect(n.schema[0]).toMatchObject({ name: "id", type: "INTEGER", pk: true, description: "Customer id" });
+    expect(n.type).toBe("OWOX Data Mart");           // opaque token carried, renders generically
+    expect(n.stereotypes).toEqual([]);
+    expect(n.attributes[0]).toEqual({ name: "id", type: { name: "INTEGER" }, multiplicity: "1", description: "Customer id" });
+    expect(g.diagrams).toEqual([]);
   });
 
-  it("reads superset join keys", () => {
+  it("reads legacy joins as associates edges (keys dropped)", () => {
     const g = parseBundle({ "b/customers.md": customers, "b/orders.md": ordersSuperset });
     expect(g.edges).toHaveLength(1);
-    expect(g.edges[0]).toMatchObject({ from: "orders", to: "customers", keys: [{ left: "customer_id", right: "id" }] });
-  });
-
-  it("recovers keys for keyless OWOX joins via FK note + target PK", () => {
-    const g = parseBundle({ "b/customers.md": customers, "b/orders.md": ordersFaithful });
-    expect(g.edges[0].keys).toEqual([{ left: "customer_id", right: "id" }]);
+    expect(g.edges[0]).toMatchObject({ from: "orders", to: "customers", kind: "associates", bidirectional: false });
+    expect(g.edges[0].toEnd.navigable).toBe(true);
   });
 });
 
@@ -97,16 +90,16 @@ tags: ["owox", "table"]
 - [Blocks](./blocks.md) — \`block_hash = hash\` [N:1]
 `;
 
-describe("parse cardinality", () => {
-  it("reads the [N:1] suffix onto the edge", () => {
+describe("legacy cardinality suffix", () => {
+  it("maps [N:1] onto per-end multiplicities", () => {
     const g = parseBundle({ "b/blocks.md": customersCard, "b/transactions.md": txCard });
     expect(g.edges).toHaveLength(1);
-    expect(g.edges[0]).toMatchObject({ from: "transactions", to: "blocks", cardinality: "N:1" });
+    expect(g.edges[0].fromEnd.multiplicity).toBe("*");
+    expect(g.edges[0].toEnd.multiplicity).toBe("1");
   });
-
-  it("leaves cardinality undefined when absent", () => {
+  it("leaves multiplicities undefined when absent", () => {
     const txNo = txCard.replace(" [N:1]", "");
     const g = parseBundle({ "b/blocks.md": customersCard, "b/transactions.md": txNo });
-    expect(g.edges[0].cardinality).toBeUndefined();
+    expect(g.edges[0].fromEnd.multiplicity).toBeUndefined();
   });
 });

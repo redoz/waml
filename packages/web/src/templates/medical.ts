@@ -13,7 +13,7 @@ import { f, mart, rel, type Template } from "./helpers";
 //   LOS & bed utilization   → fct_encounters.length_of_stay_days + fct_bed_census_daily
 //   door-to-provider time   → fct_appointments.wait_minutes by dim_department
 const graph: ModelGraph = {
-  storageId: null,
+  diagrams: [],
   nodes: [
     mart("dim_patient", "Patient", "VIEW", [
       f("patient_id", "STRING", true, "Unique de-identified patient identifier."),

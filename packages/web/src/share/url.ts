@@ -1,4 +1,5 @@
 import { gzipSync, gunzipSync, strToU8, strFromU8 } from "fflate";
+import { migrateGraph } from "@mc/okf";
 import type { ModelGraph, ModelNode, ModelEdge } from "@mc/okf";
 
 // Shareable model links. The whole model is gzip-compressed and packed into the
@@ -10,29 +11,24 @@ import type { ModelGraph, ModelNode, ModelEdge } from "@mc/okf";
 const HASH_KEY = "m";
 const NAME_KEY = "n";
 
-// OWOX-specific fields (owoxId, status, createdBy, …) are dropped: a shared model
-// is a clean draft, and we never leak another project's ids into a public URL.
+// A shared model is a clean draft: canvas-only handle hints are dropped, and the
+// field list is explicit so hand-edited payloads can't smuggle extra data.
 function sanitize(g: ModelGraph): ModelGraph {
   return {
-    storageId: null,
     nodes: g.nodes.map((n): ModelNode => ({
-      key: n.key,
-      title: n.title,
-      inputSource: n.inputSource,
-      description: n.description,
-      schema: n.schema,
+      key: n.key, type: n.type, title: n.title,
+      stereotypes: n.stereotypes ?? [],
+      ...(n.abstract ? { abstract: true } : {}),
+      ...(n.description ? { description: n.description } : {}),
+      attributes: n.attributes ?? [],
+      ...(n.values ? { values: n.values } : {}),
       position: n.position,
-      status: "pending",
-      owoxId: null,
     })),
     edges: g.edges.map((e): ModelEdge => ({
-      id: e.id,
-      from: e.from,
-      to: e.to,
-      keys: e.keys,
-      bidirectional: e.bidirectional,
-      cardinality: e.cardinality,
+      id: e.id, kind: e.kind, from: e.from, to: e.to,
+      fromEnd: e.fromEnd ?? {}, toEnd: e.toEnd ?? {}, bidirectional: e.bidirectional,
     })),
+    diagrams: g.diagrams ?? [],
   };
 }
 
@@ -56,13 +52,13 @@ export function encodeModel(graph: ModelGraph): string {
   return bytesToB64url(gzipSync(strToU8(json), { level: 9 }));
 }
 
-/** Reverse of encodeModel. Returns null on any malformed/corrupt payload. */
+/** Reverse of encodeModel. Returns null on any malformed/corrupt payload.
+ *  Legacy (mart-era) payloads are migrated — old share links keep opening. */
 export function decodeModel(payload: string): ModelGraph | null {
   try {
     const json = strFromU8(gunzipSync(b64urlToBytes(payload)));
-    const g = JSON.parse(json) as ModelGraph;
-    if (!g || !Array.isArray(g.nodes) || !Array.isArray(g.edges)) return null;
-    return sanitize(g); // re-normalize (defends against hand-edited payloads)
+    const g = migrateGraph(JSON.parse(json));
+    return g ? sanitize(g) : null;
   } catch {
     return null;
   }

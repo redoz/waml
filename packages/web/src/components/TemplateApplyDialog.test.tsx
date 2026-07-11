@@ -4,12 +4,12 @@ import type { ModelGraph } from "@mc/okf";
 import { TemplateApplyDialog } from "./TemplateApplyDialog";
 
 const graph: ModelGraph = {
-  storageId: null,
   nodes: [
-    { key: "a", title: "Orders", inputSource: "SQL", schema: [], position: { x: 0, y: 0 }, status: "pending" },
-    { key: "b", title: "Customers", inputSource: "SQL", schema: [], position: { x: 0, y: 0 }, status: "pending" },
+    { key: "a", title: "Orders", type: "uml.Class", stereotypes: [], attributes: [], position: { x: 0, y: 0 } },
+    { key: "b", title: "Customers", type: "uml.Class", stereotypes: [], attributes: [], position: { x: 0, y: 0 } },
   ],
-  edges: [{ id: "e1", from: "a", to: "b", keys: [{ left: "customer_id", right: "id" }], bidirectional: false }],
+  edges: [{ id: "e1", kind: "associates", from: "a", to: "b", fromEnd: {}, toEnd: { navigable: true }, bidirectional: false }],
+  diagrams: [],
 };
 
 describe("TemplateApplyDialog", () => {

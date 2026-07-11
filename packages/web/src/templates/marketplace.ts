@@ -13,7 +13,7 @@ import { f, mart, rel, type Template } from "./helpers";
 //   fill failures           → fct_cancellations (stage, cancelled_by) + fct_orders.fulfillment_mins
 //   repeat both sides       → dim_buyer.is_repeat + dim_seller × fct_orders cohorts
 const graph: ModelGraph = {
-  storageId: null,
+  diagrams: [],
   nodes: [
     mart("dim_buyer", "Buyer", "VIEW", [
       f("buyer_id", "STRING", true, "Unique buyer identifier."),

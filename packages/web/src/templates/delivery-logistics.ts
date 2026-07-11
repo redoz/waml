@@ -13,7 +13,7 @@ import { f, mart, rel, type Template } from "./helpers";
 //   cancellations/failures  → fct_cancellations (stage, is_failed_delivery)
 //   supply vs demand        → fct_courier_shifts × fct_orders by dim_zone and hour
 const graph: ModelGraph = {
-  storageId: null,
+  diagrams: [],
   nodes: [
     mart("dim_customer", "Customer", "VIEW", [
       f("customer_id", "STRING", true, "Unique customer identifier."),

@@ -13,7 +13,7 @@ import { f, mart, rel, type Template } from "./helpers";
 //   pay equity              → fct_compensation.compa_ratio × dim_position level/family
 //   eNPS → attrition risk   → fct_engagement_surveys × fct_attrition_events
 const graph: ModelGraph = {
-  storageId: null,
+  diagrams: [],
   nodes: [
     mart("dim_employee", "Employee", "VIEW", [
       f("employee_id", "STRING", true, "Unique employee identifier."),

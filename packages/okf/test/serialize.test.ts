@@ -3,92 +3,45 @@ import { serializeBundle } from "../src/serialize";
 import type { ModelGraph } from "../src/types";
 
 const graph: ModelGraph = {
-  storageId: null,
   nodes: [
-    { key: "orders", title: "Orders", inputSource: "VIEW", status: "pending", owoxId: null,
-      position: { x: 0, y: 0 },
-      schema: [
-        { name: "order_id", type: "STRING", pk: true, description: "Unique order id" },
-        { name: "customer_id", type: "INTEGER", pk: false },
+    { key: "orders", title: "Orders", type: "uml.Class", stereotypes: [], position: { x: 0, y: 0 },
+      attributes: [
+        { name: "order_id", type: { name: "STRING" }, multiplicity: "1", description: "Unique order id" },
+        { name: "customer_id", type: { name: "INTEGER" }, multiplicity: "1" },
       ] },
-    { key: "customers", title: "Customers", inputSource: "VIEW", status: "pending", owoxId: null,
-      position: { x: 0, y: 0 },
-      schema: [{ name: "id", type: "INTEGER", pk: true }] },
+    { key: "customers", title: "Customers", type: "uml.Class", stereotypes: [], position: { x: 0, y: 0 },
+      attributes: [{ name: "id", type: { name: "INTEGER" }, multiplicity: "1" }] },
   ],
-  edges: [{ id: "e1", from: "orders", to: "customers", keys: [{ left: "customer_id", right: "id" }], bidirectional: false }],
+  edges: [{ id: "e1", kind: "associates", from: "orders", to: "customers",
+            fromEnd: { multiplicity: "*" }, toEnd: { multiplicity: "1", navigable: true }, bidirectional: false }],
+  diagrams: [],
 };
 
-describe("serializeBundle (OWOX superset)", () => {
+describe("serializeBundle (interim legacy emission)", () => {
   const { files } = serializeBundle(graph, "Demo");
   const index = files["demo/index.md"];
   const orders = files["demo/orders.md"];
 
-  it("writes a folder bundle with index + per-mart files", () => {
+  it("writes a folder bundle with index + per-doc files", () => {
     expect(Object.keys(files).sort()).toEqual(["demo/customers.md", "demo/index.md", "demo/orders.md"]);
   });
-
-  it("index uses the neutral columns and an unbranded description", () => {
-    expect(index).toContain("| Data Mart | Type | Storage |");
-    expect(index).toContain("[Orders](./orders.md) | VIEW |");
-    expect(index).toContain("Index of exported data marts.");
+  it("index lists documents with their type", () => {
+    expect(index).toContain("| Document | Type |");
+    expect(index).toContain("[Orders](./orders.md) | uml.Class |");
     expect(index).not.toContain("owox");
   });
-
-  it("mart frontmatter uses the neutral type token with no owox block or tags", () => {
-    expect(orders).toContain(`type: "Data Mart"`);
+  it("doc frontmatter carries the node type verbatim", () => {
+    expect(orders).toContain(`type: "uml.Class"`);
     expect(orders).not.toContain("owox:");
-    expect(orders).not.toContain("owox");
-    expect(orders).toContain(`tags: ["view"]`);
+    expect(orders).not.toContain("tags:");
+    expect(orders).not.toContain("## Overview");
   });
-
-  it("has an Overview section", () => {
-    expect(orders).toContain("## Overview");
-    expect(orders).toContain("- **Definition type:** VIEW");
-  });
-
-  it("schema is 3-column with PK token and FK note", () => {
+  it("schema table renders from attributes", () => {
     expect(orders).toContain("# Schema\n\n| Column | Type | Description |");
-    expect(orders).toContain("| `order_id` | STRING | PK. Unique order id |");
-    expect(orders).toContain("FK to [Customers](./customers.md)");
+    expect(orders).toContain("| `order_id` | STRING | Unique order id |");
   });
-
-  it("joins carry the superset key suffix", () => {
+  it("joins render with a cardinality suffix from end multiplicities", () => {
     expect(orders).toContain("## Joins");
-    expect(orders).toContain("- [Customers](./customers.md) — `customer_id = id`");
-  });
-});
-
-import { describe as describeCard, it as itCard, expect as expectCard } from "vitest";
-import { serializeBundle as serializeCard } from "../src/serialize";
-import type { ModelGraph as ModelGraphCard } from "../src/types";
-
-describeCard("serialize cardinality suffix", () => {
-  const base = (cardinality: any, bidirectional = false): ModelGraphCard => ({
-    storageId: null,
-    nodes: [
-      { key: "tx", title: "Transactions", inputSource: "TABLE", status: "pending", owoxId: null, position: { x: 0, y: 0 },
-        schema: [{ name: "block_hash", type: "STRING", pk: true }] },
-      { key: "blocks", title: "Blocks", inputSource: "TABLE", status: "pending", owoxId: null, position: { x: 0, y: 0 },
-        schema: [{ name: "hash", type: "STRING", pk: true }] },
-    ],
-    edges: [{ id: "e1", from: "tx", to: "blocks", keys: [{ left: "block_hash", right: "hash" }], bidirectional, cardinality }],
-  });
-
-  itCard("appends [N:1] on the source line", () => {
-    const tx = serializeCard(base("N:1"), "Demo").files["demo/transactions.md"];
-    expectCard(tx).toContain("- [Blocks](./blocks.md) — `block_hash = hash` [N:1]");
-  });
-
-  itCard("flips on the bidirectional mirror line", () => {
-    const files = serializeCard(base("N:1", true), "Demo").files;
-    expectCard(files["demo/transactions.md"]).toContain("`block_hash = hash` [N:1]");
-    // mirror line rendered from Blocks → Transactions carries the flipped value
-    expectCard(files["demo/blocks.md"]).toContain("`hash = block_hash` [1:N]");
-  });
-
-  itCard("omits the suffix when unspecified", () => {
-    const tx = serializeCard(base(undefined), "Demo").files["demo/transactions.md"];
-    expectCard(tx).toContain("- [Blocks](./blocks.md) — `block_hash = hash`");
-    expectCard(tx).not.toContain("— `block_hash = hash` [");
+    expect(orders).toContain("- [Customers](./customers.md) [N:1]");
   });
 });

@@ -13,7 +13,7 @@ import { f, mart, rel, type Template } from "./helpers";
 //   collections/involuntary → fct_billing (is_late, dunning_stage)
 //   5G/fiber migration      → fct_plan_changes (change_type='migration') × dim_plan.network_gen
 const graph: ModelGraph = {
-  storageId: null,
+  diagrams: [],
   nodes: [
     mart("dim_subscriber", "Subscriber", "VIEW", [
       f("subscriber_id", "STRING", true, "Unique subscriber identifier."),

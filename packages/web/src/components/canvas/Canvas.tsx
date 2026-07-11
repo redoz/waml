@@ -36,7 +36,7 @@ import { exportCanvasSvg } from "../../share/exportImage";
 
 import { TopBar } from "../TopBar";
 import { ImportDialog } from "../ImportDialog";
-import { mergeGraphs } from "../../sync/owoxImport";
+import { mergeGraphs } from "../../sync/merge";
 import { LibraryDialog } from "../LibraryDialog";
 import { TemplateApplyDialog } from "../TemplateApplyDialog";
 import { WelcomeDialog } from "../WelcomeDialog";
@@ -94,26 +94,8 @@ if (sharedGraph) clearSharedModelFromUrl();
 const isFirstVisit = !templateInitial && !sharedGraph && persistedGraph === undefined;
 
 // ── helpers to convert between model and RF types ───────────────────────────
-function toRFNode(n: ModelNode, viewMode: ViewMode, keyFields?: string[]): Node {
-  return {
-    id: n.key,
-    type: "mart",
-    position: n.position,
-    data: { ...n, _viewMode: viewMode, _keyFields: keyFields } as unknown as Record<string, unknown>,
-  };
-}
-
-// Field names involved in a relationship, per node key — so the ERD node can keep
-// its join keys visible even when it collapses the rest of its fields behind the
-// expand toggle (edges anchor to those field handles).
-function keyFieldsByNode(edges: ModelEdge[]): Map<string, Set<string>> {
-  const m = new Map<string, Set<string>>();
-  const add = (key: string, field?: string) => {
-    if (!field) return;
-    (m.get(key) ?? m.set(key, new Set()).get(key)!).add(field);
-  };
-  for (const e of edges) for (const k of e.keys) { add(e.from, k.left); add(e.to, k.right); }
-  return m;
+function toRFNode(n: ModelNode, viewMode: ViewMode): Node {
+  return { id: n.key, type: "okf", position: n.position, data: { ...n, _viewMode: viewMode } as unknown as Record<string, unknown> };
 }
 
 // ── Dagre auto-layout ────────────────────────────────────────────────────────
@@ -148,7 +130,7 @@ const SHEET_TITLES: Record<NonNullable<ReturnType<typeof useRightPanel>["active"
 };
 
 // ── Inner canvas (needs ReactFlowProvider context) ────────────────────────────
-const nodeTypes = { mart: MartNode };
+const nodeTypes = { okf: MartNode };
 const edgeTypes = { rel: RelEdge };
 
 function CanvasInner() {
@@ -197,9 +179,8 @@ function CanvasInner() {
   const [rfEdges, setRfEdges, onRfEdgesChange] = useEdgesState<Edge>([]);
 
   useEffect(() => {
-    const kf = keyFieldsByNode(graph.edges);
-    setRfNodes(graph.nodes.map(n => toRFNode(n, viewMode, [...(kf.get(n.key) ?? [])])));
-  }, [graph.nodes, graph.edges, viewMode, setRfNodes]);
+    setRfNodes(graph.nodes.map(n => toRFNode(n, viewMode)));
+  }, [graph.nodes, viewMode, setRfNodes]);
   useEffect(() => { setRfEdges(buildRfEdges(graph.edges, graph.nodes, viewMode, relLabelMode)); }, [graph.edges, graph.nodes, viewMode, relLabelMode, setRfEdges]);
 
   // Mark only the selected relationship as reconnectable so dragging an endpoint
@@ -211,11 +192,11 @@ function CanvasInner() {
     const selId = selection?.type === "edge" ? selection.id : null;
     setRfEdges(eds => eds.map(e => {
       const modelEdgeId = (e.data as { modelEdgeId?: string } | undefined)?.modelEdgeId;
-      const reconnectable = isEdgeReconnectable(modelEdgeId, selId, viewMode);
+      const reconnectable = isEdgeReconnectable(modelEdgeId, selId);
       const zIndex = modelEdgeId != null && modelEdgeId === selId ? 1000 : 0;
       return (e.reconnectable === reconnectable && e.zIndex === zIndex) ? e : { ...e, reconnectable, zIndex };
     }));
-  }, [selection, viewMode, graph.edges, graph.nodes, setRfEdges]);
+  }, [selection, graph.edges, graph.nodes, setRfEdges]);
 
   // Mirror the model to localStorage on every change so a refresh/crash doesn't
   // lose work.
@@ -233,17 +214,9 @@ function CanvasInner() {
   // ── Connect handler ────────────────────────────────────────────────────────
   // Drag an existing edge end onto another port/node to re-route it (for a tidy picture).
   const onReconnect = useCallback((oldEdge: Edge, conn: Connection) => {
-    // ERD view is display-only: its edges carry synthetic "<modelEdgeId>::<n>"
-    // ids (one per join key) that don't map 1:1 to a model edge, so
-    // store.updateEdge(oldEdge.id, …) would match nothing and silently no-op.
-    // Disable reconnection entirely in this mode rather than ship that no-op.
-    if (viewMode === "erd") return;
     if (!conn.source || !conn.target || conn.source === conn.target) return;
-    store.updateEdge(oldEdge.id, {
-      from: conn.source, to: conn.target,
-      sourceHandle: conn.sourceHandle, targetHandle: conn.targetHandle,
-    });
-  }, [viewMode]);
+    store.updateEdge(oldEdge.id, { from: conn.source, to: conn.target, sourceHandle: conn.sourceHandle, targetHandle: conn.targetHandle });
+  }, []);
 
   const onConnect = useCallback((connection: Connection) => {
     if (!connection.source || !connection.target) return;
@@ -339,7 +312,7 @@ function CanvasInner() {
   // Clear the canvas: permanently wipe every node + edge (keep the selected
   // storage). No undo — the dialog warns and offers an OKF export first.
   const clearCanvas = useCallback(() => {
-    store.set({ storageId: store.get().storageId, nodes: [], edges: [] });
+    store.set({ nodes: [], edges: [], diagrams: [] });
     setSelection(null);
     setShowClear(false);
     setModelName(DEFAULT_MODEL_NAME);
@@ -393,21 +366,18 @@ function CanvasInner() {
   }, [viewMode]);
 
   const handleImportConfirm = useCallback((g: ModelGraph, mode: "replace" | "merge") => {
-    if (mode === "merge") {
-      applyMergeWithLayout(g);
-    } else {
-      // Keep the currently-selected storage. The OKF bundle format doesn't carry a
-      // storageId (parse returns null), so taking the imported value would blank the
-      // selection. Fall back to the imported id only when none is selected yet.
-      store.set({ ...withLayout(g), storageId: store.get().storageId ?? g.storageId });
+    if (mode === "merge") applyMergeWithLayout(g);
+    else {
+      const hasPositions = g.nodes.some(n => n.position.x !== 0 || n.position.y !== 0);
+      store.set(hasPositions ? g : withLayout(g));
     }
     setShowImport(false);
   }, [withLayout, applyMergeWithLayout]);
 
   const applyTemplate = useCallback((g: ModelGraph, mode: "replace" | "merge") => {
-    // Keep the model on the currently selected storage; auto-layout the template.
+    // Auto-layout the template (templates ship at 0,0).
     if (mode === "merge") applyMergeWithLayout(g);
-    else store.set({ ...withLayout(g), storageId: store.get().storageId });
+    else store.set(withLayout(g));
   }, [withLayout, applyMergeWithLayout]);
 
   const handleUseTemplate = useCallback((g: ModelGraph, name: string) => {

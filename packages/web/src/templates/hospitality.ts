@@ -13,7 +13,7 @@ import { f, mart, rel, type Template } from "./helpers";
 //   ancillary per room      → fct_ancillary_revenue ÷ occupied rooms
 //   rate-plan/channel mix   → fct_rate_plans_daily × fct_reservations by season/segment
 const graph: ModelGraph = {
-  storageId: null,
+  diagrams: [],
   nodes: [
     mart("dim_property", "Property", "TABLE", [
       f("property_id", "STRING", true, "Unique property identifier."),

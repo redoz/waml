@@ -6,11 +6,14 @@ import {
   type EdgeProps,
 } from "@xyflow/react";
 import type { ModelEdge } from "@mc/okf";
-import { visibleKeys, showCardinality, type RelLabelMode } from "../../state/relLabels";
+import type { RelLabelMode } from "../../state/relLabels";
 
-export type RelEdgeData = Pick<ModelEdge, "keys" | "bidirectional" | "cardinality"> & {
+export type RelEdgeData = Pick<ModelEdge, "kind" | "fromEnd" | "toEnd" | "bidirectional"> & {
   relLabelMode?: RelLabelMode;
 };
+
+const endText = (e?: { multiplicity?: string; role?: string }) =>
+  [e?.multiplicity, e?.role].filter(Boolean).join(" ");
 
 function RelEdgeInner(props: EdgeProps) {
   // Custom <marker> defs are built inline below; RF's markerEnd/markerStart
@@ -24,9 +27,7 @@ function RelEdgeInner(props: EdgeProps) {
   } = props;
 
   const edgeData = data as unknown as RelEdgeData | undefined;
-  const keys = edgeData?.keys ?? [];
   const bidirectional = edgeData?.bidirectional ?? false;
-  const cardinality = edgeData?.cardinality;
   const mode: RelLabelMode = edgeData?.relLabelMode ?? "all";
 
   const [edgePath, labelX, labelY] = getBezierPath({
@@ -34,11 +35,8 @@ function RelEdgeInner(props: EdgeProps) {
     targetX, targetY, targetPosition,
   });
 
-  const shownKeys = visibleKeys(keys, mode);
-  const label = shownKeys.length > 0
-    ? shownKeys.map(k => `${k.left || "?"} = ${k.right || "?"}`).join(", ")
-    : "";
-  const cardShown = Boolean(cardinality) && showCardinality(keys, mode);
+  const label = mode === "hidden" ? "" :
+    [endText(edgeData?.fromEnd), endText(edgeData?.toEnd)].filter(Boolean).join(" → ");
 
   const strokeColor = selected ? "#1e88e5" : "#94a3b8";
   const strokeWidth = selected ? 2.5 : 2;
@@ -78,7 +76,7 @@ function RelEdgeInner(props: EdgeProps) {
         markerStart={bidirectional ? `url(#arr-start-${id})` : undefined}
         style={{ stroke: strokeColor, strokeWidth }}
       />
-      {(label || cardShown) && (
+      {label && (
         <EdgeLabelRenderer>
           <div
             style={{
@@ -101,20 +99,6 @@ function RelEdgeInner(props: EdgeProps) {
             className="nodrag nopan"
           >
             {label}
-            {cardShown && (
-              <span
-                style={{
-                  padding: "0 5px",
-                  borderRadius: 4,
-                  background: "#e6f1fb",
-                  color: "#1e88e5",
-                  fontSize: 10,
-                  fontWeight: 700,
-                }}
-              >
-                {cardinality}
-              </span>
-            )}
           </div>
         </EdgeLabelRenderer>
       )}

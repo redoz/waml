@@ -1,138 +1,103 @@
-import type { ModelGraph, ModelNode, ModelEdge, InputSource, Cardinality, SchemaField } from "./types";
+import type { ModelGraph, ModelNode, ModelEdge, Attribute } from "./types";
+import { endsFromCardinality } from "./migrate";
 import { parseFrontmatter } from "./slug";
 
-const FLIP_CARDINALITY: Record<Cardinality, Cardinality> = { "1:1": "1:1", "N:N": "N:N", "1:N": "N:1", "N:1": "1:N" };
-
 // Resolve a link target by its basename, tolerating ./rel paths, nested dirs,
-// and (in the prose pass) absolute paths. The strict join regex only produces ./rel.
+// and (in the prose pass) absolute paths.
 function basename(path: string): string {
   return path.split(/[\\/]/).pop()!.replace(/\.md$/i, "");
 }
 
 export function parseBundle(files: Record<string, string>): ModelGraph {
   // Every markdown doc is a node. Navigation `index.md` files are the only
-  // non-nodes, distinguished by filename (never by `type`, which is opaque).
+  // non-nodes, distinguished by filename.
   const docs = Object.entries(files)
     .filter(([p]) => p.endsWith(".md") && !p.endsWith("index.md"));
-  const nodes: ModelNode[] = []; const slugToKey = new Map<string, string>();
-  const pkByKey = new Map<string, string | undefined>();
+  const nodes: ModelNode[] = [];
+  const slugToKey = new Map<string, string>();
   for (const [path, text] of docs) {
     const { data, body } = parseFrontmatter(text);
-    const owox = data.owox || {};
-    const ov = parseOverview(body);
     const title = data.title || "Untitled";
     const fileSlug = path.split("/").pop()!.replace(/\.md$/, "");
-    const key = owox.key || fileSlug;
+    const key = (data.owox && data.owox.key) || fileSlug;
     slugToKey.set(fileSlug, key);
-    const schema = parseSchema(body);
-    pkByKey.set(key, schema.find(f => f.pk)?.name);
-    // Read inputSource only when the doc states it explicitly; otherwise a
-    // plain default. Never inferred from `type` or tags (both opaque now).
-    const inputSource = (owox.inputSource || ov.definitionType || "SQL") as InputSource;
-    const owoxId = owox.id ?? (ov.id && ov.id !== "—" ? ov.id : null);
     nodes.push({
-      key, title, inputSource,
-      description: data.description || undefined, definition: parseDefinition(body), schema,
-      position: owox.position || { x: 0, y: 0 },
-      status: owoxId || ov.status === "PUBLISHED" ? "created" : "pending", owoxId,
+      key,
+      type: typeof data.type === "string" && data.type ? data.type : "uml.Class",
+      title,
+      stereotypes: [],
+      ...(data.description ? { description: data.description } : {}),
+      attributes: parseLegacySchema(body),
+      position: (data.owox && data.owox.position) || { x: 0, y: 0 },
     });
   }
 
-  const raw: { from: string; to: string; keys: { left: string; right: string }[]; cardinality?: Cardinality }[] = [];
+  // Legacy ## Joins list items: "- [Title](./slug.md) — `k = k` [N:1]" (keys ignored).
+  const raw: { from: string; to: string; cardinality?: string; bidirectional?: boolean }[] = [];
   for (const [path, text] of docs) {
     const { data, body } = parseFrontmatter(text);
-    const fromSlug = path.split("/").pop()!.replace(/\.md$/, "");
-    const fromKey = (data.owox && data.owox.key) || fromSlug;
-    const fromSchema = parseSchema(body);
+    const fromKey = (data.owox && data.owox.key) || basename(path);
     for (const ln of body.split("\n")) {
-      const m = ln.match(/^- \[.*?\]\(\.\/(.+?)\.md\)\s*(?:—|--)?\s*(.*)$/);
+      const m = ln.replace(/\r$/, "").match(/^- \[.*?\]\(\.\/(.+?)\.md\)\s*(?:—|--)?\s*(.*)$/);
       if (!m) continue;
-      const toKey = slugToKey.get(basename(m[1])); if (!toKey) continue;
-      let keys = [...m[2].matchAll(/`([^`]+?)\s*=\s*([^`]+?)`/g)].map(g => ({ left: g[1].trim(), right: g[2].trim() }));
-      if (keys.length === 0) {
-        // Faithful-OWOX join: recover from a `FK to [Target]` note + target PK.
-        const targetTitle = nodes.find(n => n.key === toKey)?.title ?? "";
-        const fkCol = fromSchema.find(f => (f.description || "").includes(`FK to [${targetTitle}]`));
-        const rightPk = pkByKey.get(toKey);
-        if (fkCol && rightPk) keys = [{ left: fkCol.name, right: rightPk }];
-      }
+      const toKey = slugToKey.get(basename(m[1]));
+      if (!toKey || toKey === fromKey) continue;
       const cm = m[2].match(/\[(1:1|1:N|N:1|N:N)\]/);
-      const cardinality = cm ? (cm[1] as Cardinality) : undefined;
-      raw.push({ from: fromKey, to: toKey, keys, cardinality });
+      raw.push({ from: fromKey, to: toKey, cardinality: cm ? cm[1] : undefined });
     }
   }
 
-  // Tolerant pass for Google OKF v0.1 prose joins, e.g.
-  //   "...can be joined with the [users](users.md) table on `user_id`..."
-  // Conservative: only lines that mention "join" AND link to a known mart, and
-  // never list-item lines (those are the strict parser's job). An `on `key``
-  // binds to the most recent preceding link; links without a key become keyless
-  // edges. A discovered key upgrades an existing keyless edge for the same pair.
-  const addProseEdge = (from: string, to: string, key: string | undefined) => {
-    const keys = key ? [{ left: key, right: pkByKey.get(to) ?? key }] : [];
-    const ex = raw.find(r => (r.from === from && r.to === to) || (r.from === to && r.to === from));
-    if (ex) {
-      if (keys.length && ex.keys.length === 0) {
-        ex.keys = ex.from === from ? keys : keys.map(k => ({ left: k.right, right: k.left }));
-      }
-      return;
-    }
-    raw.push({ from, to, keys });
+  // Tolerant pass for prose joins ("…can be joined with the [users](users.md)
+  // table…"). Conservative: lines mentioning "join" that link a known node, and
+  // never list-item lines (the strict pass owns those).
+  const addProseEdge = (from: string, to: string) => {
+    if (raw.some(r => (r.from === from && r.to === to) || (r.from === to && r.to === from))) return;
+    raw.push({ from, to });
   };
   for (const [path, text] of docs) {
     const { data, body } = parseFrontmatter(text);
     const fromKey = (data.owox && data.owox.key) || basename(path);
     for (const ln of body.split("\n")) {
       if (!/join/i.test(ln)) continue;
-      if (/^[-*]\s+\[/.test(ln.trim())) continue;      // strict-parser list items
-      let pending: string | null = null;
-      for (const tk of ln.matchAll(/\[[^\]]+\]\(([^)]+\.md)\)|on\s+`([^`]+)`/gi)) {
-        if (tk[1]) {
-          if (pending) addProseEdge(fromKey, pending, undefined);
-          const toKey = slugToKey.get(basename(tk[1]));
-          pending = toKey && toKey !== fromKey ? toKey : null;
-        } else if (tk[2] && pending) {
-          addProseEdge(fromKey, pending, tk[2].trim());
-          pending = null;
-        }
+      if (/^[-*]\s+\[/.test(ln.trim())) continue;
+      for (const tk of ln.matchAll(/\[[^\]]+\]\(([^)]+\.md)\)/g)) {
+        const toKey = slugToKey.get(basename(tk[1]));
+        if (toKey && toKey !== fromKey) addProseEdge(fromKey, toKey);
       }
-      if (pending) addProseEdge(fromKey, pending, undefined);
     }
   }
 
-  const edges: ModelEdge[] = []; const seen = new Map<string, ModelEdge>();
+  // Collapse mutual declarations into one bidirectional edge.
+  const edges: ModelEdge[] = [];
+  const seen = new Map<string, ModelEdge>();
   for (const r of raw) {
     const pairKey = [r.from, r.to].sort().join("|");
     const ex = seen.get(pairKey);
     if (ex) {
       ex.bidirectional = true;
-      if (!ex.cardinality && r.cardinality) {
-        ex.cardinality = ex.from === r.from ? r.cardinality : FLIP_CARDINALITY[r.cardinality];
-      }
+      ex.fromEnd.navigable = true;
+      ex.toEnd.navigable = true;
       continue;
     }
-    const e: ModelEdge = { id: `e${edges.length + 1}`, from: r.from, to: r.to, keys: r.keys, bidirectional: false };
-    if (r.cardinality) e.cardinality = r.cardinality;
-    seen.set(pairKey, e); edges.push(e);
+    const e: ModelEdge = {
+      id: `e${edges.length + 1}`, kind: "associates", from: r.from, to: r.to,
+      ...endsFromCardinality(r.cardinality, false), bidirectional: false,
+    };
+    seen.set(pairKey, e);
+    edges.push(e);
   }
-  const storageId = (docs[0] && (parseFrontmatter(docs[0][1]).data.owox || {}).storageId) || null;
-  return { storageId, nodes, edges };
+  return { nodes, edges, diagrams: [] };
 }
 
-function parseOverview(body: string): { id?: string; status?: string; definitionType?: string } {
-  const out: { id?: string; status?: string; definitionType?: string } = {};
-  const grab = (label: string) => {
-    const m = body.match(new RegExp(`^- \\*\\*${label}:\\*\\*\\s*\`?([^\`\\n]+?)\`?\\s*$`, "im"));
-    return m ? m[1].trim() : undefined;
-  };
-  out.id = grab("ID"); out.status = grab("Status"); out.definitionType = grab("Definition type");
-  return out;
-}
+// ── Legacy `# Schema` readers (tables + Google-era bullet lists) ─────────────
 
-function parseSchema(body: string): import("./types").SchemaField[] {
-  const out: import("./types").SchemaField[] = [];
-  const lines = body.split("\n"); let inSchema = false; let legacy = false;
-  for (const ln of lines) {
+function parseLegacySchema(body: string): Attribute[] {
+  const out: Attribute[] = [];
+  const lines = body.split("\n");
+  let inSchema = false;
+  let legacy = false;
+  for (const raw of lines) {
+    const ln = raw.replace(/\r$/, "");
     if (/^##?\s+Schema/i.test(ln)) { inSchema = true; continue; }
     if (!inSchema) continue;
     if (/^##?\s+/.test(ln)) break;
@@ -146,18 +111,10 @@ function parseSchema(body: string): import("./types").SchemaField[] {
     }
     if (/^:?-+:?$/.test(name)) continue; // separator
     const type = (cells[1] || "STRING").replace(/`/g, "").trim() || "STRING";
-    const field: import("./types").SchemaField = { name, type, pk: false };
-    if (legacy) {
-      field.pk = /^(✓|x|X)$/.test((cells[2] || "").trim());
-      const alias = (cells[3] || "").trim(); const desc = (cells[4] || "").trim();
-      if (alias) field.alias = alias;
-      if (desc) field.description = desc;
-    } else {
-      let desc = (cells[2] || "").trim();
-      if (/^PK\.\s*/.test(desc)) { field.pk = true; desc = desc.replace(/^PK\.\s*/, "").trim(); }
-      if (desc) field.description = desc;
-    }
-    out.push(field);
+    let desc = legacy ? (cells[4] || "").trim() : (cells[2] || "").trim();
+    desc = desc.replace(/^PK\.\s*/, "").trim();           // pk flag is data-profile-only: strip the token
+    desc = desc.replace(/\s*FK to \[[^\]]*\]\([^)]*\)/g, "").trim(); // FK notes likewise
+    out.push({ name, type: { name: type }, multiplicity: "1", ...(desc ? { description: desc } : {}) });
   }
   if (out.length === 0) return parseSchemaBullets(body);
   return out;
@@ -168,50 +125,43 @@ const TYPE_WORDS =
   "TIMESTAMP|DATE|DATETIME|TIME|RECORD|STRUCT|GEOGRAPHY|JSON|INTERVAL";
 const TYPE_RE = new RegExp(`\\b(${TYPE_WORDS})\\b`, "i");
 
-// Fallback for Google OKF v0.1 bundles, whose `# Schema` sections are bullet
-// lists rather than markdown tables. Top-level bullets only; nested RECORD
-// children (indented) are skipped. Runs only when the table parser found nothing.
-function parseSchemaBullets(body: string): SchemaField[] {
-  const out: SchemaField[] = [];
-  let inSchema = false; let schemaLevel = 0;
-  for (const ln of body.split("\n")) {
+// Fallback for Google OKF v0.1 bundles (bullet-list schemas). Top-level bullets
+// only; runs only when the table parser found nothing.
+function parseSchemaBullets(body: string): Attribute[] {
+  const out: Attribute[] = [];
+  let inSchema = false;
+  let schemaLevel = 0;
+  for (const raw of body.split("\n")) {
+    const ln = raw.replace(/\r$/, "");
     const h = ln.match(/^(#{1,6})\s+(.*)$/);
     if (h) {
       const level = h[1].length;
       if (/^schema\b/i.test(h[2].trim())) { inSchema = true; schemaLevel = level; continue; }
-      if (inSchema && level <= schemaLevel) break;   // section ends at same/higher heading
-      continue;                                       // sub-header inside Schema (GA4 "## event")
+      if (inSchema && level <= schemaLevel) break;
+      continue;
     }
     if (!inSchema) continue;
-    const m = ln.match(/^[-*]\s+`([^`]+)`(.*)$/);     // top-level bullet, no leading indent
+    const m = ln.match(/^[-*]\s+`([^`]+)`(.*)$/);
     if (!m) continue;
     const name = m[1].trim();
-    if (!/^[\w.]+$/.test(name)) continue;             // skip enum-value rows like `key = 'x'`
+    if (!/^[\w.]+$/.test(name)) continue;
     out.push(parseFieldRest(name, m[2]));
   }
   return out;
 }
 
-// Extract type + description from the text after a field's backticked name,
-// tolerating: " (TYPE): desc", " (TYPE) - desc", " TYPE MODE: desc", ": TYPE".
-function parseFieldRest(name: string, rest: string): SchemaField {
-  let type = "STRING"; let description = "";
+function parseFieldRest(name: string, rest: string): Attribute {
+  let type = "STRING";
+  let description = "";
   const paren = rest.match(/^\s*\(([^)]+)\)\s*[-:]?\s*(.*)$/);
   if (paren) {
     type = (paren[1].match(TYPE_RE)?.[1] ?? paren[1].trim()).toUpperCase();
     description = paren[2].trim();
   } else {
-    const tail = rest.replace(/^\s*[-:]\s*/, "");     // drop a leading separator
+    const tail = rest.replace(/^\s*[-:]\s*/, "");
     type = (tail.match(TYPE_RE)?.[1] ?? "STRING").toUpperCase();
     const colon = tail.indexOf(":");
     description = colon >= 0 ? tail.slice(colon + 1).trim() : "";
   }
-  const field: SchemaField = { name, type, pk: false };
-  if (description) field.description = description;
-  return field;
-}
-
-function parseDefinition(body: string): string | null {
-  const m = body.match(/^##?\s+Definition\s*\n+```[^\n]*\n([\s\S]*?)\n```/im);
-  return m ? m[1].trim() : null;
+  return { name, type: { name: type }, multiplicity: "1", ...(description ? { description } : {}) };
 }

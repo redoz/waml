@@ -13,7 +13,7 @@ import { f, mart, rel, type Template } from "./helpers";
 //   CAC payback < 12m       → fct_marketing_spend × new-business MRR by channel cohort
 //   expansion MRR           → fct_subscription_events (upgrades) + fct_usage_daily signals
 const graph: ModelGraph = {
-  storageId: null,
+  diagrams: [],
   nodes: [
     mart("dim_account", "Account", "VIEW", [
       f("account_id", "STRING", true, "Unique account identifier."),

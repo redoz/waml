@@ -14,15 +14,13 @@ describe("Dock relationship-labels flyout", () => {
   beforeEach(() => vi.useFakeTimers());
   afterEach(() => vi.useRealTimers());
 
-  it("opens the flyout 0.5s after hovering Connect and lists all four modes", () => {
+  it("opens the flyout 0.5s after hovering Connect and lists the label modes", () => {
     render(<Dock {...base} relLabelMode="all" onRelLabelModeChange={() => {}} />);
     const connect = screen.getByRole("button", { name: /connect/i });
     fireEvent.mouseEnter(connect.parentElement!);
-    expect(screen.queryByText("Show everything")).toBeNull(); // not yet — delay pending
+    expect(screen.queryByText("Show labels")).toBeNull(); // not yet — delay pending
     act(() => { vi.advanceTimersByTime(500); });
-    expect(screen.getByText("Show everything")).toBeTruthy();
-    expect(screen.getByText("Defined keys only")).toBeTruthy();
-    expect(screen.getByText("Undefined keys only")).toBeTruthy();
+    expect(screen.getByText("Show labels")).toBeTruthy();
     expect(screen.getByText("Hide all labels")).toBeTruthy();
   });
 
@@ -36,8 +34,8 @@ describe("Dock relationship-labels flyout", () => {
   });
 
   it("shows the glyph of the active mode as a badge", () => {
-    render(<Dock {...base} relLabelMode="undefined" onRelLabelModeChange={() => {}} />);
-    expect(screen.getByTestId("rel-label-badge").textContent).toBe("?");
+    render(<Dock {...base} relLabelMode="hidden" onRelLabelModeChange={() => {}} />);
+    expect(screen.getByTestId("rel-label-badge").textContent).toBe("⊘");
   });
 
   it("still activates the Connect tool when the button itself is clicked", () => {

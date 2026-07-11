@@ -13,7 +13,7 @@ import { f, mart, rel, type Template } from "./helpers";
 //   aggregator drag         → fct_orders (order_channel, aggregator_commission)
 //   waste & shrink          → fct_waste_events (reason, waste_cost) × dim_menu_item
 const graph: ModelGraph = {
-  storageId: null,
+  diagrams: [],
   nodes: [
     mart("dim_location", "Location", "TABLE", [
       f("location_id", "STRING", true, "Unique location identifier."),

@@ -4,18 +4,11 @@ import type { RelLabelMode } from "../../state/relLabels";
 
 export type Tool = "select" | "add" | "connect" | "layout";
 
-const REL_LABEL_GLYPH: Record<RelLabelMode, string> = {
-  all: "≡",
-  defined: "=",
-  undefined: "?",
-  hidden: "⊘",
-};
+const REL_LABEL_GLYPH: Record<RelLabelMode, string> = { all: "≡", hidden: "⊘" };
 
 const REL_LABEL_OPTIONS: { mode: RelLabelMode; label: string; helper: string }[] = [
-  { mode: "all", label: "Show everything", helper: "All join keys and cardinality on every relationship" },
-  { mode: "defined", label: "Defined keys only", helper: "Show keys and cardinality only where the join is filled in; hide labels that are still blank" },
-  { mode: "undefined", label: "Undefined keys only", helper: "Show only relationships whose keys aren't set yet — spot what's left to define" },
-  { mode: "hidden", label: "Hide all labels", helper: "Just the connector lines — no keys, no cardinality" },
+  { mode: "all", label: "Show labels", helper: "Multiplicities and roles on every relationship" },
+  { mode: "hidden", label: "Hide all labels", helper: "Just the connector lines" },
 ];
 
 interface DockProps {

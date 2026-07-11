@@ -13,7 +13,7 @@ import { f, mart, rel, type Template } from "./helpers";
 //   mid-market cycle length → fct_stage_transitions × dim_account.employee_band
 //   pipeline velocity       → fct_stage_transitions.days_in_from_stage × win-rate × ACV
 const graph: ModelGraph = {
-  storageId: null,
+  diagrams: [],
   nodes: [
     mart("dim_campaign", "Campaign", "TABLE", [
       f("campaign_id", "STRING", true, "Unique identifier for each campaign."),

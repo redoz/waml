@@ -3,9 +3,9 @@ import type { ModelNode } from "@mc/okf";
 import { erdAwareNodeSize } from "./layoutSize";
 
 const mk = (fields: number): ModelNode => ({
-  key: "n", title: "n", inputSource: "VIEW",
-  schema: Array.from({ length: fields }, (_, i) => ({ name: `f${i}`, type: "STRING", pk: false })),
-  position: { x: 0, y: 0 }, status: "created", owoxId: null,
+  key: "n", title: "n", type: "uml.Class", stereotypes: [],
+  attributes: Array.from({ length: fields }, (_, i) => ({ name: `f${i}`, type: { name: "STRING" }, multiplicity: "1" })),
+  position: { x: 0, y: 0 },
 });
 
 describe("erdAwareNodeSize", () => {

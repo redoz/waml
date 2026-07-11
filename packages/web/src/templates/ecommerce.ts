@@ -12,7 +12,7 @@ import { f, mart, rel, type Template } from "./helpers";
 //   returns on high-AOV     → fct_returns × dim_product.category × fct_orders.gross_revenue
 //   cart/checkout abandon   → fct_sessions (add_to_cart, reached_checkout, converted)
 const graph: ModelGraph = {
-  storageId: null,
+  diagrams: [],
   nodes: [
     mart("dim_customer", "Customer", "VIEW", [
       f("customer_id", "STRING", true, "Surrogate customer key."),

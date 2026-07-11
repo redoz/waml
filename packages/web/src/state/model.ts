@@ -1,6 +1,6 @@
 import type { ModelGraph, ModelNode, ModelEdge } from "@mc/okf";
 export function createModelStore(initial?: Partial<ModelGraph>) {
-  let g: ModelGraph = { storageId: null, nodes: [], edges: [], ...initial } as ModelGraph;
+  let g: ModelGraph = { nodes: [], edges: [], diagrams: [], ...initial } as ModelGraph;
   // Per-store counter so independent stores (and HMR reloads) don't share ids.
   // Seed it past any restored/imported ids (n1, e1, …) so freshly minted keys
   // never collide with the ones we just rehydrated from localStorage.
@@ -20,17 +20,28 @@ export function createModelStore(initial?: Partial<ModelGraph>) {
       emit();
     },
     addNode(position: { x: number; y: number }): ModelNode {
-      const n: ModelNode = { key: uid("n"), title: "New object", inputSource: "SQL", schema: [], position, status: "pending", owoxId: null };
+      const n: ModelNode = { key: uid("n"), type: "uml.Class", title: "New object", stereotypes: [], attributes: [], position };
       g = { ...g, nodes: [...g.nodes, n] }; emit(); return n;
     },
     updateNode(key: string, patch: Partial<ModelNode>) { g = { ...g, nodes: g.nodes.map(n => n.key === key ? { ...n, ...patch } : n) }; emit(); },
-    removeNode(key: string) { g = { ...g, nodes: g.nodes.filter(n => n.key !== key), edges: g.edges.filter(e => e.from !== key && e.to !== key) }; emit(); },
+    removeNode(key: string) {
+      g = { ...g,
+        nodes: g.nodes.filter(n => n.key !== key),
+        edges: g.edges.filter(e => e.from !== key && e.to !== key),
+        diagrams: g.diagrams.map(d => d.members.includes(key) ? { ...d, members: d.members.filter(m => m !== key) } : d),
+      }; emit();
+    },
     addEdge(from: string, to: string, sourceHandle?: string | null, targetHandle?: string | null): ModelEdge | null {
       if (from === to) return null;
       const pair = [from, to].sort().join("|");
       const existing = g.edges.find(e => [e.from, e.to].sort().join("|") === pair);
-      if (existing) { g = { ...g, edges: g.edges.map(e => e === existing ? { ...e, bidirectional: true } : e) }; emit(); return existing; }
-      const e: ModelEdge = { id: uid("e"), from, to, keys: [{ left: "", right: "" }], bidirectional: false, sourceHandle, targetHandle };
+      if (existing) {
+        g = { ...g, edges: g.edges.map(e => e === existing
+          ? { ...e, bidirectional: true, fromEnd: { ...e.fromEnd, navigable: true }, toEnd: { ...e.toEnd, navigable: true } }
+          : e) };
+        emit(); return existing;
+      }
+      const e: ModelEdge = { id: uid("e"), kind: "associates", from, to, fromEnd: {}, toEnd: { navigable: true }, bidirectional: false, sourceHandle, targetHandle };
       g = { ...g, edges: [...g.edges, e] }; emit(); return e;
     },
     updateEdge(id: string, patch: Partial<ModelEdge>) { g = { ...g, edges: g.edges.map(e => e.id === id ? { ...e, ...patch } : e) }; emit(); },

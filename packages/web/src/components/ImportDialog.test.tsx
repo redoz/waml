@@ -32,7 +32,7 @@ describe("import zipped bundle", () => {
     for (const [p, bytes] of Object.entries(unzipSync(zip))) files[p] = strFromU8(bytes as Uint8Array);
     const g = filesToGraph(files);
     expect(g.nodes.map((n) => n.title)).toContain("Customers");
-    expect(g.nodes[0].schema[0]).toMatchObject({ name: "id", pk: true });
+    expect(g.nodes[0].attributes[0]).toMatchObject({ name: "id", type: { name: "INTEGER" } });
   });
 });
 
@@ -49,7 +49,7 @@ describe("ImportDialog UI", () => {
     expect(onConfirm).toHaveBeenCalledTimes(1);
     const [graph, mode] = onConfirm.mock.calls[0];
     expect(graph.nodes.map((n: { title: string }) => n.title)).toContain("Customers");
-    expect(graph.nodes[0].status).toBe("pending");
+    expect(graph.nodes[0].type).toBe("OWOX Data Mart");
     expect(mode).toBe("merge");
   });
 });

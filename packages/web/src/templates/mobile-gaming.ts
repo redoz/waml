@@ -13,7 +13,7 @@ import { f, mart, rel, type Template } from "./helpers";
 //   CPI & D7 ROAS           → fct_ua_spend (spend, installs) × player LTV by campaign
 //   FTUE funnel             → fct_events (event_name, level) step-through rates
 const graph: ModelGraph = {
-  storageId: null,
+  diagrams: [],
   nodes: [
     mart("dim_player", "Player", "VIEW", [
       f("player_id", "STRING", true, "Unique player identifier."),

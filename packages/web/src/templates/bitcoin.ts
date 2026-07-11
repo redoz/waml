@@ -4,7 +4,7 @@ import { f, mart, rel, type Template } from "./helpers";
 // Public-dataset templates (kept schema-faithful to the real BigQuery tables).
 
 const graph: ModelGraph = {
-  storageId: null,
+  diagrams: [],
   nodes: [
     mart("blocks", "Blocks", "TABLE", [
       f("hash", "STRING", true, "Block header hash that uniquely identifies the block."),

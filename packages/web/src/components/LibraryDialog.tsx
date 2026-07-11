@@ -74,7 +74,7 @@ function TemplateRow({ template, open, onToggle, onUse }: { template: Template; 
       {open && (
         <div className="px-4 pb-4 pt-1 bg-[#fbfcfe] border-t border-[#eef1f5] overflow-y-auto" style={{ maxHeight: "46vh" }}>
           <div className="flex flex-col gap-1.5 mt-2">
-            {nodes.map(n => <MartRow key={n.key} title={n.title} fields={n.schema} />)}
+            {nodes.map(n => <MartRow key={n.key} title={n.title} fields={n.attributes} />)}
           </div>
 
           {edges.length > 0 && (
@@ -84,13 +84,10 @@ function TemplateRow({ template, open, onToggle, onUse }: { template: Template; 
                 {edges.map(e => {
                   const from = nodes.find(n => n.key === e.from)?.title ?? e.from;
                   const to = nodes.find(n => n.key === e.to)?.title ?? e.to;
-                  const cond = e.keys.map(k => `${k.left} = ${k.right}`).join(", ");
                   return (
                     <li key={e.id} className="flex items-center gap-2 text-[12px] text-slate-600">
                       <JoinIcon size={13} className="text-slate-400 flex-shrink-0" />
                       <span><b className="text-slate-800">{from}</b> {e.bidirectional ? "↔" : "→"} <b className="text-slate-800">{to}</b></span>
-                      <span className="text-slate-400">·</span>
-                      <code className="text-[11px] text-slate-500">{cond}</code>
                     </li>
                   );
                 })}
@@ -103,7 +100,7 @@ function TemplateRow({ template, open, onToggle, onUse }: { template: Template; 
   );
 }
 
-function MartRow({ title, fields }: { title: string; fields: { name: string; type: string; pk: boolean }[] }) {
+function MartRow({ title, fields }: { title: string; fields: { name: string; type: { name: string } }[] }) {
   const [open, setOpen] = useState(false);
   return (
     <div className="rounded-lg border border-[#e9edf2] bg-white">
@@ -119,8 +116,7 @@ function MartRow({ title, fields }: { title: string; fields: { name: string; typ
             {fields.map(f => (
               <tr key={f.name} className="border-b border-[#f3f5f8] last:border-0">
                 <td className="px-3 py-1.5 font-mono text-slate-700">{f.name}</td>
-                <td className="px-3 py-1.5 text-slate-500">{f.type}</td>
-                <td className="px-3 py-1.5 text-right text-[10.5px] text-[#1e88e5] font-semibold">{f.pk ? "PK" : ""}</td>
+                <td className="px-3 py-1.5 text-slate-500">{f.type.name}</td>
               </tr>
             ))}
           </tbody>

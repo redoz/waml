@@ -2,7 +2,7 @@ import type { ModelGraph } from "@mc/okf";
 import { f, mart, rel, type Template } from "./helpers";
 
 const graph: ModelGraph = {
-  storageId: null,
+  diagrams: [],
   nodes: [
     mart("users", "Users", "TABLE", [
       f("id", "INTEGER", true, "Unique identifier of the user."),

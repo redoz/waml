@@ -30,8 +30,7 @@ export function ImportDialog({ onConfirm, onClose }: ImportDialogProps) {
     }
   }
 
-  // Parse the current inputs into a ModelGraph (pending nodes — OKF carries no
-  // OWOX identity). Throws on empty/invalid input.
+  // Parse the current inputs into a ModelGraph. Throws on empty/invalid input.
   async function buildGraph(paste: string): Promise<ModelGraph> {
     let files: Record<string, string> = {};
     const uploaded = fileInputRef.current?.files;
@@ -46,8 +45,7 @@ export function ImportDialog({ onConfirm, onClose }: ImportDialogProps) {
     }
     if (paste.trim()) files = { ...files, ...parsePastedMarkdown(paste.trim()) };
     if (Object.keys(files).length === 0) throw new Error("Provide a file or paste markdown content.");
-    const graph = filesToGraph(files);
-    return { ...graph, nodes: graph.nodes.map(n => ({ ...n, status: "pending" as const, owoxId: null })) };
+    return filesToGraph(files);
   }
 
   // Re-parse to drive the live preview/count. Empty input clears both; a parse

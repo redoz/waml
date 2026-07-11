@@ -13,7 +13,7 @@ import { f, mart, rel, type Template } from "./helpers";
 //   FCR & reopens           → fct_tickets (is_fcr, reopen_count) + fct_ticket_events
 //   staffing vs volume      → fct_agent_shifts × fct_backlog_snapshots by channel
 const graph: ModelGraph = {
-  storageId: null,
+  diagrams: [],
   nodes: [
     mart("dim_customer", "Customer", "VIEW", [
       f("customer_id", "STRING", true, "Unique customer identifier."),

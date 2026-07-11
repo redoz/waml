@@ -13,7 +13,7 @@ import { f, mart, rel, type Template } from "./helpers";
 //   promo uplift            → fct_pos_sales (promotion_id, discount) vs non-promo baseline
 //   shrinkage hot spots     → fct_shrinkage_events (reason, cost) by store × category
 const graph: ModelGraph = {
-  storageId: null,
+  diagrams: [],
   nodes: [
     mart("dim_store", "Store", "TABLE", [
       f("store_id", "STRING", true, "Unique store identifier."),

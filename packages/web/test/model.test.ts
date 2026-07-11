@@ -1,10 +1,10 @@
 import { describe, it, expect } from "vitest";
 import { createModelStore } from "../src/state/model";
 describe("model store", () => {
-  it("adds a node defaulting to SQL + pending", () => {
+  it("adds a node defaulting to a uml.Class classifier", () => {
     const s = createModelStore();
     const n = s.addNode({ x: 10, y: 20 });
-    expect(n.inputSource).toBe("SQL"); expect(n.status).toBe("pending");
+    expect(n.type).toBe("uml.Class"); expect(n.attributes).toEqual([]); expect(n.stereotypes).toEqual([]);
     expect(s.get().nodes).toHaveLength(1);
   });
   it("blocks self-links and collapses mutual edges to bidirectional", () => {

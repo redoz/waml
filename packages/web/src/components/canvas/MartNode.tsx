@@ -1,39 +1,12 @@
 import { memo, useState } from "react";
 import { Handle, Position, type NodeProps } from "@xyflow/react";
-import { KeyRound, ChevronDown, ChevronRight } from "lucide-react";
-import type { ModelNode, SchemaField } from "@mc/okf";
+import { ChevronDown, ChevronRight } from "lucide-react";
+import type { ModelNode, Attribute } from "@mc/okf";
 import type { ViewMode } from "../../state/viewMode";
 import { DataMartIcon } from "../../lib/icons";
 import { ERD_COLLAPSED_ROWS } from "./layoutSize";
 
-const SOURCE_COLOR: Record<string, string> = {
-  SQL: "#10b981",
-  CONNECTOR: "#f59e0b",
-  VIEW: "#3b82f6",
-  TABLE: "#8b5cf6",
-};
-
-const STATUS_TIP: Record<string, string> = {
-  created: "Created in OWOX",
-  pending: "Draft — not pushed yet",
-  creating: "Creating in OWOX…",
-  error: "Error — check details",
-};
-
-export type MartNodeData = ModelNode & { _viewMode?: ViewMode; _keyFields?: string[] };
-
-function StatusDot({ status }: { status: string }) {
-  const base = "absolute top-[10px] right-[10px] w-[9px] h-[9px] rounded-full z-10";
-  const colors: Record<string, string> = {
-    created: "bg-[#10b981]",
-    pending: "bg-slate-300",
-    creating: "bg-[#1e88e5] animate-pulse",
-    error: "bg-[#ef4444]",
-  };
-  return (
-    <span className={`${base} ${colors[status] ?? "bg-slate-300"}`} title={STATUS_TIP[status] ?? status} />
-  );
-}
+export type MartNodeData = ModelNode & { _viewMode?: ViewMode };
 
 // Node-level connectable ports (the only way to draw a new relationship).
 function NodePorts() {
@@ -62,53 +35,30 @@ function MartHeader({ node, color }: { node: MartNodeData; color: string }) {
   );
 }
 
-// Display-only anchor handles on a field row. isConnectable={false} keeps them
-// from starting new connections — they only give existing edges a place to land.
-function FieldAnchors({ name }: { name: string }) {
-  const base = { width: 1, height: 1, minWidth: 0, minHeight: 0, background: "transparent", border: "none", top: "50%" } as const;
-  return (
-    <>
-      <Handle type="source" position={Position.Left} id={`fl:${name}`} isConnectable={false} style={{ ...base, left: 0 }} />
-      <Handle type="source" position={Position.Right} id={`fr:${name}`} isConnectable={false} style={{ ...base, right: 0 }} />
-    </>
-  );
-}
-
-function FieldRow({ f }: { f: SchemaField }) {
+function FieldRow({ a }: { a: Attribute }) {
   return (
     <div className="relative flex items-center gap-2 px-3 py-[5px] text-[11.5px] border-b border-[#f3f5f8] last:border-b-0">
-      <FieldAnchors name={f.name} />
-      {f.pk
-        ? <KeyRound size={11} className="text-amber-500 flex-shrink-0" />
-        : <span className="w-[11px] flex-shrink-0" />}
-      <span className="flex-1 text-slate-800 truncate" title={f.alias || f.name}>{f.alias || f.name}</span>
-      <span className="text-slate-400 font-mono text-[10.5px] truncate">{f.type}</span>
+      <span className="flex-1 text-slate-800 truncate" title={a.name}>{a.name}</span>
+      <span className="text-slate-400 font-mono text-[10.5px] truncate">{a.type.name}{a.multiplicity !== "1" ? ` [${a.multiplicity}]` : ""}</span>
     </div>
   );
 }
 
-// ERD body shows at most ERD_COLLAPSED_ROWS fields by default so dense marts stay
-// readable; the rest hide behind a "+N more" toggle. PK and relationship-key
-// fields are always kept in the visible set so their edge handles exist even
-// while collapsed (edges anchor to those field rows).
+// ERD body shows at most ERD_COLLAPSED_ROWS attributes by default so dense nodes
+// stay readable; the rest hide behind a "+N more" toggle.
 function ErdBody({ node }: { node: MartNodeData }) {
   const [expanded, setExpanded] = useState(false);
-  const schema = node.schema;
-  if (schema.length === 0) {
-    return <div className="px-3 pb-[10px] text-[11px] text-slate-400">no fields</div>;
+  const ordered = node.attributes;
+  if (ordered.length === 0) {
+    return <div className="px-3 pb-[10px] text-[11px] text-slate-400">no attributes</div>;
   }
 
-  const keyFields = new Set(node._keyFields ?? []);
-  const isKey = (f: SchemaField) => f.pk || keyFields.has(f.name);
-  // Keys first, then the rest — keeps a stable order whether collapsed or expanded.
-  const ordered = [...schema.filter(isKey), ...schema.filter(f => !isKey(f))];
-  const collapsedCount = Math.max(ERD_COLLAPSED_ROWS, ordered.filter(isKey).length);
-  const visible = expanded ? ordered : ordered.slice(0, collapsedCount);
-  const hidden = schema.length - collapsedCount;
+  const visible = expanded ? ordered : ordered.slice(0, ERD_COLLAPSED_ROWS);
+  const hidden = ordered.length - ERD_COLLAPSED_ROWS;
 
   return (
     <div className="border-t border-[#eef1f5]">
-      {visible.map(f => <FieldRow key={f.name} f={f} />)}
+      {visible.map(a => <FieldRow key={a.name} a={a} />)}
       {hidden > 0 && (
         <button
           onClick={e => { e.stopPropagation(); setExpanded(v => !v); }}
@@ -126,9 +76,9 @@ function ErdBody({ node }: { node: MartNodeData }) {
 function MartNodeInner({ data }: NodeProps) {
   const node = data as unknown as MartNodeData;
   const viewMode = node._viewMode ?? "compact";
-  const color = SOURCE_COLOR[node.inputSource] ?? "#94a3b8";
+  const color = "#94a3b8";
   const isErd = viewMode === "erd";
-  const fieldCount = node.schema?.length ?? 0;
+  const fieldCount = node.attributes?.length ?? 0;
   const fieldText = fieldCount > 0 ? `${fieldCount} field${fieldCount > 1 ? "s" : ""}` : "no fields";
 
   return (
@@ -136,7 +86,6 @@ function MartNodeInner({ data }: NodeProps) {
       className={`relative bg-white border-[1.5px] border-[#d8dee8] rounded-xl shadow-[0_2px_8px_rgba(15,23,42,0.05)] cursor-grab hover:border-[#c2cad8] select-none ${isErd ? "w-[250px]" : "w-[200px]"}`}
       style={{ fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Inter, system-ui, sans-serif" }}
     >
-      <StatusDot status={node.status} />
       <MartHeader node={node} color={color} />
 
       {/* Meta row: type chip + (compact) field count */}
@@ -145,7 +94,7 @@ function MartNodeInner({ data }: NodeProps) {
           className="text-[10.5px] font-[650] uppercase tracking-[0.3px] px-[7px] py-[2px] rounded-full text-white"
           style={{ background: color }}
         >
-          {node.inputSource}
+          {node.type}
         </span>
         {!isErd && <span className="text-[11px] text-slate-500">{fieldText}</span>}
       </div>

@@ -38,13 +38,14 @@ function renderEdge(data: any) {
   );
 }
 
-describe("RelEdge cardinality pill", () => {
-  it("shows the pill when cardinality is set", () => {
-    const { queryByText } = renderEdge({ keys: [{ left: "x", right: "y" }], bidirectional: false, cardinality: "N:1" });
-    expect(queryByText("N:1")).toBeTruthy();
+describe("RelEdge multiplicity label", () => {
+  it("shows the end multiplicities when labels are on", () => {
+    const { container } = renderEdge({ kind: "associates", fromEnd: { multiplicity: "1" }, toEnd: { multiplicity: "*" }, bidirectional: false, relLabelMode: "all" });
+    expect(container.textContent).toContain("1");
+    expect(container.textContent).toContain("*");
   });
-  it("shows no pill when cardinality is unset", () => {
-    const { queryByText } = renderEdge({ keys: [{ left: "x", right: "y" }], bidirectional: false });
-    expect(queryByText("N:1")).toBeNull();
+  it("renders no label div when labels are hidden", () => {
+    const { container } = renderEdge({ kind: "associates", fromEnd: { multiplicity: "1" }, toEnd: { multiplicity: "*" }, bidirectional: false, relLabelMode: "hidden" });
+    expect(container.textContent).not.toContain("→");
   });
 });

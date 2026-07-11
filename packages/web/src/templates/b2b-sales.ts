@@ -13,7 +13,7 @@ import { f, mart, rel, type Template } from "./helpers";
 //   quota attainment/ramp   → fct_quota_attainment × dim_rep.is_ramped
 //   ACV via multi-product   → fct_opportunity_products line mix per deal
 const graph: ModelGraph = {
-  storageId: null,
+  diagrams: [],
   nodes: [
     mart("dim_account", "Account", "VIEW", [
       f("account_id", "STRING", true, "Unique account identifier."),

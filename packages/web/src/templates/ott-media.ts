@@ -13,7 +13,7 @@ import { f, mart, rel, type Template } from "./helpers";
 //   free/ad → paid          → fct_subscription_events (plan_from → plan_to) × dim_plan.tier
 //   involuntary churn       → fct_payments (is_failed, retry_count, recovered_at)
 const graph: ModelGraph = {
-  storageId: null,
+  diagrams: [],
   nodes: [
     mart("dim_subscriber", "Subscriber", "VIEW", [
       f("subscriber_id", "STRING", true, "Unique subscriber identifier."),

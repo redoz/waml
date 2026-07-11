@@ -13,7 +13,7 @@ import { f, mart, rel, type Template } from "./helpers";
 //   supplier OTIF           → fct_purchase_orders (is_on_time, is_in_full, defect_ppm)
 //   plan attainment         → fct_production_runs (planned_units vs produced_units) by shift
 const graph: ModelGraph = {
-  storageId: null,
+  diagrams: [],
   nodes: [
     mart("dim_plant", "Plant", "TABLE", [
       f("plant_id", "STRING", true, "Unique plant identifier."),

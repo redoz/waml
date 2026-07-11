@@ -3,7 +3,6 @@ import { PanelRightOpen } from "lucide-react";
 import type { ModelNode, ModelEdge } from "@mc/okf";
 import { ObjectInspector } from "./ObjectInspector";
 import { RelationshipInspector } from "./RelationshipInspector";
-import { joinFieldType } from "../../sync/joinFieldType";
 
 type Selection =
   | { type: "node"; id: string }
@@ -43,7 +42,7 @@ function EmptyState() {
       <div>
         Select an object or relationship to edit.
         <br /><br />
-        Changes here are pushed to the matching Data Mart.
+        Changes apply to your local model.
       </div>
     </div>
   );
@@ -135,14 +134,6 @@ export function Inspector({
       fromNode={nodes.find(n => n.key === selectedEdge.from)}
       toNode={nodes.find(n => n.key === selectedEdge.to)}
       onUpdate={patch => onUpdateEdge(selectedEdge.id, patch)}
-      onEnsureField={(nodeKey, fieldName) => {
-        const node = nodes.find(n => n.key === nodeKey);
-        if (!node || !fieldName || node.schema.some(f => f.name === fieldName)) return;
-        // Match the type of the field on the other side of the join so a key
-        // pointing at an INTEGER PK isn't created as STRING (OWOX rejects it).
-        const type = joinFieldType(nodes, [selectedEdge], nodeKey, fieldName);
-        onUpdateNode(nodeKey, { schema: [...node.schema, { name: fieldName, type, pk: false }] });
-      }}
     />
   ) : (
     <EmptyState />
