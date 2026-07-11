@@ -1,5 +1,6 @@
 //! Core library for UAML: a UML-profile authoring format layered on CommonMark.
 
+pub mod frontmatter;
 pub mod slug;
 
 #[cfg(test)]
