@@ -112,6 +112,40 @@ impl<'a> Cur<'a> {
     fn done(&self) -> bool { self.pos >= self.toks.len() }
 }
 
+fn eat_direction(cur: &mut Cur) -> Option<Direction> {
+    match cur.peek_word()?.to_ascii_lowercase().as_str() {
+        "above" => { cur.bump(); Some(Direction::Above) }
+        "below" => { cur.bump(); Some(Direction::Below) }
+        "left" => {
+            let save = cur.pos;
+            cur.bump();
+            if cur.eat_word("of") { Some(Direction::LeftOf) } else { cur.pos = save; None }
+        }
+        "right" => {
+            let save = cur.pos;
+            cur.bump();
+            if cur.eat_word("of") { Some(Direction::RightOf) } else { cur.pos = save; None }
+        }
+        _ => None,
+    }
+}
+
+fn try_parse_placement(toks: &[Tok]) -> Option<LayoutStatement> {
+    let mut cur = Cur { toks, pos: 0 };
+    let first = parse_operand(&mut cur)?;
+    let mut operands = vec![first];
+    let mut directions = vec![eat_direction(&mut cur)?]; // one direction required
+    operands.push(parse_operand(&mut cur)?);
+    while let Some(d) = eat_direction(&mut cur) {
+        directions.push(d);
+        operands.push(parse_operand(&mut cur)?);
+    }
+    if !cur.done() {
+        return None;
+    }
+    Some(LayoutStatement::Placement { operands, directions })
+}
+
 /// Parse one `## Layout` bullet (leading `- ` required). Returns `None` if the
 /// bullet is malformed or has unconsumed trailing tokens.
 pub fn parse_layout_line(line: &str) -> Option<LayoutStatement> {
@@ -120,7 +154,9 @@ pub fn parse_layout_line(line: &str) -> Option<LayoutStatement> {
     if toks.is_empty() {
         return None;
     }
-    // Standalone only, for now. Placement/alignment dispatch arrives in Tasks 6–7.
+    if let Some(stmt) = try_parse_placement(&toks) {
+        return Some(stmt);
+    }
     let mut cur = Cur { toks: &toks, pos: 0 };
     let op = parse_operand(&mut cur)?;
     if !cur.done() {
@@ -379,5 +415,43 @@ mod tests {
         assert_eq!(axis, Axis::Row);
         assert_eq!(items.len(), 2);
         assert!(matches!(items[0].ref_, OperandRef::Paren(_)));
+    }
+
+    #[test]
+    fn parses_single_and_chained_placement() {
+        use crate::syntax::*;
+        let stmt = parse_layout_line("- Users left of Orders").unwrap();
+        let LayoutStatement::Placement { operands, directions } = stmt else { panic!("expected placement") };
+        assert_eq!(operands.len(), 2);
+        assert_eq!(directions, vec![Direction::LeftOf]);
+
+        let stmt = parse_layout_line("- Order above OrderLine above Payment").unwrap();
+        let LayoutStatement::Placement { operands, directions } = stmt else { panic!() };
+        assert_eq!(operands.len(), 3);
+        assert_eq!(directions, vec![Direction::Above, Direction::Above]);
+    }
+
+    #[test]
+    fn parses_all_four_directions() {
+        use crate::syntax::*;
+        for (text, dir) in [
+            ("- A left of B", Direction::LeftOf),
+            ("- A right of B", Direction::RightOf),
+            ("- A above B", Direction::Above),
+            ("- A below B", Direction::Below),
+        ] {
+            let LayoutStatement::Placement { directions, .. } = parse_layout_line(text).unwrap() else { panic!() };
+            assert_eq!(directions, vec![dir]);
+        }
+    }
+
+    #[test]
+    fn placement_binds_with_to_operand_then_direction() {
+        use crate::syntax::*;
+        // greedy `with` on the first operand, then a trailing relation
+        let stmt = parse_layout_line("- Users with frame left of Orders").unwrap();
+        let LayoutStatement::Placement { operands, directions } = stmt else { panic!() };
+        assert_eq!(directions, vec![Direction::LeftOf]);
+        assert_eq!(operands[0].hints, vec![Hint::Shape(Shape::Frame)]);
     }
 }
