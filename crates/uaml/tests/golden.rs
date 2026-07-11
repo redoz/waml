@@ -54,3 +54,10 @@ fn every_doc_is_a_serialize_fixpoint() {
         assert_eq!(once, twice, "serialize must be idempotent per document");
     }
 }
+
+#[test]
+fn orders_domain_has_no_diagnostics() {
+    let bundle = uaml::parse::split_bundle(FIXTURE);
+    let diags = uaml::validate::validate(&bundle);
+    assert!(diags.is_empty(), "expected clean fixture, got: {diags:?}");
+}
