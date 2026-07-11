@@ -178,8 +178,8 @@ fn validate_doc(path: &str, text: &str, keyset: &HashSet<String>, diags: &mut Ve
                     }
                 }
             }
-            "layout" => {
-                if crate::layout::parse_layout_line(trimmed).is_none() {
+            "layout"
+                if crate::layout::parse_layout_line(trimmed).is_none() => {
                     diags.push(Diagnostic::new(
                         DiagCode::MalformedLayout,
                         "malformed layout statement",
@@ -187,7 +187,6 @@ fn validate_doc(path: &str, text: &str, keyset: &HashSet<String>, diags: &mut Ve
                         n,
                     ));
                 }
-            }
             _ => {}
         }
     }
@@ -257,11 +256,10 @@ fn has_cycle(graph: &HashMap<String, Vec<String>>) -> bool {
             for s in succs {
                 match state.get(s).copied().unwrap_or(0) {
                     1 => return true,
-                    0 => {
-                        if dfs(s, graph, state) {
+                    0
+                        if dfs(s, graph, state) => {
                             return true;
                         }
-                    }
                     _ => {}
                 }
             }

@@ -290,9 +290,9 @@ fn parse_axis(cur: &mut Cur) -> Option<Axis> {
 fn parse_hints(cur: &mut Cur) -> Option<Vec<Hint>> {
     let mut hints = vec![parse_hint(cur)?];
     loop {
-        if cur.peek() == Some(&Tok::Comma) {
-            cur.bump();
-        } else if cur.peek_word().map(|w| w.eq_ignore_ascii_case("and")) == Some(true) {
+        let is_sep = cur.peek() == Some(&Tok::Comma)
+            || cur.peek_word().map(|w| w.eq_ignore_ascii_case("and")) == Some(true);
+        if is_sep {
             cur.bump();
         } else {
             break;
