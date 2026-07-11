@@ -4,7 +4,7 @@ import { ChevronDown, ChevronRight } from "lucide-react";
 import type { Attribute, ModelNode } from "@mc/okf";
 import type { ViewMode } from "@mc/core/state/viewMode";
 import { ERD_COLLAPSED_ROWS } from "../layoutSize";
-import { getProfile, stereotypeStyle } from "../../../profiles";
+import { getProfile, stereotypeStyle } from "@mc/core/profiles";
 
 export type OkfNodeData = ModelNode & { _viewMode?: ViewMode; _profile?: string; _collapsed?: boolean };
 export interface OkfNodeProps { data: OkfNodeData }
