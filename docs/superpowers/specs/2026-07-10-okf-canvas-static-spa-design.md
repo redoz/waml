@@ -1,7 +1,10 @@
 # OKF Canvas — static SPA pivot
 
 **Date:** 2026-07-10
-**Status:** Approved design, pre-implementation
+**Status:** Superseded — implemented, then pivoted. React Flow → Svelte
+(f11f6dd), OKF → UAML rename (eedb9e5), scope `@mc` → `@uaml`. This doc is
+kept as a point-in-time record of the founding pivot; for current state see
+`docs/uaml-spec.md`.
 **Fork of:** OWOX Model Canvas (Apache-2.0)
 
 ## Goal
