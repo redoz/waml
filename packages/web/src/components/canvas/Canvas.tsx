@@ -31,7 +31,7 @@ import type { ModelNode, ModelEdge, ModelGraph } from "@mc/okf";
 
 import { graphToBundleFiles, downloadBundle } from "@mc/core/okf/io";
 import { buildShareUrl, readSharedModel, readSharedName, clearSharedModelFromUrl } from "@mc/core/share/url";
-import { readTemplateModel, clearTemplateFromUrl } from "../../lib/templateLink";
+import { readTemplateModel, clearTemplateFromUrl } from "@mc/core/lib/templateLink";
 import { exportCanvasSvg } from "@mc/core/share/exportImage";
 
 import { TopBar } from "../TopBar";

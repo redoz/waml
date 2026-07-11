@@ -2,7 +2,7 @@ import { X, Rocket, Plus, Download, ExternalLink } from "lucide-react";
 import type { ModelGraph } from "@mc/okf";
 import { INDUSTRY_TEMPLATES, DATASET_TEMPLATES, type Template } from "@mc/core/templates";
 import { LibraryIcon } from "../lib/icons";
-import { IMPORT_GUIDE_URL } from "../lib/links";
+import { IMPORT_GUIDE_URL } from "@mc/core/lib/links";
 
 interface Props {
   /** Roll a template onto the canvas. */
