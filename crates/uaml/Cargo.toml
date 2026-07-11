@@ -1,0 +1,10 @@
+[package]
+name = "uaml"
+version = "0.0.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Core library for parsing, serializing, and validating UAML documents."
+
+[dependencies]
+regex.workspace = true

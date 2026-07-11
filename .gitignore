@@ -1,1 +1,9 @@
-Removed: upstream-licensed content, not redistributed.
+node_modules/
+dist/
+.superpowers/
+.claude/
+.env
+.env.local
+*.log
+.DS_Store
+/target

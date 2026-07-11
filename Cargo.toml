@@ -1,0 +1,11 @@
+[workspace]
+resolver = "2"
+members = ["crates/uaml"]
+
+[workspace.package]
+edition = "2021"
+rust-version = "1.80"
+license = "Apache-2.0"
+
+[workspace.dependencies]
+regex = "1"
