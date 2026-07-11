@@ -195,6 +195,14 @@ fn parse_hint(cur: &mut Cur) -> Option<Hint> {
 
 fn parse_ref(cur: &mut Cur) -> Option<OperandRef> {
     match cur.peek()? {
+        Tok::LParen => {
+            cur.bump();
+            let inner = parse_operand(cur)?;
+            match cur.bump() {
+                Some(Tok::RParen) => Some(OperandRef::Paren(Box::new(inner))),
+                _ => None,
+            }
+        }
         Tok::Link { .. } => {
             if let Some(Tok::Link { title, slug }) = cur.bump() {
                 Some(OperandRef::Name(NameRef::Link { title: title.clone(), slug: slug.clone() }))
@@ -210,13 +218,33 @@ fn parse_ref(cur: &mut Cur) -> Option<OperandRef> {
             }
         }
         Tok::Word(w) => {
-            // Inline groups + parens are added in Task 5. For now a lone bare word.
-            let name = w.clone();
-            cur.bump();
-            Some(OperandRef::Name(NameRef::Bare(name)))
+            let lw = w.to_ascii_lowercase();
+            if lw == "column" || lw == "row" {
+                let axis = if lw == "column" { Axis::Column } else { Axis::Row };
+                cur.bump();
+                if !cur.eat_word("of") {
+                    // Not a group; backtrack and treat as bare word
+                    return None;
+                }
+                let items = parse_operand_list(cur)?;
+                Some(OperandRef::InlineGroup { axis, items })
+            } else {
+                let name = w.clone();
+                cur.bump();
+                Some(OperandRef::Name(NameRef::Bare(name)))
+            }
         }
         _ => None,
     }
+}
+
+fn parse_operand_list(cur: &mut Cur) -> Option<Vec<Operand>> {
+    let mut items = vec![parse_operand(cur)?];
+    while cur.peek() == Some(&Tok::Comma) {
+        cur.bump();
+        items.push(parse_operand(cur)?);
+    }
+    Some(items)
 }
 
 #[cfg(test)]
@@ -316,5 +344,40 @@ mod tests {
     fn rejects_dangling_as_without_axis() {
         assert!(parse_layout_line("- Users as").is_none());
         assert!(parse_layout_line("- Users as with frame").is_none());
+    }
+
+    #[test]
+    fn parses_inline_group_and_greedy_with_binding() {
+        use crate::syntax::*;
+        // `with` binds to Account (nearest operand), NOT the whole column.
+        let stmt = parse_layout_line("- column of Customer, Account with large margin").unwrap();
+        let LayoutStatement::Standalone(op) = stmt else { panic!() };
+        let OperandRef::InlineGroup { axis, items } = op.ref_ else { panic!("expected inline group") };
+        assert_eq!(axis, Axis::Column);
+        assert_eq!(items.len(), 2);
+        assert!(op.hints.is_empty(), "outer operand carries no hints");
+        assert_eq!(items[1].hints, vec![Hint::Margin(Margin::Large)]);
+    }
+
+    #[test]
+    fn parens_rebind_with_to_the_whole_group() {
+        use crate::syntax::*;
+        let stmt = parse_layout_line("- (column of Customer, Account) with large margin").unwrap();
+        let LayoutStatement::Standalone(op) = stmt else { panic!() };
+        assert_eq!(op.hints, vec![Hint::Margin(Margin::Large)]);
+        let OperandRef::Paren(inner) = op.ref_ else { panic!("expected paren") };
+        assert!(inner.hints.is_empty());
+        assert!(matches!(inner.ref_, OperandRef::InlineGroup { .. }));
+    }
+
+    #[test]
+    fn parses_nested_inline_groups() {
+        use crate::syntax::*;
+        let stmt = parse_layout_line("- row of (column of Customer, Account), Orders").unwrap();
+        let LayoutStatement::Standalone(op) = stmt else { panic!() };
+        let OperandRef::InlineGroup { axis, items } = op.ref_ else { panic!() };
+        assert_eq!(axis, Axis::Row);
+        assert_eq!(items.len(), 2);
+        assert!(matches!(items[0].ref_, OperandRef::Paren(_)));
     }
 }
