@@ -33,11 +33,11 @@
   import TemplateApplyDialog from "../TemplateApplyDialog.svelte";
   import GoalDialog from "../GoalDialog.svelte";
 import ShareToast from "../ShareToast.svelte";
+  import ShareDialog from "../share/ShareDialog.svelte";
   import Inspector from "../inspector/Inspector.svelte";
   import ExternalRefs from "../inspector/ExternalRefs.svelte";
   import ModelSheet from "../rail/ModelSheet.svelte";
   import RightRail from "../rail/RightRail.svelte";
-  import SharePanel from "../rail/SharePanel.svelte";
   import { createRightPanel, type RightPanelId } from "../rail/rightPanel.svelte";
 
   import {
@@ -54,12 +54,14 @@ import ShareToast from "../ShareToast.svelte";
   import { persistGraph } from "@uaml/core/state/persist";
   import { graphToBundleFiles, downloadBundle } from "@uaml/core/okf/io";
   import { buildShareUrl } from "@uaml/core/share/url";
-  import { exportCanvasSvg } from "@uaml/core/share/exportImage";
+  import { exportCanvasSvg, buildCanvasSvg } from "@uaml/core/share/exportImage";
+  import { svgToPngBlob } from "../../share/rasterize";
   import { mergeGraphs } from "@uaml/core/sync/merge";
   import type { ModelGraph } from "@uaml/okf";
 
-  // Titles shown in the right Sheet header per active panel.
-  const SHEET_TITLES: Record<RightPanelId, string> = { inspect: "Inspect", share: "Share model" };
+  // Titles shown in the right Sheet header per active panel. Share moved to the
+  // top bar + modal dialog, so the sheet now hosts only Inspect.
+  const SHEET_TITLES: Record<RightPanelId, string> = { inspect: "Inspect" };
 
   // ── State (one $state per React useState) ───────────────────────────────────
   let selection = $state<Selection>(null);
@@ -88,6 +90,8 @@ import ShareToast from "../ShareToast.svelte";
   let showWelcome = $state(isFirstVisit);
   let shareToast = $state<string | null>(null);
   let showClear = $state(false);
+  // Modal Share dialog (link + share-as-image). Replaces the old rail Share panel.
+  let showShare = $state(false);
 
   // Single right-side panel state (which rail entry is open in the Sheet).
   const panel = createRightPanel();
@@ -325,20 +329,13 @@ import ShareToast from "../ShareToast.svelte";
     });
   }
 
-  // Copy a shareable link that reopens this exact model. Falls back to a prompt
-  // if the clipboard API is blocked (insecure context / permissions).
-  async function handleShare() {
-    const url = buildShareUrl(store.get(), modelName);
-    const isLocal = /^(localhost|127\.|0\.0\.0\.0|\[::1\])/.test(location.hostname);
-    const msg = isLocal
-      ? "Link copied — note: a localhost link only opens on this machine. Deploy to share it."
-      : "Link copied — anyone with it can open this model.";
-    try {
-      await navigator.clipboard.writeText(url);
-      shareToast = msg;
-    } catch {
-      window.prompt("Copy this shareable link:", url);
-    }
+  // Render the current diagram to a PNG for the Share dialog's "Share as image"
+  // flow: reuse the SVG export path (buildCanvasSvg → styles inlined), then
+  // rasterize that SVG onto a canvas. Returns null when there's nothing to draw.
+  async function generateSharePng(): Promise<Blob | null> {
+    const built = await buildCanvasSvg(rfNodes, ".svelte-flow__viewport");
+    if (!built) return null;
+    return svgToPngBlob(built.svg, { width: built.width, height: built.height });
   }
 
   // Auto-layout a freshly loaded graph (import or template). The OKF format
@@ -415,8 +412,7 @@ import ShareToast from "../ShareToast.svelte";
     onExport={handleExport}
     onExportSvg={handleExportSvg}
     exportDisabled={$model.nodes.length === 0}
-    onShare={handleShare}
-    shareDisabled={$model.nodes.length === 0}
+    onShare={() => (showShare = true)}
     onLibrary={() => (showLibrary = true)}
     onOpenGoal={() => (showGoal = true)}
     goalSet={!!goal}
@@ -474,6 +470,15 @@ import ShareToast from "../ShareToast.svelte";
         showGoal = false;
       }}
       onClose={() => (showGoal = false)}
+    />
+  {/if}
+  {#if showShare}
+    <ShareDialog
+      shareUrl={buildShareUrl(store.get(), modelName)}
+      imageName={imageName}
+      canShareImage={$model.nodes.length > 0}
+      generatePng={generateSharePng}
+      onClose={() => (showShare = false)}
     />
   {/if}
 
@@ -606,9 +611,6 @@ import ShareToast from "../ShareToast.svelte";
             {/if}
           {/snippet}
         </Inspector>
-      {/if}
-      {#if panel.active === "share"}
-        <SharePanel shareUrl={buildShareUrl(store.get(), modelName)} onCopy={() => void handleShare()} onExportImage={handleExportSvg} />
       {/if}
     </ModelSheet>
     <RightRail active={panel.active} onOpen={panel.open} />

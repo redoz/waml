@@ -1,13 +1,13 @@
 <script lang="ts">
   // Mirrors packages/web/src/components/rail/RightRail.tsx.
-  import { PanelRight, Share2 } from "lucide-svelte";
+  import { PanelRight } from "lucide-svelte";
   import type { RightPanelId } from "./rightPanel.svelte";
 
   type Item = { id: RightPanelId; label: string };
 
+  // Share now lives in the top bar; the rail hosts only Inspect.
   const ITEMS: Item[] = [
     { id: "inspect", label: "Inspect" },
-    { id: "share", label: "Share" },
   ];
 
   const railBtn = (on: boolean) =>
@@ -31,11 +31,7 @@
       aria-current={on ? "true" : undefined}
       class={railBtn(on)}
     >
-      {#if it.id === "inspect"}
-        <PanelRight size={20} />
-      {:else}
-        <Share2 size={20} />
-      {/if}
+      <PanelRight size={20} />
       {it.label}
     </button>
   {/each}
