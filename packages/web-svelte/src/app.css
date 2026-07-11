@@ -1,0 +1,6 @@
+@import "@xyflow/svelte/dist/style.css";
+@import "./components/canvas/canvas.css";
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;

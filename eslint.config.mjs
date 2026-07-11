@@ -42,6 +42,12 @@ export default tseslint.config(
     },
   },
 
+  // Browser Svelte app (plain-TS modules; .svelte files are checked by svelte-check)
+  {
+    files: ["packages/web-svelte/**/*.ts"],
+    languageOptions: { globals: { ...globals.browser } },
+  },
+
   // Node code (shared lib)
   {
     files: ["packages/okf/**/*.ts"],
