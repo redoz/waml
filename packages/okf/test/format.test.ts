@@ -13,10 +13,10 @@ description: "A customer's placed order."
 # Order
 
 ## Attributes
-- id: OrderId [1]
+- id: OrderId {1}
 - placedAt: Timestamp
 - status: [OrderStatus](./order-status.md)
-- shippingAddress: [Address](./address.md) [0..1]
+- shippingAddress: [Address](./address.md) {0..1}
 
 ## Relationships
 - associates [Customer](./customer.md) as "places": 1 order to 1 customer
@@ -107,7 +107,7 @@ describe("parseBundle — UML format", () => {
 describe("parseBundle — association classes (uml.Association)", () => {
   const orderAC = `---\ntype: uml.Class\ntitle: Order\n---\n# Order\n\n## Relationships\n- associates [Customer](./customer.md) as [Places](./places.md): 1 order to 1 customer\n`;
   const customerAC = `---\ntype: uml.Class\ntitle: Customer\n---\n# Customer\n`;
-  const places = `---\ntype: uml.Association\ntitle: Places\n---\n# Places\n\n## Attributes\n- placedAt: Timestamp [1]\n- channel: [Channel](./channel.md) [1]\n`;
+  const places = `---\ntype: uml.Association\ntitle: Places\n---\n# Places\n\n## Attributes\n- placedAt: Timestamp {1}\n- channel: [Channel](./channel.md) {1}\n`;
   const channel = `---\ntype: uml.Class\ntitle: Channel\n---\n# Channel\n`;
   const g = parseBundle({ "m/order.md": orderAC, "m/customer.md": customerAC, "m/places.md": places, "m/channel.md": channel });
 
@@ -190,7 +190,7 @@ describe("UML format round-trip (lossless)", () => {
     expect(doc).toContain("## Attributes");
     expect(doc).toContain("- id: OrderId");
     expect(doc).toContain("- status: [OrderStatus](./order-status.md)");
-    expect(doc).toContain("- - note: String [0..1]");
+    expect(doc).toContain("- - note: String {0..1}");
     expect(doc).toContain("## Relationships");
     expect(doc).toContain("- composes [OrderLine](./order-line.md): 1 to 1..* lines");
     expect(doc).toContain("- specializes [Base](./base.md)");

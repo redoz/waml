@@ -8,6 +8,6 @@
   {#if showVisibility && a.visibility}<span class="text-slate-400 font-mono">{a.visibility}</span>{/if}
   <span class="flex-1 text-slate-800 truncate" title={a.name}>{a.name}</span>
   <span class="text-slate-400 font-mono text-[10.5px] truncate">
-    {a.type.name}{a.multiplicity !== "1" ? ` [${a.multiplicity}]` : ""}
+    {a.type.name}{a.multiplicity !== "1" ? ` {${a.multiplicity}}` : ""}
   </span>
 </div>

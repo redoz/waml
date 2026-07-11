@@ -45,9 +45,9 @@ description: "A customer's placed order."
 # Order
 
 ## Attributes
-- id: OrderId [1]
-- status: [OrderStatus](./order-status.md) [1]
-- total: [Money](./money.md) [1]
+- id: OrderId {1}
+- status: [OrderStatus](./order-status.md) {1}
+- total: [Money](./money.md) {1}
 
 ## Relationships
 - associates [Customer](./customer.md): 1 order to 1 customer
@@ -62,10 +62,10 @@ description: "A customer's placed order."
 - `description` — one-line summary (optional).
 
 ### `## Attributes`
-One bullet per attribute: `- [<visibility> ]<name>: <Type> [<multiplicity>]`.
+One bullet per attribute: `- [<visibility> ]<name>: <Type> {<multiplicity>}`.
 - **Visibility** (optional, leading): `+` public, `-` private, `#` protected, `~` package.
 - **Type** — either a bare token (`OrderId`, `String`, `Decimal`) or a link `[Title](./slug.md)` to another classifier (the canvas draws navigation to it).
-- **Multiplicity** — trailing `[…]`: `1`, `0..1`, `*`, `1..*`, `2..5`. Absent ⇒ `[1]`.
+- **Multiplicity** — trailing `{…}`: `1`, `0..1`, `*`, `1..*`, `2..5`. Absent ⇒ `{1}`.
 
 ### `## Values` (enums only)
 For `type: uml.Enum`, list the literals — one `- LITERAL` per line:
@@ -181,9 +181,9 @@ description: "A customer's placed order."
 # Order
 
 ## Attributes
-- id: OrderId [1]
-- status: [OrderStatus](./order-status.md) [1]
-- total: [Money](./money.md) [1]
+- id: OrderId {1}
+- status: [OrderStatus](./order-status.md) {1}
+- total: [Money](./money.md) {1}
 
 ## Relationships
 - associates [Customer](./customer.md): 1 order to 1 customer
@@ -198,8 +198,8 @@ title: OrderLine
 # OrderLine
 
 ## Attributes
-- quantity: Int [1]
-- unitPrice: [Money](./money.md) [1]
+- quantity: Int {1}
+- unitPrice: [Money](./money.md) {1}
 
 <!-- shop/customer.md -->
 ---
@@ -210,8 +210,8 @@ title: Customer
 # Customer
 
 ## Attributes
-- id: CustomerId [1]
-- name: String [1]
+- id: CustomerId {1}
+- name: String {1}
 
 <!-- shop/order-status.md -->
 ---
@@ -235,8 +235,8 @@ title: Money
 # Money
 
 ## Attributes
-- amount: Decimal [1]
-- currency: CurrencyCode [1]
+- amount: Decimal {1}
+- currency: CurrencyCode {1}
 
 <!-- shop/orders-domain.md -->
 ---
