@@ -39,6 +39,8 @@ pub enum Op {
         rename: Option<String>,
     },
     AttrRm { node: String, name: String },
+    ValueAdd { node: String, literal: String },
+    ValueRm { node: String, literal: String },
 }
 
 pub fn apply(bundle: &[(String, String)], ops: &[Op]) -> Result<Bundle, OpError> {
@@ -61,6 +63,8 @@ fn apply_one(work: &mut Bundle, op: &Op) -> Result<(), OpError> {
             op_attr_set(work, node, name, ty_token, multiplicity, *visibility, rename)
         }
         Op::AttrRm { node, name } => op_attr_rm(work, node, name),
+        Op::ValueAdd { node, literal } => op_value_add(work, node, literal),
+        Op::ValueRm { node, literal } => op_value_rm(work, node, literal),
     }
 }
 
@@ -102,6 +106,21 @@ pub(crate) fn attrs_mut(doc: &mut Document) -> &mut Vec<Attribute> {
             _ => None,
         })
         .expect("attributes section just ensured")
+}
+
+/// Get the `## Values` list, creating an empty section if absent
+/// (canonical serialize re-orders sections, so append position is irrelevant).
+pub(crate) fn values_mut(doc: &mut Document) -> &mut Vec<String> {
+    if !doc.sections.iter().any(|s| matches!(s, Section::Values(_))) {
+        doc.sections.push(Section::Values(Vec::new()));
+    }
+    doc.sections
+        .iter_mut()
+        .find_map(|s| match s {
+            Section::Values(v) => Some(v),
+            _ => None,
+        })
+        .expect("values section just ensured")
 }
 
 /// Forward-ref-safe: a token matching an existing doc slug links to it (using
@@ -189,6 +208,29 @@ fn op_attr_rm(work: &mut Bundle, node: &str, name: &str) -> Result<(), OpError> 
         attrs.retain(|a| a.name != name);
         if attrs.len() == before {
             return Err(OpError::at("attr.rm", format!("no attribute '{name}' in {node}")));
+        }
+        Ok(())
+    })
+}
+
+fn op_value_add(work: &mut Bundle, node: &str, literal: &str) -> Result<(), OpError> {
+    edit_doc(work, node, "value.add", |doc| {
+        let values = values_mut(doc);
+        if values.iter().any(|v| v == literal) {
+            return Err(OpError::at("value.add", format!("value '{literal}' already in {node}")));
+        }
+        values.push(literal.to_string());
+        Ok(())
+    })
+}
+
+fn op_value_rm(work: &mut Bundle, node: &str, literal: &str) -> Result<(), OpError> {
+    edit_doc(work, node, "value.rm", |doc| {
+        let values = values_mut(doc);
+        let before = values.len();
+        values.retain(|v| v != literal);
+        if values.len() == before {
+            return Err(OpError::at("value.rm", format!("no value '{literal}' in {node}")));
         }
         Ok(())
     })
@@ -300,5 +342,27 @@ mod tests {
         assert!(out[0].1.contains("- id: OrderId"));
         let err = apply(&b, &[Op::AttrRm { node:"order".into(), name:"ghost".into() }]).unwrap_err();
         assert!(err.reason.contains("no attribute 'ghost'"));
+    }
+
+    #[test]
+    fn value_add_appends_and_refuses_duplicate() {
+        let b = vec![("a/order-status.md".to_string(),
+            "---\ntype: uml.Enum\ntitle: OrderStatus\n---\n# OrderStatus\n\n## Values\n- DRAFT\n".to_string())];
+        let out = apply(&b, &[Op::ValueAdd { node:"order-status".into(), literal:"PLACED".into() }]).unwrap();
+        assert!(out[0].1.contains("- DRAFT"));
+        assert!(out[0].1.contains("- PLACED"));
+        let err = apply(&b, &[Op::ValueAdd { node:"order-status".into(), literal:"DRAFT".into() }]).unwrap_err();
+        assert!(err.reason.contains("already"));
+    }
+
+    #[test]
+    fn value_rm_removes_and_refuses_missing() {
+        let b = vec![("a/order-status.md".to_string(),
+            "---\ntype: uml.Enum\ntitle: OrderStatus\n---\n# OrderStatus\n\n## Values\n- DRAFT\n- PLACED\n".to_string())];
+        let out = apply(&b, &[Op::ValueRm { node:"order-status".into(), literal:"DRAFT".into() }]).unwrap();
+        assert!(!out[0].1.contains("DRAFT"));
+        assert!(out[0].1.contains("- PLACED"));
+        let err = apply(&b, &[Op::ValueRm { node:"order-status".into(), literal:"GONE".into() }]).unwrap_err();
+        assert!(err.reason.contains("no value 'GONE'"));
     }
 }
