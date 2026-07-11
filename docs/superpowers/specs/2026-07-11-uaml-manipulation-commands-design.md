@@ -135,7 +135,10 @@ link changes. Covered by a golden test on the orders-domain fixture.
   single `Op` and calls `apply` on the bundle read from the target paths.
 - `apply` subcommand: read the NDJSON op-log from a file or stdin (`-`), parse the optional
   header line + one `Op` per line, call `apply`.
-- Shared flags on mutating commands: `--dry-run`, `--stdout`, `--format human|json`.
+- Shared flags on mutating commands: `--dry-run`, `--stdout`, `--emit-ops`, `--format human|json`.
+  Each sugar command builds exactly one `Op`, so `--emit-ops` just serializes that `Op` as an
+  NDJSON line and writes nothing — making the CLI a producer of the same op-log the web UI
+  emits. The three "write nothing" flags are mutually exclusive.
 - New `io` helpers: write-back of only the changed entries, unified-diff rendering for
   `--dry-run`, bundle emission for `--stdout`.
 - `show` / `refs` are read-only: build the `Model`, print the resolved node/edges (`show`) or
@@ -185,8 +188,9 @@ uaml refs  <slug>
 uaml apply <ops.ndjson | ->  [--dry-run|--stdout] [--format human|json]   # NDJSON: one Op/line, optional {uamlOps:1} header line
 
 # Global on mutating commands
---dry-run   # print diff, write nothing
---stdout    # emit resulting bundle to stdout
+--dry-run   # print unified diff of the touched files, write nothing
+--stdout    # emit resulting bundle to stdout, write nothing
+--emit-ops  # print the NDJSON Op line(s) this command would apply, write nothing (capture mode)
 ```
 
 ## Error handling
@@ -206,6 +210,8 @@ uaml apply <ops.ndjson | ->  [--dry-run|--stdout] [--format human|json]   # NDJS
   header; an unknown `uamlOps` version is rejected with a clear error (replay-compat guard for
   the web op-log). A malformed line names its line number in the error.
 - Apply-then-serialize is a canonical fixpoint (an edit leaves the file in canonical form).
+- Command↔op parity: for each sugar command, the `Op` it emits under `--emit-ops`, applied via
+  `apply`, produces the same bundle as running the command directly.
 - Cross-file rename golden on `tests/fixtures/orders-domain.md`: every referrer (rel target,
   attribute type-ref, `as [Ref]`, diagram member, hint) rewritten; unrelated content untouched.
 - Gate (unchanged): `cargo test` (workspace) + `cargo clippy --all-targets` clean + golden
