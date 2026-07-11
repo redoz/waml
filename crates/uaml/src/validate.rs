@@ -266,6 +266,25 @@ mod tests {
     }
 
     #[test]
+    fn stray_comment_does_not_hide_unresolved_target() {
+        // Reproduces the reported bug: an unresolved relationship target
+        // appears BEFORE a later, unrelated HTML comment (e.g. a review
+        // note). Pre-fix, `split_bundle` treats that stray comment as a
+        // bundle marker and — because it only keeps the tail of the blob
+        // starting at the marker — silently discards everything before it,
+        // including the frontmatter and the Relationships section. That
+        // makes `check` report no problems for a document that actually
+        // has an Error-severity diagnostic.
+        let text = "---\ntype: uml.Class\ntitle: Order\n---\n# Order\n\n## Relationships\n- depends [Ghost](./ghost.md)\n\n<!-- reviewed: needs follow-up -->\n\nTrailing note.\n";
+        let bundle = crate::parse::split_bundle(text);
+        let d = validate(&bundle);
+        assert!(
+            d.iter().any(|x| x.code == DiagCode::UnresolvedTarget),
+            "unresolved-target must still be reported (content before a stray comment must not be discarded), got: {d:?}"
+        );
+    }
+
+    #[test]
     fn mismatched_fence_styles_do_not_hide_diagnostics() {
         // A `~~~`-fenced block containing a literal ``` line must not desync
         // the fence tracker: only a matching `~~~` should close it, and the

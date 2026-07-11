@@ -81,4 +81,18 @@ mod tests {
         assert_eq!(docs.len(), 1);
         assert_eq!(docs[0].0, "shop/order.md");
     }
+
+    #[test]
+    fn stray_comment_doc_is_one_doc() {
+        // A single .md doc that happens to contain a lone, non-marker HTML
+        // comment (e.g. a review note) must not be split apart: it must
+        // come back as exactly one doc, keyed by its real display path,
+        // with the full content — including the unresolved relationship
+        // section that follows the stray comment — intact.
+        let text = "---\ntype: uml.Class\ntitle: Order\n---\n# Order\n\n<!-- reviewed: needs follow-up -->\n\n## Relationships\n- depends [Ghost](./ghost.md)\n";
+        let docs = expand_text("shop/order.md", text);
+        assert_eq!(docs.len(), 1, "a stray non-.md comment must not split the document");
+        assert_eq!(docs[0].0, "shop/order.md");
+        assert_eq!(docs[0].1, text, "content must be kept intact, nothing discarded");
+    }
 }

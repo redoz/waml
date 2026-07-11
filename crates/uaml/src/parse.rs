@@ -98,7 +98,7 @@ pub fn parse_document(src: &str) -> Document {
 }
 
 static MARKER_RE: std::sync::LazyLock<regex::Regex> =
-    std::sync::LazyLock::new(|| regex::Regex::new(r"(?m)^<!--\s*(.+?)\s*-->[ \t]*\n").unwrap());
+    std::sync::LazyLock::new(|| regex::Regex::new(r"(?m)^<!--\s*(.+?\.md)\s*-->[ \t]*\n").unwrap());
 
 /// Split a concatenated bundle blob into `(path, content)` pairs on
 /// `<!-- path/slug.md -->` markers. An unmarked blob is a single document.
@@ -373,6 +373,25 @@ mod tests {
         let parts = split_bundle("# Just one doc\n");
         assert_eq!(parts.len(), 1);
         assert_eq!(parts[0].0, "pasted/doc.md");
+    }
+
+    #[test]
+    fn stray_html_comment_is_not_a_bundle_marker() {
+        // A lone HTML comment that is NOT a `.md` path marker (e.g. an
+        // author's review note) must not be treated as a bundle split
+        // point: it belongs to the surrounding document, not a new one.
+        let blob = "# Order\n\nSome intro text.\n\n<!-- reviewed: TODO -->\n\nMore text after the comment.\n";
+        let parts = split_bundle(blob);
+        assert_eq!(parts.len(), 1, "a stray non-.md comment must not split the blob");
+        assert_eq!(parts[0].0, "pasted/doc.md");
+        assert!(parts[0].1.contains("Some intro text."), "content before the comment must be kept");
+        assert!(parts[0].1.contains("More text after the comment."), "content after the comment must be kept");
+
+        // A genuine `.md` marker must still split the blob.
+        let real = "<!-- shop/x.md -->\n# X\n";
+        let real_parts = split_bundle(real);
+        assert_eq!(real_parts.len(), 1);
+        assert_eq!(real_parts[0].0, "shop/x.md");
     }
 }
 
