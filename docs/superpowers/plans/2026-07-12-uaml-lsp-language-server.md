@@ -25,8 +25,8 @@ These resolve ambiguities in the spec. They keep the diff bounded while honoring
 
 1. **`parse` is the new primary entry; `parse_document` is retained as a thin wrapper.** `pub fn parse(text) -> (Document, Vec<Diagnostic>)` is added; `pub fn parse_document(text) -> Document` becomes `parse(text).0`. This avoids churning the many `Document`-only callers (`ops/mod.rs`, `ops/rename.rs`, `serialize` tests, `golden.rs`).
 2. **`validate(bundle) -> Vec<Diagnostic>` is retained as the combined (syntactic + semantic) entry** so `uaml check` and `plan_fmt` need only minimal edits. Internally it now does: parse each doc (collect syntactic diagnostics) + `link` over the parsed docs (collect semantic diagnostics). The old `validate_doc`/`validate_diagram_refs` raw re-scan is deleted.
-3. **"Error nodes" are recorded as spanned diagnostics emitted by `parse`, not by converting `Section` item vecs into `Vec<Result<T, _>>`.** `Section::Attributes(Vec<Attribute>)` / `Values` keep holding only well-formed items; every dropped line now yields a diagnostic, so `parse` is no longer *silently* lossy. This satisfies "no `filter_map` silent drops" without rippling an enum through `build_model`/`serialize`. (`fmt` skips any error file anyway, so error lines are never serialized.)
-4. **Only relationship / member / layout nodes gain position info,** because only their diagnostics (`UnresolvedTarget`, `UnresolvedLayoutRef`, `LayoutCycle`) are emitted later, in `link`, and must reuse the parser's recorded position. `ParsedRel` and `MemberLine` gain `line: usize` + `span: Option<(usize, usize)>`; `Section::Layout` becomes `Vec<LayoutItem>` where `LayoutItem { line: usize, stmt: LayoutStatement }`. Attributes/values need no position (no semantic code references them).
+3. **Error nodes live IN the tree (matches the spec's "`Section` gains error nodes"), and diagnostics are DERIVED from them — single source of truth.** A new `enum Line<T> { Parsed(T), Error(ErrorNode) }` replaces the bare item vecs in every bullet section that today `filter_map`-drops (`Attributes`, `Relationships`, `Members`' group members, `Layout`). A malformed or droppable in-section line becomes `Line::Error(ErrorNode)` — never dropped. `parse` then produces its bullet-level syntactic diagnostics by *walking the tree's `Line::Error` nodes* (`ErrorNode` → `Diagnostic`, sharing the same span/line/code/message), not by keeping a parallel list. Consumer ripple: `build_model` skips `Line::Error` variants (explicit graceful degradation, replacing today's silent drop); `serialize` emits `ErrorNode.raw` verbatim (round-trip safe — and `fmt` skips error-files anyway); `link` walks only `Line::Parsed` nodes. Frontmatter-level codes (`UnknownType`, `FrontmatterNotClean`) and pre-first-section prose (`DroppableContent`) have no bullet-node home, so `parse` still emits those directly from its frontmatter/pre-section scan and appends them.
+4. **Only relationship / member / layout `Parsed` nodes gain position info,** because only their diagnostics (`UnresolvedTarget`, `UnresolvedLayoutRef`, `LayoutCycle`) are emitted later, in `link`, and must reuse the parser's recorded position. `ParsedRel` and `MemberLine` gain `line: usize` + `span: Option<(usize, usize)>`; layout parsed statements are wrapped as `LayoutItem { line: usize, stmt: LayoutStatement }`. Combined with Decision 3, the section shapes become `Vec<Line<Attribute>>`, `Vec<Line<ParsedRel>>`, `Vec<Line<LayoutItem>>`, and `MemberGroup.members: Vec<Line<MemberLine>>`. `ErrorNode` itself carries `line`/`span`, so error lines are positioned too. Attributes/values need no `Parsed`-node position (no semantic code references them).
 5. **`UnresolvedTarget` spans are computed by string-search of the reconstructed `[Title](./slug.md)` on the held line** (the spec's "single-token, string search" tier), done in `parse` when it holds the raw line. Layout refs stay line-level (`span: None`) in Phase 1, but point at the offending statement's line (not the `## Layout` heading).
 6. **The VS Code client lives in `packages/vscode` (`@uaml/vscode`)**, a pnpm workspace member matching existing `packages/*` conventions.
 7. **`tower-lsp` + `tokio` are added only to `crates/uaml-cli`.** Suggested pins: `tower-lsp = "0.20"`, `tokio = { version = "1", features = ["rt-multi-thread", "io-std", "macros"] }`. If newer majors are current at implementation time, prefer the latest stable and adjust the trait/API calls in Tasks 11–12 accordingly.
@@ -37,9 +37,9 @@ These resolve ambiguities in the spec. They keep the diff bounded while honoring
 - `crates/uaml/src/diagnostic.rs` — `Diagnostic` gains `span`; add `with_span` builder.
 - `crates/uaml/src/grammar.rs` — five line-parsers move `Option<T>` → `Result<T, LineError>`; `rel_error_message`/`has_multiplicity_ends` move here from `validate.rs`; new `LineError` type + `bullet_range` helper.
 - `crates/uaml/src/layout.rs` — `parse_layout_line` moves `Option` → `Result<LayoutStatement, LineError>`.
-- `crates/uaml/src/syntax.rs` — `ParsedRel` and `MemberLine` gain `line`/`span`; new `LayoutItem`; `Section::Layout(Vec<LayoutItem>)`.
-- `crates/uaml/src/parse.rs` — `classify`/`parse_document` become `parse(text) -> (Document, Vec<Diagnostic>)` with a fence-aware content-line walk that emits syntactic diagnostics; `build_model` reads the new fields.
-- `crates/uaml/src/serialize.rs` — `render_section` reads `Section::Layout(Vec<LayoutItem>)`.
+- `crates/uaml/src/syntax.rs` — new `Line<T>`/`ErrorNode`; `ParsedRel` and `MemberLine` gain `line`/`span`; new `LayoutItem`; bullet sections become `Vec<Line<T>>` (`Attributes`, `Relationships`, `Layout`) and `MemberGroup.members: Vec<Line<MemberLine>>`.
+- `crates/uaml/src/parse.rs` — `classify`/`parse_document` become `parse(text) -> (Document, Vec<Diagnostic>)` with a fence-aware content-line walk that builds `Line::Parsed`/`Line::Error` nodes; diagnostics are derived by walking the `Line::Error` nodes (plus frontmatter/pre-section scan); `build_model` skips `Line::Error`.
+- `crates/uaml/src/serialize.rs` — `render_section` maps `Line::Parsed` through the renderers and emits `Line::Error(e)` as `e.raw` verbatim.
 - `crates/uaml/src/validate.rs` — `validate_doc` deleted; add `link(&[Document]) -> Vec<Diagnostic>`; `validate(bundle)` re-expressed as parse + link.
 - `crates/uaml-cli/src/commands.rs` — `plan_fmt` uses `parse` for the per-file skip decision; JSON DTO gains `span`.
 
@@ -209,7 +209,7 @@ pub fn parse_relationship_line(line: &str) -> Result<ParsedRel, LineError> {
 }
 ```
 
-Note: the `ParsedRel { ..., line: 0, span: None }` fields are added in Task 4 (syntax.rs). Until Task 4 lands, keep this task's diff on a branch that includes Task 4, OR add the two fields to `ParsedRel` here as part of Step 5 (they are inert). To keep each task green, **do Task 4's `syntax.rs` field additions first if implementing strictly in isolation.** (See Task 4 ordering note.)
+Note: **add `pub line: usize,` and `pub span: Option<(usize, usize)>,` to `ParsedRel` (and to `MemberLine`) in `syntax.rs` as part of THIS task** (default them to `line: 0, span: None` in the grammar constructors; `parse` fills real values in Task 5). Update the `syntax.rs` `document_is_constructible` test literal accordingly. Task 4 then builds `Line<T>`/`ErrorNode`/`LayoutItem` on top of these fields.
 
 - [ ] **Step 6: Convert `parse_member_line`** to `Result<MemberLine, LineError>` (message `"malformed member line"`), constructing `MemberLine { title, slug, line: 0, span: None }`. Inside `parse_members_block`, the call `parse_member_line(t)` changes from `if let Some(m)` to `if let Ok(m)`.
 
@@ -284,45 +284,79 @@ git add crates/uaml/src/layout.rs
 git commit -m "refactor(uaml): parse_layout_line returns LineError instead of Option"
 ```
 
-### Task 4: AST position fields — `LayoutItem`, `Section::Layout`, and node positions
+### Task 4: In-tree error nodes — `Line<T>` / `ErrorNode`, `LayoutItem`, and node positions
 
-Adds the position-carrying shapes the semantic `link` pass will read. `ParsedRel`/`MemberLine` already gained `line`/`span` in Task 2; this task adds the layout wrapper and updates `build_model` + `serialize` + affected tests to compile.
+Adds the error-node-in-tree shapes the parser (Task 5) will build and the semantic `link` pass will read. `ParsedRel`/`MemberLine` already gained `line`/`span` in Task 2; this task adds `Line<T>`/`ErrorNode`/`LayoutItem`, converts the bullet sections to `Vec<Line<T>>`, and updates `build_model` (skip errors) + `serialize` (emit `raw`) + affected tests to compile.
 
 **Files:**
-- Modify: `crates/uaml/src/syntax.rs`, `crates/uaml/src/parse.rs` (`build_model`, `classify`), `crates/uaml/src/serialize.rs`
+- Modify: `crates/uaml/src/syntax.rs`, `crates/uaml/src/parse.rs` (`build_model`, `classify`), `crates/uaml/src/serialize.rs`, `crates/uaml/src/grammar.rs` (`parse_members_block` group member type)
 - Test: `crates/uaml/src/syntax.rs` (inline `mod tests`)
 
 **Interfaces:**
-- Consumes: `LayoutStatement` (existing).
+- Consumes: `LayoutStatement`, `DiagCode` (existing).
 - Produces:
+  - `pub struct ErrorNode { pub raw: String, pub line: usize, pub span: (usize, usize), pub code: DiagCode, pub message: String }`
+  - `pub enum Line<T> { Parsed(T), Error(ErrorNode) }` — with a helper `impl<T> Line<T> { pub fn parsed(&self) -> Option<&T> { match self { Line::Parsed(t) => Some(t), Line::Error(_) => None } } }`.
   - `pub struct LayoutItem { pub line: usize, pub stmt: LayoutStatement }`
-  - `Section::Layout(Vec<LayoutItem>)` (was `Vec<LayoutStatement>`).
-  - Confirms `ParsedRel { …, pub line: usize, pub span: Option<(usize, usize)> }` and `MemberLine { …, pub line: usize, pub span: Option<(usize, usize)> }` (added in Task 2).
+  - `Section::Attributes(Vec<Line<Attribute>>)`, `Section::Relationships(Vec<Line<ParsedRel>>)`, `Section::Layout(Vec<Line<LayoutItem>>)`.
+  - `MemberGroup.members: Vec<Line<MemberLine>>`.
+  - Confirms `ParsedRel`/`MemberLine` carry `line`/`span` (from Task 2). `Values`/`Notes` stay `Vec<String>` (no Malformed code; stray lines are pre/section `DroppableContent` handled in Task 5).
 
 - [ ] **Step 1: Write the failing test** — in `syntax.rs` `mod tests`:
 
 ```rust
     #[test]
-    fn layout_item_wraps_a_statement_with_a_line() {
+    fn line_wraps_parsed_and_error_nodes() {
         let item = LayoutItem {
             line: 12,
             stmt: LayoutStatement::Standalone(Operand {
                 ref_: OperandRef::Name(NameRef::Bare("Orders".into())), axis: None, hints: vec![],
             }),
         };
-        assert_eq!(item.line, 12);
-        let _s = Section::Layout(vec![item]); // must typecheck
+        let good: Line<LayoutItem> = Line::Parsed(item);
+        assert!(good.parsed().is_some());
+        let bad: Line<LayoutItem> = Line::Error(ErrorNode {
+            raw: "- nonsense".into(), line: 13, span: (0, 10),
+            code: crate::diagnostic::DiagCode::MalformedLayout, message: "malformed layout statement".into(),
+        });
+        assert!(bad.parsed().is_none());
+        let _s = Section::Layout(vec![good, bad]); // must typecheck
     }
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cargo test -p uaml layout_item_wraps_a_statement_with_a_line`
-Expected: FAIL — `LayoutItem` undefined; `Section::Layout(Vec<LayoutStatement>)` mismatch.
+Run: `cargo test -p uaml line_wraps_parsed_and_error_nodes`
+Expected: FAIL — `Line`/`ErrorNode`/`LayoutItem` undefined; section shape mismatch.
 
-- [ ] **Step 3: Edit `syntax.rs`.** Add the struct and change the variant:
+- [ ] **Step 3: Edit `syntax.rs`.** Add near the top:
 
 ```rust
+use crate::diagnostic::DiagCode;
+
+/// A malformed or droppable source line preserved verbatim in the tree.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ErrorNode {
+    pub raw: String,          // the original line, byte-for-byte (for serialize)
+    pub line: usize,          // 1-based line within the source document
+    pub span: (usize, usize), // byte range within `line`
+    pub code: DiagCode,       // which syntactic diagnostic this line yields
+    pub message: String,      // the derived diagnostic message
+}
+
+/// One bullet-section item: a well-formed node, or a preserved error line.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Line<T> {
+    Parsed(T),
+    Error(ErrorNode),
+}
+
+impl<T> Line<T> {
+    pub fn parsed(&self) -> Option<&T> {
+        match self { Line::Parsed(t) => Some(t), Line::Error(_) => None }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct LayoutItem {
     pub line: usize,
@@ -330,57 +364,83 @@ pub struct LayoutItem {
 }
 ```
 
-Change `Layout(Vec<LayoutStatement>)` → `Layout(Vec<LayoutItem>)` in `enum Section`. Confirm `ParsedRel` and `MemberLine` each carry `pub line: usize,` and `pub span: Option<(usize, usize)>,` (present from Task 2). Update the `document_is_constructible` test's `ParsedRel { … }` literal to include `line: 0, span: None`.
+Change the `enum Section` variants: `Attributes(Vec<Line<Attribute>>)`, `Relationships(Vec<Line<ParsedRel>>)`, `Layout(Vec<Line<LayoutItem>>)`. Change `MemberGroup.members` to `Vec<Line<MemberLine>>`. Confirm `ParsedRel`/`MemberLine` carry `pub line: usize,` + `pub span: Option<(usize, usize)>,` (from Task 2). Update the `document_is_constructible` test to wrap its `ParsedRel` in `Line::Parsed(...)` (and add `line: 0, span: None` to the literal).
 
-- [ ] **Step 4: Update `build_model` (`parse.rs`).** In `build_diagrams`, the `Section::Layout(stmts)` arm now yields `Vec<LayoutItem>`; strip to `Vec<LayoutStatement>` for the model:
+- [ ] **Step 4: Update `build_model` (`parse.rs`) to SKIP `Line::Error`.** Everywhere a bullet section is consumed, filter to `Line::Parsed`:
+
+```rust
+            Section::Attributes(a) =>
+                attributes = a.iter().filter_map(Line::parsed).map(|x| resolve_attr(x, keyset)).collect(),
+```
+
+```rust
+            let Section::Relationships(rels) = s else { continue };
+            for r in rels.iter().filter_map(Line::parsed) {
+```
 
 ```rust
                 Section::Layout(items) => {
-                    layout = items.iter().map(|it| it.stmt.clone()).collect();
+                    layout = items.iter().filter_map(Line::parsed).map(|it| it.stmt.clone()).collect();
                 }
 ```
 
-- [ ] **Step 5: Update `serialize.rs`.** In `render_section`, the `Section::Layout(stmts)` arm maps over `items`:
+In `resolve_group` (`parse.rs:269`), the group's members are now `Vec<Line<MemberLine>>`: `g.members.iter().filter_map(Line::parsed).filter(|m| keyset.contains(...))`.
+
+- [ ] **Step 5: Update `serialize.rs` to emit `Line::Error` verbatim.** In `render_section`:
 
 ```rust
-        Section::Layout(items) => {
-            let body = items
-                .iter()
-                .map(|it| crate::layout::render_layout_line(&it.stmt))
-                .collect::<Vec<_>>()
-                .join("\n");
-            if body.is_empty() { "## Layout".to_string() } else { format!("## Layout\n{body}") }
+        Section::Attributes(items) => {
+            let body = items.iter().map(render_line_attr).collect::<Vec<_>>().join("\n");
+            format!("## Attributes\n{body}")
         }
 ```
 
-- [ ] **Step 6: Update `classify` (`parse.rs`) temporarily** so the crate compiles before the Task 5 rewrite: wrap each parsed statement with `line: 0`:
+with a small helper (and analogous ones for relationships/layout, plus `render_members_block` handling `Line`):
 
 ```rust
+use crate::syntax::Line;
+
+fn render_line_attr(l: &Line<Attribute>) -> String {
+    match l {
+        Line::Parsed(a) => render_attribute_line(a),
+        Line::Error(e) => e.raw.clone(),
+    }
+}
+```
+
+For `Section::Layout`, render `Line::Parsed(it)` via `render_layout_line(&it.stmt)` and `Line::Error(e)` via `e.raw.clone()`. `render_members_block` (`grammar.rs`) maps each `Line<MemberLine>` the same way (`Parsed` → `render_member_line`, `Error` → `raw`).
+
+- [ ] **Step 6: Update `classify` (`parse.rs`) temporarily** so the crate compiles before the Task 5 rewrite — wrap the still-`filter_map` results in `Line::Parsed` (no error nodes yet; that lands in Task 5):
+
+```rust
+        "attributes" => Section::Attributes(
+            lines(content).iter().filter_map(|l| parse_attribute_line(l).ok().map(Line::Parsed)).collect()),
+        "relationships" => Section::Relationships(
+            lines(content).iter().filter_map(|l| parse_relationship_line(l).ok().map(Line::Parsed)).collect()),
         "layout" => Section::Layout(
             lines(content).iter()
                 .filter_map(|l| crate::layout::parse_layout_line(l).ok())
-                .map(|stmt| crate::syntax::LayoutItem { line: 0, stmt })
-                .collect(),
-        ),
+                .map(|stmt| Line::Parsed(crate::syntax::LayoutItem { line: 0, stmt }))
+                .collect()),
 ```
 
-Also, since Task 2/3 changed the other parsers to `Result`, update `classify`'s other arms to `.ok()` (`parse_attribute_line(l).ok()`, `parse_value_line(l).ok()`, `parse_relationship_line(l).ok()`). This keeps `parse_document` lossy-but-compiling until Task 5 replaces it.
+`parse_members_block` (`grammar.rs`) now pushes `Line::Parsed(member)` into groups. `Values`/`Notes` arms keep `.ok()` on `parse_value_line` (unchanged `Vec<String>`). This keeps `parse_document` compiling (still lossy) until Task 5.
 
 - [ ] **Step 7: Run the whole core test suite**
 
 Run: `cargo test -p uaml`
-Expected: PASS — all existing `uaml` tests green (behavior unchanged; only shapes moved). `validate` tests still pass because `validate.rs` is unchanged and still owns the diagnostics.
+Expected: PASS — all existing `uaml` tests green (behavior unchanged; only shapes moved — `Line::Parsed` wrappers everywhere, no error nodes yet). `validate.rs` is unchanged and still owns the diagnostics until Task 6.
 
 - [ ] **Step 8: Commit**
 
 ```bash
-git add crates/uaml/src/syntax.rs crates/uaml/src/parse.rs crates/uaml/src/serialize.rs
-git commit -m "refactor(uaml): add LayoutItem and position fields to layout/rel/member AST"
+git add crates/uaml/src/syntax.rs crates/uaml/src/parse.rs crates/uaml/src/serialize.rs crates/uaml/src/grammar.rs
+git commit -m "refactor(uaml): add Line/ErrorNode in-tree error nodes and LayoutItem"
 ```
 
 ### Task 5: `parse(text) -> (Document, Vec<Diagnostic>)` — emit syntactic diagnostics with spans
 
-The core of Part 1. `parse` keeps using pulldown-cmark for section boundaries (already fence-correct), then walks each section's content lines with a local fence tracker, calling the Task 2/3 `Result` parsers. Well-formed items go into the `Section`; every failure and every droppable line becomes a spanned `Diagnostic`. Frontmatter is scanned once for `UnknownType` and `FrontmatterNotClean`. `parse_document` is retained as `parse(text).0`.
+The core of Part 1. `parse` keeps using pulldown-cmark for section boundaries (already fence-correct), then walks each section's content lines with a local fence tracker, calling the Task 2/3 `Result` parsers. A well-formed bullet becomes `Line::Parsed`; a malformed bullet or a droppable in-section line becomes `Line::Error(ErrorNode)` (verbatim `raw` + span + code + message) — **never dropped**. Diagnostics are then DERIVED by walking the tree's `Line::Error` nodes (single source of truth), plus a frontmatter/pre-section scan for the codes that have no bullet home (`UnknownType`, `FrontmatterNotClean`, pre-first-section `DroppableContent`). `parse_document` is retained as `parse(text).0`.
 
 **Files:**
 - Modify: `crates/uaml/src/parse.rs`
@@ -389,9 +449,10 @@ The core of Part 1. `parse` keeps using pulldown-cmark for section boundaries (a
 **Interfaces:**
 - Consumes: `parse_attribute_line`/`parse_value_line`/`parse_relationship_line`/`parse_member_line`/`parse_layout_line` (all `Result`), `LineError`, `bullet_range`, `Diagnostic`, `DiagCode`, `LayoutItem`.
 - Produces:
-  - `pub fn parse(src: &str) -> (Document, Vec<Diagnostic>)` — the file argument on each `Diagnostic` is `""` here (the caller/`link` sets the path; see note). Diagnostics carry absolute `line` (1-based over `src`) and line-relative byte `span`.
+  - `pub fn parse(src: &str) -> (Document, Vec<Diagnostic>)` — builds the tree (with `Line::Error` nodes), then derives diagnostics. The file field on each `Diagnostic` is `""` here (the caller/`validate` sets the path; see Task 6). Diagnostics carry absolute `line` (1-based over `src`) and line-relative byte `span`.
   - `pub fn parse_document(src: &str) -> Document { parse(src).0 }`
-  - Private helpers: `fn line_at(src: &str, byte: usize) -> usize` (1-based line of a byte offset); the content-walk that classifies + diagnoses.
+  - `pub fn diagnostics_of(doc: &Document) -> Vec<Diagnostic>` — walks every section's `Line::Error` nodes and maps each `ErrorNode` → `Diagnostic::new(e.code, &e.message, "", e.line).with_span(e.span)`. This is the single source of truth for bullet-level syntactic diagnostics; `parse` calls it and then appends the frontmatter/pre-section codes.
+  - Private helpers: `fn line_at(src: &str, byte: usize) -> usize` (1-based line of a byte offset); the content-walk that builds `Line` nodes.
 
 - [ ] **Step 1: Write the failing tests** — append to `parse.rs` `mod tests`:
 
@@ -421,6 +482,21 @@ The core of Part 1. `parse` keeps using pulldown-cmark for section boundaries (a
         let (_doc, diags) = parse(src);
         assert!(diags.is_empty(), "got: {diags:?}");
     }
+
+    #[test]
+    fn malformed_line_is_preserved_as_error_node_not_dropped() {
+        use crate::syntax::{Line, Section};
+        let src = "---\ntype: uml.Class\ntitle: X\n---\n# X\n\n## Attributes\n- id: XId\n- bad line without colon\n";
+        let (doc, _diags) = parse(src);
+        let attrs = doc.sections.iter().find_map(|s| match s {
+            Section::Attributes(a) => Some(a), _ => None }).unwrap();
+        assert_eq!(attrs.len(), 2, "the malformed line must be kept as an error node, not dropped");
+        let err = attrs.iter().find_map(|l| match l { Line::Error(e) => Some(e), _ => None }).unwrap();
+        assert!(err.raw.contains("bad line without colon"));
+        // Diagnostics are derived from the same error node.
+        let (_d, diags) = parse(src);
+        assert!(diags.iter().any(|d| d.code == DiagCode::MalformedAttribute));
+    }
 ```
 
 - [ ] **Step 2: Run tests to verify they fail**
@@ -437,12 +513,15 @@ fn line_at(src: &str, byte: usize) -> usize {
 }
 ```
 
-- [ ] **Step 4: Rewrite `classify` into a diagnostic-emitting content walk.** Replace `classify` with a function that takes the section title, the section's content text, the content's absolute byte start in `src`, and `src`; returns `(Section, Vec<Diagnostic>)`. It:
+- [ ] **Step 4: Rewrite `classify` into a `Line`-building content walk.** Replace `classify` with a function that takes the section title, the section's content text, the content's absolute byte start in `src`, and `src`; returns a `Section` whose bullet vecs hold `Line<T>` (no separate diagnostics list — diagnostics are derived in Step 6). It:
   1. Splits `content` into lines, tracking each line's byte offset within `content` (so `abs = content_abs_start + line_offset`, `line_no = line_at(src, abs)`).
-  2. Maintains a local fence tracker (the `Option<char>` logic moved from `validate.rs:102-116`): lines inside a fence are skipped for diagnostics AND for parsing.
-  3. For the five bullet sections, calls the matching `Result` parser on each non-fenced line; `Ok(v)` pushes `v`, `Err(LineError { range, message })` pushes `Diagnostic::new(code, message, "", line_no).with_span(range)` with the section's code (`MalformedAttribute`/`MalformedRelationship`/`MalformedLayout`; value/notes use `MalformedAttribute`? — use a dedicated message but note: `Values`/`Notes` malformed lines are reported as `DroppableContent`, matching today's behavior where only attributes/relationships/members/layout have Malformed codes). For layout, wrap `Ok(stmt)` as `LayoutItem { line: line_no, stmt }`.
-  4. Emits `DroppableContent` for non-blank, non-bullet lines inside bullet sections, and (for `members`) allows `###` group headings (the `is_member_group_heading` rule from `validate.rs:129`). Span = `bullet_range(line)`.
-  5. Body/Notes/Unknown sections keep their current construction (no per-line diagnostics for free prose).
+  2. Maintains a local fence tracker (the `Option<char>` logic moved from `validate.rs:102-116`): lines inside a fence are skipped entirely (not parsed, not error nodes). Blank lines are skipped.
+  3. For the four bullet sections (`attributes`, `relationships`, `members`, `layout`), for each remaining line:
+     - if the line starts with `- ` (a bullet): call the matching `Result` parser; `Ok(v)` → `Line::Parsed(v)` (for layout, wrap as `LayoutItem { line: line_no, stmt }`); `Err(LineError { range, message })` → `Line::Error(ErrorNode { raw: raw_line.to_string(), line: line_no, span: range, code: <section Malformed code>, message })`.
+     - else (not a bullet, and not an allowed `###` members group heading — the `is_member_group_heading` rule from `validate.rs:129`): `Line::Error(ErrorNode { raw, line: line_no, span: bullet_range(raw), code: DiagCode::DroppableContent, message: "content here is outside the recognized document structure and would be silently dropped by fmt".into() })`.
+     Section→code map: `attributes`→`MalformedAttribute`, `relationships`→`MalformedRelationship`, `layout`→`MalformedLayout`, `members`→`UnresolvedTarget`? No — members malformed bullets are rare; use `DroppableContent` for non-`- [..](..)` member lines and keep well-formed member links as `Line::Parsed` (member resolution is semantic, in `link`).
+  4. `Values`/`Notes`: keep `Vec<String>` of parsed values; a non-bullet stray line here is caught by the pre/section `DroppableContent` scan (Step 6, item 2) rather than an in-vec error node (no Malformed-value code exists).
+  5. Body/Unknown sections keep their current construction (free prose preserved verbatim, never an error).
 
 Reference the exact rules being moved: `validate.rs:123-144` (DroppableContent), `validate.rs:150-191` (per-section parser dispatch), `validate.rs:102-116` (fence tracker).
 
@@ -459,14 +538,14 @@ fn find_link_span(line: &str, title: &str, slug: &str) -> (usize, usize) {
 }
 ```
 
-Do the same for member lines (`MemberLine.line`/`.span`). This is the "single-token, string-search" span tier.
+Set these fields before wrapping the node in `Line::Parsed(rel)`. Do the same for member lines (`MemberLine.line`/`.span`) before `Line::Parsed(member)`. This is the "single-token, string-search" span tier, and it is what `link` reads in Task 6.
 
 - [ ] **Step 6: Rewrite `parse_document` into `parse`.** Keep the existing pulldown heading loop that builds `heads` (`parse.rs:46-93`). Then:
   1. Before the section loop, scan the frontmatter region of `src` for `UnknownType` (each `type:` line where `ClassifierType::parse(ty)` is `Unknown` and `ty != "Diagram"`, at its real line — reuse the logic from `validate.rs:89-99`) and `FrontmatterNotClean` (the `has_metadata_block` check from `validate.rs:60-67`; move `has_metadata_block` into `parse.rs`). `FrontmatterNotClean` gets `span: None`, `line: 1`.
-  2. Emit `DroppableContent` for non-blank prose before the first `## ` section (excluding the H1 title line), per `validate.rs:127-143`.
-  3. For each head, call the new content-walk, collecting `(Section, diags)`; accumulate all diagnostics.
-  4. Return `(Document { frontmatter, title, sections }, diags)`.
-  5. Add `pub fn parse_document(src: &str) -> Document { parse(src).0 }`.
+  2. Emit `DroppableContent` for non-blank prose before the first `## ` section (excluding the H1 title line), per `validate.rs:127-143`. (These have no bullet-node home, so they are direct diagnostics, collected into a `frontmatter_diags` vec.)
+  3. For each head, call the new content-walk, collecting `Section`s into `sections` (the walk builds `Line::Error` nodes in-tree; it returns no diagnostics).
+  4. Build `let doc = Document { frontmatter, title, sections };`. Derive the bullet-level diagnostics: `let mut diags = diagnostics_of(&doc);` then `diags.extend(frontmatter_diags);` (order is not significant — `validate` sorts for display).
+  5. Return `(doc, diags)`. Add `pub fn parse_document(src: &str) -> Document { parse(src).0 }` and implement `diagnostics_of` (walk `doc.sections`; for each bullet section, for each `Line::Error(e)`, push `Diagnostic::new(e.code, e.message.clone(), "", e.line).with_span(e.span)`; also recurse group members for `Members`).
 
 - [ ] **Step 7: Update existing `parse.rs` tests** that referenced the old `Section::Layout(Vec<LayoutStatement>)` shape or `classify`: `builds_diagram_groups_and_layout` now matches `d.layout[0]` (model layer, unchanged) — no change needed there since `build_model` strips to `LayoutStatement`. The `parse_document` unit tests keep working via the wrapper.
 
@@ -518,11 +597,11 @@ Expected: FAIL — `span` is `None` (today's `validate_doc` sets no span).
 
 - [ ] **Step 3: Delete the scanner.** Remove `validate_doc` (`validate.rs:59-193`), `has_metadata_block` (moved to `parse.rs` in Task 5), `has_multiplicity_ends`/`rel_error_message` (moved to `grammar.rs` in Task 2), and the raw-text walk portion of `validate_diagram_refs`. Keep `collect_group_names`, `check_operand_refs`, `operand_key`, `has_cycle`, `slug_of`, `doc_type`.
 
-- [ ] **Step 4: Implement `link`.** Iterate the parsed docs; build `keyset`/`slug_count` (classifiers only, as today). Then per doc:
+- [ ] **Step 4: Implement `link` — walk only `Line::Parsed` nodes.** Iterate the parsed docs; build `keyset`/`slug_count` (classifiers only, as today). Then per doc:
   - `DuplicateSlug` when `slug_count[slug] > 1` (`line: 1`, `span: None`).
-  - For each `Section::Relationships(rels)`: for each `rel` with `!keyset.contains(&rel.target_slug)`, push `Diagnostic::new(DiagCode::UnresolvedTarget, msg, path, rel.line)` then `.with_span(rel.span.unwrap_or(bullet_range))`. (Use `rel.span` if `Some`.)
-  - For each `Section::Members`: walk groups; for each member with unresolved slug, `Diagnostic::warn(UnresolvedTarget, …, path, member.line).with_span(member.span…)`.
-  - For each `Section::Layout(items)`: run `check_operand_refs` per `item.stmt`, reporting at `item.line` (span `None` — Phase 1). Build the horizontal/vertical graphs from `item.stmt` and, on `has_cycle`, report `LayoutCycle` at the first participating `item.line` (fallback: first layout item's line).
+  - For each `Section::Relationships(rels)`: for each `rel in rels.iter().filter_map(Line::parsed)` with `!keyset.contains(&rel.target_slug)`, push `Diagnostic::new(DiagCode::UnresolvedTarget, msg, path, rel.line)` then apply `.with_span(span)` when `rel.span` is `Some`. (`Line::Error` rels never resolve and are already reported as syntactic diagnostics by `parse`, so `link` ignores them.)
+  - For each `Section::Members`: walk groups; for each `member in group.members.iter().filter_map(Line::parsed)` with an unresolved slug, `Diagnostic::warn(UnresolvedTarget, …, path, member.line)` + `.with_span(member.span…)`.
+  - For each `Section::Layout(items)`: for each `item in items.iter().filter_map(Line::parsed)`, run `check_operand_refs` on `item.stmt`, reporting at `item.line` (span `None` — Phase 1). Build the horizontal/vertical graphs from the parsed `item.stmt`s and, on `has_cycle`, report `LayoutCycle` at the first participating `item.line` (fallback: first parsed layout item's line).
 
 - [ ] **Step 5: Re-express `validate`.**
 
@@ -1299,7 +1378,10 @@ git commit -m "feat(vscode): thin UAML language client spawning uaml lsp --stdio
 | Spec requirement | Task(s) |
 | --- | --- |
 | `parse` parses *and* reports in one pass, `(Document, Vec<Diagnostic>)` | Task 5 |
-| No `filter_map` silent drops — malformed line → diagnostic | Tasks 2, 3, 5 |
+| No `filter_map` silent drops — malformed line → in-tree `Line::Error` node | Tasks 2, 3, 5 |
+| `Section` gains error nodes (`Line<T>`/`ErrorNode`), never dropped | Tasks 4, 5 |
+| Diagnostics derived from error nodes (single source of truth) | Task 5 (`diagnostics_of`) |
+| `build_model` skips error nodes; `serialize` emits `raw` verbatim | Task 4 |
 | One structural walk; `validate`'s scanner deleted | Task 6 (delete) + Task 5 (walk owner) |
 | Precise column spans (byte, relative to line) | Tasks 1, 2, 5 |
 | Syntactic vs semantic split | Task 5 (syntactic) + Task 6 (semantic `link`) |
@@ -1307,7 +1389,6 @@ git commit -m "feat(vscode): thin UAML language client spawning uaml lsp --stdio
 | Grammar line-parsers off `Option` | Tasks 2, 3 |
 | Per-line byte offsets threaded through `parse` | Task 5 |
 | Layout line no longer approximated to `## Layout` heading | Tasks 4 (`LayoutItem.line`) + 6 |
-| `build_model` ignores error nodes / new shapes | Task 4 |
 | `fmt` skip-on-error byte-for-byte | Task 7 (+ Task 6 keeps `validate`) |
 | `Command::Lsp` subcommand, core stays LSP-free | Task 8 |
 | tower-lsp + tokio deps | Task 8 |
