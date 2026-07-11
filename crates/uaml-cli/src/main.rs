@@ -96,18 +96,20 @@ enum Command {
 }
 
 /// Flags shared by all mutating (node/attr/value/rel) subcommands.
+/// `global = true` so these may appear either before or after the nested
+/// action subcommand (e.g. both `attr --dir D add ...` and `attr add ... --dir D`).
 #[derive(Args)]
 struct Common {
     /// Bundle root; recursively collects *.md. Default: current directory.
-    #[arg(long, default_value = ".")]
+    #[arg(long, default_value = ".", global = true)]
     dir: PathBuf,
-    #[arg(long)]
+    #[arg(long, global = true)]
     dry_run: bool,
-    #[arg(long)]
+    #[arg(long, global = true)]
     stdout: bool,
-    #[arg(long)]
+    #[arg(long, global = true)]
     emit: bool,
-    #[arg(long, value_enum, default_value_t = Format::Human)]
+    #[arg(long, value_enum, default_value_t = Format::Human, global = true)]
     format: Format,
 }
 

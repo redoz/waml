@@ -438,4 +438,72 @@ mod tests {
         };
         assert_eq!(op, back);
     }
+
+    #[test]
+    fn every_op_survives_a_wire_round_trip() {
+        use uaml::grammar::parse_ends;
+        use uaml::model::{ClassifierType, RelationshipKind};
+        use uaml::multiplicity::Multiplicity;
+        use uaml::ops::{NameSpec, Op, RelBy, Selector};
+
+        let ops = vec![
+            Op::NodeNew {
+                slug: "order".into(),
+                ty: ClassifierType::parse("uml.Class"),
+                title: "Order".into(),
+                stereotype: vec!["entity".into()],
+                description: Some("x".into()),
+                abstract_: true,
+            },
+            Op::NodeRename { from: "a".into(), to: "b".into() },
+            Op::NodeSet {
+                slug: "order".into(),
+                title: Some("O".into()),
+                description: None,
+                stereotype: Some(vec!["e".into()]),
+                abstract_: Some(false),
+                ty: None,
+            },
+            Op::NodeRm { slug: "x".into(), cascade: true },
+            Op::AttrAdd {
+                node: "order".into(),
+                name: "total".into(),
+                ty_token: "Money".into(),
+                multiplicity: Multiplicity::parse("0..1").unwrap(),
+                visibility: Some(uaml::model::Visibility::Private),
+            },
+            Op::AttrSet {
+                node: "order".into(),
+                name: "total".into(),
+                ty_token: Some("Cash".into()),
+                multiplicity: Some(Multiplicity::default()),
+                visibility: None,
+                rename: Some("amount".into()),
+            },
+            Op::AttrRm { node: "order".into(), name: "total".into() },
+            Op::ValueAdd { node: "e".into(), literal: "PLACED".into() },
+            Op::ValueRm { node: "e".into(), literal: "DRAFT".into() },
+            Op::RelAdd {
+                source: "order".into(),
+                kind: RelationshipKind::Composes,
+                target: "order-line".into(),
+                name: Some(NameSpec::Label("has".into())),
+                ends: parse_ends("1 to 1..* lines"),
+            },
+            Op::RelSet {
+                selector: Selector::Rel {
+                    source: "order".into(),
+                    by: RelBy::Endpoint { kind: RelationshipKind::Composes, target: "order-line".into() },
+                },
+                ends: parse_ends("1 to *"),
+                name: None,
+            },
+            Op::RelRm { selector: Selector::Rel { source: "order".into(), by: RelBy::Named("has".into()) } },
+        ];
+        for op in &ops {
+            let line = serde_json::to_string(&OpDto::from_op(op)).unwrap();
+            let back: OpDto = serde_json::from_str(&line).unwrap();
+            assert_eq!(&back.to_op().unwrap(), op, "wire round-trip changed op: {line}");
+        }
+    }
 }
