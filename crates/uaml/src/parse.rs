@@ -10,7 +10,7 @@ use crate::syntax::{Document, Section};
 use std::collections::{HashMap, HashSet};
 
 use crate::model::{
-    Attribute, ClassifierType, Diagram, Edge, Member, Model, Node,
+    Attribute, ClassifierType, Diagram, DiagramGroup, Edge, Model, Node,
 };
 
 struct Head {
@@ -266,6 +266,19 @@ fn build_edges(classifiers: &[&ParsedDoc], keyset: &HashSet<&str>) -> Vec<Edge> 
     edges
 }
 
+fn resolve_group(g: &crate::syntax::MemberGroup, keyset: &HashSet<&str>) -> DiagramGroup {
+    DiagramGroup {
+        name: g.name.clone(),
+        members: g
+            .members
+            .iter()
+            .filter(|m| keyset.contains(m.slug.as_str()))
+            .map(|m| m.slug.clone())
+            .collect(),
+        children: g.children.iter().map(|c| resolve_group(c, keyset)).collect(),
+    }
+}
+
 fn build_diagrams(parsed: &[ParsedDoc], keyset: &HashSet<&str>) -> Vec<Diagram> {
     let mut out = Vec::new();
     for p in parsed.iter().filter(|p| p.ty == ClassifierType::Diagram) {
@@ -277,28 +290,20 @@ fn build_diagrams(parsed: &[ParsedDoc], keyset: &HashSet<&str>) -> Vec<Diagram> 
             .unwrap_or("uml-domain")
             .to_string();
 
-        let mut members = Vec::new();
+        let mut groups = Vec::new();
+        let mut layout = Vec::new();
         for s in &p.doc.sections {
             match s {
                 Section::Members(block) => {
-                    fn collect(g: &crate::syntax::MemberGroup, keyset: &HashSet<&str>, out: &mut Vec<Member>) {
-                        for m in &g.members {
-                            if keyset.contains(m.slug.as_str()) {
-                                out.push(Member { key: m.slug.clone() });
-                            }
-                        }
-                        for c in &g.children {
-                            collect(c, keyset, out);
-                        }
-                    }
-                    for g in &block.groups {
-                        collect(g, keyset, &mut members);
-                    }
+                    groups = block.groups.iter().map(|g| resolve_group(g, keyset)).collect();
+                }
+                Section::Layout(stmts) => {
+                    layout = stmts.clone();
                 }
                 _ => {}
             }
         }
-        out.push(Diagram { key: p.slug.clone(), title, profile, members });
+        out.push(Diagram { key: p.slug.clone(), title, profile, groups, layout });
     }
     out
 }
@@ -467,24 +472,20 @@ mod model_tests {
         assert!(m.edges.is_empty());
     }
 
-    fn diagram_bundle() -> Vec<(String, String)> {
-        vec![
-            ("d/order.md".into(), "---\ntype: uml.Class\ntitle: Order\n---\n# Order\n".into()),
-            ("d/pricing.md".into(), "---\ntype: uml.Class\ntitle: Pricing\n---\n# Pricing\n".into()),
-            ("d/orders-domain.md".into(),
-             "---\ntype: Diagram\ntitle: Orders Domain\nprofile: uml-domain\n---\n# Orders Domain\n\n## Members\n- [Order](./order.md)\n- [Pricing](./pricing.md)\n- [Ghost](./ghost.md)\n\n## Render hints\n- emphasize: order\n- collapse [Pricing](./pricing.md)\n".into()),
-        ]
-    }
-
     #[test]
-    fn builds_diagram_with_members_and_hints() {
-        let m = build_model(&diagram_bundle());
-        assert_eq!(m.nodes.len(), 2, "diagram doc is not a node");
-        assert_eq!(m.diagrams.len(), 1);
-        let d = &m.diagrams[0];
-        assert_eq!(d.title, "Orders Domain");
-        assert_eq!(d.profile, "uml-domain");
-        // resolvable members only; ghost is dropped
-        assert_eq!(d.members.iter().map(|x| x.key.as_str()).collect::<Vec<_>>(), vec!["order", "pricing"]);
+    fn builds_diagram_groups_and_layout() {
+        let diagram = "---\ntype: Diagram\ntitle: Orders\nprofile: uml-domain\n---\n# Orders\n\n## Members\n\n### Users\n- [Customer](./customer.md)\n\n### Orders\n- [Order](./order.md)\n\n## Layout\n- Users left of Orders\n";
+        let bundle = vec![
+            ("customer.md".to_string(), "---\ntype: uml.Class\ntitle: Customer\n---\n# Customer\n".to_string()),
+            ("order.md".to_string(), "---\ntype: uml.Class\ntitle: Order\n---\n# Order\n".to_string()),
+            ("orders.md".to_string(), diagram.to_string()),
+        ];
+        let model = build_model(&bundle);
+        let d = model.diagrams.iter().find(|d| d.key == "orders").unwrap();
+        assert_eq!(d.groups.len(), 2);
+        assert_eq!(d.groups[0].name, "Users");
+        assert_eq!(d.groups[0].members, vec!["customer".to_string()]);
+        assert_eq!(d.layout.len(), 1);
+        assert!(matches!(d.layout[0], crate::syntax::LayoutStatement::Placement { .. }));
     }
 }
