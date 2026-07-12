@@ -129,3 +129,24 @@ test("clicking a package in results rescopes and clears the query", async () => 
   expect(onScope).toHaveBeenCalled();
   expect(input.value).toBe("");
 });
+
+test("deleting a non-empty package prompts all three branches", async () => {
+  const onDelete = vi.fn();
+  render(Navigator, { props: props({ onDelete, scopeKey: "" }) }); // "sales" has members
+  await fireEvent.contextMenu(screen.getByRole("treeitem", { name: "sales" }));
+  await fireEvent.click(screen.getByRole("menuitem", { name: /Delete/ }));
+  expect(screen.getByRole("button", { name: /Delete children too/ })).toBeTruthy();
+  await fireEvent.click(screen.getByRole("button", { name: /Move to parent/ }));
+  expect(onDelete).toHaveBeenCalledWith("sales", "package", "reparent");
+});
+
+test("deleting an empty ghost package does not prompt", async () => {
+  const onDelete = vi.fn();
+  const g2 = structuredClone(graph);
+  g2.packages.push({ ...node("empty", "empty", "uml.Package"), members: [] });
+  g2.packages[0].members = ["sales", "empty"];
+  render(Navigator, { props: props({ graph: g2, scopeKey: "", onDelete }) });
+  await fireEvent.contextMenu(screen.getByRole("treeitem", { name: "empty" }));
+  await fireEvent.click(screen.getByRole("menuitem", { name: /Delete/ }));
+  expect(onDelete).toHaveBeenCalledWith("empty", "package", "single");
+});

@@ -23,6 +23,7 @@
     onCreateDiagram,
     onRename,
     onSort,
+    onDelete,
   }: {
     graph: ModelGraph;
     scopeKey?: string;
@@ -39,6 +40,7 @@
     onCreateDiagram?: (name: string) => void;
     onRename?: (key: string, kind: NavKind, title: string) => void;
     onSort?: (pkgKey: string) => void;
+    onDelete?: (key: string, kind: NavKind, mode: "single" | "cascade" | "reparent") => void;
   } = $props();
 
   // Search box (filtering lands in Task 21; here it only toggles filterNav).
@@ -144,10 +146,28 @@
     ctxMenu = { key: row.key, kind: row.kind, title: row.title };
   }
 
+  // Delete prompt for a non-empty package (cascade / reparent / cancel). Empty
+  // packages and non-package rows delete straight through onDelete.
+  let deletePrompt = $state<{ key: string; title: string } | null>(null);
+  function requestDelete() {
+    if (!ctxMenu) return;
+    const { key, kind, title } = ctxMenu;
+    const members = graph.packages.find((p) => p.key === key)?.members ?? [];
+    if (kind === "package" && members.length > 0) {
+      ctxMenu = null;
+      ctxMode = null;
+      deletePrompt = { key, title };
+    } else {
+      onDelete?.(key, kind, "single");
+      closeMenus();
+    }
+  }
+
   function closeMenus() {
     actionMenu = null;
     ctxMenu = null;
     ctxMode = null;
+    deletePrompt = null;
   }
 
   function startMode(mode: "package" | "diagram" | "rename") {
@@ -425,6 +445,49 @@
         class="w-full text-left text-[13px] text-slate-900 px-3 py-2 cursor-pointer hover:bg-[#f1f3f7]"
       >
         Sort A–Z
+      </button>
+
+      <div class="my-1 border-t border-[#eef1f5]"></div>
+
+      <button
+        role="menuitem"
+        onclick={requestDelete}
+        class="w-full text-left text-[13px] text-[#d64545] px-3 py-2 cursor-pointer hover:bg-[#fdeded]"
+      >
+        Delete…
+      </button>
+    </div>
+  {/if}
+
+  {#if deletePrompt}
+    {@const key = deletePrompt.key}
+    <!-- svelte-ignore a11y_click_events_have_key_events -->
+    <!-- svelte-ignore a11y_no_static_element_interactions -->
+    <div class="fixed inset-0 z-40" onclick={closeMenus}></div>
+    <div
+      role="menu"
+      class="absolute z-50 left-1/2 -translate-x-1/2 top-[120px] w-[230px] rounded-lg border border-[#d8dee8] bg-white shadow-[0_8px_24px_rgba(15,23,42,0.18)] py-1"
+    >
+      <div class="px-3 py-2 text-[12.5px] text-slate-600">
+        Delete <span class="font-[600] text-slate-900">{deletePrompt.title}</span>?
+      </div>
+      <button
+        onclick={() => { onDelete?.(key, "package", "cascade"); closeMenus(); }}
+        class="w-full text-left text-[13px] text-[#d64545] px-3 py-2 cursor-pointer hover:bg-[#fdeded]"
+      >
+        Delete children too
+      </button>
+      <button
+        onclick={() => { onDelete?.(key, "package", "reparent"); closeMenus(); }}
+        class="w-full text-left text-[13px] text-slate-900 px-3 py-2 cursor-pointer hover:bg-[#f1f3f7]"
+      >
+        Move to parent
+      </button>
+      <button
+        onclick={closeMenus}
+        class="w-full text-left text-[13px] text-slate-500 px-3 py-2 cursor-pointer hover:bg-[#f1f3f7]"
+      >
+        Cancel
       </button>
     </div>
   {/if}
