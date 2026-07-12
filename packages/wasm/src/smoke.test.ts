@@ -2,7 +2,6 @@
 // into a lossless OKF Concept, all through Rust core.
 import { test, expect } from "vitest";
 import { initWasm, build_bundle } from "./index";
-import type { Bundle } from "@uaml/okf";
 
 test("build_bundle projects every doc to a lossless OKF Concept through wasm", async () => {
   await initWasm();
@@ -24,8 +23,8 @@ test("build_bundle projects every doc to a lossless OKF Concept through wasm", a
         "[1] [BigQuery announcement](https://cloud.google.com/blog/x)\n",
     ],
   ];
-  const out = build_bundle(bundle) as Bundle;
-  const c = out.concepts.find((c) => c.id === "playbooks/dataplex");
+  const out = build_bundle(bundle);
+  const c = out.concepts.find((c: any) => c.id === "playbooks/dataplex");
   expect(c).toBeDefined();
   expect(c!.type).toBe("Playbook");
   expect(c!.title).toBe("Dataplex Playbook");
