@@ -37,7 +37,7 @@ Reuse the existing inspector field bodies (`ObjectInspector`, diagram display fi
 - **Body content** routed by the current selection:
   - **element (classifier node)** → existing `ObjectInspector` fields.
   - **package node** → `ObjectInspector` fields (a package is a `Node`; start with the same title/description/type body — see Open Questions on whether to trim).
-  - **diagram** → diagram display/properties fields (the surface described by `2026-07-11-diagram-properties-panel-design.md` / today's `handleDisplayChange` inputs).
+  - **diagram** → diagram display/properties fields. **These exist today** as a 268px popover in `Dock.svelte` (sliders button, `role="dialog"` "Diagram properties"): `showAttributes`, `attributeDetail`, `associationLabels`, `emphasizeMultiplicity`, `showStereotype`, etc. — display toggles only, no title/profile. The panel body reuses these same controls (lifted out of the popover); the Dock **sliders button stays as the trigger** but opens the central panel instead of the inline popover.
 
 ### Two invocation contexts
 
@@ -76,7 +76,7 @@ The right-docked `InspectorPanel` **stays** for **in-diagram** element/edge sele
 ## Open Questions (resolve in planning or with a stated default)
 
 1. **Package body fields** — reuse full `ObjectInspector` (title/description/type/attributes) or a trimmed package body? **Default: reuse `ObjectInspector` unchanged** for now; trim later if noisy.
-2. **Diagram-properties trigger** — is there an existing affordance (toolbar button/menu) to open diagram properties, or does this spec add one? Needs a quick check of current diagram-settings entry point.
+2. **Diagram-properties trigger** — RESOLVED: exists today as the sliders button + 268px popover in `Dock.svelte` (`propsOpen`). Plan reuses the button, routes it to the central panel, and lifts the popover's display controls into the panel body. Decide during planning whether the small popover is deleted outright or kept as a compact alternative.
 3. **Selection interface with tree-nav** — exact shape of the selection signal C consumes (event? store field?). Depends on the tree-nav workstream's contract; C should define the minimal interface it needs and wire when available.
 4. **Coexistence vs convergence** — docked `InspectorPanel` and `CentralEditPanel` share bodies but are separate hosts. Confirm they coexist (this spec's assumption) rather than merging now.
 5. **Backdrop for single-item context** — is there literally an empty neutral canvas behind, or is the panel effectively full-screen? Default: neutral empty backdrop, panel centered (not edge-to-edge).
