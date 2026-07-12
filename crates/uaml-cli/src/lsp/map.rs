@@ -3,16 +3,40 @@
 
 use tower_lsp::lsp_types as lsp;
 use uaml::diagnostic::{Diagnostic, Severity};
-use uaml::frontmatter::parse_frontmatter;
 use uaml::model::ClassifierType;
 
-/// True iff the document's frontmatter `type:` is a recognized UAML type.
+/// True iff the document's frontmatter declares a recognized UAML `type:`.
+///
+/// This scans the leading frontmatter region line by line — mirroring the core
+/// parser's `scan_frontmatter_and_preamble` — rather than requiring a cleanly
+/// terminated `---`…`---` block. That matters for a buffer mid-edit whose
+/// frontmatter is broken/unterminated (the exact `FrontmatterNotClean` case):
+/// a strict block parse would classify it as non-UAML and silently suppress
+/// its live diagnostics, blinding the LSP to the very error it reports.
 pub fn is_uaml(text: &str) -> bool {
-    let ty = parse_frontmatter(text).0.get_str("type").map(str::to_string);
-    match ty {
-        Some(t) => t == "Diagram" || !matches!(ClassifierType::parse(&t), ClassifierType::Unknown(_)),
-        None => false,
+    let mut in_fm = false;
+    for raw in text.lines() {
+        let trimmed = raw.trim_end_matches('\r').trim();
+        if !in_fm {
+            if trimmed.is_empty() {
+                continue;
+            }
+            if trimmed == "---" {
+                in_fm = true;
+                continue;
+            }
+            return false; // first content isn't a frontmatter opener
+        }
+        if trimmed == "---" || trimmed == "..." {
+            break; // frontmatter closed without a recognized type
+        }
+        if let Some(rest) = trimmed.strip_prefix("type:") {
+            let ty = rest.trim().trim_matches('"');
+            return ty == "Diagram"
+                || !matches!(ClassifierType::parse(ty), ClassifierType::Unknown(_));
+        }
     }
+    false
 }
 
 /// UTF-16 code-unit offset of byte offset `byte_col` within `line_text`.
@@ -60,6 +84,19 @@ mod tests {
         assert!(is_uaml("---\ntype: Diagram\n---\n# X\n"));
         assert!(!is_uaml("# just markdown\n"));
         assert!(!is_uaml("---\ntype: bpmn.Task\n---\n# X\n"));
+    }
+
+    #[test]
+    fn is_uaml_recognizes_broken_frontmatter_with_a_type() {
+        // A buffer mid-edit with an unterminated frontmatter block (the exact
+        // `FrontmatterNotClean` case) must still be classified as UAML so its
+        // live diagnostics are published, not silently suppressed.
+        assert!(is_uaml("---\ntype: uml.Class\ntitle: A\n# X\n"));
+        // ... closer with no trailing block terminator is still recognized.
+        assert!(is_uaml("---\ntype: uml.Class\n"));
+        // Broken block without any recognized type stays non-UAML.
+        assert!(!is_uaml("---\ntitle: A\n# X\n"));
+        assert!(!is_uaml("---\ntype: bpmn.Task\n# X\n"));
     }
 
     #[test]
