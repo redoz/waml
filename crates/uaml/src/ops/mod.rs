@@ -84,6 +84,7 @@ pub enum Op {
     NodeRm { slug: String, cascade: bool },
     NodeRename { from: String, to: String },
     PkgMove { slug: String, to_dir: String },
+    PkgRename { from: String, to: String },
 }
 
 pub fn apply(bundle: &[(String, String)], ops: &[Op]) -> Result<Bundle, OpError> {
@@ -122,6 +123,7 @@ fn apply_one(work: &mut Bundle, op: &Op) -> Result<(), OpError> {
         Op::NodeRm { slug, cascade } => op_node_rm(work, slug, *cascade),
         Op::NodeRename { from, to } => rename::op_node_rename(work, from, to),
         Op::PkgMove { slug, to_dir } => pkg::op_pkg_move(work, slug, to_dir),
+        Op::PkgRename { from, to } => pkg::op_pkg_rename(work, from, to),
     }
 }
 
