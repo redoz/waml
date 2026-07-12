@@ -4,3 +4,11 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+/* Keyboard shortcut hints: hidden by default (opacity-0 utility on .keyhint),
+   revealed on hover of the control group, or globally when the Dock toggle is on
+   (data-show-shortcuts on <html>). */
+.group:hover .keyhint,
+[data-show-shortcuts] .keyhint {
+  opacity: 1;
+}
