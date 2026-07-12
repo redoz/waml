@@ -4,10 +4,8 @@
 
 <script lang="ts">
   import type { Snippet } from "svelte";
-  import { DEFAULT_DISPLAY, type DiagramDisplay } from "@uaml/okf";
   import { Keyboard } from "lucide-svelte";
   import KeyHint from "../KeyHint.svelte";
-  import DiagramPropertiesBody from "./DiagramPropertiesBody.svelte";
   import { hints } from "../../state/hints.svelte";
   import { matchesShortcut, keyLabel } from "../../lib/shortcuts";
 
@@ -16,22 +14,15 @@
     onToolChange,
     onClear,
     clearDisabled,
-    display = DEFAULT_DISPLAY,
-    onDisplayChange,
+    onOpenProperties,
   }: {
     activeTool: Tool;
     onToolChange: (tool: Tool) => void;
     onClear: () => void;
     clearDisabled?: boolean;
-    // The ACTIVE diagram's resolved render settings, and a patch handler that
-    // writes changes back onto that diagram's `display`.
-    display?: DiagramDisplay;
-    onDisplayChange?: (patch: Partial<DiagramDisplay>) => void;
+    // Opens the central edit panel's diagram-properties context.
+    onOpenProperties?: () => void;
   } = $props();
-
-  // "Diagram properties" flyout: a left-anchored popover off the dock configuring
-  // how the active diagram renders. Toggled by the sliders button.
-  let propsOpen = $state(false);
 
   // Keyboard shortcuts, sourced from the registry so displayed glyphs and the
   // handled keys can never drift.
@@ -164,39 +155,17 @@
 
   <div class="h-px bg-[#d8dee8] mx-1 my-[3px]"></div>
 
-  <!-- Diagram properties: left-anchored flyout configuring the active diagram's
-       per-diagram render settings. -->
+  <!-- Diagram properties: opens the central edit panel's diagram-properties
+       context, configuring the active diagram's per-diagram render settings. -->
   <div class="relative group">
     <button
-      onclick={() => (propsOpen = !propsOpen)}
+      onclick={() => onOpenProperties?.()}
       aria-label="Diagram properties"
-      aria-expanded={propsOpen}
-      class="w-[38px] h-[38px] rounded-[9px] border-none flex items-center justify-center cursor-pointer transition-colors {propsOpen
-        ? 'bg-[#e6f1fb] text-[#1e88e5]'
-        : 'bg-transparent text-slate-500 hover:bg-[#f1f3f7] hover:text-slate-900'}"
+      class="w-[38px] h-[38px] rounded-[9px] border-none flex items-center justify-center cursor-pointer transition-colors bg-transparent text-slate-500 hover:bg-[#f1f3f7] hover:text-slate-900"
     >
       {@render slidersIcon()}
     </button>
-    {#if !propsOpen}
-      {@render dockTip("Diagram properties")}
-    {/if}
-
-    {#if propsOpen}
-      <div class="absolute left-[calc(100%+10px)] top-1/2 -translate-y-1/2 z-50">
-        <span class="absolute right-full top-0 h-full w-[12px]"></span>
-        <div
-          role="dialog"
-          aria-label="Diagram properties"
-          class="w-[268px] rounded-xl border border-[#d8dee8] bg-white p-1.5 shadow-[0_8px_24px_rgba(15,23,42,0.14)]"
-        >
-          <div class="px-2 pt-1 pb-1.5 text-[11px] font-semibold uppercase tracking-wide text-slate-400">
-            Diagram properties
-          </div>
-
-          <DiagramPropertiesBody {display} onChange={(p) => onDisplayChange?.(p)} />
-        </div>
-      </div>
-    {/if}
+    {@render dockTip("Diagram properties")}
   </div>
 
   <div class="h-px bg-[#d8dee8] mx-1 my-[3px]"></div>

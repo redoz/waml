@@ -594,8 +594,7 @@ import ShareToast from "../ShareToast.svelte";
         onToolChange={handleToolChange}
         onClear={() => (showClear = true)}
         clearDisabled={$model.nodes.length === 0}
-        display={activeDisplay}
-        onDisplayChange={handleDisplayChange}
+        onOpenProperties={() => (centralPanel = { kind: "diagram" })}
       />
       <SvelteFlow
         bind:nodes={rfNodes}
