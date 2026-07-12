@@ -609,12 +609,11 @@ import ShareToast from "../ShareToast.svelte";
       {/if}
     </div>
 
-    <!-- Right-edge Feedback flag; slides left by the panel width to stay clear
-         of the always-present Inspector. -->
+    <!-- Right-edge Feedback flag; anchored to the edge (the Inspector is a
+         floating top-right card that doesn't overlap the mid-height flag). -->
     <EdgeFlag
       label="Feedback"
       offset={62}
-      rightOffset={inspectorWidth}
       href="https://github.com/redoz/uaml/issues/new"
     >
       {#snippet icon()}<MessageSquare size={16} />{/snippet}
