@@ -488,7 +488,7 @@ import ShareToast from "../ShareToast.svelte";
   {/if}
   {#if showClear}
     <ClearCanvasDialog
-      counts={{ marts: $model.nodes.length, relationships: $model.edges.length }}
+      counts={{ nodes: $model.nodes.length, relationships: $model.edges.length }}
       onDelete={clearCanvas}
       onExportAndDelete={handleExportAndClear}
       onClose={() => (showClear = false)}

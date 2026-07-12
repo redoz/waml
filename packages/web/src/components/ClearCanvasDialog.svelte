@@ -6,13 +6,13 @@
   // bundle to their computer first. Two destructive paths (export-then-delete,
   // or just delete) plus Cancel.
   let { counts, onDelete, onExportAndDelete, onClose }: {
-    counts: { marts: number; relationships: number };
+    counts: { nodes: number; relationships: number };
     onDelete: () => void;
     onExportAndDelete: () => void;
     onClose: () => void;
   } = $props();
 
-  const empty = $derived(counts.marts === 0 && counts.relationships === 0);
+  const empty = $derived(counts.nodes === 0 && counts.relationships === 0);
 </script>
 
 <!-- svelte-ignore a11y_click_events_have_key_events -->
@@ -31,7 +31,7 @@
       <!-- Whitespace butts directly against the {#if}/{/if} tags so Svelte's
            whitespace-collapse doesn't inject a stray space before the period
            (empty case) or after the counts (matches ClearCanvasDialog.tsx). -->
-      This permanently deletes everything on the canvas{#if !empty}{" "}— <span class="font-semibold">{counts.marts} {counts.marts === 1 ? "mart" : "marts"}</span> and <span class="font-semibold">{counts.relationships} {counts.relationships === 1 ? "relationship" : "relationships"}</span>{/if}. This can't be undone.
+      This permanently deletes everything on the canvas{#if !empty}{" "}— <span class="font-semibold">{counts.nodes} {counts.nodes === 1 ? "node" : "nodes"}</span> and <span class="font-semibold">{counts.relationships} {counts.relationships === 1 ? "relationship" : "relationships"}</span>{/if}. This can't be undone.
     </div>
 
     <p class="text-[13px] text-slate-600">

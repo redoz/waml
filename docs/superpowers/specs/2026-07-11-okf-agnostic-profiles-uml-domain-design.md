@@ -6,7 +6,7 @@
 
 ## Goal
 
-Turn OKF Canvas from a data-mart/ERD tool into a **profile-agnostic modeling
+Turn OKF Canvas from a data-node/ERD tool into a **profile-agnostic modeling
 canvas**. OKF stays an open markdown format; the canvas renders any node kind by
 dispatching on a small closed set of **metaclasses**, with everything
 domain-specific carried as **data** (stereotypes + profiles) rather than code.
@@ -20,8 +20,8 @@ not a renderer rewrite.
 - Not implementing every UML diagram type. Scope = **class/structure** diagrams.
 - No operations/methods modeling yet (deferred; see Deferred).
 - No change to URL sharing (gzipped JSON `ModelGraph`) or localStorage plumbing.
-- Not deleting the existing data-mart capability in this spec — but the node data
-  model is generalized so the mart notion becomes one possible shape, not the core.
+- Not deleting the existing data-node capability in this spec — but the node data
+  model is generalized so the node notion becomes one possible shape, not the core.
 
 ## Core concepts
 
@@ -391,7 +391,7 @@ at a shared `Money` value object curated elsewhere). Behavior:
 
 ## Data-model impact (`packages/okf`, `packages/web`)
 
-The current `ModelNode` is data-mart shaped (`inputSource`, `schema:
+The current `ModelNode` is data-node shaped (`inputSource`, `schema:
 SchemaField[]` with `pk`, `JoinKey`). Generalize:
 
 - **Node** gains: `metaclass`/`type` (`family.Metaclass`), `stereotypes: string[]`,
@@ -466,7 +466,7 @@ edge.kind ─→ line style + end adornments (per-end mult/role, reciprocity)
 ## Rollout (staged, `main` green each step)
 
 1. Generalize the node/edge/diagram data model in `okf` types (keep existing
-   tests compiling; adapt mart shape onto the new model).
+   tests compiling; adapt node shape onto the new model).
 2. Parser/serializer: Attributes / Values / Relationships (incl. `as "..."` /
    `as [link]` names) / Body / Notes sections + `annotates` resolution +
    round-trip tests.

@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Turn OKF Canvas from a data-mart/ERD tool into a profile-agnostic modeling canvas whose first profile is a UML class-diagram / domain model, per the approved spec `docs/superpowers/specs/2026-07-11-okf-agnostic-profiles-uml-domain-design.md`.
+**Goal:** Turn OKF Canvas from a data-node/ERD tool into a profile-agnostic modeling canvas whose first profile is a UML class-diagram / domain model, per the approved spec `docs/superpowers/specs/2026-07-11-okf-agnostic-profiles-uml-domain-design.md`.
 
 **Architecture:** The core `ModelGraph` in `packages/okf` is generalized (classifier nodes with `family.Metaclass` type + stereotypes + attributes; relationship edges with a verb `kind` + per-end multiplicity/role/navigability; diagrams as first-class curated views). The markdown format gains `## Attributes` / `## Values` / `## Relationships` sections and `type: Diagram` docs. The web canvas dispatches rendering through a metaclass renderer registry with a mandatory generic fallback, and a data-only profile (`uml-domain`) supplies emphasis, stereotype styles, and the palette.
 
@@ -117,7 +117,7 @@ packages/web/src/
   share/url.ts    — sanitize/migrate for new shape
   sync/merge.ts   — NEW (replaces sync/owoxImport.ts); sync/detach.ts + sync/joinFieldType.ts DELETED
   templates/helpers.ts — legacy helpers mapped to new shape + new UML helpers (stage 6)
-  components/canvas/nodes/ — NEW (stage 3): shared.tsx, GenericNode.tsx, uml.tsx, registry.ts, OkfNode.tsx (MartNode.tsx DELETED)
+  components/canvas/nodes/ — NEW (stage 3): shared.tsx, GenericNode.tsx, uml.tsx, registry.ts, OkfNode.tsx (NodeNode.tsx DELETED)
   components/canvas/{Canvas.tsx, edges.ts, RelEdge.tsx, layoutSize.ts, Dock.tsx, DiagramTabs.tsx (NEW, stage 5)}
   components/inspector/{ObjectInspector.tsx, RelationshipInspector.tsx, AttributeEditor.tsx (NEW, replaces SchemaEditor.tsx), ExternalRefs.tsx (NEW, stage 5)}
   profiles/ — NEW (stage 4): index.ts, umlDomain.ts
@@ -136,7 +136,7 @@ packages/web/public/okf-format.md — rewritten author guide (stage 6)
 
 **Files:**
 - Create: `packages/web/src/components/canvas/nodes/shared.tsx`, `nodes/GenericNode.tsx`, `nodes/uml.tsx`, `nodes/registry.ts`, `nodes/OkfNode.tsx`
-- Delete: `packages/web/src/components/canvas/MartNode.tsx`, `MartNode.test.tsx`
+- Delete: `packages/web/src/components/canvas/NodeNode.tsx`, `NodeNode.test.tsx`
 - Modify: `packages/web/src/components/canvas/Canvas.tsx` (line 45 import + line 151 `nodeTypes`), `packages/web/src/components/canvas/layoutSize.ts` (account for values rows)
 - Test: `packages/web/src/components/canvas/nodes/registry.test.tsx` (new)
 
@@ -238,8 +238,8 @@ export function NodePorts() {
   } as const;
   return (
     <>
-      <Handle type="source" position={Position.Left} id="left" style={{ ...common, left: -7 }} className="mart-handle" />
-      <Handle type="source" position={Position.Right} id="right" style={{ ...common, right: -7 }} className="mart-handle" />
+      <Handle type="source" position={Position.Left} id="left" style={{ ...common, left: -7 }} className="node-handle" />
+      <Handle type="source" position={Position.Right} id="right" style={{ ...common, right: -7 }} className="node-handle" />
     </>
   );
 }
@@ -431,12 +431,12 @@ function OkfNodeInner({ data }: NodeProps) {
 export const OkfNode = memo(OkfNodeInner);
 ```
 
-In `Canvas.tsx`: line 45 `import { MartNode } from "./MartNode";` → `import { OkfNode } from "./nodes/OkfNode";`; line 151 `const nodeTypes = { okf: OkfNode };`. Then `git rm packages/web/src/components/canvas/MartNode.tsx packages/web/src/components/canvas/MartNode.test.tsx`. In `layoutSize.ts`, count values too: `const total = node.values ? node.values.length : node.attributes.length;` (keep the rest).
+In `Canvas.tsx`: line 45 `import { NodeNode } from "./NodeNode";` → `import { OkfNode } from "./nodes/OkfNode";`; line 151 `const nodeTypes = { okf: OkfNode };`. Then `git rm packages/web/src/components/canvas/NodeNode.tsx packages/web/src/components/canvas/NodeNode.test.tsx`. In `layoutSize.ts`, count values too: `const total = node.values ? node.values.length : node.attributes.length;` (keep the rest).
 
 - [ ] **Step 5: Run tests and the web suite**
 
 Run: `pnpm --filter @mc/web test -- registry && pnpm --filter @mc/web test`
-Expected: PASS (MartNode tests are gone; nothing else referenced it except Canvas).
+Expected: PASS (NodeNode tests are gone; nothing else referenced it except Canvas).
 
 - [ ] **Step 6: Commit**
 

@@ -2,7 +2,7 @@
   // Mirrors packages/web/src/components/TemplateApplyDialog.tsx.
   // Shown when "Use" is clicked on a template while the canvas already has
   // content. Mirrors the OKF import dialogs: choose Replace vs Merge
-  // and see how many marts and relationships will be added before committing.
+  // and see how many nodes and relationships will be added before committing.
   import { build_model } from "@uaml/okf";
 
   type Bundle = [string, string][];
@@ -52,7 +52,7 @@
         </label>
       {/each}
       <p class="text-[12px] text-slate-500">
-        Will import {counts.nodes.length} marts, {counts.edges.length} relationships.
+        Will import {counts.nodes.length} nodes, {counts.edges.length} relationships.
       </p>
     </div>
 

@@ -6,9 +6,9 @@ test("Delete / Export-&-delete route to their handlers", async () => {
   const onDelete = vi.fn();
   const onExportAndDelete = vi.fn();
   render(ClearCanvasDialog, {
-    props: { counts: { marts: 3, relationships: 2 }, onDelete, onExportAndDelete, onClose: vi.fn() },
+    props: { counts: { nodes: 3, relationships: 2 }, onDelete, onExportAndDelete, onClose: vi.fn() },
   });
-  expect(document.body.textContent).toContain("3 marts");
+  expect(document.body.textContent).toContain("3 nodes");
   await fireEvent.click(screen.getByRole("button", { name: /Export OKF & delete/ }));
   expect(onExportAndDelete).toHaveBeenCalledTimes(1);
   await fireEvent.click(screen.getByRole("button", { name: "Delete" }));
@@ -20,17 +20,17 @@ test("Delete / Export-&-delete route to their handlers", async () => {
 // vs ClearCanvasDialog.tsx, worse in the empty case which double-spaced).
 test("confirmation copy has no stray whitespace (non-empty)", () => {
   render(ClearCanvasDialog, {
-    props: { counts: { marts: 3, relationships: 2 }, onDelete: vi.fn(), onExportAndDelete: vi.fn(), onClose: vi.fn() },
+    props: { counts: { nodes: 3, relationships: 2 }, onDelete: vi.fn(), onExportAndDelete: vi.fn(), onClose: vi.fn() },
   });
   expect(document.body.textContent).toContain(
-    "This permanently deletes everything on the canvas — 3 marts and 2 relationships. This can't be undone.",
+    "This permanently deletes everything on the canvas — 3 nodes and 2 relationships. This can't be undone.",
   );
   cleanup();
 });
 
 test("confirmation copy has no stray whitespace (empty canvas)", () => {
   render(ClearCanvasDialog, {
-    props: { counts: { marts: 0, relationships: 0 }, onDelete: vi.fn(), onExportAndDelete: vi.fn(), onClose: vi.fn() },
+    props: { counts: { nodes: 0, relationships: 0 }, onDelete: vi.fn(), onExportAndDelete: vi.fn(), onClose: vi.fn() },
   });
   expect(document.body.textContent).toContain(
     "This permanently deletes everything on the canvas. This can't be undone.",

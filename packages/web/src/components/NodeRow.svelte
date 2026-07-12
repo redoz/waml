@@ -1,10 +1,10 @@
 <script lang="ts">
-  // Private helper for LibraryDialog.svelte — mirrors the MartRow() function
+  // Private helper for LibraryDialog.svelte — mirrors the NodeRow() function
   // in packages/web/src/components/LibraryDialog.tsx. Split into its own
   // component because it owns its own `open` toggle state, which a snippet
   // can't hold cleanly.
   import { ChevronRight, ChevronDown } from "lucide-svelte";
-  import { DataMartIcon } from "../lib/icons";
+  import { DataNodeIcon } from "../lib/icons";
 
   let { title, fields }: {
     title: string;
@@ -21,7 +21,7 @@
     {:else}
       <ChevronRight size={14} class="text-slate-400" />
     {/if}
-    <DataMartIcon size={14} class="text-slate-500" />
+    <DataNodeIcon size={14} class="text-slate-500" />
     <span class="text-[13px] font-medium flex-1">{title}</span>
     <span class="text-[11px] text-slate-500">{fields.length} fields</span>
   </button>

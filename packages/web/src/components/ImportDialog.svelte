@@ -164,7 +164,7 @@
           </label>
         {/each}
         <p class="text-[12px] text-slate-500">
-          Will import {preview.nodes} marts, {preview.edges} relationships.
+          Will import {preview.nodes} nodes, {preview.edges} relationships.
         </p>
       </div>
     {/if}

@@ -5,7 +5,7 @@
   import { toModelGraph, emptyOverlay, type RustModel } from "@uaml/core/state/overlay";
   import { TEMPLATES, INDUSTRY_TEMPLATES, DATASET_TEMPLATES, type Template } from "@uaml/core/templates";
   import { JoinIcon, LibraryIcon } from "../lib/icons";
-  import MartRow from "./MartRow.svelte";
+  import NodeRow from "./NodeRow.svelte";
 
   type Bundle = [string, string][];
 
@@ -54,7 +54,7 @@
         <div class="text-[14px] font-semibold truncate">{t.name}</div>
         <div class="text-[12px] text-slate-500 truncate">{t.description}</div>
       </div>
-      <span class="text-[11px] text-slate-500 whitespace-nowrap flex-shrink-0">{nodes.length} marts · {edges.length} links</span>
+      <span class="text-[11px] text-slate-500 whitespace-nowrap flex-shrink-0">{nodes.length} nodes · {edges.length} links</span>
       <button
         onclick={(e) => { e.stopPropagation(); onUse(t.bundle.map(([p, m]) => [p, m]), t.name); }}
         title="Roll out this model onto the canvas"
@@ -68,7 +68,7 @@
       <div class="px-4 pb-4 pt-1 bg-[#fbfcfe] border-t border-[#eef1f5] overflow-y-auto" style="max-height: 46vh">
         <div class="flex flex-col gap-1.5 mt-2">
           {#each nodes as n (n.key)}
-            <MartRow title={n.title} fields={n.attributes} />
+            <NodeRow title={n.title} fields={n.attributes} />
           {/each}
         </div>
 

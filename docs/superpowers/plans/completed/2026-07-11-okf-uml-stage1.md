@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Turn OKF Canvas from a data-mart/ERD tool into a profile-agnostic modeling canvas whose first profile is a UML class-diagram / domain model, per the approved spec `docs/superpowers/specs/2026-07-11-okf-agnostic-profiles-uml-domain-design.md`.
+**Goal:** Turn OKF Canvas from a data-node/ERD tool into a profile-agnostic modeling canvas whose first profile is a UML class-diagram / domain model, per the approved spec `docs/superpowers/specs/2026-07-11-okf-agnostic-profiles-uml-domain-design.md`.
 
 **Architecture:** The core `ModelGraph` in `packages/okf` is generalized (classifier nodes with `family.Metaclass` type + stereotypes + attributes; relationship edges with a verb `kind` + per-end multiplicity/role/navigability; diagrams as first-class curated views). The markdown format gains `## Attributes` / `## Values` / `## Relationships` sections and `type: Diagram` docs. The web canvas dispatches rendering through a metaclass renderer registry with a mandatory generic fallback, and a data-only profile (`uml-domain`) supplies emphasis, stereotype styles, and the palette.
 
@@ -117,7 +117,7 @@ packages/web/src/
   share/url.ts    — sanitize/migrate for new shape
   sync/merge.ts   — NEW (replaces sync/owoxImport.ts); sync/detach.ts + sync/joinFieldType.ts DELETED
   templates/helpers.ts — legacy helpers mapped to new shape + new UML helpers (stage 6)
-  components/canvas/nodes/ — NEW (stage 3): shared.tsx, GenericNode.tsx, uml.tsx, registry.ts, OkfNode.tsx (MartNode.tsx DELETED)
+  components/canvas/nodes/ — NEW (stage 3): shared.tsx, GenericNode.tsx, uml.tsx, registry.ts, OkfNode.tsx (NodeNode.tsx DELETED)
   components/canvas/{Canvas.tsx, edges.ts, RelEdge.tsx, layoutSize.ts, Dock.tsx, DiagramTabs.tsx (NEW, stage 5)}
   components/inspector/{ObjectInspector.tsx, RelationshipInspector.tsx, AttributeEditor.tsx (NEW, replaces SchemaEditor.tsx), ExternalRefs.tsx (NEW, stage 5)}
   profiles/ — NEW (stage 4): index.ts, umlDomain.ts
@@ -137,7 +137,7 @@ Everything compiles and passes on the new `ModelGraph`; markdown format unchange
 ### Task 1: okf core types + migration module
 
 **Files:**
-- Rewrite: `packages/okf/src/types.ts` (currently 44 lines, mart-shaped)
+- Rewrite: `packages/okf/src/types.ts` (currently 44 lines, node-shaped)
 - Create: `packages/okf/src/migrate.ts`
 - Modify: `packages/okf/src/index.ts` (4 lines)
 - Test: `packages/okf/test/migrate.test.ts`
@@ -169,7 +169,7 @@ const legacy = {
 };
 
 describe("migrateGraph", () => {
-  it("maps a legacy mart graph onto the UML model", () => {
+  it("maps a legacy node graph onto the UML model", () => {
     const g = migrateGraph(legacy)!;
     expect(g.diagrams).toEqual([]);
     const n = g.nodes[0];
@@ -334,7 +334,7 @@ export function splitType(type: string): { family: string; metaclass: string } |
 ```ts
 import type { Attribute, ModelEdge, ModelGraph, ModelNode, RelEnd } from "./types";
 
-// Pre-UML (data-mart era) shapes as found in old localStorage payloads and
+// Pre-UML (data-node era) shapes as found in old localStorage payloads and
 // shared URLs. They exist only here; the rest of the codebase never sees them.
 interface LegacyField { name: string; type: string; pk?: boolean; alias?: string; description?: string }
 interface LegacyNode {
@@ -462,7 +462,7 @@ Replace `packages/okf/test/parse-owox.test.ts` body assertions (keep the `custom
 
 ```ts
 describe("parseBundle (legacy OWOX format)", () => {
-  it("maps a legacy mart doc onto a generic classifier with attributes", () => {
+  it("maps a legacy node doc onto a generic classifier with attributes", () => {
     const g = parseBundle({ "b/customers.md": customers });
     const n = g.nodes[0];
     expect(n.type).toBe("OWOX Data Mart");           // opaque token carried, renders generically
@@ -973,7 +973,7 @@ Update `packages/web/src/share/url.test.ts`: rewrite fixtures to the new node/ed
 
 ```ts
 import { gzipSync, strToU8 } from "fflate";
-it("decodes a legacy (mart-era) share payload via migration", () => {
+it("decodes a legacy (node-era) share payload via migration", () => {
   const legacyJson = JSON.stringify({
     storageId: null,
     nodes: [{ key: "n1", title: "Orders", inputSource: "SQL", schema: [{ name: "id", type: "STRING", pk: true }],
@@ -1090,7 +1090,7 @@ function sanitize(g: ModelGraph): ModelGraph {
 }
 
 /** Reverse of encodeModel. Returns null on any malformed/corrupt payload.
- *  Legacy (mart-era) payloads are migrated — old share links keep opening. */
+ *  Legacy (node-era) payloads are migrated — old share links keep opening. */
 export function decodeModel(payload: string): ModelGraph | null {
   try {
     const json = strFromU8(gunzipSync(b64urlToBytes(payload)));
@@ -1190,7 +1190,7 @@ git commit -m "feat(web): store/persist/share/merge on the generalized model; dr
 
 **Interfaces:**
 - Consumes: pinned types, `endsFromCardinality` from `@mc/okf`.
-- Produces: `f(name, type, pk?, description?): Attribute` (pk ignored); `mart(key, title, inputSource, attributes, description?): ModelNode` (inputSource ignored); `rel(id, from, to, left, right, cardinality?, bidirectional?): ModelEdge` (left/right ignored; cardinality → end multiplicities). Signatures UNCHANGED so the 22 template files compile untouched except the graph-literal sweep.
+- Produces: `f(name, type, pk?, description?): Attribute` (pk ignored); `node(key, title, inputSource, attributes, description?): ModelNode` (inputSource ignored); `rel(id, from, to, left, right, cardinality?, bidirectional?): ModelEdge` (left/right ignored; cardinality → end multiplicities). Signatures UNCHANGED so the 22 template files compile untouched except the graph-literal sweep.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -1227,7 +1227,7 @@ describe("built-in templates", () => {
 - [ ] **Step 2: Run to verify failure**
 
 Run: `pnpm --filter @mc/web test -- templates.test`
-Expected: FAIL (helpers still build the mart shape; template literals still carry `storageId`).
+Expected: FAIL (helpers still build the node shape; template literals still carry `storageId`).
 
 - [ ] **Step 3: Rewrite `packages/web/src/templates/helpers.ts`**
 
@@ -1236,13 +1236,13 @@ import type { ModelGraph, ModelNode, ModelEdge, Attribute } from "@mc/okf";
 import { endsFromCardinality } from "@mc/okf";
 
 // ── tiny authoring helpers ─────────────────────────────────────────────────
-// Signatures kept from the mart era so the 22 template files stay untouched:
+// Signatures kept from the node era so the 22 template files stay untouched:
 // `pk`, `inputSource` and join fields are accepted and dropped (data-profile
 // concerns, deferred); cardinality maps onto per-end multiplicities.
 export const f = (name: string, type: string, _pk = false, description?: string): Attribute =>
   ({ name, type: { name: type }, multiplicity: "1", ...(description ? { description } : {}) });
 
-export const mart = (
+export const node = (
   key: string,
   title: string,
   _inputSource: string,
@@ -1292,18 +1292,18 @@ Expected: PASS.
 
 ```bash
 git add packages/web/src/templates
-git commit -m "feat(web): templates emit the generalized model (helpers remap mart-era args)"
+git commit -m "feat(web): templates emit the generalized model (helpers remap node-era args)"
 ```
 
 ### Task 6: canvas on the new model (interim rendering)
 
 **Files:**
-- Modify: `packages/web/src/components/canvas/Canvas.tsx` (625 lines), `edges.ts` (95 lines), `MartNode.tsx` (161 lines), `RelEdge.tsx` (126 lines), `layoutSize.ts` (23 lines), `Dock.tsx` (lines 7–19), `packages/web/src/components/LibraryDialog.tsx`, `packages/web/src/components/ImportDialog.tsx` (line 50)
-- Test: update `edges.test.ts`, `RelEdge.test.tsx`, `MartNode.test.tsx`, `layoutSize.test.ts`, `Dock.test.tsx`, `okf/io.test.ts`, `okf/guideExample.test.ts`
+- Modify: `packages/web/src/components/canvas/Canvas.tsx` (625 lines), `edges.ts` (95 lines), `NodeNode.tsx` (161 lines), `RelEdge.tsx` (126 lines), `layoutSize.ts` (23 lines), `Dock.tsx` (lines 7–19), `packages/web/src/components/LibraryDialog.tsx`, `packages/web/src/components/ImportDialog.tsx` (line 50)
+- Test: update `edges.test.ts`, `RelEdge.test.tsx`, `NodeNode.test.tsx`, `layoutSize.test.ts`, `Dock.test.tsx`, `okf/io.test.ts`, `okf/guideExample.test.ts`
 
 **Interfaces:**
 - Consumes: Task 4 store/merge, Task 5 templates.
-- Produces: `buildRfEdges(edges, nodes, viewMode, relLabelMode)` (same signature), edge `data` now `{ kind, fromEnd, toEnd, bidirectional, modelEdgeId, relLabelMode }`; `isEdgeReconnectable(modelEdgeId, selectedEdgeId)` (viewMode param dropped); `MartNodeData = ModelNode & { _viewMode?: ViewMode }`; RF node type renamed `"okf"`. Stage 3 replaces the visuals; this task only makes them truthful to the new model.
+- Produces: `buildRfEdges(edges, nodes, viewMode, relLabelMode)` (same signature), edge `data` now `{ kind, fromEnd, toEnd, bidirectional, modelEdgeId, relLabelMode }`; `isEdgeReconnectable(modelEdgeId, selectedEdgeId)` (viewMode param dropped); `NodeNodeData = ModelNode & { _viewMode?: ViewMode }`; RF node type renamed `"okf"`. Stage 3 replaces the visuals; this task only makes them truthful to the new model.
 
 - [ ] **Step 1: `Canvas.tsx` edits (exact spots)**
 
@@ -1324,7 +1324,7 @@ git commit -m "feat(web): templates emit the generalized model (helpers remap ma
     }, [graph.nodes, viewMode, setRfNodes]);
     ```
 
-  - Line 151: `const nodeTypes = { okf: MartNode };` (renamed now so stage 3 doesn't touch Canvas again).
+  - Line 151: `const nodeTypes = { okf: NodeNode };` (renamed now so stage 3 doesn't touch Canvas again).
   - Line 214: `isEdgeReconnectable(modelEdgeId, selId)` (drop `viewMode`); remove `viewMode` from that effect's dep list only if ESLint agrees (it's still used for zIndex? it isn't — remove it).
   - `onReconnect` (235–246): drop the ERD guard (edges are now 1:1 with model edges in every mode):
 
@@ -1377,12 +1377,12 @@ export function buildRfEdges(edges: ModelEdge[], nodes: ModelNode[], viewMode: V
 }
 ```
 
-- [ ] **Step 3: Interim `MartNode.tsx` truthfulness pass**
+- [ ] **Step 3: Interim `NodeNode.tsx` truthfulness pass**
 
 Keep the file/component name (stage 3 replaces it wholesale). Delete `SOURCE_COLOR`, `STATUS_TIP`, `StatusDot`, `FieldAnchors`; drop `_keyFields`:
 
 ```ts
-export type MartNodeData = ModelNode & { _viewMode?: ViewMode };
+export type NodeNodeData = ModelNode & { _viewMode?: ViewMode };
 ```
 
 ```tsx
@@ -1396,7 +1396,7 @@ function FieldRow({ a }: { a: Attribute }) {
 }
 ```
 
-`ErdBody`: `const ordered = node.attributes;` (key-first ordering dies with keys); keep the `ERD_COLLAPSED_ROWS` expand toggle. `MartNodeInner`: `const color = "#94a3b8";`, remove `<StatusDot …/>`, the meta chip shows `node.type`, `fieldCount` reads `node.attributes.length`. Imports shrink (drop `KeyRound`, `SchemaField`).
+`ErdBody`: `const ordered = node.attributes;` (key-first ordering dies with keys); keep the `ERD_COLLAPSED_ROWS` expand toggle. `NodeNodeInner`: `const color = "#94a3b8";`, remove `<StatusDot …/>`, the meta chip shows `node.type`, `fieldCount` reads `node.attributes.length`. Imports shrink (drop `KeyRound`, `SchemaField`).
 
 - [ ] **Step 4: Interim `RelEdge.tsx` label pass**
 
@@ -1426,7 +1426,7 @@ Keep the existing arrow markers and mid-path label div; delete `visibleKeys`/`sh
     ];
     ```
 
-  - `LibraryDialog.tsx`: line 77 `fields={n.schema}` → `fields={n.attributes}`; delete line 87 (`const cond = e.keys…`) and the `<code>` span + separator rendering it (lines 92–93); `MartRow` prop type (line 106) becomes `fields: { name: string; type: { name: string } }[]`, and inside `MartRow` print `f.type.name` and drop any `f.pk` icon.
+  - `LibraryDialog.tsx`: line 77 `fields={n.schema}` → `fields={n.attributes}`; delete line 87 (`const cond = e.keys…`) and the `<code>` span + separator rendering it (lines 92–93); `NodeRow` prop type (line 106) becomes `fields: { name: string; type: { name: string } }[]`, and inside `NodeRow` print `f.type.name` and drop any `f.pk` icon.
   - `ImportDialog.tsx` line 50: `return graph;` (the status/owoxId scrub is dead). Update the comment above it.
 
 - [ ] **Step 6: Update canvas tests**
@@ -1435,7 +1435,7 @@ Use the Task 4 `node`/`edge` builders in each file.
 
   - `edges.test.ts`: assert one RF edge per model edge in BOTH `"compact"` and `"erd"` modes, with `data.kind === "associates"` and `data.modelEdgeId`; keep the side-selection tests (they only use positions); delete per-key fan-out tests (ids like `"e1::0"`) and `isEdgeReconnectable` ERD-mode tests (now 2-arg).
   - `RelEdge.test.tsx`: fixture data `{ kind: "associates", fromEnd: { multiplicity: "1" }, toEnd: { multiplicity: "*" }, bidirectional: false, relLabelMode: "all" }`; assert the label text contains `1` and `*`; assert `relLabelMode: "hidden"` renders no label div; delete "? = ?" and cardinality-badge tests.
-  - `MartNode.test.tsx`: node data via builder + `_viewMode: "erd"`; assert title renders, attribute name + type token render, and no status dot / PK icon markup.
+  - `NodeNode.test.tsx`: node data via builder + `_viewMode: "erd"`; assert title renders, attribute name + type token render, and no status dot / PK icon markup.
   - `layoutSize.test.ts`: fixtures swap `schema:` for `attributes:` (via builder); expectations unchanged.
   - `Dock.test.tsx`: label-mode menu shows exactly "Show labels" and "Hide all labels".
   - `okf/io.test.ts`: fixtures to new shape; round-trip through `graphToBundleFiles` → `filesToGraph` asserts node keys + edge kind survive.
@@ -1459,7 +1459,7 @@ Use the Task 4 `node`/`edge` builders in each file.
 
 - [ ] **Step 7: Run canvas tests**
 
-Run: `pnpm --filter @mc/web test -- edges RelEdge MartNode layoutSize Dock io.test guideExample`
+Run: `pnpm --filter @mc/web test -- edges RelEdge NodeNode layoutSize Dock io.test guideExample`
 Expected: PASS. (Inspector tests still red — Task 7.)
 
 - [ ] **Step 8: Commit**
@@ -1782,7 +1782,7 @@ export function ObjectInspector({ node, onUpdate }: ObjectInspectorProps) {
 }
 ```
 
-In `Inspector.tsx`: remove the `joinFieldType` import (line 6); the `RelationshipInspector` call site (lines 132–146) loses `onEnsureField` entirely; `EmptyState` copy line 46 "Changes here are pushed to the matching Data Mart." → "Changes apply to your local model."
+In `Inspector.tsx`: remove the `joinFieldType` import (line 6); the `RelationshipInspector` call site (lines 132–146) loses `onEnsureField` entirely; `EmptyState` copy line 46 "Changes here are pushed to the matching Data Node." → "Changes apply to your local model."
 
 - [ ] **Step 6: Run inspector tests, then the FULL STAGE GATE**
 

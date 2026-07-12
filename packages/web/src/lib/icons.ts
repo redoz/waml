@@ -1,8 +1,8 @@
 // Canonical entity icons — kept consistent across the product UI.
-// Data Mart = Box, Storage = Database, Input Source = Code (</>),
+// Data Node = Box, Storage = Database, Input Source = Code (</>),
 // Output Schema = Columns3, Joinable/relationship = Link2, Library = Library.
 export {
-  Box as DataMartIcon,
+  Box as DataNodeIcon,
   Database as StorageIcon,
   Code as InputSourceIcon,
   Columns3 as OutputSchemaIcon,

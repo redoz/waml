@@ -6,7 +6,7 @@
 
 > Sketch a data model on a free, anonymous, in-browser canvas — then share it as a link or export it as portable Markdown.
 
-OKF Canvas is a static, single-page canvas for data people. Sketch your **data marts** (tables, views, SQL or connector outputs) as nodes and **joinable relationships** as edges, start from ready-made templates, flip to a field-level ERD view, and share the whole thing as a link. It's 100% client-side: there's no backend, no account, and no sign-in — your model lives in your browser and travels inside the URL you share.
+OKF Canvas is a static, single-page canvas for data people. Sketch your **data nodes** (tables, views, SQL or connector outputs) and **joinable relationships** as edges, start from ready-made templates, flip to a field-level ERD view, and share the whole thing as a link. It's 100% client-side: there's no backend, no account, and no sign-in — your model lives in your browser and travels inside the URL you share.
 
 > This fork removes the upstream server-side pieces (the OWOX API proxy, sign-in/Push, and the AI questions feature). What remains is a purely static SPA.
 
@@ -22,7 +22,7 @@ OKF Canvas is a static, single-page canvas for data people. Sketch your **data m
 
 ## Open Knowledge Format (OKF) — your model stays portable
 
-The canvas reads and writes **[Open Knowledge Format](https://github.com/GoogleCloudPlatform/knowledge-catalog)** — a vendor-neutral way to describe a data model as a **folder of Markdown files** with YAML frontmatter: one document per data mart, a schema table, and a `## Joins` section for relationships. It's **human-readable and agent-friendly** — people can review it in a pull request and LLMs can author it.
+The canvas reads and writes **[Open Knowledge Format](https://github.com/GoogleCloudPlatform/knowledge-catalog)** — a vendor-neutral way to describe a data model as a **folder of Markdown files** with YAML frontmatter: one document per data node, a schema table, and a `## Joins` section for relationships. It's **human-readable and agent-friendly** — people can review it in a pull request and LLMs can author it.
 
 - **Author + export, as a pair.** Design visually here and **Export OKF** to get a bundle that round-trips — re-importing restores the model. OWOX publishes real bundles at **[OWOX/models](https://github.com/OWOX/models)**; this canvas is a visual authoring/export front-end for that same format.
 - **No lock-in.** Because the format is open and text-based, your model isn't trapped in a proprietary file — it lives in Markdown you own, in any git repo.

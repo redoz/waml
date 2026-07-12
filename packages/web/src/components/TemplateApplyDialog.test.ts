@@ -7,7 +7,7 @@ beforeAll(async () => {
   await initWasm();
 });
 
-// A two-class, one-association bundle → 2 marts, 1 relationship (derived by the
+// A two-class, one-association bundle → 2 nodes, 1 relationship (derived by the
 // WASM core for the dialog's preview counts).
 const bundle: [string, string][] = [
   [
@@ -20,7 +20,7 @@ const bundle: [string, string][] = [
 test("Apply confirms with the default replace mode", async () => {
   const onConfirm = vi.fn();
   render(TemplateApplyDialog, { props: { bundle, name: "Retail", onConfirm, onClose: vi.fn() } });
-  expect(document.body.textContent).toContain("Will import 2 marts, 1 relationships.");
+  expect(document.body.textContent).toContain("Will import 2 nodes, 1 relationships.");
   await fireEvent.click(screen.getByRole("button", { name: "Apply" }));
   expect(onConfirm).toHaveBeenCalledWith("replace");
 });

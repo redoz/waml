@@ -33,7 +33,7 @@
       <div class="text-[14px] font-semibold">{t.name}</div>
       <div class="text-[12px] text-slate-500 truncate">{t.description}</div>
     </div>
-    <span class="text-[11px] text-slate-500 whitespace-nowrap">{graph.nodes.length} marts · {graph.edges.length} links</span>
+    <span class="text-[11px] text-slate-500 whitespace-nowrap">{graph.nodes.length} nodes · {graph.edges.length} links</span>
     <button
       onclick={() => onUseTemplate(t.bundle.map(([p, m]) => [p, m]), t.name)}
       title={`Roll out the ${t.name} model`}

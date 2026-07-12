@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Turn OKF Canvas from a data-mart/ERD tool into a profile-agnostic modeling canvas whose first profile is a UML class-diagram / domain model, per the approved spec `docs/superpowers/specs/2026-07-11-okf-agnostic-profiles-uml-domain-design.md`.
+**Goal:** Turn OKF Canvas from a data-node/ERD tool into a profile-agnostic modeling canvas whose first profile is a UML class-diagram / domain model, per the approved spec `docs/superpowers/specs/2026-07-11-okf-agnostic-profiles-uml-domain-design.md`.
 
 **Architecture:** The core `ModelGraph` in `packages/okf` is generalized (classifier nodes with `family.Metaclass` type + stereotypes + attributes; relationship edges with a verb `kind` + per-end multiplicity/role/navigability; diagrams as first-class curated views). The markdown format gains `## Attributes` / `## Values` / `## Relationships` sections and `type: Diagram` docs. The web canvas dispatches rendering through a metaclass renderer registry with a mandatory generic fallback, and a data-only profile (`uml-domain`) supplies emphasis, stereotype styles, and the palette.
 
@@ -117,7 +117,7 @@ packages/web/src/
   share/url.ts    — sanitize/migrate for new shape
   sync/merge.ts   — NEW (replaces sync/owoxImport.ts); sync/detach.ts + sync/joinFieldType.ts DELETED
   templates/helpers.ts — legacy helpers mapped to new shape + new UML helpers (stage 6)
-  components/canvas/nodes/ — NEW (stage 3): shared.tsx, GenericNode.tsx, uml.tsx, registry.ts, OkfNode.tsx (MartNode.tsx DELETED)
+  components/canvas/nodes/ — NEW (stage 3): shared.tsx, GenericNode.tsx, uml.tsx, registry.ts, OkfNode.tsx (NodeNode.tsx DELETED)
   components/canvas/{Canvas.tsx, edges.ts, RelEdge.tsx, layoutSize.ts, Dock.tsx, DiagramTabs.tsx (NEW, stage 5)}
   components/inspector/{ObjectInspector.tsx, RelationshipInspector.tsx, AttributeEditor.tsx (NEW, replaces SchemaEditor.tsx), ExternalRefs.tsx (NEW, stage 5)}
   profiles/ — NEW (stage 4): index.ts, umlDomain.ts
@@ -311,7 +311,7 @@ git commit -m "feat(web): Orders Domain UML template (uml-domain showcase)"
 ### Task 19: author guide rewrite + FINAL GATE
 
 **Files:**
-- Rewrite: `packages/web/public/okf-format.md` (8.1K, currently the mart/Joins guide)
+- Rewrite: `packages/web/public/okf-format.md` (8.1K, currently the node/Joins guide)
 - Modify: `packages/web/src/okf/guideExample.test.ts` (add new-format worked example; keep the legacy block as legacy-import coverage), `packages/web/public/llms.txt` (pointer copy only)
 
 **Interfaces:**
@@ -320,7 +320,7 @@ git commit -m "feat(web): Orders Domain UML template (uml-domain showcase)"
 
 - [ ] **Step 1: Add the failing guide test**
 
-In `packages/web/src/okf/guideExample.test.ts`, keep the existing `GUIDE_EXAMPLE` describe (rename its describe to `"legacy mart format still imports"`) and add:
+In `packages/web/src/okf/guideExample.test.ts`, keep the existing `GUIDE_EXAMPLE` describe (rename its describe to `"legacy node format still imports"`) and add:
 
 ```ts
 const UML_GUIDE_EXAMPLE = `
@@ -445,7 +445,7 @@ Structure (write it in full; the content mirrors the spec's "Node document forma
 7. **Diagram doc:** `type: Diagram`, `profile: uml-domain`, `## Members` (with optional `at x,y`), `## Render hints` (`- emphasize: …`, `- collapse [T](./slug.md)`).
 8. **Graceful degradation note:** unknown `type` renders as a generic box; unknown sections are preserved.
 9. **The worked example:** paste the exact `UML_GUIDE_EXAMPLE` content from Step 1 (they must stay character-identical — that's the drift guard; note this in a comment at the top of the test).
-10. **Legacy note:** the old mart format (Schema tables + `## Joins`) still imports.
+10. **Legacy note:** the old node format (Schema tables + `## Joins`) still imports.
 
 Update `packages/web/public/llms.txt`: adjust the one-line description of the format doc to "UML-flavored classifier + diagram markdown format" (keep the file's structure otherwise).
 
@@ -470,7 +470,7 @@ git push origin main
 ## Plan self-review (performed while writing)
 
 1. **Spec coverage:** three doc roles → Task 15 (`index.md` unchanged, Diagram split, classifier default) ✓; `family.Metaclass` + graceful degradation → Tasks 1/11 ✓; stereotypes → Tasks 1/9/11/13 ✓; profiles (lens/styles/palette) → Tasks 13/14 ✓; node doc format incl. visibility/multiplicity/values → Tasks 8/9/10 ✓; relationship BNF incl. the `<name>` production (`as "…"` / `as [link]`) + context rules + reciprocity → Tasks 8/9/10 ✓ (grammar capture + slug→key resolution + lossless emission); the `specializes` verb (renamed from `extends`) → Tasks 1/7/8/9/10/12/19 ✓; **association classes** (`uml.Association`): edge `name = { ref }` + classifier parse (no ends) + renderer + dashed mid-line connector → Tasks 1/8/9/10/11/12 ✓; **notes** (`uml.Note`): `## Body` + `annotates` anchors + `## Notes` desugar/round-trip + dog-eared renderer + dashed anchors → Tasks 1/9/10/11/12 ✓; diagram doc + members + hints + external refs → Tasks 15/16/17 ✓; data-model impact + migration of shares/templates → Tasks 1/4/5 ✓; rollout order and per-stage green → stage gates ✓; Deferred list → nothing here builds operations, other families, or the data profile ✓.
-2. **Known interim compromises (explicit, not placeholders):** Task 3's legacy emission (replaced in Task 10); Task 6's interim MartNode (replaced in Task 11); hardcoded `"uml-domain"` in Canvas (replaced in Task 16).
+2. **Known interim compromises (explicit, not placeholders):** Task 3's legacy emission (replaced in Task 10); Task 6's interim NodeNode (replaced in Task 11); hardcoded `"uml-domain"` in Canvas (replaced in Task 16).
 3. **Type consistency spot-checks:** `fromEnd`/`toEnd` naming used everywhere; `attributes: Attribute[]` (never `schema`); `kind` (never `verb`); `getProfile` in Tasks 13/14/16; `effectiveDiagrams`/`ALL_DIAGRAM_KEY` in Tasks 16/17; `toRFNode(n, viewMode, profileName, collapsed)` final arity established in Task 16 (Tasks 6/13 versions are earlier evolution steps, each compiling at its own stage).
 
 ## Execution notes

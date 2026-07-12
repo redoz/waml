@@ -278,7 +278,7 @@
       disabled={exportDisabled}
       aria-haspopup="menu"
       aria-expanded={exportMenuOpen}
-      title={exportDisabled ? "Add a mart first, then export" : "Export this model"}
+      title={exportDisabled ? "Add a node first, then export" : "Export this model"}
       class="text-[13px] font-[550] border border-[#d8dee8] bg-white text-slate-900 rounded-lg px-3 py-[7px] cursor-pointer flex items-center gap-[6px] hover:bg-[#f1f3f7] disabled:opacity-50 disabled:cursor-not-allowed"
     >
       <Upload size={15} /> Export <ChevronDown size={14} class="text-slate-400" />
