@@ -26,7 +26,7 @@
     <label class={labelCls} for="oi-description">Description</label>
     <textarea
       id="oi-description"
-      value={node.description ?? ""}
+      value={node.concept.description ?? ""}
       rows={3}
       oninput={(e) => onUpdate({ description: e.currentTarget.value || undefined })}
       class={`${inputCls} resize-y min-h-[60px]`}
