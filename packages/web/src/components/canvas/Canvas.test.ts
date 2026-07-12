@@ -2,6 +2,7 @@ import { test, expect, describe, it } from "vitest";
 import { render, screen, fireEvent, within } from "@testing-library/svelte";
 import { tick } from "svelte";
 import Canvas from "./Canvas.svelte";
+import { store } from "../../state/model.svelte";
 
 // End-to-end chrome mount check: rendering the provider-wrapped Canvas brings up
 // the TopBar, and clicking the first-class top-bar Share button opens the modal
@@ -69,5 +70,27 @@ describe("pinnable Inspector (always present, never closes)", () => {
     expect(panel.classList.contains("opacity-40")).toBe(true);
     await fireEvent.pointerEnter(panel);
     expect(panel.classList.contains("opacity-40")).toBe(false);
+  });
+
+  // Task 2 seam: the picker lists the active diagram's member nodes, and
+  // choosing one round-trips into canvas selection → the Inspector body.
+  it("picker lists active-diagram member nodes; selecting one reflects into the Inspector", async () => {
+    const node = store.addNode({ x: 0, y: 0 });
+    render(Canvas);
+    const panel = screen.getByRole("complementary", { name: "Inspector" });
+    const combobox = within(panel).getByRole("combobox", { name: "Select element" }) as HTMLSelectElement;
+
+    // The freshly-added node is a member of the implicit "All" diagram, so it
+    // shows up as an option labelled with its title.
+    expect(within(panel).getByRole("option", { name: node.title })).toBeTruthy();
+
+    await fireEvent.change(combobox, { target: { value: node.key } });
+    await tick();
+
+    // Selection round-tripped: the combobox reflects the chosen node, the hint
+    // is gone, and the Inspector body now shows that node's title field.
+    expect(combobox.value).toBe(node.key);
+    expect(within(panel).queryByText(/select an element to edit/i)).toBeNull();
+    expect((within(panel).getByLabelText("Title") as HTMLInputElement).value).toBe(node.title);
   });
 });
