@@ -2,7 +2,29 @@ use crate::frontmatter::render_frontmatter;
 use crate::grammar::{
     render_attribute_line, render_members_block, render_relationship_line,
 };
-use crate::syntax::{Document, Section};
+use crate::model::Attribute;
+use crate::syntax::{Document, LayoutItem, Line, ParsedRel, Section};
+
+fn render_line_attr(l: &Line<Attribute>) -> String {
+    match l {
+        Line::Parsed(a) => render_attribute_line(a),
+        Line::Error(e) => e.raw.clone(),
+    }
+}
+
+fn render_line_rel(l: &Line<ParsedRel>) -> String {
+    match l {
+        Line::Parsed(r) => render_relationship_line(r),
+        Line::Error(e) => e.raw.clone(),
+    }
+}
+
+fn render_line_layout(l: &Line<LayoutItem>) -> String {
+    match l {
+        Line::Parsed(it) => crate::layout::render_layout_line(&it.stmt),
+        Line::Error(e) => e.raw.clone(),
+    }
+}
 
 fn section_order(s: &Section) -> u8 {
     match s {
@@ -21,7 +43,7 @@ fn render_section(s: &Section) -> String {
     match s {
         Section::Body(body) => format!("## Body\n{body}"),
         Section::Attributes(attrs) => {
-            let body = attrs.iter().map(render_attribute_line).collect::<Vec<_>>().join("\n");
+            let body = attrs.iter().map(render_line_attr).collect::<Vec<_>>().join("\n");
             format!("## Attributes\n{body}")
         }
         Section::Values(values) => {
@@ -29,7 +51,7 @@ fn render_section(s: &Section) -> String {
             format!("## Values\n{body}")
         }
         Section::Relationships(rels) => {
-            let body = rels.iter().map(render_relationship_line).collect::<Vec<_>>().join("\n");
+            let body = rels.iter().map(render_line_rel).collect::<Vec<_>>().join("\n");
             format!("## Relationships\n{body}")
         }
         Section::Notes(notes) => {
@@ -37,10 +59,10 @@ fn render_section(s: &Section) -> String {
             format!("## Notes\n{body}")
         }
         Section::Members(block) => render_members_block(block),
-        Section::Layout(stmts) => {
-            let body = stmts
+        Section::Layout(items) => {
+            let body = items
                 .iter()
-                .map(crate::layout::render_layout_line)
+                .map(render_line_layout)
                 .collect::<Vec<_>>()
                 .join("\n");
             if body.is_empty() { "## Layout".to_string() } else { format!("## Layout\n{body}") }

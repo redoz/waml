@@ -221,8 +221,8 @@ pub fn parse_members_block(content: &str) -> MembersBlock {
             stack.push(MemberGroup { name, depth, members: vec![], children: vec![] });
         } else if let Ok(m) = parse_member_line(t) {
             match stack.last_mut() {
-                Some(g) => g.members.push(m),
-                None => implicit.members.push(m),
+                Some(g) => g.members.push(crate::syntax::Line::Parsed(m)),
+                None => implicit.members.push(crate::syntax::Line::Parsed(m)),
             }
         }
         // blank / unrecognized lines are ignored here (validate flags droppable content)
@@ -245,7 +245,10 @@ pub fn render_members_block(block: &MembersBlock) -> String {
         }
         for m in &g.members {
             out.push('\n');
-            out.push_str(&render_member_line(m));
+            match m {
+                crate::syntax::Line::Parsed(ml) => out.push_str(&render_member_line(ml)),
+                crate::syntax::Line::Error(e) => out.push_str(&e.raw),
+            }
         }
         for c in &g.children {
             render_group(out, c);
@@ -391,7 +394,7 @@ mod tests {
         assert_eq!(block.groups.len(), 2);
         assert_eq!(block.groups[0].name, "Users");
         assert_eq!(block.groups[0].depth, 3);
-        assert_eq!(block.groups[0].members[0].slug, "customer");
+        assert_eq!(block.groups[0].members[0].parsed().unwrap().slug, "customer");
         assert_eq!(block.groups[0].children[0].name, "VIP");
         assert_eq!(block.groups[0].children[0].depth, 4);
         assert_eq!(block.groups[1].name, "Orders");

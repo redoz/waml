@@ -5,7 +5,7 @@ use crate::grammar::{
     parse_attribute_line, parse_relationship_line,
     parse_value_line,
 };
-use crate::syntax::{Document, Section};
+use crate::syntax::{Document, LayoutItem, Line, Section};
 
 use std::collections::{HashMap, HashSet};
 
@@ -22,22 +22,25 @@ struct Head {
 fn classify(title: &str, content: &str, raw_full: &str) -> Section {
     let lines = |c: &str| c.lines().map(|l| l.to_string()).collect::<Vec<_>>();
     match title.to_lowercase().as_str() {
-        "attributes" => {
-            Section::Attributes(lines(content).iter().filter_map(|l| parse_attribute_line(l).ok()).collect())
-        }
+        "attributes" => Section::Attributes(
+            lines(content).iter().filter_map(|l| parse_attribute_line(l).ok().map(Line::Parsed)).collect(),
+        ),
         "values" => {
             Section::Values(lines(content).iter().filter_map(|l| parse_value_line(l).ok()).collect())
         }
-        "relationships" => {
-            Section::Relationships(lines(content).iter().filter_map(|l| parse_relationship_line(l).ok()).collect())
-        }
+        "relationships" => Section::Relationships(
+            lines(content).iter().filter_map(|l| parse_relationship_line(l).ok().map(Line::Parsed)).collect(),
+        ),
         "members" => Section::Members(crate::grammar::parse_members_block(content)),
         "body" => Section::Body(content.trim().to_string()),
         "notes" => {
             Section::Notes(lines(content).iter().filter_map(|l| parse_value_line(l).ok()).collect())
         }
         "layout" => Section::Layout(
-            lines(content).iter().filter_map(|l| crate::layout::parse_layout_line(l).ok()).collect(),
+            lines(content).iter()
+                .filter_map(|l| crate::layout::parse_layout_line(l).ok())
+                .map(|stmt| Line::Parsed(LayoutItem { line: 0, stmt }))
+                .collect(),
         ),
         _ => Section::Unknown { title: title.to_string(), raw: raw_full.trim_end().to_string() },
     }
@@ -161,7 +164,7 @@ fn build_node(p: &ParsedDoc, keyset: &HashSet<&str>) -> Node {
     let mut body = None;
     for s in &p.doc.sections {
         match s {
-            Section::Attributes(a) => attributes = a.iter().map(|x| resolve_attr(x, keyset)).collect(),
+            Section::Attributes(a) => attributes = a.iter().filter_map(Line::parsed).map(|x| resolve_attr(x, keyset)).collect(),
             Section::Values(v) => values = v.clone(),
             Section::Body(b) => body = Some(b.clone()),
             _ => {}
@@ -206,7 +209,7 @@ fn build_edges(classifiers: &[&ParsedDoc], keyset: &HashSet<&str>) -> Vec<Edge> 
         let from = &p.slug;
         for s in &p.doc.sections {
             let Section::Relationships(rels) = s else { continue };
-            for r in rels {
+            for r in rels.iter().filter_map(Line::parsed) {
                 let to = &r.target_slug;
                 if !keyset.contains(to.as_str()) || to == from {
                     continue;
@@ -272,6 +275,7 @@ fn resolve_group(g: &crate::syntax::MemberGroup, keyset: &HashSet<&str>) -> Diag
         members: g
             .members
             .iter()
+            .filter_map(Line::parsed)
             .filter(|m| keyset.contains(m.slug.as_str()))
             .map(|m| m.slug.clone())
             .collect(),
@@ -297,8 +301,8 @@ fn build_diagrams(parsed: &[ParsedDoc], keyset: &HashSet<&str>) -> Vec<Diagram> 
                 Section::Members(block) => {
                     groups = block.groups.iter().map(|g| resolve_group(g, keyset)).collect();
                 }
-                Section::Layout(stmts) => {
-                    layout = stmts.clone();
+                Section::Layout(items) => {
+                    layout = items.iter().filter_map(Line::parsed).map(|it| it.stmt.clone()).collect();
                 }
                 _ => {}
             }
@@ -325,12 +329,12 @@ mod tests {
             _ => None,
         }).unwrap();
         assert_eq!(attrs.len(), 2);
-        assert_eq!(attrs[1].ty.ref_.as_deref(), Some("order-status"));
+        assert_eq!(attrs[1].parsed().unwrap().ty.ref_.as_deref(), Some("order-status"));
         let rels = doc.sections.iter().find_map(|s| match s {
             Section::Relationships(r) => Some(r),
             _ => None,
         }).unwrap();
-        assert_eq!(rels[0].kind, RelationshipKind::Composes);
+        assert_eq!(rels[0].parsed().unwrap().kind, RelationshipKind::Composes);
     }
 
     #[test]

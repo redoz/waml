@@ -1,7 +1,7 @@
 use super::{find_doc, slug_of, Bundle, OpError};
 use crate::parse::parse_document;
 use crate::serialize::serialize_document;
-use crate::syntax::{Document, NameRef, Operand, OperandRef, ParsedName, Section};
+use crate::syntax::{Document, Line, NameRef, Operand, OperandRef, ParsedName, Section};
 
 /// Swap the basename of `path` to `to.md`, preserving any directory prefix.
 fn replace_basename(path: &str, to: &str) -> String {
@@ -18,7 +18,7 @@ fn rename_in_doc(doc: &mut Document, from: &str, to: &str) -> bool {
     for sec in &mut doc.sections {
         match sec {
             Section::Attributes(attrs) => {
-                for a in attrs {
+                for a in attrs.iter_mut().filter_map(Line::parsed_mut) {
                     if a.ty.ref_.as_deref() == Some(from) {
                         a.ty.ref_ = Some(to.to_string());
                         changed = true;
@@ -26,7 +26,7 @@ fn rename_in_doc(doc: &mut Document, from: &str, to: &str) -> bool {
                 }
             }
             Section::Relationships(rels) => {
-                for r in rels {
+                for r in rels.iter_mut().filter_map(Line::parsed_mut) {
                     if r.target_slug == from {
                         r.target_slug = to.to_string();
                         changed = true;
@@ -41,7 +41,7 @@ fn rename_in_doc(doc: &mut Document, from: &str, to: &str) -> bool {
             }
             Section::Members(block) => {
                 fn rename_in_group(g: &mut crate::syntax::MemberGroup, from: &str, to: &str, changed: &mut bool) {
-                    for m in &mut g.members {
+                    for m in g.members.iter_mut().filter_map(Line::parsed_mut) {
                         if m.slug == from {
                             m.slug = to.to_string();
                             *changed = true;
@@ -56,8 +56,8 @@ fn rename_in_doc(doc: &mut Document, from: &str, to: &str) -> bool {
                 }
             }
             Section::Layout(stmts) => {
-                for stmt in stmts {
-                    match stmt {
+                for it in stmts.iter_mut().filter_map(Line::parsed_mut) {
+                    match &mut it.stmt {
                         crate::syntax::LayoutStatement::Standalone(op) => {
                             changed |= rename_in_operand(op, from, to);
                         }

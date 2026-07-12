@@ -7,7 +7,7 @@ use crate::frontmatter::parse_frontmatter;
 use crate::grammar::{parse_attribute_line, parse_member_line, parse_relationship_line};
 use crate::model::ClassifierType;
 use crate::parse::parse_document;
-use crate::syntax::{LayoutStatement, MemberGroup, NameRef, Operand, OperandRef, Section};
+use crate::syntax::{LayoutStatement, Line, MemberGroup, NameRef, Operand, OperandRef, Section};
 
 fn has_metadata_block(text: &str) -> bool {
     let mut opts = Options::empty();
@@ -250,7 +250,7 @@ fn validate_diagram_refs(path: &str, text: &str, keyset: &HashSet<String>, diags
     }
     let doc = parse_document(text);
     let mut group_names = HashSet::new();
-    let mut layout: &[LayoutStatement] = &[];
+    let mut layout: Vec<&LayoutStatement> = Vec::new();
     for s in &doc.sections {
         match s {
             Section::Members(block) => {
@@ -258,14 +258,16 @@ fn validate_diagram_refs(path: &str, text: &str, keyset: &HashSet<String>, diags
                     collect_group_names(g, &mut group_names);
                 }
             }
-            Section::Layout(stmts) => layout = stmts,
+            Section::Layout(stmts) => {
+                layout = stmts.iter().filter_map(Line::parsed).map(|it| &it.stmt).collect();
+            }
             _ => {}
         }
     }
     // Line number is approximate (the layout statement's exact position within
     // the doc is not tracked here); use the `## Layout` heading line as anchor.
     let layout_line = text.lines().position(|l| l.trim().to_lowercase() == "## layout").map(|i| i + 1).unwrap_or(1);
-    for stmt in layout {
+    for &stmt in &layout {
         let ops: Vec<&Operand> = match stmt {
             LayoutStatement::Standalone(op) => vec![op],
             LayoutStatement::Placement { operands, .. } => operands.iter().collect(),
@@ -279,7 +281,7 @@ fn validate_diagram_refs(path: &str, text: &str, keyset: &HashSet<String>, diags
     use crate::syntax::Direction;
     let mut horizontal: HashMap<String, Vec<String>> = HashMap::new();
     let mut vertical: HashMap<String, Vec<String>> = HashMap::new();
-    for stmt in layout {
+    for &stmt in &layout {
         if let LayoutStatement::Placement { operands, directions } = stmt {
             for (i, dir) in directions.iter().enumerate() {
                 let (a, b) = (operand_key(&operands[i]), operand_key(&operands[i + 1]));
