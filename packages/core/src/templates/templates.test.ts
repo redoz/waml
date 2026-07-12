@@ -18,15 +18,9 @@ describe("built-in templates", () => {
       }
     }
   });
-  it("default N:1 cardinality became */1 end multiplicities", () => {
-    // Assert against a legacy (mart-derived) template — the new-format
-    // ordersDomain uses hand-authored multiplicities, not the rel() default.
-    const withEdges = TEMPLATES.find(
-      t => t.id !== "uml_orders_domain" && t.graph.edges.length > 0,
-    )!;
-    const e = withEdges.graph.edges[0];
-    expect(e.fromEnd.multiplicity).toBe("*");
-    expect(e.toEnd.multiplicity).toBe("1");
+  it("ships exactly one template — Orders Domain", () => {
+    expect(TEMPLATES).toHaveLength(1);
+    expect(TEMPLATES[0].id).toBe("uml_orders_domain");
   });
 });
 

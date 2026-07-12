@@ -1,60 +1,12 @@
-// Template library. Each template lives in its own file and is authored as a
-// ModelGraph (the same shape OKF encodes), so it round-trips to an OKF bundle
-// via Export OKF. Positions are 0,0 — the canvas runs Dagre auto-layout when a
-// template is loaded. Template ids are immutable: `?template=<id>` deep links
-// are the CTA target for the blog gallery, launch emails and social posts.
+// Template library. Stage 1b ships exactly one template — Orders Domain — as the
+// living demo of the uml-domain profile. Its id is immutable: `?template=<id>`
+// deep links are the CTA target for the blog gallery, launch emails and posts.
 export type { Template } from "./helpers";
 
 import type { Template } from "./helpers";
 import { ordersDomain } from "./orders-domain";
-import { ecommerce } from "./ecommerce";
-import { saas } from "./saas";
-import { marketplace } from "./marketplace";
-import { marketing_ads } from "./marketing-ads";
-import { mobile_gaming } from "./mobile-gaming";
-import { finance } from "./finance";
-import { medical } from "./medical";
-import { ott_media } from "./ott-media";
-import { delivery_logistics } from "./delivery-logistics";
-import { insurance } from "./insurance";
-import { b2b_sales } from "./b2b-sales";
-import { customer_support } from "./customer-support";
-import { hr_people } from "./hr-people";
-import { telecom } from "./telecom";
-import { hospitality } from "./hospitality";
-import { restaurants } from "./restaurants";
-import { edtech } from "./edtech";
-import { travel_ota } from "./travel-ota";
-import { retail_pos } from "./retail-pos";
-import { manufacturing } from "./manufacturing";
-import { crypto_bitcoin } from "./bitcoin";
-import { stackoverflow } from "./stackoverflow";
 
-export const TEMPLATES: Template[] = [
-  ordersDomain,
-  ecommerce,
-  saas,
-  marketplace,
-  marketing_ads,
-  mobile_gaming,
-  finance,
-  medical,
-  ott_media,
-  delivery_logistics,
-  insurance,
-  b2b_sales,
-  customer_support,
-  hr_people,
-  telecom,
-  hospitality,
-  restaurants,
-  edtech,
-  travel_ota,
-  retail_pos,
-  manufacturing,
-  crypto_bitcoin,
-  stackoverflow,
-];
+export const TEMPLATES: Template[] = [ordersDomain];
 
 export const INDUSTRY_TEMPLATES: Template[] = TEMPLATES.filter(t => t.category === "industry");
 export const DATASET_TEMPLATES: Template[] = TEMPLATES.filter(t => t.category === "dataset");

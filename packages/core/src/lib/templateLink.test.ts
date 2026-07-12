@@ -7,15 +7,15 @@ beforeEach(() => setUrl("/"));
 
 describe("readTemplateModel", () => {
   it("loads a known template by id", () => {
-    setUrl("/?template=ecommerce");
+    setUrl("/?template=uml_orders_domain");
     const g = readTemplateModel();
     expect(g).not.toBeNull();
-    expect(g!.nodes.some(n => n.key === "dim_customer")).toBe(true);
+    expect(g!.nodes.some(n => n.key === "order")).toBe(true);
     expect(g!.edges.length).toBeGreaterThan(0);
   });
 
   it("returns a fresh deep clone each call (the source template is never mutated)", () => {
-    setUrl("/?template=ecommerce");
+    setUrl("/?template=uml_orders_domain");
     const a = readTemplateModel()!;
     a.nodes[0].title = "MUTATED";
     const b = readTemplateModel()!;
@@ -35,7 +35,7 @@ describe("readTemplateModel", () => {
 
 describe("clearTemplateFromUrl", () => {
   it("removes only the template param, preserving UTM params and the hash", () => {
-    setUrl("/?template=saas&utm_source=newsletter#m=abc");
+    setUrl("/?template=uml_orders_domain&utm_source=newsletter#m=abc");
     clearTemplateFromUrl();
     expect(location.search).toBe("?utm_source=newsletter");
     expect(location.hash).toBe("#m=abc");
