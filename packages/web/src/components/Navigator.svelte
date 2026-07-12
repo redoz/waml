@@ -2,8 +2,9 @@
   // The navigator sheet — a prop-driven presentational tree grown from the
   // TopBar switcher. All mutations are callbacks so it unit-tests like TopBar.
   import { Check, ChevronDown, Folder, FileText, StickyNote, Box } from "lucide-svelte";
-  import { buildNavTree, type NavRow, type NavKind } from "@uaml/core/nav/tree";
+  import { buildNavTree, packageOf, type NavRow, type NavKind } from "@uaml/core/nav/tree";
   import { filterNav } from "@uaml/core/nav/search";
+  import { GripVertical } from "lucide-svelte";
   import type { ModelGraph } from "@uaml/okf";
 
   let {
@@ -13,6 +14,7 @@
     palette = [],
     onScope,
     onSelectDiagram,
+    onReorder,
   }: {
     graph: ModelGraph;
     scopeKey?: string;
@@ -20,15 +22,52 @@
     palette?: string[];
     onScope?: (key: string) => void;
     onSelectDiagram?: (key: string) => void;
+    onReorder?: (pkgKey: string, order: string[]) => void;
   } = $props();
 
   // Search box (filtering lands in Task 21; here it only toggles filterNav).
   let query = $state("");
 
+  // Type chip: rotates through ["all", ...palette]; label de-prefixes the token.
+  let typeFilter = $state("all");
+  const chipOptions = $derived(["all", ...palette]);
+  function rotateChip() {
+    const i = chipOptions.indexOf(typeFilter);
+    typeFilter = chipOptions[(i + 1) % chipOptions.length];
+  }
+  const deprefix = (t: string) => (t === "all" ? "All" : t.split(".").pop() || t);
+
+  // Ctrl-T also rotates the chip (no inline key hint rendered).
+  $effect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.ctrlKey && (e.key === "t" || e.key === "T")) {
+        e.preventDefault();
+        rotateChip();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  });
+
   // The visible rows: filtered when searching, else the full scoped subtree.
   const rows = $derived<NavRow[]>(
-    query ? filterNav(graph, scopeKey, query, "all").inScope : buildNavTree(graph, scopeKey),
+    query ? filterNav(graph, scopeKey, query, typeFilter).inScope : buildNavTree(graph, scopeKey),
   );
+
+  // Drag-reorder: track the dragged member; dropping on a same-package row
+  // persists the reordered member keys via onReorder.
+  let dragKey = $state<string | null>(null);
+  function dropOn(target: NavRow) {
+    const src = dragKey;
+    dragKey = null;
+    if (!src || src === target.key) return;
+    const pkgKey = packageOf(graph, src);
+    if (packageOf(graph, target.key) !== pkgKey) return; // only reorder within a package
+    const members = (graph.packages.find((p) => p.key === pkgKey)?.members ?? []).filter((k) => k !== src);
+    const at = members.indexOf(target.key);
+    members.splice(at < 0 ? members.length : at, 0, src);
+    onReorder?.(pkgKey, members);
+  }
 
   // Breadcrumb: the root crumb (whole model) plus one crumb per scope segment,
   // each carrying its cumulative package key.
@@ -69,9 +108,10 @@
     />
     <button
       aria-label="Filter by type"
+      onclick={rotateChip}
       class="flex items-center gap-[3px] px-2 py-[6px] rounded-md border border-[#d8dee8] text-slate-600 cursor-pointer hover:bg-[#f1f3f7]"
     >
-      All <ChevronDown size={13} class="text-slate-400" />
+      {deprefix(typeFilter)} <ChevronDown size={13} class="text-slate-400" />
     </button>
   </div>
 
@@ -96,10 +136,19 @@
       {@const Icon = KIND_ICON[row.kind]}
       <button
         role="treeitem"
+        draggable="true"
+        ondragstart={() => (dragKey = row.key)}
+        ondragover={(e) => e.preventDefault()}
+        ondrop={() => dropOn(row)}
         onclick={() => activateRow(row)}
         style="padding-left:{8 + row.depth * 16}px"
-        class="w-full text-left pr-3 py-[5px] cursor-pointer flex items-center gap-[7px] hover:bg-[#f1f3f7] {row.kind === 'diagram' && row.key === activeDiagramKey ? 'text-[#1e88e5] font-[600]' : 'text-slate-900'}"
+        class="group w-full text-left pr-3 py-[5px] cursor-pointer flex items-center gap-[7px] hover:bg-[#f1f3f7] {row.kind === 'diagram' && row.key === activeDiagramKey ? 'text-[#1e88e5] font-[600]' : 'text-slate-900'}"
       >
+        <GripVertical
+          size={13}
+          class="flex-shrink-0 text-slate-300 opacity-0 group-hover:opacity-100 cursor-grab"
+          aria-hidden="true"
+        />
         <Icon size={15} class="flex-shrink-0 text-slate-500" />
         <span class="truncate flex-1">{row.title}</span>
         {#if row.kind === "diagram" && row.key === activeDiagramKey}
