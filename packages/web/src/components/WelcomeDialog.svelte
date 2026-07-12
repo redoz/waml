@@ -1,9 +1,13 @@
 <script lang="ts">
   // Mirrors packages/web/src/components/WelcomeDialog.tsx.
   import { X, Rocket, Plus, Download, ExternalLink } from "lucide-svelte";
-  import type { ModelGraph } from "@uaml/okf";
+  import { build_model } from "@uaml/okf";
+  import { toModelGraph, emptyOverlay, type RustModel } from "@uaml/core/state/overlay";
   import { INDUSTRY_TEMPLATES, DATASET_TEMPLATES, type Template } from "@uaml/core/templates";
   import { LibraryIcon } from "../lib/icons";
+
+  type Bundle = [string, string][];
+  const deriveGraph = (bundle: Bundle) => toModelGraph(build_model(bundle) as unknown as RustModel, emptyOverlay());
 
   // First-screen chooser shown to brand-new visitors: pick a template (value
   // first), start blank, or import an existing model. Dismissing (X / backdrop)
@@ -14,7 +18,7 @@
     onImport,
   }: {
     /** Roll a template onto the canvas. */
-    onUseTemplate: (graph: ModelGraph, name: string) => void;
+    onUseTemplate: (bundle: Bundle, name: string) => void;
     /** Dismiss and start from an empty canvas. */
     onStartBlank: () => void;
     /** Open the OKF import flow. */
@@ -23,14 +27,15 @@
 </script>
 
 {#snippet templateChoice(t: Template)}
+  {@const graph = deriveGraph(t.bundle)}
   <div class="flex items-center gap-3 rounded-xl border border-[#e2e6ec] px-4 py-3 hover:bg-[#f8fafc]">
     <div class="flex-1 min-w-0">
       <div class="text-[14px] font-semibold">{t.name}</div>
       <div class="text-[12px] text-slate-500 truncate">{t.description}</div>
     </div>
-    <span class="text-[11px] text-slate-500 whitespace-nowrap">{t.graph.nodes.length} marts · {t.graph.edges.length} links</span>
+    <span class="text-[11px] text-slate-500 whitespace-nowrap">{graph.nodes.length} marts · {graph.edges.length} links</span>
     <button
-      onclick={() => onUseTemplate(structuredClone(t.graph), t.name)}
+      onclick={() => onUseTemplate(t.bundle.map(([p, m]) => [p, m]), t.name)}
       title={`Roll out the ${t.name} model`}
       class="flex items-center gap-[6px] rounded-lg bg-[#1e88e5] px-3 py-[6px] text-[12px] font-semibold text-white hover:bg-[#1976d2] whitespace-nowrap"
     >

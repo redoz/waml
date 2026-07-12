@@ -1,4 +1,4 @@
-import type { ModelGraph, ModelNode, ModelEdge, Attribute } from "@uaml/okf";
+import type { ModelNode, ModelEdge, Attribute } from "@uaml/okf";
 import { endsFromCardinality } from "@uaml/okf";
 
 // ── tiny authoring helpers ─────────────────────────────────────────────────
@@ -33,7 +33,9 @@ export interface Template {
   category: "industry" | "dataset";
   name: string;
   description: string;
-  graph: ModelGraph;
+  /** The template as a committed `.okf` bundle (`[path, markdown][]`) — the WASM
+   *  core derives its Model. */
+  bundle: [string, string][];
 }
 
 // ── UML-profile authoring helpers (stage 6+) ───────────────────────────────

@@ -1,4 +1,5 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, beforeAll } from "vitest";
+import { initWasm } from "@uaml/okf";
 import { createModelStore } from "@uaml/core/state/model";
 import {
   EMPTY_SELECTION,
@@ -92,24 +93,22 @@ describe("anchorNodeIds — bounding-box anchors for the toolbar", () => {
 });
 
 describe("deleteSelection — delete removes ALL selected nodes + edges", () => {
-  const node = (key: string) =>
-    ({ key, title: key, type: "uml.Class", stereotypes: [], attributes: [], position: { x: 0, y: 0 } });
+  beforeAll(async () => {
+    await initWasm();
+  });
+  const doc = (slug: string): [string, string] => [`m/${slug}.md`, `---\ntype: uml.Class\ntitle: ${slug}\n---\n\n# ${slug}\n`];
 
   it("removes every selected node and edge", () => {
-    const store = createModelStore({
-      nodes: [node("a"), node("b"), node("c")],
-      edges: [],
-      diagrams: [],
-    });
+    const store = createModelStore([doc("a"), doc("b"), doc("c")]);
     const e = store.addEdge("a", "b");
     deleteSelection(store, { nodes: ["a", "c"], edges: e ? [e.id] : [] });
     const g = store.get();
-    expect(g.nodes.map((n) => n.key)).toEqual(["b"]);
+    expect(g.nodes.map((n) => n.key).sort()).toEqual(["b"]);
     expect(g.edges).toEqual([]);
   });
 
   it("tolerates edges already removed as a side-effect of node removal", () => {
-    const store = createModelStore({ nodes: [node("a"), node("b")], edges: [], diagrams: [] });
+    const store = createModelStore([doc("a"), doc("b")]);
     const e = store.addEdge("a", "b");
     // Selecting both the node and its incident edge; removing the node drops the
     // edge first, so the explicit edge removal is a harmless no-op.

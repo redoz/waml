@@ -24,16 +24,13 @@ describe("diagram title switcher (replaces the goal button + DiagramTabs pill)",
     expect(screen.queryByRole("button", { name: "Set business goal" })).toBeNull();
   });
 
-  it("creates a new empty diagram from the switcher and makes it active", async () => {
+  // NOTE: diagram creation is derived-only in Stage 1b — the store's diagram
+  // mutators are no-ops (no diagram/membership ops), so the switcher stays on the
+  // implicit "All" view. Persisted diagram creation returns in Stage 1c.
+  it("exposes the New diagram affordance in the switcher menu", async () => {
     render(Canvas);
     await fireEvent.click(screen.getByRole("button", { name: /switch diagram/i }));
-    await fireEvent.click(screen.getByRole("button", { name: /New diagram/i }));
-    const input = screen.getByLabelText("New diagram name") as HTMLInputElement;
-    await fireEvent.input(input, { target: { value: "Flows" } });
-    await fireEvent.click(screen.getByRole("button", { name: "Create" }));
-    await tick();
-    // The switcher now reflects the freshly-created, active diagram.
-    expect(screen.getByRole("button", { name: /switch diagram/i }).textContent).toContain("Flows");
+    expect(screen.getByRole("button", { name: /New diagram/i })).toBeTruthy();
   });
 });
 

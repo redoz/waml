@@ -6,20 +6,20 @@ const setUrl = (url: string) => history.replaceState(null, "", url);
 beforeEach(() => setUrl("/"));
 
 describe("readTemplateModel", () => {
-  it("loads a known template by id", () => {
+  it("loads a known template by id (as a bundle)", () => {
     setUrl("/?template=uml_orders_domain");
-    const g = readTemplateModel();
-    expect(g).not.toBeNull();
-    expect(g!.nodes.some(n => n.key === "order")).toBe(true);
-    expect(g!.edges.length).toBeGreaterThan(0);
+    const b = readTemplateModel();
+    expect(b).not.toBeNull();
+    expect(b!.some(([p]) => p.endsWith("order.md"))).toBe(true);
+    expect(b!.length).toBeGreaterThan(0);
   });
 
-  it("returns a fresh deep clone each call (the source template is never mutated)", () => {
+  it("returns a fresh copy each call (the source template is never mutated)", () => {
     setUrl("/?template=uml_orders_domain");
     const a = readTemplateModel()!;
-    a.nodes[0].title = "MUTATED";
+    a[0][1] = "MUTATED";
     const b = readTemplateModel()!;
-    expect(b.nodes[0].title).not.toBe("MUTATED");
+    expect(b[0][1]).not.toBe("MUTATED");
   });
 
   it("returns null for an unknown id", () => {

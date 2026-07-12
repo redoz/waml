@@ -1,20 +1,24 @@
 <script lang="ts">
   // Mirrors packages/web/src/components/ImportDialog.tsx.
   import { Copy, Check } from "lucide-svelte";
-  import { filesToGraph, parsePastedMarkdown, zipToFiles } from "@uaml/core/okf/io";
-  import type { ModelGraph } from "@uaml/okf";
+  import { parsePastedMarkdown, zipToFiles } from "@uaml/core/okf/io";
+  import { build_model } from "@uaml/okf";
+
+  type Bundle = [string, string][];
 
   let { onConfirm, onClose }: {
-    onConfirm: (g: ModelGraph, mode: "replace" | "merge") => void;
+    onConfirm: (bundle: Bundle, mode: "replace" | "merge") => void;
     onClose: () => void;
   } = $props();
 
   let pasteText = $state("");
   let error: string | null = $state(null);
-  let preview: ModelGraph | null = $state(null);
+  let preview: { bundle: Bundle; nodes: number; edges: number } | null = $state(null);
   let mode: "replace" | "merge" = $state("replace");
   let copied = $state(false);
   let fileInput: HTMLInputElement | undefined = $state();
+
+  const MARKER_RE = /<!--\s*.+?\s*-->\n/;
 
   // Copy the AI authoring guide to the clipboard so the user can paste it into
   // Claude/ChatGPT to generate an importable OKF model. Falls back to opening
@@ -30,8 +34,10 @@
     }
   }
 
-  // Parse the current inputs into a ModelGraph. Throws on empty/invalid input.
-  async function buildGraph(paste: string): Promise<ModelGraph> {
+  // Collect the current inputs into an OKF bundle (`[path, markdown][]`). A file
+  // or paste that is itself a concatenated bundle (HTML-comment path markers) is
+  // expanded into its constituent documents. Throws on empty input.
+  async function buildBundle(paste: string): Promise<Bundle> {
     let files: Record<string, string> = {};
     const uploaded = fileInput?.files;
     if (uploaded && uploaded.length > 0) {
@@ -39,22 +45,29 @@
         if (file.name.endsWith(".zip")) {
           Object.assign(files, zipToFiles(new Uint8Array(await file.arrayBuffer())));
         } else {
-          files[file.name] = await file.text();
+          const text = await file.text();
+          if (MARKER_RE.test(text)) Object.assign(files, parsePastedMarkdown(text));
+          else files[file.name] = text;
         }
       }
     }
     if (paste.trim()) files = { ...files, ...parsePastedMarkdown(paste.trim()) };
     if (Object.keys(files).length === 0) throw new Error("Provide a file or paste markdown content.");
-    return filesToGraph(files);
+    return Object.entries(files);
   }
 
   // Re-parse to drive the live preview/count. Empty input clears both; a parse
-  // error is shown (and clears the preview) so the count never lies.
+  // error is shown (and clears the preview) so the count never lies. Counts come
+  // from the WASM core (`build_model`).
   async function refresh(paste: string) {
     const hasInput = (fileInput?.files?.length ?? 0) > 0 || paste.trim().length > 0;
     if (!hasInput) { preview = null; error = null; return; }
-    try { preview = await buildGraph(paste); error = null; }
-    catch (e) { preview = null; error = (e as Error).message ?? "Failed to parse OKF bundle."; }
+    try {
+      const bundle = await buildBundle(paste);
+      const m = build_model(bundle) as { nodes: unknown[]; edges: unknown[] };
+      preview = { bundle, nodes: m.nodes.length, edges: m.edges.length };
+      error = null;
+    } catch (e) { preview = null; error = (e as Error).message ?? "Failed to parse OKF bundle."; }
   }
 </script>
 
@@ -151,7 +164,7 @@
           </label>
         {/each}
         <p class="text-[12px] text-slate-500">
-          Will import {preview.nodes.length} marts, {preview.edges.length} relationships.
+          Will import {preview.nodes} marts, {preview.edges} relationships.
         </p>
       </div>
     {/if}
@@ -164,7 +177,7 @@
         Cancel
       </button>
       <button
-        onclick={() => preview && onConfirm(preview, mode)}
+        onclick={() => preview && onConfirm(preview.bundle, mode)}
         disabled={!preview}
         class="text-[13px] font-[550] bg-[#1e88e5] text-white border border-[#1e88e5] rounded-lg px-4 py-[7px] cursor-pointer hover:bg-[#1976d2] disabled:opacity-50"
       >

@@ -1,7 +1,12 @@
-import { test, expect } from "vitest";
+import { test, expect, beforeAll } from "vitest";
 import { get } from "svelte/store";
+import { initWasm } from "@uaml/okf";
 import { createModelStore } from "@uaml/core/state/model";
 import { toModelReadable } from "./model.svelte";
+
+beforeAll(async () => {
+  await initWasm();
+});
 
 test("readable yields the current graph and re-emits on store.updateNode", () => {
   const s = createModelStore();

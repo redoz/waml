@@ -1,7 +1,11 @@
-import { test, expect } from "vitest";
-import { DEFAULT_DISPLAY } from "@uaml/okf";
+import { test, expect, beforeAll } from "vitest";
+import { DEFAULT_DISPLAY, initWasm } from "@uaml/okf";
 import { createModelStore } from "@uaml/core/state/model";
 import { toRFNode } from "./toRFNode";
+
+beforeAll(async () => {
+  await initWasm();
+});
 
 test("toRFNode wraps a model node with okf type + payload flags and a cloned position", () => {
   const s = createModelStore();

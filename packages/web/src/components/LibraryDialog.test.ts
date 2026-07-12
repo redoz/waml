@@ -9,5 +9,10 @@ test("Use rolls out the first template", async () => {
   const first = DATASET_TEMPLATES[0];
   const useButtons = screen.getAllByRole("button", { name: /Use/ });
   await fireEvent.click(useButtons[0]);
-  expect(onUse).toHaveBeenCalledWith(expect.objectContaining({ nodes: expect.any(Array) }), first.name);
+  // onUse now receives the template's `.okf` bundle (`[path, markdown][]`).
+  const [bundle, name] = onUse.mock.calls[0];
+  expect(Array.isArray(bundle)).toBe(true);
+  expect(bundle[0]).toHaveLength(2);
+  expect(typeof bundle[0][0]).toBe("string");
+  expect(name).toBe(first.name);
 });

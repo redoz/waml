@@ -3,10 +3,12 @@
   // Shown when "Use" is clicked on a template while the canvas already has
   // content. Mirrors the OKF import dialogs: choose Replace vs Merge
   // and see how many marts and relationships will be added before committing.
-  import type { ModelGraph } from "@uaml/okf";
+  import { build_model } from "@uaml/okf";
 
-  let { graph, name, onConfirm, onClose }: {
-    graph: ModelGraph;
+  type Bundle = [string, string][];
+
+  let { bundle, name, onConfirm, onClose }: {
+    bundle: Bundle;
     name: string;
     onConfirm: (mode: "replace" | "merge") => void;
     onClose: () => void;
@@ -15,6 +17,9 @@
   let mode = $state<"replace" | "merge">("replace");
 
   const modes = ["replace", "merge"] as const;
+
+  // Preview counts from the WASM core (the app awaited initWasm() at bootstrap).
+  const counts = $derived(build_model(bundle) as { nodes: unknown[]; edges: unknown[] });
 </script>
 
 <!-- svelte-ignore a11y_click_events_have_key_events -->
@@ -47,7 +52,7 @@
         </label>
       {/each}
       <p class="text-[12px] text-slate-500">
-        Will import {graph.nodes.length} marts, {graph.edges.length} relationships.
+        Will import {counts.nodes.length} marts, {counts.edges.length} relationships.
       </p>
     </div>
 

@@ -1,5 +1,25 @@
 import type { ModelGraph } from "@uaml/okf";
 
+type Bundle = [string, string][];
+
+/** Bundle-native merge (OKF import / template "merge" mode): append every
+ *  incoming document that doesn't collide with an existing one, keyed by slug
+ *  (the filename without `.md` — the node identity). Colliding docs are skipped
+ *  so the merge is idempotent and never produces duplicate slugs (build_model
+ *  would otherwise see two documents for the same key). */
+export function mergeBundles(current: Bundle, incoming: Bundle): Bundle {
+  const slug = (p: string) => (p.split(/[\\/]/).pop() ?? p).replace(/\.md$/, "");
+  const used = new Set(current.map(([p]) => slug(p)));
+  const out: Bundle = current.map(([p, m]) => [p, m]);
+  for (const [p, m] of incoming) {
+    const s = slug(p);
+    if (used.has(s)) continue;
+    used.add(s);
+    out.push([p, m]);
+  }
+  return out;
+}
+
 // Merge incoming into current (OKF import / template "merge" mode): every
 // incoming node is appended under a fresh key; edges, diagrams and members are
 // remapped. Returns the new keys so the caller can lay out only those.

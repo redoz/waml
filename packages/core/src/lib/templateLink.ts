@@ -1,22 +1,22 @@
-import type { ModelGraph } from "@uaml/okf";
+import type { Bundle } from "../state/model";
 import { TEMPLATES } from "@uaml/core/templates";
 
-// Deep-link: `?template=<id>` opens a named built-in template
-// straight onto the canvas. It's the CTA target for the blog template gallery,
-// launch emails and social posts — one click from "here's a model" to "you're
-// editing it". An unknown/missing id falls through to the normal first-run flow.
+// Deep-link: `?template=<id>` opens a named built-in template straight onto the
+// canvas. It's the CTA target for the blog template gallery, launch emails and
+// social posts — one click from "here's a model" to "you're editing it". An
+// unknown/missing id falls through to the normal first-run flow.
 
 const PARAM = "template";
 
 /** If the URL carries `?template=<id>` and it matches a known template, return a
- *  deep clone of that template's graph. Positions are still (0,0) — the caller
- *  runs Dagre layout, exactly like any freshly loaded model. Missing or unknown
- *  id → null (so the bootstrap falls back to shared link / localStorage / welcome). */
-export function readTemplateModel(): ModelGraph | null {
+ *  copy of that template's bundle. The caller derives + Dagre-lays-out the model,
+ *  exactly like any freshly loaded bundle. Missing or unknown id → null (so the
+ *  bootstrap falls back to shared link / localStorage / welcome). */
+export function readTemplateModel(): Bundle | null {
   const id = new URLSearchParams(location.search).get(PARAM);
   if (!id) return null;
-  const t = TEMPLATES.find(tpl => tpl.id === id);
-  return t ? structuredClone(t.graph) : null;
+  const t = TEMPLATES.find((tpl) => tpl.id === id);
+  return t ? t.bundle.map(([p, m]) => [p, m] as [string, string]) : null;
 }
 
 /** Strip the `template` param from the address bar after loading, so a refresh

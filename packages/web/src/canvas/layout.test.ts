@@ -1,7 +1,11 @@
-import { test, expect } from "vitest";
-import { DEFAULT_DISPLAY } from "@uaml/okf";
+import { test, expect, beforeAll } from "vitest";
+import { DEFAULT_DISPLAY, initWasm } from "@uaml/okf";
 import { createModelStore } from "@uaml/core/state/model";
 import { runDagreLayout, NODE_W, NODE_H } from "./layout";
+
+beforeAll(async () => {
+  await initWasm();
+});
 
 test("runDagreLayout returns a distinct position per node", () => {
   const s = createModelStore();

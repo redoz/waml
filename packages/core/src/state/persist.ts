@@ -1,25 +1,26 @@
-import type { ModelGraph } from "@uaml/okf";
-import { migrateGraph } from "@uaml/okf";
+import type { Bundle } from "./model";
 
-// The whole model lives in memory for the session, so a refresh or an
-// accidental tab close would otherwise wipe it. We mirror it into localStorage
-// on every change and rehydrate on load as a safety net. Legacy (mart-era)
-// payloads are migrated on read so old saves keep opening.
-const KEY = "mc.model.v1";
+// The bundle (the source of truth) lives in memory for the session, so a refresh
+// or an accidental tab close would otherwise wipe it. We mirror it into
+// localStorage on every change and rehydrate on load as a safety net. Stage 1b
+// stores the raw `[path, markdown][]` bundle as JSON — no legacy migration
+// (nothing released under the old graph key).
+const KEY = "mc.bundle.v1";
 
-export function loadPersistedGraph(): ModelGraph | undefined {
+export function loadPersistedBundle(): Bundle | undefined {
   try {
     const raw = localStorage.getItem(KEY);
     if (!raw) return undefined;
-    return migrateGraph(JSON.parse(raw)) ?? undefined;
+    const b = JSON.parse(raw);
+    return Array.isArray(b) ? (b as Bundle) : undefined;
   } catch {
     return undefined;
   }
 }
 
-export function persistGraph(g: ModelGraph): void {
+export function persistBundle(b: Bundle): void {
   try {
-    localStorage.setItem(KEY, JSON.stringify(g));
+    localStorage.setItem(KEY, JSON.stringify(b));
   } catch {
     // Ignore quota / private-mode failures — persistence is best-effort.
   }

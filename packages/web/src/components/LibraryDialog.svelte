@@ -1,13 +1,16 @@
 <script lang="ts">
   // Mirrors packages/web/src/components/LibraryDialog.tsx.
   import { ChevronRight, ChevronDown, X, Rocket } from "lucide-svelte";
-  import type { ModelGraph } from "@uaml/okf";
+  import { build_model } from "@uaml/okf";
+  import { toModelGraph, emptyOverlay, type RustModel } from "@uaml/core/state/overlay";
   import { TEMPLATES, INDUSTRY_TEMPLATES, DATASET_TEMPLATES, type Template } from "@uaml/core/templates";
   import { JoinIcon, LibraryIcon } from "../lib/icons";
   import MartRow from "./MartRow.svelte";
 
+  type Bundle = [string, string][];
+
   let { onUse, onClose }: {
-    onUse: (graph: ModelGraph, name: string) => void;
+    onUse: (bundle: Bundle, name: string) => void;
     onClose: () => void;
   } = $props();
 
@@ -16,12 +19,17 @@
   function toggle(id: string) {
     openId = openId === id ? null : id;
   }
+
+  // Derive the preview graph from the template's committed bundle (WASM core is
+  // ready — the app awaited initWasm() at bootstrap).
+  const deriveGraph = (bundle: Bundle) => toModelGraph(build_model(bundle) as unknown as RustModel, emptyOverlay());
 </script>
 
 {#snippet templateRow(t: Template)}
   {@const open = openId === t.id}
-  {@const nodes = t.graph.nodes}
-  {@const edges = t.graph.edges}
+  {@const graph = deriveGraph(t.bundle)}
+  {@const nodes = graph.nodes}
+  {@const edges = graph.edges}
   <div class="shrink-0 rounded-xl border border-[#e2e6ec] overflow-hidden">
     <div
       onclick={() => toggle(t.id)}
@@ -48,7 +56,7 @@
       </div>
       <span class="text-[11px] text-slate-500 whitespace-nowrap flex-shrink-0">{nodes.length} marts · {edges.length} links</span>
       <button
-        onclick={(e) => { e.stopPropagation(); onUse(structuredClone(t.graph), t.name); }}
+        onclick={(e) => { e.stopPropagation(); onUse(t.bundle.map(([p, m]) => [p, m]), t.name); }}
         title="Roll out this model onto the canvas"
         class="flex items-center gap-[6px] rounded-lg bg-[#1e88e5] px-3 py-[6px] text-[12px] font-semibold text-white hover:bg-[#1976d2] whitespace-nowrap"
       >

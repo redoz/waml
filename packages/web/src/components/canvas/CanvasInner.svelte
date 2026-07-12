@@ -17,7 +17,7 @@
   import { MessageSquare, PanelRight } from "lucide-svelte";
 
   import { model, store } from "../../state/model.svelte";
-  import { sharedModelName, isFirstVisit } from "../../state/bootstrap";
+  import { sharedModelName, isFirstVisit, onStoreError } from "../../state/bootstrap";
   import { runDagreLayout, NODE_W, NODE_H } from "../../canvas/layout";
   import { toRFNode } from "./toRFNode";
   import { nodeTypes, edgeTypes } from "./flowTypes";
@@ -55,13 +55,13 @@ import ShareToast from "../ShareToast.svelte";
   } from "@uaml/core/state/diagrams";
   import { resolveDisplay, type DiagramDisplay } from "@uaml/okf";
   import { loadModelName, persistModelName, DEFAULT_MODEL_NAME, templateModelName } from "@uaml/core/state/modelName";
-  import { persistGraph } from "@uaml/core/state/persist";
+  import { persistBundle } from "@uaml/core/state/persist";
   import { graphToBundleFiles, downloadBundle } from "@uaml/core/okf/io";
   import { buildShareUrl } from "@uaml/core/share/url";
   import { exportCanvasSvg, buildCanvasSvg } from "@uaml/core/share/exportImage";
   import { svgToPngBlob } from "../../share/rasterize";
-  import { mergeGraphs } from "@uaml/core/sync/merge";
-  import type { ModelGraph } from "@uaml/okf";
+  import { mergeBundles } from "@uaml/core/sync/merge";
+  import type { Bundle } from "@uaml/core/state/model";
 
   // ── State (one $state per React useState) ───────────────────────────────────
   // Full multi-selection (node keys + model edge ids). SvelteFlow owns the live
@@ -88,7 +88,7 @@ import ShareToast from "../ShareToast.svelte";
   let showLibrary = $state(false);
   // A template chosen from the library while the canvas already had content —
   // held until the user confirms Replace vs Merge in the TemplateApplyDialog.
-  let pendingTemplate = $state<{ graph: ModelGraph; name: string } | null>(null);
+  let pendingTemplate = $state<{ bundle: Bundle; name: string } | null>(null);
   // First-screen chooser — shown once to brand-new visitors (no persisted model).
   let showWelcome = $state(isFirstVisit);
   let shareToast = $state<string | null>(null);
@@ -213,11 +213,16 @@ import ShareToast from "../ShareToast.svelte";
     persistModelName(modelName);
   });
 
-  // 6) Mirror the model to localStorage on every change so a refresh/crash
-  // doesn't lose work.
+  // 6) Mirror the bundle to localStorage on every change so a refresh/crash
+  // doesn't lose work. `$model` is the reactive trigger; the bundle is the truth.
   $effect(() => {
-    persistGraph($model);
+    void $model;
+    persistBundle(store.getBundle());
   });
+
+  // Surface a rejected `apply_ops` edit (e.g. a name collision) as a toast rather
+  // than letting it throw out of a handler.
+  $effect(() => onStoreError((e) => { shareToast = e; }));
 
   // Share-confirmation toast auto-dismiss now lives in the <ShareToast> component
   // (Task 3), which owns its own setTimeout(onClose, 3500) effect — mirrors
@@ -353,7 +358,7 @@ import ShareToast from "../ShareToast.svelte";
   // Clear the canvas: permanently wipe every node + edge. No undo — the dialog
   // warns and offers an OKF export first.
   function clearCanvas() {
-    store.set({ nodes: [], edges: [], diagrams: [] });
+    store.load([]);
     selectionSet = EMPTY_SELECTION;
     showClear = false;
     modelName = DEFAULT_MODEL_NAME;
@@ -383,46 +388,49 @@ import ShareToast from "../ShareToast.svelte";
     return svgToPngBlob(built.svg, { width: built.width, height: built.height });
   }
 
-  // Auto-layout a freshly loaded graph (import or template). The OKF format
-  // does not persist node positions, so without this every imported node piles
-  // up at the origin.
-  function withLayout(g: ModelGraph): ModelGraph {
+  // Dagre-lay out the current (derived) model and feed positions into the store's
+  // overlay. The OKF bundle carries no positions, so without this every freshly
+  // loaded node piles up at the origin.
+  function layoutAll() {
+    const g = store.get();
     const positions = runDagreLayout(g.nodes, g.edges, activeDisplay);
-    return { ...g, nodes: g.nodes.map((n) => ({ ...n, position: positions.get(n.key) ?? n.position })) };
+    positions.forEach((pos, key) => store.updateNode(key, { position: pos }));
   }
 
-  // Merge a freshly loaded graph into the canvas, laying out only the new nodes
-  // so the existing layout isn't reshuffled. Shared by OKF import + templates.
-  function applyMergeWithLayout(g: ModelGraph) {
-    const { graph, newKeys } = mergeGraphs(store.get(), g);
-    const positions = runDagreLayout(graph.nodes, graph.edges, activeDisplay);
-    store.set({ ...graph, nodes: graph.nodes.map((n) => (newKeys.has(n.key) ? { ...n, position: positions.get(n.key) ?? n.position } : n)) });
+  // Replace the whole model with a bundle, then auto-layout it.
+  function loadBundleWithLayout(bundle: Bundle) {
+    store.load(bundle);
+    layoutAll();
   }
 
-  function handleImportConfirm(g: ModelGraph, mode: "replace" | "merge") {
-    if (mode === "merge") applyMergeWithLayout(g);
-    else {
-      const hasPositions = g.nodes.some((n) => n.position.x !== 0 || n.position.y !== 0);
-      store.set(hasPositions ? g : withLayout(g));
-    }
+  // Merge an incoming bundle into the canvas (bundle-native slug-keyed concat),
+  // then re-layout. Stage 1b re-lays-out the whole model on merge (positions live
+  // in the overlay, not the bundle).
+  function applyMergeWithLayout(bundle: Bundle) {
+    store.load(mergeBundles(store.getBundle(), bundle));
+    layoutAll();
+  }
+
+  function handleImportConfirm(bundle: Bundle, mode: "replace" | "merge") {
+    if (mode === "merge") applyMergeWithLayout(bundle);
+    else loadBundleWithLayout(bundle);
     showImport = false;
   }
 
-  function applyTemplate(g: ModelGraph, mode: "replace" | "merge") {
-    // Auto-layout the template (templates ship at 0,0).
-    if (mode === "merge") applyMergeWithLayout(g);
-    else store.set(withLayout(g));
+  function applyTemplate(bundle: Bundle, mode: "replace" | "merge") {
+    if (mode === "merge") applyMergeWithLayout(bundle);
+    else loadBundleWithLayout(bundle);
   }
 
-  function handleUseTemplate(g: ModelGraph, name: string) {
+  function handleUseTemplate(bundle: Bundle, name: string) {
     // Empty canvas → drop the template straight in. Non-empty → ask Replace vs
     // Merge first so existing work isn't silently wiped.
     if (store.get().nodes.length === 0) {
       modelName = templateModelName(name); // "My {template} model"
-      applyTemplate(g, "replace");
+      applyTemplate(bundle, "replace");
       showLibrary = false;
     } else {
-      pendingTemplate = { graph: g, name };
+      pendingTemplate = { bundle, name };
     }
   }
 
@@ -432,7 +440,7 @@ import ShareToast from "../ShareToast.svelte";
       // merging keeps the current model (and its name) and just folds the
       // template in.
       if (mode === "replace") modelName = templateModelName(pendingTemplate.name);
-      applyTemplate(pendingTemplate.graph, mode);
+      applyTemplate(pendingTemplate.bundle, mode);
     }
     pendingTemplate = null;
     showLibrary = false;
@@ -497,7 +505,7 @@ import ShareToast from "../ShareToast.svelte";
   {/if}
   {#if pendingTemplate}
     <TemplateApplyDialog
-      graph={pendingTemplate.graph}
+      bundle={pendingTemplate.bundle}
       name={pendingTemplate.name}
       onConfirm={handleTemplateApplyConfirm}
       onClose={() => (pendingTemplate = null)}
@@ -505,7 +513,7 @@ import ShareToast from "../ShareToast.svelte";
   {/if}
   {#if showShare}
     <ShareDialog
-      shareUrl={buildShareUrl(store.get(), modelName)}
+      shareUrl={buildShareUrl(store.getBundle(), modelName)}
       imageName={imageName}
       canShareImage={$model.nodes.length > 0}
       generatePng={generateSharePng}

@@ -7,7 +7,7 @@ import { store } from "../../state/model.svelte";
 // Reset the shared store singleton between tests so an added node from one test
 // doesn't leak into the next.
 afterEach(() => {
-  store.set({ nodes: [], edges: [], diagrams: [] });
+  store.load([]);
   localStorage.clear();
 });
 
@@ -37,24 +37,7 @@ describe("multi-select toolbar + regression", () => {
     expect(screen.getByRole("button", { name: /new diagram from selection/i })).toBeTruthy();
   });
 
-  it("'New diagram from selection' creates a diagram with exactly the selected node and activates it", async () => {
-    render(Canvas);
-    await addAndSelectNode();
-    const nodeKey = store.get().nodes[0].key;
-
-    await fireEvent.click(screen.getByRole("button", { name: /new diagram from selection/i }));
-    const input = screen.getByLabelText("New diagram name") as HTMLInputElement;
-    await fireEvent.input(input, { target: { value: "Focus" } });
-    await fireEvent.click(screen.getByRole("button", { name: /^create diagram$/i }));
-    await tick();
-
-    // Store: a new diagram seeded with exactly the selected node.
-    const diagrams = store.get().diagrams;
-    expect(diagrams).toHaveLength(1);
-    expect(diagrams[0].title).toBe("Focus");
-    expect(diagrams[0].members).toEqual([nodeKey]);
-
-    // Activated: the TopBar switcher now reflects the new diagram.
-    expect(screen.getByRole("button", { name: /Diagram: Focus/i })).toBeTruthy();
-  });
+  // NOTE: diagram editing (create/rename/membership) is derived-only in Stage 1b —
+  // the store's diagram mutators are no-ops (no diagram/membership ops), so the
+  // "New diagram from selection" persistence test returns in Stage 1c.
 });
