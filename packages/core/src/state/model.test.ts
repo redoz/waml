@@ -37,6 +37,17 @@ describe("bundle-as-truth model store", () => {
     expect(s.get().nodes.find((x) => x.key === n.key)!.position).toEqual({ x: 10, y: 20 });
   });
 
+  it("addNode broadcasts the new node at the drop position, not the origin", () => {
+    const s = createModelStore(fresh());
+    let broadcastPos: { x: number; y: number } | undefined;
+    s.subscribe(() => {
+      const created = s.get().nodes.find((x) => x.key !== "order" && x.key !== "customer");
+      if (created) broadcastPos = created.position;
+    });
+    s.addNode({ x: 10, y: 20 });
+    expect(broadcastPos).toEqual({ x: 10, y: 20 });
+  });
+
   it("updateNode(scalar) edits the bundle via apply_ops", () => {
     const s = createModelStore(fresh());
     s.updateNode("order", { title: "Sales Order" });
