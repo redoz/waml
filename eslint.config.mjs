@@ -13,7 +13,7 @@ export default tseslint.config(
       "packages/okf/test/fixtures/**",
       "packages/web/public/**",
       // Vendored wasm-bindgen glue (browser globals, machine-generated).
-      "packages/okf/src/generated/**",
+      "packages/wasm/src/generated/**",
       "**/pkg/**",
     ],
   },
