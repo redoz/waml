@@ -2,9 +2,9 @@
 
 use std::collections::BTreeMap;
 use crate::diagnostic::{DiagCode, Diagnostic};
-use crate::syntax::{Direction, Edge, Margin};
+use crate::syntax::{Axis, Direction, Edge, Margin, Shape};
 use super::potentials::Potentials;
-use super::{Box, BoxId, BoxKind, Constraint, Rect, Scene, Size, SizeMap, SolveConfig, Solved};
+use super::{Box, BoxId, BoxKind, Constraint, Rect, Scene, Size, SizeMap, SolveConfig, Solved, SolvedGroup};
 
 fn margin_rank(m: Margin) -> u8 {
     match m { Margin::No => 0, Margin::Small => 1, Margin::Medium => 2, Margin::Large => 3 }
@@ -163,28 +163,201 @@ pub(super) fn solve_cluster(
     out
 }
 
-pub fn solve(scene: &Scene, sizes: &SizeMap, cfg: &SolveConfig) -> (Solved, Vec<Diagnostic>) {
-    let mut diags = vec![];
-    // Task 5: flat — position leaf boxes only. Groups/shapes arrive in Task 6.
+/// A solved subtree in local coordinates: the box's outer size, every
+/// descendant leaf rect, and every descendant group hull.
+struct Laid {
+    size: Size,
+    rects: BTreeMap<BoxId, Rect>,
+    groups: Vec<SolvedGroup>,
+}
+
+fn endpoints(c: &Constraint) -> (&BoxId, &BoxId) {
+    match c {
+        Constraint::Place { a, b, .. } => (a, b),
+        Constraint::Align { a, b, .. } => (a, b),
+    }
+}
+
+fn axis_constraints(b: &Box) -> Vec<Constraint> {
+    let dir = match b.axis {
+        Some(Axis::Row) => Direction::LeftOf,
+        Some(Axis::Column) => Direction::Above,
+        None => return vec![],
+    };
+    b.children
+        .windows(2)
+        .map(|w| Constraint::Place { a: w[0].clone(), b: w[1].clone(), dir })
+        .collect()
+}
+
+/// Union of child rects → (minX, minY, maxX, maxY). Empty → all zero.
+fn bounds(rects: &BTreeMap<BoxId, Rect>, ids: &[BoxId]) -> (f64, f64, f64, f64) {
+    let mut min_x = f64::INFINITY;
+    let mut min_y = f64::INFINITY;
+    let mut max_x = f64::NEG_INFINITY;
+    let mut max_y = f64::NEG_INFINITY;
+    for id in ids {
+        let r = rects[id];
+        min_x = min_x.min(r.x);
+        min_y = min_y.min(r.y);
+        max_x = max_x.max(r.x + r.w);
+        max_y = max_y.max(r.y + r.h);
+    }
+    if ids.is_empty() {
+        (0.0, 0.0, 0.0, 0.0)
+    } else {
+        (min_x, min_y, max_x, max_y)
+    }
+}
+
+/// Place a set of already-sized children under `cons`, then translate each
+/// child's own subtree into this frame. `inset` pads the content; `hull`, if
+/// given, appends this box's own group rectangle.
+#[allow(clippy::too_many_arguments)]
+fn assemble(
+    children: &[BoxId],
+    child_laid: &BTreeMap<BoxId, Laid>,
+    child_margins: &BTreeMap<BoxId, Margin>,
+    cons: &[Constraint],
+    inset: f64,
+    hull: Option<(Shape, Option<String>, u8)>,
+    cfg: &SolveConfig,
+    diags: &mut Vec<Diagnostic>,
+) -> Laid {
     let mut dims: BTreeMap<BoxId, (Size, Margin)> = BTreeMap::new();
-    let mut ids = vec![];
-    for b in &scene.boxes {
-        if b.kind == BoxKind::Leaf {
-            if let BoxId::Node(key) = &b.id {
-                let sz = sizes.get(key).copied().unwrap_or(Size { w: 100.0, h: 40.0 });
-                dims.insert(b.id.clone(), (sz, b.margin));
-                ids.push(b.id.clone());
-            }
+    for c in children {
+        dims.insert(c.clone(), (child_laid[c].size, child_margins[c]));
+    }
+    let placed = solve_cluster(children, &dims, cons, cfg, diags);
+    let (min_x, min_y, max_x, max_y) = bounds(&placed, children);
+    let dx = inset - min_x;
+    let dy = inset - min_y;
+
+    let mut rects = BTreeMap::new();
+    let mut groups = Vec::new();
+    for c in children {
+        let pr = placed[c];
+        let ox = pr.x + dx;
+        let oy = pr.y + dy;
+        let cl = &child_laid[c];
+        for (k, r) in &cl.rects {
+            rects.insert(k.clone(), Rect { x: r.x + ox, y: r.y + oy, w: r.w, h: r.h });
+        }
+        for g in &cl.groups {
+            groups.push(SolvedGroup {
+                rect: Rect { x: g.rect.x + ox, y: g.rect.y + oy, w: g.rect.w, h: g.rect.h },
+                shape: g.shape,
+                title: g.title.clone(),
+                depth: g.depth,
+            });
         }
     }
-    let rects = solve_cluster(&ids, &dims, &scene.constraints, cfg, &mut diags);
+
+    let outer = Size { w: (max_x - min_x) + 2.0 * inset, h: (max_y - min_y) + 2.0 * inset };
+    if let Some((shape, title, depth)) = hull {
+        groups.push(SolvedGroup { rect: Rect { x: 0.0, y: 0.0, w: outer.w, h: outer.h }, shape, title, depth });
+    }
+    Laid { size: outer, rects, groups }
+}
+
+fn solve_box(
+    id: &BoxId,
+    boxes: &BTreeMap<BoxId, &Box>,
+    sizes: &SizeMap,
+    cfg: &SolveConfig,
+    cfor: &BTreeMap<Option<BoxId>, Vec<Constraint>>,
+    diags: &mut Vec<Diagnostic>,
+) -> Laid {
+    let b = boxes[id];
+    if b.kind == BoxKind::Leaf {
+        let key = match id { BoxId::Node(k) => k.clone(), _ => String::new() };
+        let sz = sizes.get(&key).copied().unwrap_or(Size { w: 100.0, h: 40.0 });
+        let mut rects = BTreeMap::new();
+        rects.insert(id.clone(), Rect { x: 0.0, y: 0.0, w: sz.w, h: sz.h });
+        return Laid { size: sz, rects, groups: vec![] };
+    }
+
+    let mut child_laid = BTreeMap::new();
+    let mut child_margins = BTreeMap::new();
+    for c in &b.children {
+        child_laid.insert(c.clone(), solve_box(c, boxes, sizes, cfg, cfor, diags));
+        child_margins.insert(c.clone(), boxes[c].margin);
+    }
+    let mut cons = axis_constraints(b);
+    if let Some(list) = cfor.get(&Some(id.clone())) {
+        cons.extend(list.iter().cloned());
+    }
+    let inset = cfg.margin(b.margin);
+    assemble(
+        &b.children,
+        &child_laid,
+        &child_margins,
+        &cons,
+        inset,
+        Some((b.shape, b.title.clone(), b.depth)),
+        cfg,
+        diags,
+    )
+}
+
+pub fn solve(scene: &Scene, sizes: &SizeMap, cfg: &SolveConfig) -> (Solved, Vec<Diagnostic>) {
+    let mut diags = vec![];
+    let boxes: BTreeMap<BoxId, &Box> = scene.boxes.iter().map(|b| (b.id.clone(), b)).collect();
+    // parent[child] = its group; roots have no parent.
+    let mut parent: BTreeMap<BoxId, BoxId> = BTreeMap::new();
+    for b in &scene.boxes {
+        for c in &b.children {
+            parent.insert(c.clone(), b.id.clone());
+        }
+    }
+    let roots: Vec<BoxId> =
+        scene.boxes.iter().filter(|b| !parent.contains_key(&b.id)).map(|b| b.id.clone()).collect();
+
+    // Assign each constraint to the cluster whose direct children are both
+    // endpoints. Non-siblings warn and drop.
+    let mut cfor: BTreeMap<Option<BoxId>, Vec<Constraint>> = BTreeMap::new();
+    for c in &scene.constraints {
+        let (a, b) = endpoints(c);
+        let pa = parent.get(a).cloned();
+        let pb = parent.get(b).cloned();
+        if pa == pb {
+            cfor.entry(pa).or_default().push(c.clone());
+        } else {
+            diags.push(Diagnostic::warn(
+                DiagCode::LayoutConflict,
+                "layout relates operands that are not siblings; dropped",
+                "",
+                0,
+            ));
+        }
+    }
+
+    // Solve every root subtree, then assemble the roots as a top-level clump
+    // (no hull, no inset).
+    let mut child_laid = BTreeMap::new();
+    let mut child_margins = BTreeMap::new();
+    for r in &roots {
+        child_laid.insert(r.clone(), solve_box(r, &boxes, sizes, cfg, &cfor, &mut diags));
+        child_margins.insert(r.clone(), boxes[r].margin);
+    }
+    let root_cons = cfor.get(&None).cloned().unwrap_or_default();
+    let laid = assemble(&roots, &child_laid, &child_margins, &root_cons, 0.0, None, cfg, &mut diags);
+
     let mut nodes = BTreeMap::new();
-    for (id, r) in rects {
+    for (id, r) in laid.rects {
         if let BoxId::Node(key) = id {
             nodes.insert(key, r);
         }
     }
-    (Solved { nodes, groups: vec![], flags: BTreeMap::new() }, diags)
+    let mut groups = laid.groups;
+    groups.sort_by(|a, b| {
+        a.depth
+            .cmp(&b.depth)
+            .then(a.rect.x.total_cmp(&b.rect.x))
+            .then(a.rect.y.total_cmp(&b.rect.y))
+    });
+
+    (Solved { nodes, groups, flags: BTreeMap::new() }, diags)
 }
 
 #[cfg(test)]
@@ -245,5 +418,62 @@ mod tests {
         assert_eq!(diags.len(), 1);
         assert_eq!(diags[0].code, DiagCode::LayoutConflict);
         assert_eq!(solved.nodes.len(), 2, "always renders every node");
+    }
+
+    fn group(id: u32, children: Vec<BoxId>, axis: Option<crate::syntax::Axis>, shape: Shape, title: &str) -> Box {
+        Box {
+            id: BoxId::Group(id),
+            kind: BoxKind::Group,
+            children,
+            axis,
+            shape,
+            margin: Margin::Medium,
+            flags: FlagSet::default(),
+            title: Some(title.into()),
+            depth: 0,
+        }
+    }
+
+    #[test]
+    fn column_group_with_frame_wraps_members_with_margin() {
+        use crate::syntax::Axis;
+        let scene = Scene {
+            boxes: vec![
+                leaf("a"),
+                leaf("b"),
+                group(0, vec![BoxId::Node("a".into()), BoxId::Node("b".into())], Some(Axis::Column), Shape::Frame, "Users"),
+            ],
+            constraints: vec![],
+        };
+        let (solved, diags) = solve(&scene, &sizes(&["a", "b"], 200.0, 90.0), &SolveConfig::default());
+        assert!(diags.is_empty());
+        assert_eq!(
+            pretty(&solved),
+            "node a @ 16,16 200x90\n\
+             node b @ 16,122 200x90\n\
+             group Frame \"Users\" d0 @ 0,0 232x228\n"
+        );
+    }
+
+    #[test]
+    fn non_sibling_constraint_warns() {
+        use crate::syntax::Axis;
+        // `a` lives inside group Users; relating it to top-level `c` is not a sibling relation.
+        let scene = Scene {
+            boxes: vec![
+                leaf("a"),
+                leaf("c"),
+                group(0, vec![BoxId::Node("a".into())], Some(Axis::Column), Shape::Shrink, "Users"),
+            ],
+            constraints: vec![Constraint::Place {
+                a: BoxId::Node("a".into()),
+                b: BoxId::Node("c".into()),
+                dir: Direction::LeftOf,
+            }],
+        };
+        let (solved, diags) = solve(&scene, &sizes(&["a", "c"], 200.0, 90.0), &SolveConfig::default());
+        assert_eq!(diags.len(), 1);
+        assert_eq!(diags[0].code, DiagCode::LayoutConflict);
+        assert_eq!(solved.nodes.len(), 2, "still renders both nodes");
     }
 }
