@@ -9,16 +9,69 @@ pub mod resolve;
 pub mod potentials;
 pub mod geometry;
 
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct Size { pub w: f64, pub h: f64 }
+// Wire (solver IO) types live in a nested module so that the `Tsify` derive's
+// generated `VectorIntoWasmAbi`/`VectorFromWasmAbi` impls — which reference the
+// unqualified `std::boxed::Box<[Self]>` — resolve to the prelude `Box`, not the
+// internal IR type `solve::Box` defined below (which would otherwise shadow it
+// in this module's scope). Re-exported below so all existing `solve::X` paths
+// (including `super::X` imports in `resolve.rs`/`geometry.rs`) are unaffected.
+mod wire {
+    use std::collections::BTreeMap;
+    use crate::syntax::Shape;
 
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct Rect { pub x: f64, pub y: f64, pub w: f64, pub h: f64 }
+    #[derive(Debug, Clone, Copy, PartialEq)]
+    #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+    #[cfg_attr(feature = "wasm", derive(tsify_next::Tsify))]
+    #[cfg_attr(feature = "wasm", tsify(into_wasm_abi, from_wasm_abi))]
+    pub struct Size { pub w: f64, pub h: f64 }
+
+    #[derive(Debug, Clone, Copy, PartialEq)]
+    #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+    #[cfg_attr(feature = "wasm", derive(tsify_next::Tsify))]
+    #[cfg_attr(feature = "wasm", tsify(into_wasm_abi, from_wasm_abi))]
+    pub struct Rect { pub x: f64, pub y: f64, pub w: f64, pub h: f64 }
+
+    #[derive(Debug, Clone, Copy, PartialEq)]
+    #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+    #[cfg_attr(feature = "wasm", derive(tsify_next::Tsify))]
+    #[cfg_attr(feature = "wasm", tsify(into_wasm_abi, from_wasm_abi))]
+    pub struct SolveConfig { pub margin_px: [f64; 4], pub chip: Size }
+
+    #[derive(Debug, Clone, Copy, Default, PartialEq)]
+    #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+    #[cfg_attr(feature = "wasm", derive(tsify_next::Tsify))]
+    #[cfg_attr(feature = "wasm", tsify(into_wasm_abi, from_wasm_abi))]
+    pub struct FlagSet { pub emphasized: bool, pub collapsed: bool }
+
+    #[derive(Debug, Clone, PartialEq)]
+    #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+    #[cfg_attr(feature = "wasm", derive(tsify_next::Tsify))]
+    #[cfg_attr(feature = "wasm", tsify(into_wasm_abi, from_wasm_abi))]
+    pub struct SolvedGroup { pub rect: Rect, pub shape: Shape, pub title: Option<String>, pub depth: u8 }
+
+    #[derive(Debug, Clone, PartialEq)]
+    #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+    #[cfg_attr(feature = "wasm", derive(tsify_next::Tsify))]
+    #[cfg_attr(feature = "wasm", tsify(into_wasm_abi, from_wasm_abi))]
+    pub struct Solved {
+        #[cfg_attr(feature = "wasm", tsify(type = "Record<string, Rect>"))]
+        #[cfg_attr(
+            all(feature = "wasm", target_family = "wasm"),
+            serde(serialize_with = "wasm_bindgen_utils::serialize_btreemap_as_object")
+        )]
+        pub nodes: BTreeMap<String, Rect>,
+        pub groups: Vec<SolvedGroup>,
+        #[cfg_attr(feature = "wasm", tsify(type = "Record<string, FlagSet>"))]
+        #[cfg_attr(
+            all(feature = "wasm", target_family = "wasm"),
+            serde(serialize_with = "wasm_bindgen_utils::serialize_btreemap_as_object")
+        )]
+        pub flags: BTreeMap<String, FlagSet>,
+    }
+}
+pub use wire::{FlagSet, Rect, Size, SolveConfig, Solved, SolvedGroup};
 
 pub type SizeMap = BTreeMap<String, Size>;
-
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct SolveConfig { pub margin_px: [f64; 4], pub chip: Size }
 
 impl Default for SolveConfig {
     fn default() -> Self {
@@ -36,19 +89,6 @@ impl SolveConfig {
             Margin::Large => self.margin_px[3],
         }
     }
-}
-
-#[derive(Debug, Clone, Copy, Default, PartialEq)]
-pub struct FlagSet { pub emphasized: bool, pub collapsed: bool }
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct SolvedGroup { pub rect: Rect, pub shape: Shape, pub title: Option<String>, pub depth: u8 }
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct Solved {
-    pub nodes: BTreeMap<String, Rect>,
-    pub groups: Vec<SolvedGroup>,
-    pub flags: BTreeMap<String, FlagSet>,
 }
 
 /// Stable identity of a box in the scene.
@@ -139,5 +179,25 @@ mod tests {
         let cfg = SolveConfig::default();
         assert_eq!(cfg.margin(Margin::No), 0.0);
         assert_eq!(cfg.margin(Margin::Large), 32.0);
+    }
+
+    #[test]
+    #[cfg(feature = "serde")]
+    fn solve_io_types_serde_roundtrip() {
+        // Inputs deserialize from a JS-shaped object.
+        let cfg: SolveConfig =
+            serde_json::from_str(r#"{"margin_px":[0,8,16,32],"chip":{"w":96,"h":28}}"#).unwrap();
+        assert_eq!(cfg, SolveConfig::default());
+
+        let sizes: SizeMap = serde_json::from_str(r#"{"a":{"w":200,"h":90}}"#).unwrap();
+        assert_eq!(sizes["a"], Size { w: 200.0, h: 90.0 });
+
+        // Output serializes with maps as JSON objects (serde_json default).
+        let mut nodes = BTreeMap::new();
+        nodes.insert("a".to_string(), Rect { x: 1.0, y: 2.0, w: 3.0, h: 4.0 });
+        let solved = Solved { nodes, groups: vec![], flags: BTreeMap::new() };
+        let v: serde_json::Value = serde_json::to_value(&solved).unwrap();
+        assert_eq!(v["nodes"]["a"]["x"], 1.0);
+        assert_eq!(v["nodes"]["a"]["w"], 3.0);
     }
 }
