@@ -37,7 +37,7 @@
   );
 
   const title = $derived(
-    selectedNode ? (selectedNode.title.trim() || "Untitled")
+    selectedNode ? (selectedNode.concept.title?.trim() || "Untitled")
       : selectedEdge ? "Relationship" : "Inspector",
   );
 

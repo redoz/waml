@@ -125,7 +125,7 @@ import ShareToast from "../ShareToast.svelte";
   const inspectorOptions = $derived(
     $model.nodes
       .filter((n) => memberSet.has(n.key))
-      .map((n) => ({ key: n.key, label: n.title.trim() || "Untitled" })),
+      .map((n) => ({ key: n.key, label: n.concept.title?.trim() || "Untitled" })),
   );
   const inspectorSelectedKey = $derived(focused?.type === "node" ? focused.id : null);
   const inspectorFocusedKind = $derived(focused?.type);

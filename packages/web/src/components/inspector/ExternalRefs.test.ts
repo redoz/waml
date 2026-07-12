@@ -3,7 +3,7 @@ import { render, screen, fireEvent } from "@testing-library/svelte";
 import ExternalRefs from "./ExternalRefs.svelte";
 
 const nodes = [
-  { key: "a", title: "A" }, { key: "b", title: "B" },
+  { key: "a", title: "A", concept: { title: "A" } }, { key: "b", title: "B", concept: { title: "B" } },
 ] as any;
 const edges = [{ id: "e1", from: "a", to: "b", kind: "associates" }] as any;
 const diagrams = [{ key: "d2", members: ["b"] }] as any;

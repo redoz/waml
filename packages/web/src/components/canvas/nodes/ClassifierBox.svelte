@@ -43,7 +43,7 @@
       <StereotypeRow stereotypes={data.stereotypes} {keyword} />
     {/if}
     <div class={`px-3 pb-[9px] pt-[3px] text-center text-[13.5px] font-semibold text-slate-900 ${data.abstract ? "italic" : ""}`}>
-      {data.title}
+      {data.concept.title ?? "Untitled"}
     </div>
     {#if isDetailed && data.values && data.values.length > 0}
       <RowsCompartment rows={data.values.length}>
