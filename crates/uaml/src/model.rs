@@ -368,6 +368,15 @@ pub struct Node {
         serde(default, skip_serializing_if = "Option::is_none")
     )]
     pub body: Option<String>,
+    /// A `uml.Note`'s markdown prose (from its `## Body` section), byte-identical
+    /// to flat `body` during the migration. Distinct from the generic verbatim
+    /// `concept.body`: this is the Note-specific rendered prose. Sole reader is
+    /// the note node renderer.
+    #[cfg_attr(
+        feature = "serde",
+        serde(default, skip_serializing_if = "Option::is_none")
+    )]
+    pub note_body: Option<String>,
     #[cfg_attr(
         feature = "serde",
         serde(default, skip_serializing_if = "Vec::is_empty")
@@ -495,6 +504,7 @@ mod tests {
             attributes: vec![],
             values: vec![],
             body: None,
+            note_body: None,
             annotates: vec![],
             members: vec![],
         };

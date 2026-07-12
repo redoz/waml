@@ -80,6 +80,7 @@ fn package_node_and_model_path() {
         attributes: vec![],
         values: vec![],
         body: None,
+        note_body: None,
         annotates: vec![],
         members: vec!["order".into(), "customer".into()],
     };
@@ -105,6 +106,7 @@ fn package_node_and_model_path() {
         attributes: vec![],
         values: vec![],
         body: None,
+        note_body: None,
         annotates: vec![],
         members: vec![],
     };

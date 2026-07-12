@@ -9,6 +9,7 @@
 
 use std::sync::LazyLock;
 
+use pulldown_cmark::{Event, HeadingLevel, Options, Parser, Tag, TagEnd};
 use regex::Regex;
 
 use crate::frontmatter::{parse_frontmatter, Frontmatter};
@@ -172,6 +173,29 @@ fn split_citations(body: &str) -> (&str, &str) {
     (body, "")
 }
 
+/// The document's first level-1 heading (H1) text, trimmed, or `None` when the
+/// body has no non-empty H1. Extraction mirrors `parse::parse`'s title logic
+/// (pulldown over the frontmatter-stripped body) byte-for-byte, so the enriched
+/// `concept.title` H1 fallback stays identical to the flat-field title fallback.
+fn first_h1(body: &str) -> Option<String> {
+    let mut title = String::new();
+    let mut in_h1 = false;
+    for ev in Parser::new_ext(body, Options::empty()) {
+        match ev {
+            Event::Start(Tag::Heading { level: HeadingLevel::H1, .. }) => in_h1 = true,
+            Event::End(TagEnd::Heading(HeadingLevel::H1)) => in_h1 = false,
+            Event::Text(t) | Event::Code(t) => {
+                if in_h1 {
+                    title.push_str(&t);
+                }
+            }
+            _ => {}
+        }
+    }
+    let trimmed = title.trim();
+    (!trimmed.is_empty()).then(|| trimmed.to_string())
+}
+
 fn extract_links(text: &str) -> Vec<Link> {
     LINK_RE
         .captures_iter(text)
@@ -192,7 +216,10 @@ fn extract_citations(text: &str) -> Vec<Citation> {
 pub fn project(path: &str, src: &str) -> Concept {
     let (fm, body) = parse_frontmatter(src);
 
-    let title = fm.get_str("title").map(String::from);
+    let title = fm
+        .get_str("title")
+        .map(String::from)
+        .or_else(|| first_h1(&body));
     let description = fm.get_str("description").map(String::from);
     let resource = fm.get_str("resource").map(String::from);
     let timestamp = fm.get_str("timestamp").map(String::from);
@@ -295,6 +322,25 @@ mod tests {
         assert!(c.extra.get("type").is_none());
         assert!(c.extra.get("tags").is_none());
         assert!(c.extra.get("title").is_none());
+    }
+
+    #[test]
+    fn title_falls_back_to_first_h1_when_frontmatter_title_absent() {
+        // No `title:` frontmatter → concept.title resolves to the H1 text.
+        let c = project("shop/order.md", "---\ntype: uml.Class\n---\n# Order Heading\n\n## Attributes\n- id: X\n");
+        assert_eq!(c.title.as_deref(), Some("Order Heading"));
+    }
+
+    #[test]
+    fn title_prefers_frontmatter_over_h1() {
+        let c = project("x.md", "---\ntitle: FM Title\n---\n# H1 Title\n");
+        assert_eq!(c.title.as_deref(), Some("FM Title"));
+    }
+
+    #[test]
+    fn title_is_none_when_neither_frontmatter_nor_h1_present() {
+        let c = project("x.md", "---\ntype: uml.Class\n---\n\nprose with no heading\n");
+        assert_eq!(c.title, None);
     }
 
     #[test]

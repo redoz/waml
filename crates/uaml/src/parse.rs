@@ -414,6 +414,7 @@ fn build_node(p: &ParsedDoc, keyset: &HashSet<&str>) -> Node {
         description: fm.get_str("description").map(String::from),
         attributes,
         values,
+        note_body: body.clone(), // uml.Note prose, byte-identical to flat body
         body,
         annotates: Vec::new(), // deferred: uml.Note anchors
         members: Vec::new(),    // classifiers own no members
