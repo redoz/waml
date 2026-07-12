@@ -83,6 +83,7 @@ pub enum Op {
     },
     NodeRm { slug: String, cascade: bool },
     NodeRename { from: String, to: String },
+    PkgMove { slug: String, to_dir: String },
 }
 
 pub fn apply(bundle: &[(String, String)], ops: &[Op]) -> Result<Bundle, OpError> {
@@ -120,6 +121,7 @@ fn apply_one(work: &mut Bundle, op: &Op) -> Result<(), OpError> {
         }
         Op::NodeRm { slug, cascade } => op_node_rm(work, slug, *cascade),
         Op::NodeRename { from, to } => rename::op_node_rename(work, from, to),
+        Op::PkgMove { slug, to_dir } => pkg::op_pkg_move(work, slug, to_dir),
     }
 }
 
@@ -585,6 +587,7 @@ fn op_node_rm(work: &mut Bundle, slug: &str, cascade: bool) -> Result<(), OpErro
     Ok(())
 }
 
+pub mod pkg;
 pub mod rename;
 pub mod selector;
 pub use selector::{parse_selector, render_selector, RelBy, Selector};
