@@ -6,6 +6,7 @@ use crate::ops_dto::OpDto;
 
 mod commands;
 mod io;
+mod lsp;
 mod ops_dto;
 
 #[derive(Parser)]
@@ -27,6 +28,12 @@ enum Command {
         /// Output format.
         #[arg(long, value_enum, default_value_t = Format::Human)]
         format: Format,
+    },
+    /// Run the UAML language server (stdio LSP).
+    Lsp {
+        /// Use stdio transport (the only supported transport in Phase 1).
+        #[arg(long)]
+        stdio: bool,
     },
     /// Rewrite documents in canonical form.
     Fmt {
@@ -294,6 +301,7 @@ fn main() {
             }
             exit
         }
+        Command::Lsp { stdio: _ } => lsp::run(),
         Command::Node { action, common } => run_mutation(&common, node_dto(action)),
         Command::Attr { action, common } => run_mutation(&common, attr_dto(action)),
         Command::Value { action, common } => run_mutation(&common, value_dto(action)),
@@ -552,6 +560,12 @@ mod tests {
             }
             _ => panic!("expected check"),
         }
+    }
+
+    #[test]
+    fn parses_lsp_stdio_subcommand() {
+        let cli = Cli::try_parse_from(["uaml", "lsp", "--stdio"]).unwrap();
+        assert!(matches!(cli.command, Command::Lsp { stdio: true }));
     }
 
     #[test]
