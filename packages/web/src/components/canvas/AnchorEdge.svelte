@@ -8,8 +8,13 @@
   //   export declare function useInternalNode(id: string): { current: InternalNode | undefined };
   let { id, source, target }: EdgeProps = $props();
 
-  const sourceNode = $derived(useInternalNode(source).current as NodeGeom | undefined);
-  const targetNode = $derived(useInternalNode(target).current as NodeGeom | undefined);
+  // Derive the accessor once (re-created only on source/target change), read
+  // `.current` downstream — see RelEdge.svelte for why the collapsed form froze
+  // edge geometry until drag stop.
+  const sourceInternal = $derived(useInternalNode(source));
+  const targetInternal = $derived(useInternalNode(target));
+  const sourceNode = $derived(sourceInternal.current as NodeGeom | undefined);
+  const targetNode = $derived(targetInternal.current as NodeGeom | undefined);
 
   // Floating endpoints, but the dashed connector stays a straight line.
   const path = $derived.by(() => {

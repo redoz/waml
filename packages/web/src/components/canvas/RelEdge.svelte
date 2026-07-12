@@ -29,8 +29,15 @@
   //   export declare function useInternalNode(id: string): { current: InternalNode | undefined };
   let { id, source, target, data, selected }: EdgeProps = $props();
 
-  const sourceNode = $derived(useInternalNode(source).current as NodeGeom | undefined);
-  const targetNode = $derived(useInternalNode(target).current as NodeGeom | undefined);
+  // Derive the accessor object once (re-created only when source/target change),
+  // then read `.current` reactively downstream — mirrors @xyflow/svelte's own
+  // MinimapNode. Calling useInternalNode() *inside* the .current derived orphaned
+  // its internal subscription to the `nodes` signal, so the edge only re-tracked
+  // node positions on a full re-render (drag stop) instead of live during a drag.
+  const sourceInternal = $derived(useInternalNode(source));
+  const targetInternal = $derived(useInternalNode(target));
+  const sourceNode = $derived(sourceInternal.current as NodeGeom | undefined);
+  const targetNode = $derived(targetInternal.current as NodeGeom | undefined);
 
   const d = $derived(data as unknown as RelEdgeData | undefined);
   const kind = $derived<RelationshipKind>(d?.kind ?? "associates");
