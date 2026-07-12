@@ -1,4 +1,6 @@
 use super::{find_doc, Bundle, OpError};
+use crate::index_md::{render_index, IndexEntry};
+use crate::parse::build_model;
 
 fn join(dir: &str, slug: &str) -> String {
     if dir.is_empty() { format!("{slug}.md") } else { format!("{dir}/{slug}.md") }
@@ -68,6 +70,64 @@ pub(crate) fn op_pkg_delete(work: &mut Bundle, path: &str, cascade: bool) -> Res
     Ok(())
 }
 
+/// Title/description now live on `concept` (single source). Look up a member's
+/// display title across nodes, diagrams, and sub-packages.
+fn member_title(model: &crate::model::Model, k: &str) -> String {
+    model.nodes.iter().find(|n| n.key == k).and_then(|n| n.concept.title.clone())
+        .or_else(|| model.diagrams.iter().find(|d| d.key == k).map(|d| d.title.clone()))
+        .or_else(|| model.packages.iter().find(|p| p.key == k).and_then(|p| p.concept.title.clone()))
+        .unwrap_or_else(|| k.to_string())
+}
+
+/// Write/replace `<path>/index.md` with a listing in the requested (or A–Z)
+/// order, preserving intro prose + blurbs. `order` keys not in the package are
+/// ignored; members missing from `order` are appended in existing order.
+fn write_package_index(work: &mut Bundle, path: &str, order: Option<&[String]>) -> Result<(), OpError> {
+    let model = build_model(work);
+    let pkg = model.packages.iter().find(|p| p.key == path)
+        .ok_or_else(|| OpError::at("pkg.order", format!("no package '{path}'")))?;
+    // desired order
+    let mut keys: Vec<String> = match order {
+        Some(o) => {
+            let mut v: Vec<String> = o.iter().filter(|k| pkg.members.contains(k)).cloned().collect();
+            for m in &pkg.members { if !v.contains(m) { v.push(m.clone()); } }
+            v
+        }
+        None => {
+            let mut v = pkg.members.clone();
+            v.sort_by_key(|k| member_title(&model, k).to_lowercase());
+            v
+        }
+    };
+    let entries: Vec<IndexEntry> = keys.drain(..).map(|k| {
+        let (title, is_pkg, blurb) = model.nodes.iter().find(|n| n.key == k)
+            .map(|n| (
+                n.concept.title.clone().unwrap_or_else(|| k.clone()),
+                false,
+                n.concept.description.as_ref().map(|d| d.lines().next().unwrap_or("").to_string()),
+            ))
+            .or_else(|| model.diagrams.iter().find(|d| d.key == k).map(|d| (d.title.clone(), false, None)))
+            .or_else(|| model.packages.iter().find(|p| p.key == k)
+                .map(|p| (p.concept.title.clone().unwrap_or_else(|| k.clone()), true, None)))
+            .unwrap_or((k.clone(), false, None));
+        IndexEntry { key: k, title, is_package: is_pkg, blurb }
+    }).collect();
+    let text = render_index(path, pkg.concept.description.as_deref(), &entries);
+    let idx_path = format!("{path}/index.md");
+    match work.iter_mut().find(|(p, _)| *p == idx_path) {
+        Some(slot) => slot.1 = text,
+        None => work.push((idx_path, text)),
+    }
+    Ok(())
+}
+
+pub(crate) fn op_pkg_reorder(work: &mut Bundle, path: &str, order: &[String]) -> Result<(), OpError> {
+    write_package_index(work, path, Some(order))
+}
+pub(crate) fn op_pkg_sort(work: &mut Bundle, path: &str) -> Result<(), OpError> {
+    write_package_index(work, path, None)
+}
+
 #[cfg(test)]
 mod tests {
     use crate::ops::{apply, Op};
@@ -119,5 +179,28 @@ mod tests {
         let out = apply(&b, &[Op::PkgDelete { path: "sales/orders".into(), cascade: false }]).unwrap();
         assert!(out.iter().any(|(p, _)| p == "sales/order.md"));
         assert!(out.iter().all(|(p, _)| !p.contains("orders")));
+    }
+
+    #[test]
+    fn reorder_writes_index_md_in_requested_order() {
+        let b = vec![
+            ("sales/order.md".to_string(), "---\ntype: uml.Class\ntitle: Order\n---\n# Order\n".to_string()),
+            ("sales/customer.md".to_string(), "---\ntype: uml.Class\ntitle: Customer\n---\n# Customer\n".to_string()),
+        ];
+        let out = apply(&b, &[Op::PkgReorder { path: "sales".into(), order: vec!["order".into(), "customer".into()] }]).unwrap();
+        let idx = &out.iter().find(|(p, _)| p == "sales/index.md").unwrap().1;
+        let oi = idx.find("order.md").unwrap();
+        let ci = idx.find("customer.md").unwrap();
+        assert!(oi < ci, "order must precede customer in index.md");
+    }
+    #[test]
+    fn sort_writes_index_md_alphabetically() {
+        let b = vec![
+            ("sales/order.md".to_string(), "---\ntype: uml.Class\ntitle: Order\n---\n# Order\n".to_string()),
+            ("sales/customer.md".to_string(), "---\ntype: uml.Class\ntitle: Customer\n---\n# Customer\n".to_string()),
+        ];
+        let out = apply(&b, &[Op::PkgSort { path: "sales".into() }]).unwrap();
+        let idx = &out.iter().find(|(p, _)| p == "sales/index.md").unwrap().1;
+        assert!(idx.find("customer.md").unwrap() < idx.find("order.md").unwrap());
     }
 }

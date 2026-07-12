@@ -86,6 +86,8 @@ pub enum Op {
     PkgMove { slug: String, to_dir: String },
     PkgRename { from: String, to: String },
     PkgDelete { path: String, cascade: bool },
+    PkgReorder { path: String, order: Vec<String> },
+    PkgSort { path: String },
 }
 
 pub fn apply(bundle: &[(String, String)], ops: &[Op]) -> Result<Bundle, OpError> {
@@ -126,6 +128,8 @@ fn apply_one(work: &mut Bundle, op: &Op) -> Result<(), OpError> {
         Op::PkgMove { slug, to_dir } => pkg::op_pkg_move(work, slug, to_dir),
         Op::PkgRename { from, to } => pkg::op_pkg_rename(work, from, to),
         Op::PkgDelete { path, cascade } => pkg::op_pkg_delete(work, path, *cascade),
+        Op::PkgReorder { path, order } => pkg::op_pkg_reorder(work, path, order),
+        Op::PkgSort { path } => pkg::op_pkg_sort(work, path),
     }
 }
 
