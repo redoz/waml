@@ -137,7 +137,7 @@ export function nodeRmOps(slug: string, cascade = true): OpDto[] {
 export function nodeSetOps(prev: ModelNode, patch: Partial<ModelNode>): OpDto[] {
   const set: Omit<Extract<OpDto, { op: "node.set" }>, "op" | "slug"> = {};
   if (patch.title !== undefined && patch.title !== prev.title) set.title = patch.title;
-  if (patch.description !== undefined && patch.description !== prev.description) set.desc = patch.description;
+  if (patch.description !== undefined && patch.description !== prev.concept.description) set.desc = patch.description;
   if (patch.stereotypes !== undefined && !arrEq(patch.stereotypes, prev.stereotypes)) set.stereotype = patch.stereotypes;
   if (patch.abstract !== undefined && !!patch.abstract !== !!prev.abstract) set.abstract = !!patch.abstract;
   if (patch.type !== undefined && patch.type !== prev.type) set.ty = patch.type;

@@ -21,6 +21,26 @@ test("editing title patches through onUpdate", async () => {
   expect(onUpdate).toHaveBeenCalledWith({ title: "Orders" });
 });
 
+test("description field is sourced from concept.description", () => {
+  // Flat `description` and nested `concept.description` deliberately diverge so the
+  // test pins WHICH source the display reads. The migrated reader must show concept's.
+  const withDesc: ModelNode = {
+    ...node,
+    description: undefined,
+    concept: { ...node.concept, description: "From concept" },
+  };
+  render(ObjectInspector, { props: { node: withDesc, onUpdate: () => {}, profileName: "uml-domain" } });
+  expect(screen.getByDisplayValue("From concept")).toBeTruthy();
+});
+
+test("editing the description patches a flat { description } write intent", async () => {
+  const onUpdate = vi.fn();
+  render(ObjectInspector, { props: { node, onUpdate, profileName: "uml-domain" } });
+  const textarea = screen.getByLabelText("Description") as HTMLTextAreaElement;
+  await fireEvent.input(textarea, { target: { value: "Placed by a customer" } });
+  expect(onUpdate).toHaveBeenCalledWith({ description: "Placed by a customer" });
+});
+
 test("toggling the abstract checkbox calls onUpdate", async () => {
   const onUpdate = vi.fn();
   render(ObjectInspector, { props: { node, onUpdate, profileName: "uml-domain" } });

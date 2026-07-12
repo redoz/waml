@@ -78,6 +78,23 @@ describe("node ops", () => {
   it("rename to the same slug emits []", () => {
     expect(nodeRenameOps("customer", "customer")).toEqual([]);
   });
+
+  it("description compare reads the STORED concept.description, not the flat field", () => {
+    // Flat `description` and `concept.description` deliberately diverge so this test
+    // pins WHICH stored source the compare reads. In the real build_model output both
+    // hold the identical frontmatter value; here they differ to be discriminating.
+    const prev = {
+      ...orderNode(),
+      description: "flat-stale",
+      concept: { ...orderNode().concept, description: "concept-desc" },
+    };
+    // Write intent equals the concept-sourced stored value → no change → no op.
+    expect(nodeSetOps(prev, { description: "concept-desc" })).toEqual([]);
+    // Write intent differs from the concept-sourced stored value → a single desc op.
+    expect(nodeSetOps(prev, { description: "changed" })).toEqual([
+      { op: "node.set", slug: "order", desc: "changed" },
+    ]);
+  });
 });
 
 describe("attribute array diff", () => {
