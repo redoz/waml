@@ -1,5 +1,46 @@
+use crate::diagnostic::DiagCode;
 use crate::frontmatter::Frontmatter;
 use crate::model::{Attribute, RelEnd, RelationshipKind};
+
+/// A malformed or droppable source line preserved verbatim in the tree.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ErrorNode {
+    pub raw: String,          // the original line, byte-for-byte (for serialize)
+    pub line: usize,          // 1-based line within the source document
+    pub span: (usize, usize), // byte range within `line`
+    pub code: DiagCode,       // which syntactic diagnostic this line yields
+    pub message: String,      // the derived diagnostic message
+}
+
+/// One bullet-section item: a well-formed node, or a preserved error line.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Line<T> {
+    Parsed(T),
+    Error(ErrorNode),
+}
+
+impl<T> Line<T> {
+    pub fn parsed(&self) -> Option<&T> {
+        match self {
+            Line::Parsed(t) => Some(t),
+            Line::Error(_) => None,
+        }
+    }
+
+    pub fn parsed_mut(&mut self) -> Option<&mut T> {
+        match self {
+            Line::Parsed(t) => Some(t),
+            Line::Error(_) => None,
+        }
+    }
+}
+
+/// One `## Layout` bullet: a parsed statement plus its source line.
+#[derive(Debug, Clone, PartialEq)]
+pub struct LayoutItem {
+    pub line: usize,
+    pub stmt: LayoutStatement,
+}
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Document {
@@ -10,13 +51,13 @@ pub struct Document {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Section {
-    Attributes(Vec<Attribute>),
+    Attributes(Vec<Line<Attribute>>),
     Values(Vec<String>),
-    Relationships(Vec<ParsedRel>),
+    Relationships(Vec<Line<ParsedRel>>),
     Body(String),
     Notes(Vec<String>),
     Members(MembersBlock),
-    Layout(Vec<LayoutStatement>),
+    Layout(Vec<Line<LayoutItem>>),
     /// An unrecognized `## Section`, preserved verbatim (graceful degradation).
     Unknown { title: String, raw: String },
 }
@@ -67,7 +108,7 @@ pub struct MembersBlock {
 pub struct MemberGroup {
     pub name: String,
     pub depth: u8,
-    pub members: Vec<MemberLine>,
+    pub members: Vec<Line<MemberLine>>,
     pub children: Vec<MemberGroup>,
 }
 
@@ -130,11 +171,34 @@ mod tests {
     use super::*;
 
     #[test]
+    fn line_wraps_parsed_and_error_nodes() {
+        let item = LayoutItem {
+            line: 12,
+            stmt: LayoutStatement::Standalone(Operand {
+                ref_: OperandRef::Name(NameRef::Bare("Orders".into())),
+                axis: None,
+                hints: vec![],
+            }),
+        };
+        let good: Line<LayoutItem> = Line::Parsed(item);
+        assert!(good.parsed().is_some());
+        let bad: Line<LayoutItem> = Line::Error(ErrorNode {
+            raw: "- nonsense".into(),
+            line: 13,
+            span: (0, 10),
+            code: crate::diagnostic::DiagCode::MalformedLayout,
+            message: "malformed layout statement".into(),
+        });
+        assert!(bad.parsed().is_none());
+        let _s = Section::Layout(vec![good, bad]); // must typecheck
+    }
+
+    #[test]
     fn document_is_constructible() {
         let doc = Document {
             frontmatter: Frontmatter::default(),
             title: "Order".to_string(),
-            sections: vec![Section::Relationships(vec![ParsedRel {
+            sections: vec![Section::Relationships(vec![Line::Parsed(ParsedRel {
                 kind: RelationshipKind::Composes,
                 target_title: "OrderLine".to_string(),
                 target_slug: "order-line".to_string(),
@@ -143,7 +207,7 @@ mod tests {
                 to_end: RelEnd::default(),
                 line: 0,
                 span: None,
-            }])],
+            })])],
         };
         assert_eq!(doc.title, "Order");
         assert_eq!(doc.sections.len(), 1);

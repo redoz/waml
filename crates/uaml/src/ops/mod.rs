@@ -3,7 +3,7 @@ use crate::model::{Attribute, ClassifierType, RelEnd, RelationshipKind, TypeRef,
 use crate::multiplicity::Multiplicity;
 use crate::parse::parse_document;
 use crate::serialize::serialize_document;
-use crate::syntax::{Document, ParsedName, ParsedRel, Section};
+use crate::syntax::{Document, Line, ParsedName, ParsedRel, Section};
 
 pub type Bundle = Vec<(String, String)>;
 
@@ -148,7 +148,7 @@ where
 
 /// Get the `## Attributes` list, creating an empty section if absent
 /// (canonical serialize re-orders sections, so append position is irrelevant).
-pub(crate) fn attrs_mut(doc: &mut Document) -> &mut Vec<Attribute> {
+pub(crate) fn attrs_mut(doc: &mut Document) -> &mut Vec<Line<Attribute>> {
     if !doc.sections.iter().any(|s| matches!(s, Section::Attributes(_))) {
         doc.sections.push(Section::Attributes(Vec::new()));
     }
@@ -193,7 +193,7 @@ pub(crate) fn resolve_type(work: &Bundle, token: &str) -> TypeRef {
 
 /// Get the `## Relationships` list, creating an empty section if absent
 /// (canonical serialize re-orders sections, so append position is irrelevant).
-pub(crate) fn rels_mut(doc: &mut Document) -> &mut Vec<ParsedRel> {
+pub(crate) fn rels_mut(doc: &mut Document) -> &mut Vec<Line<ParsedRel>> {
     if !doc.sections.iter().any(|s| matches!(s, Section::Relationships(_))) {
         doc.sections.push(Section::Relationships(Vec::new()));
     }
@@ -271,14 +271,14 @@ pub fn referrers(work: &Bundle, slug: &str) -> Vec<String> {
         }
         let doc = parse_document(text);
         let hit = doc.sections.iter().any(|sec| match sec {
-            Section::Attributes(attrs) => attrs.iter().any(|a| a.ty.ref_.as_deref() == Some(slug)),
-            Section::Relationships(rels) => rels.iter().any(|r| {
+            Section::Attributes(attrs) => attrs.iter().filter_map(Line::parsed).any(|a| a.ty.ref_.as_deref() == Some(slug)),
+            Section::Relationships(rels) => rels.iter().filter_map(Line::parsed).any(|r| {
                 r.target_slug == slug
                     || matches!(&r.name, Some(ParsedName::Ref { slug: rs, .. }) if rs == slug)
             }),
             Section::Members(block) => {
                 fn group_has(g: &crate::syntax::MemberGroup, slug: &str) -> bool {
-                    g.members.iter().any(|m| m.slug == slug)
+                    g.members.iter().filter_map(Line::parsed).any(|m| m.slug == slug)
                         || g.children.iter().any(|c| group_has(c, slug))
                 }
                 block.groups.iter().any(|g| group_has(g, slug))
@@ -293,7 +293,7 @@ pub fn referrers(work: &Bundle, slug: &str) -> Vec<String> {
                         OperandRef::Paren(inner) => operand_refs(inner, slug),
                     }
                 }
-                stmts.iter().any(|stmt| match stmt {
+                stmts.iter().filter_map(Line::parsed).any(|it| match &it.stmt {
                     crate::syntax::LayoutStatement::Standalone(op) => operand_refs(op, slug),
                     crate::syntax::LayoutStatement::Placement { operands, .. } => {
                         operands.iter().any(|op| operand_refs(op, slug))
@@ -325,16 +325,16 @@ fn op_attr_add(
     let ty = resolve_type(work, ty_token);
     edit_doc(work, node, "attr.add", |doc| {
         let attrs = attrs_mut(doc);
-        if attrs.iter().any(|a| a.name == name) {
+        if attrs.iter().filter_map(Line::parsed).any(|a| a.name == name) {
             return Err(OpError::at("attr.add", format!("attribute '{name}' already exists in {node}")));
         }
-        attrs.push(Attribute {
+        attrs.push(Line::Parsed(Attribute {
             name: name.to_string(),
             ty,
             multiplicity: multiplicity.clone(),
             visibility,
             description: None,
-        });
+        }));
         Ok(())
     })
 }
@@ -353,12 +353,13 @@ fn op_attr_set(
     edit_doc(work, node, "attr.set", |doc| {
         let attrs = attrs_mut(doc);
         if let Some(new) = rename {
-            if new != name && attrs.iter().any(|a| a.name == *new) {
+            if new != name && attrs.iter().filter_map(Line::parsed).any(|a| a.name == *new) {
                 return Err(OpError::at("attr.set", format!("attribute '{new}' already exists in {node}")));
             }
         }
         let a = attrs
             .iter_mut()
+            .filter_map(Line::parsed_mut)
             .find(|a| a.name == name)
             .ok_or_else(|| OpError::at("attr.set", format!("no attribute '{name}' in {node}")))?;
         if let Some(t) = ty {
@@ -381,7 +382,7 @@ fn op_attr_rm(work: &mut Bundle, node: &str, name: &str) -> Result<(), OpError> 
     edit_doc(work, node, "attr.rm", |doc| {
         let attrs = attrs_mut(doc);
         let before = attrs.len();
-        attrs.retain(|a| a.name != name);
+        attrs.retain(|a| a.parsed().is_none_or(|x| x.name != name));
         if attrs.len() == before {
             return Err(OpError::at("attr.rm", format!("no attribute '{name}' in {node}")));
         }
@@ -433,14 +434,14 @@ fn op_rel_add(
     let ends = ends.clone();
     edit_doc(work, source, "rel.add", |doc| {
         let rels = rels_mut(doc);
-        if rels.iter().any(|r| r.kind == kind && r.target_slug == target) {
+        if rels.iter().filter_map(Line::parsed).any(|r| r.kind == kind && r.target_slug == target) {
             return Err(OpError::at(
                 "rel.add",
                 format!("relationship '{} {target}' already exists in {source}", kind.as_str()),
             ));
         }
         let (from_end, to_end) = ends.unwrap_or_default();
-        rels.push(ParsedRel {
+        rels.push(Line::Parsed(ParsedRel {
             kind,
             target_title,
             target_slug: target.to_string(),
@@ -449,7 +450,7 @@ fn op_rel_add(
             to_end,
             line: 0,
             span: None,
-        });
+        }));
         Ok(())
     })
 }
@@ -469,6 +470,7 @@ fn op_rel_set(
         let rels = rels_mut(doc);
         let r = rels
             .iter_mut()
+            .filter_map(Line::parsed_mut)
             .find(|r| rel_matches(r, &by))
             .ok_or_else(|| OpError::at("rel.set", format!("no relationship '{disp}'")).with_sel(disp.clone()))?;
         if let Some((f, t)) = new_ends {
@@ -492,7 +494,7 @@ fn op_rel_rm(work: &mut Bundle, selector: &Selector) -> Result<(), OpError> {
     edit_doc(work, &source, "rel.rm", |doc| {
         let rels = rels_mut(doc);
         let before = rels.len();
-        rels.retain(|r| !rel_matches(r, &by));
+        rels.retain(|r| r.parsed().is_none_or(|x| !rel_matches(x, &by)));
         if rels.len() == before {
             return Err(OpError::at("rel.rm", format!("no relationship '{disp}'")).with_sel(disp.clone()));
         }
@@ -660,7 +662,7 @@ mod tests {
             Section::Attributes(a) => Some(a),
             _ => None,
         }).expect("attributes section present");
-        let id = attrs.iter().find(|a| a.name == "id").expect("id attribute present");
+        let id = attrs.iter().filter_map(Line::parsed).find(|a| a.name == "id").expect("id attribute present");
         assert_eq!(id.visibility, Some(crate::model::Visibility::Private));
     }
 
