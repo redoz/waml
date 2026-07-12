@@ -1,12 +1,17 @@
-# Floating collapsible inspector — design
+# Floating inspector — picker + never-close — design
 
 **Date:** 2026-07-12
-**Scope:** Restyle the inspector panel to match the diagram properties dialog, float it off the top/right corner, and make it collapsible.
-**Target file:** `packages/web/src/components/inspector/InspectorPanel.svelte` (the `<aside>` at lines 94–103 and its header). No new components.
+**Scope:** Restyle the inspector panel to match the diagram properties dialog, float it off the top/right corner, make it collapsible, replace its static title with an element **picker**, and make it **never close** — an empty selection shows a compact bar + hint instead.
+**Primary files:** `packages/web/src/components/inspector/InspectorPanel.svelte` (card + header + collapse) and `packages/web/src/components/canvas/CanvasInner.svelte` (sole host: always-mounted, picker options, selection wiring, Inspect edge-flag removal).
 
 ## Problem
 
-The inspector is an edge-pinned, full-height white slab (`absolute top-0 bottom-0 right-0`, `border-l`, no radius). The diagram properties dialog (`Dock.svelte:243-247`) is a detached, rounded, all-sides-shadowed floating card. The two should read as the same design language. The inspector should also be collapsible so it can be tucked out of the way without losing the "what's selected" context.
+The inspector is an edge-pinned, full-height white slab (`absolute top-0 bottom-0 right-0`, `border-l`, no radius) that opens/closes via an "Inspect" edge-flag and a close (X) button, with a static `title="Inspect"`. We want it to:
+1. Read as the same design language as the diagram properties dialog (`Dock.svelte:243-247`) — detached, rounded, all-sides shadow.
+2. Float off the top/right corner.
+3. Be collapsible.
+4. Never close — instead, when nothing is selected it rests as a compact bar with a hint.
+5. Carry an **element picker** in its header (in place of the static title) so you can choose what to inspect from the current diagram.
 
 ## Design
 
@@ -26,53 +31,65 @@ The `<aside>` container changes from an edge slab to a detached card:
 | opacity | `opacity-40` when pinned+idle | **unchanged** |
 | z | `z-[16]` | **unchanged** |
 
-Because the card is content-height, the body scroll region (currently line 136) needs `min-h-0` so `overflow-y-auto` engages when content exceeds the `max-h` cap.
+Body scroll region keeps `flex-1 min-h-0 overflow-y-auto` so content scrolls inside the `max-h` cap.
 
-### 2. Collapse
+### 2. Never close — always mounted
 
-- New local `collapsed` state (`$state(false)`) in `InspectorPanel.svelte`.
-- A chevron toggle button in the header, in the control cluster to the **left of** the pin button.
-- Collapsed:
-  - Body (`{@render children()}` region) is hidden (`{#if !collapsed}` or `class:hidden`).
-  - Left-edge resize drag handle is hidden.
-  - Header bottom-border is dropped (card is just the header bar).
-- Because the card anchors top-right, hiding the body shrinks the card upward — the content "collapses up" into the header bar.
-- Chevron rotates 180° between states (`transition-transform`).
-- Collapse state is component-local and not persisted (resets when the panel unmounts/reopens). Persistence is out of scope.
+- Remove the panel's `open` prop, the host's `inspectorOpen` state, and the **Inspect edge-flag tab** (`CanvasInner.svelte:606-615`). The panel is always rendered.
+- Remove the close (X) button and the `onClose` prop.
+- The right-edge flags that previously slid left only while open now always offset by the panel width (`rightOffset={inspectorWidth}`).
 
-### 3. Header — kind-icon + name, no close
+### 3. Header — kind-icon + element picker + collapse + pin
 
-- Replace the plain title with a **kind-icon + name**:
-  - A small square icon chip (accent color on `#e6f1fb`, `rounded-md`) before the title.
-  - Icon reflects the element kind: a box/table glyph for an object node, a relationship glyph for an edge. The consumer already distinguishes node vs. edge (`Inspector.svelte:32-42`) — it passes a `kind` (`"node" | "edge"` or similar) alongside the existing `title` prop so `InspectorPanel` can pick the icon. Fallback icon when nothing meaningful is selected.
-  - So the collapsed header bar still shows *what* is selected.
-- **Remove the close button.** Collapse is the only "tuck away" affordance now.
-- **Keep the pin button** and its behavior unchanged (toggles the translucent-when-idle fade).
-- Resulting header control cluster, left→right: `[kind-icon] [title ………] [⋯ collapse chevron] [📌 pin]`.
+Header control cluster, left→right: `[kind-icon] [ ▾ element select box ] [⌃ collapse] [📌 pin]`.
+
+- **Element picker** (native styled `<select>`) replaces the static `<h2>`:
+  - Options = the active diagram's **member nodes** (objects + notes — both are nodes, so notes appear naturally). Option label = `node.title.trim() || "Untitled"`, value = `node.key`.
+  - A placeholder option `"Select an element…"` is shown/selected when nothing is focused.
+  - Choosing an option focuses that node: host sets `selectionSet = { nodes: [key], edges: [] }`.
+  - Two-way: when the canvas selection changes, the picker's current value reflects the focused node.
+- **Kind-icon** left of the picker reflects the focused element kind: node → `Box`, edge → `Spline`. Hidden when nothing is focused.
+- **Collapse chevron**: only shown when something is focused (there's a body to collapse). Toggles the body; chevron rotates 180°. Local `collapsed` state, not persisted.
+- **Pin** button + translucent-when-idle behavior: unchanged.
+
+### 4. Body — selection-driven
+
+- **Nothing focused** (resting state): header (picker) + a **slim hint** row ("Select an element to edit"). No body, no collapse chevron. This is the "compact" view.
+- **Node focused**: `ObjectInspector` body (rendered by the existing `<Inspector>` child). Collapse chevron toggles it.
+- **Edge focused** (via canvas — the picker does not list edges in v1): `RelationshipInspector` body still renders through the child; the picker shows its placeholder. No regression.
 
 ## Interface changes
 
 `InspectorPanel.svelte` props:
-- **Add** `kind` (e.g. `"node" | "edge" | undefined`) so the header can pick the icon.
-- **Remove** `onClose` and the close button markup.
-- Everything else (`open`, `pinned`, `title`, `onTogglePin`, `hideDelay`, `width`, `children`) unchanged.
+- **Remove:** `open`, `onClose`, static `title`.
+- **Add:**
+  - `options: { key: string; label: string }[]` — picker entries (diagram member nodes).
+  - `selectedKey: string | null` — focused node key (null when an edge or nothing is focused).
+  - `focusedKind: "node" | "edge" | undefined` — drives the kind-icon + whether a body/collapse is offered.
+  - `onSelect: (key: string | null) => void` — focus a node from the picker.
+- **Keep:** `pinned`, `onTogglePin`, `hideDelay`, `width` (`$bindable`), `children`.
+- The `<aside>` region `aria-label` is the constant `"Inspector"`.
 
-Consumer (`Inspector.svelte`, and any other `InspectorPanel` host):
-- Pass the new `kind` prop derived from the current selection.
-- Drop the `onClose` wiring for this panel (the panel no longer closes itself; closing, if still needed anywhere, is the host's concern via its own affordance — out of scope here).
+Host (`CanvasInner.svelte`):
+- Remove `inspectorOpen`, the Inspect edge-flag, and the `onClose` handler.
+- Always render `<InspectorPanel>`.
+- Derive and pass: `options` (member nodes), `selectedKey` (`focused?.type === "node" ? focused.id : null`), `focusedKind` (`focused?.type`), `onSelect` (`key => selectionSet = key ? {nodes:[key],edges:[]} : EMPTY_SELECTION`).
+- Right-edge flag `rightOffset` becomes `inspectorWidth` (always).
 
 ## Non-goals / YAGNI
 
-- No element context-menu / kebab (`...`) button.
+- No "diagram itself" picker entry / diagram-inspector body (later).
+- No relationships in the picker (later); edge selection via canvas still works.
+- No note-vs-object visual distinction in the picker (later).
+- No element context-menu / kebab.
 - No collapse-state persistence.
-- No changes to the older `Inspector.svelte` slab chrome beyond passing the new prop / dropping close wiring for `InspectorPanel`.
 - No changes to resize math, translucency logic, or the body inspector components (`ObjectInspector`, `RelationshipInspector`).
 
 ## Testing
 
-- Existing `InspectorPanel` behavior (open, pin/translucency, resize) must still pass.
-- Add coverage: collapse toggle hides body + resize handle and keeps the header; chevron aria/label reflects state; kind-icon renders per `kind`.
+- `InspectorPanel` unit tests: picker renders options + reflects `selectedKey`; `onSelect` fires on change; kind-icon renders per `focusedKind`; collapse toggle only present when focused and hides the body; nothing-focused shows the hint and no body; pin/translucency/resize tests still pass (drop the `open:false` "renders nothing" and the close-button tests).
+- `CanvasInner` / `Canvas` integration: panel is always present (no Inspect flag); selecting a node on canvas reflects in the picker; picking in the select focuses the node.
 
 ## Reference
 
-Interactive mockup: floating card, collapse toggle, kind-icon + name, pin, no close — matches this spec.
+Interactive mockup (v1 styling — floating card, collapse, kind-icon, pin): illustrates the card look. The picker + never-close behavior is described above.
