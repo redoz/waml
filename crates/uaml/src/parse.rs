@@ -37,7 +37,7 @@ fn classify(title: &str, content: &str, raw_full: &str) -> Section {
             Section::Notes(lines(content).iter().filter_map(|l| parse_value_line(l).ok()).collect())
         }
         "layout" => Section::Layout(
-            lines(content).iter().filter_map(|l| crate::layout::parse_layout_line(l)).collect(),
+            lines(content).iter().filter_map(|l| crate::layout::parse_layout_line(l).ok()).collect(),
         ),
         _ => Section::Unknown { title: title.to_string(), raw: raw_full.trim_end().to_string() },
     }

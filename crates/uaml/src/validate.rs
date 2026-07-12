@@ -147,7 +147,7 @@ fn validate_doc(path: &str, text: &str, keyset: &HashSet<String>, diags: &mut Ve
                 }
             }
             "layout"
-                if crate::layout::parse_layout_line(trimmed).is_none() => {
+                if crate::layout::parse_layout_line(trimmed).is_err() => {
                     diags.push(Diagnostic::new(
                         DiagCode::MalformedLayout,
                         "malformed layout statement",

@@ -242,9 +242,17 @@ fn try_parse_placement(toks: &[Tok]) -> Option<LayoutStatement> {
     Some(LayoutStatement::Placement { operands, directions })
 }
 
-/// Parse one `## Layout` bullet (leading `- ` required). Returns `None` if the
+/// Parse one `## Layout` bullet (leading `- ` required). Returns `Err` if the
 /// bullet is malformed or has unconsumed trailing tokens.
-pub fn parse_layout_line(line: &str) -> Option<LayoutStatement> {
+pub fn parse_layout_line(line: &str) -> Result<LayoutStatement, crate::grammar::LineError> {
+    parse_layout_line_opt(line).ok_or_else(|| crate::grammar::LineError {
+        range: crate::grammar::bullet_range(line),
+        message: "malformed layout statement".to_string(),
+    })
+}
+
+/// The recursive-descent core (unchanged body of the former `parse_layout_line`).
+fn parse_layout_line_opt(line: &str) -> Option<LayoutStatement> {
     let body = line.trim().strip_prefix("- ")?;
     let toks = lex_layout(body)?;
     if toks.is_empty() {
@@ -472,7 +480,7 @@ mod tests {
         use crate::syntax::*;
         assert_eq!(
             parse_layout_line("- Orders"),
-            Some(LayoutStatement::Standalone(Operand {
+            Ok(LayoutStatement::Standalone(Operand {
                 ref_: OperandRef::Name(NameRef::Bare("Orders".into())),
                 axis: None,
                 hints: vec![],
@@ -480,7 +488,7 @@ mod tests {
         );
         assert_eq!(
             parse_layout_line("- [Order](./order.md)"),
-            Some(LayoutStatement::Standalone(Operand {
+            Ok(LayoutStatement::Standalone(Operand {
                 ref_: OperandRef::Name(NameRef::Link { title: "Order".into(), slug: "order".into() }),
                 axis: None,
                 hints: vec![],
@@ -489,9 +497,16 @@ mod tests {
     }
 
     #[test]
+    fn malformed_layout_line_is_an_err_with_range() {
+        let e = parse_layout_line("- Users nonsense Orders").unwrap_err();
+        assert!(e.range.0 < e.range.1);
+        assert!(e.message.contains("layout"));
+    }
+
+    #[test]
     fn rejects_line_without_bullet_and_trailing_garbage() {
-        assert!(parse_layout_line("Orders").is_none());       // no "- " bullet
-        assert!(parse_layout_line("- Orders Extra").is_none()); // two bare words, no relation
+        assert!(parse_layout_line("Orders").is_err());       // no "- " bullet
+        assert!(parse_layout_line("- Orders Extra").is_err()); // two bare words, no relation
     }
 
     #[test]
@@ -521,7 +536,7 @@ mod tests {
 
     #[test]
     fn rejects_margin_level_without_margin_keyword() {
-        assert!(parse_layout_line("- Order with large").is_none());
+        assert!(parse_layout_line("- Order with large").is_err());
     }
 
     #[test]
@@ -536,8 +551,8 @@ mod tests {
 
     #[test]
     fn rejects_dangling_as_without_axis() {
-        assert!(parse_layout_line("- Users as").is_none());
-        assert!(parse_layout_line("- Users as with frame").is_none());
+        assert!(parse_layout_line("- Users as").is_err());
+        assert!(parse_layout_line("- Users as with frame").is_err());
     }
 
     #[test]
@@ -654,9 +669,9 @@ mod tests {
             "- row of (column of Customer, Account), Orders",
             "- [Money](./money.md) with collapsed",
         ] {
-            let parsed = parse_layout_line(line).unwrap_or_else(|| panic!("failed to parse: {line}"));
+            let parsed = parse_layout_line(line).unwrap_or_else(|_| panic!("failed to parse: {line}"));
             let rendered = render_layout_line(&parsed);
-            let reparsed = parse_layout_line(&rendered).unwrap_or_else(|| panic!("failed to reparse: {rendered}"));
+            let reparsed = parse_layout_line(&rendered).unwrap_or_else(|_| panic!("failed to reparse: {rendered}"));
             assert_eq!(parsed, reparsed, "not a fixpoint: {line} -> {rendered}");
         }
     }
@@ -669,7 +684,7 @@ mod tests {
             let parsed = parse_layout_line(line).unwrap();
             let rendered = render_layout_line(&parsed);
             let reparsed = parse_layout_line(&rendered)
-                .unwrap_or_else(|| panic!("reparse failed: {rendered}"));
+                .unwrap_or_else(|_| panic!("reparse failed: {rendered}"));
             assert_eq!(parsed, reparsed, "not a fixpoint: {line} -> {rendered}");
         }
     }
