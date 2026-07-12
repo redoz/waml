@@ -65,6 +65,8 @@ pub enum Op {
     RelRm { selector: Selector },
     NodeNew {
         slug: String,
+        /// Target package directory ("" = root). File written at `<dir>/<slug>.md`.
+        dir: String,
         ty: ClassifierType,
         title: String,
         stereotype: Vec<String>,
@@ -110,8 +112,8 @@ fn apply_one(work: &mut Bundle, op: &Op) -> Result<(), OpError> {
         }
         Op::RelSet { selector, ends, name } => op_rel_set(work, selector, ends, name),
         Op::RelRm { selector } => op_rel_rm(work, selector),
-        Op::NodeNew { slug, ty, title, stereotype, description, abstract_ } => {
-            op_node_new(work, slug, ty, title, stereotype, description, *abstract_)
+        Op::NodeNew { slug, dir, ty, title, stereotype, description, abstract_ } => {
+            op_node_new(work, slug, dir, ty, title, stereotype, description, *abstract_)
         }
         Op::NodeSet { slug, title, description, stereotype, abstract_, ty } => {
             op_node_set(work, slug, title, description, stereotype, abstract_, ty)
@@ -506,6 +508,7 @@ fn op_rel_rm(work: &mut Bundle, selector: &Selector) -> Result<(), OpError> {
 fn op_node_new(
     work: &mut Bundle,
     slug: &str,
+    dir: &str,
     ty: &ClassifierType,
     title: &str,
     stereotype: &[String],
@@ -531,7 +534,8 @@ fn op_node_new(
         title: title.to_string(),
         sections: Vec::new(),
     };
-    work.push((format!("{slug}.md"), serialize_document(&doc)));
+    let path = if dir.is_empty() { format!("{slug}.md") } else { format!("{dir}/{slug}.md") };
+    work.push((path, serialize_document(&doc)));
     Ok(())
 }
 
@@ -801,7 +805,7 @@ mod tests {
     fn node_new_writes_frontmatter_and_title_and_refuses_dup() {
         let b: Bundle = vec![];
         let out = apply(&b, &[Op::NodeNew {
-            slug: "order".into(), ty: ClassifierType::parse("uml.Class"), title: "Order".into(),
+            slug: "order".into(), dir: String::new(), ty: ClassifierType::parse("uml.Class"), title: "Order".into(),
             stereotype: vec!["entity".into()], description: Some("An order.".into()), abstract_: false,
         }]).unwrap();
         assert_eq!(out.len(), 1);
@@ -809,8 +813,17 @@ mod tests {
         assert!(out[0].1.contains("type: \"uml.Class\""));
         assert!(out[0].1.contains("title: \"Order\""));
         assert!(out[0].1.contains("# Order"));
-        let dup = apply(&out, &[Op::NodeNew { slug:"order".into(), ty: ClassifierType::parse("uml.Class"), title:"X".into(), stereotype: vec![], description: None, abstract_: false }]).unwrap_err();
+        let dup = apply(&out, &[Op::NodeNew { slug:"order".into(), dir: String::new(), ty: ClassifierType::parse("uml.Class"), title:"X".into(), stereotype: vec![], description: None, abstract_: false }]).unwrap_err();
         assert!(dup.reason.contains("already exists"));
+    }
+
+    #[test]
+    fn node_new_writes_into_target_directory() {
+        let out = apply(&vec![], &[Op::NodeNew {
+            slug: "order".into(), dir: "sales".into(), ty: ClassifierType::parse("uml.Class"),
+            title: "Order".into(), stereotype: vec![], description: None, abstract_: false,
+        }]).unwrap();
+        assert_eq!(out[0].0, "sales/order.md");
     }
 
     #[test]

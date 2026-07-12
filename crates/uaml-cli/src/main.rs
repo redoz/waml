@@ -321,7 +321,7 @@ fn main() {
 fn node_dto(a: NodeCmd) -> OpDto {
     match a {
         NodeCmd::New { slug, r#type, title, stereotype, desc, r#abstract } => {
-            OpDto::NodeNew { v: 1, slug, ty: r#type, title, stereotype, desc, abstract_: r#abstract }
+            OpDto::NodeNew { v: 1, slug, dir: String::new(), ty: r#type, title, stereotype, desc, abstract_: r#abstract }
         }
         NodeCmd::Rename { from, to } => OpDto::NodeRename { v: 1, from, to },
         NodeCmd::Set { slug, title, desc, stereotype, r#abstract, r#type } => {

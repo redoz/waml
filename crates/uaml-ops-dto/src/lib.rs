@@ -16,6 +16,8 @@ pub enum OpDto {
         #[serde(default = "one")]
         v: u32,
         slug: String,
+        #[serde(default)]
+        dir: String,
         ty: String,
         title: String,
         #[serde(default)]
@@ -205,10 +207,11 @@ fn rel_sel(
 impl OpDto {
     pub fn to_op(&self) -> Result<Op, String> {
         match self {
-            OpDto::NodeNew { v, slug, ty, title, stereotype, desc, abstract_ } => {
+            OpDto::NodeNew { v, slug, dir, ty, title, stereotype, desc, abstract_ } => {
                 check_v(*v, "node.new")?;
                 Ok(Op::NodeNew {
                     slug: slug.clone(),
+                    dir: dir.clone(),
                     ty: ClassifierType::parse(ty),
                     title: title.clone(),
                     stereotype: stereotype.clone(),
@@ -304,9 +307,10 @@ impl OpDto {
             None => (None, None),
         };
         match op {
-            Op::NodeNew { slug, ty, title, stereotype, description, abstract_ } => OpDto::NodeNew {
+            Op::NodeNew { slug, dir, ty, title, stereotype, description, abstract_ } => OpDto::NodeNew {
                 v: 1,
                 slug: slug.clone(),
+                dir: dir.clone(),
                 ty: ty.as_str(),
                 title: title.clone(),
                 stereotype: stereotype.clone(),
@@ -449,6 +453,7 @@ mod tests {
         let ops = vec![
             Op::NodeNew {
                 slug: "order".into(),
+                dir: "sales".into(),
                 ty: ClassifierType::parse("uml.Class"),
                 title: "Order".into(),
                 stereotype: vec!["entity".into()],
