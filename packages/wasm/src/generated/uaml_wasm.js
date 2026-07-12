@@ -62,6 +62,26 @@ export function init_panic_hook() {
 }
 
 /**
+ * `bundle`: `[path, markdown][]`; `diagram_key`: which diagram to solve;
+ * `sizes`: `Record<string, {w, h}>`; `cfg`: `SolveConfig | null | undefined`.
+ * Returns `{ solved, diagnostics }`.
+ * @param {any} bundle
+ * @param {string} diagram_key
+ * @param {any} sizes
+ * @param {any} cfg
+ * @returns {SolveResult}
+ */
+export function solve(bundle, diagram_key, sizes, cfg) {
+    const ptr0 = passStringToWasm0(diagram_key, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.solve(bundle, ptr0, len0, sizes, cfg);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return takeFromExternrefTable0(ret[0]);
+}
+
+/**
  * Split a multi-document bundle string into `[path, markdown][]`.
  * @param {string} text
  * @returns {any}
@@ -95,6 +115,17 @@ function __wbg_get_imports() {
             const ret = Error(getStringFromWasm0(arg0, arg1));
             return ret;
         },
+        __wbg_Number_9a4e0ecb0fa16705: function(arg0) {
+            const ret = Number(arg0);
+            return ret;
+        },
+        __wbg_String_8564e559799eccda: function(arg0, arg1) {
+            const ret = String(arg1);
+            const ptr1 = passStringToWasm0(ret, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+            const len1 = WASM_VECTOR_LEN;
+            getDataViewMemory0().setInt32(arg0 + 4 * 1, len1, true);
+            getDataViewMemory0().setInt32(arg0 + 4 * 0, ptr1, true);
+        },
         __wbg___wbindgen_bigint_get_as_i64_d968e41184ae354f: function(arg0, arg1) {
             const v = arg1;
             const ret = typeof(v) === 'bigint' ? v : undefined;
@@ -125,6 +156,10 @@ function __wbg_get_imports() {
             const ret = typeof(arg0) === 'function';
             return ret;
         },
+        __wbg___wbindgen_is_null_ea9085d691f535d3: function(arg0) {
+            const ret = arg0 === null;
+            return ret;
+        },
         __wbg___wbindgen_is_object_a27215656b807791: function(arg0) {
             const val = arg0;
             const ret = typeof(val) === 'object' && val !== null;
@@ -132,6 +167,10 @@ function __wbg_get_imports() {
         },
         __wbg___wbindgen_is_string_ea5e6cc2e4141dfe: function(arg0) {
             const ret = typeof(arg0) === 'string';
+            return ret;
+        },
+        __wbg___wbindgen_is_undefined_c05833b95a3cf397: function(arg0) {
+            const ret = arg0 === undefined;
             return ret;
         },
         __wbg___wbindgen_jsval_eq_e659fcf7b0e32763: function(arg0, arg1) {
@@ -192,6 +231,10 @@ function __wbg_get_imports() {
         }, arguments); },
         __wbg_get_unchecked_6e0ad6d2a41b06f6: function(arg0, arg1) {
             const ret = arg0[arg1 >>> 0];
+            return ret;
+        },
+        __wbg_get_with_ref_key_6412cf3094599694: function(arg0, arg1) {
+            const ret = arg0[arg1];
             return ret;
         },
         __wbg_instanceof_ArrayBuffer_4480b9e0068a8adb: function(arg0) {

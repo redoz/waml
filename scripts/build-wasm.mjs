@@ -1,5 +1,5 @@
 // Builds crates/uaml-wasm to wasm, then emits an INLINED module under
-// packages/okf/src/generated so the frontend needs no runtime .wasm fetch.
+// packages/wasm/src/generated so the frontend needs no runtime .wasm fetch.
 // Idempotent: rerunning overwrites the generated files identically.
 import { execFileSync } from "node:child_process";
 import { readFileSync, writeFileSync, mkdirSync, copyFileSync } from "node:fs";
@@ -9,7 +9,7 @@ import { fileURLToPath } from "node:url";
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const crate = join(root, "crates", "uaml-wasm");
 const pkg = join(crate, "pkg");
-const outDir = join(root, "packages", "okf", "src", "generated");
+const outDir = join(root, "packages", "wasm", "src", "generated");
 
 // 1. Compile to wasm + wasm-bindgen glue (--target web ⇒ ESM + `init(bytes)`).
 execFileSync(

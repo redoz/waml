@@ -1,5 +1,68 @@
 /* tslint:disable */
 /* eslint-disable */
+/**
+ * Result of solving one diagram: absolute rects + any layout diagnostics.
+ * Tsify emits its TypeScript type; under `wasm` it crosses the boundary as a
+ * plain JS object.
+ */
+export interface SolveResult {
+    solved: Solved;
+    diagnostics: Diagnostic[];
+}
+
+export interface Diagnostic {
+    severity: Severity;
+    code: DiagCode;
+    message: string;
+    file: string;
+    line: number;
+    /**
+     * Byte range within `line`, if the diagnostic pins a precise column span.
+     */
+    span: [number, number] | undefined;
+}
+
+export interface FlagSet {
+    emphasized: boolean;
+    collapsed: boolean;
+}
+
+export interface Rect {
+    x: number;
+    y: number;
+    w: number;
+    h: number;
+}
+
+export interface Size {
+    w: number;
+    h: number;
+}
+
+export interface SolveConfig {
+    margin_px: [number, number, number, number];
+    chip: Size;
+}
+
+export interface Solved {
+    nodes: Record<string, Rect>;
+    groups: SolvedGroup[];
+    flags: Record<string, FlagSet>;
+}
+
+export interface SolvedGroup {
+    rect: Rect;
+    shape: Shape;
+    title: string | undefined;
+    depth: number;
+}
+
+export type DiagCode = "duplicate-slug" | "frontmatter-not-clean" | "unknown-type" | "malformed-attribute" | "malformed-relationship" | "unresolved-target" | "droppable-content" | "malformed-layout" | "unresolved-layout-ref" | "layout-cycle" | "layout-conflict";
+
+export type Severity = "error" | "warning";
+
+export type Shape = "Frame" | "Box" | "Shrink";
+
 
 /**
  * `bundle`: a `[path, markdown][]`; `ops`: an `OpDto[]`. Returns the edited bundle.
@@ -28,6 +91,13 @@ export function fmt(bundle: any): any;
 export function init_panic_hook(): void;
 
 /**
+ * `bundle`: `[path, markdown][]`; `diagram_key`: which diagram to solve;
+ * `sizes`: `Record<string, {w, h}>`; `cfg`: `SolveConfig | null | undefined`.
+ * Returns `{ solved, diagnostics }`.
+ */
+export function solve(bundle: any, diagram_key: string, sizes: any, cfg: any): SolveResult;
+
+/**
  * Split a multi-document bundle string into `[path, markdown][]`.
  */
 export function split_bundle(text: string): any;
@@ -45,6 +115,7 @@ export interface InitOutput {
     readonly build_bundle: (a: any) => [number, number, number];
     readonly build_model: (a: any) => [number, number, number];
     readonly fmt: (a: any) => [number, number, number];
+    readonly solve: (a: any, b: number, c: number, d: any, e: any) => [number, number, number];
     readonly split_bundle: (a: number, b: number) => [number, number, number];
     readonly validate: (a: any) => [number, number, number];
     readonly init_panic_hook: () => void;
