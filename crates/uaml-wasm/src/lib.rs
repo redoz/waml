@@ -67,12 +67,16 @@ pub fn build_model(bundle: JsValue) -> Result<JsValue, JsValue> {
 
 /// `bundle`: a `[path, markdown][]`. Returns the resolved OKF `Bundle` (one
 /// `Concept` per document). Additive to [`build_model`]; the UML surface is
-/// untouched.
+/// untouched. `Concept.extra` (frontmatter) serializes as a plain JS object —
+/// `serialize_maps_as_objects` matches its JSON semantics and the TS
+/// `Record<string, FmValue>` type, not a `Map`.
 #[wasm_bindgen]
 pub fn build_bundle(bundle: JsValue) -> Result<JsValue, JsValue> {
+    use serde::Serialize;
     let b: Vec<(String, String)> = serde_wasm_bindgen::from_value(bundle)?;
     let out = uaml::okf::build_bundle(&b);
-    Ok(serde_wasm_bindgen::to_value(&out)?)
+    let ser = serde_wasm_bindgen::Serializer::new().serialize_maps_as_objects(true);
+    Ok(out.serialize(&ser)?)
 }
 
 /// `bundle`: a `[path, markdown][]`. Returns a `Diagnostic[]`.

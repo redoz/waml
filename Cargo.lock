@@ -890,6 +890,7 @@ name = "uaml-wasm"
 version = "0.0.0"
 dependencies = [
  "console_error_panic_hook",
+ "serde",
  "serde-wasm-bindgen",
  "serde_json",
  "uaml",

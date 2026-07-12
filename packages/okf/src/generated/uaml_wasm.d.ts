@@ -7,6 +7,15 @@
 export function apply_ops(bundle: any, ops: any): any;
 
 /**
+ * `bundle`: a `[path, markdown][]`. Returns the resolved OKF `Bundle` (one
+ * `Concept` per document). Additive to [`build_model`]; the UML surface is
+ * untouched. `Concept.extra` (frontmatter) serializes as a plain JS object —
+ * `serialize_maps_as_objects` matches its JSON semantics and the TS
+ * `Record<string, FmValue>` type, not a `Map`.
+ */
+export function build_bundle(bundle: any): any;
+
+/**
  * `bundle`: a `[path, markdown][]` (array of pairs). Returns the resolved `Model`.
  */
 export function build_model(bundle: any): any;
@@ -33,6 +42,7 @@ export type InitInput = RequestInfo | URL | Response | BufferSource | WebAssembl
 export interface InitOutput {
     readonly memory: WebAssembly.Memory;
     readonly apply_ops: (a: any, b: any) => [number, number, number];
+    readonly build_bundle: (a: any) => [number, number, number];
     readonly build_model: (a: any) => [number, number, number];
     readonly fmt: (a: any) => [number, number, number];
     readonly split_bundle: (a: number, b: number) => [number, number, number];

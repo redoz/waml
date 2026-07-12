@@ -15,6 +15,23 @@ export function apply_ops(bundle, ops) {
 }
 
 /**
+ * `bundle`: a `[path, markdown][]`. Returns the resolved OKF `Bundle` (one
+ * `Concept` per document). Additive to [`build_model`]; the UML surface is
+ * untouched. `Concept.extra` (frontmatter) serializes as a plain JS object —
+ * `serialize_maps_as_objects` matches its JSON semantics and the TS
+ * `Record<string, FmValue>` type, not a `Map`.
+ * @param {any} bundle
+ * @returns {any}
+ */
+export function build_bundle(bundle) {
+    const ret = wasm.build_bundle(bundle);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return takeFromExternrefTable0(ret[0]);
+}
+
+/**
  * `bundle`: a `[path, markdown][]` (array of pairs). Returns the resolved `Model`.
  * @param {any} bundle
  * @returns {any}
@@ -111,6 +128,10 @@ function __wbg_get_imports() {
         __wbg___wbindgen_is_object_a27215656b807791: function(arg0) {
             const val = arg0;
             const ret = typeof(val) === 'object' && val !== null;
+            return ret;
+        },
+        __wbg___wbindgen_is_string_ea5e6cc2e4141dfe: function(arg0) {
+            const ret = typeof(arg0) === 'string';
             return ret;
         },
         __wbg___wbindgen_jsval_eq_e659fcf7b0e32763: function(arg0, arg1) {
@@ -231,6 +252,10 @@ function __wbg_get_imports() {
             const ret = new Array();
             return ret;
         },
+        __wbg_new_7796ffc7ed656783: function() {
+            const ret = new Map();
+            return ret;
+        },
         __wbg_new_cd45aabdf6073e84: function(arg0) {
             const ret = new Uint8Array(arg0);
             return ret;
@@ -249,6 +274,10 @@ function __wbg_get_imports() {
         }, arguments); },
         __wbg_prototypesetcall_4770620bbe4688a0: function(arg0, arg1, arg2) {
             Uint8Array.prototype.set.call(getArrayU8FromWasm0(arg0, arg1), arg2);
+        },
+        __wbg_set_575dd786d51585f8: function(arg0, arg1, arg2) {
+            const ret = arg0.set(arg1, arg2);
+            return ret;
         },
         __wbg_set_6be42768c690e380: function(arg0, arg1, arg2) {
             arg0[arg1] = arg2;

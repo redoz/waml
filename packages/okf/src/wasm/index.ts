@@ -2,6 +2,7 @@
 // (no runtime .wasm fetch). Call `initWasm()` once before any other export.
 import init, {
   apply_ops,
+  build_bundle,
   build_model,
   fmt,
   init_panic_hook,
@@ -22,4 +23,4 @@ export function initWasm(): Promise<void> {
   return ready;
 }
 
-export { apply_ops, build_model, fmt, split_bundle, validate };
+export { apply_ops, build_bundle, build_model, fmt, split_bundle, validate };
