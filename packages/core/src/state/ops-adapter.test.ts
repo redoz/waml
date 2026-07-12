@@ -89,6 +89,10 @@ describe("node ops", () => {
     expect(nodeSetOps(prev, { concept: { ...prev.concept, description: "changed" } })).toEqual([
       { op: "node.set", slug: "order", desc: "changed" },
     ]);
+    // Clearing a non-empty description to "" emits a single desc:"" op (not skipped).
+    expect(nodeSetOps(prev, { concept: { ...prev.concept, description: "" } })).toEqual([
+      { op: "node.set", slug: "order", desc: "" },
+    ]);
   });
 });
 

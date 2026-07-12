@@ -28,7 +28,7 @@
       id="oi-description"
       value={node.concept.description ?? ""}
       rows={3}
-      oninput={(e) => onUpdate({ concept: { ...node.concept, description: e.currentTarget.value || undefined } })}
+      oninput={(e) => onUpdate({ concept: { ...node.concept, description: e.currentTarget.value } })}
       class={`${inputCls} resize-y min-h-[60px]`}
     ></textarea>
   </div>
