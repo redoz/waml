@@ -150,6 +150,42 @@ pub enum OpDto {
         #[serde(default, rename = "as")]
         as_sel: Option<String>,
     },
+    #[serde(rename = "pkg.move")]
+    PkgMove {
+        #[serde(default = "one")]
+        v: u32,
+        slug: String,
+        to_dir: String,
+    },
+    #[serde(rename = "pkg.rename")]
+    PkgRename {
+        #[serde(default = "one")]
+        v: u32,
+        from: String,
+        to: String,
+    },
+    #[serde(rename = "pkg.delete")]
+    PkgDelete {
+        #[serde(default = "one")]
+        v: u32,
+        path: String,
+        #[serde(default)]
+        cascade: bool,
+    },
+    #[serde(rename = "pkg.reorder")]
+    PkgReorder {
+        #[serde(default = "one")]
+        v: u32,
+        path: String,
+        #[serde(default)]
+        order: Vec<String>,
+    },
+    #[serde(rename = "pkg.sort")]
+    PkgSort {
+        #[serde(default = "one")]
+        v: u32,
+        path: String,
+    },
 }
 
 fn check_v(v: u32, op: &str) -> Result<(), String> {
@@ -293,6 +329,26 @@ impl OpDto {
                 check_v(*v, "rel.rm")?;
                 Ok(Op::RelRm { selector: rel_sel(source, kind, target, as_sel)? })
             }
+            OpDto::PkgMove { v, slug, to_dir } => {
+                check_v(*v, "pkg.move")?;
+                Ok(Op::PkgMove { slug: slug.clone(), to_dir: to_dir.clone() })
+            }
+            OpDto::PkgRename { v, from, to } => {
+                check_v(*v, "pkg.rename")?;
+                Ok(Op::PkgRename { from: from.clone(), to: to.clone() })
+            }
+            OpDto::PkgDelete { v, path, cascade } => {
+                check_v(*v, "pkg.delete")?;
+                Ok(Op::PkgDelete { path: path.clone(), cascade: *cascade })
+            }
+            OpDto::PkgReorder { v, path, order } => {
+                check_v(*v, "pkg.reorder")?;
+                Ok(Op::PkgReorder { path: path.clone(), order: order.clone() })
+            }
+            OpDto::PkgSort { v, path } => {
+                check_v(*v, "pkg.sort")?;
+                Ok(Op::PkgSort { path: path.clone() })
+            }
         }
     }
 
@@ -369,6 +425,11 @@ impl OpDto {
                 let (source, kind, target, as_sel) = sel_parts(selector);
                 OpDto::RelRm { v: 1, source, kind, target, as_sel }
             }
+            Op::PkgMove { slug, to_dir } => OpDto::PkgMove { v: 1, slug: slug.clone(), to_dir: to_dir.clone() },
+            Op::PkgRename { from, to } => OpDto::PkgRename { v: 1, from: from.clone(), to: to.clone() },
+            Op::PkgDelete { path, cascade } => OpDto::PkgDelete { v: 1, path: path.clone(), cascade: *cascade },
+            Op::PkgReorder { path, order } => OpDto::PkgReorder { v: 1, path: path.clone(), order: order.clone() },
+            Op::PkgSort { path } => OpDto::PkgSort { v: 1, path: path.clone() },
         }
     }
 }
@@ -504,6 +565,11 @@ mod tests {
                 name: None,
             },
             Op::RelRm { selector: Selector::Rel { source: "order".into(), by: RelBy::Named("has".into()) } },
+            Op::PkgMove { slug: "order".into(), to_dir: "billing".into() },
+            Op::PkgRename { from: "a".into(), to: "b".into() },
+            Op::PkgDelete { path: "sales".into(), cascade: false },
+            Op::PkgReorder { path: "sales".into(), order: vec!["a".into()] },
+            Op::PkgSort { path: "sales".into() },
         ];
         for op in &ops {
             let line = serde_json::to_string(&OpDto::from_op(op)).unwrap();
