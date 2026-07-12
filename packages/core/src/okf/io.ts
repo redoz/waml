@@ -1,4 +1,3 @@
-import { serializeBundle, parseBundle, type ModelGraph } from "@uaml/okf";
 import { zipSync, unzipSync, strToU8, strFromU8 } from "fflate";
 
 // Branded footer appended to the bundle index — every exported model carries an
@@ -7,30 +6,16 @@ const OKF_FOOTER =
   "\n\n---\n\n" +
   "_Generated with [UAML](https://github.com/redoz/uaml)_\n";
 
-export function graphToBundleFiles(g: ModelGraph, projectTitle: string): Record<string, string> {
-  const files = serializeBundle(g, projectTitle).files;
-  // Append the UAML footer to the bundle's index.md (per-mart docs stay clean).
+/** Turn the WASM store's `[path, markdown][]` bundle into the flat file map the
+ *  zip download expects, tacking the UAML attribution footer onto the index
+ *  (creating one if the bundle has no index doc). Per-doc markdown stays clean. */
+export function bundleToDownloadFiles(bundle: [string, string][], projectTitle: string): Record<string, string> {
+  const files: Record<string, string> = {};
+  for (const [path, md] of bundle) files[path] = md;
   const indexKey = Object.keys(files).find(k => k.endsWith("index.md"));
   if (indexKey) files[indexKey] = files[indexKey].replace(/\s*$/, "") + OKF_FOOTER;
+  else files["index.md"] = `# ${projectTitle}\n${OKF_FOOTER}`;
   return files;
-}
-
-export function filesToGraph(files: Record<string, string>): ModelGraph {
-  return parseBundle(expandBundles(files));
-}
-
-// A downloaded OKF bundle is a single .md file with every doc concatenated
-// behind `<!-- path -->` markers (see downloadBundle). When such a file is
-// uploaded, expand it back into its constituent files so each doc keeps its
-// own frontmatter; otherwise parseBundle treats the whole blob as one document.
-const BUNDLE_MARKER = /<!--\s*.+?\s*-->\n/;
-function expandBundles(files: Record<string, string>): Record<string, string> {
-  const out: Record<string, string> = {};
-  for (const [name, content] of Object.entries(files)) {
-    if (BUNDLE_MARKER.test(content)) Object.assign(out, parsePastedMarkdown(content));
-    else out[name] = content;
-  }
-  return out;
 }
 
 export function bundleToZip(files: Record<string, string>): Uint8Array {

@@ -56,7 +56,7 @@ import ShareToast from "../ShareToast.svelte";
   import { resolveDisplay, type DiagramDisplay } from "@uaml/okf";
   import { loadModelName, persistModelName, DEFAULT_MODEL_NAME, templateModelName } from "@uaml/core/state/modelName";
   import { persistBundle } from "@uaml/core/state/persist";
-  import { graphToBundleFiles, downloadBundle } from "@uaml/core/okf/io";
+  import { bundleToDownloadFiles, downloadBundle } from "@uaml/core/okf/io";
   import { buildShareUrl } from "@uaml/core/share/url";
   import { exportCanvasSvg, buildCanvasSvg } from "@uaml/core/share/exportImage";
   import { svgToPngBlob } from "../../share/rasterize";
@@ -351,7 +351,7 @@ import ShareToast from "../ShareToast.svelte";
   // ── Import / Export / Share handlers ───────────────────────────────────────
   function handleExport() {
     const title = modelName.trim() || "model-okf";
-    const files = graphToBundleFiles(store.get(), title);
+    const files = bundleToDownloadFiles(store.getBundle(), title);
     downloadBundle(files, title);
   }
 
