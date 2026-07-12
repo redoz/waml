@@ -416,6 +416,7 @@ fn build_node(p: &ParsedDoc, keyset: &HashSet<&str>) -> Node {
         values,
         body,
         annotates: Vec::new(), // deferred: uml.Note anchors
+        members: Vec::new(),    // classifiers own no members
     }
 }
 
@@ -429,7 +430,7 @@ pub fn build_model(bundle: &[(String, String)]) -> Model {
     let edges: Vec<Edge> = build_edges(&classifiers, &keyset);
     let diagrams: Vec<Diagram> = build_diagrams(&parsed, &keyset);
 
-    Model { nodes, edges, diagrams }
+    Model { nodes, edges, diagrams, path: String::new(), packages: Vec::new() }
 }
 
 use crate::model::{AssocName, RelationshipKind};

@@ -373,6 +373,10 @@ pub struct Node {
         serde(default, skip_serializing_if = "Vec::is_empty")
     )]
     pub annotates: Vec<NoteAnchor>,
+    /// Owned member keys (classifiers, diagrams, sub-packages), in progressive-
+    /// disclosure order. Meaningful only on `uml.Package` nodes; empty elsewhere.
+    #[cfg_attr(feature = "serde", serde(default, skip_serializing_if = "Vec::is_empty"))]
+    pub members: Vec<String>,
 }
 
 /// A resolved membership group in a diagram (heading text + resolved keys).
@@ -405,6 +409,13 @@ pub struct Model {
     pub nodes: Vec<Node>,
     pub edges: Vec<Edge>,
     pub diagrams: Vec<Diagram>,
+    /// Bundle/root name (root `index.md` H1); "" when absent. Export label + root crumb.
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub path: String,
+    /// Discovered `uml.Package` nodes (root + nested). Kept out of `nodes` so
+    /// classifier consumers are unaffected.
+    #[cfg_attr(feature = "serde", serde(default, skip_serializing_if = "Vec::is_empty"))]
+    pub packages: Vec<Node>,
 }
 
 impl Model {
@@ -488,8 +499,9 @@ mod tests {
             values: vec![],
             body: None,
             annotates: vec![],
+            members: vec![],
         };
-        let model = Model { nodes: vec![node], edges: vec![], diagrams: vec![] };
+        let model = Model { nodes: vec![node], edges: vec![], diagrams: vec![], path: String::new(), packages: vec![] };
         assert_eq!(model.node("order").map(|n| n.title.as_str()), Some("Order"));
         assert!(model.node("missing").is_none());
     }

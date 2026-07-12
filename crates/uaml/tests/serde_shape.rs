@@ -2,7 +2,7 @@
 //! Pins the JSON shape of `Model` to the TS field names in
 //! `packages/okf/src/types.ts`. If a rename drifts, this fails.
 use uaml::diagnostic::{DiagCode, Diagnostic, Severity};
-use uaml::model::{AssocName, Visibility};
+use uaml::model::{AssocName, ClassifierType, Model, Node, UmlMetaclass, Visibility};
 use uaml::multiplicity::Multiplicity;
 use uaml::parse::build_model;
 
@@ -65,6 +65,51 @@ fn assoc_name_matches_ts_union_shape() {
         serde_json::to_value(AssocName::Assoc("employment".into())).unwrap(),
         serde_json::json!({ "ref": "employment" })
     );
+}
+
+#[test]
+fn package_node_and_model_path() {
+    let pkg = Node {
+        concept: uaml::okf::project("sales/index.md", "# sales\n\nSales bounded context.\n"),
+        key: "sales".into(),
+        ty: ClassifierType::Uml(UmlMetaclass::Package),
+        title: "sales".into(),
+        stereotypes: vec![],
+        abstract_: false,
+        description: Some("Sales bounded context.".into()),
+        attributes: vec![],
+        values: vec![],
+        body: None,
+        annotates: vec![],
+        members: vec!["order".into(), "customer".into()],
+    };
+    let model = Model {
+        nodes: vec![],
+        edges: vec![],
+        diagrams: vec![],
+        path: "acme-model".into(),
+        packages: vec![pkg],
+    };
+    let json = serde_json::to_string(&model).unwrap();
+    assert!(json.contains("\"path\":\"acme-model\""));
+    assert!(json.contains("\"members\":[\"order\",\"customer\"]"));
+    // classifier with no members must omit field entirely.
+    let bare = Node {
+        concept: uaml::okf::project("order.md", "---\ntype: uml.Class\ntitle: Order\n---\n# Order\n"),
+        key: "order".into(),
+        ty: ClassifierType::Uml(UmlMetaclass::Class),
+        title: "Order".into(),
+        stereotypes: vec![],
+        abstract_: false,
+        description: None,
+        attributes: vec![],
+        values: vec![],
+        body: None,
+        annotates: vec![],
+        members: vec![],
+    };
+    let bj = serde_json::to_string(&bare).unwrap();
+    assert!(!bj.contains("members"), "empty members must be omitted: {bj}");
 }
 
 #[test]
