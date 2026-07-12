@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll } from "vitest";
-import { initWasm } from "@uaml/okf";
+import { initWasm } from "@uaml/wasm";
 import { createModelStore } from "@uaml/core/state/model";
 import {
   EMPTY_SELECTION,

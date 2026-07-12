@@ -1,6 +1,6 @@
 import { test, expect, beforeAll } from "vitest";
 import { get } from "svelte/store";
-import { initWasm } from "@uaml/okf";
+import { initWasm } from "@uaml/wasm";
 import { createModelStore } from "@uaml/core/state/model";
 import { toModelReadable } from "./model.svelte";
 

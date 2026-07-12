@@ -1,7 +1,7 @@
 <script lang="ts">
   // Mirrors packages/web/src/components/LibraryDialog.tsx.
   import { ChevronRight, ChevronDown, X, Rocket } from "lucide-svelte";
-  import { build_model } from "@uaml/okf";
+  import { build_model } from "@uaml/wasm";
   import { toModelGraph, emptyOverlay, type RustModel } from "@uaml/core/state/overlay";
   import { TEMPLATES, INDUSTRY_TEMPLATES, DATASET_TEMPLATES, type Template } from "@uaml/core/templates";
   import { JoinIcon, LibraryIcon } from "../lib/icons";

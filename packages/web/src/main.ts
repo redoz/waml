@@ -1,5 +1,5 @@
 import "./app.css";
-import { initWasm } from "@uaml/okf";
+import { initWasm } from "@uaml/wasm";
 
 // The WASM core is the source of truth — block first render until it's ready. The
 // app (and, transitively, the bundle-as-truth store in `bootstrap.ts`) is only

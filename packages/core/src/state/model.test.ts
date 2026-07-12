@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll } from "vitest";
-import { initWasm } from "@uaml/okf";
+import { initWasm } from "@uaml/wasm";
 import { createModelStore, type Bundle } from "./model";
 
 beforeAll(async () => {

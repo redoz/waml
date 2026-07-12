@@ -1,5 +1,5 @@
 import { gzipSync, gunzipSync, strToU8, strFromU8 } from "fflate";
-import { split_bundle } from "@uaml/okf";
+import { split_bundle } from "@uaml/wasm";
 import type { Bundle } from "../state/model";
 
 // Shareable model links. The whole bundle is gzip-compressed and packed into the

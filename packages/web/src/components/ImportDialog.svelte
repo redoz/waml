@@ -2,7 +2,7 @@
   // Mirrors packages/web/src/components/ImportDialog.tsx.
   import { Copy, Check } from "lucide-svelte";
   import { parsePastedMarkdown, zipToFiles } from "@uaml/core/okf/io";
-  import { build_model } from "@uaml/okf";
+  import { build_model } from "@uaml/wasm";
 
   type Bundle = [string, string][];
 

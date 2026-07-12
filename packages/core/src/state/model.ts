@@ -15,7 +15,7 @@
 // return types are unchanged so the ~13 call sites in `CanvasInner.svelte` and the
 // details panel stay untouched.
 import type { ModelGraph, ModelNode, ModelEdge, Diagram, RelationshipKind } from "@uaml/okf";
-import { build_model, apply_ops } from "@uaml/okf";
+import { build_model, apply_ops } from "@uaml/wasm";
 import {
   toModelGraph,
   emptyOverlay,

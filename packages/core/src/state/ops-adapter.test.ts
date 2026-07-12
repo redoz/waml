@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll } from "vitest";
-import { initWasm, apply_ops, build_model } from "@uaml/okf";
+import { initWasm, apply_ops, build_model } from "@uaml/wasm";
 import { toModelGraph, emptyOverlay, type RustModel } from "./overlay";
 import {
   nodeNewOps,

@@ -1,6 +1,6 @@
 import { test, expect, beforeAll, vi } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/svelte";
-import { initWasm } from "@uaml/okf";
+import { initWasm } from "@uaml/wasm";
 import TemplateApplyDialog from "./TemplateApplyDialog.svelte";
 
 beforeAll(async () => {
