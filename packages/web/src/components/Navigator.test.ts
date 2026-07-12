@@ -1,6 +1,7 @@
 import { test, expect, vi } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/svelte";
 import Navigator from "./Navigator.svelte";
+import type { ModelGraph } from "@uaml/okf";
 
 // Node/package fixture helper — mirrors the concept-Node shape (title lives on
 // `concept.title`, never a flat `title`), matching nav/tree.test.ts.
@@ -22,7 +23,7 @@ const graph = {
     { ...node("", "", "uml.Package"), members: ["sales"] },
     { ...node("sales", "sales", "uml.Package"), members: ["overview", "customer"] },
   ],
-};
+} as unknown as ModelGraph;
 
 const props = (over = {}) => ({
   graph,
@@ -70,4 +71,26 @@ test("dropping a reordered row persists new member order", async () => {
   const [pkgKey, order] = onReorder.mock.calls[0];
   expect(pkgKey).toBe("sales");
   expect(order).toContain("customer");
+});
+
+test("classifier with one containing diagram jumps; edit-props calls stub", async () => {
+  const onViewInDiagram = vi.fn();
+  const onEditProperties = vi.fn();
+  const g2 = structuredClone(graph);
+  g2.diagrams[0].members = ["customer"];
+  render(Navigator, { props: props({ graph: g2, onViewInDiagram, onEditProperties }) });
+  await fireEvent.click(screen.getByRole("treeitem", { name: /Customer/ }));
+  await fireEvent.click(screen.getByRole("menuitem", { name: /View in diagram/ }));
+  expect(onViewInDiagram).toHaveBeenCalledWith("customer", "overview");
+  await fireEvent.click(screen.getByRole("treeitem", { name: /Customer/ }));
+  await fireEvent.click(screen.getByRole("menuitem", { name: /View \/ edit properties/ }));
+  expect(onEditProperties).toHaveBeenCalledWith("customer");
+});
+
+test("classifier in no diagram shows Add to new diagram", async () => {
+  const onAddToNewDiagram = vi.fn();
+  render(Navigator, { props: props({ onAddToNewDiagram }) });
+  await fireEvent.click(screen.getByRole("treeitem", { name: /Customer/ }));
+  await fireEvent.click(screen.getByRole("menuitem", { name: /Add to new diagram/ }));
+  expect(onAddToNewDiagram).toHaveBeenCalledWith("customer");
 });

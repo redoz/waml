@@ -15,6 +15,9 @@
     onScope,
     onSelectDiagram,
     onReorder,
+    onViewInDiagram,
+    onAddToNewDiagram,
+    onEditProperties,
   }: {
     graph: ModelGraph;
     scopeKey?: string;
@@ -23,6 +26,9 @@
     onScope?: (key: string) => void;
     onSelectDiagram?: (key: string) => void;
     onReorder?: (pkgKey: string, order: string[]) => void;
+    onViewInDiagram?: (key: string, diagramKey: string) => void;
+    onAddToNewDiagram?: (key: string) => void;
+    onEditProperties?: (key: string) => void;
   } = $props();
 
   // Search box (filtering lands in Task 21; here it only toggles filterNav).
@@ -87,9 +93,21 @@
     classifier: Box,
   };
 
+  // Left-click action menu for classifier/note rows (packages/diagrams keep
+  // their scope/select behavior).
+  let actionMenu = $state<{ key: string } | null>(null);
+  const containing = $derived(
+    actionMenu ? graph.diagrams.filter((d) => d.members.includes(actionMenu!.key)) : [],
+  );
+
   function activateRow(row: NavRow) {
     if (row.kind === "package") onScope?.(row.key);
     else if (row.kind === "diagram") onSelectDiagram?.(row.key);
+    else actionMenu = { key: row.key };
+  }
+
+  function closeMenus() {
+    actionMenu = null;
   }
 </script>
 
@@ -136,6 +154,7 @@
       {@const Icon = KIND_ICON[row.kind]}
       <button
         role="treeitem"
+        aria-selected={row.kind === "diagram" && row.key === activeDiagramKey}
         draggable="true"
         ondragstart={() => (dragKey = row.key)}
         ondragover={(e) => e.preventDefault()}
@@ -157,4 +176,60 @@
       </button>
     {/each}
   </div>
+
+  {#if actionMenu}
+    {@const key = actionMenu.key}
+    <!-- svelte-ignore a11y_click_events_have_key_events -->
+    <!-- svelte-ignore a11y_no_static_element_interactions -->
+    <div class="fixed inset-0 z-40" onclick={closeMenus}></div>
+    <div
+      role="menu"
+      class="absolute z-50 left-1/2 -translate-x-1/2 top-[120px] w-[220px] rounded-lg border border-[#d8dee8] bg-white shadow-[0_8px_24px_rgba(15,23,42,0.18)] py-1"
+    >
+      {#if containing.length <= 1}
+        {#if containing.length === 1}
+          <button
+            role="menuitem"
+            onclick={() => { onViewInDiagram?.(key, containing[0].key); closeMenus(); }}
+            class="w-full text-left text-[13px] text-slate-900 px-3 py-2 cursor-pointer hover:bg-[#f1f3f7]"
+          >
+            View in diagram
+          </button>
+        {/if}
+        <button
+          role="menuitem"
+          onclick={() => { onAddToNewDiagram?.(key); closeMenus(); }}
+          class="w-full text-left text-[13px] text-slate-900 px-3 py-2 cursor-pointer hover:bg-[#f1f3f7]"
+        >
+          Add to new diagram
+        </button>
+      {:else}
+        <div class="px-3 py-2 text-[12px] text-slate-500">View in diagram</div>
+        {#each containing as d (d.key)}
+          <button
+            role="menuitem"
+            onclick={() => { onViewInDiagram?.(key, d.key); closeMenus(); }}
+            class="w-full text-left text-[13px] text-slate-900 pl-6 pr-3 py-2 cursor-pointer hover:bg-[#f1f3f7]"
+          >
+            {d.title}
+          </button>
+        {/each}
+        <button
+          role="menuitem"
+          onclick={() => { onAddToNewDiagram?.(key); closeMenus(); }}
+          class="w-full text-left text-[13px] text-slate-900 px-3 py-2 cursor-pointer hover:bg-[#f1f3f7]"
+        >
+          Add to new diagram
+        </button>
+      {/if}
+      <div class="my-1 border-t border-[#eef1f5]"></div>
+      <button
+        role="menuitem"
+        onclick={() => { onEditProperties?.(key); closeMenus(); }}
+        class="w-full text-left text-[13px] text-slate-900 px-3 py-2 cursor-pointer hover:bg-[#f1f3f7]"
+      >
+        View / edit properties
+      </button>
+    </div>
+  {/if}
 </div>
