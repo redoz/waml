@@ -29,6 +29,9 @@ impl Workspace {
 
     /// Seed the bundle from every `*.md` under `root` (recursive `read_dir`,
     /// no extra crate). Existing entries (open buffers) are not overwritten.
+    /// Files are keyed by ABSOLUTE path — the same key `did_open`/`did_change`
+    /// derive from a document URI — so an open buffer overlays its disk copy
+    /// under one key (no phantom duplicate-slug, edits reach cross-file checks).
     pub fn seed_from_glob(&mut self, root: &Path) {
         fn walk(dir: &Path, out: &mut Vec<std::path::PathBuf>) {
             if let Ok(rd) = std::fs::read_dir(dir) {
@@ -46,12 +49,8 @@ impl Workspace {
         walk(root, &mut files);
         for f in files {
             if let Ok(text) = std::fs::read_to_string(&f) {
-                let rel = f
-                    .strip_prefix(root)
-                    .unwrap_or(&f)
-                    .to_string_lossy()
-                    .replace('\\', "/");
-                self.docs.entry(rel).or_insert(text);
+                let key = f.to_string_lossy().replace('\\', "/");
+                self.docs.entry(key).or_insert(text);
             }
         }
     }
@@ -111,6 +110,45 @@ mod tests {
             .find(|(p, _)| p == "notes.md")
             .map(|(_, d)| d.is_empty())
             .unwrap_or(true));
+    }
+
+    #[test]
+    fn seeded_disk_file_and_open_buffer_share_one_key() {
+        // Reproduces the overlay-key mismatch: `seed_from_glob` keyed disk files
+        // by workspace-relative path while `did_open`/`did_change` key by absolute
+        // path. In a real session every opened on-disk file then existed under two
+        // keys, yielding a spurious `duplicate-slug` and stale cross-file content.
+        use std::io::Write;
+        let dir = std::env::temp_dir().join(format!("uaml_lsp_seed_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("order.md");
+        let mut f = std::fs::File::create(&file).unwrap();
+        write!(f, "---\ntype: uml.Class\ntitle: Order\n---\n# Order\n\n## Attributes\n- id: OrderId\n").unwrap();
+        drop(f);
+
+        let mut ws = Workspace::new();
+        ws.seed_from_glob(&dir);
+        // The editor opens the same file: overlay by ABSOLUTE path, exactly as
+        // `did_open` normalizes a `file://` URI.
+        let abs = file.to_string_lossy().replace('\\', "/");
+        ws.overlay(
+            abs.clone(),
+            "---\ntype: uml.Class\ntitle: Order\n---\n# Order\n\n## Attributes\n- id: OrderId\n- name: [String](./string.md)\n".into(),
+        );
+
+        let diags = ws.diagnostics();
+        assert!(
+            diags.iter().all(|(_, ds)| ds.iter().all(|d| !matches!(
+                &d.code,
+                Some(lsp::NumberOrString::String(s)) if s == "duplicate-slug"
+            ))),
+            "open buffer must overlay its seeded disk copy under ONE key (no duplicate-slug), got: {diags:?}"
+        );
+        let entries = diags.iter().filter(|(p, _)| p.ends_with("order.md")).count();
+        assert_eq!(entries, 1, "exactly one bundle entry for the opened file");
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
