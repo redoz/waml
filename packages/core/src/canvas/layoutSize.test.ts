@@ -5,7 +5,7 @@ import { erdAwareNodeSize } from "./layoutSize";
 
 const mk = (fields: number): ModelNode => ({
   concept: { id: "n", type: "uml.Class", body: "" },
-  key: "n", title: "n", type: "uml.Class", stereotypes: [],
+  key: "n", type: "uml.Class", stereotypes: [],
   attributes: Array.from({ length: fields }, (_, i) => ({ name: `f${i}`, type: { name: "STRING" }, multiplicity: "1" })),
   position: { x: 0, y: 0 },
 });

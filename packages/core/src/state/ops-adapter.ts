@@ -136,8 +136,11 @@ export function nodeRmOps(slug: string, cascade = true): OpDto[] {
  *  single `node.set` carrying just the fields that actually changed, or `[]`. */
 export function nodeSetOps(prev: ModelNode, patch: Partial<ModelNode>): OpDto[] {
   const set: Omit<Extract<OpDto, { op: "node.set" }>, "op" | "slug"> = {};
-  if (patch.title !== undefined && patch.title !== prev.title) set.title = patch.title;
-  if (patch.description !== undefined && patch.description !== prev.concept.description) set.desc = patch.description;
+  // Title/description edits ride the concept (the single authoritative source);
+  // the emitted node.set still mutates doc frontmatter, which build_model
+  // re-derives back into concept.*.
+  if (patch.concept?.title !== undefined && patch.concept.title !== prev.concept.title) set.title = patch.concept.title;
+  if (patch.concept?.description !== undefined && patch.concept.description !== prev.concept.description) set.desc = patch.concept.description;
   if (patch.stereotypes !== undefined && !arrEq(patch.stereotypes, prev.stereotypes)) set.stereotype = patch.stereotypes;
   if (patch.abstract !== undefined && !!patch.abstract !== !!prev.abstract) set.abstract = !!patch.abstract;
   if (patch.type !== undefined && patch.type !== prev.type) set.ty = patch.type;

@@ -17,15 +17,15 @@ test("readable yields the current graph and re-emits on store.updateNode", () =>
   const titles: string[] = [];
   const unsub = m.subscribe((g) => {
     const node = g.nodes.find((x) => x.key === n.key);
-    if (node) titles.push(node.title);
+    if (node?.concept.title) titles.push(node.concept.title);
   });
 
   // subscribe delivered the current value synchronously
-  expect(get(m).nodes.find((x) => x.key === n.key)!.title).toBe("New object");
+  expect(get(m).nodes.find((x) => x.key === n.key)!.concept.title).toBe("New object");
 
-  s.updateNode(n.key, { title: "Renamed" });
+  s.updateNode(n.key, { concept: { ...n.concept, title: "Renamed" } });
 
-  expect(get(m).nodes.find((x) => x.key === n.key)!.title).toBe("Renamed");
+  expect(get(m).nodes.find((x) => x.key === n.key)!.concept.title).toBe("Renamed");
   expect(titles).toContain("New object");
   expect(titles).toContain("Renamed");
 

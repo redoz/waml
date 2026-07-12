@@ -28,6 +28,12 @@ fn model_json_matches_ts_field_names() {
     // TS ModelNode uses `type` and `key`, not `ty`.
     assert_eq!(node["type"], "uml.Class");
     assert_eq!(node["key"], "order");
+    // Flat title/description/body are DELETED — the concept is the single source.
+    assert!(node.get("title").is_none(), "flat title deleted: {node}");
+    assert!(node.get("description").is_none(), "flat description deleted: {node}");
+    assert!(node.get("body").is_none(), "flat body deleted: {node}");
+    assert_eq!(node["concept"]["id"], "m/order");
+    assert_eq!(node["concept"]["title"], "Order");
     // Attribute.type is a TypeRef ({ name, ref? }); multiplicity is canonical string.
     assert_eq!(node["attributes"][0]["name"], "id");
     assert_eq!(node["attributes"][0]["type"]["name"], "OrderId");
@@ -73,13 +79,10 @@ fn package_node_and_model_path() {
         concept: uaml::okf::project("sales/index.md", "# sales\n\nSales bounded context.\n"),
         key: "sales".into(),
         ty: ClassifierType::Uml(UmlMetaclass::Package),
-        title: "sales".into(),
         stereotypes: vec![],
         abstract_: false,
-        description: Some("Sales bounded context.".into()),
         attributes: vec![],
         values: vec![],
-        body: None,
         note_body: None,
         annotates: vec![],
         members: vec!["order".into(), "customer".into()],
@@ -99,13 +102,10 @@ fn package_node_and_model_path() {
         concept: uaml::okf::project("order.md", "---\ntype: uml.Class\ntitle: Order\n---\n# Order\n"),
         key: "order".into(),
         ty: ClassifierType::Uml(UmlMetaclass::Class),
-        title: "Order".into(),
         stereotypes: vec![],
         abstract_: false,
-        description: None,
         attributes: vec![],
         values: vec![],
-        body: None,
         note_body: None,
         annotates: vec![],
         members: vec![],

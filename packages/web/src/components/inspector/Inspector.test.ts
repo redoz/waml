@@ -5,7 +5,7 @@ import Inspector from "./Inspector.svelte";
 
 const nodes = [{
   concept: { id: "n1", type: "uml.Class", title: "Order", body: "" },
-  key: "n1", title: "Order", type: "uml.Class", stereotypes: [], attributes: [],
+  key: "n1", type: "uml.Class", stereotypes: [], attributes: [],
   position: { x: 0, y: 0 },
 }] as ModelNode[];
 

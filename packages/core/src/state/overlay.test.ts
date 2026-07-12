@@ -35,10 +35,10 @@ describe("toModelGraph", () => {
   it("flattens a diagram's group forest to flat members in declared, depth-first order", () => {
     const m = model({
       nodes: [
-        { key: "order", type: "uml.Class", title: "Order", stereotypes: [], attributes: [] },
-        { key: "line", type: "uml.Class", title: "OrderLine", stereotypes: [], attributes: [] },
-        { key: "customer", type: "uml.Class", title: "Customer", stereotypes: [], attributes: [] },
-        { key: "money", type: "uml.DataType", title: "Money", stereotypes: [], attributes: [] },
+        { key: "order", type: "uml.Class", stereotypes: [], attributes: [] },
+        { key: "line", type: "uml.Class", stereotypes: [], attributes: [] },
+        { key: "customer", type: "uml.Class", stereotypes: [], attributes: [] },
+        { key: "money", type: "uml.DataType", stereotypes: [], attributes: [] },
       ],
       diagrams: [
         {
@@ -66,8 +66,8 @@ describe("toModelGraph", () => {
   it("injects node position from the overlay; missing positions default to {0,0}", () => {
     const m = model({
       nodes: [
-        { key: "order", type: "uml.Class", title: "Order", stereotypes: [], attributes: [] },
-        { key: "customer", type: "uml.Class", title: "Customer", stereotypes: [], attributes: [] },
+        { key: "order", type: "uml.Class", stereotypes: [], attributes: [] },
+        { key: "customer", type: "uml.Class", stereotypes: [], attributes: [] },
       ],
     });
     const overlay: Overlay = emptyOverlay();
@@ -80,8 +80,8 @@ describe("toModelGraph", () => {
   it("carries edge handles and synthetic e# ids from the overlay", () => {
     const m = model({
       nodes: [
-        { key: "order", type: "uml.Class", title: "Order", stereotypes: [], attributes: [] },
-        { key: "customer", type: "uml.Class", title: "Customer", stereotypes: [], attributes: [] },
+        { key: "order", type: "uml.Class", stereotypes: [], attributes: [] },
+        { key: "customer", type: "uml.Class", stereotypes: [], attributes: [] },
       ],
       edges: [
         {
@@ -113,8 +113,8 @@ describe("toModelGraph", () => {
   it("synthesizes an e# id when the overlay has no entry for an edge", () => {
     const m = model({
       nodes: [
-        { key: "a", type: "uml.Class", title: "A", stereotypes: [], attributes: [] },
-        { key: "b", type: "uml.Class", title: "B", stereotypes: [], attributes: [] },
+        { key: "a", type: "uml.Class", stereotypes: [], attributes: [] },
+        { key: "b", type: "uml.Class", stereotypes: [], attributes: [] },
       ],
       edges: [{ kind: "depends", from: "a", to: "b", fromEnd: {}, toEnd: {}, bidirectional: false }],
     });
@@ -124,7 +124,7 @@ describe("toModelGraph", () => {
 
   it("empty diagrams yields a ModelGraph with diagrams: [] (canvas shows the implicit all-node view)", () => {
     const m = model({
-      nodes: [{ key: "a", type: "uml.Class", title: "A", stereotypes: [], attributes: [] }],
+      nodes: [{ key: "a", type: "uml.Class", stereotypes: [], attributes: [] }],
     });
     const g = toModelGraph(m, emptyOverlay());
     expect(g.diagrams).toEqual([]);
@@ -136,12 +136,11 @@ describe("toModelGraph", () => {
         {
           key: "order",
           type: "uml.Class",
-          title: "Order",
           stereotypes: ["entity"],
           abstract: true,
-          description: "an order",
           attributes: [{ name: "id", type: { name: "OrderId" }, multiplicity: "1" }],
           values: ["A", "B"],
+          note_body: "note prose",
           concept: { id: "shop/order", type: "uml.Class", body: "# Order\n" },
         },
       ],
@@ -150,7 +149,7 @@ describe("toModelGraph", () => {
     const n = g.nodes[0];
     expect(n.stereotypes).toEqual(["entity"]);
     expect(n.abstract).toBe(true);
-    expect(n.description).toBe("an order");
+    expect(n.note_body).toBe("note prose");
     expect(n.attributes[0].name).toBe("id");
     expect(n.values).toEqual(["A", "B"]);
     // The nested OKF concept is forwarded straight through onto the graph node.

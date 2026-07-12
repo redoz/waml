@@ -46,13 +46,13 @@ const oc = () => base.edges.find((e) => e.from === "order" && e.to === "customer
 
 describe("node ops", () => {
   it("scalar edit → a single node.set carrying only the changed field, round-trips", () => {
-    const ops = nodeSetOps(orderNode(), { title: "Sales Order" });
+    const ops = nodeSetOps(orderNode(), { concept: { ...orderNode().concept, title: "Sales Order" } });
     expect(ops).toEqual([{ op: "node.set", slug: "order", title: "Sales Order" }]);
-    expect(apply(BASE, ops).nodes.find((n) => n.key === "order")!.title).toBe("Sales Order");
+    expect(apply(BASE, ops).nodes.find((n) => n.key === "order")!.concept.title).toBe("Sales Order");
   });
 
   it("no-op edit (same value) emits []", () => {
-    expect(nodeSetOps(orderNode(), { title: orderNode().title, position: { x: 9, y: 9 } })).toEqual([]);
+    expect(nodeSetOps(orderNode(), { concept: orderNode().concept, position: { x: 9, y: 9 } })).toEqual([]);
   });
 
   it("add node → node.new, round-trips", () => {
@@ -79,19 +79,14 @@ describe("node ops", () => {
     expect(nodeRenameOps("customer", "customer")).toEqual([]);
   });
 
-  it("description compare reads the STORED concept.description, not the flat field", () => {
-    // Flat `description` and `concept.description` deliberately diverge so this test
-    // pins WHICH stored source the compare reads. In the real build_model output both
-    // hold the identical frontmatter value; here they differ to be discriminating.
-    const prev = {
-      ...orderNode(),
-      description: "flat-stale",
-      concept: { ...orderNode().concept, description: "concept-desc" },
-    };
-    // Write intent equals the concept-sourced stored value → no change → no op.
-    expect(nodeSetOps(prev, { description: "concept-desc" })).toEqual([]);
-    // Write intent differs from the concept-sourced stored value → a single desc op.
-    expect(nodeSetOps(prev, { description: "changed" })).toEqual([
+  it("title/description writes route through the concept (the single stored source)", () => {
+    // The patch carries the intended `concept`; nodeSetOps compares its title/desc
+    // against the node's stored concept and emits a node.set for only what changed.
+    const prev = { ...orderNode(), concept: { ...orderNode().concept, description: "concept-desc" } };
+    // Write intent equals the stored concept value → no change → no op.
+    expect(nodeSetOps(prev, { concept: { ...prev.concept, description: "concept-desc" } })).toEqual([]);
+    // Write intent differs from the stored concept value → a single desc op.
+    expect(nodeSetOps(prev, { concept: { ...prev.concept, description: "changed" } })).toEqual([
       { op: "node.set", slug: "order", desc: "changed" },
     ]);
   });
@@ -205,7 +200,7 @@ describe("updateNodeOps composite", () => {
 
   it("combines scalar + attribute changes", () => {
     const next = [...orderNode().attributes, { name: "note", type: { name: "String" }, multiplicity: "1" }];
-    const ops = updateNodeOps(orderNode(), { title: "PO", attributes: next });
+    const ops = updateNodeOps(orderNode(), { concept: { ...orderNode().concept, title: "PO" }, attributes: next });
     expect(ops).toEqual([
       { op: "node.set", slug: "order", title: "PO" },
       { op: "attr.add", node: "order", name: "note", ty: "String" },

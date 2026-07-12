@@ -475,7 +475,7 @@ fn run_show(slug: &str, q: &QueryArgs) -> i32 {
     };
     match q.format {
         Format::Human => {
-            println!("{} ({})", node.title, node.ty.as_str());
+            println!("{} ({})", node.concept.title.as_deref().unwrap_or("Untitled"), node.ty.as_str());
             for a in &node.attributes {
                 println!("  - {}: {} {{{}}}", a.name, a.ty.name, a.multiplicity.as_str());
             }
@@ -490,7 +490,7 @@ fn run_show(slug: &str, q: &QueryArgs) -> i32 {
         Format::Json => {
             let refs = uaml::ops::referrers(&bundle, slug);
             let dto = serde_json::json!({
-                "slug": slug, "title": node.title, "type": node.ty.as_str(),
+                "slug": slug, "title": node.concept.title.as_deref().unwrap_or("Untitled"), "type": node.ty.as_str(),
                 "attributes": node.attributes.iter().map(|a| serde_json::json!({
                     "name": a.name, "type": a.ty.name, "ref": a.ty.ref_, "multiplicity": a.multiplicity.as_str()
                 })).collect::<Vec<_>>(),
@@ -539,9 +539,9 @@ fn run_list(ty: &Option<String>, q: &QueryArgs) -> i32 {
     for n in &model.nodes {
         if ty.as_deref().map(|t| t == n.ty.as_str()).unwrap_or(true) {
             match q.format {
-                Format::Human => println!("{}\t{}\t{}", n.key, n.ty.as_str(), n.title),
+                Format::Human => println!("{}\t{}\t{}", n.key, n.ty.as_str(), n.concept.title.as_deref().unwrap_or("Untitled")),
                 Format::Json => {
-                    println!("{}", serde_json::json!({"slug": n.key, "type": n.ty.as_str(), "title": n.title}))
+                    println!("{}", serde_json::json!({"slug": n.key, "type": n.ty.as_str(), "title": n.concept.title.as_deref().unwrap_or("Untitled")}))
                 }
             }
         }

@@ -82,7 +82,7 @@ describe("pinnable Inspector (always present, never closes)", () => {
 
     // The freshly-added node is a member of the implicit "All" diagram, so it
     // shows up as an option labelled with its title.
-    expect(within(panel).getByRole("option", { name: node.title })).toBeTruthy();
+    expect(within(panel).getByRole("option", { name: node.concept.title! })).toBeTruthy();
 
     await fireEvent.change(combobox, { target: { value: node.key } });
     await tick();
@@ -91,6 +91,6 @@ describe("pinnable Inspector (always present, never closes)", () => {
     // is gone, and the Inspector body now shows that node's title field.
     expect(combobox.value).toBe(node.key);
     expect(within(panel).queryByText(/select an element to edit/i)).toBeNull();
-    expect((within(panel).getByLabelText("Title") as HTMLInputElement).value).toBe(node.title);
+    expect((within(panel).getByLabelText("Title") as HTMLInputElement).value).toBe(node.concept.title);
   });
 });

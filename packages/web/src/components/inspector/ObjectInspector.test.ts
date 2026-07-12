@@ -6,39 +6,36 @@ import ObjectInspector from "./ObjectInspector.svelte";
 const node: ModelNode = {
   concept: { id: "n1", type: "uml.Class", title: "Order", body: "" },
   key: "n1",
-  title: "Order",
   type: "uml.Class",
   stereotypes: [],
   attributes: [],
   position: { x: 0, y: 0 },
 };
 
-test("editing title patches through onUpdate", async () => {
+test("editing title patches the concept through onUpdate", async () => {
   const onUpdate = vi.fn();
   render(ObjectInspector, { props: { node, onUpdate, profileName: "uml-domain" } });
   const input = screen.getByDisplayValue("Order") as HTMLInputElement;
   await fireEvent.input(input, { target: { value: "Orders" } });
-  expect(onUpdate).toHaveBeenCalledWith({ title: "Orders" });
+  expect(onUpdate).toHaveBeenCalledWith({ concept: { ...node.concept, title: "Orders" } });
 });
 
 test("description field is sourced from concept.description", () => {
-  // Flat `description` and nested `concept.description` deliberately diverge so the
-  // test pins WHICH source the display reads. The migrated reader must show concept's.
+  // The display reads `concept.description` — the single authoritative source.
   const withDesc: ModelNode = {
     ...node,
-    description: undefined,
     concept: { ...node.concept, description: "From concept" },
   };
   render(ObjectInspector, { props: { node: withDesc, onUpdate: () => {}, profileName: "uml-domain" } });
   expect(screen.getByDisplayValue("From concept")).toBeTruthy();
 });
 
-test("editing the description patches a flat { description } write intent", async () => {
+test("editing the description patches the concept through onUpdate", async () => {
   const onUpdate = vi.fn();
   render(ObjectInspector, { props: { node, onUpdate, profileName: "uml-domain" } });
   const textarea = screen.getByLabelText("Description") as HTMLTextAreaElement;
   await fireEvent.input(textarea, { target: { value: "Placed by a customer" } });
-  expect(onUpdate).toHaveBeenCalledWith({ description: "Placed by a customer" });
+  expect(onUpdate).toHaveBeenCalledWith({ concept: { ...node.concept, description: "Placed by a customer" } });
 });
 
 test("toggling the abstract checkbox calls onUpdate", async () => {

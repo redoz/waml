@@ -40,6 +40,8 @@ fn orders_domain_builds_the_expected_model() {
 
     // Order has 3 attributes (id, status, total); total resolves to Money.
     let order = m.node("order").unwrap();
+    // Title now lives ONLY on the concept (single authoritative source).
+    assert_eq!(order.concept.title.as_deref(), Some("Order"));
     assert_eq!(order.attributes.len(), 3);
     let total = order.attributes.iter().find(|a| a.name == "total").unwrap();
     assert_eq!(total.ty.name, "Money");

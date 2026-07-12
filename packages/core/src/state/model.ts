@@ -104,10 +104,9 @@ export function createModelStore(initial?: Bundle, opts: CreateStoreOptions = {}
       if (!ok) emit();
       return (
         findNode(slug) ?? {
-          concept: { id: slug, type: "uml.Class", body: "" },
+          concept: { id: slug, type: "uml.Class", title: "New object", body: "" },
           key: slug,
           type: "uml.Class",
-          title: "New object",
           stereotypes: [],
           attributes: [],
           position,

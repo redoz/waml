@@ -50,8 +50,9 @@ describe("bundle-as-truth model store", () => {
 
   it("updateNode(scalar) edits the bundle via apply_ops", () => {
     const s = createModelStore(fresh());
-    s.updateNode("order", { title: "Sales Order" });
-    expect(s.get().nodes.find((n) => n.key === "order")!.title).toBe("Sales Order");
+    const order = s.get().nodes.find((n) => n.key === "order")!;
+    s.updateNode("order", { concept: { ...order.concept, title: "Sales Order" } });
+    expect(s.get().nodes.find((n) => n.key === "order")!.concept.title).toBe("Sales Order");
     expect(s.getBundle().find(([p]) => p.endsWith("order.md"))![1]).toContain("Sales Order");
   });
 

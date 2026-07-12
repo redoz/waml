@@ -20,7 +20,7 @@
 <div class="flex flex-col gap-[15px]">
   <div>
     <label class={labelCls} for="oi-title">Title</label>
-    <input id="oi-title" type="text" value={node.concept.title ?? ""} oninput={(e) => onUpdate({ title: e.currentTarget.value })} class={inputCls} />
+    <input id="oi-title" type="text" value={node.concept.title ?? ""} oninput={(e) => onUpdate({ concept: { ...node.concept, title: e.currentTarget.value } })} class={inputCls} />
   </div>
   <div>
     <label class={labelCls} for="oi-description">Description</label>
@@ -28,7 +28,7 @@
       id="oi-description"
       value={node.concept.description ?? ""}
       rows={3}
-      oninput={(e) => onUpdate({ description: e.currentTarget.value || undefined })}
+      oninput={(e) => onUpdate({ concept: { ...node.concept, description: e.currentTarget.value || undefined } })}
       class={`${inputCls} resize-y min-h-[60px]`}
     ></textarea>
   </div>

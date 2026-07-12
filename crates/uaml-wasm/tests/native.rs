@@ -171,14 +171,20 @@ fn build_model_json_nests_okf_concept_on_each_node() {
     let v: serde_json::Value = serde_json::from_str(&json).unwrap();
     let nodes = v["nodes"].as_array().expect("nodes array");
 
-    // The UML node keeps every flat field AND gains a nested `concept`.
+    // The UML node no longer carries flat title/description/body — those live
+    // only on the nested `concept` (single authoritative source), which the node
+    // still gains alongside its UML-tier fields.
     let order = nodes.iter().find(|n| n["key"] == "order").expect("order node");
     assert_eq!(order["type"], "uml.Class");
-    assert_eq!(order["title"], "Order");
+    assert!(order.get("title").is_none(), "flat title deleted: {order}");
+    assert!(order.get("description").is_none(), "flat description deleted: {order}");
+    assert!(order.get("body").is_none(), "flat body deleted: {order}");
     assert_eq!(order["attributes"][0]["name"], "id");
-    // The nested concept mirrors okf::project: id = full path minus `.md`.
+    // The nested concept mirrors okf::project: id = full path minus `.md`, and is
+    // the single source of the resolved title.
     assert_eq!(order["concept"]["id"], "shop/order");
     assert_eq!(order["concept"]["type"], "uml.Class");
+    assert_eq!(order["concept"]["title"], "Order");
 
     // The non-UML Playbook is still a classifier node; its `concept` carries
     // every OKF field the flat Node drops.

@@ -336,42 +336,31 @@ pub enum NoteAnchor {
 #[derive(Debug, Clone, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Node {
-    /// Lossless OKF projection of this node's source document (OKF tier). Nested
-    /// additively beneath the flat UML fields below — every flat field mirrors a
-    /// `concept.*` slot, but `concept` also carries the non-UML OKF fields
-    /// (`tags`/`resource`/`timestamp`/`links`/`citations`/`role`/`extra`) the flat
-    /// projection drops. Populated from `crate::okf::project` (single source).
+    /// Lossless OKF projection of this node's source document (OKF tier) and the
+    /// single authoritative source for `title`/`description`/verbatim `body` (read
+    /// via `concept.title`/`concept.description`/`concept.body`) plus the non-UML
+    /// OKF fields (`tags`/`resource`/`timestamp`/`links`/`citations`/`role`/`extra`).
+    /// Populated from `crate::okf::project` (single source).
     pub concept: crate::okf::Concept,
     pub key: String,
     #[cfg_attr(feature = "serde", serde(rename = "type"))]
     pub ty: ClassifierType,
-    pub title: String,
     pub stereotypes: Vec<String>,
     #[cfg_attr(
         feature = "serde",
         serde(rename = "abstract", default, skip_serializing_if = "is_false")
     )]
     pub abstract_: bool,
-    #[cfg_attr(
-        feature = "serde",
-        serde(default, skip_serializing_if = "Option::is_none")
-    )]
-    pub description: Option<String>,
     pub attributes: Vec<Attribute>,
     #[cfg_attr(
         feature = "serde",
         serde(default, skip_serializing_if = "Vec::is_empty")
     )]
     pub values: Vec<String>,
-    #[cfg_attr(
-        feature = "serde",
-        serde(default, skip_serializing_if = "Option::is_none")
-    )]
-    pub body: Option<String>,
-    /// A `uml.Note`'s markdown prose (from its `## Body` section), byte-identical
-    /// to flat `body` during the migration. Distinct from the generic verbatim
-    /// `concept.body`: this is the Note-specific rendered prose. Sole reader is
-    /// the note node renderer.
+    /// A `uml.Note`'s markdown prose (from its `## Body` section). Distinct from
+    /// the generic verbatim `concept.body`: this is the Note-specific rendered
+    /// prose. Sole reader is the note node renderer. Title/description/verbatim
+    /// body now live only on `concept` (the single authoritative source).
     #[cfg_attr(
         feature = "serde",
         serde(default, skip_serializing_if = "Option::is_none")
@@ -497,19 +486,16 @@ mod tests {
             ),
             key: "order".to_string(),
             ty: ClassifierType::Uml(UmlMetaclass::Class),
-            title: "Order".to_string(),
             stereotypes: vec![],
             abstract_: false,
-            description: None,
             attributes: vec![],
             values: vec![],
-            body: None,
             note_body: None,
             annotates: vec![],
             members: vec![],
         };
         let model = Model { nodes: vec![node], edges: vec![], diagrams: vec![], path: String::new(), packages: vec![] };
-        assert_eq!(model.node("order").map(|n| n.title.as_str()), Some("Order"));
+        assert_eq!(model.node("order").and_then(|n| n.concept.title.as_deref()), Some("Order"));
         assert!(model.node("missing").is_none());
     }
 

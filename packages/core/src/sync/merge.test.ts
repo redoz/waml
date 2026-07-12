@@ -3,7 +3,7 @@ import { mergeGraphs } from "./merge";
 import type { ModelGraph } from "@uaml/okf";
 
 const node = (key: string, title: string): ModelGraph["nodes"][0] =>
-  ({ concept: { id: key, type: "uml.Class", body: "" }, key, title, type: "uml.Class", stereotypes: [], attributes: [], position: { x: 0, y: 0 } });
+  ({ concept: { id: key, type: "uml.Class", title, body: "" }, key, type: "uml.Class", stereotypes: [], attributes: [], position: { x: 0, y: 0 } });
 const edge = (id: string, from: string, to: string): ModelGraph["edges"][0] =>
   ({ id, kind: "associates", from, to, fromEnd: {}, toEnd: { navigable: true }, bidirectional: false });
 

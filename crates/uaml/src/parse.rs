@@ -390,9 +390,6 @@ fn resolve_attr(attr: &Attribute, keyset: &HashSet<&str>) -> Attribute {
 
 fn build_node(p: &ParsedDoc, keyset: &HashSet<&str>) -> Node {
     let fm = &p.doc.frontmatter;
-    let title = fm.get_str("title").map(String::from).unwrap_or_else(|| {
-        if p.doc.title.is_empty() { "Untitled".to_string() } else { p.doc.title.clone() }
-    });
     let mut attributes = Vec::new();
     let mut values = Vec::new();
     let mut body = None;
@@ -404,18 +401,17 @@ fn build_node(p: &ParsedDoc, keyset: &HashSet<&str>) -> Node {
             _ => {}
         }
     }
+    // title/description/verbatim body now live only on `concept` (single source,
+    // resolved in `okf::project`). `note_body` carries the `## Body` prose.
     Node {
         concept: p.concept.clone(),
         key: p.slug.clone(),
         ty: p.ty.clone(),
-        title,
         stereotypes: fm.get_string_list("stereotype"),
         abstract_: fm.get_bool("abstract") == Some(true),
-        description: fm.get_str("description").map(String::from),
         attributes,
         values,
-        note_body: body.clone(), // uml.Note prose, byte-identical to flat body
-        body,
+        note_body: body, // uml.Note prose (`## Body`)
         annotates: Vec::new(), // deferred: uml.Note anchors
         members: Vec::new(),    // classifiers own no members
     }
@@ -692,7 +688,7 @@ mod model_tests {
         let m = build_model(&bundle());
         assert_eq!(m.nodes.len(), 2);
         let order = m.node("order").unwrap();
-        assert_eq!(order.title, "Order");
+        assert_eq!(order.concept.title.as_deref(), Some("Order"));
         assert_eq!(order.ty, ClassifierType::Uml(UmlMetaclass::Class));
         assert_eq!(order.stereotypes, vec!["aggregateRoot", "entity"]);
         assert_eq!(order.attributes.len(), 3);
