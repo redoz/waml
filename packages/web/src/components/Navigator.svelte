@@ -18,6 +18,11 @@
     onViewInDiagram,
     onAddToNewDiagram,
     onEditProperties,
+    onCreatePackage,
+    onCreateNode,
+    onCreateDiagram,
+    onRename,
+    onSort,
   }: {
     graph: ModelGraph;
     scopeKey?: string;
@@ -29,6 +34,11 @@
     onViewInDiagram?: (key: string, diagramKey: string) => void;
     onAddToNewDiagram?: (key: string) => void;
     onEditProperties?: (key: string) => void;
+    onCreatePackage?: (parentKey: string, name: string) => void;
+    onCreateNode?: (dir: string, metaclass: string) => void;
+    onCreateDiagram?: (name: string) => void;
+    onRename?: (key: string, kind: NavKind, title: string) => void;
+    onSort?: (pkgKey: string) => void;
   } = $props();
 
   // Search box (filtering lands in Task 21; here it only toggles filterNav).
@@ -106,8 +116,40 @@
     else actionMenu = { key: row.key };
   }
 
+  // Right-click context menu. `mode` reveals an inline input for the create /
+  // rename actions (never window.prompt), mirroring TopBar's newMode pattern.
+  let ctxMenu = $state<{ key: string; kind: NavKind; title: string } | null>(null);
+  let ctxMode = $state<null | "package" | "diagram" | "rename">(null);
+  let ctxInput = $state("");
+  const ctxTargetPkg = $derived(
+    ctxMenu ? (ctxMenu.kind === "package" ? ctxMenu.key : packageOf(graph, ctxMenu.key)) : "",
+  );
+
+  function openCtx(row: NavRow) {
+    actionMenu = null;
+    ctxMode = null;
+    ctxInput = "";
+    ctxMenu = { key: row.key, kind: row.kind, title: row.title };
+  }
+
   function closeMenus() {
     actionMenu = null;
+    ctxMenu = null;
+    ctxMode = null;
+  }
+
+  function startMode(mode: "package" | "diagram" | "rename") {
+    ctxMode = mode;
+    ctxInput = mode === "rename" ? (ctxMenu?.title ?? "") : "";
+  }
+
+  function submitCtx() {
+    const name = ctxInput.trim();
+    if (!name || !ctxMenu) return;
+    if (ctxMode === "package") onCreatePackage?.(ctxTargetPkg, name);
+    else if (ctxMode === "diagram") onCreateDiagram?.(name);
+    else if (ctxMode === "rename") onRename?.(ctxMenu.key, ctxMenu.kind, name);
+    closeMenus();
   }
 </script>
 
@@ -159,6 +201,7 @@
         ondragstart={() => (dragKey = row.key)}
         ondragover={(e) => e.preventDefault()}
         ondrop={() => dropOn(row)}
+        oncontextmenu={(e) => { e.preventDefault(); openCtx(row); }}
         onclick={() => activateRow(row)}
         style="padding-left:{8 + row.depth * 16}px"
         class="group w-full text-left pr-3 py-[5px] cursor-pointer flex items-center gap-[7px] hover:bg-[#f1f3f7] {row.kind === 'diagram' && row.key === activeDiagramKey ? 'text-[#1e88e5] font-[600]' : 'text-slate-900'}"
@@ -229,6 +272,106 @@
         class="w-full text-left text-[13px] text-slate-900 px-3 py-2 cursor-pointer hover:bg-[#f1f3f7]"
       >
         View / edit properties
+      </button>
+    </div>
+  {/if}
+
+  {#if ctxMenu}
+    <!-- svelte-ignore a11y_click_events_have_key_events -->
+    <!-- svelte-ignore a11y_no_static_element_interactions -->
+    <div class="fixed inset-0 z-40" onclick={closeMenus}></div>
+    <div
+      role="menu"
+      class="absolute z-50 left-1/2 -translate-x-1/2 top-[120px] w-[230px] rounded-lg border border-[#d8dee8] bg-white shadow-[0_8px_24px_rgba(15,23,42,0.18)] py-1"
+    >
+      <!-- New package — inline name input -->
+      {#if ctxMode === "package"}
+        <form class="px-2 py-1 flex items-center gap-1.5" onsubmit={(e) => { e.preventDefault(); submitCtx(); }}>
+          <!-- svelte-ignore a11y_autofocus -->
+          <input
+            aria-label="New package name"
+            bind:value={ctxInput}
+            placeholder="New package name"
+            autofocus
+            class="flex-1 min-w-0 text-[13px] px-2 py-[6px] border border-[#d8dee8] rounded-md text-slate-900 focus:outline-none focus:border-[#1e88e5] focus:ring-2 focus:ring-[#e6f1fb]"
+          />
+          <button type="submit" class="text-[12.5px] font-[550] text-[#1e88e5] px-2 py-[6px] rounded-md cursor-pointer hover:bg-[#e6f1fb]">Add</button>
+        </form>
+      {:else}
+        <button
+          role="menuitem"
+          onclick={() => startMode("package")}
+          class="w-full text-left text-[13px] text-slate-900 px-3 py-2 cursor-pointer hover:bg-[#f1f3f7]"
+        >
+          New package
+        </button>
+      {/if}
+
+      <!-- One create item per palette metaclass, de-prefixed for the label -->
+      {#each palette as token (token)}
+        <button
+          role="menuitem"
+          onclick={() => { onCreateNode?.(ctxTargetPkg, token); closeMenus(); }}
+          class="w-full text-left text-[13px] text-slate-900 px-3 py-2 cursor-pointer hover:bg-[#f1f3f7]"
+        >
+          New {deprefix(token)}
+        </button>
+      {/each}
+
+      <!-- New diagram — inline name input -->
+      {#if ctxMode === "diagram"}
+        <form class="px-2 py-1 flex items-center gap-1.5" onsubmit={(e) => { e.preventDefault(); submitCtx(); }}>
+          <!-- svelte-ignore a11y_autofocus -->
+          <input
+            aria-label="New diagram name"
+            bind:value={ctxInput}
+            placeholder="New diagram name"
+            autofocus
+            class="flex-1 min-w-0 text-[13px] px-2 py-[6px] border border-[#d8dee8] rounded-md text-slate-900 focus:outline-none focus:border-[#1e88e5] focus:ring-2 focus:ring-[#e6f1fb]"
+          />
+          <button type="submit" class="text-[12.5px] font-[550] text-[#1e88e5] px-2 py-[6px] rounded-md cursor-pointer hover:bg-[#e6f1fb]">Add</button>
+        </form>
+      {:else}
+        <button
+          role="menuitem"
+          onclick={() => startMode("diagram")}
+          class="w-full text-left text-[13px] text-slate-900 px-3 py-2 cursor-pointer hover:bg-[#f1f3f7]"
+        >
+          New diagram
+        </button>
+      {/if}
+
+      <div class="my-1 border-t border-[#eef1f5]"></div>
+
+      <!-- Rename — inline input seeded with the current title -->
+      {#if ctxMode === "rename"}
+        <form class="px-2 py-1 flex items-center gap-1.5" onsubmit={(e) => { e.preventDefault(); submitCtx(); }}>
+          <!-- svelte-ignore a11y_autofocus -->
+          <input
+            aria-label="Rename item"
+            bind:value={ctxInput}
+            placeholder="Rename"
+            autofocus
+            class="flex-1 min-w-0 text-[13px] px-2 py-[6px] border border-[#d8dee8] rounded-md text-slate-900 focus:outline-none focus:border-[#1e88e5] focus:ring-2 focus:ring-[#e6f1fb]"
+          />
+          <button type="submit" class="text-[12.5px] font-[550] text-slate-600 px-2 py-[6px] rounded-md cursor-pointer hover:bg-[#f1f3f7]">Rename</button>
+        </form>
+      {:else}
+        <button
+          role="menuitem"
+          onclick={() => startMode("rename")}
+          class="w-full text-left text-[13px] text-slate-900 px-3 py-2 cursor-pointer hover:bg-[#f1f3f7]"
+        >
+          Rename
+        </button>
+      {/if}
+
+      <button
+        role="menuitem"
+        onclick={() => { onSort?.(ctxTargetPkg); closeMenus(); }}
+        class="w-full text-left text-[13px] text-slate-900 px-3 py-2 cursor-pointer hover:bg-[#f1f3f7]"
+      >
+        Sort A–Z
       </button>
     </div>
   {/if}

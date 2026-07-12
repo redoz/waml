@@ -94,3 +94,15 @@ test("classifier in no diagram shows Add to new diagram", async () => {
   await fireEvent.click(screen.getByRole("menuitem", { name: /Add to new diagram/ }));
   expect(onAddToNewDiagram).toHaveBeenCalledWith("customer");
 });
+
+test("context menu lists de-prefixed metaclasses and creates under the package", async () => {
+  const onCreateNode = vi.fn();
+  const onSort = vi.fn();
+  render(Navigator, { props: props({ palette: ["uml.Class", "uml.Interface"], onCreateNode, onSort }) });
+  await fireEvent.contextMenu(screen.getByRole("treeitem", { name: /Customer/ }));
+  expect(screen.getByRole("menuitem", { name: "New Class" })).toBeTruthy();
+  expect(screen.getByRole("menuitem", { name: "New Interface" })).toBeTruthy();
+  expect(screen.queryByText(/classifier/i)).toBeNull();
+  await fireEvent.click(screen.getByRole("menuitem", { name: "New Class" }));
+  expect(onCreateNode).toHaveBeenCalledWith("sales", "uml.Class");
+});
