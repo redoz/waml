@@ -135,9 +135,7 @@
       {@render icon()}
     </button>
     {#if keys}
-      <span class="pointer-events-none absolute -top-1 -right-1">
-        <KeyHint {keys} />
-      </span>
+      <KeyHint {keys} />
     {/if}
     {@render dockTip(tip)}
   </div>
@@ -302,9 +300,7 @@
     >
       <Keyboard size={19} />
     </button>
-    <span class="pointer-events-none absolute -top-1 -right-1">
-      <KeyHint keys={keyLabel("hints.toggle")} />
-    </span>
+    <KeyHint keys={keyLabel("hints.toggle")} />
     {@render dockTip("Show keyboard shortcuts (?)")}
   </div>
 

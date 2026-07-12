@@ -114,7 +114,7 @@
         onclick={onDelete}
         aria-label="Delete selection"
         title="Delete the selected objects and relationships"
-        class="group flex items-center gap-[6px] rounded-lg px-2.5 py-[7px] text-[12px] font-semibold text-slate-500 hover:bg-[#fdf2f2] hover:text-[#dc2626] cursor-pointer whitespace-nowrap transition-colors"
+        class="group relative flex items-center gap-[6px] rounded-lg px-2.5 py-[7px] text-[12px] font-semibold text-slate-500 hover:bg-[#fdf2f2] hover:text-[#dc2626] cursor-pointer whitespace-nowrap transition-colors"
       >
         <Trash2 size={14} /> Delete selection
         <KeyHint keys={keyLabel("selection.delete")} />

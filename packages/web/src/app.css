@@ -5,10 +5,18 @@
 @tailwind components;
 @tailwind utilities;
 
-/* Keyboard shortcut hints: hidden by default (opacity-0 utility on .keyhint),
-   revealed on hover of the control group, or globally when the Dock toggle is on
-   (data-show-shortcuts on <html>). */
-.group:hover .keyhint,
+/* Keyboard shortcut hints. Hidden by default (opacity-0 utility on .keyhint),
+   shown fully opaque under the Dock toggle (data-show-shortcuts on <html>) or
+   on hover of a control group. The hover reveal is delayed ~0.5s so a badge
+   only appears on a deliberate, lingering hover — not while the pointer sweeps
+   across; the toggle reveal and the hide stay instant. */
+.keyhint {
+  transition: opacity 0.18s ease;
+}
 [data-show-shortcuts] .keyhint {
   opacity: 1;
+}
+.group:hover .keyhint {
+  opacity: 1;
+  transition-delay: 0.5s;
 }
