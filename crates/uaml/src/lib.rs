@@ -3,6 +3,7 @@
 pub mod diagnostic;
 pub mod frontmatter;
 pub mod model;
+pub mod okf;
 pub mod ops;
 pub mod multiplicity;
 pub mod slug;

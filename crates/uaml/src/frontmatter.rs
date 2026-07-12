@@ -7,16 +7,58 @@ static NUM_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^-?\d+(\.\d+)?$").unwrap());
 
 #[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(untagged))]
 pub enum FmValue {
+    // Ordering matters for untagged deserialize: a JSON string only matches
+    // `Str`, a bool only `Bool`, a number only `Num`, an array only `List`.
     Str(String),
     Bool(bool),
     Num(f64),
     List(Vec<FmValue>),
 }
 
+/// Ordered key→value frontmatter. On the wire (`Concept.extra`) it serializes
+/// as a plain JSON object; insertion order is preserved on serialize.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Frontmatter {
     pub entries: Vec<(String, FmValue)>,
+}
+
+#[cfg(feature = "serde")]
+impl serde::Serialize for Frontmatter {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        use serde::ser::SerializeMap;
+        let mut map = s.serialize_map(Some(self.entries.len()))?;
+        for (k, v) in &self.entries {
+            map.serialize_entry(k, v)?;
+        }
+        map.end()
+    }
+}
+
+#[cfg(feature = "serde")]
+impl<'de> serde::Deserialize<'de> for Frontmatter {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Frontmatter, D::Error> {
+        struct V;
+        impl<'de> serde::de::Visitor<'de> for V {
+            type Value = Frontmatter;
+            fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+                f.write_str("a frontmatter object")
+            }
+            fn visit_map<M: serde::de::MapAccess<'de>>(
+                self,
+                mut m: M,
+            ) -> Result<Frontmatter, M::Error> {
+                let mut entries = Vec::new();
+                while let Some((k, v)) = m.next_entry::<String, FmValue>()? {
+                    entries.push((k, v));
+                }
+                Ok(Frontmatter { entries })
+            }
+        }
+        d.deserialize_map(V)
+    }
 }
 
 impl Frontmatter {
