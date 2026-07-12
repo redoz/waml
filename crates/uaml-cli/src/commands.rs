@@ -1,6 +1,6 @@
 use serde::Serialize;
 use uaml::diagnostic::{Diagnostic, Severity};
-use uaml::parse::parse_document;
+use uaml::parse::{parse, parse_document};
 use uaml::serialize::serialize_document;
 use uaml::validate::validate;
 
@@ -11,6 +11,8 @@ struct DiagDto<'a> {
     message: &'a str,
     file: &'a str,
     line: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    span: Option<(usize, usize)>,
 }
 
 fn severity_str(s: Severity) -> &'static str {
@@ -56,6 +58,7 @@ pub fn render_json(diags: &[Diagnostic]) -> String {
             message: &d.message,
             file: &d.file,
             line: d.line,
+            span: d.span,
         })
         .collect();
     serde_json::to_string_pretty(&dtos).unwrap_or_else(|_| "[]".to_string())
@@ -131,12 +134,12 @@ pub struct FmtResult {
 }
 
 pub fn plan_fmt(files: &[(String, String)]) -> Vec<FmtResult> {
-    let diags = validate(files);
+    let bundle_diags = validate(files); // includes semantic (link) errors, e.g. duplicate-slug
     let mut out = Vec::new();
     for (path, text) in files {
-        let has_error = diags
-            .iter()
-            .any(|d| d.file == *path && d.severity == Severity::Error);
+        let (_doc, syn) = parse(text);
+        let has_error = syn.iter().any(|d| d.severity == Severity::Error)
+            || bundle_diags.iter().any(|d| d.file == *path && d.severity == Severity::Error);
         if has_error {
             out.push(FmtResult { path: path.clone(), formatted: text.clone(), changed: false, skipped: true });
             continue;
@@ -174,6 +177,26 @@ mod tests {
         assert_eq!(v.as_array().unwrap().len(), 2);
         assert_eq!(v[0]["code"], "unresolved-target");
         assert_eq!(v[0]["line"], 8);
+    }
+
+    #[test]
+    fn json_output_includes_span_when_present() {
+        let diags = vec![
+            Diagnostic::new(DiagCode::MalformedAttribute, "bad", "a.md", 8).with_span((2, 20)),
+        ];
+        let out = render_json(&diags);
+        let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+        assert_eq!(v[0]["span"][0], 2);
+        assert_eq!(v[0]["span"][1], 20);
+    }
+
+    #[test]
+    fn plan_fmt_still_skips_error_files_byte_for_byte() {
+        let original = "---\ntype: uml.Class\ntitle: A\n---\n# A\n\nDo not lose this sentence.\n\n## Attributes\n- id: AId\n";
+        let files = vec![("x/a.md".to_string(), original.to_string())];
+        let plan = plan_fmt(&files);
+        assert!(plan[0].skipped);
+        assert_eq!(plan[0].formatted, original);
     }
 
     #[test]
