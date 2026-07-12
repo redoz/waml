@@ -4,7 +4,7 @@ import type { ModelNode } from "@uaml/okf";
 import ObjectInspector from "./ObjectInspector.svelte";
 
 const node: ModelNode = {
-  concept: { id: "n1", type: "uml.Class", body: "" },
+  concept: { id: "n1", type: "uml.Class", title: "Order", body: "" },
   key: "n1",
   title: "Order",
   type: "uml.Class",

@@ -18,9 +18,9 @@
     const result: { key: string; label: string; other: string }[] = [];
     for (const e of edges) {
       if (e.from === nodeKey && !memberSet.has(e.to) && byKey.has(e.to)) {
-        result.push({ key: e.id, label: `${e.kind} → ${byKey.get(e.to)!.title}`, other: e.to });
+        result.push({ key: e.id, label: `${e.kind} → ${byKey.get(e.to)!.concept.title ?? e.to}`, other: e.to });
       } else if (e.to === nodeKey && !memberSet.has(e.from) && byKey.has(e.from)) {
-        result.push({ key: e.id, label: `${byKey.get(e.from)!.title} → ${e.kind}`, other: e.from });
+        result.push({ key: e.id, label: `${byKey.get(e.from)!.concept.title ?? e.from} → ${e.kind}`, other: e.from });
       }
     }
     return result;

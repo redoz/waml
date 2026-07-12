@@ -25,8 +25,8 @@
 
   const inputCls = "w-full text-[13px] px-[10px] py-[8px] border border-[#d8dee8] rounded-lg text-slate-900 focus:outline-none focus:border-[#1e88e5] focus:ring-2 focus:ring-[#e6f1fb]";
 
-  const fromTitle = $derived(fromNode?.title ?? "Source");
-  const toTitle = $derived(toNode?.title ?? "Target");
+  const fromTitle = $derived(fromNode?.concept.title ?? "Source");
+  const toTitle = $derived(toNode?.concept.title ?? "Target");
   const hasEnds = $derived(ENDED_KINDS.has(edge.kind));
 </script>
 

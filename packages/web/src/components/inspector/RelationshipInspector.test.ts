@@ -4,7 +4,7 @@ import type { ModelEdge, ModelNode } from "@uaml/okf";
 import RelationshipInspector from "./RelationshipInspector.svelte";
 
 const node = (key: string, title: string): ModelNode =>
-  ({ concept: { id: key, type: "uml.Class", body: "" }, key, title, type: "uml.Class", stereotypes: [], attributes: [], position: { x: 0, y: 0 } });
+  ({ concept: { id: key, type: "uml.Class", title, body: "" }, key, title, type: "uml.Class", stereotypes: [], attributes: [], position: { x: 0, y: 0 } });
 
 const edge: ModelEdge = {
   id: "e1", kind: "associates", from: "a", to: "b",

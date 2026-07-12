@@ -15,6 +15,6 @@
   <NodePorts />
   <div class="absolute top-0 right-0 z-[1] h-[14px] w-[14px] border-l border-b border-[#e3d9a8] bg-[#f3ebc0]"></div>
   <div class="relative z-[1] px-3 py-[9px] text-[11.5px] leading-snug text-slate-700 whitespace-pre-wrap">
-    {data.body ?? data.title}
+    {data.note_body ?? data.concept.title}
   </div>
 </div>

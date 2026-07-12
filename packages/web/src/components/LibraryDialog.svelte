@@ -68,7 +68,7 @@
       <div class="px-4 pb-4 pt-1 bg-[#fbfcfe] border-t border-[#eef1f5] overflow-y-auto" style="max-height: 46vh">
         <div class="flex flex-col gap-1.5 mt-2">
           {#each nodes as n (n.key)}
-            <NodeRow title={n.title} fields={n.attributes} />
+            <NodeRow title={n.concept.title ?? "Untitled"} fields={n.attributes} />
           {/each}
         </div>
 
@@ -77,8 +77,8 @@
             <div class="text-[10.5px] font-semibold uppercase tracking-wide text-slate-500 mb-1.5">Relationships</div>
             <ul class="flex flex-col gap-1">
               {#each edges as e (e.id)}
-                {@const from = nodes.find(n => n.key === e.from)?.title ?? e.from}
-                {@const to = nodes.find(n => n.key === e.to)?.title ?? e.to}
+                {@const from = nodes.find(n => n.key === e.from)?.concept.title ?? e.from}
+                {@const to = nodes.find(n => n.key === e.to)?.concept.title ?? e.to}
                 <li class="flex items-center gap-2 text-[12px] text-slate-600">
                   <JoinIcon size={13} class="text-slate-400 flex-shrink-0" />
                   <span><b class="text-slate-800">{from}</b> {e.bidirectional ? "↔" : "→"} <b class="text-slate-800">{to}</b></span>
