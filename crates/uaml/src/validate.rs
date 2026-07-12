@@ -398,6 +398,49 @@ mod tests {
     }
 
     #[test]
+    fn flags_non_bullet_line_in_values() {
+        // A stray non-bullet line inside `## Values` was silently dropped by the
+        // `filter_map(...ok())` path (no error node, no diagnostic) — so `fmt`
+        // did not skip and `serialize` deleted it on round-trip. It must now be
+        // preserved and flagged as droppable content.
+        let b = vec![("a/x.md".into(),
+            "---\ntype: uml.Enum\ntitle: X\n---\n# X\n\n## Values\n- DRAFT\nA stray comment line.\n".into())];
+        let d = validate(&b);
+        assert!(
+            d.iter().any(|x| x.code == DiagCode::DroppableContent && x.severity == Severity::Error),
+            "expected a DroppableContent Error, got: {d:?}"
+        );
+    }
+
+    #[test]
+    fn flags_stray_line_in_members() {
+        // A stray non-heading, non-member line inside `## Members` was silently
+        // dropped by `parse_members_block` — data loss on `fmt` round-trip. It
+        // must now be preserved and flagged as droppable content.
+        let b = vec![("d/dia.md".into(),
+            "---\ntype: Diagram\ntitle: D\n---\n# D\n\n## Members\n- [Customer](./customer.md)\nA stray note.\n".into())];
+        let d = validate(&b);
+        assert!(
+            d.iter().any(|x| x.code == DiagCode::DroppableContent && x.severity == Severity::Error),
+            "expected a DroppableContent Error, got: {d:?}"
+        );
+    }
+
+    #[test]
+    fn unresolved_member_carries_line_and_span() {
+        // The member bullet sits on line 8; its unresolved-target diagnostic must
+        // point at that line (not 0) and carry a link span — the member walk fills
+        // `MemberLine.line`/`.span`.
+        let b = vec![("d/dia.md".into(),
+            "---\ntype: Diagram\ntitle: D\n---\n# D\n\n## Members\n- [Ghost](./ghost.md)\n".into())];
+        let d = validate(&b);
+        let t = d.iter().find(|x| x.code == DiagCode::UnresolvedTarget).unwrap();
+        assert_eq!(t.line, 8, "member diagnostic must point at the bullet line");
+        let (s, e) = t.span.expect("member unresolved-target must carry a link span");
+        assert!(s < e);
+    }
+
+    #[test]
     fn flags_non_bullet_line_in_attributes() {
         // A stray non-bullet line inside a bullet section (e.g. `## Attributes`)
         // is neither preserved nor flagged today — `filter_map` just drops it.

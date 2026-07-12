@@ -1,9 +1,10 @@
 use std::sync::LazyLock;
 use regex::Regex;
 
+use crate::diagnostic::DiagCode;
 use crate::model::{Attribute, RelEnd, RelationshipKind, TypeRef, Visibility};
 use crate::multiplicity::Multiplicity;
-use crate::syntax::{MemberGroup, MemberLine, MembersBlock, ParsedName, ParsedRel};
+use crate::syntax::{ErrorNode, Line, MemberGroup, MemberLine, MembersBlock, ParsedName, ParsedRel};
 
 static ATTR_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^- (?:([+\-#~]) )?([A-Za-z_][A-Za-z0-9_]*): (.+)$").unwrap());
@@ -193,8 +194,11 @@ fn heading_depth(line: &str) -> Option<(u8, String)> {
     Some((hashes as u8, name))
 }
 
-/// Parse the raw text under `## Members` into a group forest.
-pub fn parse_members_block(content: &str) -> MembersBlock {
+/// Parse the raw text under `## Members` into a group forest. `content_abs_start`
+/// is the byte offset of `content`'s first byte within `src`, used to fill each
+/// member's 1-based `line` and link `span`. A stray non-heading, non-member line
+/// is preserved as a positioned `Line::Error` (never silently dropped).
+pub fn parse_members_block(content: &str, content_abs_start: usize, src: &str) -> MembersBlock {
     fn close_to(stack: &mut Vec<MemberGroup>, groups: &mut Vec<MemberGroup>, depth: u8) {
         while let Some(top) = stack.last() {
             if top.depth >= depth {
@@ -212,20 +216,61 @@ pub fn parse_members_block(content: &str) -> MembersBlock {
     let mut groups: Vec<MemberGroup> = Vec::new();
     let mut implicit = MemberGroup { name: String::new(), depth: 0, members: vec![], children: vec![] };
     let mut stack: Vec<MemberGroup> = Vec::new();
+    let mut fence: Option<char> = None;
+    let mut offset = 0usize;
 
-    for raw in content.lines() {
+    for raw in content.split('\n') {
+        let line_start = offset;
+        offset += raw.len() + 1; // + 1 for the consumed '\n'
         let line = raw.trim_end_matches('\r');
         let t = line.trim_start();
+
+        if let Some(marker) = fence {
+            let delim = if marker == '`' { "```" } else { "~~~" };
+            if t.starts_with(delim) {
+                fence = None;
+            }
+            continue;
+        }
+        if t.starts_with("```") {
+            fence = Some('`');
+            continue;
+        }
+        if t.starts_with("~~~") {
+            fence = Some('~');
+            continue;
+        }
+        if t.is_empty() {
+            continue;
+        }
+
         if let Some((depth, name)) = heading_depth(t) {
             close_to(&mut stack, &mut groups, depth);
             stack.push(MemberGroup { name, depth, members: vec![], children: vec![] });
-        } else if let Ok(m) = parse_member_line(t) {
-            match stack.last_mut() {
-                Some(g) => g.members.push(crate::syntax::Line::Parsed(m)),
-                None => implicit.members.push(crate::syntax::Line::Parsed(m)),
-            }
+            continue;
         }
-        // blank / unrecognized lines are ignored here (validate flags droppable content)
+
+        let line_no = crate::parse::line_at(src, content_abs_start + line_start);
+        let node = match parse_member_line(raw) {
+            Ok(mut m) => {
+                m.line = line_no;
+                m.span = Some(crate::parse::find_link_span(raw, &m.title, &m.slug));
+                Line::Parsed(m)
+            }
+            // A non-heading, non-member line would be silently dropped by
+            // serialize — preserve it as a positioned droppable-content error.
+            Err(_) => Line::Error(ErrorNode {
+                raw: raw.to_string(),
+                line: line_no,
+                span: bullet_range(raw),
+                code: DiagCode::DroppableContent,
+                message: crate::parse::DROPPABLE_MSG.to_string(),
+            }),
+        };
+        match stack.last_mut() {
+            Some(g) => g.members.push(node),
+            None => implicit.members.push(node),
+        }
     }
     close_to(&mut stack, &mut groups, 0);
 
@@ -390,7 +435,7 @@ mod tests {
     #[test]
     fn parses_nested_member_groups() {
         let content = "### Users\n- [Customer](./customer.md)\n\n#### VIP\n- [Platinum](./platinum.md)\n\n### Orders\n- [Order](./order.md)";
-        let block = parse_members_block(content);
+        let block = parse_members_block(content, 0, content);
         assert_eq!(block.groups.len(), 2);
         assert_eq!(block.groups[0].name, "Users");
         assert_eq!(block.groups[0].depth, 3);
@@ -403,14 +448,15 @@ mod tests {
     #[test]
     fn flat_list_is_one_implicit_group_and_round_trips() {
         let content = "- [Order](./order.md)\n- [Customer](./customer.md)";
-        let block = parse_members_block(content);
+        let block = parse_members_block(content, 0, content);
         assert_eq!(block.groups.len(), 1);
         assert_eq!(block.groups[0].name, "");
         assert_eq!(block.groups[0].depth, 0);
         assert_eq!(block.groups[0].members.len(), 2);
 
         let rendered = render_members_block(&block);
-        let reparsed = parse_members_block(rendered.strip_prefix("## Members\n").unwrap());
+        let body = rendered.strip_prefix("## Members\n").unwrap();
+        let reparsed = parse_members_block(body, 0, body);
         assert_eq!(block, reparsed);
     }
 

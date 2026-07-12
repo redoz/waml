@@ -163,7 +163,7 @@ pub(crate) fn attrs_mut(doc: &mut Document) -> &mut Vec<Line<Attribute>> {
 
 /// Get the `## Values` list, creating an empty section if absent
 /// (canonical serialize re-orders sections, so append position is irrelevant).
-pub(crate) fn values_mut(doc: &mut Document) -> &mut Vec<String> {
+pub(crate) fn values_mut(doc: &mut Document) -> &mut Vec<Line<String>> {
     if !doc.sections.iter().any(|s| matches!(s, Section::Values(_))) {
         doc.sections.push(Section::Values(Vec::new()));
     }
@@ -393,10 +393,10 @@ fn op_attr_rm(work: &mut Bundle, node: &str, name: &str) -> Result<(), OpError> 
 fn op_value_add(work: &mut Bundle, node: &str, literal: &str) -> Result<(), OpError> {
     edit_doc(work, node, "value.add", |doc| {
         let values = values_mut(doc);
-        if values.iter().any(|v| v == literal) {
+        if values.iter().filter_map(Line::parsed).any(|v| v == literal) {
             return Err(OpError::at("value.add", format!("value '{literal}' already in {node}")));
         }
-        values.push(literal.to_string());
+        values.push(Line::Parsed(literal.to_string()));
         Ok(())
     })
 }
@@ -405,7 +405,7 @@ fn op_value_rm(work: &mut Bundle, node: &str, literal: &str) -> Result<(), OpErr
     edit_doc(work, node, "value.rm", |doc| {
         let values = values_mut(doc);
         let before = values.len();
-        values.retain(|v| v != literal);
+        values.retain(|l| l.parsed().is_none_or(|v| v != literal));
         if values.len() == before {
             return Err(OpError::at("value.rm", format!("no value '{literal}' in {node}")));
         }

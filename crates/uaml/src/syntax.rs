@@ -52,10 +52,10 @@ pub struct Document {
 #[derive(Debug, Clone, PartialEq)]
 pub enum Section {
     Attributes(Vec<Line<Attribute>>),
-    Values(Vec<String>),
+    Values(Vec<Line<String>>),
     Relationships(Vec<Line<ParsedRel>>),
     Body(String),
-    Notes(Vec<String>),
+    Notes(Vec<Line<String>>),
     Members(MembersBlock),
     Layout(Vec<Line<LayoutItem>>),
     /// An unrecognized `## Section`, preserved verbatim (graceful degradation).

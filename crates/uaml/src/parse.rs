@@ -20,12 +20,12 @@ struct Head {
 }
 
 /// 1-based line number of byte offset `byte` within `src`.
-fn line_at(src: &str, byte: usize) -> usize {
+pub(crate) fn line_at(src: &str, byte: usize) -> usize {
     1 + src[..byte.min(src.len())].bytes().filter(|&b| b == b'\n').count()
 }
 
 /// Byte range of `[Title](./slug.md)` within `line`, or the whole bullet.
-fn find_link_span(line: &str, title: &str, slug: &str) -> (usize, usize) {
+pub(crate) fn find_link_span(line: &str, title: &str, slug: &str) -> (usize, usize) {
     let needle = format!("[{title}](./{slug}.md)");
     match line.find(&needle) {
         Some(s) => (s, s + needle.len()),
@@ -41,7 +41,7 @@ fn has_metadata_block(text: &str) -> bool {
     Parser::new_ext(text, opts).any(|e| matches!(e, Event::Start(Tag::MetadataBlock(_))))
 }
 
-const DROPPABLE_MSG: &str =
+pub(crate) const DROPPABLE_MSG: &str =
     "content here is outside the recognized document structure and would be silently dropped by fmt";
 
 /// Walk a bullet section's content into `Line` nodes: a well-formed `- ` bullet
@@ -112,15 +112,15 @@ fn walk_bullets<T>(
 /// with in-tree `Line::Error` nodes. `content_abs_start` is the byte offset of
 /// `content`'s first byte within `src`.
 fn walk_section(title: &str, content: &str, content_abs_start: usize, src: &str, raw_full: &str) -> Section {
-    let lines = |c: &str| c.lines().map(|l| l.to_string()).collect::<Vec<_>>();
     match title.to_lowercase().as_str() {
         "attributes" => Section::Attributes(walk_bullets(
             content, content_abs_start, src, DiagCode::MalformedAttribute,
             |line, _ln| parse_attribute_line(line),
         )),
-        "values" => {
-            Section::Values(lines(content).iter().filter_map(|l| parse_value_line(l).ok()).collect())
-        }
+        "values" => Section::Values(walk_bullets(
+            content, content_abs_start, src, DiagCode::DroppableContent,
+            |line, _ln| parse_value_line(line),
+        )),
         "relationships" => Section::Relationships(walk_bullets(
             content, content_abs_start, src, DiagCode::MalformedRelationship,
             |line, ln| {
@@ -131,11 +131,12 @@ fn walk_section(title: &str, content: &str, content_abs_start: usize, src: &str,
                 })
             },
         )),
-        "members" => Section::Members(crate::grammar::parse_members_block(content)),
+        "members" => Section::Members(crate::grammar::parse_members_block(content, content_abs_start, src)),
         "body" => Section::Body(content.trim().to_string()),
-        "notes" => {
-            Section::Notes(lines(content).iter().filter_map(|l| parse_value_line(l).ok()).collect())
-        }
+        "notes" => Section::Notes(walk_bullets(
+            content, content_abs_start, src, DiagCode::DroppableContent,
+            |line, _ln| parse_value_line(line),
+        )),
         "layout" => Section::Layout(walk_bullets(
             content, content_abs_start, src, DiagCode::MalformedLayout,
             |line, ln| crate::layout::parse_layout_line(line).map(|stmt| LayoutItem { line: ln, stmt }),
@@ -167,6 +168,8 @@ pub fn diagnostics_of(doc: &Document) -> Vec<Diagnostic> {
     for s in &doc.sections {
         match s {
             Section::Attributes(v) => push_line_errors(v, &mut out),
+            Section::Values(v) => push_line_errors(v, &mut out),
+            Section::Notes(v) => push_line_errors(v, &mut out),
             Section::Relationships(v) => push_line_errors(v, &mut out),
             Section::Layout(v) => push_line_errors(v, &mut out),
             Section::Members(block) => {
@@ -392,7 +395,7 @@ fn build_node(p: &ParsedDoc, keyset: &HashSet<&str>) -> Node {
     for s in &p.doc.sections {
         match s {
             Section::Attributes(a) => attributes = a.iter().filter_map(Line::parsed).map(|x| resolve_attr(x, keyset)).collect(),
-            Section::Values(v) => values = v.clone(),
+            Section::Values(v) => values = v.iter().filter_map(Line::parsed).cloned().collect(),
             Section::Body(b) => body = Some(b.clone()),
             _ => {}
         }

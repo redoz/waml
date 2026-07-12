@@ -26,6 +26,13 @@ fn render_line_layout(l: &Line<LayoutItem>) -> String {
     }
 }
 
+fn render_line_value(l: &Line<String>) -> String {
+    match l {
+        Line::Parsed(v) => format!("- {v}"),
+        Line::Error(e) => e.raw.clone(),
+    }
+}
+
 fn section_order(s: &Section) -> u8 {
     match s {
         Section::Body(_) => 0,
@@ -47,7 +54,7 @@ fn render_section(s: &Section) -> String {
             format!("## Attributes\n{body}")
         }
         Section::Values(values) => {
-            let body = values.iter().map(|v| format!("- {v}")).collect::<Vec<_>>().join("\n");
+            let body = values.iter().map(render_line_value).collect::<Vec<_>>().join("\n");
             format!("## Values\n{body}")
         }
         Section::Relationships(rels) => {
@@ -55,7 +62,7 @@ fn render_section(s: &Section) -> String {
             format!("## Relationships\n{body}")
         }
         Section::Notes(notes) => {
-            let body = notes.iter().map(|n| format!("- {n}")).collect::<Vec<_>>().join("\n");
+            let body = notes.iter().map(render_line_value).collect::<Vec<_>>().join("\n");
             format!("## Notes\n{body}")
         }
         Section::Members(block) => render_members_block(block),
