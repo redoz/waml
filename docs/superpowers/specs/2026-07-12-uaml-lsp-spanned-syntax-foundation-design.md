@@ -38,7 +38,10 @@ with **documentSymbol** (the document outline) as its first consumer.
 - Keep the semantic model position-free (syntax/semantic separation).
 - Ship `textDocument/documentSymbol` as the proof consumer: a hierarchical
   outline built by walking the spanned syntax tree.
-- Bound the blast radius: no rewrite of the `Diagnostic` type (see Non-goals).
+- Unify on the absolute span currency **end to end**: syntax nodes *and*
+  `Diagnostic` carry `TextSpan`; byte→position conversion happens exactly
+  once, at the LSP boundary (`map.rs` via `LineIndex`). No node carries two
+  span forms.
 
 ## Design inspiration
 
@@ -78,11 +81,14 @@ existing syntax tree, and one new LSP handler consuming them.
   │    Document { title_span, .. }                             │
   │                                                            │
   │  parse.rs  ← retain the absolute offsets already computed  │
+  │  diagnostic.rs  Diagnostic.span: TextSpan (absolute)       │
   └───────────────────────────────────────────────────────────┘
                               │ spanned Document
                               ▼
                    crates/uaml-cli/src/lsp
   ┌───────────────────────────────────────────────────────────┐
+  │  map.rs            ONE TextSpan → lsp::Range path, shared  │
+  │                    by diagnostics AND symbols (via LineIndex)│
   │  symbols.rs (new)  Document + LineIndex → DocumentSymbol[] │
   │  server.rs         document_symbol handler + capability    │
   └───────────────────────────────────────────────────────────┘
@@ -135,23 +141,14 @@ code units of the line slice, so a trailing `\r` is handled the same way
 
 ### 3. Spanned syntax tree (core `syntax.rs`)
 
-Add an absolute `span: TextSpan` to `ErrorNode`, `ParsedRel`, `MemberLine`,
-and `LayoutItem`, **alongside** their existing `line` (and line-relative
-`span` where present). The existing `line` fields are **kept**, not dropped:
-`validate.rs` and the diagnostic pipeline still consume `line`, and the
-`Diagnostic` migration that would retire it is deferred (see Non-goals).
-`line` is derivable from `LineIndex` and can be removed later, together with
-that migration — not in this phase. The line-relative `span` on `ParsedRel` /
-`MemberLine` / `ErrorNode` likewise stays until diagnostics move to the
-absolute currency.
-
-Because those three nodes already own a line-relative field named `span`, the
-new absolute field must **coexist under a distinct name** (e.g.
-`text_span: TextSpan`) rather than shadow it; nodes without an existing `span`
-(`LayoutItem`, `Spanned<T>`, `Section`, `Document`) use the plain `span` /
-`*_span` name. The plan picks the exact field names; the invariant is: one
-absolute `TextSpan` reachable on every syntax node, no collision with the
-retained line-relative fields.
+Give every syntax node a **single** absolute `span: TextSpan`. On
+`ErrorNode`, `ParsedRel`, and `MemberLine` this **replaces** their current
+line-relative `span: Option<(usize, usize)>` — no coexistence, no dual fields.
+`LayoutItem` gains a `span`. The now-redundant `line` fields on these nodes
+are removed; any consumer needing a row derives it from the absolute span via
+`LineIndex`. This is possible precisely because the parser already computes
+the absolute offsets (`content_abs_start + line_start`); it retains them
+instead of collapsing to `line` + line-relative range.
 
 Make `Line<T>` the positioned wrapper so *every* bullet — including the
 currently-position-less attributes, values, and notes — carries a span
@@ -186,7 +183,43 @@ Every consumer that reads bullets through `.parsed()` / `.parsed_mut()`
 `Line::Parsed(Spanned { node: t, .. })` — a mechanical edit. The golden
 serialize-fixpoint test is the guard that the reshape preserved round-trip.
 
-### 4. `symbols.rs` (LSP) — the documentSymbol consumer
+### 4. `Diagnostic` → absolute span
+
+To keep one span currency, `Diagnostic` moves off the `line` +
+line-relative-`span` pair onto the absolute currency:
+
+```rust
+pub struct Diagnostic {
+    pub severity: Severity,
+    pub code: DiagCode,
+    pub message: String,
+    pub file: String,
+    pub span: TextSpan,   // absolute; was: line: usize + span: Option<(usize,usize)>
+}
+```
+
+- **Emission sites that already have a node span** (`push_line_errors` from
+  `ErrorNode`, the relationship / member `unresolved-target` sites) pass the
+  node's absolute `TextSpan` directly — cleaner than today's
+  `find_link_span` + `with_span` dance.
+- **Emission sites that only knew a line** (`duplicate-slug`,
+  `layout-cycle`, `frontmatter-not-clean`, …) construct a line-covering
+  `TextSpan` from the source. `validate.rs`/`parse.rs` already hold the
+  document source at these sites; a small helper (`line_span(src, line)` or a
+  shared `LineIndex`) yields the span. Where a whole-line highlight is
+  intended, the span covers the line's byte range.
+- **`map.rs`** collapses to a single path: `to_lsp_diagnostic(d: &Diagnostic,
+  index: &LineIndex)` converts the absolute `TextSpan` to an `lsp::Range` via
+  `LineIndex.line_col` + `utf16_col` — the **same** `TextSpan`→`Range` code
+  the symbol consumer uses. `bundle.rs::diagnostics()` builds one `LineIndex`
+  per document (instead of re-slicing per-diagnostic line text).
+
+This is bounded: sites passing only a line are a mechanical
+`line → line_span` swap; the precise-span sites get simpler; the UTF-16
+column logic is unchanged (it moves into `LineIndex.utf16_col`, already
+covered by the existing `utf16_col` tests).
+
+### 5. `symbols.rs` (LSP) — the documentSymbol consumer
 
 A pure function `document_symbols(doc: &Document, index: &LineIndex, src: &str)
 -> Vec<DocumentSymbol>`:
@@ -214,7 +247,7 @@ A pure function `document_symbols(doc: &Document, index: &LineIndex, src: &str)
 
 `TextSpan` → `lsp::Range` via `LineIndex.line_col` + `utf16_col`.
 
-### 5. `server.rs` wiring
+### 6. `server.rs` wiring
 
 - `initialize` advertises `document_symbol_provider: Some(OneOf::Left(true))`
   alongside the existing text-sync capability.
@@ -259,6 +292,11 @@ client: textDocument/documentSymbol { uri }
   substring.
 - Golden serialize-fixpoint suite stays green (the `Line` reshape did not
   change round-trip output).
+- Diagnostic migration: each existing diagnostic keeps its code/message/
+  severity and now carries an absolute `TextSpan` whose byte range slices to
+  the expected offending substring (update the `diagnostic.rs` span tests and
+  any validate/parse assertions that referenced `line` + line-relative span).
+  A line-only diagnostic (e.g. `duplicate-slug`) spans its whole line.
 
 **LSP (`crates/uaml-cli`):**
 - `symbols.rs` unit: a fixture document → expected `DocumentSymbol` tree
@@ -270,12 +308,6 @@ client: textDocument/documentSymbol { uri }
 
 ## Non-goals (deferred, deliberately)
 
-- **Migrating the `Diagnostic` type** from `line + relative-span` to absolute
-  `TextSpan`. Diagnostics keep their current form and code paths; they are an
-  independent output of the same parse and continue to work unchanged. The
-  unified span currency reaches diagnostics in a later phase, when
-  go-to-def/references make it worth touching all ~11 emission sites +
-  `map.rs` + the diagnostic tests.
 - **Reverse position→symbol lookup** (`node_at(offset)` descent) and its
   consumers (hover, definition, references, rename). This spec lays the span
   groundwork they need; they are their own later phase.
