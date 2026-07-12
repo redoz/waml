@@ -9,6 +9,14 @@ pub fn build_model_json(bundle: &[(String, String)]) -> String {
     serde_json::to_string(&uaml::parse::build_model(bundle)).unwrap()
 }
 
+/// Project each document to its OKF [`Concept`](uaml::okf::Concept), returning
+/// the resolved [`Bundle`](uaml::okf::Bundle) as JSON. Additive to
+/// [`build_model_json`]: domain-agnostic, lossless, and it does not touch the
+/// UML `Model` shape.
+pub fn build_bundle_json(bundle: &[(String, String)]) -> String {
+    serde_json::to_string(&uaml::okf::build_bundle(bundle)).unwrap()
+}
+
 pub fn validate_json(bundle: &[(String, String)]) -> String {
     serde_json::to_string(&uaml::validate::validate(bundle)).unwrap()
 }
@@ -55,6 +63,16 @@ pub fn build_model(bundle: JsValue) -> Result<JsValue, JsValue> {
     let b: Vec<(String, String)> = serde_wasm_bindgen::from_value(bundle)?;
     let model = uaml::parse::build_model(&b);
     Ok(serde_wasm_bindgen::to_value(&model)?)
+}
+
+/// `bundle`: a `[path, markdown][]`. Returns the resolved OKF `Bundle` (one
+/// `Concept` per document). Additive to [`build_model`]; the UML surface is
+/// untouched.
+#[wasm_bindgen]
+pub fn build_bundle(bundle: JsValue) -> Result<JsValue, JsValue> {
+    let b: Vec<(String, String)> = serde_wasm_bindgen::from_value(bundle)?;
+    let out = uaml::okf::build_bundle(&b);
+    Ok(serde_wasm_bindgen::to_value(&out)?)
 }
 
 /// `bundle`: a `[path, markdown][]`. Returns a `Diagnostic[]`.
