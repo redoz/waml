@@ -22,12 +22,16 @@ function model(partial: {
   nodes?: RustNodeInput[];
   edges?: RustEdge[];
   diagrams?: RustDiagram[];
+  path?: string;
+  packages?: RustNodeInput[];
 }): RustModel {
   return {
     edges: [],
     diagrams: [],
+    path: "",
     ...partial,
     nodes: (partial.nodes ?? []).map((n) => ({ concept: CONCEPT, ...n })),
+    packages: (partial.packages ?? []).map((n) => ({ concept: CONCEPT, ...n })),
   };
 }
 
@@ -120,6 +124,18 @@ describe("toModelGraph", () => {
     });
     const g = toModelGraph(m, emptyOverlay());
     expect(g.edges[0].id).toBe("e1");
+  });
+
+  it("carries path and packages with members", () => {
+    const m = model({
+      nodes: [{ key: "order", type: "uml.Class", stereotypes: [], attributes: [] }],
+      path: "acme-model",
+      packages: [{ key: "", type: "uml.Package", stereotypes: [], attributes: [], members: ["order"] }],
+    });
+    const g = toModelGraph(m, emptyOverlay());
+    expect(g.path).toBe("acme-model");
+    expect(g.packages).toHaveLength(1);
+    expect(g.packages[0].members).toEqual(["order"]);
   });
 
   it("empty diagrams yields a ModelGraph with diagrams: [] (canvas shows the implicit all-node view)", () => {

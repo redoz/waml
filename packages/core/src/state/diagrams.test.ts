@@ -10,19 +10,19 @@ const node = (key: string): ModelGraph["nodes"][0] =>
 // stays the read-side contract the canvas relies on.
 describe("effectiveDiagrams", () => {
   it("empty diagrams ⇒ one implicit All diagram with every node", () => {
-    const g: ModelGraph = { nodes: [node("a"), node("b")], edges: [], diagrams: [] };
+    const g: ModelGraph = { nodes: [node("a"), node("b")], edges: [], diagrams: [], path: "", packages: [] };
     const d = effectiveDiagrams(g);
     expect(d).toHaveLength(1);
     expect(d[0]).toMatchObject({ key: ALL_DIAGRAM_KEY, profile: "uml-domain", members: ["a", "b"] });
   });
   it("explicit diagrams pass through untouched", () => {
-    const g: ModelGraph = { nodes: [node("a")], edges: [], diagrams: [{ key: "d1", title: "D", profile: "p", members: ["a"] }] };
+    const g: ModelGraph = { nodes: [node("a")], edges: [], diagrams: [{ key: "d1", title: "D", profile: "p", members: ["a"] }], path: "", packages: [] };
     expect(effectiveDiagrams(g)).toEqual(g.diagrams);
   });
   it("returns a referentially stable result for the same graph (implicit All)", () => {
     // Canvas passes this into effect deps; a fresh object each call would re-fire
     // the setRfNodes effect every render, leaving React Flow nodes visibility:hidden.
-    const g: ModelGraph = { nodes: [node("a"), node("b")], edges: [], diagrams: [] };
+    const g: ModelGraph = { nodes: [node("a"), node("b")], edges: [], diagrams: [], path: "", packages: [] };
     expect(effectiveDiagrams(g)).toBe(effectiveDiagrams(g));
   });
 });

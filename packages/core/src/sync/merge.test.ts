@@ -9,11 +9,13 @@ const edge = (id: string, from: string, to: string): ModelGraph["edges"][0] =>
 
 describe("mergeGraphs", () => {
   it("appends incoming nodes with fresh keys and remaps edges + diagram members", () => {
-    const current: ModelGraph = { nodes: [node("n1", "A")], edges: [], diagrams: [] };
+    const current: ModelGraph = { nodes: [node("n1", "A")], edges: [], diagrams: [], path: "", packages: [] };
     const incoming: ModelGraph = {
       nodes: [node("n1", "B"), node("n2", "C")],
       edges: [edge("e1", "n1", "n2")],
       diagrams: [{ key: "d", title: "D", profile: "uml-domain", members: ["n1", "n2"] }],
+      path: "",
+      packages: [],
     };
     const { graph, newKeys } = mergeGraphs(current, incoming);
     expect(graph.nodes).toHaveLength(3);

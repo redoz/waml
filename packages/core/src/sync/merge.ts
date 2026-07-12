@@ -46,5 +46,7 @@ export function mergeGraphs(current: ModelGraph, incoming: ModelGraph): { graph:
     ...current.diagrams,
     ...incoming.diagrams.map(d => ({ ...d, members: d.members.map(m => keyRemap.get(m)).filter((k): k is string => !!k) })),
   ];
-  return { graph: { nodes, edges, diagrams }, newKeys };
+  // Package/path derivation is bundle-level (re-derived by build_model); the
+  // graph merge carries `current`'s values through unchanged.
+  return { graph: { nodes, edges, diagrams, path: current.path, packages: current.packages }, newKeys };
 }
