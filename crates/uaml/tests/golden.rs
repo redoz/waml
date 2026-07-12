@@ -58,6 +58,35 @@ fn every_doc_is_a_serialize_fixpoint() {
 }
 
 #[test]
+fn nested_packages_round_trip_through_reindex() {
+    use uaml::index_md::reindex_bundle;
+    let b = vec![
+        ("sales/order.md".to_string(), "---\ntype: uml.Class\ntitle: Order\n---\n# Order\n".to_string()),
+        ("sales/customer.md".to_string(), "---\ntype: uml.Class\ntitle: Customer\ndescription: A buyer.\n---\n# Customer\n".to_string()),
+        ("sales/orders/line.md".to_string(), "---\ntype: uml.Class\ntitle: Line\n---\n# Line\n".to_string()),
+    ];
+    let m1 = build_model(&b);
+    let bundle2 = reindex_bundle(&b);
+    let m2 = build_model(&bundle2);
+    // packages + members stable across the round-trip
+    let names = |m: &uaml::model::Model| {
+        let mut v: Vec<_> = m.packages.iter().map(|p| (p.key.clone(), p.members.clone())).collect();
+        v.sort();
+        v
+    };
+    assert_eq!(names(&m1), names(&m2));
+    // blurb from description survived into sales/index.md
+    let idx = bundle2.iter().find(|(p, _)| p == "sales/index.md").unwrap();
+    assert!(idx.1.contains("[Customer](./customer.md) - A buyer."));
+    // second reindex is a fixpoint
+    let bundle3 = reindex_bundle(&bundle2);
+    assert_eq!(
+        bundle2.iter().find(|(p, _)| p == "sales/index.md").unwrap().1,
+        bundle3.iter().find(|(p, _)| p == "sales/index.md").unwrap().1
+    );
+}
+
+#[test]
 fn orders_domain_has_no_diagnostics() {
     let bundle = uaml::parse::split_bundle(FIXTURE);
     let diags = uaml::validate::validate(&bundle);
