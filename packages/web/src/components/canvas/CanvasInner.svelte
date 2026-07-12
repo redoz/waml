@@ -257,8 +257,8 @@ import ShareToast from "../ShareToast.svelte";
   // onconnect: OnConnect = (connection: Connection) => void.
   function onConnect(connection: Connection) {
     if (!connection.source || !connection.target) return;
-    // Select the freshly-drawn edge (shows the toolbar). The Inspector no longer
-    // auto-opens on selection — open it via the Inspect flag to set join keys.
+    // Select the freshly-drawn edge (shows the toolbar and reflects into the
+    // always-present Inspector) to set join keys.
     const e = store.addEdge(connection.source, connection.target, connection.sourceHandle, connection.targetHandle);
     if (e) selectionSet = { nodes: [], edges: [e.id] };
   }
