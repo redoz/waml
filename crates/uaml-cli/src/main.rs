@@ -32,7 +32,11 @@ enum Command {
     /// Run the UAML language server (stdio LSP).
     Lsp {
         /// Use stdio transport (the only supported transport in Phase 1).
-        #[arg(long)]
+        ///
+        /// `overrides_with_self` lets the flag be passed more than once without
+        /// error: the LSP client appends its own `--stdio` (TransportKind.stdio)
+        /// on top of any we pass, and a repeated flag must not abort the server.
+        #[arg(long, overrides_with = "stdio")]
         stdio: bool,
     },
     /// Rewrite documents in canonical form.

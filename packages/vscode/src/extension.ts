@@ -12,7 +12,8 @@ export function activate(_context: ExtensionContext): void {
   const command = workspace.getConfiguration("uaml").get<string>("serverPath", "uaml");
   const serverOptions: ServerOptions = {
     command,
-    args: ["lsp", "--stdio"],
+    // Only the subcommand — TransportKind.stdio makes the client append `--stdio`.
+    args: ["lsp"],
     transport: TransportKind.stdio,
   };
   const clientOptions: LanguageClientOptions = {
