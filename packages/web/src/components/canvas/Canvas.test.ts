@@ -25,13 +25,13 @@ describe("diagram title switcher (replaces the goal button + DiagramTabs pill)",
     expect(screen.queryByRole("button", { name: "Set business goal" })).toBeNull();
   });
 
-  // NOTE: diagram creation is derived-only in Stage 1b — the store's diagram
-  // mutators are no-ops (no diagram/membership ops), so the switcher stays on the
-  // implicit "All" view. Persisted diagram creation returns in Stage 1c.
-  it("exposes the New diagram affordance in the switcher menu", async () => {
+  // The switcher trigger now opens the Navigator sheet (search / scope / create /
+  // rename / reorder / delete) wired to the live model store. Its search field is
+  // the tell that the sheet mounted in place of the old inline diagram list.
+  it("opens the Navigator sheet from the switcher", async () => {
     render(Canvas);
     await fireEvent.click(screen.getByRole("button", { name: /switch diagram/i }));
-    expect(screen.getByRole("button", { name: /New diagram/i })).toBeTruthy();
+    expect(screen.getByLabelText("Search model")).toBeTruthy();
   });
 });
 

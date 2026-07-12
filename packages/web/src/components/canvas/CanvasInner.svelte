@@ -54,7 +54,8 @@ import ShareToast from "../ShareToast.svelte";
     loadActiveDiagramKey,
     persistActiveDiagramKey,
   } from "@uaml/core/state/diagrams";
-  import { resolveDisplay, type DiagramDisplay } from "@uaml/okf";
+  import { resolveDisplay, slugify, type DiagramDisplay } from "@uaml/okf";
+  import { getProfile } from "@uaml/core/profiles";
   import { loadModelName, persistModelName, DEFAULT_MODEL_NAME, templateModelName } from "@uaml/core/state/modelName";
   import { persistBundle } from "@uaml/core/state/persist";
   import { bundleToDownloadFiles, downloadBundle } from "@uaml/core/okf/io";
@@ -131,6 +132,16 @@ import ShareToast from "../ShareToast.svelte";
   const inspectorFocusedKind = $derived(focused?.type);
   const diagrams = $derived(effectiveDiagrams($model));
   const activeDiagram = $derived(diagrams.find((d) => d.key === activeDiagramKey) ?? diagrams[0]);
+  // The Navigator's scope (which package subtree it shows) and the active
+  // profile's create-palette (the metaclasses the context menu offers).
+  let scopeKey = $state("");
+  const palette = $derived([...getProfile(activeDiagram.profile).palette.metaclasses]);
+  // A package's new key after a title rename: keep its parent path, reslug the
+  // leaf from the new title.
+  const reslugPackage = (key: string, title: string) => {
+    const cut = key.lastIndexOf("/");
+    return (cut >= 0 ? key.slice(0, cut + 1) : "") + slugify(title);
+  };
   // The active diagram's resolved per-diagram render settings (absent ⇒ defaults).
   // Replaces the old global viewMode/relLabelMode browser preferences.
   const activeDisplay = $derived(resolveDisplay(activeDiagram.display));
@@ -472,11 +483,39 @@ import ShareToast from "../ShareToast.svelte";
     diagrams={diagrams}
     activeDiagramKey={activeDiagram.key}
     onSelectDiagram={(key) => (activeDiagramKey = key)}
-    onRenameDiagram={(title) => store.updateDiagram(activeDiagram.key, { title })}
     onCreateDiagram={(name) => {
       const d = store.addDiagram(name);
       activeDiagramKey = d.key;
     }}
+    graph={$model}
+    scopeKey={scopeKey}
+    palette={palette}
+    onScope={(key) => (scopeKey = key)}
+    onReorder={(pkgKey, order) => store.reorderMembers(pkgKey, order)}
+    onSort={(pkgKey) => store.sortPackage(pkgKey)}
+    onCreatePackage={(parent, name) => store.createGhostPackage(parent, name)}
+    onCreateNode={(dir, metaclass) => store.createNodeInPackage(dir, metaclass, metaclass.split(".").pop() || metaclass)}
+    onRename={(key, kind, title) => {
+      if (kind === "package") store.renamePackage(key, reslugPackage(key, title));
+      else if (kind === "diagram") store.updateDiagram(key, { title });
+      else {
+        const n = $model.nodes.find((x) => x.key === key);
+        if (n) store.updateNode(key, { concept: { ...n.concept, title } });
+      }
+    }}
+    onDelete={(key, kind, mode) => {
+      if (kind === "package") store.deletePackage(key, mode === "cascade");
+      else store.removeNode(key);
+    }}
+    onViewInDiagram={(key, diagramKey) => {
+      activeDiagramKey = diagramKey;
+      selectionSet = { nodes: [key], edges: [] };
+    }}
+    onAddToNewDiagram={(key) => {
+      const d = store.addDiagramFromMembers("New diagram", [key]);
+      activeDiagramKey = d.key;
+    }}
+    onEditProperties={(key) => (selectionSet = { nodes: [key], edges: [] })}
   />
 
   {#if shareToast}

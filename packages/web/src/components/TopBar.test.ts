@@ -1,6 +1,7 @@
 import { test, expect, vi } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/svelte";
 import TopBar from "./TopBar.svelte";
+import type { ModelGraph } from "@uaml/okf";
 
 const diagram = (key: string, title: string) => ({
   key,
@@ -8,6 +9,26 @@ const diagram = (key: string, title: string) => ({
   profile: "uml-domain",
   members: [] as string[],
 });
+
+// A minimal graph for the mounted Navigator sheet — packages carry the
+// concept-Node shape (title on concept.title), matching the real model.
+const navGraph = {
+  path: "acme-model",
+  nodes: [],
+  edges: [],
+  diagrams: [{ key: "d1", title: "Overview", profile: "uml-domain", members: [] }],
+  packages: [
+    {
+      key: "",
+      type: "uml.Package",
+      concept: { id: "", type: "uml.Package", title: "", body: "" },
+      stereotypes: [],
+      attributes: [],
+      position: { x: 0, y: 0 },
+      members: ["d1"],
+    },
+  ],
+} as unknown as ModelGraph;
 
 const switcherProps = (over: Record<string, unknown> = {}) => ({
   diagrams: [diagram("d1", "Overview"), diagram("d2", "Details")],
@@ -34,52 +55,23 @@ test("no longer renders the Business Goal button", () => {
   expect(screen.queryByRole("button", { name: "Set business goal" })).toBeNull();
 });
 
-test("dropdown lists every diagram, checkmarks the active one, and switches on click", async () => {
-  const onSelectDiagram = vi.fn();
-  render(TopBar, { props: switcherProps({ onSelectDiagram }) });
+test("the center switcher opens the Navigator sheet (not the old inline list)", async () => {
+  render(TopBar, {
+    props: {
+      diagrams: [diagram("d1", "Overview")],
+      activeDiagramKey: "d1",
+      graph: navGraph,
+      palette: ["uml.Class"],
+      onSelectDiagram: vi.fn(),
+      onScope: vi.fn(),
+    },
+  });
   await fireEvent.click(screen.getByRole("button", { name: /switch diagram/i }));
-
-  const active = screen.getByRole("menuitemradio", { name: "Overview" });
-  const other = screen.getByRole("menuitemradio", { name: "Details" });
-  expect(active.getAttribute("aria-checked")).toBe("true");
-  expect(other.getAttribute("aria-checked")).toBe("false");
-
-  await fireEvent.click(other);
-  expect(onSelectDiagram).toHaveBeenCalledWith("d2");
-});
-
-test("rename current diagram submits the trimmed title", async () => {
-  const onRenameDiagram = vi.fn();
-  render(TopBar, { props: switcherProps({ onRenameDiagram }) });
-  await fireEvent.click(screen.getByRole("button", { name: /switch diagram/i }));
-
-  const input = screen.getByLabelText("Rename diagram") as HTMLInputElement;
-  await fireEvent.input(input, { target: { value: "  Renamed  " } });
-  await fireEvent.click(screen.getByRole("button", { name: "Rename" }));
-  expect(onRenameDiagram).toHaveBeenCalledWith("Renamed");
-});
-
-test("empty / whitespace rename is rejected (keeps previous title)", async () => {
-  const onRenameDiagram = vi.fn();
-  render(TopBar, { props: switcherProps({ onRenameDiagram }) });
-  await fireEvent.click(screen.getByRole("button", { name: /switch diagram/i }));
-
-  const input = screen.getByLabelText("Rename diagram") as HTMLInputElement;
-  await fireEvent.input(input, { target: { value: "   " } });
-  await fireEvent.click(screen.getByRole("button", { name: "Rename" }));
-  expect(onRenameDiagram).not.toHaveBeenCalled();
-});
-
-test("+ New diagram creates a diagram via an inline name input (not window.prompt)", async () => {
-  const onCreateDiagram = vi.fn();
-  render(TopBar, { props: switcherProps({ onCreateDiagram }) });
-  await fireEvent.click(screen.getByRole("button", { name: /switch diagram/i }));
-
-  await fireEvent.click(screen.getByRole("button", { name: /New diagram/i }));
-  const input = screen.getByLabelText("New diagram name") as HTMLInputElement;
-  await fireEvent.input(input, { target: { value: "  Fresh  " } });
-  await fireEvent.click(screen.getByRole("button", { name: "Create" }));
-  expect(onCreateDiagram).toHaveBeenCalledWith("Fresh");
+  // Navigator's search field is the tell that the new sheet mounted.
+  expect(screen.getByLabelText("Search model")).toBeTruthy();
+  expect(screen.getByText("acme-model")).toBeTruthy();
+  // The old inline diagram-list radios are gone.
+  expect(screen.queryByRole("menuitemradio")).toBeNull();
 });
 
 test("export dropdown opens and routes OKF vs SVG", async () => {
