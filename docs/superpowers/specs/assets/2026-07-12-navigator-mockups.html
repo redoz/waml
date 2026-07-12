@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>UAML Navigator Sheet — design mockups (Spec 1, Part B)</title>
+<style>
+  :root { --blue:#1e88e5; --blue-bg:#e6f1fb; --bd:#d8dee8; --ink:#1e293b; }
+  * { box-sizing:border-box; }
+  body { margin:0; font:14px/1.5 -apple-system,Segoe UI,Roboto,sans-serif; color:var(--ink);
+    background:#f1f4f8; padding:40px 20px; }
+  .wrap { max-width:920px; margin:0 auto; }
+  h1 { font-size:22px; margin:0 0 4px; } h1 + p { color:#64748b; margin:0 0 32px; }
+  h2 { font-size:15px; margin:36px 0 4px; color:#0f172a; }
+  h2 + p { color:#64748b; font-size:12.5px; margin:0 0 14px; }
+  .board { display:flex; flex-wrap:wrap; gap:24px; align-items:flex-start; }
+  .frame { background:#fff; border:1px solid var(--bd); border-radius:8px; padding:16px;
+    box-shadow:0 1px 3px rgba(15,23,42,.06); }
+  .frame > .lbl { font-size:11px; text-transform:uppercase; letter-spacing:.4px; color:#94a3b8;
+    font-weight:600; margin-bottom:12px; }
+  .sheet { background:#fff; border:1px solid var(--bd); border-radius:12px;
+    box-shadow:0 8px 24px rgba(15,23,42,.18); font-size:13px; width:340px; position:relative; overflow:visible; }
+  .row { display:flex; gap:6px; padding:8px 10px; align-items:center; }
+  .search { flex:1; border:1px solid var(--bd); border-radius:6px; padding:6px 9px; color:#94a3b8; font-size:12.5px; }
+  .search.active { border-color:var(--blue); color:var(--ink); box-shadow:0 0 0 3px rgba(30,136,229,.12); }
+  .filt { border:1px solid var(--bd); border-radius:6px; padding:5px 9px; color:#475569; font-size:12px; }
+  .scope { display:flex; align-items:center; gap:6px; padding:7px 10px; background:#fafbfc;
+    border-top:1px solid #eef1f5; border-bottom:1px solid #eef1f5; font-size:12px; }
+  .crumb { color:var(--blue); font-weight:600; cursor:pointer; } .crumb.dim { color:#94a3b8; font-weight:500; }
+  .sep { color:#cbd5e1; }
+  .node { display:flex; align-items:center; gap:7px; padding:5px 10px; cursor:pointer; }
+  .node:hover { background:#f1f3f7; }
+  .ico { width:16px; text-align:center; flex-shrink:0; }
+  .pkg { color:#a16207; } .cls { color:#1e88e5; } .note { color:#7c3aed; } .dgm { color:#0891b2; }
+  .guide { color:#e2e8f0; }
+  .active { color:var(--blue); font-weight:600; }
+  .chk { color:var(--blue); font-weight:700; width:14px; text-align:center; }
+  .tail { color:#cbd5e1; margin-left:auto; font-size:11px; }
+  .grip { color:#e2e8f0; margin-left:auto; font-size:12px; }
+  .hl { background:#e6f1fb; outline:1px solid #bcdcf7; border-radius:5px; }
+  mark { background:#fff2ab; color:inherit; border-radius:2px; padding:0 1px; }
+  .empty { padding:12px 10px; text-align:center; color:#94a3b8; font-size:12.5px; }
+  .divider { display:flex; align-items:center; gap:8px; padding:4px 12px; }
+  .divider .line { flex:1; height:1px; background:#eef1f5; }
+  .divider .dl { font-size:10px; text-transform:uppercase; letter-spacing:.4px; color:#94a3b8; font-weight:600; white-space:nowrap; }
+  .where { margin-left:auto; font-size:11px; color:#94a3b8; }
+  .menu { position:absolute; z-index:20; background:#fff; border:1px solid var(--bd); border-radius:9px;
+    box-shadow:0 8px 24px rgba(15,23,42,.2); padding:4px; width:210px; font-size:12.5px; }
+  .mi { display:flex; align-items:center; gap:9px; padding:6px 9px; border-radius:6px; cursor:pointer; color:#334155; }
+  .mi:hover { background:#f1f3f7; } .mi .g { width:15px; text-align:center; opacity:.7; }
+  .mi.danger { color:#dc2626; } .msep { height:1px; background:#eef1f5; margin:4px 6px; }
+  .mlabel { padding:5px 9px 3px; font-size:10px; text-transform:uppercase; letter-spacing:.4px; color:#94a3b8; font-weight:600; }
+  .sub2 { color:#94a3b8; margin-left:auto; font-size:11px; }
+  .legend { display:flex; gap:16px; flex-wrap:wrap; font-size:12px; color:#64748b; margin:10px 0 0; }
+  footer { color:#94a3b8; font-size:11.5px; margin-top:40px; border-top:1px solid var(--bd); padding-top:16px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>UAML Navigator Sheet — design mockups</h1>
+  <p>Companion to <code>2026-07-12-uaml-packages-navigator-design.md</code>, Part B. The center title switcher grown into a searchable package/diagram tree. Placeholder glyphs (swap for lucide); app colors (#1e88e5 / #d8dee8).</p>
+
+  <div class="legend">
+    <span style="color:#a16207">📂 package</span>
+    <span style="color:#1e88e5">◻ classifier</span>
+    <span style="color:#0891b2">◫ diagram</span>
+    <span style="color:#7c3aed">🗒 note</span>
+    <span>✓ active diagram</span>
+  </div>
+
+  <h2>1 · Main sheet — single column, fully expanded, diagrams float per package</h2>
+  <p>Search + type chip (Ctrl-T rotates) · scope header glued to tree · members in <code>members</code> order · diagrams first within each package · on-hover drag grips reorder.</p>
+  <div class="board">
+    <div class="frame"><div class="lbl">Viewing package: sales</div>
+      <div class="sheet">
+        <div class="row"><div class="search">Search…</div><div class="filt">All ▾</div></div>
+        <div class="scope"><span class="crumb dim">acme-model</span><span class="sep">/</span><span class="crumb">sales</span></div>
+        <div class="node"><span class="ico dgm">◫</span><span class="chk">✓</span><span class="active">Sales overview</span><span class="grip">⠿</span></div>
+        <div class="node"><span class="ico dgm">◫</span><span class="chk"></span>Fulfilment flow<span class="grip">⠿</span></div>
+        <div class="node"><span class="ico pkg">📂</span> orders<span class="grip">⠿</span></div>
+        <div class="node"><span class="ico guide">│</span><span class="ico dgm">◫</span> Order lifecycle</div>
+        <div class="node"><span class="ico guide">│</span><span class="ico cls">◻</span> Order</div>
+        <div class="node"><span class="ico pkg">📂</span> refunds<span class="grip">⠿</span></div>
+        <div class="node"><span class="ico guide">│</span><span class="ico cls">◻</span> RefundRequest</div>
+        <div class="node"><span class="ico cls">◻</span> Customer<span class="grip">⠿</span></div>
+        <div class="node"><span class="ico cls">◻</span> Invoice<span class="grip">⠿</span></div>
+        <div class="node"><span class="ico note">🗒</span> Billing rules<span class="grip">⠿</span></div>
+      </div>
+    </div>
+  </div>
+
+  <h2>2 · The two menus</h2>
+  <p>Left-click a classifier → action menu (what to do with it). Right-click any row → context menu (file-manager ops; Sort A–Z rewrites <code>members</code>).</p>
+  <div class="board">
+    <div class="frame"><div class="lbl">Left-click classifier → actions</div>
+      <div class="sheet">
+        <div class="row"><div class="search">Search…</div><div class="filt">All ▾</div></div>
+        <div class="scope"><span class="crumb dim">acme-model</span><span class="sep">/</span><span class="crumb">sales</span></div>
+        <div class="node"><span class="ico dgm">◫</span><span class="chk">✓</span><span class="active">Sales overview</span></div>
+        <div class="node hl"><span class="ico cls">◻</span> Customer</div>
+        <div class="node"><span class="ico cls">◻</span> Invoice</div>
+        <div class="menu" style="top:96px; left:118px">
+          <div class="mlabel">Customer</div>
+          <div class="mi"><span class="g" style="color:#0891b2">◫</span> View in diagram <span class="sub2">3 ›</span></div>
+          <div class="mi"><span class="g">＋</span> Add to new diagram</div>
+          <div class="msep"></div>
+          <div class="mi"><span class="g">✎</span> View / edit properties</div>
+        </div>
+      </div>
+    </div>
+    <div class="frame"><div class="lbl">Right-click row → context ops</div>
+      <div class="sheet">
+        <div class="row"><div class="search">Search…</div><div class="filt">All ▾</div></div>
+        <div class="scope"><span class="crumb dim">acme-model</span><span class="sep">/</span><span class="crumb">sales</span></div>
+        <div class="node hl"><span class="ico pkg">📂</span> orders</div>
+        <div class="node"><span class="ico cls">◻</span> Customer</div>
+        <div class="menu" style="top:88px; left:96px">
+          <div class="mlabel">orders (package)</div>
+          <div class="mi"><span class="g">↳</span> New package</div>
+          <div class="mi"><span class="g">◻</span> New Class</div>
+          <div class="mi"><span class="g">◫</span> New diagram</div>
+          <div class="msep"></div>
+          <div class="mi"><span class="g">✎</span> Rename</div>
+          <div class="mi"><span class="g">↕</span> Sort A–Z</div>
+          <div class="msep"></div>
+          <div class="mi danger"><span class="g">🗑</span> Delete…</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <h2>3 · Search = filtered tree</h2>
+  <p>Matches render in structure; ancestor packages kept at full strength; matched substring highlighted; non-matches pruned. Click a package in results → rescope + clear search.</p>
+  <div class="board">
+    <div class="frame"><div class="lbl">In-scope matches</div>
+      <div class="sheet">
+        <div class="row"><div class="search active">order</div><div class="filt">All ▾</div></div>
+        <div class="scope"><span class="crumb dim">acme-model</span><span class="sep">/</span><span class="crumb">sales</span></div>
+        <div class="node"><span class="ico pkg">📂</span> orders</div>
+        <div class="node"><span class="ico guide">│</span><span class="ico dgm">◫</span> <mark>Order</mark> lifecycle</div>
+        <div class="node"><span class="ico guide">│</span><span class="ico cls">◻</span> <mark>Order</mark></div>
+        <div class="node"><span class="ico guide">│</span><span class="ico cls">◻</span> <mark>Order</mark>Line</div>
+      </div>
+    </div>
+    <div class="frame"><div class="lbl">Zero here + matches elsewhere</div>
+      <div class="sheet">
+        <div class="row"><div class="search active">payment</div><div class="filt">All ▾</div></div>
+        <div class="scope"><span class="crumb dim">acme-model</span><span class="sep">/</span><span class="crumb">sales</span></div>
+        <div class="empty">No matches in <b>sales</b></div>
+        <div class="divider"><span class="line"></span><span class="dl">Elsewhere in model</span><span class="line"></span></div>
+        <div class="node"><span class="ico pkg">📂</span> billing</div>
+        <div class="node"><span class="ico guide">│</span><span class="ico cls">◻</span> <mark>Payment</mark></div>
+        <div class="node"><span class="ico guide">│</span><span class="ico dgm">◫</span> <mark>Payment</mark> flow</div>
+        <div class="node"><span class="ico pkg">📂</span> catalog</div>
+        <div class="node"><span class="ico guide">│</span><span class="ico cls">◻</span> <mark>Payment</mark>Method</div>
+      </div>
+    </div>
+    <div class="frame"><div class="lbl">Zero everywhere</div>
+      <div class="sheet">
+        <div class="row"><div class="search active">zzzzz</div><div class="filt">All ▾</div></div>
+        <div class="scope"><span class="crumb dim">acme-model</span><span class="sep">/</span><span class="crumb">sales</span></div>
+        <div class="empty">No matches found</div>
+      </div>
+    </div>
+  </div>
+
+  <footer>Design mockups — reference for implementation. Behavior of record is the spec markdown; where pixels and prose disagree, the prose wins.</footer>
+</div>
+</body>
+</html>

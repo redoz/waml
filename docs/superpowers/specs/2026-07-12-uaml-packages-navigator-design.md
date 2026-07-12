@@ -73,6 +73,60 @@ Non-goals for this spec: the rich classifier document editor (A4 modal, markdown
 
 Grow the center **diagram title switcher** (`TopBar.svelte`) into a **navigator sheet** that drops down from the top bar. It is a roomy **single-column** panel (not a tiny menu) and **stays open while working** so it can host file-manager interactions. This **replaces** the earlier left-panel idea.
 
+### Visual reference
+
+Full mockups (app colors, all screens): [`assets/2026-07-12-navigator-mockups.html`](assets/2026-07-12-navigator-mockups.html). The prose below is the behavior of record; where pixels and prose disagree, the prose wins.
+
+**Main sheet** — scope `sales`, diagrams floated to the top of each package, on-hover drag grips (`⠿`):
+
+```
+┌────────────────────────────────────────┐
+│ [ Search…                    ] [ All ▾ ]│  ← live search + type chip (Ctrl-T rotates)
+├────────────────────────────────────────┤
+│ acme-model / sales                      │  ← scope header (breadcrumb), glued to tree
+├────────────────────────────────────────┤
+│ ◫ ✓ Sales overview                    ⠿ │  ┐ sales' own diagrams float to top
+│ ◫   Fulfilment flow                   ⠿ │  ┘
+│ 📂 orders                             ⠿ │  ┐ then members in `members` order
+│ │  ◫ Order lifecycle                    │  │   (sub-package diagrams float too)
+│ │  ◻ Order                              │  │
+│ 📂 refunds                            ⠿ │  │
+│ │  ◻ RefundRequest                      │  │
+│ ◻ Customer                            ⠿ │  │
+│ ◻ Invoice                             ⠿ │  │
+│ 🗒 Billing rules                      ⠿ │  ┘
+└────────────────────────────────────────┘
+```
+
+**Left-click classifier → action menu · Right-click row → context menu:**
+
+```
+  Customer  ▸ ┌───────────────────────┐      orders ▸ ┌───────────────────────┐
+              │ ◫ View in diagram  3 ›│               │ ↳ New package         │
+              │ ＋ Add to new diagram │               │ ◻ New Class           │
+              │ ───────────────────── │               │ ◫ New diagram         │
+              │ ✎ View / edit props   │               │ ───────────────────── │
+              └───────────────────────┘               │ ✎ Rename              │
+                                                       │ ↕ Sort A–Z            │
+                                                       │ ───────────────────── │
+                                                       │ 🗑 Delete…            │
+                                                       └───────────────────────┘
+```
+
+**Search — zero in scope, matches elsewhere** (filtered tree, matched substring `⟨…⟩`):
+
+```
+│ [ payment ]                    [ All ▾ ]│
+│ acme-model / sales                      │
+│           No matches in sales           │  ← short, centered, no icon
+│ ──────── Elsewhere in model ─────────── │  ← divider
+│ 📂 billing                              │  ← ancestor kept (full strength)
+│ │  ◻ ⟨Payment⟩                          │
+│ │  ◫ ⟨Payment⟩ flow                     │
+│ 📂 catalog                              │
+│ │  ◻ ⟨Payment⟩Method                    │
+```
+
 ### Layout (top to bottom)
 
 1. **Search + type filter row** — a live search field (filters as you type, no Enter — the dataset is small) and, beside it, a **type chip** showing the active metaclass filter (`All ▾`). `Ctrl-T` rotates the chip through the available types; the key hint is **not** rendered inline (it surfaces via the separate keyboard-shortcuts spec).
