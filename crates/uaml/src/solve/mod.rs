@@ -108,13 +108,16 @@ pub fn pretty(solved: &Solved) -> String {
     out
 }
 
-/// Top-level entry: resolve then solve. Filled in by Task 8.
+/// Top-level entry: resolve the diagram to a `Scene`, then solve it.
 pub fn solve_diagram(
-    _diagram: &crate::model::Diagram,
-    _sizes: &SizeMap,
-    _cfg: &SolveConfig,
+    diagram: &crate::model::Diagram,
+    sizes: &SizeMap,
+    cfg: &SolveConfig,
 ) -> (Solved, Vec<Diagnostic>) {
-    (Solved { nodes: BTreeMap::new(), groups: vec![], flags: BTreeMap::new() }, vec![])
+    let (scene, mut diags) = resolve::resolve(diagram);
+    let (solved, mut geo_diags) = geometry::solve(&scene, sizes, cfg);
+    diags.append(&mut geo_diags);
+    (solved, diags)
 }
 
 #[cfg(test)]
