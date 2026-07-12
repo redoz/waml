@@ -33,6 +33,7 @@
   } from "./selection";
   import Dock, { type Tool } from "./Dock.svelte";
   import SelectionToolbar from "./SelectionToolbar.svelte";
+  import { matchesShortcut } from "../../lib/shortcuts";
 
   import TopBar from "../TopBar.svelte";
   import ImportDialog from "../ImportDialog.svelte";
@@ -308,7 +309,7 @@ import ShareToast from "../ShareToast.svelte";
 
   // ── Keyboard delete ────────────────────────────────────────────────────────
   function handleKeyDown(e: KeyboardEvent) {
-    if ((e.key === "Delete" || e.key === "Backspace") && !isSelectionEmpty(selectionSet)) {
+    if (matchesShortcut("selection.delete", e) && !isSelectionEmpty(selectionSet)) {
       const tag = (e.target as HTMLElement).tagName;
       if (["INPUT", "TEXTAREA", "SELECT"].includes(tag)) return;
       handleDeleteSelection();

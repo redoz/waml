@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, test, expect, vi } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/svelte";
 import SelectionToolbar from "./SelectionToolbar.svelte";
 
@@ -48,4 +48,20 @@ describe("SelectionToolbar", () => {
     await fireEvent.click(screen.getByRole("button", { name: /delete selection/i }));
     expect(onDelete).toHaveBeenCalledOnce();
   });
+});
+
+test("the Delete button shows the ⌫ key hint", () => {
+  render(SelectionToolbar, {
+    props: {
+      x: 100,
+      y: 100,
+      nodeCount: 1,
+      edgeCount: 0,
+      onNewDiagram: vi.fn(),
+      onDelete: vi.fn(),
+    },
+  });
+  const del = screen.getByRole("button", { name: "Delete selection" });
+  const kbd = del.querySelector("kbd");
+  expect(kbd?.textContent).toBe("⌫"); // ⌫
 });

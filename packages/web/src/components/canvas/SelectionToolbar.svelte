@@ -3,6 +3,8 @@
   // the parent computes the screen anchor (x,y — top-center of the box) and the
   // selected node/edge counts, and supplies the action callbacks.
   import { Trash2, LayoutDashboard } from "lucide-svelte";
+  import KeyHint from "../KeyHint.svelte";
+  import { keyLabel } from "../../lib/shortcuts";
 
   let {
     x,
@@ -112,9 +114,10 @@
         onclick={onDelete}
         aria-label="Delete selection"
         title="Delete the selected objects and relationships"
-        class="flex items-center gap-[6px] rounded-lg px-2.5 py-[7px] text-[12px] font-semibold text-slate-500 hover:bg-[#fdf2f2] hover:text-[#dc2626] cursor-pointer whitespace-nowrap transition-colors"
+        class="group flex items-center gap-[6px] rounded-lg px-2.5 py-[7px] text-[12px] font-semibold text-slate-500 hover:bg-[#fdf2f2] hover:text-[#dc2626] cursor-pointer whitespace-nowrap transition-colors"
       >
         <Trash2 size={14} /> Delete selection
+        <KeyHint keys={keyLabel("selection.delete")} />
       </button>
     {/if}
   </div>
