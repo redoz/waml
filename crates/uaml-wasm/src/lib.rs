@@ -50,6 +50,12 @@ pub fn fmt_bundle(bundle: &[(String, String)]) -> Vec<(String, String)> {
         .collect()
 }
 
+/// Rebuild every `<dir>/index.md` from the bundle's package forest, leaving
+/// concept/diagram docs untouched.
+pub fn reindex_bundle_core(bundle: &[(String, String)]) -> Vec<(String, String)> {
+    uaml::index_md::reindex_bundle(bundle)
+}
+
 /// Result of solving one diagram: absolute rects + any layout diagnostics.
 /// Tsify emits its TypeScript type; under `wasm` it crosses the boundary as a
 /// plain JS object.
@@ -132,6 +138,14 @@ pub fn apply_ops(bundle: JsValue, ops: JsValue) -> Result<JsValue, JsValue> {
 pub fn fmt(bundle: JsValue) -> Result<JsValue, JsValue> {
     let b: Vec<(String, String)> = serde_wasm_bindgen::from_value(bundle)?;
     Ok(serde_wasm_bindgen::to_value(&fmt_bundle(&b))?)
+}
+
+/// `bundle`: a `[path, markdown][]`. Returns the bundle with every
+/// `<dir>/index.md` regenerated from the package forest.
+#[wasm_bindgen]
+pub fn reindex(bundle: JsValue) -> Result<JsValue, JsValue> {
+    let b: Vec<(String, String)> = serde_wasm_bindgen::from_value(bundle)?;
+    Ok(serde_wasm_bindgen::to_value(&reindex_bundle_core(&b))?)
 }
 
 /// Split a multi-document bundle string into `[path, markdown][]`.

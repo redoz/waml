@@ -62,6 +62,20 @@ export function init_panic_hook() {
 }
 
 /**
+ * `bundle`: a `[path, markdown][]`. Returns the bundle with every
+ * `<dir>/index.md` regenerated from the package forest.
+ * @param {any} bundle
+ * @returns {any}
+ */
+export function reindex(bundle) {
+    const ret = wasm.reindex(bundle);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return takeFromExternrefTable0(ret[0]);
+}
+
+/**
  * `bundle`: `[path, markdown][]`; `diagram_key`: which diagram to solve;
  * `sizes`: `Record<string, {w, h}>`; `cfg`: `SolveConfig | null | undefined`.
  * Returns `{ solved, diagnostics }`.
