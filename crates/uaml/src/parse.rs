@@ -361,6 +361,9 @@ struct ParsedDoc {
     slug: String,
     ty: ClassifierType,
     doc: Document,
+    /// Lossless OKF projection of the source document (single source of the
+    /// nested `Node::concept`; never re-derived by hand).
+    concept: crate::okf::Concept,
 }
 
 fn parse_bundle(bundle: &[(String, String)]) -> Vec<ParsedDoc> {
@@ -369,7 +372,8 @@ fn parse_bundle(bundle: &[(String, String)]) -> Vec<ParsedDoc> {
         .map(|(path, text)| {
             let doc = parse_document(text);
             let ty = ClassifierType::parse(doc.frontmatter.get_str("type").unwrap_or("uml.Class"));
-            ParsedDoc { slug: doc_slug(path), ty, doc }
+            let concept = crate::okf::project(path, text);
+            ParsedDoc { slug: doc_slug(path), ty, doc, concept }
         })
         .collect()
 }
@@ -401,6 +405,7 @@ fn build_node(p: &ParsedDoc, keyset: &HashSet<&str>) -> Node {
         }
     }
     Node {
+        concept: p.concept.clone(),
         key: p.slug.clone(),
         ty: p.ty.clone(),
         title,

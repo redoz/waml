@@ -3,7 +3,7 @@ import { effectiveDiagrams, ALL_DIAGRAM_KEY } from "./diagrams";
 import type { ModelGraph } from "@uaml/okf";
 
 const node = (key: string): ModelGraph["nodes"][0] =>
-  ({ key, title: key, type: "uml.Class", stereotypes: [], attributes: [], position: { x: 0, y: 0 } });
+  ({ concept: { id: key, type: "uml.Class", body: "" }, key, title: key, type: "uml.Class", stereotypes: [], attributes: [], position: { x: 0, y: 0 } });
 
 // NOTE: diagram *editing* is derived-only in Stage 1b (no diagram / membership
 // ops); the store's diagram mutators are no-ops until Stage 1c. `effectiveDiagrams`

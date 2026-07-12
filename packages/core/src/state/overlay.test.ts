@@ -1,9 +1,34 @@
 import { describe, it, expect } from "vitest";
-import { toModelGraph, edgeKey, emptyOverlay, type Overlay, type RustModel } from "./overlay";
+import {
+  toModelGraph,
+  edgeKey,
+  emptyOverlay,
+  type Overlay,
+  type RustModel,
+  type RustNode,
+  type RustEdge,
+  type RustDiagram,
+} from "./overlay";
+
+/** A default OKF projection for fixtures that don't care about the concept tier. */
+const CONCEPT = { id: "", type: "uml.Class", body: "" };
+
+/** Node fixtures predate the additive `concept` field; the helper injects it so
+ *  callers stay terse while the wire type keeps `concept` required. */
+type RustNodeInput = Omit<RustNode, "concept"> & { concept?: RustNode["concept"] };
 
 // A minimal Rust `Model` (as serialized from wasm `build_model`) for adapter tests.
-function model(partial: Partial<RustModel>): RustModel {
-  return { nodes: [], edges: [], diagrams: [], ...partial };
+function model(partial: {
+  nodes?: RustNodeInput[];
+  edges?: RustEdge[];
+  diagrams?: RustDiagram[];
+}): RustModel {
+  return {
+    edges: [],
+    diagrams: [],
+    ...partial,
+    nodes: (partial.nodes ?? []).map((n) => ({ concept: CONCEPT, ...n })),
+  };
 }
 
 describe("toModelGraph", () => {
@@ -117,6 +142,7 @@ describe("toModelGraph", () => {
           description: "an order",
           attributes: [{ name: "id", type: { name: "OrderId" }, multiplicity: "1" }],
           values: ["A", "B"],
+          concept: { id: "shop/order", type: "uml.Class", body: "# Order\n" },
         },
       ],
     });
@@ -127,5 +153,7 @@ describe("toModelGraph", () => {
     expect(n.description).toBe("an order");
     expect(n.attributes[0].name).toBe("id");
     expect(n.values).toEqual(["A", "B"]);
+    // The nested OKF concept is forwarded straight through onto the graph node.
+    expect(n.concept).toEqual({ id: "shop/order", type: "uml.Class", body: "# Order\n" });
   });
 });

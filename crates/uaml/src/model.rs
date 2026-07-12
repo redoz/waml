@@ -336,6 +336,12 @@ pub enum NoteAnchor {
 #[derive(Debug, Clone, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Node {
+    /// Lossless OKF projection of this node's source document (OKF tier). Nested
+    /// additively beneath the flat UML fields below — every flat field mirrors a
+    /// `concept.*` slot, but `concept` also carries the non-UML OKF fields
+    /// (`tags`/`resource`/`timestamp`/`links`/`citations`/`role`/`extra`) the flat
+    /// projection drops. Populated from `crate::okf::project` (single source).
+    pub concept: crate::okf::Concept,
     pub key: String,
     #[cfg_attr(feature = "serde", serde(rename = "type"))]
     pub ty: ClassifierType,
@@ -468,6 +474,10 @@ mod tests {
     #[test]
     fn model_looks_up_nodes_by_key() {
         let node = Node {
+            concept: crate::okf::project(
+                "order.md",
+                "---\ntype: uml.Class\ntitle: Order\n---\n# Order\n",
+            ),
             key: "order".to_string(),
             ty: ClassifierType::Uml(UmlMetaclass::Class),
             title: "Order".to_string(),

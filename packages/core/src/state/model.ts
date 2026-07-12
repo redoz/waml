@@ -102,7 +102,17 @@ export function createModelStore(initial?: Bundle, opts: CreateStoreOptions = {}
       overlay.nodes.set(slug, { position });
       const ok = run(nodeNewOps({ slug, title: "New object", type: "uml.Class" }));
       if (!ok) emit();
-      return findNode(slug) ?? { key: slug, type: "uml.Class", title: "New object", stereotypes: [], attributes: [], position };
+      return (
+        findNode(slug) ?? {
+          concept: { id: slug, type: "uml.Class", body: "" },
+          key: slug,
+          type: "uml.Class",
+          title: "New object",
+          stereotypes: [],
+          attributes: [],
+          position,
+        }
+      );
     },
 
     updateNode(key: string, patch: Partial<ModelNode>): void {

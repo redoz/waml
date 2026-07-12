@@ -11,6 +11,7 @@ const ClassifierBox = (await import("./ClassifierBox.svelte")).default;
 
 const mkData = (display: DiagramDisplay): OkfNodeData =>
   ({
+    concept: { id: "n", type: "uml.Class", body: "" },
     key: "n",
     title: "Order",
     type: "uml.Class",

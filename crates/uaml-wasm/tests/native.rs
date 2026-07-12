@@ -133,6 +133,67 @@ fn build_bundle_json_round_trips_every_okf_field_and_leaves_uml_intact() {
 }
 
 #[test]
+fn build_model_json_nests_okf_concept_on_each_node() {
+    // Additive OKF expand: every `Node` now carries a nested `concept` mirroring
+    // the doc's lossless `okf::project`. A non-UML `Playbook` (which still becomes
+    // a classifier node) carries every OKF field — tags, resource, timestamp, a
+    // body link, a citation — on `concept`, none of which the flat Node exposes.
+    let bundle = vec![
+        (
+            "shop/order.md".to_string(),
+            "---\ntype: uml.Class\ntitle: Order\n---\n# Order\n\n## Attributes\n- id: OrderId {1}\n".to_string(),
+        ),
+        (
+            "playbooks/dataplex.md".to_string(),
+            "---\n\
+                type: Playbook\n\
+                title: Dataplex Playbook\n\
+                description: How to onboard Dataplex.\n\
+                resource: /playbooks/dataplex\n\
+                tags: [data, governance]\n\
+                timestamp: 2026-05-22\n\
+                owner: data-team\n\
+                ---\n\
+                # Dataplex Playbook\n\n\
+                See the [customers table](/tables/customers.md) for the join key.\n\n\
+                # Citations\n\n\
+                [1] [BigQuery announcement](https://cloud.google.com/blog/x)\n"
+                .to_string(),
+        ),
+    ];
+
+    let json = build_model_json(&bundle);
+    let v: serde_json::Value = serde_json::from_str(&json).unwrap();
+    let nodes = v["nodes"].as_array().expect("nodes array");
+
+    // The UML node keeps every flat field AND gains a nested `concept`.
+    let order = nodes.iter().find(|n| n["key"] == "order").expect("order node");
+    assert_eq!(order["type"], "uml.Class");
+    assert_eq!(order["title"], "Order");
+    assert_eq!(order["attributes"][0]["name"], "id");
+    // The nested concept mirrors okf::project: id = full path minus `.md`.
+    assert_eq!(order["concept"]["id"], "shop/order");
+    assert_eq!(order["concept"]["type"], "uml.Class");
+
+    // The non-UML Playbook is still a classifier node; its `concept` carries
+    // every OKF field the flat Node drops.
+    let pb = nodes.iter().find(|n| n["key"] == "dataplex").expect("playbook node");
+    let c = &pb["concept"];
+    assert_eq!(c["id"], "playbooks/dataplex");
+    assert_eq!(c["type"], "Playbook");
+    assert_eq!(c["title"], "Dataplex Playbook");
+    assert_eq!(c["description"], "How to onboard Dataplex.");
+    assert_eq!(c["resource"], "/playbooks/dataplex");
+    assert_eq!(c["tags"][0], "data");
+    assert_eq!(c["tags"][1], "governance");
+    assert_eq!(c["timestamp"], "2026-05-22");
+    assert!(c["body"].as_str().unwrap().contains("# Dataplex Playbook"));
+    assert_eq!(c["links"][0]["href"], "/tables/customers.md");
+    assert_eq!(c["citations"][0]["href"], "https://cloud.google.com/blog/x");
+    assert_eq!(c["extra"]["owner"], "data-team");
+}
+
+#[test]
 fn fmt_is_idempotent() {
     // A document with loose spacing; fmt canonicalizes, and re-fmt is a no-op.
     let src = vec![(
