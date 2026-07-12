@@ -3,7 +3,7 @@
   // TopBar switcher. All mutations are callbacks so it unit-tests like TopBar.
   import { Check, ChevronDown, Folder, FileText, StickyNote, Box } from "lucide-svelte";
   import { buildNavTree, packageOf, type NavRow, type NavKind } from "@uaml/core/nav/tree";
-  import { filterNav } from "@uaml/core/nav/search";
+  import { filterNav, matchSpan } from "@uaml/core/nav/search";
   import { GripVertical } from "lucide-svelte";
   import type { ModelGraph } from "@uaml/okf";
 
@@ -65,10 +65,12 @@
     return () => window.removeEventListener("keydown", onKey);
   });
 
-  // The visible rows: filtered when searching, else the full scoped subtree.
-  const rows = $derived<NavRow[]>(
-    query ? filterNav(graph, scopeKey, query, typeFilter).inScope : buildNavTree(graph, scopeKey),
-  );
+  // The full scoped subtree (shown when not searching).
+  const rows = $derived<NavRow[]>(buildNavTree(graph, scopeKey));
+  // While searching, the three-state filtered result (matches / empty-scope /
+  // empty-all); null clears the search overlay.
+  const search = $derived(query ? filterNav(graph, scopeKey, query, typeFilter) : null);
+  const scopeLabel = $derived(scopeKey.split("/").filter(Boolean).pop() || (graph.path || "model"));
 
   // Drag-reorder: track the dragged member; dropping on a same-package row
   // persists the reordered member keys via onReorder.
@@ -114,6 +116,16 @@
     if (row.kind === "package") onScope?.(row.key);
     else if (row.kind === "diagram") onSelectDiagram?.(row.key);
     else actionMenu = { key: row.key };
+  }
+
+  // A row clicked from search results: rescoping to a package also clears the
+  // query (the sheet returns to the plain scoped tree); other kinds behave as
+  // in the main tree.
+  function activateResult(row: NavRow) {
+    if (row.kind === "package") {
+      onScope?.(row.key);
+      query = "";
+    } else activateRow(row);
   }
 
   // Right-click context menu. `mode` reveals an inline input for the create /
@@ -190,34 +202,75 @@
 
   <div class="my-1 border-t border-[#eef1f5]"></div>
 
+  <!-- Title with the matched substring wrapped in <mark> (search results). -->
+  {#snippet marked(title: string)}
+    {@const span = matchSpan(title, query)}
+    {#if span}{title.slice(0, span[0])}<mark class="rounded-[2px] bg-[#fff3bf] text-inherit"
+        >{title.slice(span[0], span[1])}</mark
+      >{title.slice(span[1])}{:else}{title}{/if}
+  {/snippet}
+
+  <!-- A single search-result row (no drag; highlighted title). -->
+  {#snippet resultRow(row: NavRow)}
+    {@const Icon = KIND_ICON[row.kind]}
+    <button
+      role="treeitem"
+      aria-label={row.title}
+      aria-selected={row.kind === "diagram" && row.key === activeDiagramKey}
+      oncontextmenu={(e) => { e.preventDefault(); openCtx(row); }}
+      onclick={() => activateResult(row)}
+      style="padding-left:{8 + row.depth * 16}px"
+      class="w-full text-left pr-3 py-[5px] cursor-pointer flex items-center gap-[7px] text-slate-900 hover:bg-[#f1f3f7]"
+    >
+      <Icon size={15} class="flex-shrink-0 text-slate-500" />
+      <span class="truncate flex-1">{@render marked(row.title)}</span>
+    </button>
+  {/snippet}
+
   <!-- Tree -->
   <div class="max-h-[420px] overflow-y-auto py-0.5">
-    {#each rows as row (row.key)}
-      {@const Icon = KIND_ICON[row.kind]}
-      <button
-        role="treeitem"
-        aria-selected={row.kind === "diagram" && row.key === activeDiagramKey}
-        draggable="true"
-        ondragstart={() => (dragKey = row.key)}
-        ondragover={(e) => e.preventDefault()}
-        ondrop={() => dropOn(row)}
-        oncontextmenu={(e) => { e.preventDefault(); openCtx(row); }}
-        onclick={() => activateRow(row)}
-        style="padding-left:{8 + row.depth * 16}px"
-        class="group w-full text-left pr-3 py-[5px] cursor-pointer flex items-center gap-[7px] hover:bg-[#f1f3f7] {row.kind === 'diagram' && row.key === activeDiagramKey ? 'text-[#1e88e5] font-[600]' : 'text-slate-900'}"
-      >
-        <GripVertical
-          size={13}
-          class="flex-shrink-0 text-slate-300 opacity-0 group-hover:opacity-100 cursor-grab"
-          aria-hidden="true"
-        />
-        <Icon size={15} class="flex-shrink-0 text-slate-500" />
-        <span class="truncate flex-1">{row.title}</span>
-        {#if row.kind === "diagram" && row.key === activeDiagramKey}
-          <Check size={15} class="flex-shrink-0 text-[#1e88e5]" />
-        {/if}
-      </button>
-    {/each}
+    {#if search}
+      {#if search.state === "empty-all"}
+        <div class="px-3 py-6 text-center text-[12.5px] text-slate-400">No matches found</div>
+      {:else if search.state === "empty-scope"}
+        <div class="px-3 py-3 text-center text-[12.5px] text-slate-400">No matches in {scopeLabel}</div>
+        <div class="px-3 pb-1 text-[11px] font-[600] uppercase tracking-wide text-slate-400">Elsewhere in model</div>
+        {#each search.elsewhere as row (row.key)}
+          {@render resultRow(row)}
+        {/each}
+      {:else}
+        {#each search.inScope as row (row.key)}
+          {@render resultRow(row)}
+        {/each}
+      {/if}
+    {:else}
+      {#each rows as row (row.key)}
+        {@const Icon = KIND_ICON[row.kind]}
+        <button
+          role="treeitem"
+          aria-selected={row.kind === "diagram" && row.key === activeDiagramKey}
+          draggable="true"
+          ondragstart={() => (dragKey = row.key)}
+          ondragover={(e) => e.preventDefault()}
+          ondrop={() => dropOn(row)}
+          oncontextmenu={(e) => { e.preventDefault(); openCtx(row); }}
+          onclick={() => activateRow(row)}
+          style="padding-left:{8 + row.depth * 16}px"
+          class="group w-full text-left pr-3 py-[5px] cursor-pointer flex items-center gap-[7px] hover:bg-[#f1f3f7] {row.kind === 'diagram' && row.key === activeDiagramKey ? 'text-[#1e88e5] font-[600]' : 'text-slate-900'}"
+        >
+          <GripVertical
+            size={13}
+            class="flex-shrink-0 text-slate-300 opacity-0 group-hover:opacity-100 cursor-grab"
+            aria-hidden="true"
+          />
+          <Icon size={15} class="flex-shrink-0 text-slate-500" />
+          <span class="truncate flex-1">{row.title}</span>
+          {#if row.kind === "diagram" && row.key === activeDiagramKey}
+            <Check size={15} class="flex-shrink-0 text-[#1e88e5]" />
+          {/if}
+        </button>
+      {/each}
+    {/if}
   </div>
 
   {#if actionMenu}

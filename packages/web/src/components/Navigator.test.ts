@@ -106,3 +106,26 @@ test("context menu lists de-prefixed metaclasses and creates under the package",
   await fireEvent.click(screen.getByRole("menuitem", { name: "New Class" }));
   expect(onCreateNode).toHaveBeenCalledWith("sales", "uml.Class");
 });
+
+test("zero-in-scope shows No matches in <scope> + Elsewhere divider with results", async () => {
+  const g2 = structuredClone(graph);
+  g2.nodes.push(node("payment", "Payment"));
+  g2.packages.push({ ...node("billing", "billing", "uml.Package"), members: ["payment"] });
+  g2.packages[0].members = ["sales", "billing"];
+  render(Navigator, { props: props({ graph: g2 }) });
+  await fireEvent.input(screen.getByLabelText("Search model"), { target: { value: "payment" } });
+  expect(screen.getByText(/No matches in/).textContent).toContain("sales");
+  expect(screen.getByText(/Elsewhere in model/)).toBeTruthy();
+  expect(screen.getByText("Payment", { selector: "mark" })).toBeTruthy();
+});
+
+test("clicking a package in results rescopes and clears the query", async () => {
+  const onScope = vi.fn();
+  // Scope at the root so the "sales" package itself surfaces as a result row.
+  render(Navigator, { props: props({ onScope, scopeKey: "" }) });
+  const input = screen.getByLabelText("Search model") as HTMLInputElement;
+  await fireEvent.input(input, { target: { value: "sal" } });
+  await fireEvent.click(screen.getByRole("treeitem", { name: /sales/ }));
+  expect(onScope).toHaveBeenCalled();
+  expect(input.value).toBe("");
+});
