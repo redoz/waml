@@ -358,6 +358,9 @@ fn doc_slug(path: &str) -> String {
 }
 
 struct ParsedDoc {
+    /// Bundle path of the source document (forward-slash normalized on use);
+    /// carries the directory the doc lives in, for package discovery.
+    path: String,
     slug: String,
     ty: ClassifierType,
     doc: Document,
@@ -373,7 +376,7 @@ fn parse_bundle(bundle: &[(String, String)]) -> Vec<ParsedDoc> {
             let doc = parse_document(text);
             let ty = ClassifierType::parse(doc.frontmatter.get_str("type").unwrap_or("uml.Class"));
             let concept = crate::okf::project(path, text);
-            ParsedDoc { slug: doc_slug(path), ty, doc, concept }
+            ParsedDoc { path: path.clone(), slug: doc_slug(path), ty, doc, concept }
         })
         .collect()
 }
@@ -417,17 +420,195 @@ fn build_node(p: &ParsedDoc, keyset: &HashSet<&str>) -> Node {
     }
 }
 
+/// Resolved title of a doc (frontmatter `title`, else H1, else its slug).
+fn doc_title(p: &ParsedDoc) -> String {
+    p.doc.frontmatter.get_str("title").map(String::from).unwrap_or_else(|| {
+        if p.doc.title.is_empty() { p.slug.clone() } else { p.doc.title.clone() }
+    })
+}
+
+/// Directory of a bundle path ("" for root). Forward-slash normalized.
+fn dir_of(path: &str) -> String {
+    let p = path.replace('\\', "/");
+    match p.rfind('/') { Some(i) => p[..i].to_string(), None => String::new() }
+}
+
+/// Parsed shape of a frontmatter-less `index.md`.
+struct IndexDoc {
+    intro: Option<String>,
+    order: Vec<String>,
+    h1: String,
+}
+
+/// Parse a frontmatter-less index.md: H1, intro prose (before the first bullet),
+/// and `* [Title](url) - blurb` entries. `url` maps to a member key: `sub/` ->
+/// the dir-relative sub-package key; `./slug.md` -> slug.
+fn parse_index(dir: &str, text: &str) -> IndexDoc {
+    let mut h1 = String::new();
+    let mut intro_lines: Vec<&str> = vec![];
+    let mut order = vec![];
+    let re = regex::Regex::new(r"^\s*[*-]\s*\[[^\]]*\]\(([^)]+)\)(?:\s*-\s*(.*))?$").unwrap();
+    let mut seen_bullet = false;
+    for line in text.lines() {
+        if let Some(c) = re.captures(line) {
+            seen_bullet = true;
+            let url = c.get(1).unwrap().as_str();
+            let key = if let Some(sub) = url.strip_suffix('/') {
+                let seg = sub.trim_start_matches("./").trim_end_matches('/');
+                if dir.is_empty() { seg.to_string() } else { format!("{dir}/{seg}") }
+            } else {
+                url.rsplit('/').next().unwrap_or(url).strip_suffix(".md").unwrap_or(url).to_string()
+            };
+            order.push(key);
+        } else if !seen_bullet {
+            let t = line.trim();
+            if let Some(rest) = t.strip_prefix("# ") {
+                h1 = rest.trim().to_string();
+            } else if !t.is_empty() {
+                intro_lines.push(t);
+            }
+        }
+    }
+    IndexDoc {
+        intro: (!intro_lines.is_empty()).then(|| intro_lines.join(" ")),
+        order,
+        h1,
+    }
+}
+
+/// Build the package forest from the bundle's directory structure.
+/// `docs` = (full_path, key, title) for every NON-index concept/diagram doc.
+/// `indexes` = raw `index.md` text keyed by its directory; reconciles member
+/// order + package description, and the root entry sets `model_path` (its H1).
+/// Returns `(model_path, packages)`.
+fn build_packages(
+    docs: &[(String, String, String)],
+    indexes: &std::collections::BTreeMap<String, String>,
+) -> (String, Vec<Node>) {
+    use std::collections::{BTreeMap, BTreeSet};
+    // Every directory that contains a doc, plus all ancestor dirs, is a package.
+    let mut dirs: BTreeSet<String> = BTreeSet::new();
+    dirs.insert(String::new());
+    for (path, _, _) in docs {
+        let mut d = dir_of(path);
+        loop {
+            dirs.insert(d.clone());
+            if d.is_empty() { break; }
+            d = dir_of(&d);
+        }
+    }
+    // members: (title, key) per dir so we can sort A–Z by title/segment name.
+    let mut members: BTreeMap<String, Vec<(String, String)>> = BTreeMap::new();
+    for d in &dirs {
+        members.entry(d.clone()).or_default();
+    }
+    // child docs
+    for (path, key, title) in docs {
+        members.get_mut(&dir_of(path)).unwrap().push((title.clone(), key.clone()));
+    }
+    // child sub-packages: each non-root dir is a member of its parent, sorted by last segment.
+    for d in &dirs {
+        if d.is_empty() { continue; }
+        let parent = dir_of(d);
+        let seg = d.rsplit('/').next().unwrap_or(d).to_string();
+        members.get_mut(&parent).unwrap().push((seg, d.clone()));
+    }
+    let packages = dirs
+        .iter()
+        .map(|d| {
+            let mut ms = members.get(d).cloned().unwrap_or_default();
+            ms.sort_by(|a, b| a.0.to_lowercase().cmp(&b.0.to_lowercase()).then(a.1.cmp(&b.1)));
+            // Discovered member keys, already in A–Z order.
+            let discovered: Vec<String> = ms.into_iter().map(|(_, k)| k).collect();
+            let title = if d.is_empty() {
+                String::new()
+            } else {
+                d.rsplit('/').next().unwrap_or(d).to_string()
+            };
+            let index_path =
+                if d.is_empty() { "index.md".to_string() } else { format!("{d}/index.md") };
+
+            // Reconcile against a real index.md when present: listed survivors
+            // keep their order, unlisted discovered members are appended A–Z,
+            // listed-but-absent entries are silently dropped. Otherwise A–Z.
+            let (members, intro, index_src) = match indexes.get(d) {
+                Some(text) => {
+                    let idx = parse_index(d, text);
+                    let mut ordered: Vec<String> = vec![];
+                    for k in &idx.order {
+                        if discovered.contains(k) && !ordered.contains(k) {
+                            ordered.push(k.clone());
+                        }
+                    }
+                    for k in &discovered {
+                        if !ordered.contains(k) {
+                            ordered.push(k.clone());
+                        }
+                    }
+                    (ordered, idx.intro, text.clone())
+                }
+                // No index.md: synthesize one so `concept` is always populated.
+                None => (discovered, None, format!("# {title}\n")),
+            };
+
+            // Title/description now live on `concept` (single source). Pin the
+            // package title to its directory segment and route the index intro
+            // into `concept.description`.
+            let mut concept = crate::okf::project(&index_path, &index_src);
+            concept.title = (!title.is_empty()).then(|| title.clone());
+            concept.description = intro;
+
+            Node {
+                concept,
+                key: d.clone(),
+                ty: ClassifierType::Uml(crate::model::UmlMetaclass::Package),
+                stereotypes: vec![],
+                abstract_: false,
+                attributes: vec![],
+                values: vec![],
+                note_body: None,
+                annotates: vec![],
+                members,
+            }
+        })
+        .collect();
+
+    // Model path = the ROOT index.md's H1 title (else "").
+    let path = indexes
+        .get("")
+        .map(|text| parse_index("", text).h1)
+        .unwrap_or_default();
+    (path, packages)
+}
+
 pub fn build_model(bundle: &[(String, String)]) -> Model {
     let parsed = parse_bundle(bundle);
-    let classifiers: Vec<&ParsedDoc> =
-        parsed.iter().filter(|p| p.ty != ClassifierType::Diagram).collect();
+    // `index.md`/`log.md` are reserved package files, never classifiers.
+    let classifiers: Vec<&ParsedDoc> = parsed
+        .iter()
+        .filter(|p| p.ty != ClassifierType::Diagram && p.slug != "index" && p.slug != "log")
+        .collect();
     let keyset: HashSet<&str> = classifiers.iter().map(|p| p.slug.as_str()).collect();
 
     let nodes = classifiers.iter().map(|p| build_node(p, &keyset)).collect();
     let edges: Vec<Edge> = build_edges(&classifiers, &keyset);
     let diagrams: Vec<Diagram> = build_diagrams(&parsed, &keyset);
 
-    Model { nodes, edges, diagrams, path: String::new(), packages: Vec::new() }
+    // Discover the package forest from directory structure (index/log excluded).
+    let docs: Vec<(String, String, String)> = parsed
+        .iter()
+        .filter(|p| p.slug != "index" && p.slug != "log")
+        .map(|p| (p.path.clone(), p.slug.clone(), doc_title(p)))
+        .collect();
+    // Raw index.md text keyed by directory, for member/description reconciliation.
+    let indexes: std::collections::BTreeMap<String, String> = bundle
+        .iter()
+        .filter(|(path, _)| doc_slug(path) == "index")
+        .map(|(path, text)| (dir_of(path), text.clone()))
+        .collect();
+    let (path, packages) = build_packages(&docs, &indexes);
+
+    Model { nodes, edges, diagrams, path, packages }
 }
 
 use crate::model::{AssocName, RelationshipKind};
@@ -549,6 +730,61 @@ fn build_diagrams(parsed: &[ParsedDoc], keyset: &HashSet<&str>) -> Vec<Diagram> 
 mod tests {
     use super::*;
     use crate::model::RelationshipKind;
+
+    #[test]
+    fn build_model_discovers_nested_packages_from_directories() {
+        let b = vec![
+            ("sales/order.md".to_string(), "---\ntype: uml.Class\ntitle: Order\n---\n# Order\n".to_string()),
+            ("sales/orders/order-line.md".to_string(), "---\ntype: uml.Class\ntitle: OrderLine\n---\n# OrderLine\n".to_string()),
+            ("billing/invoice.md".to_string(), "---\ntype: uml.Class\ntitle: Invoice\n---\n# Invoice\n".to_string()),
+        ];
+        let m = build_model(&b);
+        // classifiers remain flat in `nodes`
+        assert_eq!(m.nodes.len(), 3);
+        // packages: root "", "sales", "sales/orders", "billing"
+        let keys: std::collections::HashSet<_> = m.packages.iter().map(|p| p.key.as_str()).collect();
+        assert!(keys.contains("") && keys.contains("sales") && keys.contains("sales/orders") && keys.contains("billing"));
+        let root = m.packages.iter().find(|p| p.key.is_empty()).unwrap();
+        assert_eq!(root.members, vec!["billing".to_string(), "sales".to_string()]); // A–Z sub-packages
+        let sales = m.packages.iter().find(|p| p.key == "sales").unwrap();
+        // members = child classifier "order" + sub-package "sales/orders", A–Z by title/name
+        assert!(sales.members.contains(&"order".to_string()));
+        assert!(sales.members.contains(&"sales/orders".to_string()));
+    }
+
+    #[test]
+    fn build_model_honors_index_md_order_blurbs_and_intro() {
+        let b = vec![
+            ("sales/index.md".to_string(),
+             "# Sales\n\nSales bounded context.\n\n* [Customer](./customer.md) - a buyer\n* [Order](./order.md) - an order\n".to_string()),
+            ("sales/order.md".to_string(), "---\ntype: uml.Class\ntitle: Order\n---\n# Order\n".to_string()),
+            ("sales/customer.md".to_string(), "---\ntype: uml.Class\ntitle: Customer\n---\n# Customer\n".to_string()),
+            // present on disk but NOT listed -> appended after listed ones
+            ("sales/invoice.md".to_string(), "---\ntype: uml.Class\ntitle: Invoice\n---\n# Invoice\n".to_string()),
+            ("index.md".to_string(), "# acme-model\n\n* [sales](sales/)\n".to_string()),
+        ];
+        let m = build_model(&b);
+        assert_eq!(m.path, "acme-model");
+        // index.md docs are not classifiers
+        assert!(m.nodes.iter().all(|n| n.key != "index"));
+        let sales = m.packages.iter().find(|p| p.key == "sales").unwrap();
+        assert_eq!(sales.concept.description.as_deref(), Some("Sales bounded context."));
+        // listed order first (customer, order), then unlisted appended (invoice)
+        assert_eq!(sales.members, vec!["customer".to_string(), "order".to_string(), "invoice".to_string()]);
+    }
+
+    #[test]
+    fn build_model_flat_bundle_yields_single_root_package() {
+        let b = vec![
+            ("order.md".to_string(), "---\ntype: uml.Class\ntitle: Order\n---\n# Order\n".to_string()),
+            ("customer.md".to_string(), "---\ntype: uml.Class\ntitle: Customer\n---\n# Customer\n".to_string()),
+        ];
+        let m = build_model(&b);
+        assert_eq!(m.packages.len(), 1);
+        let root = &m.packages[0];
+        assert_eq!(root.key, "");
+        assert_eq!(root.members, vec!["customer".to_string(), "order".to_string()]);
+    }
 
     const ORDER: &str = "---\ntype: uml.Class\nstereotype: [aggregateRoot, entity]\ntitle: Order\n---\n# Order\n\n## Attributes\n- id: OrderId\n- status: [OrderStatus](./order-status.md) {0..1}\n\n## Relationships\n- composes [OrderLine](./order-line.md): 1 to 1..* lines\n\n## Provenance\nHand-authored. Keep me.\n";
 
