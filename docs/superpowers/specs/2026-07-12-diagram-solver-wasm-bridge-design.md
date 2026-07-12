@@ -6,6 +6,34 @@
 WASM and give the Rust→JS bridge its own workspace package. No canvas
 integration; that is Phase 3 with its own spec.
 
+## Amendment — Tsify generates the TypeScript types
+
+**Supersedes the hand-written TS interfaces and the `serialize_maps_as_objects`
+serializer described later in this doc.** The solver IO + diagnostic types get
+`tsify-next` (`Tsify`) derives behind a new, wasm-only `wasm` feature on
+`crates/uaml`, so the TypeScript definitions (`Solved`, `Rect`, `SolvedGroup`,
+`FlagSet`, `Size`, `SolveConfig`, `Diagnostic`, `SolveResult`, …) are generated
+from the Rust structs — a single source of truth, no hand-maintained mirror in
+`index.ts`.
+
+- Feature: `wasm = ["serde", "dep:tsify-next", "dep:wasm-bindgen",
+  "dep:wasm-bindgen-utils"]`; `tsify-next` uses `features = ["js"]`
+  (serde-wasm-bindgen ABI). The `default` build stays pure — no serde, no
+  wasm-bindgen. `crates/uaml-wasm` builds `uaml` with `features = ["wasm"]`.
+- Derive stack: `#[cfg_attr(feature = "wasm", derive(tsify_next::Tsify))]` +
+  `#[cfg_attr(feature = "wasm", tsify(into_wasm_abi, from_wasm_abi))]`, on top of
+  the serde derives.
+- Map ABI: `BTreeMap<String, _>` fields cross as JS objects via
+  `#[tsify(type = "Record<string, T>")]` + `#[serde(serialize_with =
+  "wasm_bindgen_utils::serialize_btreemap_as_object")]` (wasm-target-gated) —
+  this replaces the `serialize_maps_as_objects(true)` serializer.
+- `solve` returns the `Tsify` `SolveResult` directly (`into_wasm_abi`) instead of
+  a manually-serialized `JsValue`.
+
+Everything else in this spec (bundle-in signature, package extraction, import
+flip, no-canvas scope, parity gate) is unchanged. See the plan
+`docs/superpowers/plans/2026-07-12-diagram-solver-wasm-bridge.md`.
+
 ## Context
 
 Phase 1 (`docs/superpowers/specs/2026-07-12-diagram-layout-solver-design.md`,
