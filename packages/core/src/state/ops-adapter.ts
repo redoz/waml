@@ -38,6 +38,7 @@ export type OpDto =
   | {
       op: "node.new";
       slug: string;
+      dir?: string;
       ty: string;
       title: string;
       stereotype?: string[];
@@ -71,7 +72,12 @@ export type OpDto =
       set_as?: string;
       set_as_ref?: string;
     }
-  | { op: "rel.rm"; source: string; kind?: string; target?: string; as?: string };
+  | { op: "rel.rm"; source: string; kind?: string; target?: string; as?: string }
+  | { op: "pkg.move"; slug: string; to_dir: string }
+  | { op: "pkg.rename"; from: string; to: string }
+  | { op: "pkg.delete"; path: string; cascade: boolean }
+  | { op: "pkg.reorder"; path: string; order: string[] }
+  | { op: "pkg.sort"; path: string };
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 
@@ -103,6 +109,7 @@ function isEnded(kind: RelationshipKind): boolean {
 
 export interface NewNodeFields {
   slug: string;
+  dir?: string;
   type?: string;
   title?: string;
   stereotypes?: string[];
@@ -115,6 +122,7 @@ export function nodeNewOps(f: NewNodeFields): OpDto[] {
     {
       op: "node.new",
       slug: f.slug,
+      ...(f.dir ? { dir: f.dir } : {}),
       ty: f.type ?? "uml.Class",
       title: f.title ?? "New object",
       ...(f.stereotypes && f.stereotypes.length ? { stereotype: f.stereotypes } : {}),
@@ -122,6 +130,24 @@ export function nodeNewOps(f: NewNodeFields): OpDto[] {
       ...(f.abstract ? { abstract: true } : {}),
     },
   ];
+}
+
+// ── packages ─────────────────────────────────────────────────────────────────
+
+export function moveNodeOps(slug: string, toDir: string): OpDto[] {
+  return [{ op: "pkg.move", slug, to_dir: toDir }];
+}
+export function renamePackageOps(from: string, to: string): OpDto[] {
+  return from === to ? [] : [{ op: "pkg.rename", from, to }];
+}
+export function deletePackageOps(path: string, cascade: boolean): OpDto[] {
+  return [{ op: "pkg.delete", path, cascade }];
+}
+export function reorderMembersOps(path: string, order: string[]): OpDto[] {
+  return [{ op: "pkg.reorder", path, order }];
+}
+export function sortPackageOps(path: string): OpDto[] {
+  return [{ op: "pkg.sort", path }];
 }
 
 export function nodeRenameOps(from: string, to: string): OpDto[] {

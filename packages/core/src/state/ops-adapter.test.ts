@@ -12,6 +12,11 @@ import {
   edgeAddOps,
   edgeSetOps,
   edgeRmOps,
+  moveNodeOps,
+  renamePackageOps,
+  deletePackageOps,
+  reorderMembersOps,
+  sortPackageOps,
   type OpDto,
 } from "./ops-adapter";
 import type { ModelGraph, Attribute } from "@uaml/okf";
@@ -209,5 +214,20 @@ describe("updateNodeOps composite", () => {
       { op: "node.set", slug: "order", title: "PO" },
       { op: "attr.add", node: "order", name: "note", ty: "String" },
     ]);
+  });
+});
+
+describe("package op builders", () => {
+  it("emit the expected wire shapes", () => {
+    expect(moveNodeOps("order", "billing")).toEqual([{ op: "pkg.move", slug: "order", to_dir: "billing" }]);
+    expect(renamePackageOps("sales", "commerce")).toEqual([{ op: "pkg.rename", from: "sales", to: "commerce" }]);
+    expect(renamePackageOps("sales", "sales")).toEqual([]);
+    expect(deletePackageOps("sales", true)).toEqual([{ op: "pkg.delete", path: "sales", cascade: true }]);
+    expect(reorderMembersOps("sales", ["a", "b"])).toEqual([{ op: "pkg.reorder", path: "sales", order: ["a", "b"] }]);
+    expect(sortPackageOps("sales")).toEqual([{ op: "pkg.sort", path: "sales" }]);
+    expect(nodeNewOps({ slug: "order", type: "uml.Class", title: "Order", dir: "sales" })[0]).toMatchObject({
+      op: "node.new",
+      dir: "sales",
+    });
   });
 });
