@@ -9,6 +9,7 @@ pub mod multiplicity;
 pub mod slug;
 pub mod solve;
 pub mod grammar;
+pub mod index_md;
 pub mod layout;
 pub mod parse;
 pub mod serialize;

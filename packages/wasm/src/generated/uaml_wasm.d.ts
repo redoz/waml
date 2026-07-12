@@ -91,6 +91,12 @@ export function fmt(bundle: any): any;
 export function init_panic_hook(): void;
 
 /**
+ * `bundle`: a `[path, markdown][]`. Returns the bundle with every
+ * `<dir>/index.md` regenerated from the package forest.
+ */
+export function reindex(bundle: any): any;
+
+/**
  * `bundle`: `[path, markdown][]`; `diagram_key`: which diagram to solve;
  * `sizes`: `Record<string, {w, h}>`; `cfg`: `SolveConfig | null | undefined`.
  * Returns `{ solved, diagnostics }`.
@@ -115,6 +121,7 @@ export interface InitOutput {
     readonly build_bundle: (a: any) => [number, number, number];
     readonly build_model: (a: any) => [number, number, number];
     readonly fmt: (a: any) => [number, number, number];
+    readonly reindex: (a: any) => [number, number, number];
     readonly solve: (a: any, b: number, c: number, d: any, e: any) => [number, number, number];
     readonly split_bundle: (a: number, b: number) => [number, number, number];
     readonly validate: (a: any) => [number, number, number];

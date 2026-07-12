@@ -6,6 +6,7 @@ import init, {
   build_model,
   fmt,
   init_panic_hook,
+  reindex,
   solve as solveRaw,
   split_bundle,
   validate,
@@ -41,7 +42,7 @@ export function initWasm(): Promise<void> {
   return ready;
 }
 
-export { apply_ops, build_bundle, build_model, fmt, split_bundle, validate };
+export { apply_ops, build_bundle, build_model, fmt, reindex, split_bundle, validate };
 
 /**
  * Solve one diagram's layout. `bundle` is the OKF bundle, `diagramKey` the
