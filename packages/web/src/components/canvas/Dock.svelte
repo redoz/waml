@@ -50,6 +50,7 @@
   // Reflect the toggle onto <html> so the global CSS reveals every .keyhint.
   $effect(() => {
     document.documentElement.toggleAttribute("data-show-shortcuts", hints.show);
+    return () => document.documentElement.removeAttribute("data-show-shortcuts");
   });
 
   function patch(p: Partial<DiagramDisplay>) {
