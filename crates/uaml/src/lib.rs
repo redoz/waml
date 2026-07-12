@@ -6,6 +6,7 @@ pub mod model;
 pub mod ops;
 pub mod multiplicity;
 pub mod slug;
+pub mod solve;
 pub mod grammar;
 pub mod layout;
 pub mod parse;
