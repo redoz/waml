@@ -39,6 +39,35 @@ pub(crate) fn op_pkg_rename(work: &mut Bundle, from: &str, to: &str) -> Result<(
     Ok(())
 }
 
+fn parent_of(dir: &str) -> String {
+    match dir.rfind('/') { Some(i) => dir[..i].to_string(), None => String::new() }
+}
+
+/// Delete a package directory. `cascade=true` removes every doc under `path/`
+/// (incl. its `index.md`). `cascade=false` = move-to-parent: strip the deleted
+/// segment from every child path so children reparent one level up. Root cannot
+/// be deleted.
+pub(crate) fn op_pkg_delete(work: &mut Bundle, path: &str, cascade: bool) -> Result<(), OpError> {
+    if path.is_empty() { return Err(OpError::at("pkg.delete", "cannot delete the root package")); }
+    let pfx = format!("{path}/");
+    if cascade {
+        let before = work.len();
+        work.retain(|(p, _)| !p.replace('\\', "/").starts_with(&pfx));
+        if work.len() == before { return Err(OpError::at("pkg.delete", format!("no package '{path}'"))); }
+    } else {
+        let parent = parent_of(path);
+        let parent_pfx = if parent.is_empty() { String::new() } else { format!("{parent}/") };
+        for (p, _) in work.iter_mut() {
+            let norm = p.replace('\\', "/");
+            if let Some(rest) = norm.strip_prefix(&pfx) {
+                // strip only the deleted segment, keep any deeper nesting
+                *p = format!("{parent_pfx}{rest}");
+            }
+        }
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use crate::ops::{apply, Op};
@@ -69,5 +98,26 @@ mod tests {
         // slug-based references untouched
         let order = &out.iter().find(|(p, _)| p == "commerce/order.md").unwrap().1;
         assert!(order.contains("(./customer.md)"));
+    }
+
+    #[test]
+    fn delete_package_cascade_removes_subtree() {
+        let b = vec![
+            ("sales/order.md".to_string(), "---\ntype: uml.Class\ntitle: Order\n---\n# Order\n".to_string()),
+            ("sales/orders/line.md".to_string(), "---\ntype: uml.Class\ntitle: Line\n---\n# Line\n".to_string()),
+            ("billing/invoice.md".to_string(), "---\ntype: uml.Class\ntitle: Invoice\n---\n# Invoice\n".to_string()),
+        ];
+        let out = apply(&b, &[Op::PkgDelete { path: "sales".into(), cascade: true }]).unwrap();
+        assert!(out.iter().all(|(p, _)| !p.starts_with("sales")));
+        assert!(out.iter().any(|(p, _)| p == "billing/invoice.md"));
+    }
+    #[test]
+    fn delete_package_reparent_moves_children_up() {
+        let b = vec![
+            ("sales/orders/order.md".to_string(), "---\ntype: uml.Class\ntitle: Order\n---\n# Order\n".to_string()),
+        ];
+        let out = apply(&b, &[Op::PkgDelete { path: "sales/orders".into(), cascade: false }]).unwrap();
+        assert!(out.iter().any(|(p, _)| p == "sales/order.md"));
+        assert!(out.iter().all(|(p, _)| !p.contains("orders")));
     }
 }
