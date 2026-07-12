@@ -43,17 +43,6 @@ describe("right-edge flags", () => {
     expect(feedback.getAttribute("rel") ?? "").toContain("noreferrer");
   });
 
-  it("renders an Inspect flag as a toggle button (the right icon rail is gone)", () => {
-    render(Canvas);
-    // Exactly one Inspect control now — the right icon rail (which also rendered
-    // an 'Inspect' button) has been removed.
-    const inspectButtons = screen.getAllByRole("button", { name: "Inspect" });
-    expect(inspectButtons).toHaveLength(1);
-    // It's a flag toggle: exposes aria-pressed (the old rail button used
-    // aria-current instead), and starts unpressed.
-    expect(inspectButtons[0].getAttribute("aria-pressed")).toBe("false");
-  });
-
   it("no longer renders the bottom-left Google Form feedback anchor", () => {
     render(Canvas);
     const links = screen.getAllByRole("link");
@@ -61,36 +50,23 @@ describe("right-edge flags", () => {
   });
 });
 
-describe("Inspect flag + pinnable Inspector", () => {
-  it("toggles the Inspector open and closed", async () => {
+describe("pinnable Inspector (always present, never closes)", () => {
+  it("is always mounted, even with nothing selected", () => {
     render(Canvas);
-    // Closed initially (nothing selected).
-    expect(screen.queryByRole("complementary", { name: "Inspect" })).toBeNull();
-
-    await fireEvent.click(screen.getByRole("button", { name: "Inspect" }));
-    const panel = screen.getByRole("complementary", { name: "Inspect" });
+    const panel = screen.getByRole("complementary", { name: "Inspector" });
     expect(panel).toBeTruthy();
-    // Hosted in the dedicated pinnable InspectorPanel (has a pin control).
-    expect(within(panel).getByRole("button", { name: /pin/i })).toBeTruthy();
-
-    await fireEvent.click(screen.getByRole("button", { name: "Inspect" }));
-    expect(screen.queryByRole("complementary", { name: "Inspect" })).toBeNull();
+    // Nothing selected → shows the hint and the element picker.
+    expect(within(panel).getByText(/select an element to edit/i)).toBeTruthy();
+    expect(within(panel).getByRole("combobox", { name: "Select element" })).toBeTruthy();
   });
 
-  it("pinning keeps the Inspector open and translucent while idle", async () => {
+  it("exposes a pin control that makes the panel translucent while idle", async () => {
     render(Canvas);
-    await fireEvent.click(screen.getByRole("button", { name: "Inspect" }));
-    const panel = screen.getByRole("complementary", { name: "Inspect" });
-
-    // Unpinned + idle → opaque.
+    const panel = screen.getByRole("complementary", { name: "Inspector" });
     expect(panel.classList.contains("opacity-40")).toBe(false);
-
     await fireEvent.click(within(panel).getByRole("button", { name: /pin inspector/i }));
     await tick();
-    // Pinned + idle → translucent, and still open.
     expect(panel.classList.contains("opacity-40")).toBe(true);
-
-    // Hover restores opacity.
     await fireEvent.pointerEnter(panel);
     expect(panel.classList.contains("opacity-40")).toBe(false);
   });
