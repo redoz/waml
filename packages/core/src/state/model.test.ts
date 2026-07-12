@@ -112,3 +112,24 @@ describe("bundle-as-truth model store", () => {
     expect(s.get().nodes[0].position).toEqual({ x: 0, y: 0 });
   });
 });
+
+describe("package mutators + ghost state", () => {
+  it("ghost package appears then materializes on first child", () => {
+    const store = createModelStore([["order.md", "---\ntype: uml.Class\ntitle: Order\n---\n# Order\n"]]);
+    const key = store.createGhostPackage("", "Sales");
+    expect(key).toBe("sales");
+    expect(store.get().packages.some((p) => p.key === "sales")).toBe(true);
+    // ghost is NOT in the bundle yet
+    expect(store.getBundle().some(([p]) => p.startsWith("sales/"))).toBe(false);
+    // add first child -> materialized in the bundle, ghost pruned
+    store.createNodeInPackage("sales", "uml.Class", "Customer");
+    expect(store.getBundle().some(([p]) => p.startsWith("sales/"))).toBe(true);
+    expect(store.get().packages.some((p) => p.key === "sales")).toBe(true);
+  });
+
+  it("moveNode relocates a doc via pkg.move", () => {
+    const store = createModelStore([["sales/order.md", "---\ntype: uml.Class\ntitle: Order\n---\n# Order\n"]]);
+    store.moveNode("order", "billing");
+    expect(store.getBundle().some(([p]) => p === "billing/order.md")).toBe(true);
+  });
+});

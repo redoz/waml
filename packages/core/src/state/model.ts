@@ -23,7 +23,20 @@ import {
   type Overlay,
   type RustModel,
 } from "./overlay";
-import { updateNodeOps, nodeNewOps, nodeRmOps, edgeAddOps, edgeRmOps, edgeSetOps } from "./ops-adapter";
+import {
+  updateNodeOps,
+  nodeNewOps,
+  nodeRmOps,
+  edgeAddOps,
+  edgeRmOps,
+  edgeSetOps,
+  moveNodeOps,
+  renamePackageOps,
+  deletePackageOps,
+  reorderMembersOps,
+  sortPackageOps,
+} from "./ops-adapter";
+import { slugify } from "@uaml/okf";
 
 export type Bundle = [string, string][];
 
@@ -40,6 +53,10 @@ export function createModelStore(initial?: Bundle, opts: CreateStoreOptions = {}
   let bundle: Bundle = initial ? initial.map(([p, m]) => [p, m] as [string, string]) : [];
   let model = derive(bundle);
   let overlay: Overlay = emptyOverlay();
+  /** Package keys the user created but that own no real doc yet. Fused into the
+   *  derived graph so the navigator can show + target them; pruned once a real
+   *  child materializes them (or removed when their last child leaves). */
+  const ghosts = new Set<string>();
 
   const subs = new Set<() => void>();
   const emit = () => subs.forEach((f) => f());
@@ -60,7 +77,37 @@ export function createModelStore(initial?: Bundle, opts: CreateStoreOptions = {}
     }
   }
 
-  const graph = (): ModelGraph => toModelGraph(model, overlay);
+  const parentOf = (key: string): string => (key.includes("/") ? key.slice(0, key.lastIndexOf("/")) : "");
+
+  /** Fuse ghost packages into a derived graph: prune ghosts that became real,
+   *  then append any surviving ghost as an empty `uml.Package` and register it
+   *  in its parent's member list (parents first, so nested ghosts chain in). */
+  function fuseGhosts(g: ModelGraph): ModelGraph {
+    for (const k of [...ghosts]) if (g.packages.some((p) => p.key === k)) ghosts.delete(k);
+    if (ghosts.size === 0) return g;
+    const packages: ModelNode[] = g.packages.map((p) => ({ ...p, members: p.members ? [...p.members] : [] }));
+    const byKey = new Map(packages.map((p) => [p.key, p]));
+    for (const k of [...ghosts].sort((a, b) => a.split("/").length - b.split("/").length)) {
+      if (byKey.has(k)) continue;
+      const title = k.slice(k.lastIndexOf("/") + 1);
+      const ghost: ModelNode = {
+        concept: { id: k, type: "uml.Package", title, body: "" },
+        key: k,
+        type: "uml.Package",
+        stereotypes: [],
+        attributes: [],
+        members: [],
+        position: { x: 0, y: 0 },
+      };
+      packages.push(ghost);
+      byKey.set(k, ghost);
+      const parent = byKey.get(parentOf(k));
+      if (parent && !parent.members!.includes(k)) parent.members!.push(k);
+    }
+    return { ...g, packages };
+  }
+
+  const graph = (): ModelGraph => fuseGhosts(toModelGraph(model, overlay));
   const findNode = (key: string): ModelNode | undefined => graph().nodes.find((n) => n.key === key);
   const findEdge = (id: string): ModelEdge | undefined => graph().edges.find((e) => e.id === id);
 
@@ -172,6 +219,43 @@ export function createModelStore(initial?: Bundle, opts: CreateStoreOptions = {}
       if (!prev) return;
       overlay.edges.delete(edgeKey(prev));
       run(edgeRmOps(prev));
+    },
+
+    // ── packages ────────────────────────────────────────────────────────────
+    /** Register an empty ghost package under `parentKey` and return its key.
+     *  No op is emitted — the dir has no doc yet; it materializes on first child. */
+    createGhostPackage(parentKey: string, name: string): string {
+      const slug = slugify(name);
+      const key = parentKey ? `${parentKey}/${slug}` : slug;
+      ghosts.add(key);
+      emit();
+      return key;
+    },
+
+    /** Create a classifier inside `dir`, materializing that dir on disk. Returns
+     *  the new node's slug. */
+    createNodeInPackage(dir: string, type: string, title: string): string {
+      ghosts.delete(dir);
+      const slug = slugify(title) || freshSlug();
+      run(nodeNewOps({ slug, dir, type, title }));
+      return slug;
+    },
+
+    moveNode(slug: string, toDir: string): void {
+      run(moveNodeOps(slug, toDir));
+    },
+    renamePackage(from: string, to: string): void {
+      run(renamePackageOps(from, to));
+    },
+    deletePackage(path: string, cascade: boolean): void {
+      ghosts.delete(path);
+      run(deletePackageOps(path, cascade));
+    },
+    reorderMembers(path: string, order: string[]): void {
+      run(reorderMembersOps(path, order));
+    },
+    sortPackage(path: string): void {
+      run(sortPackageOps(path));
     },
 
     // ── diagrams: derived-only in Stage 1b (no diagram/membership ops) ──────────
