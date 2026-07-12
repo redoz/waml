@@ -50,3 +50,24 @@ test("clicking a diagram row selects it; package crumb rescopes", async () => {
   await fireEvent.click(screen.getByRole("button", { name: "acme-model" }));
   expect(onScope).toHaveBeenCalledWith("");
 });
+
+test("Ctrl-T rotates the type chip through palette without an inline hint", async () => {
+  render(Navigator, { props: props({ palette: ["uml.Class", "uml.Interface"] }) });
+  const chip = screen.getByRole("button", { name: /Filter by type/ });
+  expect(chip.textContent).toContain("All");
+  await fireEvent.keyDown(window, { key: "t", ctrlKey: true });
+  expect(chip.textContent).toContain("Class");
+  expect(chip.textContent).not.toMatch(/Ctrl/i);
+});
+
+test("dropping a reordered row persists new member order", async () => {
+  const onReorder = vi.fn();
+  render(Navigator, { props: props({ onReorder }) });
+  const rows = screen.getAllByRole("treeitem");
+  await fireEvent.dragStart(rows[1]); // customer
+  await fireEvent.drop(rows[0]); // above overview's slot
+  expect(onReorder).toHaveBeenCalled();
+  const [pkgKey, order] = onReorder.mock.calls[0];
+  expect(pkgKey).toBe("sales");
+  expect(order).toContain("customer");
+});
