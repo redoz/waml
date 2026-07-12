@@ -1,163 +1,14 @@
 use std::collections::{HashMap, HashSet};
 
-use pulldown_cmark::{Event, Options, Parser, Tag};
-
 use crate::diagnostic::{DiagCode, Diagnostic};
-use crate::frontmatter::parse_frontmatter;
-use crate::grammar::{parse_attribute_line, parse_member_line, parse_relationship_line};
 use crate::model::ClassifierType;
-use crate::parse::parse_document;
-use crate::syntax::{LayoutStatement, Line, MemberGroup, NameRef, Operand, OperandRef, Section};
-
-fn has_metadata_block(text: &str) -> bool {
-    let mut opts = Options::empty();
-    opts.insert(Options::ENABLE_YAML_STYLE_METADATA_BLOCKS);
-    Parser::new_ext(text, opts).any(|e| matches!(e, Event::Start(Tag::MetadataBlock(_))))
-}
+use crate::syntax::{
+    Direction, Document, LayoutStatement, Line, MemberGroup, NameRef, Operand, OperandRef, Section,
+};
 
 fn slug_of(path: &str) -> String {
     let seg = path.rsplit(['/', '\\']).next().unwrap_or(path);
     seg.strip_suffix(".md").unwrap_or(seg).to_string()
-}
-
-fn doc_type(text: &str) -> String {
-    parse_frontmatter(text).0.get_str("type").unwrap_or("uml.Class").to_string()
-}
-
-fn validate_doc(path: &str, text: &str, keyset: &HashSet<String>, diags: &mut Vec<Diagnostic>) {
-    if text.trim_start().starts_with("---") && !has_metadata_block(text) {
-        diags.push(Diagnostic::new(
-            DiagCode::FrontmatterNotClean,
-            "frontmatter is not a clean CommonMark metadata block (would render as a thematic break + heading)",
-            path,
-            1,
-        ));
-    }
-
-    let mut in_fm = false;
-    let mut fm_done = false;
-    let mut fence: Option<char> = None;
-    let mut section = String::new();
-    let mut seen_section = false;
-
-    for (i, raw) in text.lines().enumerate() {
-        let n = i + 1;
-        let trimmed = raw.trim_end_matches('\r').trim();
-
-        if !in_fm && !fm_done && trimmed == "---" {
-            in_fm = true;
-            continue;
-        }
-        if in_fm && (trimmed == "---" || trimmed == "...") {
-            in_fm = false;
-            fm_done = true;
-            continue;
-        }
-        if in_fm {
-            if let Some(rest) = trimmed.strip_prefix("type:") {
-                let ty = rest.trim().trim_matches('"');
-                if ty != "Diagram" && matches!(ClassifierType::parse(ty), ClassifierType::Unknown(_)) {
-                    diags.push(Diagnostic::warn(
-                        DiagCode::UnknownType,
-                        format!("unknown type '{ty}' — rendered as a generic box"),
-                        path,
-                        n,
-                    ));
-                }
-            }
-            continue;
-        }
-        if let Some(marker) = fence {
-            let delim = if marker == '`' { "```" } else { "~~~" };
-            if trimmed.starts_with(delim) {
-                fence = None;
-            }
-            continue;
-        }
-        if trimmed.starts_with("```") {
-            fence = Some('`');
-            continue;
-        }
-        if trimmed.starts_with("~~~") {
-            fence = Some('~');
-            continue;
-        }
-        if let Some(h) = trimmed.strip_prefix("## ") {
-            section = h.trim().to_lowercase();
-            seen_section = true;
-            continue;
-        }
-
-        // Content the parse→serialize round-trip would silently drop:
-        // non-blank, non-H1 lines before the first `## ` section, and
-        // non-bullet lines inside the five bullet-list sections (their
-        // parsers use `filter_map`, which drops anything that doesn't match).
-        if !trimmed.is_empty() {
-            let is_h1 = trimmed.starts_with('#') && !trimmed.starts_with("##");
-            let is_member_group_heading = section == "members" && trimmed.starts_with("###");
-            if !is_h1 && !is_member_group_heading {
-                let in_bullet_section = matches!(
-                    section.as_str(),
-                    "attributes" | "values" | "relationships" | "members" | "layout"
-                );
-                if (!seen_section || in_bullet_section) && !trimmed.starts_with("- ") {
-                    diags.push(Diagnostic::new(
-                        DiagCode::DroppableContent,
-                        "content here is outside the recognized document structure and would be silently dropped by fmt",
-                        path,
-                        n,
-                    ));
-                }
-            }
-        }
-
-        if !trimmed.starts_with("- ") {
-            continue;
-        }
-
-        match section.as_str() {
-            "attributes" => {
-                if parse_attribute_line(trimmed).is_err() {
-                    diags.push(Diagnostic::new(DiagCode::MalformedAttribute, "malformed attribute line", path, n));
-                }
-            }
-            "relationships" => match parse_relationship_line(trimmed) {
-                Err(e) => diags.push(Diagnostic::new(DiagCode::MalformedRelationship, e.message, path, n)),
-                Ok(r) => {
-                    if !keyset.contains(&r.target_slug) {
-                        diags.push(Diagnostic::new(
-                            DiagCode::UnresolvedTarget,
-                            format!("relationship target './{}.md' resolves to no document", r.target_slug),
-                            path,
-                            n,
-                        ));
-                    }
-                }
-            },
-            "members" => {
-                if let Ok(m) = parse_member_line(trimmed) {
-                    if !keyset.contains(&m.slug) {
-                        diags.push(Diagnostic::warn(
-                            DiagCode::UnresolvedTarget,
-                            format!("diagram member './{}.md' resolves to no document", m.slug),
-                            path,
-                            n,
-                        ));
-                    }
-                }
-            }
-            "layout"
-                if crate::layout::parse_layout_line(trimmed).is_err() => {
-                    diags.push(Diagnostic::new(
-                        DiagCode::MalformedLayout,
-                        "malformed layout statement",
-                        path,
-                        n,
-                    ));
-                }
-            _ => {}
-        }
-    }
 }
 
 /// Collect every group's heading name (recursively) into `names`.
@@ -244,84 +95,49 @@ fn has_cycle(graph: &HashMap<String, Vec<String>>) -> bool {
     false
 }
 
-fn validate_diagram_refs(path: &str, text: &str, keyset: &HashSet<String>, diags: &mut Vec<Diagnostic>) {
-    if doc_type(text) != "Diagram" {
-        return;
-    }
-    let doc = parse_document(text);
-    let mut group_names = HashSet::new();
-    let mut layout: Vec<&LayoutStatement> = Vec::new();
-    for s in &doc.sections {
-        match s {
-            Section::Members(block) => {
-                for g in &block.groups {
-                    collect_group_names(g, &mut group_names);
-                }
+/// Report each unresolved member bullet (recursively through sub-groups).
+fn check_group_members(
+    g: &MemberGroup,
+    keyset: &HashSet<String>,
+    path: &str,
+    diags: &mut Vec<Diagnostic>,
+) {
+    for m in g.members.iter().filter_map(Line::parsed) {
+        if !keyset.contains(&m.slug) {
+            let mut d = Diagnostic::warn(
+                DiagCode::UnresolvedTarget,
+                format!("diagram member './{}.md' resolves to no document", m.slug),
+                path,
+                m.line,
+            );
+            if let Some(span) = m.span {
+                d = d.with_span(span);
             }
-            Section::Layout(stmts) => {
-                layout = stmts.iter().filter_map(Line::parsed).map(|it| &it.stmt).collect();
-            }
-            _ => {}
+            diags.push(d);
         }
     }
-    // Line number is approximate (the layout statement's exact position within
-    // the doc is not tracked here); use the `## Layout` heading line as anchor.
-    let layout_line = text.lines().position(|l| l.trim().to_lowercase() == "## layout").map(|i| i + 1).unwrap_or(1);
-    for &stmt in &layout {
-        let ops: Vec<&Operand> = match stmt {
-            LayoutStatement::Standalone(op) => vec![op],
-            LayoutStatement::Placement { operands, .. } => operands.iter().collect(),
-            LayoutStatement::Alignment { left, right } => vec![&left.operand, &right.operand],
-        };
-        for op in ops {
-            check_operand_refs(op, keyset, &group_names, path, layout_line, diags);
-        }
-    }
-
-    use crate::syntax::Direction;
-    let mut horizontal: HashMap<String, Vec<String>> = HashMap::new();
-    let mut vertical: HashMap<String, Vec<String>> = HashMap::new();
-    for &stmt in &layout {
-        if let LayoutStatement::Placement { operands, directions } = stmt {
-            for (i, dir) in directions.iter().enumerate() {
-                let (a, b) = (operand_key(&operands[i]), operand_key(&operands[i + 1]));
-                let (Some(a), Some(b)) = (a, b) else { continue };
-                // Edge points from the operand that must come first to the one after it.
-                let (graph, from, to) = match dir {
-                    Direction::LeftOf => (&mut horizontal, a, b),
-                    Direction::RightOf => (&mut horizontal, b, a),
-                    Direction::Above => (&mut vertical, a, b),
-                    Direction::Below => (&mut vertical, b, a),
-                };
-                graph.entry(from).or_default().push(to);
-            }
-        }
-    }
-    if has_cycle(&horizontal) || has_cycle(&vertical) {
-        let layout_line = text.lines().position(|l| l.trim().to_lowercase() == "## layout").map(|i| i + 1).unwrap_or(1);
-        diags.push(Diagnostic::new(
-            DiagCode::LayoutCycle,
-            "layout placement constraints form a cycle (contradictory ordering)",
-            path,
-            layout_line,
-        ));
+    for c in &g.children {
+        check_group_members(c, keyset, path, diags);
     }
 }
 
-pub fn validate(bundle: &[(String, String)]) -> Vec<Diagnostic> {
+/// The semantic (cross-document) pass over already-parsed documents: reports
+/// `DuplicateSlug`, `UnresolvedTarget` (relationships + diagram members),
+/// `UnresolvedLayoutRef`, and `LayoutCycle`, reusing the positions recorded in
+/// each node during `parse`. Syntactic diagnostics are produced by `parse`.
+pub fn link(docs: &[(String, ClassifierType, Document)]) -> Vec<Diagnostic> {
     let mut diags = Vec::new();
     let mut keyset: HashSet<String> = HashSet::new();
     let mut slug_count: HashMap<String, usize> = HashMap::new();
-
-    for (path, text) in bundle {
+    for (path, ty, _doc) in docs {
         let slug = slug_of(path);
         *slug_count.entry(slug.clone()).or_insert(0) += 1;
-        if doc_type(text) != "Diagram" {
+        if *ty != ClassifierType::Diagram {
             keyset.insert(slug);
         }
     }
 
-    for (path, text) in bundle {
+    for (path, _ty, doc) in docs {
         let slug = slug_of(path);
         if slug_count[&slug] > 1 {
             diags.push(Diagnostic::new(
@@ -331,9 +147,114 @@ pub fn validate(bundle: &[(String, String)]) -> Vec<Diagnostic> {
                 1,
             ));
         }
-        validate_doc(path, text, &keyset, &mut diags);
-        validate_diagram_refs(path, text, &keyset, &mut diags);
+
+        // Group heading names declared in this document's `## Members` section,
+        // used to resolve bare layout operands.
+        let mut group_names = HashSet::new();
+        for s in &doc.sections {
+            if let Section::Members(block) = s {
+                for g in &block.groups {
+                    collect_group_names(g, &mut group_names);
+                }
+            }
+        }
+
+        for s in &doc.sections {
+            match s {
+                Section::Relationships(rels) => {
+                    for r in rels.iter().filter_map(Line::parsed) {
+                        if !keyset.contains(&r.target_slug) {
+                            let mut d = Diagnostic::new(
+                                DiagCode::UnresolvedTarget,
+                                format!(
+                                    "relationship target './{}.md' resolves to no document",
+                                    r.target_slug
+                                ),
+                                path,
+                                r.line,
+                            );
+                            if let Some(span) = r.span {
+                                d = d.with_span(span);
+                            }
+                            diags.push(d);
+                        }
+                    }
+                }
+                Section::Members(block) => {
+                    for g in &block.groups {
+                        check_group_members(g, &keyset, path, &mut diags);
+                    }
+                }
+                Section::Layout(items) => {
+                    for it in items.iter().filter_map(Line::parsed) {
+                        let ops: Vec<&Operand> = match &it.stmt {
+                            LayoutStatement::Standalone(op) => vec![op],
+                            LayoutStatement::Placement { operands, .. } => operands.iter().collect(),
+                            LayoutStatement::Alignment { left, right } => {
+                                vec![&left.operand, &right.operand]
+                            }
+                        };
+                        for op in ops {
+                            check_operand_refs(op, &keyset, &group_names, path, it.line, &mut diags);
+                        }
+                    }
+
+                    let mut horizontal: HashMap<String, Vec<String>> = HashMap::new();
+                    let mut vertical: HashMap<String, Vec<String>> = HashMap::new();
+                    let mut first_placement_line: Option<usize> = None;
+                    for it in items.iter().filter_map(Line::parsed) {
+                        let LayoutStatement::Placement { operands, directions } = &it.stmt else {
+                            continue;
+                        };
+                        first_placement_line.get_or_insert(it.line);
+                        for (i, dir) in directions.iter().enumerate() {
+                            let (a, b) =
+                                (operand_key(&operands[i]), operand_key(&operands[i + 1]));
+                            let (Some(a), Some(b)) = (a, b) else { continue };
+                            // Edge points from the operand that must come first to the one after it.
+                            let (graph, from, to) = match dir {
+                                Direction::LeftOf => (&mut horizontal, a, b),
+                                Direction::RightOf => (&mut horizontal, b, a),
+                                Direction::Above => (&mut vertical, a, b),
+                                Direction::Below => (&mut vertical, b, a),
+                            };
+                            graph.entry(from).or_default().push(to);
+                        }
+                    }
+                    if has_cycle(&horizontal) || has_cycle(&vertical) {
+                        let line = first_placement_line
+                            .or_else(|| {
+                                items.iter().filter_map(Line::parsed).map(|it| it.line).next()
+                            })
+                            .unwrap_or(1);
+                        diags.push(Diagnostic::new(
+                            DiagCode::LayoutCycle,
+                            "layout placement constraints form a cycle (contradictory ordering)",
+                            path,
+                            line,
+                        ));
+                    }
+                }
+                _ => {}
+            }
+        }
     }
+    diags
+}
+
+pub fn validate(bundle: &[(String, String)]) -> Vec<Diagnostic> {
+    let mut diags = Vec::new();
+    let mut docs = Vec::new();
+    for (path, text) in bundle {
+        let (doc, mut syn) = crate::parse::parse(text);
+        for d in &mut syn {
+            d.file = path.clone();
+        }
+        diags.append(&mut syn);
+        let ty = ClassifierType::parse(doc.frontmatter.get_str("type").unwrap_or("uml.Class"));
+        docs.push((path.clone(), ty, doc));
+    }
+    diags.extend(link(&docs));
     diags
 }
 
@@ -341,6 +262,17 @@ pub fn validate(bundle: &[(String, String)]) -> Vec<Diagnostic> {
 mod tests {
     use super::*;
     use crate::diagnostic::Severity;
+
+    #[test]
+    fn unresolved_relationship_target_carries_a_span() {
+        let b = vec![("a/order.md".into(),
+            "---\ntype: uml.Class\ntitle: Order\n---\n# Order\n\n## Relationships\n- depends [Ghost](./ghost.md)\n".into())];
+        let d = validate(&b);
+        let t = d.iter().find(|x| x.code == DiagCode::UnresolvedTarget).unwrap();
+        assert_eq!(t.line, 8);
+        let (s, e) = t.span.expect("unresolved target must span the link");
+        assert!(s < e);
+    }
 
     #[test]
     fn flags_unresolved_relationship_target() {
