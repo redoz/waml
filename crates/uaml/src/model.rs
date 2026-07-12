@@ -395,11 +395,8 @@ pub struct Diagram {
     pub title: String,
     pub profile: String,
     pub groups: Vec<DiagramGroup>,
-    // `layout` carries the raw layout AST (`syntax::LayoutStatement`), which the
-    // frontend does not yet consume (dagre handles placement). Skipped from the
-    // wire until layout-in-Rust (Stage 2), so the whole `syntax` layout tree need
-    // not implement serde.
-    #[cfg_attr(feature = "serde", serde(skip))]
+    // `layout` carries the raw layout AST (`syntax::LayoutStatement`). Serialized
+    // end to end (Phase 2) so the frontend can read the layout relations.
     pub layout: Vec<crate::syntax::LayoutStatement>,
 }
 

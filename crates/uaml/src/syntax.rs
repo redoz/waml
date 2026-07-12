@@ -113,6 +113,7 @@ pub struct MemberGroup {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum LayoutStatement {
     /// `A left of B above C` — N operands, N-1 directions.
     Placement { operands: Vec<Operand>, directions: Vec<Direction> },
@@ -123,15 +124,19 @@ pub enum LayoutStatement {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum Direction { LeftOf, RightOf, Above, Below }
 
 #[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Anchored { pub edge: Option<Edge>, pub operand: Operand }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum Edge { Top, Bottom, Left, Right, Center }
 
 #[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Operand {
     pub ref_: OperandRef,
     pub axis: Option<Axis>,
@@ -139,9 +144,11 @@ pub struct Operand {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum Axis { Row, Column }
 
 #[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum OperandRef {
     Name(NameRef),
     InlineGroup { axis: Axis, items: Vec<Operand> },
@@ -149,21 +156,26 @@ pub enum OperandRef {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum NameRef {
     Link { title: String, slug: String },
     Bare(String),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum Hint { Shape(Shape), Margin(Margin), Flag(Flag) }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum Shape { Frame, Box, Shrink }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum Margin { No, Small, Medium, Large }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum Flag { Emphasized, Collapsed }
 
 #[cfg(test)]
