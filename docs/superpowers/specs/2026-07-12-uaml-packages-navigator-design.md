@@ -106,7 +106,7 @@ Grow the center **diagram title switcher** (`TopBar.svelte`) into a **navigator 
 - **Slug collisions within a directory** → existing `slugify` + counter, now scoped **per directory**.
 - **Reserved-name collision** (`index` / `log`) → disambiguate the slug.
 - **Empty scope** (package containing only ghosts) → empty-state in the sheet.
-- **Delete a non-empty package** → **reparent its children to the package's parent**, then remove the (now-empty) package. Deleting an empty ghost just removes it. (Chosen over cascade-delete to avoid silent data loss.)
+- **Delete a non-empty package** → **prompt** with three choices: **Delete children too** (cascade — remove the package and everything under it), **Move to parent** (reparent children to the package's parent, then remove the empty package), or **Cancel**. Never silent. Deleting an empty ghost just removes it, no prompt.
 - **Root** is always a valid move target, so a move can never orphan a node.
 
 ## Testing
@@ -117,7 +117,7 @@ Grow the center **diagram title switcher** (`TopBar.svelte`) into a **navigator 
 - **Lifecycle:** materialize on first child; de-materialize on last child out; ghost empty-package does not survive reload.
 - **Index regen:** `index.md` regenerated with correct order; order reconcile on load.
 - **Migration:** flat model → root package; existing serializer/tests unaffected.
-- **Navigator (component, mirroring `TopBar.test.ts`):** breadcrumb rescope; search filter; type filter; classifier action-menu routing (view / add / edit-stub); file-manager ops (create / move / rename / delete / reorder) mutate the model and re-index.
+- **Navigator (component, mirroring `TopBar.test.ts`):** breadcrumb rescope; search filter; type filter; classifier action-menu routing (view / add / edit-stub); file-manager ops (create / move / rename / delete / reorder) mutate the model and re-index; **delete of a non-empty package** covers all three prompt branches (cascade / move-to-parent / cancel).
 
 ## Deferred (own specs)
 
