@@ -43,6 +43,12 @@ test("Esc with no field focused closes immediately", async () => {
   expect(onClose).toHaveBeenCalledTimes(1);
 });
 
+test("focus moves into the panel on open", () => {
+  render(CentralEditPanel, { props: props() });
+  const card = screen.getByRole("dialog");
+  expect(card.contains(document.activeElement)).toBe(true);
+});
+
 test("Esc while a field is focused blurs first, then a second Esc closes", async () => {
   const onClose = vi.fn();
   render(CentralEditPanel, { props: props({ onClose }) });

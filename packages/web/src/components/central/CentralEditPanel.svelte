@@ -33,6 +33,12 @@
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   });
+
+  // Move focus into the dialog on open so screen readers announce it
+  // (otherwise focus stays on the now-hidden trigger behind the scrim).
+  $effect(() => {
+    card?.focus();
+  });
 </script>
 
 <!-- Scrim: dims whatever is rendered behind (neutral app or the live diagram) and
@@ -52,6 +58,7 @@
     role="dialog"
     aria-modal="true"
     aria-label={title}
+    tabindex="-1"
     onclick={(e) => e.stopPropagation()}
     class="w-full max-w-[560px] max-h-[85vh] flex flex-col rounded-2xl border border-[#d8dee8] bg-white shadow-[0_16px_48px_rgba(15,23,42,0.22)]"
   >
