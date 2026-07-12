@@ -47,6 +47,7 @@ import ShareToast from "../ShareToast.svelte";
   import ExternalRefs from "../inspector/ExternalRefs.svelte";
   import InspectorPanel from "../inspector/InspectorPanel.svelte";
   import EdgeFlag from "../chrome/EdgeFlag.svelte";
+  import CentralEditPanelHost, { type CentralPanelState } from "../central/CentralEditPanelHost.svelte";
 
   import {
     effectiveDiagrams,
@@ -105,6 +106,10 @@ import ShareToast from "../ShareToast.svelte";
   // Bound to the InspectorPanel's resizable width so the edge-flags can slide
   // left, clear of the open panel, instead of sitting on top of it.
   let inspectorWidth = $state(380);
+  // central edit panel's current target (null = closed). Element context is
+  // opened by navigator's "View / edit properties"; diagram context by
+  // Dock sliders button (Task 5).
+  let centralPanel = $state<CentralPanelState | null>(null);
 
   // SvelteFlow owns the live node/edge arrays so dragging follows the cursor
   // smoothly. The model store stays the source of truth: we sync store → RF on
@@ -515,7 +520,17 @@ import ShareToast from "../ShareToast.svelte";
       const d = store.addDiagramFromMembers("New diagram", [key]);
       activeDiagramKey = d.key;
     }}
-    onEditProperties={(key) => (selectionSet = { nodes: [key], edges: [] })}
+    onEditProperties={(key) => (centralPanel = { kind: "element", nodeKey: key })}
+  />
+
+  <CentralEditPanelHost
+    state={centralPanel}
+    nodes={$model.nodes}
+    display={activeDisplay}
+    profileName={activeDiagram.profile}
+    onUpdateNode={store.updateNode}
+    onDisplayChange={handleDisplayChange}
+    onClose={() => (centralPanel = null)}
   />
 
   {#if shareToast}
