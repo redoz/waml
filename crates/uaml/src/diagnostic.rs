@@ -56,14 +56,21 @@ pub struct Diagnostic {
     pub message: String,
     pub file: String,
     pub line: usize,
+    /// Byte range within `line`, if the diagnostic pins a precise column span.
+    pub span: Option<(usize, usize)>,
 }
 
 impl Diagnostic {
     pub fn new(code: DiagCode, message: impl Into<String>, file: impl Into<String>, line: usize) -> Diagnostic {
-        Diagnostic { severity: code.severity(), code, message: message.into(), file: file.into(), line }
+        Diagnostic { severity: code.severity(), code, message: message.into(), file: file.into(), line, span: None }
     }
     pub fn warn(code: DiagCode, message: impl Into<String>, file: impl Into<String>, line: usize) -> Diagnostic {
-        Diagnostic { severity: Severity::Warning, code, message: message.into(), file: file.into(), line }
+        Diagnostic { severity: Severity::Warning, code, message: message.into(), file: file.into(), line, span: None }
+    }
+    /// Attach a byte range (relative to the diagnostic's line) to this diagnostic.
+    pub fn with_span(mut self, span: (usize, usize)) -> Diagnostic {
+        self.span = Some(span);
+        self
     }
 }
 
@@ -84,5 +91,13 @@ mod tests {
         assert_eq!(e.severity, Severity::Error);
         let w = Diagnostic::warn(DiagCode::UnresolvedTarget, "member", "a.md", 3);
         assert_eq!(w.severity, Severity::Warning);
+    }
+
+    #[test]
+    fn span_defaults_to_none_and_with_span_sets_it() {
+        let d = Diagnostic::new(DiagCode::MalformedAttribute, "bad", "a.md", 5);
+        assert_eq!(d.span, None);
+        let d = d.with_span((2, 20));
+        assert_eq!(d.span, Some((2, 20)));
     }
 }
