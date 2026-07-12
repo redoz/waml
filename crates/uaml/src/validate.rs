@@ -24,38 +24,6 @@ fn doc_type(text: &str) -> String {
     parse_frontmatter(text).0.get_str("type").unwrap_or("uml.Class").to_string()
 }
 
-/// Whether a relationship line supplies multiplicity ends (`: <near> to <far>`).
-/// Only a `:` that appears AFTER the target link's closing `)` counts — a `:`
-/// inside the link's `[Title]` (e.g. `[OrderLine: v2]`) must not be misread
-/// as the ends separator.
-fn has_multiplicity_ends(line: &str) -> bool {
-    match line.find("](") {
-        Some(link_start) => match line[link_start..].find(')') {
-            Some(close_offset) => line[link_start + close_offset + 1..].contains(':'),
-            None => line.contains(':'), // no closing paren found; fall back to whole line
-        },
-        None => line.contains(':'), // no target link found; fall back to whole line
-    }
-}
-
-fn rel_error_message(line: &str) -> String {
-    const ENDED: [&str; 3] = ["associates", "aggregates", "composes"];
-    const OTHER: [&str; 3] = ["specializes", "implements", "depends"];
-    let verb = line.trim_start_matches("- ").split_whitespace().next().unwrap_or("");
-    let has_ends = has_multiplicity_ends(line);
-    if ENDED.contains(&verb) && !has_ends {
-        format!("'{verb}' requires ': <near> to <far>' multiplicity ends")
-    } else if OTHER.contains(&verb) && has_ends {
-        format!("'{verb}' does not take multiplicity ends")
-    } else if verb == "annotates" {
-        "note anchors ('annotates') are not supported yet".to_string()
-    } else if !ENDED.contains(&verb) && !OTHER.contains(&verb) {
-        format!("unknown relationship verb '{verb}'")
-    } else {
-        "malformed relationship line".to_string()
-    }
-}
-
 fn validate_doc(path: &str, text: &str, keyset: &HashSet<String>, diags: &mut Vec<Diagnostic>) {
     if text.trim_start().starts_with("---") && !has_metadata_block(text) {
         diags.push(Diagnostic::new(
@@ -149,13 +117,13 @@ fn validate_doc(path: &str, text: &str, keyset: &HashSet<String>, diags: &mut Ve
 
         match section.as_str() {
             "attributes" => {
-                if parse_attribute_line(trimmed).is_none() {
+                if parse_attribute_line(trimmed).is_err() {
                     diags.push(Diagnostic::new(DiagCode::MalformedAttribute, "malformed attribute line", path, n));
                 }
             }
             "relationships" => match parse_relationship_line(trimmed) {
-                None => diags.push(Diagnostic::new(DiagCode::MalformedRelationship, rel_error_message(trimmed), path, n)),
-                Some(r) => {
+                Err(e) => diags.push(Diagnostic::new(DiagCode::MalformedRelationship, e.message, path, n)),
+                Ok(r) => {
                     if !keyset.contains(&r.target_slug) {
                         diags.push(Diagnostic::new(
                             DiagCode::UnresolvedTarget,
@@ -167,7 +135,7 @@ fn validate_doc(path: &str, text: &str, keyset: &HashSet<String>, diags: &mut Ve
                 }
             },
             "members" => {
-                if let Some(m) = parse_member_line(trimmed) {
+                if let Ok(m) = parse_member_line(trimmed) {
                     if !keyset.contains(&m.slug) {
                         diags.push(Diagnostic::warn(
                             DiagCode::UnresolvedTarget,

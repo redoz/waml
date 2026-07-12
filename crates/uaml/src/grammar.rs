@@ -35,9 +35,57 @@ fn basename(path: &str) -> &str {
     after_slash.strip_suffix(".md").unwrap_or(after_slash)
 }
 
-pub fn parse_attribute_line(line: &str) -> Option<Attribute> {
-    let line = line.trim_end_matches('\r').trim();
-    let caps = ATTR_RE.captures(line)?;
+/// A line-parse failure: a byte range within the input line plus a message.
+#[derive(Debug, Clone, PartialEq)]
+pub struct LineError {
+    pub range: (usize, usize),
+    pub message: String,
+}
+
+/// Whole-bullet byte range: first to last non-whitespace byte of `line`.
+pub fn bullet_range(line: &str) -> (usize, usize) {
+    let start = line.find(|c: char| !c.is_whitespace()).unwrap_or(0);
+    let end = line.trim_end().len();
+    (start, end.max(start))
+}
+
+/// Whether a relationship line supplies multiplicity ends (`: <near> to <far>`).
+/// Only a `:` that appears AFTER the target link's closing `)` counts — a `:`
+/// inside the link's `[Title]` (e.g. `[OrderLine: v2]`) must not be misread
+/// as the ends separator.
+fn has_multiplicity_ends(line: &str) -> bool {
+    match line.find("](") {
+        Some(link_start) => match line[link_start..].find(')') {
+            Some(close_offset) => line[link_start + close_offset + 1..].contains(':'),
+            None => line.contains(':'), // no closing paren found; fall back to whole line
+        },
+        None => line.contains(':'), // no target link found; fall back to whole line
+    }
+}
+
+/// Human-readable message for a malformed `## Relationships` bullet.
+pub fn rel_error_message(line: &str) -> String {
+    const ENDED: [&str; 3] = ["associates", "aggregates", "composes"];
+    const OTHER: [&str; 3] = ["specializes", "implements", "depends"];
+    let verb = line.trim_start_matches("- ").split_whitespace().next().unwrap_or("");
+    let has_ends = has_multiplicity_ends(line);
+    if ENDED.contains(&verb) && !has_ends {
+        format!("'{verb}' requires ': <near> to <far>' multiplicity ends")
+    } else if OTHER.contains(&verb) && has_ends {
+        format!("'{verb}' does not take multiplicity ends")
+    } else if verb == "annotates" {
+        "note anchors ('annotates') are not supported yet".to_string()
+    } else if !ENDED.contains(&verb) && !OTHER.contains(&verb) {
+        format!("unknown relationship verb '{verb}'")
+    } else {
+        "malformed relationship line".to_string()
+    }
+}
+
+pub fn parse_attribute_line(line: &str) -> Result<Attribute, LineError> {
+    let err = |msg: &str| LineError { range: bullet_range(line), message: msg.to_string() };
+    let trimmed = line.trim_end_matches('\r').trim();
+    let caps = ATTR_RE.captures(trimmed).ok_or_else(|| err("malformed attribute line"))?;
     let visibility = caps.get(1).and_then(|m| Visibility::from_marker(m.as_str().chars().next()?));
     let name = caps[2].to_string();
     let mut rest = caps[3].trim().to_string();
@@ -45,23 +93,26 @@ pub fn parse_attribute_line(line: &str) -> Option<Attribute> {
     if let Some(mm) = MULT_TAIL_RE.captures(&rest) {
         // A trailing `{…}` token must hold a valid multiplicity; anything else
         // (malformed braces) makes the whole line not an attribute.
-        multiplicity = Multiplicity::parse(&mm[2])?;
+        multiplicity = Multiplicity::parse(&mm[2]).ok_or_else(|| err("malformed attribute line"))?;
         rest = mm[1].trim().to_string();
     }
     let ty = if let Some(link) = LINK_RE.captures(&rest) {
         TypeRef { name: link[1].to_string(), ref_: Some(basename(&link[2]).to_string()) }
     } else {
         if rest.is_empty() || STRAY_BRACKET_RE.is_match(&rest) {
-            return None; // malformed link / stray brackets → not an attribute
+            return Err(err("malformed attribute line")); // malformed link / stray brackets
         }
         TypeRef { name: rest, ref_: None }
     };
-    Some(Attribute { name, ty, multiplicity, visibility, description: None })
+    Ok(Attribute { name, ty, multiplicity, visibility, description: None })
 }
 
-pub fn parse_value_line(line: &str) -> Option<String> {
-    let line = line.trim_end_matches('\r').trim();
-    VALUE_RE.captures(line).map(|c| c[1].trim().to_string())
+pub fn parse_value_line(line: &str) -> Result<String, LineError> {
+    let trimmed = line.trim_end_matches('\r').trim();
+    VALUE_RE
+        .captures(trimmed)
+        .map(|c| c[1].trim().to_string())
+        .ok_or_else(|| LineError { range: bullet_range(line), message: "malformed value line".to_string() })
 }
 
 fn parse_end(part: &str) -> Option<RelEnd> {
@@ -84,13 +135,17 @@ pub fn parse_ends(raw: &str) -> Option<(RelEnd, RelEnd)> {
     Some((parse_end(parts[0])?, parse_end(parts[1])?))
 }
 
-pub fn parse_relationship_line(line: &str) -> Option<ParsedRel> {
-    let line = line.trim_end_matches('\r').trim();
-    let m = REL_RE.captures(line)?;
-    let kind = RelationshipKind::parse(&m[1])?;
+pub fn parse_relationship_line(line: &str) -> Result<ParsedRel, LineError> {
+    let err = || LineError {
+        range: bullet_range(line),
+        message: rel_error_message(line.trim_end_matches('\r').trim()),
+    };
+    let trimmed = line.trim_end_matches('\r').trim();
+    let m = REL_RE.captures(trimmed).ok_or_else(err)?;
+    let kind = RelationshipKind::parse(&m[1]).ok_or_else(err)?;
     let ends_raw = m.get(7).map(|x| x.as_str());
     if kind.is_ended() != ends_raw.is_some() {
-        return None; // ends required XOR forbidden
+        return Err(err()); // ends required XOR forbidden
     }
     let name = if let Some(label) = m.get(4) {
         Some(ParsedName::Label(label.as_str().to_string()))
@@ -100,23 +155,33 @@ pub fn parse_relationship_line(line: &str) -> Option<ParsedRel> {
         None
     };
     let (from_end, to_end) = match ends_raw {
-        Some(raw) => parse_ends(raw)?,
+        Some(raw) => parse_ends(raw).ok_or_else(err)?,
         None => (RelEnd::default(), RelEnd::default()),
     };
-    Some(ParsedRel {
+    Ok(ParsedRel {
         kind,
         target_title: m[2].to_string(),
         target_slug: basename(&m[3]).to_string(),
         name,
         from_end,
         to_end,
+        line: 0,
+        span: None,
     })
 }
 
-pub fn parse_member_line(line: &str) -> Option<MemberLine> {
-    let line = line.trim_end_matches('\r').trim();
-    let m = MEMBER_RE.captures(line)?;
-    Some(MemberLine { title: m[1].to_string(), slug: basename(&m[2]).to_string() })
+pub fn parse_member_line(line: &str) -> Result<MemberLine, LineError> {
+    let trimmed = line.trim_end_matches('\r').trim();
+    let m = MEMBER_RE.captures(trimmed).ok_or_else(|| LineError {
+        range: bullet_range(line),
+        message: "malformed member line".to_string(),
+    })?;
+    Ok(MemberLine {
+        title: m[1].to_string(),
+        slug: basename(&m[2]).to_string(),
+        line: 0,
+        span: None,
+    })
 }
 
 fn heading_depth(line: &str) -> Option<(u8, String)> {
@@ -154,7 +219,7 @@ pub fn parse_members_block(content: &str) -> MembersBlock {
         if let Some((depth, name)) = heading_depth(t) {
             close_to(&mut stack, &mut groups, depth);
             stack.push(MemberGroup { name, depth, members: vec![], children: vec![] });
-        } else if let Some(m) = parse_member_line(t) {
+        } else if let Ok(m) = parse_member_line(t) {
             match stack.last_mut() {
                 Some(g) => g.members.push(m),
                 None => implicit.members.push(m),
@@ -262,20 +327,20 @@ mod tests {
 
     #[test]
     fn rejects_bare_type_with_stray_brackets() {
-        assert!(parse_attribute_line("- x: [Broken]").is_none());
+        assert!(parse_attribute_line("- x: [Broken]").is_err());
     }
 
     #[test]
     fn rejects_legacy_bracket_multiplicity() {
         // Hard migration: `[…]` attribute multiplicity is no longer accepted.
-        assert!(parse_attribute_line("- id: OrderId [1]").is_none());
-        assert!(parse_attribute_line("- status: [OrderStatus](./order-status.md) [0..1]").is_none());
+        assert!(parse_attribute_line("- id: OrderId [1]").is_err());
+        assert!(parse_attribute_line("- status: [OrderStatus](./order-status.md) [0..1]").is_err());
     }
 
     #[test]
     fn rejects_malformed_brace_multiplicity() {
-        assert!(parse_attribute_line("- id: OrderId {nope}").is_none());
-        assert!(parse_attribute_line("- id: OrderId {}").is_none());
+        assert!(parse_attribute_line("- id: OrderId {nope}").is_err());
+        assert!(parse_attribute_line("- id: OrderId {}").is_err());
     }
 
     #[test]
@@ -296,8 +361,8 @@ mod tests {
 
     #[test]
     fn rejects_ends_on_forbidden_kind_and_missing_ends_on_ended() {
-        assert!(parse_relationship_line("- specializes [Animal](./animal.md): 1 to 1").is_none());
-        assert!(parse_relationship_line("- composes [OrderLine](./order-line.md)").is_none());
+        assert!(parse_relationship_line("- specializes [Animal](./animal.md): 1 to 1").is_err());
+        assert!(parse_relationship_line("- composes [OrderLine](./order-line.md)").is_err());
     }
 
     #[test]

@@ -23,18 +23,18 @@ fn classify(title: &str, content: &str, raw_full: &str) -> Section {
     let lines = |c: &str| c.lines().map(|l| l.to_string()).collect::<Vec<_>>();
     match title.to_lowercase().as_str() {
         "attributes" => {
-            Section::Attributes(lines(content).iter().filter_map(|l| parse_attribute_line(l)).collect())
+            Section::Attributes(lines(content).iter().filter_map(|l| parse_attribute_line(l).ok()).collect())
         }
         "values" => {
-            Section::Values(lines(content).iter().filter_map(|l| parse_value_line(l)).collect())
+            Section::Values(lines(content).iter().filter_map(|l| parse_value_line(l).ok()).collect())
         }
         "relationships" => {
-            Section::Relationships(lines(content).iter().filter_map(|l| parse_relationship_line(l)).collect())
+            Section::Relationships(lines(content).iter().filter_map(|l| parse_relationship_line(l).ok()).collect())
         }
         "members" => Section::Members(crate::grammar::parse_members_block(content)),
         "body" => Section::Body(content.trim().to_string()),
         "notes" => {
-            Section::Notes(lines(content).iter().filter_map(|l| parse_value_line(l)).collect())
+            Section::Notes(lines(content).iter().filter_map(|l| parse_value_line(l).ok()).collect())
         }
         "layout" => Section::Layout(
             lines(content).iter().filter_map(|l| crate::layout::parse_layout_line(l)).collect(),

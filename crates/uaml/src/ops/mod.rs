@@ -447,6 +447,8 @@ fn op_rel_add(
             name,
             from_end,
             to_end,
+            line: 0,
+            span: None,
         });
         Ok(())
     })

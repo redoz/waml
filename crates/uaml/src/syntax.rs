@@ -37,6 +37,10 @@ pub struct ParsedRel {
     pub name: Option<ParsedName>,
     pub from_end: RelEnd,
     pub to_end: RelEnd,
+    /// 1-based line within the document (0 until filled by `parse`).
+    pub line: usize,
+    /// Byte range within `line`, if positioned by `parse`.
+    pub span: Option<(usize, usize)>,
 }
 
 /// One `## Members` bullet in a diagram document.
@@ -44,6 +48,10 @@ pub struct ParsedRel {
 pub struct MemberLine {
     pub title: String,
     pub slug: String,
+    /// 1-based line within the document (0 until filled by `parse`).
+    pub line: usize,
+    /// Byte range within `line`, if positioned by `parse`.
+    pub span: Option<(usize, usize)>,
 }
 
 /// The `## Members` section: a forest of groups. A flat bullet list (no
@@ -133,6 +141,8 @@ mod tests {
                 name: None,
                 from_end: RelEnd::default(),
                 to_end: RelEnd::default(),
+                line: 0,
+                span: None,
             }])],
         };
         assert_eq!(doc.title, "Order");
