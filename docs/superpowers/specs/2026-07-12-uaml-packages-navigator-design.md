@@ -76,7 +76,7 @@ Grow the center **diagram title switcher** (`TopBar.svelte`) into a **navigator 
 ### Layout (top to bottom)
 
 - **Ancestry breadcrumb** — a styled chain of the currently scoped package (`root / … / current`). Click any crumb to rescope. Root is the default scope.
-- **Search** — live-filters the tree by title. Default scope = the current package; a toggle widens to the whole model.
+- **Search** — live-filters the tree by title. Default scope = the current package; a toggle widens to the whole model. **Out-of-scope hint:** when a scoped search yields **zero** in-scope matches but the same query *would* match outside the current scope, still show an unambiguous "no results" state, and *beneath* it a subtle hint — "Found N elsewhere — did you mean those?" — that jumps/widens the search on click. The hint never masquerades as a result; empty stays obviously empty.
 - **Type filter** — narrow to a single metaclass (e.g. only `uml.Class`, or only packages).
 - **Model tree** — packages and classifiers under the current scope.
 - **Diagrams zone** — the existing views; selecting one switches the active diagram (reuses `onSelectDiagram` / `onRenameDiagram` / `onCreateDiagram`).
@@ -117,7 +117,7 @@ Grow the center **diagram title switcher** (`TopBar.svelte`) into a **navigator 
 - **Lifecycle:** materialize on first child; de-materialize on last child out; ghost empty-package does not survive reload.
 - **Index regen:** `index.md` regenerated with correct order; order reconcile on load.
 - **Migration:** flat model → root package; existing serializer/tests unaffected.
-- **Navigator (component, mirroring `TopBar.test.ts`):** breadcrumb rescope; search filter; type filter; classifier action-menu routing (view / add / edit-stub); file-manager ops (create / move / rename / delete / reorder) mutate the model and re-index; **delete of a non-empty package** covers all three prompt branches (cascade / move-to-parent / cancel).
+- **Navigator (component, mirroring `TopBar.test.ts`):** breadcrumb rescope; search filter (incl. zero-in-scope + matches-elsewhere → shows empty state plus the out-of-scope hint); type filter; classifier action-menu routing (view / add / edit-stub); file-manager ops (create / move / rename / delete / reorder) mutate the model and re-index; **delete of a non-empty package** covers all three prompt branches (cascade / move-to-parent / cancel).
 
 ## Deferred (own specs)
 
