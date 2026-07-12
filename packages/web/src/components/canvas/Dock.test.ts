@@ -1,7 +1,8 @@
-import { test, expect, vi } from "vitest";
+import { test, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/svelte";
 import { DEFAULT_DISPLAY, type DiagramDisplay } from "@uaml/okf";
 import Dock from "./Dock.svelte";
+import { hints } from "../../state/hints.svelte";
 
 const baseProps = (display: DiagramDisplay, onDisplayChange = vi.fn()) => ({
   activeTool: "select" as const,
@@ -15,6 +16,12 @@ const baseProps = (display: DiagramDisplay, onDisplayChange = vi.fn()) => ({
 async function openPanel() {
   await fireEvent.click(screen.getByRole("button", { name: "Diagram properties" }));
 }
+
+beforeEach(() => {
+  localStorage.clear();
+  hints.show = false;
+  document.documentElement.removeAttribute("data-show-shortcuts");
+});
 
 test("the ERD toggle is gone; a Diagram properties button opens a left-anchored flyout", async () => {
   render(Dock, { props: baseProps(DEFAULT_DISPLAY) });
@@ -67,4 +74,36 @@ test("Attribute detail is disabled when Show attributes is off", async () => {
   expect(nameType.disabled).toBe(true);
   await fireEvent.click(nameType);
   expect(onDisplayChange).not.toHaveBeenCalled();
+});
+
+test("the shortcuts toggle button flips hints.show, aria-pressed, and the root attribute", async () => {
+  render(Dock, { props: baseProps(DEFAULT_DISPLAY) });
+  const btn = screen.getByRole("button", { name: "Show keyboard shortcuts" });
+  expect(btn.getAttribute("aria-pressed")).toBe("false");
+  expect(document.documentElement.hasAttribute("data-show-shortcuts")).toBe(false);
+
+  await fireEvent.click(btn);
+  expect(hints.show).toBe(true);
+  expect(btn.getAttribute("aria-pressed")).toBe("true");
+  expect(document.documentElement.hasAttribute("data-show-shortcuts")).toBe(true);
+});
+
+test("pressing ? toggles the hints; ? while typing in an input is ignored", async () => {
+  render(Dock, { props: baseProps(DEFAULT_DISPLAY) });
+  await fireEvent.keyDown(window, { key: "?" });
+  expect(hints.show).toBe(true);
+
+  // Typing ? inside an input must NOT toggle.
+  const input = document.createElement("input");
+  document.body.appendChild(input);
+  await fireEvent.keyDown(input, { key: "?" });
+  expect(hints.show).toBe(true); // unchanged
+  input.remove();
+});
+
+test("tool buttons render their key-hint glyph", () => {
+  render(Dock, { props: baseProps(DEFAULT_DISPLAY) });
+  // V / N / C glyphs are present in the DOM (hidden via CSS, but rendered).
+  const glyphs = Array.from(document.querySelectorAll("kbd")).map((k) => k.textContent);
+  expect(glyphs).toEqual(expect.arrayContaining(["V", "N", "C"]));
 });

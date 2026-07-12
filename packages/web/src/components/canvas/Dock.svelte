@@ -5,6 +5,10 @@
 <script lang="ts">
   import type { Snippet } from "svelte";
   import { DEFAULT_DISPLAY, type DiagramDisplay } from "@uaml/okf";
+  import { Keyboard } from "lucide-svelte";
+  import KeyHint from "../KeyHint.svelte";
+  import { hints } from "../../state/hints.svelte";
+  import { matchesShortcut, keyLabel } from "../../lib/shortcuts";
 
   let {
     activeTool,
@@ -28,17 +32,24 @@
   // how the active diagram renders. Toggled by the sliders button.
   let propsOpen = $state(false);
 
-  // Keyboard shortcuts V/N/C
+  // Keyboard shortcuts, sourced from the registry so displayed glyphs and the
+  // handled keys can never drift.
   $effect(() => {
     function handler(e: KeyboardEvent) {
       const tag = (e.target as HTMLElement).tagName;
       if (["INPUT", "TEXTAREA", "SELECT"].includes(tag)) return;
-      if (e.key === "v") onToolChange("select");
-      if (e.key === "n") onToolChange("add");
-      if (e.key === "c") onToolChange("connect");
+      if (matchesShortcut("tool.select", e)) onToolChange("select");
+      else if (matchesShortcut("tool.add", e)) onToolChange("add");
+      else if (matchesShortcut("tool.connect", e)) onToolChange("connect");
+      else if (matchesShortcut("hints.toggle", e)) hints.toggle();
     }
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
+  });
+
+  // Reflect the toggle onto <html> so the global CSS reveals every .keyhint.
+  $effect(() => {
+    document.documentElement.toggleAttribute("data-show-shortcuts", hints.show);
   });
 
   function patch(p: Partial<DiagramDisplay>) {
@@ -111,7 +122,7 @@
   </svg>
 {/snippet}
 
-{#snippet toolButton(icon: Snippet, tip: string, active: boolean, onClick: () => void)}
+{#snippet toolButton(icon: Snippet, tip: string, active: boolean, onClick: () => void, keys?: string[])}
   <div class="relative group">
     <button
       onclick={onClick}
@@ -122,6 +133,11 @@
     >
       {@render icon()}
     </button>
+    {#if keys}
+      <span class="pointer-events-none absolute -top-1 -right-1">
+        <KeyHint {keys} />
+      </span>
+    {/if}
     {@render dockTip(tip)}
   </div>
 {/snippet}
@@ -184,18 +200,20 @@
   class="absolute left-[14px] top-[calc(50%-34px)] -translate-y-1/2 bg-white border border-[#d8dee8] rounded-xl p-[6px] flex flex-col gap-1 z-20 shadow-[0_4px_16px_rgba(15,23,42,0.06)]"
   style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Inter, system-ui, sans-serif;"
 >
-  {@render toolButton(selectIcon, "Select & move (V)", activeTool === "select", () => onToolChange("select"))}
+  {@render toolButton(selectIcon, "Select & move (V)", activeTool === "select", () => onToolChange("select"), keyLabel("tool.select"))}
   {@render toolButton(
     addIcon,
     "Add object (N) — or double-click canvas",
     activeTool === "add",
     () => onToolChange("add"),
+    keyLabel("tool.add"),
   )}
   {@render toolButton(
     connectIcon,
     "Connect (C) — or drag from a node's port",
     activeTool === "connect",
     () => onToolChange("connect"),
+    keyLabel("tool.connect"),
   )}
 
   <div class="h-px bg-[#d8dee8] mx-1 my-[3px]"></div>
@@ -269,6 +287,24 @@
         </div>
       </div>
     {/if}
+  </div>
+
+  <div class="h-px bg-[#d8dee8] mx-1 my-[3px]"></div>
+  <div class="relative group">
+    <button
+      onclick={() => hints.toggle()}
+      aria-label="Show keyboard shortcuts"
+      aria-pressed={hints.show}
+      class="w-[38px] h-[38px] rounded-[9px] border-none flex items-center justify-center cursor-pointer transition-colors {hints.show
+        ? 'bg-[#e6f1fb] text-[#1e88e5]'
+        : 'bg-transparent text-slate-500 hover:bg-[#f1f3f7] hover:text-slate-900'}"
+    >
+      <Keyboard size={19} />
+    </button>
+    <span class="pointer-events-none absolute -top-1 -right-1">
+      <KeyHint keys={keyLabel("hints.toggle")} />
+    </span>
+    {@render dockTip("Show keyboard shortcuts (?)")}
   </div>
 
   <div class="h-px bg-[#d8dee8] mx-1 my-[3px]"></div>
