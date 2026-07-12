@@ -998,6 +998,7 @@ dependencies = [
  "serde",
  "serde-wasm-bindgen 0.6.5",
  "serde_json",
+ "tsify-next",
  "uaml",
  "uaml-ops-dto",
  "wasm-bindgen",

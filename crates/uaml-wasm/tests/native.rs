@@ -1,6 +1,11 @@
 //! Native (non-wasm) tests over the pure `*_json` cores. The `#[wasm_bindgen]`
 //! surface is a thin serde-wasm-bindgen shell around these, exercised in JS.
-use uaml_wasm::{apply_ops_bundle, build_bundle_json, build_model_json, fmt_bundle, validate_json};
+use std::collections::BTreeMap;
+use uaml::solve::{Rect, Size, SizeMap, SolveConfig};
+use uaml_wasm::{
+    apply_ops_bundle, build_bundle_json, build_model_json, fmt_bundle, solve_bundle,
+    validate_json,
+};
 
 fn bundle() -> Vec<(String, String)> {
     vec![(
@@ -203,4 +208,62 @@ fn fmt_is_idempotent() {
     let once = fmt_bundle(&src);
     let twice = fmt_bundle(&once);
     assert_eq!(once, twice, "fmt is not idempotent");
+}
+
+fn layout_bundle() -> Vec<(String, String)> {
+    vec![
+        ("shop/customer.md".into(), "---\ntype: uml.Class\ntitle: Customer\n---\n# Customer\n".into()),
+        ("shop/account.md".into(), "---\ntype: uml.Class\ntitle: Account\n---\n# Account\n".into()),
+        ("shop/order.md".into(), "---\ntype: uml.Class\ntitle: Order\n---\n# Order\n".into()),
+        (
+            // `Diagram.key` is derived from the last path segment (`doc_slug`),
+            // so this must be `orders.md`, not e.g. `orders-domain.md`, to
+            // resolve to key "orders" — matching the golden fixture in
+            // `crates/uaml/tests/solver_golden.rs`.
+            "shop/orders.md".into(),
+            "---\ntype: Diagram\ntitle: Orders\nprofile: uml-domain\n---\n# Orders\n\n## Members\n\n### Users\n- [Customer](./customer.md)\n- [Account](./account.md)\n\n### Orders\n- [Order](./order.md)\n\n## Layout\n- Users as column with frame\n- Users left of Orders\n".into(),
+        ),
+    ]
+}
+
+fn sizes_200x90() -> SizeMap {
+    let mut s: SizeMap = BTreeMap::new();
+    for k in ["customer", "account", "order"] {
+        s.insert(k.into(), Size { w: 200.0, h: 90.0 });
+    }
+    s
+}
+
+#[test]
+fn solve_bundle_matches_golden_rects() {
+    let r = solve_bundle(&layout_bundle(), "orders", sizes_200x90(), SolveConfig::default()).unwrap();
+    assert!(r.diagnostics.is_empty(), "expected no diagnostics, got: {:?}", r.diagnostics);
+    assert_eq!(r.solved.nodes["customer"], Rect { x: 16.0, y: 16.0, w: 200.0, h: 90.0 });
+    assert_eq!(r.solved.nodes["account"], Rect { x: 16.0, y: 122.0, w: 200.0, h: 90.0 });
+    assert_eq!(r.solved.nodes["order"], Rect { x: 264.0, y: 69.0, w: 200.0, h: 90.0 });
+    // Two groups: framed "Users" shrink "Orders".
+    assert_eq!(r.solved.groups.len(), 2);
+}
+
+#[test]
+fn solve_bundle_unknown_key_errs() {
+    let err = solve_bundle(&layout_bundle(), "nope", sizes_200x90(), SolveConfig::default()).unwrap_err();
+    assert!(err.contains("nope"), "error should name missing key, got: {err}");
+}
+
+#[test]
+fn solve_bundle_surfaces_unresolved_operand_diagnostic() {
+    let mut b = layout_bundle();
+    // Append layout line referencing non-existent operand. `left of` (not
+    // `left`) so it parses as a valid Placement statement — an unresolved
+    // operand is a resolve-time diagnostic, not a parse error, and a
+    // malformed layout line (e.g. missing "of") is silently dropped by the
+    // parser before it ever reaches resolve.
+    let diagram = b.last_mut().unwrap();
+    diagram.1.push_str("- Ghosts left of Orders\n");
+    let r = solve_bundle(&b, "orders", sizes_200x90(), SolveConfig::default()).unwrap();
+    assert!(
+        r.diagnostics.iter().any(|d| d.code == uaml::diagnostic::DiagCode::UnresolvedLayoutRef),
+        "expected unresolved-layout-ref diagnostic, got: {:?}", r.diagnostics
+    );
 }

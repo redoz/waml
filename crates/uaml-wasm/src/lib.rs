@@ -50,6 +50,35 @@ pub fn fmt_bundle(bundle: &[(String, String)]) -> Vec<(String, String)> {
         .collect()
 }
 
+/// Result of solving one diagram: absolute rects + any layout diagnostics.
+/// Tsify emits its TypeScript type; under `wasm` it crosses the boundary as a
+/// plain JS object.
+#[derive(Debug, serde::Serialize, serde::Deserialize, tsify_next::Tsify)]
+#[tsify(into_wasm_abi)]
+pub struct SolveResult {
+    pub solved: uaml::solve::Solved,
+    pub diagnostics: Vec<uaml::diagnostic::Diagnostic>,
+}
+
+/// Build the model from `bundle`, pick the diagram whose `key == diagram_key`,
+/// and solve it with the caller-supplied `sizes` + `cfg`. Errors if no diagram
+/// matches the key (a caller bug, distinct from in-diagram graceful degradation).
+pub fn solve_bundle(
+    bundle: &[(String, String)],
+    diagram_key: &str,
+    sizes: uaml::solve::SizeMap,
+    cfg: uaml::solve::SolveConfig,
+) -> Result<SolveResult, String> {
+    let model = uaml::parse::build_model(bundle);
+    let diagram = model
+        .diagrams
+        .iter()
+        .find(|d| d.key == diagram_key)
+        .ok_or_else(|| format!("no diagram with key '{diagram_key}'"))?;
+    let (solved, diagnostics) = uaml::solve::solve_diagram(diagram, &sizes, &cfg);
+    Ok(SolveResult { solved, diagnostics })
+}
+
 // ── wasm-bindgen surface (structured JS values via serde-wasm-bindgen) ────────
 
 #[wasm_bindgen]
@@ -109,4 +138,24 @@ pub fn fmt(bundle: JsValue) -> Result<JsValue, JsValue> {
 #[wasm_bindgen]
 pub fn split_bundle(text: &str) -> Result<JsValue, JsValue> {
     Ok(serde_wasm_bindgen::to_value(&uaml::parse::split_bundle(text))?)
+}
+
+/// `bundle`: `[path, markdown][]`; `diagram_key`: which diagram to solve;
+/// `sizes`: `Record<string, {w, h}>`; `cfg`: `SolveConfig | null | undefined`.
+/// Returns `{ solved, diagnostics }`.
+#[wasm_bindgen]
+pub fn solve(
+    bundle: JsValue,
+    diagram_key: String,
+    sizes: JsValue,
+    cfg: JsValue,
+) -> Result<SolveResult, JsValue> {
+    let b: Vec<(String, String)> = serde_wasm_bindgen::from_value(bundle)?;
+    let sizes: uaml::solve::SizeMap = serde_wasm_bindgen::from_value(sizes)?;
+    let cfg: uaml::solve::SolveConfig = if cfg.is_null() || cfg.is_undefined() {
+        uaml::solve::SolveConfig::default()
+    } else {
+        serde_wasm_bindgen::from_value(cfg)?
+    };
+    solve_bundle(&b, &diagram_key, sizes, cfg).map_err(|e| JsValue::from_str(&e))
 }
