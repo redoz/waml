@@ -97,8 +97,10 @@ export function createModelStore(initial?: Bundle, opts: CreateStoreOptions = {}
       // Diagram membership is derived-only in Stage 1b (no membership ops), so the
       // diagram hint is accepted and dropped — the node lands in the implicit view.
       const slug = freshSlug();
-      const ok = run(nodeNewOps({ slug, title: "New object", type: "uml.Class" }));
+      // Seed the overlay position BEFORE run() emits, so subscribers receive the
+      // new node at the drop point rather than the {0,0} origin.
       overlay.nodes.set(slug, { position });
+      const ok = run(nodeNewOps({ slug, title: "New object", type: "uml.Class" }));
       if (!ok) emit();
       return findNode(slug) ?? { key: slug, type: "uml.Class", title: "New object", stereotypes: [], attributes: [], position };
     },
