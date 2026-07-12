@@ -52,7 +52,7 @@ jobs:
         run: cargo test --workspace
 
       # Regenerate the inlined wasm module so a stale commit can't hide a drift
-      # between the Rust core and the checked-in packages/okf/src/generated files.
+      # between the Rust core and the checked-in packages/wasm/src/generated files.
       - name: Build wasm
         run: pnpm build:wasm
 

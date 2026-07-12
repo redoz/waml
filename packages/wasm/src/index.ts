@@ -17,6 +17,7 @@ export type {
   Size,
   Rect,
   FlagSet,
+  Shape,
   SolvedGroup,
   Solved,
   SolveConfig,
