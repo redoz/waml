@@ -1,11 +1,11 @@
 use pulldown_cmark::{Event, HeadingLevel, Options, Parser, Tag, TagEnd};
 
+use crate::diagnostic::{DiagCode, Diagnostic};
 use crate::frontmatter::parse_frontmatter;
 use crate::grammar::{
-    parse_attribute_line, parse_relationship_line,
-    parse_value_line,
+    bullet_range, parse_attribute_line, parse_relationship_line, parse_value_line,
 };
-use crate::syntax::{Document, LayoutItem, Line, Section};
+use crate::syntax::{Document, ErrorNode, LayoutItem, Line, Section};
 
 use std::collections::{HashMap, HashSet};
 
@@ -19,35 +19,252 @@ struct Head {
     content_start: usize,
 }
 
-fn classify(title: &str, content: &str, raw_full: &str) -> Section {
+/// 1-based line number of byte offset `byte` within `src`.
+fn line_at(src: &str, byte: usize) -> usize {
+    1 + src[..byte.min(src.len())].bytes().filter(|&b| b == b'\n').count()
+}
+
+/// Byte range of `[Title](./slug.md)` within `line`, or the whole bullet.
+fn find_link_span(line: &str, title: &str, slug: &str) -> (usize, usize) {
+    let needle = format!("[{title}](./{slug}.md)");
+    match line.find(&needle) {
+        Some(s) => (s, s + needle.len()),
+        None => bullet_range(line),
+    }
+}
+
+/// Does `text` open with a clean CommonMark YAML metadata block? (A private
+/// copy of `validate.rs`'s check; `validate.rs` keeps its own until Task 6.)
+fn has_metadata_block(text: &str) -> bool {
+    let mut opts = Options::empty();
+    opts.insert(Options::ENABLE_YAML_STYLE_METADATA_BLOCKS);
+    Parser::new_ext(text, opts).any(|e| matches!(e, Event::Start(Tag::MetadataBlock(_))))
+}
+
+const DROPPABLE_MSG: &str =
+    "content here is outside the recognized document structure and would be silently dropped by fmt";
+
+/// Walk a bullet section's content into `Line` nodes: a well-formed `- ` bullet
+/// becomes `Line::Parsed`, a malformed bullet or stray non-bullet line becomes a
+/// preserved `Line::Error` (never dropped). `content_abs_start` is the byte
+/// offset of `content`'s first byte within `src`; `malformed_code` is the code
+/// a failed bullet parse yields.
+fn walk_bullets<T>(
+    content: &str,
+    content_abs_start: usize,
+    src: &str,
+    malformed_code: DiagCode,
+    mut parse_one: impl FnMut(&str, usize) -> Result<T, crate::grammar::LineError>,
+) -> Vec<Line<T>> {
+    let mut out = Vec::new();
+    let mut fence: Option<char> = None;
+    let mut offset = 0usize;
+    for raw_line in content.split('\n') {
+        let line_start = offset;
+        offset += raw_line.len() + 1; // + 1 for the consumed '\n'
+        let trimmed = raw_line.trim_end_matches('\r').trim();
+
+        if let Some(marker) = fence {
+            let delim = if marker == '`' { "```" } else { "~~~" };
+            if trimmed.starts_with(delim) {
+                fence = None;
+            }
+            continue;
+        }
+        if trimmed.starts_with("```") {
+            fence = Some('`');
+            continue;
+        }
+        if trimmed.starts_with("~~~") {
+            fence = Some('~');
+            continue;
+        }
+        if trimmed.is_empty() {
+            continue;
+        }
+
+        let line_no = line_at(src, content_abs_start + line_start);
+        if trimmed.starts_with("- ") {
+            match parse_one(raw_line, line_no) {
+                Ok(v) => out.push(Line::Parsed(v)),
+                Err(e) => out.push(Line::Error(ErrorNode {
+                    raw: raw_line.to_string(),
+                    line: line_no,
+                    span: e.range,
+                    code: malformed_code,
+                    message: e.message,
+                })),
+            }
+        } else {
+            out.push(Line::Error(ErrorNode {
+                raw: raw_line.to_string(),
+                line: line_no,
+                span: bullet_range(raw_line),
+                code: DiagCode::DroppableContent,
+                message: DROPPABLE_MSG.to_string(),
+            }));
+        }
+    }
+    out
+}
+
+/// Build a `Section` from its heading title and content, wiring bullet sections
+/// with in-tree `Line::Error` nodes. `content_abs_start` is the byte offset of
+/// `content`'s first byte within `src`.
+fn walk_section(title: &str, content: &str, content_abs_start: usize, src: &str, raw_full: &str) -> Section {
     let lines = |c: &str| c.lines().map(|l| l.to_string()).collect::<Vec<_>>();
     match title.to_lowercase().as_str() {
-        "attributes" => Section::Attributes(
-            lines(content).iter().filter_map(|l| parse_attribute_line(l).ok().map(Line::Parsed)).collect(),
-        ),
+        "attributes" => Section::Attributes(walk_bullets(
+            content, content_abs_start, src, DiagCode::MalformedAttribute,
+            |line, _ln| parse_attribute_line(line),
+        )),
         "values" => {
             Section::Values(lines(content).iter().filter_map(|l| parse_value_line(l).ok()).collect())
         }
-        "relationships" => Section::Relationships(
-            lines(content).iter().filter_map(|l| parse_relationship_line(l).ok().map(Line::Parsed)).collect(),
-        ),
+        "relationships" => Section::Relationships(walk_bullets(
+            content, content_abs_start, src, DiagCode::MalformedRelationship,
+            |line, ln| {
+                parse_relationship_line(line).map(|mut r| {
+                    r.line = ln;
+                    r.span = Some(find_link_span(line, &r.target_title, &r.target_slug));
+                    r
+                })
+            },
+        )),
         "members" => Section::Members(crate::grammar::parse_members_block(content)),
         "body" => Section::Body(content.trim().to_string()),
         "notes" => {
             Section::Notes(lines(content).iter().filter_map(|l| parse_value_line(l).ok()).collect())
         }
-        "layout" => Section::Layout(
-            lines(content).iter()
-                .filter_map(|l| crate::layout::parse_layout_line(l).ok())
-                .map(|stmt| Line::Parsed(LayoutItem { line: 0, stmt }))
-                .collect(),
-        ),
+        "layout" => Section::Layout(walk_bullets(
+            content, content_abs_start, src, DiagCode::MalformedLayout,
+            |line, ln| crate::layout::parse_layout_line(line).map(|stmt| LayoutItem { line: ln, stmt }),
+        )),
         _ => Section::Unknown { title: title.to_string(), raw: raw_full.trim_end().to_string() },
     }
 }
 
-pub fn parse_document(src: &str) -> Document {
+/// Push a bullet section's `Line::Error` nodes as diagnostics.
+fn push_line_errors<T>(lines: &[Line<T>], out: &mut Vec<Diagnostic>) {
+    for l in lines {
+        if let Line::Error(e) = l {
+            out.push(Diagnostic::new(e.code, e.message.clone(), "", e.line).with_span(e.span));
+        }
+    }
+}
+
+fn push_group_errors(g: &crate::syntax::MemberGroup, out: &mut Vec<Diagnostic>) {
+    push_line_errors(&g.members, out);
+    for c in &g.children {
+        push_group_errors(c, out);
+    }
+}
+
+/// Derive bullet-level syntactic diagnostics by walking the tree's `Line::Error`
+/// nodes — the single source of truth for per-line syntax errors.
+pub fn diagnostics_of(doc: &Document) -> Vec<Diagnostic> {
+    let mut out = Vec::new();
+    for s in &doc.sections {
+        match s {
+            Section::Attributes(v) => push_line_errors(v, &mut out),
+            Section::Relationships(v) => push_line_errors(v, &mut out),
+            Section::Layout(v) => push_line_errors(v, &mut out),
+            Section::Members(block) => {
+                for g in &block.groups {
+                    push_group_errors(g, &mut out);
+                }
+            }
+            _ => {}
+        }
+    }
+    out
+}
+
+/// Scan the frontmatter region and pre-first-section preamble of `src` for the
+/// diagnostic codes that have no bullet-node home: `UnknownType`,
+/// `FrontmatterNotClean`, and `DroppableContent` for prose before the first
+/// `## ` section. `file` is left `""` (the caller sets the path).
+fn scan_frontmatter_and_preamble(src: &str) -> Vec<Diagnostic> {
+    let mut diags = Vec::new();
+    if src.trim_start().starts_with("---") && !has_metadata_block(src) {
+        diags.push(Diagnostic::new(
+            DiagCode::FrontmatterNotClean,
+            "frontmatter is not a clean CommonMark metadata block (would render as a thematic break + heading)",
+            "",
+            1,
+        ));
+    }
+
+    let mut in_fm = false;
+    let mut fm_done = false;
+    let mut fence: Option<char> = None;
+    for (i, raw) in src.lines().enumerate() {
+        let n = i + 1;
+        let trimmed = raw.trim_end_matches('\r').trim();
+
+        if !in_fm && !fm_done && trimmed == "---" {
+            in_fm = true;
+            continue;
+        }
+        if in_fm && (trimmed == "---" || trimmed == "...") {
+            in_fm = false;
+            fm_done = true;
+            continue;
+        }
+        if in_fm {
+            if let Some(rest) = trimmed.strip_prefix("type:") {
+                let ty = rest.trim().trim_matches('"');
+                if ty != "Diagram" && matches!(ClassifierType::parse(ty), ClassifierType::Unknown(_)) {
+                    diags.push(Diagnostic::warn(
+                        DiagCode::UnknownType,
+                        format!("unknown type '{ty}' — rendered as a generic box"),
+                        "",
+                        n,
+                    ));
+                }
+            }
+            continue;
+        }
+
+        if let Some(marker) = fence {
+            let delim = if marker == '`' { "```" } else { "~~~" };
+            if trimmed.starts_with(delim) {
+                fence = None;
+            }
+            continue;
+        }
+        if trimmed.starts_with("```") {
+            fence = Some('`');
+            continue;
+        }
+        if trimmed.starts_with("~~~") {
+            fence = Some('~');
+            continue;
+        }
+        // The first `## ` section ends the preamble — its content is handled by
+        // the in-tree content walk.
+        if trimmed.starts_with("## ") {
+            break;
+        }
+        // Non-blank, non-H1 prose before the first section would be silently
+        // dropped by parse→serialize.
+        if !trimmed.is_empty() {
+            let is_h1 = trimmed.starts_with('#') && !trimmed.starts_with("##");
+            if !is_h1 {
+                diags.push(Diagnostic::new(DiagCode::DroppableContent, DROPPABLE_MSG, "", n));
+            }
+        }
+    }
+    diags
+}
+
+/// Parse `src` into a `Document` (with in-tree `Line::Error` nodes) plus the
+/// syntactic diagnostics derived from those nodes and the frontmatter/preamble
+/// scan. Diagnostic `file` is `""` (the caller sets the path); `line` is 1-based
+/// over `src` and `span` is a line-relative byte range where known.
+pub fn parse(src: &str) -> (Document, Vec<Diagnostic>) {
     let (frontmatter, body) = parse_frontmatter(src);
+    let body_offset = src.len() - body.len();
     let parser = Parser::new_ext(&body, Options::empty()).into_offset_iter();
 
     let mut title = String::new();
@@ -90,12 +307,22 @@ pub fn parse_document(src: &str) -> Document {
     let mut sections = Vec::new();
     for (i, head) in heads.iter().enumerate() {
         let end = heads.get(i + 1).map(|h| h.heading_start).unwrap_or(body.len());
-        let content = body[head.content_start..end].trim();
+        let raw_slice = &body[head.content_start..end];
+        let lead = raw_slice.len() - raw_slice.trim_start().len();
+        let content = raw_slice.trim();
+        let content_abs_start = body_offset + head.content_start + lead;
         let raw_full = &body[head.heading_start..end];
-        sections.push(classify(&head.title, content, raw_full));
+        sections.push(walk_section(&head.title, content, content_abs_start, src, raw_full));
     }
 
-    Document { frontmatter, title: title.trim().to_string(), sections }
+    let doc = Document { frontmatter, title: title.trim().to_string(), sections };
+    let mut diags = diagnostics_of(&doc);
+    diags.extend(scan_frontmatter_and_preamble(src));
+    (doc, diags)
+}
+
+pub fn parse_document(src: &str) -> Document {
+    parse(src).0
 }
 
 static MARKER_RE: std::sync::LazyLock<regex::Regex> =
@@ -335,6 +562,47 @@ mod tests {
             _ => None,
         }).unwrap();
         assert_eq!(rels[0].parsed().unwrap().kind, RelationshipKind::Composes);
+    }
+
+    #[test]
+    fn parse_reports_malformed_attribute_with_span_and_line() {
+        let src = "---\ntype: uml.Class\ntitle: X\n---\n# X\n\n## Attributes\n- bad line without colon\n";
+        let (_doc, diags) = parse(src);
+        let d = diags.iter().find(|d| d.code == DiagCode::MalformedAttribute).unwrap();
+        assert_eq!(d.line, 8);
+        let span = d.span.expect("malformed attribute must carry a span");
+        assert!(span.0 < span.1);
+    }
+
+    #[test]
+    fn parse_reports_unknown_type_on_frontmatter_line() {
+        let src = "---\ntype: bpmn.Task\ntitle: X\n---\n# X\n";
+        let (_doc, diags) = parse(src);
+        let d = diags.iter().find(|d| d.code == DiagCode::UnknownType).unwrap();
+        assert_eq!(d.line, 2);
+        assert_eq!(d.severity, crate::diagnostic::Severity::Warning);
+    }
+
+    #[test]
+    fn parse_of_a_clean_doc_has_no_diagnostics() {
+        let src = "---\ntype: uml.Class\ntitle: X\n---\n# X\n\n## Attributes\n- id: XId\n";
+        let (_doc, diags) = parse(src);
+        assert!(diags.is_empty(), "got: {diags:?}");
+    }
+
+    #[test]
+    fn malformed_line_is_preserved_as_error_node_not_dropped() {
+        use crate::syntax::{Line, Section};
+        let src = "---\ntype: uml.Class\ntitle: X\n---\n# X\n\n## Attributes\n- id: XId\n- bad line without colon\n";
+        let (doc, _diags) = parse(src);
+        let attrs = doc.sections.iter().find_map(|s| match s {
+            Section::Attributes(a) => Some(a), _ => None }).unwrap();
+        assert_eq!(attrs.len(), 2, "the malformed line must be kept as an error node, not dropped");
+        let err = attrs.iter().find_map(|l| match l { Line::Error(e) => Some(e), _ => None }).unwrap();
+        assert!(err.raw.contains("bad line without colon"));
+        // Diagnostics are derived from the same error node.
+        let (_d, diags) = parse(src);
+        assert!(diags.iter().any(|d| d.code == DiagCode::MalformedAttribute));
     }
 
     #[test]
