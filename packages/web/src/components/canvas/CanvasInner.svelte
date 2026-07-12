@@ -14,7 +14,7 @@
     type Connection,
     type Viewport,
   } from "@xyflow/svelte";
-  import { MessageSquare, PanelRight } from "lucide-svelte";
+  import { MessageSquare } from "lucide-svelte";
 
   import { model, store } from "../../state/model.svelte";
   import { sharedModelName, isFirstVisit, onStoreError } from "../../state/bootstrap";
@@ -97,11 +97,9 @@ import ShareToast from "../ShareToast.svelte";
   // Modal Share dialog (link + share-as-image). Replaces the old rail Share panel.
   let showShare = $state(false);
 
-  // Inspector visibility + pin state. Opened ONLY by the Inspect edge-flag
-  // (selection no longer auto-opens it — the multi-select toolbar owns selection
-  // actions now). When pinned the InspectorPanel stays open and dims (translucent)
+  // Inspector pin state. The panel is always mounted (never closes); an empty
+  // selection rests as a compact bar + hint. When pinned it dims (translucent)
   // while idle, fading back opaque on hover/focus.
-  let inspectorOpen = $state(false);
   let inspectorPinned = $state(false);
   // Bound to the InspectorPanel's resizable width so the edge-flags can slide
   // left, clear of the open panel, instead of sitting on top of it.
@@ -123,6 +121,14 @@ import ShareToast from "../ShareToast.svelte";
   // Single "focused" element (the sole selected node/edge) for the Inspector; a
   // multi-selection focuses nothing.
   const focused = $derived(focusedSelection(selectionSet));
+  // Element picker entries: the active diagram's member nodes (objects + notes).
+  const inspectorOptions = $derived(
+    $model.nodes
+      .filter((n) => memberSet.has(n.key))
+      .map((n) => ({ key: n.key, label: n.title.trim() || "Untitled" })),
+  );
+  const inspectorSelectedKey = $derived(focused?.type === "node" ? focused.id : null);
+  const inspectorFocusedKind = $derived(focused?.type);
   const diagrams = $derived(effectiveDiagrams($model));
   const activeDiagram = $derived(diagrams.find((d) => d.key === activeDiagramKey) ?? diagrams[0]);
   // The active diagram's resolved per-diagram render settings (absent ⇒ defaults).
@@ -603,39 +609,26 @@ import ShareToast from "../ShareToast.svelte";
       {/if}
     </div>
 
-    <!-- Right-edge flag tabs (mid-height, stacked). Inspect sits above Feedback.
-         Both slide left by the panel width while the Inspector is open so they
-         stay clear of it. -->
-    <EdgeFlag
-      label="Inspect"
-      offset={-62}
-      rightOffset={inspectorOpen ? inspectorWidth : 0}
-      active={inspectorOpen}
-      onClick={() => (inspectorOpen = !inspectorOpen)}
-    >
-      {#snippet icon()}<PanelRight size={16} />{/snippet}
-    </EdgeFlag>
+    <!-- Right-edge Feedback flag; slides left by the panel width to stay clear
+         of the always-present Inspector. -->
     <EdgeFlag
       label="Feedback"
       offset={62}
-      rightOffset={inspectorOpen ? inspectorWidth : 0}
+      rightOffset={inspectorWidth}
       href="https://github.com/redoz/uaml/issues/new"
     >
       {#snippet icon()}<MessageSquare size={16} />{/snippet}
     </EdgeFlag>
 
-    <!-- Pinnable Inspector host (translucent when pinned + idle, opaque on hover). -->
+    <!-- Always-present floating Inspector (translucent when pinned + idle). -->
     <InspectorPanel
-      open={inspectorOpen}
+      options={inspectorOptions}
+      selectedKey={inspectorSelectedKey}
+      focusedKind={inspectorFocusedKind}
+      onSelect={(key) => (selectionSet = key ? { nodes: [key], edges: [] } : EMPTY_SELECTION)}
       pinned={inspectorPinned}
-      title="Inspect"
       bind:width={inspectorWidth}
       onTogglePin={() => (inspectorPinned = !inspectorPinned)}
-      onClose={() => {
-        inspectorOpen = false;
-        inspectorPinned = false;
-        selectionSet = EMPTY_SELECTION;
-      }}
     >
       <Inspector
         selection={focused}
@@ -645,7 +638,6 @@ import ShareToast from "../ShareToast.svelte";
         onUpdateEdge={store.updateEdge}
         onClose={() => {
           selectionSet = EMPTY_SELECTION;
-          inspectorOpen = false;
         }}
         profileName={activeDiagram.profile}
         embedded
