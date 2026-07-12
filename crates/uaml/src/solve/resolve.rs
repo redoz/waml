@@ -13,6 +13,10 @@ struct Builder {
     constraints: Vec<Constraint>,
     group_by_name: BTreeMap<String, BoxId>,
     node_keys: BTreeSet<String>,
+    /// Every box already claimed as some parent's child. The box forest must be
+    /// a tree: a box parented twice is laid out under both subtrees, so a second
+    /// claim is warned and dropped.
+    owned: BTreeSet<BoxId>,
     next_group: u32,
     next_inline: u32,
 }
@@ -24,12 +28,13 @@ impl Builder {
             constraints: vec![],
             group_by_name: BTreeMap::new(),
             node_keys: BTreeSet::new(),
+            owned: BTreeSet::new(),
             next_group: 0,
             next_inline: 0,
         }
     }
 
-    fn add_group(&mut self, g: &DiagramGroup, depth: u8) -> BoxId {
+    fn add_group(&mut self, g: &DiagramGroup, depth: u8, file: &str, diags: &mut Vec<Diagnostic>) -> BoxId {
         let gid = self.next_group;
         self.next_group += 1;
         let id = BoxId::Group(gid);
@@ -53,10 +58,20 @@ impl Builder {
                     depth,
                 });
             }
-            children.push(leaf);
+            if self.owned.insert(leaf.clone()) {
+                children.push(leaf);
+            } else {
+                diags.push(Diagnostic::warn(
+                    DiagCode::LayoutConflict,
+                    format!("node `{key}` is already grouped; second group membership dropped"),
+                    file,
+                    0,
+                ));
+            }
         }
         for child in &g.children {
-            let cid = self.add_group(child, depth + 1);
+            let cid = self.add_group(child, depth + 1, file, diags);
+            self.owned.insert(cid.clone());
             children.push(cid);
         }
         let title = if g.name.is_empty() { None } else { Some(g.name.clone()) };
@@ -117,15 +132,29 @@ impl Builder {
                 }
             }
             OperandRef::InlineGroup { axis, items } => {
-                let iid = self.next_inline;
-                self.next_inline += 1;
-                let id = BoxId::Inline(iid);
                 let mut children = Vec::new();
                 for it in items {
                     if let Some(cid) = self.resolve_operand(it, file, diags) {
-                        children.push(cid);
+                        if self.owned.insert(cid.clone()) {
+                            children.push(cid);
+                        } else {
+                            diags.push(Diagnostic::warn(
+                                DiagCode::LayoutConflict,
+                                "layout operand is already grouped; inline group membership dropped",
+                                file,
+                                0,
+                            ));
+                        }
                     }
                 }
+                if children.is_empty() {
+                    // Every operand was unresolved or already grouped: emitting an
+                    // empty inline box would render as a detached frame.
+                    return None;
+                }
+                let iid = self.next_inline;
+                self.next_inline += 1;
+                let id = BoxId::Inline(iid);
                 self.boxes.push(Box {
                     id: id.clone(),
                     kind: BoxKind::Group,
@@ -190,10 +219,10 @@ impl Builder {
 
 pub fn resolve(diagram: &Diagram) -> (Scene, Vec<Diagnostic>) {
     let mut b = Builder::new();
-    for g in &diagram.groups {
-        b.add_group(g, 0);
-    }
     let mut diags = vec![];
+    for g in &diagram.groups {
+        b.add_group(g, 0, &diagram.key, &mut diags);
+    }
     for stmt in &diagram.layout {
         b.add_statement(stmt, &diagram.key, &mut diags);
     }
@@ -279,24 +308,82 @@ mod tests {
 
     #[test]
     fn resolves_bare_node_by_slug_and_inline_group() {
+        use crate::solve::Constraint;
         use crate::syntax::*;
+        fn bare(name: &str) -> Operand {
+            Operand { ref_: OperandRef::Name(NameRef::Bare(name.into())), axis: None, hints: vec![] }
+        }
+        // An inline group regroups a *group* (not an already-owned member), so it
+        // owns a genuinely unparented box; a bare name resolves to a node by slug.
         let inline = Operand {
-            ref_: OperandRef::InlineGroup {
-                axis: Axis::Column,
-                items: vec![Operand { ref_: OperandRef::Name(NameRef::Bare("Order Line".into())), axis: None, hints: vec![] }],
-            },
+            ref_: OperandRef::InlineGroup { axis: Axis::Column, items: vec![bare("Lines")] },
             axis: None,
             hints: vec![Hint::Margin(Margin::Large)],
         };
         let d = diagram(
-            vec![DiagramGroup { name: "".into(), members: vec!["order-line".into()], children: vec![] }],
-            vec![LayoutStatement::Standalone(inline)],
+            vec![
+                DiagramGroup { name: "Lines".into(), members: vec!["order-line".into()], children: vec![] },
+                DiagramGroup { name: "Notes".into(), members: vec!["note".into()], children: vec![] },
+            ],
+            vec![
+                LayoutStatement::Standalone(inline),
+                LayoutStatement::Placement { operands: vec![bare("Order Line"), bare("note")], directions: vec![Direction::LeftOf] },
+            ],
         );
         let (scene, diags) = resolve(&d);
-        assert!(diags.is_empty(), "`Order Line` slugifies to order-line and resolves");
+        assert!(diags.is_empty(), "group ref and `Order Line` (slug order-line) both resolve");
         let ig = scene.boxes.iter().find(|b| b.id == BoxId::Inline(0)).unwrap();
         assert_eq!(ig.axis, Some(Axis::Column));
         assert_eq!(ig.margin, Margin::Large);
-        assert_eq!(ig.children, vec![BoxId::Node("order-line".into())]);
+        assert_eq!(ig.children, vec![BoxId::Group(0)]);
+        assert_eq!(
+            scene.constraints[0],
+            Constraint::Place { a: BoxId::Node("order-line".into()), b: BoxId::Node("note".into()), dir: Direction::LeftOf }
+        );
+    }
+
+    #[test]
+    fn node_in_two_groups_is_parented_once_and_warns() {
+        let d = diagram(
+            vec![
+                DiagramGroup { name: "A".into(), members: vec!["shared".into()], children: vec![] },
+                DiagramGroup { name: "B".into(), members: vec!["shared".into()], children: vec![] },
+            ],
+            vec![],
+        );
+        let (scene, diags) = resolve(&d);
+        let owners: Vec<BoxId> = scene
+            .boxes
+            .iter()
+            .filter(|b| b.kind == BoxKind::Group && b.children.contains(&BoxId::Node("shared".into())))
+            .map(|b| b.id.clone())
+            .collect();
+        assert_eq!(owners, vec![BoxId::Group(0)], "shared node parented by exactly the first group");
+        assert_eq!(diags.len(), 1);
+        assert_eq!(diags[0].code, crate::diagnostic::DiagCode::LayoutConflict);
+    }
+
+    #[test]
+    fn inline_group_over_grouped_members_warns_and_emits_no_frame() {
+        use crate::syntax::*;
+        fn bare(name: &str) -> Operand {
+            Operand { ref_: OperandRef::Name(NameRef::Bare(name.into())), axis: None, hints: vec![] }
+        }
+        let inline = Operand {
+            ref_: OperandRef::InlineGroup { axis: Axis::Column, items: vec![bare("a"), bare("b")] },
+            axis: None,
+            hints: vec![],
+        };
+        let d = diagram(
+            vec![DiagramGroup { name: "G".into(), members: vec!["a".into(), "b".into()], children: vec![] }],
+            vec![LayoutStatement::Standalone(inline)],
+        );
+        let (scene, diags) = resolve(&d);
+        assert!(
+            !scene.boxes.iter().any(|b| matches!(b.id, BoxId::Inline(_))),
+            "inline group over already-grouped members must not emit a detached frame"
+        );
+        assert_eq!(diags.len(), 2, "one warning per already-grouped operand");
+        assert!(diags.iter().all(|d| d.code == crate::diagnostic::DiagCode::LayoutConflict));
     }
 }
