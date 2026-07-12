@@ -271,7 +271,11 @@ fn solve_box(
     let b = boxes[id];
     if b.kind == BoxKind::Leaf {
         let key = match id { BoxId::Node(k) => k.clone(), _ => String::new() };
-        let sz = sizes.get(&key).copied().unwrap_or(Size { w: 100.0, h: 40.0 });
+        let sz = if b.flags.collapsed {
+            cfg.chip
+        } else {
+            sizes.get(&key).copied().unwrap_or(Size { w: 100.0, h: 40.0 })
+        };
         let mut rects = BTreeMap::new();
         rects.insert(id.clone(), Rect { x: 0.0, y: 0.0, w: sz.w, h: sz.h });
         return Laid { size: sz, rects, groups: vec![] };
@@ -357,7 +361,16 @@ pub fn solve(scene: &Scene, sizes: &SizeMap, cfg: &SolveConfig) -> (Solved, Vec<
             .then(a.rect.y.total_cmp(&b.rect.y))
     });
 
-    (Solved { nodes, groups, flags: BTreeMap::new() }, diags)
+    let mut flags = BTreeMap::new();
+    for b in &scene.boxes {
+        if let BoxId::Node(key) = &b.id {
+            if b.flags.emphasized || b.flags.collapsed {
+                flags.insert(key.clone(), b.flags);
+            }
+        }
+    }
+
+    (Solved { nodes, groups, flags }, diags)
 }
 
 #[cfg(test)]
@@ -475,5 +488,32 @@ mod tests {
         assert_eq!(diags.len(), 1);
         assert_eq!(diags[0].code, DiagCode::LayoutConflict);
         assert_eq!(solved.nodes.len(), 2, "still renders both nodes");
+    }
+
+    #[test]
+    fn collapsed_uses_chip_size_and_flags_reported() {
+        let mut a = leaf("a");
+        a.flags.collapsed = true;
+        let mut b = leaf("b");
+        b.flags.emphasized = true;
+        let scene = Scene {
+            boxes: vec![a, b],
+            constraints: vec![Constraint::Place {
+                a: BoxId::Node("a".into()),
+                b: BoxId::Node("b".into()),
+                dir: Direction::LeftOf,
+            }],
+        };
+        let (solved, diags) = solve(&scene, &sizes(&["a", "b"], 200.0, 90.0), &SolveConfig::default());
+        assert!(diags.is_empty());
+        // a collapses to the 96x28 chip; `a left of b` gaps 96+16=112 in x,
+        // centers align in y: (28-90)/2 = -31, normalized so the band top is 0.
+        assert_eq!(
+            pretty(&solved),
+            "node a @ 0,31 96x28\n\
+             node b @ 112,0 200x90\n\
+             flags a emphasized=false collapsed=true\n\
+             flags b emphasized=true collapsed=false\n"
+        );
     }
 }
