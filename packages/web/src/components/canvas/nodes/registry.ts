@@ -9,6 +9,8 @@ import UmlDataTypeNode from "./UmlDataTypeNode.svelte";
 import UmlPackageNode from "./UmlPackageNode.svelte";
 import UmlAssociationNode from "./UmlAssociationNode.svelte";
 import UmlNoteNode from "./UmlNoteNode.svelte";
+import UmlActorNode from "./UmlActorNode.svelte";
+import UmlUseCaseNode from "./UmlUseCaseNode.svelte";
 
 type NodeComponent = Component<{ data: OkfNodeData }>;
 
@@ -22,6 +24,8 @@ const FAMILIES: Record<string, Record<string, NodeComponent>> = {
     Package: UmlPackageNode,
     Association: UmlAssociationNode, // association class — class box + dashed mid-line connector (edge side)
     Note: UmlNoteNode, // dog-eared comment box — no compartments
+    Actor: UmlActorNode, // stick figure — use-case diagrams (behavioral substrates spec)
+    UseCase: UmlUseCaseNode, // ellipse
   },
 };
 
