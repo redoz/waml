@@ -2,9 +2,12 @@ use std::sync::LazyLock;
 use regex::Regex;
 
 use crate::diagnostic::DiagCode;
-use crate::model::{Attribute, RelEnd, RelationshipKind, TypeRef, Visibility};
+use crate::model::{Attribute, FlowNodeKind, RelEnd, RelationshipKind, TypeRef, Visibility};
 use crate::multiplicity::Multiplicity;
-use crate::syntax::{ErrorNode, Line, MemberGroup, MemberLine, MembersBlock, ParsedName, ParsedRel};
+use crate::syntax::{
+    ErrorNode, FlowBullet, FlowNodeSyntax, FlowTargetRef, FlowTransition, Line, LinkRef,
+    MemberGroup, MemberLine, MembersBlock, ParsedName, ParsedRel,
+};
 
 static ATTR_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^- (?:([+\-#~]) )?([A-Za-z_][A-Za-z0-9_]*): (.+)$").unwrap());
@@ -29,6 +32,23 @@ static MEMBER_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^- \[([^\]]*)\]\(\./(.+?)\.md\)\s*$").unwrap());
 static STRAY_BRACKET_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"[\[\](){}]").unwrap());
+static FLOW_TRANSITION_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(concat!(
+        r"^- ",
+        r"(?:on `([^`]+)` )?",
+        r"(?:when `([^`]+)` |(else) )?",
+        r"transitions to (.+?)",
+        r"(?: carries \[([^\]]+)\]\(\./(.+?)\.md\))?",
+        r"(?::\s*`([^`]+)`)?$",
+    ))
+    .unwrap()
+});
+static FLOW_INTERNAL_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^- (entry|do|exit):\s*`([^`]+)`$").unwrap());
+static FLOW_REFINES_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^- refines \[([^\]]+)\]\(\./(.+?)\.md\)$").unwrap());
+static FLOW_PARTITION_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^- partition:\s*(\S.*)$").unwrap());
 
 /// A line-parse failure: a byte range within the input line plus a message.
 #[derive(Debug, Clone, PartialEq)]
@@ -358,6 +378,127 @@ pub fn render_member_line(m: &MemberLine) -> String {
     format!("- [{}](./{}.md)", m.title, m.slug)
 }
 
+/// Whole-string `[Title](./slug.md)` reference, or `None`.
+pub fn parse_link_ref(s: &str) -> Option<LinkRef> {
+    LINK_RE
+        .captures(s.trim())
+        .map(|c| LinkRef { title: c[1].to_string(), slug: c[2].to_string() })
+}
+
+/// Human-readable message for a malformed flow bullet.
+fn flow_error_message(line: &str) -> String {
+    if line.contains("transitions") {
+        "malformed transition — expected '[on `trigger`] [when `guard`|else] transitions to <target> [carries <link>] [: `effect`]' (expressions must be backticked)".to_string()
+    } else {
+        "unrecognized flow bullet — expected a transition, 'entry|do|exit: `effect`', 'refines <link>', or 'partition: <name>'".to_string()
+    }
+}
+
+pub fn parse_flow_bullet(line: &str) -> Result<FlowBullet, LineError> {
+    let trimmed = line.trim_end_matches('\r').trim();
+    if let Some(m) = FLOW_TRANSITION_RE.captures(trimmed) {
+        let raw_target = m[4].trim().to_string();
+        let target = match parse_link_ref(&raw_target) {
+            Some(l) => FlowTargetRef::Link(l),
+            None => FlowTargetRef::Local(raw_target),
+        };
+        return Ok(FlowBullet::Transition(FlowTransition {
+            trigger: m.get(1).map(|x| x.as_str().to_string()),
+            guard: m.get(2).map(|x| x.as_str().to_string()),
+            is_else: m.get(3).is_some(),
+            target,
+            carries: match (m.get(5), m.get(6)) {
+                (Some(t), Some(s)) => Some(LinkRef { title: t.as_str().to_string(), slug: s.as_str().to_string() }),
+                _ => None,
+            },
+            effect: m.get(7).map(|x| x.as_str().to_string()),
+            line: 0,
+        }));
+    }
+    if let Some(m) = FLOW_INTERNAL_RE.captures(trimmed) {
+        let e = m[2].to_string();
+        return Ok(match &m[1] {
+            "entry" => FlowBullet::Entry(e),
+            "do" => FlowBullet::Do(e),
+            _ => FlowBullet::Exit(e),
+        });
+    }
+    if let Some(m) = FLOW_REFINES_RE.captures(trimmed) {
+        return Ok(FlowBullet::Refines(LinkRef { title: m[1].to_string(), slug: m[2].to_string() }));
+    }
+    if let Some(m) = FLOW_PARTITION_RE.captures(trimmed) {
+        return Ok(FlowBullet::Partition(m[1].trim().to_string()));
+    }
+    Err(LineError { range: bullet_range(line), message: flow_error_message(trimmed) })
+}
+
+/// Split a `###` heading's text into (kind, identity, object link). The
+/// identity is the text minus the leading kind keyword; a keyword-only heading
+/// uses the keyword itself; an `object` node's identity is its link title.
+pub fn parse_flow_heading(text: &str) -> (FlowNodeKind, String, Option<LinkRef>) {
+    let t = text.trim();
+    let (kw, rest) = match t.split_once(' ') {
+        Some((a, b)) => (a, b.trim()),
+        None => (t, ""),
+    };
+    match FlowNodeKind::from_keyword(kw) {
+        None => (FlowNodeKind::Plain, t.to_string(), None),
+        Some(k) if rest.is_empty() => (k, kw.to_string(), None),
+        Some(FlowNodeKind::Object) => match parse_link_ref(rest) {
+            Some(l) => (FlowNodeKind::Object, l.title.clone(), Some(l)),
+            None => (FlowNodeKind::Object, rest.to_string(), None),
+        },
+        Some(k) => (k, rest.to_string(), None),
+    }
+}
+
+pub fn render_flow_heading(n: &FlowNodeSyntax) -> String {
+    match n.kind {
+        FlowNodeKind::Plain => format!("### {}", n.identity),
+        FlowNodeKind::Object => match &n.object_ref {
+            Some(l) => format!("### object [{}](./{}.md)", l.title, l.slug),
+            None => format!("### object {}", n.identity),
+        },
+        k => {
+            let kw = k.keyword().expect("non-plain kinds have a keyword");
+            if n.identity == kw { format!("### {kw}") } else { format!("### {kw} {}", n.identity) }
+        }
+    }
+}
+
+pub fn render_flow_bullet(b: &FlowBullet) -> String {
+    match b {
+        FlowBullet::Transition(t) => {
+            let mut s = String::from("- ");
+            if let Some(x) = &t.trigger {
+                s.push_str(&format!("on `{x}` "));
+            }
+            if let Some(g) = &t.guard {
+                s.push_str(&format!("when `{g}` "));
+            } else if t.is_else {
+                s.push_str("else ");
+            }
+            s.push_str("transitions to ");
+            match &t.target {
+                FlowTargetRef::Local(n) => s.push_str(n),
+                FlowTargetRef::Link(l) => s.push_str(&format!("[{}](./{}.md)", l.title, l.slug)),
+            }
+            if let Some(c) = &t.carries {
+                s.push_str(&format!(" carries [{}](./{}.md)", c.title, c.slug));
+            }
+            if let Some(e) = &t.effect {
+                s.push_str(&format!(": `{e}`"));
+            }
+            s
+        }
+        FlowBullet::Entry(e) => format!("- entry: `{e}`"),
+        FlowBullet::Do(e) => format!("- do: `{e}`"),
+        FlowBullet::Exit(e) => format!("- exit: `{e}`"),
+        FlowBullet::Refines(l) => format!("- refines [{}](./{}.md)", l.title, l.slug),
+        FlowBullet::Partition(p) => format!("- partition: {p}"),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -501,6 +642,74 @@ mod tests {
         ] {
             let r = parse_relationship_line(line).unwrap();
             assert_eq!(render_relationship_line(&r), line);
+        }
+    }
+
+    use crate::model::FlowNodeKind;
+    use crate::syntax::{FlowBullet, FlowTargetRef};
+
+    #[test]
+    fn parses_full_transition_bullet() {
+        let FlowBullet::Transition(t) =
+            parse_flow_bullet("- on `ship` when `paid` transitions to Shipped carries [Order](./order.md): `notify`").unwrap()
+        else { panic!("expected a transition") };
+        assert_eq!(t.trigger.as_deref(), Some("ship"));
+        assert_eq!(t.guard.as_deref(), Some("paid"));
+        assert!(!t.is_else);
+        assert_eq!(t.target, FlowTargetRef::Local("Shipped".to_string()));
+        assert_eq!(t.carries.as_ref().unwrap().slug, "order");
+        assert_eq!(t.effect.as_deref(), Some("notify"));
+    }
+
+    #[test]
+    fn parses_completion_else_and_link_target_transitions() {
+        let FlowBullet::Transition(t) = parse_flow_bullet("- transitions to final").unwrap() else { panic!() };
+        assert_eq!(t.target, FlowTargetRef::Local("final".to_string()));
+        assert!(t.trigger.is_none() && t.guard.is_none() && !t.is_else);
+
+        let FlowBullet::Transition(t) = parse_flow_bullet("- else transitions to Hold").unwrap() else { panic!() };
+        assert!(t.is_else);
+
+        let FlowBullet::Transition(t) =
+            parse_flow_bullet("- transitions to [Fulfilment](./fulfilment.md)").unwrap() else { panic!() };
+        assert!(matches!(t.target, FlowTargetRef::Link(ref l) if l.slug == "fulfilment"));
+    }
+
+    #[test]
+    fn parses_internals_refines_and_partition() {
+        assert_eq!(parse_flow_bullet("- entry: `reserveStock`").unwrap(), FlowBullet::Entry("reserveStock".to_string()));
+        assert_eq!(parse_flow_bullet("- do: `poll`").unwrap(), FlowBullet::Do("poll".to_string()));
+        assert_eq!(parse_flow_bullet("- exit: `release`").unwrap(), FlowBullet::Exit("release".to_string()));
+        assert!(matches!(parse_flow_bullet("- refines [SubFlow](./sub.md)").unwrap(), FlowBullet::Refines(ref l) if l.slug == "sub"));
+        assert_eq!(parse_flow_bullet("- partition: Warehouse").unwrap(), FlowBullet::Partition("Warehouse".to_string()));
+        assert!(parse_flow_bullet("- goes to X").is_err());
+        assert!(parse_flow_bullet("- when paid transitions to X").is_err(), "guards must be backticked");
+    }
+
+    #[test]
+    fn parses_flow_headings() {
+        assert_eq!(parse_flow_heading("Draft"), (FlowNodeKind::Plain, "Draft".to_string(), None));
+        assert_eq!(parse_flow_heading("initial"), (FlowNodeKind::Initial, "initial".to_string(), None));
+        assert_eq!(parse_flow_heading("decision Ready to ship?"), (FlowNodeKind::Decision, "Ready to ship?".to_string(), None));
+        let (k, id, obj) = parse_flow_heading("object [Order](./order.md)");
+        assert_eq!(k, FlowNodeKind::Object);
+        assert_eq!(id, "Order");
+        assert_eq!(obj.unwrap().slug, "order");
+    }
+
+    #[test]
+    fn flow_bullets_and_headings_round_trip() {
+        for line in [
+            "- on `place` when `items > 0` transitions to Placed",
+            "- transitions to Deliver carries [Order](./order.md)",
+            "- else transitions to Hold",
+            "- transitions to Shipped: `notify`",
+            "- entry: `reserveStock`",
+            "- refines [SubFlow](./sub.md)",
+            "- partition: Warehouse",
+        ] {
+            let b = parse_flow_bullet(line).unwrap();
+            assert_eq!(render_flow_bullet(&b), line);
         }
     }
 }

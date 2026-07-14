@@ -180,6 +180,65 @@ pub enum Margin { No, Small, Medium, Large }
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum Flag { Emphasized, Collapsed }
 
+/// A parsed `[Title](./slug.md)` reference (unresolved slug stem).
+#[derive(Debug, Clone, PartialEq)]
+pub struct LinkRef {
+    pub title: String,
+    pub slug: String,
+}
+
+/// A flow edge's target: a bare local vertex label, or a cross-document link.
+#[derive(Debug, Clone, PartialEq)]
+pub enum FlowTargetRef {
+    Local(String),
+    Link(LinkRef),
+}
+
+/// One `transitions` bullet: `[on `t`] [when `g`|else] transitions to <target>
+/// [carries <link>] [: `effect`]`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct FlowTransition {
+    pub trigger: Option<String>,
+    pub guard: Option<String>,
+    pub is_else: bool,
+    pub target: FlowTargetRef,
+    pub carries: Option<LinkRef>,
+    pub effect: Option<String>,
+    /// 1-based line within the document (0 until filled by the block parser).
+    pub line: usize,
+}
+
+/// One bullet under a flow node heading.
+#[derive(Debug, Clone, PartialEq)]
+pub enum FlowBullet {
+    Transition(FlowTransition),
+    Entry(String),
+    Do(String),
+    Exit(String),
+    Refines(LinkRef),
+    Partition(String),
+}
+
+/// One `###` node in a `## Nodes` section. Identity = heading text minus the
+/// leading kind keyword (the link title for `object` nodes).
+#[derive(Debug, Clone, PartialEq)]
+pub struct FlowNodeSyntax {
+    pub kind: crate::model::FlowNodeKind,
+    pub identity: String,
+    pub object_ref: Option<LinkRef>,
+    pub bullets: Vec<Line<FlowBullet>>,
+    pub notes: Vec<Line<String>>,
+    pub line: usize,
+}
+
+/// The `## Nodes` section of a flow document: one directed graph.
+#[derive(Debug, Clone, PartialEq)]
+pub struct FlowBlock {
+    pub nodes: Vec<FlowNodeSyntax>,
+    /// Non-heading content before the first `###` — preserved, never dropped.
+    pub preamble_errors: Vec<ErrorNode>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

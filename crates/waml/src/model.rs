@@ -299,6 +299,49 @@ impl BehaviorKind {
     }
 }
 
+/// A flow node's closed kind set (heading keyword). `Plain` = no keyword →
+/// action (activity) or state (state machine).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(rename_all = "lowercase"))]
+pub enum FlowNodeKind {
+    Initial,
+    Final,
+    Decision,
+    Merge,
+    Fork,
+    Join,
+    Object,
+    Plain,
+}
+
+impl FlowNodeKind {
+    pub fn keyword(self) -> Option<&'static str> {
+        match self {
+            FlowNodeKind::Initial => Some("initial"),
+            FlowNodeKind::Final => Some("final"),
+            FlowNodeKind::Decision => Some("decision"),
+            FlowNodeKind::Merge => Some("merge"),
+            FlowNodeKind::Fork => Some("fork"),
+            FlowNodeKind::Join => Some("join"),
+            FlowNodeKind::Object => Some("object"),
+            FlowNodeKind::Plain => None,
+        }
+    }
+    pub fn from_keyword(s: &str) -> Option<FlowNodeKind> {
+        match s {
+            "initial" => Some(FlowNodeKind::Initial),
+            "final" => Some(FlowNodeKind::Final),
+            "decision" => Some(FlowNodeKind::Decision),
+            "merge" => Some(FlowNodeKind::Merge),
+            "fork" => Some(FlowNodeKind::Fork),
+            "join" => Some(FlowNodeKind::Join),
+            "object" => Some(FlowNodeKind::Object),
+            _ => None,
+        }
+    }
+}
+
 /// A classifier's `type`. Graceful degradation is a type-level guarantee: any
 /// unrecognized token becomes `Unknown` and renders as a generic labelled box.
 ///
