@@ -1,5 +1,5 @@
 import { test, expect, beforeEach } from "vitest";
-import { DEFAULT_DISPLAY } from "@uaml/okf";
+import { DEFAULT_DISPLAY } from "@waml/okf";
 import { displaySettings } from "./displaySettings.svelte";
 
 beforeEach(() => displaySettings._reset());

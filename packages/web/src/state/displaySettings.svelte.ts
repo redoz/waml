@@ -1,4 +1,4 @@
-import { resolveDisplay, type DiagramDisplay } from "@uaml/okf";
+import { resolveDisplay, type DiagramDisplay } from "@waml/okf";
 
 // Session-level per-diagram display overrides. The model store's diagram
 // mutations are no-ops in Stage 1b (`store.updateDiagram` never persists) and
