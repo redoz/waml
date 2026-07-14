@@ -3,6 +3,7 @@
   import { BaseEdge, EdgeLabel, EdgeReconnectAnchor, getSmoothStepPath, useInternalNode, type EdgeProps, type Position } from "@xyflow/svelte";
   import type { ModelEdge, RelEnd, RelationshipKind, DiagramDisplay } from "@waml/okf";
   import { getEdgeParams, portPoint, type NodeGeom, type Rect, type Slot } from "./floating";
+  import { edgeStereotype } from "./edges";
 
   type RelEdgeData = Pick<ModelEdge, "kind" | "fromEnd" | "toEnd" | "bidirectional"> & {
     associationLabels?: DiagramDisplay["associationLabels"];
@@ -22,7 +23,7 @@
     h: n.measured?.height ?? 0,
   });
 
-  const DASHED: ReadonlySet<RelationshipKind> = new Set(["implements", "depends"]);
+  const DASHED: ReadonlySet<RelationshipKind> = new Set(["implements", "depends", "includes", "extends"]);
 
   // useInternalNode(id) accessor shape confirmed via
   // node_modules/@xyflow/svelte/dist/lib/hooks/useInternalNode.svelte.d.ts:
@@ -100,7 +101,7 @@
     } else if (kind === "specializes" || kind === "implements") {
       defs.push({ type: "triangle" });
       markerEnd = `url(#triangle-${id})`;
-    } else if (kind === "depends") {
+    } else if (kind === "depends" || kind === "includes" || kind === "extends") {
       defs.push({ type: "arrow", key: "dep-arrow", flip: false });
       markerEnd = `url(#dep-arrow-${id})`;
     } else {
@@ -134,6 +135,9 @@
     if (tt) out.push({ x: lerp(sx, tx, 0.82), y: lerp(sy, ty, 0.82) - 10, text: tt });
     return out;
   });
+
+  // Verb keyword label for use-case dependency verbs (includes/extends).
+  const stereo = $derived(edgeStereotype(kind));
 </script>
 
 {#if sourceNode && targetNode && edgePath}
@@ -182,4 +186,14 @@
       {l.text}
     </EdgeLabel>
   {/each}
+  {#if stereo && geometry}
+    <EdgeLabel
+      x={(geometry.sx + geometry.tx) / 2}
+      y={(geometry.sy + geometry.ty) / 2 - 10}
+      class="nodrag nopan"
+      style="background:rgba(255,255,255,0.9);border-radius:4px;padding:0 4px;font-size:10.5px;font-weight:600;color:#334155;white-space:nowrap;"
+    >
+      {stereo}
+    </EdgeLabel>
+  {/if}
 {/if}
