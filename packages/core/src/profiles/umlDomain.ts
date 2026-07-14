@@ -14,7 +14,7 @@ export const UML_DOMAIN: Profile = {
     // are authored via an `as [link]` name on a relationship, and notes via the `## Notes`
     // shorthand / a standalone note doc — never by adding a bare node from the palette.
     // Both still render (Task 11) when present in an imported/authored model.
-    metaclasses: ["uml.Class", "uml.Interface", "uml.Enum", "uml.DataType"],
+    metaclasses: ["uml.Class", "uml.Interface", "uml.Enum", "uml.DataType", "uml.Actor", "uml.UseCase"],
     stereotypes: ["entity", "valueObject", "aggregateRoot", "service", "domainEvent"],
   },
 };

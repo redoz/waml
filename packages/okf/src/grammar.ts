@@ -57,7 +57,7 @@ export function parseValueLine(line: string): string | null {
 
 // - verb [Title](./slug.md)[ as ("name"|[Title](./slug.md))][: <end> to <end>]   end ::= mult[ role]
 // Groups: 1 verb · 2 target title · 3 target slug · 4 name string · 5 name-link title · 6 name-link slug · 7 ends
-const REL_RE = /^- (associates|aggregates|composes|specializes|implements|depends) \[([^\]]+)\]\(\.\/(.+?)\.md\)(?: as (?:"([^"]*)"|\[([^\]]+)\]\(\.\/(.+?)\.md\)))?(?:\s*:\s*(.+))?$/;
+const REL_RE = /^- (associates|aggregates|composes|specializes|implements|depends|includes|extends) \[([^\]]+)\]\(\.\/(.+?)\.md\)(?: as (?:"([^"]*)"|\[([^\]]+)\]\(\.\/(.+?)\.md\)))?(?:\s*:\s*(.+))?$/;
 const END_RE = /^(\S+)(?:\s+([A-Za-z][A-Za-z0-9_]*))?$/;
 
 export function parseRelationshipLine(
@@ -67,8 +67,14 @@ export function parseRelationshipLine(
   if (!m) return null;
   const kind = m[1] as RelationshipKind;
   const endsRaw = m[7];
-  const needsEnds = ENDED_KINDS.has(kind);
-  if (needsEnds !== Boolean(endsRaw)) return null; // ends required XOR forbidden (spec context rules)
+  // Ends: forbidden unless `kind` is in ENDED_KINDS; required for aggregates/composes;
+  // OPTIONAL for associates (bare = actor↔use-case communication link, enforced
+  // cross-doc by the Rust validate layer — TS grammar only enforces syntax here).
+  if (endsRaw) {
+    if (!ENDED_KINDS.has(kind)) return null;
+  } else if (ENDED_KINDS.has(kind) && kind !== "associates") {
+    return null;
+  }
   // Optional `as …` UML association name — allowed on EVERY verb, before the ends.
   // String form → plain label + note handle; link form → { ref: slug } (Task 9 remaps the slug to a uml.Association node key).
   const name: string | { ref: string } | undefined =
@@ -117,6 +123,7 @@ export function renderRelationshipLine(
     name === undefined ? ""
     : typeof name === "string" ? ` as "${name}"`
     : ` as [${name.title}](./${name.slug}.md)`;
-  if (!ENDED_KINDS.has(kind)) return `- ${kind} ${link}${nameStr}`;
+  const hasEnds = fromEnd.multiplicity !== undefined || toEnd.multiplicity !== undefined;
+  if (!ENDED_KINDS.has(kind) || !hasEnds) return `- ${kind} ${link}${nameStr}`;
   return `- ${kind} ${link}${nameStr}: ${renderEnd(fromEnd)} to ${renderEnd(toEnd)}`;
 }

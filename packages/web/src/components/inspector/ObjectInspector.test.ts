@@ -50,7 +50,7 @@ describe("ObjectInspector palette", () => {
   it("offers the profile's metaclasses in the type datalist", () => {
     const { container } = render(ObjectInspector, { props: { node, onUpdate: () => {}, profileName: "uml-domain" } });
     const options = [...container.querySelectorAll("datalist#okf-metaclasses option")].map(o => o.getAttribute("value"));
-    expect(options).toEqual(["uml.Class", "uml.Interface", "uml.Enum", "uml.DataType"]);
+    expect(options).toEqual(["uml.Class", "uml.Interface", "uml.Enum", "uml.DataType", "uml.Actor", "uml.UseCase"]);
   });
 
   it("offers the profile's stereotypes in a datalist", () => {

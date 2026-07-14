@@ -88,6 +88,21 @@ describe("parseRelationshipLine", () => {
     expect(parseRelationshipLine("- specializes [Party](./party.md)"))
       .toEqual({ kind: "specializes", targetSlug: "party", fromEnd: {}, toEnd: {} });
   });
+  it("parses includes extends without ends", () => {
+    expect(parseRelationshipLine("- includes [Authenticate](./authenticate.md)"))
+      .toEqual({ kind: "includes", targetSlug: "authenticate", fromEnd: {}, toEnd: {} });
+    expect(parseRelationshipLine("- extends [Apply Coupon](./apply-coupon.md)"))
+      .toEqual({ kind: "extends", targetSlug: "apply-coupon", fromEnd: {}, toEnd: {} });
+    expect(parseRelationshipLine("- includes [A](./a.md): 1 to 1")).toBeNull();
+  });
+  it("parses and renders an ends-less associates communication link", () => {
+    expect(parseRelationshipLine("- associates [Customer](./customer.md)"))
+      .toEqual({ kind: "associates", targetSlug: "customer", fromEnd: {}, toEnd: {} });
+    expect(renderRelationshipLine("associates", "Customer", "customer", {}, {}))
+      .toBe("- associates [Customer](./customer.md)");
+    expect(renderRelationshipLine("includes", "Auth", "auth", {}, {}))
+      .toBe("- includes [Auth](./auth.md)");
+  });
   it("captures an `as \"string\"` association name before the ends", () => {
     expect(parseRelationshipLine("- associates [Customer](./customer.md) as \"places\": 1 order to 1 customer"))
       .toEqual({ kind: "associates", targetSlug: "customer", name: "places",
@@ -101,9 +116,6 @@ describe("parseRelationshipLine", () => {
   it("allows a name on a no-ends verb too", () => {
     expect(parseRelationshipLine("- depends [PricingService](./pricing-service.md) as \"prices\""))
       .toEqual({ kind: "depends", targetSlug: "pricing-service", name: "prices", fromEnd: {}, toEnd: {} });
-  });
-  it("ends are REQUIRED for associates", () => {
-    expect(parseRelationshipLine("- associates [Customer](./customer.md)")).toBeNull();
   });
   it("ends are FORBIDDEN for depends", () => {
     expect(parseRelationshipLine("- depends [PricingService](./pricing-service.md): 1 to 1")).toBeNull();
