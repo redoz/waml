@@ -1,6 +1,9 @@
 # Diagram Properties Panel
 
 **Date:** 2026-07-11
+**Status:** Implemented (2026-07-12, via `central-edit-panel-implementation` and
+`floating-collapsible-inspector` plans — see `plans/completed/`). Stack migrated
+from React to Svelte 5 in the interim; file paths below are historical.
 **Product:** Model Canvas (`packages/web`, React + React Flow + TypeScript)
 **Scope:** 1 of 5 UI-change specs. Independent; no dependency on the others.
 
@@ -46,7 +49,7 @@ export interface DiagramDisplay {
   /** Show attribute rows on class boxes. Replaces viewMode erd/compact. */
   showAttributes: boolean;
   /** Detail shown per attribute row. */
-  attributeDetail: "name" | "name-type";
+  attributeDetail: "name-only" | "name-type";
   /** Association-edge labels. Replaces relLabelMode. */
   associationLabels: "all" | "hidden";
   /** Bold/emphasize multiplicity on association ends. Existing knob. */
@@ -86,7 +89,11 @@ existing OKF files valid and round-trips through OKF import/export.
 - Remove the ERD button from the Dock. Add a **"Diagram properties"** button
   (icon: a sliders/settings glyph) in its slot.
 - Clicking opens a **left-anchored flyout panel** off the dock (a small popover,
-  not the right sheet). Panel fields, driven by the active diagram's `display`:
+  not the right sheet). **Superseded:** the later `central-edit-panel-implementation`
+  plan replaced the flyout popover with routing into the central edit panel
+  (`DiagramPropertiesBody.svelte`, mounted via `CentralEditPanelHost`); the field
+  set below is unchanged, only the container moved. Panel fields, driven by the
+  active diagram's `display`:
   - **Show attributes** — toggle (`showAttributes`).
   - **Attribute detail** — segmented / radio: *Name only* | *Name + type*
     (`attributeDetail`; disabled when Show attributes is off).
