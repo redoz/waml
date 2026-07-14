@@ -147,6 +147,35 @@ pub fn id_of(path: &str) -> String {
     norm.strip_suffix(".md").unwrap_or(&norm).to_string()
 }
 
+/// Resolve a written href (e.g. `./orders.md`, `../shop/order.md`) against the
+/// *referring* document's own bundle-relative path, producing the target's full
+/// id (same shape as [`id_of`]). Strips a leading `./`, joins against
+/// `referring_path`'s parent directory, normalizes `..` segments, normalizes
+/// `\` to `/`, and strips a trailing `.md`.
+pub fn resolve_href(referring_path: &str, href: &str) -> String {
+    let referring_norm = referring_path.replace('\\', "/");
+    let href_norm = href.replace('\\', "/");
+    let href_trimmed = href_norm.strip_prefix("./").unwrap_or(&href_norm);
+
+    let mut segments: Vec<&str> = referring_norm
+        .rsplit_once('/')
+        .map(|(dir, _)| dir.split('/').collect())
+        .unwrap_or_default();
+
+    for seg in href_trimmed.split('/') {
+        match seg {
+            "" | "." => {}
+            ".." => {
+                segments.pop();
+            }
+            other => segments.push(other),
+        }
+    }
+
+    let joined = segments.join("/");
+    id_of(&joined)
+}
+
 /// The reserved role implied by a path's filename.
 fn role_of(path: &str) -> ConceptRole {
     let seg = path.rsplit(['/', '\\']).next().unwrap_or(path);
@@ -272,6 +301,26 @@ mod tests {
         assert_eq!(id_of("tables/orders.md"), "tables/orders");
         assert_eq!(id_of("orders.md"), "orders");
         assert_eq!(id_of("a\\b\\c.md"), "a/b/c");
+    }
+
+    #[test]
+    fn resolve_href_same_dir() {
+        assert_eq!(resolve_href("tables/index.md", "./orders.md"), "tables/orders");
+    }
+
+    #[test]
+    fn resolve_href_root_referring_doc() {
+        assert_eq!(resolve_href("readme.md", "./x.md"), "x");
+    }
+
+    #[test]
+    fn resolve_href_nested_multi_segment() {
+        assert_eq!(resolve_href("tables/index.md", "./sub/x.md"), "tables/sub/x");
+    }
+
+    #[test]
+    fn resolve_href_parent_dir_escape() {
+        assert_eq!(resolve_href("tables/orders.md", "../shop/order.md"), "shop/order");
     }
 
     #[test]
