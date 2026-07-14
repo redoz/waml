@@ -96,6 +96,8 @@ pub enum RelationshipKind {
     Implements,
     Depends,
     Annotates,
+    Includes,
+    Extends,
 }
 
 impl RelationshipKind {
@@ -108,6 +110,8 @@ impl RelationshipKind {
             RelationshipKind::Implements => "implements",
             RelationshipKind::Depends => "depends",
             RelationshipKind::Annotates => "annotates",
+            RelationshipKind::Includes => "includes",
+            RelationshipKind::Extends => "extends",
         }
     }
     pub fn parse(s: &str) -> Option<RelationshipKind> {
@@ -119,6 +123,8 @@ impl RelationshipKind {
             "implements" => Some(RelationshipKind::Implements),
             "depends" => Some(RelationshipKind::Depends),
             "annotates" => Some(RelationshipKind::Annotates),
+            "includes" => Some(RelationshipKind::Includes),
+            "extends" => Some(RelationshipKind::Extends),
             _ => None,
         }
     }
@@ -231,6 +237,8 @@ pub enum UmlMetaclass {
     Package,
     Note,
     Association,
+    Actor,
+    UseCase,
 }
 
 impl UmlMetaclass {
@@ -243,6 +251,8 @@ impl UmlMetaclass {
             "Package" => Some(UmlMetaclass::Package),
             "Note" => Some(UmlMetaclass::Note),
             "Association" => Some(UmlMetaclass::Association),
+            "Actor" => Some(UmlMetaclass::Actor),
+            "UseCase" => Some(UmlMetaclass::UseCase),
             _ => None,
         }
     }
@@ -255,6 +265,8 @@ impl UmlMetaclass {
             UmlMetaclass::Package => "Package",
             UmlMetaclass::Note => "Note",
             UmlMetaclass::Association => "Association",
+            UmlMetaclass::Actor => "Actor",
+            UmlMetaclass::UseCase => "UseCase",
         }
     }
 }
@@ -486,10 +498,36 @@ mod tests {
             RelationshipKind::Implements,
             RelationshipKind::Depends,
             RelationshipKind::Annotates,
+            RelationshipKind::Includes,
+            RelationshipKind::Extends,
         ] {
             assert_eq!(RelationshipKind::parse(k.as_str()), Some(k));
         }
         assert_eq!(RelationshipKind::parse("nope"), None);
+    }
+
+    #[test]
+    fn actor_and_usecase_metaclasses_parse_and_round_trip() {
+        assert_eq!(
+            ClassifierType::parse("uml.Actor"),
+            ClassifierType::Uml(UmlMetaclass::Actor)
+        );
+        assert_eq!(
+            ClassifierType::parse("uml.UseCase"),
+            ClassifierType::Uml(UmlMetaclass::UseCase)
+        );
+        assert_eq!(ClassifierType::Uml(UmlMetaclass::Actor).as_str(), "uml.Actor");
+        assert_eq!(ClassifierType::Uml(UmlMetaclass::UseCase).as_str(), "uml.UseCase");
+    }
+
+    #[test]
+    fn includes_and_extends_are_endless_dependency_verbs() {
+        assert_eq!(RelationshipKind::parse("includes"), Some(RelationshipKind::Includes));
+        assert_eq!(RelationshipKind::parse("extends"), Some(RelationshipKind::Extends));
+        assert_eq!(RelationshipKind::Includes.as_str(), "includes");
+        assert_eq!(RelationshipKind::Extends.as_str(), "extends");
+        assert!(!RelationshipKind::Includes.is_ended());
+        assert!(!RelationshipKind::Extends.is_ended());
     }
 
     #[test]
