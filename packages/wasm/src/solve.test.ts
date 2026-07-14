@@ -9,18 +9,17 @@ const bundle: [string, string][] = [
   ["shop/account.md", "---\ntype: uml.Class\ntitle: Account\n---\n# Account\n"],
   ["shop/order.md", "---\ntype: uml.Class\ntitle: Order\n---\n# Order\n"],
   [
-    // `Diagram.key` is derived from the last path segment (`doc_slug`), so
-    // this must be `orders.md`, not `orders-domain.md`, to resolve to key
-    // "orders" — matching the golden fixture.
+    // `Diagram.key` is the full bundle-relative id (`okf::id_of`), so this
+    // resolves to key "shop/orders" — matching the golden fixture.
     "shop/orders.md",
     "---\ntype: Diagram\ntitle: Orders\nprofile: uml-domain\n---\n# Orders\n\n## Members\n\n### Users\n- [Customer](./customer.md)\n- [Account](./account.md)\n\n### Orders\n- [Order](./order.md)\n\n## Layout\n- Users as column with frame\n- Users left of Orders\n",
   ],
 ];
 
 const sizes = {
-  customer: { w: 200, h: 90 },
-  account: { w: 200, h: 90 },
-  order: { w: 200, h: 90 },
+  "shop/customer": { w: 200, h: 90 },
+  "shop/account": { w: 200, h: 90 },
+  "shop/order": { w: 200, h: 90 },
 };
 
 describe("solve() over wasm", () => {
@@ -29,12 +28,12 @@ describe("solve() over wasm", () => {
   });
 
   it("returns the golden rects as plain objects", () => {
-    const { solved, diagnostics } = solve(bundle, "orders", sizes);
+    const { solved, diagnostics } = solve(bundle, "shop/orders", sizes);
     expect(diagnostics).toEqual([]);
     // Plain object, not a Map.
-    expect(solved.nodes.customer).toEqual({ x: 16, y: 16, w: 200, h: 90 });
-    expect(solved.nodes.account).toEqual({ x: 16, y: 122, w: 200, h: 90 });
-    expect(solved.nodes.order).toEqual({ x: 264, y: 69, w: 200, h: 90 });
+    expect(solved.nodes["shop/customer"]).toEqual({ x: 16, y: 16, w: 200, h: 90 });
+    expect(solved.nodes["shop/account"]).toEqual({ x: 16, y: 122, w: 200, h: 90 });
+    expect(solved.nodes["shop/order"]).toEqual({ x: 264, y: 69, w: 200, h: 90 });
     expect(solved.groups).toHaveLength(2);
     // The framed "Users" group renders with a title.
     expect(solved.groups.some((g) => g.title === "Users")).toBe(true);
@@ -51,7 +50,7 @@ describe("solve() over wasm", () => {
           ? [p, t + "- Ghosts left of Orders\n"]
           : [p, t]) as [string, string],
     );
-    const { diagnostics } = solve(bad, "orders", sizes);
+    const { diagnostics } = solve(bad, "shop/orders", sizes);
     expect(diagnostics.some((d) => d.code === "unresolved-layout-ref")).toBe(true);
   });
 });
