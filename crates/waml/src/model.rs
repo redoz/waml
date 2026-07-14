@@ -342,6 +342,78 @@ impl FlowNodeKind {
     }
 }
 
+/// Flow flavor: tunes rendering only — one grammar for both.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(rename_all = "camelCase"))]
+pub enum FlowFlavor {
+    Activity,
+    StateMachine,
+}
+
+/// A resolved node of a flow document.
+#[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct FlowNode {
+    /// Heading text minus the kind keyword — the name transitions resolve against.
+    pub id: String,
+    pub kind: FlowNodeKind,
+    /// Resolved key of an `object` node's typing classifier.
+    #[cfg_attr(feature = "serde", serde(rename = "objectRef", default, skip_serializing_if = "Option::is_none"))]
+    pub object_ref: Option<String>,
+    #[cfg_attr(feature = "serde", serde(default, skip_serializing_if = "Option::is_none"))]
+    pub partition: Option<String>,
+    #[cfg_attr(feature = "serde", serde(default, skip_serializing_if = "Option::is_none"))]
+    pub entry: Option<String>,
+    #[cfg_attr(feature = "serde", serde(rename = "do", default, skip_serializing_if = "Option::is_none"))]
+    pub do_: Option<String>,
+    #[cfg_attr(feature = "serde", serde(default, skip_serializing_if = "Option::is_none"))]
+    pub exit: Option<String>,
+    /// Resolved key of the flow document this composite/call-behavior refines.
+    #[cfg_attr(feature = "serde", serde(default, skip_serializing_if = "Option::is_none"))]
+    pub refines: Option<String>,
+    #[cfg_attr(feature = "serde", serde(default, skip_serializing_if = "Vec::is_empty"))]
+    pub notes: Vec<String>,
+}
+
+/// A resolved transition (flow edge). Source/target are node identities.
+#[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct FlowEdge {
+    pub from: String,
+    /// Local node identity, or the link title for a cross-document target.
+    pub to: String,
+    /// Resolved key when the target was a cross-document link.
+    #[cfg_attr(feature = "serde", serde(rename = "toRef", default, skip_serializing_if = "Option::is_none"))]
+    pub to_ref: Option<String>,
+    #[cfg_attr(feature = "serde", serde(default, skip_serializing_if = "Option::is_none"))]
+    pub trigger: Option<String>,
+    #[cfg_attr(feature = "serde", serde(default, skip_serializing_if = "Option::is_none"))]
+    pub guard: Option<String>,
+    /// Decision default branch (`else transitions to …`).
+    #[cfg_attr(feature = "serde", serde(rename = "else", default, skip_serializing_if = "is_false"))]
+    pub is_else: bool,
+    #[cfg_attr(feature = "serde", serde(default, skip_serializing_if = "Option::is_none"))]
+    pub effect: Option<String>,
+    /// Resolved key of the carried object type (`carries <link>` object flow).
+    #[cfg_attr(feature = "serde", serde(default, skip_serializing_if = "Option::is_none"))]
+    pub carries: Option<String>,
+}
+
+/// One flow document: one self-rendering directed graph (model AND view).
+#[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct FlowDoc {
+    pub key: String,
+    pub title: String,
+    pub flavor: FlowFlavor,
+    /// Resolved key of the entity this behavior describes (frontmatter link).
+    #[cfg_attr(feature = "serde", serde(default, skip_serializing_if = "Option::is_none"))]
+    pub describes: Option<String>,
+    pub nodes: Vec<FlowNode>,
+    pub edges: Vec<FlowEdge>,
+}
+
 /// A classifier's `type`. Graceful degradation is a type-level guarantee: any
 /// unrecognized token becomes `Unknown` and renders as a generic labelled box.
 ///
@@ -540,6 +612,9 @@ pub struct Model {
     /// classifier consumers are unaffected.
     #[cfg_attr(feature = "serde", serde(default, skip_serializing_if = "Vec::is_empty"))]
     pub packages: Vec<Node>,
+    /// Flow-substrate behavior documents (uml.Activity / uml.StateMachine).
+    #[cfg_attr(feature = "serde", serde(default, skip_serializing_if = "Vec::is_empty"))]
+    pub flows: Vec<FlowDoc>,
 }
 
 impl Model {

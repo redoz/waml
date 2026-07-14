@@ -10,7 +10,8 @@ use crate::syntax::{Document, ErrorNode, LayoutItem, Line, Section};
 use std::collections::{HashMap, HashSet};
 
 use crate::model::{
-    Attribute, ClassifierType, Diagram, DiagramDisplay, DiagramGroup, Edge, Model, Node,
+    Attribute, BehaviorKind, ClassifierType, Diagram, DiagramDisplay, DiagramGroup, Edge, FlowDoc,
+    FlowEdge, FlowFlavor, FlowNode, Model, Node,
 };
 
 struct Head {
@@ -630,7 +631,108 @@ pub fn build_model(bundle: &[(String, String)]) -> Model {
         .collect();
     let (path, packages) = build_packages(&docs, &indexes);
 
-    Model { nodes, edges, diagrams, path, packages }
+    let flows = build_flows(&parsed, &keyset);
+
+    Model { nodes, edges, diagrams, path, packages, flows, ..Default::default() }
+}
+
+/// Resolve a frontmatter `describes: [T](./t.md)` link against the classifier keyset.
+fn resolve_describes(p: &ParsedDoc, keyset: &HashSet<&str>) -> Option<String> {
+    p.doc
+        .frontmatter
+        .get_str("describes")
+        .and_then(crate::grammar::parse_link_ref)
+        .map(|l| crate::okf::resolve_href(&p.path, &l.slug))
+        .filter(|k| keyset.contains(k.as_str()))
+}
+
+/// Scan all parsed docs for behavior docs in the flow substrate
+/// (`uml.Activity` / `uml.StateMachine` — NOT `uml.Sequence`, which is the
+/// separate interaction substrate) and resolve their `## Nodes` block into a
+/// `FlowDoc`. A behavior doc with no `## Nodes` section (or an empty one)
+/// yields a `FlowDoc` with empty `nodes`/`edges` — never a panic.
+fn build_flows(parsed: &[ParsedDoc], keyset: &HashSet<&str>) -> Vec<FlowDoc> {
+    use crate::syntax::{FlowBullet, FlowTargetRef};
+    let flow_keys: HashSet<String> = parsed
+        .iter()
+        .filter(|p| matches!(p.ty, ClassifierType::Behavior(BehaviorKind::Activity | BehaviorKind::StateMachine)))
+        .map(|p| p.id.clone())
+        .collect();
+    let mut out = Vec::new();
+    for p in parsed {
+        let flavor = match p.ty {
+            ClassifierType::Behavior(BehaviorKind::Activity) => FlowFlavor::Activity,
+            ClassifierType::Behavior(BehaviorKind::StateMachine) => FlowFlavor::StateMachine,
+            _ => continue,
+        };
+        let mut nodes = Vec::new();
+        let mut edges = Vec::new();
+        for s in &p.doc.sections {
+            let Section::Nodes(block) = s else { continue };
+            for n in &block.nodes {
+                let mut fnode = FlowNode {
+                    id: n.identity.clone(),
+                    kind: n.kind,
+                    object_ref: n
+                        .object_ref
+                        .as_ref()
+                        .map(|l| crate::okf::resolve_href(&p.path, &l.slug))
+                        .filter(|k| keyset.contains(k.as_str())),
+                    partition: None,
+                    entry: None,
+                    do_: None,
+                    exit: None,
+                    refines: None,
+                    notes: n.notes.iter().filter_map(Line::parsed).cloned().collect(),
+                };
+                for b in n.bullets.iter().filter_map(Line::parsed) {
+                    match b {
+                        FlowBullet::Transition(t) => {
+                            let (to, to_ref) = match &t.target {
+                                FlowTargetRef::Local(name) => (name.clone(), None),
+                                FlowTargetRef::Link(l) => {
+                                    let r = crate::okf::resolve_href(&p.path, &l.slug);
+                                    (l.title.clone(), flow_keys.contains(&r).then_some(r))
+                                }
+                            };
+                            edges.push(FlowEdge {
+                                from: n.identity.clone(),
+                                to,
+                                to_ref,
+                                trigger: t.trigger.clone(),
+                                guard: t.guard.clone(),
+                                is_else: t.is_else,
+                                effect: t.effect.clone(),
+                                carries: t
+                                    .carries
+                                    .as_ref()
+                                    .map(|l| crate::okf::resolve_href(&p.path, &l.slug))
+                                    .filter(|k| keyset.contains(k.as_str())),
+                            });
+                        }
+                        FlowBullet::Entry(e) => fnode.entry = Some(e.clone()),
+                        FlowBullet::Do(e) => fnode.do_ = Some(e.clone()),
+                        FlowBullet::Exit(e) => fnode.exit = Some(e.clone()),
+                        FlowBullet::Refines(l) => {
+                            let r = crate::okf::resolve_href(&p.path, &l.slug);
+                            fnode.refines = flow_keys.contains(&r).then_some(r);
+                        }
+                        FlowBullet::Partition(name) => fnode.partition = Some(name.clone()),
+                    }
+                }
+                nodes.push(fnode);
+            }
+        }
+        out.push(FlowDoc {
+            key: p.id.clone(),
+            title: doc_title(p),
+            flavor,
+            describes: resolve_describes(p, keyset),
+            nodes,
+            edges,
+        });
+    }
+    out
 }
 
 use crate::model::{AssocName, RelationshipKind};
@@ -1149,5 +1251,33 @@ mod model_tests {
         assert_eq!(d.groups[0].members, vec!["customer".to_string()]);
         assert_eq!(d.layout.len(), 1);
         assert!(matches!(d.layout[0], crate::syntax::LayoutStatement::Placement { .. }));
+    }
+
+    #[test]
+    fn builds_flow_doc_with_resolved_links_and_edges() {
+        use crate::model::{FlowFlavor, FlowNodeKind};
+        let b = vec![
+            ("m/order.md".into(), "---\ntype: uml.Class\ntitle: Order\n---\n# Order\n".into()),
+            ("m/sub.md".into(), "---\ntype: uml.Activity\ntitle: Sub\n---\n# Sub\n\n## Nodes\n\n### initial\n- transitions to final\n\n### final\n".into()),
+            ("m/lifecycle.md".into(),
+             "---\ntype: uml.StateMachine\ntitle: Order Lifecycle\ndescribes: [Order](./order.md)\n---\n# Order Lifecycle\n\n## Nodes\n\n### initial\n- transitions to Draft\n\n### Draft\n- on `place` when `items > 0` transitions to Placed: `reserve`\n- partition: Sales\n\n### Placed\n- entry: `reserveStock`\n- refines [Sub](./sub.md)\n- transitions to Ship carries [Order](./order.md)\n\n### Ship\n- transitions to final\n\n### final\n".into()),
+        ];
+        let m = build_model(&b);
+        assert_eq!(m.flows.len(), 2);
+        let f = m.flows.iter().find(|f| f.key == "m/lifecycle").unwrap();
+        assert_eq!(f.flavor, FlowFlavor::StateMachine);
+        assert_eq!(f.describes.as_deref(), Some("m/order"));
+        assert_eq!(f.nodes.len(), 5);
+        assert_eq!(f.nodes[0].kind, FlowNodeKind::Initial);
+        assert_eq!(f.nodes[1].partition.as_deref(), Some("Sales"));
+        assert_eq!(f.nodes[2].entry.as_deref(), Some("reserveStock"));
+        assert_eq!(f.nodes[2].refines.as_deref(), Some("m/sub"));
+        assert_eq!(f.edges.len(), 4);
+        let placed = f.edges.iter().find(|e| e.to == "Placed").unwrap();
+        assert_eq!(placed.trigger.as_deref(), Some("place"));
+        assert_eq!(placed.guard.as_deref(), Some("items > 0"));
+        assert_eq!(placed.effect.as_deref(), Some("reserve"));
+        let ship = f.edges.iter().find(|e| e.to == "Ship").unwrap();
+        assert_eq!(ship.carries.as_deref(), Some("m/order"));
     }
 }

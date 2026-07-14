@@ -93,6 +93,7 @@ fn package_node_and_model_path() {
         diagrams: vec![],
         path: "acme-model".into(),
         packages: vec![pkg],
+        ..Default::default()
     };
     let json = serde_json::to_string(&model).unwrap();
     assert!(json.contains("\"path\":\"acme-model\""));
@@ -112,6 +113,33 @@ fn package_node_and_model_path() {
     };
     let bj = serde_json::to_string(&bare).unwrap();
     assert!(!bj.contains("members"), "empty members must be omitted: {bj}");
+}
+
+#[test]
+fn flow_doc_json_matches_ts_field_names() {
+    let b = vec![
+        ("m/order.md".to_string(), "---\ntype: uml.Class\ntitle: Order\n---\n# Order\n".to_string()),
+        ("m/lifecycle.md".to_string(),
+         "---\ntype: uml.StateMachine\ntitle: Order Lifecycle\ndescribes: [Order](./order.md)\n---\n# Order Lifecycle\n\n## Nodes\n\n### initial\n- transitions to Draft\n\n### Draft\n- on `place` when `items > 0` transitions to Placed: `reserve`\n- else transitions to Cancelled\n\n### Placed\n- entry: `reserveStock`\n\n### Cancelled\n\n### final\n".to_string()),
+    ];
+    let m = build_model(&b);
+    let v = serde_json::to_value(&m).unwrap();
+    let f = &v["flows"][0];
+    assert_eq!(f["key"], "m/lifecycle");
+    assert_eq!(f["flavor"], "stateMachine");
+    assert_eq!(f["describes"], "m/order");
+    assert_eq!(f["nodes"][0]["kind"], "initial");
+    assert_eq!(f["nodes"][2]["entry"], "reserveStock");
+    let e = &f["edges"][1];
+    assert_eq!(e["from"], "Draft");
+    assert_eq!(e["trigger"], "place");
+    assert_eq!(e["guard"], "items > 0");
+    assert_eq!(e["effect"], "reserve");
+    assert_eq!(f["edges"][2]["else"], true);
+    // classifier-only models omit the field entirely
+    let m2 = build_model(&vec![("a.md".to_string(), "---\ntype: uml.Class\ntitle: A\n---\n# A\n".to_string())]);
+    let v2 = serde_json::to_value(&m2).unwrap();
+    assert!(v2.get("flows").is_none());
 }
 
 #[test]
