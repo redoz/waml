@@ -1,4 +1,5 @@
 import { describe, it, expect } from "vitest";
+import type { FlowDoc } from "@waml/okf";
 import {
   toModelGraph,
   edgeKey,
@@ -170,6 +171,20 @@ describe("toModelGraph", () => {
     expect(n.values).toEqual(["A", "B"]);
     // The nested OKF concept is forwarded straight through onto the graph node.
     expect(n.concept).toEqual({ id: "shop/order", type: "uml.Class", body: "# Order\n" });
+  });
+
+  it("passes flow docs through to the ModelGraph", () => {
+    const flow: FlowDoc = {
+      key: "m/lifecycle",
+      title: "Order Lifecycle",
+      flavor: "stateMachine",
+      describes: "m/order",
+      nodes: [{ id: "initial", kind: "initial" }, { id: "Draft", kind: "plain", entry: "reserveStock" }],
+      edges: [{ from: "initial", to: "Draft" }],
+    };
+    const rust = { nodes: [], edges: [], diagrams: [], path: "", packages: [], flows: [flow] };
+    const g = toModelGraph(rust as never, emptyOverlay());
+    expect(g.flows).toEqual([flow]);
   });
 });
 
