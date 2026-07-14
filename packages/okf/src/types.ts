@@ -153,6 +153,64 @@ export interface ModelGraph {
   path: string;
   /** Discovered uml.Package nodes (root has key ""), carrying ordered `members`. */
   packages: ModelNode[];
+  /** Flow-substrate behavior documents (self-rendering; absent on legacy graphs). */
+  flows?: FlowDoc[];
+}
+
+// ── Flow substrate (activity / state-machine behavior documents) ────────────
+// Mirrors the Rust `model::Flow*` shapes (crates/waml/src/model.rs). A flow doc
+// is a self-rendering directed graph: one per behavior classifier, resolved
+// from its `## Nodes` section by `build_flows`. Additive — absent on graphs
+// with no behavior classifiers.
+
+/** Flow flavor: tunes rendering only — one grammar for both. */
+export type FlowFlavor = "activity" | "stateMachine";
+
+/** A flow node's closed kind set (heading keyword). `"plain"` = no keyword →
+ *  action (activity) or state (state machine). */
+export type FlowNodeKind = "initial" | "final" | "decision" | "merge" | "fork" | "join" | "object" | "plain";
+
+/** A resolved node of a flow document. */
+export interface FlowNode {
+  /** Heading text minus the kind keyword — the name transitions resolve against. */
+  id: string;
+  kind: FlowNodeKind;
+  /** Resolved key of an `object` node's typing classifier. */
+  objectRef?: string;
+  partition?: string;
+  entry?: string;
+  do?: string;
+  exit?: string;
+  /** Resolved key of the flow document this composite/call-behavior refines. */
+  refines?: string;
+  notes?: string[];
+}
+
+/** A resolved transition (flow edge). Source/target are node identities. */
+export interface FlowEdge {
+  from: string;
+  /** Local node identity, or the link title for a cross-document target. */
+  to: string;
+  /** Resolved key when the target was a cross-document link. */
+  toRef?: string;
+  trigger?: string;
+  guard?: string;
+  /** Decision default branch (`else transitions to …`). */
+  else?: boolean;
+  effect?: string;
+  /** Resolved key of the carried object type (`carries <link>` object flow). */
+  carries?: string;
+}
+
+/** One flow document: one self-rendering directed graph (model AND view). */
+export interface FlowDoc {
+  key: string;
+  title: string;
+  flavor: FlowFlavor;
+  /** Resolved key of the entity this behavior describes (frontmatter link). */
+  describes?: string;
+  nodes: FlowNode[];
+  edges: FlowEdge[];
 }
 
 /** Split "family.Metaclass". Null for opaque/legacy tokens. */
