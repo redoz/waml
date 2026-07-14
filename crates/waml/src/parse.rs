@@ -1280,4 +1280,17 @@ mod model_tests {
         let ship = f.edges.iter().find(|e| e.to == "Ship").unwrap();
         assert_eq!(ship.carries.as_deref(), Some("m/order"));
     }
+
+    #[test]
+    fn excludes_sequence_docs_from_flows() {
+        let b = vec![
+            ("m/onboarding.md".into(),
+             "---\ntype: uml.Activity\ntitle: Onboarding\n---\n# Onboarding\n\n## Nodes\n\n### initial\n- transitions to final\n\n### final\n".into()),
+            ("m/login.md".into(), "---\ntype: uml.Sequence\ntitle: Login Flow\n---\n# Login Flow\n".into()),
+        ];
+        let m = build_model(&b);
+        assert_eq!(m.flows.len(), 1, "Sequence doc must not become a flow");
+        assert_eq!(m.flows[0].key, "m/onboarding");
+        assert!(m.flows.iter().all(|f| f.key != "m/login"));
+    }
 }
