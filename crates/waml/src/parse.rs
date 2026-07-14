@@ -589,9 +589,16 @@ fn build_packages(
 pub fn build_model(bundle: &[(String, String)]) -> Model {
     let parsed = parse_bundle(bundle);
     // `index.md`/`log.md` are reserved package files, never classifiers.
+    // Behavior docs (`uml.Activity`/`StateMachine`/`Sequence`) are the document
+    // AND view for their own substrate — they never become classifier nodes.
     let classifiers: Vec<&ParsedDoc> = parsed
         .iter()
-        .filter(|p| p.ty != ClassifierType::Diagram && p.slug != "index" && p.slug != "log")
+        .filter(|p| {
+            p.ty != ClassifierType::Diagram
+                && !matches!(p.ty, ClassifierType::Behavior(_))
+                && p.slug != "index"
+                && p.slug != "log"
+        })
         .collect();
     let keyset: HashSet<&str> = classifiers.iter().map(|p| p.id.as_str()).collect();
 
@@ -1013,6 +1020,17 @@ mod model_tests {
         assert_eq!(order.ty, ClassifierType::Uml(UmlMetaclass::Class));
         assert_eq!(order.stereotypes, vec!["aggregateRoot", "entity"]);
         assert_eq!(order.attributes.len(), 3);
+    }
+
+    #[test]
+    fn behavior_docs_are_not_classifier_nodes() {
+        let b = vec![
+            ("m/order.md".into(), "---\ntype: uml.Class\ntitle: Order\n---\n# Order\n".into()),
+            ("m/lifecycle.md".into(), "---\ntype: uml.StateMachine\ntitle: Order Lifecycle\n---\n# Order Lifecycle\n".into()),
+        ];
+        let m = build_model(&b);
+        assert_eq!(m.nodes.len(), 1, "a behavior doc must not become a classifier node");
+        assert!(m.node("m/lifecycle").is_none());
     }
 
     #[test]

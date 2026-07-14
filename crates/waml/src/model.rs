@@ -271,6 +271,34 @@ impl UmlMetaclass {
     }
 }
 
+/// A behavior document's kind: selects the substrate (flow vs interaction) and
+/// the flow flavor. Behavior docs are the document — model AND view — and are
+/// never classifier nodes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BehaviorKind {
+    Activity,
+    StateMachine,
+    Sequence,
+}
+
+impl BehaviorKind {
+    pub fn parse(s: &str) -> Option<BehaviorKind> {
+        match s {
+            "Activity" => Some(BehaviorKind::Activity),
+            "StateMachine" => Some(BehaviorKind::StateMachine),
+            "Sequence" => Some(BehaviorKind::Sequence),
+            _ => None,
+        }
+    }
+    pub fn name(self) -> &'static str {
+        match self {
+            BehaviorKind::Activity => "Activity",
+            BehaviorKind::StateMachine => "StateMachine",
+            BehaviorKind::Sequence => "Sequence",
+        }
+    }
+}
+
 /// A classifier's `type`. Graceful degradation is a type-level guarantee: any
 /// unrecognized token becomes `Unknown` and renders as a generic labelled box.
 ///
@@ -281,6 +309,7 @@ impl UmlMetaclass {
 #[cfg_attr(feature = "serde", serde(into = "String", from = "String"))]
 pub enum ClassifierType {
     Uml(UmlMetaclass),
+    Behavior(BehaviorKind),
     Diagram,
     Unknown(String),
 }
@@ -309,6 +338,9 @@ impl ClassifierType {
                 if let Some(mc) = UmlMetaclass::parse(metaclass) {
                     return ClassifierType::Uml(mc);
                 }
+                if let Some(bk) = BehaviorKind::parse(metaclass) {
+                    return ClassifierType::Behavior(bk);
+                }
             }
         }
         ClassifierType::Unknown(s.to_string())
@@ -316,6 +348,7 @@ impl ClassifierType {
     pub fn as_str(&self) -> String {
         match self {
             ClassifierType::Uml(mc) => format!("uml.{}", mc.name()),
+            ClassifierType::Behavior(bk) => format!("uml.{}", bk.name()),
             ClassifierType::Diagram => "Diagram".to_string(),
             ClassifierType::Unknown(s) => s.clone(),
         }
@@ -521,6 +554,14 @@ mod tests {
     }
 
     #[test]
+    fn behavior_types_parse_and_round_trip() {
+        assert_eq!(ClassifierType::parse("uml.Activity"), ClassifierType::Behavior(BehaviorKind::Activity));
+        assert_eq!(ClassifierType::parse("uml.StateMachine"), ClassifierType::Behavior(BehaviorKind::StateMachine));
+        assert_eq!(ClassifierType::parse("uml.Sequence"), ClassifierType::Behavior(BehaviorKind::Sequence));
+        assert_eq!(ClassifierType::Behavior(BehaviorKind::StateMachine).as_str(), "uml.StateMachine");
+    }
+
+    #[test]
     fn includes_and_extends_are_endless_dependency_verbs() {
         assert_eq!(RelationshipKind::parse("includes"), Some(RelationshipKind::Includes));
         assert_eq!(RelationshipKind::parse("extends"), Some(RelationshipKind::Extends));
@@ -585,7 +626,7 @@ mod tests {
             annotates: vec![],
             members: vec![],
         };
-        let model = Model { nodes: vec![node], edges: vec![], diagrams: vec![], path: String::new(), packages: vec![] };
+        let model = Model { nodes: vec![node], ..Default::default() };
         assert_eq!(model.node("order").and_then(|n| n.concept.title.as_deref()), Some("Order"));
         assert!(model.node("missing").is_none());
     }
