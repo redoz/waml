@@ -18,6 +18,7 @@
 
   import { model, store } from "../../state/model.svelte";
   import { sharedModelName, isFirstVisit, onStoreError } from "../../state/bootstrap";
+  import { displaySettings } from "../../state/displaySettings.svelte";
   import { runDagreLayout, NODE_W, NODE_H } from "../../canvas/layout";
   import { toRFNode } from "./toRFNode";
   import { nodeTypes, edgeTypes } from "./flowTypes";
@@ -55,7 +56,7 @@ import ShareToast from "../ShareToast.svelte";
     loadActiveDiagramKey,
     persistActiveDiagramKey,
   } from "@uaml/core/state/diagrams";
-  import { resolveDisplay, slugify, type DiagramDisplay } from "@uaml/okf";
+  import { slugify, type DiagramDisplay } from "@uaml/okf";
   import { getProfile } from "@uaml/core/profiles";
   import { loadModelName, persistModelName, DEFAULT_MODEL_NAME, templateModelName } from "@uaml/core/state/modelName";
   import { persistBundle } from "@uaml/core/state/persist";
@@ -149,7 +150,7 @@ import ShareToast from "../ShareToast.svelte";
   };
   // The active diagram's resolved per-diagram render settings (absent ⇒ defaults).
   // Replaces the old global viewMode/relLabelMode browser preferences.
-  const activeDisplay = $derived(resolveDisplay(activeDiagram.display));
+  const activeDisplay = $derived(displaySettings.resolve(activeDiagram.key, activeDiagram.display));
   const memberSet = $derived(new Set(activeDiagram.members));
   const imageName = $derived(modelName.trim() || "model");
   const canvasClass = $derived(
@@ -322,11 +323,13 @@ import ShareToast from "../ShareToast.svelte";
     tool = t;
   }
 
-  // Merge a single-field edit into the active diagram's display and persist it on
-  // the diagram (per-diagram, not per-browser). For the implicit "All" diagram
-  // (no real diagram in the model yet) updateDiagram is a no-op, mirroring rename.
+  // Merge a single-field edit into the active diagram's session-level display.
+  // Held in memory (displaySettings), not the model: `store.updateDiagram` is a
+  // no-op until Stage 1c and the OKF wire carries no `display` block. Works
+  // identically for the implicit "All" diagram and real diagrams — no diagram
+  // creation is forced (spec lines 108-112).
   function handleDisplayChange(p: Partial<DiagramDisplay>) {
-    store.updateDiagram(activeDiagram.key, { display: { ...activeDisplay, ...p } });
+    displaySettings.patch(activeDiagram.key, p);
   }
 
   // ── Keyboard delete ────────────────────────────────────────────────────────
