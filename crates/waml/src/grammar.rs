@@ -646,7 +646,7 @@ mod tests {
     }
 
     use crate::model::FlowNodeKind;
-    use crate::syntax::{FlowBullet, FlowTargetRef};
+    use crate::syntax::{FlowBullet, FlowNodeSyntax, FlowTargetRef};
 
     #[test]
     fn parses_full_transition_bullet() {
@@ -705,11 +705,27 @@ mod tests {
             "- else transitions to Hold",
             "- transitions to Shipped: `notify`",
             "- entry: `reserveStock`",
+            "- do: `pollCarrier`",
+            "- exit: `releaseStock`",
             "- refines [SubFlow](./sub.md)",
             "- partition: Warehouse",
         ] {
             let b = parse_flow_bullet(line).unwrap();
             assert_eq!(render_flow_bullet(&b), line);
+        }
+    }
+
+    #[test]
+    fn renders_flow_headings_round_trip() {
+        for heading in [
+            "Draft",
+            "initial",
+            "decision Ready to ship?",
+            "object [Order](./order.md)",
+        ] {
+            let (kind, identity, object_ref) = parse_flow_heading(heading);
+            let n = FlowNodeSyntax { kind, identity, object_ref, bullets: Vec::new(), notes: Vec::new(), line: 0 };
+            assert_eq!(render_flow_heading(&n), format!("### {heading}"));
         }
     }
 }
