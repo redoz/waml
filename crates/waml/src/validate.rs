@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::diagnostic::{DiagCode, Diagnostic};
-use crate::model::ClassifierType;
+use crate::model::{ClassifierType, RelationshipKind, UmlMetaclass};
 use crate::slug::slugify;
 use crate::syntax::{
     Direction, Document, LayoutStatement, Line, MemberGroup, NameRef, Operand, OperandRef, Section,
@@ -161,8 +161,12 @@ pub fn link(docs: &[(String, ClassifierType, Document)]) -> Vec<Diagnostic> {
             keyset.insert(slug);
         }
     }
+    let mut types: HashMap<String, ClassifierType> = HashMap::new();
+    for (path, ty, _doc) in docs {
+        types.insert(crate::okf::id_of(path), ty.clone());
+    }
 
-    for (path, _ty, doc) in docs {
+    for (path, ty, doc) in docs {
         let slug = crate::okf::id_of(path);
         if slug_count[&slug] > 1 {
             diags.push(Diagnostic::new(
@@ -196,6 +200,34 @@ pub fn link(docs: &[(String, ClassifierType, Document)]) -> Vec<Diagnostic> {
                                     "relationship target './{}.md' resolves to no document",
                                     r.target_slug
                                 ),
+                                path,
+                                r.line,
+                            );
+                            if let Some(span) = r.span {
+                                d = d.with_span(span);
+                            }
+                            diags.push(d);
+                        }
+                        // Context rule: an ends-less `associates` is a
+                        // communication link — valid only when an actor or a
+                        // use case participates. Between plain classifiers,
+                        // ends are required (uaml-spec.md).
+                        let is_comm_party = |t: Option<&ClassifierType>| {
+                            matches!(
+                                t,
+                                Some(ClassifierType::Uml(UmlMetaclass::Actor))
+                                    | Some(ClassifierType::Uml(UmlMetaclass::UseCase))
+                            )
+                        };
+                        if r.kind == RelationshipKind::Associates
+                            && r.from_end.multiplicity.is_none()
+                            && keyset.contains(&resolved)
+                            && !is_comm_party(Some(ty))
+                            && !is_comm_party(types.get(&resolved))
+                        {
+                            let mut d = Diagnostic::new(
+                                DiagCode::MalformedRelationship,
+                                "'associates' between classifiers requires ': <near> to <far>' multiplicity ends (ends are optional only on an actor↔use-case communication link)",
                                 path,
                                 r.line,
                             );
@@ -692,5 +724,30 @@ mod tests {
             "---\ntype: uml.Class\ntitle: X\n---\n# X\n\n## Attributes\n~~~\nsome code\n```\nmore code\n~~~\n- bad line without colon\n".into())];
         let d = validate(&b);
         assert!(d.iter().any(|x| x.code == DiagCode::MalformedAttribute));
+    }
+
+    #[test]
+    fn endless_associates_between_actor_and_use_case_is_clean() {
+        let b = vec![
+            ("u/place-order.md".into(),
+             "---\ntype: uml.UseCase\ntitle: Place Order\n---\n# Place Order\n\n## Relationships\n- associates [Customer](./customer.md)\n- includes [Authenticate](./authenticate.md)\n".into()),
+            ("u/customer.md".into(), "---\ntype: uml.Actor\ntitle: Customer\n---\n# Customer\n".into()),
+            ("u/authenticate.md".into(), "---\ntype: uml.UseCase\ntitle: Authenticate\n---\n# Authenticate\n".into()),
+        ];
+        let d = validate(&b);
+        assert!(d.is_empty(), "got: {d:?}");
+    }
+
+    #[test]
+    fn endless_associates_between_classes_is_flagged() {
+        let b = vec![
+            ("c/order.md".into(),
+             "---\ntype: uml.Class\ntitle: Order\n---\n# Order\n\n## Relationships\n- associates [Customer](./customer.md)\n".into()),
+            ("c/customer.md".into(), "---\ntype: uml.Class\ntitle: Customer\n---\n# Customer\n".into()),
+        ];
+        let d = validate(&b);
+        let m = d.iter().find(|x| x.code == DiagCode::MalformedRelationship)
+            .expect("classifier↔classifier associates without ends must be flagged");
+        assert_eq!(m.line, 8);
     }
 }
