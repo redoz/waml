@@ -17,7 +17,7 @@ static VALUE_RE: LazyLock<Regex> =
 // verb · target-title · target-slug · name-label · name-link-title · name-link-slug · ends
 static REL_RE: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(concat!(
-        r"^- (associates|aggregates|composes|specializes|implements|depends) ",
+        r"^- (associates|aggregates|composes|specializes|implements|depends|includes|extends) ",
         r"\[([^\]]+)\]\(\./(.+?)\.md\)",
         r#"(?: as (?:"([^"]*)"|\[([^\]]+)\]\(\./(.+?)\.md\)))?"#,
         r"(?:\s*:\s*(.+))?$",
@@ -60,8 +60,8 @@ fn has_multiplicity_ends(line: &str) -> bool {
 
 /// Human-readable message for a malformed `## Relationships` bullet.
 pub fn rel_error_message(line: &str) -> String {
-    const ENDED: [&str; 3] = ["associates", "aggregates", "composes"];
-    const OTHER: [&str; 3] = ["specializes", "implements", "depends"];
+    const ENDED: [&str; 2] = ["aggregates", "composes"];
+    const OTHER: [&str; 5] = ["specializes", "implements", "depends", "includes", "extends"];
     let verb = line.trim_start_matches("- ").split_whitespace().next().unwrap_or("");
     let has_ends = has_multiplicity_ends(line);
     if ENDED.contains(&verb) && !has_ends {
@@ -70,7 +70,7 @@ pub fn rel_error_message(line: &str) -> String {
         format!("'{verb}' does not take multiplicity ends")
     } else if verb == "annotates" {
         "note anchors ('annotates') are not supported yet".to_string()
-    } else if !ENDED.contains(&verb) && !OTHER.contains(&verb) {
+    } else if !ENDED.contains(&verb) && !OTHER.contains(&verb) && verb != "associates" {
         format!("unknown relationship verb '{verb}'")
     } else {
         "malformed relationship line".to_string()
@@ -142,8 +142,13 @@ pub fn parse_relationship_line(line: &str) -> Result<ParsedRel, LineError> {
     let m = REL_RE.captures(trimmed).ok_or_else(err)?;
     let kind = RelationshipKind::parse(&m[1]).ok_or_else(err)?;
     let ends_raw = m.get(7).map(|x| x.as_str());
-    if kind.is_ended() != ends_raw.is_some() {
-        return Err(err()); // ends required XOR forbidden
+    // Ends: required for aggregates/composes; OPTIONAL for associates (bare =
+    // actor↔use-case communication link, enforced cross-doc in validate::link);
+    // forbidden for all non-ended verbs.
+    match (ends_raw.is_some(), kind) {
+        (true, k) if !k.is_ended() => return Err(err()),
+        (false, k) if k.is_ended() && k != RelationshipKind::Associates => return Err(err()),
+        _ => {}
     }
     let name = if let Some(label) = m.get(4) {
         Some(ParsedName::Label(label.as_str().to_string()))
@@ -341,7 +346,8 @@ pub fn render_relationship_line(r: &ParsedRel) -> String {
         Some(ParsedName::Label(s)) => format!(" as \"{s}\""),
         Some(ParsedName::Ref { title, slug }) => format!(" as [{title}](./{slug}.md)"),
     };
-    if !r.kind.is_ended() {
+    let has_ends = r.from_end.multiplicity.is_some() || r.to_end.multiplicity.is_some();
+    if !r.kind.is_ended() || !has_ends {
         format!("- {} {link}{name}", r.kind.as_str())
     } else {
         format!("- {} {link}{name}: {} to {}", r.kind.as_str(), render_end(&r.from_end), render_end(&r.to_end))
@@ -466,5 +472,35 @@ mod tests {
         let m = parse_member_line("- [Order](./order.md)").unwrap();
         assert_eq!(m.slug, "order");
         assert_eq!(render_member_line(&m), "- [Order](./order.md)");
+    }
+
+    #[test]
+    fn parses_includes_and_extends_without_ends() {
+        let r = parse_relationship_line("- includes [Authenticate](./authenticate.md)").unwrap();
+        assert_eq!(r.kind, RelationshipKind::Includes);
+        assert_eq!(r.target_slug, "authenticate");
+        let r = parse_relationship_line("- extends [Apply Coupon](./apply-coupon.md)").unwrap();
+        assert_eq!(r.kind, RelationshipKind::Extends);
+        assert!(parse_relationship_line("- includes [A](./a.md): 1 to 1").is_err());
+    }
+
+    #[test]
+    fn associates_without_ends_parses_as_bare_communication_link() {
+        let r = parse_relationship_line("- associates [Customer](./customer.md)").unwrap();
+        assert_eq!(r.kind, RelationshipKind::Associates);
+        assert_eq!(r.from_end, RelEnd::default());
+        assert_eq!(r.to_end, RelEnd::default());
+    }
+
+    #[test]
+    fn renders_endless_associates_and_use_case_verbs_round_trip() {
+        for line in [
+            "- associates [Customer](./customer.md)",
+            "- includes [Authenticate](./authenticate.md)",
+            "- extends [Apply Coupon](./apply-coupon.md)",
+        ] {
+            let r = parse_relationship_line(line).unwrap();
+            assert_eq!(render_relationship_line(&r), line);
+        }
     }
 }
