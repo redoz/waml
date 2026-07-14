@@ -17,10 +17,12 @@ export interface Attribute {
 }
 
 // "annotates" is a uml.Note-only verb; it never produces a ModelEdge (anchors live on the note node).
-export const RELATIONSHIP_KINDS = ["associates", "aggregates", "composes", "specializes", "implements", "depends", "annotates"] as const;
+export const RELATIONSHIP_KINDS = ["associates", "aggregates", "composes", "specializes", "implements", "depends", "includes", "extends", "annotates"] as const;
 export type RelationshipKind = (typeof RELATIONSHIP_KINDS)[number];
 
-/** Verbs that take `: <near> to <far>` ends. The rest forbid them. */
+/** Verbs that may take `: <near> to <far>` ends. Required for aggregates/composes;
+ *  optional for associates (bare = actor↔use-case communication link, enforced
+ *  cross-doc by the Rust validate layer); forbidden for everything else. */
 export const ENDED_KINDS: ReadonlySet<RelationshipKind> = new Set(["associates", "aggregates", "composes"]);
 
 export interface RelEnd { multiplicity?: string; role?: string; navigable?: boolean }

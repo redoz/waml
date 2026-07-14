@@ -17,6 +17,8 @@
     specializes: "Generalization — hollow triangle at the parent (near→far reads child→parent).",
     implements: "Realization — dashed line, hollow triangle at the interface.",
     depends: "Dependency — dashed open arrow at the target.",
+    includes: "Use-case «include» — dashed open arrow, base → included use case.",
+    extends: "Use-case «extend» — dashed open arrow, extension → base use case.",
     annotates: "Note anchor — uml.Note only; never selectable here.",
   };
 
