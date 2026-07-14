@@ -38,10 +38,10 @@ importers:
       '@dagrejs/dagre':
         specifier: ^1.1.0
         version: 1.1.8
-      '@uaml/okf':
+      '@waml/okf':
         specifier: workspace:*
         version: link:../okf
-      '@uaml/wasm':
+      '@waml/wasm':
         specifier: workspace:*
         version: link:../wasm
       fflate:
@@ -100,13 +100,13 @@ importers:
       '@dagrejs/dagre':
         specifier: ^1.1.0
         version: 1.1.8
-      '@uaml/core':
+      '@waml/core':
         specifier: workspace:*
         version: link:../core
-      '@uaml/okf':
+      '@waml/okf':
         specifier: workspace:*
         version: link:../okf
-      '@uaml/wasm':
+      '@waml/wasm':
         specifier: workspace:*
         version: link:../wasm
       '@xyflow/svelte':

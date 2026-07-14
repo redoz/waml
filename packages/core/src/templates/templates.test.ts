@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll } from "vitest";
-import { initWasm, build_model } from "@uaml/wasm";
-import { RELATIONSHIP_KINDS } from "@uaml/okf";
+import { initWasm, build_model } from "@waml/wasm";
+import { RELATIONSHIP_KINDS } from "@waml/okf";
 import { toModelGraph, emptyOverlay, type RustModel } from "../state/overlay";
 import { TEMPLATES, ordersDomain } from "./index";
 

@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll } from "vitest";
-import { initWasm, apply_ops, build_model } from "@uaml/wasm";
+import { initWasm, apply_ops, build_model } from "@waml/wasm";
 import { toModelGraph, emptyOverlay, type RustModel } from "./overlay";
 import {
   nodeNewOps,
@@ -19,7 +19,7 @@ import {
   sortPackageOps,
   type OpDto,
 } from "./ops-adapter";
-import type { ModelGraph, Attribute } from "@uaml/okf";
+import type { ModelGraph, Attribute } from "@waml/okf";
 
 type Bundle = [string, string][];
 

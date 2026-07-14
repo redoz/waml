@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { effectiveDiagrams, ALL_DIAGRAM_KEY } from "./diagrams";
-import type { ModelGraph } from "@uaml/okf";
+import type { ModelGraph } from "@waml/okf";
 
 const node = (key: string): ModelGraph["nodes"][0] =>
   ({ concept: { id: key, type: "uml.Class", title: key, body: "" }, key, type: "uml.Class", stereotypes: [], attributes: [], position: { x: 0, y: 0 } });

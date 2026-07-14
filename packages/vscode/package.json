@@ -1,23 +1,23 @@
 {
-  "name": "@uaml/vscode",
+  "name": "@waml/vscode",
   "private": true,
   "version": "0.0.0",
   "license": "Apache-2.0",
   "type": "commonjs",
-  "displayName": "UAML",
-  "description": "Live UAML diagnostics for Markdown documents.",
+  "displayName": "WAML",
+  "description": "Live WAML diagnostics for Markdown documents.",
   "engines": { "vscode": "^1.90.0" },
   "categories": ["Programming Languages", "Linters"],
   "activationEvents": ["onLanguage:markdown"],
   "main": "./dist/extension.js",
   "contributes": {
     "configuration": {
-      "title": "UAML",
+      "title": "WAML",
       "properties": {
-        "uaml.serverPath": {
+        "waml.serverPath": {
           "type": "string",
-          "default": "uaml",
-          "description": "Path to the uaml executable that provides the language server."
+          "default": "waml",
+          "description": "Path to the waml executable that provides the language server."
         }
       }
     }

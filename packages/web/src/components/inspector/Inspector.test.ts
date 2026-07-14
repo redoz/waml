@@ -1,6 +1,6 @@
 import { test, expect, vi } from "vitest";
 import { render, screen } from "@testing-library/svelte";
-import type { ModelNode } from "@uaml/okf";
+import type { ModelNode } from "@waml/okf";
 import Inspector from "./Inspector.svelte";
 
 const nodes = [{

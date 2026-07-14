@@ -1,7 +1,7 @@
 <script lang="ts">
   import type { Snippet } from "svelte";
   import { ChevronDown, ChevronRight } from "lucide-svelte";
-  import { ERD_COLLAPSED_ROWS } from "@uaml/core/canvas/layoutSize";
+  import { ERD_COLLAPSED_ROWS } from "@waml/core/canvas/layoutSize";
 
   // Attribute compartment with the collapsed/expand toggle (ERD_COLLAPSED_ROWS).
   let { rows, render }: { rows: number; render: Snippet<[number]> } = $props();

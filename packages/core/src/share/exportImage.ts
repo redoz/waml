@@ -1,7 +1,7 @@
 import { toSvg } from "html-to-image";
 
 // Export the whole model (not just the visible viewport) as an SVG, with a minimal
-// UAML watermark in the bottom-right corner. Capturing the flow viewport
+// WAML watermark in the bottom-right corner. Capturing the flow viewport
 // element with an overridden transform renders every node at 1:1 regardless of
 // the user's current pan/zoom.
 //
@@ -36,7 +36,7 @@ function nodesBounds(nodes: BoundsNode[]): { x: number; y: number; width: number
   return { x: minX, y: minY, width: maxX - minX, height: maxY - minY };
 }
 
-// UAML wordmark glyph paths (100-unit-tall grid; laid out left→right with the
+// WAML wordmark glyph paths (100-unit-tall grid; laid out left→right with the
 // same translate offsets as the TopBar wordmark). Rendered flat brand-blue.
 const GLYPH_U = "M 0,0 H 25 V 75 H 55 V 0 H 80 V 85 L 65,100 H 15 L 0,85 Z";
 const GLYPH_A = "M 0,100 V 15 L 15,0 H 65 L 80,15 V 100 H 55 V 65 H 25 V 100 Z M 25,25 H 55 V 40 H 25 Z";
@@ -45,7 +45,7 @@ const GLYPH_L = "M 0,0 H 25 V 75 H 80 V 85 L 65,100 H 15 L 0,85 Z";
 
 const WM_H = 18;
 const WM_W = 72; // wordmark spans ~400 glyph units wide × 100 tall → 72×18 at this height
-// Watermark as an SVG <g> WM_W×WM_H: the UAML wordmark in flat brand blue.
+// Watermark as an SVG <g> WM_W×WM_H: the WAML wordmark in flat brand blue.
 function watermarkGroup(x: number, y: number): string {
   const scale = WM_H / 100; // glyphs are 100 units tall
   return (
@@ -71,7 +71,7 @@ function captureOptions(rfNodes: BoundsNode[]) {
 export type CanvasSvg = { svg: string; width: number; height: number };
 
 /**
- * Build the model's SVG markup (whole model, transparent background, UAML
+ * Build the model's SVG markup (whole model, transparent background, WAML
  * watermark bottom-right) without touching the DOM to download it. Returns null
  * when there's nothing to export (no viewport element or empty diagram).
  *
@@ -80,7 +80,7 @@ export type CanvasSvg = { svg: string; width: number; height: number };
  * baked in (the raster is not unstyled). `skipFonts: true` only skips embedding
  * @font-face web fonts — the app renders in the system font stack, so text still
  * rasterizes styled. This is the SVG string a PNG rasterizer can draw onto a
- * canvas (see @uaml/web src/share/rasterize.ts).
+ * canvas (see @waml/web src/share/rasterize.ts).
  */
 export async function buildCanvasSvg(rfNodes: BoundsNode[], viewportSelector: string): Promise<CanvasSvg | null> {
   const el = document.querySelector<HTMLElement>(viewportSelector);
@@ -97,7 +97,7 @@ export async function buildCanvasSvg(rfNodes: BoundsNode[], viewportSelector: st
   return { svg, width, height };
 }
 
-/** Export the model as an SVG with the UAML watermark embedded bottom-right. */
+/** Export the model as an SVG with the WAML watermark embedded bottom-right. */
 export async function exportCanvasSvg(rfNodes: BoundsNode[], filename = "model", viewportSelector: string): Promise<void> {
   const built = await buildCanvasSvg(rfNodes, viewportSelector);
   if (!built) return;

@@ -1,5 +1,5 @@
 {
-  "name": "@uaml/web",
+  "name": "@waml/web",
   "version": "0.0.0",
   "license": "Apache-2.0",
   "type": "module",
@@ -12,9 +12,9 @@
   },
   "dependencies": {
     "@dagrejs/dagre": "^1.1.0",
-    "@uaml/core": "workspace:*",
-    "@uaml/okf": "workspace:*",
-    "@uaml/wasm": "workspace:*",
+    "@waml/core": "workspace:*",
+    "@waml/okf": "workspace:*",
+    "@waml/wasm": "workspace:*",
     "@xyflow/svelte": "^1.0.0",
     "fflate": "^0.8.3",
     "html-to-image": "^1.11.13",

@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { mergeGraphs } from "./merge";
-import type { ModelGraph } from "@uaml/okf";
+import type { ModelGraph } from "@waml/okf";
 
 const node = (key: string, title: string): ModelGraph["nodes"][0] =>
   ({ concept: { id: key, type: "uml.Class", title, body: "" }, key, type: "uml.Class", stereotypes: [], attributes: [], position: { x: 0, y: 0 } });

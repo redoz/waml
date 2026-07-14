@@ -1,6 +1,6 @@
 import { test, expect } from "vitest";
 import { buildNavTree, packageOf } from "./tree";
-import type { ModelGraph } from "@uaml/okf";
+import type { ModelGraph } from "@waml/okf";
 
 const node = (key: string, title: string, type = "uml.Class") => ({
   key,

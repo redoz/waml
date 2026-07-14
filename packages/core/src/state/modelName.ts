@@ -3,7 +3,7 @@
 // how the model itself and the business goal are persisted.
 const KEY = "mc.modelName.v1";
 
-export const DEFAULT_MODEL_NAME = "My first UAML model";
+export const DEFAULT_MODEL_NAME = "My first WAML model";
 
 /** Default name for a model started from a template, e.g. "My SaaS / Subscription model". */
 export function templateModelName(templateName: string): string {

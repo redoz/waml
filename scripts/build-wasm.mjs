@@ -1,4 +1,4 @@
-// Builds crates/uaml-wasm to wasm, then emits an INLINED module under
+// Builds crates/waml-wasm to wasm, then emits an INLINED module under
 // packages/wasm/src/generated so the frontend needs no runtime .wasm fetch.
 // Idempotent: rerunning overwrites the generated files identically.
 import { execFileSync } from "node:child_process";
@@ -7,24 +7,24 @@ import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
-const crate = join(root, "crates", "uaml-wasm");
+const crate = join(root, "crates", "waml-wasm");
 const pkg = join(crate, "pkg");
 const outDir = join(root, "packages", "wasm", "src", "generated");
 
 // 1. Compile to wasm + wasm-bindgen glue (--target web ⇒ ESM + `init(bytes)`).
 execFileSync(
   "wasm-pack",
-  ["build", crate, "--target", "web", "--out-dir", "pkg", "--out-name", "uaml_wasm", "--release"],
+  ["build", crate, "--target", "web", "--out-dir", "pkg", "--out-name", "waml_wasm", "--release"],
   { stdio: "inherit" },
 );
 
 // 2. Copy the wasm-bindgen glue + type declarations into the package tree.
 mkdirSync(outDir, { recursive: true });
-copyFileSync(join(pkg, "uaml_wasm.js"), join(outDir, "uaml_wasm.js"));
-copyFileSync(join(pkg, "uaml_wasm.d.ts"), join(outDir, "uaml_wasm.d.ts"));
+copyFileSync(join(pkg, "waml_wasm.js"), join(outDir, "waml_wasm.js"));
+copyFileSync(join(pkg, "waml_wasm.d.ts"), join(outDir, "waml_wasm.d.ts"));
 
 // 3. Base64-inline the wasm bytes so init() never touches the network / fs.
-const wasm = readFileSync(join(pkg, "uaml_wasm_bg.wasm"));
+const wasm = readFileSync(join(pkg, "waml_wasm_bg.wasm"));
 const b64 = wasm.toString("base64");
 writeFileSync(
   join(outDir, "wasm-inline.ts"),

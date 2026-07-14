@@ -2,7 +2,7 @@
   // The active diagram's display controls, extracted from Dock's popover so the
   // central edit panel host can render the identical set. Display toggles only — no
   // title/profile. Each control emits a single changed field via onChange.
-  import type { DiagramDisplay } from "@uaml/okf";
+  import type { DiagramDisplay } from "@waml/okf";
 
   let { display, onChange }: {
     display: DiagramDisplay;

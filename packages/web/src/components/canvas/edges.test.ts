@@ -1,8 +1,8 @@
 import { describe, it, test, expect, beforeAll } from "vitest";
-import type { ModelNode, ModelEdge } from "@uaml/okf";
-import { initWasm } from "@uaml/wasm";
-import { DEFAULT_DISPLAY, type DiagramDisplay } from "@uaml/okf";
-import { createModelStore } from "@uaml/core/state/model";
+import type { ModelNode, ModelEdge } from "@waml/okf";
+import { initWasm } from "@waml/wasm";
+import { DEFAULT_DISPLAY, type DiagramDisplay } from "@waml/okf";
+import { createModelStore } from "@waml/core/state/model";
 import { buildRfEdges, isEdgeReconnectable, buildAnchorEdges } from "./edges";
 
 beforeAll(async () => {
@@ -141,10 +141,10 @@ describe("isEdgeReconnectable (only the selected relationship reconnects)", () =
   });
 });
 
-// Integration smoke tests against the real @uaml/core model store (rather than
+// Integration smoke tests against the real @waml/core model store (rather than
 // hand-rolled fixtures), matching how buildRfEdges/buildAnchorEdges are actually
 // fed by the Svelte state bridge.
-describe("integration with @uaml/core's createModelStore", () => {
+describe("integration with @waml/core's createModelStore", () => {
   test("buildRfEdges maps each model edge to one 'rel' edge with modelEdgeId in data", () => {
     const s = createModelStore();
     const a = s.addNode({ x: 0, y: 0 });

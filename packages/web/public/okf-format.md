@@ -1,6 +1,6 @@
-# UAML — OKF authoring guide for AI agents
+# WAML — OKF authoring guide for AI agents
 
-Use this to generate a domain model in **OKF (Open Knowledge Format)** that imports cleanly into **UAML** (https://github.com/redoz/uaml).
+Use this to generate a domain model in **OKF (Open Knowledge Format)** that imports cleanly into **WAML** (https://github.com/redoz/waml).
 
 **How the user will use your output:** they open **Import** on the canvas, paste your text (or upload a `.zip`), and review the rendered UML diagram.
 

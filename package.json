@@ -1,13 +1,13 @@
 {
-  "name": "uaml",
+  "name": "waml",
   "private": true,
   "license": "Apache-2.0",
   "scripts": {
-    "dev": "pnpm --filter @uaml/web dev",
-    "dev:web": "pnpm --filter @uaml/web dev",
+    "dev": "pnpm --filter @waml/web dev",
+    "dev:web": "pnpm --filter @waml/web dev",
     "build:wasm": "node scripts/build-wasm.mjs",
-    "build": "pnpm --filter @uaml/wasm build && pnpm --filter @uaml/okf build && pnpm --filter @uaml/core build && pnpm --filter @uaml/web build",
-    "serve": "pnpm build && pnpm --filter @uaml/web preview",
+    "build": "pnpm --filter @waml/wasm build && pnpm --filter @waml/okf build && pnpm --filter @waml/core build && pnpm --filter @waml/web build",
+    "serve": "pnpm build && pnpm --filter @waml/web preview",
     "test": "pnpm -r test",
     "lint": "eslint .",
     "format": "prettier --write .",

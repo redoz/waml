@@ -1,7 +1,7 @@
 import { test, expect, beforeAll } from "vitest";
-import { initWasm } from "@uaml/wasm";
-import { DEFAULT_DISPLAY } from "@uaml/okf";
-import { createModelStore } from "@uaml/core/state/model";
+import { initWasm } from "@waml/wasm";
+import { DEFAULT_DISPLAY } from "@waml/okf";
+import { createModelStore } from "@waml/core/state/model";
 import { runDagreLayout, NODE_W, NODE_H } from "./layout";
 
 beforeAll(async () => {

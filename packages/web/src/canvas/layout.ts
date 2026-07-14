@@ -1,6 +1,6 @@
 import dagre from "@dagrejs/dagre";
-import type { ModelNode, ModelEdge, DiagramDisplay } from "@uaml/okf";
-import { erdAwareNodeSize } from "@uaml/core/canvas/layoutSize";
+import type { ModelNode, ModelEdge, DiagramDisplay } from "@waml/okf";
+import { erdAwareNodeSize } from "@waml/core/canvas/layoutSize";
 
 // ── Dagre auto-layout ────────────────────────────────────────────────────────
 // Shared with Plan 3a (Canvas): the OKF format does not persist node positions,

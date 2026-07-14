@@ -1,7 +1,7 @@
 import { test, expect, vi } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/svelte";
 import Navigator from "./Navigator.svelte";
-import type { ModelGraph } from "@uaml/okf";
+import type { ModelGraph } from "@waml/okf";
 
 // Node/package fixture helper — mirrors the concept-Node shape (title lives on
 // `concept.title`, never a flat `title`), matching nav/tree.test.ts.

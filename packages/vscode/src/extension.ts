@@ -21,7 +21,7 @@ export function activate(context: ExtensionContext): void {
     env: process.env,
     extensionPath: context.extensionPath,
     platform: process.platform,
-    configInspection: workspace.getConfiguration("uaml").inspect<string>("serverPath"),
+    configInspection: workspace.getConfiguration("waml").inspect<string>("serverPath"),
     fileExists: (p) => existsSync(p),
     probeCommand: (command) => {
       const result = spawnSync(command, ["--version"], { stdio: "ignore" });
@@ -34,13 +34,13 @@ export function activate(context: ExtensionContext): void {
   if (!resolution.runnable) {
     void window
       .showErrorMessage(
-        `UAML language server not started. ${resolution.reason ?? ""} ` +
+        `WAML language server not started. ${resolution.reason ?? ""} ` +
           "After fixing this, reload the window (Developer: Reload Window).",
-        "Open UAML Settings",
+        "Open WAML Settings",
       )
       .then((choice) => {
-        if (choice === "Open UAML Settings") {
-          void commands.executeCommand("workbench.action.openSettings", "uaml.serverPath");
+        if (choice === "Open WAML Settings") {
+          void commands.executeCommand("workbench.action.openSettings", "waml.serverPath");
         }
       });
     return;
@@ -56,7 +56,7 @@ export function activate(context: ExtensionContext): void {
   const clientOptions: LanguageClientOptions = {
     documentSelector: [{ language: "markdown" }],
   };
-  client = new LanguageClient("uaml", "UAML", serverOptions, clientOptions);
+  client = new LanguageClient("waml", "WAML", serverOptions, clientOptions);
   client.start();
 }
 

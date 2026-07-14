@@ -8,7 +8,7 @@
 </script>
 
 <script lang="ts">
-  import type { DiagramDisplay, ModelNode } from "@uaml/okf";
+  import type { DiagramDisplay, ModelNode } from "@waml/okf";
   import CentralEditPanel from "./CentralEditPanel.svelte";
   import ObjectInspector from "../inspector/ObjectInspector.svelte";
   import DiagramPropertiesBody from "../canvas/DiagramPropertiesBody.svelte";

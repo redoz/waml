@@ -39,7 +39,7 @@ describe("right-edge flags", () => {
   it("renders a Feedback flag linking to the GitHub new-issue page in a new tab", () => {
     render(Canvas);
     const feedback = screen.getByRole("link", { name: "Feedback" });
-    expect(feedback.getAttribute("href")).toBe("https://github.com/redoz/uaml/issues/new");
+    expect(feedback.getAttribute("href")).toBe("https://github.com/redoz/waml/issues/new");
     expect(feedback.getAttribute("target")).toBe("_blank");
     expect(feedback.getAttribute("rel") ?? "").toContain("noreferrer");
   });

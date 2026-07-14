@@ -1,7 +1,7 @@
 import { test, expect, vi } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/svelte";
 import CentralEditPanelHost from "./CentralEditPanelHost.svelte";
-import { DEFAULT_DISPLAY, type ModelNode } from "@uaml/okf";
+import { DEFAULT_DISPLAY, type ModelNode } from "@waml/okf";
 
 const node = (key: string, title: string): ModelNode =>
   ({

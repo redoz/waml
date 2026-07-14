@@ -1,7 +1,7 @@
 <script lang="ts">
   import type { Snippet } from "svelte";
-  import { getProfile, stereotypeStyle } from "@uaml/core/profiles";
-  import { resolveDisplay } from "@uaml/okf";
+  import { getProfile, stereotypeStyle } from "@waml/core/profiles";
+  import { resolveDisplay } from "@waml/okf";
   import NodePorts from "./NodePorts.svelte";
   import StereotypeRow from "./StereotypeRow.svelte";
   import AttributeRow from "./AttributeRow.svelte";

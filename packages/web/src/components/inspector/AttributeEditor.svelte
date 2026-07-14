@@ -1,6 +1,6 @@
 <script lang="ts">
   import { GripVertical } from "lucide-svelte";
-  import type { Attribute, Visibility } from "@uaml/okf";
+  import type { Attribute, Visibility } from "@waml/okf";
   import InfoTip from "./InfoTip.svelte";
 
   const VISIBILITIES: (Visibility | "")[] = ["", "+", "-", "#", "~"];

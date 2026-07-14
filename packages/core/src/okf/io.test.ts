@@ -11,15 +11,15 @@ describe("zip round-trip", () => {
 });
 
 describe("bundleToDownloadFiles", () => {
-  it("appends a UAML attribution footer to the index only", () => {
+  it("appends a WAML attribution footer to the index only", () => {
     const bundle: [string, string][] = [
       ["demo/index.md", "# Demo\n"],
       ["demo/orders.md", "# Orders\n"],
     ];
     const files = bundleToDownloadFiles(bundle, "Demo");
     expect(files["demo/index.md"]).toContain("Generated with");
-    expect(files["demo/index.md"]).toContain("UAML");
-    expect(files["demo/index.md"]).toContain("github.com/redoz/uaml");
+    expect(files["demo/index.md"]).toContain("WAML");
+    expect(files["demo/index.md"]).toContain("github.com/redoz/waml");
     expect(files["demo/orders.md"]).not.toContain("Generated with"); // per-doc stays clean
   });
 

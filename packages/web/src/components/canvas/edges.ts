@@ -1,6 +1,6 @@
 import { Position, type Edge } from "@xyflow/svelte";
-import type { ModelNode, ModelEdge, DiagramDisplay } from "@uaml/okf";
-import { erdAwareNodeSize } from "@uaml/core/canvas/layoutSize";
+import type { ModelNode, ModelEdge, DiagramDisplay } from "@waml/okf";
+import { erdAwareNodeSize } from "@waml/core/canvas/layoutSize";
 import { oppositeSide, type Slot } from "./floating";
 
 // The rendered edge attaches nowhere fixed: RelEdge computes a floating attach

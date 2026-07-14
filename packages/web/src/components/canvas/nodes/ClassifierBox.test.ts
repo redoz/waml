@@ -1,6 +1,6 @@
 import { test, expect, vi } from "vitest";
 import { render } from "@testing-library/svelte";
-import { DEFAULT_DISPLAY, type DiagramDisplay } from "@uaml/okf";
+import { DEFAULT_DISPLAY, type DiagramDisplay } from "@waml/okf";
 import type { OkfNodeData } from "./types";
 
 // NodePorts renders <Handle>, which throws outside a SvelteFlow custom-node

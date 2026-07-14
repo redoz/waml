@@ -1,8 +1,8 @@
 <script lang="ts">
-  import type { ModelNode, Attribute } from "@uaml/okf";
+  import type { ModelNode, Attribute } from "@waml/okf";
   import AttributeEditor from "./AttributeEditor.svelte";
   import InfoTip from "./InfoTip.svelte";
-  import { getProfile } from "@uaml/core/profiles";
+  import { getProfile } from "@waml/core/profiles";
 
   let { node, onUpdate, profileName }: {
     node: ModelNode;

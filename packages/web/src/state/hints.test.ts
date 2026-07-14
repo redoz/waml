@@ -1,6 +1,6 @@
 import { test, expect, beforeEach, vi } from "vitest";
 
-const KEY = "uaml:show-shortcuts";
+const KEY = "waml:show-shortcuts";
 
 beforeEach(() => {
   localStorage.clear();

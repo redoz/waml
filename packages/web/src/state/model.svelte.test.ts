@@ -1,7 +1,7 @@
 import { test, expect, beforeAll } from "vitest";
 import { get } from "svelte/store";
-import { initWasm } from "@uaml/wasm";
-import { createModelStore } from "@uaml/core/state/model";
+import { initWasm } from "@waml/wasm";
+import { createModelStore } from "@waml/core/state/model";
 import { toModelReadable } from "./model.svelte";
 
 beforeAll(async () => {

@@ -14,8 +14,8 @@
 // edit) and reports the error via the optional `onError` callback — mutator
 // return types are unchanged so the ~13 call sites in `CanvasInner.svelte` and the
 // details panel stay untouched.
-import type { ModelGraph, ModelNode, ModelEdge, Diagram, RelationshipKind } from "@uaml/okf";
-import { build_model, apply_ops } from "@uaml/wasm";
+import type { ModelGraph, ModelNode, ModelEdge, Diagram, RelationshipKind } from "@waml/okf";
+import { build_model, apply_ops } from "@waml/wasm";
 import {
   toModelGraph,
   emptyOverlay,
@@ -36,7 +36,7 @@ import {
   reorderMembersOps,
   sortPackageOps,
 } from "./ops-adapter";
-import { slugify } from "@uaml/okf";
+import { slugify } from "@waml/okf";
 
 export type Bundle = [string, string][];
 

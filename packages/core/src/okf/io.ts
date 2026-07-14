@@ -4,10 +4,10 @@ import { zipSync, unzipSync, strToU8, strFromU8 } from "fflate";
 // attribution + a link back to the source.
 const OKF_FOOTER =
   "\n\n---\n\n" +
-  "_Generated with [UAML](https://github.com/redoz/uaml)_\n";
+  "_Generated with [WAML](https://github.com/redoz/waml)_\n";
 
 /** Turn the WASM store's `[path, markdown][]` bundle into the flat file map the
- *  zip download expects, tacking the UAML attribution footer onto the index
+ *  zip download expects, tacking the WAML attribution footer onto the index
  *  (creating one if the bundle has no index doc). Per-doc markdown stays clean. */
 export function bundleToDownloadFiles(bundle: [string, string][], projectTitle: string): Record<string, string> {
   const files: Record<string, string> = {};

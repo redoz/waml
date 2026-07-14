@@ -1,7 +1,7 @@
 <script lang="ts">
   // Mirrors packages/web/src/components/canvas/RelEdge.tsx.
   import { BaseEdge, EdgeLabel, EdgeReconnectAnchor, getSmoothStepPath, useInternalNode, type EdgeProps, type Position } from "@xyflow/svelte";
-  import type { ModelEdge, RelEnd, RelationshipKind, DiagramDisplay } from "@uaml/okf";
+  import type { ModelEdge, RelEnd, RelationshipKind, DiagramDisplay } from "@waml/okf";
   import { getEdgeParams, portPoint, type NodeGeom, type Rect, type Slot } from "./floating";
 
   type RelEdgeData = Pick<ModelEdge, "kind" | "fromEnd" | "toEnd" | "bidirectional"> & {

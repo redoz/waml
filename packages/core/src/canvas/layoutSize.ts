@@ -1,4 +1,4 @@
-import type { ModelNode, DiagramDisplay } from "@uaml/okf";
+import type { ModelNode, DiagramDisplay } from "@waml/okf";
 
 const COMPACT = { width: 200, height: 90 };
 const ERD_WIDTH = 250;

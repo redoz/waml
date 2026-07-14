@@ -1,6 +1,6 @@
 <script lang="ts">
-  import type { ModelEdge, ModelNode, RelationshipKind, RelEnd } from "@uaml/okf";
-  import { RELATIONSHIP_KINDS, ENDED_KINDS } from "@uaml/okf";
+  import type { ModelEdge, ModelNode, RelationshipKind, RelEnd } from "@waml/okf";
+  import { RELATIONSHIP_KINDS, ENDED_KINDS } from "@waml/okf";
   import InfoTip from "./InfoTip.svelte";
 
   let { edge, fromNode, toNode, onUpdate }: {

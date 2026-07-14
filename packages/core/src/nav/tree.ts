@@ -1,4 +1,4 @@
-import type { ModelGraph } from "@uaml/okf";
+import type { ModelGraph } from "@waml/okf";
 
 export type NavKind = "package" | "diagram" | "note" | "classifier";
 export interface NavRow {

@@ -1,5 +1,5 @@
 <script lang="ts">
-  import type { Attribute } from "@uaml/okf";
+  import type { Attribute } from "@waml/okf";
 
   // `showTypes` (from the diagram's attributeDetail) toggles the trailing
   // type/multiplicity column; "name-only" hides it, "name-type" shows it.

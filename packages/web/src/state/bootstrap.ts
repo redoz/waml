@@ -1,8 +1,8 @@
-import { DEFAULT_DISPLAY } from "@uaml/okf";
-import { createModelStore, type Bundle } from "@uaml/core/state/model";
-import { loadPersistedBundle, persistBundle } from "@uaml/core/state/persist";
-import { readSharedModel, readSharedName, clearSharedModelFromUrl } from "@uaml/core/share/url";
-import { readTemplateModel, clearTemplateFromUrl } from "@uaml/core/lib/templateLink";
+import { DEFAULT_DISPLAY } from "@waml/okf";
+import { createModelStore, type Bundle } from "@waml/core/state/model";
+import { loadPersistedBundle, persistBundle } from "@waml/core/state/persist";
+import { readSharedModel, readSharedName, clearSharedModelFromUrl } from "@waml/core/share/url";
+import { readTemplateModel, clearTemplateFromUrl } from "@waml/core/lib/templateLink";
 import { runDagreLayout } from "../canvas/layout";
 
 // NOTE: `initWasm()` is awaited by the app entry (`main.ts`) BEFORE this module is

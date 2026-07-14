@@ -1,4 +1,4 @@
-/* Ported from @uaml/web src/components/canvas/canvas.css.
+/* Ported from @waml/web src/components/canvas/canvas.css.
    SvelteFlow emits `.svelte-flow__*` class names where React Flow emitted
    `.react-flow__*`; every selector below is renamed accordingly. */
 

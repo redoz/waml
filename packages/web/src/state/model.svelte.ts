@@ -1,9 +1,9 @@
 import { readable, type Readable } from "svelte/store";
-import type { ModelGraph } from "@uaml/okf";
-import type { ModelStore } from "@uaml/core/state/model";
+import type { ModelGraph } from "@waml/okf";
+import type { ModelStore } from "@waml/core/state/model";
 import { store } from "./bootstrap";
 
-// @uaml/core's createModelStore().subscribe is a bare-callback external store:
+// @waml/core's createModelStore().subscribe is a bare-callback external store:
 //   subscribe(f: () => void): () => void
 // It fires `f` on every change but does NOT pass the value, and does NOT call
 // `f` on subscribe. Svelte's store contract requires subscribe(run) to CALL

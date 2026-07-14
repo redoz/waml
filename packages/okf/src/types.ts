@@ -145,7 +145,7 @@ export function splitType(type: string): { family: string; metaclass: string } |
 // ── OKF tier (domain-agnostic substrate beneath the UML profile) ─────────────
 // The lossless projection of a bundle: one `Concept` per markdown document,
 // carrying every OKF field verbatim. Additive to the UML `Model*` types above —
-// mirrors the Rust `okf::` shapes (see crates/uaml/src/okf.rs) that
+// mirrors the Rust `okf::` shapes (see crates/waml/src/okf.rs) that
 // `build_bundle` returns over the wasm wire. These do NOT replace `ModelNode` /
 // `ModelGraph`; both surfaces coexist.
 

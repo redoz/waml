@@ -1,7 +1,7 @@
 import { test, expect, vi } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/svelte";
 import DiagramPropertiesBody from "./DiagramPropertiesBody.svelte";
-import { DEFAULT_DISPLAY } from "@uaml/okf";
+import { DEFAULT_DISPLAY } from "@waml/okf";
 
 const props = (over = {}) => ({
   display: { ...DEFAULT_DISPLAY },

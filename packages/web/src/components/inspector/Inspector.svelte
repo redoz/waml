@@ -2,7 +2,7 @@
   // Mirrors packages/web/src/components/inspector/Inspector.tsx.
   import type { Snippet } from "svelte";
   import { PanelRightOpen } from "lucide-svelte";
-  import type { ModelNode, ModelEdge } from "@uaml/okf";
+  import type { ModelNode, ModelEdge } from "@waml/okf";
   import type { Selection } from "../canvas/selection";
   import ObjectInspector from "./ObjectInspector.svelte";
   import RelationshipInspector from "./RelationshipInspector.svelte";

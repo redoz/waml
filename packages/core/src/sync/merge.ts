@@ -1,4 +1,4 @@
-import type { ModelGraph } from "@uaml/okf";
+import type { ModelGraph } from "@waml/okf";
 
 type Bundle = [string, string][];
 
