@@ -2,9 +2,17 @@ use std::collections::{HashMap, HashSet};
 
 use crate::diagnostic::{DiagCode, Diagnostic};
 use crate::model::ClassifierType;
+use crate::slug::slugify;
 use crate::syntax::{
     Direction, Document, LayoutStatement, Line, MemberGroup, NameRef, Operand, OperandRef, Section,
 };
+
+/// Last `/`-separated segment of a full-path node key (`"tables/order"` ->
+/// `"order"`), used to match bare informal name references against
+/// full-path `keyset` entries. Mirrors `solve::resolve::basename`.
+fn basename(key: &str) -> &str {
+    key.rsplit('/').next().unwrap_or(key)
+}
 
 /// Collect every group's heading name (recursively) into `names`.
 fn collect_group_names(g: &MemberGroup, names: &mut HashSet<String>) {
@@ -33,7 +41,25 @@ fn check_operand_refs(
                     let resolved_id = crate::okf::resolve_href(path, slug);
                     (slug.clone(), keyset.contains(&resolved_id))
                 }
-                NameRef::Bare(s) => (s.clone(), keyset.contains(s) || group_names.contains(s)),
+                NameRef::Bare(s) => {
+                    // Mirror `solve::resolve::resolve_ref`'s `NameRef::Bare` arm:
+                    // group heading names match by raw name first; failing that,
+                    // `keyset` is full-path node keys, so slugify `s` and try an
+                    // exact (root-level) match, then a unique-basename match
+                    // across all keys. An ambiguous basename is left unresolved.
+                    let resolved = if group_names.contains(s) {
+                        true
+                    } else {
+                        let slug = slugify(s, "");
+                        if keyset.contains(&slug) {
+                            true
+                        } else {
+                            let mut matches = keyset.iter().filter(|k| basename(k) == slug);
+                            matches.next().is_some() && matches.next().is_none()
+                        }
+                    };
+                    (s.clone(), resolved)
+                }
             };
             if !resolved {
                 diags.push(Diagnostic::warn(
@@ -600,6 +626,41 @@ mod tests {
         let refs: Vec<_> = diags.iter().filter(|d| d.code == DiagCode::UnresolvedLayoutRef).collect();
         assert_eq!(refs.len(), 1);
         assert!(refs[0].message.contains("Ghosts"));
+    }
+
+    #[test]
+    fn bare_layout_ref_resolves_by_unique_basename_across_full_path_keys() {
+        // `keyset` is full-path node keys (`tables/order`, not `order`) since
+        // the full-path-keying migration. A bare informal layout ref
+        // ("Order") carries no directory of its own, so it must still
+        // resolve by unique basename match, same as `solve::resolve`.
+        let bundle = vec![
+            ("tables/dia.md".to_string(),
+             "---\ntype: Diagram\ntitle: D\n---\n# D\n\n## Layout\n- Order\n".to_string()),
+            ("tables/order.md".to_string(),
+             "---\ntype: uml.Class\ntitle: Order\n---\n# Order\n".to_string()),
+        ];
+        let diags = validate(&bundle);
+        assert!(
+            diags.iter().all(|d| d.code != DiagCode::UnresolvedLayoutRef),
+            "expected bare layout ref to resolve by unique basename, got: {diags:?}"
+        );
+    }
+
+    #[test]
+    fn bare_layout_ref_with_ambiguous_basename_stays_unresolved() {
+        // Two full-path keys share the basename `order` (`tables/order`,
+        // `shop/order`) — the bare ref must NOT silently pick one.
+        let bundle = vec![
+            ("tables/dia.md".to_string(),
+             "---\ntype: Diagram\ntitle: D\n---\n# D\n\n## Layout\n- Order\n".to_string()),
+            ("tables/order.md".to_string(),
+             "---\ntype: uml.Class\ntitle: Order\n---\n# Order\n".to_string()),
+            ("shop/order.md".to_string(),
+             "---\ntype: uml.Class\ntitle: ShopOrder\n---\n# ShopOrder\n".to_string()),
+        ];
+        let diags = validate(&bundle);
+        assert!(diags.iter().any(|d| d.code == DiagCode::UnresolvedLayoutRef));
     }
 
     #[test]
