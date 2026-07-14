@@ -110,10 +110,13 @@ fn axis_str(a: Axis) -> &'static str {
 static LAYOUT_LINK_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^\[([^\]]*)\]\(\./(.+?)\.md\)").unwrap());
 
-/// Strip a directory prefix and the `.md` suffix from a link path.
+/// Raw captured href stem (dir prefix intact, `.md` already excluded by
+/// `LAYOUT_LINK_RE`'s capture group) — resolved against the referring
+/// document's directory downstream, mirroring `grammar.rs`'s relationship/
+/// member captures. NOT basename-stripped: two docs sharing a basename in
+/// different directories must stay distinguishable.
 fn link_slug(path: &str) -> String {
-    let seg = path.rsplit(['/', '\\']).next().unwrap_or(path);
-    seg.strip_suffix(".md").unwrap_or(seg).to_string()
+    path.to_string()
 }
 
 #[derive(Debug, Clone, PartialEq)]

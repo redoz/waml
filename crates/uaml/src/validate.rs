@@ -6,11 +6,6 @@ use crate::syntax::{
     Direction, Document, LayoutStatement, Line, MemberGroup, NameRef, Operand, OperandRef, Section,
 };
 
-fn slug_of(path: &str) -> String {
-    let seg = path.rsplit(['/', '\\']).next().unwrap_or(path);
-    seg.strip_suffix(".md").unwrap_or(seg).to_string()
-}
-
 /// Collect every group's heading name (recursively) into `names`.
 fn collect_group_names(g: &MemberGroup, names: &mut HashSet<String>) {
     if !g.name.is_empty() {
@@ -34,7 +29,10 @@ fn check_operand_refs(
     match &op.ref_ {
         OperandRef::Name(name) => {
             let (label, resolved) = match name {
-                NameRef::Link { slug, .. } => (slug.clone(), keyset.contains(slug)),
+                NameRef::Link { slug, .. } => {
+                    let resolved_id = crate::okf::resolve_href(path, slug);
+                    (slug.clone(), keyset.contains(&resolved_id))
+                }
                 NameRef::Bare(s) => (s.clone(), keyset.contains(s) || group_names.contains(s)),
             };
             if !resolved {
@@ -103,7 +101,8 @@ fn check_group_members(
     diags: &mut Vec<Diagnostic>,
 ) {
     for m in g.members.iter().filter_map(Line::parsed) {
-        if !keyset.contains(&m.slug) {
+        let resolved = crate::okf::resolve_href(path, &m.slug);
+        if !keyset.contains(&resolved) {
             let mut d = Diagnostic::warn(
                 DiagCode::UnresolvedTarget,
                 format!("diagram member './{}.md' resolves to no document", m.slug),
@@ -130,7 +129,7 @@ pub fn link(docs: &[(String, ClassifierType, Document)]) -> Vec<Diagnostic> {
     let mut keyset: HashSet<String> = HashSet::new();
     let mut slug_count: HashMap<String, usize> = HashMap::new();
     for (path, ty, _doc) in docs {
-        let slug = slug_of(path);
+        let slug = crate::okf::id_of(path);
         *slug_count.entry(slug.clone()).or_insert(0) += 1;
         if *ty != ClassifierType::Diagram {
             keyset.insert(slug);
@@ -138,7 +137,7 @@ pub fn link(docs: &[(String, ClassifierType, Document)]) -> Vec<Diagnostic> {
     }
 
     for (path, _ty, doc) in docs {
-        let slug = slug_of(path);
+        let slug = crate::okf::id_of(path);
         if slug_count[&slug] > 1 {
             diags.push(Diagnostic::new(
                 DiagCode::DuplicateSlug,
@@ -163,7 +162,8 @@ pub fn link(docs: &[(String, ClassifierType, Document)]) -> Vec<Diagnostic> {
             match s {
                 Section::Relationships(rels) => {
                     for r in rels.iter().filter_map(Line::parsed) {
-                        if !keyset.contains(&r.target_slug) {
+                        let resolved = crate::okf::resolve_href(path, &r.target_slug);
+                        if !keyset.contains(&resolved) {
                             let mut d = Diagnostic::new(
                                 DiagCode::UnresolvedTarget,
                                 format!(
@@ -285,6 +285,79 @@ mod tests {
     }
 
     #[test]
+    fn relationship_target_resolves_against_referring_dir_not_a_same_basename_doc_elsewhere() {
+        // `tables/index.md`'s `./order.md` must resolve to `tables/order`, not
+        // to `shop/order.md` (a different doc that happens to share the
+        // basename). If it mis-resolved to the wrong doc, the correct target
+        // (`tables/order.md`) would be flagged as an unused/orphan doc but the
+        // relationship itself would spuriously fail to resolve here — assert
+        // it resolves cleanly with the correctly-directoried target present.
+        let b = vec![
+            ("tables/index.md".into(),
+             "---\ntype: uml.Class\ntitle: Index\n---\n# Index\n\n## Relationships\n- depends [Order](./order.md)\n".into()),
+            ("tables/order.md".into(),
+             "---\ntype: uml.Class\ntitle: Order\n---\n# Order\n".into()),
+            ("shop/order.md".into(),
+             "---\ntype: uml.Class\ntitle: ShopOrder\n---\n# ShopOrder\n".into()),
+        ];
+        let d = validate(&b);
+        assert!(
+            d.iter().all(|x| x.code != DiagCode::UnresolvedTarget),
+            "expected `./order.md` in tables/index.md to resolve to tables/order, got: {d:?}"
+        );
+    }
+
+    #[test]
+    fn relationship_target_does_not_fall_back_to_wrong_directory_same_basename_doc() {
+        // Same shape as above but WITHOUT `tables/order.md` present — the
+        // relationship must NOT resolve against `shop/order.md` (proving the
+        // resolver is directory-relative, not a bare-basename fallback).
+        let b = vec![
+            ("tables/index.md".into(),
+             "---\ntype: uml.Class\ntitle: Index\n---\n# Index\n\n## Relationships\n- depends [Order](./order.md)\n".into()),
+            ("shop/order.md".into(),
+             "---\ntype: uml.Class\ntitle: ShopOrder\n---\n# ShopOrder\n".into()),
+        ];
+        let d = validate(&b);
+        assert!(d.iter().any(|x| x.code == DiagCode::UnresolvedTarget));
+    }
+
+    #[test]
+    fn diagram_member_link_resolves_against_referring_diagrams_dir() {
+        let b = vec![
+            ("tables/dia.md".into(),
+             "---\ntype: Diagram\ntitle: D\n---\n# D\n\n## Members\n- [Order](./order.md)\n".into()),
+            ("tables/order.md".into(),
+             "---\ntype: uml.Class\ntitle: Order\n---\n# Order\n".into()),
+            ("shop/order.md".into(),
+             "---\ntype: uml.Class\ntitle: ShopOrder\n---\n# ShopOrder\n".into()),
+        ];
+        let d = validate(&b);
+        assert!(
+            d.iter().all(|x| x.code != DiagCode::UnresolvedTarget),
+            "expected diagram member `./order.md` to resolve to tables/order, got: {d:?}"
+        );
+    }
+
+    #[test]
+    fn layout_link_ref_resolves_against_referring_diagrams_dir() {
+        // A `## Layout` operand written as a link (not a bare name) must
+        // resolve the same directory-relative way as Members/Relationships —
+        // a diagram living in a subdirectory must not spuriously warn
+        // UnresolvedLayoutRef against its own (full-path) member.
+        let b = vec![("tables/dia.md".into(),
+            "---\ntype: Diagram\ntitle: D\n---\n# D\n\n## Members\n- [Order](./order.md)\n- [Customer](./customer.md)\n\n## Layout\n- [Order](./order.md) left of [Customer](./customer.md)\n".into()),
+            ("tables/order.md".into(), "---\ntype: uml.Class\ntitle: Order\n---\n# Order\n".into()),
+            ("tables/customer.md".into(), "---\ntype: uml.Class\ntitle: Customer\n---\n# Customer\n".into()),
+        ];
+        let d = validate(&b);
+        assert!(
+            d.iter().all(|x| x.code != DiagCode::UnresolvedLayoutRef),
+            "expected layout link refs to resolve against the diagram's own directory, got: {d:?}"
+        );
+    }
+
+    #[test]
     fn flags_missing_ends_on_composition() {
         let b = vec![
             ("a/order.md".into(),
@@ -308,10 +381,25 @@ mod tests {
     }
 
     #[test]
-    fn flags_duplicate_slug() {
+    fn distinct_basenames_in_different_dirs_do_not_collide() {
+        // Full-path keying: `a/order.md` and `b/order.md` share a basename but
+        // key on their distinct full paths (`a/order`, `b/order`) — no
+        // DuplicateSlug false positive.
         let b = vec![
             ("a/order.md".into(), "---\ntype: uml.Class\ntitle: Order\n---\n# Order\n".into()),
             ("b/order.md".into(), "---\ntype: uml.Class\ntitle: Order2\n---\n# Order2\n".into()),
+        ];
+        let d = validate(&b);
+        assert_eq!(d.iter().filter(|x| x.code == DiagCode::DuplicateSlug).count(), 0);
+    }
+
+    #[test]
+    fn flags_duplicate_slug() {
+        // Two docs projecting to the *same* full id (identical bundle-relative
+        // path) still collide.
+        let b = vec![
+            ("a/order.md".into(), "---\ntype: uml.Class\ntitle: Order\n---\n# Order\n".into()),
+            ("a/order.md".into(), "---\ntype: uml.Class\ntitle: Order2\n---\n# Order2\n".into()),
         ];
         let d = validate(&b);
         assert_eq!(d.iter().filter(|x| x.code == DiagCode::DuplicateSlug).count(), 2);
