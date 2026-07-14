@@ -157,7 +157,7 @@ pub fn link(docs: &[(String, ClassifierType, Document)]) -> Vec<Diagnostic> {
     for (path, ty, _doc) in docs {
         let slug = crate::okf::id_of(path);
         *slug_count.entry(slug.clone()).or_insert(0) += 1;
-        if *ty != ClassifierType::Diagram {
+        if *ty != ClassifierType::Diagram && !matches!(ty, ClassifierType::Behavior(_)) {
             keyset.insert(slug);
         }
     }
@@ -291,6 +291,36 @@ pub fn link(docs: &[(String, ClassifierType, Document)]) -> Vec<Diagnostic> {
                             path,
                             line,
                         ));
+                    }
+                }
+                Section::Nodes(block) => {
+                    use crate::syntax::{FlowBullet, FlowTargetRef};
+                    let mut counts: HashMap<&str, usize> = HashMap::new();
+                    for n in &block.nodes {
+                        *counts.entry(n.identity.as_str()).or_insert(0) += 1;
+                    }
+                    for n in &block.nodes {
+                        if counts[n.identity.as_str()] > 1 {
+                            diags.push(Diagnostic::new(
+                                DiagCode::DuplicateFlowNode,
+                                format!("duplicate node identity '{}' — transition targets resolve by identity", n.identity),
+                                path,
+                                n.line,
+                            ));
+                        }
+                        for b in n.bullets.iter().filter_map(Line::parsed) {
+                            let FlowBullet::Transition(t) = b else { continue };
+                            if let FlowTargetRef::Local(name) = &t.target {
+                                if !counts.contains_key(name.as_str()) {
+                                    diags.push(Diagnostic::warn(
+                                        DiagCode::UnresolvedTarget,
+                                        format!("transition target '{name}' matches no '###' node in this document"),
+                                        path,
+                                        t.line,
+                                    ));
+                                }
+                            }
+                        }
                     }
                 }
                 _ => {}
@@ -749,5 +779,31 @@ mod tests {
         let m = d.iter().find(|x| x.code == DiagCode::MalformedRelationship)
             .expect("classifier↔classifier associates without ends must be flagged");
         assert_eq!(m.line, 8);
+    }
+
+    #[test]
+    fn flow_doc_with_clean_graph_validates_clean() {
+        let b = vec![("f/a.md".into(),
+            "---\ntype: uml.Activity\ntitle: A\n---\n# A\n\n## Nodes\n\n### initial\n- transitions to Work\n\n### Work\n- transitions to final\n\n### final\n".into())];
+        let d = validate(&b);
+        assert!(d.is_empty(), "got: {d:?}");
+    }
+
+    #[test]
+    fn flags_unresolved_local_transition_target() {
+        let b = vec![("f/a.md".into(),
+            "---\ntype: uml.Activity\ntitle: A\n---\n# A\n\n## Nodes\n\n### initial\n- transitions to Ghost\n\n### final\n".into())];
+        let d = validate(&b);
+        let t = d.iter().find(|x| x.code == DiagCode::UnresolvedTarget).unwrap();
+        assert_eq!(t.severity, Severity::Warning);
+        assert_eq!(t.line, 10);
+    }
+
+    #[test]
+    fn flags_duplicate_flow_node_identity() {
+        let b = vec![("f/a.md".into(),
+            "---\ntype: uml.StateMachine\ntitle: A\n---\n# A\n\n## Nodes\n\n### Draft\n\n### Draft\n".into())];
+        let d = validate(&b);
+        assert!(d.iter().any(|x| x.code == DiagCode::DuplicateFlowNode));
     }
 }
