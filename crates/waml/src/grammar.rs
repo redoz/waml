@@ -5,7 +5,7 @@ use crate::diagnostic::DiagCode;
 use crate::model::{Attribute, FlowNodeKind, RelEnd, RelationshipKind, TypeRef, Visibility};
 use crate::multiplicity::Multiplicity;
 use crate::syntax::{
-    ErrorNode, FlowBullet, FlowNodeSyntax, FlowTargetRef, FlowTransition, Line, LinkRef,
+    ErrorNode, FlowBlock, FlowBullet, FlowNodeSyntax, FlowTargetRef, FlowTransition, Line, LinkRef,
     MemberGroup, MemberLine, MembersBlock, ParsedName, ParsedRel,
 };
 
@@ -497,6 +497,128 @@ pub fn render_flow_bullet(b: &FlowBullet) -> String {
         FlowBullet::Refines(l) => format!("- refines [{}](./{}.md)", l.title, l.slug),
         FlowBullet::Partition(p) => format!("- partition: {p}"),
     }
+}
+
+/// Parse the raw text under `## Nodes` into a flow graph block. Each `###`
+/// heading opens a node; `#### Notes` opens the current node's notes; bullets
+/// parse via `parse_flow_bullet`. Malformed or stray lines are preserved as
+/// positioned `Line::Error`s (never dropped).
+pub fn parse_flow_block(content: &str, content_abs_start: usize, src: &str) -> FlowBlock {
+    let mut nodes: Vec<FlowNodeSyntax> = Vec::new();
+    let mut preamble_errors: Vec<ErrorNode> = Vec::new();
+    let mut in_notes = false;
+    let mut fence: Option<char> = None;
+    let mut offset = 0usize;
+
+    for raw in content.split('\n') {
+        let line_start = offset;
+        offset += raw.len() + 1;
+        let line = raw.trim_end_matches('\r');
+        let t = line.trim();
+
+        if let Some(marker) = fence {
+            let delim = if marker == '`' { "```" } else { "~~~" };
+            if t.starts_with(delim) {
+                fence = None;
+            }
+            continue;
+        }
+        if t.starts_with("```") {
+            fence = Some('`');
+            continue;
+        }
+        if t.starts_with("~~~") {
+            fence = Some('~');
+            continue;
+        }
+        if t.is_empty() {
+            continue;
+        }
+
+        let line_no = crate::parse::line_at(src, content_abs_start + line_start);
+
+        if let Some(rest) = t.strip_prefix("### ") {
+            let (kind, identity, object_ref) = parse_flow_heading(rest);
+            nodes.push(FlowNodeSyntax { kind, identity, object_ref, bullets: vec![], notes: vec![], line: line_no });
+            in_notes = false;
+            continue;
+        }
+        if let Some(rest) = t.strip_prefix("#### ") {
+            if rest.trim().eq_ignore_ascii_case("notes") && !nodes.is_empty() {
+                in_notes = true;
+                continue;
+            }
+            // Unrecognized sub-heading → preserved droppable line.
+        }
+
+        let droppable = || ErrorNode {
+            raw: raw.to_string(),
+            line: line_no,
+            span: bullet_range(raw),
+            code: DiagCode::DroppableContent,
+            message: crate::parse::DROPPABLE_MSG.to_string(),
+        };
+        let Some(node) = nodes.last_mut() else {
+            preamble_errors.push(droppable());
+            continue;
+        };
+        if in_notes {
+            match parse_value_line(raw) {
+                Ok(v) => node.notes.push(Line::Parsed(v)),
+                Err(_) => node.notes.push(Line::Error(droppable())),
+            }
+        } else if t.starts_with("- ") {
+            match parse_flow_bullet(raw) {
+                Ok(mut b) => {
+                    if let FlowBullet::Transition(ref mut tr) = b {
+                        tr.line = line_no;
+                    }
+                    node.bullets.push(Line::Parsed(b));
+                }
+                Err(e) => node.bullets.push(Line::Error(ErrorNode {
+                    raw: raw.to_string(),
+                    line: line_no,
+                    span: e.range,
+                    code: DiagCode::MalformedFlowBullet,
+                    message: e.message,
+                })),
+            }
+        } else {
+            node.bullets.push(Line::Error(droppable()));
+        }
+    }
+    FlowBlock { nodes, preamble_errors }
+}
+
+/// Render a flow block, `## Nodes` heading included, as canonical Markdown.
+pub fn render_flow_block(block: &FlowBlock) -> String {
+    let mut out = String::from("## Nodes");
+    for e in &block.preamble_errors {
+        out.push('\n');
+        out.push_str(&e.raw);
+    }
+    for n in &block.nodes {
+        out.push_str("\n\n");
+        out.push_str(&render_flow_heading(n));
+        for b in &n.bullets {
+            out.push('\n');
+            match b {
+                Line::Parsed(x) => out.push_str(&render_flow_bullet(x)),
+                Line::Error(e) => out.push_str(&e.raw),
+            }
+        }
+        if !n.notes.is_empty() {
+            out.push_str("\n\n#### Notes");
+            for m in &n.notes {
+                out.push('\n');
+                match m {
+                    Line::Parsed(v) => out.push_str(&format!("- {v}")),
+                    Line::Error(e) => out.push_str(&e.raw),
+                }
+            }
+        }
+    }
+    out
 }
 
 #[cfg(test)]

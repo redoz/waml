@@ -131,6 +131,7 @@ fn walk_section(title: &str, content: &str, content_abs_start: usize, src: &str,
                 })
             },
         )),
+        "nodes" => Section::Nodes(crate::grammar::parse_flow_block(content, content_abs_start, src)),
         "members" => Section::Members(crate::grammar::parse_members_block(content, content_abs_start, src)),
         "body" => Section::Body(content.trim().to_string()),
         "notes" => Section::Notes(walk_bullets(
@@ -175,6 +176,15 @@ pub fn diagnostics_of(doc: &Document) -> Vec<Diagnostic> {
             Section::Members(block) => {
                 for g in &block.groups {
                     push_group_errors(g, &mut out);
+                }
+            }
+            Section::Nodes(block) => {
+                for e in &block.preamble_errors {
+                    out.push(Diagnostic::new(e.code, e.message.clone(), "", e.line).with_span(e.span));
+                }
+                for n in &block.nodes {
+                    push_line_errors(&n.bullets, &mut out);
+                    push_line_errors(&n.notes, &mut out);
                 }
             }
             _ => {}
@@ -937,6 +947,41 @@ mod tests {
         // Diagnostics are derived from the same error node.
         let (_d, diags) = parse(src);
         assert!(diags.iter().any(|d| d.code == DiagCode::MalformedAttribute));
+    }
+
+    const LIFECYCLE: &str = "---\ntype: uml.StateMachine\ntitle: Order Lifecycle\ndescribes: [Order](./order.md)\n---\n# Order Lifecycle\n\n## Nodes\n\n### initial\n- transitions to Draft\n\n### Draft\n- on `place` when `items > 0` transitions to Placed\n- on `cancel` transitions to Cancelled\n\n#### Notes\n- Auto-expires after 24h.\n\n### Placed\n- entry: `reserveStock`\n- on `ship` transitions to Shipped: `notify`\n\n### Shipped\n- on `deliver` transitions to final\n\n### Cancelled\n- transitions to final\n\n### final\n";
+
+    #[test]
+    fn parses_flow_nodes_section() {
+        use crate::model::FlowNodeKind;
+        use crate::syntax::{FlowBullet, Section};
+        let doc = parse_document(LIFECYCLE);
+        let block = doc.sections.iter().find_map(|s| match s {
+            Section::Nodes(b) => Some(b),
+            _ => None,
+        }).expect("## Nodes must parse into Section::Nodes");
+        // NOTE: the fixture has 6 `###` node headings (initial, Draft, Placed,
+        // Shipped, Cancelled, final); the plan's brief asserted 7 / index 6,
+        // an off-by-one against its own literal fixture text — corrected here.
+        assert_eq!(block.nodes.len(), 6);
+        assert_eq!(block.nodes[0].kind, FlowNodeKind::Initial);
+        assert_eq!(block.nodes[1].identity, "Draft");
+        assert_eq!(block.nodes[1].bullets.len(), 2);
+        assert_eq!(block.nodes[1].notes.iter().filter_map(crate::syntax::Line::parsed).next().unwrap(), "Auto-expires after 24h.");
+        assert!(matches!(block.nodes[2].bullets[0].parsed().unwrap(), FlowBullet::Entry(e) if e == "reserveStock"));
+        assert_eq!(block.nodes[5].kind, FlowNodeKind::Final);
+    }
+
+    #[test]
+    fn malformed_flow_bullet_is_preserved_and_diagnosed() {
+        let src = "---\ntype: uml.Activity\ntitle: A\n---\n# A\n\n## Nodes\n\n### Ship\n- goes to Deliver\n";
+        let (doc, diags) = parse(src);
+        let d = diags.iter().find(|d| d.code == DiagCode::MalformedFlowBullet).unwrap();
+        assert_eq!(d.line, 10);
+        // preserved, not dropped
+        use crate::syntax::{Line, Section};
+        let block = doc.sections.iter().find_map(|s| match s { Section::Nodes(b) => Some(b), _ => None }).unwrap();
+        assert!(matches!(&block.nodes[0].bullets[0], Line::Error(e) if e.raw.contains("goes to Deliver")));
     }
 
     #[test]

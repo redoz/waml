@@ -40,9 +40,10 @@ fn section_order(s: &Section) -> u8 {
         Section::Values(_) => 2,
         Section::Relationships(_) => 3,
         Section::Notes(_) => 4,
-        Section::Members(_) => 5,
-        Section::Layout(_) => 6,
-        Section::Unknown { .. } => 7,
+        Section::Nodes(_) => 5,
+        Section::Members(_) => 6,
+        Section::Layout(_) => 7,
+        Section::Unknown { .. } => 8,
     }
 }
 
@@ -65,6 +66,7 @@ fn render_section(s: &Section) -> String {
             let body = notes.iter().map(render_line_value).collect::<Vec<_>>().join("\n");
             format!("## Notes\n{body}")
         }
+        Section::Nodes(block) => crate::grammar::render_flow_block(block),
         Section::Members(block) => render_members_block(block),
         Section::Layout(items) => {
             let body = items
@@ -162,5 +164,17 @@ mod tests {
         let twice = serialize_document(&parse_document(&once));
         assert_eq!(once, twice);
         assert!(once.contains("## Layout\n- Users left of Orders"));
+    }
+
+    #[test]
+    fn flow_document_serialize_is_a_semantic_fixpoint() {
+        let src = "---\ntype: uml.StateMachine\ntitle: Order Lifecycle\ndescribes: [Order](./order.md)\n---\n# Order Lifecycle\n\n## Nodes\n\n### initial\n- transitions to Draft\n\n### Draft\n- on `place` when `items > 0` transitions to Placed\n\n#### Notes\n- Auto-expires after 24h.\n\n### decision Ready to ship?\n- when `paid and inStock` transitions to Ship\n- else transitions to Hold\n\n### object [Order](./order.md)\n\n### Ship\n- transitions to Deliver carries [Order](./order.md)\n\n### final\n";
+        let once = serialize_document(&parse_document(src));
+        let twice = serialize_document(&parse_document(&once));
+        assert_eq!(once, twice);
+        assert!(once.contains("### decision Ready to ship?"));
+        assert!(once.contains("- else transitions to Hold"));
+        assert!(once.contains("### object [Order](./order.md)"));
+        assert!(once.contains("#### Notes\n- Auto-expires after 24h."));
     }
 }

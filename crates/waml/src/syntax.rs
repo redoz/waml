@@ -56,6 +56,8 @@ pub enum Section {
     Relationships(Vec<Line<ParsedRel>>),
     Body(String),
     Notes(Vec<Line<String>>),
+    /// A flow document's `## Nodes` section (one directed graph).
+    Nodes(FlowBlock),
     Members(MembersBlock),
     Layout(Vec<Line<LayoutItem>>),
     /// An unrecognized `## Section`, preserved verbatim (graceful degradation).
