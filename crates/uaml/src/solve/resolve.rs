@@ -8,6 +8,13 @@ use crate::slug::slugify;
 use crate::syntax::{Edge, Flag, Hint, LayoutStatement, Margin, NameRef, Operand, OperandRef, Shape};
 use super::{Box, BoxId, BoxKind, Constraint, FlagSet, Scene};
 
+/// Last `/`-separated segment of a full-path node key (`"tables/order"` ->
+/// `"order"`), used to match bare informal name references (which carry no
+/// directory of their own) against full-path `node_keys`.
+fn basename(key: &str) -> &str {
+    key.rsplit('/').next().unwrap_or(key)
+}
+
 struct Builder {
     boxes: Vec<Box>,
     constraints: Vec<Constraint>,
@@ -112,8 +119,13 @@ impl Builder {
     fn resolve_ref(&mut self, r: &OperandRef, file: &str, diags: &mut Vec<Diagnostic>) -> Option<BoxId> {
         match r {
             OperandRef::Name(NameRef::Link { slug, .. }) => {
-                if self.node_keys.contains(slug) {
-                    Some(BoxId::Node(slug.clone()))
+                // `slug` is the raw captured href stem (dir prefix intact) —
+                // resolve it against the referring diagram's own directory
+                // before matching the full-id `node_keys`, same as
+                // relationship/member target resolution in `parse.rs`.
+                let resolved = crate::okf::resolve_href(file, slug);
+                if self.node_keys.contains(&resolved) {
+                    Some(BoxId::Node(resolved))
                 } else {
                     self.warn_unknown(slug, file, diags);
                     None
@@ -123,9 +135,28 @@ impl Builder {
                 if let Some(id) = self.group_by_name.get(name) {
                     return Some(id.clone());
                 }
+                // A bare name is an informal, same-diagram title reference — not
+                // an href — so it carries no directory of its own to resolve
+                // against (unlike `NameRef::Link`). `node_keys` is now full-path
+                // (`tables/order`, not `order`), so match the slugified name
+                // first as an exact (root-level) key, then by unique basename
+                // across all full-path keys — keeping single-directory bundles
+                // (today's fixtures) working unchanged while staying correct
+                // for multi-directory bundles as long as the basename is
+                // unambiguous; an ambiguous basename is left unresolved rather
+                // than silently picking the wrong document.
                 let slug = slugify(name, "");
-                if self.node_keys.contains(&slug) {
-                    Some(BoxId::Node(slug))
+                let resolved = if self.node_keys.contains(&slug) {
+                    Some(slug)
+                } else {
+                    let mut matches = self.node_keys.iter().filter(|k| basename(k) == slug);
+                    match (matches.next(), matches.next()) {
+                        (Some(only), None) => Some(only.clone()),
+                        _ => None,
+                    }
+                };
+                if let Some(key) = resolved {
+                    Some(BoxId::Node(key))
                 } else {
                     self.warn_unknown(name, file, diags);
                     None
@@ -385,5 +416,68 @@ mod tests {
         );
         assert_eq!(diags.len(), 2, "one warning per already-grouped operand");
         assert!(diags.iter().all(|d| d.code == crate::diagnostic::DiagCode::LayoutConflict));
+    }
+
+    #[test]
+    fn link_ref_resolves_against_referring_diagrams_directory() {
+        use crate::syntax::*;
+        // `diagram.key` is full-path (`tables/dia`); members are full-path
+        // (`tables/order`) per Task 2. A Layout `[Order](./order.md)` link's raw
+        // captured stem is `order` — it must resolve against the diagram's own
+        // directory (`tables/`) to `tables/order`, not fail to match.
+        let d = Diagram {
+            key: "tables/dia".into(),
+            title: "D".into(),
+            profile: "uml-domain".into(),
+            groups: vec![DiagramGroup { name: "".into(), members: vec!["tables/order".into()], children: vec![] }],
+            layout: vec![LayoutStatement::Standalone(Operand {
+                ref_: OperandRef::Name(NameRef::Link { title: "Order".into(), slug: "order".into() }),
+                axis: Some(Axis::Column),
+                hints: vec![],
+            })],
+        };
+        let (scene, diags) = resolve(&d);
+        assert!(diags.is_empty(), "expected the link ref to resolve, got: {diags:?}");
+        let node = scene.boxes.iter().find(|b| b.id == BoxId::Node("tables/order".into())).unwrap();
+        assert_eq!(node.axis, Some(Axis::Column));
+    }
+
+    #[test]
+    fn bare_name_resolves_by_unique_basename_across_full_path_keys() {
+        use crate::syntax::*;
+        // A bare informal name reference carries no directory of its own; it
+        // must still resolve to a full-path member by basename when unambiguous.
+        let d = diagram(
+            vec![DiagramGroup { name: "".into(), members: vec!["tables/order".into()], children: vec![] }],
+            vec![LayoutStatement::Standalone(Operand {
+                ref_: OperandRef::Name(NameRef::Bare("Order".into())),
+                axis: Some(Axis::Row),
+                hints: vec![],
+            })],
+        );
+        let (scene, diags) = resolve(&d);
+        assert!(diags.is_empty(), "expected the bare name to resolve by basename, got: {diags:?}");
+        let node = scene.boxes.iter().find(|b| b.id == BoxId::Node("tables/order".into())).unwrap();
+        assert_eq!(node.axis, Some(Axis::Row));
+    }
+
+    #[test]
+    fn bare_name_with_ambiguous_basename_stays_unresolved() {
+        use crate::syntax::*;
+        // Two full-path members share a basename (`tables/order`, `shop/order`)
+        // — a bare "Order" reference must NOT silently pick one; it warns.
+        let d = diagram(
+            vec![
+                DiagramGroup { name: "".into(), members: vec!["tables/order".into(), "shop/order".into()], children: vec![] },
+            ],
+            vec![LayoutStatement::Standalone(Operand {
+                ref_: OperandRef::Name(NameRef::Bare("Order".into())),
+                axis: None,
+                hints: vec![],
+            })],
+        );
+        let (_scene, diags) = resolve(&d);
+        assert_eq!(diags.len(), 1);
+        assert_eq!(diags[0].code, crate::diagnostic::DiagCode::UnresolvedLayoutRef);
     }
 }
