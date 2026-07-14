@@ -1,6 +1,7 @@
 use crate::frontmatter::{FmValue, Frontmatter};
 use crate::model::{Attribute, ClassifierType, RelEnd, RelationshipKind, TypeRef, Visibility};
 use crate::multiplicity::Multiplicity;
+use crate::okf;
 use crate::parse::parse_document;
 use crate::serialize::serialize_document;
 use crate::syntax::{Document, Line, ParsedName, ParsedRel, Section};
@@ -140,10 +141,32 @@ pub(crate) fn slug_of(path: &str) -> String {
     seg.strip_suffix(".md").unwrap_or(seg).to_string()
 }
 
-pub(crate) fn find_doc(work: &Bundle, slug: &str, op: &str) -> Result<usize, OpError> {
-    work.iter()
-        .position(|(p, _)| slug_of(p) == slug)
-        .ok_or_else(|| OpError::at(op, format!("no document '{slug}'")))
+/// Resolve a caller-given target — a full bundle-path id (`okf::id_of`, what
+/// the parse/graph layer keys `Node`/`Edge`/`Diagram` by) or a bare basename
+/// — to the doc's index. Full-id match takes priority; a bare target falls
+/// back to a unique-basename match across the bundle (mirrors
+/// `solve::resolve`'s `NameRef::Bare` handling). Ambiguous basenames are left
+/// unresolved rather than guessing.
+pub(crate) fn resolve_index(work: &Bundle, target: &str) -> Option<usize> {
+    if let Some(i) = work.iter().position(|(p, _)| okf::id_of(p) == target) {
+        return Some(i);
+    }
+    let mut matches = work.iter().enumerate().filter(|(_, (p, _))| slug_of(p) == target);
+    match (matches.next(), matches.next()) {
+        (Some((i, _)), None) => Some(i),
+        _ => None,
+    }
+}
+
+/// The bare basename actually embedded in this bundle's same-directory
+/// relative hrefs (`./slug.md`) for a resolved target. An unresolved token
+/// (a forward reference to a not-yet-existing doc) passes through unchanged.
+pub(crate) fn stored_slug(work: &Bundle, target: &str) -> String {
+    resolve_index(work, target).map(|i| slug_of(&work[i].0)).unwrap_or_else(|| target.to_string())
+}
+
+pub(crate) fn find_doc(work: &Bundle, target: &str, op: &str) -> Result<usize, OpError> {
+    resolve_index(work, target).ok_or_else(|| OpError::at(op, format!("no document '{target}'")))
 }
 
 /// Parse the target file, mutate via `f`, re-serialize canonically.
@@ -191,13 +214,14 @@ pub(crate) fn values_mut(doc: &mut Document) -> &mut Vec<Line<String>> {
 /// Forward-ref-safe: a token matching an existing doc slug links to it (using
 /// that doc's title); otherwise it is a bare type token. Mirrors build_model.
 pub(crate) fn resolve_type(work: &Bundle, token: &str) -> TypeRef {
-    if let Some((_, text)) = work.iter().find(|(p, _)| slug_of(p) == token) {
+    if let Some(i) = resolve_index(work, token) {
+        let (path, text) = &work[i];
         let title = parse_document(text)
             .frontmatter
             .get_str("title")
             .map(String::from)
             .unwrap_or_else(|| token.to_string());
-        TypeRef { name: title, ref_: Some(token.to_string()) }
+        TypeRef { name: title, ref_: Some(slug_of(path)) }
     } else {
         TypeRef { name: token.to_string(), ref_: None }
     }
@@ -221,9 +245,8 @@ pub(crate) fn rels_mut(doc: &mut Document) -> &mut Vec<Line<ParsedRel>> {
 /// Look up a document's `title` by slug, falling back to the slug itself
 /// (forward-ref-safe, mirrors `resolve_type`).
 pub(crate) fn resolve_title(work: &Bundle, slug: &str) -> String {
-    work.iter()
-        .find(|(p, _)| slug_of(p) == slug)
-        .and_then(|(_, t)| parse_document(t).frontmatter.get_str("title").map(String::from))
+    resolve_index(work, slug)
+        .and_then(|i| parse_document(&work[i].1).frontmatter.get_str("title").map(String::from))
         .unwrap_or_else(|| slug.to_string())
 }
 
@@ -234,8 +257,18 @@ fn build_name(work: &Bundle, spec: &Option<NameSpec>) -> Option<ParsedName> {
         None => None,
         Some(NameSpec::Label(l)) => Some(ParsedName::Label(l.clone())),
         Some(NameSpec::Ref(slug)) => {
-            Some(ParsedName::Ref { title: resolve_title(work, slug), slug: slug.clone() })
+            Some(ParsedName::Ref { title: resolve_title(work, slug), slug: stored_slug(work, slug) })
         }
+    }
+}
+
+/// `RelBy::Endpoint.target` may be a full bundle-path id (the parse/graph
+/// layer's edge key); `ParsedRel.target_slug` is always the bare
+/// same-directory-relative href token. Resolve before matching.
+fn resolve_rel_by(work: &Bundle, by: &RelBy) -> RelBy {
+    match by {
+        RelBy::Endpoint { kind, target } => RelBy::Endpoint { kind: *kind, target: stored_slug(work, target) },
+        RelBy::Named(name) => RelBy::Named(name.clone()),
     }
 }
 
@@ -275,25 +308,29 @@ fn str_list(items: &[String]) -> FmValue {
 /// Slugs of every document that references `slug` (rel target, attribute
 /// type-ref, `as [Ref]` name, diagram member). Sorted, deduped.
 pub fn referrers(work: &Bundle, slug: &str) -> Vec<String> {
+    // Referring docs store bare same-directory-relative hrefs (`./slug.md`),
+    // not full ids — translate `slug` (which may be a full bundle-path id,
+    // per `resolve_index`) down to that bare form before matching stored refs.
+    let target_idx = resolve_index(work, slug);
+    let target = target_idx.map(|i| slug_of(&work[i].0)).unwrap_or_else(|| slug.to_string());
     let mut out = Vec::new();
-    for (p, text) in work {
-        let s = slug_of(p);
-        if s == slug {
+    for (i, (p, text)) in work.iter().enumerate() {
+        if Some(i) == target_idx {
             continue;
         }
         let doc = parse_document(text);
         let hit = doc.sections.iter().any(|sec| match sec {
-            Section::Attributes(attrs) => attrs.iter().filter_map(Line::parsed).any(|a| a.ty.ref_.as_deref() == Some(slug)),
+            Section::Attributes(attrs) => attrs.iter().filter_map(Line::parsed).any(|a| a.ty.ref_.as_deref() == Some(target.as_str())),
             Section::Relationships(rels) => rels.iter().filter_map(Line::parsed).any(|r| {
-                r.target_slug == slug
-                    || matches!(&r.name, Some(ParsedName::Ref { slug: rs, .. }) if rs == slug)
+                r.target_slug == target
+                    || matches!(&r.name, Some(ParsedName::Ref { slug: rs, .. }) if rs == &target)
             }),
             Section::Members(block) => {
                 fn group_has(g: &crate::syntax::MemberGroup, slug: &str) -> bool {
                     g.members.iter().filter_map(Line::parsed).any(|m| m.slug == slug)
                         || g.children.iter().any(|c| group_has(c, slug))
                 }
-                block.groups.iter().any(|g| group_has(g, slug))
+                block.groups.iter().any(|g| group_has(g, &target))
             }
             Section::Layout(stmts) => {
                 fn operand_refs(op: &crate::syntax::Operand, slug: &str) -> bool {
@@ -306,19 +343,19 @@ pub fn referrers(work: &Bundle, slug: &str) -> Vec<String> {
                     }
                 }
                 stmts.iter().filter_map(Line::parsed).any(|it| match &it.stmt {
-                    crate::syntax::LayoutStatement::Standalone(op) => operand_refs(op, slug),
+                    crate::syntax::LayoutStatement::Standalone(op) => operand_refs(op, &target),
                     crate::syntax::LayoutStatement::Placement { operands, .. } => {
-                        operands.iter().any(|op| operand_refs(op, slug))
+                        operands.iter().any(|op| operand_refs(op, &target))
                     }
                     crate::syntax::LayoutStatement::Alignment { left, right } => {
-                        operand_refs(&left.operand, slug) || operand_refs(&right.operand, slug)
+                        operand_refs(&left.operand, &target) || operand_refs(&right.operand, &target)
                     }
                 })
             }
             _ => false,
         });
         if hit {
-            out.push(s);
+            out.push(slug_of(p));
         }
     }
     out.sort();
@@ -442,11 +479,12 @@ fn op_rel_add(
         return Err(OpError::at("rel.add", msg));
     }
     let target_title = resolve_title(work, target);
+    let target_ref = stored_slug(work, target);
     let name = build_name(work, name);
     let ends = ends.clone();
     edit_doc(work, source, "rel.add", |doc| {
         let rels = rels_mut(doc);
-        if rels.iter().filter_map(Line::parsed).any(|r| r.kind == kind && r.target_slug == target) {
+        if rels.iter().filter_map(Line::parsed).any(|r| r.kind == kind && r.target_slug == target_ref) {
             return Err(OpError::at(
                 "rel.add",
                 format!("relationship '{} {target}' already exists in {source}", kind.as_str()),
@@ -456,7 +494,7 @@ fn op_rel_add(
         rels.push(Line::Parsed(ParsedRel {
             kind,
             target_title,
-            target_slug: target.to_string(),
+            target_slug: target_ref,
             name,
             from_end,
             to_end,
@@ -474,7 +512,7 @@ fn op_rel_set(
     name: &Option<NameSpec>,
 ) -> Result<(), OpError> {
     let (source, by) = rel_target(selector, "rel.set")?;
-    let (source, by) = (source.to_string(), by.clone());
+    let (source, by) = (source.to_string(), resolve_rel_by(work, by));
     let disp = render_selector(selector);
     let new_ends = ends.clone();
     let new_name = build_name(work, name);
@@ -501,7 +539,7 @@ fn op_rel_set(
 
 fn op_rel_rm(work: &mut Bundle, selector: &Selector) -> Result<(), OpError> {
     let (source, by) = rel_target(selector, "rel.rm")?;
-    let (source, by) = (source.to_string(), by.clone());
+    let (source, by) = (source.to_string(), resolve_rel_by(work, by));
     let disp = render_selector(selector);
     edit_doc(work, &source, "rel.rm", |doc| {
         let rels = rels_mut(doc);
@@ -525,7 +563,8 @@ fn op_node_new(
     description: &Option<String>,
     abstract_: bool,
 ) -> Result<(), OpError> {
-    if work.iter().any(|(p, _)| slug_of(p) == slug) {
+    let path = if dir.is_empty() { format!("{slug}.md") } else { format!("{dir}/{slug}.md") };
+    if work.iter().any(|(p, _)| okf::id_of(p) == okf::id_of(&path)) {
         return Err(OpError::at("node.new", format!("document '{slug}' already exists")));
     }
     let mut entries: Vec<(String, FmValue)> = vec![("type".into(), FmValue::Str(ty.as_str()))];
@@ -544,7 +583,6 @@ fn op_node_new(
         title: title.to_string(),
         sections: Vec::new(),
     };
-    let path = if dir.is_empty() { format!("{slug}.md") } else { format!("{dir}/{slug}.md") };
     work.push((path, serialize_document(&doc)));
     Ok(())
 }
@@ -891,5 +929,104 @@ mod tests {
         ];
         let refs = referrers(&b, "order");
         assert!(refs.contains(&"diagram".to_string()), "diagram referencing 'order' only via a bare Layout operand must be reported: {refs:?}");
+    }
+
+    // ---- full bundle-path id resolution (matches the parse/graph layer's
+    // `okf::id_of` keying, not just a bare same-directory basename) ----
+
+    #[test]
+    fn find_doc_resolves_full_path_id_for_a_nested_doc() {
+        let b = vec![("shop/order.md".to_string(),
+            "---\ntype: uml.Class\ntitle: Order\n---\n# Order\n\n## Attributes\n- id: OrderId\n".to_string())];
+        let out = apply(&b, &[attr_add("shop/order", "total", "Money")]).unwrap();
+        assert!(out[0].1.contains("- total: Money"), "op.node addressed by full-path id must resolve: {:?}", out[0].1);
+    }
+
+    #[test]
+    fn attr_add_links_a_known_slug_addressed_by_full_path_id() {
+        let b = vec![
+            ("a/order.md".to_string(), "---\ntype: uml.Class\ntitle: Order\n---\n# Order\n".to_string()),
+            ("a/money.md".to_string(), "---\ntype: uml.DataType\ntitle: Money\n---\n# Money\n".to_string()),
+        ];
+        // both the node being edited and the type token are passed as full-path ids
+        let out = apply(&b, &[attr_add("a/order", "total", "a/money")]).unwrap();
+        assert!(out[0].1.contains("- total: [Money](./money.md)"),
+            "type token resolved by full-path id must still emit a bare same-directory href: {:?}", out[0].1);
+    }
+
+    #[test]
+    fn node_set_resolves_nested_doc_by_full_path_id() {
+        let b = vec![("shop/order.md".to_string(), "---\ntype: uml.Class\ntitle: Order\n---\n# Order\n".to_string())];
+        let out = apply(&b, &[Op::NodeSet {
+            slug: "shop/order".into(), title: Some("Sales Order".into()), description: None,
+            stereotype: None, abstract_: None, ty: None,
+        }]).unwrap();
+        assert_eq!(out[0].0, "shop/order.md");
+        assert!(out[0].1.contains("title: \"Sales Order\""));
+    }
+
+    #[test]
+    fn node_rm_resolves_nested_doc_by_full_path_id_and_referrers_stay_bare() {
+        let b = vec![
+            ("shop/order.md".to_string(), "---\ntype: uml.Class\ntitle: Order\n---\n# Order\n\n## Relationships\n- depends [Money](./money.md)\n".to_string()),
+            ("shop/money.md".to_string(), "---\ntype: uml.DataType\ntitle: Money\n---\n# Money\n".to_string()),
+        ];
+        let err = apply(&b, &[Op::NodeRm { slug: "shop/money".into(), cascade: false }]).unwrap_err();
+        assert!(err.reason.contains("referenced by"));
+        assert!(err.reason.contains("order"));
+        let out = apply(&b, &[Op::NodeRm { slug: "shop/money".into(), cascade: true }]).unwrap();
+        assert!(out.iter().all(|(p, _)| slug_of(p) != "money"));
+    }
+
+    #[test]
+    fn node_new_collision_check_is_scoped_to_the_destination_path_not_global() {
+        // A same-basename doc already exists in a different directory — this
+        // must NOT collide (full-path keying is what allows same-basename
+        // docs to coexist across directories in the first place).
+        let b = vec![("shop/order.md".to_string(), "---\ntype: uml.Class\ntitle: Order\n---\n# Order\n".to_string())];
+        let out = apply(&b, &[Op::NodeNew {
+            slug: "order".into(), dir: "billing".into(), ty: ClassifierType::parse("uml.Class"),
+            title: "Order".into(), stereotype: vec![], description: None, abstract_: false,
+        }]).unwrap();
+        assert!(out.iter().any(|(p, _)| p == "billing/order.md"));
+        // same directory + same basename must still collide
+        let dup = apply(&b, &[Op::NodeNew {
+            slug: "order".into(), dir: "shop".into(), ty: ClassifierType::parse("uml.Class"),
+            title: "X".into(), stereotype: vec![], description: None, abstract_: false,
+        }]).unwrap_err();
+        assert!(dup.reason.contains("already exists"));
+    }
+
+    #[test]
+    fn rel_set_resolves_endpoint_target_addressed_by_full_path_id() {
+        let b = vec![
+            ("shop/order.md".to_string(),
+             "---\ntype: uml.Class\ntitle: Order\n---\n# Order\n\n## Relationships\n- associates [Customer](./customer.md): 1 to 1\n".to_string()),
+            ("shop/customer.md".to_string(), "---\ntype: uml.Class\ntitle: Customer\n---\n# Customer\n".to_string()),
+        ];
+        let sel = Selector::Rel {
+            source: "shop/order".into(),
+            by: RelBy::Endpoint { kind: RelationshipKind::Associates, target: "shop/customer".into() },
+        };
+        let ends = parse_ends("1 to 1..* customers").unwrap();
+        let out = apply(&b, &[Op::RelSet { selector: sel, ends: Some(ends), name: None }]).unwrap();
+        let order = &out.iter().find(|(p, _)| p == "shop/order.md").unwrap().1;
+        assert!(order.contains("1..* customers"), "endpoint addressed by full-path id must resolve: {order}");
+    }
+
+    #[test]
+    fn rel_rm_resolves_endpoint_target_addressed_by_full_path_id() {
+        let b = vec![
+            ("shop/order.md".to_string(),
+             "---\ntype: uml.Class\ntitle: Order\n---\n# Order\n\n## Relationships\n- associates [Customer](./customer.md): 1 to 1\n".to_string()),
+            ("shop/customer.md".to_string(), "---\ntype: uml.Class\ntitle: Customer\n---\n# Customer\n".to_string()),
+        ];
+        let sel = Selector::Rel {
+            source: "shop/order".into(),
+            by: RelBy::Endpoint { kind: RelationshipKind::Associates, target: "shop/customer".into() },
+        };
+        let out = apply(&b, &[Op::RelRm { selector: sel }]).unwrap();
+        let order = &out.iter().find(|(p, _)| p == "shop/order.md").unwrap().1;
+        assert!(!order.contains("associates"), "endpoint addressed by full-path id must resolve for removal: {order}");
     }
 }

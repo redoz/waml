@@ -38,14 +38,14 @@ describe("orders-domain UML template", () => {
 
   it("uses stereotypes, an enum, composition and a diagram", () => {
     const g = graphOf(ordersDomain.bundle);
-    const order = g.nodes.find((n) => n.key === "order")!;
+    const order = g.nodes.find((n) => n.key === "orders-domain-uml/order")!;
     expect(order.stereotypes).toEqual(["aggregateRoot", "entity"]);
-    expect(g.nodes.find((n) => n.key === "order-status")!.values).toContain("PLACED");
+    expect(g.nodes.find((n) => n.key === "orders-domain-uml/order-status")!.values).toContain("PLACED");
     const compose = g.edges.find((e) => e.kind === "composes")!;
-    expect(compose).toMatchObject({ from: "order", to: "order-line" });
+    expect(compose).toMatchObject({ from: "orders-domain-uml/order", to: "orders-domain-uml/order-line" });
     expect(g.diagrams).toHaveLength(1);
     expect(g.diagrams[0].profile).toBe("uml-domain");
-    expect(g.diagrams[0].members).toContain("order");
+    expect(g.diagrams[0].members).toContain("orders-domain-uml/order");
   });
 
   it("attribute refs point at real member nodes", () => {

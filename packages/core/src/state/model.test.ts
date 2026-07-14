@@ -19,7 +19,7 @@ describe("bundle-as-truth model store", () => {
   it("get() derives a ModelGraph from the bundle", () => {
     const s = createModelStore(fresh());
     const g = s.get();
-    expect(g.nodes.map((n) => n.key).sort()).toEqual(["customer", "order"]);
+    expect(g.nodes.map((n) => n.key).sort()).toEqual(["m/customer", "m/order"]);
     expect(g.nodes[0].position).toEqual({ x: 0, y: 0 });
   });
 
@@ -41,7 +41,7 @@ describe("bundle-as-truth model store", () => {
     const s = createModelStore(fresh());
     let broadcastPos: { x: number; y: number } | undefined;
     s.subscribe(() => {
-      const created = s.get().nodes.find((x) => x.key !== "order" && x.key !== "customer");
+      const created = s.get().nodes.find((x) => x.key !== "m/order" && x.key !== "m/customer");
       if (created) broadcastPos = created.position;
     });
     s.addNode({ x: 10, y: 20 });
@@ -50,39 +50,39 @@ describe("bundle-as-truth model store", () => {
 
   it("updateNode(scalar) edits the bundle via apply_ops", () => {
     const s = createModelStore(fresh());
-    const order = s.get().nodes.find((n) => n.key === "order")!;
-    s.updateNode("order", { concept: { ...order.concept, title: "Sales Order" } });
-    expect(s.get().nodes.find((n) => n.key === "order")!.concept.title).toBe("Sales Order");
+    const order = s.get().nodes.find((n) => n.key === "m/order")!;
+    s.updateNode("m/order", { concept: { ...order.concept, title: "Sales Order" } });
+    expect(s.get().nodes.find((n) => n.key === "m/order")!.concept.title).toBe("Sales Order");
     expect(s.getBundle().find(([p]) => p.endsWith("order.md"))![1]).toContain("Sales Order");
   });
 
   it("addEdge writes a relationship into the source document", () => {
     const s = createModelStore(fresh());
-    const e = s.addEdge("order", "customer");
+    const e = s.addEdge("m/order", "m/customer");
     expect(e).not.toBeNull();
-    expect(s.get().edges.some((x) => x.from === "order" && x.to === "customer")).toBe(true);
+    expect(s.get().edges.some((x) => x.from === "m/order" && x.to === "m/customer")).toBe(true);
     expect(s.getBundle().find(([p]) => p.endsWith("order.md"))![1]).toContain("associates");
   });
 
   it("removeNode drops the document and its outgoing edges", () => {
     const s = createModelStore(fresh());
-    s.addEdge("order", "customer");
-    s.removeNode("order");
-    expect(s.get().nodes.some((n) => n.key === "order")).toBe(false);
+    s.addEdge("m/order", "m/customer");
+    s.removeNode("m/order");
+    expect(s.get().nodes.some((n) => n.key === "m/order")).toBe(false);
     expect(s.get().edges.length).toBe(0);
   });
 
   it("position-only updateNode leaves the bundle byte-identical (overlay only)", () => {
     const s = createModelStore(fresh());
     const before = JSON.stringify(s.getBundle());
-    s.updateNode("order", { position: { x: 99, y: 88 } });
+    s.updateNode("m/order", { position: { x: 99, y: 88 } });
     expect(JSON.stringify(s.getBundle())).toBe(before);
-    expect(s.get().nodes.find((n) => n.key === "order")!.position).toEqual({ x: 99, y: 88 });
+    expect(s.get().nodes.find((n) => n.key === "m/order")!.position).toEqual({ x: 99, y: 88 });
   });
 
   it("edge handle change leaves the bundle byte-identical (overlay only)", () => {
     const s = createModelStore(fresh());
-    const e = s.addEdge("order", "customer")!;
+    const e = s.addEdge("m/order", "m/customer")!;
     const before = JSON.stringify(s.getBundle());
     s.updateEdge(e.id, { sourceHandle: "r", targetHandle: "l" });
     expect(JSON.stringify(s.getBundle())).toBe(before);
@@ -108,7 +108,7 @@ describe("bundle-as-truth model store", () => {
     const s = createModelStore(fresh());
     s.updateNode("order", { position: { x: 5, y: 5 } });
     s.load([doc("widget", "Widget")]);
-    expect(s.get().nodes.map((n) => n.key)).toEqual(["widget"]);
+    expect(s.get().nodes.map((n) => n.key)).toEqual(["m/widget"]);
     expect(s.get().nodes[0].position).toEqual({ x: 0, y: 0 });
   });
 });

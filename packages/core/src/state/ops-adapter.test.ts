@@ -45,15 +45,15 @@ beforeAll(async () => {
   base = derive(BASE);
 });
 
-const orderNode = () => base.nodes.find((n) => n.key === "order")!;
-const statusNode = () => base.nodes.find((n) => n.key === "status")!;
-const oc = () => base.edges.find((e) => e.from === "order" && e.to === "customer")!;
+const orderNode = () => base.nodes.find((n) => n.key === "m/order")!;
+const statusNode = () => base.nodes.find((n) => n.key === "m/status")!;
+const oc = () => base.edges.find((e) => e.from === "m/order" && e.to === "m/customer")!;
 
 describe("node ops", () => {
   it("scalar edit → a single node.set carrying only the changed field, round-trips", () => {
     const ops = nodeSetOps(orderNode(), { concept: { ...orderNode().concept, title: "Sales Order" } });
-    expect(ops).toEqual([{ op: "node.set", slug: "order", title: "Sales Order" }]);
-    expect(apply(BASE, ops).nodes.find((n) => n.key === "order")!.concept.title).toBe("Sales Order");
+    expect(ops).toEqual([{ op: "node.set", slug: "m/order", title: "Sales Order" }]);
+    expect(apply(BASE, ops).nodes.find((n) => n.key === "m/order")!.concept.title).toBe("Sales Order");
   });
 
   it("no-op edit (same value) emits []", () => {
@@ -70,14 +70,14 @@ describe("node ops", () => {
     const ops = nodeRmOps("customer");
     expect(ops).toEqual([{ op: "node.rm", slug: "customer", cascade: true }]);
     const g = apply(BASE, ops);
-    expect(g.nodes.some((n) => n.key === "customer")).toBe(false);
-    expect(g.edges.some((e) => e.to === "customer")).toBe(false);
+    expect(g.nodes.some((n) => n.key === "m/customer")).toBe(false);
+    expect(g.edges.some((e) => e.to === "m/customer")).toBe(false);
   });
 
   it("rename → node.rename, round-trips", () => {
     const ops = nodeRenameOps("customer", "client");
     expect(ops).toEqual([{ op: "node.rename", from: "customer", to: "client" }]);
-    expect(apply(BASE, ops).nodes.some((n) => n.key === "client")).toBe(true);
+    expect(apply(BASE, ops).nodes.some((n) => n.key === "m/client")).toBe(true);
   });
 
   it("rename to the same slug emits []", () => {
@@ -92,11 +92,11 @@ describe("node ops", () => {
     expect(nodeSetOps(prev, { concept: { ...prev.concept, description: "concept-desc" } })).toEqual([]);
     // Write intent differs from the stored concept value → a single desc op.
     expect(nodeSetOps(prev, { concept: { ...prev.concept, description: "changed" } })).toEqual([
-      { op: "node.set", slug: "order", desc: "changed" },
+      { op: "node.set", slug: "m/order", desc: "changed" },
     ]);
     // Clearing a non-empty description to "" emits a single desc:"" op (not skipped).
     expect(nodeSetOps(prev, { concept: { ...prev.concept, description: "" } })).toEqual([
-      { op: "node.set", slug: "order", desc: "" },
+      { op: "node.set", slug: "m/order", desc: "" },
     ]);
   });
 });
@@ -108,7 +108,7 @@ describe("attribute array diff", () => {
     const next: Attribute[] = [...attrs(), { name: "placedAt", type: { name: "Timestamp" }, multiplicity: "1" }];
     const ops = attrDiffOps("order", attrs(), next);
     expect(ops).toEqual([{ op: "attr.add", node: "order", name: "placedAt", ty: "Timestamp" }]);
-    const n = apply(BASE, ops).nodes.find((x) => x.key === "order")!;
+    const n = apply(BASE, ops).nodes.find((x) => x.key === "m/order")!;
     expect(n.attributes.some((a) => a.name === "placedAt")).toBe(true);
   });
 
@@ -116,7 +116,7 @@ describe("attribute array diff", () => {
     const next = attrs().filter((a) => a.name !== "total");
     const ops = attrDiffOps("order", attrs(), next);
     expect(ops).toEqual([{ op: "attr.rm", node: "order", name: "total" }]);
-    const n = apply(BASE, ops).nodes.find((x) => x.key === "order")!;
+    const n = apply(BASE, ops).nodes.find((x) => x.key === "m/order")!;
     expect(n.attributes.some((a) => a.name === "total")).toBe(false);
   });
 
@@ -124,7 +124,7 @@ describe("attribute array diff", () => {
     const next = attrs().map((a) => (a.name === "total" ? { ...a, type: { name: "Cash" } } : a));
     const ops = attrDiffOps("order", attrs(), next);
     expect(ops).toEqual([{ op: "attr.set", node: "order", name: "total", ty: "Cash" }]);
-    const n = apply(BASE, ops).nodes.find((x) => x.key === "order")!;
+    const n = apply(BASE, ops).nodes.find((x) => x.key === "m/order")!;
     expect(n.attributes.find((a) => a.name === "total")!.type.name).toBe("Cash");
   });
 
@@ -134,7 +134,7 @@ describe("attribute array diff", () => {
     expect(ops).toEqual([
       { op: "attr.set", node: "order", name: "id", rename: "orderId", ty: "OrderId", mult: "1" },
     ]);
-    const n = apply(BASE, ops).nodes.find((x) => x.key === "order")!;
+    const n = apply(BASE, ops).nodes.find((x) => x.key === "m/order")!;
     expect(n.attributes.some((a) => a.name === "orderId")).toBe(true);
     expect(n.attributes.some((a) => a.name === "id")).toBe(false);
   });
@@ -150,14 +150,14 @@ describe("value array diff", () => {
   it("addition → value.add, round-trips", () => {
     const ops = valueDiffOps("status", vals(), [...vals(), "SHIPPED"]);
     expect(ops).toEqual([{ op: "value.add", node: "status", literal: "SHIPPED" }]);
-    const n = apply(BASE, ops).nodes.find((x) => x.key === "status")!;
+    const n = apply(BASE, ops).nodes.find((x) => x.key === "m/status")!;
     expect(n.values).toContain("SHIPPED");
   });
 
   it("removal → value.rm, round-trips", () => {
     const ops = valueDiffOps("status", vals(), ["DRAFT"]);
     expect(ops).toEqual([{ op: "value.rm", node: "status", literal: "PLACED" }]);
-    const n = apply(BASE, ops).nodes.find((x) => x.key === "status")!;
+    const n = apply(BASE, ops).nodes.find((x) => x.key === "m/status")!;
     expect(n.values).not.toContain("PLACED");
   });
 });
@@ -167,15 +167,15 @@ describe("edge ops", () => {
     const ops = edgeAddOps("customer", "status");
     expect(ops).toEqual([{ op: "rel.add", source: "customer", kind: "associates", target: "status", ends: "1 to 1" }]);
     const g = apply(BASE, ops);
-    expect(g.edges.some((e) => e.from === "customer" && e.to === "status")).toBe(true);
+    expect(g.edges.some((e) => e.from === "m/customer" && e.to === "m/status")).toBe(true);
   });
 
   it("edit ends → rel.set, round-trips", () => {
     const ops = edgeSetOps(oc(), { toEnd: { multiplicity: "1..*", role: "customers" } });
     expect(ops).toEqual([
-      { op: "rel.set", source: "order", kind: "associates", target: "customer", ends: "1 to 1..* customers" },
+      { op: "rel.set", source: "m/order", kind: "associates", target: "m/customer", ends: "1 to 1..* customers" },
     ]);
-    const e = apply(BASE, ops).edges.find((x) => x.from === "order" && x.to === "customer")!;
+    const e = apply(BASE, ops).edges.find((x) => x.from === "m/order" && x.to === "m/customer")!;
     expect(e.toEnd.multiplicity).toBe("1..*");
     expect(e.toEnd.role).toBe("customers");
   });
@@ -183,18 +183,18 @@ describe("edge ops", () => {
   it("change kind → rel.rm + rel.add, round-trips", () => {
     const ops = edgeSetOps(oc(), { kind: "aggregates" });
     expect(ops).toEqual([
-      { op: "rel.rm", source: "order", kind: "associates", target: "customer" },
-      { op: "rel.add", source: "order", kind: "aggregates", target: "customer", ends: "1 to 1" },
+      { op: "rel.rm", source: "m/order", kind: "associates", target: "m/customer" },
+      { op: "rel.add", source: "m/order", kind: "aggregates", target: "m/customer", ends: "1 to 1" },
     ]);
-    const e = apply(BASE, ops).edges.find((x) => x.from === "order" && x.to === "customer")!;
+    const e = apply(BASE, ops).edges.find((x) => x.from === "m/order" && x.to === "m/customer")!;
     expect(e.kind).toBe("aggregates");
   });
 
   it("remove edge → rel.rm, round-trips", () => {
     const ops = edgeRmOps(oc());
-    expect(ops).toEqual([{ op: "rel.rm", source: "order", kind: "associates", target: "customer" }]);
+    expect(ops).toEqual([{ op: "rel.rm", source: "m/order", kind: "associates", target: "m/customer" }]);
     const g = apply(BASE, ops);
-    expect(g.edges.some((x) => x.from === "order" && x.to === "customer")).toBe(false);
+    expect(g.edges.some((x) => x.from === "m/order" && x.to === "m/customer")).toBe(false);
   });
 
   it("handles-only change emits [] (overlay keeps it)", () => {
@@ -211,8 +211,8 @@ describe("updateNodeOps composite", () => {
     const next = [...orderNode().attributes, { name: "note", type: { name: "String" }, multiplicity: "1" }];
     const ops = updateNodeOps(orderNode(), { concept: { ...orderNode().concept, title: "PO" }, attributes: next });
     expect(ops).toEqual([
-      { op: "node.set", slug: "order", title: "PO" },
-      { op: "attr.add", node: "order", name: "note", ty: "String" },
+      { op: "node.set", slug: "m/order", title: "PO" },
+      { op: "attr.add", node: "m/order", name: "note", ty: "String" },
     ]);
   });
 });

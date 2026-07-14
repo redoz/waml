@@ -103,7 +103,7 @@ describe("deleteSelection — delete removes ALL selected nodes + edges", () => 
     const e = store.addEdge("a", "b");
     deleteSelection(store, { nodes: ["a", "c"], edges: e ? [e.id] : [] });
     const g = store.get();
-    expect(g.nodes.map((n) => n.key).sort()).toEqual(["b"]);
+    expect(g.nodes.map((n) => n.key).sort()).toEqual(["m/b"]);
     expect(g.edges).toEqual([]);
   });
 
@@ -114,6 +114,6 @@ describe("deleteSelection — delete removes ALL selected nodes + edges", () => 
     // edge first, so the explicit edge removal is a harmless no-op.
     deleteSelection(store, { nodes: ["a"], edges: e ? [e.id] : [] });
     expect(store.get().edges).toEqual([]);
-    expect(store.get().nodes.map((n) => n.key)).toEqual(["b"]);
+    expect(store.get().nodes.map((n) => n.key)).toEqual(["m/b"]);
   });
 });

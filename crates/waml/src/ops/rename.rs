@@ -1,4 +1,5 @@
 use super::{find_doc, slug_of, Bundle, OpError};
+use crate::okf;
 use crate::parse::parse_document;
 use crate::serialize::serialize_document;
 use crate::syntax::{Document, Line, NameRef, Operand, OperandRef, ParsedName, Section};
@@ -109,17 +110,25 @@ fn rename_in_operand(op: &mut Operand, from: &str, to: &str) -> bool {
 }
 
 pub(crate) fn op_node_rename(work: &mut Bundle, from: &str, to: &str) -> Result<(), OpError> {
+    // `from` may be a full bundle-path id (the parse/graph layer's node key)
+    // or a bare basename; `to` is always a bare local name in the renamed
+    // doc's own directory. Repointing compares against stored hrefs, which
+    // are bare same-directory-relative slugs — resolve `from` down to that
+    // form before rewriting referrers.
     let idx = find_doc(work, from, "node.rename")?;
-    if work.iter().any(|(p, _)| slug_of(p) == to) {
+    let from_basename = slug_of(&work[idx].0);
+    let dest_path = replace_basename(&work[idx].0, to);
+    let dest_id = okf::id_of(&dest_path);
+    if work.iter().enumerate().any(|(i, (p, _))| i != idx && okf::id_of(p) == dest_id) {
         return Err(OpError::at("node.rename", format!("target slug '{to}' already exists")));
     }
     for (_, text) in work.iter_mut() {
         let mut doc = parse_document(text);
-        if rename_in_doc(&mut doc, from, to) {
+        if rename_in_doc(&mut doc, &from_basename, to) {
             *text = serialize_document(&doc);
         }
     }
-    work[idx].0 = replace_basename(&work[idx].0, to);
+    work[idx].0 = dest_path;
     Ok(())
 }
 
@@ -217,5 +226,29 @@ mod tests {
         let diagram = &out.iter().find(|(p, _)| p == "shop/diagram.md").unwrap().1;
         assert!(diagram.contains("invoice left of customer"), "bare layout operand repointed: {diagram}");
         assert!(!diagram.contains("order left of"), "no stale bare layout operand left: {diagram}");
+    }
+
+    #[test]
+    fn rename_resolves_from_by_full_path_id_and_still_rewrites_referrers() {
+        // `from` addressed as the parse/graph layer's full bundle-path id
+        // (`shop/order-line`), not the bare basename `order-line`.
+        let out = apply(&bundle(), &[Op::NodeRename { from: "shop/order-line".into(), to: "line-item".into() }]).unwrap();
+
+        assert!(out.iter().any(|(p, _)| p == "shop/line-item.md"));
+        let order = &out.iter().find(|(p, _)| p == "shop/order.md").unwrap().1;
+        assert!(order.contains("(./line-item.md)"), "links repointed when `from` is a full-path id");
+        assert!(!order.contains("(./order-line.md)"), "no stale link left");
+    }
+
+    #[test]
+    fn rename_collision_check_is_scoped_to_the_destination_directory() {
+        // A same-basename doc exists in a *different* directory — must not
+        // block the rename (full-path keying allows same-basename docs to
+        // coexist across directories).
+        let mut b = bundle();
+        b.push(("billing/line-item.md".to_string(), "---\ntype: uml.Class\ntitle: LineItem\n---\n# LineItem\n".to_string()));
+        let out = apply(&b, &[Op::NodeRename { from: "order-line".into(), to: "line-item".into() }]).unwrap();
+        assert!(out.iter().any(|(p, _)| p == "shop/line-item.md"));
+        assert!(out.iter().any(|(p, _)| p == "billing/line-item.md"), "unrelated same-basename doc untouched");
     }
 }
