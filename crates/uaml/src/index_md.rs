@@ -8,13 +8,15 @@ pub struct IndexEntry {
 }
 
 /// Relative URL for a member, from its containing dir. Sub-packages -> `seg/`,
-/// concept docs -> `./slug.md`.
-fn member_url(_dir: &str, e: &IndexEntry) -> String {
+/// concept docs -> `./slug.md` (dir-relative — `e.key` is a full bundle id,
+/// so strip the referring `dir` prefix before writing the href).
+fn member_url(dir: &str, e: &IndexEntry) -> String {
     if e.is_package {
         let seg = e.key.rsplit('/').next().unwrap_or(&e.key);
         format!("{seg}/")
     } else {
-        format!("./{}.md", e.key)
+        let rel = e.key.strip_prefix(dir).and_then(|s| s.strip_prefix('/')).unwrap_or(&e.key);
+        format!("./{rel}.md")
     }
 }
 

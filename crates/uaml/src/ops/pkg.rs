@@ -187,7 +187,11 @@ mod tests {
             ("sales/order.md".to_string(), "---\ntype: uml.Class\ntitle: Order\n---\n# Order\n".to_string()),
             ("sales/customer.md".to_string(), "---\ntype: uml.Class\ntitle: Customer\n---\n# Customer\n".to_string()),
         ];
-        let out = apply(&b, &[Op::PkgReorder { path: "sales".into(), order: vec!["order".into(), "customer".into()] }]).unwrap();
+        let out = apply(
+            &b,
+            &[Op::PkgReorder { path: "sales".into(), order: vec!["sales/order".into(), "sales/customer".into()] }],
+        )
+        .unwrap();
         let idx = &out.iter().find(|(p, _)| p == "sales/index.md").unwrap().1;
         let oi = idx.find("order.md").unwrap();
         let ci = idx.find("customer.md").unwrap();

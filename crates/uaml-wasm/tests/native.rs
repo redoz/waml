@@ -19,7 +19,7 @@ fn build_model_json_emits_ts_shaped_nodes() {
     let json = build_model_json(&bundle());
     let v: serde_json::Value = serde_json::from_str(&json).unwrap();
     assert_eq!(v["nodes"][0]["type"], "uml.Class");
-    assert_eq!(v["nodes"][0]["key"], "order");
+    assert_eq!(v["nodes"][0]["key"], "m/order");
     assert_eq!(v["nodes"][0]["attributes"][0]["name"], "id");
 }
 
@@ -132,7 +132,7 @@ fn build_bundle_json_round_trips_every_okf_field_and_leaves_uml_intact() {
         .as_array()
         .unwrap()
         .iter()
-        .find(|n| n["key"] == "order")
+        .find(|n| n["key"] == "shop/order")
         .expect("order node still present");
     assert_eq!(order_node["type"], "uaml.Class");
 }
@@ -174,7 +174,7 @@ fn build_model_json_nests_okf_concept_on_each_node() {
     // The UML node no longer carries flat title/description/body — those live
     // only on the nested `concept` (single authoritative source), which the node
     // still gains alongside its UML-tier fields.
-    let order = nodes.iter().find(|n| n["key"] == "order").expect("order node");
+    let order = nodes.iter().find(|n| n["key"] == "shop/order").expect("order node");
     assert_eq!(order["type"], "uml.Class");
     assert!(order.get("title").is_none(), "flat title deleted: {order}");
     assert!(order.get("description").is_none(), "flat description deleted: {order}");
@@ -188,7 +188,7 @@ fn build_model_json_nests_okf_concept_on_each_node() {
 
     // The non-UML Playbook is still a classifier node; its `concept` carries
     // every OKF field the flat Node drops.
-    let pb = nodes.iter().find(|n| n["key"] == "dataplex").expect("playbook node");
+    let pb = nodes.iter().find(|n| n["key"] == "playbooks/dataplex").expect("playbook node");
     let c = &pb["concept"];
     assert_eq!(c["id"], "playbooks/dataplex");
     assert_eq!(c["type"], "Playbook");
@@ -222,10 +222,9 @@ fn layout_bundle() -> Vec<(String, String)> {
         ("shop/account.md".into(), "---\ntype: uml.Class\ntitle: Account\n---\n# Account\n".into()),
         ("shop/order.md".into(), "---\ntype: uml.Class\ntitle: Order\n---\n# Order\n".into()),
         (
-            // `Diagram.key` is derived from the last path segment (`doc_slug`),
-            // so this must be `orders.md`, not e.g. `orders-domain.md`, to
-            // resolve to key "orders" — matching the golden fixture in
-            // `crates/uaml/tests/solver_golden.rs`.
+            // `Diagram.key` is the full bundle-relative id (`okf::id_of`), so
+            // this resolves to key "shop/orders" — matching the golden
+            // fixture in `crates/uaml/tests/solver_golden.rs`.
             "shop/orders.md".into(),
             "---\ntype: Diagram\ntitle: Orders\nprofile: uml-domain\n---\n# Orders\n\n## Members\n\n### Users\n- [Customer](./customer.md)\n- [Account](./account.md)\n\n### Orders\n- [Order](./order.md)\n\n## Layout\n- Users as column with frame\n- Users left of Orders\n".into(),
         ),
@@ -234,7 +233,7 @@ fn layout_bundle() -> Vec<(String, String)> {
 
 fn sizes_200x90() -> SizeMap {
     let mut s: SizeMap = BTreeMap::new();
-    for k in ["customer", "account", "order"] {
+    for k in ["shop/customer", "shop/account", "shop/order"] {
         s.insert(k.into(), Size { w: 200.0, h: 90.0 });
     }
     s
@@ -242,11 +241,11 @@ fn sizes_200x90() -> SizeMap {
 
 #[test]
 fn solve_bundle_matches_golden_rects() {
-    let r = solve_bundle(&layout_bundle(), "orders", sizes_200x90(), SolveConfig::default()).unwrap();
+    let r = solve_bundle(&layout_bundle(), "shop/orders", sizes_200x90(), SolveConfig::default()).unwrap();
     assert!(r.diagnostics.is_empty(), "expected no diagnostics, got: {:?}", r.diagnostics);
-    assert_eq!(r.solved.nodes["customer"], Rect { x: 16.0, y: 16.0, w: 200.0, h: 90.0 });
-    assert_eq!(r.solved.nodes["account"], Rect { x: 16.0, y: 122.0, w: 200.0, h: 90.0 });
-    assert_eq!(r.solved.nodes["order"], Rect { x: 264.0, y: 69.0, w: 200.0, h: 90.0 });
+    assert_eq!(r.solved.nodes["shop/customer"], Rect { x: 16.0, y: 16.0, w: 200.0, h: 90.0 });
+    assert_eq!(r.solved.nodes["shop/account"], Rect { x: 16.0, y: 122.0, w: 200.0, h: 90.0 });
+    assert_eq!(r.solved.nodes["shop/order"], Rect { x: 264.0, y: 69.0, w: 200.0, h: 90.0 });
     // Two groups: framed "Users" shrink "Orders".
     assert_eq!(r.solved.groups.len(), 2);
 }
@@ -267,7 +266,7 @@ fn solve_bundle_surfaces_unresolved_operand_diagnostic() {
     // parser before it ever reaches resolve.
     let diagram = b.last_mut().unwrap();
     diagram.1.push_str("- Ghosts left of Orders\n");
-    let r = solve_bundle(&b, "orders", sizes_200x90(), SolveConfig::default()).unwrap();
+    let r = solve_bundle(&b, "shop/orders", sizes_200x90(), SolveConfig::default()).unwrap();
     assert!(
         r.diagnostics.iter().any(|d| d.code == uaml::diagnostic::DiagCode::UnresolvedLayoutRef),
         "expected unresolved-layout-ref diagnostic, got: {:?}", r.diagnostics

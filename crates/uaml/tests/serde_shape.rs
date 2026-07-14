@@ -27,7 +27,7 @@ fn model_json_matches_ts_field_names() {
     let node = &v["nodes"][0];
     // TS ModelNode uses `type` and `key`, not `ty`.
     assert_eq!(node["type"], "uml.Class");
-    assert_eq!(node["key"], "order");
+    assert_eq!(node["key"], "m/order");
     // Flat title/description/body are DELETED — the concept is the single source.
     assert!(node.get("title").is_none(), "flat title deleted: {node}");
     assert!(node.get("description").is_none(), "flat description deleted: {node}");
@@ -42,8 +42,8 @@ fn model_json_matches_ts_field_names() {
     let edge = &v["edges"][0];
     // TS ModelEdge uses `from`/`to`, kind lowercase string.
     assert_eq!(edge["kind"], "composes");
-    assert_eq!(edge["from"], "order");
-    assert_eq!(edge["to"], "line");
+    assert_eq!(edge["from"], "m/order");
+    assert_eq!(edge["to"], "m/line");
 }
 
 #[test]

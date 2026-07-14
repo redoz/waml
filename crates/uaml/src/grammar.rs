@@ -30,12 +30,6 @@ static MEMBER_RE: LazyLock<Regex> =
 static STRAY_BRACKET_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"[\[\](){}]").unwrap());
 
-/// Strip a directory prefix and the `.md` suffix from a link path.
-fn basename(path: &str) -> &str {
-    let after_slash = path.rsplit(['/', '\\']).next().unwrap_or(path);
-    after_slash.strip_suffix(".md").unwrap_or(after_slash)
-}
-
 /// A line-parse failure: a byte range within the input line plus a message.
 #[derive(Debug, Clone, PartialEq)]
 pub struct LineError {
@@ -98,7 +92,10 @@ pub fn parse_attribute_line(line: &str) -> Result<Attribute, LineError> {
         rest = mm[1].trim().to_string();
     }
     let ty = if let Some(link) = LINK_RE.captures(&rest) {
-        TypeRef { name: link[1].to_string(), ref_: Some(basename(&link[2]).to_string()) }
+        // Raw captured href stem (dir prefix intact, `.md` already stripped by
+        // the regex) — resolution against the referring doc's directory
+        // happens downstream in `parse::resolve_attr`.
+        TypeRef { name: link[1].to_string(), ref_: Some(link[2].to_string()) }
     } else {
         if rest.is_empty() || STRAY_BRACKET_RE.is_match(&rest) {
             return Err(err("malformed attribute line")); // malformed link / stray brackets
@@ -151,7 +148,7 @@ pub fn parse_relationship_line(line: &str) -> Result<ParsedRel, LineError> {
     let name = if let Some(label) = m.get(4) {
         Some(ParsedName::Label(label.as_str().to_string()))
     } else if let (Some(t), Some(s)) = (m.get(5), m.get(6)) {
-        Some(ParsedName::Ref { title: t.as_str().to_string(), slug: basename(s.as_str()).to_string() })
+        Some(ParsedName::Ref { title: t.as_str().to_string(), slug: s.as_str().to_string() })
     } else {
         None
     };
@@ -162,7 +159,9 @@ pub fn parse_relationship_line(line: &str) -> Result<ParsedRel, LineError> {
     Ok(ParsedRel {
         kind,
         target_title: m[2].to_string(),
-        target_slug: basename(&m[3]).to_string(),
+        // Raw captured href stem (dir prefix intact); resolved against the
+        // referring doc's directory downstream in `parse::build_edges`.
+        target_slug: m[3].to_string(),
         name,
         from_end,
         to_end,
@@ -179,7 +178,9 @@ pub fn parse_member_line(line: &str) -> Result<MemberLine, LineError> {
     })?;
     Ok(MemberLine {
         title: m[1].to_string(),
-        slug: basename(&m[2]).to_string(),
+        // Raw captured href stem (dir prefix intact); resolved against the
+        // referring diagram's directory downstream in `parse::resolve_group`.
+        slug: m[2].to_string(),
         line: 0,
         span: None,
     })

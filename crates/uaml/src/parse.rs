@@ -361,7 +361,11 @@ struct ParsedDoc {
     /// Bundle path of the source document (forward-slash normalized on use);
     /// carries the directory the doc lives in, for package discovery.
     path: String,
+    /// Bare filename slug — used only for the reserved-role checks (`index`,
+    /// `log`); NOT the node key (see `id`).
     slug: String,
+    /// Full bundle-relative id (`okf::id_of(&path)`) — the node/edge/diagram key.
+    id: String,
     ty: ClassifierType,
     doc: Document,
     /// Lossless OKF projection of the source document (single source of the
@@ -376,17 +380,16 @@ fn parse_bundle(bundle: &[(String, String)]) -> Vec<ParsedDoc> {
             let doc = parse_document(text);
             let ty = ClassifierType::parse(doc.frontmatter.get_str("type").unwrap_or("uml.Class"));
             let concept = crate::okf::project(path, text);
-            ParsedDoc { path: path.clone(), slug: doc_slug(path), ty, doc, concept }
+            ParsedDoc { path: path.clone(), slug: doc_slug(path), id: crate::okf::id_of(path), ty, doc, concept }
         })
         .collect()
 }
 
-fn resolve_attr(attr: &Attribute, keyset: &HashSet<&str>) -> Attribute {
+fn resolve_attr(attr: &Attribute, referring_path: &str, keyset: &HashSet<&str>) -> Attribute {
     let mut a = attr.clone();
-    if let Some(slug) = &a.ty.ref_ {
-        if !keyset.contains(slug.as_str()) {
-            a.ty.ref_ = None; // degrade to a bare token
-        }
+    if let Some(raw_href) = &a.ty.ref_ {
+        let resolved = crate::okf::resolve_href(referring_path, raw_href);
+        a.ty.ref_ = keyset.contains(resolved.as_str()).then_some(resolved); // else degrade to a bare token
     }
     a
 }
@@ -398,7 +401,7 @@ fn build_node(p: &ParsedDoc, keyset: &HashSet<&str>) -> Node {
     let mut body = None;
     for s in &p.doc.sections {
         match s {
-            Section::Attributes(a) => attributes = a.iter().filter_map(Line::parsed).map(|x| resolve_attr(x, keyset)).collect(),
+            Section::Attributes(a) => attributes = a.iter().filter_map(Line::parsed).map(|x| resolve_attr(x, &p.path, keyset)).collect(),
             Section::Values(v) => values = v.iter().filter_map(Line::parsed).cloned().collect(),
             Section::Body(b) => body = Some(b.clone()),
             _ => {}
@@ -408,7 +411,7 @@ fn build_node(p: &ParsedDoc, keyset: &HashSet<&str>) -> Node {
     // resolved in `okf::project`). `note_body` carries the `## Body` prose.
     Node {
         concept: p.concept.clone(),
-        key: p.slug.clone(),
+        key: p.id.clone(),
         ty: p.ty.clone(),
         stereotypes: fm.get_string_list("stereotype"),
         abstract_: fm.get_bool("abstract") == Some(true),
@@ -442,13 +445,15 @@ struct IndexDoc {
 
 /// Parse a frontmatter-less index.md: H1, intro prose (before the first bullet),
 /// and `* [Title](url) - blurb` entries. `url` maps to a member key: `sub/` ->
-/// the dir-relative sub-package key; `./slug.md` -> slug.
+/// the dir-relative sub-package key; `./slug.md` -> the full id, resolved
+/// against this index.md's own directory (same as any other href target).
 fn parse_index(dir: &str, text: &str) -> IndexDoc {
     let mut h1 = String::new();
     let mut intro_lines: Vec<&str> = vec![];
     let mut order = vec![];
     let re = regex::Regex::new(r"^\s*[*-]\s*\[[^\]]*\]\(([^)]+)\)(?:\s*-\s*(.*))?$").unwrap();
     let mut seen_bullet = false;
+    let referring = if dir.is_empty() { "index.md".to_string() } else { format!("{dir}/index.md") };
     for line in text.lines() {
         if let Some(c) = re.captures(line) {
             seen_bullet = true;
@@ -457,7 +462,7 @@ fn parse_index(dir: &str, text: &str) -> IndexDoc {
                 let seg = sub.trim_start_matches("./").trim_end_matches('/');
                 if dir.is_empty() { seg.to_string() } else { format!("{dir}/{seg}") }
             } else {
-                url.rsplit('/').next().unwrap_or(url).strip_suffix(".md").unwrap_or(url).to_string()
+                crate::okf::resolve_href(&referring, url)
             };
             order.push(key);
         } else if !seen_bullet {
@@ -588,7 +593,7 @@ pub fn build_model(bundle: &[(String, String)]) -> Model {
         .iter()
         .filter(|p| p.ty != ClassifierType::Diagram && p.slug != "index" && p.slug != "log")
         .collect();
-    let keyset: HashSet<&str> = classifiers.iter().map(|p| p.slug.as_str()).collect();
+    let keyset: HashSet<&str> = classifiers.iter().map(|p| p.id.as_str()).collect();
 
     let nodes = classifiers.iter().map(|p| build_node(p, &keyset)).collect();
     let edges: Vec<Edge> = build_edges(&classifiers, &keyset);
@@ -598,7 +603,7 @@ pub fn build_model(bundle: &[(String, String)]) -> Model {
     let docs: Vec<(String, String, String)> = parsed
         .iter()
         .filter(|p| p.slug != "index" && p.slug != "log")
-        .map(|p| (p.path.clone(), p.slug.clone(), doc_title(p)))
+        .map(|p| (p.path.clone(), p.id.clone(), doc_title(p)))
         .collect();
     // Raw index.md text keyed by directory, for member/description reconciliation.
     let indexes: std::collections::BTreeMap<String, String> = bundle
@@ -620,19 +625,20 @@ fn build_edges(classifiers: &[&ParsedDoc], keyset: &HashSet<&str>) -> Vec<Edge> 
     let mut seen_other: HashSet<(String, String, String)> = HashSet::new();
 
     for p in classifiers {
-        let from = &p.slug;
+        let from = &p.id;
         for s in &p.doc.sections {
             let Section::Relationships(rels) = s else { continue };
             for r in rels.iter().filter_map(Line::parsed) {
-                let to = &r.target_slug;
-                if !keyset.contains(to.as_str()) || to == from {
+                let to = crate::okf::resolve_href(&p.path, &r.target_slug);
+                if !keyset.contains(to.as_str()) || &to == from {
                     continue;
                 }
                 let name = match &r.name {
                     None => None,
                     Some(ParsedName::Label(l)) => Some(AssocName::Label(l.clone())),
                     Some(ParsedName::Ref { slug, .. }) => {
-                        keyset.contains(slug.as_str()).then(|| AssocName::Assoc(slug.clone()))
+                        let resolved = crate::okf::resolve_href(&p.path, slug);
+                        keyset.contains(resolved.as_str()).then_some(AssocName::Assoc(resolved))
                     }
                 };
 
@@ -683,17 +689,19 @@ fn build_edges(classifiers: &[&ParsedDoc], keyset: &HashSet<&str>) -> Vec<Edge> 
     edges
 }
 
-fn resolve_group(g: &crate::syntax::MemberGroup, keyset: &HashSet<&str>) -> DiagramGroup {
+fn resolve_group(g: &crate::syntax::MemberGroup, referring_path: &str, keyset: &HashSet<&str>) -> DiagramGroup {
     DiagramGroup {
         name: g.name.clone(),
         members: g
             .members
             .iter()
             .filter_map(Line::parsed)
-            .filter(|m| keyset.contains(m.slug.as_str()))
-            .map(|m| m.slug.clone())
+            .filter_map(|m| {
+                let resolved = crate::okf::resolve_href(referring_path, &m.slug);
+                keyset.contains(resolved.as_str()).then_some(resolved)
+            })
             .collect(),
-        children: g.children.iter().map(|c| resolve_group(c, keyset)).collect(),
+        children: g.children.iter().map(|c| resolve_group(c, referring_path, keyset)).collect(),
     }
 }
 
@@ -713,7 +721,7 @@ fn build_diagrams(parsed: &[ParsedDoc], keyset: &HashSet<&str>) -> Vec<Diagram> 
         for s in &p.doc.sections {
             match s {
                 Section::Members(block) => {
-                    groups = block.groups.iter().map(|g| resolve_group(g, keyset)).collect();
+                    groups = block.groups.iter().map(|g| resolve_group(g, &p.path, keyset)).collect();
                 }
                 Section::Layout(items) => {
                     layout = items.iter().filter_map(Line::parsed).map(|it| it.stmt.clone()).collect();
@@ -721,7 +729,7 @@ fn build_diagrams(parsed: &[ParsedDoc], keyset: &HashSet<&str>) -> Vec<Diagram> 
                 _ => {}
             }
         }
-        out.push(Diagram { key: p.slug.clone(), title, profile, groups, layout });
+        out.push(Diagram { key: p.id.clone(), title, profile, groups, layout });
     }
     out
 }
@@ -748,7 +756,7 @@ mod tests {
         assert_eq!(root.members, vec!["billing".to_string(), "sales".to_string()]); // A–Z sub-packages
         let sales = m.packages.iter().find(|p| p.key == "sales").unwrap();
         // members = child classifier "order" + sub-package "sales/orders", A–Z by title/name
-        assert!(sales.members.contains(&"order".to_string()));
+        assert!(sales.members.contains(&"sales/order".to_string()));
         assert!(sales.members.contains(&"sales/orders".to_string()));
     }
 
@@ -770,7 +778,10 @@ mod tests {
         let sales = m.packages.iter().find(|p| p.key == "sales").unwrap();
         assert_eq!(sales.concept.description.as_deref(), Some("Sales bounded context."));
         // listed order first (customer, order), then unlisted appended (invoice)
-        assert_eq!(sales.members, vec!["customer".to_string(), "order".to_string(), "invoice".to_string()]);
+        assert_eq!(
+            sales.members,
+            vec!["sales/customer".to_string(), "sales/order".to_string(), "sales/invoice".to_string()]
+        );
     }
 
     #[test]
@@ -923,7 +934,7 @@ mod model_tests {
     fn builds_classifier_nodes() {
         let m = build_model(&bundle());
         assert_eq!(m.nodes.len(), 2);
-        let order = m.node("order").unwrap();
+        let order = m.node("shop/order").unwrap();
         assert_eq!(order.concept.title.as_deref(), Some("Order"));
         assert_eq!(order.ty, ClassifierType::Uml(UmlMetaclass::Class));
         assert_eq!(order.stereotypes, vec!["aggregateRoot", "entity"]);
@@ -933,9 +944,9 @@ mod model_tests {
     #[test]
     fn resolves_and_degrades_attribute_refs() {
         let m = build_model(&bundle());
-        let order = m.node("order").unwrap();
-        // resolvable link keeps its ref
-        assert_eq!(order.attributes[1].ty.ref_.as_deref(), Some("order-status"));
+        let order = m.node("shop/order").unwrap();
+        // resolvable link keeps its ref, resolved to the full id
+        assert_eq!(order.attributes[1].ty.ref_.as_deref(), Some("shop/order-status"));
         // unresolvable link degrades to a bare token (ref dropped), name preserved
         assert_eq!(order.attributes[2].ty.name, "Missing");
         assert_eq!(order.attributes[2].ty.ref_, None);
@@ -944,7 +955,7 @@ mod model_tests {
     #[test]
     fn collects_enum_values() {
         let m = build_model(&bundle());
-        assert_eq!(m.node("order-status").unwrap().values, vec!["DRAFT", "PLACED"]);
+        assert_eq!(m.node("shop/order-status").unwrap().values, vec!["DRAFT", "PLACED"]);
     }
 
     fn rel_bundle() -> Vec<(String, String)> {
@@ -962,8 +973,8 @@ mod model_tests {
     fn builds_composition_edge() {
         let m = build_model(&rel_bundle());
         let comp = m.edges.iter().find(|e| e.kind == crate::model::RelationshipKind::Composes).unwrap();
-        assert_eq!(comp.source, "order");
-        assert_eq!(comp.target, "order-line");
+        assert_eq!(comp.source, "a/order");
+        assert_eq!(comp.target, "a/order-line");
         assert_eq!(comp.to_end.role.as_deref(), Some("lines"));
         assert!(!comp.bidirectional);
     }
