@@ -1,5 +1,5 @@
 import type { Bundle } from "../state/model";
-import { TEMPLATES } from "@uaml/core/templates";
+import { TEMPLATES } from "@waml/core/templates";
 
 // Deep-link: `?template=<id>` opens a named built-in template straight onto the
 // canvas. It's the CTA target for the blog template gallery, launch emails and

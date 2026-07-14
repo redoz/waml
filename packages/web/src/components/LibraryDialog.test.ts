@@ -1,6 +1,6 @@
 import { test, expect, vi } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/svelte";
-import { DATASET_TEMPLATES } from "@uaml/core/templates";
+import { DATASET_TEMPLATES } from "@waml/core/templates";
 import LibraryDialog from "./LibraryDialog.svelte";
 
 test("Use rolls out the first template", async () => {

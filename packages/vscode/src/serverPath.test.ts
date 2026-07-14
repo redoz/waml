@@ -20,49 +20,49 @@ function makeCtx(overrides: Partial<ServerPathContext> = {}): ServerPathContext 
 }
 
 describe("resolveServerPath", () => {
-  it("uses UAML_SERVER_PATH when set (runnable when the file exists)", () => {
+  it("uses WAML_SERVER_PATH when set (runnable when the file exists)", () => {
     const r = resolveServerPath(
       makeCtx({
-        env: { UAML_SERVER_PATH: "/tmp/uaml" },
-        fileExists: (p) => p === "/tmp/uaml",
+        env: { WAML_SERVER_PATH: "/tmp/waml" },
+        fileExists: (p) => p === "/tmp/waml",
       }),
     );
     expect(r.source).toBe("env");
-    expect(r.command).toBe("/tmp/uaml");
+    expect(r.command).toBe("/tmp/waml");
     expect(r.runnable).toBe(true);
     expect(r.reason).toBeUndefined();
   });
 
-  it("uses an explicit uaml.serverPath config value", () => {
-    const inspection: ConfigInspection = { defaultValue: "uaml", globalValue: "/opt/uaml" };
+  it("uses an explicit waml.serverPath config value", () => {
+    const inspection: ConfigInspection = { defaultValue: "waml", globalValue: "/opt/waml" };
     const r = resolveServerPath(
       makeCtx({
         configInspection: inspection,
-        fileExists: (p) => p === "/opt/uaml",
+        fileExists: (p) => p === "/opt/waml",
       }),
     );
     expect(r.source).toBe("config");
-    expect(r.command).toBe("/opt/uaml");
+    expect(r.command).toBe("/opt/waml");
     expect(r.runnable).toBe(true);
   });
 
   it("ignores the default config value and falls through to the bundled binary", () => {
     const r = resolveServerPath(
       makeCtx({
-        configInspection: { defaultValue: "uaml" },
+        configInspection: { defaultValue: "waml" },
         platform: "win32",
         fileExists: (p) => p.includes("server"),
       }),
     );
     expect(r.source).toBe("bundled");
-    expect(r.command).toContain("uaml.exe");
+    expect(r.command).toContain("waml.exe");
     expect(r.runnable).toBe(true);
   });
 
   it("returns not-runnable with a reason when nothing is found", () => {
     const r = resolveServerPath(makeCtx());
     expect(r.source).toBe("path");
-    expect(r.command).toBe("uaml");
+    expect(r.command).toBe("waml");
     expect(r.runnable).toBe(false);
     expect(r.reason).toBeTruthy();
   });
@@ -70,19 +70,19 @@ describe("resolveServerPath", () => {
   it("lets env win over an explicit config value", () => {
     const r = resolveServerPath(
       makeCtx({
-        env: { UAML_SERVER_PATH: "/env/uaml" },
-        configInspection: { defaultValue: "uaml", globalValue: "/config/uaml" },
+        env: { WAML_SERVER_PATH: "/env/waml" },
+        configInspection: { defaultValue: "waml", globalValue: "/config/waml" },
         fileExists: () => true,
       }),
     );
     expect(r.source).toBe("env");
-    expect(r.command).toBe("/env/uaml");
+    expect(r.command).toBe("/env/waml");
   });
 });
 
 describe("getServerCommand / setServerCommand", () => {
   it("round-trips the cached command", () => {
-    setServerCommand("/cached/uaml");
-    expect(getServerCommand()).toBe("/cached/uaml");
+    setServerCommand("/cached/waml");
+    expect(getServerCommand()).toBe("/cached/waml");
   });
 });

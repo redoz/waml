@@ -1,6 +1,6 @@
 import { test, expect, vi } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/svelte";
-import type { ModelEdge, ModelNode } from "@uaml/okf";
+import type { ModelEdge, ModelNode } from "@waml/okf";
 import RelationshipInspector from "./RelationshipInspector.svelte";
 
 const node = (key: string, title: string): ModelNode =>

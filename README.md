@@ -8,11 +8,11 @@ In-browser canvas for sketching data models, reading/writing [Open Knowledge For
 
 ```bash
 pnpm install
-pnpm --filter @uaml/okf build   # web consumes okf's built dist — build okf first
-pnpm --filter @uaml/web dev     # Vite dev server on :5173
+pnpm --filter @waml/okf build   # web consumes okf's built dist — build okf first
+pnpm --filter @waml/web dev     # Vite dev server on :5173
 ```
 
-pnpm monorepo: `packages/okf`, `packages/core`, `packages/web` (the SvelteFlow canvas), `packages/wasm`, `packages/vscode`, plus a Rust workspace under `crates/` for the UAML language core/CLI/LSP.
+pnpm monorepo: `packages/okf`, `packages/core`, `packages/web` (the SvelteFlow canvas), `packages/wasm`, `packages/vscode`, plus a Rust workspace under `crates/` for the WAML language core/CLI/LSP.
 
 ## License
 

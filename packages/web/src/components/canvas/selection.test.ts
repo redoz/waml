@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll } from "vitest";
-import { initWasm } from "@uaml/wasm";
-import { createModelStore } from "@uaml/core/state/model";
+import { initWasm } from "@waml/wasm";
+import { createModelStore } from "@waml/core/state/model";
 import {
   EMPTY_SELECTION,
   isSelectionEmpty,

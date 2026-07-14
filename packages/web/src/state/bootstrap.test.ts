@@ -1,7 +1,7 @@
 import { test, expect, beforeAll, beforeEach, vi } from "vitest";
-import { initWasm } from "@uaml/wasm";
-import { persistBundle } from "@uaml/core/state/persist";
-import { createModelStore } from "@uaml/core/state/model";
+import { initWasm } from "@waml/wasm";
+import { persistBundle } from "@waml/core/state/persist";
+import { createModelStore } from "@waml/core/state/model";
 
 beforeAll(async () => {
   await initWasm();
@@ -16,7 +16,7 @@ beforeEach(() => {
 // before loading the app). `vi.resetModules()` gives each test a fresh bootstrap +
 // okf instance, so initialize that fresh wasm module before importing bootstrap.
 async function loadBootstrap() {
-  const wasm = await import("@uaml/wasm");
+  const wasm = await import("@waml/wasm");
   await wasm.initWasm();
   return import("./bootstrap");
 }

@@ -2,10 +2,10 @@
   // The navigator sheet — a prop-driven presentational tree grown from the
   // TopBar switcher. All mutations are callbacks so it unit-tests like TopBar.
   import { Check, ChevronDown, Folder, FileText, StickyNote, Box } from "lucide-svelte";
-  import { buildNavTree, packageOf, type NavRow, type NavKind } from "@uaml/core/nav/tree";
-  import { filterNav, matchSpan } from "@uaml/core/nav/search";
+  import { buildNavTree, packageOf, type NavRow, type NavKind } from "@waml/core/nav/tree";
+  import { filterNav, matchSpan } from "@waml/core/nav/search";
   import { GripVertical } from "lucide-svelte";
-  import type { ModelGraph } from "@uaml/okf";
+  import type { ModelGraph } from "@waml/okf";
 
   let {
     graph,

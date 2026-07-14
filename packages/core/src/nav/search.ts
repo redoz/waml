@@ -1,4 +1,4 @@
-import type { ModelGraph } from "@uaml/okf";
+import type { ModelGraph } from "@waml/okf";
 import { buildNavTree, type NavRow } from "./tree";
 
 export interface SearchResult {

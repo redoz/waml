@@ -1,5 +1,5 @@
 import { gzipSync, gunzipSync, strToU8, strFromU8 } from "fflate";
-import { split_bundle } from "@uaml/wasm";
+import { split_bundle } from "@waml/wasm";
 import type { Bundle } from "../state/model";
 
 // Shareable model links. The whole bundle is gzip-compressed and packed into the
@@ -10,7 +10,7 @@ import type { Bundle } from "../state/model";
 //
 // The payload is the bundle joined into the multi-document string that the Rust
 // core's `split_bundle` reads back: each doc is preceded by an
-// `<!-- path/slug.md -->` marker line (see `crates/uaml/src/parse.rs::split_bundle`).
+// `<!-- path/slug.md -->` marker line (see `crates/waml/src/parse.rs::split_bundle`).
 
 const HASH_KEY = "m";
 const NAME_KEY = "n";

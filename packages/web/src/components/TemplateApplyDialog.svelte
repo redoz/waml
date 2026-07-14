@@ -3,7 +3,7 @@
   // Shown when "Use" is clicked on a template while the canvas already has
   // content. Mirrors the OKF import dialogs: choose Replace vs Merge
   // and see how many nodes and relationships will be added before committing.
-  import { build_model } from "@uaml/wasm";
+  import { build_model } from "@waml/wasm";
 
   type Bundle = [string, string][];
 

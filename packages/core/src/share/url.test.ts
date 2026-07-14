@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll } from "vitest";
-import { initWasm } from "@uaml/wasm";
+import { initWasm } from "@waml/wasm";
 import { encodeModel, decodeModel, buildShareUrl, readSharedName, SHARE_URL_HASH_CEILING } from "./url";
 import { ordersDomainBundle } from "../templates/orders-domain.bundle";
 import type { Bundle } from "../state/model";

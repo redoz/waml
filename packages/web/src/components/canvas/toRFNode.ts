@@ -1,5 +1,5 @@
 import type { Node } from "@xyflow/svelte";
-import type { ModelNode, DiagramDisplay } from "@uaml/okf";
+import type { ModelNode, DiagramDisplay } from "@waml/okf";
 import type { OkfNodeData } from "./nodes/types";
 
 // NB (SvelteFlow-specific): clone `position` — SvelteFlow mutates node.position in

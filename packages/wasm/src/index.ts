@@ -1,4 +1,4 @@
-// Frontend-facing entry to the Rust UAML core, compiled to wasm and inlined
+// Frontend-facing entry to the Rust WAML core, compiled to wasm and inlined
 // (no runtime .wasm fetch). Call `initWasm()` once before any other export.
 import init, {
   apply_ops,
@@ -10,7 +10,7 @@ import init, {
   solve as solveRaw,
   split_bundle,
   validate,
-} from "./generated/uaml_wasm.js";
+} from "./generated/waml_wasm.js";
 import { wasmBytes } from "./generated/wasm-inline";
 
 // Types generated from the Rust structs by Tsify (single source of truth).
@@ -26,9 +26,9 @@ export type {
   DiagCode,
   Severity,
   SolveResult,
-} from "./generated/uaml_wasm.js";
+} from "./generated/waml_wasm.js";
 
-import type { Size, SolveConfig, SolveResult } from "./generated/uaml_wasm.js";
+import type { Size, SolveConfig, SolveResult } from "./generated/waml_wasm.js";
 
 let ready: Promise<void> | undefined;
 

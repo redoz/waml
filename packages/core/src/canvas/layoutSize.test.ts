@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
-import type { ModelNode } from "@uaml/okf";
-import { DEFAULT_DISPLAY } from "@uaml/okf";
+import type { ModelNode } from "@waml/okf";
+import { DEFAULT_DISPLAY } from "@waml/okf";
 import { erdAwareNodeSize } from "./layoutSize";
 
 const mk = (fields: number): ModelNode => ({

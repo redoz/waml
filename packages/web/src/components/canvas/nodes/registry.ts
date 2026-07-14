@@ -1,5 +1,5 @@
 import type { Component } from "svelte";
-import { splitType } from "@uaml/okf";
+import { splitType } from "@waml/okf";
 import type { OkfNodeData } from "./types";
 import GenericNode from "./GenericNode.svelte";
 import UmlClassNode from "./UmlClassNode.svelte";

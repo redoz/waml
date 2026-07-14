@@ -1,6 +1,6 @@
 import { test, expect, vi } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/svelte";
-import type { Attribute } from "@uaml/okf";
+import type { Attribute } from "@waml/okf";
 import AttributeEditor from "./AttributeEditor.svelte";
 
 const attrs: Attribute[] = [{ name: "id", type: { name: "String" }, multiplicity: "1" }];

@@ -2,7 +2,7 @@
 // it against the bundle. NO wasm calls here — the store (Task 3) feeds these ops
 // to `apply_ops` and re-derives. This is where the array diffing lives.
 //
-// Wire tag → Rust variant map (crates/uaml-ops-dto/src/lib.rs, #[serde(tag="op")]):
+// Wire tag → Rust variant map (crates/waml-ops-dto/src/lib.rs, #[serde(tag="op")]):
 //   "node.new"  → NodeNew   { slug, ty, title, stereotype[], desc?, abstract? }
 //   "node.set"  → NodeSet   { slug, title?, desc?, stereotype?, abstract?, ty? }
 //   "node.rm"   → NodeRm    { slug, cascade? }
@@ -29,8 +29,8 @@
 //    Changing an edge's kind or endpoints is not expressible as `rel.set` (they
 //    are the selector), so it becomes `rel.rm` + `rel.add`. Only ends/name changes
 //    on the same triple use `rel.set`. Canvas-only fields (handles) emit nothing.
-import type { ModelNode, ModelEdge, Attribute, RelEnd, RelationshipKind, Visibility } from "@uaml/okf";
-import { ENDED_KINDS } from "@uaml/okf";
+import type { ModelNode, ModelEdge, Attribute, RelEnd, RelationshipKind, Visibility } from "@waml/okf";
+import { ENDED_KINDS } from "@waml/okf";
 
 type EdgeName = string | { ref: string };
 

@@ -2,7 +2,7 @@
   "version": "0.2.0",
   "configurations": [
     {
-      "name": "Run UAML Extension",
+      "name": "Run WAML Extension",
       "type": "extensionHost",
       "request": "launch",
       "args": [
@@ -11,11 +11,11 @@
       ],
       "outFiles": ["${workspaceFolder}/dist/**/*.js"],
       "env": {
-        "UAML_SERVER_PATH": "${workspaceFolder}/../../target/debug/uaml"
+        "WAML_SERVER_PATH": "${workspaceFolder}/../../target/debug/waml"
       },
       "windows": {
         "env": {
-          "UAML_SERVER_PATH": "${workspaceFolder}/../../target/debug/uaml.exe"
+          "WAML_SERVER_PATH": "${workspaceFolder}/../../target/debug/waml.exe"
         }
       }
     }

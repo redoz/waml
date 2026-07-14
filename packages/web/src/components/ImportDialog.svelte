@@ -1,8 +1,8 @@
 <script lang="ts">
   // Mirrors packages/web/src/components/ImportDialog.tsx.
   import { Copy, Check } from "lucide-svelte";
-  import { parsePastedMarkdown, zipToFiles } from "@uaml/core/okf/io";
-  import { build_model } from "@uaml/wasm";
+  import { parsePastedMarkdown, zipToFiles } from "@waml/core/okf/io";
+  import { build_model } from "@waml/wasm";
 
   type Bundle = [string, string][];
 

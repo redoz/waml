@@ -1,5 +1,5 @@
 <script lang="ts">
-  import type { ModelNode, ModelEdge, Diagram } from "@uaml/okf";
+  import type { ModelNode, ModelEdge, Diagram } from "@waml/okf";
 
   let { nodeKey, nodes, edges, members, diagrams, onNavigate }: {
     nodeKey: string;

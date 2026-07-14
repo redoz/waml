@@ -1,6 +1,6 @@
 // Parity vitest for `solve()`: proves the JS wasm bridge reproduces the
-// Rust golden layout from `crates/uaml/tests/solver_golden.rs` (also
-// exercised natively in `crates/uaml-wasm/tests/native.rs`).
+// Rust golden layout from `crates/waml/tests/solver_golden.rs` (also
+// exercised natively in `crates/waml-wasm/tests/native.rs`).
 import { beforeAll, describe, expect, it } from "vitest";
 import { initWasm, solve } from "./index";
 

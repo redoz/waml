@@ -1,7 +1,7 @@
 // Rasterize an SVG string to a PNG Blob for the "Share as image" flow.
 //
 // Pipeline (the spec's recommended, no-new-dependency approach): the diagram SVG
-// — produced by @uaml/core buildCanvasSvg (html-to-image, styles inlined) — is
+// — produced by @waml/core buildCanvasSvg (html-to-image, styles inlined) — is
 // loaded into an <img> from a data URL, drawn onto an <canvas>, and read back via
 // canvas.toBlob(…, "image/png").
 //

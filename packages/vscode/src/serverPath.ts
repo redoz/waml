@@ -32,10 +32,10 @@ export interface ServerPathContext {
 }
 
 export function resolveServerPath(ctx: ServerPathContext): ServerPathResolution {
-  const exeName = ctx.platform === "win32" ? "uaml.exe" : "uaml";
+  const exeName = ctx.platform === "win32" ? "waml.exe" : "waml";
 
-  // 1. UAML_SERVER_PATH env var — the F5 dev override. Env wins.
-  const envPath = ctx.env.UAML_SERVER_PATH?.trim();
+  // 1. WAML_SERVER_PATH env var — the F5 dev override. Env wins.
+  const envPath = ctx.env.WAML_SERVER_PATH?.trim();
   if (envPath) {
     const runnable = ctx.fileExists(envPath);
     return {
@@ -44,11 +44,11 @@ export function resolveServerPath(ctx: ServerPathContext): ServerPathResolution 
       runnable,
       reason: runnable
         ? undefined
-        : `UAML_SERVER_PATH points at "${envPath}" but no file exists there. Run \`cargo build\` or fix the path, then reload the window.`,
+        : `WAML_SERVER_PATH points at "${envPath}" but no file exists there. Run \`cargo build\` or fix the path, then reload the window.`,
     };
   }
 
-  // 2. Explicit uaml.serverPath config (ignore the "uaml" default value).
+  // 2. Explicit waml.serverPath config (ignore the "waml" default value).
   const insp = ctx.configInspection;
   const explicit = insp?.workspaceFolderValue ?? insp?.workspaceValue ?? insp?.globalValue;
   if (explicit !== undefined && explicit.trim() !== "") {
@@ -59,25 +59,25 @@ export function resolveServerPath(ctx: ServerPathContext): ServerPathResolution 
       runnable,
       reason: runnable
         ? undefined
-        : `uaml.serverPath is set to "${explicit}" but no file exists there. Fix the setting, then reload the window.`,
+        : `waml.serverPath is set to "${explicit}" but no file exists there. Fix the setting, then reload the window.`,
     };
   }
 
-  // 3. Bundled binary at <extensionPath>/server/uaml[.exe] (dead until step 2).
+  // 3. Bundled binary at <extensionPath>/server/waml[.exe] (dead until step 2).
   const bundled = join(ctx.extensionPath, "server", exeName);
   if (ctx.fileExists(bundled)) {
     return { command: bundled, source: "bundled", runnable: true };
   }
 
-  // 4. Bare "uaml" on PATH — final fallback.
-  const runnable = ctx.probeCommand("uaml");
+  // 4. Bare "waml" on PATH — final fallback.
+  const runnable = ctx.probeCommand("waml");
   return {
-    command: "uaml",
+    command: "waml",
     source: "path",
     runnable,
     reason: runnable
       ? undefined
-      : 'Could not find the "uaml" binary on your PATH. Set uaml.serverPath to its full path, install uaml, or run `cargo build` and launch via the provided F5 config.',
+      : 'Could not find the "waml" binary on your PATH. Set waml.serverPath to its full path, install waml, or run `cargo build` and launch via the provided F5 config.',
   };
 }
 

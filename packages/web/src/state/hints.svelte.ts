@@ -1,4 +1,4 @@
-const KEY = "uaml:show-shortcuts";
+const KEY = "waml:show-shortcuts";
 
 function load(): boolean {
   try {

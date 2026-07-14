@@ -1,5 +1,5 @@
 {
-  "name": "@uaml/wasm",
+  "name": "@waml/wasm",
   "version": "0.0.0",
   "type": "module",
   "license": "Apache-2.0",

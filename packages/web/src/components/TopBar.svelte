@@ -2,8 +2,8 @@
   // Mirrors packages/web/src/components/TopBar.tsx.
   import { Download, Upload, ChevronDown, FileText, Image as ImageIcon, Share2 } from "lucide-svelte";
   import { LibraryIcon } from "../lib/icons";
-  import type { Diagram, ModelGraph } from "@uaml/okf";
-  import type { NavKind } from "@uaml/core/nav/tree";
+  import type { Diagram, ModelGraph } from "@waml/okf";
+  import type { NavKind } from "@waml/core/nav/tree";
   import Navigator from "./Navigator.svelte";
 
   // First-visit onboarding hint pointing at the Library. Persisted so it only
@@ -128,17 +128,17 @@
 </script>
 
 <div class="flex items-center gap-3 px-4 py-[9px] bg-white border-b border-[#d8dee8] flex-shrink-0 z-30">
-  <!-- Brand — UAML wordmark links to the GitHub repo -->
+  <!-- Brand — WAML wordmark links to the GitHub repo -->
   <div class="flex items-center gap-[9px] font-[650] text-[15px] tracking-[-0.2px]">
     <a
-      href="https://github.com/redoz/uaml"
+      href="https://github.com/redoz/waml"
       target="_blank"
       rel="noreferrer"
-      title="UAML — github.com/redoz/uaml"
-      aria-label="UAML — github.com/redoz/uaml"
+      title="WAML — github.com/redoz/waml"
+      aria-label="WAML — github.com/redoz/waml"
       class="flex items-center rounded-md transition-opacity hover:opacity-80"
     >
-      <!-- UAML wordmark. Inlined (matching the previous pattern) and filled with
+      <!-- WAML wordmark. Inlined (matching the previous pattern) and filled with
            currentColor so it inherits the brand text color and dims on hover. -->
       <svg
         viewBox="-20 -20 440 140"
@@ -146,7 +146,7 @@
         width="75"
         height="24"
         role="img"
-        aria-label="UAML"
+        aria-label="WAML"
       >
         <g fill="currentColor">
           <!-- U -->

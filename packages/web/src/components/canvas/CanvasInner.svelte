@@ -55,17 +55,17 @@ import ShareToast from "../ShareToast.svelte";
     ALL_DIAGRAM_KEY,
     loadActiveDiagramKey,
     persistActiveDiagramKey,
-  } from "@uaml/core/state/diagrams";
-  import { slugify, type DiagramDisplay } from "@uaml/okf";
-  import { getProfile } from "@uaml/core/profiles";
-  import { loadModelName, persistModelName, DEFAULT_MODEL_NAME, templateModelName } from "@uaml/core/state/modelName";
-  import { persistBundle } from "@uaml/core/state/persist";
-  import { bundleToDownloadFiles, downloadBundle } from "@uaml/core/okf/io";
-  import { buildShareUrl } from "@uaml/core/share/url";
-  import { exportCanvasSvg, buildCanvasSvg } from "@uaml/core/share/exportImage";
+  } from "@waml/core/state/diagrams";
+  import { resolveDisplay, slugify, type DiagramDisplay } from "@waml/okf";
+  import { getProfile } from "@waml/core/profiles";
+  import { loadModelName, persistModelName, DEFAULT_MODEL_NAME, templateModelName } from "@waml/core/state/modelName";
+  import { persistBundle } from "@waml/core/state/persist";
+  import { bundleToDownloadFiles, downloadBundle } from "@waml/core/okf/io";
+  import { buildShareUrl } from "@waml/core/share/url";
+  import { exportCanvasSvg, buildCanvasSvg } from "@waml/core/share/exportImage";
   import { svgToPngBlob } from "../../share/rasterize";
-  import { mergeBundles } from "@uaml/core/sync/merge";
-  import type { Bundle } from "@uaml/core/state/model";
+  import { mergeBundles } from "@waml/core/sync/merge";
+  import type { Bundle } from "@waml/core/state/model";
 
   // ── State (one $state per React useState) ───────────────────────────────────
   // Full multi-selection (node keys + model edge ids). SvelteFlow owns the live
@@ -395,7 +395,7 @@ import ShareToast from "../ShareToast.svelte";
     clearCanvas();
   }
 
-  // Export the canvas as an SVG (whole model, UAML watermark). Uses the live RF
+  // Export the canvas as an SVG (whole model, WAML watermark). Uses the live RF
   // node list (measured sizes) to frame the export. exportCanvasSvg's 3rd arg
   // (viewportSelector) was made required by Plan 1; Svelte passes the
   // `.svelte-flow__` viewport class.
@@ -670,7 +670,7 @@ import ShareToast from "../ShareToast.svelte";
     <EdgeFlag
       label="Feedback"
       offset={62}
-      href="https://github.com/redoz/uaml/issues/new"
+      href="https://github.com/redoz/waml/issues/new"
     >
       {#snippet icon()}<MessageSquare size={16} />{/snippet}
     </EdgeFlag>

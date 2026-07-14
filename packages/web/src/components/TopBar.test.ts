@@ -1,7 +1,7 @@
 import { test, expect, vi } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/svelte";
 import TopBar from "./TopBar.svelte";
-import type { ModelGraph } from "@uaml/okf";
+import type { ModelGraph } from "@waml/okf";
 
 const diagram = (key: string, title: string) => ({
   key,
@@ -92,23 +92,23 @@ test("export button disabled when exportDisabled", () => {
   ).toBe(true);
 });
 
-test("renders the UAML wordmark and keeps the Model Canvas label", () => {
+test("renders the WAML wordmark and keeps the Model Canvas label", () => {
   const { container } = render(TopBar, { props: {} });
-  // Wordmark SVG exposes itself as an accessible image named "UAML".
-  const wordmark = screen.getByRole("img", { name: "UAML" });
+  // Wordmark SVG exposes itself as an accessible image named "WAML".
+  const wordmark = screen.getByRole("img", { name: "WAML" });
   expect(wordmark.tagName.toLowerCase()).toBe("svg");
   expect(container.textContent).toContain("Model Canvas");
 });
 
-test("brand anchor links to the UAML GitHub repo", () => {
+test("brand anchor links to the WAML GitHub repo", () => {
   render(TopBar, { props: {} });
   const link = screen.getByRole("link");
-  expect(link.getAttribute("href")).toBe("https://github.com/redoz/uaml");
+  expect(link.getAttribute("href")).toBe("https://github.com/redoz/waml");
   // External-link hygiene preserved.
   expect(link.getAttribute("target")).toBe("_blank");
   expect(link.getAttribute("rel")).toBe("noreferrer");
-  // Accessible name mentions UAML, not the old OWOX brand.
-  expect(link.getAttribute("aria-label")).toContain("UAML");
+  // Accessible name mentions WAML, not the old OWOX brand.
+  expect(link.getAttribute("aria-label")).toContain("WAML");
   expect(link.getAttribute("aria-label")).not.toMatch(/owox/i);
 });
 
