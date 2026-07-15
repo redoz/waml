@@ -238,7 +238,7 @@ export interface Attribute {
     name: string;
     type: TypeRef;
     multiplicity: string;
-    visibility?: string;
+    visibility?: "+" | "-" | "#" | "~";
     description?: string;
 }
 
