@@ -18,7 +18,6 @@
 
   import { model, store } from "../../state/model.svelte";
   import { sharedModelName, isFirstVisit, onStoreError } from "../../state/bootstrap";
-  import { displaySettings } from "../../state/displaySettings.svelte";
   import { runDagreLayout, NODE_W, NODE_H } from "../../canvas/layout";
   import { toRFNode } from "./toRFNode";
   import { nodeTypes, edgeTypes } from "./flowTypes";
@@ -166,7 +165,7 @@ import ShareToast from "../ShareToast.svelte";
   };
   // The active diagram's resolved per-diagram render settings (absent ⇒ defaults).
   // Replaces the old global viewMode/relLabelMode browser preferences.
-  const activeDisplay = $derived(displaySettings.resolve(activeDiagram.key, activeDiagram.display));
+  const activeDisplay = $derived(resolveDisplay(activeDiagram.display));
   const memberSet = $derived(new Set(activeDiagram.members));
   const imageName = $derived(modelName.trim() || "model");
   const canvasClass = $derived(
@@ -339,13 +338,13 @@ import ShareToast from "../ShareToast.svelte";
     tool = t;
   }
 
-  // Merge a single-field edit into the active diagram's session-level display.
-  // Held in memory (displaySettings), not the model: `store.updateDiagram` is a
-  // no-op until Stage 1c and the OKF wire carries no `display` block. Works
-  // identically for the implicit "All" diagram and real diagrams — no diagram
-  // creation is forced (spec lines 108-112).
+  // Merge the single-field panel patch onto the current resolved display and
+  // persist the full display through the store. On the implicit "All" diagram
+  // (no backing doc) store.updateDiagram is a documented no-op.
   function handleDisplayChange(p: Partial<DiagramDisplay>) {
-    displaySettings.patch(activeDiagram.key, p);
+    store.updateDiagram(activeDiagram.key, {
+      display: resolveDisplay({ ...activeDiagram.display, ...p }),
+    });
   }
 
   // ── Keyboard delete ────────────────────────────────────────────────────────

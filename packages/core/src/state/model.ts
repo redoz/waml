@@ -25,6 +25,7 @@ import {
 } from "./overlay";
 import {
   updateNodeOps,
+  updateDiagramOps,
   nodeNewOps,
   nodeRmOps,
   edgeAddOps,
@@ -268,8 +269,13 @@ export function createModelStore(initial?: Bundle, opts: CreateStoreOptions = {}
     addDiagramFromMembers(title: string, _members: string[]): Diagram {
       return { key: `d-${title}`, title, profile: "uml-domain", members: [] };
     },
-    updateDiagram(_key: string, _patch: Partial<Diagram>): void {
-      /* no-op in 1b */
+    updateDiagram(key: string, patch: Partial<Diagram>): void {
+      // graph().diagrams holds only REAL diagram docs; the implicit "All" diagram
+      // is synthesized downstream (effectiveDiagrams) and never appears here, so
+      // the !prev guard makes edits on it a silent no-op (documented limitation).
+      const prev = graph().diagrams.find((d) => d.key === key);
+      if (!prev) return;
+      run(updateDiagramOps(prev, patch));
     },
     removeDiagram(_key: string): void {
       /* no-op in 1b */

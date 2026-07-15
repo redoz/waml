@@ -29,15 +29,15 @@
 //    Changing an edge's kind or endpoints is not expressible as `rel.set` (they
 //    are the selector), so it becomes `rel.rm` + `rel.add`. Only ends/name changes
 //    on the same triple use `rel.set`. Canvas-only fields (handles) emit nothing.
-import type { ModelNode, ModelEdge, Attribute, RelEnd, RelationshipKind, Visibility } from "@waml/okf";
-import { ENDED_KINDS } from "@waml/okf";
+import type { ModelNode, ModelEdge, Attribute, RelEnd, RelationshipKind, Visibility, Diagram, DiagramDisplay } from "@waml/okf";
+import { ENDED_KINDS, resolveDisplay } from "@waml/okf";
 // `OpDto` (and its nested `DisplayDto`) is generated from the Rust
 // `waml-ops-dto` crate via Tsify (single source of truth); see
 // crates/waml-ops-dto/src/lib.rs. The generated union is a superset of the
 // old hand-written one here (adds the `diagram.set` variant and an optional
 // `v?: number` version tag on every variant), so existing narrowings by `op`
 // tag remain valid.
-import type { OpDto } from "@waml/wasm";
+import type { OpDto, DisplayDto } from "@waml/wasm";
 export type { OpDto };
 
 type EdgeName = string | { ref: string };
@@ -213,6 +213,37 @@ export function updateNodeOps(prev: ModelNode, patch: Partial<ModelNode>): OpDto
   if (patch.attributes) ops.push(...attrDiffOps(prev.key, prev.attributes, patch.attributes));
   if (patch.values) ops.push(...valueDiffOps(prev.key, prev.values ?? [], patch.values));
   return ops;
+}
+
+// ── diagrams ─────────────────────────────────────────────────────────────────
+
+/** Full resolved DiagramDisplay → wire DisplayDto. Serializes the color record to a
+ *  "name:#hex" list and passes maxAttributes/stereotypeFilter through as-is (undefined
+ *  ⇒ omitted key ⇒ unlimited / show-all server-side). Resolves internally so a Partial
+ *  input is safe. */
+function toDisplayDto(display: Partial<DiagramDisplay>): DisplayDto {
+  const d = resolveDisplay(display);
+  return {
+    showAttributes: d.showAttributes,
+    attributeDetail: d.attributeDetail,
+    showAttributeVisibility: d.showAttributeVisibility,
+    showAttributeMultiplicity: d.showAttributeMultiplicity,
+    ...(d.maxAttributes !== undefined ? { maxAttributes: d.maxAttributes } : {}),
+    associationLabels: d.associationLabels,
+    emphasizeMultiplicity: d.emphasizeMultiplicity,
+    showStereotype: d.showStereotype,
+    ...(d.stereotypeFilter !== undefined ? { stereotypeFilter: d.stereotypeFilter } : {}),
+    stereotypeColors: Object.entries(d.stereotypeColors).map(([k, v]) => `${k}:${v}`),
+  };
+}
+
+/** Scalar title/description + whole-block display. Emits a single diagram.set or []. */
+export function updateDiagramOps(prev: Diagram, patch: Partial<Diagram>): OpDto[] {
+  const set: Omit<Extract<OpDto, { op: "diagram.set" }>, "op" | "key"> = {};
+  if (patch.title !== undefined && patch.title !== prev.title) set.title = patch.title;
+  if (patch.description !== undefined && patch.description !== prev.description) set.desc = patch.description;
+  if (patch.display !== undefined) set.display = toDisplayDto(patch.display);
+  return Object.keys(set).length ? [{ op: "diagram.set", key: prev.key, ...set }] : [];
 }
 
 // ── edges ────────────────────────────────────────────────────────────────────

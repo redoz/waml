@@ -9,6 +9,7 @@ import {
   attrDiffOps,
   valueDiffOps,
   updateNodeOps,
+  updateDiagramOps,
   edgeAddOps,
   edgeSetOps,
   edgeRmOps,
@@ -19,7 +20,7 @@ import {
   sortPackageOps,
   type OpDto,
 } from "./ops-adapter";
-import type { ModelGraph, Attribute } from "@waml/okf";
+import { resolveDisplay, type ModelGraph, type Attribute, type Diagram } from "@waml/okf";
 
 type Bundle = [string, string][];
 
@@ -229,5 +230,38 @@ describe("package op builders", () => {
       op: "node.new",
       dir: "sales",
     });
+  });
+});
+
+describe("updateDiagramOps", () => {
+  const baseDiagram: Diagram = { key: "d", title: "D", profile: "uml-domain", members: [] };
+
+  it("emits title-only diagram.set for title change", () => {
+    expect(updateDiagramOps(baseDiagram, { title: "New" })).toEqual([{ op: "diagram.set", key: "d", title: "New" }]);
+  });
+
+  it("emits desc-only diagram.set for description change", () => {
+    expect(updateDiagramOps(baseDiagram, { description: "Notes" })).toEqual([{ op: "diagram.set", key: "d", desc: "Notes" }]);
+  });
+
+  it("emits [] when nothing changed", () => {
+    expect(updateDiagramOps(baseDiagram, { title: "D" })).toEqual([]);
+  });
+
+  it("emits a full display DTO, colors as a name:#hex list, undefined nullable fields omitted", () => {
+    const display = resolveDisplay({ showAttributes: false, stereotypeColors: { entity: "#ffedd5" } });
+    const ops = updateDiagramOps(baseDiagram, { display });
+    expect(ops).toHaveLength(1);
+    const dto = (ops[0] as unknown as { display: Record<string, unknown> }).display;
+    expect(dto.showAttributes).toBe(false);
+    expect(dto.stereotypeColors).toEqual(["entity:#ffedd5"]);
+    expect("maxAttributes" in dto).toBe(false);
+    expect("stereotypeFilter" in dto).toBe(false);
+  });
+
+  it("passes stereotypeFilter [] (show none) through as an empty array", () => {
+    const display = resolveDisplay({ stereotypeFilter: [] });
+    const dto = (updateDiagramOps(baseDiagram, { display })[0] as { display: { stereotypeFilter?: string[] } }).display;
+    expect(dto.stereotypeFilter).toEqual([]);
   });
 });

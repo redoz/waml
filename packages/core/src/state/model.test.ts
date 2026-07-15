@@ -1,6 +1,8 @@
 import { describe, it, expect, beforeAll } from "vitest";
 import { initWasm } from "@waml/wasm";
 import { createModelStore, type Bundle } from "./model";
+import { ALL_DIAGRAM_KEY } from "./diagrams";
+import { resolveDisplay } from "@waml/okf";
 
 beforeAll(async () => {
   await initWasm();
@@ -131,5 +133,28 @@ describe("package mutators + ghost state", () => {
     const store = createModelStore([["sales/order.md", "---\ntype: uml.Class\ntitle: Order\n---\n# Order\n"]]);
     store.moveNode("order", "billing");
     expect(store.getBundle().some(([p]) => p === "billing/order.md")).toBe(true);
+  });
+});
+
+describe("updateDiagram", () => {
+  it("updateDiagram persists display on a real diagram doc", () => {
+    const bundle: Bundle = [
+      ["order.md", "---\ntype: uml.Class\ntitle: Order\n---\n# Order\n"],
+      ["dia.md", "---\ntype: Diagram\ntitle: D\nprofile: uml-domain\n---\n# D\n\n## Members\n- [Order](./order.md)\n"],
+    ];
+    const store = createModelStore(bundle);
+    const key = store.get().diagrams.find((d) => d.title === "D")!.key;
+    store.updateDiagram(key, { display: resolveDisplay({ showAttributes: false }) });
+    const after = store.get().diagrams.find((d) => d.key === key)!;
+    expect(after.display?.showAttributes).toBe(false);
+  });
+
+  it("updateDiagram on the implicit All diagram is a silent no-op", () => {
+    const store = createModelStore([["order.md", "---\ntype: uml.Class\ntitle: Order\n---\n# Order\n"]]);
+    const before = store.get().diagrams; // [] — no authored Diagram docs; "All" is synthesized downstream, not here
+    store.updateDiagram(ALL_DIAGRAM_KEY, { display: resolveDisplay({ showAttributes: false }) });
+    const after = store.get().diagrams;
+    expect(after).toHaveLength(0); // nothing was persisted
+    expect(after).toEqual(before);
   });
 });
