@@ -143,6 +143,26 @@ fn flow_doc_json_matches_ts_field_names() {
 }
 
 #[test]
+fn sequence_doc_json_matches_ts_field_names() {
+    let b = vec![
+        ("s/order.md".to_string(), "---\ntype: uml.Class\ntitle: Order\n---\n# Order\n".to_string()),
+        ("s/seq.md".to_string(),
+         "---\ntype: uml.Sequence\ntitle: S\n---\n# S\n\n## Lifelines\n- [Order](./order.md) as order\n\n## Messages\n- order calls order: `tick()`\n- opt\n  - when `ready`\n    - order sends order: `go()`\n".to_string()),
+    ];
+    let m = build_model(&b);
+    let v = serde_json::to_value(&m).unwrap();
+    let s = &v["interactions"][0];
+    assert_eq!(s["lifelines"][0]["ref"], "s/order");
+    assert_eq!(s["lifelines"][0]["alias"], "order");
+    assert_eq!(s["messages"][0]["item"], "message");
+    assert_eq!(s["messages"][0]["verb"], "calls");
+    assert_eq!(s["messages"][0]["signature"], "tick()");
+    assert_eq!(s["messages"][1]["item"], "fragment");
+    assert_eq!(s["messages"][1]["kind"], "opt");
+    assert_eq!(s["messages"][1]["operands"][0]["guard"], "ready");
+}
+
+#[test]
 fn diagnostic_serializes_with_kebab_code_and_lowercase_severity() {
     let d = Diagnostic::new(DiagCode::UnresolvedTarget, "gone", "a.md", 3);
     let v = serde_json::to_value(&d).unwrap();

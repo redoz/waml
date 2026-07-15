@@ -11,7 +11,7 @@ use std::collections::{HashMap, HashSet};
 
 use crate::model::{
     Attribute, BehaviorKind, ClassifierType, Diagram, DiagramDisplay, DiagramGroup, Edge, FlowDoc,
-    FlowEdge, FlowFlavor, FlowNode, Model, Node,
+    FlowEdge, FlowFlavor, FlowNode, Lifeline, Model, Node, SeqItem, SeqOperand, SequenceDoc,
 };
 
 struct Head {
@@ -666,8 +666,9 @@ pub fn build_model(bundle: &[(String, String)]) -> Model {
     let (path, packages) = build_packages(&docs, &indexes);
 
     let flows = build_flows(&parsed, &keyset);
+    let interactions = build_interactions(&parsed, &keyset);
 
-    Model { nodes, edges, diagrams, path, packages, flows, ..Default::default() }
+    Model { nodes, edges, diagrams, path, packages, flows, interactions }
 }
 
 /// Resolve a frontmatter `describes: [T](./t.md)` link against the classifier keyset.
@@ -764,6 +765,84 @@ fn build_flows(parsed: &[ParsedDoc], keyset: &HashSet<&str>) -> Vec<FlowDoc> {
             describes: resolve_describes(p, keyset),
             nodes,
             edges,
+        });
+    }
+    out
+}
+
+/// Scan all parsed docs for `uml.Sequence` behavior docs and resolve their
+/// `## Lifelines`/`## Messages` blocks into a `SequenceDoc`. A participant
+/// token (a message's `from`/`to`) canonicalizes to a lifeline's alias when
+/// declared, else its title; unresolved lifeline links degrade to `ref: None`
+/// (view still renders, `title` is kept verbatim).
+fn build_interactions(parsed: &[ParsedDoc], keyset: &HashSet<&str>) -> Vec<SequenceDoc> {
+    use crate::syntax::SeqItemSyntax;
+    let mut out = Vec::new();
+    for p in parsed {
+        if p.ty != ClassifierType::Behavior(BehaviorKind::Sequence) {
+            continue;
+        }
+        let mut lifelines: Vec<Lifeline> = Vec::new();
+        for s in &p.doc.sections {
+            let Section::Lifelines(lines) = s else { continue };
+            for l in lines.iter().filter_map(Line::parsed) {
+                let resolved = crate::okf::resolve_href(&p.path, &l.link.slug);
+                lifelines.push(Lifeline {
+                    title: l.link.title.clone(),
+                    alias: l.alias.clone(),
+                    ref_: keyset.contains(resolved.as_str()).then_some(resolved),
+                });
+            }
+        }
+        // A participant token (alias, title, or `[Title](./slug.md)` link)
+        // canonicalizes to a lifeline's handle: its alias when declared, else
+        // its title. Unresolved tokens are kept verbatim (validate warns;
+        // render degrades).
+        let handle_of = |token: &str| -> String {
+            let name = match crate::grammar::parse_link_ref(token) {
+                Some(l) => l.title,
+                None => token.to_string(),
+            };
+            for l in &lifelines {
+                if l.alias.as_deref() == Some(name.as_str()) || l.title == name {
+                    return l.alias.clone().unwrap_or_else(|| l.title.clone());
+                }
+            }
+            name
+        };
+        fn items_of(items: &[Line<SeqItemSyntax>], handle_of: &dyn Fn(&str) -> String) -> Vec<SeqItem> {
+            items
+                .iter()
+                .filter_map(Line::parsed)
+                .map(|it| match it {
+                    SeqItemSyntax::Message(m) => SeqItem::Message {
+                        from: handle_of(&m.from),
+                        verb: m.verb,
+                        to: handle_of(&m.to),
+                        signature: m.signature.clone(),
+                    },
+                    SeqItemSyntax::Fragment { kind, operands, .. } => SeqItem::Fragment {
+                        kind: *kind,
+                        operands: operands
+                            .iter()
+                            .map(|o| SeqOperand { guard: o.guard.clone(), items: items_of(&o.items, handle_of) })
+                            .collect(),
+                    },
+                })
+                .collect()
+        }
+        let mut messages = Vec::new();
+        for s in &p.doc.sections {
+            if let Section::Messages(block) = s {
+                messages = items_of(&block.items, &handle_of);
+            }
+        }
+        out.push(SequenceDoc {
+            key: p.id.clone(),
+            title: doc_title(p),
+            describes: resolve_describes(p, keyset),
+            lifelines,
+            messages,
         });
     }
     out
@@ -1326,5 +1405,33 @@ mod model_tests {
         assert_eq!(m.flows.len(), 1, "Sequence doc must not become a flow");
         assert_eq!(m.flows[0].key, "m/onboarding");
         assert!(m.flows.iter().all(|f| f.key != "m/login"));
+    }
+
+    #[test]
+    fn builds_sequence_doc_with_resolved_lifelines_and_nested_messages() {
+        use crate::model::{FragmentKind, MessageVerb, SeqItem};
+        let b = vec![
+            ("s/customer.md".into(), "---\ntype: uml.Actor\ntitle: Customer\n---\n# Customer\n".into()),
+            ("s/order.md".into(), "---\ntype: uml.Class\ntitle: Order\n---\n# Order\n".into()),
+            ("s/place-order.md".into(),
+             "---\ntype: uml.Sequence\ntitle: Place Order\ndescribes: [Order](./order.md)\n---\n# Place Order\n\n## Lifelines\n- [Customer](./customer.md)\n- [Order](./order.md) as order\n- [Warehouse](./warehouse.md) as wh\n\n## Messages\n- Customer calls order: `place(items)`\n- alt\n  - when `paid`\n    - order calls wh: `ship()`\n  - else\n    - order sends Customer: `paymentFailed()`\n- order replies Customer: `confirmation`\n".into()),
+        ];
+        let m = build_model(&b);
+        assert_eq!(m.interactions.len(), 1);
+        let s = &m.interactions[0];
+        assert_eq!(s.key, "s/place-order");
+        assert_eq!(s.describes.as_deref(), Some("s/order"));
+        assert_eq!(s.lifelines.len(), 3);
+        assert_eq!(s.lifelines[0].ref_.as_deref(), Some("s/customer"));
+        assert_eq!(s.lifelines[1].alias.as_deref(), Some("order"));
+        assert_eq!(s.lifelines[2].ref_, None, "unresolved lifeline degrades to link title only");
+        assert_eq!(s.messages.len(), 3);
+        let SeqItem::Message { from, verb, to, signature } = &s.messages[0] else { panic!() };
+        assert_eq!((from.as_str(), *verb, to.as_str()), ("Customer", MessageVerb::Calls, "order"));
+        assert_eq!(signature.as_deref(), Some("place(items)"));
+        let SeqItem::Fragment { kind, operands } = &s.messages[1] else { panic!() };
+        assert_eq!(*kind, FragmentKind::Alt);
+        assert_eq!(operands.len(), 2);
+        assert_eq!(operands[0].guard.as_deref(), Some("paid"));
     }
 }
