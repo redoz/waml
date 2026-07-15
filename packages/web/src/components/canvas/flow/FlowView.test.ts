@@ -24,4 +24,15 @@ describe("FlowView", () => {
     expect(getByText("Placed")).toBeTruthy();
     expect(getByText("entry / reserveStock")).toBeTruthy();
   });
+
+  it("gives every node a source and target handle so edges survive", () => {
+    // SvelteFlow's getEdgePosition() returns null — dropping the edge before it
+    // ever renders — unless the source node has a source handle and the target
+    // node a target handle (isNodeInitialized in @xyflow/system). jsdom never
+    // lays the graph out, so we can't assert the drawn edges here; instead we
+    // assert the invariant that was missing and caused every flow edge to vanish.
+    const { container } = render(FlowView, { props: { doc: DOC } });
+    expect(container.querySelectorAll(".svelte-flow__handle.source").length).toBe(DOC.nodes.length);
+    expect(container.querySelectorAll(".svelte-flow__handle.target").length).toBe(DOC.nodes.length);
+  });
 });

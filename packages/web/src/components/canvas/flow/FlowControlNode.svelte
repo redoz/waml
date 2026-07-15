@@ -1,5 +1,6 @@
 <script lang="ts">
   import type { FlowFlavor, FlowNode } from "@waml/okf";
+  import FlowPorts from "./FlowPorts.svelte";
 
   let { data }: { data: { node: FlowNode; flavor: FlowFlavor } } = $props();
   const n = $derived(data.node);
@@ -7,6 +8,7 @@
 </script>
 
 <div class="relative flex flex-col items-center select-none">
+  <FlowPorts />
   {#if n.kind === "initial"}
     <svg width="36" height="36"><circle cx="18" cy="18" r="10" fill="#334155" /></svg>
   {:else if n.kind === "final"}

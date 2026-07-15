@@ -1,5 +1,6 @@
 <script lang="ts">
   import type { FlowFlavor, FlowNode } from "@waml/okf";
+  import FlowPorts from "./FlowPorts.svelte";
 
   let { data }: { data: { node: FlowNode; flavor: FlowFlavor } } = $props();
   const n = $derived(data.node);
@@ -14,8 +15,9 @@
 
 <!-- Action (activity) / state (state machine): rounded rect, optional internals. -->
 <div
-  class="w-[180px] select-none rounded-[12px] border-[1.5px] border-[#c8d2e0] bg-white px-3 py-[9px] text-center shadow-[0_2px_8px_rgba(15,23,42,0.05)]"
+  class="relative w-[180px] select-none rounded-[12px] border-[1.5px] border-[#c8d2e0] bg-white px-3 py-[9px] text-center shadow-[0_2px_8px_rgba(15,23,42,0.05)]"
 >
+  <FlowPorts />
   <div class="text-[12.5px] font-semibold text-slate-800">{n.id}</div>
   {#if internals.length > 0}
     <div class="mt-1 border-t border-[#e2e8f0] pt-1 text-left text-[10.5px] leading-[18px] text-slate-600">
