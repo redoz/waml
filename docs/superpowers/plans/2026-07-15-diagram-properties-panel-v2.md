@@ -192,11 +192,24 @@ git commit -m "feat(web): AttributeRow splits type name from independent multipl
   `AttributeRow` along with `showMultiplicity={display.showAttributeMultiplicity}`.
 
 **Note (registered-profile limitation):** the only registered profile, `uml-domain`, has
-`hide: ["operations", "visibility"]`, so `profile.hide.includes("visibility")` is `true` and
-the visibility floor is always off in `ClassifierBox` tests. This task therefore asserts the
-**profile floor** (marker suppressed even with `showAttributeVisibility: true`); the
-diagram-flag half of the AND (`showVisibility` prop gates the marker when the profile allows) is
-covered at the `AttributeRow` unit in Task 1. Flagged for review.
+`hide: ["operations", "visibility"]` (verified in `packages/core/src/profiles/umlDomain.ts:6`),
+so `profile.hide.includes("visibility")` is `true` and the visibility floor is always off in
+`ClassifierBox` tests. This task therefore asserts the **profile floor** (marker suppressed even
+with `showAttributeVisibility: true`); the diagram-flag half of the AND (`showVisibility` prop
+gates the marker when the profile allows) is covered at the `AttributeRow` unit in Task 1.
+Flagged for review.
+
+> **Reviewer note (2026-07-15):** The AND-gate is only *half* covered end-to-end. Task 1 tests
+> `AttributeRow`'s `showVisibility` **prop** directly (bypassing `ClassifierBox`), and Task 2
+> tests only the profile-floor path (`uml-domain` always floors visibility off). Nothing exercises
+> `ClassifierBox`'s new derive `!profile.hide.includes("visibility") && display.showAttributeVisibility`
+> for a profile that *allows* visibility. Concretely: an implementer who wrote
+> `showVisibility = $derived(!profile.hide.includes("visibility"))` (dropping the `&& display.showAttributeVisibility`
+> conjunct) would pass **every** test in this plan while being wrong for any visibility-allowing
+> profile. Since no such profile is registered, close the gap without one — e.g. in Task 2 add a
+> case that partial-mocks `@waml/core/profiles` so `getProfile` returns a profile with
+> `hide: []` (keep the real `stereotypeStyle`), then assert `showAttributeVisibility: true` renders
+> the `+` marker and `false` suppresses it. Reviewer's call on whether that mock is acceptable here.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -595,7 +608,13 @@ git commit -m "feat(web): ClassifierBox filters stereotype tags via stereotypeFi
 
 **Note (jsdom + `color-mix`):** assert the accent (`border-top-color`) and the wash by reading the
 raw `style` attribute string on the box root (`container.firstElementChild`), not via CSSOM —
-jsdom does not parse `color-mix()` and would drop it from `element.style`. Flagged for review.
+jsdom does not parse `color-mix()` and would drop it from `element.style`. This raw-attribute
+technique already has precedent in this repo (`packages/web/src/components/chrome/EdgeFlag.test.ts:23`
+asserts `getAttribute("style") ?? "").toContain(...)`), and `ClassifierBox` sets its root via a plain
+dynamic `style={boxStyle}` string attribute (Svelte serializes it verbatim through `setAttribute`, so
+`getAttribute("style")` returns the exact joined declarations). The substring assertions must match
+`boxStyle`'s no-space `key:value;` join format (e.g. `border-top-color:#ff0000`, not `border-top-color: #ff0000`).
+Flagged for review.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -926,10 +945,13 @@ const props = (over = {}) => ({
 });
 ```
 
-Also, if the pre-existing `"a non-default display value drives every control's rendered state"`
-test constructs a bare `display` literal, change it to spread `DEFAULT_DISPLAY`
-(`{ ...DEFAULT_DISPLAY, ...overrides }`) so it satisfies the post-Spec-A required `DiagramDisplay`
-fields.
+Also update the pre-existing `"a non-default display value drives every control's rendered state"`
+test: at HEAD it constructs a **bare** `display` literal (the 5 pre-Spec-A fields only, no
+`DEFAULT_DISPLAY` spread — `DiagramPropertiesBody.test.ts:40-46`). Spec A's plan does **not** touch
+this file (its only web changes are `CanvasInner.svelte` + deleting `displaySettings.svelte.ts`), so
+this step is **live, not a no-op** — change the literal to spread `DEFAULT_DISPLAY`
+(`{ ...DEFAULT_DISPLAY, ...overrides }`) so it carries the post-Spec-A required `DiagramDisplay`
+fields (`showAttributeVisibility` / `showAttributeMultiplicity` / `stereotypeColors`).
 
 - [ ] **Step 5: Run the affected suites + typecheck**
 
