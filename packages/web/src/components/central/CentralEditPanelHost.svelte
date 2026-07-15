@@ -9,7 +9,7 @@
 </script>
 
 <script lang="ts">
-  import type { DiagramDisplay, ModelNode, ModelEdge } from "@waml/okf";
+  import type { DiagramDisplay, ModelNode, ModelEdge, Diagram } from "@waml/okf";
   import CentralEditPanel from "./CentralEditPanel.svelte";
   import ElementPreview from "./ElementPreview.svelte";
   import ObjectInspector from "../inspector/ObjectInspector.svelte";
@@ -21,17 +21,24 @@
     nodes,
     edges,
     display,
+    diagram,
+    candidateStereotypes,
+    editable,
     profileName,
     showPreview = false,
     onUpdateNode,
     onUpdateEdge,
     onDisplayChange,
+    onUpdateDiagram,
     onClose,
   }: {
     state: CentralPanelState | null;
     nodes: ModelNode[];
     edges: ModelEdge[];
     display: DiagramDisplay;
+    diagram: Diagram;
+    candidateStereotypes: string[];
+    editable: boolean;
     profileName?: string;
     /** Render the live cropped preview above the fields. Omit when there is no
      *  active diagram behind the dialog (Navigator's out-of-diagram context). */
@@ -39,6 +46,7 @@
     onUpdateNode: (key: string, patch: Partial<ModelNode>) => void;
     onUpdateEdge: (id: string, patch: Partial<ModelEdge>) => void;
     onDisplayChange: (patch: Partial<DiagramDisplay>) => void;
+    onUpdateDiagram: (patch: Partial<Diagram>) => void;
     onClose: () => void;
   } = $props();
 
@@ -88,6 +96,10 @@
   </CentralEditPanel>
 {:else if state?.kind === "diagram"}
   <CentralEditPanel title="Diagram properties" {onClose}>
-    <DiagramPropertiesBody {display} onChange={onDisplayChange} />
+    <DiagramPropertiesBody
+      {display} {diagram} {candidateStereotypes} {editable}
+      onChange={onDisplayChange}
+      {onUpdateDiagram}
+    />
   </CentralEditPanel>
 {/if}

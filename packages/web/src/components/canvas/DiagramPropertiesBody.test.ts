@@ -1,11 +1,17 @@
 import { test, expect, vi } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/svelte";
 import DiagramPropertiesBody from "./DiagramPropertiesBody.svelte";
-import { DEFAULT_DISPLAY } from "@waml/okf";
+import { DEFAULT_DISPLAY, type Diagram } from "@waml/okf";
+
+const diagram: Diagram = { key: "orders", title: "Orders", profile: "uml-domain", members: [] };
 
 const props = (over = {}) => ({
   display: { ...DEFAULT_DISPLAY },
+  diagram,
+  candidateStereotypes: [] as string[],
+  editable: true,
   onChange: vi.fn(),
+  onUpdateDiagram: vi.fn(),
   ...over,
 });
 
@@ -38,6 +44,7 @@ test("picking an attribute-detail option emits that value", async () => {
 
 test("a non-default display value drives every control's rendered state", () => {
   const display = {
+    ...DEFAULT_DISPLAY,
     showAttributes: false,
     attributeDetail: "name-only" as const,
     associationLabels: "hidden" as const,

@@ -20,6 +20,7 @@
   import { sharedModelName, isFirstVisit, onStoreError } from "../../state/bootstrap";
   import { runDagreLayout, NODE_W, NODE_H } from "../../canvas/layout";
   import { toRFNode } from "./toRFNode";
+  import { diagramCandidateStereotypes, isDiagramEditable } from "./diagramProps";
   import { nodeTypes, edgeTypes } from "./flowTypes";
   import { buildRfEdges, buildAnchorEdges } from "./edges";
   import {
@@ -167,6 +168,8 @@ import ShareToast from "../ShareToast.svelte";
   // Replaces the old global viewMode/relLabelMode browser preferences.
   const activeDisplay = $derived(resolveDisplay(activeDiagram.display));
   const memberSet = $derived(new Set(activeDiagram.members));
+  const candidateStereotypes = $derived(diagramCandidateStereotypes($model.nodes, activeDiagram.members));
+  const diagramEditable = $derived(isDiagramEditable(activeDiagram.key));
   const imageName = $derived(modelName.trim() || "model");
   const canvasClass = $derived(
     [tool === "add" ? "canvas-add" : tool === "connect" ? "canvas-connect" : "", layoutAnimating ? "canvas-animating" : ""]
@@ -558,11 +561,15 @@ import ShareToast from "../ShareToast.svelte";
     nodes={$model.nodes}
     edges={$model.edges}
     display={activeDisplay}
+    diagram={activeDiagram}
+    candidateStereotypes={candidateStereotypes}
+    editable={diagramEditable}
     profileName={activeDiagram.profile}
     showPreview
     onUpdateNode={store.updateNode}
     onUpdateEdge={store.updateEdge}
     onDisplayChange={handleDisplayChange}
+    onUpdateDiagram={(patch) => store.updateDiagram(activeDiagram.key, patch)}
     onClose={() => (centralPanel = null)}
   />
 

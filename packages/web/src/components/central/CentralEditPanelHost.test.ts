@@ -1,7 +1,7 @@
 import { test, expect, vi } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/svelte";
 import CentralEditPanelHost from "./CentralEditPanelHost.svelte";
-import { DEFAULT_DISPLAY, type ModelNode, type ModelEdge } from "@waml/okf";
+import { DEFAULT_DISPLAY, type ModelNode, type ModelEdge, type Diagram } from "@waml/okf";
 
 const node = (key: string, title: string): ModelNode =>
   ({
@@ -16,16 +16,22 @@ const node = (key: string, title: string): ModelNode =>
 const edge = (id: string, from: string, to: string): ModelEdge =>
   ({ id, kind: "associates", from, to, fromEnd: {}, toEnd: {}, bidirectional: false });
 
+const diagram: Diagram = { key: "orders", title: "Orders", profile: "uml-domain", members: [] };
+
 const props = (over = {}) => ({
   state: null,
   nodes: [node("customer", "Customer"), node("order", "Order")],
   edges: [edge("e1", "customer", "order")],
   display: { ...DEFAULT_DISPLAY },
+  diagram,
+  candidateStereotypes: [] as string[],
+  editable: true,
   profileName: "uml-domain",
   showPreview: false,
   onUpdateNode: vi.fn(),
   onUpdateEdge: vi.fn(),
   onDisplayChange: vi.fn(),
+  onUpdateDiagram: vi.fn(),
   onClose: vi.fn(),
   ...over,
 });
