@@ -6,7 +6,13 @@
   // translucency logic.
   import type { Snippet } from "svelte";
   import { cubicOut } from "svelte/easing";
-  import { Pin, PinOff, ChevronUp, ChevronDown, Box, Spline, Pencil, Check } from "lucide-svelte";
+  import { Pin, PinOff, ChevronUp, ChevronDown, Box, Spline, Frame, Pencil, Check } from "lucide-svelte";
+
+  // Picker entries span three kinds: the active diagram (top), its objects
+  // (nodes) and its associations (edges). The kind drives both the row icon and
+  // how a selection is routed back to the canvas.
+  type Kind = "diagram" | "node" | "edge";
+  const KIND_ICON = { diagram: Frame, node: Box, edge: Spline };
 
   // Combined slide + fade for the fold. Applied to a non-flex element so the
   // animated height actually takes (a flex-1 element ignores an animated height).
@@ -38,10 +44,10 @@
     width = $bindable(380),
     children,
   }: {
-    options: { key: string; label: string }[];
+    options: { key: string; label: string; kind: Kind }[];
     selectedKey: string | null;
-    focusedKind: "node" | "edge" | undefined;
-    onSelect: (key: string | null) => void;
+    focusedKind: Kind | undefined;
+    onSelect: (key: string | null, kind?: Kind) => void;
     pinned?: boolean;
     onTogglePin: () => void;
     /** Opens the edit dialog for the currently-focused element. */
@@ -94,8 +100,8 @@
     else openMenu();
   }
 
-  function choose(key: string) {
-    onSelect(key);
+  function choose(key: string, kind: Kind) {
+    onSelect(key, kind);
     closeMenu();
     triggerEl?.focus();
   }
@@ -119,7 +125,8 @@
       highlighted = Math.max(0, highlighted - 1);
     } else if (e.key === "Enter") {
       e.preventDefault();
-      if (highlighted >= 0 && options[highlighted]) choose(options[highlighted].key);
+      if (highlighted >= 0 && options[highlighted])
+        choose(options[highlighted].key, options[highlighted].kind);
     }
   }
 
@@ -198,12 +205,9 @@
 
   <div class={`flex items-center gap-2 p-4 ${hasSelection && !collapsed ? "border-b border-[#d8dee8]" : ""}`}>
     {#if focusedKind}
+      {@const KindIcon = KIND_ICON[focusedKind]}
       <span class="inspector-kind flex-none w-[26px] h-[26px] flex items-center justify-center rounded-md text-[#1e88e5] bg-[#e6f1fb]">
-        {#if focusedKind === "node"}
-          <Box size={15} />
-        {:else}
-          <Spline size={15} />
-        {/if}
+        <KindIcon size={15} />
       </span>
     {/if}
     <div class="flex-1 min-w-0">
@@ -246,17 +250,18 @@
             <div class="px-3 py-2 text-[13px] text-slate-400">No elements in this diagram</div>
           {/if}
           {#each options as opt, i (opt.key)}
+            {@const RowIcon = KIND_ICON[opt.kind]}
             <button
               type="button"
               role="option"
               aria-selected={opt.key === selectedKey}
-              onclick={() => choose(opt.key)}
+              onclick={() => choose(opt.key, opt.kind)}
               onmouseenter={() => (highlighted = i)}
               class={`w-full text-left px-3 py-2 text-[13px] cursor-pointer flex items-center gap-[7px] ${
                 i === highlighted ? "bg-[#f1f3f7]" : ""
               } ${opt.key === selectedKey ? "text-[#1e88e5] font-[600]" : "text-slate-900"}`}
             >
-              <Box
+              <RowIcon
                 size={14}
                 class={`flex-shrink-0 ${opt.key === selectedKey ? "text-[#1e88e5]" : "text-slate-400"}`}
               />
@@ -269,7 +274,7 @@
         </div>
       {/if}
     </div>
-    {#if hasSelection}
+    {#if hasSelection && focusedKind !== "diagram"}
       <button
         onclick={onEdit}
         aria-label="Edit element"

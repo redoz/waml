@@ -59,7 +59,7 @@ import ShareToast from "../ShareToast.svelte";
     loadActiveDiagramKey,
     persistActiveDiagramKey,
   } from "@waml/core/state/diagrams";
-  import { resolveDisplay, slugify, type DiagramDisplay, type Diagram } from "@waml/okf";
+  import { resolveDisplay, slugify, type DiagramDisplay, type Diagram, type ModelEdge } from "@waml/okf";
   import { getProfile } from "@waml/core/profiles";
   import { loadModelName, persistModelName, DEFAULT_MODEL_NAME, templateModelName } from "@waml/core/state/modelName";
   import { persistBundle } from "@waml/core/state/persist";
@@ -147,14 +147,6 @@ import ShareToast from "../ShareToast.svelte";
   // Single "focused" element (the sole selected node/edge) for the Inspector; a
   // multi-selection focuses nothing.
   const focused = $derived(focusedSelection(selectionSet));
-  // Element picker entries: the active diagram's member nodes (objects + notes).
-  const inspectorOptions = $derived(
-    $model.nodes
-      .filter((n) => memberSet.has(n.key))
-      .map((n) => ({ key: n.key, label: n.concept.title?.trim() || "Untitled" })),
-  );
-  const inspectorSelectedKey = $derived(focused?.type === "node" ? focused.id : null);
-  const inspectorFocusedKind = $derived(focused?.type);
   // Behavior documents are both model and view — they join the switcher as
   // read-only views alongside curated Diagrams (behavioral substrates spec).
   const behaviorViews = $derived(
@@ -181,6 +173,40 @@ import ShareToast from "../ShareToast.svelte";
   // Replaces the old global viewMode/relLabelMode browser preferences.
   const activeDisplay = $derived(resolveDisplay(activeDiagram.display));
   const memberSet = $derived(new Set(activeDiagram.members));
+  // Element picker entries: the active diagram at the top, then its member
+  // objects (nodes), then its associations (edges with both ends in the diagram).
+  const nodeTitle = (key: string) =>
+    $model.nodes.find((n) => n.key === key)?.concept.title?.trim() || "Untitled";
+  const edgeLabel = (e: ModelEdge) =>
+    typeof e.name === "string" && e.name.trim()
+      ? e.name.trim()
+      : `${nodeTitle(e.from)} → ${nodeTitle(e.to)}`;
+  const inspectorOptions = $derived([
+    {
+      key: activeDiagram.key,
+      label: activeDiagram.title?.trim() || "Untitled diagram",
+      kind: "diagram" as const,
+    },
+    ...$model.nodes
+      .filter((n) => memberSet.has(n.key))
+      .map((n) => ({ key: n.key, label: n.concept.title?.trim() || "Untitled", kind: "node" as const })),
+    ...$model.edges
+      .filter((e) => memberSet.has(e.from) && memberSet.has(e.to))
+      .map((e) => ({ key: e.id, label: edgeLabel(e), kind: "edge" as const })),
+  ]);
+  // The picker can also select the active diagram itself, which just shows its
+  // name in the panel. That "scope" only applies while no node/edge is focused.
+  let inspectorDiagramScope = $state(false);
+  const inspectorSelectedKey = $derived(
+    focused?.type === "node" || focused?.type === "edge"
+      ? focused.id
+      : inspectorDiagramScope
+        ? activeDiagram.key
+        : null,
+  );
+  const inspectorFocusedKind = $derived(
+    focused?.type ?? (inspectorDiagramScope ? "diagram" : undefined),
+  );
   const candidateStereotypes = $derived(diagramCandidateStereotypes($model.nodes, activeDiagram.members));
   const diagramEditable = $derived(isDiagramEditable(activeDiagram.key));
   const imageName = $derived(modelName.trim() || "model");
@@ -383,6 +409,8 @@ import ShareToast from "../ShareToast.svelte";
   // model-keyed set (collapsing ERD's per-model-edge RF edges).
   function onSelectionChange({ nodes, edges }: { nodes: Node[]; edges: Edge[] }) {
     selectionSet = selectionFromFlow(nodes, edges);
+    // A real canvas selection exits the diagram-name scope.
+    if (nodes.length || edges.length) inspectorDiagramScope = false;
   }
 
   // ── Pane click → add (in Add tool) ─────────────────────────────────────────
@@ -598,6 +626,7 @@ import ShareToast from "../ShareToast.svelte";
       // and the <SelectionToolbar> render condition below (defense in depth).
       activeDiagramKey = key;
       selectionSet = EMPTY_SELECTION;
+      inspectorDiagramScope = false;
     }}
     onCreateDiagram={(name) => {
       const d = store.addDiagram(name);
@@ -821,7 +850,18 @@ import ShareToast from "../ShareToast.svelte";
       options={inspectorOptions}
       selectedKey={inspectorSelectedKey}
       focusedKind={inspectorFocusedKind}
-      onSelect={(key) => (selectionSet = key ? { nodes: [key], edges: [] } : EMPTY_SELECTION)}
+      onSelect={(key, kind) => {
+        if (kind === "diagram") {
+          inspectorDiagramScope = true;
+          selectionSet = EMPTY_SELECTION;
+        } else if (kind === "edge") {
+          inspectorDiagramScope = false;
+          selectionSet = key ? { nodes: [], edges: [key] } : EMPTY_SELECTION;
+        } else {
+          inspectorDiagramScope = false;
+          selectionSet = key ? { nodes: [key], edges: [] } : EMPTY_SELECTION;
+        }
+      }}
       pinned={inspectorPinned}
       bind:width={inspectorWidth}
       onTogglePin={() => (inspectorPinned = !inspectorPinned)}
@@ -830,27 +870,35 @@ import ShareToast from "../ShareToast.svelte";
         else if (focused?.type === "edge") centralPanel = { kind: "edge", edgeKey: focused.id };
       }}
     >
-      <InspectorReadonly
-        selection={focused}
-        nodes={$model.nodes}
-        edges={$model.edges}
-      >
-        {#snippet externalRefs()}
-          {#if focused?.type === "node"}
-            <ExternalRefs
-              nodeKey={focused.id}
-              nodes={$model.nodes}
-              edges={$model.edges}
-              members={activeDiagram.members}
-              diagrams={diagrams}
-              onNavigate={(diagramKey, nodeKey) => {
-                activeDiagramKey = diagramKey;
-                selectionSet = { nodes: [nodeKey], edges: [] };
-              }}
-            />
-          {/if}
-        {/snippet}
-      </InspectorReadonly>
+      {#if inspectorFocusedKind === "diagram"}
+        <!-- Diagram scope: name only for now; full properties live elsewhere. -->
+        <div class="text-[14px] font-semibold text-slate-900">
+          {activeDiagram.title?.trim() || "Untitled diagram"}
+        </div>
+        <div class="mt-1 text-[12px] font-medium uppercase tracking-wide text-slate-400">Diagram</div>
+      {:else}
+        <InspectorReadonly
+          selection={focused}
+          nodes={$model.nodes}
+          edges={$model.edges}
+        >
+          {#snippet externalRefs()}
+            {#if focused?.type === "node"}
+              <ExternalRefs
+                nodeKey={focused.id}
+                nodes={$model.nodes}
+                edges={$model.edges}
+                members={activeDiagram.members}
+                diagrams={diagrams}
+                onNavigate={(diagramKey, nodeKey) => {
+                  activeDiagramKey = diagramKey;
+                  selectionSet = { nodes: [nodeKey], edges: [] };
+                }}
+              />
+            {/if}
+          {/snippet}
+        </InspectorReadonly>
+      {/if}
     </InspectorPanel>
   </div>
 </div>

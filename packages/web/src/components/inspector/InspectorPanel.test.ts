@@ -3,9 +3,12 @@ import { render, screen, fireEvent } from "@testing-library/svelte";
 import { tick } from "svelte";
 import InspectorPanel from "./InspectorPanel.svelte";
 
-const OPTIONS = [
-  { key: "customer", label: "Customer" },
-  { key: "order", label: "Order" },
+type Kind = "diagram" | "node" | "edge";
+const OPTIONS: { key: string; label: string; kind: Kind }[] = [
+  { key: "d1", label: "My Diagram", kind: "diagram" },
+  { key: "customer", label: "Customer", kind: "node" },
+  { key: "order", label: "Order", kind: "node" },
+  { key: "e1", label: "Customer → Order", kind: "edge" },
 ];
 
 function setup(props: Record<string, unknown> = {}) {
@@ -40,24 +43,44 @@ describe("InspectorPanel", () => {
     expect(trigger.textContent).toMatch(/select an element/i);
   });
 
-  it("opens a listbox of options on click, marking the selected one", async () => {
+  it("opens a listbox of the diagram, its objects and associations", async () => {
     setup({ selectedKey: "order" });
     const trigger = screen.getByRole("combobox", { name: "Select element" });
     expect(trigger.getAttribute("aria-expanded")).toBe("false");
     await fireEvent.click(trigger);
     expect(trigger.getAttribute("aria-expanded")).toBe("true");
+    expect(screen.getByRole("option", { name: "My Diagram" })).toBeTruthy();
     expect(screen.getByRole("option", { name: "Customer" })).toBeTruthy();
+    expect(screen.getByRole("option", { name: "Customer → Order" })).toBeTruthy();
     const selected = screen.getByRole("option", { name: "Order" });
     expect(selected.getAttribute("aria-selected")).toBe("true");
   });
 
-  it("fires onSelect with the chosen key and closes the listbox", async () => {
+  it("fires onSelect with the chosen key and kind, and closes the listbox", async () => {
     const onSelect = vi.fn();
     setup({ onSelect });
     await fireEvent.click(screen.getByRole("combobox", { name: "Select element" }));
     await fireEvent.click(screen.getByRole("option", { name: "Order" }));
-    expect(onSelect).toHaveBeenCalledWith("order");
-    expect(screen.getByRole("combobox", { name: "Select element" }).getAttribute("aria-expanded")).toBe("false");
+    expect(onSelect).toHaveBeenCalledWith("order", "node");
+    expect(
+      screen.getByRole("combobox", { name: "Select element" }).getAttribute("aria-expanded"),
+    ).toBe("false");
+  });
+
+  it("fires onSelect with the edge kind for an association row", async () => {
+    const onSelect = vi.fn();
+    setup({ onSelect });
+    await fireEvent.click(screen.getByRole("combobox", { name: "Select element" }));
+    await fireEvent.click(screen.getByRole("option", { name: "Customer → Order" }));
+    expect(onSelect).toHaveBeenCalledWith("e1", "edge");
+  });
+
+  it("fires onSelect with the diagram kind for the diagram row", async () => {
+    const onSelect = vi.fn();
+    setup({ onSelect });
+    await fireEvent.click(screen.getByRole("combobox", { name: "Select element" }));
+    await fireEvent.click(screen.getByRole("option", { name: "My Diagram" }));
+    expect(onSelect).toHaveBeenCalledWith("d1", "diagram");
   });
 
   it("closes the listbox on Escape", async () => {
@@ -80,6 +103,12 @@ describe("InspectorPanel", () => {
     const { container } = setup({ focusedKind: "node" });
     expect(container.querySelector(".inspector-kind svg")).toBeTruthy();
     expect(screen.getByRole("button", { name: "Collapse inspector" })).toBeTruthy();
+  });
+
+  it("with the diagram focused: shows a kind icon but no Edit button", () => {
+    const { container } = setup({ selectedKey: "d1", focusedKind: "diagram", onEdit: vi.fn() });
+    expect(container.querySelector(".inspector-kind svg")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Edit element" })).toBeNull();
   });
 
   it("collapse toggle flips aria-expanded and its label", async () => {
@@ -119,7 +148,7 @@ describe("InspectorPanel", () => {
     expect(aside.classList.contains("opacity-40")).toBe(true);
   });
 
-  it("shows an Edit button only when an element is focused, and fires onEdit", async () => {
+  it("shows an Edit button only when a node/edge is focused, and fires onEdit", async () => {
     const onEdit = vi.fn();
     const { unmount } = setup({ selectedKey: null, focusedKind: undefined, onEdit });
     expect(screen.queryByRole("button", { name: "Edit element" })).toBeNull();
