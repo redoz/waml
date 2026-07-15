@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import type { FlowDoc } from "@waml/okf";
+import type { FlowDoc, SequenceDoc } from "@waml/okf";
 import {
   toModelGraph,
   edgeKey,
@@ -185,6 +185,21 @@ describe("toModelGraph", () => {
     const rust = { nodes: [], edges: [], diagrams: [], path: "", packages: [], flows: [flow] };
     const g = toModelGraph(rust as never, emptyOverlay());
     expect(g.flows).toEqual([flow]);
+  });
+
+  it("passes sequence docs through to the ModelGraph", () => {
+    const seq: SequenceDoc = {
+      key: "s/place-order",
+      title: "Place Order",
+      lifelines: [{ title: "Customer", ref: "s/customer" }, { title: "Order", alias: "order" }],
+      messages: [
+        { item: "message", from: "Customer", verb: "calls", to: "order", signature: "place(items)" },
+        { item: "fragment", kind: "alt", operands: [{ guard: "paid", items: [] }, { items: [] }] },
+      ],
+    };
+    const rust = { nodes: [], edges: [], diagrams: [], path: "", packages: [], interactions: [seq] };
+    const g = toModelGraph(rust as never, emptyOverlay());
+    expect(g.interactions).toEqual([seq]);
   });
 });
 
