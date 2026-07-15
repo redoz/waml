@@ -155,6 +155,8 @@ export interface ModelGraph {
   packages: ModelNode[];
   /** Flow-substrate behavior documents (self-rendering; absent on legacy graphs). */
   flows?: FlowDoc[];
+  /** Interaction-substrate behavior documents (self-rendering; absent on legacy graphs). */
+  interactions?: SequenceDoc[];
 }
 
 // ── Flow substrate (activity / state-machine behavior documents) ────────────
@@ -211,6 +213,51 @@ export interface FlowDoc {
   describes?: string;
   nodes: FlowNode[];
   edges: FlowEdge[];
+}
+
+// ── Interaction substrate (sequence behavior documents) ────────────────────────
+// Mirrors the Rust `model::Sequence*` shapes (crates/waml/src/model.rs). A sequence
+// doc is a self-rendering message/fragment diagram, one per interaction classifier,
+// resolved from its `## Interactions` section by `build_interactions`. Additive —
+// absent on graphs with no interaction classifiers.
+
+/** Message verb. */
+export type MessageVerb = "calls" | "responds";
+
+/** Fragment kind. */
+export type FragmentKind = "alt" | "opt" | "loop" | "break" | "par" | "seq" | "strict" | "neg" | "assert" | "ignore" | "consider" | "decorate";
+
+/** A resolved lifeline (actor/object). */
+export interface Lifeline {
+  /** Display title. */
+  title: string;
+  /** Optional ref to an actor/object classifier. */
+  ref?: string;
+  /** Optional alias (if ref is absent, used as the identity). */
+  alias?: string;
+}
+
+/** A resolved sequence operand (alt/opt guard branch). */
+export interface SeqOperand {
+  /** Guard condition (if/else). */
+  guard?: string;
+  /** Items in this operand. */
+  items: SeqItem[];
+}
+
+/** A resolved sequence message or fragment. */
+export type SeqItem =
+  | { item: "message"; from: string; verb: MessageVerb; to: string; signature?: string }
+  | { item: "fragment"; kind: FragmentKind; operands: SeqOperand[] };
+
+/** One sequence document: self-rendering sequence diagram (model AND view). */
+export interface SequenceDoc {
+  key: string;
+  title: string;
+  /** Resolved key of the entity this interaction describes. */
+  describes?: string;
+  lifelines: Lifeline[];
+  messages: SeqItem[];
 }
 
 /** Split "family.Metaclass". Null for opaque/legacy tokens. */
