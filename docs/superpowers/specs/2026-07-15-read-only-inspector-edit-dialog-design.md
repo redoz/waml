@@ -102,7 +102,7 @@ Node edit dialog continues to be reachable both from Navigator's "Edit propertie
 
 ## Cleanup Note (flagged, out of scope)
 
-`packages/web/src/components/inspector/Inspector.svelte` is dead code — an older full-height sidebar inspector variant, superseded by `InspectorPanel.svelte`, referenced only by its own test file. Not touched by this spec; worth a follow-up removal.
+`packages/web/src/components/inspector/Inspector.svelte` is **currently live** — it's the dispatcher embedded as `InspectorPanel`'s body (`CanvasInner.svelte:47,688-715`), routing selection to `ObjectInspector`/`RelationshipInspector` in editable mode. This spec's read-only body variant replaces it in that role (see Architecture). Once wired, `Inspector.svelte` becomes unreferenced except by its own test — a follow-up removal candidate, not touched directly by this work.
 
 ## Open Questions (resolve in planning or with a stated default)
 
