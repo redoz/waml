@@ -75,6 +75,8 @@ test("diagram state mounts the display controls titled 'Diagram properties'", ()
   render(CentralEditPanelHost, { props: props({ state: { kind: "diagram" } }) });
   expect(screen.getByRole("heading", { name: "Diagram properties" })).toBeTruthy();
   expect(screen.getByRole("switch", { name: "Show attributes" })).toBeTruthy();
+  // Same full-height chrome as the element/edge edit panels.
+  expect(screen.getByRole("dialog", { name: "Diagram properties" }).className).toContain("h-[95vh]");
 });
 
 test("toggling a display control in the diagram body calls onDisplayChange", async () => {

@@ -89,7 +89,7 @@
     />
   </CentralEditPanel>
 {:else if state?.kind === "diagram"}
-  <CentralEditPanel title="Diagram properties" {onClose}>
+  <CentralEditPanel title="Diagram properties" fullHeight {onClose}>
     <DiagramPropertiesBody
       {display} {diagram} {candidateStereotypes} {editable}
       onChange={onDisplayChange}

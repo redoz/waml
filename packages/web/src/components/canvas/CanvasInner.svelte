@@ -866,7 +866,8 @@ import ShareToast from "../ShareToast.svelte";
       bind:width={inspectorWidth}
       onTogglePin={() => (inspectorPinned = !inspectorPinned)}
       onEdit={() => {
-        if (focused?.type === "node") centralPanel = { kind: "element", nodeKey: focused.id };
+        if (inspectorFocusedKind === "diagram") centralPanel = { kind: "diagram" };
+        else if (focused?.type === "node") centralPanel = { kind: "element", nodeKey: focused.id };
         else if (focused?.type === "edge") centralPanel = { kind: "edge", edgeKey: focused.id };
       }}
     >

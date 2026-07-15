@@ -274,7 +274,7 @@
         </div>
       {/if}
     </div>
-    {#if hasSelection && focusedKind !== "diagram"}
+    {#if hasSelection}
       <button
         onclick={onEdit}
         aria-label="Edit element"

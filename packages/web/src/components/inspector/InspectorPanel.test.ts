@@ -105,10 +105,12 @@ describe("InspectorPanel", () => {
     expect(screen.getByRole("button", { name: "Collapse inspector" })).toBeTruthy();
   });
 
-  it("with the diagram focused: shows a kind icon but no Edit button", () => {
-    const { container } = setup({ selectedKey: "d1", focusedKind: "diagram", onEdit: vi.fn() });
+  it("with the diagram focused: shows a kind icon and an Edit button that fires onEdit", async () => {
+    const onEdit = vi.fn();
+    const { container } = setup({ selectedKey: "d1", focusedKind: "diagram", onEdit });
     expect(container.querySelector(".inspector-kind svg")).toBeTruthy();
-    expect(screen.queryByRole("button", { name: "Edit element" })).toBeNull();
+    await fireEvent.click(screen.getByRole("button", { name: "Edit element" }));
+    expect(onEdit).toHaveBeenCalledTimes(1);
   });
 
   it("collapse toggle flips aria-expanded and its label", async () => {
