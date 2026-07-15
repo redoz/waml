@@ -1,7 +1,7 @@
 import { test, expect, vi } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/svelte";
 import CentralEditPanelHost from "./CentralEditPanelHost.svelte";
-import { DEFAULT_DISPLAY, type ModelNode } from "@waml/okf";
+import { DEFAULT_DISPLAY, type ModelNode, type ModelEdge } from "@waml/okf";
 
 const node = (key: string, title: string): ModelNode =>
   ({
@@ -13,12 +13,18 @@ const node = (key: string, title: string): ModelNode =>
     position: { x: 0, y: 0 },
   }) as unknown as ModelNode;
 
+const edge = (id: string, from: string, to: string): ModelEdge =>
+  ({ id, kind: "associates", from, to, fromEnd: {}, toEnd: {}, bidirectional: false });
+
 const props = (over = {}) => ({
   state: null,
-  nodes: [node("customer", "Customer")],
+  nodes: [node("customer", "Customer"), node("order", "Order")],
+  edges: [edge("e1", "customer", "order")],
   display: { ...DEFAULT_DISPLAY },
   profileName: "uml-domain",
+  showPreview: false,
   onUpdateNode: vi.fn(),
+  onUpdateEdge: vi.fn(),
   onDisplayChange: vi.fn(),
   onClose: vi.fn(),
   ...over,
@@ -76,4 +82,37 @@ test("toggling a display control in the diagram body calls onDisplayChange", asy
   });
   await fireEvent.click(screen.getByRole("switch", { name: "Show attributes" }));
   expect(onDisplayChange).toHaveBeenCalledWith({ showAttributes: false });
+});
+
+test("edge state mounts the RelationshipInspector titled Relationship", () => {
+  render(CentralEditPanelHost, {
+    props: props({ state: { kind: "edge", edgeKey: "e1" } }),
+  });
+  expect(screen.getByRole("heading", { name: "Relationship" })).toBeTruthy();
+  // RelationshipInspector's Kind control is present inside the host.
+  expect(screen.getByLabelText("Kind")).toBeTruthy();
+});
+
+test("editing an edge calls onUpdateEdge with the edge id", async () => {
+  const onUpdateEdge = vi.fn();
+  render(CentralEditPanelHost, {
+    props: props({ state: { kind: "edge", edgeKey: "e1" }, onUpdateEdge }),
+  });
+  await fireEvent.change(screen.getByLabelText("Kind"), { target: { value: "composes" } });
+  expect(onUpdateEdge).toHaveBeenCalledWith("e1", { kind: "composes" });
+});
+
+test("a since-deleted edge closes the panel", () => {
+  const onClose = vi.fn();
+  render(CentralEditPanelHost, {
+    props: props({ state: { kind: "edge", edgeKey: "gone" }, onClose }),
+  });
+  expect(onClose).toHaveBeenCalled();
+});
+
+test("showPreview renders the preview region for an element", () => {
+  render(CentralEditPanelHost, {
+    props: props({ state: { kind: "element", nodeKey: "customer" }, showPreview: true }),
+  });
+  expect(screen.getByTestId("element-preview")).toBeTruthy();
 });
