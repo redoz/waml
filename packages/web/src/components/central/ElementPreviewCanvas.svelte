@@ -41,14 +41,20 @@
 
 	const { fitView } = useSvelteFlow();
 
-	// Re-crop rendered set on mount whenever geometry changes. Guard the
-	// microtask continuation with a per-effect cancellation flag: if the
-	// component/effect is destroyed (e.g. dialog closes) before tick()
-	// resolves, calling fitView() would read a derived belonging to a
-	// now-destroyed effect (Svelte's `derived_inert` warning).
+	// Re-crop on subset change only. Must watch the input props, not
+	// rfNodes/rfEdges: those are bind:-two-way with SvelteFlow, which
+	// writes measured dimensions back into them on every layout pass.
+	// Watching the bound state re-armed this effect on xyflow's own
+	// writeback, calling fitView -> changing measured dims -> writeback
+	// again, an infinite loop (reproduced hang, not just a jsdom artifact).
+	// Guard the microtask continuation with a per-effect cancellation flag:
+	// if the component/effect is destroyed (e.g. dialog closes) before
+	// tick() resolves, calling fitView() would read a derived belonging to
+	// a now-destroyed effect (Svelte's `derived_inert` warning).
 	$effect(() => {
-		void rfNodes;
-		void rfEdges;
+		void nodes;
+		void edges;
+		void focalKeys;
 		let cancelled = false;
 		tick().then(() => {
 			if (!cancelled) fitView({ padding: 0.2, duration: 0 });
