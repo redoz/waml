@@ -17,7 +17,7 @@
   let isDetailed = $derived(display.showAttributes);
   let showTypes = $derived(display.attributeDetail === "name-type");
   let showStereotype = $derived(display.showStereotype);
-  let showVisibility = $derived(!profile.hide.includes("visibility"));
+  let showVisibility = $derived(!profile.hide.includes("visibility") && display.showAttributeVisibility);
   let hasStereotypeStyle = $derived(Object.keys(st).length > 0);
 
   let boxStyle = $derived.by(() => {
@@ -57,7 +57,7 @@
     {#if isDetailed && !data.values}
       <RowsCompartment rows={data.attributes.length}>
         {#snippet render(i: number)}
-          <AttributeRow a={data.attributes[i]} {showVisibility} {showTypes} />
+          <AttributeRow a={data.attributes[i]} {showVisibility} {showTypes} showMultiplicity={display.showAttributeMultiplicity} />
         {/snippet}
       </RowsCompartment>
     {/if}
