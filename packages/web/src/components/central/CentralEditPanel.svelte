@@ -62,7 +62,7 @@
     aria-label={title}
     tabindex="-1"
     onclick={(e) => e.stopPropagation()}
-    class={`w-full max-w-[560px] ${fullHeight ? "h-[95vh] max-h-[95vh]" : "max-h-[85vh]"} flex flex-col rounded-2xl border border-[#d8dee8] bg-white shadow-[0_16px_48px_rgba(15,23,42,0.22)]`}
+    class={`w-full max-w-[620px] ${fullHeight ? "h-[95vh] max-h-[95vh]" : "max-h-[85vh]"} flex flex-col rounded-2xl border border-[#d8dee8] bg-white shadow-[0_16px_48px_rgba(15,23,42,0.22)]`}
   >
     <div class="px-5 py-[15px] border-b border-[#d8dee8] flex items-center gap-2 flex-shrink-0">
       <h2 class="text-[15px] font-[650] flex-1 text-slate-900 truncate">{title}</h2>
