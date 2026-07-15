@@ -10,10 +10,26 @@ describe("resolveDisplay", () => {
     expect(DEFAULT_DISPLAY).toEqual({
       showAttributes: true,
       attributeDetail: "name-type",
+      showAttributeVisibility: true,
+      showAttributeMultiplicity: true,
       associationLabels: "all",
       emphasizeMultiplicity: false,
       showStereotype: true,
+      stereotypeColors: {},
     });
+  });
+
+  it("leaves nullable fields (maxAttributes, stereotypeFilter) undefined by default", () => {
+    const r = resolveDisplay(undefined);
+    expect(r.maxAttributes).toBeUndefined();
+    expect(r.stereotypeFilter).toBeUndefined();
+  });
+
+  it("overlays new fields, keeping stereotypeColors a record", () => {
+    const r = resolveDisplay({ maxAttributes: 6, stereotypeFilter: ["entity"], stereotypeColors: { entity: "#fff" } });
+    expect(r.maxAttributes).toBe(6);
+    expect(r.stereotypeFilter).toEqual(["entity"]);
+    expect(r.stereotypeColors).toEqual({ entity: "#fff" });
   });
 
   it("overlays a partial display onto the defaults", () => {
