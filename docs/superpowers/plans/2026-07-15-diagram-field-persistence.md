@@ -29,6 +29,7 @@
 - `src/ops/mod.rs` — `Op::DiagramSet` + `DiagramDisplaySet` + `op_diagram_set` handler + `apply_one` registration.
 - `src/serialize.rs` — round-trip fixpoint test for a diagram doc carrying the new keys.
 - `src/solve/resolve.rs` — two existing test-fixture `Diagram { .. }` literals must gain the new fields to keep compiling.
+- `tests/solver_golden.rs` — one integration-test `Diagram { .. }` literal must gain the new fields to keep compiling (`cargo test -p waml` compiles the `tests/` integration targets, so an unfixed literal breaks Task 1's own green gate).
 
 **Rust (`crates/waml-ops-dto`)**
 - `src/lib.rs` — `OpDto::DiagramSet` variant + `DisplayDto` struct + `to_op`/`from_op` + round-trip test cases.
@@ -58,6 +59,7 @@
 - Modify: `crates/waml/src/model.rs:389-399` (the `Diagram` struct)
 - Modify: `crates/waml/src/parse.rs:732` (the `Diagram { .. }` construction in `build_diagrams`)
 - Modify: `crates/waml/src/solve/resolve.rs:270` and `:428` (two test-fixture `Diagram { .. }` literals)
+- Modify: `crates/waml/tests/solver_golden.rs:18` (integration-test `Diagram { .. }` literal — `use waml::model::{Diagram, DiagramGroup}` at the top of that file needs `DiagramDisplay` added)
 
 **Interfaces:**
 - Produces: `pub struct DiagramDisplay` (partial; all fields `Option`/`Vec`) with `pub fn is_empty(&self) -> bool`, and `Diagram.description: Option<String>` + `Diagram.display: DiagramDisplay`. Consumed by Tasks 2 (parse) and later serde on the wasm wire.
@@ -149,7 +151,7 @@ impl DiagramDisplay {
 }
 ```
 
-- [ ] **Step 4: Update the three `Diagram { .. }` construction sites to compile**
+- [ ] **Step 4: Update the four `Diagram { .. }` construction sites to compile**
 
 In `crates/waml/src/parse.rs:732`, change:
 
@@ -186,7 +188,9 @@ to:
             description: None, groups, layout, display: crate::model::DiagramDisplay::default() }
 ```
 
-In `crates/waml/src/solve/resolve.rs:428`, the `let d = Diagram { key: "tables/dia".into(), title: "D".into(), profile: "uml-domain".into(), groups: vec![...] ... }` literal — add `description: None,` after `profile`, and `display: crate::model::DiagramDisplay::default(),` before the closing `}` (keep the existing `groups`/`layout` fields; add `layout: vec![],` if that literal did not already set it).
+In `crates/waml/src/solve/resolve.rs:428`, the `let d = Diagram { key: "tables/dia".into(), title: "D".into(), profile: "uml-domain".into(), groups: vec![...] ... }` literal — add `description: None,` after `profile`, and `display: crate::model::DiagramDisplay::default(),` before the closing `}` (this literal already sets both `groups` and `layout`, so leave those as-is).
+
+In `crates/waml/tests/solver_golden.rs:18`, the `let diagram = Diagram { key, title, profile, groups, layout }` literal — this is an integration test, so it imports the model types via `use waml::model::{Diagram, DiagramGroup};` (line 2). Add `DiagramDisplay` to that import, then add `description: None,` after `profile` and `display: DiagramDisplay::default(),` before the closing `}`. **This file is easy to overlook** (it lives under `tests/`, not `src/`), but `cargo test -p waml` in Step 5 compiles it — miss it and the crate's own green gate fails to compile.
 
 - [ ] **Step 5: Run the test + full crate to verify green**
 
@@ -196,7 +200,7 @@ Expected: PASS — `diagram_display_*` pass; all pre-existing `waml` tests still
 - [ ] **Step 6: Commit**
 
 ```bash
-git add crates/waml/src/model.rs crates/waml/src/parse.rs crates/waml/src/solve/resolve.rs
+git add crates/waml/src/model.rs crates/waml/src/parse.rs crates/waml/src/solve/resolve.rs crates/waml/tests/solver_golden.rs
 git commit -m "feat(waml): add description + DiagramDisplay to the Diagram model"
 ```
 
@@ -1212,13 +1216,15 @@ it("updateDiagram persists display on a real diagram doc", async () => {
 
 it("updateDiagram on the implicit All diagram is a silent no-op", async () => {
   const store = createModelStore([["order.md", "---\ntype: uml.Class\ntitle: Order\n---\n# Order\n"]]);
-  const before = store.get();
+  const before = store.get().diagrams; // [] — no authored Diagram docs; "All" is synthesized downstream, not here
   store.updateDiagram(ALL_DIAGRAM_KEY, { display: resolveDisplay({ showAttributes: false }) });
-  expect(store.get()).toBe(before); // no emit, bundle unchanged (graph().diagrams has no such key)
+  const after = store.get().diagrams;
+  expect(after).toHaveLength(0);   // nothing was persisted
+  expect(after).toEqual(before);
 });
 ```
 
-(Import `resolveDisplay` from `@waml/okf` and `createModelStore` per the file's existing imports. If `store.get()` identity is not a stable no-op signal in this suite, assert instead that `store.get().diagrams` is empty and no error was surfaced.)
+(Import `resolveDisplay` from `@waml/okf` and `createModelStore` per the file's existing imports. **Do NOT assert `store.get() === before` by identity** — `store.get()` calls `graph()`, which recomputes `fuseGhosts(toModelGraph(...))` fresh on every call and returns a new object even when nothing mutated, so a `.toBe` identity check would false-fail on correct no-op behaviour. Assert on `graph().diagrams` content instead: it must stay empty. If the `!prev` guard were removed, `updateDiagramOps(undefined, patch)` would throw and fail this test — so the content assertion still catches a broken guard.)
 
 - [ ] **Step 2: Run test to verify it fails**
 
@@ -1386,4 +1392,4 @@ Expected: no matches for `displaySettings`; the `updateDiagram` "no-op in 1b" co
 
 **Type consistency:** `DiagramDisplaySet` field names identical across Rust ops (Task 4), DTO converters (Task 5). Frontmatter/serde/TS keys all camelCase (`showAttributeVisibility` etc.). `toDisplayDto`/`partialDisplayFromWire`/`DisplayDto` field sets match the Rust `DisplayDto`. `updateDiagramOps(prev: Diagram, patch: Partial<Diagram>)` matches the store call in Task 10 and the `Diagram` type from Task 7. `stereotypeColors` is `Record<string,string>` in TS `DiagramDisplay`, `string[]` on both wires (`RustDiagramDisplay`, `DisplayDto`) — conversions live in `partialDisplayFromWire` (in) and `toDisplayDto` (out).
 
-**Assumptions flagged inline** (also in the final report): (A) `@waml/*`/`crates/waml` naming vs the spec's `@uaml`; (B) `wasm-pack` required for Task 6; (C) two `solve/resolve.rs` test fixtures need the new `Diagram` fields; (D) `toDisplayDto` re-resolves internally for type-safety/idempotency; (E) web handler has no isolated unit test — verified via build + grep + manual smoke, per the spec's "(or a focused unit)".
+**Assumptions flagged inline** (also in the final report): (A) `@waml/*`/`crates/waml` naming vs the spec's `@uaml`; (B) `wasm-pack` required for Task 6; (C) three test-fixture `Diagram { .. }` literals beyond `parse.rs` need the new fields to keep compiling — two in `solve/resolve.rs` (:270, :428) and one in the `tests/solver_golden.rs` integration target (:18), which `cargo test -p waml` also compiles; (D) `toDisplayDto` re-resolves internally for type-safety/idempotency; (E) web handler has no isolated unit test — verified via build + grep + manual smoke, per the spec's "(or a focused unit)".
