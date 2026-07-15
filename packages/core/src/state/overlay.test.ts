@@ -18,21 +18,25 @@ const CONCEPT = { id: "", type: "uml.Class", body: "" };
  *  callers stay terse while the wire type keeps `concept` required. */
 type RustNodeInput = Omit<RustNode, "concept"> & { concept?: RustNode["concept"] };
 
+/** Diagram fixtures predate the additive `layout` field (Stage 1c, unread by
+ *  `toModelGraph`); the helper injects it so callers stay terse. */
+type RustDiagramInput = Omit<RustDiagram, "layout"> & { layout?: RustDiagram["layout"] };
+
 // A minimal Rust `Model` (as serialized from wasm `build_model`) for adapter tests.
 function model(partial: {
   nodes?: RustNodeInput[];
   edges?: RustEdge[];
-  diagrams?: RustDiagram[];
+  diagrams?: RustDiagramInput[];
   path?: string;
   packages?: RustNodeInput[];
 }): RustModel {
   return {
     edges: [],
-    diagrams: [],
     path: "",
     ...partial,
     nodes: (partial.nodes ?? []).map((n) => ({ concept: CONCEPT, ...n })),
     packages: (partial.packages ?? []).map((n) => ({ concept: CONCEPT, ...n })),
+    diagrams: (partial.diagrams ?? []).map((d) => ({ layout: [], ...d })),
   };
 }
 
@@ -203,8 +207,8 @@ describe("toModelGraph", () => {
   });
 });
 
-function modelWith(diagram: RustModel["diagrams"][number]): RustModel {
-  return { nodes: [], edges: [], diagrams: [diagram], path: "", packages: [] };
+function modelWith(diagram: RustDiagramInput): RustModel {
+  return { nodes: [], edges: [], diagrams: [{ layout: [], ...diagram }], path: "", packages: [] };
 }
 
 describe("toModelGraph diagram display/description", () => {
