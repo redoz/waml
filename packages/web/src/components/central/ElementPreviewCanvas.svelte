@@ -41,11 +41,21 @@
 
 	const { fitView } = useSvelteFlow();
 
-	// Re-crop rendered set on mount whenever geometry changes.
+	// Re-crop rendered set on mount whenever geometry changes. Guard the
+	// microtask continuation with a per-effect cancellation flag: if the
+	// component/effect is destroyed (e.g. dialog closes) before tick()
+	// resolves, calling fitView() would read a derived belonging to a
+	// now-destroyed effect (Svelte's `derived_inert` warning).
 	$effect(() => {
 		void rfNodes;
 		void rfEdges;
-		void tick().then(() => fitView({ padding: 0.2, duration: 0 }));
+		let cancelled = false;
+		tick().then(() => {
+			if (!cancelled) fitView({ padding: 0.2, duration: 0 });
+		});
+		return () => {
+			cancelled = true;
+		};
 	});
 </script>
 

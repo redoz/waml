@@ -52,3 +52,69 @@ test("renders the preview region for an edge", () => {
   });
   expect(screen.getByTestId("element-preview")).toBeTruthy();
 });
+
+// Dimming logic (ElementPreviewCanvas): nodes in `focalKeys` render at full
+// opacity (`style: undefined`); every other node in the subset renders dimmed
+// (`style: "opacity:0.4"`). @xyflow/svelte applies a node's `style` directly
+// to its `.svelte-flow__node[data-id]` wrapper div, so we can assert on it
+// through the rendered DOM (unlike edges — see note on the edge-mode test
+// below, where @xyflow/svelte's viewport-overlap culling means no edge DOM
+// renders at all under jsdom, regardless of dimming correctness).
+test("node-edit mode: focal node renders full-opacity, connected neighbor renders dimmed", () => {
+  const { container } = render(ElementPreview, {
+    props: {
+      mode: "node",
+      focalKey: "a",
+      nodes: [node("a"), node("b")],
+      edges: [edge],
+      display: { ...DEFAULT_DISPLAY },
+      profileName: "uml-domain",
+    },
+  });
+  const focalNode = container.querySelector('.svelte-flow__node[data-id="a"]') as HTMLElement;
+  const neighborNode = container.querySelector('.svelte-flow__node[data-id="b"]') as HTMLElement;
+  expect(focalNode).toBeTruthy();
+  expect(neighborNode).toBeTruthy();
+  expect(focalNode.style.opacity).toBe("");
+  expect(neighborNode.style.opacity).toBe("0.4");
+});
+
+// Edge-edit mode: both endpoints of the focal edge are in `focalKeys`
+// (`edgePreviewSubset` sets `focalKeys = { edge.from, edge.to }`), so both
+// nodes render full-opacity — this exercises the same subset->focalKeys
+// wiring the buggy earlier draft got wrong for the edge's own AND condition
+// (`focalKeys.has(e.source) && focalKeys.has(e.target)`).
+//
+// NOTE: asserting directly on the *edge's* dim style was attempted but is
+// not observable via rendered DOM in this test environment:
+// @xyflow/svelte's EdgeRenderer filters `store.visible.edges` through
+// `isEdgeVisible()`, which computes overlap against the flow container's
+// live `clientWidth`/`clientHeight` — always 0 under jsdom (no real layout
+// engine), so no edge ever renders regardless of the dimming logic's
+// correctness. Forcing non-zero measured dimensions via a firing
+// ResizeObserver + `getBoundingClientRect` stub was attempted and caused
+// @xyflow/svelte's internal reactivity to loop indefinitely (the test
+// process had to be killed), so that path was abandoned as impractical.
+// Separately, `RelEdge.svelte` (the "rel" edge type used for all model
+// edges) does not forward its incoming `style` prop to `<BaseEdge>` at all
+// — so even outside tests, edge dimming currently has no visual effect in
+// the running app. That's a real, pre-existing gap beyond this task's two
+// assigned findings; flagged for follow-up rather than fixed here.
+test("edge-edit mode: both endpoints of the focal edge render full-opacity", () => {
+  const { container } = render(ElementPreview, {
+    props: {
+      mode: "edge",
+      focalKey: "ab",
+      nodes: [node("a"), node("b")],
+      edges: [edge],
+      display: { ...DEFAULT_DISPLAY },
+      profileName: "uml-domain",
+    },
+  });
+  const fromNode = container.querySelector('.svelte-flow__node[data-id="a"]') as HTMLElement;
+  const toNode = container.querySelector('.svelte-flow__node[data-id="b"]') as HTMLElement;
+  expect(fromNode).toBeTruthy();
+  expect(toNode).toBeTruthy();
+  expect(fromNode.style.opacity).toBe("");
+  expect(toNode.style.opacity).toBe("");
+});
