@@ -75,6 +75,8 @@
   <CentralEditPanel title={node.concept.title?.trim() || "Untitled"} fullHeight {showPreview} bind:previewEl {onClose}>
     <ObjectInspector
       {node}
+      {nodes}
+      {edges}
       onUpdate={(patch) => onUpdateNode(node.key, patch)}
       {profileName}
     />

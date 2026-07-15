@@ -1,6 +1,6 @@
 import { describe, it, test, expect, vi } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/svelte";
-import type { ModelNode } from "@waml/okf";
+import type { ModelNode, ModelEdge } from "@waml/okf";
 import ObjectInspector from "./ObjectInspector.svelte";
 
 const node: ModelNode = {
@@ -44,6 +44,30 @@ test("toggling the abstract checkbox calls onUpdate", async () => {
   const checkbox = screen.getByRole("checkbox") as HTMLInputElement;
   await fireEvent.click(checkbox);
   expect(onUpdate).toHaveBeenCalledWith({ abstract: true });
+});
+
+describe("ObjectInspector associations", () => {
+  const other: ModelNode = {
+    concept: { id: "n2", type: "uml.Class", title: "Customer", body: "" },
+    key: "n2", type: "uml.Class", stereotypes: [], attributes: [], position: { x: 0, y: 0 },
+  };
+  const edge: ModelEdge = {
+    id: "e1", kind: "associates", from: "n1", to: "n2",
+    fromEnd: {}, toEnd: { multiplicity: "0..*" }, bidirectional: false,
+  };
+
+  it("lists the related node before the attributes section", () => {
+    render(ObjectInspector, { props: { node, onUpdate: () => {}, profileName: "uml-domain", nodes: [node, other], edges: [edge] } });
+    expect(screen.getByText("Associations")).toBeTruthy();
+    expect(screen.getByText("Customer")).toBeTruthy();
+    const doc = document.body.textContent ?? "";
+    expect(doc.indexOf("Associations")).toBeLessThan(doc.indexOf("Attributes"));
+  });
+
+  it("shows an empty hint when the node has no relationships", () => {
+    render(ObjectInspector, { props: { node, onUpdate: () => {}, profileName: "uml-domain", nodes: [node], edges: [] } });
+    expect(screen.getByText("No associations")).toBeTruthy();
+  });
 });
 
 describe("ObjectInspector palette", () => {

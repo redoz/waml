@@ -1,14 +1,20 @@
 <!-- packages/web/src/components/inspector/ObjectInspectorReadonly.svelte -->
 <script lang="ts">
-  import type { ModelNode } from "@waml/okf";
+  import type { ModelNode, ModelEdge } from "@waml/okf";
+  import { nodeAssociations } from "./associations";
 
-  let { node }: { node: ModelNode } = $props();
+  let { node, nodes = [], edges = [] }: {
+    node: ModelNode;
+    nodes?: ModelNode[];
+    edges?: ModelEdge[];
+  } = $props();
 
   const labelCls = "block text-[11px] font-semibold text-slate-500 uppercase tracking-[0.3px] mb-[6px]";
   const valueCls = "text-[13px] text-slate-900 whitespace-pre-wrap break-words";
   const emptyCls = "text-[13px] text-slate-400 italic";
 
   const isEnum = $derived(node.type === "uml.Enum");
+  const associations = $derived(nodeAssociations(node, edges, nodes));
 </script>
 
 <div class="flex flex-col gap-[15px]">
@@ -43,6 +49,22 @@
       <div class={valueCls}>{node.stereotypes.map((s) => `«${s}»`).join(" ")}</div>
     {:else}
       <div class={emptyCls}>None</div>
+    {/if}
+  </div>
+  <div>
+    <span class={labelCls}>Associations</span>
+    {#if associations.length > 0}
+      <ul class="flex flex-col gap-[4px]">
+        {#each associations as a (a.id)}
+          <li class="text-[13px] text-slate-900 break-words flex items-baseline gap-[6px]">
+            <span class="text-slate-400 font-mono">{a.outgoing ? "→" : "←"}</span>
+            <span class="font-semibold">{a.otherTitle}</span>
+            <span class="text-[11px] text-slate-500">{a.kind}{a.role ? ` (${a.role})` : ""}{a.multiplicity ? ` [${a.multiplicity}]` : ""}</span>
+          </li>
+        {/each}
+      </ul>
+    {:else}
+      <div class={emptyCls}>No associations</div>
     {/if}
   </div>
   {#if isEnum}

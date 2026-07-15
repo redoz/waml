@@ -110,6 +110,8 @@
   {#if selectedNode}
     <ObjectInspector
       node={selectedNode}
+      {nodes}
+      {edges}
       onUpdate={(patch) => onUpdateNode(selectedNode.key, patch)}
       profileName={profileName}
     />

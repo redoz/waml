@@ -25,7 +25,7 @@
 </script>
 
 {#if selectedNode}
-  <ObjectInspectorReadonly node={selectedNode} />
+  <ObjectInspectorReadonly node={selectedNode} {nodes} {edges} />
   {@render externalRefs?.()}
 {:else if selectedEdge}
   <RelationshipInspectorReadonly

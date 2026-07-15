@@ -1,13 +1,16 @@
 <script lang="ts">
-  import type { ModelNode, Attribute } from "@waml/okf";
+  import type { ModelNode, ModelEdge, Attribute } from "@waml/okf";
   import AttributeEditor from "./AttributeEditor.svelte";
   import InfoTip from "./InfoTip.svelte";
+  import { nodeAssociations } from "./associations";
   import { getProfile } from "@waml/core/profiles";
 
-  let { node, onUpdate, profileName }: {
+  let { node, onUpdate, profileName, nodes = [], edges = [] }: {
     node: ModelNode;
     onUpdate: (patch: Partial<ModelNode>) => void;
     profileName?: string;
+    nodes?: ModelNode[];
+    edges?: ModelEdge[];
   } = $props();
 
   const inputCls = "w-full text-[13px] px-[10px] py-2 border border-[#d8dee8] rounded-lg text-slate-900 focus:outline-none focus:border-[#1e88e5] focus:ring-2 focus:ring-[#e6f1fb]";
@@ -15,6 +18,7 @@
 
   let palette = $derived(getProfile(profileName).palette);
   let isEnum = $derived(node.type === "uml.Enum");
+  let associations = $derived(nodeAssociations(node, edges, nodes));
 </script>
 
 <div class="flex flex-col gap-[15px]">
@@ -77,6 +81,22 @@
         <option value={s}></option>
       {/each}
     </datalist>
+  </div>
+  <div>
+    <span class={labelCls}>Associations</span>
+    {#if associations.length > 0}
+      <ul class="flex flex-col gap-[4px]">
+        {#each associations as a (a.id)}
+          <li class="text-[13px] text-slate-900 break-words flex items-baseline gap-[6px]">
+            <span class="text-slate-400 font-mono">{a.outgoing ? "→" : "←"}</span>
+            <span class="font-semibold">{a.otherTitle}</span>
+            <span class="text-[11px] text-slate-500">{a.kind}{a.role ? ` (${a.role})` : ""}{a.multiplicity ? ` [${a.multiplicity}]` : ""}</span>
+          </li>
+        {/each}
+      </ul>
+    {:else}
+      <div class="text-[13px] text-slate-400 italic">No associations</div>
+    {/if}
   </div>
   {#if isEnum}
     <div>
