@@ -13,6 +13,9 @@ const templatesDir = join(root, "packages", "core", "src", "templates");
 // shape the hand-authored bundles used, e.g. "orders-domain-uml/order.md".
 const bundles = [
   { dir: "orders-domain-uml", exportName: "ordersDomainBundle", out: join(templatesDir, "orders-domain.bundle.ts") },
+  { dir: "orders-checkout-activity", exportName: "ordersCheckoutActivityBundle", out: join(templatesDir, "orders-checkout-activity.bundle.ts") },
+  { dir: "orders-checkout-sequence", exportName: "ordersCheckoutSequenceBundle", out: join(templatesDir, "orders-checkout-sequence.bundle.ts") },
+  { dir: "orders-use-cases", exportName: "ordersUseCasesBundle", out: join(templatesDir, "orders-use-cases.bundle.ts") },
 ];
 
 for (const { dir, exportName, out } of bundles) {
