@@ -208,7 +208,7 @@ the verb itself adds the **end adornment**:
 | category | line | verbs | end adornment |
 |---|---|---|---|
 | **association** | solid | `associates`, `aggregates`, `composes` | none / hollow ◇ (aggregation) / filled ◆ (composition) |
-| **dependency** | dashed | `depends`, `implements` (realization) | open → / hollow ▷ (realization) |
+| **dependency** | dashed | `depends`, `implements` (realization), `includes`, `extends` | open → / hollow ▷ (realization) / open → + `«include»`/`«extend»` label |
 | **generalization** | solid | `specializes` | hollow ▷ |
 
 These nest: composition is a stronger aggregation, and aggregation a stronger
@@ -310,6 +310,92 @@ arrow, and is allowed on **all** verbs. It takes one of two forms:
   `lower..bound`, `lower ≤ bound` unless `bound` is `*`.
 - `<role>` is optional per end; it is a single token following the multiplicity
   after one space.
+
+## Behavioral substrates
+
+Three additions extend the structure grammar above and introduce two new
+self-rendering substrates. Full rationale and worked examples:
+`docs/superpowers/specs/2026-07-11-uaml-behavioral-substrates-design.md`.
+
+### Structure tier additions
+
+Two new metaclasses join the closed set: `uml.Actor`, `uml.UseCase`. Two new
+dependency verbs join the Relationships grammar:
+
+```bnf
+<rel-verb>      ::= "associates" | "aggregates" | "composes" | "specializes"
+                   | "implements" | "depends" | "includes" | "extends"
+```
+
+`includes` and `extends` are dependencies: no ends, rendered dashed with an
+open arrow and a `«include»` / `«extend»` label. Context rule: `associates`
+ends (`: <near> to <far>`) are required between two classifiers, and
+**optional** when either end is an `uml.Actor` or `uml.UseCase` (a bare
+`associates` there is a communication link). A system boundary is a `frame`
+group in a Diagram's `## Members` section — no new metaclass.
+
+### Flow substrate (`uml.Activity`, `uml.StateMachine`)
+
+One document is one directed graph — self-rendering, no `## Layout`. Optional
+frontmatter `describes: [Title](./slug.md)` links the flow to the entity it
+behaviorizes. `## Nodes` holds one `###` heading per vertex:
+
+```bnf
+flow-heading    ::= "###" SP node-kind? SP node-identity
+node-kind       ::= "initial" | "final" | "decision" | "merge"
+                   | "fork" | "join" | "object" link
+node-identity   ::= text                      ; heading text minus the keyword;
+                                               ; an "object" node's identity is
+                                               ; its link title
+```
+
+Each node owns zero or more bullets:
+
+```bnf
+flow-bullet     ::= transition | internal | refines | partition
+transition      ::= "-" SP ("on" SP expr SP)? (("when" SP expr) | "else")? SP
+                     "transitions to" SP target
+                     (SP "carries" SP link)?
+                     (":" SP expr)?
+target          ::= local-name | link
+internal        ::= "-" SP ("entry" | "do" | "exit") ":" SP expr
+refines         ::= "-" SP "refines" SP link
+partition       ::= "-" SP "partition:" SP text
+expr            ::= "`" text "`"               ; opaque to the model
+link            ::= "[" text "](" "./" slug ".md" ")"
+```
+
+`transitions` is the one edge verb for both flow flavors. Guards are
+delimited by the word `when`, never `[...]`. A trailing `#### Notes` under a
+node is a plain bulleted list, same grammar as a classifier's `## Notes`.
+
+### Interaction substrate (`uml.Sequence`)
+
+One document is one ordered interaction — self-rendering. Optional
+`describes:` as above. `## Lifelines` declares participants (order fixes the
+diagram's columns); `## Messages` is the ordered list (document order is time
+order):
+
+```bnf
+lifeline-line   ::= "-" SP link (SP "as" SP alias)?
+message-line    ::= "-" SP participant SP msg-verb SP participant
+                     (":" SP expr)?
+msg-verb        ::= "calls" | "sends" | "replies" | "creates" | "destroys"
+participant     ::= local-name | link                ; resolves to a lifeline
+                                                       ; by alias or title
+fragment        ::= "-" SP frag-kind
+                     ( operand )+
+frag-kind       ::= "alt" | "opt" | "loop"
+operand         ::= "-" SP ("when" SP expr | "else")
+                     ( message-line | fragment )+     ; indented one level
+                                                       ; deeper than the operand
+```
+
+`calls` (sync) renders solid line + filled arrowhead; `sends` (async) solid +
+open arrowhead; `replies` dashed + open arrowhead; `creates` dashed arrow to a
+new lifeline; `destroys` an arrow ending in `✕`. Execution bars are derived
+from call/reply pairing — there is no syntax for them. `par` operands,
+self/found/lost messages, gates, and coregions are not yet supported.
 
 ## Association classes (`uml.Association`)
 
