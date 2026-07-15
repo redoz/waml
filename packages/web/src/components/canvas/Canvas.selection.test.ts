@@ -41,3 +41,45 @@ describe("multi-select toolbar + regression", () => {
   // the store's diagram mutators are no-ops (no diagram/membership ops), so the
   // "New diagram from selection" persistence test returns in Stage 1c.
 });
+
+// Final-whole-branch-review fix: a selection made in one diagram must not
+// survive a switch to another diagram — most importantly, it must never carry
+// into a read-only Flow/Sequence view, where a stale selection would leave the
+// floating SelectionToolbar's Delete button live against the (still-mounted)
+// model. Exercised here with two ordinary diagrams — the switcher's
+// selection-clearing fix is generic to every diagram switch, not special-cased
+// to behavior views.
+describe("diagram switch clears a stale selection (final-review fix)", () => {
+  it("clears the selection when the switcher activates a different diagram", async () => {
+    store.load([
+      ["alpha.md", "---\ntype: uml.Class\ntitle: Alpha\n---\n# Alpha\n"],
+      ["beta.md", "---\ntype: uml.Class\ntitle: Beta\n---\n# Beta\n"],
+      [
+        "one.md",
+        "---\ntype: Diagram\ntitle: One\nprofile: uml-domain\n---\n# One\n\n## Members\n\n### Items\n- [Alpha](./alpha.md)\n",
+      ],
+      [
+        "two.md",
+        "---\ntype: Diagram\ntitle: Two\nprofile: uml-domain\n---\n# Two\n\n## Members\n\n### Items\n- [Beta](./beta.md)\n",
+      ],
+    ]);
+    render(Canvas);
+
+    // Select an element in whichever diagram is active on mount.
+    await addAndSelectNode();
+    expect(screen.getByTestId("selection-toolbar")).toBeTruthy();
+
+    // Open the switcher and activate the OTHER diagram (whichever one isn't
+    // currently shown as the trigger's title).
+    const switcher = screen.getByRole("button", { name: /switch diagram/i });
+    const otherTitle = switcher.textContent?.includes("One") ? "Two" : "One";
+    await fireEvent.click(switcher);
+    await fireEvent.click(screen.getByRole("treeitem", { name: otherTitle }));
+    await tick();
+
+    // The stale selection from the previous diagram must be gone — no toolbar,
+    // and the switcher now shows the newly-activated diagram.
+    expect(screen.queryByTestId("selection-toolbar")).toBeNull();
+    expect(screen.getByRole("button", { name: /switch diagram/i }).textContent).toContain(otherTitle);
+  });
+});

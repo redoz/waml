@@ -346,6 +346,7 @@ import ShareToast from "../ShareToast.svelte";
 
   // ── Keyboard delete ────────────────────────────────────────────────────────
   function handleKeyDown(e: KeyboardEvent) {
+    if (activeFlow || activeSequence) return; // read-only behavior view — never mutate the model
     if (matchesShortcut("selection.delete", e) && !isSelectionEmpty(selectionSet)) {
       const tag = (e.target as HTMLElement).tagName;
       if (["INPUT", "TEXTAREA", "SELECT"].includes(tag)) return;
@@ -357,6 +358,7 @@ import ShareToast from "../ShareToast.svelte";
   // Remove every selected node + edge (shared by the Delete key and the toolbar's
   // "Delete selection").
   function handleDeleteSelection() {
+    if (activeFlow || activeSequence) return; // read-only behavior view — never mutate the model
     deleteSelection(store, selectionSet);
     selectionSet = EMPTY_SELECTION;
   }
@@ -503,7 +505,16 @@ import ShareToast from "../ShareToast.svelte";
     onLibrary={() => (showLibrary = true)}
     diagrams={diagrams}
     activeDiagramKey={activeDiagram.key}
-    onSelectDiagram={(key) => (activeDiagramKey = key)}
+    onSelectDiagram={(key) => {
+      // A selection made in one diagram must never carry into another — most
+      // importantly, it must never survive into a read-only Flow/Sequence view
+      // (where it would otherwise leave the floating SelectionToolbar's Delete
+      // button live against the still-mounted model). See also the
+      // activeFlow/activeSequence guards on handleDeleteSelection/handleKeyDown
+      // and the <SelectionToolbar> render condition below (defense in depth).
+      activeDiagramKey = key;
+      selectionSet = EMPTY_SELECTION;
+    }}
     onCreateDiagram={(name) => {
       const d = store.addDiagram(name);
       activeDiagramKey = d.key;
@@ -675,7 +686,7 @@ import ShareToast from "../ShareToast.svelte";
 
       <!-- Floating toolbar anchored above the selection's bounding box. Shown
            whenever ≥1 element is selected. -->
-      {#if !isSelectionEmpty(selectionSet) && toolbarPos}
+      {#if !isSelectionEmpty(selectionSet) && toolbarPos && !activeFlow && !activeSequence}
         <SelectionToolbar
           x={toolbarPos.x}
           y={toolbarPos.y}
