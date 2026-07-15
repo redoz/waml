@@ -1,7 +1,7 @@
 <script lang="ts">
   // The navigator sheet — a prop-driven presentational tree grown from the
   // TopBar switcher. All mutations are callbacks so it unit-tests like TopBar.
-  import { Check, ChevronDown, Folder, FileText, StickyNote, Box } from "lucide-svelte";
+  import { Check, ChevronDown, Folder, FileText, StickyNote, Box, Workflow, ArrowRightLeft } from "lucide-svelte";
   import { buildNavTree, packageOf, type NavRow, type NavKind } from "@waml/core/nav/tree";
   import { filterNav, matchSpan } from "@waml/core/nav/search";
   import { GripVertical } from "lucide-svelte";
@@ -105,7 +105,16 @@
     diagram: FileText,
     note: StickyNote,
     classifier: Box,
+    flow: Workflow,
+    sequence: ArrowRightLeft,
   };
+
+  // Flow/sequence rows are read-only behavior-doc views: no rename/delete/
+  // reorder/properties affordances apply, so their "active" indicator only
+  // needs to track activeDiagramKey (mirrors the diagram row's indicator).
+  function isActiveRow(row: NavRow): boolean {
+    return (row.kind === "diagram" || row.kind === "flow" || row.kind === "sequence") && row.key === activeDiagramKey;
+  }
 
   // Left-click action menu for classifier/note rows (packages/diagrams keep
   // their scope/select behavior).
@@ -116,7 +125,7 @@
 
   function activateRow(row: NavRow) {
     if (row.kind === "package") onScope?.(row.key);
-    else if (row.kind === "diagram") onSelectDiagram?.(row.key);
+    else if (row.kind === "diagram" || row.kind === "flow" || row.kind === "sequence") onSelectDiagram?.(row.key);
     else actionMenu = { key: row.key };
   }
 
@@ -140,6 +149,10 @@
   );
 
   function openCtx(row: NavRow) {
+    // Flow/sequence rows are read-only behavior-doc views: rename/delete/
+    // reorder/sort/properties are not meaningful for them, so skip opening
+    // the context menu entirely rather than wiring dead menu items.
+    if (row.kind === "flow" || row.kind === "sequence") return;
     actionMenu = null;
     ctxMode = null;
     ctxInput = "";
@@ -236,7 +249,7 @@
     <button
       role="treeitem"
       aria-label={row.title}
-      aria-selected={row.kind === "diagram" && row.key === activeDiagramKey}
+      aria-selected={isActiveRow(row)}
       oncontextmenu={(e) => { e.preventDefault(); openCtx(row); }}
       onclick={() => activateResult(row)}
       style="padding-left:{8 + row.depth * 16}px"
@@ -268,7 +281,7 @@
         {@const Icon = KIND_ICON[row.kind]}
         <button
           role="treeitem"
-          aria-selected={row.kind === "diagram" && row.key === activeDiagramKey}
+          aria-selected={isActiveRow(row)}
           draggable="true"
           ondragstart={() => (dragKey = row.key)}
           ondragover={(e) => e.preventDefault()}
@@ -276,7 +289,7 @@
           oncontextmenu={(e) => { e.preventDefault(); openCtx(row); }}
           onclick={() => activateRow(row)}
           style="padding-left:{8 + row.depth * 16}px"
-          class="group w-full text-left pr-3 py-[5px] cursor-pointer flex items-center gap-[7px] hover:bg-[#f1f3f7] {row.kind === 'diagram' && row.key === activeDiagramKey ? 'text-[#1e88e5] font-[600]' : 'text-slate-900'}"
+          class="group w-full text-left pr-3 py-[5px] cursor-pointer flex items-center gap-[7px] hover:bg-[#f1f3f7] {isActiveRow(row) ? 'text-[#1e88e5] font-[600]' : 'text-slate-900'}"
         >
           <GripVertical
             size={13}
@@ -285,7 +298,7 @@
           />
           <Icon size={15} class="flex-shrink-0 text-slate-500" />
           <span class="truncate flex-1">{row.title}</span>
-          {#if row.kind === "diagram" && row.key === activeDiagramKey}
+          {#if isActiveRow(row)}
             <Check size={15} class="flex-shrink-0 text-[#1e88e5]" />
           {/if}
         </button>

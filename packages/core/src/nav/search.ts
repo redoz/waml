@@ -43,6 +43,8 @@ function typeMap(graph: ModelGraph): Map<string, string> {
   for (const n of graph.nodes) types.set(n.key, n.type);
   for (const d of graph.diagrams) types.set(d.key, "Diagram");
   for (const p of graph.packages) types.set(p.key, "uml.Package");
+  for (const f of graph.flows ?? []) types.set(f.key, "Flow");
+  for (const s of graph.interactions ?? []) types.set(s.key, "Sequence");
   return types;
 }
 

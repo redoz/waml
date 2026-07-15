@@ -1,6 +1,6 @@
 import type { ModelGraph } from "@waml/okf";
 
-export type NavKind = "package" | "diagram" | "note" | "classifier";
+export type NavKind = "package" | "diagram" | "note" | "classifier" | "flow" | "sequence";
 export interface NavRow {
   key: string;
   title: string;
@@ -13,6 +13,8 @@ function kindOf(type: string): NavKind {
   if (type === "uml.Package") return "package";
   if (type === "Diagram") return "diagram";
   if (type === "uml.Note") return "note";
+  if (type === "Flow") return "flow";
+  if (type === "Sequence") return "sequence";
   return "classifier";
 }
 
@@ -26,6 +28,11 @@ export function buildNavTree(graph: ModelGraph, scopeKey: string): NavRow[] {
   for (const d of graph.diagrams) byKey.set(d.key, { title: d.title, type: "Diagram" });
   for (const p of graph.packages)
     byKey.set(p.key, { title: p.concept.title || graph.path, type: "uml.Package", members: p.members });
+  // Flow/interaction doc keys already live in the owning package's `members`
+  // (parse.rs's build_packages does not exclude behavior docs) — they just
+  // need a byKey entry so emitPackage's `if (!m) continue;` doesn't skip them.
+  for (const f of graph.flows ?? []) byKey.set(f.key, { title: f.title, type: "Flow" });
+  for (const s of graph.interactions ?? []) byKey.set(s.key, { title: s.title, type: "Sequence" });
 
   const rows: NavRow[] = [];
   const emitPackage = (pkgKey: string, depth: number) => {
@@ -41,6 +48,7 @@ export function buildNavTree(graph: ModelGraph, scopeKey: string): NavRow[] {
     }
   };
   emitPackage(scopeKey, 0);
+
   return rows;
 }
 
