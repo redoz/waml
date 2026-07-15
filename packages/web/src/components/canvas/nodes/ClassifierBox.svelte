@@ -55,7 +55,7 @@
       </RowsCompartment>
     {/if}
     {#if isDetailed && !data.values}
-      <RowsCompartment rows={data.attributes.length}>
+      <RowsCompartment rows={data.attributes.length} max={display.maxAttributes}>
         {#snippet render(i: number)}
           <AttributeRow a={data.attributes[i]} {showVisibility} {showTypes} showMultiplicity={display.showAttributeMultiplicity} />
         {/snippet}

@@ -114,3 +114,36 @@ test("a profile that allows visibility still requires showAttributeVisibility (A
   });
   expect(off.container.querySelector(".relative.flex span.font-mono")?.textContent ?? "").not.toContain("+");
 });
+
+const mkManyAttrs = (display: DiagramDisplay): OkfNodeData =>
+  ({
+    concept: { id: "n", type: "uml.Class", title: "Order", body: "" },
+    key: "n",
+    type: "uml.Class",
+    stereotypes: ["entity"],
+    attributes: [
+      { name: "a1", type: { name: "STRING" }, multiplicity: "1" },
+      { name: "a2", type: { name: "STRING" }, multiplicity: "1" },
+      { name: "a3", type: { name: "STRING" }, multiplicity: "1" },
+      { name: "a4", type: { name: "STRING" }, multiplicity: "1" },
+    ],
+    position: { x: 0, y: 0 },
+    _display: display,
+    _profile: "uml-domain",
+  }) as OkfNodeData;
+
+test("maxAttributes caps attribute rows with a static '+K more' footer, no expand button", () => {
+  const { container } = render(ClassifierBox, {
+    props: { data: mkManyAttrs(disp({ showAttributes: true, maxAttributes: 2 })) },
+  });
+  expect(container.textContent).toContain("a1");
+  expect(container.textContent).toContain("a2");
+  expect(container.textContent).not.toContain("a3");
+  expect(container.textContent).toContain("+2 more");
+  expect(container.querySelector("button")).toBeNull();
+
+  const { container: uncapped } = render(ClassifierBox, {
+    props: { data: mkManyAttrs(disp({ showAttributes: true })) },
+  });
+  expect(uncapped.textContent).toContain("a4");
+});
