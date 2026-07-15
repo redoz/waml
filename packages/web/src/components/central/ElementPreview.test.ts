@@ -96,10 +96,11 @@ test("node-edit mode: focal node renders full-opacity, connected neighbor render
 // @xyflow/svelte's internal reactivity to loop indefinitely (the test
 // process had to be killed), so that path was abandoned as impractical.
 // Separately, `RelEdge.svelte` (the "rel" edge type used for all model
-// edges) does not forward its incoming `style` prop to `<BaseEdge>` at all
-// — so even outside tests, edge dimming currently has no visual effect in
-// the running app. That's a real, pre-existing gap beyond this task's two
-// assigned findings; flagged for follow-up rather than fixed here.
+// edges) was found to not forward its incoming `style` prop to `<BaseEdge>`
+// at all — so even outside tests, edge dimming had no visual effect in the
+// running app. That gap has since been fixed (see RelEdge.svelte's `style`
+// destructuring and `edgeStyle` computation); it just isn't observable via
+// rendered DOM in this jsdom test environment for the reason above.
 test("edge-edit mode: both endpoints of the focal edge render full-opacity", () => {
   const { container } = render(ElementPreview, {
     props: {
