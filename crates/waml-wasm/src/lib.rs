@@ -116,10 +116,9 @@ pub fn build_bundle(bundle: JsValue) -> Result<JsValue, JsValue> {
 
 /// `bundle`: a `[path, markdown][]`. Returns a `Diagnostic[]`.
 #[wasm_bindgen]
-pub fn validate(bundle: JsValue) -> Result<JsValue, JsValue> {
+pub fn validate(bundle: JsValue) -> Result<Vec<waml::diagnostic::Diagnostic>, JsValue> {
     let b: Vec<(String, String)> = serde_wasm_bindgen::from_value(bundle)?;
-    let diags = waml::validate::validate(&b);
-    Ok(serde_wasm_bindgen::to_value(&diags)?)
+    Ok(waml::validate::validate(&b))
 }
 
 /// `bundle`: a `[path, markdown][]`; `ops`: an `OpDto[]`. Returns the edited bundle.

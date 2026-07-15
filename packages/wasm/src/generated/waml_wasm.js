@@ -113,14 +113,16 @@ export function split_bundle(text) {
 /**
  * `bundle`: a `[path, markdown][]`. Returns a `Diagnostic[]`.
  * @param {any} bundle
- * @returns {any}
+ * @returns {Diagnostic[]}
  */
 export function validate(bundle) {
     const ret = wasm.validate(bundle);
-    if (ret[2]) {
-        throw takeFromExternrefTable0(ret[1]);
+    if (ret[3]) {
+        throw takeFromExternrefTable0(ret[2]);
     }
-    return takeFromExternrefTable0(ret[0]);
+    var v1 = getArrayJsValueFromWasm0(ret[0], ret[1]).slice();
+    wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
+    return v1;
 }
 function __wbg_get_imports() {
     const import0 = {
@@ -458,6 +460,17 @@ function debugString(val) {
     }
     // TODO we could test for more things here, like `Set`s and `Map`s.
     return className;
+}
+
+function getArrayJsValueFromWasm0(ptr, len) {
+    ptr = ptr >>> 0;
+    const mem = getDataViewMemory0();
+    const result = [];
+    for (let i = ptr; i < ptr + 4 * len; i += 4) {
+        result.push(wasm.__wbindgen_externrefs.get(mem.getUint32(i, true)));
+    }
+    wasm.__externref_drop_slice(ptr, len);
+    return result;
 }
 
 function getArrayU8FromWasm0(ptr, len) {
