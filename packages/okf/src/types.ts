@@ -4,34 +4,49 @@
 
 export type Visibility = "+" | "-" | "#" | "~";
 
-/** An attribute's type: a display token, optionally resolved to another classifier. */
-export interface TypeRef { name: string; ref?: string }
+export type {
+  TypeRef,
+  Attribute,
+  RelEnd,
+  RelationshipKind,
+  NoteAnchor,
+  FlowFlavor,
+  FlowNodeKind,
+  FlowNode,
+  FlowEdge,
+  FlowDoc,
+  MessageVerb,
+  FragmentKind,
+  Lifeline,
+  SeqOperand,
+  SeqItem,
+  SequenceDoc,
+  FmValue,
+  ConceptRole,
+  Link,
+  Citation,
+} from "@waml/wasm";
 
-export interface Attribute {
-  name: string;
-  type: TypeRef;
-  /** UML multiplicity string as authored ("1", "0..1", "*", "1..*", "2..5"). Parser defaults to "1". */
-  multiplicity: string;
-  visibility?: Visibility;
-  description?: string;
-}
+import type {
+  Attribute,
+  RelEnd,
+  RelationshipKind,
+  NoteAnchor,
+  FlowDoc,
+  SequenceDoc,
+  FmValue,
+  ConceptRole,
+  Link,
+  Citation,
+} from "@waml/wasm";
 
 // "annotates" is a uml.Note-only verb; it never produces a ModelEdge (anchors live on the note node).
 export const RELATIONSHIP_KINDS = ["associates", "aggregates", "composes", "specializes", "implements", "depends", "includes", "extends", "annotates"] as const;
-export type RelationshipKind = (typeof RELATIONSHIP_KINDS)[number];
 
 /** Verbs that may take `: <near> to <far>` ends. Required for aggregates/composes;
  *  optional for associates (bare = actor↔use-case communication link, enforced
  *  cross-doc by the Rust validate layer); forbidden for everything else. */
 export const ENDED_KINDS: ReadonlySet<RelationshipKind> = new Set(["associates", "aggregates", "composes"]);
-
-export interface RelEnd { multiplicity?: string; role?: string; navigable?: boolean }
-
-/** A uml.Note anchor: a classifier, a NAMED association, or an association addressed by its endpoint (unnamed). */
-export type NoteAnchor =
-  | { targetKey: string }
-  | { sourceKey: string; name: string }
-  | { sourceKey: string; kind: RelationshipKind; targetKey: string };
 
 export interface ModelNode {
   /** Lossless OKF projection of this node's source document (OKF tier) and the
@@ -159,107 +174,6 @@ export interface ModelGraph {
   interactions?: SequenceDoc[];
 }
 
-// ── Flow substrate (activity / state-machine behavior documents) ────────────
-// Mirrors the Rust `model::Flow*` shapes (crates/waml/src/model.rs). A flow doc
-// is a self-rendering directed graph: one per behavior classifier, resolved
-// from its `## Nodes` section by `build_flows`. Additive — absent on graphs
-// with no behavior classifiers.
-
-/** Flow flavor: tunes rendering only — one grammar for both. */
-export type FlowFlavor = "activity" | "stateMachine";
-
-/** A flow node's closed kind set (heading keyword). `"plain"` = no keyword →
- *  action (activity) or state (state machine). */
-export type FlowNodeKind = "initial" | "final" | "decision" | "merge" | "fork" | "join" | "object" | "plain";
-
-/** A resolved node of a flow document. */
-export interface FlowNode {
-  /** Heading text minus the kind keyword — the name transitions resolve against. */
-  id: string;
-  kind: FlowNodeKind;
-  /** Resolved key of an `object` node's typing classifier. */
-  objectRef?: string;
-  partition?: string;
-  entry?: string;
-  do?: string;
-  exit?: string;
-  /** Resolved key of the flow document this composite/call-behavior refines. */
-  refines?: string;
-  notes?: string[];
-}
-
-/** A resolved transition (flow edge). Source/target are node identities. */
-export interface FlowEdge {
-  from: string;
-  /** Local node identity, or the link title for a cross-document target. */
-  to: string;
-  /** Resolved key when the target was a cross-document link. */
-  toRef?: string;
-  trigger?: string;
-  guard?: string;
-  /** Decision default branch (`else transitions to …`). */
-  else?: boolean;
-  effect?: string;
-  /** Resolved key of the carried object type (`carries <link>` object flow). */
-  carries?: string;
-}
-
-/** One flow document: one self-rendering directed graph (model AND view). */
-export interface FlowDoc {
-  key: string;
-  title: string;
-  flavor: FlowFlavor;
-  /** Resolved key of the entity this behavior describes (frontmatter link). */
-  describes?: string;
-  nodes: FlowNode[];
-  edges: FlowEdge[];
-}
-
-// ── Interaction substrate (sequence behavior documents) ────────────────────────
-// Mirrors the Rust `model::Sequence*` shapes (crates/waml/src/model.rs). A sequence
-// doc is a self-rendering message/fragment diagram, one per interaction classifier,
-// resolved from its `## Interactions` section by `build_interactions`. Additive —
-// absent on graphs with no interaction classifiers.
-
-/** Message verb. */
-export type MessageVerb = "calls" | "sends" | "replies" | "creates" | "destroys";
-
-/** Fragment kind. */
-export type FragmentKind = "alt" | "opt" | "loop";
-
-/** A resolved lifeline (actor/object). */
-export interface Lifeline {
-  /** Display title. */
-  title: string;
-  /** Optional ref to an actor/object classifier. */
-  ref?: string;
-  /** Optional alias (if ref is absent, used as the identity). */
-  alias?: string;
-}
-
-/** A resolved sequence operand (alt/opt guard branch). */
-export interface SeqOperand {
-  /** Guard condition (if/else). */
-  guard?: string;
-  /** Items in this operand. */
-  items: SeqItem[];
-}
-
-/** A resolved sequence message or fragment. */
-export type SeqItem =
-  | { item: "message"; from: string; verb: MessageVerb; to: string; signature?: string }
-  | { item: "fragment"; kind: FragmentKind; operands: SeqOperand[] };
-
-/** One sequence document: self-rendering sequence diagram (model AND view). */
-export interface SequenceDoc {
-  key: string;
-  title: string;
-  /** Resolved key of the entity this interaction describes. */
-  describes?: string;
-  lifelines: Lifeline[];
-  messages: SeqItem[];
-}
-
 /** Split "family.Metaclass". Null for opaque/legacy tokens. */
 export function splitType(type: string): { family: string; metaclass: string } | null {
   const m = /^([a-z][a-z0-9]*)\.([A-Za-z][A-Za-z0-9]*)$/.exec(type);
@@ -272,18 +186,6 @@ export function splitType(type: string): { family: string; metaclass: string } |
 // mirrors the Rust `okf::` shapes (see crates/waml/src/okf.rs) that
 // `build_bundle` returns over the wasm wire. These do NOT replace `ModelNode` /
 // `ModelGraph`; both surfaces coexist.
-
-/** A frontmatter scalar or (recursively) list, mirroring Rust `okf`'s `FmValue`. */
-export type FmValue = string | boolean | number | FmValue[];
-
-/** Reserved-file role of a document. Absent on the wire ⇒ `"concept"`. */
-export type ConceptRole = "concept" | "index" | "log";
-
-/** An untyped OKF link (`[text](href)`) drawn from a concept's body (OKF §5.3). */
-export interface Link { text: string; href: string }
-
-/** A citation: a link to an external source backing a claim (OKF §8). */
-export interface Citation { text: string; href: string }
 
 /** The domain-agnostic projection of one markdown document. Round-trips every
  *  OKF field losslessly. Fields that are empty/default are omitted on the wire

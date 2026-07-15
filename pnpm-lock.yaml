@@ -62,6 +62,10 @@ importers:
         version: 2.1.9(@types/node@22.19.21)(jsdom@25.0.1)
 
   packages/okf:
+    dependencies:
+      '@waml/wasm':
+        specifier: workspace:*
+        version: link:../wasm
     devDependencies:
       typescript:
         specifier: ^5.6.0

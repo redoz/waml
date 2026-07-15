@@ -1,4 +1,5 @@
 { "name": "@waml/okf", "version": "0.0.0", "type": "module", "license": "Apache-2.0",
   "main": "dist/index.js", "types": "dist/index.d.ts",
   "scripts": { "build": "tsc -p tsconfig.json", "test": "vitest run --passWithNoTests" },
+  "dependencies": { "@waml/wasm": "workspace:*" },
   "devDependencies": { "vitest": "^2.1.0", "typescript": "^5.6.0" } }
