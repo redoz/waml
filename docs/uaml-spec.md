@@ -343,7 +343,7 @@ behaviorizes. `## Nodes` holds one `###` heading per vertex:
 ```bnf
 flow-heading    ::= "###" SP node-kind? SP node-identity
 node-kind       ::= "initial" | "final" | "decision" | "merge"
-                   | "fork" | "join" | "object" link
+                   | "fork" | "join" | "object"
 node-identity   ::= text                      ; heading text minus the keyword;
                                                ; an "object" node's identity is
                                                ; its link title
