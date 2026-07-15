@@ -178,3 +178,36 @@ test("showStereotype false renders neither keyword nor tags", () => {
   expect(container.textContent).not.toContain("«Class»");
   expect(container.textContent).not.toContain("«entity»");
 });
+
+const style = (container: HTMLElement) => (container.firstElementChild as HTMLElement).getAttribute("style") ?? "";
+
+// Note: jsdom (via the `cssstyle` package) normalizes recognized color
+// declarations set through `element.style.cssText` — which is how Svelte 5
+// applies a dynamic `style={...}` attribute — into `rgb(r, g, b)` form
+// before reflecting them back through `getAttribute("style")`. So these
+// assertions match on the normalized rgb() form rather than the literal hex
+// input, even though we're reading the raw attribute string (not the CSSOM)
+// per the jsdom + color-mix() note above.
+test("a stereotype color overrides the header accent and adds a wash", () => {
+  const { container } = render(ClassifierBox, {
+    props: { data: mkTags(disp({ showStereotype: true, stereotypeColors: { entity: "#ff0000" } })) },
+  });
+  const s = style(container);
+  expect(s).toContain("border-top-color: rgb(255, 0, 0)");
+  expect(s).toContain("color-mix(in srgb, rgb(255, 0, 0) 12%, white)");
+});
+
+test("override color follows later-wins precedence across stereotypes", () => {
+  const { container } = render(ClassifierBox, {
+    props: { data: mkTags(disp({ showStereotype: true, stereotypeColors: { entity: "#111111", valueObject: "#222222" } })) },
+  });
+  // data.stereotypes = ["entity", "valueObject"] ⇒ valueObject wins
+  expect(style(container)).toContain("border-top-color: rgb(34, 34, 34)");
+});
+
+test("no override keeps the plain white background (no wash)", () => {
+  const { container } = render(ClassifierBox, {
+    props: { data: mkTags(disp({ showStereotype: true, stereotypeColors: {} })) },
+  });
+  expect(style(container)).not.toContain("color-mix");
+});

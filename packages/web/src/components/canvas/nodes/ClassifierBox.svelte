@@ -25,10 +25,16 @@
       : data.stereotypes.filter((s) => display.stereotypeFilter!.includes(s)),
   );
 
+  let overrideHeader = $derived(
+    data.stereotypes.reduce<string | undefined>((acc, s) => display.stereotypeColors[s] ?? acc, undefined),
+  );
+  let headerColor = $derived(overrideHeader ?? st.header);
+
   let boxStyle = $derived.by(() => {
     const decls: string[] = [`font-family:${NODE_FONT}`];
-    if (st.header) decls.push(`border-top-color:${st.header}`, `border-top-width:4px`);
-    if (st.border === "thick") decls.push(`border-color:${st.header ?? "#334155"}`, `border-width:2.5px`);
+    if (headerColor) decls.push(`border-top-color:${headerColor}`, `border-top-width:4px`);
+    if (st.border === "thick") decls.push(`border-color:${headerColor ?? "#334155"}`, `border-width:2.5px`);
+    if (overrideHeader) decls.push(`background-color:color-mix(in srgb, ${overrideHeader} 12%, white)`);
     if (st.shape === "hexagon") {
       decls.push(`clip-path:polygon(8% 0, 92% 0, 100% 50%, 92% 100%, 8% 100%, 0 50%)`, `border-radius:0`);
     }
