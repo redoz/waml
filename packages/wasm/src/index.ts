@@ -52,6 +52,8 @@ export type {
   ConceptRole,
   Link,
   Citation,
+  Concept,
+  Bundle,
 } from "./generated/waml_wasm.js";
 
 import type { Size, SolveConfig, SolveResult } from "./generated/waml_wasm.js";

@@ -122,6 +122,8 @@ pub struct Concept {
 /// Every document projects to exactly one `Concept`; a `Bundle` stays flat.
 #[derive(Debug, Clone, Default, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "wasm", derive(tsify_next::Tsify))]
+#[cfg_attr(feature = "wasm", tsify(into_wasm_abi, from_wasm_abi))]
 pub struct Bundle {
     pub concepts: Vec<Concept>,
 }

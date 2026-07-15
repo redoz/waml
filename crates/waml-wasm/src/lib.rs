@@ -104,6 +104,9 @@ pub fn build_model(bundle: JsValue) -> Result<waml::model::Model, JsValue> {
 /// untouched. `Concept.extra` (frontmatter) serializes as a plain JS object —
 /// `serialize_maps_as_objects` matches its JSON semantics and the TS
 /// `Record<string, FmValue>` type, not a `Map`.
+/// Spike B (see docs/superpowers/plans/notes/2026-07-15-tsify-spike-findings.md) found
+/// tsify's `into_wasm_abi` renders this shape as a JS `Map`, so the return stays `JsValue`
+/// with this serializer rather than the now-Tsify'd `waml::okf::Bundle`.
 #[wasm_bindgen]
 pub fn build_bundle(bundle: JsValue) -> Result<JsValue, JsValue> {
     use serde::Serialize;
