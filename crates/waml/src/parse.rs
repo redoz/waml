@@ -133,6 +133,17 @@ fn walk_section(title: &str, content: &str, content_abs_start: usize, src: &str,
             },
         )),
         "nodes" => Section::Nodes(crate::grammar::parse_flow_block(content, content_abs_start, src)),
+        "lifelines" => Section::Lifelines(walk_bullets(
+            content, content_abs_start, src, DiagCode::MalformedLifeline,
+            |line, ln| {
+                crate::grammar::parse_lifeline_line(line).map(|mut l| {
+                    l.line = ln;
+                    l.span = Some(find_link_span(line, &l.link.title, &l.link.slug));
+                    l
+                })
+            },
+        )),
+        "messages" => Section::Messages(crate::grammar::parse_messages_block(content, content_abs_start, src)),
         "members" => Section::Members(crate::grammar::parse_members_block(content, content_abs_start, src)),
         "body" => Section::Body(content.trim().to_string()),
         "notes" => Section::Notes(walk_bullets(
@@ -163,6 +174,27 @@ fn push_group_errors(g: &crate::syntax::MemberGroup, out: &mut Vec<Diagnostic>) 
     }
 }
 
+/// Push a `## Messages` block's `Line::Error` nodes as diagnostics, recursing
+/// into fragment operands (and each fragment's own misplaced-line errors).
+fn push_seq_errors(items: &[crate::syntax::Line<crate::syntax::SeqItemSyntax>], out: &mut Vec<Diagnostic>) {
+    for it in items {
+        match it {
+            crate::syntax::Line::Error(e) => {
+                out.push(Diagnostic::new(e.code, e.message.clone(), "", e.line).with_span(e.span));
+            }
+            crate::syntax::Line::Parsed(crate::syntax::SeqItemSyntax::Fragment { operands, errors, .. }) => {
+                for e in errors {
+                    out.push(Diagnostic::new(e.code, e.message.clone(), "", e.line).with_span(e.span));
+                }
+                for op in operands {
+                    push_seq_errors(&op.items, out);
+                }
+            }
+            crate::syntax::Line::Parsed(crate::syntax::SeqItemSyntax::Message(_)) => {}
+        }
+    }
+}
+
 /// Derive bullet-level syntactic diagnostics by walking the tree's `Line::Error`
 /// nodes — the single source of truth for per-line syntax errors.
 pub fn diagnostics_of(doc: &Document) -> Vec<Diagnostic> {
@@ -174,6 +206,8 @@ pub fn diagnostics_of(doc: &Document) -> Vec<Diagnostic> {
             Section::Notes(v) => push_line_errors(v, &mut out),
             Section::Relationships(v) => push_line_errors(v, &mut out),
             Section::Layout(v) => push_line_errors(v, &mut out),
+            Section::Lifelines(v) => push_line_errors(v, &mut out),
+            Section::Messages(block) => push_seq_errors(&block.items, &mut out),
             Section::Members(block) => {
                 for g in &block.groups {
                     push_group_errors(g, &mut out);

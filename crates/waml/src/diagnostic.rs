@@ -27,6 +27,8 @@ pub enum DiagCode {
     UnresolvedLayoutRef,
     LayoutCycle,
     LayoutConflict,
+    MalformedMessage,
+    MalformedLifeline,
 }
 
 impl DiagCode {
@@ -45,6 +47,8 @@ impl DiagCode {
             DiagCode::UnresolvedLayoutRef => "unresolved-layout-ref",
             DiagCode::LayoutCycle => "layout-cycle",
             DiagCode::LayoutConflict => "layout-conflict",
+            DiagCode::MalformedMessage => "malformed-message",
+            DiagCode::MalformedLifeline => "malformed-lifeline",
         }
     }
     /// Default severity for this code (a specific site may downgrade to a warning).

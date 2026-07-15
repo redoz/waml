@@ -5,8 +5,9 @@ use crate::diagnostic::DiagCode;
 use crate::model::{Attribute, FlowNodeKind, RelEnd, RelationshipKind, TypeRef, Visibility};
 use crate::multiplicity::Multiplicity;
 use crate::syntax::{
-    ErrorNode, FlowBlock, FlowBullet, FlowNodeSyntax, FlowTargetRef, FlowTransition, Line, LinkRef,
-    MemberGroup, MemberLine, MembersBlock, ParsedName, ParsedRel,
+    ErrorNode, FlowBlock, FlowBullet, FlowNodeSyntax, FlowTargetRef, FlowTransition, LifelineLine,
+    Line, LinkRef, MemberGroup, MemberLine, MembersBlock, MessagesBlock, ParsedMessage,
+    ParsedName, ParsedRel, SeqItemSyntax, SeqOperandSyntax,
 };
 
 static ATTR_RE: LazyLock<Regex> =
@@ -28,6 +29,15 @@ static REL_RE: LazyLock<Regex> = LazyLock::new(|| {
 });
 static END_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^(\S+)(?:\s+([A-Za-z][A-Za-z0-9_]*))?$").unwrap());
+static LIFELINE_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^- \[([^\]]+)\]\(\./(.+?)\.md\)(?: as ([A-Za-z][A-Za-z0-9_]*))?$").unwrap());
+static MESSAGE_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"^- (.+?) (calls|sends|replies|creates|destroys) (.+?)(?::\s*`([^`]+)`)?$").unwrap()
+});
+static SEQ_FRAGMENT_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^- (alt|opt|loop)$").unwrap());
+static SEQ_OPERAND_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^- (?:when `([^`]+)`|else)$").unwrap());
 static MEMBER_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^- \[([^\]]*)\]\(\./(.+?)\.md\)\s*$").unwrap());
 static STRAY_BRACKET_RE: LazyLock<Regex> =
@@ -621,6 +631,253 @@ pub fn render_flow_block(block: &FlowBlock) -> String {
     out
 }
 
+pub fn parse_lifeline_line(line: &str) -> Result<LifelineLine, LineError> {
+    let trimmed = line.trim_end_matches('\r').trim();
+    let m = LIFELINE_RE.captures(trimmed).ok_or_else(|| LineError {
+        range: bullet_range(line),
+        message: "malformed lifeline — expected '- [Title](./slug.md)[ as alias]' (a lifeline IS a Class or Actor, so it is a link)".to_string(),
+    })?;
+    Ok(LifelineLine {
+        link: LinkRef { title: m[1].to_string(), slug: m[2].to_string() },
+        alias: m.get(3).map(|x| x.as_str().to_string()),
+        line: 0,
+        span: None,
+    })
+}
+
+fn message_error_message(line: &str) -> String {
+    let first = line.trim_start_matches("- ").split_whitespace().next().unwrap_or("");
+    if first == "par" {
+        "'par' fragments are deferred — supported fragments are alt, opt, loop".to_string()
+    } else {
+        "malformed message — expected '<sender> <verb> <receiver>[: `signature`]' with verb one of calls/sends/replies/creates/destroys".to_string()
+    }
+}
+
+pub fn parse_message_line(line: &str) -> Result<ParsedMessage, LineError> {
+    let trimmed = line.trim_end_matches('\r').trim();
+    let m = MESSAGE_RE.captures(trimmed).ok_or_else(|| LineError {
+        range: bullet_range(line),
+        message: message_error_message(trimmed),
+    })?;
+    Ok(ParsedMessage {
+        from: m[1].trim().to_string(),
+        verb: crate::model::MessageVerb::parse(&m[2]).expect("regex alternation is the closed verb set"),
+        to: m[3].trim().to_string(),
+        signature: m.get(4).map(|x| x.as_str().to_string()),
+        line: 0,
+    })
+}
+
+pub fn render_lifeline_line(l: &LifelineLine) -> String {
+    match &l.alias {
+        Some(a) => format!("- [{}](./{}.md) as {a}", l.link.title, l.link.slug),
+        None => format!("- [{}](./{}.md)", l.link.title, l.link.slug),
+    }
+}
+
+fn render_message_line(m: &ParsedMessage) -> String {
+    match &m.signature {
+        Some(sig) => format!("- {} {} {}: `{sig}`", m.from, m.verb.as_str(), m.to),
+        None => format!("- {} {} {}", m.from, m.verb.as_str(), m.to),
+    }
+}
+
+/// Parse the raw text under `## Messages`. Nesting is by indentation (two
+/// spaces per level): a fragment owns operands one level deeper; an operand's
+/// items nest one level deeper again. Malformed/misplaced lines are preserved
+/// as positioned error nodes — nothing is dropped.
+pub fn parse_messages_block(content: &str, content_abs_start: usize, src: &str) -> MessagesBlock {
+    use crate::model::FragmentKind;
+
+    enum Open {
+        Fragment { kind: FragmentKind, operands: Vec<SeqOperandSyntax>, errors: Vec<ErrorNode>, line: usize, level: usize },
+        Operand { guard: Option<String>, items: Vec<Line<SeqItemSyntax>>, line: usize, level: usize },
+    }
+    fn level_of(o: &Open) -> usize {
+        match o {
+            Open::Fragment { level, .. } | Open::Operand { level, .. } => *level,
+        }
+    }
+    fn close_one(stack: &mut Vec<Open>, top: &mut Vec<Line<SeqItemSyntax>>) {
+        match stack.pop().expect("close_one on non-empty stack") {
+            Open::Operand { guard, items, line, .. } => match stack.last_mut() {
+                Some(Open::Fragment { operands, .. }) => operands.push(SeqOperandSyntax { guard, items, line }),
+                _ => unreachable!("an operand only ever opened under a fragment"),
+            },
+            Open::Fragment { kind, operands, errors, line, .. } => {
+                let item = Line::Parsed(SeqItemSyntax::Fragment { kind, operands, errors, line });
+                match stack.last_mut() {
+                    Some(Open::Operand { items, .. }) => items.push(item),
+                    None => top.push(item),
+                    Some(Open::Fragment { .. }) => unreachable!("a fragment is never opened under a fragment"),
+                }
+            }
+        }
+    }
+
+    let mut top: Vec<Line<SeqItemSyntax>> = Vec::new();
+    let mut stack: Vec<Open> = Vec::new();
+    let mut fence: Option<char> = None;
+    let mut offset = 0usize;
+
+    for raw in content.split('\n') {
+        let line_start = offset;
+        offset += raw.len() + 1;
+        let line = raw.trim_end_matches('\r');
+        let t = line.trim_start();
+
+        if let Some(marker) = fence {
+            let delim = if marker == '`' { "```" } else { "~~~" };
+            if t.starts_with(delim) {
+                fence = None;
+            }
+            continue;
+        }
+        if t.starts_with("```") {
+            fence = Some('`');
+            continue;
+        }
+        if t.starts_with("~~~") {
+            fence = Some('~');
+            continue;
+        }
+        if t.is_empty() {
+            continue;
+        }
+
+        let line_no = crate::parse::line_at(src, content_abs_start + line_start);
+        let level = (line.len() - t.len()) / 2;
+        while stack.last().map(|o| level_of(o) >= level).unwrap_or(false) {
+            close_one(&mut stack, &mut top);
+        }
+
+        let in_fragment = matches!(stack.last(), Some(Open::Fragment { .. }));
+
+        let mk_err = |code: DiagCode, message: String| ErrorNode {
+            raw: raw.to_string(),
+            line: line_no,
+            span: bullet_range(raw),
+            code,
+            message,
+        };
+
+        if !t.starts_with("- ") {
+            let e = mk_err(DiagCode::DroppableContent, crate::parse::DROPPABLE_MSG.to_string());
+            match stack.last_mut() {
+                Some(Open::Operand { items, .. }) => items.push(Line::Error(e)),
+                Some(Open::Fragment { errors, .. }) => errors.push(e),
+                None => top.push(Line::Error(e)),
+            }
+            continue;
+        }
+
+        if let Some(m) = SEQ_OPERAND_RE.captures(t) {
+            if in_fragment {
+                stack.push(Open::Operand {
+                    guard: m.get(1).map(|x| x.as_str().to_string()),
+                    items: vec![],
+                    line: line_no,
+                    level,
+                });
+            } else {
+                let e = mk_err(
+                    DiagCode::MalformedMessage,
+                    "'when'/'else' operand outside an alt/opt/loop fragment".to_string(),
+                );
+                match stack.last_mut() {
+                    Some(Open::Operand { items, .. }) => items.push(Line::Error(e)),
+                    _ => top.push(Line::Error(e)),
+                }
+            }
+            continue;
+        }
+        if let Some(m) = SEQ_FRAGMENT_RE.captures(t) {
+            let kind = crate::model::FragmentKind::parse(&m[1]).expect("regex alternation is the closed set");
+            if in_fragment {
+                let e = mk_err(
+                    DiagCode::MalformedMessage,
+                    "a nested fragment must sit inside a 'when'/'else' operand".to_string(),
+                );
+                if let Some(Open::Fragment { errors, .. }) = stack.last_mut() {
+                    errors.push(e);
+                }
+            } else {
+                stack.push(Open::Fragment { kind, operands: vec![], errors: vec![], line: line_no, level });
+            }
+            continue;
+        }
+        match parse_message_line(t) {
+            Ok(mut msg) => {
+                msg.line = line_no;
+                if in_fragment {
+                    let e = mk_err(
+                        DiagCode::MalformedMessage,
+                        "expected a 'when `guard`' or 'else' operand before messages inside a fragment".to_string(),
+                    );
+                    if let Some(Open::Fragment { errors, .. }) = stack.last_mut() {
+                        errors.push(e);
+                    }
+                } else {
+                    let item = Line::Parsed(SeqItemSyntax::Message(msg));
+                    match stack.last_mut() {
+                        Some(Open::Operand { items, .. }) => items.push(item),
+                        _ => top.push(item),
+                    }
+                }
+            }
+            Err(le) => {
+                let e = mk_err(DiagCode::MalformedMessage, le.message);
+                match stack.last_mut() {
+                    Some(Open::Operand { items, .. }) => items.push(Line::Error(e)),
+                    Some(Open::Fragment { errors, .. }) => errors.push(e),
+                    None => top.push(Line::Error(e)),
+                }
+            }
+        }
+    }
+    while !stack.is_empty() {
+        close_one(&mut stack, &mut top);
+    }
+    MessagesBlock { items: top }
+}
+
+/// Render a messages block, `## Messages` heading included.
+pub fn render_messages_block(block: &MessagesBlock) -> String {
+    fn render_items(out: &mut String, items: &[Line<SeqItemSyntax>], depth: usize) {
+        for it in items {
+            out.push('\n');
+            match it {
+                Line::Error(e) => out.push_str(&e.raw),
+                Line::Parsed(SeqItemSyntax::Message(m)) => {
+                    out.push_str(&"  ".repeat(depth));
+                    out.push_str(&render_message_line(m));
+                }
+                Line::Parsed(SeqItemSyntax::Fragment { kind, operands, errors, .. }) => {
+                    out.push_str(&"  ".repeat(depth));
+                    out.push_str(&format!("- {}", kind.as_str()));
+                    for e in errors {
+                        out.push('\n');
+                        out.push_str(&e.raw);
+                    }
+                    for op in operands {
+                        out.push('\n');
+                        out.push_str(&"  ".repeat(depth + 1));
+                        match &op.guard {
+                            Some(g) => out.push_str(&format!("- when `{g}`")),
+                            None => out.push_str("- else"),
+                        }
+                        render_items(out, &op.items, depth + 2);
+                    }
+                }
+            }
+        }
+    }
+    let mut out = String::from("## Messages");
+    render_items(&mut out, &block.items, 0);
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -849,5 +1106,67 @@ mod tests {
             let n = FlowNodeSyntax { kind, identity, object_ref, bullets: Vec::new(), notes: Vec::new(), line: 0 };
             assert_eq!(render_flow_heading(&n), format!("### {heading}"));
         }
+    }
+
+    use crate::model::{FragmentKind, MessageVerb};
+    use crate::syntax::SeqItemSyntax;
+
+    #[test]
+    fn parses_lifeline_lines() {
+        let l = parse_lifeline_line("- [Order](./order.md) as order").unwrap();
+        assert_eq!(l.link.slug, "order");
+        assert_eq!(l.alias.as_deref(), Some("order"));
+        let l = parse_lifeline_line("- [Customer](./customer.md)").unwrap();
+        assert_eq!(l.alias, None);
+        assert!(parse_lifeline_line("- Customer").is_err(), "a lifeline IS a link");
+    }
+
+    #[test]
+    fn parses_message_lines() {
+        let m = parse_message_line("- Customer calls order: `place(items)`").unwrap();
+        assert_eq!(m.from, "Customer");
+        assert_eq!(m.verb, MessageVerb::Calls);
+        assert_eq!(m.to, "order");
+        assert_eq!(m.signature.as_deref(), Some("place(items)"));
+        let m = parse_message_line("- order replies Customer: `confirmation`").unwrap();
+        assert_eq!(m.verb, MessageVerb::Replies);
+        assert!(parse_message_line("- Customer shouts order").is_err());
+        assert!(parse_message_line("- par").is_err(), "par is deferred");
+    }
+
+    #[test]
+    fn parses_nested_fragments_in_messages_block() {
+        let content = "- Customer calls order: `place(items)`\n- alt\n  - when `paid`\n    - order calls wh: `ship()`\n  - else\n    - order sends Customer: `paymentFailed()`\n- order replies Customer: `confirmation`";
+        let block = parse_messages_block(content, 0, content);
+        assert_eq!(block.items.len(), 3);
+        let SeqItemSyntax::Fragment { kind, operands, .. } = block.items[1].parsed().unwrap() else {
+            panic!("expected a fragment")
+        };
+        assert_eq!(*kind, FragmentKind::Alt);
+        assert_eq!(operands.len(), 2);
+        assert_eq!(operands[0].guard.as_deref(), Some("paid"));
+        assert_eq!(operands[1].guard, None); // else
+        let SeqItemSyntax::Message(m) = operands[0].items[0].parsed().unwrap() else { panic!() };
+        assert_eq!(m.to, "wh");
+    }
+
+    #[test]
+    fn messages_block_round_trips() {
+        let content = "- Customer calls order: `place(items)`\n- alt\n  - when `paid`\n    - order calls wh: `ship()`\n  - else\n    - order sends Customer: `paymentFailed()`\n- order replies Customer: `confirmation`";
+        let block = parse_messages_block(content, 0, content);
+        let rendered = render_messages_block(&block);
+        let body = rendered.strip_prefix("## Messages\n").unwrap();
+        assert_eq!(parse_messages_block(body, 0, body), block);
+        assert_eq!(body, content);
+    }
+
+    #[test]
+    fn misplaced_operand_and_unknown_fragment_degrade_to_error_lines() {
+        let content = "- when `paid`\n- par\n- Customer calls order";
+        let block = parse_messages_block(content, 0, content);
+        assert_eq!(block.items.len(), 3);
+        assert!(block.items[0].parsed().is_none(), "operand outside a fragment is an error line");
+        assert!(block.items[1].parsed().is_none(), "'par' is deferred and degrades");
+        assert!(block.items[2].parsed().is_some());
     }
 }

@@ -58,6 +58,10 @@ pub enum Section {
     Notes(Vec<Line<String>>),
     /// A flow document's `## Nodes` section (one directed graph).
     Nodes(FlowBlock),
+    /// A sequence document's participants.
+    Lifelines(Vec<Line<LifelineLine>>),
+    /// A sequence document's ordered messages.
+    Messages(MessagesBlock),
     Members(MembersBlock),
     Layout(Vec<Line<LayoutItem>>),
     /// An unrecognized `## Section`, preserved verbatim (graceful degradation).

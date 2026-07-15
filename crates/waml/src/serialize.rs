@@ -41,9 +41,11 @@ fn section_order(s: &Section) -> u8 {
         Section::Relationships(_) => 3,
         Section::Notes(_) => 4,
         Section::Nodes(_) => 5,
-        Section::Members(_) => 6,
-        Section::Layout(_) => 7,
-        Section::Unknown { .. } => 8,
+        Section::Lifelines(_) => 6,
+        Section::Messages(_) => 7,
+        Section::Members(_) => 8,
+        Section::Layout(_) => 9,
+        Section::Unknown { .. } => 10,
     }
 }
 
@@ -67,6 +69,18 @@ fn render_section(s: &Section) -> String {
             format!("## Notes\n{body}")
         }
         Section::Nodes(block) => crate::grammar::render_flow_block(block),
+        Section::Lifelines(lines) => {
+            let body = lines
+                .iter()
+                .map(|l| match l {
+                    Line::Parsed(x) => crate::grammar::render_lifeline_line(x),
+                    Line::Error(e) => e.raw.clone(),
+                })
+                .collect::<Vec<_>>()
+                .join("\n");
+            format!("## Lifelines\n{body}")
+        }
+        Section::Messages(block) => crate::grammar::render_messages_block(block),
         Section::Members(block) => render_members_block(block),
         Section::Layout(items) => {
             let body = items
@@ -176,5 +190,15 @@ mod tests {
         assert!(once.contains("- else transitions to Hold"));
         assert!(once.contains("### object [Order](./order.md)"));
         assert!(once.contains("#### Notes\n- Auto-expires after 24h."));
+    }
+
+    #[test]
+    fn sequence_document_serialize_is_a_semantic_fixpoint() {
+        let src = "---\ntype: uml.Sequence\ntitle: Place Order\ndescribes: [Place Order](./place-order.md)\n---\n# Place Order\n\n## Lifelines\n- [Customer](./customer.md)\n- [Order](./order.md) as order\n- [Warehouse](./warehouse.md) as wh\n\n## Messages\n- Customer calls order: `place(items)`\n- alt\n  - when `paid`\n    - order calls wh: `ship()`\n  - else\n    - order sends Customer: `paymentFailed()`\n- order replies Customer: `confirmation`\n";
+        let once = serialize_document(&parse_document(src));
+        let twice = serialize_document(&parse_document(&once));
+        assert_eq!(once, twice);
+        assert!(once.contains("## Lifelines\n- [Customer](./customer.md)\n- [Order](./order.md) as order"));
+        assert!(once.contains("- alt\n  - when `paid`\n    - order calls wh: `ship()`"));
     }
 }
