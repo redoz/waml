@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 use waml::grammar::{parse_ends, render_ends};
 use waml::model::{ClassifierType, RelEnd, RelationshipKind, Visibility};
 use waml::multiplicity::Multiplicity;
-use waml::ops::{NameSpec, Op, RelBy, Selector};
+use waml::ops::{DiagramDisplaySet, NameSpec, Op, RelBy, Selector};
 
 fn one() -> u32 {
     1
@@ -186,6 +186,67 @@ pub enum OpDto {
         v: u32,
         path: String,
     },
+    #[serde(rename = "diagram.set")]
+    DiagramSet {
+        #[serde(default = "one")]
+        v: u32,
+        key: String,
+        #[serde(default)]
+        title: Option<String>,
+        #[serde(default)]
+        desc: Option<String>,
+        #[serde(default)]
+        display: Option<DisplayDto>,
+    },
+}
+
+/// A fully-specified display block on the wire. Mirrors `waml::ops::DiagramDisplaySet`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DisplayDto {
+    pub show_attributes: bool,
+    pub attribute_detail: String,
+    pub show_attribute_visibility: bool,
+    pub show_attribute_multiplicity: bool,
+    #[serde(default)]
+    pub max_attributes: Option<u32>,
+    pub association_labels: String,
+    pub emphasize_multiplicity: bool,
+    pub show_stereotype: bool,
+    #[serde(default)]
+    pub stereotype_filter: Option<Vec<String>>,
+    #[serde(default)]
+    pub stereotype_colors: Vec<String>,
+}
+
+fn display_dto_to_set(d: &DisplayDto) -> DiagramDisplaySet {
+    DiagramDisplaySet {
+        show_attributes: d.show_attributes,
+        attribute_detail: d.attribute_detail.clone(),
+        show_attribute_visibility: d.show_attribute_visibility,
+        show_attribute_multiplicity: d.show_attribute_multiplicity,
+        max_attributes: d.max_attributes,
+        association_labels: d.association_labels.clone(),
+        emphasize_multiplicity: d.emphasize_multiplicity,
+        show_stereotype: d.show_stereotype,
+        stereotype_filter: d.stereotype_filter.clone(),
+        stereotype_colors: d.stereotype_colors.clone(),
+    }
+}
+
+fn display_set_to_dto(ds: &DiagramDisplaySet) -> DisplayDto {
+    DisplayDto {
+        show_attributes: ds.show_attributes,
+        attribute_detail: ds.attribute_detail.clone(),
+        show_attribute_visibility: ds.show_attribute_visibility,
+        show_attribute_multiplicity: ds.show_attribute_multiplicity,
+        max_attributes: ds.max_attributes,
+        association_labels: ds.association_labels.clone(),
+        emphasize_multiplicity: ds.emphasize_multiplicity,
+        show_stereotype: ds.show_stereotype,
+        stereotype_filter: ds.stereotype_filter.clone(),
+        stereotype_colors: ds.stereotype_colors.clone(),
+    }
 }
 
 fn check_v(v: u32, op: &str) -> Result<(), String> {
@@ -349,6 +410,15 @@ impl OpDto {
                 check_v(*v, "pkg.sort")?;
                 Ok(Op::PkgSort { path: path.clone() })
             }
+            OpDto::DiagramSet { v, key, title, desc, display } => {
+                check_v(*v, "diagram.set")?;
+                Ok(Op::DiagramSet {
+                    key: key.clone(),
+                    title: title.clone(),
+                    description: desc.clone(),
+                    display: display.as_ref().map(display_dto_to_set),
+                })
+            }
         }
     }
 
@@ -430,6 +500,13 @@ impl OpDto {
             Op::PkgDelete { path, cascade } => OpDto::PkgDelete { v: 1, path: path.clone(), cascade: *cascade },
             Op::PkgReorder { path, order } => OpDto::PkgReorder { v: 1, path: path.clone(), order: order.clone() },
             Op::PkgSort { path } => OpDto::PkgSort { v: 1, path: path.clone() },
+            Op::DiagramSet { key, title, description, display } => OpDto::DiagramSet {
+                v: 1,
+                key: key.clone(),
+                title: title.clone(),
+                desc: description.clone(),
+                display: display.as_ref().map(display_set_to_dto),
+            },
         }
     }
 }
@@ -570,11 +647,71 @@ mod tests {
             Op::PkgDelete { path: "sales".into(), cascade: false },
             Op::PkgReorder { path: "sales".into(), order: vec!["a".into()] },
             Op::PkgSort { path: "sales".into() },
+            Op::DiagramSet {
+                key: "dia".into(),
+                title: Some("D".into()),
+                description: None,
+                display: None,
+            },
+            Op::DiagramSet {
+                key: "dia".into(),
+                title: None,
+                description: Some("notes".into()),
+                display: Some(DiagramDisplaySet {
+                    show_attributes: false,
+                    attribute_detail: "name-only".into(),
+                    show_attribute_visibility: false,
+                    show_attribute_multiplicity: false,
+                    max_attributes: Some(6),
+                    association_labels: "hidden".into(),
+                    emphasize_multiplicity: true,
+                    show_stereotype: false,
+                    stereotype_filter: Some(vec!["entity".into()]),
+                    stereotype_colors: vec!["entity:#ffedd5".into()],
+                }),
+            },
         ];
         for op in &ops {
             let line = serde_json::to_string(&OpDto::from_op(op)).unwrap();
             let back: OpDto = serde_json::from_str(&line).unwrap();
             assert_eq!(&back.to_op().unwrap(), op, "wire round-trip changed op: {line}");
         }
+    }
+
+    #[test]
+    fn diagram_set_wire_tag_is_diagram_dot_set() {
+        let dto = OpDto::from_op(&Op::DiagramSet {
+            key: "dia".into(),
+            title: Some("D".into()),
+            description: None,
+            display: None,
+        });
+        let line = serde_json::to_string(&dto).unwrap();
+        assert!(line.contains("\"op\":\"diagram.set\""), "unexpected wire tag: {line}");
+    }
+
+    #[test]
+    fn diagram_set_display_dto_round_trips_absent_nullable_fields() {
+        let op = Op::DiagramSet {
+            key: "dia".into(),
+            title: None,
+            description: None,
+            display: Some(DiagramDisplaySet {
+                show_attributes: true,
+                attribute_detail: "name-type".into(),
+                show_attribute_visibility: true,
+                show_attribute_multiplicity: true,
+                max_attributes: None,
+                association_labels: "all".into(),
+                emphasize_multiplicity: false,
+                show_stereotype: true,
+                stereotype_filter: None,
+                stereotype_colors: vec![],
+            }),
+        };
+        let dto = OpDto::from_op(&op);
+        let line = serde_json::to_string(&dto).unwrap();
+        let back: OpDto = serde_json::from_str(&line).unwrap();
+        assert_eq!(back.to_op().unwrap(), op, "absent maxAttributes/stereotypeFilter must round-trip as None: {line}");
     }
 }

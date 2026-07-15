@@ -34,6 +34,23 @@ pub enum NameSpec {
     Ref(String), // target slug
 }
 
+/// A fully-specified display block. The panel always holds a resolved
+/// display, so every non-nullable field is present; nullable fields use
+/// their own absent state (`None` ⇒ omit the key).
+#[derive(Debug, Clone, PartialEq)]
+pub struct DiagramDisplaySet {
+    pub show_attributes: bool,
+    pub attribute_detail: String,
+    pub show_attribute_visibility: bool,
+    pub show_attribute_multiplicity: bool,
+    pub max_attributes: Option<u32>,
+    pub association_labels: String,
+    pub emphasize_multiplicity: bool,
+    pub show_stereotype: bool,
+    pub stereotype_filter: Option<Vec<String>>,
+    pub stereotype_colors: Vec<String>,
+}
+
 /// One mutation. One variant per sugar command; grows task by task.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Op {
@@ -89,6 +106,12 @@ pub enum Op {
     PkgDelete { path: String, cascade: bool },
     PkgReorder { path: String, order: Vec<String> },
     PkgSort { path: String },
+    DiagramSet {
+        key: String,                          // diagram doc id (full-path or bare slug)
+        title: Option<String>,                // None = leave unchanged
+        description: Option<String>,          // None = leave unchanged
+        display: Option<DiagramDisplaySet>,   // None = leave display untouched
+    },
 }
 
 pub fn apply(bundle: &[(String, String)], ops: &[Op]) -> Result<Bundle, OpError> {
@@ -131,6 +154,9 @@ fn apply_one(work: &mut Bundle, op: &Op) -> Result<(), OpError> {
         Op::PkgDelete { path, cascade } => pkg::op_pkg_delete(work, path, *cascade),
         Op::PkgReorder { path, order } => pkg::op_pkg_reorder(work, path, order),
         Op::PkgSort { path } => pkg::op_pkg_sort(work, path),
+        Op::DiagramSet { key, title, description, display } => {
+            op_diagram_set(work, key, title, description, display)
+        }
     }
 }
 
@@ -618,6 +644,55 @@ fn op_node_set(
     })
 }
 
+const DISPLAY_KEYS: &[&str] = &[
+    "showAttributes", "attributeDetail", "showAttributeVisibility",
+    "showAttributeMultiplicity", "maxAttributes", "associationLabels",
+    "emphasizeMultiplicity", "showStereotype", "stereotypeFilter",
+    "stereotypeColors",
+];
+
+fn op_diagram_set(
+    work: &mut Bundle,
+    key: &str,
+    title: &Option<String>,
+    description: &Option<String>,
+    display: &Option<DiagramDisplaySet>,
+) -> Result<(), OpError> {
+    edit_doc(work, key, "diagram.set", |doc| {
+        if let Some(t) = title {
+            fm_set(&mut doc.frontmatter, "title", FmValue::Str(t.clone()));
+            doc.title = t.clone();
+        }
+        if let Some(d) = description {
+            fm_set(&mut doc.frontmatter, "description", FmValue::Str(d.clone()));
+        }
+        if let Some(ds) = display {
+            // Whole-block replace: drop every display key first so a field left
+            // absent on this DiagramSet (e.g. maxAttributes not present on `ds`)
+            // clears back to its tri-state-absent wire representation, then
+            // re-set exactly the keys this fully-resolved display carries.
+            doc.frontmatter.entries.retain(|(k, _)| !DISPLAY_KEYS.contains(&k.as_str()));
+            fm_set(&mut doc.frontmatter, "showAttributes", FmValue::Bool(ds.show_attributes));
+            fm_set(&mut doc.frontmatter, "attributeDetail", FmValue::Str(ds.attribute_detail.clone()));
+            fm_set(&mut doc.frontmatter, "showAttributeVisibility", FmValue::Bool(ds.show_attribute_visibility));
+            fm_set(&mut doc.frontmatter, "showAttributeMultiplicity", FmValue::Bool(ds.show_attribute_multiplicity));
+            if let Some(max) = ds.max_attributes {
+                fm_set(&mut doc.frontmatter, "maxAttributes", FmValue::Num(max as f64));
+            }
+            fm_set(&mut doc.frontmatter, "associationLabels", FmValue::Str(ds.association_labels.clone()));
+            fm_set(&mut doc.frontmatter, "emphasizeMultiplicity", FmValue::Bool(ds.emphasize_multiplicity));
+            fm_set(&mut doc.frontmatter, "showStereotype", FmValue::Bool(ds.show_stereotype));
+            if let Some(filter) = &ds.stereotype_filter {
+                fm_set(&mut doc.frontmatter, "stereotypeFilter", str_list(filter));
+            }
+            if !ds.stereotype_colors.is_empty() {
+                fm_set(&mut doc.frontmatter, "stereotypeColors", str_list(&ds.stereotype_colors));
+            }
+        }
+        Ok(())
+    })
+}
+
 fn op_node_rm(work: &mut Bundle, slug: &str, cascade: bool) -> Result<(), OpError> {
     let i = find_doc(work, slug, "node.rm")?;
     if !cascade {
@@ -1028,5 +1103,89 @@ mod tests {
         let out = apply(&b, &[Op::RelRm { selector: sel }]).unwrap();
         let order = &out.iter().find(|(p, _)| p == "shop/order.md").unwrap().1;
         assert!(!order.contains("associates"), "endpoint addressed by full-path id must resolve for removal: {order}");
+    }
+
+    fn diagram_doc() -> Bundle {
+        vec![("shop/dia.md".to_string(),
+            "---\ntype: Diagram\ntitle: D\nprofile: uml-domain\n---\n# D\n".to_string())]
+    }
+
+    fn full_display() -> DiagramDisplaySet {
+        DiagramDisplaySet {
+            show_attributes: false,
+            attribute_detail: "name-only".into(),
+            show_attribute_visibility: false,
+            show_attribute_multiplicity: false,
+            max_attributes: Some(6),
+            association_labels: "hidden".into(),
+            emphasize_multiplicity: true,
+            show_stereotype: false,
+            stereotype_filter: Some(vec!["entity".into()]),
+            stereotype_colors: vec!["entity:#ffedd5".into()],
+        }
+    }
+
+    #[test]
+    fn diagram_set_writes_title_and_note() {
+        let out = apply(&diagram_doc(), &[Op::DiagramSet {
+            key: "dia".into(), title: Some("Order lifecycle".into()),
+            description: Some("Notes for reviewers".into()), display: None,
+        }]).unwrap();
+        assert!(out[0].1.contains("title: \"Order lifecycle\""));
+        assert!(out[0].1.contains("# Order lifecycle"), "H1 kept in sync");
+        assert!(out[0].1.contains("description: \"Notes for reviewers\""));
+    }
+
+    #[test]
+    fn diagram_set_replaces_display_block_and_drops_stale_keys() {
+        let set = apply(&diagram_doc(), &[Op::DiagramSet {
+            key: "dia".into(), title: None, description: None, display: Some(full_display()),
+        }]).unwrap();
+        assert!(set[0].1.contains("showAttributes: false"));
+        assert!(set[0].1.contains("maxAttributes: 6"));
+        assert!(set[0].1.contains("stereotypeFilter: [\"entity\"]"));
+
+        // A second DiagramSet with a display that omits maxAttributes/stereotypeFilter
+        // must drop those stale keys entirely (whole-block replace).
+        let cleared = apply(&set, &[Op::DiagramSet {
+            key: "dia".into(), title: None, description: None,
+            display: Some(DiagramDisplaySet {
+                max_attributes: None,
+                stereotype_filter: None,
+                stereotype_colors: vec![],
+                ..full_display()
+            }),
+        }]).unwrap();
+        assert!(!cleared[0].1.contains("maxAttributes"), "stale key must be dropped: {}", cleared[0].1);
+        assert!(!cleared[0].1.contains("stereotypeFilter"), "stale key must be dropped: {}", cleared[0].1);
+        assert!(!cleared[0].1.contains("stereotypeColors"), "stale key must be dropped: {}", cleared[0].1);
+    }
+
+    #[test]
+    fn diagram_set_on_missing_diagram_errors() {
+        let err = apply(&diagram_doc(), &[Op::DiagramSet {
+            key: "ghost".into(), title: Some("X".into()), description: None, display: None,
+        }]).unwrap_err();
+        assert!(err.reason.contains("no document 'ghost'"));
+    }
+
+    #[test]
+    fn diagram_set_leaves_untouched_fields_alone() {
+        let out = apply(&diagram_doc(), &[Op::DiagramSet {
+            key: "dia".into(), title: None, description: None, display: None,
+        }]).unwrap();
+        // A no-op DiagramSet must match plain parse+serialize normalization —
+        // i.e. edit_doc's own round-trip introduces no extra drift.
+        let normalized = serialize_document(&parse_document(&diagram_doc()[0].1));
+        assert_eq!(out[0].1, normalized, "no-op DiagramSet leaves the doc unchanged beyond normal round-trip");
+    }
+
+    #[test]
+    fn diagram_set_resolves_nested_doc_by_full_path_id() {
+        let out = apply(&diagram_doc(), &[Op::DiagramSet {
+            key: "shop/dia".into(), title: Some("D2".into()), description: None, display: None,
+        }]).unwrap();
+        assert_eq!(out[0].0, "shop/dia.md");
+        assert!(out[0].1.contains("title: \"D2\""));
     }
 }
