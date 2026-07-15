@@ -3,10 +3,12 @@
   import type { ModelNode, ModelEdge } from "@waml/okf";
   import { nodeAssociations } from "./associations";
 
-  let { node, nodes = [], edges = [] }: {
+  let { node, nodes = [], edges = [], onSelectAssociation }: {
     node: ModelNode;
     nodes?: ModelNode[];
     edges?: ModelEdge[];
+    /** Clicking an association row selects that edge. */
+    onSelectAssociation?: (edgeId: string) => void;
   } = $props();
 
   const labelCls = "block text-[11px] font-semibold text-slate-500 uppercase tracking-[0.3px] mb-[6px]";
@@ -56,10 +58,16 @@
     {#if associations.length > 0}
       <ul class="flex flex-col gap-[4px]">
         {#each associations as a (a.id)}
-          <li class="text-[13px] text-slate-900 break-words flex items-baseline gap-[6px]">
-            <span class="text-slate-400 font-mono">{a.outgoing ? "→" : "←"}</span>
-            <span class="font-semibold">{a.otherTitle}</span>
-            <span class="text-[11px] text-slate-500">{a.kind}{a.role ? ` (${a.role})` : ""}{a.multiplicity ? ` [${a.multiplicity}]` : ""}</span>
+          <li>
+            <button
+              type="button"
+              onclick={() => onSelectAssociation?.(a.id)}
+              class="w-full text-left text-[13px] text-slate-900 break-words flex items-baseline gap-[6px] rounded-md -mx-1 px-1 py-[2px] hover:bg-[#f1f3f7] focus:outline-none focus:ring-2 focus:ring-[#e6f1fb]"
+            >
+              <span class="text-slate-400 font-mono">{a.outgoing ? "→" : "←"}</span>
+              <span class="font-semibold">{a.otherTitle}</span>
+              <span class="text-[11px] text-slate-500">{a.kind}{a.role ? ` (${a.role})` : ""}{a.multiplicity ? ` [${a.multiplicity}]` : ""}</span>
+            </button>
           </li>
         {/each}
       </ul>

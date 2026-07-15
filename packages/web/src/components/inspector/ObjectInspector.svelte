@@ -5,12 +5,14 @@
   import { nodeAssociations } from "./associations";
   import { getProfile } from "@waml/core/profiles";
 
-  let { node, onUpdate, profileName, nodes = [], edges = [] }: {
+  let { node, onUpdate, profileName, nodes = [], edges = [], onSelectAssociation }: {
     node: ModelNode;
     onUpdate: (patch: Partial<ModelNode>) => void;
     profileName?: string;
     nodes?: ModelNode[];
     edges?: ModelEdge[];
+    /** Clicking an association row repoints the inspector at that edge. */
+    onSelectAssociation?: (edgeId: string) => void;
   } = $props();
 
   const inputCls = "w-full text-[13px] px-[10px] py-2 border border-[#d8dee8] rounded-lg text-slate-900 focus:outline-none focus:border-[#1e88e5] focus:ring-2 focus:ring-[#e6f1fb]";
@@ -87,10 +89,16 @@
     {#if associations.length > 0}
       <ul class="flex flex-col gap-[4px]">
         {#each associations as a (a.id)}
-          <li class="text-[13px] text-slate-900 break-words flex items-baseline gap-[6px]">
-            <span class="text-slate-400 font-mono">{a.outgoing ? "→" : "←"}</span>
-            <span class="font-semibold">{a.otherTitle}</span>
-            <span class="text-[11px] text-slate-500">{a.kind}{a.role ? ` (${a.role})` : ""}{a.multiplicity ? ` [${a.multiplicity}]` : ""}</span>
+          <li>
+            <button
+              type="button"
+              onclick={() => onSelectAssociation?.(a.id)}
+              class="w-full text-left text-[13px] text-slate-900 break-words flex items-baseline gap-[6px] rounded-md -mx-1 px-1 py-[2px] hover:bg-[#f1f3f7] focus:outline-none focus:ring-2 focus:ring-[#e6f1fb]"
+            >
+              <span class="text-slate-400 font-mono">{a.outgoing ? "→" : "←"}</span>
+              <span class="font-semibold">{a.otherTitle}</span>
+              <span class="text-[11px] text-slate-500">{a.kind}{a.role ? ` (${a.role})` : ""}{a.multiplicity ? ` [${a.multiplicity}]` : ""}</span>
+            </button>
           </li>
         {/each}
       </ul>

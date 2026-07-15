@@ -672,8 +672,14 @@ import ShareToast from "../ShareToast.svelte";
     candidateStereotypes={candidateStereotypes}
     editable={diagramEditable}
     profileName={activeDiagram.profile}
+    options={inspectorOptions}
     showPreview
     bind:previewEl
+    onSelectElement={(key, kind) => {
+      if (kind === "diagram") centralPanel = { kind: "diagram" };
+      else if (kind === "edge") centralPanel = { kind: "edge", edgeKey: key };
+      else centralPanel = { kind: "element", nodeKey: key };
+    }}
     onUpdateNode={store.updateNode}
     onUpdateEdge={store.updateEdge}
     onDisplayChange={handleDisplayChange}
@@ -882,6 +888,10 @@ import ShareToast from "../ShareToast.svelte";
           selection={focused}
           nodes={$model.nodes}
           edges={$model.edges}
+          onSelectAssociation={(id) => {
+            inspectorDiagramScope = false;
+            selectionSet = { nodes: [], edges: [id] };
+          }}
         >
           {#snippet externalRefs()}
             {#if focused?.type === "node"}

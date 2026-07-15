@@ -9,11 +9,13 @@
   import ObjectInspectorReadonly from "./ObjectInspectorReadonly.svelte";
   import RelationshipInspectorReadonly from "./RelationshipInspectorReadonly.svelte";
 
-  let { selection, nodes, edges, externalRefs }: {
+  let { selection, nodes, edges, externalRefs, onSelectAssociation }: {
     selection: Selection;
     nodes: ModelNode[];
     edges: ModelEdge[];
     externalRefs?: Snippet;
+    /** Clicking an association row selects that edge. */
+    onSelectAssociation?: (edgeId: string) => void;
   } = $props();
 
   const selectedNode = $derived(
@@ -25,7 +27,7 @@
 </script>
 
 {#if selectedNode}
-  <ObjectInspectorReadonly node={selectedNode} {nodes} {edges} />
+  <ObjectInspectorReadonly node={selectedNode} {nodes} {edges} {onSelectAssociation} />
   {@render externalRefs?.()}
 {:else if selectedEdge}
   <RelationshipInspectorReadonly
