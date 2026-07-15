@@ -323,6 +323,55 @@ pub fn link(docs: &[(String, ClassifierType, Document)]) -> Vec<Diagnostic> {
                         }
                     }
                 }
+                Section::Messages(block) => {
+                    use crate::syntax::SeqItemSyntax;
+                    // Participant tokens must match a declared lifeline
+                    // (alias or title). Collect the declared names first.
+                    let mut names: HashSet<String> = HashSet::new();
+                    for sec in &doc.sections {
+                        if let Section::Lifelines(lines) = sec {
+                            for l in lines.iter().filter_map(Line::parsed) {
+                                names.insert(l.link.title.clone());
+                                if let Some(a) = &l.alias {
+                                    names.insert(a.clone());
+                                }
+                            }
+                        }
+                    }
+                    fn check_items(
+                        items: &[Line<SeqItemSyntax>],
+                        names: &HashSet<String>,
+                        path: &str,
+                        diags: &mut Vec<Diagnostic>,
+                    ) {
+                        for it in items.iter().filter_map(Line::parsed) {
+                            match it {
+                                SeqItemSyntax::Message(m) => {
+                                    for token in [&m.from, &m.to] {
+                                        let name = match crate::grammar::parse_link_ref(token) {
+                                            Some(l) => l.title,
+                                            None => token.clone(),
+                                        };
+                                        if !names.contains(&name) {
+                                            diags.push(Diagnostic::warn(
+                                                DiagCode::UnresolvedTarget,
+                                                format!("message participant '{name}' matches no lifeline"),
+                                                path,
+                                                m.line,
+                                            ));
+                                        }
+                                    }
+                                }
+                                SeqItemSyntax::Fragment { operands, .. } => {
+                                    for op in operands {
+                                        check_items(&op.items, names, path, diags);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    check_items(&block.items, &names, path, &mut diags);
+                }
                 _ => {}
             }
         }
@@ -805,5 +854,18 @@ mod tests {
             "---\ntype: uml.StateMachine\ntitle: A\n---\n# A\n\n## Nodes\n\n### Draft\n\n### Draft\n".into())];
         let d = validate(&b);
         assert!(d.iter().any(|x| x.code == DiagCode::DuplicateFlowNode));
+    }
+
+    #[test]
+    fn flags_unknown_message_participant() {
+        let b = vec![
+            ("s/customer.md".into(), "---\ntype: uml.Actor\ntitle: Customer\n---\n# Customer\n".into()),
+            ("s/seq.md".into(),
+             "---\ntype: uml.Sequence\ntitle: S\n---\n# S\n\n## Lifelines\n- [Customer](./customer.md)\n\n## Messages\n- Customer calls Ghost: `x()`\n".into()),
+        ];
+        let d = validate(&b);
+        let w = d.iter().find(|x| x.code == DiagCode::UnresolvedTarget && x.message.contains("Ghost")).unwrap();
+        assert_eq!(w.severity, Severity::Warning);
+        assert_eq!(w.line, 11);
     }
 }
