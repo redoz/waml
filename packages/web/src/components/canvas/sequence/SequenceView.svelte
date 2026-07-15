@@ -11,6 +11,9 @@
   // dashed+open = replies; dashed→new lifeline = creates; →✕ = destroys.
   const dashed = (r: MessageRow) => r.item.verb === "replies" || r.item.verb === "creates";
   const filled = (r: MessageRow) => r.item.verb === "calls";
+  const destroyed = (r: MessageRow) => r.item.verb === "destroys";
+  // Picks the arrow marker for a row: filled > destroys-✕ > default open.
+  const markerFor = (r: MessageRow) => (filled(r) ? "url(#seq-arrow-filled)" : destroyed(r) ? "url(#seq-arrow-x)" : "url(#seq-arrow-open)");
 </script>
 
 <!-- A self-rendering behavior view: read-only, plain SVG. The lifelines and
@@ -24,6 +27,9 @@
       <marker id="seq-arrow-open" markerWidth="12" markerHeight="12" refX="9" refY="5" orient="auto">
         <path d="M0,0 L10,5 L0,10" fill="none" stroke="#334155" stroke-width="1.5" />
       </marker>
+      <marker id="seq-arrow-x" markerWidth="14" markerHeight="14" refX="10" refY="6" orient="auto">
+        <path d="M4,2 L10,10 M10,2 L4,10" fill="none" stroke="#334155" stroke-width="1.5" />
+      </marker>
     </defs>
 
     {#each layout.lifelines as lane (lane.key)}
@@ -35,9 +41,9 @@
     {#each layout.rows as row (row.y + row.kind)}
       {#if row.kind === "message"}
         {#if row.self}
-          <path d={`M${row.fromX},${row.y} h30 v18 h-30`} fill="none" stroke="#334155" stroke-width="1.5" stroke-dasharray={dashed(row) ? "5 3" : undefined} marker-end={filled(row) ? "url(#seq-arrow-filled)" : "url(#seq-arrow-open)"} />
+          <path d={`M${row.fromX},${row.y} h30 v18 h-30`} fill="none" stroke="#334155" stroke-width="1.5" stroke-dasharray={dashed(row) ? "5 3" : undefined} marker-end={markerFor(row)} />
         {:else}
-          <line x1={row.fromX} y1={row.y} x2={row.toX} y2={row.y} stroke="#334155" stroke-width="1.5" stroke-dasharray={dashed(row) ? "5 3" : undefined} marker-end={filled(row) ? "url(#seq-arrow-filled)" : "url(#seq-arrow-open)"} />
+          <line x1={row.fromX} y1={row.y} x2={row.toX} y2={row.y} stroke="#334155" stroke-width="1.5" stroke-dasharray={dashed(row) ? "5 3" : undefined} marker-end={markerFor(row)} />
         {/if}
         {#if row.item.signature}
           <text x={(row.fromX + row.toX) / 2} y={row.y - 6} text-anchor="middle" font-size="11" fill="#334155">{row.item.signature}</text>
