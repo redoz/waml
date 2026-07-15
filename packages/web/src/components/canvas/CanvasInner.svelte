@@ -44,7 +44,7 @@
   import TemplateApplyDialog from "../TemplateApplyDialog.svelte";
 import ShareToast from "../ShareToast.svelte";
   import ShareDialog from "../share/ShareDialog.svelte";
-  import Inspector from "../inspector/Inspector.svelte";
+  import InspectorReadonly from "../inspector/InspectorReadonly.svelte";
   import ExternalRefs from "../inspector/ExternalRefs.svelte";
   import InspectorPanel from "../inspector/InspectorPanel.svelte";
   import EdgeFlag from "../chrome/EdgeFlag.svelte";
@@ -529,9 +529,12 @@ import ShareToast from "../ShareToast.svelte";
   <CentralEditPanelHost
     state={centralPanel}
     nodes={$model.nodes}
+    edges={$model.edges}
     display={activeDisplay}
     profileName={activeDiagram.profile}
+    showPreview
     onUpdateNode={store.updateNode}
+    onUpdateEdge={store.updateEdge}
     onDisplayChange={handleDisplayChange}
     onClose={() => (centralPanel = null)}
   />
@@ -684,18 +687,15 @@ import ShareToast from "../ShareToast.svelte";
       pinned={inspectorPinned}
       bind:width={inspectorWidth}
       onTogglePin={() => (inspectorPinned = !inspectorPinned)}
+      onEdit={() => {
+        if (focused?.type === "node") centralPanel = { kind: "element", nodeKey: focused.id };
+        else if (focused?.type === "edge") centralPanel = { kind: "edge", edgeKey: focused.id };
+      }}
     >
-      <Inspector
+      <InspectorReadonly
         selection={focused}
         nodes={$model.nodes}
         edges={$model.edges}
-        onUpdateNode={store.updateNode}
-        onUpdateEdge={store.updateEdge}
-        onClose={() => {
-          selectionSet = EMPTY_SELECTION;
-        }}
-        profileName={activeDiagram.profile}
-        embedded
       >
         {#snippet externalRefs()}
           {#if focused?.type === "node"}
@@ -712,7 +712,7 @@ import ShareToast from "../ShareToast.svelte";
             />
           {/if}
         {/snippet}
-      </Inspector>
+      </InspectorReadonly>
     </InspectorPanel>
   </div>
 </div>

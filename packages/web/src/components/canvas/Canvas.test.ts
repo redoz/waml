@@ -88,9 +88,28 @@ describe("pinnable Inspector (always present, never closes)", () => {
     await tick();
 
     // Selection round-tripped: the combobox reflects the chosen node, the hint
-    // is gone, and the Inspector body now shows that node's title field.
+    // is gone, and the read-only Inspector body now shows the title as static
+    // text (no editable Title input in the docked panel).
     expect(combobox.value).toBe(node.key);
     expect(within(panel).queryByText(/select an element to edit/i)).toBeNull();
-    expect((within(panel).getByLabelText("Title") as HTMLInputElement).value).toBe(node.concept.title);
+    expect(within(panel).queryByLabelText("Title")).toBeNull();
+    expect(within(panel).getAllByText(node.concept.title!).length).toBeGreaterThan(0);
+  });
+
+  it("the docked panel's Edit button opens the edit dialog for the selected node", async () => {
+    const node = store.addNode({ x: 0, y: 0 });
+    render(Canvas);
+    const panel = screen.getByRole("complementary", { name: "Inspector" });
+    const combobox = within(panel).getByRole("combobox", { name: "Select element" }) as HTMLSelectElement;
+    await fireEvent.change(combobox, { target: { value: node.key } });
+    await tick();
+
+    await fireEvent.click(within(panel).getByRole("button", { name: "Edit element" }));
+    await tick();
+
+    // The centered dialog is now open with the EDITABLE ObjectInspector body.
+    const dialog = screen.getByRole("dialog");
+    expect(dialog).toBeTruthy();
+    expect(within(dialog).getByLabelText("Title")).toBeTruthy();
   });
 });
