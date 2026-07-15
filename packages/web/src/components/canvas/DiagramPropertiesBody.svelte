@@ -85,10 +85,10 @@
   {#if !editable}
     <div
       role="note"
-      class="mx-1 mb-2 rounded-lg border border-orange-200 bg-orange-50 px-3 py-2 text-[12px] leading-snug text-orange-800"
+      class="mx-1 mb-2 rounded-lg bg-[#fff7ed] px-3 py-2 text-[12px] leading-snug text-[#9a3412]"
     >
-      Showing settings for the <strong>All</strong> view. These aren't saved anywhere — switch to a
-      single diagram to edit its properties.
+      Display and note settings save to a diagram. The <strong>All</strong> view can't store them — create
+      a diagram to customize.
     </div>
   {/if}
 
@@ -156,9 +156,8 @@
         value={display.maxAttributes ?? ""}
         disabled={!display.showAttributes || disabledAll}
         oninput={(e) => {
-          if (!display.showAttributes || disabledAll) return;
           const n = Number((e.currentTarget as HTMLInputElement).value);
-          patch({ maxAttributes: Number.isFinite(n) && n >= 1 ? Math.floor(n) : undefined });
+          if (Number.isFinite(n) && n >= 1) patch({ maxAttributes: Math.floor(n) });
         }}
         class="w-16 rounded-md border border-slate-300 px-2 py-1 text-[13px] disabled:opacity-40"
       />
@@ -167,11 +166,10 @@
         aria-label="Unlimited attributes"
         disabled={!display.showAttributes || disabledAll}
         onclick={() => {
-          if (!display.showAttributes || disabledAll) return;
-          patch({ maxAttributes: undefined });
+          if (display.showAttributes && !disabledAll) patch({ maxAttributes: undefined });
         }}
-        class="rounded-md px-2 py-1 text-[12px] font-semibold {display.maxAttributes == null
-          ? 'bg-white shadow-sm'
+        class="rounded-md px-2 py-1 text-[12px] font-semibold {display.maxAttributes === undefined
+          ? 'bg-white text-[#1e88e5] shadow-sm'
           : 'text-slate-500'}"
       >
         Unlimited
