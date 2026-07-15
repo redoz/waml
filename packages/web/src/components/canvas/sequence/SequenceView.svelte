@@ -7,8 +7,10 @@
   const layout = $derived(layoutSequence(doc));
 
   type MessageRow = Extract<SeqRow, { kind: "message" }>;
-  const filled = (r: MessageRow) => r.item.verb === "calls" || r.item.verb === "creates";
-  const dashed = (r: MessageRow) => r.item.verb === "replies" || r.item.verb === "destroys";
+  // Solid+filled = calls (sync); solid+open = sends (async);
+  // dashed+open = replies; dashed→new lifeline = creates; →✕ = destroys.
+  const dashed = (r: MessageRow) => r.item.verb === "replies" || r.item.verb === "creates";
+  const filled = (r: MessageRow) => r.item.verb === "calls";
 </script>
 
 <!-- A self-rendering behavior view: read-only, plain SVG. The lifelines and
