@@ -28,42 +28,58 @@ describe("InspectorPanel", () => {
     expect(screen.getByRole("complementary", { name: "Inspector" })).toBeTruthy();
   });
 
-  it("renders the picker options and reflects the selected key", () => {
+  it("the trigger reflects the selected element's label", () => {
     setup({ selectedKey: "order" });
-    const select = screen.getByRole("combobox", { name: "Select element" }) as HTMLSelectElement;
-    expect(select.value).toBe("order");
+    const trigger = screen.getByRole("combobox", { name: "Select element" });
+    expect(trigger.textContent).toContain("Order");
+  });
+
+  it("shows placeholder text on the trigger when nothing is selected", () => {
+    setup({ selectedKey: null, focusedKind: undefined });
+    const trigger = screen.getByRole("combobox", { name: "Select element" });
+    expect(trigger.textContent).toMatch(/select an element/i);
+  });
+
+  it("opens a listbox of options on click, marking the selected one", async () => {
+    setup({ selectedKey: "order" });
+    const trigger = screen.getByRole("combobox", { name: "Select element" });
+    expect(trigger.getAttribute("aria-expanded")).toBe("false");
+    await fireEvent.click(trigger);
+    expect(trigger.getAttribute("aria-expanded")).toBe("true");
     expect(screen.getByRole("option", { name: "Customer" })).toBeTruthy();
-    expect(screen.getByRole("option", { name: "Order" })).toBeTruthy();
+    const selected = screen.getByRole("option", { name: "Order" });
+    expect(selected.getAttribute("aria-selected")).toBe("true");
   });
 
-  it("fires onSelect with the chosen key", async () => {
+  it("fires onSelect with the chosen key and closes the listbox", async () => {
     const onSelect = vi.fn();
     setup({ onSelect });
-    const select = screen.getByRole("combobox", { name: "Select element" });
-    await fireEvent.change(select, { target: { value: "order" } });
+    await fireEvent.click(screen.getByRole("combobox", { name: "Select element" }));
+    await fireEvent.click(screen.getByRole("option", { name: "Order" }));
     expect(onSelect).toHaveBeenCalledWith("order");
+    expect(screen.getByRole("combobox", { name: "Select element" }).getAttribute("aria-expanded")).toBe("false");
   });
 
-  it("fires onSelect(null) when the placeholder is chosen", async () => {
-    const onSelect = vi.fn();
-    setup({ onSelect });
-    const select = screen.getByRole("combobox", { name: "Select element" });
-    await fireEvent.change(select, { target: { value: "" } });
-    expect(onSelect).toHaveBeenCalledWith(null);
+  it("closes the listbox on Escape", async () => {
+    setup();
+    const trigger = screen.getByRole("combobox", { name: "Select element" });
+    await fireEvent.click(trigger);
+    expect(trigger.getAttribute("aria-expanded")).toBe("true");
+    await fireEvent.keyDown(trigger, { key: "Escape" });
+    expect(trigger.getAttribute("aria-expanded")).toBe("false");
   });
 
-  it("with nothing focused: shows a hint, no collapse control, no kind icon", () => {
+  it("with nothing focused: no hint text, no collapse control, no kind icon", () => {
     const { container } = setup({ selectedKey: null, focusedKind: undefined });
-    expect(screen.getByText(/select an element to edit/i)).toBeTruthy();
+    expect(screen.queryByText(/select an element to edit/i)).toBeNull();
     expect(screen.queryByRole("button", { name: /collapse inspector/i })).toBeNull();
     expect(container.querySelector(".inspector-kind")).toBeNull();
   });
 
-  it("with a node focused: shows the kind icon and a collapse control, no hint", () => {
+  it("with a node focused: shows the kind icon and a collapse control", () => {
     const { container } = setup({ focusedKind: "node" });
     expect(container.querySelector(".inspector-kind svg")).toBeTruthy();
     expect(screen.getByRole("button", { name: "Collapse inspector" })).toBeTruthy();
-    expect(screen.queryByText(/select an element to edit/i)).toBeNull();
   });
 
   it("collapse toggle flips aria-expanded and its label", async () => {
@@ -105,11 +121,9 @@ describe("InspectorPanel", () => {
 
   it("shows an Edit button only when an element is focused, and fires onEdit", async () => {
     const onEdit = vi.fn();
-    // Nothing focused → no Edit button.
     const { unmount } = setup({ selectedKey: null, focusedKind: undefined, onEdit });
     expect(screen.queryByRole("button", { name: "Edit element" })).toBeNull();
     unmount();
-    // Node focused → Edit button present and wired.
     setup({ focusedKind: "node", onEdit });
     await fireEvent.click(screen.getByRole("button", { name: "Edit element" }));
     expect(onEdit).toHaveBeenCalledTimes(1);

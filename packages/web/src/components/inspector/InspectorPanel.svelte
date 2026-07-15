@@ -5,7 +5,24 @@
   // panel). Provides its own resizable chrome, a pin toggle, and the
   // translucency logic.
   import type { Snippet } from "svelte";
-  import { Pin, PinOff, ChevronUp, Box, Spline, Pencil } from "lucide-svelte";
+  import { cubicOut } from "svelte/easing";
+  import { Pin, PinOff, ChevronUp, ChevronDown, Box, Spline, Pencil, Check } from "lucide-svelte";
+
+  // Combined slide + fade for the fold. Applied to a non-flex element so the
+  // animated height actually takes (a flex-1 element ignores an animated height).
+  function foldFade(node: HTMLElement, { duration = 200 } = {}) {
+    const s = getComputedStyle(node);
+    const height = parseFloat(s.height);
+    const paddingTop = parseFloat(s.paddingTop);
+    const paddingBottom = parseFloat(s.paddingBottom);
+    return {
+      duration,
+      easing: cubicOut,
+      css: (t: number) =>
+        `overflow: hidden; opacity: ${t}; height: ${t * height}px;` +
+        `padding-top: ${t * paddingTop}px; padding-bottom: ${t * paddingBottom}px;`,
+    };
+  }
 
   const MIN_WIDTH = 320;
 
@@ -46,6 +63,65 @@
   const hasSelection = $derived(focusedKind !== undefined);
 
   const translucent = $derived(pinned && !engaged);
+
+  // ── Element picker (custom listbox) ──────────────────────────────────────────
+  // Replaces a native <select> so the option list can carry the same styling as
+  // the diagram/object switcher (Navigator). The menu is position:fixed so it
+  // escapes the panel's overflow-hidden clip; coordinates are measured off the
+  // trigger when it opens.
+  let open = $state(false);
+  let highlighted = $state(-1);
+  let triggerEl: HTMLButtonElement | undefined;
+  let menuStyle = $state("");
+
+  const selectedLabel = $derived(options.find((o) => o.key === selectedKey)?.label);
+
+  function openMenu() {
+    if (triggerEl) {
+      const r = triggerEl.getBoundingClientRect();
+      menuStyle = `left: ${r.left}px; top: ${r.bottom + 6}px; min-width: ${r.width}px;`;
+    }
+    highlighted = Math.max(0, options.findIndex((o) => o.key === selectedKey));
+    open = true;
+  }
+
+  function closeMenu() {
+    open = false;
+  }
+
+  function toggleMenu() {
+    if (open) closeMenu();
+    else openMenu();
+  }
+
+  function choose(key: string) {
+    onSelect(key);
+    closeMenu();
+    triggerEl?.focus();
+  }
+
+  function onTriggerKeydown(e: KeyboardEvent) {
+    if (!open) {
+      if (e.key === "ArrowDown" || e.key === "Enter" || e.key === " ") {
+        e.preventDefault();
+        openMenu();
+      }
+      return;
+    }
+    if (e.key === "Escape") {
+      e.preventDefault();
+      closeMenu();
+    } else if (e.key === "ArrowDown") {
+      e.preventDefault();
+      highlighted = Math.min(options.length - 1, highlighted + 1);
+    } else if (e.key === "ArrowUp") {
+      e.preventDefault();
+      highlighted = Math.max(0, highlighted - 1);
+    } else if (e.key === "Enter") {
+      e.preventDefault();
+      if (highlighted >= 0 && options[highlighted]) choose(options[highlighted].key);
+    }
+  }
 
   function engage() {
     if (hideTimer) {
@@ -130,17 +206,69 @@
         {/if}
       </span>
     {/if}
-    <select
-      aria-label="Select element"
-      value={selectedKey ?? ""}
-      onchange={(e) => onSelect(e.currentTarget.value || null)}
-      class="flex-1 min-w-0 text-[14px] font-semibold text-slate-900 bg-transparent border-0 focus:outline-none focus:ring-2 focus:ring-[#e6f1fb] rounded-md py-1 cursor-pointer"
-    >
-      <option value="">Select an element…</option>
-      {#each options as opt (opt.key)}
-        <option value={opt.key}>{opt.label}</option>
-      {/each}
-    </select>
+    <div class="flex-1 min-w-0">
+      <button
+        bind:this={triggerEl}
+        type="button"
+        role="combobox"
+        aria-label="Select element"
+        aria-haspopup="listbox"
+        aria-controls="inspector-element-listbox"
+        aria-expanded={open}
+        onclick={toggleMenu}
+        onkeydown={onTriggerKeydown}
+        class="w-full flex items-center gap-1.5 min-w-0 text-[14px] rounded-md py-1 px-1.5 cursor-pointer transition-colors hover:bg-[#f1f3f7] focus:outline-none focus:ring-2 focus:ring-[#e6f1fb]"
+      >
+        <span
+          class={`flex-1 truncate text-left ${selectedLabel ? "font-semibold text-slate-900" : "font-medium text-slate-400"}`}
+        >
+          {selectedLabel ?? "Select an element…"}
+        </span>
+        <ChevronDown
+          size={15}
+          class={`flex-none text-slate-400 transition-transform duration-150 ${open ? "rotate-180" : ""}`}
+        />
+      </button>
+
+      {#if open}
+        <!-- svelte-ignore a11y_click_events_have_key_events -->
+        <!-- svelte-ignore a11y_no_static_element_interactions -->
+        <div class="fixed inset-0 z-[59]" onclick={closeMenu}></div>
+        <div
+          id="inspector-element-listbox"
+          role="listbox"
+          aria-label="Select element"
+          tabindex="-1"
+          style={menuStyle}
+          class="fixed z-[60] max-h-[280px] overflow-y-auto rounded-lg border border-[#d8dee8] bg-white shadow-[0_8px_24px_rgba(15,23,42,0.18)] py-1"
+        >
+          {#if options.length === 0}
+            <div class="px-3 py-2 text-[13px] text-slate-400">No elements in this diagram</div>
+          {/if}
+          {#each options as opt, i (opt.key)}
+            <button
+              type="button"
+              role="option"
+              aria-selected={opt.key === selectedKey}
+              onclick={() => choose(opt.key)}
+              onmouseenter={() => (highlighted = i)}
+              class={`w-full text-left px-3 py-2 text-[13px] cursor-pointer flex items-center gap-[7px] ${
+                i === highlighted ? "bg-[#f1f3f7]" : ""
+              } ${opt.key === selectedKey ? "text-[#1e88e5] font-[600]" : "text-slate-900"}`}
+            >
+              <Box
+                size={14}
+                class={`flex-shrink-0 ${opt.key === selectedKey ? "text-[#1e88e5]" : "text-slate-400"}`}
+              />
+              <span class="truncate">{opt.label}</span>
+              {#if opt.key === selectedKey}
+                <Check size={14} class="ml-auto flex-shrink-0 text-[#1e88e5]" />
+              {/if}
+            </button>
+          {/each}
+        </div>
+      {/if}
+    </div>
     {#if hasSelection}
       <button
         onclick={onEdit}
@@ -179,11 +307,11 @@
     </button>
   </div>
 
-  {#if hasSelection}
-    {#if !collapsed}
-      <div class="p-4 overflow-y-auto flex-1 min-h-0">{@render children?.()}</div>
-    {/if}
-  {:else}
-    <div class="px-4 pb-4 text-[13px] text-slate-500">Select an element to edit.</div>
+  {#if hasSelection && !collapsed}
+    <div class="flex-1 min-h-0 overflow-y-auto">
+      <div transition:foldFade={{ duration: 200 }} class="p-4">
+        {@render children?.()}
+      </div>
+    </div>
   {/if}
 </aside>

@@ -56,8 +56,8 @@ describe("pinnable Inspector (always present, never closes)", () => {
     render(Canvas);
     const panel = screen.getByRole("complementary", { name: "Inspector" });
     expect(panel).toBeTruthy();
-    // Nothing selected → shows the hint and the element picker.
-    expect(within(panel).getByText(/select an element to edit/i)).toBeTruthy();
+    // Nothing selected → just the element picker, no hint text.
+    expect(within(panel).queryByText(/select an element to edit/i)).toBeNull();
     expect(within(panel).getByRole("combobox", { name: "Select element" })).toBeTruthy();
   });
 
@@ -78,20 +78,22 @@ describe("pinnable Inspector (always present, never closes)", () => {
     const node = store.addNode({ x: 0, y: 0 });
     render(Canvas);
     const panel = screen.getByRole("complementary", { name: "Inspector" });
-    const combobox = within(panel).getByRole("combobox", { name: "Select element" }) as HTMLSelectElement;
+    const combobox = within(panel).getByRole("combobox", { name: "Select element" });
 
     // The freshly-added node is a member of the implicit "All" diagram, so it
-    // shows up as an option labelled with its title.
-    expect(within(panel).getByRole("option", { name: node.concept.title! })).toBeTruthy();
+    // shows up as an option (labelled with its title) once the picker opens.
+    await fireEvent.click(combobox);
+    await tick();
+    const option = within(panel).getByRole("option", { name: node.concept.title! });
+    expect(option).toBeTruthy();
 
-    await fireEvent.change(combobox, { target: { value: node.key } });
+    await fireEvent.click(option);
     await tick();
 
-    // Selection round-tripped: the combobox reflects the chosen node, the hint
-    // is gone, and the read-only Inspector body now shows the title as static
-    // text (no editable Title input in the docked panel).
-    expect(combobox.value).toBe(node.key);
-    expect(within(panel).queryByText(/select an element to edit/i)).toBeNull();
+    // Selection round-tripped: the trigger reflects the chosen node and the
+    // read-only Inspector body now shows the title as static text (no editable
+    // Title input in the docked panel).
+    expect(combobox.textContent).toContain(node.concept.title!);
     expect(within(panel).queryByLabelText("Title")).toBeNull();
     expect(within(panel).getAllByText(node.concept.title!).length).toBeGreaterThan(0);
   });
@@ -100,8 +102,13 @@ describe("pinnable Inspector (always present, never closes)", () => {
     const node = store.addNode({ x: 0, y: 0 });
     render(Canvas);
     const panel = screen.getByRole("complementary", { name: "Inspector" });
-    const combobox = within(panel).getByRole("combobox", { name: "Select element" }) as HTMLSelectElement;
-    await fireEvent.change(combobox, { target: { value: node.key } });
+    const combobox = within(panel).getByRole("combobox", { name: "Select element" });
+    await fireEvent.click(combobox);
+    await tick();
+    // The store persists across tests, so several same-titled options may exist;
+    // the just-added node is the last member, so pick the last matching option.
+    const opts = within(panel).getAllByRole("option", { name: node.concept.title! });
+    await fireEvent.click(opts[opts.length - 1]);
     await tick();
 
     await fireEvent.click(within(panel).getByRole("button", { name: "Edit element" }));
