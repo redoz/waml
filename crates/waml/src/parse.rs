@@ -729,15 +729,28 @@ fn build_diagrams(parsed: &[ParsedDoc], keyset: &HashSet<&str>) -> Vec<Diagram> 
                 _ => {}
             }
         }
-        out.push(Diagram {
-            key: p.id.clone(),
-            title,
-            profile,
-            description: None,
-            groups,
-            layout,
-            display: DiagramDisplay::default(),
-        });
+        let description = fm.get_str("description").map(String::from);
+
+        let max_attributes = match fm.get("maxAttributes") {
+            Some(crate::frontmatter::FmValue::Num(n)) if *n > 0.0 => Some(*n as u32),
+            _ => None,
+        };
+        let stereotype_filter = fm.get("stereotypeFilter").map(|_| fm.get_string_list("stereotypeFilter"));
+
+        let display = DiagramDisplay {
+            show_attributes: fm.get_bool("showAttributes"),
+            attribute_detail: fm.get_str("attributeDetail").map(String::from),
+            show_attribute_visibility: fm.get_bool("showAttributeVisibility"),
+            show_attribute_multiplicity: fm.get_bool("showAttributeMultiplicity"),
+            max_attributes,
+            association_labels: fm.get_str("associationLabels").map(String::from),
+            emphasize_multiplicity: fm.get_bool("emphasizeMultiplicity"),
+            show_stereotype: fm.get_bool("showStereotype"),
+            stereotype_filter,
+            stereotype_colors: fm.get_string_list("stereotypeColors"),
+        };
+
+        out.push(Diagram { key: p.id.clone(), title, profile, description, groups, layout, display });
     }
     out
 }
@@ -746,6 +759,59 @@ fn build_diagrams(parsed: &[ParsedDoc], keyset: &HashSet<&str>) -> Vec<Diagram> 
 mod tests {
     use super::*;
     use crate::model::RelationshipKind;
+
+    fn diagram_bundle(fm_body: &str) -> Vec<(String, String)> {
+        vec![(
+            "d.md".to_string(),
+            format!("---\ntype: Diagram\ntitle: D\nprofile: uml-domain\n{fm_body}---\n# D\n"),
+        )]
+    }
+
+    #[test]
+    fn build_diagrams_reads_all_display_keys() {
+        let b = diagram_bundle(
+            "description: \"Notes\"\nshowAttributes: false\nattributeDetail: name-only\n\
+             showAttributeVisibility: false\nshowAttributeMultiplicity: false\nmaxAttributes: 6\n\
+             associationLabels: hidden\nemphasizeMultiplicity: true\nshowStereotype: false\n\
+             stereotypeFilter: [entity, valueObject]\nstereotypeColors: [\"entity:#ffedd5\"]\n",
+        );
+        let m = build_model(&b);
+        let d = &m.diagrams[0];
+        assert_eq!(d.description.as_deref(), Some("Notes"));
+        let x = &d.display;
+        assert_eq!(x.show_attributes, Some(false));
+        assert_eq!(x.attribute_detail.as_deref(), Some("name-only"));
+        assert_eq!(x.show_attribute_visibility, Some(false));
+        assert_eq!(x.show_attribute_multiplicity, Some(false));
+        assert_eq!(x.max_attributes, Some(6));
+        assert_eq!(x.association_labels.as_deref(), Some("hidden"));
+        assert_eq!(x.emphasize_multiplicity, Some(true));
+        assert_eq!(x.show_stereotype, Some(false));
+        assert_eq!(x.stereotype_filter, Some(vec!["entity".to_string(), "valueObject".to_string()]));
+        assert_eq!(x.stereotype_colors, vec!["entity:#ffedd5".to_string()]);
+    }
+
+    #[test]
+    fn build_diagrams_distinguishes_absent_vs_empty_stereotype_filter() {
+        let present = build_model(&diagram_bundle("stereotypeFilter: []\n"));
+        assert_eq!(present.diagrams[0].display.stereotype_filter, Some(vec![]));
+        let absent = build_model(&diagram_bundle(""));
+        assert_eq!(absent.diagrams[0].display.stereotype_filter, None);
+    }
+
+    #[test]
+    fn build_diagrams_maps_max_attributes_floor() {
+        assert_eq!(build_model(&diagram_bundle("maxAttributes: 6\n")).diagrams[0].display.max_attributes, Some(6));
+        assert_eq!(build_model(&diagram_bundle("maxAttributes: 0\n")).diagrams[0].display.max_attributes, None);
+        assert_eq!(build_model(&diagram_bundle("")).diagrams[0].display.max_attributes, None);
+    }
+
+    #[test]
+    fn build_diagrams_legacy_doc_has_no_description_and_empty_display() {
+        let m = build_model(&diagram_bundle(""));
+        assert_eq!(m.diagrams[0].description, None);
+        assert!(m.diagrams[0].display.is_empty());
+    }
 
     #[test]
     fn build_model_discovers_nested_packages_from_directories() {
