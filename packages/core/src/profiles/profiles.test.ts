@@ -13,7 +13,7 @@ describe("profiles", () => {
     expect(p.stereotypes.aggregateRoot).toEqual({ header: "#eab308", border: "thick" });
     expect(p.stereotypes.valueObject).toEqual({ header: "#64748b" });
     expect(p.stereotypes.domainEvent).toEqual({ shape: "hexagon" });
-    expect(p.palette.metaclasses).toEqual(["uml.Class", "uml.Interface", "uml.Enum", "uml.DataType"]);
+    expect(p.palette.metaclasses).toEqual(["uml.Class", "uml.Interface", "uml.Enum", "uml.DataType", "uml.Actor", "uml.UseCase"]);
     expect(p.palette.stereotypes).toEqual(["entity", "valueObject", "aggregateRoot", "service", "domainEvent"]);
   });
 });
