@@ -414,6 +414,134 @@ pub struct FlowDoc {
     pub edges: Vec<FlowEdge>,
 }
 
+/// The message kind: fixes line and arrowhead (interaction substrate).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(rename_all = "lowercase"))]
+pub enum MessageVerb {
+    Calls,
+    Sends,
+    Replies,
+    Creates,
+    Destroys,
+}
+
+impl MessageVerb {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            MessageVerb::Calls => "calls",
+            MessageVerb::Sends => "sends",
+            MessageVerb::Replies => "replies",
+            MessageVerb::Creates => "creates",
+            MessageVerb::Destroys => "destroys",
+        }
+    }
+    pub fn parse(s: &str) -> Option<MessageVerb> {
+        match s {
+            "calls" => Some(MessageVerb::Calls),
+            "sends" => Some(MessageVerb::Sends),
+            "replies" => Some(MessageVerb::Replies),
+            "creates" => Some(MessageVerb::Creates),
+            "destroys" => Some(MessageVerb::Destroys),
+            _ => None,
+        }
+    }
+}
+
+/// Combined-fragment keyword. `par` deferred (open question in spec).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(rename_all = "lowercase"))]
+pub enum FragmentKind {
+    Alt,
+    Opt,
+    Loop,
+}
+
+impl FragmentKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            FragmentKind::Alt => "alt",
+            FragmentKind::Opt => "opt",
+            FragmentKind::Loop => "loop",
+        }
+    }
+    pub fn parse(s: &str) -> Option<FragmentKind> {
+        match s {
+            "alt" => Some(FragmentKind::Alt),
+            "opt" => Some(FragmentKind::Opt),
+            "loop" => Some(FragmentKind::Loop),
+            _ => None,
+        }
+    }
+}
+
+/// A sequence participant: IS Class or Actor, referenced by link.
+#[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct Lifeline {
+    pub title: String,
+    #[cfg_attr(
+        feature = "serde",
+        serde(default, skip_serializing_if = "Option::is_none")
+    )]
+    pub alias: Option<String>,
+    /// Resolved key of the classifier this lifeline is; None when unresolved.
+    #[cfg_attr(
+        feature = "serde",
+        serde(rename = "ref", default, skip_serializing_if = "Option::is_none")
+    )]
+    pub ref_: Option<String>,
+}
+
+/// One operand of a combined fragment. `guard: None` = the `else` operand.
+#[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct SeqOperand {
+    #[cfg_attr(
+        feature = "serde",
+        serde(default, skip_serializing_if = "Option::is_none")
+    )]
+    pub guard: Option<String>,
+    pub items: Vec<SeqItem>,
+}
+
+/// One ordered interaction item: document order is time order.
+#[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(tag = "item", rename_all = "lowercase"))]
+pub enum SeqItem {
+    Message {
+        from: String,
+        verb: MessageVerb,
+        to: String,
+        #[cfg_attr(
+            feature = "serde",
+            serde(default, skip_serializing_if = "Option::is_none")
+        )]
+        signature: Option<String>,
+    },
+    Fragment {
+        kind: FragmentKind,
+        operands: Vec<SeqOperand>,
+    },
+}
+
+/// One sequence document: lifelines + ordered messages (model AND view).
+#[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct SequenceDoc {
+    pub key: String,
+    pub title: String,
+    #[cfg_attr(
+        feature = "serde",
+        serde(default, skip_serializing_if = "Option::is_none")
+    )]
+    pub describes: Option<String>,
+    pub lifelines: Vec<Lifeline>,
+    pub messages: Vec<SeqItem>,
+}
+
 /// A classifier's `type`. Graceful degradation is a type-level guarantee: any
 /// unrecognized token becomes `Unknown` and renders as a generic labelled box.
 ///
@@ -615,6 +743,9 @@ pub struct Model {
     /// Flow-substrate behavior documents (uml.Activity / uml.StateMachine).
     #[cfg_attr(feature = "serde", serde(default, skip_serializing_if = "Vec::is_empty"))]
     pub flows: Vec<FlowDoc>,
+    /// Interaction-substrate behavior documents (uml.Sequence).
+    #[cfg_attr(feature = "serde", serde(default, skip_serializing_if = "Vec::is_empty"))]
+    pub interactions: Vec<SequenceDoc>,
 }
 
 impl Model {
@@ -747,6 +878,24 @@ mod tests {
         let model = Model { nodes: vec![node], ..Default::default() };
         assert_eq!(model.node("order").and_then(|n| n.concept.title.as_deref()), Some("Order"));
         assert!(model.node("missing").is_none());
+    }
+
+    #[test]
+    fn message_verbs_and_fragment_kinds_round_trip() {
+        for v in [
+            MessageVerb::Calls,
+            MessageVerb::Sends,
+            MessageVerb::Replies,
+            MessageVerb::Creates,
+            MessageVerb::Destroys,
+        ] {
+            assert_eq!(MessageVerb::parse(v.as_str()), Some(v));
+        }
+        assert_eq!(MessageVerb::parse("shouts"), None);
+        for k in [FragmentKind::Alt, FragmentKind::Opt, FragmentKind::Loop] {
+            assert_eq!(FragmentKind::parse(k.as_str()), Some(k));
+        }
+        assert_eq!(FragmentKind::parse("par"), None, "par operands are deferred");
     }
 
     #[test]

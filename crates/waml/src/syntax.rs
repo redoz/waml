@@ -241,6 +241,54 @@ pub struct FlowBlock {
     pub preamble_errors: Vec<ErrorNode>,
 }
 
+/// One `## Lifelines` bullet: `- [Title](./slug.md)[ alias]`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct LifelineLine {
+    pub link: LinkRef,
+    pub alias: Option<String>,
+    pub line: usize,
+    pub span: Option<(usize, usize)>,
+}
+
+/// One message bullet: `- <sender> <verb> <receiver>[: `signature`]`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ParsedMessage {
+    pub from: String,
+    pub verb: crate::model::MessageVerb,
+    pub to: String,
+    pub signature: Option<String>,
+    pub line: usize,
+}
+
+/// One operand of an authored fragment (`- when `g`` / `- else`).
+#[derive(Debug, Clone, PartialEq)]
+pub struct SeqOperandSyntax {
+    /// None = the `else` operand.
+    pub guard: Option<String>,
+    pub items: Vec<Line<SeqItemSyntax>>,
+    pub line: usize,
+}
+
+/// One `## Messages` item: a message, or a fragment owning operands.
+/// `errors` preserves misplaced lines authored directly inside the fragment
+/// (outside any operand) so serialization stays lossless.
+#[derive(Debug, Clone, PartialEq)]
+pub enum SeqItemSyntax {
+    Message(ParsedMessage),
+    Fragment {
+        kind: crate::model::FragmentKind,
+        operands: Vec<SeqOperandSyntax>,
+        errors: Vec<ErrorNode>,
+        line: usize,
+    },
+}
+
+/// The ordered `## Messages` section. Document order is time order.
+#[derive(Debug, Clone, PartialEq)]
+pub struct MessagesBlock {
+    pub items: Vec<Line<SeqItemSyntax>>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
