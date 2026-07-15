@@ -111,7 +111,7 @@ export function split_bundle(text: string): any;
 /**
  * `bundle`: a `[path, markdown][]`. Returns a `Diagnostic[]`.
  */
-export function validate(bundle: any): any;
+export function validate(bundle: any): Diagnostic[];
 
 export type InitInput = RequestInfo | URL | Response | BufferSource | WebAssembly.Module;
 
@@ -124,7 +124,7 @@ export interface InitOutput {
     readonly reindex: (a: any) => [number, number, number];
     readonly solve: (a: any, b: number, c: number, d: any, e: any) => [number, number, number];
     readonly split_bundle: (a: number, b: number) => [number, number, number];
-    readonly validate: (a: any) => [number, number, number];
+    readonly validate: (a: any) => [number, number, number, number];
     readonly init_panic_hook: () => void;
     readonly __wbindgen_malloc: (a: number, b: number) => number;
     readonly __wbindgen_realloc: (a: number, b: number, c: number, d: number) => number;
@@ -133,6 +133,7 @@ export interface InitOutput {
     readonly __wbindgen_externrefs: WebAssembly.Table;
     readonly __wbindgen_free: (a: number, b: number, c: number) => void;
     readonly __externref_table_dealloc: (a: number) => void;
+    readonly __externref_drop_slice: (a: number, b: number) => void;
     readonly __wbindgen_start: () => void;
 }
 
