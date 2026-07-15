@@ -19,6 +19,11 @@
   let showStereotype = $derived(display.showStereotype);
   let showVisibility = $derived(!profile.hide.includes("visibility") && display.showAttributeVisibility);
   let hasStereotypeStyle = $derived(Object.keys(st).length > 0);
+  let stereotypeTags = $derived(
+    display.stereotypeFilter === undefined
+      ? data.stereotypes
+      : data.stereotypes.filter((s) => display.stereotypeFilter!.includes(s)),
+  );
 
   let boxStyle = $derived.by(() => {
     const decls: string[] = [`font-family:${NODE_FONT}`];
@@ -40,7 +45,7 @@
   <div class="relative z-[1]">
     {@render header?.()}
     {#if showStereotype}
-      <StereotypeRow stereotypes={data.stereotypes} {keyword} />
+      <StereotypeRow stereotypes={stereotypeTags} {keyword} />
     {/if}
     <div class={`px-3 pb-[9px] pt-[3px] text-center text-[13.5px] font-semibold text-slate-900 ${data.abstract ? "italic" : ""}`}>
       {data.concept.title ?? "Untitled"}
