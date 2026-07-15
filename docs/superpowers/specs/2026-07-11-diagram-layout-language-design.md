@@ -1,6 +1,12 @@
 # Diagram Layout Language
 
 **Date:** 2026-07-11
+**Status:** Partial (language grammar, parser, and solver implemented in Rust —
+see `plans/completed/2026-07-11-diagram-layout-language-parser.md`,
+`2026-07-12-diagram-layout-solver.md`, `2026-07-12-diagram-solver-wasm-bridge.md`;
+`crates/waml/src/layout.rs`, `crates/waml/src/solve/mod.rs`, `packages/wasm`. Not
+wired into the canvas UI: `packages/web/src/canvas/layout.ts` is still dagre-only,
+and there is no drag→relation editing round-trip.)
 **Product:** OKF-UML / Model Canvas (`docs/uaml-spec.md`, `packages/okf`, `packages/web`)
 **Scope:** The declarative layout + grouping language for **Diagram** documents. Replaces per-element saved coordinates with human-readable, relation-based positioning.
 

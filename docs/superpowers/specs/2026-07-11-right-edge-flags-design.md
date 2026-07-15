@@ -1,6 +1,11 @@
 # Right-Edge Flag Tabs (Feedback + Inspect) & Rail Removal
 
 **Date:** 2026-07-11
+**Status:** Implemented (commit `3a783c6` "feat(web): right-edge flag tabs
+(Feedback + Inspect) & rail removal", 2026-07-11). Stack since migrated
+React→Svelte 5; verified in Svelte equivalents: `packages/web/src/components/chrome/EdgeFlag.svelte`,
+pin/translucency logic in `packages/web/src/components/inspector/InspectorPanel.svelte`,
+both flags wired in `CanvasInner.svelte`. `RightRail`/`SharePanel` confirmed gone.
 **Product:** Model Canvas (`packages/web`, React + React Flow + TypeScript)
 **Scope:** 4 of 5 UI-change specs.
 **Depends on:** share-topbar-and-dialog (Share must leave the right rail before the

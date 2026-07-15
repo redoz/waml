@@ -1,7 +1,11 @@
 # Central Edit Panel — Design
 
 **Date:** 2026-07-12
-**Status:** Draft (design)
+**Status:** Implemented (via `plans/completed/2026-07-12-central-edit-panel-implementation.md`).
+Verified `packages/web/src/components/central/CentralEditPanelHost.svelte`
+(routes `{kind:"element"}`/`{kind:"diagram"}` to `ObjectInspector`/
+`DiagramPropertiesBody`) wired from `CanvasInner.svelte` (`onEditProperties`,
+`onOpenProperties`).
 **Related:** `2026-07-11-diagram-properties-panel-design.md`, tree-nav workstream (selection model), diagram-solver-wasm-bridge (Phase 2, complete)
 
 ## Problem

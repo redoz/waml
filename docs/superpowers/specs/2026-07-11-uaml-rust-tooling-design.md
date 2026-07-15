@@ -1,7 +1,11 @@
 # UAML Rust Tooling — Design
 
 **Date:** 2026-07-11
-**Status:** Approved (design), pending implementation plan
+**Status:** Implemented (via `plans/completed/2026-07-11-uaml-rust-tooling-{1-foundations,
+2-document-tier,3-model-tier,4-validation,5-cli}.md`). Crate/CLI renamed
+`uaml`→`waml`; `check`/`fmt` and the two-tier `syntax`/`model` AST are verified
+in `crates/waml/src/{syntax,model,parse,serialize,validate}.rs` and
+`crates/waml-cli/src/main.rs`.
 **Author:** Patrik Husfloen (redoz) with Claude
 
 ## Summary

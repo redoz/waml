@@ -1,6 +1,12 @@
 # UAML WASM frontend — Stage 1b design spec
 
-**Status:** design locked, ready for implementation plan.
+**Status:** Implemented. `packages/core/src/state/model.ts` holds
+bundle+model+overlay exactly as designed, with `overlay.ts`/`toModelGraph`,
+`ops-adapter.ts`, single-template ingest, gzip share-link, and localStorage
+bundle persistence all matching the spec; `@waml/okf`'s parse/serialize/migrate
+bodies are gone. `updateDiagram`/`removeDiagram` remain the deliberate 1b
+no-ops — Stage 1c (layout-from-rules) is a separate future spec, not pending
+work of this one.
 **Parent spec:** `docs/superpowers/specs/2026-07-11-uaml-wasm-frontend-design.md`
 **Stage 1a plan (done):** `docs/superpowers/plans/2026-07-11-uaml-wasm-ops-editing.md`
 **Precedes:** Stage 1c (layout-from-rules engine + drag→rule editing).

@@ -1,6 +1,11 @@
 # Diagram Solver — WASM Bridge (Phase 2)
 
 **Date:** 2026-07-12
+**Status:** Implemented. `crates/waml-wasm::solve` (bundle-in, diagram-key
+lookup, `{ solved, diagnostics }`) plus a standalone `packages/wasm`
+(`@waml/wasm`) package with the `Tsify`-derived types matching the amendment;
+`@waml/core`/`@waml/web` import from `@waml/wasm`, and `Diagram.layout` is
+un-skipped. Names carry the repo-wide `uaml` → `waml` rename.
 **Product:** UAML / Model Canvas (`crates/uaml`, `crates/uaml-wasm`, `packages/`)
 **Scope (this spec):** **Phase 2** — expose the Rust diagram layout solver over
 WASM and give the Rust→JS bridge its own workspace package. No canvas

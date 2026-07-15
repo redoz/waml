@@ -1,8 +1,12 @@
 # Drop Tailwind for scoped CSS + token layer
 
 **Date:** 2026-07-12
+**Status:** Not implemented. `tailwindcss`/`postcss`/`autoprefixer` are still
+`packages/web` deps, `tailwind.config.js`/`postcss.config.js` still exist,
+`app.css` still has `@tailwind base/components/utilities`, and no
+`packages/web/src/styles/` directory or `<style>` blocks exist — 0 of 44
+Svelte components have a scoped `<style>` block.
 **Package:** `packages/web` (the only Tailwind consumer in the monorepo)
-**Status:** Approved design, ready for implementation planning
 
 ## Problem
 

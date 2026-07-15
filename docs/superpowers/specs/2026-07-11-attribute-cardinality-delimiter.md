@@ -1,6 +1,9 @@
 # Spec change: attribute cardinality delimiter `[…]` → `{…}`
 
-Status: proposed · Date: 2026-07-11 · Profile: OKF-UML
+Status: Implemented (verified in code — `crates/waml/src/grammar.rs` parses/serializes
+attribute multiplicity with `{…}` and rejects legacy `[…]` via
+`rejects_legacy_bracket_multiplicity` test; `packages/okf/src/grammar.ts` mirrors the
+same delimiter) · Date: 2026-07-11 · Profile: OKF-UML
 
 ## Summary
 

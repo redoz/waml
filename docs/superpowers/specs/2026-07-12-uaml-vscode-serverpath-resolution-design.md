@@ -1,7 +1,12 @@
 # UAML VS Code Extension — Server Path Resolution
 
 **Date:** 2026-07-12
-**Status:** Design approved
+**Status:** Implemented, via `plans/completed/2026-07-12-uaml-vscode-serverpath-resolution.md`.
+`packages/vscode/src/serverPath.ts` has the full env→config→bundled→path
+precedence + preflight; `extension.ts` calls it once and shows an actionable
+error instead of starting the client. Project renamed uaml → waml in the
+interim (`UAML_SERVER_PATH`/`uaml.serverPath` now `WAML_SERVER_PATH`/
+`waml.serverPath`); behavior is unchanged.
 
 ## Problem
 

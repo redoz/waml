@@ -1,7 +1,10 @@
 # Keyboard Shortcut Hints — Design
 
 **Date:** 2026-07-12
-**Status:** Approved (brainstorming)
+**Status:** Implemented, via `plans/completed/2026-07-12-keyboard-shortcut-hints.md`.
+`packages/web/src/lib/shortcuts.ts` registry, `state/hints.svelte.ts` toggle
+state, `components/KeyHint.svelte`, and Dock's `?`-key/button wiring with
+`data-show-shortcuts` all match the design.
 
 ## Goal
 

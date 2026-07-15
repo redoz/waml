@@ -1,7 +1,11 @@
 # UAML manipulation commands — design
 
 Date: 2026-07-11
-Status: Approved (design). Implementation not started.
+Status: Implemented (via `plans/completed/2026-07-11-uaml-manipulation-commands.md`).
+Crate/CLI renamed `uaml`→`waml` since this spec was written; the full command
+surface (node/attr/value/rel/apply/show/refs/list, `Selector`, `ops::apply`,
+`OpDto`) is verified in `crates/waml/src/ops/mod.rs` and
+`crates/waml-cli/src/main.rs`.
 
 ## Goal
 

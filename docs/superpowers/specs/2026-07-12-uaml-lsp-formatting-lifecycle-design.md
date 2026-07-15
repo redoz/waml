@@ -1,7 +1,12 @@
 # UAML LSP — Formatting + Buffer Lifecycle
 
 **Date:** 2026-07-12
-**Status:** Design approved
+**Status:** Not implemented. `crates/waml-cli/src/lsp/server.rs` only wires
+`initialize`/`initialized`/`did_open`/`did_change`/`shutdown` — no
+`document_formatting_provider`, no `textDocument/formatting` handler, no
+`did_close`/`did_save`. `Workspace` (`lsp/bundle.rs`) has only
+`overlay`/`seed_from_glob`/`diagnostics`, no `close`/`save_reconcile`. Design
+doc only; despite the "docs(uaml): specs" commits, none of this shipped.
 
 ## Problem
 

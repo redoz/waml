@@ -1,6 +1,10 @@
 # Straighten Edges Within a Shared Border Band
 
 **Date:** 2026-07-12
+**Status:** Not implemented. `RelEdge.svelte`'s `edgePath` unconditionally calls
+`getSmoothStepPath` (no straighten branch); `floating.ts` has no `straightPort`
+helper. Matching plan `plans/2026-07-12-straighten-edges-shared-band.md` is
+still unstarted.
 **Product:** Model Canvas (`packages/web`, Svelte + XYFlow/Svelte + TypeScript)
 **Scope:** Edge rendering only — `RelEdge.svelte`, `AnchorEdge.svelte`, `floating.ts`.
 

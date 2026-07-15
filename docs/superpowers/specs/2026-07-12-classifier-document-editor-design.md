@@ -1,7 +1,11 @@
 # Classifier Document Editor — Design (deferred)
 
 **Date:** 2026-07-12
-**Status:** Parked. Captured so the idea isn't lost; not scheduled. Depends on the package/navigator work (`2026-07-12-uaml-packages-navigator-design.md`), which stubs *View/edit properties* to the existing Inspector until this lands.
+**Status:** Not implemented (confirmed still parked as of this audit). No A4
+document modal, markdown live-preview field, or raw-markdown escape hatch found
+anywhere in `packages/web/src`; `2026-07-12-uaml-packages-navigator.md` (completed)
+still routes *View/edit properties* to the existing Inspector/central panel as
+described here.
 
 ## Goal
 

@@ -1,5 +1,13 @@
 # UAML behavioral substrates — covering the four core UML families
 
+**Date:** 2026-07-11
+**Status:** Not implemented (forward-looking design doc; explicitly marked
+"first pass... BNF deferred to the implementation plan" in its own body). No
+`uml.Actor`/`uaml.Actor`, `UseCase`, `Activity`, `StateMachine`, or `Sequence`
+metaclass, no flow/interaction substrate, appears anywhere in `crates/` or
+`packages/` outside this spec; only the existing structure-tier (class diagram)
+metaclasses from the agnostic-profiles spec are implemented.
+
 ## Goal
 
 Extend UAML from structural-only (class/structure diagrams) to cover the

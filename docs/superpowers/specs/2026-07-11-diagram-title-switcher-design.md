@@ -1,6 +1,12 @@
 # Diagram Title & Switcher
 
 **Date:** 2026-07-11
+**Status:** Implemented (commit `e0a012c` "diagram title switcher replaces goal
+button + DiagramTabs"; centered blue title + dropdown verified in
+`packages/web/src/components/TopBar.svelte:172-209`. No `GoalDialog`/`state/goal`
+or `DiagramTabs` remnants found. The dropdown later evolved into the fuller
+Navigator sheet, plans `2026-07-12` series — a superset of the spec's simple
+list/rename/create dropdown.)
 **Product:** Model Canvas (`packages/web`, React + React Flow + TypeScript)
 **Scope:** 2 of 5 UI-change specs. Independent.
 

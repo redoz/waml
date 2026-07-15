@@ -1,7 +1,12 @@
 # OKF Canvas — agnostic modeling core + UML domain-model profile
 
 **Date:** 2026-07-11
-**Status:** Approved design + post-approval revisions (see Changelog), pre-implementation
+**Status:** Implemented (via the paired `2026-07-11-okf-agnostic-profiles-uml-domain-plan.md`
+and its `okf-uml-stage1..6` completed stages). Verified: `family.Metaclass` dispatch,
+stereotypes, attributes/values, `## Relationships` verb grammar, `uml.Association`
+and `uml.Note` all present in `packages/okf/src/types.ts`; profile mechanism lives
+in `packages/core/src/profiles/`. Family token later renamed `uml.*` → `uaml.*`
+(`2026-07-12-okf-uaml-tier-refactor.md`), not a behavior change.
 **Builds on:** `2026-07-10-okf-canvas-static-spa-design.md` (static SPA pivot, `type` made opaque)
 
 ## Goal

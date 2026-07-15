@@ -1,6 +1,12 @@
 # Replace Brand Logo with UAML Wordmark
 
 **Date:** 2026-07-11
+**Status:** Implemented (commit `582aede` "feat(web): swap OWOX gradient logo
+UAML wordmark in top bar", 2026-07-11). Verified in Svelte equivalent
+`packages/web/src/components/TopBar.svelte` (`currentColor` wordmark SVG,
+brand link, "Model Canvas" text retained). Project subsequently renamed
+uaml→waml (commit `bf5ba02`), so the live wordmark/link now read "WAML" and
+`github.com/redoz/waml` — a later rename, not a spec regression.
 **Product:** Model Canvas (`packages/web`, React + React Flow + TypeScript)
 **Scope:** 6 of 6 UI-change specs. Independent; small.
 

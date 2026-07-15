@@ -1,6 +1,11 @@
 # Share in Top Bar + Share Dialog
 
 **Date:** 2026-07-11
+**Status:** Implemented (commit `1723cf0` "feat(web): move Share to top bar with
+a modal Share dialog", 2026-07-11). Verified in Svelte equivalent:
+`packages/web/src/components/share/ShareDialog.svelte` (link+Copy, PNG
+share-as-image via `svgToPngBlob`/`buildCanvasSvg`), Share button in
+`packages/web/src/components/TopBar.svelte`; old `SharePanel`/rail routing removed.
 **Product:** Model Canvas (`packages/web`, React + React Flow + TypeScript)
 **Scope:** 3 of 5 UI-change specs. Independent. Frees the right rail's Share so
 the right-edge-flags spec can delete the rail.

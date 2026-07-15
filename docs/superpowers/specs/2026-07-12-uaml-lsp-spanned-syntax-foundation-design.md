@@ -1,7 +1,12 @@
 # UAML LSP — Spanned Syntax Foundation + documentSymbol
 
 **Date:** 2026-07-12
-**Status:** Design approved
+**Status:** Not implemented. No `TextSpan`/`LineIndex` in `crates/waml/src`
+(no `text.rs`); `Diagnostic` still uses `line: usize` + line-relative
+`span: Option<(usize,usize)>`, not an absolute-offset currency. No
+`symbols.rs` and no `document_symbol` handler/capability in
+`crates/waml-cli/src/lsp/server.rs`. Design doc only; the recent
+"docs(uaml): specs" commits refined the spec text, not the code.
 
 ## Problem
 

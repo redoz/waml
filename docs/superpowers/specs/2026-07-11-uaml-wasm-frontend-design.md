@@ -1,8 +1,14 @@
 # UAML → WASM frontend: design spec
 
-**Status:** design locked, staged for implementation. Stage 1 has a plan
-(`docs/superpowers/plans/2026-07-11-uaml-wasm-ops-editing.md`); later stages are
-roadmapped here and get their own plans when reached.
+**Status:** Partial. Stage 1 (WASM ops-editing) implemented via
+`plans/completed/2026-07-11-uaml-wasm-ops-editing.md` and
+`plans/completed/2026-07-12-uaml-wasm-frontend-1b.md` — verified
+`crates/waml-wasm/src/lib.rs` (`build_model`/`validate`/`apply_ops`/`fmt`/
+`split_bundle`), `@waml/wasm` wired into `packages/web`. Stage 2 (layout) is
+underway (`crates/waml/src/solve/` + `plans/completed/2026-07-12-diagram-solver-wasm-bridge.md`,
+`2026-07-12-diagram-layout-solver.md`) but not a standalone `uaml-layout` crate as
+specced. Stage 3 (drop the TS overlay) and Stage 4 (format-preserving edits) not
+started — `packages/core/src/state/overlay.ts` still exists.
 
 ## Problem
 

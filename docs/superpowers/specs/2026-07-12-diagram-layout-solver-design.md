@@ -1,6 +1,12 @@
 # Diagram Layout Solver
 
 **Date:** 2026-07-12
+**Status:** Implemented. `crates/waml/src/solve/` (`resolve.rs`, `geometry.rs`,
+`mod.rs`, `potentials.rs`) matches the design: `resolve()`/`solve()`/
+`solve_diagram()`, `Scene`/`Constraint`/`Solved` types, golden + unit tests.
+Crate renamed `uaml` → `waml` since this spec was written; diagnostics landed
+as `UnresolvedLayoutRef`/`LayoutCycle`/`LayoutConflict` (slightly different
+names than drafted, same behavior).
 **Product:** UAML / Model Canvas (`docs/uaml-spec.md`, `crates/uaml`, `packages/web`)
 **Scope (this spec):** **Phase 1** — the headless Rust solver that turns parsed
 `## Layout` relations + `## Members` groups into absolute pixel rectangles.

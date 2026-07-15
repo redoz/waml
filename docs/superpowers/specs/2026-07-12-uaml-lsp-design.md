@@ -1,6 +1,13 @@
 # UAML Language Server (`uaml lsp`)
 
 **Date:** 2026-07-12
+**Status:** Implemented (Phase 1, as scoped). `validate()` now delegates to
+`parse()` + `link()` with no hand-rolled re-scan (`crates/waml/src/validate.rs`);
+`Diagnostic` carries `line`+`span`. `Command::Lsp` runs a real tower-lsp
+stdio server (`crates/waml-cli/src/lsp/{server,bundle,map}.rs`) with
+workspace bundling, overlay, and UTF-16 diagnostic mapping. A thin
+`packages/vscode` (`@waml/vscode`) client spawns it. Nav/completion phases
+are explicitly out of scope here (see the other two LSP specs).
 **Product:** UAML core (`crates/uaml`), UAML CLI (`crates/uaml-cli`), editor tooling
 **Scope:** An LSP for UAML-shaped Markdown, shipped as a subcommand of the existing `uaml` binary. Phase 1 delivers live diagnostics with precise spans. Reaching that cleanly first requires reshaping the parser to **parse and report in one pass** — the enabling refactor is the larger half of this spec.
 

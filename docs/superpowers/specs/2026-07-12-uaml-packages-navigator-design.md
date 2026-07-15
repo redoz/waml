@@ -1,6 +1,12 @@
 # UAML Packages + Model Navigator — Design
 
 **Date:** 2026-07-12
+**Status:** Implemented. `ModelGraph` has `path`/`packages` and `ModelNode`
+has `members` (`packages/okf/src/types.ts`); the center diagram switcher
+grew into a 494-line `packages/web/src/components/Navigator.svelte` with
+scoped breadcrumb rescope, `filterNav` search (in-scope/elsewhere/empty
+states), drag-reorder, and Sort A–Z, backed by `Navigator.test.ts`. Parts C/D
+remain deferred per spec.
 **Scope:** Spec 1 of a decomposed effort — parts **A** (package model) and **B** (navigator sheet). Parts **C** (classifier document editor) and **D** (LSP-in-editor) are captured in `2026-07-12-classifier-document-editor-design.md` and deferred.
 
 ## Goal

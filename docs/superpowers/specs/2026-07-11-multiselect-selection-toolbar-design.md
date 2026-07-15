@@ -1,6 +1,13 @@
 # Multi-Select & Floating Selection Toolbar
 
 **Date:** 2026-07-11
+**Status:** Partial (multi-select, marquee, floating toolbar, and delete-selection
+verified working — `packages/web/src/components/canvas/CanvasInner.svelte:285-350,612-624`,
+`SelectionToolbar.svelte`; auto-open-Inspector-on-select is gone. "New diagram from
+selection" is UI-complete but currently non-functional: `addDiagramFromMembers` in
+`packages/core/src/state/model.ts:268` is a stub that discards the passed member ids
+— a known regression from the in-flight tier refactor, `docs/superpowers/plans/2026-07-12-okf-uaml-tier-refactor.md`,
+dated 2026-07-12 through 2026-07-14.)
 **Product:** Model Canvas (`packages/web`, React + React Flow + TypeScript)
 **Scope:** 5 of 5 UI-change specs. Independent.
 

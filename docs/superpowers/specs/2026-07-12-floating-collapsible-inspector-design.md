@@ -1,6 +1,10 @@
 # Floating inspector — picker + never-close — design
 
 **Date:** 2026-07-12
+**Status:** Implemented, via `plans/completed/2026-07-12-floating-collapsible-inspector.md`.
+`InspectorPanel.svelte` takes `options`/`selectedKey`/`focusedKind`/`onSelect`
+(no `open`/`onClose`/`title`) and always renders `aria-label="Inspector"`;
+`CanvasInner.svelte` always mounts it and wires selection/picker/`rightOffset`.
 **Scope:** Restyle the inspector panel to match the diagram properties dialog, float it off the top/right corner, make it collapsible, replace its static title with an element **picker**, and make it **never close** — an empty selection shows a compact bar + hint instead.
 **Primary files:** `packages/web/src/components/inspector/InspectorPanel.svelte` (card + header + collapse) and `packages/web/src/components/canvas/CanvasInner.svelte` (sole host: always-mounted, picker options, selection wiring, Inspect edge-flag removal).
 
