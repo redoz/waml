@@ -48,6 +48,7 @@ import ShareToast from "../ShareToast.svelte";
   import InspectorReadonly from "../inspector/InspectorReadonly.svelte";
   import ExternalRefs from "../inspector/ExternalRefs.svelte";
   import InspectorPanel from "../inspector/InspectorPanel.svelte";
+  import NavigatorPanel from "../NavigatorPanel.svelte";
   import EdgeFlag from "../chrome/EdgeFlag.svelte";
   import CentralEditPanelHost, { type CentralPanelState } from "../central/CentralEditPanelHost.svelte";
   import FlowView from "./flow/FlowView.svelte";
@@ -119,6 +120,12 @@ import ShareToast from "../ShareToast.svelte";
   // Bound to the InspectorPanel's resizable width so the edge-flags can slide
   // left, clear of the open panel, instead of sitting on top of it.
   let inspectorWidth = $state(380);
+  // Navigator panel — session-local, like the inspector state above. `navMode`
+  // is remembered across close/reopen; unpinning returns to "centered".
+  let navOpen = $state(false);
+  let navMode = $state<"centered" | "docked">("centered");
+  let navWidth = $state(340);
+  let navCollapsed = $state(false);
   // central edit panel's current target (null = closed). Element context is
   // opened by navigator's "View / edit properties"; diagram context by
   // Dock sliders button (Task 5).
@@ -617,50 +624,8 @@ import ShareToast from "../ShareToast.svelte";
     onLibrary={() => (showLibrary = true)}
     diagrams={diagrams}
     activeDiagramKey={activeDiagram.key}
-    onSelectDiagram={(key) => {
-      // A selection made in one diagram must never carry into another — most
-      // importantly, it must never survive into a read-only Flow/Sequence view
-      // (where it would otherwise leave the floating SelectionToolbar's Delete
-      // button live against the still-mounted model). See also the
-      // activeFlow/activeSequence guards on handleDeleteSelection/handleKeyDown
-      // and the <SelectionToolbar> render condition below (defense in depth).
-      activeDiagramKey = key;
-      selectionSet = EMPTY_SELECTION;
-      inspectorDiagramScope = false;
-    }}
-    onCreateDiagram={(name) => {
-      const d = store.addDiagram(name);
-      activeDiagramKey = d.key;
-    }}
-    graph={$model}
-    scopeKey={scopeKey}
-    palette={palette}
-    onScope={(key) => (scopeKey = key)}
-    onReorder={(pkgKey, order) => store.reorderMembers(pkgKey, order)}
-    onSort={(pkgKey) => store.sortPackage(pkgKey)}
-    onCreatePackage={(parent, name) => store.createGhostPackage(parent, name)}
-    onCreateNode={(dir, metaclass) => store.createNodeInPackage(dir, metaclass, metaclass.split(".").pop() || metaclass)}
-    onRename={(key, kind, title) => {
-      if (kind === "package") store.renamePackage(key, reslugPackage(key, title));
-      else if (kind === "diagram") store.updateDiagram(key, { title });
-      else {
-        const n = $model.nodes.find((x) => x.key === key);
-        if (n) store.updateNode(key, { concept: { ...n.concept, title } });
-      }
-    }}
-    onDelete={(key, kind, mode) => {
-      if (kind === "package") store.deletePackage(key, mode === "cascade");
-      else store.removeNode(key);
-    }}
-    onViewInDiagram={(key, diagramKey) => {
-      activeDiagramKey = diagramKey;
-      selectionSet = { nodes: [key], edges: [] };
-    }}
-    onAddToNewDiagram={(key) => {
-      const d = store.addDiagramFromMembers("New diagram", [key]);
-      activeDiagramKey = d.key;
-    }}
-    onEditProperties={(key) => (centralPanel = { kind: "element", nodeKey: key })}
+    navOpen={navOpen}
+    onToggleNav={() => (navOpen = !navOpen)}
   />
 
   <CentralEditPanelHost
@@ -850,6 +815,71 @@ import ShareToast from "../ShareToast.svelte";
     >
       {#snippet icon()}<MessageSquare size={16} />{/snippet}
     </EdgeFlag>
+
+    <!-- Model navigator — two-mode panel (centered modal / left-docked rail).
+         Session state lives above; navigation actions close it, structural
+         edits leave it open so the user can chain them. -->
+    <NavigatorPanel
+      open={navOpen}
+      mode={navMode}
+      bind:width={navWidth}
+      bind:collapsed={navCollapsed}
+      title={$model.path || "model"}
+      onClose={() => (navOpen = false)}
+      onToggleMode={() => (navMode = navMode === "centered" ? "docked" : "centered")}
+      graph={$model}
+      scopeKey={scopeKey}
+      activeDiagramKey={activeDiagram.key}
+      palette={palette}
+      onScope={(key) => (scopeKey = key)}
+      onSelectDiagram={(key) => {
+        // A selection made in one diagram must never carry into another — most
+        // importantly, it must never survive into a read-only Flow/Sequence view
+        // (where it would otherwise leave the floating SelectionToolbar's Delete
+        // button live against the still-mounted model). See also the
+        // activeFlow/activeSequence guards on handleDeleteSelection/handleKeyDown
+        // and the <SelectionToolbar> render condition below (defense in depth).
+        activeDiagramKey = key;
+        selectionSet = EMPTY_SELECTION;
+        inspectorDiagramScope = false;
+        navOpen = false;
+      }}
+      onCreateDiagram={(name) => {
+        const d = store.addDiagram(name);
+        activeDiagramKey = d.key;
+        navOpen = false;
+      }}
+      onReorder={(pkgKey, order) => store.reorderMembers(pkgKey, order)}
+      onSort={(pkgKey) => store.sortPackage(pkgKey)}
+      onCreatePackage={(parent, name) => store.createGhostPackage(parent, name)}
+      onCreateNode={(dir, metaclass) => store.createNodeInPackage(dir, metaclass, metaclass.split(".").pop() || metaclass)}
+      onRename={(key, kind, title) => {
+        if (kind === "package") store.renamePackage(key, reslugPackage(key, title));
+        else if (kind === "diagram") store.updateDiagram(key, { title });
+        else {
+          const n = $model.nodes.find((x) => x.key === key);
+          if (n) store.updateNode(key, { concept: { ...n.concept, title } });
+        }
+      }}
+      onDelete={(key, kind, mode) => {
+        if (kind === "package") store.deletePackage(key, mode === "cascade");
+        else store.removeNode(key);
+      }}
+      onViewInDiagram={(key, diagramKey) => {
+        activeDiagramKey = diagramKey;
+        selectionSet = { nodes: [key], edges: [] };
+        navOpen = false;
+      }}
+      onAddToNewDiagram={(key) => {
+        const d = store.addDiagramFromMembers("New diagram", [key]);
+        activeDiagramKey = d.key;
+        navOpen = false;
+      }}
+      onEditProperties={(key) => {
+        centralPanel = { kind: "element", nodeKey: key };
+        navOpen = false;
+      }}
+    />
 
     <!-- Always-present floating Inspector (translucent when pinned + idle). -->
     <InspectorPanel

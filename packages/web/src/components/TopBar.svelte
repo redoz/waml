@@ -2,9 +2,7 @@
   // Mirrors packages/web/src/components/TopBar.tsx.
   import { Download, Upload, ChevronDown, FileText, Image as ImageIcon, Share2 } from "lucide-svelte";
   import { LibraryIcon } from "../lib/icons";
-  import type { Diagram, ModelGraph } from "@waml/okf";
-  import type { NavKind } from "@waml/core/nav/tree";
-  import Navigator from "./Navigator.svelte";
+  import type { Diagram } from "@waml/okf";
 
   // First-visit onboarding hint pointing at the Library. Persisted so it only
   // ever shows once per browser; dismissed as soon as the user hovers it.
@@ -22,24 +20,10 @@
     onLibrary,
     diagrams = [],
     activeDiagramKey = "",
-    onSelectDiagram,
-    onCreateDiagram,
-    // Navigator sheet — the switcher trigger now opens the full model navigator
-    // (search / scope / create / rename / reorder / delete). The parent owns the
-    // model and maps every callback to a store mutator.
-    graph,
-    scopeKey = "",
-    palette = [],
-    onScope,
-    onReorder,
-    onViewInDiagram,
-    onAddToNewDiagram,
-    onEditProperties,
-    onCreatePackage,
-    onCreateNode,
-    onRename,
-    onSort,
-    onDelete,
+    // The center switcher is now a pure open/close trigger for the model
+    // navigator; CanvasInner owns the panel state and its callbacks.
+    navOpen = false,
+    onToggleNav,
   }: {
     onImport?: () => void;
     onExport?: () => void;
@@ -49,24 +33,11 @@
     shareDisabled?: boolean;
     onLibrary?: () => void;
     // Diagram title switcher — the active diagram's title doubles as the trigger
-    // for the Navigator sheet.
+    // that toggles the navigator panel.
     diagrams?: Diagram[];
     activeDiagramKey?: string;
-    onSelectDiagram?: (key: string) => void;
-    onCreateDiagram?: (name: string) => void;
-    graph?: ModelGraph;
-    scopeKey?: string;
-    palette?: string[];
-    onScope?: (key: string) => void;
-    onReorder?: (pkgKey: string, order: string[]) => void;
-    onViewInDiagram?: (key: string, diagramKey: string) => void;
-    onAddToNewDiagram?: (key: string) => void;
-    onEditProperties?: (key: string) => void;
-    onCreatePackage?: (parentKey: string, name: string) => void;
-    onCreateNode?: (dir: string, metaclass: string) => void;
-    onRename?: (key: string, kind: NavKind, title: string) => void;
-    onSort?: (pkgKey: string) => void;
-    onDelete?: (key: string, kind: NavKind, mode: "single" | "cascade" | "reparent") => void;
+    navOpen?: boolean;
+    onToggleNav?: () => void;
   } = $props();
 
   // Export dropdown (OKF markdown / SVG).
@@ -75,39 +46,11 @@
   let showLibraryHint = $state(false);
 
   // ── Diagram title switcher ─────────────────────────────────────────────────
-  // The trigger opens the Navigator sheet; the callbacks below close it after a
-  // navigation action (select / view / add / edit) while structural edits keep
-  // the sheet open so the user can chain them.
-  let switcherOpen = $state(false);
-
+  // The trigger is now a pure open/close toggle for the model navigator, which
+  // CanvasInner mounts and owns; TopBar only reports the active diagram's title.
   const activeTitle = $derived(
     diagrams.find((d) => d.key === activeDiagramKey)?.title ?? diagrams[0]?.title ?? "Untitled diagram",
   );
-
-  function openSwitcher() {
-    switcherOpen = !switcherOpen;
-  }
-
-  function selectDiagram(key: string) {
-    onSelectDiagram?.(key);
-    switcherOpen = false;
-  }
-  function viewInDiagram(key: string, diagramKey: string) {
-    onViewInDiagram?.(key, diagramKey);
-    switcherOpen = false;
-  }
-  function addToNewDiagram(key: string) {
-    onAddToNewDiagram?.(key);
-    switcherOpen = false;
-  }
-  function editProperties(key: string) {
-    onEditProperties?.(key);
-    switcherOpen = false;
-  }
-  function createDiagram(name: string) {
-    onCreateDiagram?.(name);
-    switcherOpen = false;
-  }
 
   $effect(() => {
     try {
@@ -171,41 +114,16 @@
        over from the old Business Goal button (Target icon dropped). -->
   <div class="relative">
     <button
-      onclick={openSwitcher}
+      onclick={() => onToggleNav?.()}
       aria-label={`Diagram: ${activeTitle} — switch diagram`}
-      aria-haspopup="menu"
-      aria-expanded={switcherOpen}
-      title="Switch, rename, or create a diagram"
+      aria-haspopup="dialog"
+      aria-expanded={navOpen}
+      title="Open the model navigator"
       class="flex items-center gap-[6px] rounded-lg px-[10px] py-[6px] text-[13px] font-[600] cursor-pointer transition-colors text-[#1e88e5] bg-[#e6f1fb] hover:bg-[#d8e8f9]"
     >
       <span class="max-w-[240px] truncate">{activeTitle}</span>
       <ChevronDown size={14} class="text-[#1e88e5]/70" />
     </button>
-    {#if switcherOpen && graph}
-      <!-- svelte-ignore a11y_click_events_have_key_events -->
-      <!-- svelte-ignore a11y_no_static_element_interactions -->
-      <div class="fixed inset-0 z-40" onclick={() => (switcherOpen = false)}></div>
-      <div class="absolute top-[calc(100%+6px)] left-1/2 -translate-x-1/2 z-50">
-        <Navigator
-          {graph}
-          {scopeKey}
-          {activeDiagramKey}
-          {palette}
-          {onScope}
-          onSelectDiagram={selectDiagram}
-          {onReorder}
-          onViewInDiagram={viewInDiagram}
-          onAddToNewDiagram={addToNewDiagram}
-          onEditProperties={editProperties}
-          {onCreatePackage}
-          {onCreateNode}
-          onCreateDiagram={createDiagram}
-          {onRename}
-          {onSort}
-          {onDelete}
-        />
-      </div>
-    {/if}
   </div>
 
   <div class="flex-1"></div>

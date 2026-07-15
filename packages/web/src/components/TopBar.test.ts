@@ -1,7 +1,6 @@
 import { test, expect, vi } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/svelte";
 import TopBar from "./TopBar.svelte";
-import type { ModelGraph } from "@waml/okf";
 
 const diagram = (key: string, title: string) => ({
   key,
@@ -9,26 +8,6 @@ const diagram = (key: string, title: string) => ({
   profile: "uml-domain",
   members: [] as string[],
 });
-
-// A minimal graph for the mounted Navigator sheet — packages carry the
-// concept-Node shape (title on concept.title), matching the real model.
-const navGraph = {
-  path: "acme-model",
-  nodes: [],
-  edges: [],
-  diagrams: [{ key: "d1", title: "Overview", profile: "uml-domain", members: [] }],
-  packages: [
-    {
-      key: "",
-      type: "uml.Package",
-      concept: { id: "", type: "uml.Package", title: "", body: "" },
-      stereotypes: [],
-      attributes: [],
-      position: { x: 0, y: 0 },
-      members: ["d1"],
-    },
-  ],
-} as unknown as ModelGraph;
 
 const switcherProps = (over: Record<string, unknown> = {}) => ({
   diagrams: [diagram("d1", "Overview"), diagram("d2", "Details")],
@@ -55,23 +34,22 @@ test("no longer renders the Business Goal button", () => {
   expect(screen.queryByRole("button", { name: "Set business goal" })).toBeNull();
 });
 
-test("the center switcher opens the Navigator sheet (not the old inline list)", async () => {
+test("the center switcher toggles the navigator via onToggleNav + aria-expanded", async () => {
+  const onToggleNav = vi.fn();
   render(TopBar, {
     props: {
       diagrams: [diagram("d1", "Overview")],
       activeDiagramKey: "d1",
-      graph: navGraph,
-      palette: ["uml.Class"],
-      onSelectDiagram: vi.fn(),
-      onScope: vi.fn(),
+      navOpen: false,
+      onToggleNav,
     },
   });
-  await fireEvent.click(screen.getByRole("button", { name: /switch diagram/i }));
-  // Navigator's search field is the tell that the new sheet mounted.
-  expect(screen.getByLabelText("Search model")).toBeTruthy();
-  expect(screen.getByText("acme-model")).toBeTruthy();
-  // The old inline diagram-list radios are gone.
-  expect(screen.queryByRole("menuitemradio")).toBeNull();
+  const btn = screen.getByRole("button", { name: /switch diagram/i });
+  expect(btn.getAttribute("aria-expanded")).toBe("false");
+  await fireEvent.click(btn);
+  expect(onToggleNav).toHaveBeenCalledTimes(1);
+  // The navigator no longer mounts inside the TopBar.
+  expect(screen.queryByLabelText("Search model")).toBeNull();
 });
 
 test("export dropdown opens and routes OKF vs SVG", async () => {
