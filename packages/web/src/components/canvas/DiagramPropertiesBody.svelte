@@ -18,6 +18,26 @@
   }
 
   let disabledAll = $derived(!editable);
+  let stereoDisabled = $derived(!display.showStereotype || disabledAll);
+
+  function toggleFilter(name: string) {
+    if (stereoDisabled) return;
+    const current = display.stereotypeFilter === undefined ? [...candidateStereotypes] : [...display.stereotypeFilter];
+    const idx = current.indexOf(name);
+    if (idx >= 0) current.splice(idx, 1);
+    else current.push(name);
+    patch({ stereotypeFilter: current });
+  }
+  function setColor(name: string, hex: string) {
+    if (stereoDisabled) return;
+    patch({ stereotypeColors: { ...display.stereotypeColors, [name]: hex } });
+  }
+  function clearColor(name: string) {
+    if (stereoDisabled) return;
+    const next = { ...display.stereotypeColors };
+    delete next[name];
+    patch({ stereotypeColors: next });
+  }
 
   function commitTitle(v: string) {
     const t = v.trim();
@@ -198,4 +218,50 @@
   {@render toggleRow("Show stereotype", display.showStereotype, () =>
     patch({ showStereotype: !display.showStereotype }), disabledAll,
   )}
+
+  <div class="px-2 py-1.5 {stereoDisabled ? 'opacity-40' : ''}">
+    <div class="mb-1 text-[13px] font-medium text-slate-800">Stereotype filter</div>
+    {#if candidateStereotypes.length === 0}
+      <div class="text-[12px] text-slate-400">No stereotypes on this diagram's members yet.</div>
+    {:else}
+      <label class="flex items-center gap-2 py-0.5 text-[12px] text-slate-700">
+        <input
+          type="checkbox" aria-label="Show all stereotypes"
+          checked={display.stereotypeFilter === undefined} disabled={stereoDisabled}
+          onchange={() => { if (!stereoDisabled) patch({ stereotypeFilter: undefined }); }} />
+        <span>Show all</span>
+      </label>
+      {#each candidateStereotypes as name (name)}
+        {@const checked = display.stereotypeFilter === undefined ? true : display.stereotypeFilter.includes(name)}
+        <label class="flex items-center gap-2 py-0.5 text-[12px] text-slate-700">
+          <input type="checkbox" aria-label={name} checked={checked} disabled={stereoDisabled} onchange={() => toggleFilter(name)} />
+          <span>{name}</span>
+        </label>
+      {/each}
+    {/if}
+  </div>
+
+  <div class="px-2 py-1.5 {stereoDisabled ? 'opacity-40' : ''}">
+    <div class="mb-1 text-[13px] font-medium text-slate-800">Stereotype colors</div>
+    {#if candidateStereotypes.length === 0}
+      <div class="text-[12px] text-slate-400">No stereotypes on this diagram's members yet.</div>
+    {:else}
+      {#each candidateStereotypes as name (name)}
+        <div class="flex items-center gap-2 py-0.5 text-[12px] text-slate-700">
+          <input
+            type="color" aria-label={`Color for ${name}`} disabled={stereoDisabled}
+            value={display.stereotypeColors[name] ?? "#dddddd"}
+            oninput={(e) => setColor(name, (e.currentTarget as HTMLInputElement).value)}
+            class="h-6 w-8 rounded border border-slate-300" />
+          <span class="flex-1">{name}</span>
+          {#if display.stereotypeColors[name]}
+            <button
+              type="button" aria-label={`Clear color for ${name}`} disabled={stereoDisabled}
+              onclick={() => clearColor(name)}
+              class="text-slate-400 hover:text-slate-700">Clear</button>
+          {/if}
+        </div>
+      {/each}
+    {/if}
+  </div>
 </div>

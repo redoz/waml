@@ -149,3 +149,47 @@ test("editable false shows the banner and disables every control", async () => {
   const title = screen.getByLabelText("Diagram title") as HTMLInputElement;
   expect(title.disabled).toBe(true);
 });
+
+const withStereos = (over = {}) =>
+  props({ display: { ...DEFAULT_DISPLAY, showStereotype: true }, candidateStereotypes: ["entity", "valueObject"], ...over });
+
+test("empty candidate list shows the muted hint", () => {
+  render(DiagramPropertiesBody, { props: props({ candidateStereotypes: [] }) });
+  expect(screen.getAllByText(/No stereotypes on this diagram's members yet/i).length).toBeGreaterThan(0);
+});
+
+test("Show all emits stereotypeFilter undefined", async () => {
+  const onChange = vi.fn();
+  render(DiagramPropertiesBody, { props: withStereos({ display: { ...DEFAULT_DISPLAY, showStereotype: true, stereotypeFilter: ["entity"] }, onChange }) });
+  await fireEvent.click(screen.getByRole("checkbox", { name: "Show all stereotypes" }));
+  expect(onChange).toHaveBeenCalledWith({ stereotypeFilter: undefined });
+});
+
+test("toggling a name off from an allowlist can empty it to [] (show none)", async () => {
+  const onChange = vi.fn();
+  render(DiagramPropertiesBody, { props: withStereos({ display: { ...DEFAULT_DISPLAY, showStereotype: true, stereotypeFilter: ["entity"] }, onChange }) });
+  await fireEvent.click(screen.getByRole("checkbox", { name: "entity" }));
+  expect(onChange).toHaveBeenCalledWith({ stereotypeFilter: [] });
+});
+
+test("toggling a name from show-all builds an allowlist", async () => {
+  const onChange = vi.fn();
+  render(DiagramPropertiesBody, { props: withStereos({ onChange }) }); // stereotypeFilter undefined => show all
+  await fireEvent.click(screen.getByRole("checkbox", { name: "valueObject" }));
+  expect(onChange).toHaveBeenCalledWith({ stereotypeFilter: ["entity"] });
+});
+
+test("picking a color merges into stereotypeColors; clearing removes the key", async () => {
+  const onChange = vi.fn();
+  render(DiagramPropertiesBody, { props: withStereos({ display: { ...DEFAULT_DISPLAY, showStereotype: true, stereotypeColors: { entity: "#ffedd5" } }, onChange }) });
+  await fireEvent.input(screen.getByLabelText("Color for valueObject"), { target: { value: "#dbeafe" } });
+  expect(onChange).toHaveBeenCalledWith({ stereotypeColors: { entity: "#ffedd5", valueObject: "#dbeafe" } });
+  await fireEvent.click(screen.getByRole("button", { name: "Clear color for entity" }));
+  expect(onChange).toHaveBeenCalledWith({ stereotypeColors: {} });
+});
+
+test("stereotype controls disabled when showStereotype is off", () => {
+  render(DiagramPropertiesBody, { props: withStereos({ display: { ...DEFAULT_DISPLAY, showStereotype: false }, candidateStereotypes: ["entity"] }) });
+  expect((screen.getByRole("checkbox", { name: "entity" }) as HTMLInputElement).disabled).toBe(true);
+  expect((screen.getByLabelText("Color for entity") as HTMLInputElement).disabled).toBe(true);
+});
