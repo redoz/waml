@@ -267,7 +267,8 @@ mod tests {
     use crate::solve::{BoxId, BoxKind};
 
     fn diagram(groups: Vec<DiagramGroup>, layout: Vec<crate::syntax::LayoutStatement>) -> Diagram {
-        Diagram { key: "orders".into(), title: "Orders".into(), profile: "uml-domain".into(), groups, layout }
+        Diagram { key: "orders".into(), title: "Orders".into(), profile: "uml-domain".into(),
+            description: None, groups, layout, display: crate::model::DiagramDisplay::default() }
     }
 
     #[test]
@@ -429,12 +430,14 @@ mod tests {
             key: "tables/dia".into(),
             title: "D".into(),
             profile: "uml-domain".into(),
+            description: None,
             groups: vec![DiagramGroup { name: "".into(), members: vec!["tables/order".into()], children: vec![] }],
             layout: vec![LayoutStatement::Standalone(Operand {
                 ref_: OperandRef::Name(NameRef::Link { title: "Order".into(), slug: "order".into() }),
                 axis: Some(Axis::Column),
                 hints: vec![],
             })],
+            display: crate::model::DiagramDisplay::default(),
         };
         let (scene, diags) = resolve(&d);
         assert!(diags.is_empty(), "expected the link ref to resolve, got: {diags:?}");

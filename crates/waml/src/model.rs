@@ -392,10 +392,51 @@ pub struct Diagram {
     pub key: String,
     pub title: String,
     pub profile: String,
+    #[cfg_attr(feature = "serde", serde(default, skip_serializing_if = "Option::is_none"))]
+    pub description: Option<String>,
     pub groups: Vec<DiagramGroup>,
     // `layout` carries the raw layout AST (`syntax::LayoutStatement`). Serialized
     // end to end (Phase 2) so the frontend can read the layout relations.
     pub layout: Vec<crate::syntax::LayoutStatement>,
+    #[cfg_attr(feature = "serde", serde(default, skip_serializing_if = "DiagramDisplay::is_empty"))]
+    pub display: DiagramDisplay,
+}
+
+/// A diagram's authored render settings — a PARTIAL. Only keys present in the
+/// file are `Some`/non-empty; TS `resolveDisplay` fills the rest from
+/// `DEFAULT_DISPLAY`. Serde `rename_all="camelCase"` matches the TS keys.
+#[derive(Debug, Clone, Default, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(rename_all = "camelCase", default))]
+pub struct DiagramDisplay {
+    #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none"))]
+    pub show_attributes: Option<bool>,
+    #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none"))]
+    pub attribute_detail: Option<String>, // "name-only" | "name-type"
+    #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none"))]
+    pub show_attribute_visibility: Option<bool>,
+    #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none"))]
+    pub show_attribute_multiplicity: Option<bool>,
+    #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none"))]
+    pub max_attributes: Option<u32>,
+    #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none"))]
+    pub association_labels: Option<String>, // "all" | "hidden"
+    #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none"))]
+    pub emphasize_multiplicity: Option<bool>,
+    #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none"))]
+    pub show_stereotype: Option<bool>,
+    /// `None` ⇒ key absent ⇒ show all; `Some(vec)` ⇒ allowlist (empty ⇒ show none).
+    #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none"))]
+    pub stereotype_filter: Option<Vec<String>>,
+    /// Opaque `"name:#rrggbb"` pairs; empty ⇒ key absent.
+    #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Vec::is_empty"))]
+    pub stereotype_colors: Vec<String>,
+}
+
+impl DiagramDisplay {
+    pub fn is_empty(&self) -> bool {
+        *self == DiagramDisplay::default()
+    }
 }
 
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -422,6 +463,18 @@ impl Model {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn diagram_display_default_is_empty() {
+        let d = DiagramDisplay::default();
+        assert!(d.is_empty(), "an all-None/empty display must report empty");
+    }
+
+    #[test]
+    fn diagram_display_with_a_set_field_is_not_empty() {
+        let d = DiagramDisplay { show_attributes: Some(false), ..Default::default() };
+        assert!(!d.is_empty(), "any set field makes the display non-empty");
+    }
 
     #[test]
     fn relationship_kind_round_trips() {

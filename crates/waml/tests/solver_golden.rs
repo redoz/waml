@@ -1,5 +1,5 @@
 use std::collections::BTreeMap;
-use waml::model::{Diagram, DiagramGroup};
+use waml::model::{Diagram, DiagramDisplay, DiagramGroup};
 use waml::solve::{pretty, solve_diagram, Size, SizeMap, SolveConfig};
 use waml::syntax::*;
 
@@ -19,6 +19,7 @@ fn orders_domain_diagram_solves_to_expected_layout() {
         key: "orders".into(),
         title: "Orders".into(),
         profile: "uml-domain".into(),
+        description: None,
         groups: vec![
             DiagramGroup { name: "Users".into(), members: vec!["customer".into(), "account".into()], children: vec![] },
             DiagramGroup { name: "Orders".into(), members: vec!["order".into()], children: vec![] },
@@ -27,6 +28,7 @@ fn orders_domain_diagram_solves_to_expected_layout() {
             LayoutStatement::Standalone(users_treated),
             LayoutStatement::Placement { operands: vec![bare("Users"), bare("Orders")], directions: vec![Direction::LeftOf] },
         ],
+        display: DiagramDisplay::default(),
     };
 
     let mut sizes: SizeMap = BTreeMap::new();

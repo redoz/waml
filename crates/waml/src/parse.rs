@@ -10,7 +10,7 @@ use crate::syntax::{Document, ErrorNode, LayoutItem, Line, Section};
 use std::collections::{HashMap, HashSet};
 
 use crate::model::{
-    Attribute, ClassifierType, Diagram, DiagramGroup, Edge, Model, Node,
+    Attribute, ClassifierType, Diagram, DiagramDisplay, DiagramGroup, Edge, Model, Node,
 };
 
 struct Head {
@@ -729,7 +729,15 @@ fn build_diagrams(parsed: &[ParsedDoc], keyset: &HashSet<&str>) -> Vec<Diagram> 
                 _ => {}
             }
         }
-        out.push(Diagram { key: p.id.clone(), title, profile, groups, layout });
+        out.push(Diagram {
+            key: p.id.clone(),
+            title,
+            profile,
+            description: None,
+            groups,
+            layout,
+            display: DiagramDisplay::default(),
+        });
     }
     out
 }
