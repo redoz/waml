@@ -49,6 +49,7 @@ import ShareToast from "../ShareToast.svelte";
   import InspectorPanel from "../inspector/InspectorPanel.svelte";
   import EdgeFlag from "../chrome/EdgeFlag.svelte";
   import CentralEditPanelHost, { type CentralPanelState } from "../central/CentralEditPanelHost.svelte";
+  import FlowView from "./flow/FlowView.svelte";
 
   import {
     effectiveDiagrams,
@@ -56,7 +57,7 @@ import ShareToast from "../ShareToast.svelte";
     loadActiveDiagramKey,
     persistActiveDiagramKey,
   } from "@waml/core/state/diagrams";
-  import { resolveDisplay, slugify, type DiagramDisplay } from "@waml/okf";
+  import { resolveDisplay, slugify, type DiagramDisplay, type Diagram } from "@waml/okf";
   import { getProfile } from "@waml/core/profiles";
   import { loadModelName, persistModelName, DEFAULT_MODEL_NAME, templateModelName } from "@waml/core/state/modelName";
   import { persistBundle } from "@waml/core/state/persist";
@@ -136,7 +137,13 @@ import ShareToast from "../ShareToast.svelte";
   );
   const inspectorSelectedKey = $derived(focused?.type === "node" ? focused.id : null);
   const inspectorFocusedKind = $derived(focused?.type);
-  const diagrams = $derived(effectiveDiagrams($model));
+  // Behavior documents are both model and view — they join the switcher as
+  // read-only views alongside curated Diagrams (behavioral substrates spec).
+  const behaviorViews = $derived(
+    ($model.flows ?? []).map((f): Diagram => ({ key: f.key, title: f.title, profile: "uml-domain", members: [] as string[] })),
+  );
+  const diagrams = $derived([...effectiveDiagrams($model), ...behaviorViews]);
+  const activeFlow = $derived(($model.flows ?? []).find((f) => f.key === activeDiagramKey));
   const activeDiagram = $derived(diagrams.find((d) => d.key === activeDiagramKey) ?? diagrams[0]);
   // The Navigator's scope (which package subtree it shows) and the active
   // profile's create-palette (the metaclasses the context menu offers).
@@ -602,43 +609,47 @@ import ShareToast from "../ShareToast.svelte";
         clearDisabled={$model.nodes.length === 0}
         onOpenProperties={() => (centralPanel = { kind: "diagram" })}
       />
-      <SvelteFlow
-        bind:nodes={rfNodes}
-        bind:edges={rfEdges}
-        {nodeTypes}
-        {edgeTypes}
-        bind:viewport={viewport}
-        onnodedragstop={onNodeDragStop}
-        onconnect={onConnect}
-        onreconnect={onReconnect}
-        onpaneclick={onPaneClick}
-        onselectionchange={onSelectionChange}
-        connectionMode={ConnectionMode.Loose}
-        fitView={false}
-        minZoom={0.4}
-        maxZoom={1.6}
-        nodesDraggable={tool === "select"}
-        nodesConnectable={true}
-        selectNodesOnDrag={false}
-        selectionOnDrag={tool === "select"}
-        selectionKey="Shift"
-        multiSelectionKey={["Meta", "Control", "Shift"]}
-        panActivationKey="Space"
-        panOnDrag={tool === "select" ? [1, 2] : false}
-        zoomOnScroll={true}
-        zoomOnDoubleClick={false}
-        deleteKey={null}
-      >
-        <!-- Background color prop is `patternColor` (confirmed via
-             plugins/Background/types.d.ts — BackgroundProps has bgColor +
-             patternColor, no `color`). -->
-        <Background variant={BackgroundVariant.Dots} gap={22} size={1.3} patternColor="#e2e6ec" />
-        <!-- Controls `position` accepts PanelPosition ("bottom-left" etc.),
-             confirmed via @xyflow/system dist/esm/types/general.d.ts. The
-             feedback link moved to a right-edge flag, so the zoom controls
-             return to their normal bottom-left resting position. -->
-        <Controls position="bottom-left" style="bottom:15px;left:15px;margin:0;" />
-      </SvelteFlow>
+      {#if activeFlow}
+        <FlowView doc={activeFlow} />
+      {:else}
+        <SvelteFlow
+          bind:nodes={rfNodes}
+          bind:edges={rfEdges}
+          {nodeTypes}
+          {edgeTypes}
+          bind:viewport={viewport}
+          onnodedragstop={onNodeDragStop}
+          onconnect={onConnect}
+          onreconnect={onReconnect}
+          onpaneclick={onPaneClick}
+          onselectionchange={onSelectionChange}
+          connectionMode={ConnectionMode.Loose}
+          fitView={false}
+          minZoom={0.4}
+          maxZoom={1.6}
+          nodesDraggable={tool === "select"}
+          nodesConnectable={true}
+          selectNodesOnDrag={false}
+          selectionOnDrag={tool === "select"}
+          selectionKey="Shift"
+          multiSelectionKey={["Meta", "Control", "Shift"]}
+          panActivationKey="Space"
+          panOnDrag={tool === "select" ? [1, 2] : false}
+          zoomOnScroll={true}
+          zoomOnDoubleClick={false}
+          deleteKey={null}
+        >
+          <!-- Background color prop is `patternColor` (confirmed via
+               plugins/Background/types.d.ts — BackgroundProps has bgColor +
+               patternColor, no `color`). -->
+          <Background variant={BackgroundVariant.Dots} gap={22} size={1.3} patternColor="#e2e6ec" />
+          <!-- Controls `position` accepts PanelPosition ("bottom-left" etc.),
+               confirmed via @xyflow/system dist/esm/types/general.d.ts. The
+               feedback link moved to a right-edge flag, so the zoom controls
+               return to their normal bottom-left resting position. -->
+          <Controls position="bottom-left" style="bottom:15px;left:15px;margin:0;" />
+        </SvelteFlow>
+      {/if}
 
       <!-- Empty canvas CTA -->
       {#if $model.nodes.length === 0}
