@@ -18,6 +18,3 @@ export const ordersDomain: Template = {
 };
 
 export const TEMPLATES: Template[] = [ordersDomain];
-
-export const INDUSTRY_TEMPLATES: Template[] = TEMPLATES.filter((t) => t.category === "industry");
-export const DATASET_TEMPLATES: Template[] = TEMPLATES.filter((t) => t.category === "dataset");

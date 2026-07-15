@@ -3,7 +3,7 @@
   import { ChevronRight, ChevronDown, X, Rocket } from "lucide-svelte";
   import { build_model } from "@waml/wasm";
   import { toModelGraph, emptyOverlay, type RustModel } from "@waml/core/state/overlay";
-  import { TEMPLATES, INDUSTRY_TEMPLATES, DATASET_TEMPLATES, type Template } from "@waml/core/templates";
+  import { TEMPLATES, type Template } from "@waml/core/templates";
   import { JoinIcon, LibraryIcon } from "../lib/icons";
   import NodeRow from "./NodeRow.svelte";
 
@@ -106,12 +106,8 @@
     </div>
 
     <div class="flex-1 min-h-0 overflow-y-auto p-3 flex flex-col gap-2">
-      <div class="px-1 text-[10.5px] font-semibold uppercase tracking-wide text-slate-500">Industry templates</div>
-      {#each INDUSTRY_TEMPLATES as t (t.id)}
-        {@render templateRow(t)}
-      {/each}
-      <div class="px-1 pt-2 text-[10.5px] font-semibold uppercase tracking-wide text-slate-500">Public datasets</div>
-      {#each DATASET_TEMPLATES as t (t.id)}
+      <div class="px-1 text-[10.5px] font-semibold uppercase tracking-wide text-slate-500">Built-in templates</div>
+      {#each TEMPLATES as t (t.id)}
         {@render templateRow(t)}
       {/each}
     </div>

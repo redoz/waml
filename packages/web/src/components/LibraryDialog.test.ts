@@ -1,12 +1,12 @@
 import { test, expect, vi } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/svelte";
-import { DATASET_TEMPLATES } from "@waml/core/templates";
+import { TEMPLATES } from "@waml/core/templates";
 import LibraryDialog from "./LibraryDialog.svelte";
 
 test("Use rolls out the first template", async () => {
   const onUse = vi.fn();
   render(LibraryDialog, { props: { onUse, onClose: vi.fn() } });
-  const first = DATASET_TEMPLATES[0];
+  const first = TEMPLATES[0];
   const useButtons = screen.getAllByRole("button", { name: /Use/ });
   await fireEvent.click(useButtons[0]);
   // onUse now receives the template's `.okf` bundle (`[path, markdown][]`).

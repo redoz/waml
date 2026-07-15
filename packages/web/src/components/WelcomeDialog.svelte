@@ -3,7 +3,7 @@
   import { X, Rocket, Plus, Download, ExternalLink } from "lucide-svelte";
   import { build_model } from "@waml/wasm";
   import { toModelGraph, emptyOverlay, type RustModel } from "@waml/core/state/overlay";
-  import { INDUSTRY_TEMPLATES, DATASET_TEMPLATES, type Template } from "@waml/core/templates";
+  import { TEMPLATES, type Template } from "@waml/core/templates";
   import { LibraryIcon } from "../lib/icons";
 
   type Bundle = [string, string][];
@@ -68,11 +68,7 @@
       <div class="flex items-center gap-2 px-1 text-[11px] font-semibold uppercase tracking-wide text-slate-500">
         <LibraryIcon size={14} class="text-[#1e88e5]" /> Start from a template
       </div>
-      {#each INDUSTRY_TEMPLATES as t (t.id)}
-        {@render templateChoice(t)}
-      {/each}
-      <div class="px-1 pt-2 text-[11px] font-semibold uppercase tracking-wide text-slate-500">Public datasets</div>
-      {#each DATASET_TEMPLATES as t (t.id)}
+      {#each TEMPLATES as t (t.id)}
         {@render templateChoice(t)}
       {/each}
     </div>

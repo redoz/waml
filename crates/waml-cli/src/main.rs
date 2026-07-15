@@ -104,6 +104,20 @@ enum Command {
         #[command(flatten)]
         query: QueryArgs,
     },
+    /// Bundle a directory of `.md` files into a single JSON or TS artifact.
+    Bundle {
+        /// Directory to recursively collect `*.md` from.
+        dir: PathBuf,
+        /// Output format.
+        #[arg(long, value_enum, default_value_t = BundleFormat::Json)]
+        format: BundleFormat,
+        /// Write to this file instead of stdout.
+        #[arg(long)]
+        out: Option<PathBuf>,
+        /// Exported const name; required when `--format ts`.
+        #[arg(long)]
+        export_name: Option<String>,
+    },
 }
 
 /// Flags shared by all mutating (node/attr/value/rel) subcommands.
@@ -253,6 +267,12 @@ enum Format {
     Json,
 }
 
+#[derive(Debug, Copy, Clone, PartialEq, Eq, ValueEnum)]
+enum BundleFormat {
+    Json,
+    Ts,
+}
+
 fn main() {
     let cli = Cli::parse();
     let code = match cli.command {
@@ -314,6 +334,7 @@ fn main() {
         Command::Show { slug, query } => run_show(&slug, &query),
         Command::Refs { slug, query } => run_refs(&slug, &query),
         Command::List { r#type, query } => run_list(&r#type, &query),
+        Command::Bundle { dir, format, out, export_name } => run_bundle(&dir, format, out, export_name),
     };
     std::process::exit(code);
 }
@@ -527,6 +548,37 @@ fn run_refs(slug: &str, q: &QueryArgs) -> i32 {
     0
 }
 
+fn run_bundle(dir: &PathBuf, format: BundleFormat, out: Option<PathBuf>, export_name: Option<String>) -> i32 {
+    let export_name = match (format, export_name) {
+        (BundleFormat::Ts, None) => {
+            eprintln!("waml: --export-name required when --format ts");
+            return 2;
+        }
+        (_, name) => name,
+    };
+    let bundle = match io::read_files(std::slice::from_ref(dir)) {
+        Ok(b) => b,
+        Err(e) => {
+            eprintln!("waml: {e}");
+            return 2;
+        }
+    };
+    let rendered = match format {
+        BundleFormat::Json => commands::render_bundle_json(&bundle),
+        BundleFormat::Ts => commands::render_bundle_ts(&bundle, &export_name.unwrap()),
+    };
+    match out {
+        Some(path) => {
+            if let Err(e) = std::fs::write(&path, rendered) {
+                eprintln!("waml: failed to write {}: {e}", path.display());
+                return 2;
+            }
+        }
+        None => println!("{rendered}"),
+    }
+    0
+}
+
 fn run_list(ty: &Option<String>, q: &QueryArgs) -> i32 {
     let bundle = match io::read_files(std::slice::from_ref(&q.dir)) {
         Ok(b) => b,
@@ -597,5 +649,28 @@ mod tests {
     fn parses_apply_and_show() {
         assert!(matches!(Cli::try_parse_from(["waml", "apply", "ops.ndjson"]).unwrap().command, Command::Apply { .. }));
         assert!(matches!(Cli::try_parse_from(["waml", "show", "order"]).unwrap().command, Command::Show { .. }));
+    }
+
+    #[test]
+    fn parses_bundle_with_ts_format_and_export_name() {
+        let cli = Cli::try_parse_from([
+            "waml", "bundle", "dir", "--format", "ts", "--export-name", "myBundle", "--out", "out.ts",
+        ])
+        .unwrap();
+        match cli.command {
+            Command::Bundle { dir, format, out, export_name } => {
+                assert_eq!(dir, PathBuf::from("dir"));
+                assert_eq!(format, BundleFormat::Ts);
+                assert_eq!(out, Some(PathBuf::from("out.ts")));
+                assert_eq!(export_name.as_deref(), Some("myBundle"));
+            }
+            _ => panic!("expected bundle"),
+        }
+    }
+
+    #[test]
+    fn parses_bundle_default_format_is_json() {
+        let cli = Cli::try_parse_from(["waml", "bundle", "dir"]).unwrap();
+        assert!(matches!(cli.command, Command::Bundle { format: BundleFormat::Json, .. }));
     }
 }
