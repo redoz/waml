@@ -172,3 +172,36 @@ describe("toModelGraph", () => {
     expect(n.concept).toEqual({ id: "shop/order", type: "uml.Class", body: "# Order\n" });
   });
 });
+
+function modelWith(diagram: RustModel["diagrams"][number]): RustModel {
+  return { nodes: [], edges: [], diagrams: [diagram], path: "", packages: [] };
+}
+
+describe("toModelGraph diagram display/description", () => {
+  it("parses stereotypeColors list into a record and copies scalars", () => {
+    const g = toModelGraph(
+      modelWith({
+        key: "d", title: "D", profile: "uml-domain", groups: [],
+        description: "Notes",
+        display: { showAttributes: false, maxAttributes: 6, stereotypeColors: ["entity:#ffedd5"] },
+      }),
+      emptyOverlay(),
+    );
+    expect(g.diagrams[0].description).toBe("Notes");
+    expect(g.diagrams[0].display).toEqual({ showAttributes: false, maxAttributes: 6, stereotypeColors: { entity: "#ffedd5" } });
+  });
+
+  it("splits stereotypeColors on the first colon (hex keeps its own colons? no — hex has none)", () => {
+    const g = toModelGraph(
+      modelWith({ key: "d", title: "D", profile: "uml-domain", groups: [], display: { stereotypeColors: ["entity:#ffedd5"] } }),
+      emptyOverlay(),
+    );
+    expect(g.diagrams[0].display?.stereotypeColors).toEqual({ entity: "#ffedd5" });
+  });
+
+  it("leaves display undefined when the wire carries no display", () => {
+    const g = toModelGraph(modelWith({ key: "d", title: "D", profile: "uml-domain", groups: [] }), emptyOverlay());
+    expect(g.diagrams[0].display).toBeUndefined();
+    expect(g.diagrams[0].description).toBeUndefined();
+  });
+});
