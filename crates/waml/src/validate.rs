@@ -868,4 +868,21 @@ mod tests {
         assert_eq!(w.severity, Severity::Warning);
         assert_eq!(w.line, 11);
     }
+
+    #[test]
+    fn flags_unknown_message_participant_inside_fragment() {
+        // Same check as `flags_unknown_message_participant`, but the offending
+        // message sits inside an `alt` fragment's `when` operand (not
+        // top-level) — this exercises `check_items`'s recursive call over
+        // `Fragment { operands, .. }`.
+        let b = vec![
+            ("s/customer.md".into(), "---\ntype: uml.Actor\ntitle: Customer\n---\n# Customer\n".into()),
+            ("s/seq.md".into(),
+             "---\ntype: uml.Sequence\ntitle: S\n---\n# S\n\n## Lifelines\n- [Customer](./customer.md)\n\n## Messages\n- alt\n  - when `guard`\n    - Customer calls Ghost: `x()`\n  - else\n    - Customer calls Customer: `y()`\n".into()),
+        ];
+        let d = validate(&b);
+        let w = d.iter().find(|x| x.code == DiagCode::UnresolvedTarget && x.message.contains("Ghost")).unwrap();
+        assert_eq!(w.severity, Severity::Warning);
+        assert_eq!(w.line, 13);
+    }
 }
