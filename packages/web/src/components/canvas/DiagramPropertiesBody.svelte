@@ -16,6 +16,16 @@
   function patch(p: Partial<DiagramDisplay>) {
     onChange(p);
   }
+
+  let disabledAll = $derived(!editable);
+
+  function commitTitle(v: string) {
+    const t = v.trim();
+    if (t && t !== diagram.title) onUpdateDiagram({ title: t });
+  }
+  function commitNote(v: string) {
+    if (v !== (diagram.description ?? "")) onUpdateDiagram({ description: v });
+  }
 </script>
 
 <!-- A labelled on/off toggle row inside the properties flyout. -->
@@ -72,8 +82,52 @@
 {/snippet}
 
 <div>
+  {#if !editable}
+    <div
+      role="note"
+      class="mx-1 mb-2 rounded-lg border border-orange-200 bg-orange-50 px-3 py-2 text-[12px] leading-snug text-orange-800"
+    >
+      Showing settings for the <strong>All</strong> view. These aren't saved anywhere — switch to a
+      single diagram to edit its properties.
+    </div>
+  {/if}
+
+  <div class="px-2 py-1.5">
+    <label class="block">
+      <span class="mb-1 block text-[13px] font-medium text-slate-800">Title</span>
+      <input
+        type="text"
+        aria-label="Diagram title"
+        value={diagram.title}
+        disabled={disabledAll}
+        onblur={(e) => commitTitle((e.currentTarget as HTMLInputElement).value)}
+        onkeydown={(e) => {
+          if (e.key === "Enter") {
+            e.preventDefault();
+            (e.currentTarget as HTMLInputElement).blur();
+          }
+        }}
+        class="w-full rounded-md border border-slate-300 px-2 py-1 text-[13px] disabled:opacity-40"
+      />
+    </label>
+    <label class="mt-2 block">
+      <span class="mb-1 block text-[13px] font-medium text-slate-800">Note</span>
+      <textarea
+        aria-label="Diagram note"
+        rows="3"
+        disabled={disabledAll}
+        placeholder="Notes about this diagram (not shown on canvas)."
+        value={diagram.description ?? ""}
+        onblur={(e) => commitNote((e.currentTarget as HTMLTextAreaElement).value)}
+        class="w-full resize-y rounded-md border border-slate-300 px-2 py-1 text-[13px] disabled:opacity-40"
+      ></textarea>
+    </label>
+  </div>
+
+  <div class="h-px bg-[#eef1f5] mx-1 my-1"></div>
+
   {@render toggleRow("Show attributes", display.showAttributes, () =>
-    patch({ showAttributes: !display.showAttributes }),
+    patch({ showAttributes: !display.showAttributes }), disabledAll,
   )}
   {@render segmented(
     "Attribute detail",
@@ -83,8 +137,47 @@
     ],
     display.attributeDetail,
     (v) => patch({ attributeDetail: v as DiagramDisplay["attributeDetail"] }),
-    !display.showAttributes,
+    !display.showAttributes || disabledAll,
   )}
+  {@render toggleRow("Show visibility", display.showAttributeVisibility, () =>
+    patch({ showAttributeVisibility: !display.showAttributeVisibility }), !display.showAttributes || disabledAll,
+  )}
+  {@render toggleRow("Show multiplicity", display.showAttributeMultiplicity, () =>
+    patch({ showAttributeMultiplicity: !display.showAttributeMultiplicity }), !display.showAttributes || disabledAll,
+  )}
+  <div class="px-2 py-1.5 {(!display.showAttributes || disabledAll) ? 'opacity-40' : ''}">
+    <div class="mb-1 text-[13px] font-medium text-slate-800">Max attributes</div>
+    <div class="flex items-center gap-2">
+      <input
+        type="number"
+        min="1"
+        aria-label="Max attributes"
+        placeholder="∞"
+        value={display.maxAttributes ?? ""}
+        disabled={!display.showAttributes || disabledAll}
+        oninput={(e) => {
+          if (!display.showAttributes || disabledAll) return;
+          const n = Number((e.currentTarget as HTMLInputElement).value);
+          patch({ maxAttributes: Number.isFinite(n) && n >= 1 ? Math.floor(n) : undefined });
+        }}
+        class="w-16 rounded-md border border-slate-300 px-2 py-1 text-[13px] disabled:opacity-40"
+      />
+      <button
+        type="button"
+        aria-label="Unlimited attributes"
+        disabled={!display.showAttributes || disabledAll}
+        onclick={() => {
+          if (!display.showAttributes || disabledAll) return;
+          patch({ maxAttributes: undefined });
+        }}
+        class="rounded-md px-2 py-1 text-[12px] font-semibold {display.maxAttributes == null
+          ? 'bg-white shadow-sm'
+          : 'text-slate-500'}"
+      >
+        Unlimited
+      </button>
+    </div>
+  </div>
 
   <div class="h-px bg-[#eef1f5] mx-1 my-1"></div>
 
@@ -96,14 +189,15 @@
     ],
     display.associationLabels,
     (v) => patch({ associationLabels: v as DiagramDisplay["associationLabels"] }),
+    disabledAll,
   )}
   {@render toggleRow("Emphasize multiplicity", display.emphasizeMultiplicity, () =>
-    patch({ emphasizeMultiplicity: !display.emphasizeMultiplicity }),
+    patch({ emphasizeMultiplicity: !display.emphasizeMultiplicity }), disabledAll,
   )}
 
   <div class="h-px bg-[#eef1f5] mx-1 my-1"></div>
 
   {@render toggleRow("Show stereotype", display.showStereotype, () =>
-    patch({ showStereotype: !display.showStereotype }),
+    patch({ showStereotype: !display.showStereotype }), disabledAll,
   )}
 </div>

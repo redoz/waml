@@ -95,3 +95,57 @@ test("attribute-detail options are disabled and inert when 'Show attributes' is 
   await fireEvent.click(nameOnly);
   expect(onChange).not.toHaveBeenCalled();
 });
+
+test("editing the title commits on blur via onUpdateDiagram", async () => {
+  const onUpdateDiagram = vi.fn();
+  render(DiagramPropertiesBody, { props: props({ onUpdateDiagram }) });
+  const input = screen.getByLabelText("Diagram title") as HTMLInputElement;
+  await fireEvent.input(input, { target: { value: "Order lifecycle" } });
+  await fireEvent.blur(input);
+  expect(onUpdateDiagram).toHaveBeenCalledWith({ title: "Order lifecycle" });
+});
+
+test("editing the note commits on blur via onUpdateDiagram", async () => {
+  const onUpdateDiagram = vi.fn();
+  render(DiagramPropertiesBody, { props: props({ onUpdateDiagram }) });
+  const note = screen.getByLabelText("Diagram note") as HTMLTextAreaElement;
+  await fireEvent.input(note, { target: { value: "Notes for reviewers" } });
+  await fireEvent.blur(note);
+  expect(onUpdateDiagram).toHaveBeenCalledWith({ description: "Notes for reviewers" });
+});
+
+test("Show visibility toggle emits showAttributeVisibility", async () => {
+  const onChange = vi.fn();
+  render(DiagramPropertiesBody, { props: props({ display: { ...DEFAULT_DISPLAY, showAttributes: true, showAttributeVisibility: true }, onChange }) });
+  await fireEvent.click(screen.getByRole("switch", { name: "Show visibility" }));
+  expect(onChange).toHaveBeenCalledWith({ showAttributeVisibility: false });
+});
+
+test("Show multiplicity toggle emits showAttributeMultiplicity", async () => {
+  const onChange = vi.fn();
+  render(DiagramPropertiesBody, { props: props({ display: { ...DEFAULT_DISPLAY, showAttributes: true, showAttributeMultiplicity: true }, onChange }) });
+  await fireEvent.click(screen.getByRole("switch", { name: "Show multiplicity" }));
+  expect(onChange).toHaveBeenCalledWith({ showAttributeMultiplicity: false });
+});
+
+test("Max attributes: typing a number emits it; Unlimited emits undefined", async () => {
+  const onChange = vi.fn();
+  render(DiagramPropertiesBody, { props: props({ display: { ...DEFAULT_DISPLAY, showAttributes: true }, onChange }) });
+  await fireEvent.input(screen.getByLabelText("Max attributes"), { target: { value: "6" } });
+  expect(onChange).toHaveBeenCalledWith({ maxAttributes: 6 });
+  await fireEvent.click(screen.getByRole("button", { name: "Unlimited attributes" }));
+  expect(onChange).toHaveBeenCalledWith({ maxAttributes: undefined });
+});
+
+test("editable false shows the banner and disables every control", async () => {
+  const onChange = vi.fn();
+  const onUpdateDiagram = vi.fn();
+  render(DiagramPropertiesBody, { props: props({ editable: false, onChange, onUpdateDiagram }) });
+  expect(screen.getByRole("note")).toBeTruthy();
+  const showAttrs = screen.getByRole("switch", { name: "Show attributes" }) as HTMLButtonElement;
+  expect(showAttrs.disabled).toBe(true);
+  await fireEvent.click(showAttrs);
+  expect(onChange).not.toHaveBeenCalled();
+  const title = screen.getByLabelText("Diagram title") as HTMLInputElement;
+  expect(title.disabled).toBe(true);
+});
