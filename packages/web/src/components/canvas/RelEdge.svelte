@@ -27,7 +27,7 @@
   // useInternalNode(id) accessor shape confirmed via
   // node_modules/@xyflow/svelte/dist/lib/hooks/useInternalNode.svelte.d.ts:
   //   export declare function useInternalNode(id: string): { current: InternalNode | undefined };
-  let { id, source, target, data, selected }: EdgeProps = $props();
+  let { id, source, target, data, selected, style }: EdgeProps = $props();
 
   // Derive the accessor object once (re-created only when source/target change),
   // then read `.current` reactively downstream — mirrors @xyflow/svelte's own
@@ -76,7 +76,9 @@
 
   const stroke = $derived(selected ? "#1e88e5" : "#64748b");
   const strokeWidth = $derived(selected ? 2.5 : 1.8);
-  const edgeStyle = $derived(`stroke:${stroke};stroke-width:${strokeWidth};${DASHED.has(kind) ? "stroke-dasharray:6 4;" : ""}`);
+  const edgeStyle = $derived(
+    `stroke:${stroke};stroke-width:${strokeWidth};${DASHED.has(kind) ? "stroke-dasharray:6 4;" : ""}${style ?? ""}`,
+  );
 
   // Verb → end adornments (spec table).
   type MarkerDef =
