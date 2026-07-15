@@ -102,4 +102,16 @@ describe("InspectorPanel", () => {
     await tick();
     expect(aside.classList.contains("opacity-40")).toBe(true);
   });
+
+  it("shows an Edit button only when an element is focused, and fires onEdit", async () => {
+    const onEdit = vi.fn();
+    // Nothing focused → no Edit button.
+    const { unmount } = setup({ selectedKey: null, focusedKind: undefined, onEdit });
+    expect(screen.queryByRole("button", { name: "Edit element" })).toBeNull();
+    unmount();
+    // Node focused → Edit button present and wired.
+    setup({ focusedKind: "node", onEdit });
+    await fireEvent.click(screen.getByRole("button", { name: "Edit element" }));
+    expect(onEdit).toHaveBeenCalledTimes(1);
+  });
 });

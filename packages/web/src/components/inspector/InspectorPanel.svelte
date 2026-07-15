@@ -5,7 +5,7 @@
   // panel). Provides its own resizable chrome, a pin toggle, and the
   // translucency logic.
   import type { Snippet } from "svelte";
-  import { Pin, PinOff, ChevronUp, Box, Spline } from "lucide-svelte";
+  import { Pin, PinOff, ChevronUp, Box, Spline, Pencil } from "lucide-svelte";
 
   const MIN_WIDTH = 320;
 
@@ -16,6 +16,7 @@
     onSelect,
     pinned = false,
     onTogglePin,
+    onEdit,
     hideDelay = 250,
     width = $bindable(380),
     children,
@@ -26,6 +27,8 @@
     onSelect: (key: string | null) => void;
     pinned?: boolean;
     onTogglePin: () => void;
+    /** Opens the edit dialog for the currently-focused element. */
+    onEdit?: () => void;
     /** Delay (ms) before re-dimming after the pointer leaves — avoids flicker. */
     hideDelay?: number;
     width?: number;
@@ -138,6 +141,16 @@
         <option value={opt.key}>{opt.label}</option>
       {/each}
     </select>
+    {#if hasSelection}
+      <button
+        onclick={onEdit}
+        aria-label="Edit element"
+        title="Edit element"
+        class="w-[30px] h-[30px] flex items-center justify-center rounded-md text-slate-500 hover:bg-[#f1f3f7]"
+      >
+        <Pencil size={15} />
+      </button>
+    {/if}
     {#if hasSelection}
       <button
         onclick={() => (collapsed = !collapsed)}
