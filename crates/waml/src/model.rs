@@ -57,6 +57,8 @@ impl Visibility {
 /// An attribute's type: a display token, optionally resolved to another classifier's slug.
 #[derive(Debug, Clone, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "wasm", derive(tsify_next::Tsify))]
+#[cfg_attr(feature = "wasm", tsify(into_wasm_abi, from_wasm_abi))]
 pub struct TypeRef {
     pub name: String,
     #[cfg_attr(
@@ -68,15 +70,19 @@ pub struct TypeRef {
 
 #[derive(Debug, Clone, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "wasm", derive(tsify_next::Tsify))]
+#[cfg_attr(feature = "wasm", tsify(into_wasm_abi, from_wasm_abi))]
 pub struct Attribute {
     pub name: String,
     #[cfg_attr(feature = "serde", serde(rename = "type"))]
     pub ty: TypeRef,
+    #[cfg_attr(feature = "wasm", tsify(type = "string"))]
     pub multiplicity: Multiplicity,
     #[cfg_attr(
         feature = "serde",
         serde(default, skip_serializing_if = "Option::is_none")
     )]
+    #[cfg_attr(feature = "wasm", tsify(type = "string"))]
     pub visibility: Option<Visibility>,
     #[cfg_attr(
         feature = "serde",
@@ -88,6 +94,8 @@ pub struct Attribute {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "serde", serde(rename_all = "lowercase"))]
+#[cfg_attr(feature = "wasm", derive(tsify_next::Tsify))]
+#[cfg_attr(feature = "wasm", tsify(into_wasm_abi, from_wasm_abi))]
 pub enum RelationshipKind {
     Associates,
     Aggregates,
@@ -141,11 +149,14 @@ impl RelationshipKind {
 
 #[derive(Debug, Clone, Default, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "wasm", derive(tsify_next::Tsify))]
+#[cfg_attr(feature = "wasm", tsify(into_wasm_abi, from_wasm_abi))]
 pub struct RelEnd {
     #[cfg_attr(
         feature = "serde",
         serde(default, skip_serializing_if = "Option::is_none")
     )]
+    #[cfg_attr(feature = "wasm", tsify(type = "string"))]
     pub multiplicity: Option<Multiplicity>,
     #[cfg_attr(
         feature = "serde",
@@ -208,6 +219,8 @@ impl<'de> serde::Deserialize<'de> for AssocName {
 
 #[derive(Debug, Clone, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "wasm", derive(tsify_next::Tsify))]
+#[cfg_attr(feature = "wasm", tsify(into_wasm_abi, from_wasm_abi))]
 pub struct Edge {
     #[cfg_attr(feature = "serde", serde(rename = "from"))]
     pub source: String,
@@ -218,6 +231,7 @@ pub struct Edge {
         feature = "serde",
         serde(default, skip_serializing_if = "Option::is_none")
     )]
+    #[cfg_attr(feature = "wasm", tsify(type = "string | { ref: string }"))]
     pub name: Option<AssocName>,
     #[cfg_attr(feature = "serde", serde(rename = "fromEnd"))]
     pub from_end: RelEnd,
@@ -304,6 +318,8 @@ impl BehaviorKind {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "serde", serde(rename_all = "lowercase"))]
+#[cfg_attr(feature = "wasm", derive(tsify_next::Tsify))]
+#[cfg_attr(feature = "wasm", tsify(into_wasm_abi, from_wasm_abi))]
 pub enum FlowNodeKind {
     Initial,
     Final,
@@ -346,6 +362,8 @@ impl FlowNodeKind {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "serde", serde(rename_all = "camelCase"))]
+#[cfg_attr(feature = "wasm", derive(tsify_next::Tsify))]
+#[cfg_attr(feature = "wasm", tsify(into_wasm_abi, from_wasm_abi))]
 pub enum FlowFlavor {
     Activity,
     StateMachine,
@@ -354,6 +372,8 @@ pub enum FlowFlavor {
 /// A resolved node of a flow document.
 #[derive(Debug, Clone, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "wasm", derive(tsify_next::Tsify))]
+#[cfg_attr(feature = "wasm", tsify(into_wasm_abi, from_wasm_abi))]
 pub struct FlowNode {
     /// Heading text minus the kind keyword — the name transitions resolve against.
     pub id: String,
@@ -379,6 +399,8 @@ pub struct FlowNode {
 /// A resolved transition (flow edge). Source/target are node identities.
 #[derive(Debug, Clone, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "wasm", derive(tsify_next::Tsify))]
+#[cfg_attr(feature = "wasm", tsify(into_wasm_abi, from_wasm_abi))]
 pub struct FlowEdge {
     pub from: String,
     /// Local node identity, or the link title for a cross-document target.
@@ -403,6 +425,8 @@ pub struct FlowEdge {
 /// One flow document: one self-rendering directed graph (model AND view).
 #[derive(Debug, Clone, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "wasm", derive(tsify_next::Tsify))]
+#[cfg_attr(feature = "wasm", tsify(into_wasm_abi, from_wasm_abi))]
 pub struct FlowDoc {
     pub key: String,
     pub title: String,
@@ -418,6 +442,8 @@ pub struct FlowDoc {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "serde", serde(rename_all = "lowercase"))]
+#[cfg_attr(feature = "wasm", derive(tsify_next::Tsify))]
+#[cfg_attr(feature = "wasm", tsify(into_wasm_abi, from_wasm_abi))]
 pub enum MessageVerb {
     Calls,
     Sends,
@@ -452,6 +478,8 @@ impl MessageVerb {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "serde", serde(rename_all = "lowercase"))]
+#[cfg_attr(feature = "wasm", derive(tsify_next::Tsify))]
+#[cfg_attr(feature = "wasm", tsify(into_wasm_abi, from_wasm_abi))]
 pub enum FragmentKind {
     Alt,
     Opt,
@@ -479,6 +507,8 @@ impl FragmentKind {
 /// A sequence participant: IS Class or Actor, referenced by link.
 #[derive(Debug, Clone, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "wasm", derive(tsify_next::Tsify))]
+#[cfg_attr(feature = "wasm", tsify(into_wasm_abi, from_wasm_abi))]
 pub struct Lifeline {
     pub title: String,
     #[cfg_attr(
@@ -497,6 +527,8 @@ pub struct Lifeline {
 /// One operand of a combined fragment. `guard: None` = the `else` operand.
 #[derive(Debug, Clone, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "wasm", derive(tsify_next::Tsify))]
+#[cfg_attr(feature = "wasm", tsify(into_wasm_abi, from_wasm_abi))]
 pub struct SeqOperand {
     #[cfg_attr(
         feature = "serde",
@@ -510,6 +542,8 @@ pub struct SeqOperand {
 #[derive(Debug, Clone, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "serde", serde(tag = "item", rename_all = "lowercase"))]
+#[cfg_attr(feature = "wasm", derive(tsify_next::Tsify))]
+#[cfg_attr(feature = "wasm", tsify(into_wasm_abi, from_wasm_abi))]
 pub enum SeqItem {
     Message {
         from: String,
@@ -530,6 +564,8 @@ pub enum SeqItem {
 /// One sequence document: lifelines + ordered messages (model AND view).
 #[derive(Debug, Clone, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "wasm", derive(tsify_next::Tsify))]
+#[cfg_attr(feature = "wasm", tsify(into_wasm_abi, from_wasm_abi))]
 pub struct SequenceDoc {
     pub key: String,
     pub title: String,
@@ -602,6 +638,8 @@ impl ClassifierType {
 #[derive(Debug, Clone, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "serde", serde(untagged))]
+#[cfg_attr(feature = "wasm", derive(tsify_next::Tsify))]
+#[cfg_attr(feature = "wasm", tsify(into_wasm_abi, from_wasm_abi))]
 pub enum NoteAnchor {
     Classifier {
         #[cfg_attr(feature = "serde", serde(rename = "targetKey"))]
@@ -623,6 +661,8 @@ pub enum NoteAnchor {
 
 #[derive(Debug, Clone, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "wasm", derive(tsify_next::Tsify))]
+#[cfg_attr(feature = "wasm", tsify(into_wasm_abi, from_wasm_abi))]
 pub struct Node {
     /// Lossless OKF projection of this node's source document (OKF tier) and the
     /// single authoritative source for `title`/`description`/verbatim `body` (read
@@ -632,6 +672,7 @@ pub struct Node {
     pub concept: crate::okf::Concept,
     pub key: String,
     #[cfg_attr(feature = "serde", serde(rename = "type"))]
+    #[cfg_attr(feature = "wasm", tsify(type = "string"))]
     pub ty: ClassifierType,
     pub stereotypes: Vec<String>,
     #[cfg_attr(
@@ -668,6 +709,8 @@ pub struct Node {
 /// A resolved membership group in a diagram (heading text + resolved keys).
 #[derive(Debug, Clone, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "wasm", derive(tsify_next::Tsify))]
+#[cfg_attr(feature = "wasm", tsify(into_wasm_abi, from_wasm_abi))]
 pub struct DiagramGroup {
     pub name: String,
     pub members: Vec<String>,
@@ -676,6 +719,8 @@ pub struct DiagramGroup {
 
 #[derive(Debug, Clone, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "wasm", derive(tsify_next::Tsify))]
+#[cfg_attr(feature = "wasm", tsify(into_wasm_abi, from_wasm_abi))]
 pub struct Diagram {
     pub key: String,
     pub title: String,
@@ -685,6 +730,7 @@ pub struct Diagram {
     pub groups: Vec<DiagramGroup>,
     // `layout` carries the raw layout AST (`syntax::LayoutStatement`). Serialized
     // end to end (Phase 2) so the frontend can read the layout relations.
+    #[cfg_attr(feature = "wasm", tsify(type = "unknown[]"))]
     pub layout: Vec<crate::syntax::LayoutStatement>,
     #[cfg_attr(feature = "serde", serde(default, skip_serializing_if = "DiagramDisplay::is_empty"))]
     pub display: DiagramDisplay,
@@ -696,6 +742,8 @@ pub struct Diagram {
 #[derive(Debug, Clone, Default, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "serde", serde(rename_all = "camelCase", default))]
+#[cfg_attr(feature = "wasm", derive(tsify_next::Tsify))]
+#[cfg_attr(feature = "wasm", tsify(into_wasm_abi, from_wasm_abi))]
 pub struct DiagramDisplay {
     #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none"))]
     pub show_attributes: Option<bool>,
@@ -729,6 +777,8 @@ impl DiagramDisplay {
 
 #[derive(Debug, Clone, Default, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "wasm", derive(tsify_next::Tsify))]
+#[cfg_attr(feature = "wasm", tsify(into_wasm_abi, from_wasm_abi))]
 pub struct Model {
     pub nodes: Vec<Node>,
     pub edges: Vec<Edge>,

@@ -1,6 +1,192 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
+ * A `uml.Note` anchor. Three forms, per the spec.
+ */
+export type NoteAnchor = { targetKey: string } | { sourceKey: string; name: string } | { sourceKey: string; kind: RelationshipKind; targetKey: string };
+
+/**
+ * A citation: a link to an external source backing a claim, listed under a
+ * `# Citations` heading (OKF §8).
+ */
+export interface Citation {
+    text: string;
+    href: string;
+}
+
+/**
+ * A diagram\'s authored render settings — a PARTIAL. Only keys present in the
+ * file are `Some`/non-empty; TS `resolveDisplay` fills the rest from
+ * `DEFAULT_DISPLAY`. Serde `rename_all=\"camelCase\"` matches the TS keys.
+ */
+export interface DiagramDisplay {
+    showAttributes?: boolean;
+    attributeDetail?: string;
+    showAttributeVisibility?: boolean;
+    showAttributeMultiplicity?: boolean;
+    maxAttributes?: number;
+    associationLabels?: string;
+    emphasizeMultiplicity?: boolean;
+    showStereotype?: boolean;
+    /**
+     * `None` ⇒ key absent ⇒ show all; `Some(vec)` ⇒ allowlist (empty ⇒ show none).
+     */
+    stereotypeFilter?: string[];
+    /**
+     * Opaque `\"name:#rrggbb\"` pairs; empty ⇒ key absent.
+     */
+    stereotypeColors?: string[];
+}
+
+/**
+ * A flow node\'s closed kind set (heading keyword). `Plain` = no keyword →
+ * action (activity) or state (state machine).
+ */
+export type FlowNodeKind = "initial" | "final" | "decision" | "merge" | "fork" | "join" | "object" | "plain";
+
+/**
+ * A resolved membership group in a diagram (heading text + resolved keys).
+ */
+export interface DiagramGroup {
+    name: string;
+    members: string[];
+    children: DiagramGroup[];
+}
+
+/**
+ * A resolved node of a flow document.
+ */
+export interface FlowNode {
+    /**
+     * Heading text minus the kind keyword — the name transitions resolve against.
+     */
+    id: string;
+    kind: FlowNodeKind;
+    /**
+     * Resolved key of an `object` node\'s typing classifier.
+     */
+    objectRef?: string;
+    partition?: string;
+    entry?: string;
+    do?: string;
+    exit?: string;
+    /**
+     * Resolved key of the flow document this composite/call-behavior refines.
+     */
+    refines?: string;
+    notes?: string[];
+}
+
+/**
+ * A resolved transition (flow edge). Source/target are node identities.
+ */
+export interface FlowEdge {
+    from: string;
+    /**
+     * Local node identity, or the link title for a cross-document target.
+     */
+    to: string;
+    /**
+     * Resolved key when the target was a cross-document link.
+     */
+    toRef?: string;
+    trigger?: string;
+    guard?: string;
+    /**
+     * Decision default branch (`else transitions to …`).
+     */
+    else?: boolean;
+    effect?: string;
+    /**
+     * Resolved key of the carried object type (`carries <link>` object flow).
+     */
+    carries?: string;
+}
+
+/**
+ * A sequence participant: IS Class or Actor, referenced by link.
+ */
+export interface Lifeline {
+    title: string;
+    alias?: string;
+    /**
+     * Resolved key of the classifier this lifeline is; None when unresolved.
+     */
+    ref?: string;
+}
+
+/**
+ * An attribute\'s type: a display token, optionally resolved to another classifier\'s slug.
+ */
+export interface TypeRef {
+    name: string;
+    ref?: string;
+}
+
+/**
+ * An untyped OKF link (`[text](href)`) drawn from a concept\'s body (OKF §5.3).
+ */
+export interface Link {
+    text: string;
+    href: string;
+}
+
+/**
+ * Combined-fragment keyword. `par` deferred (open question in spec).
+ */
+export type FragmentKind = "alt" | "opt" | "loop";
+
+/**
+ * Flow flavor: tunes rendering only — one grammar for both.
+ */
+export type FlowFlavor = "activity" | "stateMachine";
+
+/**
+ * One flow document: one self-rendering directed graph (model AND view).
+ */
+export interface FlowDoc {
+    key: string;
+    title: string;
+    flavor: FlowFlavor;
+    /**
+     * Resolved key of the entity this behavior describes (frontmatter link).
+     */
+    describes?: string;
+    nodes: FlowNode[];
+    edges: FlowEdge[];
+}
+
+/**
+ * One operand of a combined fragment. `guard: None` = the `else` operand.
+ */
+export interface SeqOperand {
+    guard?: string;
+    items: SeqItem[];
+}
+
+/**
+ * One ordered interaction item: document order is time order.
+ */
+export type SeqItem = { item: "message"; from: string; verb: MessageVerb; to: string; signature?: string } | { item: "fragment"; kind: FragmentKind; operands: SeqOperand[] };
+
+/**
+ * One sequence document: lifelines + ordered messages (model AND view).
+ */
+export interface SequenceDoc {
+    key: string;
+    title: string;
+    describes?: string;
+    lifelines: Lifeline[];
+    messages: SeqItem[];
+}
+
+/**
+ * Reserved-file role. Every document lands in the bundle regardless of role;
+ * `index.md`/`log.md` are flagged so consumers can treat them specially.
+ */
+export type ConceptRole = "concept" | "index" | "log";
+
+/**
  * Result of solving one diagram: absolute rects + any layout diagnostics.
  * Tsify emits its TypeScript type; under `wasm` it crosses the boundary as a
  * plain JS object.
@@ -8,6 +194,52 @@
 export interface SolveResult {
     solved: Solved;
     diagnostics: Diagnostic[];
+}
+
+/**
+ * The domain-agnostic projection of one markdown document. Round-trips every
+ * OKF field losslessly — nothing a producer wrote is dropped: known fields are
+ * promoted, the raw markdown body is retained verbatim, and any remaining
+ * frontmatter survives in [`Concept::extra`].
+ */
+export interface Concept {
+    /**
+     * Concept ID = full path minus the `.md` suffix (OKF §2).
+     */
+    id: string;
+    /**
+     * The free-text `type` frontmatter field (NOT the UML `ClassifierType`).
+     */
+    type: string;
+    title?: string;
+    description?: string;
+    resource?: string;
+    tags?: string[];
+    timestamp?: string;
+    /**
+     * The full markdown body (everything after the frontmatter), verbatim.
+     */
+    body: string;
+    links?: Link[];
+    citations?: Citation[];
+    role?: ConceptRole;
+    /**
+     * Producer-specific frontmatter keys with no dedicated field above.
+     */
+    extra?: Record<string, FmValue>;
+}
+
+/**
+ * The message kind: fixes line and arrowhead (interaction substrate).
+ */
+export type MessageVerb = "calls" | "sends" | "replies" | "creates" | "destroys";
+
+export interface Attribute {
+    name: string;
+    type: TypeRef;
+    multiplicity: string;
+    visibility?: string;
+    description?: string;
 }
 
 export interface Diagnostic {
@@ -22,9 +254,86 @@ export interface Diagnostic {
     span: [number, number] | undefined;
 }
 
+export interface Diagram {
+    key: string;
+    title: string;
+    profile: string;
+    description?: string;
+    groups: DiagramGroup[];
+    layout: unknown[];
+    display?: DiagramDisplay;
+}
+
+export interface Edge {
+    from: string;
+    to: string;
+    kind: RelationshipKind;
+    name?: string | { ref: string };
+    fromEnd: RelEnd;
+    toEnd: RelEnd;
+    /**
+     * True when a reciprocal `associates` was declared from both ends; both
+     * ends are then navigable. Set during Model resolution (Plan 3).
+     */
+    bidirectional: boolean;
+}
+
 export interface FlagSet {
     emphasized: boolean;
     collapsed: boolean;
+}
+
+export interface Model {
+    nodes: Node[];
+    edges: Edge[];
+    diagrams: Diagram[];
+    /**
+     * Bundle/root name (root `index.md` H1); \"\" when absent. Export label + root crumb.
+     */
+    path?: string;
+    /**
+     * Discovered `uml.Package` nodes (root + nested). Kept out of `nodes` so
+     * classifier consumers are unaffected.
+     */
+    packages?: Node[];
+    /**
+     * Flow-substrate behavior documents (uml.Activity / uml.StateMachine).
+     */
+    flows?: FlowDoc[];
+    /**
+     * Interaction-substrate behavior documents (uml.Sequence).
+     */
+    interactions?: SequenceDoc[];
+}
+
+export interface Node {
+    /**
+     * Lossless OKF projection of this node\'s source document (OKF tier) and the
+     * single authoritative source for `title`/`description`/verbatim `body` (read
+     * via `concept.title`/`concept.description`/`concept.body`) plus the non-UML
+     * OKF fields (`tags`/`resource`/`timestamp`/`links`/`citations`/`role`/`extra`).
+     * Populated from `crate::okf::project` (single source).
+     */
+    concept: Concept;
+    key: string;
+    type: string;
+    stereotypes: string[];
+    abstract?: boolean;
+    attributes: Attribute[];
+    values?: string[];
+    /**
+     * A `uml.Note`\'s markdown prose (from its `## Body` section). Distinct from
+     * the generic verbatim `concept.body`: this is the Note-specific rendered
+     * prose. Sole reader is the note node renderer. Title/description/verbatim
+     * body now live only on `concept` (the single authoritative source).
+     */
+    note_body?: string;
+    annotates?: NoteAnchor[];
+    /**
+     * Owned member keys (classifiers, diagrams, sub-packages), in progressive-
+     * disclosure order. Meaningful only on `uml.Package` nodes; empty elsewhere.
+     */
+    members?: string[];
 }
 
 export interface Rect {
@@ -32,6 +341,12 @@ export interface Rect {
     y: number;
     w: number;
     h: number;
+}
+
+export interface RelEnd {
+    multiplicity?: string;
+    role?: string;
+    navigable?: boolean;
 }
 
 export interface Size {
@@ -59,6 +374,10 @@ export interface SolvedGroup {
 
 export type DiagCode = "duplicate-slug" | "frontmatter-not-clean" | "unknown-type" | "malformed-attribute" | "malformed-relationship" | "malformed-flow-bullet" | "duplicate-flow-node" | "unresolved-target" | "droppable-content" | "malformed-layout" | "unresolved-layout-ref" | "layout-cycle" | "layout-conflict" | "malformed-message" | "malformed-lifeline";
 
+export type FmValue = string | boolean | number | FmValue[];
+
+export type RelationshipKind = "associates" | "aggregates" | "composes" | "specializes" | "implements" | "depends" | "annotates" | "includes" | "extends";
+
 export type Severity = "error" | "warning";
 
 export type Shape = "Frame" | "Box" | "Shrink";
@@ -81,7 +400,7 @@ export function build_bundle(bundle: any): any;
 /**
  * `bundle`: a `[path, markdown][]` (array of pairs). Returns the resolved `Model`.
  */
-export function build_model(bundle: any): any;
+export function build_model(bundle: any): Model;
 
 /**
  * `bundle`: a `[path, markdown][]`. Returns the canonicalized bundle.

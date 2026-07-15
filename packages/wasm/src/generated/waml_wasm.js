@@ -34,7 +34,7 @@ export function build_bundle(bundle) {
 /**
  * `bundle`: a `[path, markdown][]` (array of pairs). Returns the resolved `Model`.
  * @param {any} bundle
- * @returns {any}
+ * @returns {Model}
  */
 export function build_model(bundle) {
     const ret = wasm.build_model(bundle);

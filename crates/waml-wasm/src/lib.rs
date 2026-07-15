@@ -94,10 +94,9 @@ pub fn init_panic_hook() {
 
 /// `bundle`: a `[path, markdown][]` (array of pairs). Returns the resolved `Model`.
 #[wasm_bindgen]
-pub fn build_model(bundle: JsValue) -> Result<JsValue, JsValue> {
+pub fn build_model(bundle: JsValue) -> Result<waml::model::Model, JsValue> {
     let b: Vec<(String, String)> = serde_wasm_bindgen::from_value(bundle)?;
-    let model = waml::parse::build_model(&b);
-    Ok(serde_wasm_bindgen::to_value(&model)?)
+    Ok(waml::parse::build_model(&b))
 }
 
 /// `bundle`: a `[path, markdown][]`. Returns the resolved OKF `Bundle` (one
