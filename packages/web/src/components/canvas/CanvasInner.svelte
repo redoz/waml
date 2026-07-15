@@ -50,6 +50,7 @@ import ShareToast from "../ShareToast.svelte";
   import EdgeFlag from "../chrome/EdgeFlag.svelte";
   import CentralEditPanelHost, { type CentralPanelState } from "../central/CentralEditPanelHost.svelte";
   import FlowView from "./flow/FlowView.svelte";
+  import SequenceView from "./sequence/SequenceView.svelte";
 
   import {
     effectiveDiagrams,
@@ -142,8 +143,12 @@ import ShareToast from "../ShareToast.svelte";
   const behaviorViews = $derived(
     ($model.flows ?? []).map((f): Diagram => ({ key: f.key, title: f.title, profile: "uml-domain", members: [] as string[] })),
   );
-  const diagrams = $derived([...effectiveDiagrams($model), ...behaviorViews]);
+  const sequenceViews = $derived(
+    ($model.interactions ?? []).map((s): Diagram => ({ key: s.key, title: s.title, profile: "uml-domain", members: [] as string[] })),
+  );
+  const diagrams = $derived([...effectiveDiagrams($model), ...behaviorViews, ...sequenceViews]);
   const activeFlow = $derived(($model.flows ?? []).find((f) => f.key === activeDiagramKey));
+  const activeSequence = $derived(($model.interactions ?? []).find((s) => s.key === activeDiagramKey));
   const activeDiagram = $derived(diagrams.find((d) => d.key === activeDiagramKey) ?? diagrams[0]);
   // The Navigator's scope (which package subtree it shows) and the active
   // profile's create-palette (the metaclasses the context menu offers).
@@ -369,7 +374,7 @@ import ShareToast from "../ShareToast.svelte";
   // Hit-test uses .svelte-flow__* (SvelteFlow's DOM class prefix, confirmed via
   // canvas.css which was already renamed from .react-flow__* for this port).
   function handleWrapperDoubleClick(e: MouseEvent) {
-    if (activeFlow) return; // read-only flow view — never mutate the model
+    if (activeFlow || activeSequence) return; // read-only behavior view — never mutate the model
     const target = e.target as HTMLElement;
     if (target.closest(".svelte-flow__node") || target.closest(".svelte-flow__edge")) return;
     if (target.closest("[data-dock]")) return; // double-clicking the toolbar shouldn't drop a node
@@ -612,6 +617,8 @@ import ShareToast from "../ShareToast.svelte";
       />
       {#if activeFlow}
         <FlowView doc={activeFlow} />
+      {:else if activeSequence}
+        <SequenceView doc={activeSequence} />
       {:else}
         <SvelteFlow
           bind:nodes={rfNodes}
@@ -653,7 +660,7 @@ import ShareToast from "../ShareToast.svelte";
       {/if}
 
       <!-- Empty canvas CTA -->
-      {#if $model.nodes.length === 0 && !activeFlow}
+      {#if $model.nodes.length === 0 && !activeFlow && !activeSequence}
         <div
           class="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 text-center text-slate-500 pointer-events-none z-[1]"
           style="font-size:15px;"
