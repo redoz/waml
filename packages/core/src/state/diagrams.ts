@@ -21,6 +21,15 @@ export function effectiveDiagrams(g: ModelGraph): Diagram[] {
   return cached;
 }
 
+/** The view a fresh model should open on: a curated diagram, else the first
+ *  behavioral flow, else the first interaction, else the synthetic "All". */
+export function defaultDiagramKey(g: ModelGraph): string {
+  if (g.diagrams.length) return g.diagrams[0].key;
+  if (g.flows?.length) return g.flows[0].key;
+  if (g.interactions?.length) return g.interactions[0].key;
+  return effectiveDiagrams(g)[0].key;
+}
+
 const KEY = "mc.activeDiagram.v1";
 
 export function loadActiveDiagramKey(): string | null {
