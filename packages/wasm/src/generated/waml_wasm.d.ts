@@ -25,8 +25,9 @@ export interface DiagramDisplay {
     showAttributeVisibility?: boolean;
     showAttributeMultiplicity?: boolean;
     maxAttributes?: number;
-    associationLabels?: string;
-    emphasizeMultiplicity?: boolean;
+    showRoles?: boolean;
+    showCardinality?: boolean;
+    showLabels?: boolean;
     showStereotype?: boolean;
     /**
      * `None` ⇒ key absent ⇒ show all; `Some(vec)` ⇒ allowlist (empty ⇒ show none).
@@ -53,8 +54,9 @@ export interface DisplayDto {
     showAttributeVisibility: boolean;
     showAttributeMultiplicity: boolean;
     maxAttributes?: number | undefined;
-    associationLabels: string;
-    emphasizeMultiplicity: boolean;
+    showRoles: boolean;
+    showCardinality: boolean;
+    showLabels: boolean;
     showStereotype: boolean;
     stereotypeFilter?: string[] | undefined;
     stereotypeColors?: string[];

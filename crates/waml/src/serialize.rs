@@ -152,7 +152,7 @@ mod tests {
         // Regression guard: diagram docs round-trip through the generic
         // serialize_document/render_frontmatter path — no diagram-specific
         // serializer exists, so every authored display key must survive.
-        let text = "---\ntype: Diagram\ntitle: D\nprofile: uml-domain\ndescription: \"Notes\"\nshowAttributes: false\nattributeDetail: name-only\nshowAttributeVisibility: false\nshowAttributeMultiplicity: false\nmaxAttributes: 6\nassociationLabels: hidden\nemphasizeMultiplicity: true\nshowStereotype: false\nstereotypeFilter: [entity, valueObject]\nstereotypeColors: [\"entity:#ffedd5\"]\n---\n# D\n";
+        let text = "---\ntype: Diagram\ntitle: D\nprofile: uml-domain\ndescription: \"Notes\"\nshowAttributes: false\nattributeDetail: name-only\nshowAttributeVisibility: false\nshowAttributeMultiplicity: false\nmaxAttributes: 6\nshowRoles: false\nshowCardinality: false\nshowLabels: true\nshowStereotype: false\nstereotypeFilter: [entity, valueObject]\nstereotypeColors: [\"entity:#ffedd5\"]\n---\n# D\n";
         let once = serialize_document(&parse_document(text));
         let twice = serialize_document(&parse_document(&once));
         assert_eq!(once, twice);

@@ -19,8 +19,9 @@ test("renders all five display controls", () => {
   render(DiagramPropertiesBody, { props: props() });
   expect(screen.getByRole("switch", { name: "Show attributes" })).toBeTruthy();
   expect(screen.getByRole("radiogroup", { name: "Attribute detail" })).toBeTruthy();
-  expect(screen.getByRole("radiogroup", { name: "Associations" })).toBeTruthy();
-  expect(screen.getByRole("switch", { name: "Emphasize multiplicity" })).toBeTruthy();
+  expect(screen.getByRole("switch", { name: "Show roles" })).toBeTruthy();
+  expect(screen.getByRole("switch", { name: "Show cardinality" })).toBeTruthy();
+  expect(screen.getByRole("switch", { name: "Show labels" })).toBeTruthy();
   expect(screen.getByRole("switch", { name: "Show stereotype" })).toBeTruthy();
 });
 
@@ -47,8 +48,9 @@ test("a non-default display value drives every control's rendered state", () => 
     ...DEFAULT_DISPLAY,
     showAttributes: false,
     attributeDetail: "name-only" as const,
-    associationLabels: "hidden" as const,
-    emphasizeMultiplicity: true,
+    showRoles: false,
+    showCardinality: false,
+    showLabels: false,
     showStereotype: false,
   };
   render(DiagramPropertiesBody, { props: props({ display }) });
@@ -56,9 +58,13 @@ test("a non-default display value drives every control's rendered state", () => 
   expect(screen.getByRole("switch", { name: "Show attributes" }).getAttribute("aria-checked")).toBe(
     "false",
   );
-  expect(
-    screen.getByRole("switch", { name: "Emphasize multiplicity" }).getAttribute("aria-checked"),
-  ).toBe("true");
+  expect(screen.getByRole("switch", { name: "Show roles" }).getAttribute("aria-checked")).toBe("false");
+  expect(screen.getByRole("switch", { name: "Show cardinality" }).getAttribute("aria-checked")).toBe(
+    "false",
+  );
+  expect(screen.getByRole("switch", { name: "Show labels" }).getAttribute("aria-checked")).toBe(
+    "false",
+  );
   expect(screen.getByRole("switch", { name: "Show stereotype" }).getAttribute("aria-checked")).toBe(
     "false",
   );
@@ -67,18 +73,17 @@ test("a non-default display value drives every control's rendered state", () => 
   expect(screen.getByRole("radio", { name: "Name + type" }).getAttribute("aria-checked")).toBe(
     "false",
   );
-
-  expect(screen.getByRole("radio", { name: "Hide labels" }).getAttribute("aria-checked")).toBe("true");
-  expect(screen.getByRole("radio", { name: "Show labels" }).getAttribute("aria-checked")).toBe(
-    "false",
-  );
 });
 
-test("picking an associations option emits that value", async () => {
+test("toggling 'Show roles'/'Show cardinality'/'Show labels' each emit their inverted flag", async () => {
   const onChange = vi.fn();
   render(DiagramPropertiesBody, { props: props({ onChange }) });
-  await fireEvent.click(screen.getByRole("radio", { name: "Hide labels" }));
-  expect(onChange).toHaveBeenCalledWith({ associationLabels: "hidden" });
+  await fireEvent.click(screen.getByRole("switch", { name: "Show roles" }));
+  expect(onChange).toHaveBeenCalledWith({ showRoles: false });
+  await fireEvent.click(screen.getByRole("switch", { name: "Show cardinality" }));
+  expect(onChange).toHaveBeenCalledWith({ showCardinality: false });
+  await fireEvent.click(screen.getByRole("switch", { name: "Show labels" }));
+  expect(onChange).toHaveBeenCalledWith({ showLabels: false });
 });
 
 test("attribute-detail options are disabled and inert when 'Show attributes' is off", async () => {

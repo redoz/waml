@@ -1,14 +1,15 @@
 <script lang="ts">
   // Mirrors packages/web/src/components/canvas/RelEdge.tsx.
   import { BaseEdge, EdgeLabel, EdgeReconnectAnchor, getSmoothStepPath, useInternalNode, type EdgeProps, type Position } from "@xyflow/svelte";
-  import type { ModelEdge, RelEnd, RelationshipKind, DiagramDisplay } from "@waml/okf";
+  import type { ModelEdge, RelEnd, RelationshipKind } from "@waml/okf";
   import { getEdgeParams, portPoint, type NodeGeom, type Rect, type Slot } from "./floating";
   import { edgeStereotype } from "./edges";
 
-  type RelEdgeData = Pick<ModelEdge, "kind" | "fromEnd" | "toEnd" | "bidirectional"> & {
-    associationLabels?: DiagramDisplay["associationLabels"];
+  type RelEdgeData = Pick<ModelEdge, "kind" | "fromEnd" | "toEnd" | "bidirectional" | "name"> & {
     modelEdgeId?: string;
-    emphasizeMultiplicity?: boolean;
+    showRoles?: boolean;
+    showCardinality?: boolean;
+    showLabels?: boolean;
     // Pre-assigned by edges.ts so a hub's edges space themselves along each border.
     sourceSide?: Position;
     targetSide?: Position;
@@ -44,7 +45,6 @@
   const kind = $derived<RelationshipKind>(d?.kind ?? "associates");
   const fromEnd = $derived<RelEnd>(d?.fromEnd ?? {});
   const toEnd = $derived<RelEnd>(d?.toEnd ?? {});
-  const mode = $derived<DiagramDisplay["associationLabels"]>(d?.associationLabels ?? "all");
 
   // Floating endpoints. When edges.ts has assigned a side + slot (and both nodes
   // are measured), place the point on that border spaced by the slot so a hub's
@@ -118,22 +118,30 @@
     return { markerStart, markerEnd, defs };
   });
 
-  const endText = (e: RelEnd) => [e.multiplicity, e.role].filter(Boolean).join(" ");
-  // `associationLabels` alone decides whether labels show; `emphasizeMultiplicity`
-  // is a separate visual emphasis (bolder/larger multiplicity text) applied to them.
-  const showLabels = $derived(mode !== "hidden");
-  const emphasize = $derived(d?.emphasizeMultiplicity ?? false);
+  const showRoles = $derived(d?.showRoles ?? true);
+  const showCardinality = $derived(d?.showCardinality ?? true);
+  const showLabels = $derived(d?.showLabels ?? true);
+  const endText = (e: RelEnd) =>
+    [showCardinality ? e.multiplicity : undefined, showRoles ? e.role : undefined].filter(Boolean).join(" ");
   const lerp = (a: number, b: number, t: number) => a + (b - a) * t;
 
   const labels = $derived.by(() => {
     const out: { x: number; y: number; text: string }[] = [];
-    if (!showLabels || !geometry) return out;
+    if ((!showRoles && !showCardinality) || !geometry) return out;
     const { sx, sy, tx, ty } = geometry;
     const ft = endText(fromEnd);
     const tt = endText(toEnd);
     if (ft) out.push({ x: lerp(sx, tx, 0.18), y: lerp(sy, ty, 0.18) - 10, text: ft });
     if (tt) out.push({ x: lerp(sx, tx, 0.82), y: lerp(sy, ty, 0.82) - 10, text: tt });
     return out;
+  });
+
+  // Reading-label name (string form of `name`); the assoc-class ref form has
+  // no text to render here (its box is the association-class node itself).
+  const nameLabel = $derived.by(() => {
+    if (!showLabels || !geometry || typeof d?.name !== "string" || !d.name) return undefined;
+    const { sx, sy, tx, ty } = geometry;
+    return { x: lerp(sx, tx, 0.5), y: lerp(sy, ty, 0.5) - 10, text: d.name };
   });
 
   // Verb keyword label for use-case dependency verbs (includes/extends).
@@ -179,13 +187,21 @@
       x={l.x}
       y={l.y}
       class="nodrag nopan"
-      style="background:rgba(255,255,255,0.9);border-radius:4px;padding:0 4px;font-size:{emphasize
-        ? 12
-        : 10.5}px;font-weight:{emphasize ? 800 : 600};color:{emphasize ? '#0f172a' : '#334155'};white-space:nowrap;"
+      style="background:rgba(255,255,255,0.9);border-radius:4px;padding:0 4px;font-size:10.5px;font-weight:600;color:#334155;white-space:nowrap;"
     >
       {l.text}
     </EdgeLabel>
   {/each}
+  {#if nameLabel}
+    <EdgeLabel
+      x={nameLabel.x}
+      y={nameLabel.y}
+      class="nodrag nopan"
+      style="background:rgba(255,255,255,0.9);border-radius:4px;padding:0 4px;font-size:10.5px;font-weight:600;color:#334155;white-space:nowrap;"
+    >
+      {nameLabel.text}
+    </EdgeLabel>
+  {/if}
   {#if stereo && geometry}
     <EdgeLabel
       x={(geometry.sx + geometry.tx) / 2}

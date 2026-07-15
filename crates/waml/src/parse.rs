@@ -975,8 +975,9 @@ fn build_diagrams(parsed: &[ParsedDoc], keyset: &HashSet<&str>) -> Vec<Diagram> 
             show_attribute_visibility: fm.get_bool("showAttributeVisibility"),
             show_attribute_multiplicity: fm.get_bool("showAttributeMultiplicity"),
             max_attributes,
-            association_labels: fm.get_str("associationLabels").map(String::from),
-            emphasize_multiplicity: fm.get_bool("emphasizeMultiplicity"),
+            show_roles: fm.get_bool("showRoles"),
+            show_cardinality: fm.get_bool("showCardinality"),
+            show_labels: fm.get_bool("showLabels"),
             show_stereotype: fm.get_bool("showStereotype"),
             stereotype_filter,
             stereotype_colors: fm.get_string_list("stereotypeColors"),
@@ -1004,7 +1005,7 @@ mod tests {
         let b = diagram_bundle(
             "description: \"Notes\"\nshowAttributes: false\nattributeDetail: name-only\n\
              showAttributeVisibility: false\nshowAttributeMultiplicity: false\nmaxAttributes: 6\n\
-             associationLabels: hidden\nemphasizeMultiplicity: true\nshowStereotype: false\n\
+             showRoles: false\nshowCardinality: false\nshowLabels: true\nshowStereotype: false\n\
              stereotypeFilter: [entity, valueObject]\nstereotypeColors: [\"entity:#ffedd5\"]\n",
         );
         let m = build_model(&b);
@@ -1016,8 +1017,9 @@ mod tests {
         assert_eq!(x.show_attribute_visibility, Some(false));
         assert_eq!(x.show_attribute_multiplicity, Some(false));
         assert_eq!(x.max_attributes, Some(6));
-        assert_eq!(x.association_labels.as_deref(), Some("hidden"));
-        assert_eq!(x.emphasize_multiplicity, Some(true));
+        assert_eq!(x.show_roles, Some(false));
+        assert_eq!(x.show_cardinality, Some(false));
+        assert_eq!(x.show_labels, Some(true));
         assert_eq!(x.show_stereotype, Some(false));
         assert_eq!(x.stereotype_filter, Some(vec!["entity".to_string(), "valueObject".to_string()]));
         assert_eq!(x.stereotype_colors, vec!["entity:#ffedd5".to_string()]);

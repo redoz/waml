@@ -199,18 +199,14 @@
 
   <div class="h-px bg-[#eef1f5] mx-1 my-1"></div>
 
-  {@render segmented(
-    "Associations",
-    [
-      { value: "all", label: "Show labels" },
-      { value: "hidden", label: "Hide labels" },
-    ],
-    display.associationLabels,
-    (v) => patch({ associationLabels: v as DiagramDisplay["associationLabels"] }),
-    disabledAll,
+  {@render toggleRow("Show roles", display.showRoles, () =>
+    patch({ showRoles: !display.showRoles }), disabledAll,
   )}
-  {@render toggleRow("Emphasize multiplicity", display.emphasizeMultiplicity, () =>
-    patch({ emphasizeMultiplicity: !display.emphasizeMultiplicity }), disabledAll,
+  {@render toggleRow("Show cardinality", display.showCardinality, () =>
+    patch({ showCardinality: !display.showCardinality }), disabledAll,
+  )}
+  {@render toggleRow("Show labels", display.showLabels, () =>
+    patch({ showLabels: !display.showLabels }), disabledAll,
   )}
 
   <div class="h-px bg-[#eef1f5] mx-1 my-1"></div>

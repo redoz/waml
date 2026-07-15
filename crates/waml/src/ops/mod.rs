@@ -44,8 +44,9 @@ pub struct DiagramDisplaySet {
     pub show_attribute_visibility: bool,
     pub show_attribute_multiplicity: bool,
     pub max_attributes: Option<u32>,
-    pub association_labels: String,
-    pub emphasize_multiplicity: bool,
+    pub show_roles: bool,
+    pub show_cardinality: bool,
+    pub show_labels: bool,
     pub show_stereotype: bool,
     pub stereotype_filter: Option<Vec<String>>,
     pub stereotype_colors: Vec<String>,
@@ -646,8 +647,8 @@ fn op_node_set(
 
 const DISPLAY_KEYS: &[&str] = &[
     "showAttributes", "attributeDetail", "showAttributeVisibility",
-    "showAttributeMultiplicity", "maxAttributes", "associationLabels",
-    "emphasizeMultiplicity", "showStereotype", "stereotypeFilter",
+    "showAttributeMultiplicity", "maxAttributes", "showRoles",
+    "showCardinality", "showLabels", "showStereotype", "stereotypeFilter",
     "stereotypeColors",
 ];
 
@@ -679,8 +680,9 @@ fn op_diagram_set(
             if let Some(max) = ds.max_attributes {
                 fm_set(&mut doc.frontmatter, "maxAttributes", FmValue::Num(max as f64));
             }
-            fm_set(&mut doc.frontmatter, "associationLabels", FmValue::Str(ds.association_labels.clone()));
-            fm_set(&mut doc.frontmatter, "emphasizeMultiplicity", FmValue::Bool(ds.emphasize_multiplicity));
+            fm_set(&mut doc.frontmatter, "showRoles", FmValue::Bool(ds.show_roles));
+            fm_set(&mut doc.frontmatter, "showCardinality", FmValue::Bool(ds.show_cardinality));
+            fm_set(&mut doc.frontmatter, "showLabels", FmValue::Bool(ds.show_labels));
             fm_set(&mut doc.frontmatter, "showStereotype", FmValue::Bool(ds.show_stereotype));
             if let Some(filter) = &ds.stereotype_filter {
                 fm_set(&mut doc.frontmatter, "stereotypeFilter", str_list(filter));
@@ -1117,8 +1119,9 @@ mod tests {
             show_attribute_visibility: false,
             show_attribute_multiplicity: false,
             max_attributes: Some(6),
-            association_labels: "hidden".into(),
-            emphasize_multiplicity: true,
+            show_roles: false,
+            show_cardinality: false,
+            show_labels: true,
             show_stereotype: false,
             stereotype_filter: Some(vec!["entity".into()]),
             stereotype_colors: vec!["entity:#ffedd5".into()],

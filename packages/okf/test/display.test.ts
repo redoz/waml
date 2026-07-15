@@ -12,8 +12,9 @@ describe("resolveDisplay", () => {
       attributeDetail: "name-type",
       showAttributeVisibility: true,
       showAttributeMultiplicity: true,
-      associationLabels: "all",
-      emphasizeMultiplicity: false,
+      showRoles: true,
+      showCardinality: true,
+      showLabels: true,
       showStereotype: true,
       stereotypeColors: {},
     });
