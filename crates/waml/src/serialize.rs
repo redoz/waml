@@ -132,6 +132,22 @@ mod tests {
     }
 
     #[test]
+    fn serialize_is_a_semantic_fixpoint_with_diagram_display_frontmatter() {
+        // Regression guard: diagram docs round-trip through the generic
+        // serialize_document/render_frontmatter path — no diagram-specific
+        // serializer exists, so every authored display key must survive.
+        let text = "---\ntype: Diagram\ntitle: D\nprofile: uml-domain\ndescription: \"Notes\"\nshowAttributes: false\nattributeDetail: name-only\nshowAttributeVisibility: false\nshowAttributeMultiplicity: false\nmaxAttributes: 6\nassociationLabels: hidden\nemphasizeMultiplicity: true\nshowStereotype: false\nstereotypeFilter: [entity, valueObject]\nstereotypeColors: [\"entity:#ffedd5\"]\n---\n# D\n";
+        let once = serialize_document(&parse_document(text));
+        let twice = serialize_document(&parse_document(&once));
+        assert_eq!(once, twice);
+        assert!(once.contains("description: \"Notes\""));
+        assert!(once.contains("showAttributes: false"));
+        assert!(once.contains("maxAttributes: 6"));
+        assert!(once.contains("stereotypeFilter: [\"entity\", \"valueObject\"]"));
+        assert!(once.contains("stereotypeColors: [\"entity:#ffedd5\"]"));
+    }
+
+    #[test]
     fn render_hints_section_degrades_to_preserved_unknown() {
         let src = "---\ntype: Diagram\ntitle: D\n---\n# D\n\n## Render hints\n- emphasize: order\n";
         let out = serialize_document(&parse_document(src));
