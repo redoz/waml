@@ -9,6 +9,8 @@ fn one() -> u32 {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
+#[cfg_attr(feature = "wasm", derive(tsify_next::Tsify))]
+#[cfg_attr(feature = "wasm", tsify(into_wasm_abi, from_wasm_abi))]
 #[serde(tag = "op")]
 pub enum OpDto {
     #[serde(rename = "node.new")]
@@ -202,6 +204,8 @@ pub enum OpDto {
 
 /// A fully-specified display block on the wire. Mirrors `waml::ops::DiagramDisplaySet`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "wasm", derive(tsify_next::Tsify))]
+#[cfg_attr(feature = "wasm", tsify(into_wasm_abi, from_wasm_abi))]
 #[serde(rename_all = "camelCase")]
 pub struct DisplayDto {
     pub show_attributes: bool,

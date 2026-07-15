@@ -123,12 +123,12 @@ pub fn validate(bundle: JsValue) -> Result<Vec<waml::diagnostic::Diagnostic>, Js
     Ok(waml::validate::validate(&b))
 }
 
-/// `bundle`: a `[path, markdown][]`; `ops`: an `OpDto[]`. Returns the edited bundle.
+/// `bundle`: a `[path, markdown][]`; `ops`: an `OpDto[]` (Tsify-generated union;
+/// see `packages/wasm/src/generated/waml_wasm.d.ts`). Returns the edited bundle.
 #[wasm_bindgen]
-pub fn apply_ops(bundle: JsValue, ops: JsValue) -> Result<JsValue, JsValue> {
+pub fn apply_ops(bundle: JsValue, ops: Vec<waml_ops_dto::OpDto>) -> Result<JsValue, JsValue> {
     let b: Vec<(String, String)> = serde_wasm_bindgen::from_value(bundle)?;
-    let dtos: Vec<waml_ops_dto::OpDto> = serde_wasm_bindgen::from_value(ops)?;
-    let parsed = dtos_to_ops(dtos).map_err(|e| JsValue::from_str(&e))?;
+    let parsed = dtos_to_ops(ops).map_err(|e| JsValue::from_str(&e))?;
     let out = waml::ops::apply(&b, &parsed)
         .map_err(|e| JsValue::from_str(&format!("op {}: {}", e.index, e.reason)))?;
     Ok(serde_wasm_bindgen::to_value(&out)?)

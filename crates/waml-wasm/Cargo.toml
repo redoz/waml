@@ -11,7 +11,7 @@ crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 waml = { path = "../waml", features = ["wasm"] }
-waml-ops-dto = { path = "../waml-ops-dto" }
+waml-ops-dto = { path = "../waml-ops-dto", features = ["wasm"] }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
 wasm-bindgen = "0.2"

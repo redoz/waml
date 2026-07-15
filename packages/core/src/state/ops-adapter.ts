@@ -31,53 +31,16 @@
 //    on the same triple use `rel.set`. Canvas-only fields (handles) emit nothing.
 import type { ModelNode, ModelEdge, Attribute, RelEnd, RelationshipKind, Visibility } from "@waml/okf";
 import { ENDED_KINDS } from "@waml/okf";
+// `OpDto` (and its nested `DisplayDto`) is generated from the Rust
+// `waml-ops-dto` crate via Tsify (single source of truth); see
+// crates/waml-ops-dto/src/lib.rs. The generated union is a superset of the
+// old hand-written one here (adds the `diagram.set` variant and an optional
+// `v?: number` version tag on every variant), so existing narrowings by `op`
+// tag remain valid.
+import type { OpDto } from "@waml/wasm";
+export type { OpDto };
 
 type EdgeName = string | { ref: string };
-
-export type OpDto =
-  | {
-      op: "node.new";
-      slug: string;
-      dir?: string;
-      ty: string;
-      title: string;
-      stereotype?: string[];
-      desc?: string;
-      abstract?: boolean;
-    }
-  | { op: "node.rename"; from: string; to: string }
-  | {
-      op: "node.set";
-      slug: string;
-      title?: string;
-      desc?: string;
-      stereotype?: string[];
-      abstract?: boolean;
-      ty?: string;
-    }
-  | { op: "node.rm"; slug: string; cascade?: boolean }
-  | { op: "attr.add"; node: string; name: string; ty: string; mult?: string; vis?: string }
-  | { op: "attr.set"; node: string; name: string; ty?: string; mult?: string; vis?: string; rename?: string }
-  | { op: "attr.rm"; node: string; name: string }
-  | { op: "value.add"; node: string; literal: string }
-  | { op: "value.rm"; node: string; literal: string }
-  | { op: "rel.add"; source: string; kind: string; target: string; as?: string; as_ref?: string; ends?: string }
-  | {
-      op: "rel.set";
-      source: string;
-      kind?: string;
-      target?: string;
-      as?: string;
-      ends?: string;
-      set_as?: string;
-      set_as_ref?: string;
-    }
-  | { op: "rel.rm"; source: string; kind?: string; target?: string; as?: string }
-  | { op: "pkg.move"; slug: string; to_dir: string }
-  | { op: "pkg.rename"; from: string; to: string }
-  | { op: "pkg.delete"; path: string; cascade: boolean }
-  | { op: "pkg.reorder"; path: string; order: string[] }
-  | { op: "pkg.sort"; path: string };
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 

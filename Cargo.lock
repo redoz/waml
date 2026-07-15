@@ -1024,7 +1024,9 @@ version = "0.0.0"
 dependencies = [
  "serde",
  "serde_json",
+ "tsify-next",
  "waml",
+ "wasm-bindgen",
 ]
 
 [[package]]

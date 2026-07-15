@@ -45,6 +45,22 @@ export interface DiagramDisplay {
 export type FlowNodeKind = "initial" | "final" | "decision" | "merge" | "fork" | "join" | "object" | "plain";
 
 /**
+ * A fully-specified display block on the wire. Mirrors `waml::ops::DiagramDisplaySet`.
+ */
+export interface DisplayDto {
+    showAttributes: boolean;
+    attributeDetail: string;
+    showAttributeVisibility: boolean;
+    showAttributeMultiplicity: boolean;
+    maxAttributes?: number | undefined;
+    associationLabels: string;
+    emphasizeMultiplicity: boolean;
+    showStereotype: boolean;
+    stereotypeFilter?: string[] | undefined;
+    stereotypeColors?: string[];
+}
+
+/**
  * A resolved membership group in a diagram (heading text + resolved keys).
  */
 export interface DiagramGroup {
@@ -383,6 +399,8 @@ export type DiagCode = "duplicate-slug" | "frontmatter-not-clean" | "unknown-typ
 
 export type FmValue = string | boolean | number | FmValue[];
 
+export type OpDto = { op: "node.new"; v?: number; slug: string; dir?: string; ty: string; title: string; stereotype?: string[]; desc?: string | undefined; abstract?: boolean } | { op: "node.rename"; v?: number; from: string; to: string } | { op: "node.set"; v?: number; slug: string; title?: string | undefined; desc?: string | undefined; stereotype?: string[] | undefined; abstract?: boolean | undefined; ty?: string | undefined } | { op: "node.rm"; v?: number; slug: string; cascade?: boolean } | { op: "attr.add"; v?: number; node: string; name: string; ty: string; mult?: string | undefined; vis?: string | undefined } | { op: "attr.set"; v?: number; node: string; name: string; ty?: string | undefined; mult?: string | undefined; vis?: string | undefined; rename?: string | undefined } | { op: "attr.rm"; v?: number; node: string; name: string } | { op: "value.add"; v?: number; node: string; literal: string } | { op: "value.rm"; v?: number; node: string; literal: string } | { op: "rel.add"; v?: number; source: string; kind: string; target: string; as?: string | undefined; as_ref?: string | undefined; ends?: string | undefined } | { op: "rel.set"; v?: number; source: string; kind?: string | undefined; target?: string | undefined; as?: string | undefined; ends?: string | undefined; set_as?: string | undefined; set_as_ref?: string | undefined } | { op: "rel.rm"; v?: number; source: string; kind?: string | undefined; target?: string | undefined; as?: string | undefined } | { op: "pkg.move"; v?: number; slug: string; to_dir: string } | { op: "pkg.rename"; v?: number; from: string; to: string } | { op: "pkg.delete"; v?: number; path: string; cascade?: boolean } | { op: "pkg.reorder"; v?: number; path: string; order?: string[] } | { op: "pkg.sort"; v?: number; path: string } | { op: "diagram.set"; v?: number; key: string; title?: string | undefined; desc?: string | undefined; display?: DisplayDto | undefined };
+
 export type RelationshipKind = "associates" | "aggregates" | "composes" | "specializes" | "implements" | "depends" | "annotates" | "includes" | "extends";
 
 export type Severity = "error" | "warning";
@@ -391,9 +409,10 @@ export type Shape = "Frame" | "Box" | "Shrink";
 
 
 /**
- * `bundle`: a `[path, markdown][]`; `ops`: an `OpDto[]`. Returns the edited bundle.
+ * `bundle`: a `[path, markdown][]`; `ops`: an `OpDto[]` (Tsify-generated union;
+ * see `packages/wasm/src/generated/waml_wasm.d.ts`). Returns the edited bundle.
  */
-export function apply_ops(bundle: any, ops: any): any;
+export function apply_ops(bundle: any, ops: OpDto[]): any;
 
 /**
  * `bundle`: a `[path, markdown][]`. Returns the resolved OKF `Bundle` (one
@@ -446,7 +465,7 @@ export type InitInput = RequestInfo | URL | Response | BufferSource | WebAssembl
 
 export interface InitOutput {
     readonly memory: WebAssembly.Memory;
-    readonly apply_ops: (a: any, b: any) => [number, number, number];
+    readonly apply_ops: (a: any, b: number, c: number) => [number, number, number];
     readonly build_bundle: (a: any) => [number, number, number];
     readonly build_model: (a: any) => [number, number, number];
     readonly fmt: (a: any) => [number, number, number];

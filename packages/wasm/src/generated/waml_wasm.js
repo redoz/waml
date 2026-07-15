@@ -1,13 +1,16 @@
 /* @ts-self-types="./waml_wasm.d.ts" */
 
 /**
- * `bundle`: a `[path, markdown][]`; `ops`: an `OpDto[]`. Returns the edited bundle.
+ * `bundle`: a `[path, markdown][]`; `ops`: an `OpDto[]` (Tsify-generated union;
+ * see `packages/wasm/src/generated/waml_wasm.d.ts`). Returns the edited bundle.
  * @param {any} bundle
- * @param {any} ops
+ * @param {OpDto[]} ops
  * @returns {any}
  */
 export function apply_ops(bundle, ops) {
-    const ret = wasm.apply_ops(bundle, ops);
+    const ptr0 = passArrayJsValueToWasm0(ops, wasm.__wbindgen_malloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.apply_ops(bundle, ptr0, len0);
     if (ret[2]) {
         throw takeFromExternrefTable0(ret[1]);
     }
@@ -512,6 +515,16 @@ function handleError(f, args) {
 
 function isLikeNone(x) {
     return x === undefined || x === null;
+}
+
+function passArrayJsValueToWasm0(array, malloc) {
+    const ptr = malloc(array.length * 4, 4) >>> 0;
+    for (let i = 0; i < array.length; i++) {
+        const add = addToExternrefTable0(array[i]);
+        getDataViewMemory0().setUint32(ptr + 4 * i, add, true);
+    }
+    WASM_VECTOR_LEN = array.length;
+    return ptr;
 }
 
 function passStringToWasm0(arg, malloc, realloc) {
