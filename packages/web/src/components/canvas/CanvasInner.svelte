@@ -79,6 +79,10 @@ import ShareToast from "../ShareToast.svelte";
   let viewport = $state<Viewport>();
   // Screen anchor for the floating SelectionToolbar (null ⇒ hidden).
   let toolbarPos = $state<{ x: number; y: number } | null>(null);
+  // Whether the pointer is currently over the canvas wrapper — the
+  // SelectionToolbar should only show while the canvas is hovered, not just
+  // because a selection exists (e.g. after switching away from the canvas).
+  let canvasHovered = $state(false);
   let tool = $state<Tool>("select");
   // True briefly during auto-layout so nodes glide (CSS transition) to their new
   // positions instead of snapping.
@@ -615,7 +619,13 @@ import ShareToast from "../ShareToast.svelte";
   <div class="flex flex-1 min-h-0 relative">
     <!-- SvelteFlow canvas -->
     <!-- svelte-ignore a11y_no_static_element_interactions -->
-    <div class="flex-1 relative {canvasClass}" data-canvas-wrapper ondblclick={handleWrapperDoubleClick}>
+    <div
+      class="flex-1 relative {canvasClass}"
+      data-canvas-wrapper
+      ondblclick={handleWrapperDoubleClick}
+      onpointerenter={() => (canvasHovered = true)}
+      onpointerleave={() => (canvasHovered = false)}
+    >
       <!-- Tool dock — anchored to the canvas (not the outer row) so it sits just
            inside the canvas edge and slides over as the rail opens. The diagram
            switcher now lives in the TopBar title control. -->
@@ -685,8 +695,11 @@ import ShareToast from "../ShareToast.svelte";
       {/if}
 
       <!-- Floating toolbar anchored above the selection's bounding box. Shown
-           whenever ≥1 element is selected. -->
-      {#if !isSelectionEmpty(selectionSet) && toolbarPos && !activeFlow && !activeSequence}
+           only while ≥1 element is selected AND the pointer is currently
+           hovering the canvas (selection alone isn't enough — it would
+           otherwise linger after the pointer moves elsewhere, e.g. onto the
+           Navigator or Inspector). -->
+      {#if !isSelectionEmpty(selectionSet) && toolbarPos && canvasHovered && !activeFlow && !activeSequence}
         <SelectionToolbar
           x={toolbarPos.x}
           y={toolbarPos.y}

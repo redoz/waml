@@ -13,11 +13,15 @@ afterEach(() => {
 
 // Dismiss the first-visit WelcomeDialog if present, then drop + select a node via
 // the canvas double-click handler (our own DOM handler, deterministic in jsdom).
+// Fires a pointerEnter first — realistically the pointer is over the canvas
+// wrapper when double-clicking it, and the SelectionToolbar now also requires
+// hover (in addition to a non-empty selection) to show.
 async function addAndSelectNode() {
   const blank = screen.queryByRole("button", { name: /start blank/i });
   if (blank) await fireEvent.click(blank);
   const wrapper = document.querySelector("[data-canvas-wrapper]") as HTMLElement;
   expect(wrapper).toBeTruthy();
+  await fireEvent.pointerEnter(wrapper);
   await fireEvent.dblClick(wrapper);
   await tick();
 }
@@ -40,6 +44,22 @@ describe("multi-select toolbar + regression", () => {
   // NOTE: diagram editing (create/rename/membership) is derived-only in Stage 1b —
   // the store's diagram mutators are no-ops (no diagram/membership ops), so the
   // "New diagram from selection" persistence test returns in Stage 1c.
+
+  it("hides the toolbar once the pointer leaves the canvas, and re-shows it on re-hover", async () => {
+    render(Canvas);
+    await addAndSelectNode();
+    expect(screen.getByTestId("selection-toolbar")).toBeTruthy();
+
+    const wrapper = document.querySelector("[data-canvas-wrapper]") as HTMLElement;
+    await fireEvent.pointerLeave(wrapper);
+    await tick();
+    // Selection is still non-empty, but without hover the toolbar must hide.
+    expect(screen.queryByTestId("selection-toolbar")).toBeNull();
+
+    await fireEvent.pointerEnter(wrapper);
+    await tick();
+    expect(screen.getByTestId("selection-toolbar")).toBeTruthy();
+  });
 });
 
 // Final-whole-branch-review fix: a selection made in one diagram must not
