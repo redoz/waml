@@ -80,11 +80,13 @@ test("fullHeight raises cap 95vh reduces scrim inset", () => {
   expect(screen.getByTestId("central-scrim").className).toContain("p-4");
 });
 
-test("renders preview snippet above body", () => {
-  const preview = createRawSnippet(() => ({
-    render: () => `<div data-testid="preview-slot">preview</div>`,
-  }));
-  render(CentralEditPanel, { props: props({ preview }) });
-  expect(screen.getByTestId("preview-slot")).toBeTruthy();
+test("showPreview renders a transparent cutout above the body", () => {
+  render(CentralEditPanel, { props: props({ showPreview: true }) });
+  expect(screen.getByTestId("central-preview")).toBeTruthy();
   expect(screen.getByLabelText("field")).toBeTruthy(); // body still renders
+});
+
+test("without showPreview, no cutout renders", () => {
+  render(CentralEditPanel, { props: props() });
+  expect(screen.queryByTestId("central-preview")).toBeNull();
 });

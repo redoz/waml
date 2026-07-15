@@ -116,9 +116,16 @@ test("a since-deleted edge closes the panel", () => {
   expect(onClose).toHaveBeenCalled();
 });
 
-test("showPreview renders the preview region for an element", () => {
+test("showPreview renders the transparent cutout for an element", () => {
   render(CentralEditPanelHost, {
     props: props({ state: { kind: "element", nodeKey: "customer" }, showPreview: true }),
   });
-  expect(screen.getByTestId("element-preview")).toBeTruthy();
+  expect(screen.getByTestId("central-preview")).toBeTruthy();
+});
+
+test("showPreview renders the transparent cutout for an edge", () => {
+  render(CentralEditPanelHost, {
+    props: props({ state: { kind: "edge", edgeKey: "e1" }, showPreview: true }),
+  });
+  expect(screen.getByTestId("central-preview")).toBeTruthy();
 });

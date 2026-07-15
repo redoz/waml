@@ -15,6 +15,7 @@
     type Viewport,
   } from "@xyflow/svelte";
   import { MessageSquare } from "lucide-svelte";
+  import { untrack } from "svelte";
 
   import { model, store } from "../../state/model.svelte";
   import { sharedModelName, isFirstVisit, onStoreError } from "../../state/bootstrap";
@@ -69,6 +70,11 @@ import ShareToast from "../ShareToast.svelte";
   import { mergeBundles } from "@waml/core/sync/merge";
   import type { Bundle } from "@waml/core/state/model";
 
+  // Shared with the SvelteFlow instance's own minZoom/maxZoom below, and with
+  // the magnifying-glass effect's zoom clamp, so both never drift apart.
+  const CANVAS_MIN_ZOOM = 0.4;
+  const CANVAS_MAX_ZOOM = 1.6;
+
   // ── State (one $state per React useState) ───────────────────────────────────
   // Full multi-selection (node keys + model edge ids). SvelteFlow owns the live
   // click/shift-click/marquee selection and reports it via onselectionchange; we
@@ -117,6 +123,12 @@ import ShareToast from "../ShareToast.svelte";
   // opened by navigator's "View / edit properties"; diagram context by
   // Dock sliders button (Task 5).
   let centralPanel = $state<CentralPanelState | null>(null);
+  // The central panel's transparent preview cutout (bound down through
+  // CentralEditPanelHost/CentralEditPanel) and the canvas's own wrapper —
+  // both needed to compute the pan/zoom that frames the focal node/edge
+  // inside the cutout's screen rect (see the magnify effect below).
+  let previewEl = $state<HTMLDivElement | null>(null);
+  let canvasWrapperEl = $state<HTMLDivElement | null>(null);
 
   // SvelteFlow owns the live node/edge arrays so dragging follows the cursor
   // smoothly. The model store stays the source of truth: we sync store → RF on
@@ -128,7 +140,8 @@ import ShareToast from "../ShareToast.svelte";
   // useSvelteFlow() (confirmed via hooks/useSvelteFlow.svelte.d.ts) requires flow
   // context — available because Canvas.svelte wraps this component in
   // <SvelteFlowProvider>.
-  const { screenToFlowPosition, fitView, flowToScreenPosition, getNodesBounds } = useSvelteFlow();
+  const { screenToFlowPosition, fitView, flowToScreenPosition, getNodesBounds, getViewport, setViewport } =
+    useSvelteFlow();
 
   // ── Derived ──────────────────────────────────────────────────────────────────
   // Single "focused" element (the sole selected node/edge) for the Inspector; a
@@ -260,6 +273,71 @@ import ShareToast from "../ShareToast.svelte";
   $effect(() => {
     void $model;
     persistBundle(store.getBundle());
+  });
+
+  // 7) "Magnifying glass": while the central panel is open for an element or
+  // edge, pan/zoom the real canvas so the focal node(s) sit behind the panel's
+  // transparent preview cutout, instead of rendering a separate cropped
+  // preview. Computed once per open (not on every rfNodes change, e.g. a
+  // field edit re-rendering the focal node — re-centering on every keystroke
+  // would be janky); restores the pre-open viewport on close.
+  let savedViewport: Viewport | null = null;
+  const MAGNIFY_DURATION = 240;
+  $effect(() => {
+    const panel = centralPanel;
+    if (!panel || panel.kind === "diagram") {
+      if (savedViewport) {
+        setViewport(savedViewport, { duration: MAGNIFY_DURATION });
+        savedViewport = null;
+      }
+      return;
+    }
+    if (!previewEl || !canvasWrapperEl) return;
+    const preview = previewEl;
+    const wrapper = canvasWrapperEl;
+    // Everything below reads library internals (getNodesBounds, $model) that
+    // Svelte 5 tracks transparently even though we never name them as deps.
+    // Left tracked, those reads retrigger this effect on every intermediate
+    // measurement/store update during the transition itself, each restart
+    // resetting the ease-in-out curve — the animation fights itself and
+    // "converges" over several seconds instead of running once. untrack()
+    // confines this effect's real dependencies to panel/previewEl/canvasWrapperEl.
+    untrack(() => {
+      const focalIds =
+        panel.kind === "element"
+          ? [panel.nodeKey]
+          : (() => {
+              const focalEdge = $model.edges.find((e) => e.id === panel.edgeKey);
+              return focalEdge ? [focalEdge.from, focalEdge.to] : [];
+            })();
+      if (focalIds.length === 0) return;
+      let bounds;
+      try {
+        bounds = getNodesBounds(focalIds);
+      } catch {
+        return;
+      }
+      if (!bounds || !Number.isFinite(bounds.x) || bounds.width <= 0 || bounds.height <= 0) return;
+      if (savedViewport === null) savedViewport = getViewport();
+      const previewRect = preview.getBoundingClientRect();
+      const wrapperRect = wrapper.getBoundingClientRect();
+      const PADDING = 0.8; // leaves a margin around the focal bbox inside the cutout
+      const zoom = Math.max(
+        CANVAS_MIN_ZOOM,
+        Math.min(
+          CANVAS_MAX_ZOOM,
+          Math.min(previewRect.width / bounds.width, previewRect.height / bounds.height) * PADDING,
+        ),
+      );
+      const focalCx = bounds.x + bounds.width / 2;
+      const focalCy = bounds.y + bounds.height / 2;
+      const targetScreenX = previewRect.left + previewRect.width / 2 - wrapperRect.left;
+      const targetScreenY = previewRect.top + previewRect.height / 2 - wrapperRect.top;
+      setViewport(
+        { x: targetScreenX - focalCx * zoom, y: targetScreenY - focalCy * zoom, zoom },
+        { duration: MAGNIFY_DURATION },
+      );
+    });
   });
 
   // Surface a rejected `apply_ops` edit (e.g. a name collision) as a toast rather
@@ -566,6 +644,7 @@ import ShareToast from "../ShareToast.svelte";
     editable={diagramEditable}
     profileName={activeDiagram.profile}
     showPreview
+    bind:previewEl
     onUpdateNode={store.updateNode}
     onUpdateEdge={store.updateEdge}
     onDisplayChange={handleDisplayChange}
@@ -626,6 +705,7 @@ import ShareToast from "../ShareToast.svelte";
     <!-- SvelteFlow canvas -->
     <!-- svelte-ignore a11y_no_static_element_interactions -->
     <div
+      bind:this={canvasWrapperEl}
       class="flex-1 relative {canvasClass}"
       data-canvas-wrapper
       ondblclick={handleWrapperDoubleClick}
@@ -660,8 +740,8 @@ import ShareToast from "../ShareToast.svelte";
           onselectionchange={onSelectionChange}
           connectionMode={ConnectionMode.Loose}
           fitView={false}
-          minZoom={0.4}
-          maxZoom={1.6}
+          minZoom={CANVAS_MIN_ZOOM}
+          maxZoom={CANVAS_MAX_ZOOM}
           nodesDraggable={tool === "select"}
           nodesConnectable={true}
           selectNodesOnDrag={false}
@@ -677,7 +757,16 @@ import ShareToast from "../ShareToast.svelte";
           <!-- Background color prop is `patternColor` (confirmed via
                plugins/Background/types.d.ts — BackgroundProps has bgColor +
                patternColor, no `color`). -->
-          <Background variant={BackgroundVariant.Dots} gap={22} size={1.3} patternColor="#e2e6ec" />
+          <!-- White out the pane behind the central-edit-panel's magnifying-glass
+               cutout so the focal node sits on a clean backdrop instead of the
+               normal light-grey working surface. -->
+          <Background
+            variant={BackgroundVariant.Dots}
+            gap={22}
+            size={1.3}
+            patternColor="#e2e6ec"
+            bgColor={centralPanel ? "#ffffff" : undefined}
+          />
           <!-- Controls `position` accepts PanelPosition ("bottom-left" etc.),
                confirmed via @xyflow/system dist/esm/types/general.d.ts. The
                feedback link moved to a right-edge flag, so the zoom controls

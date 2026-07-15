@@ -11,7 +11,6 @@
 <script lang="ts">
   import type { DiagramDisplay, ModelNode, ModelEdge, Diagram } from "@waml/okf";
   import CentralEditPanel from "./CentralEditPanel.svelte";
-  import ElementPreview from "./ElementPreview.svelte";
   import ObjectInspector from "../inspector/ObjectInspector.svelte";
   import RelationshipInspector from "../inspector/RelationshipInspector.svelte";
   import DiagramPropertiesBody from "../canvas/DiagramPropertiesBody.svelte";
@@ -26,6 +25,7 @@
     editable,
     profileName,
     showPreview = false,
+    previewEl = $bindable(null),
     onUpdateNode,
     onUpdateEdge,
     onDisplayChange,
@@ -40,9 +40,13 @@
     candidateStereotypes: string[];
     editable: boolean;
     profileName?: string;
-    /** Render the live cropped preview above the fields. Omit when there is no
-     *  active diagram behind the dialog (Navigator's out-of-diagram context). */
+    /** Cut a transparent hole above the fields so the live canvas behind the
+     *  dialog shows through it. Omit when there is no active diagram behind
+     *  the dialog (Navigator's out-of-diagram context). */
     showPreview?: boolean;
+    /** The cutout's DOM element, bound up to the caller so it can compute the
+     *  viewport transform that frames the focal node/edge inside it. */
+    previewEl?: HTMLDivElement | null;
     onUpdateNode: (key: string, patch: Partial<ModelNode>) => void;
     onUpdateEdge: (id: string, patch: Partial<ModelEdge>) => void;
     onDisplayChange: (patch: Partial<DiagramDisplay>) => void;
@@ -68,12 +72,7 @@
 </script>
 
 {#if state?.kind === "element" && node}
-  <CentralEditPanel title={node.concept.title?.trim() || "Untitled"} fullHeight {onClose}>
-    {#snippet preview()}
-      {#if showPreview}
-        <ElementPreview mode="node" focalKey={node.key} {nodes} {edges} {display} profileName={profileName ?? ""} />
-      {/if}
-    {/snippet}
+  <CentralEditPanel title={node.concept.title?.trim() || "Untitled"} fullHeight {showPreview} bind:previewEl {onClose}>
     <ObjectInspector
       {node}
       onUpdate={(patch) => onUpdateNode(node.key, patch)}
@@ -81,12 +80,7 @@
     />
   </CentralEditPanel>
 {:else if state?.kind === "edge" && edge}
-  <CentralEditPanel title="Relationship" fullHeight {onClose}>
-    {#snippet preview()}
-      {#if showPreview}
-        <ElementPreview mode="edge" focalKey={edge.id} {nodes} {edges} {display} profileName={profileName ?? ""} />
-      {/if}
-    {/snippet}
+  <CentralEditPanel title="Relationship" fullHeight {showPreview} bind:previewEl {onClose}>
     <RelationshipInspector
       {edge}
       fromNode={nodes.find((n) => n.key === edge.from)}
