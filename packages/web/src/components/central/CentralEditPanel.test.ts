@@ -63,3 +63,28 @@ test("Esc while a field is focused blurs first, then a second Esc closes", async
   await fireEvent.keyDown(window, { key: "Escape" });
   expect(onClose).toHaveBeenCalledTimes(1);     // second Esc closes
 });
+
+test("default sizing caps at 85vh 8-unit scrim inset", () => {
+  render(CentralEditPanel, { props: props() });
+  const card = screen.getByRole("dialog");
+  expect(card.className).toContain("max-h-[85vh]");
+  expect(card.className).not.toContain("max-h-[95vh]");
+  expect(screen.getByTestId("central-scrim").className).toContain("p-8");
+});
+
+test("fullHeight raises cap 95vh reduces scrim inset", () => {
+  render(CentralEditPanel, { props: props({ fullHeight: true }) });
+  const card = screen.getByRole("dialog");
+  expect(card.className).toContain("max-h-[95vh]");
+  expect(card.className).not.toContain("max-h-[85vh]");
+  expect(screen.getByTestId("central-scrim").className).toContain("p-4");
+});
+
+test("renders preview snippet above body", () => {
+  const preview = createRawSnippet(() => ({
+    render: () => `<div data-testid="preview-slot">preview</div>`,
+  }));
+  render(CentralEditPanel, { props: props({ preview }) });
+  expect(screen.getByTestId("preview-slot")).toBeTruthy();
+  expect(screen.getByLabelText("field")).toBeTruthy(); // body still renders
+});
