@@ -147,3 +147,34 @@ test("maxAttributes caps attribute rows with a static '+K more' footer, no expan
   });
   expect(uncapped.textContent).toContain("a4");
 });
+
+const mkTags = (display: DiagramDisplay): OkfNodeData =>
+  ({
+    concept: { id: "n", type: "uml.Class", title: "Order", body: "" },
+    key: "n", type: "uml.Class", stereotypes: ["entity", "valueObject"],
+    attributes: [], position: { x: 0, y: 0 }, _display: display, _profile: "uml-domain",
+  }) as OkfNodeData;
+
+test("undefined filter shows every stereotype tag", () => {
+  const { container } = render(ClassifierBox, { props: { data: mkTags(disp({ showStereotype: true, stereotypeFilter: undefined })) } });
+  expect(container.textContent).toContain("«entity»");
+  expect(container.textContent).toContain("«valueObject»");
+});
+
+test("an allowlist shows only listed tags", () => {
+  const { container } = render(ClassifierBox, { props: { data: mkTags(disp({ showStereotype: true, stereotypeFilter: ["entity"] })) } });
+  expect(container.textContent).toContain("«entity»");
+  expect(container.textContent).not.toContain("«valueObject»");
+});
+
+test("empty allowlist shows no tags but keeps the keyword row", () => {
+  const { container } = render(ClassifierBox, { props: { data: mkTags(disp({ showStereotype: true, stereotypeFilter: [] })), keyword: "Class" } });
+  expect(container.textContent).toContain("«Class»");
+  expect(container.textContent).not.toContain("«entity»");
+});
+
+test("showStereotype false renders neither keyword nor tags", () => {
+  const { container } = render(ClassifierBox, { props: { data: mkTags(disp({ showStereotype: false })), keyword: "Class" } });
+  expect(container.textContent).not.toContain("«Class»");
+  expect(container.textContent).not.toContain("«entity»");
+});
