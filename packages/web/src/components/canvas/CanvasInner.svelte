@@ -56,6 +56,7 @@ import ShareToast from "../ShareToast.svelte";
 
   import {
     effectiveDiagrams,
+    defaultDiagramKey,
     ALL_DIAGRAM_KEY,
     loadActiveDiagramKey,
     persistActiveDiagramKey,
@@ -97,7 +98,7 @@ import ShareToast from "../ShareToast.svelte";
   // Computed once at mount (mirrors React's useState initializer, evaluated only
   // on first render): effectiveDiagrams($model) synthesizes the implicit "All"
   // diagram when the model has none yet.
-  let activeDiagramKey = $state<string>(loadActiveDiagramKey() ?? effectiveDiagrams($model)[0].key);
+  let activeDiagramKey = $state<string>(loadActiveDiagramKey() ?? defaultDiagramKey($model));
   // A shared link's name wins on first load (opening someone's named model);
   // otherwise restore the locally-persisted name.
   let modelName = $state(sharedModelName ?? loadModelName());
@@ -557,9 +558,13 @@ import ShareToast from "../ShareToast.svelte";
     positions.forEach((pos, key) => store.updateNode(key, { position: pos }));
   }
 
-  // Replace the whole model with a bundle, then auto-layout it.
+  // Replace the whole model with a bundle, then auto-layout it. A fresh model
+  // may be purely behavioral (no curated diagram); land on its first real view
+  // rather than keeping the previous model's activeDiagramKey. Merge (a
+  // different code path) intentionally keeps the user's current view.
   function loadBundleWithLayout(bundle: Bundle) {
     store.load(bundle);
+    activeDiagramKey = defaultDiagramKey(store.get());
     layoutAll();
   }
 
