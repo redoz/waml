@@ -18,7 +18,7 @@ const props = (over = {}) => ({
 test("renders all five display controls", () => {
   render(DiagramPropertiesBody, { props: props() });
   expect(screen.getByRole("switch", { name: "Show attributes" })).toBeTruthy();
-  expect(screen.getByRole("radiogroup", { name: "Attribute detail" })).toBeTruthy();
+  expect(screen.getByRole("switch", { name: "Show type" })).toBeTruthy();
   expect(screen.getByRole("switch", { name: "Show roles" })).toBeTruthy();
   expect(screen.getByRole("switch", { name: "Show cardinality" })).toBeTruthy();
   expect(screen.getByRole("switch", { name: "Show labels" })).toBeTruthy();
@@ -34,20 +34,20 @@ test("toggling 'Show attributes' emits the inverted flag", async () => {
   expect(onChange).toHaveBeenCalledWith({ showAttributes: false });
 });
 
-test("picking an attribute-detail option emits that value", async () => {
+test("toggling 'Show type' emits the inverted showType flag", async () => {
   const onChange = vi.fn();
   render(DiagramPropertiesBody, {
-    props: props({ display: { ...DEFAULT_DISPLAY, showAttributes: true }, onChange }),
+    props: props({ display: { ...DEFAULT_DISPLAY, showAttributes: true, showType: true }, onChange }),
   });
-  await fireEvent.click(screen.getByRole("radio", { name: "Name + type" }));
-  expect(onChange).toHaveBeenCalledWith({ attributeDetail: "name-type" });
+  await fireEvent.click(screen.getByRole("switch", { name: "Show type" }));
+  expect(onChange).toHaveBeenCalledWith({ showType: false });
 });
 
 test("a non-default display value drives every control's rendered state", () => {
   const display = {
     ...DEFAULT_DISPLAY,
     showAttributes: false,
-    attributeDetail: "name-only" as const,
+    showType: false,
     showRoles: false,
     showCardinality: false,
     showLabels: false,
@@ -69,10 +69,7 @@ test("a non-default display value drives every control's rendered state", () => 
     "false",
   );
 
-  expect(screen.getByRole("radio", { name: "Name only" }).getAttribute("aria-checked")).toBe("true");
-  expect(screen.getByRole("radio", { name: "Name + type" }).getAttribute("aria-checked")).toBe(
-    "false",
-  );
+  expect(screen.getByRole("switch", { name: "Show type" }).getAttribute("aria-checked")).toBe("false");
 });
 
 test("toggling 'Show roles'/'Show cardinality'/'Show labels' each emit their inverted flag", async () => {
@@ -86,18 +83,16 @@ test("toggling 'Show roles'/'Show cardinality'/'Show labels' each emit their inv
   expect(onChange).toHaveBeenCalledWith({ showLabels: false });
 });
 
-test("attribute-detail options are disabled and inert when 'Show attributes' is off", async () => {
+test("'Show type' is disabled and inert when 'Show attributes' is off", async () => {
   const onChange = vi.fn();
   render(DiagramPropertiesBody, {
     props: props({ display: { ...DEFAULT_DISPLAY, showAttributes: false }, onChange }),
   });
 
-  const nameOnly = screen.getByRole("radio", { name: "Name only" }) as HTMLButtonElement;
-  const nameType = screen.getByRole("radio", { name: "Name + type" }) as HTMLButtonElement;
-  expect(nameOnly.disabled).toBe(true);
-  expect(nameType.disabled).toBe(true);
+  const showType = screen.getByRole("switch", { name: "Show type" }) as HTMLButtonElement;
+  expect(showType.disabled).toBe(true);
 
-  await fireEvent.click(nameOnly);
+  await fireEvent.click(showType);
   expect(onChange).not.toHaveBeenCalled();
 });
 
@@ -126,10 +121,10 @@ test("Show visibility toggle emits showAttributeVisibility", async () => {
   expect(onChange).toHaveBeenCalledWith({ showAttributeVisibility: false });
 });
 
-test("Show multiplicity toggle emits showAttributeMultiplicity", async () => {
+test("Attribute cardinality toggle emits showAttributeMultiplicity", async () => {
   const onChange = vi.fn();
   render(DiagramPropertiesBody, { props: props({ display: { ...DEFAULT_DISPLAY, showAttributes: true, showAttributeMultiplicity: true }, onChange }) });
-  await fireEvent.click(screen.getByRole("switch", { name: "Show multiplicity" }));
+  await fireEvent.click(screen.getByRole("switch", { name: "Attribute cardinality" }));
   expect(onChange).toHaveBeenCalledWith({ showAttributeMultiplicity: false });
 });
 

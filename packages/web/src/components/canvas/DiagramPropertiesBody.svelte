@@ -55,12 +55,12 @@
 </script>
 
 <!-- A labelled on/off toggle row inside the properties flyout. -->
-{#snippet toggleRow(label: string, checked: boolean, onToggle: () => void, disabled = false)}
+{#snippet toggleRow(label: string, checked: boolean, onToggle: () => void, disabled = false, ariaLabel = label)}
   <button
     type="button"
     role="switch"
     aria-checked={checked}
-    aria-label={label}
+    aria-label={ariaLabel}
     disabled={disabled}
     onclick={() => { if (!disabled) onToggle(); }}
     class="flex w-full items-center justify-between gap-3 rounded-lg px-2 py-1.5 text-left transition-colors {disabled
@@ -80,31 +80,6 @@
       ></span>
     </span>
   </button>
-{/snippet}
-
-<!-- A two-option segmented control (radio group) inside the properties flyout. -->
-{#snippet segmented(label: string, options: { value: string; label: string }[], value: string, onPick: (v: string) => void, disabled = false)}
-  <div class="px-2 py-1.5 {disabled ? 'opacity-40' : ''}">
-    <div class="mb-1 text-[13px] font-medium text-slate-800">{label}</div>
-    <div role="radiogroup" aria-label={label} class="flex gap-1 rounded-lg bg-[#f1f3f7] p-0.5">
-      {#each options as opt (opt.value)}
-        {@const selected = opt.value === value}
-        <button
-          type="button"
-          role="radio"
-          aria-checked={selected}
-          aria-label={opt.label}
-          disabled={disabled}
-          onclick={() => { if (!disabled) onPick(opt.value); }}
-          class="flex-1 rounded-md px-2 py-1 text-[12px] font-semibold transition-colors {disabled
-            ? 'cursor-not-allowed'
-            : 'cursor-pointer'} {selected ? 'bg-white text-[#1e88e5] shadow-sm' : 'text-slate-500 hover:text-slate-800'}"
-        >
-          {opt.label}
-        </button>
-      {/each}
-    </div>
-  </div>
 {/snippet}
 
 <div class="flex flex-col gap-4 py-1">
@@ -153,27 +128,20 @@
     </div>
   </section>
 
-  <section class="flex flex-col">
+  <section class="flex flex-col border-t border-[#d8dee8] pt-4">
     <h3 class="px-2 {labelCls}">Attributes</h3>
     <div>
       {@render toggleRow("Show attributes", display.showAttributes, () =>
         patch({ showAttributes: !display.showAttributes }), disabledAll,
       )}
-      {@render segmented(
-        "Attribute detail",
-        [
-          { value: "name-only", label: "Name only" },
-          { value: "name-type", label: "Name + type" },
-        ],
-        display.attributeDetail,
-        (v) => patch({ attributeDetail: v as DiagramDisplay["attributeDetail"] }),
-        attrDisabled,
+      {@render toggleRow("Show type", display.showType, () =>
+        patch({ showType: !display.showType }), attrDisabled,
       )}
       {@render toggleRow("Show visibility", display.showAttributeVisibility, () =>
         patch({ showAttributeVisibility: !display.showAttributeVisibility }), attrDisabled,
       )}
-      {@render toggleRow("Show multiplicity", display.showAttributeMultiplicity, () =>
-        patch({ showAttributeMultiplicity: !display.showAttributeMultiplicity }), attrDisabled,
+      {@render toggleRow("Show cardinality", display.showAttributeMultiplicity, () =>
+        patch({ showAttributeMultiplicity: !display.showAttributeMultiplicity }), attrDisabled, "Attribute cardinality",
       )}
       <div class="px-2 py-1.5 {attrDisabled ? 'opacity-40' : ''}">
         <div class="mb-1 text-[13px] font-medium text-slate-800">Max attributes</div>
@@ -209,7 +177,7 @@
     </div>
   </section>
 
-  <section class="flex flex-col">
+  <section class="flex flex-col border-t border-[#d8dee8] pt-4">
     <h3 class="px-2 {labelCls}">Relationships</h3>
     <div>
       {@render toggleRow("Show roles", display.showRoles, () =>
@@ -224,7 +192,7 @@
     </div>
   </section>
 
-  <section class="flex flex-col">
+  <section class="flex flex-col border-t border-[#d8dee8] pt-4">
     <h3 class="px-2 {labelCls}">Stereotypes</h3>
     <div>
       {@render toggleRow("Show stereotype", display.showStereotype, () =>

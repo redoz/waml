@@ -1,7 +1,7 @@
 <script lang="ts">
   import type { Attribute } from "@waml/okf";
 
-  // `showTypes` (from the diagram's attributeDetail) toggles ONLY type name.
+  // `showTypes` (from the diagram's showType) toggles ONLY type name.
   // `showMultiplicity` independently toggles trailing `{mult}` suffix.
   let { a, showVisibility, showTypes = true, showMultiplicity = true }:
     { a: Attribute; showVisibility?: boolean; showTypes?: boolean; showMultiplicity?: boolean } = $props();

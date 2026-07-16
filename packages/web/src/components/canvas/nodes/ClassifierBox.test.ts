@@ -51,15 +51,15 @@ test("showAttributes on renders attribute rows; off collapses to a count", () =>
   expect(hidden.container.textContent).toContain("2 attributes");
 });
 
-test("attributeDetail name-type shows the type column; name-only hides it", () => {
-  const nameType = render(ClassifierBox, { props: { data: mkData(disp({ showAttributes: true, attributeDetail: "name-type" })) } });
-  expect(nameType.container.textContent).toContain("STRING");
-  expect(nameType.container.textContent).toContain("MONEY");
+test("showType true shows the type column; false hides it", () => {
+  const withType = render(ClassifierBox, { props: { data: mkData(disp({ showAttributes: true, showType: true })) } });
+  expect(withType.container.textContent).toContain("STRING");
+  expect(withType.container.textContent).toContain("MONEY");
 
-  const nameOnly = render(ClassifierBox, { props: { data: mkData(disp({ showAttributes: true, attributeDetail: "name-only" })) } });
-  expect(nameOnly.container.textContent).toContain("id");
-  expect(nameOnly.container.textContent).not.toContain("STRING");
-  expect(nameOnly.container.textContent).not.toContain("MONEY");
+  const noType = render(ClassifierBox, { props: { data: mkData(disp({ showAttributes: true, showType: false })) } });
+  expect(noType.container.textContent).toContain("id");
+  expect(noType.container.textContent).not.toContain("STRING");
+  expect(noType.container.textContent).not.toContain("MONEY");
 });
 
 test("showStereotype toggles the «stereotype» row", () => {
@@ -90,14 +90,14 @@ test("uml-domain hides visibility as a floor even when showAttributeVisibility i
   expect(container.querySelector(".relative.flex span.font-mono")?.textContent ?? "").not.toContain("+");
 });
 
-test("showAttributeMultiplicity drives the {mult} suffix independent of attributeDetail", () => {
+test("showAttributeMultiplicity drives the {mult} suffix independent of showType", () => {
   const shown = render(ClassifierBox, {
-    props: { data: mkAttrData(disp({ showAttributes: true, attributeDetail: "name-only", showAttributeMultiplicity: true })) },
+    props: { data: mkAttrData(disp({ showAttributes: true, showType: false, showAttributeMultiplicity: true })) },
   });
   expect(shown.container.textContent).toContain("{0..*}");
 
   const hidden = render(ClassifierBox, {
-    props: { data: mkAttrData(disp({ showAttributes: true, attributeDetail: "name-type", showAttributeMultiplicity: false })) },
+    props: { data: mkAttrData(disp({ showAttributes: true, showType: true, showAttributeMultiplicity: false })) },
   });
   expect(hidden.container.textContent).toContain("STRING");
   expect(hidden.container.textContent).not.toContain("{0..*}");

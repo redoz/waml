@@ -15,7 +15,7 @@
   // Per-diagram render settings (resolved: absent ⇒ defaults).
   let display = $derived(resolveDisplay(data._display));
   let isDetailed = $derived(display.showAttributes);
-  let showTypes = $derived(display.attributeDetail === "name-type");
+  let showTypes = $derived(display.showType);
   let showStereotype = $derived(display.showStereotype);
   let showVisibility = $derived(!profile.hide.includes("visibility") && display.showAttributeVisibility);
   let hasStereotypeStyle = $derived(Object.keys(st).length > 0);
