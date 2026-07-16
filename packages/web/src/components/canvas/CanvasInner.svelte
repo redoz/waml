@@ -803,7 +803,7 @@ import ShareToast from "../ShareToast.svelte";
       mode={navMode}
       bind:width={navWidth}
       bind:collapsed={navCollapsed}
-      title={$model.path || "model"}
+      title={$model.path || "Untitled"}
       onClose={() => (navOpen = false)}
       onToggleMode={() => (navMode = navMode === "centered" ? "docked" : "centered")}
       pinned={navPinned}

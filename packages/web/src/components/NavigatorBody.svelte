@@ -72,7 +72,7 @@
   // While searching, the three-state filtered result (matches / empty-scope /
   // empty-all); null clears the search overlay.
   const search = $derived(query ? filterNav(graph, scopeKey, query, typeFilter) : null);
-  const scopeLabel = $derived(scopeKey.split("/").filter(Boolean).pop() || (graph.path || "model"));
+  const scopeLabel = $derived(scopeKey.split("/").filter(Boolean).pop() || (graph.path || "Untitled"));
 
   // Drag-reorder: track the dragged member; dropping on a same-package row
   // persists the reordered member keys via onReorder.
@@ -92,7 +92,7 @@
   // Breadcrumb: the root crumb (whole model) plus one crumb per scope segment,
   // each carrying its cumulative package key.
   const crumbs = $derived(
-    [{ key: "", label: graph.path || "model" }].concat(
+    [{ key: "", label: graph.path || "Untitled" }].concat(
       scopeKey
         .split("/")
         .filter(Boolean)

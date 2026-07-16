@@ -98,7 +98,7 @@ export async function buildCanvasSvg(rfNodes: BoundsNode[], viewportSelector: st
 }
 
 /** Export the model as an SVG with the WAML watermark embedded bottom-right. */
-export async function exportCanvasSvg(rfNodes: BoundsNode[], filename = "model", viewportSelector: string): Promise<void> {
+export async function exportCanvasSvg(rfNodes: BoundsNode[], filename = "untitled-package", viewportSelector: string): Promise<void> {
   const built = await buildCanvasSvg(rfNodes, viewportSelector);
   if (!built) return;
   const blob = new Blob([built.svg], { type: "image/svg+xml" });
