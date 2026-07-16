@@ -94,7 +94,7 @@ describe("diagram switch clears a stale selection (final-review fix)", () => {
     const switcher = screen.getByRole("button", { name: /switch diagram/i });
     const otherTitle = switcher.textContent?.includes("One") ? "Two" : "One";
     await fireEvent.click(switcher);
-    await fireEvent.click(screen.getByRole("treeitem", { name: otherTitle }));
+    await fireEvent.click(screen.getByRole("option", { name: otherTitle }));
     await tick();
 
     // The stale selection from the previous diagram must be gone — no toolbar,

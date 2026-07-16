@@ -25,12 +25,13 @@ describe("diagram title switcher (replaces the goal button + DiagramTabs pill)",
     expect(screen.queryByRole("button", { name: "Set business goal" })).toBeNull();
   });
 
-  // The switcher trigger now opens the Navigator sheet (search / scope / create /
-  // rename / reorder / delete) wired to the live model store. Its search field is
-  // the tell that the sheet mounted in place of the old inline diagram list.
-  it("opens the Navigator sheet from the switcher", async () => {
+  it("opens the read-only switcher dropdown; Edit escalates into the full navigator", async () => {
     render(Canvas);
     await fireEvent.click(screen.getByRole("button", { name: /switch diagram/i }));
+    // Read-only dropdown first: the navigator's search field is NOT mounted yet.
+    expect(screen.queryByLabelText("Search model")).toBeNull();
+    // Edit opens the full editor.
+    await fireEvent.click(screen.getByRole("button", { name: /edit model/i }));
     expect(screen.getByLabelText("Search model")).toBeTruthy();
   });
 });

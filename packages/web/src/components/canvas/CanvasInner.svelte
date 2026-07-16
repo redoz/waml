@@ -631,8 +631,23 @@ import ShareToast from "../ShareToast.svelte";
     onLibrary={() => (showLibrary = true)}
     diagrams={diagrams}
     activeDiagramKey={activeDiagram.key}
-    navOpen={navOpen}
-    onToggleNav={() => (navOpen = !navOpen)}
+    onSelectDiagram={(key) => {
+      // Same selection-reset as the navigator's own onSelectDiagram: a selection
+      // made in one diagram must never carry into another (esp. a read-only
+      // Flow/Sequence view). navOpen = false here is a harmless no-op.
+      activeDiagramKey = key;
+      selectionSet = EMPTY_SELECTION;
+      inspectorDiagramScope = false;
+      navOpen = false;
+    }}
+    onDockModel={() => {
+      navOpen = true;
+      navMode = "docked";
+    }}
+    onEditModel={() => {
+      navOpen = true;
+      navMode = "centered";
+    }}
   />
 
   <CentralEditPanelHost

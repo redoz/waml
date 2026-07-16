@@ -13,8 +13,8 @@ const switcherProps = (over: Record<string, unknown> = {}) => ({
   diagrams: [diagram("d1", "Overview"), diagram("d2", "Details")],
   activeDiagramKey: "d1",
   onSelectDiagram: vi.fn(),
-  onRenameDiagram: vi.fn(),
-  onCreateDiagram: vi.fn(),
+  onDockModel: vi.fn(),
+  onEditModel: vi.fn(),
   ...over,
 });
 
@@ -34,22 +34,67 @@ test("no longer renders the Business Goal button", () => {
   expect(screen.queryByRole("button", { name: "Set business goal" })).toBeNull();
 });
 
-test("the center switcher toggles the navigator via onToggleNav + aria-expanded", async () => {
-  const onToggleNav = vi.fn();
-  render(TopBar, {
-    props: {
-      diagrams: [diagram("d1", "Overview")],
-      activeDiagramKey: "d1",
-      navOpen: false,
-      onToggleNav,
-    },
-  });
+test("clicking the title opens the read-only switcher dropdown", async () => {
+  render(TopBar, { props: switcherProps() });
   const btn = screen.getByRole("button", { name: /switch diagram/i });
   expect(btn.getAttribute("aria-expanded")).toBe("false");
   await fireEvent.click(btn);
-  expect(onToggleNav).toHaveBeenCalledTimes(1);
-  // The navigator no longer mounts inside the TopBar.
+  expect(btn.getAttribute("aria-expanded")).toBe("true");
+  expect(screen.getByRole("dialog", { name: /switch diagram/i })).toBeTruthy();
   expect(screen.queryByLabelText("Search model")).toBeNull();
+  expect(screen.queryByRole("button", { name: /rename|new diagram|create/i })).toBeNull();
+});
+
+test("the dropdown lists every diagram with the active one checked", async () => {
+  render(TopBar, { props: switcherProps() });
+  await fireEvent.click(screen.getByRole("button", { name: /switch diagram/i }));
+  expect(screen.getByRole("option", { name: /Overview/ }).getAttribute("aria-selected")).toBe("true");
+  expect(screen.getByRole("option", { name: /Details/ }).getAttribute("aria-selected")).toBe("false");
+});
+
+test("clicking a diagram row fires onSelectDiagram and closes the dropdown", async () => {
+  const onSelectDiagram = vi.fn();
+  render(TopBar, { props: switcherProps({ onSelectDiagram }) });
+  await fireEvent.click(screen.getByRole("button", { name: /switch diagram/i }));
+  await fireEvent.click(screen.getByRole("option", { name: /Details/ }));
+  expect(onSelectDiagram).toHaveBeenCalledWith("d2");
+  expect(screen.getByRole("button", { name: /switch diagram/i }).getAttribute("aria-expanded")).toBe("false");
+});
+
+test("the Dock button fires onDockModel and closes", async () => {
+  const onDockModel = vi.fn();
+  render(TopBar, { props: switcherProps({ onDockModel }) });
+  await fireEvent.click(screen.getByRole("button", { name: /switch diagram/i }));
+  await fireEvent.click(screen.getByRole("button", { name: /dock model editor/i }));
+  expect(onDockModel).toHaveBeenCalledTimes(1);
+  expect(screen.queryByRole("dialog", { name: /switch diagram/i })).toBeNull();
+});
+
+test("the Edit button fires onEditModel and closes", async () => {
+  const onEditModel = vi.fn();
+  render(TopBar, { props: switcherProps({ onEditModel }) });
+  await fireEvent.click(screen.getByRole("button", { name: /switch diagram/i }));
+  await fireEvent.click(screen.getByRole("button", { name: /edit model/i }));
+  expect(onEditModel).toHaveBeenCalledTimes(1);
+  expect(screen.queryByRole("dialog", { name: /switch diagram/i })).toBeNull();
+});
+
+test("outside-click closes the dropdown", async () => {
+  render(TopBar, { props: switcherProps() });
+  const btn = screen.getByRole("button", { name: /switch diagram/i });
+  await fireEvent.click(btn);
+  expect(btn.getAttribute("aria-expanded")).toBe("true");
+  await fireEvent.click(document.querySelector(".fixed.inset-0")!);
+  expect(btn.getAttribute("aria-expanded")).toBe("false");
+});
+
+test("Escape closes the dropdown", async () => {
+  render(TopBar, { props: switcherProps() });
+  const btn = screen.getByRole("button", { name: /switch diagram/i });
+  await fireEvent.click(btn);
+  expect(btn.getAttribute("aria-expanded")).toBe("true");
+  await fireEvent.keyDown(window, { key: "Escape" });
+  expect(btn.getAttribute("aria-expanded")).toBe("false");
 });
 
 test("export dropdown opens and routes OKF vs SVG", async () => {
