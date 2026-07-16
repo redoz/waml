@@ -2,6 +2,7 @@
   import type { ModelEdge, ModelNode, RelationshipKind, RelEnd } from "@waml/okf";
   import { RELATIONSHIP_KINDS, ENDED_KINDS } from "@waml/okf";
   import InfoTip from "./InfoTip.svelte";
+  import { inputCls } from "./field-styles";
 
   let { edge, fromNode, toNode, onUpdate }: {
     edge: ModelEdge;
@@ -24,8 +25,6 @@
 
   // `annotates` is a uml.Note-only verb (anchors live on the note node, not on edges) — hide it from the edge verb select.
   const EDGE_KINDS = RELATIONSHIP_KINDS.filter(k => k !== "annotates");
-
-  const inputCls = "w-full text-[13px] px-[10px] py-[8px] border border-[#d8dee8] rounded-lg text-slate-900 focus:outline-none focus:border-[#1e88e5] focus:ring-2 focus:ring-[#e6f1fb]";
 
   const fromTitle = $derived(fromNode?.concept.title ?? "Source");
   const toTitle = $derived(toNode?.concept.title ?? "Target");

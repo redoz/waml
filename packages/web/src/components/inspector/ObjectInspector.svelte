@@ -4,6 +4,7 @@
   import InfoTip from "./InfoTip.svelte";
   import { nodeAssociations } from "./associations";
   import { getProfile } from "@waml/core/profiles";
+  import { inputCls, labelCls } from "./field-styles";
 
   let { node, onUpdate, profileName, nodes = [], edges = [], onSelectAssociation }: {
     node: ModelNode;
@@ -14,9 +15,6 @@
     /** Clicking an association row repoints the inspector at that edge. */
     onSelectAssociation?: (edgeId: string) => void;
   } = $props();
-
-  const inputCls = "w-full text-[13px] px-[10px] py-2 border border-[#d8dee8] rounded-lg text-slate-900 focus:outline-none focus:border-[#1e88e5] focus:ring-2 focus:ring-[#e6f1fb]";
-  const labelCls = "block text-[11px] font-semibold text-slate-500 uppercase tracking-[0.3px] mb-[6px]";
 
   let palette = $derived(getProfile(profileName).palette);
   let isEnum = $derived(node.type === "uml.Enum");

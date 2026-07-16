@@ -2,6 +2,7 @@
 <script lang="ts">
   import type { ModelNode, ModelEdge } from "@waml/okf";
   import { nodeAssociations } from "./associations";
+  import { labelCls } from "./field-styles";
 
   let { node, nodes = [], edges = [], onSelectAssociation }: {
     node: ModelNode;
@@ -11,7 +12,6 @@
     onSelectAssociation?: (edgeId: string) => void;
   } = $props();
 
-  const labelCls = "block text-[11px] font-semibold text-slate-500 uppercase tracking-[0.3px] mb-[6px]";
   const valueCls = "text-[13px] text-slate-900 whitespace-pre-wrap break-words";
   const emptyCls = "text-[13px] text-slate-400 italic";
 

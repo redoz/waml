@@ -2,6 +2,7 @@
 <script lang="ts">
   import type { ModelEdge, ModelNode } from "@waml/okf";
   import { ENDED_KINDS } from "@waml/okf";
+  import { labelCls } from "./field-styles";
 
   let { edge, fromNode, toNode }: {
     edge: ModelEdge;
@@ -13,7 +14,6 @@
   const toTitle = $derived(toNode?.concept.title?.trim() || "Target");
   const hasEnds = $derived(ENDED_KINDS.has(edge.kind));
 
-  const labelCls = "block text-[11px] font-semibold text-slate-500 uppercase tracking-[0.3px] mb-[6px]";
   const valueCls = "text-[13px] text-slate-900";
 </script>
 
