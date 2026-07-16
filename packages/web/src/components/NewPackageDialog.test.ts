@@ -20,8 +20,9 @@ describe("NewPackageDialog", () => {
 
   it("lists the blank, the four diagram kinds and the templates as one flat card list", () => {
     const { getByText } = render(NewPackageDialog, { props: props() });
+    expect(getByText("Start from")).toBeTruthy();
     expect(getByText("Empty package")).toBeTruthy();
-    expect(getByText("Class / Domain")).toBeTruthy();
+    expect(getByText("Domain model")).toBeTruthy();
     expect(getByText("Use-case")).toBeTruthy();
     expect(getByText("Activity")).toBeTruthy();
     expect(getByText("Sequence")).toBeTruthy();
@@ -59,12 +60,21 @@ describe("NewPackageDialog", () => {
     expect(onAdd).toHaveBeenCalledWith(expect.objectContaining({ tier: "template", parentPath: "", bundle: templates[0].bundle }));
   });
 
-  it("Place in is a collapsed dropdown that opens the package tree", async () => {
-    const { getByLabelText, getByText, queryByText } = render(NewPackageDialog, { props: props() });
-    // Collapsed: shows the project name, tree rows hidden.
-    expect(getByLabelText("Place in").textContent).toContain("My Project");
-    expect(queryByText("sales")).toBeNull();
-    await fireEvent.click(getByLabelText("Place in"));
-    expect(getByText("sales")).toBeTruthy();
+  it("Place in is a native select of the project root and packages", () => {
+    const { getByLabelText } = render(NewPackageDialog, { props: props() });
+    const select = getByLabelText("Place in") as HTMLSelectElement;
+    const opts = [...select.options].map((o) => o.textContent?.trim());
+    expect(opts).toContain("My Project");
+    expect(opts).toContain("sales");
+    expect(select.value).toBe(""); // defaults to root
+  });
+
+  it("choosing a package in Place in threads it into the payload", async () => {
+    const onAdd = vi.fn();
+    const { getByLabelText, getByRole } = render(NewPackageDialog, { props: props({ onAdd }) });
+    await fireEvent.change(getByLabelText("Place in"), { target: { value: "sales" } });
+    await fireEvent.input(getByLabelText("Package name"), { target: { value: "Fresh" } });
+    await fireEvent.click(getByRole("button", { name: "Add" }));
+    expect(onAdd).toHaveBeenCalledWith({ tier: "empty", parentPath: "sales", name: "Fresh" });
   });
 });

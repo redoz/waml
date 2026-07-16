@@ -9,7 +9,6 @@
 <script lang="ts">
   import type { Template } from "@waml/core/templates";
   import { slugify } from "@waml/okf";
-  import PackageTreePicker from "./PackageTreePicker.svelte";
 
   let { templates, packages, projectName, onAdd, onClose }: {
     templates: Template[];
@@ -28,13 +27,13 @@
   type Item = { id: string; name: string; description: string; make: Make };
 
   const KIND_LABELS: Record<DiagramKind, string> = {
-    class: "Class / Domain",
+    class: "Domain model",
     usecase: "Use-case",
     activity: "Activity",
     sequence: "Sequence",
   };
   const KIND_DESC: Record<DiagramKind, string> = {
-    class: "Blank class / domain diagram",
+    class: "Blank domain model",
     usecase: "Blank use-case diagram",
     activity: "Blank activity diagram",
     sequence: "Blank sequence diagram",
@@ -55,7 +54,6 @@
 
   let selectedId = $state("empty");
   let parentPath = $state("");
-  let placeOpen = $state(false);
   let name = $state("New package");
   // Tracks whether the user has hand-edited the name; if not, the name follows
   // the selected starter's default.
@@ -88,7 +86,17 @@
   const collision = $derived(name.trim().length > 0 && packages.some((p) => p.key === targetPath));
   const canAdd = $derived(name.trim().length > 0 && !collision);
 
-  const placeLabel = $derived(parentPath === "" ? projectName : parentPath.slice(parentPath.lastIndexOf("/") + 1));
+  // Placement targets as flat <select> options: project root plus every package,
+  // sorted by full path (keeps children under parents) and indented by depth.
+  const placeOptions = $derived(
+    [...packages]
+      .map((p) => p.key)
+      .sort()
+      .map((key) => ({
+        key,
+        label: " ".repeat((key.split("/").length - 1) * 2) + key.slice(key.lastIndexOf("/") + 1),
+      })),
+  );
 
   function selectItem(id: string) {
     selectedId = id;
@@ -133,30 +141,25 @@
         <p class="text-[12px] text-[#d93025] -mt-1">name already used here</p>
       {/if}
 
-      <div class="flex flex-col gap-1 text-[12px] font-medium text-slate-500">
+      <label class="flex flex-col gap-1 text-[12px] font-medium text-slate-500">
         Place in
-        <button
-          type="button"
+        <select
           aria-label="Place in"
-          onclick={() => (placeOpen = !placeOpen)}
-          class="flex items-center justify-between text-[13px] px-2 py-[7px] border border-[#d8dee8] rounded-md text-slate-900 cursor-pointer hover:bg-[#f1f3f7]"
+          bind:value={parentPath}
+          class="text-[13px] px-2 py-[7px] border border-[#d8dee8] rounded-md text-slate-900 bg-white cursor-pointer focus:outline-none focus:border-[#1e88e5] focus:ring-2 focus:ring-[#e6f1fb]"
         >
-          <span>{placeLabel}</span>
-          <span class="text-slate-400 text-[10px]">{placeOpen ? "▲" : "▼"}</span>
-        </button>
-        {#if placeOpen}
-          <PackageTreePicker
-            {packages}
-            {projectName}
-            selected={parentPath}
-            onSelect={(p) => { parentPath = p; placeOpen = false; }}
-          />
-        {/if}
-      </div>
+          <option value="">{projectName}</option>
+          {#each placeOptions as o (o.key)}
+            <option value={o.key}>{o.label}</option>
+          {/each}
+        </select>
+      </label>
     </div>
 
     <!-- Starter list -->
-    <div class="flex flex-col gap-1.5 border-t border-slate-100 pt-3 max-h-64 overflow-auto">
+    <div class="flex flex-col gap-1.5 border-t border-slate-100 pt-3">
+      <span class="text-[12px] font-medium text-slate-500">Start from</span>
+      <div class="flex flex-col gap-1.5 max-h-64 overflow-auto">
       {#each items as it (it.id)}
         <button
           type="button"
@@ -167,6 +170,7 @@
           <div class="text-[12px] text-slate-500">{it.description}</div>
         </button>
       {/each}
+      </div>
     </div>
 
     <div class="flex gap-2 justify-end">
