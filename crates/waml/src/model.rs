@@ -578,7 +578,7 @@ pub struct SequenceDoc {
     pub messages: Vec<SeqItem>,
 }
 
-/// A classifier's `type`. Graceful degradation is a type-level guarantee: any
+/// An element's `type`. Graceful degradation is a type-level guarantee: any
 /// unrecognized token becomes `Unknown` and renders as a generic labelled box.
 ///
 /// Serializes as the flat TS `type` string (`"uml.Class"` / `"Diagram"` / opaque);
