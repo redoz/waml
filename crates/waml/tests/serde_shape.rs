@@ -2,7 +2,7 @@
 //! Pins the JSON shape of `Model` to the TS field names in
 //! `packages/okf/src/types.ts`. If a rename drifts, this fails.
 use waml::diagnostic::{DiagCode, Diagnostic, Severity};
-use waml::model::{AssocName, ClassifierType, Model, Node, UmlMetaclass, Visibility};
+use waml::model::{AssocName, BehaviorKind, ClassifierType, Model, Node, UmlMetaclass, Visibility};
 use waml::multiplicity::Multiplicity;
 use waml::parse::build_model;
 
@@ -176,4 +176,27 @@ fn diagnostic_serializes_with_kebab_code_and_lowercase_severity() {
         serde_json::to_value(Severity::Warning).unwrap(),
         serde_json::json!("warning")
     );
+}
+
+#[test]
+fn classifier_type_wire_strings_are_stable() {
+    assert_eq!(
+        serde_json::to_string(&ClassifierType::Uml(UmlMetaclass::Class)).unwrap(),
+        "\"uml.Class\""
+    );
+    assert_eq!(
+        serde_json::to_string(&ClassifierType::Behavior(BehaviorKind::Activity)).unwrap(),
+        "\"uml.Activity\""
+    );
+    assert_eq!(
+        serde_json::to_string(&ClassifierType::Diagram).unwrap(),
+        "\"Diagram\""
+    );
+    assert_eq!(
+        serde_json::to_string(&ClassifierType::Unknown("bpmn.Task".to_string())).unwrap(),
+        "\"bpmn.Task\""
+    );
+    // Deserialize round-trips through `From<String>`.
+    let ct: ClassifierType = serde_json::from_str("\"uml.Class\"").unwrap();
+    assert_eq!(ct, ClassifierType::Uml(UmlMetaclass::Class));
 }
