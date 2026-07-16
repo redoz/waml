@@ -188,6 +188,13 @@ pub enum OpDto {
         v: u32,
         path: String,
     },
+    #[serde(rename = "pkg.retitle")]
+    PkgRetitle {
+        #[serde(default = "one")]
+        v: u32,
+        path: String,
+        title: String,
+    },
     #[serde(rename = "diagram.set")]
     DiagramSet {
         #[serde(default = "one")]
@@ -413,6 +420,10 @@ impl OpDto {
                 check_v(*v, "pkg.reorder")?;
                 Ok(Op::PkgReorder { path: path.clone(), order: order.clone() })
             }
+            OpDto::PkgRetitle { v, path, title } => {
+                check_v(*v, "pkg.retitle")?;
+                Ok(Op::PkgRetitle { path: path.clone(), title: title.clone() })
+            }
             OpDto::PkgSort { v, path } => {
                 check_v(*v, "pkg.sort")?;
                 Ok(Op::PkgSort { path: path.clone() })
@@ -507,6 +518,7 @@ impl OpDto {
             Op::PkgDelete { path, cascade } => OpDto::PkgDelete { v: 1, path: path.clone(), cascade: *cascade },
             Op::PkgReorder { path, order } => OpDto::PkgReorder { v: 1, path: path.clone(), order: order.clone() },
             Op::PkgSort { path } => OpDto::PkgSort { v: 1, path: path.clone() },
+            Op::PkgRetitle { path, title } => OpDto::PkgRetitle { v: 1, path: path.clone(), title: title.clone() },
             Op::DiagramSet { key, title, description, display } => OpDto::DiagramSet {
                 v: 1,
                 key: key.clone(),
@@ -654,6 +666,7 @@ mod tests {
             Op::PkgDelete { path: "sales".into(), cascade: false },
             Op::PkgReorder { path: "sales".into(), order: vec!["a".into()] },
             Op::PkgSort { path: "sales".into() },
+            Op::PkgRetitle { path: "sales".into(), title: "Sales Domain".into() },
             Op::DiagramSet {
                 key: "dia".into(),
                 title: Some("D".into()),
