@@ -1,23 +1,20 @@
 <script lang="ts">
-  // Floating toolbar anchored above the selection's bounding box. Presentational:
-  // the parent computes the screen anchor (x,y — top-center of the box) and the
-  // selected node/edge counts, and supplies the action callbacks.
+  // Docked selection action bar: a floating pill fixed to the bottom-center of
+  // the viewport (Figma-style). Presentational — the parent decides when to
+  // mount it (selection non-empty + canvas hovered) and supplies the counts and
+  // action callbacks. Fixed position means it never chases the selection,
+  // never clips off the top edge, and never covers the elements it acts on.
   import { Trash2, LayoutDashboard } from "lucide-svelte";
+  import { fly } from "svelte/transition";
   import KeyHint from "../KeyHint.svelte";
   import { keyLabel } from "../../lib/shortcuts";
 
   let {
-    x,
-    y,
     nodeCount,
     edgeCount,
     onNewDiagram,
     onDelete,
   }: {
-    /** Screen x of the selection box's top-center (client coords, position:fixed). */
-    x: number;
-    /** Screen y of the selection box's top edge (client coords). */
-    y: number;
     nodeCount: number;
     edgeCount: number;
     onNewDiagram: (name: string) => void;
@@ -59,13 +56,14 @@
   }
 </script>
 
-<!-- Positioned above the selection (translate(-50%,-100%)) so it never covers the
-     elements it acts on. Fixed → the parent's client coords map straight through.
-     `nopan`/`nodrag` keep clicks from reaching the canvas underneath. -->
+<!-- Docked bottom-center. Slides up on appear so the link to the fresh
+     selection reads. `nopan`/`nodrag` keep clicks from reaching the canvas
+     underneath. Fixed → positions against the viewport, not the selection. -->
 <div
   data-testid="selection-toolbar"
-  class="nopan nodrag fixed z-30 -translate-x-1/2 -translate-y-full"
-  style="left:{x}px; top:{y}px; margin-top:-10px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Inter, system-ui, sans-serif;"
+  class="nopan nodrag fixed bottom-6 left-1/2 z-30 -translate-x-1/2"
+  style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Inter, system-ui, sans-serif;"
+  transition:fly={{ y: 12, duration: 150 }}
 >
   <div
     class="flex items-center gap-1 rounded-xl border border-[#d8dee8] bg-white p-[6px] shadow-[0_8px_24px_rgba(15,23,42,0.14)]"

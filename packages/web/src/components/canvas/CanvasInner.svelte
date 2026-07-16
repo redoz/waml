@@ -30,7 +30,6 @@
     isSelectionEmpty,
     focusedSelection,
     selectionFromFlow,
-    anchorNodeIds,
     deleteSelection,
   } from "./selection";
   import Dock, { type Tool } from "./Dock.svelte";
@@ -83,10 +82,6 @@ import ShareToast from "../ShareToast.svelte";
   // mirror it here so it drives the toolbar, delete, and — via `focused` — the
   // single-element Inspector.
   let selectionSet = $state<SelectionSet>(EMPTY_SELECTION);
-  // Bound to SvelteFlow's viewport so the toolbar re-anchors on pan/zoom.
-  let viewport = $state<Viewport>();
-  // Screen anchor for the floating SelectionToolbar (null ⇒ hidden).
-  let toolbarPos = $state<{ x: number; y: number } | null>(null);
   // Whether the pointer is currently over the canvas wrapper — the
   // SelectionToolbar should only show while the canvas is hovered, not just
   // because a selection exists (e.g. after switching away from the canvas).
@@ -150,7 +145,7 @@ import ShareToast from "../ShareToast.svelte";
   // useSvelteFlow() (confirmed via hooks/useSvelteFlow.svelte.d.ts) requires flow
   // context — available because Canvas.svelte wraps this component in
   // <SvelteFlowProvider>.
-  const { screenToFlowPosition, fitView, flowToScreenPosition, getNodesBounds, getViewport, setViewport } =
+  const { screenToFlowPosition, fitView, getNodesBounds, getViewport, setViewport } =
     useSvelteFlow();
 
   // ── Derived ──────────────────────────────────────────────────────────────────
@@ -269,49 +264,19 @@ import ShareToast from "../ShareToast.svelte";
     persistActiveDiagramKey(activeDiagram.key);
   });
 
-  // 4) Toolbar anchor: screen position of the top-center of the selection's
-  // bounding box. Depends on the selection, the live node positions (rfNodes) and
-  // the viewport, so it re-anchors on drag/pan/zoom. Client coords → the toolbar
-  // is position:fixed. Falls back to a top-center default if bounds can't be
-  // measured yet (e.g. brand-new node before layout).
-  $effect(() => {
-    const set = selectionSet;
-    void viewport;
-    void rfNodes;
-    if (isSelectionEmpty(set)) {
-      toolbarPos = null;
-      return;
-    }
-    const wanted = anchorNodeIds(set, $model.edges);
-    const present = wanted.filter((id) => rfNodes.some((n) => n.id === id));
-    try {
-      const bounds = getNodesBounds(present.length > 0 ? present : wanted);
-      if (bounds && Number.isFinite(bounds.x) && Number.isFinite(bounds.width) && bounds.width >= 0) {
-        const p = flowToScreenPosition({ x: bounds.x + bounds.width / 2, y: bounds.y });
-        if (Number.isFinite(p.x) && Number.isFinite(p.y)) {
-          toolbarPos = { x: p.x, y: p.y };
-          return;
-        }
-      }
-    } catch {
-      // fall through to the default below
-    }
-    toolbarPos = { x: window.innerWidth / 2, y: 120 };
-  });
-
-  // 5) Persist the model name on change.
+  // 4) Persist the model name on change.
   $effect(() => {
     persistModelName(modelName);
   });
 
-  // 6) Mirror the bundle to localStorage on every change so a refresh/crash
+  // 5) Mirror the bundle to localStorage on every change so a refresh/crash
   // doesn't lose work. `$model` is the reactive trigger; the bundle is the truth.
   $effect(() => {
     void $model;
     persistBundle(store.getBundle());
   });
 
-  // 7) "Magnifying glass": while the central panel is open for an element or
+  // 6) "Magnifying glass": while the central panel is open for an element or
   // edge, pan/zoom the real canvas so the focal node(s) sit behind the panel's
   // transparent preview cutout, instead of rendering a separate cropped
   // preview. Computed once per open (not on every rfNodes change, e.g. a
@@ -755,7 +720,6 @@ import ShareToast from "../ShareToast.svelte";
           bind:edges={rfEdges}
           {nodeTypes}
           {edgeTypes}
-          bind:viewport={viewport}
           onnodedragstop={onNodeDragStop}
           onconnect={onConnect}
           onreconnect={onReconnect}
@@ -812,15 +776,13 @@ import ShareToast from "../ShareToast.svelte";
         </div>
       {/if}
 
-      <!-- Floating toolbar anchored above the selection's bounding box. Shown
+      <!-- Docked selection action bar (bottom-center). Shown
            only while ≥1 element is selected AND the pointer is currently
            hovering the canvas (selection alone isn't enough — it would
            otherwise linger after the pointer moves elsewhere, e.g. onto the
            Navigator or Inspector). -->
-      {#if !isSelectionEmpty(selectionSet) && toolbarPos && canvasHovered && !activeFlow && !activeSequence}
+      {#if !isSelectionEmpty(selectionSet) && canvasHovered && !activeFlow && !activeSequence}
         <SelectionToolbar
-          x={toolbarPos.x}
-          y={toolbarPos.y}
           nodeCount={selectionSet.nodes.length}
           edgeCount={selectionSet.edges.length}
           onNewDiagram={handleNewDiagramFromSelection}
