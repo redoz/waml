@@ -63,7 +63,7 @@
   // Whether any element is focused — drives body-vs-hint + collapse/icon affordances.
   const hasSelection = $derived(focusedKind !== undefined);
 
-  const translucent = $derived(pinned && !engaged);
+  const translucent = $derived(!pinned && !engaged);
 
   function engage() {
     if (hideTimer) {
@@ -173,15 +173,15 @@
     {/if}
     <button
       onclick={onTogglePin}
-      aria-label={pinned ? "Unpin inspector" : "Pin inspector"}
+      aria-label={pinned ? "Let it dim when idle" : "Keep solid"}
       aria-pressed={pinned}
-      title={pinned ? "Unpin inspector" : "Pin inspector"}
+      title={pinned ? "Let it dim when idle" : "Keep solid"}
       class={`w-[30px] h-[30px] flex items-center justify-center rounded-md transition-colors ${pinned ? "text-[#1e88e5] bg-[#e6f1fb]" : "text-slate-500 hover:bg-[#f1f3f7]"}`}
     >
       {#if pinned}
-        <PinOff size={16} />
-      {:else}
         <Pin size={16} />
+      {:else}
+        <PinOff size={16} />
       {/if}
     </button>
   </div>

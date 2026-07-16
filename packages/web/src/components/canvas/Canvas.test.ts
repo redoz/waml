@@ -65,7 +65,7 @@ describe("pinnable Inspector (always present, never closes)", () => {
     render(Canvas);
     const panel = screen.getByRole("complementary", { name: "Inspector" });
     expect(panel.classList.contains("opacity-40")).toBe(false);
-    await fireEvent.click(within(panel).getByRole("button", { name: /pin inspector/i }));
+    await fireEvent.click(within(panel).getByRole("button", { name: /let it dim when idle/i }));
     await tick();
     expect(panel.classList.contains("opacity-40")).toBe(true);
     await fireEvent.pointerEnter(panel);

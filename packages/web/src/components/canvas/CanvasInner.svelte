@@ -115,9 +115,10 @@ import ShareToast from "../ShareToast.svelte";
   let showShare = $state(false);
 
   // Inspector pin state. The panel is always mounted (never closes); an empty
-  // selection rests as a compact bar + hint. When pinned it dims (translucent)
-  // while idle, fading back opaque on hover/focus.
-  let inspectorPinned = $state(false);
+  // selection rests as a compact bar + hint. Pinned = forced solid; unpinned
+  // dims (translucent) while idle, fading back opaque on hover/focus. Defaults
+  // pinned so the out-of-the-box inspector stays solid.
+  let inspectorPinned = $state(true);
   // Bound to the InspectorPanel's resizable width so the edge-flags can slide
   // left, clear of the open panel, instead of sitting on top of it.
   let inspectorWidth = $state(380);
