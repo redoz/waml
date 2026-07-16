@@ -632,6 +632,33 @@ impl ClassifierType {
             ClassifierType::Unknown(s) => s.clone(),
         }
     }
+
+    /// True only for pool members that are genuine UML **Classifiers** (design
+    /// spec §3.1): `Class`, `Interface`, `Enum`, `DataType`, `Actor`, `UseCase`,
+    /// `Association`, and the behavior classifiers (`Behavior ⊂ Class`).
+    /// `Package`, `Note`/`Comment`, `Diagram`, and unrecognized tokens are not.
+    ///
+    /// The `UmlMetaclass` arm is written out explicitly (no `_ =>` catch-all) so
+    /// adding a metaclass forces a classifier decision here at compile time.
+    pub fn is_classifier(&self) -> bool {
+        match self {
+            ClassifierType::Uml(mc) => match mc {
+                UmlMetaclass::Class
+                | UmlMetaclass::Interface
+                | UmlMetaclass::Enum
+                | UmlMetaclass::DataType
+                | UmlMetaclass::Actor
+                | UmlMetaclass::UseCase
+                | UmlMetaclass::Association => true,
+                UmlMetaclass::Package | UmlMetaclass::Note => false,
+            },
+            // Behavior ⊂ Class: Activity / Interaction (Sequence) / StateMachine
+            // are all Classifiers.
+            ClassifierType::Behavior(_) => true,
+            ClassifierType::Diagram => false,
+            ClassifierType::Unknown(_) => false,
+        }
+    }
 }
 
 /// A `uml.Note` anchor. Three forms, per the spec.
@@ -908,6 +935,27 @@ mod tests {
             ClassifierType::Unknown("x.Y".to_string()).as_str(),
             "x.Y"
         );
+    }
+
+    #[test]
+    fn is_classifier_matches_spec_table() {
+        // Genuine UML classifiers (design spec §3.1).
+        assert!(ClassifierType::Uml(UmlMetaclass::Class).is_classifier());
+        assert!(ClassifierType::Uml(UmlMetaclass::Interface).is_classifier());
+        assert!(ClassifierType::Uml(UmlMetaclass::Enum).is_classifier());
+        assert!(ClassifierType::Uml(UmlMetaclass::DataType).is_classifier());
+        assert!(ClassifierType::Uml(UmlMetaclass::Actor).is_classifier());
+        assert!(ClassifierType::Uml(UmlMetaclass::UseCase).is_classifier());
+        assert!(ClassifierType::Uml(UmlMetaclass::Association).is_classifier());
+        // Behavior ⊂ Class: all behavior classifiers qualify.
+        assert!(ClassifierType::Behavior(BehaviorKind::Activity).is_classifier());
+        assert!(ClassifierType::Behavior(BehaviorKind::StateMachine).is_classifier());
+        assert!(ClassifierType::Behavior(BehaviorKind::Sequence).is_classifier());
+        // Not classifiers.
+        assert!(!ClassifierType::Uml(UmlMetaclass::Package).is_classifier());
+        assert!(!ClassifierType::Uml(UmlMetaclass::Note).is_classifier());
+        assert!(!ClassifierType::Diagram.is_classifier());
+        assert!(!ClassifierType::Unknown("bpmn.Task".to_string()).is_classifier());
     }
 
     #[test]
