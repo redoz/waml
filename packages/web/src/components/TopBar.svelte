@@ -1,6 +1,6 @@
 <script lang="ts">
   // Mirrors packages/web/src/components/TopBar.tsx.
-  import { Download, Upload, ChevronDown, FileText, Image as ImageIcon, Share2 } from "lucide-svelte";
+  import { Download, Upload, ChevronDown, FileText, Image as ImageIcon, Share2, PanelLeft, Pencil, Check } from "lucide-svelte";
   import { LibraryIcon } from "../lib/icons";
   import type { Diagram } from "@waml/okf";
 
@@ -20,10 +20,11 @@
     onLibrary,
     diagrams = [],
     activeDiagramKey = "",
-    // The center switcher is now a pure open/close trigger for the model
-    // navigator; CanvasInner owns the panel state and its callbacks.
-    navOpen = false,
-    onToggleNav,
+    // The center title is now a read-only diagram switcher; CanvasInner owns the
+    // heavy navigator panel and its escalation callbacks.
+    onSelectDiagram,
+    onDockModel,
+    onEditModel,
   }: {
     onImport?: () => void;
     onExport?: () => void;
@@ -36,14 +37,18 @@
     // that toggles the navigator panel.
     diagrams?: Diagram[];
     activeDiagramKey?: string;
-    navOpen?: boolean;
-    onToggleNav?: () => void;
+    onSelectDiagram?: (key: string) => void;
+    onDockModel?: () => void;
+    onEditModel?: () => void;
   } = $props();
 
   // Export dropdown (OKF markdown / SVG).
   let exportMenuOpen = $state(false);
   // Show the Library hint on first ever visit; stays lit until hovered.
   let showLibraryHint = $state(false);
+  // Read-only diagram switcher popover — same anchoring pattern as the Export
+  // menu below (full-screen click-catcher + absolutely positioned card).
+  let switcherOpen = $state(false);
 
   // ── Diagram title switcher ─────────────────────────────────────────────────
   // The trigger is now a pure open/close toggle for the model navigator, which
@@ -51,6 +56,15 @@
   const activeTitle = $derived(
     diagrams.find((d) => d.key === activeDiagramKey)?.title ?? diagrams[0]?.title ?? "Untitled diagram",
   );
+
+  $effect(() => {
+    if (!switcherOpen) return;
+    function onKey(e: KeyboardEvent) {
+      if (e.key === "Escape") switcherOpen = false;
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  });
 
   $effect(() => {
     try {
@@ -114,16 +128,69 @@
        over from the old Business Goal button (Target icon dropped). -->
   <div class="relative">
     <button
-      onclick={() => onToggleNav?.()}
+      onclick={() => (switcherOpen = !switcherOpen)}
       aria-label={`Diagram: ${activeTitle} — switch diagram`}
       aria-haspopup="dialog"
-      aria-expanded={navOpen}
-      title="Open the model navigator"
+      aria-expanded={switcherOpen}
+      title="Switch diagram"
       class="flex items-center gap-[6px] rounded-lg px-[10px] py-[6px] text-[13px] font-[600] cursor-pointer transition-colors text-[#1e88e5] bg-[#e6f1fb] hover:bg-[#d8e8f9]"
     >
       <span class="max-w-[240px] truncate">{activeTitle}</span>
       <ChevronDown size={14} class="text-[#1e88e5]/70" />
     </button>
+    {#if switcherOpen}
+      <!-- svelte-ignore a11y_click_events_have_key_events -->
+      <!-- svelte-ignore a11y_no_static_element_interactions -->
+      <div class="fixed inset-0 z-40" onclick={() => (switcherOpen = false)}></div>
+      <div
+        role="dialog"
+        aria-label="Switch diagram"
+        class="absolute top-[calc(100%+6px)] left-1/2 -translate-x-1/2 z-50 w-[300px] rounded-lg border border-[#d8dee8] bg-white shadow-[0_8px_24px_rgba(15,23,42,0.18)]"
+      >
+        <div class="flex items-center gap-1 px-2 py-1.5 border-b border-[#eef1f5]">
+          <span class="flex-1 text-[12px] font-[600] text-slate-500 px-1">Diagrams</span>
+          <button
+            onclick={() => {
+              switcherOpen = false;
+              onDockModel?.();
+            }}
+            aria-label="Dock model editor"
+            title="Dock the model editor to the left"
+            class="w-[28px] h-[28px] flex items-center justify-center rounded-md text-slate-500 hover:bg-[#f1f3f7]"
+          >
+            <PanelLeft size={15} />
+          </button>
+          <button
+            onclick={() => {
+              switcherOpen = false;
+              onEditModel?.();
+            }}
+            aria-label="Edit model"
+            title="Open the full model editor"
+            class="w-[28px] h-[28px] flex items-center justify-center rounded-md text-slate-500 hover:bg-[#f1f3f7]"
+          >
+            <Pencil size={15} />
+          </button>
+        </div>
+        <div role="listbox" aria-label="Diagrams" class="py-1 max-h-[320px] overflow-y-auto">
+          {#each diagrams as d (d.key)}
+            <button
+              role="option"
+              aria-selected={d.key === activeDiagramKey}
+              onclick={() => {
+                switcherOpen = false;
+                onSelectDiagram?.(d.key);
+              }}
+              class="w-full text-left text-[13px] text-slate-900 px-3 py-2 cursor-pointer flex items-center gap-[8px] hover:bg-[#f1f3f7]"
+            >
+              <FileText size={15} class="text-slate-400 flex-none" />
+              <span class="flex-1 truncate">{d.title}</span>
+              {#if d.key === activeDiagramKey}<Check size={15} class="text-[#1e88e5] flex-none" />{/if}
+            </button>
+          {/each}
+        </div>
+      </div>
+    {/if}
   </div>
 
   <div class="flex-1"></div>
