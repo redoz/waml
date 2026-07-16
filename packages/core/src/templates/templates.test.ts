@@ -12,8 +12,8 @@ const graphOf = (bundle: [string, string][]) =>
   toModelGraph(build_model(bundle) as unknown as RustModel, emptyOverlay());
 
 describe("built-in templates", () => {
-  it("ships exactly one template — Orders Domain", () => {
-    expect(TEMPLATES).toHaveLength(1);
+  it("ships four templates, Orders Domain first with its stable deep-link id", () => {
+    expect(TEMPLATES).toHaveLength(4);
     expect(TEMPLATES[0].id).toBe("uml_orders_domain");
   });
 
