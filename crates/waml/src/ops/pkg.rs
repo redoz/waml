@@ -165,6 +165,41 @@ pub(crate) fn op_pkg_retitle(work: &mut Bundle, path: &str, title: &str) -> Resu
     write_package_index(work, path, MemberOrder::Keep, Some(title))
 }
 
+/// Insert a package: re-root every doc in `docs` under `<parent_path>/<name>/`
+/// (or `<name>/` at root) and append. The incoming top-level folder segment is
+/// stripped so a template's baked folder is replaced by the target prefix;
+/// `./`-relative links stay valid untouched. Identity is the full path, so
+/// distinct same-basename docs across packages coexist. Errors if the target
+/// package path already exists or `name` is empty.
+pub(crate) fn op_pkg_insert(
+    work: &mut Bundle,
+    parent_path: &str,
+    name: &str,
+    docs: &[(String, String)],
+) -> Result<(), OpError> {
+    if name.is_empty() {
+        return Err(OpError::at("pkg.insert", "package name is required"));
+    }
+    let prefix = if parent_path.is_empty() {
+        format!("{name}/")
+    } else {
+        format!("{parent_path}/{name}/")
+    };
+    if work.iter().any(|(p, _)| p.replace('\\', "/").starts_with(&prefix)) {
+        return Err(OpError::at("pkg.insert", format!("package '{}' already exists", prefix.trim_end_matches('/'))));
+    }
+    for (path, text) in docs {
+        let norm = path.replace('\\', "/");
+        // strip the incoming top-level folder segment (if any)
+        let rest = match norm.split_once('/') {
+            Some((_, r)) => r,
+            None => norm.as_str(),
+        };
+        work.push((format!("{prefix}{rest}"), text.clone()));
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use crate::ops::{apply, Op};
@@ -274,5 +309,67 @@ mod tests {
         let err = apply(&b, &[Op::PkgRetitle { path: "".into(), title: "   ".into() }]).unwrap_err();
         assert_eq!(err.op, "pkg.retitle");
         assert!(err.reason.contains("empty"), "reason: {}", err.reason);
+    }
+
+    #[test]
+    fn insert_reroots_docs_under_parent_and_name() {
+        let b: crate::ops::Bundle = vec![];
+        let docs = vec![
+            ("orders-domain-uml/order.md".to_string(), "---\ntype: uml.Class\ntitle: Order\n---\n# Order\n".to_string()),
+            ("orders-domain-uml/customer.md".to_string(), "---\ntype: uml.Class\ntitle: Customer\n---\n# Customer\n".to_string()),
+        ];
+        let out = apply(&b, &[Op::PkgInsert { parent_path: "sales".into(), name: "orders".into(), docs }]).unwrap();
+        assert!(out.iter().any(|(p, _)| p == "sales/orders/order.md"), "{out:?}");
+        assert!(out.iter().any(|(p, _)| p == "sales/orders/customer.md"), "{out:?}");
+        assert!(out.iter().all(|(p, _)| !p.starts_with("orders-domain-uml/")), "top folder stripped: {out:?}");
+    }
+
+    #[test]
+    fn insert_at_root_uses_name_as_top_segment() {
+        let b: crate::ops::Bundle = vec![];
+        let docs = vec![("tmpl/order.md".to_string(), "---\ntype: uml.Class\ntitle: Order\n---\n# Order\n".to_string())];
+        let out = apply(&b, &[Op::PkgInsert { parent_path: "".into(), name: "orders".into(), docs }]).unwrap();
+        assert!(out.iter().any(|(p, _)| p == "orders/order.md"), "{out:?}");
+    }
+
+    #[test]
+    fn insert_preserves_same_directory_relative_links() {
+        let b: crate::ops::Bundle = vec![];
+        let docs = vec![
+            ("t/order.md".to_string(), "---\ntype: uml.Class\ntitle: Order\n---\n# Order\n\n## Relationships\n- depends [Customer](./customer.md)\n".to_string()),
+            ("t/customer.md".to_string(), "---\ntype: uml.Class\ntitle: Customer\n---\n# Customer\n".to_string()),
+        ];
+        let out = apply(&b, &[Op::PkgInsert { parent_path: "".into(), name: "orders".into(), docs }]).unwrap();
+        let order = &out.iter().find(|(p, _)| p == "orders/order.md").unwrap().1;
+        assert!(order.contains("(./customer.md)"), "relative link untouched: {order}");
+    }
+
+    #[test]
+    fn insert_keeps_distinct_same_basename_docs_across_packages() {
+        // The old TS mergeBundles bug: a same-basename doc in a different package
+        // must NOT be dropped. Full-path identity keeps both.
+        let b: crate::ops::Bundle = vec![("billing/order.md".to_string(), "---\ntype: uml.Class\ntitle: Invoice Order\n---\n# Invoice Order\n".to_string())];
+        let docs = vec![("t/order.md".to_string(), "---\ntype: uml.Class\ntitle: Sales Order\n---\n# Sales Order\n".to_string())];
+        let out = apply(&b, &[Op::PkgInsert { parent_path: "".into(), name: "sales".into(), docs }]).unwrap();
+        assert!(out.iter().any(|(p, _)| p == "billing/order.md"), "existing kept: {out:?}");
+        assert!(out.iter().any(|(p, _)| p == "sales/order.md"), "inserted kept: {out:?}");
+        assert_eq!(out.len(), 2, "neither dropped: {out:?}");
+    }
+
+    #[test]
+    fn insert_errors_when_target_package_already_exists() {
+        let b: crate::ops::Bundle = vec![("sales/orders/order.md".to_string(), "---\ntype: uml.Class\ntitle: Order\n---\n# Order\n".to_string())];
+        let docs = vec![("t/thing.md".to_string(), "---\ntype: uml.Class\ntitle: Thing\n---\n# Thing\n".to_string())];
+        let err = apply(&b, &[Op::PkgInsert { parent_path: "sales".into(), name: "orders".into(), docs }]).unwrap_err();
+        assert_eq!(err.op, "pkg.insert");
+        assert!(err.reason.contains("already exists"), "got: {}", err.reason);
+    }
+
+    #[test]
+    fn insert_errors_on_empty_name() {
+        let b: crate::ops::Bundle = vec![];
+        let docs = vec![("t/x.md".to_string(), "---\ntype: uml.Class\ntitle: X\n---\n# X\n".to_string())];
+        let err = apply(&b, &[Op::PkgInsert { parent_path: "".into(), name: "".into(), docs }]).unwrap_err();
+        assert!(err.reason.contains("name"), "got: {}", err.reason);
     }
 }
