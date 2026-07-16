@@ -19,38 +19,58 @@
     onClose: () => void;
   } = $props();
 
-  type Tier = "empty" | "diagram" | "template";
+  // The starter's payload shape - what pkg.insert receives when this item is
+  // picked. Empty and the diagram kinds are synthetic; templates map straight in.
+  type Make =
+    | { tier: "empty" }
+    | { tier: "diagram"; kind: DiagramKind }
+    | { tier: "template"; bundle: [string, string][] };
+  type Item = { id: string; name: string; description: string; make: Make };
+
   const KIND_LABELS: Record<DiagramKind, string> = {
     class: "Class / Domain",
     usecase: "Use-case",
     activity: "Activity",
     sequence: "Sequence",
   };
-
-  let tier = $state<Tier>("empty");
-  let kind = $state<DiagramKind>("class");
-  let templateId = $state<string | null>(null);
-  let parentPath = $state("");
-  let name = $state("New package");
-  // Tracks whether the user has hand-edited the name; if not, the name follows
-  // the tier/kind/template default.
-  let nameDirty = $state(false);
-
-  const selectedTemplate = $derived(templates.find((t) => t.id === templateId) ?? null);
+  const KIND_DESC: Record<DiagramKind, string> = {
+    class: "Blank class / domain diagram",
+    usecase: "Blank use-case diagram",
+    activity: "Blank activity diagram",
+    sequence: "Blank sequence diagram",
+  };
+  const KINDS = Object.keys(KIND_LABELS) as DiagramKind[];
 
   function cleanTemplateName(n: string): string {
     return n.replace(/\s*\(UML\)\s*$/i, "").trim();
   }
 
-  // The default name for the current tier/selection.
+  // One flat starter list: a blank package, the four empty-diagram kinds, then
+  // the committed templates. Rendered as uniform cards.
+  const items = $derived<Item[]>([
+    { id: "empty", name: "Empty package", description: "No diagram - materializes on first child", make: { tier: "empty" } },
+    ...KINDS.map((k) => ({ id: `diagram:${k}`, name: KIND_LABELS[k], description: KIND_DESC[k], make: { tier: "diagram" as const, kind: k } })),
+    ...templates.map((t) => ({ id: `template:${t.id}`, name: t.name, description: t.description, make: { tier: "template" as const, bundle: t.bundle } })),
+  ]);
+
+  let selectedId = $state("empty");
+  let parentPath = $state("");
+  let placeOpen = $state(false);
+  let name = $state("New package");
+  // Tracks whether the user has hand-edited the name; if not, the name follows
+  // the selected starter's default.
+  let nameDirty = $state(false);
+
+  const selected = $derived(items.find((it) => it.id === selectedId) ?? items[0]);
+
+  // The default name for the selected starter: a generic name for a blank
+  // package, the kind label for a diagram, the cleaned template name otherwise.
   const defaultName = $derived(
-    tier === "empty"
+    selected.make.tier === "empty"
       ? "New package"
-      : tier === "diagram"
-        ? KIND_LABELS[kind]
-        : selectedTemplate
-          ? cleanTemplateName(selectedTemplate.name)
-          : "New package",
+      : selected.make.tier === "diagram"
+        ? KIND_LABELS[selected.make.kind]
+        : cleanTemplateName(selected.name),
   );
 
   // Keep the name in sync with the default until the user edits it.
@@ -66,27 +86,22 @@
     })(),
   );
   const collision = $derived(name.trim().length > 0 && packages.some((p) => p.key === targetPath));
-  const canAdd = $derived(name.trim().length > 0 && !collision && (tier !== "template" || selectedTemplate !== null));
+  const canAdd = $derived(name.trim().length > 0 && !collision);
 
-  function selectTier(t: Tier) {
-    tier = t;
-    nameDirty = false;
-  }
-  function selectKind(k: DiagramKind) {
-    kind = k;
-    nameDirty = false;
-  }
-  function selectTemplate(id: string) {
-    templateId = id;
+  const placeLabel = $derived(parentPath === "" ? projectName : parentPath.slice(parentPath.lastIndexOf("/") + 1));
+
+  function selectItem(id: string) {
+    selectedId = id;
     nameDirty = false;
   }
 
   function submit() {
     if (!canAdd) return;
     const trimmed = name.trim();
-    if (tier === "empty") onAdd({ tier: "empty", parentPath, name: trimmed });
-    else if (tier === "diagram") onAdd({ tier: "diagram", parentPath, name: trimmed, kind });
-    else if (selectedTemplate) onAdd({ tier: "template", parentPath, name: trimmed, bundle: selectedTemplate.bundle });
+    const m = selected.make;
+    if (m.tier === "empty") onAdd({ tier: "empty", parentPath, name: trimmed });
+    else if (m.tier === "diagram") onAdd({ tier: "diagram", parentPath, name: trimmed, kind: m.kind });
+    else onAdd({ tier: "template", parentPath, name: trimmed, bundle: m.bundle });
   }
 </script>
 
@@ -102,63 +117,56 @@
       <button onclick={onClose} class="text-slate-400 hover:text-slate-700 text-xl leading-none px-1">✕</button>
     </div>
 
-    <!-- Tier selector -->
-    <div class="grid grid-cols-3 gap-2">
-      {#each [["empty", "Empty"], ["diagram", "Diagram"], ["template", "Template"]] as [t, lbl] (t)}
-        <button
-          type="button"
-          onclick={() => selectTier(t as Tier)}
-          class="rounded-lg border px-3 py-2 text-[13px] cursor-pointer {tier === t ? 'border-[#1e88e5] bg-[#e6f1fb] text-[#1e88e5] font-[550]' : 'border-[#d8dee8] text-slate-800 hover:bg-[#f1f3f7]'}"
-        >
-          {lbl}
-        </button>
-      {/each}
-    </div>
-
-    <!-- Contextual middle -->
-    {#if tier === "diagram"}
-      <div class="grid grid-cols-2 gap-2 border-t border-slate-100 pt-3">
-        {#each Object.entries(KIND_LABELS) as [k, lbl] (k)}
-          <button
-            type="button"
-            onclick={() => selectKind(k as DiagramKind)}
-            class="rounded-lg border px-3 py-2 text-[13px] cursor-pointer {kind === k ? 'border-[#1e88e5] bg-[#e6f1fb] text-[#1e88e5] font-[550]' : 'border-[#d8dee8] text-slate-800 hover:bg-[#f1f3f7]'}"
-          >
-            {lbl}
-          </button>
-        {/each}
-      </div>
-    {:else if tier === "template"}
-      <div class="flex flex-col gap-1.5 border-t border-slate-100 pt-3 max-h-48 overflow-auto">
-        {#each templates as t (t.id)}
-          <button
-            type="button"
-            onclick={() => selectTemplate(t.id)}
-            class="text-left rounded-lg border px-3 py-2 cursor-pointer {templateId === t.id ? 'border-[#1e88e5] bg-[#e6f1fb]' : 'border-[#d8dee8] hover:bg-[#f1f3f7]'}"
-          >
-            <div class="text-[13px] font-[550] text-slate-900">{t.name}</div>
-            <div class="text-[12px] text-slate-500">{t.description}</div>
-          </button>
-        {/each}
-      </div>
-    {/if}
-
-    <!-- Placement footer -->
-    <div class="flex flex-col gap-2 border-t border-slate-100 pt-3">
-      <span class="text-[12px] font-medium text-slate-500">Place under</span>
-      <PackageTreePicker {packages} {projectName} selected={parentPath} onSelect={(p) => (parentPath = p)} />
+    <!-- Name + placement, on top -->
+    <div class="flex flex-col gap-3">
       <label class="flex flex-col gap-1 text-[12px] font-medium text-slate-500">
         Name
         <input
           aria-label="Package name"
           bind:value={name}
           oninput={() => (nameDirty = true)}
+          placeholder={defaultName}
           class="text-[13px] px-2 py-[7px] border border-[#d8dee8] rounded-md text-slate-900 focus:outline-none focus:border-[#1e88e5] focus:ring-2 focus:ring-[#e6f1fb]"
         />
       </label>
       {#if collision}
-        <p class="text-[12px] text-[#d93025]">name already used here</p>
+        <p class="text-[12px] text-[#d93025] -mt-1">name already used here</p>
       {/if}
+
+      <div class="flex flex-col gap-1 text-[12px] font-medium text-slate-500">
+        Place in
+        <button
+          type="button"
+          aria-label="Place in"
+          onclick={() => (placeOpen = !placeOpen)}
+          class="flex items-center justify-between text-[13px] px-2 py-[7px] border border-[#d8dee8] rounded-md text-slate-900 cursor-pointer hover:bg-[#f1f3f7]"
+        >
+          <span>{placeLabel}</span>
+          <span class="text-slate-400 text-[10px]">{placeOpen ? "▲" : "▼"}</span>
+        </button>
+        {#if placeOpen}
+          <PackageTreePicker
+            {packages}
+            {projectName}
+            selected={parentPath}
+            onSelect={(p) => { parentPath = p; placeOpen = false; }}
+          />
+        {/if}
+      </div>
+    </div>
+
+    <!-- Starter list -->
+    <div class="flex flex-col gap-1.5 border-t border-slate-100 pt-3 max-h-64 overflow-auto">
+      {#each items as it (it.id)}
+        <button
+          type="button"
+          onclick={() => selectItem(it.id)}
+          class="text-left rounded-lg border px-3 py-2 cursor-pointer {selectedId === it.id ? 'border-[#1e88e5] bg-[#e6f1fb]' : 'border-[#d8dee8] hover:bg-[#f1f3f7]'}"
+        >
+          <div class="text-[13px] font-[550] text-slate-900">{it.name}</div>
+          <div class="text-[12px] text-slate-500">{it.description}</div>
+        </button>
+      {/each}
     </div>
 
     <div class="flex gap-2 justify-end">

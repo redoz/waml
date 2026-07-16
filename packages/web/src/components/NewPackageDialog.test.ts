@@ -13,18 +13,23 @@ function props(overrides = {}) {
 }
 
 describe("NewPackageDialog", () => {
-  it("defaults to Empty tier with name 'New package'", () => {
+  it("defaults to the Empty package starter with name 'New package'", () => {
     const { getByLabelText } = render(NewPackageDialog, { props: props() });
     expect((getByLabelText("Package name") as HTMLInputElement).value).toBe("New package");
   });
 
-  it("switching to Diagram shows the 4 kind choices and defaults the name to the kind", async () => {
-    const { getByText, getByLabelText } = render(NewPackageDialog, { props: props() });
-    await fireEvent.click(getByText("Diagram"));
+  it("lists the blank, the four diagram kinds and the templates as one flat card list", () => {
+    const { getByText } = render(NewPackageDialog, { props: props() });
+    expect(getByText("Empty package")).toBeTruthy();
     expect(getByText("Class / Domain")).toBeTruthy();
     expect(getByText("Use-case")).toBeTruthy();
     expect(getByText("Activity")).toBeTruthy();
     expect(getByText("Sequence")).toBeTruthy();
+    expect(getByText("Orders Domain (UML)")).toBeTruthy();
+  });
+
+  it("picking a diagram card defaults the name to that kind", async () => {
+    const { getByText, getByLabelText } = render(NewPackageDialog, { props: props() });
     await fireEvent.click(getByText("Activity"));
     expect((getByLabelText("Package name") as HTMLInputElement).value).toBe("Activity");
   });
@@ -38,7 +43,7 @@ describe("NewPackageDialog", () => {
     expect((getByRole("button", { name: "Add" }) as HTMLButtonElement).disabled).toBe(true);
   });
 
-  it("Empty tier emits an empty-tier payload with the selected parent and name", async () => {
+  it("the Empty package card emits an empty-tier payload with the selected parent and name", async () => {
     const onAdd = vi.fn();
     const { getByLabelText, getByRole } = render(NewPackageDialog, { props: props({ onAdd }) });
     await fireEvent.input(getByLabelText("Package name"), { target: { value: "Fresh" } });
@@ -46,12 +51,20 @@ describe("NewPackageDialog", () => {
     expect(onAdd).toHaveBeenCalledWith({ tier: "empty", parentPath: "", name: "Fresh" });
   });
 
-  it("Template tier emits the chosen template's bundle", async () => {
+  it("a template card emits the chosen template's bundle", async () => {
     const onAdd = vi.fn();
     const { getByText, getByRole } = render(NewPackageDialog, { props: props({ onAdd }) });
-    await fireEvent.click(getByText("Template"));
     await fireEvent.click(getByText("Orders Domain (UML)"));
     await fireEvent.click(getByRole("button", { name: "Add" }));
     expect(onAdd).toHaveBeenCalledWith(expect.objectContaining({ tier: "template", parentPath: "", bundle: templates[0].bundle }));
+  });
+
+  it("Place in is a collapsed dropdown that opens the package tree", async () => {
+    const { getByLabelText, getByText, queryByText } = render(NewPackageDialog, { props: props() });
+    // Collapsed: shows the project name, tree rows hidden.
+    expect(getByLabelText("Place in").textContent).toContain("My Project");
+    expect(queryByText("sales")).toBeNull();
+    await fireEvent.click(getByLabelText("Place in"));
+    expect(getByText("sales")).toBeTruthy();
   });
 });
