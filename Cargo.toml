@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/waml", "crates/waml-cli", "crates/waml-ops-dto", "crates/waml-wasm"]
+members = ["crates/waml", "crates/waml-cli", "crates/waml-ops-dto", "crates/waml-wasm", "crates/waml-editor"]
 
 [workspace.package]
 edition = "2021"

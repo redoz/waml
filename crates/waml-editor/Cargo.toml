@@ -1,0 +1,11 @@
+[package]
+name = "waml-editor"
+version = "0.0.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Native, read-only GPU viewer for WAML/OKF diagrams."
+
+[dependencies]
+waml = { path = "../waml", features = ["serde"] }
+makepad-widgets = { path = "C:/dev/vendor/makepad/widgets" } # absolute for worktree build; change to relative on merge to main
