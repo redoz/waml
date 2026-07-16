@@ -19,6 +19,7 @@ import {
   reorderMembersOps,
   sortPackageOps,
   retitlePackageOps,
+  pkgInsertOps,
   type OpDto,
 } from "./ops-adapter";
 import { resolveDisplay, type ModelGraph, type Attribute, type Diagram } from "@waml/okf";
@@ -234,6 +235,13 @@ describe("package op builders", () => {
       op: "node.new",
       dir: "sales",
     });
+  });
+
+  it("builds a single pkg.insert op carrying parent, name and docs", () => {
+    const docs: [string, string][] = [["t/order.md", "# Order"]];
+    expect(pkgInsertOps("sales", "orders", docs)).toEqual([
+      { op: "pkg.insert", parent_path: "sales", name: "orders", docs },
+    ]);
   });
 });
 

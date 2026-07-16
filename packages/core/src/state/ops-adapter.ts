@@ -96,6 +96,14 @@ export function nodeNewOps(f: NewNodeFields): OpDto[] {
 }
 
 // ── packages ─────────────────────────────────────────────────────────────────
+/** Insert a package: re-root `docs` under `<parentPath>/<name>/` (or `<name>/`
+ *  at root) and append. `name` is the final path segment (already slugified by
+ *  the caller); `docs` is the source `[path, markdown][]` whose top-level folder
+ *  is replaced by the target prefix. */
+export function pkgInsertOps(parentPath: string, name: string, docs: [string, string][]): OpDto[] {
+  return [{ op: "pkg.insert", parent_path: parentPath, name, docs }];
+}
+
 
 export function moveNodeOps(slug: string, toDir: string): OpDto[] {
   return [{ op: "pkg.move", slug, to_dir: toDir }];
