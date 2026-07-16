@@ -1,5 +1,5 @@
 use crate::frontmatter::{FmValue, Frontmatter};
-use crate::model::{Attribute, ClassifierType, RelEnd, RelationshipKind, TypeRef, Visibility};
+use crate::model::{Attribute, ElementType, RelEnd, RelationshipKind, TypeRef, Visibility};
 use crate::multiplicity::Multiplicity;
 use crate::okf;
 use crate::parse::parse_document;
@@ -86,7 +86,7 @@ pub enum Op {
         slug: String,
         /// Target package directory ("" = root). File written at `<dir>/<slug>.md`.
         dir: String,
-        ty: ClassifierType,
+        ty: ElementType,
         title: String,
         stereotype: Vec<String>,
         description: Option<String>,
@@ -98,7 +98,7 @@ pub enum Op {
         description: Option<String>,
         stereotype: Option<Vec<String>>,
         abstract_: Option<bool>,
-        ty: Option<ClassifierType>,
+        ty: Option<ElementType>,
     },
     NodeRm { slug: String, cascade: bool },
     NodeRename { from: String, to: String },
@@ -588,7 +588,7 @@ fn op_node_new(
     work: &mut Bundle,
     slug: &str,
     dir: &str,
-    ty: &ClassifierType,
+    ty: &ElementType,
     title: &str,
     stereotype: &[String],
     description: &Option<String>,
@@ -626,7 +626,7 @@ fn op_node_set(
     description: &Option<String>,
     stereotype: &Option<Vec<String>>,
     abstract_: &Option<bool>,
-    ty: &Option<ClassifierType>,
+    ty: &Option<ElementType>,
 ) -> Result<(), OpError> {
     edit_doc(work, slug, "node.set", |doc| {
         if let Some(t) = title {
@@ -728,7 +728,7 @@ mod tests {
     use crate::ops::selector::{RelBy, Selector};
     use crate::model::RelationshipKind;
     use crate::grammar::parse_ends;
-    use crate::model::ClassifierType;
+    use crate::model::ElementType;
 
     fn attr_add(node: &str, name: &str, ty: &str) -> Op {
         Op::AttrAdd { node: node.into(), name: name.into(), ty_token: ty.into(),
@@ -937,7 +937,7 @@ mod tests {
     fn node_new_writes_frontmatter_and_title_and_refuses_dup() {
         let b: Bundle = vec![];
         let out = apply(&b, &[Op::NodeNew {
-            slug: "order".into(), dir: String::new(), ty: ClassifierType::parse("uml.Class"), title: "Order".into(),
+            slug: "order".into(), dir: String::new(), ty: ElementType::parse("uml.Class"), title: "Order".into(),
             stereotype: vec!["entity".into()], description: Some("An order.".into()), abstract_: false,
         }]).unwrap();
         assert_eq!(out.len(), 1);
@@ -945,14 +945,14 @@ mod tests {
         assert!(out[0].1.contains("type: \"uml.Class\""));
         assert!(out[0].1.contains("title: \"Order\""));
         assert!(out[0].1.contains("# Order"));
-        let dup = apply(&out, &[Op::NodeNew { slug:"order".into(), dir: String::new(), ty: ClassifierType::parse("uml.Class"), title:"X".into(), stereotype: vec![], description: None, abstract_: false }]).unwrap_err();
+        let dup = apply(&out, &[Op::NodeNew { slug:"order".into(), dir: String::new(), ty: ElementType::parse("uml.Class"), title:"X".into(), stereotype: vec![], description: None, abstract_: false }]).unwrap_err();
         assert!(dup.reason.contains("already exists"));
     }
 
     #[test]
     fn node_new_writes_into_target_directory() {
         let out = apply(&vec![], &[Op::NodeNew {
-            slug: "order".into(), dir: "sales".into(), ty: ClassifierType::parse("uml.Class"),
+            slug: "order".into(), dir: "sales".into(), ty: ElementType::parse("uml.Class"),
             title: "Order".into(), stereotype: vec![], description: None, abstract_: false,
         }]).unwrap();
         assert_eq!(out[0].0, "sales/order.md");
@@ -1068,13 +1068,13 @@ mod tests {
         // docs to coexist across directories in the first place).
         let b = vec![("shop/order.md".to_string(), "---\ntype: uml.Class\ntitle: Order\n---\n# Order\n".to_string())];
         let out = apply(&b, &[Op::NodeNew {
-            slug: "order".into(), dir: "billing".into(), ty: ClassifierType::parse("uml.Class"),
+            slug: "order".into(), dir: "billing".into(), ty: ElementType::parse("uml.Class"),
             title: "Order".into(), stereotype: vec![], description: None, abstract_: false,
         }]).unwrap();
         assert!(out.iter().any(|(p, _)| p == "billing/order.md"));
         // same directory + same basename must still collide
         let dup = apply(&b, &[Op::NodeNew {
-            slug: "order".into(), dir: "shop".into(), ty: ClassifierType::parse("uml.Class"),
+            slug: "order".into(), dir: "shop".into(), ty: ElementType::parse("uml.Class"),
             title: "X".into(), stereotype: vec![], description: None, abstract_: false,
         }]).unwrap_err();
         assert!(dup.reason.contains("already exists"));

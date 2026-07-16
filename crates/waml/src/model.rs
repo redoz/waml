@@ -586,7 +586,7 @@ pub struct SequenceDoc {
 #[derive(Debug, Clone, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "serde", serde(into = "String", from = "String"))]
-pub enum ClassifierType {
+pub enum ElementType {
     Uml(UmlMetaclass),
     Behavior(BehaviorKind),
     Diagram,
@@ -594,42 +594,42 @@ pub enum ClassifierType {
 }
 
 #[cfg(feature = "serde")]
-impl From<ClassifierType> for String {
-    fn from(t: ClassifierType) -> String {
+impl From<ElementType> for String {
+    fn from(t: ElementType) -> String {
         t.as_str()
     }
 }
 
 #[cfg(feature = "serde")]
-impl From<String> for ClassifierType {
-    fn from(s: String) -> ClassifierType {
-        ClassifierType::parse(&s)
+impl From<String> for ElementType {
+    fn from(s: String) -> ElementType {
+        ElementType::parse(&s)
     }
 }
 
-impl ClassifierType {
-    pub fn parse(s: &str) -> ClassifierType {
+impl ElementType {
+    pub fn parse(s: &str) -> ElementType {
         if s == "Diagram" {
-            return ClassifierType::Diagram;
+            return ElementType::Diagram;
         }
         if let Some((family, metaclass)) = s.split_once('.') {
             if family == "uml" {
                 if let Some(mc) = UmlMetaclass::parse(metaclass) {
-                    return ClassifierType::Uml(mc);
+                    return ElementType::Uml(mc);
                 }
                 if let Some(bk) = BehaviorKind::parse(metaclass) {
-                    return ClassifierType::Behavior(bk);
+                    return ElementType::Behavior(bk);
                 }
             }
         }
-        ClassifierType::Unknown(s.to_string())
+        ElementType::Unknown(s.to_string())
     }
     pub fn as_str(&self) -> String {
         match self {
-            ClassifierType::Uml(mc) => format!("uml.{}", mc.name()),
-            ClassifierType::Behavior(bk) => format!("uml.{}", bk.name()),
-            ClassifierType::Diagram => "Diagram".to_string(),
-            ClassifierType::Unknown(s) => s.clone(),
+            ElementType::Uml(mc) => format!("uml.{}", mc.name()),
+            ElementType::Behavior(bk) => format!("uml.{}", bk.name()),
+            ElementType::Diagram => "Diagram".to_string(),
+            ElementType::Unknown(s) => s.clone(),
         }
     }
 
@@ -642,7 +642,7 @@ impl ClassifierType {
     /// adding a metaclass forces a classifier decision here at compile time.
     pub fn is_classifier(&self) -> bool {
         match self {
-            ClassifierType::Uml(mc) => match mc {
+            ElementType::Uml(mc) => match mc {
                 UmlMetaclass::Class
                 | UmlMetaclass::Interface
                 | UmlMetaclass::Enum
@@ -654,9 +654,9 @@ impl ClassifierType {
             },
             // Behavior ⊂ Class: Activity / Interaction (Sequence) / StateMachine
             // are all Classifiers.
-            ClassifierType::Behavior(_) => true,
-            ClassifierType::Diagram => false,
-            ClassifierType::Unknown(_) => false,
+            ElementType::Behavior(_) => true,
+            ElementType::Diagram => false,
+            ElementType::Unknown(_) => false,
         }
     }
 }
@@ -700,7 +700,7 @@ pub struct Node {
     pub key: String,
     #[cfg_attr(feature = "serde", serde(rename = "type"))]
     #[cfg_attr(feature = "wasm", tsify(type = "string"))]
-    pub ty: ClassifierType,
+    pub ty: ElementType,
     pub stereotypes: Vec<String>,
     #[cfg_attr(
         feature = "serde",
@@ -870,23 +870,23 @@ mod tests {
     #[test]
     fn actor_and_usecase_metaclasses_parse_and_round_trip() {
         assert_eq!(
-            ClassifierType::parse("uml.Actor"),
-            ClassifierType::Uml(UmlMetaclass::Actor)
+            ElementType::parse("uml.Actor"),
+            ElementType::Uml(UmlMetaclass::Actor)
         );
         assert_eq!(
-            ClassifierType::parse("uml.UseCase"),
-            ClassifierType::Uml(UmlMetaclass::UseCase)
+            ElementType::parse("uml.UseCase"),
+            ElementType::Uml(UmlMetaclass::UseCase)
         );
-        assert_eq!(ClassifierType::Uml(UmlMetaclass::Actor).as_str(), "uml.Actor");
-        assert_eq!(ClassifierType::Uml(UmlMetaclass::UseCase).as_str(), "uml.UseCase");
+        assert_eq!(ElementType::Uml(UmlMetaclass::Actor).as_str(), "uml.Actor");
+        assert_eq!(ElementType::Uml(UmlMetaclass::UseCase).as_str(), "uml.UseCase");
     }
 
     #[test]
     fn behavior_types_parse_and_round_trip() {
-        assert_eq!(ClassifierType::parse("uml.Activity"), ClassifierType::Behavior(BehaviorKind::Activity));
-        assert_eq!(ClassifierType::parse("uml.StateMachine"), ClassifierType::Behavior(BehaviorKind::StateMachine));
-        assert_eq!(ClassifierType::parse("uml.Sequence"), ClassifierType::Behavior(BehaviorKind::Sequence));
-        assert_eq!(ClassifierType::Behavior(BehaviorKind::StateMachine).as_str(), "uml.StateMachine");
+        assert_eq!(ElementType::parse("uml.Activity"), ElementType::Behavior(BehaviorKind::Activity));
+        assert_eq!(ElementType::parse("uml.StateMachine"), ElementType::Behavior(BehaviorKind::StateMachine));
+        assert_eq!(ElementType::parse("uml.Sequence"), ElementType::Behavior(BehaviorKind::Sequence));
+        assert_eq!(ElementType::Behavior(BehaviorKind::StateMachine).as_str(), "uml.StateMachine");
     }
 
     #[test]
@@ -913,26 +913,26 @@ mod tests {
     #[test]
     fn classifier_type_parses_known_and_unknown() {
         assert_eq!(
-            ClassifierType::parse("uml.Class"),
-            ClassifierType::Uml(UmlMetaclass::Class)
+            ElementType::parse("uml.Class"),
+            ElementType::Uml(UmlMetaclass::Class)
         );
-        assert_eq!(ClassifierType::parse("Diagram"), ClassifierType::Diagram);
+        assert_eq!(ElementType::parse("Diagram"), ElementType::Diagram);
         assert_eq!(
-            ClassifierType::parse("bpmn.Task"),
-            ClassifierType::Unknown("bpmn.Task".to_string())
+            ElementType::parse("bpmn.Task"),
+            ElementType::Unknown("bpmn.Task".to_string())
         );
         assert_eq!(
-            ClassifierType::parse("LegacyToken"),
-            ClassifierType::Unknown("LegacyToken".to_string())
+            ElementType::parse("LegacyToken"),
+            ElementType::Unknown("LegacyToken".to_string())
         );
     }
 
     #[test]
     fn classifier_type_round_trips_to_string() {
-        assert_eq!(ClassifierType::Uml(UmlMetaclass::Enum).as_str(), "uml.Enum");
-        assert_eq!(ClassifierType::Diagram.as_str(), "Diagram");
+        assert_eq!(ElementType::Uml(UmlMetaclass::Enum).as_str(), "uml.Enum");
+        assert_eq!(ElementType::Diagram.as_str(), "Diagram");
         assert_eq!(
-            ClassifierType::Unknown("x.Y".to_string()).as_str(),
+            ElementType::Unknown("x.Y".to_string()).as_str(),
             "x.Y"
         );
     }
@@ -940,22 +940,22 @@ mod tests {
     #[test]
     fn is_classifier_matches_spec_table() {
         // Genuine UML classifiers (design spec §3.1).
-        assert!(ClassifierType::Uml(UmlMetaclass::Class).is_classifier());
-        assert!(ClassifierType::Uml(UmlMetaclass::Interface).is_classifier());
-        assert!(ClassifierType::Uml(UmlMetaclass::Enum).is_classifier());
-        assert!(ClassifierType::Uml(UmlMetaclass::DataType).is_classifier());
-        assert!(ClassifierType::Uml(UmlMetaclass::Actor).is_classifier());
-        assert!(ClassifierType::Uml(UmlMetaclass::UseCase).is_classifier());
-        assert!(ClassifierType::Uml(UmlMetaclass::Association).is_classifier());
+        assert!(ElementType::Uml(UmlMetaclass::Class).is_classifier());
+        assert!(ElementType::Uml(UmlMetaclass::Interface).is_classifier());
+        assert!(ElementType::Uml(UmlMetaclass::Enum).is_classifier());
+        assert!(ElementType::Uml(UmlMetaclass::DataType).is_classifier());
+        assert!(ElementType::Uml(UmlMetaclass::Actor).is_classifier());
+        assert!(ElementType::Uml(UmlMetaclass::UseCase).is_classifier());
+        assert!(ElementType::Uml(UmlMetaclass::Association).is_classifier());
         // Behavior ⊂ Class: all behavior classifiers qualify.
-        assert!(ClassifierType::Behavior(BehaviorKind::Activity).is_classifier());
-        assert!(ClassifierType::Behavior(BehaviorKind::StateMachine).is_classifier());
-        assert!(ClassifierType::Behavior(BehaviorKind::Sequence).is_classifier());
+        assert!(ElementType::Behavior(BehaviorKind::Activity).is_classifier());
+        assert!(ElementType::Behavior(BehaviorKind::StateMachine).is_classifier());
+        assert!(ElementType::Behavior(BehaviorKind::Sequence).is_classifier());
         // Not classifiers.
-        assert!(!ClassifierType::Uml(UmlMetaclass::Package).is_classifier());
-        assert!(!ClassifierType::Uml(UmlMetaclass::Note).is_classifier());
-        assert!(!ClassifierType::Diagram.is_classifier());
-        assert!(!ClassifierType::Unknown("bpmn.Task".to_string()).is_classifier());
+        assert!(!ElementType::Uml(UmlMetaclass::Package).is_classifier());
+        assert!(!ElementType::Uml(UmlMetaclass::Note).is_classifier());
+        assert!(!ElementType::Diagram.is_classifier());
+        assert!(!ElementType::Unknown("bpmn.Task".to_string()).is_classifier());
     }
 
     #[test]
@@ -966,7 +966,7 @@ mod tests {
                 "---\ntype: uml.Class\ntitle: Order\n---\n# Order\n",
             ),
             key: "order".to_string(),
-            ty: ClassifierType::Uml(UmlMetaclass::Class),
+            ty: ElementType::Uml(UmlMetaclass::Class),
             stereotypes: vec![],
             abstract_: false,
             attributes: vec![],

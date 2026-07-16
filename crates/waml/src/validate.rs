@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::diagnostic::{DiagCode, Diagnostic};
-use crate::model::{ClassifierType, RelationshipKind, UmlMetaclass};
+use crate::model::{ElementType, RelationshipKind, UmlMetaclass};
 use crate::slug::slugify;
 use crate::syntax::{
     Direction, Document, LayoutStatement, Line, MemberGroup, NameRef, Operand, OperandRef, Section,
@@ -150,18 +150,18 @@ fn check_group_members(
 /// `DuplicateSlug`, `UnresolvedTarget` (relationships + diagram members),
 /// `UnresolvedLayoutRef`, and `LayoutCycle`, reusing the positions recorded in
 /// each node during `parse`. Syntactic diagnostics are produced by `parse`.
-pub fn link(docs: &[(String, ClassifierType, Document)]) -> Vec<Diagnostic> {
+pub fn link(docs: &[(String, ElementType, Document)]) -> Vec<Diagnostic> {
     let mut diags = Vec::new();
     let mut keyset: HashSet<String> = HashSet::new();
     let mut slug_count: HashMap<String, usize> = HashMap::new();
     for (path, ty, _doc) in docs {
         let slug = crate::okf::id_of(path);
         *slug_count.entry(slug.clone()).or_insert(0) += 1;
-        if *ty != ClassifierType::Diagram && !matches!(ty, ClassifierType::Behavior(_)) {
+        if *ty != ElementType::Diagram && !matches!(ty, ElementType::Behavior(_)) {
             keyset.insert(slug);
         }
     }
-    let mut types: HashMap<String, ClassifierType> = HashMap::new();
+    let mut types: HashMap<String, ElementType> = HashMap::new();
     for (path, ty, _doc) in docs {
         types.insert(crate::okf::id_of(path), ty.clone());
     }
@@ -212,11 +212,11 @@ pub fn link(docs: &[(String, ClassifierType, Document)]) -> Vec<Diagnostic> {
                         // communication link — valid only when an actor or a
                         // use case participates. Between plain classifiers,
                         // ends are required (uaml-spec.md).
-                        let is_comm_party = |t: Option<&ClassifierType>| {
+                        let is_comm_party = |t: Option<&ElementType>| {
                             matches!(
                                 t,
-                                Some(ClassifierType::Uml(UmlMetaclass::Actor))
-                                    | Some(ClassifierType::Uml(UmlMetaclass::UseCase))
+                                Some(ElementType::Uml(UmlMetaclass::Actor))
+                                    | Some(ElementType::Uml(UmlMetaclass::UseCase))
                             )
                         };
                         if r.kind == RelationshipKind::Associates
@@ -388,7 +388,7 @@ pub fn validate(bundle: &[(String, String)]) -> Vec<Diagnostic> {
             d.file = path.clone();
         }
         diags.append(&mut syn);
-        let ty = ClassifierType::parse(doc.frontmatter.get_str("type").unwrap_or("uml.Class"));
+        let ty = ElementType::parse(doc.frontmatter.get_str("type").unwrap_or("uml.Class"));
         docs.push((path.clone(), ty, doc));
     }
     diags.extend(link(&docs));

@@ -3,7 +3,7 @@
 
 use tower_lsp::lsp_types as lsp;
 use waml::diagnostic::{Diagnostic, Severity};
-use waml::model::ClassifierType;
+use waml::model::ElementType;
 
 /// True iff the document's frontmatter declares a recognized WAML `type:`.
 ///
@@ -32,8 +32,7 @@ pub fn is_waml(text: &str) -> bool {
         }
         if let Some(rest) = trimmed.strip_prefix("type:") {
             let ty = rest.trim().trim_matches('"');
-            return ty == "Diagram"
-                || !matches!(ClassifierType::parse(ty), ClassifierType::Unknown(_));
+            return ty == "Diagram" || !matches!(ElementType::parse(ty), ElementType::Unknown(_));
         }
     }
     false

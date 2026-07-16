@@ -2,7 +2,7 @@
 //! Pins the JSON shape of `Model` to the TS field names in
 //! `packages/okf/src/types.ts`. If a rename drifts, this fails.
 use waml::diagnostic::{DiagCode, Diagnostic, Severity};
-use waml::model::{AssocName, BehaviorKind, ClassifierType, Model, Node, UmlMetaclass, Visibility};
+use waml::model::{AssocName, BehaviorKind, ElementType, Model, Node, UmlMetaclass, Visibility};
 use waml::multiplicity::Multiplicity;
 use waml::parse::build_model;
 
@@ -78,7 +78,7 @@ fn package_node_and_model_path() {
     let pkg = Node {
         concept: waml::okf::project("sales/index.md", "# sales\n\nSales bounded context.\n"),
         key: "sales".into(),
-        ty: ClassifierType::Uml(UmlMetaclass::Package),
+        ty: ElementType::Uml(UmlMetaclass::Package),
         stereotypes: vec![],
         abstract_: false,
         attributes: vec![],
@@ -102,7 +102,7 @@ fn package_node_and_model_path() {
     let bare = Node {
         concept: waml::okf::project("order.md", "---\ntype: uml.Class\ntitle: Order\n---\n# Order\n"),
         key: "order".into(),
-        ty: ClassifierType::Uml(UmlMetaclass::Class),
+        ty: ElementType::Uml(UmlMetaclass::Class),
         stereotypes: vec![],
         abstract_: false,
         attributes: vec![],
@@ -181,22 +181,22 @@ fn diagnostic_serializes_with_kebab_code_and_lowercase_severity() {
 #[test]
 fn classifier_type_wire_strings_are_stable() {
     assert_eq!(
-        serde_json::to_string(&ClassifierType::Uml(UmlMetaclass::Class)).unwrap(),
+        serde_json::to_string(&ElementType::Uml(UmlMetaclass::Class)).unwrap(),
         "\"uml.Class\""
     );
     assert_eq!(
-        serde_json::to_string(&ClassifierType::Behavior(BehaviorKind::Activity)).unwrap(),
+        serde_json::to_string(&ElementType::Behavior(BehaviorKind::Activity)).unwrap(),
         "\"uml.Activity\""
     );
     assert_eq!(
-        serde_json::to_string(&ClassifierType::Diagram).unwrap(),
+        serde_json::to_string(&ElementType::Diagram).unwrap(),
         "\"Diagram\""
     );
     assert_eq!(
-        serde_json::to_string(&ClassifierType::Unknown("bpmn.Task".to_string())).unwrap(),
+        serde_json::to_string(&ElementType::Unknown("bpmn.Task".to_string())).unwrap(),
         "\"bpmn.Task\""
     );
     // Deserialize round-trips through `From<String>`.
-    let ct: ClassifierType = serde_json::from_str("\"uml.Class\"").unwrap();
-    assert_eq!(ct, ClassifierType::Uml(UmlMetaclass::Class));
+    let ct: ElementType = serde_json::from_str("\"uml.Class\"").unwrap();
+    assert_eq!(ct, ElementType::Uml(UmlMetaclass::Class));
 }

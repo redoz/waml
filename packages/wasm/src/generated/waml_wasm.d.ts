@@ -233,7 +233,7 @@ export interface Concept {
      */
     id: string;
     /**
-     * The free-text `type` frontmatter field (NOT the UML `ClassifierType`).
+     * The free-text `type` frontmatter field (NOT the UML `ElementType`).
      */
     type: string;
     title?: string;

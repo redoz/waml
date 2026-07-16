@@ -10,7 +10,7 @@ use crate::syntax::{Document, ErrorNode, LayoutItem, Line, Section};
 use std::collections::{HashMap, HashSet};
 
 use crate::model::{
-    Attribute, BehaviorKind, ClassifierType, Diagram, DiagramDisplay, DiagramGroup, Edge, FlowDoc,
+    Attribute, BehaviorKind, Diagram, DiagramDisplay, DiagramGroup, Edge, ElementType, FlowDoc,
     FlowEdge, FlowFlavor, FlowNode, Lifeline, Model, Node, SeqItem, SeqOperand, SequenceDoc,
 };
 
@@ -262,7 +262,7 @@ fn scan_frontmatter_and_preamble(src: &str) -> Vec<Diagnostic> {
         if in_fm {
             if let Some(rest) = trimmed.strip_prefix("type:") {
                 let ty = rest.trim().trim_matches('"');
-                if ty != "Diagram" && matches!(ClassifierType::parse(ty), ClassifierType::Unknown(_)) {
+                if ty != "Diagram" && matches!(ElementType::parse(ty), ElementType::Unknown(_)) {
                     diags.push(Diagnostic::warn(
                         DiagCode::UnknownType,
                         format!("unknown type '{ty}' — rendered as a generic box"),
@@ -411,7 +411,7 @@ struct ParsedDoc {
     slug: String,
     /// Full bundle-relative id (`okf::id_of(&path)`) — the node/edge/diagram key.
     id: String,
-    ty: ClassifierType,
+    ty: ElementType,
     doc: Document,
     /// Lossless OKF projection of the source document (single source of the
     /// nested `Node::concept`; never re-derived by hand).
@@ -423,7 +423,7 @@ fn parse_bundle(bundle: &[(String, String)]) -> Vec<ParsedDoc> {
         .iter()
         .map(|(path, text)| {
             let doc = parse_document(text);
-            let ty = ClassifierType::parse(doc.frontmatter.get_str("type").unwrap_or("uml.Class"));
+            let ty = ElementType::parse(doc.frontmatter.get_str("type").unwrap_or("uml.Class"));
             let concept = crate::okf::project(path, text);
             ParsedDoc { path: path.clone(), slug: doc_slug(path), id: crate::okf::id_of(path), ty, doc, concept }
         })
@@ -611,7 +611,7 @@ fn build_packages(
             Node {
                 concept,
                 key: d.clone(),
-                ty: ClassifierType::Uml(crate::model::UmlMetaclass::Package),
+                ty: ElementType::Uml(crate::model::UmlMetaclass::Package),
                 stereotypes: vec![],
                 abstract_: false,
                 attributes: vec![],
@@ -639,8 +639,8 @@ pub fn build_model(bundle: &[(String, String)]) -> Model {
     let classifiers: Vec<&ParsedDoc> = parsed
         .iter()
         .filter(|p| {
-            p.ty != ClassifierType::Diagram
-                && !matches!(p.ty, ClassifierType::Behavior(_))
+            p.ty != ElementType::Diagram
+                && !matches!(p.ty, ElementType::Behavior(_))
                 && p.slug != "index"
                 && p.slug != "log"
         })
@@ -690,14 +690,14 @@ fn build_flows(parsed: &[ParsedDoc], keyset: &HashSet<&str>) -> Vec<FlowDoc> {
     use crate::syntax::{FlowBullet, FlowTargetRef};
     let flow_keys: HashSet<String> = parsed
         .iter()
-        .filter(|p| matches!(p.ty, ClassifierType::Behavior(BehaviorKind::Activity | BehaviorKind::StateMachine)))
+        .filter(|p| matches!(p.ty, ElementType::Behavior(BehaviorKind::Activity | BehaviorKind::StateMachine)))
         .map(|p| p.id.clone())
         .collect();
     let mut out = Vec::new();
     for p in parsed {
         let flavor = match p.ty {
-            ClassifierType::Behavior(BehaviorKind::Activity) => FlowFlavor::Activity,
-            ClassifierType::Behavior(BehaviorKind::StateMachine) => FlowFlavor::StateMachine,
+            ElementType::Behavior(BehaviorKind::Activity) => FlowFlavor::Activity,
+            ElementType::Behavior(BehaviorKind::StateMachine) => FlowFlavor::StateMachine,
             _ => continue,
         };
         let mut nodes = Vec::new();
@@ -779,7 +779,7 @@ fn build_interactions(parsed: &[ParsedDoc], keyset: &HashSet<&str>) -> Vec<Seque
     use crate::syntax::SeqItemSyntax;
     let mut out = Vec::new();
     for p in parsed {
-        if p.ty != ClassifierType::Behavior(BehaviorKind::Sequence) {
+        if p.ty != ElementType::Behavior(BehaviorKind::Sequence) {
             continue;
         }
         let mut lifelines: Vec<Lifeline> = Vec::new();
@@ -939,7 +939,7 @@ fn resolve_group(g: &crate::syntax::MemberGroup, referring_path: &str, keyset: &
 
 fn build_diagrams(parsed: &[ParsedDoc], keyset: &HashSet<&str>) -> Vec<Diagram> {
     let mut out = Vec::new();
-    for p in parsed.iter().filter(|p| p.ty == ClassifierType::Diagram) {
+    for p in parsed.iter().filter(|p| p.ty == ElementType::Diagram) {
         let fm = &p.doc.frontmatter;
         let title = fm.get_str("title").map(String::from).unwrap_or_else(|| "Untitled diagram".to_string());
         let profile = fm
@@ -1277,7 +1277,7 @@ mod tests {
 #[cfg(test)]
 mod model_tests {
     use super::*;
-    use crate::model::{ClassifierType, UmlMetaclass};
+    use crate::model::{ElementType, UmlMetaclass};
 
     fn bundle() -> Vec<(String, String)> {
         vec![
@@ -1294,7 +1294,7 @@ mod model_tests {
         assert_eq!(m.nodes.len(), 2);
         let order = m.node("shop/order").unwrap();
         assert_eq!(order.concept.title.as_deref(), Some("Order"));
-        assert_eq!(order.ty, ClassifierType::Uml(UmlMetaclass::Class));
+        assert_eq!(order.ty, ElementType::Uml(UmlMetaclass::Class));
         assert_eq!(order.stereotypes, vec!["aggregateRoot", "entity"]);
         assert_eq!(order.attributes.len(), 3);
     }

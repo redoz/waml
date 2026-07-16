@@ -97,7 +97,7 @@ fn publishes_diagnostics_for_unresolved_target_over_stdio() {
 }
 
 /// Regression guard: `Backend::did_open`/`did_change` re-run whole-document
-/// `validate()` regardless of `ClassifierType`, so a behavioral-substrate
+/// `validate()` regardless of `ElementType`, so a behavioral-substrate
 /// (flow/activity) diagnostic needs zero LSP-specific wiring to surface —
 /// this mirrors `publishes_diagnostics_for_unresolved_target_over_stdio`
 /// above but drives a `uml.Activity` doc with a malformed flow bullet.

@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 use waml::grammar::{parse_ends, render_ends};
-use waml::model::{ClassifierType, RelEnd, RelationshipKind, Visibility};
+use waml::model::{ElementType, RelEnd, RelationshipKind, Visibility};
 use waml::multiplicity::Multiplicity;
 use waml::ops::{DiagramDisplaySet, NameSpec, Op, RelBy, Selector};
 
@@ -332,7 +332,7 @@ impl OpDto {
                 Ok(Op::NodeNew {
                     slug: slug.clone(),
                     dir: dir.clone(),
-                    ty: ClassifierType::parse(ty),
+                    ty: ElementType::parse(ty),
                     title: title.clone(),
                     stereotype: stereotype.clone(),
                     description: desc.clone(),
@@ -351,7 +351,7 @@ impl OpDto {
                     description: desc.clone(),
                     stereotype: stereotype.clone(),
                     abstract_: *abstract_,
-                    ty: ty.as_ref().map(|t| ClassifierType::parse(t)),
+                    ty: ty.as_ref().map(|t| ElementType::parse(t)),
                 })
             }
             OpDto::NodeRm { v, slug, cascade } => {
@@ -626,7 +626,7 @@ mod tests {
     #[test]
     fn every_op_survives_a_wire_round_trip() {
         use waml::grammar::parse_ends;
-        use waml::model::{ClassifierType, RelationshipKind};
+        use waml::model::{ElementType, RelationshipKind};
         use waml::multiplicity::Multiplicity;
         use waml::ops::{NameSpec, Op, RelBy, Selector};
 
@@ -634,7 +634,7 @@ mod tests {
             Op::NodeNew {
                 slug: "order".into(),
                 dir: "sales".into(),
-                ty: ClassifierType::parse("uml.Class"),
+                ty: ElementType::parse("uml.Class"),
                 title: "Order".into(),
                 stereotype: vec!["entity".into()],
                 description: Some("x".into()),

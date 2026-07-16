@@ -2,7 +2,7 @@
 //! UML profile. A [`Concept`] is the lossless projection of a single markdown
 //! document; a [`Bundle`] holds one `Concept` per document in a bundle.
 //!
-//! Hard rule: this module MUST NOT import any UML type (`ClassifierType`,
+//! Hard rule: this module MUST NOT import any UML type (`ElementType`,
 //! `RelationshipKind`, `UmlMetaclass`, …). The dependency is one-way — the WAML
 //! tier depends on `okf`, never the reverse — so a later `okf-core` crate split
 //! stays mechanical.
@@ -65,7 +65,7 @@ pub struct Citation {
 pub struct Concept {
     /// Concept ID = full path minus the `.md` suffix (OKF §2).
     pub id: String,
-    /// The free-text `type` frontmatter field (NOT the UML `ClassifierType`).
+    /// The free-text `type` frontmatter field (NOT the UML `ElementType`).
     #[cfg_attr(feature = "serde", serde(rename = "type"))]
     pub ty: String,
     #[cfg_attr(
