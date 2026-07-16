@@ -20,9 +20,12 @@ fn member_url(dir: &str, e: &IndexEntry) -> String {
     }
 }
 
-pub fn render_index(dir: &str, description: Option<&str>, members: &[IndexEntry]) -> String {
-    let title = if dir.is_empty() { "index" } else { dir.rsplit('/').next().unwrap_or(dir) };
-    let mut out = format!("# {title}\n");
+pub fn render_index(dir: &str, title: Option<&str>, description: Option<&str>, members: &[IndexEntry]) -> String {
+    let fallback = if dir.is_empty() { "index" } else { dir.rsplit('/').next().unwrap_or(dir) };
+    // A custom title (parsed from the existing H1, or set by pkg.retitle) is
+    // emitted verbatim; only an absent/blank title falls back to the basename.
+    let heading = title.map(str::trim).filter(|t| !t.is_empty()).unwrap_or(fallback);
+    let mut out = format!("# {heading}\n");
     if let Some(d) = description.filter(|d| !d.trim().is_empty()) {
         out.push('\n');
         out.push_str(d.trim());
@@ -86,7 +89,15 @@ pub fn reindex_bundle(bundle: &[(String, String)]) -> Vec<(String, String)> {
         } else {
             format!("{}/index.md", pkg.key)
         };
-        out.push((path, render_index(&pkg.key, pkg.concept.description.as_deref(), &entries)));
+        // Root's name is the model path (root index.md H1); nested packages carry
+        // it on concept.title. Preserve either verbatim instead of resetting to
+        // the dir basename.
+        let title: Option<&str> = if pkg.key.is_empty() {
+            (!model.path.is_empty()).then_some(model.path.as_str())
+        } else {
+            pkg.concept.title.as_deref()
+        };
+        out.push((path, render_index(&pkg.key, title, pkg.concept.description.as_deref(), &entries)));
     }
     out
 }
@@ -101,12 +112,37 @@ mod tests {
             IndexEntry { key: "sales/orders".into(), title: "orders".into(), blurb: None, is_package: true },
             IndexEntry { key: "customer".into(), title: "Customer".into(), blurb: Some("a buyer".into()), is_package: false },
         ];
-        let out = render_index("sales", Some("Sales bounded context."), &members);
+        // title None => fall back to the dir basename.
+        let out = render_index("sales", None, Some("Sales bounded context."), &members);
         assert!(out.starts_with("# sales\n"));
         assert!(out.contains("Sales bounded context."));
         assert!(out.contains("* [orders](orders/)"));
         assert!(out.contains("* [Customer](./customer.md) - a buyer"));
         assert!(!out.contains("---")); // frontmatter-less
+    }
+
+    #[test]
+    fn render_index_emits_a_custom_title_verbatim() {
+        let out = render_index("sales", Some("Sales Domain"), None, &[]);
+        assert!(out.starts_with("# Sales Domain\n"), "custom title must be the H1: {out}");
+    }
+
+    #[test]
+    fn render_index_root_uses_title_over_index_fallback() {
+        // Root ("" dir): a Some title wins; None falls back to "index".
+        assert!(render_index("", Some("My Domain"), None, &[]).starts_with("# My Domain\n"));
+        assert!(render_index("", None, None, &[]).starts_with("# index\n"));
+    }
+
+    #[test]
+    fn reindex_preserves_a_custom_root_index_title() {
+        let b = vec![
+            ("index.md".to_string(), "# My Domain\n\n* [Order](./order.md)\n".to_string()),
+            ("order.md".to_string(), "---\ntype: uml.Class\ntitle: Order\n---\n# Order\n".to_string()),
+        ];
+        let out = reindex_bundle(&b);
+        let root = &out.iter().find(|(p, _)| p == "index.md").unwrap().1;
+        assert!(root.starts_with("# My Domain\n"), "root H1 must survive reindex, got: {root}");
     }
 
     #[test]

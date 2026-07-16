@@ -79,21 +79,34 @@ fn member_title(model: &crate::model::Model, k: &str) -> String {
         .unwrap_or_else(|| k.to_string())
 }
 
-/// Write/replace `<path>/index.md` with a listing in the requested (or A–Z)
-/// order, preserving intro prose + blurbs. `order` keys not in the package are
-/// ignored; members missing from `order` are appended in existing order.
-fn write_package_index(work: &mut Bundle, path: &str, order: Option<&[String]>) -> Result<(), OpError> {
+/// How a rewritten index.md orders its members. `Sort` = A–Z by title; `Explicit`
+/// = a caller-supplied order (unknown keys ignored, missing keys appended).
+enum MemberOrder<'a> {
+    Explicit(&'a [String]),
+    Sort,
+}
+
+/// Write/replace `<path>/index.md` (root → `index.md`) with a listing in the
+/// requested order, preserving intro prose + blurbs. The H1 title comes from
+/// `title_override` when set, else the package's current title (root →
+/// `model.path`, else `concept.title`), else the dir basename.
+fn write_package_index(
+    work: &mut Bundle,
+    path: &str,
+    order: MemberOrder<'_>,
+    title_override: Option<&str>,
+) -> Result<(), OpError> {
     let model = build_model(work);
     let pkg = model.packages.iter().find(|p| p.key == path)
-        .ok_or_else(|| OpError::at("pkg.order", format!("no package '{path}'")))?;
+        .ok_or_else(|| OpError::at("pkg.index", format!("no package '{path}'")))?;
     // desired order
     let mut keys: Vec<String> = match order {
-        Some(o) => {
+        MemberOrder::Explicit(o) => {
             let mut v: Vec<String> = o.iter().filter(|k| pkg.members.contains(k)).cloned().collect();
             for m in &pkg.members { if !v.contains(m) { v.push(m.clone()); } }
             v
         }
-        None => {
+        MemberOrder::Sort => {
             let mut v = pkg.members.clone();
             v.sort_by_key(|k| member_title(&model, k).to_lowercase());
             v
@@ -112,8 +125,17 @@ fn write_package_index(work: &mut Bundle, path: &str, order: Option<&[String]>) 
             .unwrap_or((k.clone(), false, None));
         IndexEntry { key: k, title, is_package: is_pkg, blurb }
     }).collect();
-    let text = render_index(path, pkg.concept.description.as_deref(), &entries);
-    let idx_path = format!("{path}/index.md");
+    // Current title: root's name lives on model.path (the root index.md H1);
+    // other packages carry it on concept.title. An explicit override wins.
+    let current_title = if path.is_empty() {
+        (!model.path.is_empty()).then(|| model.path.clone())
+    } else {
+        pkg.concept.title.clone()
+    };
+    let title_for_index = title_override.map(str::to_string).or(current_title);
+    let text = render_index(path, title_for_index.as_deref(), pkg.concept.description.as_deref(), &entries);
+    // Root special-case is ONLY the index-file path arithmetic.
+    let idx_path = if path.is_empty() { "index.md".to_string() } else { format!("{path}/index.md") };
     match work.iter_mut().find(|(p, _)| *p == idx_path) {
         Some(slot) => slot.1 = text,
         None => work.push((idx_path, text)),
@@ -122,10 +144,10 @@ fn write_package_index(work: &mut Bundle, path: &str, order: Option<&[String]>) 
 }
 
 pub(crate) fn op_pkg_reorder(work: &mut Bundle, path: &str, order: &[String]) -> Result<(), OpError> {
-    write_package_index(work, path, Some(order))
+    write_package_index(work, path, MemberOrder::Explicit(order), None)
 }
 pub(crate) fn op_pkg_sort(work: &mut Bundle, path: &str) -> Result<(), OpError> {
-    write_package_index(work, path, None)
+    write_package_index(work, path, MemberOrder::Sort, None)
 }
 
 #[cfg(test)]
