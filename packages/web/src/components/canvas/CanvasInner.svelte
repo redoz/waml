@@ -496,12 +496,12 @@
   }
 
   // Create a new project: close the current one (everything autosaves) and reset
-  // to an empty model with the default name. Same primitive as clearCanvas; the
-  // separate confirm guards the context switch.
+  // to an empty model. store.load([]) clears the bundle, so the root package name
+  // (derived from $model.path) falls back to empty on its own. Same primitive as
+  // clearCanvas; the separate confirm guards the context switch.
   function createNewProject() {
     store.load([]);
     selectionSet = EMPTY_SELECTION;
-    modelName = DEFAULT_MODEL_NAME;
     activeDiagramKey = defaultDiagramKey(store.get());
     showCreateNew = false;
   }
