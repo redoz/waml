@@ -195,6 +195,15 @@ pub enum OpDto {
         path: String,
         title: String,
     },
+    #[serde(rename = "pkg.insert")]
+    PkgInsert {
+        #[serde(default = "one")]
+        v: u32,
+        parent_path: String,
+        name: String,
+        #[serde(default)]
+        docs: Vec<(String, String)>,
+    },
     #[serde(rename = "diagram.set")]
     DiagramSet {
         #[serde(default = "one")]
@@ -428,6 +437,14 @@ impl OpDto {
                 check_v(*v, "pkg.sort")?;
                 Ok(Op::PkgSort { path: path.clone() })
             }
+            OpDto::PkgInsert { v, parent_path, name, docs } => {
+                check_v(*v, "pkg.insert")?;
+                Ok(Op::PkgInsert {
+                    parent_path: parent_path.clone(),
+                    name: name.clone(),
+                    docs: docs.clone(),
+                })
+            }
             OpDto::DiagramSet { v, key, title, desc, display } => {
                 check_v(*v, "diagram.set")?;
                 Ok(Op::DiagramSet {
@@ -519,6 +536,12 @@ impl OpDto {
             Op::PkgReorder { path, order } => OpDto::PkgReorder { v: 1, path: path.clone(), order: order.clone() },
             Op::PkgSort { path } => OpDto::PkgSort { v: 1, path: path.clone() },
             Op::PkgRetitle { path, title } => OpDto::PkgRetitle { v: 1, path: path.clone(), title: title.clone() },
+            Op::PkgInsert { parent_path, name, docs } => OpDto::PkgInsert {
+                v: 1,
+                parent_path: parent_path.clone(),
+                name: name.clone(),
+                docs: docs.clone(),
+            },
             Op::DiagramSet { key, title, description, display } => OpDto::DiagramSet {
                 v: 1,
                 key: key.clone(),
@@ -667,6 +690,11 @@ mod tests {
             Op::PkgReorder { path: "sales".into(), order: vec!["a".into()] },
             Op::PkgSort { path: "sales".into() },
             Op::PkgRetitle { path: "sales".into(), title: "Sales Domain".into() },
+            Op::PkgInsert {
+                parent_path: "sales".into(),
+                name: "orders".into(),
+                docs: vec![("t/order.md".into(), "body".into())],
+            },
             Op::DiagramSet {
                 key: "dia".into(),
                 title: Some("D".into()),
@@ -697,6 +725,19 @@ mod tests {
             let back: OpDto = serde_json::from_str(&line).unwrap();
             assert_eq!(&back.to_op().unwrap(), op, "wire round-trip changed op: {line}");
         }
+    }
+
+    #[test]
+    fn pkg_insert_wire_round_trips() {
+        let op = Op::PkgInsert {
+            parent_path: "sales".into(),
+            name: "orders".into(),
+            docs: vec![("t/order.md".into(), "---\ntype: uml.Class\ntitle: Order\n---\n# Order\n".into())],
+        };
+        let line = serde_json::to_string(&OpDto::from_op(&op)).unwrap();
+        assert!(line.contains("\"op\":\"pkg.insert\""), "wire tag: {line}");
+        let back: OpDto = serde_json::from_str(&line).unwrap();
+        assert_eq!(back.to_op().unwrap(), op, "round-trip changed op: {line}");
     }
 
     #[test]
