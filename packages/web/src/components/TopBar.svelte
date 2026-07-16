@@ -24,6 +24,7 @@
     onDockModel,
     onEditModel,
     rootPackageName = "",
+    onRenameRoot,
   }: {
     onImport?: () => void;
     onExport?: () => void;
@@ -41,6 +42,8 @@
     onEditModel?: () => void;
     // Name of the model's root package — shown as the brand subtitle.
     rootPackageName?: string;
+    // Commit a new root package title (inline rename from the brand).
+    onRenameRoot?: (title: string) => void;
   } = $props();
 
   // Export dropdown (OKF markdown / SVG).
@@ -50,6 +53,35 @@
   // Read-only diagram switcher popover — same anchoring pattern as the Export
   // menu below (full-screen click-catcher + absolutely positioned card).
   let switcherOpen = $state(false);
+
+  // ── Inline root-package rename ─────────────────────────────────────────────
+  // Clicking the name (or the hover pencil) swaps it for a text input seeded with
+  // the current name; Enter/blur commit a non-blank change, Esc cancels.
+  let renaming = $state(false);
+  let renameDraft = $state("");
+
+  function startRename() {
+    renameDraft = rootPackageName;
+    renaming = true;
+  }
+  function commitRename() {
+    if (!renaming) return;
+    renaming = false;
+    const next = renameDraft.trim();
+    if (next && next !== rootPackageName) onRenameRoot?.(next);
+  }
+  function cancelRename() {
+    renaming = false;
+  }
+  function onRenameKey(e: KeyboardEvent) {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      commitRename();
+    } else if (e.key === "Escape") {
+      e.preventDefault();
+      cancelRename();
+    }
+  }
 
   // ── Diagram title switcher ─────────────────────────────────────────────────
   // Read-only diagram switcher popover — lists diagrams, checks the active one,
@@ -101,7 +133,43 @@
       WAML
     </a>
     <span class="text-slate-300 font-normal">/</span>
-    <span class="font-[550] text-slate-600 max-w-[240px] truncate">{rootPackageName}</span>
+    {#if renaming}
+      <!-- svelte-ignore a11y_autofocus -->
+      <input
+        aria-label="Package name"
+        class="font-[550] text-slate-800 max-w-[240px] px-1 py-0.5 rounded border border-[#d8dee8] outline-none focus:border-[#1e88e5]"
+        value={renameDraft}
+        autofocus
+        oninput={(e) => (renameDraft = e.currentTarget.value)}
+        onkeydown={onRenameKey}
+        onblur={commitRename}
+      />
+    {:else}
+      <div class="group flex items-center gap-1">
+        <!-- The name is a plain clickable span (NOT a button) so the pencil is the
+             one and only "Rename package" button — keeps the test query
+             deterministic. Both open the same inline editor. -->
+        <span
+          role="button"
+          tabindex="0"
+          onclick={startRename}
+          onkeydown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); startRename(); } }}
+          title="Rename package"
+          class="font-[550] text-slate-600 max-w-[240px] truncate cursor-text hover:text-slate-900"
+        >
+          {#if rootPackageName}{rootPackageName}{:else}<span class="text-slate-400 italic">Untitled</span>{/if}
+        </span>
+        <button
+          type="button"
+          onclick={startRename}
+          title="Rename package"
+          aria-label="Rename package"
+          class="opacity-0 group-hover:opacity-100 transition-opacity text-slate-400 hover:text-slate-700"
+        >
+          <Pencil size={13} />
+        </button>
+      </div>
+    {/if}
   </div>
 
   <!-- Diagram title & switcher — centered. The active diagram's title doubles as

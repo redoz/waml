@@ -42,7 +42,7 @@ test("clicking the title opens the read-only switcher dropdown", async () => {
   expect(btn.getAttribute("aria-expanded")).toBe("true");
   expect(screen.getByRole("dialog", { name: /switch diagram/i })).toBeTruthy();
   expect(screen.queryByLabelText("Search model")).toBeNull();
-  expect(screen.queryByRole("button", { name: /rename|new diagram|create/i })).toBeNull();
+  expect(screen.queryByRole("button", { name: /rename diagram|new diagram|create/i })).toBeNull();
 });
 
 test("the dropdown lists every diagram with the active one checked", async () => {
@@ -123,6 +123,38 @@ test("renders the WAML wordmark and the root package name as subtitle", () => {
   // Root package name shows in place of the old "Model Canvas" label.
   expect(container.textContent).toContain("Acme Model");
   expect(container.textContent).not.toContain("Model Canvas");
+});
+
+test("shows a muted Untitled placeholder when the root name is blank", () => {
+  const { container } = render(TopBar, { props: { rootPackageName: "" } });
+  expect(container.textContent).toContain("Untitled");
+});
+
+test("clicking the pencil opens an input seeded with the current name", async () => {
+  render(TopBar, { props: { rootPackageName: "Acme Package" } });
+  await fireEvent.click(screen.getByRole("button", { name: /rename package/i }));
+  const input = screen.getByRole("textbox", { name: /package name/i }) as HTMLInputElement;
+  expect(input.value).toBe("Acme Package");
+});
+
+test("Enter in the rename input fires onRenameRoot with the new value", async () => {
+  const onRenameRoot = vi.fn();
+  render(TopBar, { props: { rootPackageName: "Acme Package", onRenameRoot } });
+  await fireEvent.click(screen.getByRole("button", { name: /rename package/i }));
+  const input = screen.getByRole("textbox", { name: /package name/i });
+  await fireEvent.input(input, { target: { value: "Beta Package" } });
+  await fireEvent.keyDown(input, { key: "Enter" });
+  expect(onRenameRoot).toHaveBeenCalledWith("Beta Package");
+});
+
+test("Escape cancels the rename without firing onRenameRoot", async () => {
+  const onRenameRoot = vi.fn();
+  render(TopBar, { props: { rootPackageName: "Acme Package", onRenameRoot } });
+  await fireEvent.click(screen.getByRole("button", { name: /rename package/i }));
+  const input = screen.getByRole("textbox", { name: /package name/i });
+  await fireEvent.input(input, { target: { value: "Discarded" } });
+  await fireEvent.keyDown(input, { key: "Escape" });
+  expect(onRenameRoot).not.toHaveBeenCalled();
 });
 
 test("brand anchor links to the WAML GitHub repo", () => {
