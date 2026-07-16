@@ -1,8 +1,9 @@
 import { render, fireEvent } from "@testing-library/svelte";
 import { describe, it, expect, vi } from "vitest";
 import NewPackageDialog from "./NewPackageDialog.svelte";
+import type { Template } from "@waml/core/templates";
 
-const templates = [
+const templates: Template[] = [
   { id: "t1", nicheId: null, category: "dataset", name: "Orders Domain (UML)", description: "d", bundle: [["orders-domain-uml/order.md", "# Order"]] },
 ];
 const packages = [{ key: "sales" }];
