@@ -1,4 +1,5 @@
 mod load;
+mod scene;
 mod sizing;
 
 fn main() {
