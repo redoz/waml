@@ -106,8 +106,8 @@ export interface DiagramHints {
 export interface DiagramDisplay {
   /** Show attribute rows inside class boxes (vs. a collapsed attribute count). */
   showAttributes: boolean;
-  /** How much of each attribute row shows: just the name, or name + type. */
-  attributeDetail: "name-only" | "name-type";
+  /** Whether each attribute row shows its type name (true) or name only (false). */
+  showType: boolean;
   /** Diagram-level gate on the +/-/#/~ visibility marker per attribute row. */
   showAttributeVisibility: boolean;
   /** Independent gate on the {mult} suffix per attribute row. */
@@ -131,7 +131,7 @@ export interface DiagramDisplay {
 /** Defaults applied when a diagram has no `display` block (keeps legacy OKF valid). */
 export const DEFAULT_DISPLAY: DiagramDisplay = {
   showAttributes: true,
-  attributeDetail: "name-type",
+  showType: true,
   showAttributeVisibility: true,
   showAttributeMultiplicity: true,
   // maxAttributes omitted ⇒ undefined ⇒ unlimited

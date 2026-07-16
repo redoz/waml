@@ -9,7 +9,7 @@ describe("resolveDisplay", () => {
   it("returns the documented default values", () => {
     expect(DEFAULT_DISPLAY).toEqual({
       showAttributes: true,
-      attributeDetail: "name-type",
+      showType: true,
       showAttributeVisibility: true,
       showAttributeMultiplicity: true,
       showRoles: true,
@@ -34,10 +34,10 @@ describe("resolveDisplay", () => {
   });
 
   it("overlays a partial display onto the defaults", () => {
-    expect(resolveDisplay({ showAttributes: false, attributeDetail: "name-only" })).toEqual({
+    expect(resolveDisplay({ showAttributes: false, showType: false })).toEqual({
       ...DEFAULT_DISPLAY,
       showAttributes: false,
-      attributeDetail: "name-only",
+      showType: false,
     });
   });
 

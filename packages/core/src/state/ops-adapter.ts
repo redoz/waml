@@ -230,7 +230,7 @@ function toDisplayDto(display: Partial<DiagramDisplay>): DisplayDto {
   const d = resolveDisplay(display);
   return {
     showAttributes: d.showAttributes,
-    attributeDetail: d.attributeDetail,
+    showType: d.showType,
     showAttributeVisibility: d.showAttributeVisibility,
     showAttributeMultiplicity: d.showAttributeMultiplicity,
     ...(d.maxAttributes !== undefined ? { maxAttributes: d.maxAttributes } : {}),
