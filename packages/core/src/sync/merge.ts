@@ -1,24 +1,9 @@
 import type { ModelGraph } from "@waml/okf";
 
-type Bundle = [string, string][];
-
-/** Bundle-native merge (OKF import / template "merge" mode): append every
- *  incoming document that doesn't collide with an existing one, keyed by slug
- *  (the filename without `.md` — the node identity). Colliding docs are skipped
- *  so the merge is idempotent and never produces duplicate slugs (build_model
- *  would otherwise see two documents for the same key). */
-export function mergeBundles(current: Bundle, incoming: Bundle): Bundle {
-  const slug = (p: string) => (p.split(/[\\/]/).pop() ?? p).replace(/\.md$/, "");
-  const used = new Set(current.map(([p]) => slug(p)));
-  const out: Bundle = current.map(([p, m]) => [p, m]);
-  for (const [p, m] of incoming) {
-    const s = slug(p);
-    if (used.has(s)) continue;
-    used.add(s);
-    out.push([p, m]);
-  }
-  return out;
-}
+// NOTE: the former `mergeBundles` (global-basename dedup) is retired — bundle
+// merging is now the Rust `pkg.insert` op (full-path identity). `mergeGraphs`
+// below is graph-level remap by fresh generated keys (not basename dedup); it has
+// no production caller and is kept for its unit test only.
 
 // Merge incoming into current (OKF import / template "merge" mode): every
 // incoming node is appended under a fresh key; edges, diagrams and members are

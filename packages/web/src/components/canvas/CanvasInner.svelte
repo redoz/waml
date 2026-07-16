@@ -67,7 +67,6 @@ import ShareToast from "../ShareToast.svelte";
   import { buildShareUrl } from "@waml/core/share/url";
   import { exportCanvasSvg, buildCanvasSvg } from "@waml/core/share/exportImage";
   import { svgToPngBlob } from "../../share/rasterize";
-  import { mergeBundles } from "@waml/core/sync/merge";
   import type { Bundle } from "@waml/core/state/model";
 
   // Shared with the SvelteFlow instance's own minZoom/maxZoom below, and with
@@ -528,12 +527,13 @@ import ShareToast from "../ShareToast.svelte";
     layoutAll();
   }
 
-  // Merge an incoming bundle into the canvas (bundle-native slug-keyed concat),
-  // then re-layout. Stage 1b re-lays-out the whole model on merge (positions live
-  // in the overlay, not the bundle).
+  // Merge an incoming OKF bundle: insert it as a package (full-path identity via
+  // the Rust pkg.insert op), named after its own top-level folder so structure is
+  // preserved, then re-layout. Replaces the retired global-basename mergeBundles.
   function applyMergeWithLayout(bundle: Bundle) {
-    store.load(mergeBundles(store.getBundle(), bundle));
-    layoutAll();
+    const top = bundle[0]?.[0]?.replace(/[\\/].*$/, "") ?? "";
+    const name = top || "imported";
+    if (store.insertPackage("", name, bundle)) layoutAll();
   }
 
   function handleImportConfirm(bundle: Bundle, mode: "replace" | "merge") {
