@@ -107,6 +107,7 @@ pub enum Op {
     PkgDelete { path: String, cascade: bool },
     PkgReorder { path: String, order: Vec<String> },
     PkgSort { path: String },
+    PkgRetitle { path: String, title: String },
     DiagramSet {
         key: String,                          // diagram doc id (full-path or bare slug)
         title: Option<String>,                // None = leave unchanged
@@ -155,6 +156,7 @@ fn apply_one(work: &mut Bundle, op: &Op) -> Result<(), OpError> {
         Op::PkgDelete { path, cascade } => pkg::op_pkg_delete(work, path, *cascade),
         Op::PkgReorder { path, order } => pkg::op_pkg_reorder(work, path, order),
         Op::PkgSort { path } => pkg::op_pkg_sort(work, path),
+        Op::PkgRetitle { path, title } => pkg::op_pkg_retitle(work, path, title),
         Op::DiagramSet { key, title, description, display } => {
             op_diagram_set(work, key, title, description, display)
         }

@@ -84,6 +84,9 @@ fn member_title(model: &crate::model::Model, k: &str) -> String {
 enum MemberOrder<'a> {
     Explicit(&'a [String]),
     Sort,
+    /// Keep the package's current (reconciled) member order — used by retitle,
+    /// which must not reshuffle the listing.
+    Keep,
 }
 
 /// Write/replace `<path>/index.md` (root → `index.md`) with a listing in the
@@ -111,6 +114,7 @@ fn write_package_index(
             v.sort_by_key(|k| member_title(&model, k).to_lowercase());
             v
         }
+        MemberOrder::Keep => pkg.members.clone(),
     };
     let entries: Vec<IndexEntry> = keys.drain(..).map(|k| {
         let (title, is_pkg, blurb) = model.nodes.iter().find(|n| n.key == k)
@@ -148,6 +152,17 @@ pub(crate) fn op_pkg_reorder(work: &mut Bundle, path: &str, order: &[String]) ->
 }
 pub(crate) fn op_pkg_sort(work: &mut Bundle, path: &str) -> Result<(), OpError> {
     write_package_index(work, path, MemberOrder::Sort, None)
+}
+
+/// Set a package's display title by writing its index.md H1, creating the file
+/// (root → `index.md`, else `<path>/index.md`) when absent. Preserves the intro
+/// prose and member listing. Empty/whitespace titles are rejected. Generic over
+/// any package key; root ("") is just one instance.
+pub(crate) fn op_pkg_retitle(work: &mut Bundle, path: &str, title: &str) -> Result<(), OpError> {
+    if title.trim().is_empty() {
+        return Err(OpError::at("pkg.retitle", "title cannot be empty"));
+    }
+    write_package_index(work, path, MemberOrder::Keep, Some(title))
 }
 
 #[cfg(test)]
@@ -228,5 +243,36 @@ mod tests {
         let out = apply(&b, &[Op::PkgSort { path: "sales".into() }]).unwrap();
         let idx = &out.iter().find(|(p, _)| p == "sales/index.md").unwrap().1;
         assert!(idx.find("customer.md").unwrap() < idx.find("order.md").unwrap());
+    }
+
+    #[test]
+    fn retitle_creates_root_index_when_absent() {
+        let b = vec![("order.md".to_string(), "---\ntype: uml.Class\ntitle: Order\n---\n# Order\n".to_string())];
+        let out = apply(&b, &[Op::PkgRetitle { path: "".into(), title: "Acme".into() }]).unwrap();
+        let idx = &out.iter().find(|(p, _)| p == "index.md").expect("root index.md created").1;
+        assert!(idx.starts_with("# Acme\n"), "root H1: {idx}");
+        assert!(idx.contains("./order.md"), "member listing preserved: {idx}");
+    }
+
+    #[test]
+    fn retitle_preserves_intro_and_members_for_a_nested_package() {
+        let b = vec![
+            ("sales/index.md".to_string(), "# Old\n\nIntro prose.\n\n* [order](./order.md)\n".to_string()),
+            ("sales/order.md".to_string(), "---\ntype: uml.Class\ntitle: Order\n---\n# Order\n".to_string()),
+            ("sales/customer.md".to_string(), "---\ntype: uml.Class\ntitle: Customer\n---\n# Customer\n".to_string()),
+        ];
+        let out = apply(&b, &[Op::PkgRetitle { path: "sales".into(), title: "Sales Domain".into() }]).unwrap();
+        let idx = &out.iter().find(|(p, _)| p == "sales/index.md").unwrap().1;
+        assert!(idx.starts_with("# Sales Domain\n"), "new H1: {idx}");
+        assert!(idx.contains("Intro prose."), "intro preserved: {idx}");
+        assert!(idx.contains("./order.md") && idx.contains("./customer.md"), "members preserved: {idx}");
+    }
+
+    #[test]
+    fn retitle_rejects_an_empty_title() {
+        let b = vec![("order.md".to_string(), "---\ntype: uml.Class\ntitle: Order\n---\n# Order\n".to_string())];
+        let err = apply(&b, &[Op::PkgRetitle { path: "".into(), title: "   ".into() }]).unwrap_err();
+        assert_eq!(err.op, "pkg.retitle");
+        assert!(err.reason.contains("empty"), "reason: {}", err.reason);
     }
 }
