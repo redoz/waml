@@ -125,20 +125,28 @@ describe("InspectorPanel", () => {
   it("fires onTogglePin when the pin control is clicked", async () => {
     const onTogglePin = vi.fn();
     setup({ onTogglePin });
-    await fireEvent.click(screen.getByRole("button", { name: /pin inspector/i }));
+    await fireEvent.click(screen.getByRole("button", { name: /keep solid|dim when idle/i }));
     expect(onTogglePin).toHaveBeenCalledTimes(1);
   });
 
-  it("is opaque when unpinned and translucent when pinned + idle", () => {
+  it("pinned shows the solid (Pin) state; unpinned shows PinOff — labels swap", () => {
+    const { unmount } = setup({ pinned: true });
+    expect(screen.getByRole("button", { name: /let it dim when idle/i }).getAttribute("aria-pressed")).toBe("true");
+    unmount();
     setup({ pinned: false });
-    expect(screen.getByRole("complementary").classList.contains("opacity-40")).toBe(false);
+    expect(screen.getByRole("button", { name: /keep solid/i }).getAttribute("aria-pressed")).toBe("false");
+  });
+
+  it("is opaque when pinned and translucent when unpinned + idle", () => {
     setup({ pinned: true });
+    expect(screen.getByRole("complementary").classList.contains("opacity-40")).toBe(false);
+    setup({ pinned: false });
     const asides = screen.getAllByRole("complementary");
     expect(asides[asides.length - 1].classList.contains("opacity-40")).toBe(true);
   });
 
   it("becomes opaque on hover, translucent again after the pointer leaves", async () => {
-    setup({ pinned: true, hideDelay: 20 });
+    setup({ pinned: false, hideDelay: 20 });
     const aside = screen.getByRole("complementary");
     expect(aside.classList.contains("opacity-40")).toBe(true);
     await fireEvent.pointerEnter(aside);
