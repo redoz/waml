@@ -3,6 +3,7 @@
   // central edit panel host can render the identical set. Display toggles only — no
   // title/profile. Each control emits a single changed field via onChange.
   import type { DiagramDisplay, Diagram } from "@waml/okf";
+  import { inputCls, labelCls } from "../inspector/field-styles";
 
   let { display, diagram, candidateStereotypes, editable, onChange, onUpdateDiagram }: {
     display: DiagramDisplay;
@@ -18,6 +19,7 @@
   }
 
   let disabledAll = $derived(!editable);
+  let attrDisabled = $derived(!display.showAttributes || disabledAll);
   let stereoDisabled = $derived(!display.showStereotype || disabledAll);
 
   function toggleFilter(name: string) {
@@ -46,6 +48,10 @@
   function commitNote(v: string) {
     if (v !== (diagram.description ?? "")) onUpdateDiagram({ description: v });
   }
+
+  // In-section field label (Title, Note, Max attributes, toggle rows) — one weight
+  // below the uppercase section headers so the hierarchy reads at a glance.
+  const fieldLabelCls = "mb-1 block text-[13px] font-medium text-slate-800";
 </script>
 
 <!-- A labelled on/off toggle row inside the properties flyout. -->
@@ -101,163 +107,175 @@
   </div>
 {/snippet}
 
-<div>
+<div class="flex flex-col gap-4 py-1">
   {#if !editable}
     <div
       role="note"
-      class="mx-1 mb-2 rounded-lg bg-[#fff7ed] px-3 py-2 text-[12px] leading-snug text-[#9a3412]"
+      class="mx-1 rounded-lg bg-[#fff7ed] px-3 py-2 text-[12px] leading-snug text-[#9a3412]"
     >
       Display and note settings save to a diagram. The <strong>All</strong> view can't store them — create
       a diagram to customize.
     </div>
   {/if}
 
-  <div class="px-2 py-1.5">
-    <label class="block">
-      <span class="mb-1 block text-[13px] font-medium text-slate-800">Title</span>
-      <input
-        type="text"
-        aria-label="Diagram title"
-        value={diagram.title}
-        disabled={disabledAll}
-        onblur={(e) => commitTitle((e.currentTarget as HTMLInputElement).value)}
-        onkeydown={(e) => {
-          if (e.key === "Enter") {
-            e.preventDefault();
-            (e.currentTarget as HTMLInputElement).blur();
-          }
-        }}
-        class="w-full rounded-md border border-slate-300 px-2 py-1 text-[13px] disabled:opacity-40"
-      />
-    </label>
-    <label class="mt-2 block">
-      <span class="mb-1 block text-[13px] font-medium text-slate-800">Note</span>
-      <textarea
-        aria-label="Diagram note"
-        rows="3"
-        disabled={disabledAll}
-        placeholder="Notes about this diagram (not shown on canvas)."
-        value={diagram.description ?? ""}
-        onblur={(e) => commitNote((e.currentTarget as HTMLTextAreaElement).value)}
-        class="w-full resize-y rounded-md border border-slate-300 px-2 py-1 text-[13px] disabled:opacity-40"
-      ></textarea>
-    </label>
-  </div>
-
-  <div class="h-px bg-[#eef1f5] mx-1 my-1"></div>
-
-  {@render toggleRow("Show attributes", display.showAttributes, () =>
-    patch({ showAttributes: !display.showAttributes }), disabledAll,
-  )}
-  {@render segmented(
-    "Attribute detail",
-    [
-      { value: "name-only", label: "Name only" },
-      { value: "name-type", label: "Name + type" },
-    ],
-    display.attributeDetail,
-    (v) => patch({ attributeDetail: v as DiagramDisplay["attributeDetail"] }),
-    !display.showAttributes || disabledAll,
-  )}
-  {@render toggleRow("Show visibility", display.showAttributeVisibility, () =>
-    patch({ showAttributeVisibility: !display.showAttributeVisibility }), !display.showAttributes || disabledAll,
-  )}
-  {@render toggleRow("Show multiplicity", display.showAttributeMultiplicity, () =>
-    patch({ showAttributeMultiplicity: !display.showAttributeMultiplicity }), !display.showAttributes || disabledAll,
-  )}
-  <div class="px-2 py-1.5 {(!display.showAttributes || disabledAll) ? 'opacity-40' : ''}">
-    <div class="mb-1 text-[13px] font-medium text-slate-800">Max attributes</div>
-    <div class="flex items-center gap-2">
-      <input
-        type="number"
-        min="1"
-        aria-label="Max attributes"
-        placeholder="∞"
-        value={display.maxAttributes ?? ""}
-        disabled={!display.showAttributes || disabledAll}
-        oninput={(e) => {
-          const n = Number((e.currentTarget as HTMLInputElement).value);
-          if (Number.isFinite(n) && n >= 1) patch({ maxAttributes: Math.floor(n) });
-        }}
-        class="w-16 rounded-md border border-slate-300 px-2 py-1 text-[13px] disabled:opacity-40"
-      />
-      <button
-        type="button"
-        aria-label="Unlimited attributes"
-        disabled={!display.showAttributes || disabledAll}
-        onclick={() => {
-          if (display.showAttributes && !disabledAll) patch({ maxAttributes: undefined });
-        }}
-        class="rounded-md px-2 py-1 text-[12px] font-semibold {display.maxAttributes === undefined
-          ? 'bg-white text-[#1e88e5] shadow-sm'
-          : 'text-slate-500'}"
-      >
-        Unlimited
-      </button>
-    </div>
-  </div>
-
-  <div class="h-px bg-[#eef1f5] mx-1 my-1"></div>
-
-  {@render toggleRow("Show roles", display.showRoles, () =>
-    patch({ showRoles: !display.showRoles }), disabledAll,
-  )}
-  {@render toggleRow("Show cardinality", display.showCardinality, () =>
-    patch({ showCardinality: !display.showCardinality }), disabledAll,
-  )}
-  {@render toggleRow("Show labels", display.showLabels, () =>
-    patch({ showLabels: !display.showLabels }), disabledAll,
-  )}
-
-  <div class="h-px bg-[#eef1f5] mx-1 my-1"></div>
-
-  {@render toggleRow("Show stereotype", display.showStereotype, () =>
-    patch({ showStereotype: !display.showStereotype }), disabledAll,
-  )}
-
-  <div class="px-2 py-1.5 {stereoDisabled ? 'opacity-40' : ''}">
-    <div class="mb-1 text-[13px] font-medium text-slate-800">Stereotype filter</div>
-    {#if candidateStereotypes.length === 0}
-      <div class="text-[12px] text-slate-400">No stereotypes on this diagram's members yet.</div>
-    {:else}
-      <label class="flex items-center gap-2 py-0.5 text-[12px] text-slate-700">
+  <section class="flex flex-col">
+    <h3 class="px-2 {labelCls}">Identity</h3>
+    <div class="px-2">
+      <label class="block">
+        <span class={fieldLabelCls}>Title</span>
         <input
-          type="checkbox" aria-label="Show all stereotypes"
-          checked={display.stereotypeFilter === undefined} disabled={stereoDisabled}
-          onchange={() => { if (!stereoDisabled) patch({ stereotypeFilter: undefined }); }} />
-        <span>Show all</span>
+          type="text"
+          aria-label="Diagram title"
+          value={diagram.title}
+          disabled={disabledAll}
+          onblur={(e) => commitTitle((e.currentTarget as HTMLInputElement).value)}
+          onkeydown={(e) => {
+            if (e.key === "Enter") {
+              e.preventDefault();
+              (e.currentTarget as HTMLInputElement).blur();
+            }
+          }}
+          class={`${inputCls} disabled:opacity-40`}
+        />
       </label>
-      {#each candidateStereotypes as name (name)}
-        {@const checked = display.stereotypeFilter === undefined ? true : display.stereotypeFilter.includes(name)}
-        <label class="flex items-center gap-2 py-0.5 text-[12px] text-slate-700">
-          <input type="checkbox" aria-label={name} checked={checked} disabled={stereoDisabled} onchange={() => toggleFilter(name)} />
-          <span>{name}</span>
-        </label>
-      {/each}
-    {/if}
-  </div>
+      <label class="mt-2 block">
+        <span class={fieldLabelCls}>Note</span>
+        <textarea
+          aria-label="Diagram note"
+          rows="3"
+          disabled={disabledAll}
+          placeholder="Notes about this diagram (not shown on canvas)."
+          value={diagram.description ?? ""}
+          onblur={(e) => commitNote((e.currentTarget as HTMLTextAreaElement).value)}
+          class={`${inputCls} resize-y disabled:opacity-40`}
+        ></textarea>
+      </label>
+    </div>
+  </section>
 
-  <div class="px-2 py-1.5 {stereoDisabled ? 'opacity-40' : ''}">
-    <div class="mb-1 text-[13px] font-medium text-slate-800">Stereotype colors</div>
-    {#if candidateStereotypes.length === 0}
-      <div class="text-[12px] text-slate-400">No stereotypes on this diagram's members yet.</div>
-    {:else}
-      {#each candidateStereotypes as name (name)}
-        <div class="flex items-center gap-2 py-0.5 text-[12px] text-slate-700">
+  <section class="flex flex-col">
+    <h3 class="px-2 {labelCls}">Attributes</h3>
+    <div>
+      {@render toggleRow("Show attributes", display.showAttributes, () =>
+        patch({ showAttributes: !display.showAttributes }), disabledAll,
+      )}
+      {@render segmented(
+        "Attribute detail",
+        [
+          { value: "name-only", label: "Name only" },
+          { value: "name-type", label: "Name + type" },
+        ],
+        display.attributeDetail,
+        (v) => patch({ attributeDetail: v as DiagramDisplay["attributeDetail"] }),
+        attrDisabled,
+      )}
+      {@render toggleRow("Show visibility", display.showAttributeVisibility, () =>
+        patch({ showAttributeVisibility: !display.showAttributeVisibility }), attrDisabled,
+      )}
+      {@render toggleRow("Show multiplicity", display.showAttributeMultiplicity, () =>
+        patch({ showAttributeMultiplicity: !display.showAttributeMultiplicity }), attrDisabled,
+      )}
+      <div class="px-2 py-1.5 {attrDisabled ? 'opacity-40' : ''}">
+        <div class="mb-1 text-[13px] font-medium text-slate-800">Max attributes</div>
+        <div class="flex items-center gap-2">
           <input
-            type="color" aria-label={`Color for ${name}`} disabled={stereoDisabled}
-            value={display.stereotypeColors[name] ?? "#dddddd"}
-            oninput={(e) => setColor(name, (e.currentTarget as HTMLInputElement).value)}
-            class="h-6 w-8 rounded border border-slate-300" />
-          <span class="flex-1">{name}</span>
-          {#if display.stereotypeColors[name]}
-            <button
-              type="button" aria-label={`Clear color for ${name}`} disabled={stereoDisabled}
-              onclick={() => clearColor(name)}
-              class="text-slate-400 hover:text-slate-700">Clear</button>
-          {/if}
+            type="number"
+            min="1"
+            aria-label="Max attributes"
+            placeholder="∞"
+            value={display.maxAttributes ?? ""}
+            disabled={attrDisabled}
+            oninput={(e) => {
+              const n = Number((e.currentTarget as HTMLInputElement).value);
+              if (Number.isFinite(n) && n >= 1) patch({ maxAttributes: Math.floor(n) });
+            }}
+            class="w-16 rounded-md border border-slate-300 px-2 py-1 text-[13px] disabled:opacity-40"
+          />
+          <button
+            type="button"
+            aria-label="Unlimited attributes"
+            disabled={attrDisabled}
+            onclick={() => {
+              if (!attrDisabled) patch({ maxAttributes: undefined });
+            }}
+            class="rounded-md px-2 py-1 text-[12px] font-semibold {display.maxAttributes === undefined
+              ? 'bg-white text-[#1e88e5] shadow-sm'
+              : 'text-slate-500'}"
+          >
+            Unlimited
+          </button>
         </div>
-      {/each}
-    {/if}
-  </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="flex flex-col">
+    <h3 class="px-2 {labelCls}">Relationships</h3>
+    <div>
+      {@render toggleRow("Show roles", display.showRoles, () =>
+        patch({ showRoles: !display.showRoles }), disabledAll,
+      )}
+      {@render toggleRow("Show cardinality", display.showCardinality, () =>
+        patch({ showCardinality: !display.showCardinality }), disabledAll,
+      )}
+      {@render toggleRow("Show labels", display.showLabels, () =>
+        patch({ showLabels: !display.showLabels }), disabledAll,
+      )}
+    </div>
+  </section>
+
+  <section class="flex flex-col">
+    <h3 class="px-2 {labelCls}">Stereotypes</h3>
+    <div>
+      {@render toggleRow("Show stereotype", display.showStereotype, () =>
+        patch({ showStereotype: !display.showStereotype }), disabledAll,
+      )}
+
+      <div class="px-2 py-1.5 {stereoDisabled ? 'opacity-40' : ''}">
+        <div class="mb-1 text-[13px] font-medium text-slate-800">Stereotype filter</div>
+        {#if candidateStereotypes.length === 0}
+          <div class="text-[12px] text-slate-400">No stereotypes on this diagram's members yet.</div>
+        {:else}
+          <label class="flex items-center gap-2 py-0.5 text-[12px] text-slate-700">
+            <input
+              type="checkbox" aria-label="Show all stereotypes"
+              checked={display.stereotypeFilter === undefined} disabled={stereoDisabled}
+              onchange={() => { if (!stereoDisabled) patch({ stereotypeFilter: undefined }); }} />
+            <span>Show all</span>
+          </label>
+          {#each candidateStereotypes as name (name)}
+            {@const checked = display.stereotypeFilter === undefined ? true : display.stereotypeFilter.includes(name)}
+            <label class="flex items-center gap-2 py-0.5 text-[12px] text-slate-700">
+              <input type="checkbox" aria-label={name} checked={checked} disabled={stereoDisabled} onchange={() => toggleFilter(name)} />
+              <span>{name}</span>
+            </label>
+          {/each}
+        {/if}
+      </div>
+
+      <div class="px-2 py-1.5 {stereoDisabled ? 'opacity-40' : ''}">
+        <div class="mb-1 text-[13px] font-medium text-slate-800">Stereotype colors</div>
+        {#if candidateStereotypes.length === 0}
+          <div class="text-[12px] text-slate-400">No stereotypes on this diagram's members yet.</div>
+        {:else}
+          {#each candidateStereotypes as name (name)}
+            <div class="flex items-center gap-2 py-0.5 text-[12px] text-slate-700">
+              <input
+                type="color" aria-label={`Color for ${name}`} disabled={stereoDisabled}
+                value={display.stereotypeColors[name] ?? "#dddddd"}
+                oninput={(e) => setColor(name, (e.currentTarget as HTMLInputElement).value)}
+                class="h-6 w-8 rounded border border-slate-300" />
+              <span class="flex-1">{name}</span>
+              {#if display.stereotypeColors[name]}
+                <button
+                  type="button" aria-label={`Clear color for ${name}`} disabled={stereoDisabled}
+                  onclick={() => clearColor(name)}
+                  class="text-slate-400 hover:text-slate-700">Clear</button>
+              {/if}
+            </div>
+          {/each}
+        {/if}
+      </div>
+    </div>
+  </section>
 </div>

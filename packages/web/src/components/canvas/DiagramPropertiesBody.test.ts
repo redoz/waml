@@ -198,3 +198,10 @@ test("stereotype controls disabled when showStereotype is off", () => {
   expect((screen.getByRole("checkbox", { name: "entity" }) as HTMLInputElement).disabled).toBe(true);
   expect((screen.getByLabelText("Color for entity") as HTMLInputElement).disabled).toBe(true);
 });
+
+test("renders the four section headings", () => {
+  render(DiagramPropertiesBody, { props: props() });
+  for (const name of ["Identity", "Attributes", "Relationships", "Stereotypes"]) {
+    expect(screen.getByRole("heading", { name })).toBeTruthy();
+  }
+});
