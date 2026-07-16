@@ -13,7 +13,6 @@ import type { Bundle } from "../state/model";
 // `<!-- path/slug.md -->` marker line (see `crates/waml/src/parse.rs::split_bundle`).
 
 const HASH_KEY = "m";
-const NAME_KEY = "n";
 
 // The compressed Orders-Domain payload must fit a comfortable URL-hash ceiling.
 // Browsers/CDNs tolerate multi-KB URLs; we keep well under 8 KB of hash so the
@@ -59,29 +58,16 @@ export function decodeModel(payload: string): Bundle | null {
   }
 }
 
-/** Full shareable URL for the current page that reopens `bundle`. */
-export function buildShareUrl(bundle: Bundle, name?: string): string {
-  // The model name isn't part of the bundle, so carry it alongside the payload as
-  // a separate hash param — the recipient opens the model under the sender's name.
-  const namePart = name && name.trim() ? `&${NAME_KEY}=${encodeURIComponent(name.trim())}` : "";
-  return `${location.origin}${location.pathname}#${HASH_KEY}=${encodeModel(bundle)}${namePart}`;
+/** Full shareable URL for the current page that reopens `bundle`. The bundle
+ *  carries its own name (root index.md H1), so no separate name param is needed. */
+export function buildShareUrl(bundle: Bundle): string {
+  return `${location.origin}${location.pathname}#${HASH_KEY}=${encodeModel(bundle)}`;
 }
 
 /** If the current URL carries a shared model, decode it into a bundle; else null. */
 export function readSharedModel(): Bundle | null {
   const match = new RegExp(`[#&]${HASH_KEY}=([^&]+)`).exec(location.hash);
   return match ? decodeModel(match[1]) : null;
-}
-
-/** The model name carried in a shared link, if any. */
-export function readSharedName(): string | null {
-  const match = new RegExp(`[#&]${NAME_KEY}=([^&]+)`).exec(location.hash);
-  if (!match) return null;
-  try {
-    return decodeURIComponent(match[1]);
-  } catch {
-    return null;
-  }
 }
 
 /** Strip the shared-model payload from the address bar (after we've loaded it),

@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll } from "vitest";
 import { initWasm } from "@waml/wasm";
-import { encodeModel, decodeModel, buildShareUrl, readSharedName, SHARE_URL_HASH_CEILING } from "./url";
+import { encodeModel, decodeModel, buildShareUrl, SHARE_URL_HASH_CEILING } from "./url";
 import { ordersDomainBundle } from "../templates/orders-domain.bundle";
 import type { Bundle } from "../state/model";
 
@@ -29,18 +29,10 @@ describe("share url", () => {
     expect(decodeModel("")).toBeNull();
   });
 
-  it("carries the model name in the link and reads it back", () => {
-    const url = buildShareUrl(bundle, "My SaaS / Subscription model");
-    expect(url).toContain("&n=");
-    history.replaceState(null, "", url.slice(url.indexOf("#")));
-    expect(readSharedName()).toBe("My SaaS / Subscription model");
-  });
-
-  it("omits the name param when no name is given, and reads null", () => {
+  it("does not carry a separate name param (the bundle owns its name)", () => {
     const url = buildShareUrl(bundle);
     expect(url).not.toContain("&n=");
-    history.replaceState(null, "", url.slice(url.indexOf("#")));
-    expect(readSharedName()).toBeNull();
+    expect(url).toContain("#m=");
   });
 
   it("the Orders Domain payload fits the URL-hash ceiling", () => {

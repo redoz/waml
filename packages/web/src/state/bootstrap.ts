@@ -1,7 +1,7 @@
 import { DEFAULT_DISPLAY } from "@waml/okf";
 import { createModelStore, type Bundle } from "@waml/core/state/model";
 import { loadPersistedBundle, persistBundle } from "@waml/core/state/persist";
-import { readSharedModel, readSharedName, clearSharedModelFromUrl } from "@waml/core/share/url";
+import { readSharedModel, clearSharedModelFromUrl } from "@waml/core/share/url";
 import { readTemplateModel, clearTemplateFromUrl } from "@waml/core/lib/templateLink";
 import { runDagreLayout } from "../canvas/layout";
 
@@ -19,7 +19,6 @@ const templateBundle = readTemplateModel();
 clearTemplateFromUrl(); // strip the param (clean URL on refresh) even if the id was unknown
 
 const sharedBundle = readSharedModel();
-export const sharedModelName = readSharedName(); // name carried alongside a shared link, if any
 const persistedBundle = loadPersistedBundle();
 
 const initialBundle: Bundle = templateBundle ?? sharedBundle ?? persistedBundle ?? [];

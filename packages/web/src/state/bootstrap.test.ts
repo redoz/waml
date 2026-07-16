@@ -24,7 +24,6 @@ async function loadBootstrap() {
 test("first-ever visit: empty store, isFirstVisit true", async () => {
   const mod = await loadBootstrap();
   expect(mod.isFirstVisit).toBe(true);
-  expect(mod.sharedModelName).toBeNull();
   expect(mod.store.get().nodes.length).toBe(0);
 });
 
