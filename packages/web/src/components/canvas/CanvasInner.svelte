@@ -18,7 +18,7 @@
   import { untrack } from "svelte";
 
   import { model, store } from "../../state/model.svelte";
-  import { sharedModelName, isFirstVisit, onStoreError } from "../../state/bootstrap";
+  import { isFirstVisit, onStoreError } from "../../state/bootstrap";
   import { runDagreLayout, NODE_W, NODE_H } from "../../canvas/layout";
   import { toRFNode } from "./toRFNode";
   import { diagramCandidateStereotypes, isDiagramEditable } from "./diagramProps";
@@ -62,7 +62,6 @@ import ShareToast from "../ShareToast.svelte";
   } from "@waml/core/state/diagrams";
   import { resolveDisplay, slugify, type DiagramDisplay, type Diagram, type ModelEdge } from "@waml/okf";
   import { getProfile } from "@waml/core/profiles";
-  import { loadModelName, persistModelName, DEFAULT_MODEL_NAME, templateModelName } from "@waml/core/state/modelName";
   import { persistBundle } from "@waml/core/state/persist";
   import { bundleToDownloadFiles, downloadBundle } from "@waml/core/okf/io";
   import { buildShareUrl } from "@waml/core/share/url";
@@ -94,9 +93,6 @@ import ShareToast from "../ShareToast.svelte";
   // on first render): effectiveDiagrams($model) synthesizes the implicit "All"
   // diagram when the model has none yet.
   let activeDiagramKey = $state<string>(loadActiveDiagramKey() ?? defaultDiagramKey($model));
-  // A shared link's name wins on first load (opening someone's named model);
-  // otherwise restore the locally-persisted name.
-  let modelName = $state(sharedModelName ?? loadModelName());
   let showImport = $state(false);
   let showLibrary = $state(false);
   // A template chosen from the library while the canvas already had content —
@@ -164,11 +160,9 @@ import ShareToast from "../ShareToast.svelte";
   const activeFlow = $derived(($model.flows ?? []).find((f) => f.key === activeDiagramKey));
   const activeSequence = $derived(($model.interactions ?? []).find((s) => s.key === activeDiagramKey));
   const activeDiagram = $derived(diagrams.find((d) => d.key === activeDiagramKey) ?? diagrams[0]);
-  // Root package (key "") title, shown as the top-bar brand subtitle; falls back
-  // to the bundle path.
-  const rootPackageName = $derived(
-    $model.packages.find((p) => p.key === "")?.concept.title?.trim() || $model.path || "Untitled",
-  );
+  // Root package name = the bundle's root index.md H1 (ModelGraph.path). Blank
+  // when unnamed; TopBar renders the "Untitled" placeholder for the empty case.
+  const rootPackageName = $derived(($model.path ?? "").trim());
   // The Navigator's scope (which package subtree it shows) and the active
   // profile's create-palette (the metaclasses the context menu offers).
   let scopeKey = $state("");
@@ -219,7 +213,7 @@ import ShareToast from "../ShareToast.svelte";
   );
   const candidateStereotypes = $derived(diagramCandidateStereotypes($model.nodes, activeDiagram.members));
   const diagramEditable = $derived(isDiagramEditable(activeDiagram.key));
-  const imageName = $derived(modelName.trim() || "model");
+  const imageName = $derived(($model.path ?? "").trim() || "untitled-package");
   const canvasClass = $derived(
     [tool === "add" ? "canvas-add" : tool === "connect" ? "canvas-connect" : "", layoutAnimating ? "canvas-animating" : ""]
       .filter(Boolean)
@@ -267,11 +261,6 @@ import ShareToast from "../ShareToast.svelte";
   // 3) Persist the active diagram key on change.
   $effect(() => {
     persistActiveDiagramKey(activeDiagram.key);
-  });
-
-  // 4) Persist the model name on change.
-  $effect(() => {
-    persistModelName(modelName);
   });
 
   // 5) Mirror the bundle to localStorage on every change so a refresh/crash
@@ -483,7 +472,7 @@ import ShareToast from "../ShareToast.svelte";
 
   // ── Import / Export / Share handlers ───────────────────────────────────────
   function handleExport() {
-    const title = modelName.trim() || "model-okf";
+    const title = ($model.path ?? "").trim() || "untitled-package";
     const files = bundleToDownloadFiles(store.getBundle(), title);
     downloadBundle(files, title);
   }
@@ -494,7 +483,6 @@ import ShareToast from "../ShareToast.svelte";
     store.load([]);
     selectionSet = EMPTY_SELECTION;
     showClear = false;
-    modelName = DEFAULT_MODEL_NAME;
   }
 
   function handleExportAndClear() {
@@ -563,7 +551,6 @@ import ShareToast from "../ShareToast.svelte";
     // Empty canvas → drop the template straight in. Non-empty → ask Replace vs
     // Merge first so existing work isn't silently wiped.
     if (store.get().nodes.length === 0) {
-      modelName = templateModelName(name); // "My {template} model"
       applyTemplate(bundle, "replace");
       showLibrary = false;
     } else {
@@ -573,10 +560,6 @@ import ShareToast from "../ShareToast.svelte";
 
   function handleTemplateApplyConfirm(mode: "replace" | "merge") {
     if (pendingTemplate) {
-      // Replacing = a fresh model from this template, so re-seed the name;
-      // merging keeps the current model (and its name) and just folds the
-      // template in.
-      if (mode === "replace") modelName = templateModelName(pendingTemplate.name);
       applyTemplate(pendingTemplate.bundle, mode);
     }
     pendingTemplate = null;
@@ -601,6 +584,7 @@ import ShareToast from "../ShareToast.svelte";
     onLibrary={() => (showLibrary = true)}
     diagrams={diagrams}
     rootPackageName={rootPackageName}
+    onRenameRoot={(title) => store.retitlePackage("", title)}
     activeDiagramKey={activeDiagram.key}
     onSelectDiagram={(key) => {
       // Same selection-reset as the navigator's own onSelectDiagram: a selection
@@ -686,7 +670,7 @@ import ShareToast from "../ShareToast.svelte";
   {/if}
   {#if showShare}
     <ShareDialog
-      shareUrl={buildShareUrl(store.getBundle(), modelName)}
+      shareUrl={buildShareUrl(store.getBundle())}
       imageName={imageName}
       canShareImage={$model.nodes.length > 0}
       generatePng={generateSharePng}
