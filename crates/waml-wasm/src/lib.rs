@@ -155,6 +155,14 @@ pub fn split_bundle(text: &str) -> Result<JsValue, JsValue> {
     Ok(serde_wasm_bindgen::to_value(&waml::parse::split_bundle(text))?)
 }
 
+/// Markdown for one empty diagram document of `kind` (`"class"`/`"domain"`,
+/// `"usecase"`, `"activity"`, `"sequence"`), titled `name`. The seed for the
+/// New Package flow's Diagram tier.
+#[wasm_bindgen]
+pub fn new_diagram_doc(kind: &str, name: &str) -> String {
+    waml::seed::new_diagram_doc(kind, name)
+}
+
 /// `bundle`: `[path, markdown][]`; `diagram_key`: which diagram to solve;
 /// `sizes`: `Record<string, {w, h}>`; `cfg`: `SolveConfig | null | undefined`.
 /// Returns `{ solved, diagnostics }`.

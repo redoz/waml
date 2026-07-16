@@ -401,7 +401,7 @@ export type DiagCode = "duplicate-slug" | "frontmatter-not-clean" | "unknown-typ
 
 export type FmValue = string | boolean | number | FmValue[];
 
-export type OpDto = { op: "node.new"; v?: number; slug: string; dir?: string; ty: string; title: string; stereotype?: string[]; desc?: string | undefined; abstract?: boolean } | { op: "node.rename"; v?: number; from: string; to: string } | { op: "node.set"; v?: number; slug: string; title?: string | undefined; desc?: string | undefined; stereotype?: string[] | undefined; abstract?: boolean | undefined; ty?: string | undefined } | { op: "node.rm"; v?: number; slug: string; cascade?: boolean } | { op: "attr.add"; v?: number; node: string; name: string; ty: string; mult?: string | undefined; vis?: string | undefined } | { op: "attr.set"; v?: number; node: string; name: string; ty?: string | undefined; mult?: string | undefined; vis?: string | undefined; rename?: string | undefined } | { op: "attr.rm"; v?: number; node: string; name: string } | { op: "value.add"; v?: number; node: string; literal: string } | { op: "value.rm"; v?: number; node: string; literal: string } | { op: "rel.add"; v?: number; source: string; kind: string; target: string; as?: string | undefined; as_ref?: string | undefined; ends?: string | undefined } | { op: "rel.set"; v?: number; source: string; kind?: string | undefined; target?: string | undefined; as?: string | undefined; ends?: string | undefined; set_as?: string | undefined; set_as_ref?: string | undefined } | { op: "rel.rm"; v?: number; source: string; kind?: string | undefined; target?: string | undefined; as?: string | undefined } | { op: "pkg.move"; v?: number; slug: string; to_dir: string } | { op: "pkg.rename"; v?: number; from: string; to: string } | { op: "pkg.delete"; v?: number; path: string; cascade?: boolean } | { op: "pkg.reorder"; v?: number; path: string; order?: string[] } | { op: "pkg.sort"; v?: number; path: string } | { op: "pkg.retitle"; v?: number; path: string; title: string } | { op: "diagram.set"; v?: number; key: string; title?: string | undefined; desc?: string | undefined; display?: DisplayDto | undefined };
+export type OpDto = { op: "node.new"; v?: number; slug: string; dir?: string; ty: string; title: string; stereotype?: string[]; desc?: string | undefined; abstract?: boolean } | { op: "node.rename"; v?: number; from: string; to: string } | { op: "node.set"; v?: number; slug: string; title?: string | undefined; desc?: string | undefined; stereotype?: string[] | undefined; abstract?: boolean | undefined; ty?: string | undefined } | { op: "node.rm"; v?: number; slug: string; cascade?: boolean } | { op: "attr.add"; v?: number; node: string; name: string; ty: string; mult?: string | undefined; vis?: string | undefined } | { op: "attr.set"; v?: number; node: string; name: string; ty?: string | undefined; mult?: string | undefined; vis?: string | undefined; rename?: string | undefined } | { op: "attr.rm"; v?: number; node: string; name: string } | { op: "value.add"; v?: number; node: string; literal: string } | { op: "value.rm"; v?: number; node: string; literal: string } | { op: "rel.add"; v?: number; source: string; kind: string; target: string; as?: string | undefined; as_ref?: string | undefined; ends?: string | undefined } | { op: "rel.set"; v?: number; source: string; kind?: string | undefined; target?: string | undefined; as?: string | undefined; ends?: string | undefined; set_as?: string | undefined; set_as_ref?: string | undefined } | { op: "rel.rm"; v?: number; source: string; kind?: string | undefined; target?: string | undefined; as?: string | undefined } | { op: "pkg.move"; v?: number; slug: string; to_dir: string } | { op: "pkg.rename"; v?: number; from: string; to: string } | { op: "pkg.delete"; v?: number; path: string; cascade?: boolean } | { op: "pkg.reorder"; v?: number; path: string; order?: string[] } | { op: "pkg.sort"; v?: number; path: string } | { op: "pkg.insert"; v?: number; parent_path: string; name: string; docs?: [string, string][] } | { op: "diagram.set"; v?: number; key: string; title?: string | undefined; desc?: string | undefined; display?: DisplayDto | undefined };
 
 export type RelationshipKind = "associates" | "aggregates" | "composes" | "specializes" | "implements" | "depends" | "annotates" | "includes" | "extends";
 
@@ -441,6 +441,13 @@ export function fmt(bundle: any): any;
 export function init_panic_hook(): void;
 
 /**
+ * Markdown for one empty diagram document of `kind` (`"class"`/`"domain"`,
+ * `"usecase"`, `"activity"`, `"sequence"`), titled `name`. The seed for the
+ * New Package flow's Diagram tier.
+ */
+export function new_diagram_doc(kind: string, name: string): string;
+
+/**
  * `bundle`: a `[path, markdown][]`. Returns the bundle with every
  * `<dir>/index.md` regenerated from the package forest.
  */
@@ -471,6 +478,7 @@ export interface InitOutput {
     readonly build_bundle: (a: any) => [number, number, number];
     readonly build_model: (a: any) => [number, number, number];
     readonly fmt: (a: any) => [number, number, number];
+    readonly new_diagram_doc: (a: number, b: number, c: number, d: number) => [number, number];
     readonly reindex: (a: any) => [number, number, number];
     readonly solve: (a: any, b: number, c: number, d: any, e: any) => [number, number, number];
     readonly split_bundle: (a: number, b: number) => [number, number, number];
