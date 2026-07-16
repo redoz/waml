@@ -112,6 +112,11 @@ export function reorderMembersOps(path: string, order: string[]): OpDto[] {
 export function sortPackageOps(path: string): OpDto[] {
   return [{ op: "pkg.sort", path }];
 }
+export function retitlePackageOps(key: string, title: string): OpDto[] {
+  // Blank titles are rejected server-side too; short-circuit here so an accidental
+  // empty edit never produces a no-op round-trip.
+  return title.trim() ? [{ op: "pkg.retitle", path: key, title }] : [];
+}
 
 export function nodeRenameOps(from: string, to: string): OpDto[] {
   return from === to ? [] : [{ op: "node.rename", from, to }];
