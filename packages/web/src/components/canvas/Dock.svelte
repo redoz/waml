@@ -17,7 +17,6 @@
     onOpenProperties,
     leftOffset = 14,
   }: {
-
     activeTool: Tool;
     onToolChange: (tool: Tool) => void;
     onClear: () => void;
@@ -204,5 +203,3 @@
     {@render dockTip(clearDisabled ? "Clear canvas — nothing to clear" : "Clear canvas — delete everything")}
   </div>
 </div>
-
-

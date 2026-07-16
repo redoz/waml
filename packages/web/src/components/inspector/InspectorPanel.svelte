@@ -53,8 +53,8 @@
     children?: Snippet;
   } = $props();
 
-  // "engaged" = pointer over the panel or focus is inside it. A pinned panel is
-  // translucent only while idle (not engaged); hover/focus fades it back opaque.
+  // "engaged" = pointer over the panel or focus is inside it. An unpinned panel is
+  // translucent only while idle (not engaged); hover/focus fades it back opaque; a pinned panel stays solid.
   let engaged = $state(false);
   let hideTimer: ReturnType<typeof setTimeout> | undefined;
 

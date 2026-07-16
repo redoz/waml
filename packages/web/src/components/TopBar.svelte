@@ -20,8 +20,6 @@
     onLibrary,
     diagrams = [],
     activeDiagramKey = "",
-    // The center title is now a read-only diagram switcher; CanvasInner owns the
-    // heavy navigator panel and its escalation callbacks.
     onSelectDiagram,
     onDockModel,
     onEditModel,
@@ -33,8 +31,8 @@
     onShare?: () => void;
     shareDisabled?: boolean;
     onLibrary?: () => void;
-    // Diagram title switcher — the active diagram's title doubles as the trigger
-    // that toggles the navigator panel.
+    // Diagram title & switcher — centered. The active diagram's title doubles as
+    // the switcher trigger; opens the read-only diagram switcher popover.
     diagrams?: Diagram[];
     activeDiagramKey?: string;
     onSelectDiagram?: (key: string) => void;
@@ -51,8 +49,9 @@
   let switcherOpen = $state(false);
 
   // ── Diagram title switcher ─────────────────────────────────────────────────
-  // The trigger is now a pure open/close toggle for the model navigator, which
-  // CanvasInner mounts and owns; TopBar only reports the active diagram's title.
+  // Read-only diagram switcher popover — lists diagrams, checks the active one,
+  // row-click selects. Dock/Edit buttons in header escalate to full editor/panel.
+  // No diagram rename or create.
   const activeTitle = $derived(
     diagrams.find((d) => d.key === activeDiagramKey)?.title ?? diagrams[0]?.title ?? "Untitled diagram",
   );
@@ -123,9 +122,10 @@
   <div class="flex-1"></div>
 
   <!-- Diagram title & switcher — centered. The active diagram's title doubles as
-       the switcher trigger; the dropdown switches diagram, renames the current
-       one, or creates a new (empty) diagram. Keeps the blue treatment carried
-       over from the old Business Goal button (Target icon dropped). -->
+       the switcher trigger; the dropdown lists diagrams, checks the active one,
+       and row-click selects. Dock/Edit buttons escalate to the full editor.
+       No write actions. Keeps the blue treatment carried over from the old
+       Business Goal button (Target icon dropped). -->
   <div class="relative">
     <button
       onclick={() => (switcherOpen = !switcherOpen)}
