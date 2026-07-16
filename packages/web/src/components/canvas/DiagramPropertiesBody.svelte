@@ -141,7 +141,7 @@
         patch({ showAttributeVisibility: !display.showAttributeVisibility }), attrDisabled,
       )}
       {@render toggleRow("Show cardinality", display.showAttributeMultiplicity, () =>
-        patch({ showAttributeMultiplicity: !display.showAttributeMultiplicity }), attrDisabled, "Attribute cardinality",
+        patch({ showAttributeMultiplicity: !display.showAttributeMultiplicity }), attrDisabled, "Show cardinality (attributes)",
       )}
       <div class="px-2 py-1.5 {attrDisabled ? 'opacity-40' : ''}">
         <div class="mb-1 text-[13px] font-medium text-slate-800">Max attributes</div>

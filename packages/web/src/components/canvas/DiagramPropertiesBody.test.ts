@@ -15,7 +15,7 @@ const props = (over = {}) => ({
   ...over,
 });
 
-test("renders all five display controls", () => {
+test("renders all six display controls", () => {
   render(DiagramPropertiesBody, { props: props() });
   expect(screen.getByRole("switch", { name: "Show attributes" })).toBeTruthy();
   expect(screen.getByRole("switch", { name: "Show type" })).toBeTruthy();
@@ -124,7 +124,7 @@ test("Show visibility toggle emits showAttributeVisibility", async () => {
 test("Attribute cardinality toggle emits showAttributeMultiplicity", async () => {
   const onChange = vi.fn();
   render(DiagramPropertiesBody, { props: props({ display: { ...DEFAULT_DISPLAY, showAttributes: true, showAttributeMultiplicity: true }, onChange }) });
-  await fireEvent.click(screen.getByRole("switch", { name: "Attribute cardinality" }));
+  await fireEvent.click(screen.getByRole("switch", { name: "Show cardinality (attributes)" }));
   expect(onChange).toHaveBeenCalledWith({ showAttributeMultiplicity: false });
 });
 
