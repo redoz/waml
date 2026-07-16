@@ -4,7 +4,7 @@
   // mirroring InspectorPanel (no scrim, right-edge resize, translucent-when-idle,
   // collapsible). The pin button toggles the two modes; Esc / scrim / close
   // dismiss. State is owned by the caller (CanvasInner) and passed in.
-  import { Pin, PinOff, ChevronUp } from "lucide-svelte";
+  import { Pin, PinOff, PanelLeft, ChevronUp } from "lucide-svelte";
   import NavigatorBody from "./NavigatorBody.svelte";
   import type { ModelGraph } from "@waml/okf";
   import type { NavKind } from "@waml/core/nav/tree";
@@ -180,7 +180,7 @@
         title="Pin navigator to left"
         class="w-[30px] h-[30px] flex items-center justify-center rounded-md transition-colors text-slate-500 hover:bg-[#f1f3f7]"
       >
-        <Pin size={16} />
+        <PanelLeft size={16} />
       </button>
     {/if}
     <button
