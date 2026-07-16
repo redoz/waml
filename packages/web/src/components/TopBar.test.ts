@@ -115,12 +115,14 @@ test("export button disabled when exportDisabled", () => {
   ).toBe(true);
 });
 
-test("renders the WAML wordmark and keeps the Model Canvas label", () => {
-  const { container } = render(TopBar, { props: {} });
-  // Wordmark SVG exposes itself as an accessible image named "WAML".
-  const wordmark = screen.getByRole("img", { name: "WAML" });
-  expect(wordmark.tagName.toLowerCase()).toBe("svg");
-  expect(container.textContent).toContain("Model Canvas");
+test("renders the WAML wordmark and the root package name as subtitle", () => {
+  const { container } = render(TopBar, { props: { rootPackageName: "Acme Model" } });
+  // Wordmark is now plain text inside the brand link, not an SVG.
+  expect(screen.queryByRole("img", { name: "WAML" })).toBeNull();
+  expect(screen.getByRole("link").textContent).toContain("WAML");
+  // Root package name shows in place of the old "Model Canvas" label.
+  expect(container.textContent).toContain("Acme Model");
+  expect(container.textContent).not.toContain("Model Canvas");
 });
 
 test("brand anchor links to the WAML GitHub repo", () => {

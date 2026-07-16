@@ -164,6 +164,11 @@ import ShareToast from "../ShareToast.svelte";
   const activeFlow = $derived(($model.flows ?? []).find((f) => f.key === activeDiagramKey));
   const activeSequence = $derived(($model.interactions ?? []).find((s) => s.key === activeDiagramKey));
   const activeDiagram = $derived(diagrams.find((d) => d.key === activeDiagramKey) ?? diagrams[0]);
+  // Root package (key "") title, shown as the top-bar brand subtitle; falls back
+  // to the bundle path.
+  const rootPackageName = $derived(
+    $model.packages.find((p) => p.key === "")?.concept.title?.trim() || $model.path || "Untitled",
+  );
   // The Navigator's scope (which package subtree it shows) and the active
   // profile's create-palette (the metaclasses the context menu offers).
   let scopeKey = $state("");
@@ -595,6 +600,7 @@ import ShareToast from "../ShareToast.svelte";
     onShare={() => (showShare = true)}
     onLibrary={() => (showLibrary = true)}
     diagrams={diagrams}
+    rootPackageName={rootPackageName}
     activeDiagramKey={activeDiagram.key}
     onSelectDiagram={(key) => {
       // Same selection-reset as the navigator's own onSelectDiagram: a selection

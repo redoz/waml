@@ -23,6 +23,7 @@
     onSelectDiagram,
     onDockModel,
     onEditModel,
+    rootPackageName = "",
   }: {
     onImport?: () => void;
     onExport?: () => void;
@@ -38,6 +39,8 @@
     onSelectDiagram?: (key: string) => void;
     onDockModel?: () => void;
     onEditModel?: () => void;
+    // Name of the model's root package — shown as the brand subtitle.
+    rootPackageName?: string;
   } = $props();
 
   // Export dropdown (OKF markdown / SVG).
@@ -84,7 +87,8 @@
 </script>
 
 <div class="relative flex items-center gap-3 px-4 py-[9px] bg-white border-b border-[#d8dee8] flex-shrink-0 z-30">
-  <!-- Brand — WAML wordmark links to the GitHub repo -->
+  <!-- Brand — WAML wordmark links to the GitHub repo; the root package name
+       trails it as a subtitle. -->
   <div class="flex items-center gap-[9px] font-[650] text-[15px] tracking-[-0.2px]">
     <a
       href="https://github.com/redoz/waml"
@@ -94,29 +98,10 @@
       aria-label="WAML — github.com/redoz/waml"
       class="flex items-center rounded-md transition-opacity hover:opacity-80"
     >
-      <!-- WAML wordmark. Inlined (matching the previous pattern) and filled with
-           currentColor so it inherits the brand text color and dims on hover. -->
-      <svg
-        viewBox="-20 -20 440 140"
-        xmlns="http://www.w3.org/2000/svg"
-        width="75"
-        height="24"
-        role="img"
-        aria-label="WAML"
-      >
-        <g fill="currentColor">
-          <!-- U -->
-          <path d="M 0,0 H 25 V 75 H 55 V 0 H 80 V 85 L 65,100 H 15 L 0,85 Z" transform="translate(0, 0)" />
-          <!-- A -->
-          <path fill-rule="evenodd" d="M 0,100 V 15 L 15,0 H 65 L 80,15 V 100 H 55 V 65 H 25 V 100 Z M 25,25 H 55 V 40 H 25 Z" transform="translate(100, 0)" />
-          <!-- M -->
-          <path d="M 0,100 V 0 H 25 L 50,40 L 75,0 H 100 V 100 H 75 V 45 L 50,75 L 25,45 V 100 Z" transform="translate(200, 0)" />
-          <!-- L -->
-          <path d="M 0,0 H 25 V 75 H 80 V 85 L 65,100 H 15 L 0,85 Z" transform="translate(320, 0)" />
-        </g>
-      </svg>
+      WAML
     </a>
-    <span>Model Canvas</span>
+    <span class="text-slate-300 font-normal">/</span>
+    <span class="font-[550] text-slate-600 max-w-[240px] truncate">{rootPackageName}</span>
   </div>
 
   <!-- Diagram title & switcher — centered. The active diagram's title doubles as
