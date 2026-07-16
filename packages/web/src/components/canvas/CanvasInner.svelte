@@ -743,6 +743,7 @@ import ShareToast from "../ShareToast.svelte";
         onClear={() => (showClear = true)}
         clearDisabled={$model.nodes.length === 0}
         onOpenProperties={() => (centralPanel = { kind: "diagram" })}
+        leftOffset={navOpen && navMode === "docked" ? navWidth + 12 : 14}
       />
       {#if activeFlow}
         <FlowView doc={activeFlow} />
@@ -967,3 +968,4 @@ import ShareToast from "../ShareToast.svelte";
     </InspectorPanel>
   </div>
 </div>
+

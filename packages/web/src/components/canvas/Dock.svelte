@@ -15,13 +15,18 @@
     onClear,
     clearDisabled,
     onOpenProperties,
+    leftOffset = 14,
   }: {
+
     activeTool: Tool;
     onToolChange: (tool: Tool) => void;
     onClear: () => void;
     clearDisabled?: boolean;
     // Opens the central edit panel's diagram-properties context.
     onOpenProperties?: () => void;
+    // px from the canvas left edge; CanvasInner slides it right to clear the
+    // docked navigator rail. Transitions so it glides rather than jumps.
+    leftOffset?: number;
   } = $props();
 
   // Keyboard shortcuts, sourced from the registry so displayed glyphs and the
@@ -131,8 +136,8 @@
 
 <div
   data-dock
-  class="absolute left-[14px] top-[calc(50%-34px)] -translate-y-1/2 bg-white border border-[#d8dee8] rounded-xl p-[6px] flex flex-col gap-1 z-20 shadow-[0_4px_16px_rgba(15,23,42,0.06)]"
-  style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Inter, system-ui, sans-serif;"
+  class="absolute top-[calc(50%-34px)] -translate-y-1/2 bg-white border border-[#d8dee8] rounded-xl p-[6px] flex flex-col gap-1 z-20 shadow-[0_4px_16px_rgba(15,23,42,0.06)] transition-[left] duration-200"
+  style={`left: ${leftOffset}px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Inter, system-ui, sans-serif;`}
 >
   {@render toolButton(selectIcon, "Select & move (V)", activeTool === "select", () => onToolChange("select"), keyLabel("tool.select"))}
   {@render toolButton(
@@ -199,3 +204,5 @@
     {@render dockTip(clearDisabled ? "Clear canvas — nothing to clear" : "Clear canvas — delete everything")}
   </div>
 </div>
+
+

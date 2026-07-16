@@ -66,3 +66,15 @@ test("tool buttons render their key-hint glyph", () => {
   const glyphs = Array.from(document.querySelectorAll("kbd")).map((k) => k.textContent);
   expect(glyphs).toEqual(expect.arrayContaining(["V", "N", "C"]));
 });
+
+test("defaults to a 14px left offset", () => {
+  const { container } = render(Dock, { props: baseProps() });
+  const dock = container.querySelector("[data-dock]") as HTMLElement;
+  expect(dock.style.left).toBe("14px");
+});
+
+test("leftOffset slides the dock clear of the docked rail", () => {
+  const { container } = render(Dock, { props: { ...baseProps(), leftOffset: 352 } });
+  const dock = container.querySelector("[data-dock]") as HTMLElement;
+  expect(dock.style.left).toBe("352px");
+});

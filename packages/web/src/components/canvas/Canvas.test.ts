@@ -121,3 +121,14 @@ describe("pinnable Inspector (always present, never closes)", () => {
     expect(within(dialog).getByLabelText("Title")).toBeTruthy();
   });
 });
+
+test("slides the tool Dock clear of the docked navigator rail", async () => {
+  const { container } = render(Canvas);
+  const dock = container.querySelector("[data-dock]") as HTMLElement;
+  expect(dock.style.left).toBe("14px");
+  await fireEvent.click(screen.getByRole("button", { name: /switch diagram/i }));
+  await fireEvent.click(screen.getByRole("button", { name: /dock model editor/i }));
+  await tick();
+  // navWidth default (340) + 12px gap.
+  expect(dock.style.left).toBe("352px");
+});
