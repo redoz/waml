@@ -113,6 +113,16 @@ describe("bundle-as-truth model store", () => {
     expect(s.get().nodes.map((n) => n.key)).toEqual(["m/widget"]);
     expect(s.get().nodes[0].position).toEqual({ x: 0, y: 0 });
   });
+
+  it("retitlePackage writes the root index.md H1 and updates path", () => {
+    const s = createModelStore([
+      ["order.md", "---\ntype: uml.Class\ntitle: Order\n---\n# Order\n"],
+    ] as Bundle);
+    s.retitlePackage("", "Acme Domain");
+    expect(s.get().path).toBe("Acme Domain");
+    const idx = s.getBundle().find(([p]) => p === "index.md");
+    expect(idx?.[1]).toContain("# Acme Domain");
+  });
 });
 
 describe("package mutators + ghost state", () => {

@@ -36,6 +36,7 @@ import {
   deletePackageOps,
   reorderMembersOps,
   sortPackageOps,
+  retitlePackageOps,
 } from "./ops-adapter";
 import { slugify } from "@waml/okf";
 
@@ -257,6 +258,9 @@ export function createModelStore(initial?: Bundle, opts: CreateStoreOptions = {}
     },
     sortPackage(path: string): void {
       run(sortPackageOps(path));
+    },
+    retitlePackage(key: string, title: string): void {
+      run(retitlePackageOps(key, title));
     },
 
     // ── diagrams: derived-only in Stage 1b (no diagram/membership ops) ──────────
