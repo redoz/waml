@@ -547,6 +547,11 @@
   // Merge an incoming OKF bundle: insert it as a package (full-path identity via
   // the Rust pkg.insert op), named after its own top-level folder so structure is
   // preserved, then re-layout. Replaces the retired global-basename mergeBundles.
+  //
+  // Contract: the bundle is treated as a SINGLE package rooted at the top folder
+  // of its first doc; the whole bundle is re-rooted under that name. Importing a
+  // bundle that spans multiple top-level packages is unsupported - wrap the
+  // packages under one folder and export that instead.
   function applyMergeWithLayout(bundle: Bundle) {
     const top = bundle[0]?.[0]?.replace(/[\\/].*$/, "") ?? "";
     const name = top || "imported";
