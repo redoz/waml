@@ -18,6 +18,7 @@ import {
   deletePackageOps,
   reorderMembersOps,
   sortPackageOps,
+  retitlePackageOps,
   type OpDto,
 } from "./ops-adapter";
 import { resolveDisplay, type ModelGraph, type Attribute, type Diagram } from "@waml/okf";
@@ -226,6 +227,9 @@ describe("package op builders", () => {
     expect(deletePackageOps("sales", true)).toEqual([{ op: "pkg.delete", path: "sales", cascade: true }]);
     expect(reorderMembersOps("sales", ["a", "b"])).toEqual([{ op: "pkg.reorder", path: "sales", order: ["a", "b"] }]);
     expect(sortPackageOps("sales")).toEqual([{ op: "pkg.sort", path: "sales" }]);
+    expect(retitlePackageOps("", "Acme")).toEqual([{ op: "pkg.retitle", path: "", title: "Acme" }]);
+    expect(retitlePackageOps("sales", "Sales Domain")).toEqual([{ op: "pkg.retitle", path: "sales", title: "Sales Domain" }]);
+    expect(retitlePackageOps("", "   ")).toEqual([]);
     expect(nodeNewOps({ slug: "order", type: "uml.Class", title: "Order", dir: "sales" })[0]).toMatchObject({
       op: "node.new",
       dir: "sales",
