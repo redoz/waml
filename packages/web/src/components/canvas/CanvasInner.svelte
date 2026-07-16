@@ -41,7 +41,7 @@
   import ClearCanvasDialog from "../ClearCanvasDialog.svelte";
   import WelcomeDialog from "../WelcomeDialog.svelte";
   import LibraryDialog from "../LibraryDialog.svelte";
-  import TemplateApplyDialog from "../TemplateApplyDialog.svelte";
+  import NewPackageDialog, { type NewPackagePayload } from "../NewPackageDialog.svelte";
 import ShareToast from "../ShareToast.svelte";
   import ShareDialog from "../share/ShareDialog.svelte";
   import InspectorReadonly from "../inspector/InspectorReadonly.svelte";
@@ -62,6 +62,8 @@ import ShareToast from "../ShareToast.svelte";
   } from "@waml/core/state/diagrams";
   import { resolveDisplay, slugify, type DiagramDisplay, type Diagram, type ModelEdge } from "@waml/okf";
   import { getProfile } from "@waml/core/profiles";
+  import { TEMPLATES } from "@waml/core/templates";
+  import { new_diagram_doc } from "@waml/wasm";
   import { persistBundle } from "@waml/core/state/persist";
   import { bundleToDownloadFiles, downloadBundle } from "@waml/core/okf/io";
   import { buildShareUrl } from "@waml/core/share/url";
@@ -94,9 +96,9 @@ import ShareToast from "../ShareToast.svelte";
   let activeDiagramKey = $state<string>(loadActiveDiagramKey() ?? defaultDiagramKey($model));
   let showImport = $state(false);
   let showLibrary = $state(false);
-  // A template chosen from the library while the canvas already had content —
-  // held until the user confirms Replace vs Merge in the TemplateApplyDialog.
-  let pendingTemplate = $state<{ bundle: Bundle; name: string } | null>(null);
+  // The unified New Package dialog (Empty/Diagram/Template tiers), opened from
+  // the TopBar's Templates button, the Library dialog, and the Welcome dialog.
+  let showNewPackage = $state(false);
   // First-screen chooser — shown once to brand-new visitors (no persisted model).
   let showWelcome = $state(isFirstVisit);
   let shareToast = $state<string | null>(null);
@@ -542,28 +544,19 @@ import ShareToast from "../ShareToast.svelte";
     showImport = false;
   }
 
-  function applyTemplate(bundle: Bundle, mode: "replace" | "merge") {
-    if (mode === "merge") applyMergeWithLayout(bundle);
-    else loadBundleWithLayout(bundle);
-  }
-
-  function handleUseTemplate(bundle: Bundle, name: string) {
-    // Empty canvas → drop the template straight in. Non-empty → ask Replace vs
-    // Merge first so existing work isn't silently wiped.
-    if (store.get().nodes.length === 0) {
-      applyTemplate(bundle, "replace");
-      showLibrary = false;
+  // Realize a New Package dialog choice. Empty -> ghost package (materializes on
+  // first child). Diagram/Template -> pkg.insert (Rust re-roots + appends), then
+  // re-layout so the freshly added nodes leave the origin.
+  function handleNewPackageAdd(p: NewPackagePayload) {
+    if (p.tier === "empty") {
+      store.createGhostPackage(p.parentPath, p.name);
     } else {
-      pendingTemplate = { bundle, name };
+      const slug = slugify(p.name);
+      const docs: Bundle =
+        p.tier === "diagram" ? [[`${slug}.md`, new_diagram_doc(p.kind, p.name)]] : p.bundle;
+      if (store.insertPackage(p.parentPath, slug, docs)) layoutAll();
     }
-  }
-
-  function handleTemplateApplyConfirm(mode: "replace" | "merge") {
-    if (pendingTemplate) {
-      applyTemplate(pendingTemplate.bundle, mode);
-    }
-    pendingTemplate = null;
-    showLibrary = false;
+    showNewPackage = false;
   }
 </script>
 
@@ -581,7 +574,7 @@ import ShareToast from "../ShareToast.svelte";
     onExportSvg={handleExportSvg}
     exportDisabled={$model.nodes.length === 0}
     onShare={() => (showShare = true)}
-    onLibrary={() => (showLibrary = true)}
+    onLibrary={() => (showNewPackage = true)}
     diagrams={diagrams}
     rootPackageName={rootPackageName}
     onRenameRoot={(title) => store.retitlePackage("", title)}
@@ -646,9 +639,9 @@ import ShareToast from "../ShareToast.svelte";
   {/if}
   {#if showWelcome}
     <WelcomeDialog
-      onUseTemplate={(g, name) => {
-        handleUseTemplate(g, name);
+      onUseTemplate={() => {
         showWelcome = false;
+        showNewPackage = true;
       }}
       onStartBlank={() => (showWelcome = false)}
       onImport={() => {
@@ -658,14 +651,15 @@ import ShareToast from "../ShareToast.svelte";
     />
   {/if}
   {#if showLibrary}
-    <LibraryDialog onUse={handleUseTemplate} onClose={() => (showLibrary = false)} />
+    <LibraryDialog onUse={() => (showNewPackage = true)} onClose={() => (showLibrary = false)} />
   {/if}
-  {#if pendingTemplate}
-    <TemplateApplyDialog
-      bundle={pendingTemplate.bundle}
-      name={pendingTemplate.name}
-      onConfirm={handleTemplateApplyConfirm}
-      onClose={() => (pendingTemplate = null)}
+  {#if showNewPackage}
+    <NewPackageDialog
+      templates={TEMPLATES}
+      packages={$model.packages}
+      projectName={rootPackageName || "Untitled"}
+      onAdd={handleNewPackageAdd}
+      onClose={() => (showNewPackage = false)}
     />
   {/if}
   {#if showShare}
