@@ -66,6 +66,25 @@ export function getEdgeParams(source: NodeGeom, target: NodeGeom) {
   };
 }
 
+// A decision renders as a diamond whose four points sit at the midpoints of its
+// bounding box. An outgoing branch reads best leaving one of the horizontal tips
+// (left/right) toward its target; a branch running essentially straight down
+// falls back to the bottom tip. We snap the source attach to that tip rather than
+// the plain border intersection so the arrow springs from the diamond's point.
+export function decisionSourceTip(source: NodeGeom, target: NodeGeom): { x: number; y: number; pos: Position } {
+  const w = source.measured?.width ?? 0;
+  const h = source.measured?.height ?? 0;
+  const { x, y } = source.internals.positionAbsolute;
+  const cx = x + w / 2;
+  const cy = y + h / 2;
+  if (!w || !h) return { x: cx, y: cy, pos: Position.Bottom }; // unmeasured: safe center
+  const tcx = target.internals.positionAbsolute.x + (target.measured?.width ?? 0) / 2;
+  const dx = tcx - cx;
+  if (dx <= -w / 2) return { x, y: cy, pos: Position.Left };
+  if (dx >= w / 2) return { x: x + w, y: cy, pos: Position.Right };
+  return { x: cx, y: y + h, pos: Position.Bottom };
+}
+
 // ── Port distribution ────────────────────────────────────────────────────────
 // The plain floating attach point is the geometric border intersection, so
 // several edges leaving a node in roughly the same direction land on nearly the

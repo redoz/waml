@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { Position } from "@xyflow/svelte";
-import { getEdgeParams, portPoint } from "./floating";
+import { decisionSourceTip, getEdgeParams, portPoint } from "./floating";
 
 // InternalNode-shaped plain objects (measured + internals.positionAbsolute).
 const geom = (x: number, y: number, w = 100, h = 100) => ({
@@ -58,6 +58,28 @@ describe("getEdgeParams (floating-edge border intersection)", () => {
     const p = getEdgeParams(source, target);
     expect(Number.isNaN(p.sx)).toBe(false);
     expect(Number.isNaN(p.ty)).toBe(false);
+  });
+});
+
+describe("decisionSourceTip (outgoing edge leaves a diamond at its tip)", () => {
+  const diamond = geom(0, 0, 56, 56); // tips: left (0,28), right (56,28), bottom (28,56)
+  it("target below-left → left tip", () => {
+    const p = decisionSourceTip(diamond, geom(-100, 200, 56, 56));
+    expect(p).toEqual({ x: 0, y: 28, pos: Position.Left });
+  });
+  it("target below-right → right tip", () => {
+    const p = decisionSourceTip(diamond, geom(100, 200, 56, 56));
+    expect(p).toEqual({ x: 56, y: 28, pos: Position.Right });
+  });
+  it("target straight below (|dx| < half width) → bottom tip", () => {
+    const p = decisionSourceTip(diamond, geom(0, 200, 56, 56));
+    expect(p).toEqual({ x: 28, y: 56, pos: Position.Bottom });
+  });
+  it("zero-size node → finite center, no NaN", () => {
+    const p = decisionSourceTip({ measured: { width: 0, height: 0 }, internals: { positionAbsolute: { x: 10, y: 20 } } }, geom(100, 200));
+    expect(Number.isNaN(p.x)).toBe(false);
+    expect(Number.isNaN(p.y)).toBe(false);
+    expect(p.pos).toBe(Position.Bottom);
   });
 });
 

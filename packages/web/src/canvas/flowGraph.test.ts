@@ -40,4 +40,13 @@ describe("flowToRf", () => {
     expect(edges).toHaveLength(3);
     expect(edges.every((e) => e.type === "transition")).toBe(true);
   });
+
+  it("carries the flavor and the source node's kind on each edge", () => {
+    const { edges } = flowToRf(DOC);
+    const data = (i: number) => edges[i].data as { flavor: string; fromKind: string };
+    expect(edges.every((e) => (e.data as { flavor: string }).flavor === "stateMachine")).toBe(true);
+    // edges[0] leaves "initial", edges[2] leaves the "Ready to ship?" decision
+    expect(data(0).fromKind).toBe("initial");
+    expect(data(2).fromKind).toBe("decision");
+  });
 });

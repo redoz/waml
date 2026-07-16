@@ -1,6 +1,6 @@
 <script lang="ts">
-  import { BaseEdge, EdgeLabel, getSmoothStepPath, useInternalNode, type EdgeProps } from "@xyflow/svelte";
-  import { getEdgeParams, type NodeGeom } from "../floating";
+  import { BaseEdge, EdgeLabel, getBezierPath, getSmoothStepPath, useInternalNode, type EdgeProps } from "@xyflow/svelte";
+  import { decisionSourceTip, getEdgeParams, type NodeGeom } from "../floating";
 
   let { id, source, target, data }: EdgeProps = $props();
 
@@ -8,20 +8,32 @@
   const targetInternal = $derived(useInternalNode(target));
   const sourceNode = $derived(sourceInternal.current as NodeGeom | undefined);
   const targetNode = $derived(targetInternal.current as NodeGeom | undefined);
-  const geometry = $derived(sourceNode && targetNode ? getEdgeParams(sourceNode, targetNode) : undefined);
-  const d = $derived(data as { label?: string; carries?: string } | undefined);
+  const d = $derived(data as { label?: string; carries?: string; flavor?: string; fromKind?: string } | undefined);
+
+  // Floating border intersection for both ends, then — when the source is a
+  // decision diamond — snap its attach point to the tip facing the target.
+  const geometry = $derived.by(() => {
+    if (!sourceNode || !targetNode) return undefined;
+    const p = getEdgeParams(sourceNode, targetNode);
+    if (d?.fromKind === "decision") {
+      const tip = decisionSourceTip(sourceNode, targetNode);
+      return { ...p, sx: tip.x, sy: tip.y, sourcePos: tip.pos };
+    }
+    return p;
+  });
 
   const edgePath = $derived.by(() => {
     if (!geometry) return undefined;
-    const [p] = getSmoothStepPath({
+    // Activity diagrams read as curved splines; state machines keep smooth-step.
+    const params = {
       sourceX: geometry.sx,
       sourceY: geometry.sy,
       sourcePosition: geometry.sourcePos,
       targetX: geometry.tx,
       targetY: geometry.ty,
       targetPosition: geometry.targetPos,
-      borderRadius: 8,
-    });
+    };
+    const [p] = d?.flavor === "activity" ? getBezierPath(params) : getSmoothStepPath({ ...params, borderRadius: 8 });
     return p;
   });
 </script>

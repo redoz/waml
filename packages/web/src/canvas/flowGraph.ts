@@ -71,6 +71,7 @@ export function flowToRf(doc: FlowDoc): { nodes: Node[]; edges: Edge[] } {
       selectable: false,
     };
   });
+  const kindById = new Map(doc.nodes.map((n) => [n.id, n.kind]));
   const edges: Edge[] = doc.edges
     .filter((e) => local.has(e.from) && local.has(e.to))
     .map((e, i) => ({
@@ -78,7 +79,8 @@ export function flowToRf(doc: FlowDoc): { nodes: Node[]; edges: Edge[] } {
       source: e.from,
       target: e.to,
       type: "transition",
-      data: { label: transitionLabel(e), carries: e.carries } as unknown as Record<string, unknown>,
+      // flavor picks the path shape; fromKind lets a decision source snap to a tip.
+      data: { label: transitionLabel(e), carries: e.carries, flavor: doc.flavor, fromKind: kindById.get(e.from) } as unknown as Record<string, unknown>,
       selectable: false,
     }));
   return { nodes, edges };
