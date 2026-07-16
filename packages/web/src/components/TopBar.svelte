@@ -83,7 +83,7 @@
   }
 </script>
 
-<div class="flex items-center gap-3 px-4 py-[9px] bg-white border-b border-[#d8dee8] flex-shrink-0 z-30">
+<div class="relative flex items-center gap-3 px-4 py-[9px] bg-white border-b border-[#d8dee8] flex-shrink-0 z-30">
   <!-- Brand — WAML wordmark links to the GitHub repo -->
   <div class="flex items-center gap-[9px] font-[650] text-[15px] tracking-[-0.2px]">
     <a
@@ -119,14 +119,13 @@
     <span>Model Canvas</span>
   </div>
 
-  <div class="flex-1"></div>
-
   <!-- Diagram title & switcher — centered. The active diagram's title doubles as
        the switcher trigger; the dropdown lists diagrams, checks the active one,
        and row-click selects. Dock/Edit buttons escalate to the full editor.
        No write actions. Keeps the blue treatment carried over from the old
-       Business Goal button (Target icon dropped). -->
-  <div class="relative">
+       Business Goal button (Target icon dropped). Absolutely centered on the
+       bar so it tracks the page center, not the gap between brand and buttons. -->
+  <div class="absolute left-1/2 -translate-x-1/2">
     <button
       onclick={() => (switcherOpen = !switcherOpen)}
       aria-label={`Diagram: ${activeTitle} — switch diagram`}
