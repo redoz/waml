@@ -16,3 +16,15 @@ test("Use rolls out the first template", async () => {
   expect(typeof bundle[0][0]).toBe("string");
   expect(name).toBe(first.name);
 });
+
+test("lists all four templates", () => {
+  render(LibraryDialog, { props: { onUse: vi.fn(), onClose: vi.fn() } });
+  // Exact match: one template is named "Orders Use Cases", whose row header
+  // is itself an accessible `role="button"` with that name, so the loose
+  // /Use/ substring regex used above also (correctly, for that test's needs)
+  // matches it — inflating the count here. Exact "Use" isolates the Rocket
+  // "Use" buttons only.
+  const useButtons = screen.getAllByRole("button", { name: "Use" });
+  expect(TEMPLATES).toHaveLength(4);
+  expect(useButtons).toHaveLength(TEMPLATES.length);
+});
