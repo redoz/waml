@@ -21,7 +21,7 @@ export interface Citation {
  */
 export interface DiagramDisplay {
     showAttributes?: boolean;
-    attributeDetail?: string;
+    showType?: boolean;
     showAttributeVisibility?: boolean;
     showAttributeMultiplicity?: boolean;
     maxAttributes?: number;
@@ -50,7 +50,7 @@ export type FlowNodeKind = "initial" | "final" | "decision" | "merge" | "fork" |
  */
 export interface DisplayDto {
     showAttributes: boolean;
-    attributeDetail: string;
+    showType: boolean;
     showAttributeVisibility: boolean;
     showAttributeMultiplicity: boolean;
     maxAttributes?: number | undefined;
