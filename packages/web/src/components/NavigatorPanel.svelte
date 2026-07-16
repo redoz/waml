@@ -189,11 +189,10 @@
       title="Close"
       class="w-[30px] h-[30px] flex items-center justify-center rounded-md text-slate-500 hover:bg-[#f1f3f7] text-[20px] leading-none"
     >
-      ×
+      Ã—
     </button>
   </div>
 {/snippet}
-
 
 {#if open}
   {#if mode === "centered"}
