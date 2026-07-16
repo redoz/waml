@@ -1,6 +1,6 @@
 <script lang="ts">
   // Mirrors packages/web/src/components/TopBar.tsx.
-  import { Download, Upload, ChevronDown, FileText, Image as ImageIcon, Share2, PanelLeft, Pencil, Check } from "lucide-svelte";
+  import { Download, Upload, ChevronDown, FileText, Image as ImageIcon, Share2, PanelLeft, Pencil, Check, Plus } from "lucide-svelte";
   import { LibraryIcon } from "../lib/icons";
   import type { Diagram } from "@waml/okf";
 
@@ -11,6 +11,7 @@
   // Share is now a first-class top-bar button (immediately right of Export) that
   // opens the modal Share dialog — it no longer lives in the right rail.
   let {
+    onCreateNew,
     onImport,
     onExport,
     onExportSvg,
@@ -26,6 +27,7 @@
     rootPackageName = "",
     onRenameRoot,
   }: {
+    onCreateNew?: () => void;
     onImport?: () => void;
     onExport?: () => void;
     onExportSvg?: () => void;
@@ -246,6 +248,15 @@
   </div>
 
   <div class="flex-1"></div>
+
+  <!-- Create new — resets to an empty project (confirm-gated in CanvasInner). -->
+  <button
+    onclick={onCreateNew}
+    title="Create a new project"
+    class="text-[13px] font-[550] border border-[#d8dee8] bg-white text-slate-900 rounded-lg px-3 py-[7px] cursor-pointer flex items-center gap-[6px] hover:bg-[#f1f3f7]"
+  >
+    <Plus size={15} /> Create new
+  </button>
 
   <!-- Templates -->
   <div class="relative">

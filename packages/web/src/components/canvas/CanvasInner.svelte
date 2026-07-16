@@ -39,10 +39,11 @@
   import TopBar from "../TopBar.svelte";
   import ImportDialog from "../ImportDialog.svelte";
   import ClearCanvasDialog from "../ClearCanvasDialog.svelte";
+  import CreateNewProjectDialog from "../CreateNewProjectDialog.svelte";
   import WelcomeDialog from "../WelcomeDialog.svelte";
   import LibraryDialog from "../LibraryDialog.svelte";
   import NewPackageDialog, { type NewPackagePayload } from "../NewPackageDialog.svelte";
-import ShareToast from "../ShareToast.svelte";
+  import ShareToast from "../ShareToast.svelte";
   import ShareDialog from "../share/ShareDialog.svelte";
   import InspectorReadonly from "../inspector/InspectorReadonly.svelte";
   import ExternalRefs from "../inspector/ExternalRefs.svelte";
@@ -103,6 +104,9 @@ import ShareToast from "../ShareToast.svelte";
   let showWelcome = $state(isFirstVisit);
   let shareToast = $state<string | null>(null);
   let showClear = $state(false);
+  // Confirm gate for the TopBar "Create new" action — separate from showClear
+  // (different copy, non-destructive framing) but resets via the same primitive.
+  let showCreateNew = $state(false);
   // Modal Share dialog (link + share-as-image). Replaces the old rail Share panel.
   let showShare = $state(false);
 
@@ -491,6 +495,17 @@ import ShareToast from "../ShareToast.svelte";
     clearCanvas();
   }
 
+  // Create a new project: close the current one (everything autosaves) and reset
+  // to an empty model with the default name. Same primitive as clearCanvas; the
+  // separate confirm guards the context switch.
+  function createNewProject() {
+    store.load([]);
+    selectionSet = EMPTY_SELECTION;
+    modelName = DEFAULT_MODEL_NAME;
+    activeDiagramKey = defaultDiagramKey(store.get());
+    showCreateNew = false;
+  }
+
   // Export the canvas as an SVG (whole model, WAML watermark). Uses the live RF
   // node list (measured sizes) to frame the export. exportCanvasSvg's 3rd arg
   // (viewportSelector) was made required by Plan 1; Svelte passes the
@@ -569,6 +584,7 @@ import ShareToast from "../ShareToast.svelte";
   tabindex="0"
 >
   <TopBar
+    onCreateNew={() => (showCreateNew = true)}
     onImport={() => (showImport = true)}
     onExport={handleExport}
     onExportSvg={handleExportSvg}
@@ -635,6 +651,12 @@ import ShareToast from "../ShareToast.svelte";
       onDelete={clearCanvas}
       onExportAndDelete={handleExportAndClear}
       onClose={() => (showClear = false)}
+    />
+  {/if}
+  {#if showCreateNew}
+    <CreateNewProjectDialog
+      onConfirm={createNewProject}
+      onClose={() => (showCreateNew = false)}
     />
   {/if}
   {#if showWelcome}

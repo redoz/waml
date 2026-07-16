@@ -1,5 +1,5 @@
 import { test, expect, vi } from "vitest";
-import { render, screen, fireEvent } from "@testing-library/svelte";
+import { render, screen, fireEvent, within } from "@testing-library/svelte";
 import TopBar from "./TopBar.svelte";
 
 const diagram = (key: string, title: string) => ({
@@ -40,9 +40,12 @@ test("clicking the title opens the read-only switcher dropdown", async () => {
   expect(btn.getAttribute("aria-expanded")).toBe("false");
   await fireEvent.click(btn);
   expect(btn.getAttribute("aria-expanded")).toBe("true");
-  expect(screen.getByRole("dialog", { name: /switch diagram/i })).toBeTruthy();
+  const dialog = screen.getByRole("dialog", { name: /switch diagram/i });
+  expect(dialog).toBeTruthy();
   expect(screen.queryByLabelText("Search model")).toBeNull();
-  expect(screen.queryByRole("button", { name: /rename diagram|new diagram|create/i })).toBeNull();
+  // Scoped to the popover itself: the TopBar's own "Create new" button lives
+  // outside the dropdown and legitimately matches /create/i.
+  expect(within(dialog).queryByRole("button", { name: /rename|new diagram|create/i })).toBeNull();
 });
 
 test("the dropdown lists every diagram with the active one checked", async () => {
@@ -195,4 +198,12 @@ test("Share button disabled when shareDisabled", () => {
   expect(
     (screen.getByRole("button", { name: /^Share$/ }) as HTMLButtonElement).disabled
   ).toBe(true);
+});
+
+test("renders a Create new button and fires onCreateNew", async () => {
+  const onCreateNew = vi.fn();
+  render(TopBar, { props: { onCreateNew } });
+  const btn = screen.getByRole("button", { name: /create new/i });
+  await fireEvent.click(btn);
+  expect(onCreateNew).toHaveBeenCalledTimes(1);
 });
