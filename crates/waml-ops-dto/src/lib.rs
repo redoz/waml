@@ -216,7 +216,7 @@ pub enum OpDto {
 #[serde(rename_all = "camelCase")]
 pub struct DisplayDto {
     pub show_attributes: bool,
-    pub attribute_detail: String,
+    pub show_type: bool,
     pub show_attribute_visibility: bool,
     pub show_attribute_multiplicity: bool,
     #[serde(default)]
@@ -234,7 +234,7 @@ pub struct DisplayDto {
 fn display_dto_to_set(d: &DisplayDto) -> DiagramDisplaySet {
     DiagramDisplaySet {
         show_attributes: d.show_attributes,
-        attribute_detail: d.attribute_detail.clone(),
+        show_type: d.show_type,
         show_attribute_visibility: d.show_attribute_visibility,
         show_attribute_multiplicity: d.show_attribute_multiplicity,
         max_attributes: d.max_attributes,
@@ -250,7 +250,7 @@ fn display_dto_to_set(d: &DisplayDto) -> DiagramDisplaySet {
 fn display_set_to_dto(ds: &DiagramDisplaySet) -> DisplayDto {
     DisplayDto {
         show_attributes: ds.show_attributes,
-        attribute_detail: ds.attribute_detail.clone(),
+        show_type: ds.show_type,
         show_attribute_visibility: ds.show_attribute_visibility,
         show_attribute_multiplicity: ds.show_attribute_multiplicity,
         max_attributes: ds.max_attributes,
@@ -679,7 +679,7 @@ mod tests {
                 description: Some("notes".into()),
                 display: Some(DiagramDisplaySet {
                     show_attributes: false,
-                    attribute_detail: "name-only".into(),
+                    show_type: false,
                     show_attribute_visibility: false,
                     show_attribute_multiplicity: false,
                     max_attributes: Some(6),
@@ -719,7 +719,7 @@ mod tests {
             description: None,
             display: Some(DiagramDisplaySet {
                 show_attributes: true,
-                attribute_detail: "name-type".into(),
+                show_type: true,
                 show_attribute_visibility: true,
                 show_attribute_multiplicity: true,
                 max_attributes: None,

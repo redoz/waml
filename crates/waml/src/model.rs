@@ -748,7 +748,7 @@ pub struct DiagramDisplay {
     #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none"))]
     pub show_attributes: Option<bool>,
     #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none"))]
-    pub attribute_detail: Option<String>, // "name-only" | "name-type"
+    pub show_type: Option<bool>,
     #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none"))]
     pub show_attribute_visibility: Option<bool>,
     #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none"))]

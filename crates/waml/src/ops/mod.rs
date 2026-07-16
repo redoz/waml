@@ -40,7 +40,7 @@ pub enum NameSpec {
 #[derive(Debug, Clone, PartialEq)]
 pub struct DiagramDisplaySet {
     pub show_attributes: bool,
-    pub attribute_detail: String,
+    pub show_type: bool,
     pub show_attribute_visibility: bool,
     pub show_attribute_multiplicity: bool,
     pub max_attributes: Option<u32>,
@@ -648,7 +648,9 @@ fn op_node_set(
 }
 
 const DISPLAY_KEYS: &[&str] = &[
-    "showAttributes", "attributeDetail", "showAttributeVisibility",
+    // `attributeDetail` stays listed so a legacy key is stripped on the next
+    // whole-block rewrite, even though we only ever emit `showType` now.
+    "showAttributes", "showType", "attributeDetail", "showAttributeVisibility",
     "showAttributeMultiplicity", "maxAttributes", "showRoles",
     "showCardinality", "showLabels", "showStereotype", "stereotypeFilter",
     "stereotypeColors",
@@ -676,7 +678,7 @@ fn op_diagram_set(
             // re-set exactly the keys this fully-resolved display carries.
             doc.frontmatter.entries.retain(|(k, _)| !DISPLAY_KEYS.contains(&k.as_str()));
             fm_set(&mut doc.frontmatter, "showAttributes", FmValue::Bool(ds.show_attributes));
-            fm_set(&mut doc.frontmatter, "attributeDetail", FmValue::Str(ds.attribute_detail.clone()));
+            fm_set(&mut doc.frontmatter, "showType", FmValue::Bool(ds.show_type));
             fm_set(&mut doc.frontmatter, "showAttributeVisibility", FmValue::Bool(ds.show_attribute_visibility));
             fm_set(&mut doc.frontmatter, "showAttributeMultiplicity", FmValue::Bool(ds.show_attribute_multiplicity));
             if let Some(max) = ds.max_attributes {
@@ -1117,7 +1119,7 @@ mod tests {
     fn full_display() -> DiagramDisplaySet {
         DiagramDisplaySet {
             show_attributes: false,
-            attribute_detail: "name-only".into(),
+            show_type: false,
             show_attribute_visibility: false,
             show_attribute_multiplicity: false,
             max_attributes: Some(6),

@@ -971,7 +971,9 @@ fn build_diagrams(parsed: &[ParsedDoc], keyset: &HashSet<&str>) -> Vec<Diagram> 
 
         let display = DiagramDisplay {
             show_attributes: fm.get_bool("showAttributes"),
-            attribute_detail: fm.get_str("attributeDetail").map(String::from),
+            // New boolean key; fall back to the legacy `attributeDetail` enum so
+            // pre-migration .waml files still resolve ("name-type" ⇒ show types).
+            show_type: fm.get_bool("showType").or_else(|| fm.get_str("attributeDetail").map(|s| s == "name-type")),
             show_attribute_visibility: fm.get_bool("showAttributeVisibility"),
             show_attribute_multiplicity: fm.get_bool("showAttributeMultiplicity"),
             max_attributes,
@@ -1013,7 +1015,7 @@ mod tests {
         assert_eq!(d.description.as_deref(), Some("Notes"));
         let x = &d.display;
         assert_eq!(x.show_attributes, Some(false));
-        assert_eq!(x.attribute_detail.as_deref(), Some("name-only"));
+        assert_eq!(x.show_type, Some(false)); // legacy "name-only" ⇒ false
         assert_eq!(x.show_attribute_visibility, Some(false));
         assert_eq!(x.show_attribute_multiplicity, Some(false));
         assert_eq!(x.max_attributes, Some(6));
@@ -1031,6 +1033,19 @@ mod tests {
         assert_eq!(present.diagrams[0].display.stereotype_filter, Some(vec![]));
         let absent = build_model(&diagram_bundle(""));
         assert_eq!(absent.diagrams[0].display.stereotype_filter, None);
+    }
+
+    #[test]
+    fn build_diagrams_reads_show_type_and_legacy_attribute_detail() {
+        let n = build_model(&diagram_bundle("showType: false\n"));
+        assert_eq!(n.diagrams[0].display.show_type, Some(false));
+        let t = build_model(&diagram_bundle("attributeDetail: name-type\n"));
+        assert_eq!(t.diagrams[0].display.show_type, Some(true));
+        let o = build_model(&diagram_bundle("attributeDetail: name-only\n"));
+        assert_eq!(o.diagrams[0].display.show_type, Some(false));
+        // Explicit new key wins over the legacy key.
+        let both = build_model(&diagram_bundle("showType: false\nattributeDetail: name-type\n"));
+        assert_eq!(both.diagrams[0].display.show_type, Some(false));
     }
 
     #[test]
