@@ -701,15 +701,19 @@ import ShareToast from "../ShareToast.svelte";
     >
       <!-- Tool dock — anchored to the canvas (not the outer row) so it sits just
            inside the canvas edge and slides over as the rail opens. The diagram
-           switcher now lives in the TopBar title control. -->
-      <Dock
-        activeTool={tool}
-        onToolChange={handleToolChange}
-        onClear={() => (showClear = true)}
-        clearDisabled={$model.nodes.length === 0}
-        onOpenProperties={() => (centralPanel = { kind: "diagram" })}
-        leftOffset={navOpen && navMode === "docked" ? navWidth + 12 : 14}
-      />
+           switcher now lives in the TopBar title control. Hidden while the
+           centered project viewer is open — its scrim covers the canvas, so
+           the Dock would only bleed through the dim as unclickable clutter. -->
+      {#if !(navOpen && navMode === "centered")}
+        <Dock
+          activeTool={tool}
+          onToolChange={handleToolChange}
+          onClear={() => (showClear = true)}
+          clearDisabled={$model.nodes.length === 0}
+          onOpenProperties={() => (centralPanel = { kind: "diagram" })}
+          leftOffset={navOpen && navMode === "docked" ? navWidth + 12 : 14}
+        />
+      {/if}
       {#if activeFlow}
         <FlowView doc={activeFlow} />
       {:else if activeSequence}
