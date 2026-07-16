@@ -49,8 +49,8 @@
     if (v !== (diagram.description ?? "")) onUpdateDiagram({ description: v });
   }
 
-  // In-section field label (Title, Note, Max attributes, toggle rows) — one weight
-  // below the uppercase section headers so the hierarchy reads at a glance.
+  // Title and Note field labels — one weight below the uppercase section
+  // headers so the hierarchy reads at a glance.
   const fieldLabelCls = "mb-1 block text-[13px] font-medium text-slate-800";
 </script>
 
