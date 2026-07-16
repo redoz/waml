@@ -144,6 +144,26 @@ describe("package mutators + ghost state", () => {
     store.moveNode("order", "billing");
     expect(store.getBundle().some(([p]) => p === "billing/order.md")).toBe(true);
   });
+
+  it("insertPackage re-roots docs under the target path", () => {
+    const store = createModelStore([]);
+    const ok = store.insertPackage("", "orders", [
+      ["t/order.md", "---\ntype: uml.Class\ntitle: Order\n---\n# Order\n"],
+    ]);
+    expect(ok).toBe(true);
+    expect(store.getBundle().some(([p]) => p === "orders/order.md")).toBe(true);
+  });
+
+  it("insertPackage returns false and surfaces an error on a path collision", () => {
+    const errors: string[] = [];
+    const store = createModelStore(
+      [["sales/orders/order.md", "---\ntype: uml.Class\ntitle: Order\n---\n# Order\n"]],
+      { onError: (e) => errors.push(e) },
+    );
+    const ok = store.insertPackage("sales", "orders", [["t/x.md", "---\ntype: uml.Class\ntitle: X\n---\n# X\n"]]);
+    expect(ok).toBe(false);
+    expect(errors.join()).toContain("already exists");
+  });
 });
 
 describe("updateDiagram", () => {

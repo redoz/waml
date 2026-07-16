@@ -37,6 +37,7 @@ import {
   reorderMembersOps,
   sortPackageOps,
   retitlePackageOps,
+  pkgInsertOps,
 } from "./ops-adapter";
 import { slugify } from "@waml/okf";
 
@@ -261,6 +262,13 @@ export function createModelStore(initial?: Bundle, opts: CreateStoreOptions = {}
     },
     retitlePackage(key: string, title: string): void {
       run(retitlePackageOps(key, title));
+    },
+    /** Insert a package: re-root `docs` under `<parentPath>/<name>/` and append,
+     *  via the Rust `pkg.insert` op. Returns true on success; on a path collision
+     *  keeps prior state, surfaces the error, and returns false. Positions are
+     *  the web layer's job (re-run layout after a successful insert). */
+    insertPackage(parentPath: string, name: string, docs: [string, string][]): boolean {
+      return run(pkgInsertOps(parentPath, name, docs));
     },
 
     // ── diagrams: derived-only in Stage 1b (no diagram/membership ops) ──────────
