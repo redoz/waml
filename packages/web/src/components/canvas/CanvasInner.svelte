@@ -128,6 +128,7 @@ import ShareToast from "../ShareToast.svelte";
   let navMode = $state<"centered" | "docked">("centered");
   let navWidth = $state(340);
   let navCollapsed = $state(false);
+  let navPinned = $state(false);
   // central edit panel's current target (null = closed). Element context is
   // opened by navigator's "View / edit properties"; diagram context by
   // Dock sliders button (Task 5).
@@ -833,6 +834,8 @@ import ShareToast from "../ShareToast.svelte";
       title={$model.path || "model"}
       onClose={() => (navOpen = false)}
       onToggleMode={() => (navMode = navMode === "centered" ? "docked" : "centered")}
+      pinned={navPinned}
+      onTogglePin={() => (navPinned = !navPinned)}
       graph={$model}
       scopeKey={scopeKey}
       activeDiagramKey={activeDiagram.key}

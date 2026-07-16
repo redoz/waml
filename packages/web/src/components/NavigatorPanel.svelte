@@ -19,6 +19,8 @@
     title,
     onClose,
     onToggleMode,
+    pinned = false,
+    onTogglePin,
     graph,
     scopeKey = "",
     activeDiagramKey = "",
@@ -43,6 +45,8 @@
     title: string;
     onClose: () => void;
     onToggleMode: () => void;
+    pinned?: boolean;
+    onTogglePin: () => void;
     graph: ModelGraph;
     scopeKey?: string;
     activeDiagramKey?: string;
@@ -75,7 +79,7 @@
   // when idle. Mirrors InspectorPanel.
   let engaged = $state(false);
   let hideTimer: ReturnType<typeof setTimeout> | undefined;
-  const translucent = $derived(mode === "docked" && !engaged);
+  const translucent = $derived(mode === "docked" && !pinned && !engaged);
   function engage() {
     if (hideTimer) { clearTimeout(hideTimer); hideTimer = undefined; }
     engaged = true;
@@ -159,26 +163,37 @@
           <ChevronUp size={16} />
         </span>
       </button>
+      <button
+        onclick={onTogglePin}
+        aria-label={pinned ? "Let it dim when idle" : "Keep solid"}
+        aria-pressed={pinned}
+        title={pinned ? "Let it dim when idle" : "Keep solid"}
+        class={`w-[30px] h-[30px] flex items-center justify-center rounded-md transition-colors ${pinned ? "text-[#1e88e5] bg-[#e6f1fb]" : "text-slate-500 hover:bg-[#f1f3f7]"}`}
+      >
+        {#if pinned}<Pin size={16} />{:else}<PinOff size={16} />{/if}
+      </button>
+    {:else}
+      <button
+        onclick={onToggleMode}
+        aria-label="Pin navigator to left"
+        aria-pressed={false}
+        title="Pin navigator to left"
+        class="w-[30px] h-[30px] flex items-center justify-center rounded-md transition-colors text-slate-500 hover:bg-[#f1f3f7]"
+      >
+        <Pin size={16} />
+      </button>
     {/if}
-    <button
-      onclick={onToggleMode}
-      aria-label={docked ? "Unpin navigator (center)" : "Pin navigator to left"}
-      aria-pressed={docked}
-      title={docked ? "Unpin navigator (center)" : "Pin navigator to left"}
-      class={`w-[30px] h-[30px] flex items-center justify-center rounded-md transition-colors ${docked ? "text-[#1e88e5] bg-[#e6f1fb]" : "text-slate-500 hover:bg-[#f1f3f7]"}`}
-    >
-      {#if docked}<PinOff size={16} />{:else}<Pin size={16} />{/if}
-    </button>
     <button
       onclick={onClose}
       aria-label="Close"
       title="Close"
       class="w-[30px] h-[30px] flex items-center justify-center rounded-md text-slate-500 hover:bg-[#f1f3f7] text-[20px] leading-none"
     >
-      Ã—
+      ×
     </button>
   </div>
 {/snippet}
+
 
 {#if open}
   {#if mode === "centered"}
