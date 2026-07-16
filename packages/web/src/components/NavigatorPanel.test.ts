@@ -21,7 +21,7 @@ const graph = {
 const props = (over = {}) => ({
   open: true, mode: "centered" as const, title: "acme-model",
   graph, scopeKey: "sales", activeDiagramKey: "overview", palette: ["uml.Class"],
-  onClose: vi.fn(), onToggleMode: vi.fn(), onScope: vi.fn(), onSelectDiagram: vi.fn(),
+  onClose: vi.fn(), onToggleMode: vi.fn(), onTogglePin: vi.fn(), onScope: vi.fn(), onSelectDiagram: vi.fn(),
   ...over,
 });
 
@@ -68,11 +68,27 @@ test("first Escape blurs a focused input, second closes", async () => {
   expect(onClose).toHaveBeenCalledTimes(1);
 });
 
-test("docked mode exposes a resize handle and unpin control", () => {
+test("docked mode exposes a resize handle and a pin toggle (no center toggle)", () => {
   render(NavigatorPanel, { props: props({ mode: "docked" }) });
   expect(screen.getByLabelText("Model navigator")).toBeTruthy();
-  expect(screen.getByRole("button", { name: /unpin|center/i })).toBeTruthy();
+  expect(screen.getByRole("button", { name: /keep solid|dim when idle/i })).toBeTruthy();
+  expect(screen.queryByRole("button", { name: /center/i })).toBeNull();
   expect(screen.getByTestId("nav-resize")).toBeTruthy();
+});
+
+test("docked pin toggle fires onTogglePin", async () => {
+  const onTogglePin = vi.fn();
+  render(NavigatorPanel, { props: props({ mode: "docked", onTogglePin }) });
+  await fireEvent.click(screen.getByRole("button", { name: /keep solid|dim when idle/i }));
+  expect(onTogglePin).toHaveBeenCalledTimes(1);
+});
+
+test("docked translucency tracks pinned (dims when idle unless pinned)", () => {
+  const { unmount } = render(NavigatorPanel, { props: props({ mode: "docked", pinned: false }) });
+  expect(screen.getByLabelText("Model navigator").classList.contains("opacity-40")).toBe(true);
+  unmount();
+  render(NavigatorPanel, { props: props({ mode: "docked", pinned: true }) });
+  expect(screen.getByLabelText("Model navigator").classList.contains("opacity-40")).toBe(false);
 });
 
 test("docked collapse toggle hides the body", async () => {
