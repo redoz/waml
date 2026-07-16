@@ -1,14 +1,13 @@
 # New Package Flow Implementation Plan
 
-> **STATUS: PAUSED (2026-07-16).** Blocked on a separate profile-system redesign
-> spec. User directive: profiles must cover EVERY diagram kind and dictate both
-> the toolbox (node types) and the allowed association/relationship kinds — a
-> distinct subsystem being brainstormed on its own. The seed profile strings in
-> Task 1 (`new_diagram_doc`) are PROVISIONAL (use-case currently resolves to
-> `uml-domain`); revisit Task 1's `kind_frontmatter` once the profile spec lands
-> so each kind seeds its real profile name. Everything else in this plan
-> (`pkg.insert`, dialog, tree picker, create-new, retiring `mergeBundles`) is
-> independent of that redesign and stands as written.
+> **STATUS: ACTIVE (2026-07-16).** Proceeds now. A separate profile-system
+> redesign (profiles covering EVERY diagram kind and dictating the toolbox +
+> allowed association kinds) is a deferred FOLLOW-UP, not a blocker. This plan's
+> only coupling is Task 1's seed profile strings in `new_diagram_doc`, which are
+> PROVISIONAL — use-case currently resolves to `uml-domain`; revisit Task 1's
+> `kind_frontmatter` once the profile spec lands so each kind seeds its real
+> profile name. Everything else (`pkg.insert`, dialog, tree picker, create-new,
+> retiring `mergeBundles`) is independent of that redesign.
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
