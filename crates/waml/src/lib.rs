@@ -12,6 +12,7 @@ pub mod grammar;
 pub mod index_md;
 pub mod layout;
 pub mod parse;
+pub mod seed;
 pub mod serialize;
 pub mod syntax;
 pub mod validate;
