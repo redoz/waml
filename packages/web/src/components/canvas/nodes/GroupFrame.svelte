@@ -1,13 +1,12 @@
 <script lang="ts">
-  import type { NodeProps } from "@xyflow/svelte";
-
   // A group hull for a `with frame` layout group: a titled, dashed bordered box
   // sized to the solver's rect. Only `shape === "Frame"` groups reach this
   // renderer (Box/Shrink shape the layout but draw nothing). It is a
   // non-interactive backdrop — selectable/draggable/deletable are set false on
   // the pseudo-node (see toGroupNode), so pointer events pass through.
-  let { data }: NodeProps = $props();
-  let group = $derived(data as unknown as { title?: string; width: number; height: number });
+  // Props are narrowed to the group data this renderer reads; SvelteFlow injects
+  // the rest of NodeProps at runtime but only `data` is consumed here.
+  let { data: group }: { data: { title?: string; width: number; height: number } } = $props();
 </script>
 
 <div
