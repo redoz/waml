@@ -12,7 +12,6 @@ script_mod! {
         ui: Root{
             main_window := Window{
                 window.inner_size: vec2(1280, 840)
-                pass.clear_color: vec4(0.08, 0.09, 0.11, 1.0)
                 body +: {
                     Splitter{
                         width: Fill
