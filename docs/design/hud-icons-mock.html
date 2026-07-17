@@ -1,0 +1,200 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>HUD icons — item set</title>
+<style>
+  :root { color-scheme: light; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; }
+  body {
+    --accent: 20, 150, 220;
+    --fill: #eaeff5;
+    --glow: 0.9;
+    background: #eef2f7;
+    color: #26313f;
+    font: 14px/1.5 -apple-system, "Segoe UI", system-ui, sans-serif;
+    display: grid;
+    grid-template-columns: 1fr 300px;
+    min-height: 100vh;
+  }
+  #stage {
+    display: grid; place-items: center; padding: 40px;
+    background:
+      radial-gradient(120% 90% at 50% 0%, #ffffff 0%, #e6ecf3 60%, #dbe3ec 100%),
+      repeating-linear-gradient(0deg,  transparent 0 23px, rgba(20,120,190,.05) 23px 24px),
+      repeating-linear-gradient(90deg, transparent 0 23px, rgba(20,120,190,.05) 23px 24px);
+  }
+  .grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 18px; }
+  .item { display: grid; justify-items: center; gap: 8px; width: 128px; }
+  .chip {
+    position: relative; width: 64px; height: 64px;
+    display: grid; place-items: center;
+    background:
+      linear-gradient(180deg, rgba(255,255,255,.94), rgba(255,255,255,.80)),
+      rgba(var(--accent),.06);
+    box-shadow:
+      0 6px 16px rgba(40,70,110,.13),
+      0 0 calc(9px * var(--glow)) rgba(var(--accent), calc(.14 * var(--glow)));
+  }
+  /* thin accent frame with the source-bright asymmetry */
+  .chip::before {
+    content: ""; position: absolute; inset: 0; padding: 1.5px;
+    background: linear-gradient(150deg, rgba(var(--accent),.95), rgba(var(--accent),.5));
+    -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+    mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+    -webkit-mask-composite: xor; mask-composite: exclude;
+    pointer-events: none;
+  }
+  .ico   { stroke: rgb(var(--accent)); stroke-width: 2; fill: none;
+           stroke-linejoin: round; stroke-linecap: round; }
+  .ico .hollow { fill: var(--fill); }
+  .ico .solid  { fill: rgb(var(--accent)); stroke: none; }
+  /* tree-view scale test: icons at 16px next to a label, like a nav row */
+  .tree { margin-top: 30px; width: 300px; background: rgba(255,255,255,.7);
+          border: 1px solid rgba(var(--accent),.35); padding: 6px 4px; }
+  .trow { display: flex; align-items: center; gap: 8px; padding: 3px 10px;
+          font: 500 13px/1 -apple-system, "Segoe UI", system-ui, sans-serif; color: #2c3744; }
+  .trow svg { flex: 0 0 auto; }
+  .lbl  { font: 700 12px/1 ui-monospace, "SF Mono", "Cascadia Code", Menlo, monospace;
+          letter-spacing: .04em; color: #212a34; }
+  .sub  { font: 500 10px/1 ui-monospace, "SF Mono", "Cascadia Code", Menlo, monospace;
+          letter-spacing: .08em; color: rgb(var(--accent)); opacity: .8; margin-top: -4px; }
+
+  aside { padding: 20px 18px; background: #fff; border-left: 1px solid #dbe3ec; overflow-y: auto; }
+  h1 { font-size: 12px; letter-spacing: .16em; text-transform: uppercase; color: #1496dc; margin: 0 0 14px; }
+  .swatches { display: flex; gap: 8px; flex-wrap: wrap; margin: 8px 0 18px; }
+  .swatch { width: 30px; height: 30px; border-radius: 6px; border: 1px solid #cdd7e2; cursor: pointer; }
+  .swatch.sel { outline: 2px solid #1496dc; outline-offset: 2px; }
+  .hint { font-size: 11px; color: #8a97a6; line-height: 1.6; }
+</style>
+</head>
+<body>
+  <div id="stage">
+    <div class="grid">
+
+      <div class="item">
+        <div class="chip"><svg class="ico" width="32" height="32" viewBox="0 0 24 24">
+          <rect class="hollow" x="4.5" y="5" width="15" height="14" rx="2"/>
+          <line x1="4.5" y1="9.5" x2="19.5" y2="9.5"/>
+        </svg></div>
+        <div class="lbl">Class</div><div class="sub">uml.Class</div>
+      </div>
+
+      <div class="item">
+        <div class="chip"><svg class="ico" width="32" height="32" viewBox="0 0 24 24">
+          <circle class="hollow" cx="12" cy="12" r="6.5" stroke-dasharray="3 2.6"/>
+        </svg></div>
+        <div class="lbl">Interface</div><div class="sub">uml.Interface</div>
+      </div>
+
+      <div class="item">
+        <div class="chip"><svg class="ico" width="32" height="32" viewBox="0 0 24 24">
+          <rect class="hollow" x="5"  y="5"  width="7" height="7" rx="1"/>
+          <rect class="hollow" x="13" y="5"  width="7" height="7" rx="1"/>
+          <rect class="hollow" x="5"  y="13" width="7" height="7" rx="1"/>
+        </svg></div>
+        <div class="lbl">Enum</div><div class="sub">uml.Enum</div>
+      </div>
+
+      <div class="item">
+        <div class="chip"><svg class="ico" width="32" height="32" viewBox="0 0 24 24">
+          <path class="hollow" d="M12,4.5 L18.5,8.25 L18.5,15.75 L12,19.5 L5.5,15.75 L5.5,8.25 Z"/>
+        </svg></div>
+        <div class="lbl">DataType</div><div class="sub">uml.DataType</div>
+      </div>
+
+      <div class="item">
+        <div class="chip"><svg class="ico" width="32" height="32" viewBox="0 0 24 24">
+          <path class="hollow" d="M12,4 L19,8 L12,11 L5,8 Z"/>
+          <path class="hollow" d="M5,8 L12,11 L12,20 L5,16 Z"/>
+          <path class="hollow" d="M19,8 L12,11 L12,20 L19,16 Z"/>
+        </svg></div>
+        <div class="lbl">Package</div><div class="sub">uml.Package</div>
+      </div>
+
+      <div class="item">
+        <div class="chip"><svg class="ico" width="32" height="32" viewBox="0 0 24 24">
+          <path class="hollow" d="M6.5,4.5 L14,4.5 L17.5,8 L17.5,19.5 L6.5,19.5 Z"/>
+          <path d="M14,4.5 L14,8 L17.5,8"/>
+        </svg></div>
+        <div class="lbl">Note</div><div class="sub">uml.Note</div>
+      </div>
+
+      <div class="item">
+        <div class="chip"><svg class="ico" width="32" height="32" viewBox="0 0 24 24">
+          <line x1="9" y1="8" x2="15" y2="8"/>
+          <line x1="8" y1="10" x2="11" y2="15"/>
+          <line x1="16" y1="10" x2="13" y2="15"/>
+          <circle class="hollow" cx="7" cy="8" r="2.4"/>
+          <circle class="hollow" cx="17" cy="8" r="2.4"/>
+          <circle class="hollow" cx="12" cy="17" r="2.4"/>
+        </svg></div>
+        <div class="lbl">Diagram</div><div class="sub">Diagram</div>
+      </div>
+
+      <div class="item">
+        <div class="chip"><svg class="ico" width="32" height="32" viewBox="0 0 24 24">
+          <line x1="8" y1="5" x2="16" y2="5"/>
+          <line x1="12" y1="5" x2="12" y2="17"/>
+          <path d="M8,13 L12,17.5 L16,13"/>
+        </svg></div>
+        <div class="lbl">Flow</div><div class="sub">flow.Doc</div>
+      </div>
+
+      <div class="item">
+        <div class="chip"><svg class="ico" width="32" height="32" viewBox="0 0 24 24">
+          <rect class="hollow" x="4.5" y="4" width="5" height="4"/>
+          <rect class="hollow" x="14.5" y="4" width="5" height="4"/>
+          <line x1="7" y1="8" x2="7" y2="20" stroke-dasharray="2.2 2.2"/>
+          <line x1="17" y1="8" x2="17" y2="20" stroke-dasharray="2.2 2.2"/>
+          <line x1="7" y1="13" x2="17" y2="13"/>
+          <path d="M14.5,11 L17,13 L14.5,15"/>
+        </svg></div>
+        <div class="lbl">Sequence</div><div class="sub">seq.Doc</div>
+      </div>
+
+    </div>
+
+    <div class="tree">
+      <div class="trow"><svg class="ico" width="16" height="16" viewBox="0 0 24 24"><rect class="hollow" x="4.5" y="5" width="15" height="14" rx="2"/><line x1="4.5" y1="9.5" x2="19.5" y2="9.5"/></svg> Order</div>
+      <div class="trow"><svg class="ico" width="16" height="16" viewBox="0 0 24 24"><circle class="hollow" cx="12" cy="12" r="6.5" stroke-dasharray="3 2.6"/></svg> Payable</div>
+      <div class="trow"><svg class="ico" width="16" height="16" viewBox="0 0 24 24"><rect class="hollow" x="5" y="5" width="7" height="7" rx="1"/><rect class="hollow" x="13" y="5" width="7" height="7" rx="1"/><rect class="hollow" x="5" y="13" width="7" height="7" rx="1"/></svg> Status</div>
+      <div class="trow"><svg class="ico" width="16" height="16" viewBox="0 0 24 24"><path class="hollow" d="M12,4.5 L18.5,8.25 L18.5,15.75 L12,19.5 L5.5,15.75 L5.5,8.25 Z"/></svg> Money</div>
+      <div class="trow"><svg class="ico" width="16" height="16" viewBox="0 0 24 24"><path class="hollow" d="M12,4 L19,8 L12,11 L5,8 Z"/><path class="hollow" d="M5,8 L12,11 L12,20 L5,16 Z"/><path class="hollow" d="M19,8 L12,11 L12,20 L19,16 Z"/></svg> orders</div>
+      <div class="trow"><svg class="ico" width="16" height="16" viewBox="0 0 24 24"><path class="hollow" d="M6.5,4.5 L14,4.5 L17.5,8 L17.5,19.5 L6.5,19.5 Z"/><path d="M14,4.5 L14,8 L17.5,8"/></svg> reviewer note</div>
+      <div class="trow"><svg class="ico" width="16" height="16" viewBox="0 0 24 24"><line x1="9" y1="8" x2="15" y2="8"/><line x1="8" y1="10" x2="11" y2="15"/><line x1="16" y1="10" x2="13" y2="15"/><circle class="hollow" cx="7" cy="8" r="2.4"/><circle class="hollow" cx="17" cy="8" r="2.4"/><circle class="hollow" cx="12" cy="17" r="2.4"/></svg> Domain view</div>
+      <div class="trow"><svg class="ico" width="16" height="16" viewBox="0 0 24 24"><line x1="8" y1="5" x2="16" y2="5"/><line x1="12" y1="5" x2="12" y2="17"/><path d="M8,13 L12,17.5 L16,13"/></svg> Checkout flow</div>
+      <div class="trow"><svg class="ico" width="16" height="16" viewBox="0 0 24 24"><rect class="hollow" x="4.5" y="4" width="5" height="4"/><rect class="hollow" x="14.5" y="4" width="5" height="4"/><line x1="7" y1="8" x2="7" y2="20" stroke-dasharray="2.2 2.2"/><line x1="17" y1="8" x2="17" y2="20" stroke-dasharray="2.2 2.2"/><line x1="7" y1="13" x2="17" y2="13"/><path d="M14.5,11 L17,13 L14.5,15"/></svg> Place order</div>
+    </div>
+  </div>
+
+  <aside>
+    <h1>HUD icons — item set</h1>
+    <div class="swatches" id="swatches"></div>
+    <p class="hint">
+      One glyph per model item in the shared HUD material: accent strokes,
+      hollow interiors filled with the chip color, source-bright frame. Class box
+      with member divider, dashed interface (a shape, not a thing), enum literal
+      cells (3-of-4), hexagon data type, 3D package box, dog-eared note, diagram
+      frame, activity flow, sequence participants. Recolor with the swatches.
+      These become the navigator / palette / canvas glyphs.
+    </p>
+  </aside>
+
+<script>
+  const colors = [
+    ['Blue','20, 150, 220'], ['Cyan','0, 180, 210'], ['Teal','20, 190, 160'],
+    ['Indigo','90, 110, 240'], ['Amber','230, 150, 20'], ['Green','60, 190, 90'],
+    ['Rose','235, 70, 120'], ['Slate','100, 116, 139'],
+  ];
+  const sw = document.getElementById('swatches');
+  colors.forEach((c,i)=>{ const d=document.createElement('div');
+    d.className='swatch'+(i===0?' sel':''); d.style.background=`rgb(${c[1]})`; d.title=c[0];
+    d.onclick=()=>{ document.body.style.setProperty('--accent', c[1]);
+      [...sw.children].forEach(e=>e.classList.remove('sel')); d.classList.add('sel'); };
+    sw.appendChild(d); });
+</script>
+</body>
+</html>
