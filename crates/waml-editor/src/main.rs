@@ -9,6 +9,7 @@ mod load;
 mod scene;
 mod sizing;
 mod tree;
+mod tree_panel;
 
 use app::App;
 
