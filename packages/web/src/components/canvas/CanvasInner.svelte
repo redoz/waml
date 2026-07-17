@@ -149,6 +149,10 @@
   // diagnostics banner. Written ONLY by the imperative layoutActiveView pass.
   let solveResult = $state<SolveLayout | null>(null);
 
+  // The diagnostics banner is dismissible; each new solve (a fresh solveResult
+  // object) un-dismisses it so new warnings always show on the next reload.
+  let diagnosticsDismissed = $state(false);
+
   // useSvelteFlow() (confirmed via hooks/useSvelteFlow.svelte.d.ts) requires flow
   // context — available because Canvas.svelte wraps this component in
   // <SvelteFlowProvider>.
@@ -300,6 +304,12 @@
   $effect(() => {
     void activeDiagramKey;
     untrack(() => layoutActiveView());
+  });
+
+  // 3c) Un-dismiss the diagnostics banner whenever a new solve lands.
+  $effect(() => {
+    void solveResult;
+    diagnosticsDismissed = false;
   });
 
   // 5) Mirror the bundle to localStorage on every change so a refresh/crash
@@ -836,6 +846,31 @@
                return to their normal bottom-left resting position. -->
           <Controls position="bottom-left" style="bottom:15px;left:15px;margin:0;" />
         </SvelteFlow>
+      {/if}
+
+      <!-- Solver diagnostics: a lightweight dismissible strip listing each
+           layout warning (conflicts, unresolved refs), so a mistyped name or a
+           dumb layout is visible the moment you reload. -->
+      {#if solveResult && solveResult.diagnostics.length > 0 && !diagnosticsDismissed}
+        <div
+          role="alert"
+          class="absolute top-3 left-1/2 z-[5] max-w-[600px] -translate-x-1/2 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-[13px] text-amber-900 shadow"
+        >
+          <div class="flex items-start gap-2">
+            <div class="flex-1">
+              {#each solveResult.diagnostics as d}
+                <div>{d.message}</div>
+              {/each}
+            </div>
+            <button
+              class="text-amber-700 hover:text-amber-900"
+              aria-label="Dismiss layout warnings"
+              onclick={() => (diagnosticsDismissed = true)}
+            >
+              ×
+            </button>
+          </div>
+        </div>
       {/if}
 
       <!-- Empty canvas CTA -->
