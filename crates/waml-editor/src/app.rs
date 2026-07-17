@@ -30,17 +30,23 @@ pub struct App {
 
 impl MatchEvent for App {
     fn handle_startup(&mut self, cx: &mut Cx) {
-        // Directory + optional diagram title come from argv (wired fully in Task 8).
-        let dir = std::env::args().nth(1).unwrap_or_else(|| ".".to_string());
-        let model = match load::load_model(std::path::Path::new(&dir)) {
-            Ok(m) => m,
+        let argv: Vec<String> = std::env::args().collect();
+        let args = match crate::cli::parse(&argv) {
+            Ok(a) => a,
             Err(e) => {
-                log!("failed to load OKF dir {dir:?}: {e}");
+                log!("{e}");
                 return;
             }
         };
-        let Some(diagram) = model.diagrams.first() else {
-            log!("no diagrams in {dir:?}");
+        let model = match load::load_model(&args.dir) {
+            Ok(m) => m,
+            Err(e) => {
+                log!("failed to load OKF dir {:?}: {e}", args.dir);
+                return;
+            }
+        };
+        let Some(diagram) = crate::cli::select_diagram(&model, args.diagram.as_deref()) else {
+            log!("no diagrams in {:?}", args.dir);
             return;
         };
         let (scene, diags) = build_scene(&model, diagram);

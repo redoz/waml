@@ -4,6 +4,7 @@ use makepad_widgets::*;
 mod app;
 mod camera;
 mod canvas;
+mod cli;
 mod load;
 mod scene;
 mod sizing;
