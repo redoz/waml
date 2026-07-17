@@ -45,9 +45,12 @@ pub struct ProjectTree {
     id_to_key: HashMap<LiveId, String>,
     #[rust]
     id_to_kind: HashMap<LiveId, TreeKind>,
-    #[rust]
-    active_key: Option<String>,
 }
+
+// Tree-row selection highlight is click-only, provided by `FileTree`'s own
+// built-in selection state. The vendored makepad fork exposes no public API
+// to programmatically select/highlight a row, so there is no way to sync the
+// highlighted row to the currently-active diagram from outside a click.
 
 /// The glyph prefix that encodes a leaf's kind in its row name. Packages use the
 /// built-in folder icon and are never passed here.
@@ -140,11 +143,6 @@ impl ProjectTree {
         self.id_to_key = id_to_key;
         self.id_to_kind = id_to_kind;
         self.tree = tree;
-        self.view.redraw(cx);
-    }
-
-    pub fn set_active_diagram(&mut self, cx: &mut Cx, key: String) {
-        self.active_key = Some(key);
         self.view.redraw(cx);
     }
 
