@@ -75,3 +75,21 @@ test("a diagram referencing a non-member surfaces the diagnostics banner, and it
   await tick();
   expect(queryByRole("alert")).toBeNull();
 });
+
+test("a dragged position is a free override: it persists until the next solve trigger", async () => {
+  store.load(solvedBundle);
+  render(Canvas);
+  await tick();
+  await tick();
+  // Sanity: the solve placed Order at its golden spot (real erdAwareNodeSize widths).
+  expect(store.get().nodes.find((n) => n.key === "shop/order")!.position).toEqual({ x: 314, y: 69 });
+
+  // Simulate a drag drop write-back (what onNodeDragStop does).
+  store.updateNode("shop/order", { position: { x: 999, y: 999 } });
+  await tick();
+  await tick();
+
+  // No reactive effect re-solves it back — the override stands until an explicit
+  // solve trigger (view switch / layout button / load) overwrites it.
+  expect(store.get().nodes.find((n) => n.key === "shop/order")!.position).toEqual({ x: 999, y: 999 });
+});
