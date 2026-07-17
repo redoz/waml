@@ -12,6 +12,7 @@ use makepad_widgets::*;
 script_mod! {
     use mod.prelude.widgets_internal.*
     use mod.widgets.*
+    use mod.text.*
 
     mod.widgets.GraphCanvasBase = #(GraphCanvas::register_widget(vm))
 
@@ -24,7 +25,13 @@ script_mod! {
         draw_edge +: { color: #x5a6785 }
         draw_text +: {
             color: #xe6ebf5
-            text_style: theme.font_regular{font_size: 11}
+            text_style: TextStyle{
+                font_size: 12
+                font_family: FontFamily{
+                    latin := FontMember{res: crate_resource("self:resources/fonts/IBMPlexSans-Regular.ttf") asc: -0.1 desc: 0.0}
+                }
+                line_spacing: 1.2
+            }
         }
     }
 }

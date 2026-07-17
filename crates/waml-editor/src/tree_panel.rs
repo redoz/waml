@@ -23,7 +23,39 @@ script_mod! {
         show_bg: true
         draw_bg +: { color: #x14161d }
         file_tree := FileTree {
-            node_height: 22.0
+            // Roomier rows + larger humanist type, and flat (no zebra striping)
+            // so the panel reads as a calm modern sidebar, not a 90s list box.
+            node_height: 30.0
+
+            file_node +: {
+                padding: Inset{left: 16.0}
+                indent_width: 18.0
+                draw_text +: {
+                    text_style: theme.font_regular{font_size: 12}
+                }
+                draw_bg +: {
+                    color_1: #x14161d
+                    color_2: #x14161d
+                    color_active: #x2b3540
+                }
+            }
+
+            folder_node +: {
+                padding: Inset{left: 16.0}
+                indent_width: 18.0
+                draw_text +: {
+                    text_style: theme.font_bold{font_size: 12}
+                }
+                draw_bg +: {
+                    color_1: #x14161d
+                    color_2: #x14161d
+                    color_active: #x2b3540
+                }
+            }
+
+            filler +: {
+                pixel: fn() { return #x14161d }
+            }
         }
     }
 }
