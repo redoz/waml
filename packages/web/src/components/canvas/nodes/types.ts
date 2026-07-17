@@ -5,4 +5,4 @@ import type { ModelNode, DiagramDisplay } from "@waml/okf";
 // global `_viewMode`).
 export type OkfNodeData = ModelNode & { _display?: DiagramDisplay; _profile?: string; _collapsed?: boolean };
 
-export const NODE_FONT = "-apple-system, BlinkMacSystemFont, 'Segoe UI', Inter, system-ui, sans-serif";
+export const NODE_FONT = "'Source Sans 3 Variable', -apple-system, BlinkMacSystemFont, 'Segoe UI', Inter, system-ui, sans-serif";

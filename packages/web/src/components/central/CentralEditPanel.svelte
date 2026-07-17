@@ -83,7 +83,7 @@
   onclick={onClose}
   out:fade={{ duration: 200 }}
   class={`fixed inset-0 z-[60] flex items-center justify-center ${holeRect ? "" : "bg-slate-900/30"} ${fullHeight ? "p-4" : "p-8"}`}
-  style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Inter, system-ui, sans-serif;"
+  style="font-family: 'Source Sans 3 Variable', -apple-system, BlinkMacSystemFont, 'Segoe UI', Inter, system-ui, sans-serif;"
 >
   {#if holeRect}
     <!-- Hole-punch: box-shadow spread fills the whole viewport except this
@@ -109,7 +109,7 @@
       {#if header}
         <div class="flex-1 min-w-0">{@render header()}</div>
       {:else}
-        <h2 class="text-[15px] font-[650] flex-1 text-slate-900 truncate">{title}</h2>
+        <h2 class="text-[15px] font-[700] flex-1 text-slate-900 truncate">{title}</h2>
       {/if}
       <button
         onclick={onClose}

@@ -12,6 +12,7 @@
   },
   "dependencies": {
     "@dagrejs/dagre": "^1.1.0",
+    "@fontsource-variable/source-sans-3": "^5.2.9",
     "@waml/core": "workspace:*",
     "@waml/okf": "workspace:*",
     "@waml/wasm": "workspace:*",

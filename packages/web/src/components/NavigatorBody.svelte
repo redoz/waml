@@ -377,7 +377,7 @@
             autofocus
             class="flex-1 min-w-0 text-[13px] px-2 py-[6px] border border-[#d8dee8] rounded-md text-slate-900 focus:outline-none focus:border-[#1e88e5] focus:ring-2 focus:ring-[#e6f1fb]"
           />
-          <button type="submit" class="text-[12.5px] font-[550] text-[#1e88e5] px-2 py-[6px] rounded-md cursor-pointer hover:bg-[#e6f1fb]">Add</button>
+          <button type="submit" class="text-[12.5px] font-[600] text-[#1e88e5] px-2 py-[6px] rounded-md cursor-pointer hover:bg-[#e6f1fb]">Add</button>
         </form>
       {:else}
         <button
@@ -411,7 +411,7 @@
             autofocus
             class="flex-1 min-w-0 text-[13px] px-2 py-[6px] border border-[#d8dee8] rounded-md text-slate-900 focus:outline-none focus:border-[#1e88e5] focus:ring-2 focus:ring-[#e6f1fb]"
           />
-          <button type="submit" class="text-[12.5px] font-[550] text-[#1e88e5] px-2 py-[6px] rounded-md cursor-pointer hover:bg-[#e6f1fb]">Add</button>
+          <button type="submit" class="text-[12.5px] font-[600] text-[#1e88e5] px-2 py-[6px] rounded-md cursor-pointer hover:bg-[#e6f1fb]">Add</button>
         </form>
       {:else}
         <button
@@ -436,7 +436,7 @@
             autofocus
             class="flex-1 min-w-0 text-[13px] px-2 py-[6px] border border-[#d8dee8] rounded-md text-slate-900 focus:outline-none focus:border-[#1e88e5] focus:ring-2 focus:ring-[#e6f1fb]"
           />
-          <button type="submit" class="text-[12.5px] font-[550] text-slate-600 px-2 py-[6px] rounded-md cursor-pointer hover:bg-[#f1f3f7]">Rename</button>
+          <button type="submit" class="text-[12.5px] font-[600] text-slate-600 px-2 py-[6px] rounded-md cursor-pointer hover:bg-[#f1f3f7]">Rename</button>
         </form>
       {:else}
         <button

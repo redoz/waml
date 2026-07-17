@@ -29,13 +29,13 @@
     <div class="flex items-center justify-end gap-2">
       <button
         onclick={onClose}
-        class="text-[13px] font-[550] border border-[#d8dee8] bg-white text-slate-900 rounded-lg px-4 py-[7px] cursor-pointer hover:bg-[#f1f3f7]"
+        class="text-[13px] font-[600] border border-[#d8dee8] bg-white text-slate-900 rounded-lg px-4 py-[7px] cursor-pointer hover:bg-[#f1f3f7]"
       >
         Cancel
       </button>
       <button
         onclick={onConfirm}
-        class="text-[13px] font-[550] bg-[#1e88e5] text-white border border-[#1e88e5] rounded-lg px-4 py-[7px] cursor-pointer hover:bg-[#1976d2]"
+        class="text-[13px] font-[600] bg-[#1e88e5] text-white border border-[#1e88e5] rounded-lg px-4 py-[7px] cursor-pointer hover:bg-[#1976d2]"
       >
         Create new
       </button>

@@ -33,7 +33,7 @@
 
   // Rests behind the floating Inspector (z-[16]); hover/focus lifts it above.
   const base =
-    "group absolute z-[12] hover:z-30 focus-visible:z-30 flex w-[34px] flex-col items-center justify-center gap-[6px] rounded-l-xl border border-r-0 border-[#d8dee8] bg-white py-3 text-[11px] font-[550] text-slate-500 shadow-[-3px_0_12px_rgba(15,23,42,0.08)] cursor-pointer transition-[right,background-color,color] duration-200 hover:bg-[#f1f3f7] hover:text-[#1e88e5] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#1e88e5]/60";
+    "group absolute z-[12] hover:z-30 focus-visible:z-30 flex w-[34px] flex-col items-center justify-center gap-[6px] rounded-l-xl border border-r-0 border-[#d8dee8] bg-white py-3 text-[11px] font-[600] text-slate-500 shadow-[-3px_0_12px_rgba(15,23,42,0.08)] cursor-pointer transition-[right,background-color,color] duration-200 hover:bg-[#f1f3f7] hover:text-[#1e88e5] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#1e88e5]/60";
   const cls = $derived(base + (active ? " bg-[#e6f1fb] text-[#1e88e5]" : ""));
 
   // Vertical label reading bottom-to-top, sitting beneath the icon.

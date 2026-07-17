@@ -41,20 +41,20 @@
     <div class="flex items-center justify-between gap-2">
       <button
         onclick={onClose}
-        class="text-[13px] font-[550] border border-[#d8dee8] bg-white text-slate-900 rounded-lg px-4 py-[7px] cursor-pointer hover:bg-[#f1f3f7]"
+        class="text-[13px] font-[600] border border-[#d8dee8] bg-white text-slate-900 rounded-lg px-4 py-[7px] cursor-pointer hover:bg-[#f1f3f7]"
       >
         Cancel
       </button>
       <div class="flex gap-2">
         <button
           onclick={onExportAndDelete}
-          class="text-[13px] font-[550] border border-[#dc2626] bg-white text-[#dc2626] rounded-lg px-4 py-[7px] cursor-pointer hover:bg-[#fdf2f2]"
+          class="text-[13px] font-[600] border border-[#dc2626] bg-white text-[#dc2626] rounded-lg px-4 py-[7px] cursor-pointer hover:bg-[#fdf2f2]"
         >
           Export OKF & delete
         </button>
         <button
           onclick={onDelete}
-          class="text-[13px] font-[550] bg-[#dc2626] text-white border border-[#dc2626] rounded-lg px-4 py-[7px] cursor-pointer hover:bg-[#b91c1c]"
+          class="text-[13px] font-[600] bg-[#dc2626] text-white border border-[#dc2626] rounded-lg px-4 py-[7px] cursor-pointer hover:bg-[#b91c1c]"
         >
           Delete
         </button>

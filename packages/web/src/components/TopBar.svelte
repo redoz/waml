@@ -123,7 +123,7 @@
 <div class="relative flex items-center gap-3 px-4 py-[9px] bg-white border-b border-[#d8dee8] flex-shrink-0 z-30">
   <!-- Brand — WAML wordmark links to the GitHub repo; the root package name
        trails it as a subtitle. -->
-  <div class="flex items-center gap-[9px] font-[650] text-[15px] tracking-[-0.2px]">
+  <div class="flex items-center gap-[9px] font-[700] text-[15px] tracking-[-0.2px]">
     <a
       href="https://github.com/redoz/waml"
       target="_blank"
@@ -139,7 +139,7 @@
       <!-- svelte-ignore a11y_autofocus -->
       <input
         aria-label="Package name"
-        class="font-[550] text-slate-800 max-w-[240px] px-1 py-0.5 rounded border border-[#d8dee8] outline-none focus:border-[#1e88e5]"
+        class="font-[600] text-slate-800 max-w-[240px] px-1 py-0.5 rounded border border-[#d8dee8] outline-none focus:border-[#1e88e5]"
         value={renameDraft}
         autofocus
         oninput={(e) => (renameDraft = e.currentTarget.value)}
@@ -157,7 +157,7 @@
           onclick={startRename}
           onkeydown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); startRename(); } }}
           title="Rename package"
-          class="font-[550] text-slate-600 max-w-[240px] truncate cursor-text hover:text-slate-900"
+          class="font-[600] text-slate-600 max-w-[240px] truncate cursor-text hover:text-slate-900"
         >
           {#if rootPackageName}{rootPackageName}{:else}<span class="text-slate-400 italic">Untitled</span>{/if}
         </span>
@@ -253,7 +253,7 @@
   <button
     onclick={onCreateNew}
     title="Create a new project"
-    class="text-[13px] font-[550] border border-[#d8dee8] bg-white text-slate-900 rounded-lg px-3 py-[7px] cursor-pointer flex items-center gap-[6px] hover:bg-[#f1f3f7]"
+    class="text-[13px] font-[600] border border-[#d8dee8] bg-white text-slate-900 rounded-lg px-3 py-[7px] cursor-pointer flex items-center gap-[6px] hover:bg-[#f1f3f7]"
   >
     <Plus size={15} /> Create new
   </button>
@@ -270,7 +270,7 @@
         onLibrary?.();
       }}
       title="Browse model templates"
-      class="text-[13px] font-[550] text-slate-900 border border-[#d8dee8] bg-white rounded-lg px-3 py-[7px] cursor-pointer flex items-center gap-[6px] hover:bg-[#f1f3f7]"
+      class="text-[13px] font-[600] text-slate-900 border border-[#d8dee8] bg-white rounded-lg px-3 py-[7px] cursor-pointer flex items-center gap-[6px] hover:bg-[#f1f3f7]"
     >
       <LibraryIcon size={15} /> Templates
     </button>
@@ -289,7 +289,7 @@
   <!-- Import OKF -->
   <button
     onclick={onImport}
-    class="text-[13px] font-[550] border border-[#d8dee8] bg-white text-slate-900 rounded-lg px-3 py-[7px] cursor-pointer flex items-center gap-[6px] hover:bg-[#f1f3f7]"
+    class="text-[13px] font-[600] border border-[#d8dee8] bg-white text-slate-900 rounded-lg px-3 py-[7px] cursor-pointer flex items-center gap-[6px] hover:bg-[#f1f3f7]"
   >
     <Download size={15} /> Import
   </button>
@@ -302,7 +302,7 @@
       aria-haspopup="menu"
       aria-expanded={exportMenuOpen}
       title={exportDisabled ? "Add a node first, then export" : "Export this model"}
-      class="text-[13px] font-[550] border border-[#d8dee8] bg-white text-slate-900 rounded-lg px-3 py-[7px] cursor-pointer flex items-center gap-[6px] hover:bg-[#f1f3f7] disabled:opacity-50 disabled:cursor-not-allowed"
+      class="text-[13px] font-[600] border border-[#d8dee8] bg-white text-slate-900 rounded-lg px-3 py-[7px] cursor-pointer flex items-center gap-[6px] hover:bg-[#f1f3f7] disabled:opacity-50 disabled:cursor-not-allowed"
     >
       <Upload size={15} /> Export <ChevronDown size={14} class="text-slate-400" />
     </button>
@@ -341,7 +341,7 @@
     onclick={onShare}
     disabled={shareDisabled}
     title={shareDisabled ? "Add something to share" : "Share this model"}
-    class="text-[13px] font-[550] bg-[#1e88e5] text-white rounded-lg px-3 py-[7px] cursor-pointer flex items-center gap-[6px] hover:bg-[#1976d2] disabled:opacity-50 disabled:cursor-not-allowed"
+    class="text-[13px] font-[600] bg-[#1e88e5] text-white rounded-lg px-3 py-[7px] cursor-pointer flex items-center gap-[6px] hover:bg-[#1976d2] disabled:opacity-50 disabled:cursor-not-allowed"
   >
     <Share2 size={15} /> Share
   </button>

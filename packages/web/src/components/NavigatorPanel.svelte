@@ -150,7 +150,7 @@
 
 {#snippet header(docked: boolean)}
   <div class="px-4 py-[13px] border-b border-[#d8dee8] flex items-center gap-2 flex-shrink-0 bg-white">
-    <h2 class="text-[14px] font-[650] flex-1 min-w-0 truncate text-slate-900">{title}</h2>
+    <h2 class="text-[14px] font-[700] flex-1 min-w-0 truncate text-slate-900">{title}</h2>
     {#if docked}
       <button
         onclick={() => (collapsed = !collapsed)}
@@ -202,7 +202,7 @@
       data-testid="nav-scrim"
       onclick={onClose}
       class="fixed inset-0 z-[60] flex items-center justify-center bg-slate-900/30 p-4"
-      style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Inter, system-ui, sans-serif;"
+      style="font-family: 'Source Sans 3 Variable', -apple-system, BlinkMacSystemFont, 'Segoe UI', Inter, system-ui, sans-serif;"
     >
       <!-- svelte-ignore a11y_no_static_element_interactions -->
       <div
