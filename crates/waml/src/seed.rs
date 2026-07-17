@@ -42,40 +42,40 @@ mod tests {
     #[test]
     fn class_kind_emits_diagram_type_and_uml_domain_profile() {
         let md = new_diagram_doc("class", "My Domain");
-        assert!(md.contains("type: \"Diagram\""), "got: {md}");
-        assert!(md.contains("profile: \"uml-domain\""), "got: {md}");
-        assert!(md.contains("title: \"My Domain\""), "got: {md}");
+        assert!(md.contains("type: Diagram"), "got: {md}");
+        assert!(md.contains("profile: uml-domain"), "got: {md}");
+        assert!(md.contains("title: My Domain"), "got: {md}");
         assert!(md.contains("# My Domain"), "H1 present: {md}");
     }
 
     #[test]
     fn usecase_kind_emits_diagram_type_and_uml_domain_profile() {
         let md = new_diagram_doc("usecase", "Actors");
-        assert!(md.contains("type: \"Diagram\""), "got: {md}");
-        assert!(md.contains("profile: \"uml-domain\""), "got: {md}");
-        assert!(md.contains("title: \"Actors\""), "got: {md}");
+        assert!(md.contains("type: Diagram"), "got: {md}");
+        assert!(md.contains("profile: uml-domain"), "got: {md}");
+        assert!(md.contains("title: Actors"), "got: {md}");
     }
 
     #[test]
     fn activity_kind_emits_uml_activity_type_and_no_profile() {
         let md = new_diagram_doc("activity", "Checkout");
-        assert!(md.contains("type: \"uml.Activity\""), "got: {md}");
+        assert!(md.contains("type: uml.Activity"), "got: {md}");
         assert!(!md.contains("profile:"), "activity has no profile: {md}");
-        assert!(md.contains("title: \"Checkout\""), "got: {md}");
+        assert!(md.contains("title: Checkout"), "got: {md}");
     }
 
     #[test]
     fn sequence_kind_emits_uml_sequence_type() {
         let md = new_diagram_doc("sequence", "Place Order");
-        assert!(md.contains("type: \"uml.Sequence\""), "got: {md}");
-        assert!(md.contains("title: \"Place Order\""), "got: {md}");
+        assert!(md.contains("type: uml.Sequence"), "got: {md}");
+        assert!(md.contains("title: Place Order"), "got: {md}");
     }
 
     #[test]
     fn unknown_kind_falls_back_to_class_form() {
         let md = new_diagram_doc("nonsense", "X");
-        assert!(md.contains("type: \"Diagram\""), "got: {md}");
-        assert!(md.contains("profile: \"uml-domain\""), "got: {md}");
+        assert!(md.contains("type: Diagram"), "got: {md}");
+        assert!(md.contains("profile: uml-domain"), "got: {md}");
     }
 
     #[test]

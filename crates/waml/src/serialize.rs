@@ -156,11 +156,11 @@ mod tests {
         let once = serialize_document(&parse_document(text));
         let twice = serialize_document(&parse_document(&once));
         assert_eq!(once, twice);
-        assert!(once.contains("description: \"Notes\""));
+        assert!(once.contains("description: Notes"));
         assert!(once.contains("showAttributes: false"));
         assert!(once.contains("maxAttributes: 6"));
-        assert!(once.contains("stereotypeFilter: [\"entity\", \"valueObject\"]"));
-        assert!(once.contains("stereotypeColors: [\"entity:#ffedd5\"]"));
+        assert!(once.contains("stereotypeFilter: [entity, valueObject]"));
+        assert!(once.contains("stereotypeColors: [entity:#ffedd5]"));
     }
 
     #[test]

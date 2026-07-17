@@ -8,13 +8,13 @@ describe("new_diagram_doc", () => {
 
   it("emits a uml.Activity doc for the activity kind", () => {
     const md = new_diagram_doc("activity", "Checkout");
-    expect(md).toContain('type: "uml.Activity"');
-    expect(md).toContain('title: "Checkout"');
+    expect(md).toContain("type: uml.Activity");
+    expect(md).toContain("title: Checkout");
   });
 
   it("emits a Diagram + uml-domain doc for the class kind", () => {
     const md = new_diagram_doc("class", "My Domain");
-    expect(md).toContain('type: "Diagram"');
-    expect(md).toContain('profile: "uml-domain"');
+    expect(md).toContain("type: Diagram");
+    expect(md).toContain("profile: uml-domain");
   });
 });

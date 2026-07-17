@@ -942,8 +942,8 @@ mod tests {
         }]).unwrap();
         assert_eq!(out.len(), 1);
         assert_eq!(out[0].0, "order.md");
-        assert!(out[0].1.contains("type: \"uml.Class\""));
-        assert!(out[0].1.contains("title: \"Order\""));
+        assert!(out[0].1.contains("type: uml.Class"));
+        assert!(out[0].1.contains("title: Order"));
         assert!(out[0].1.contains("# Order"));
         let dup = apply(&out, &[Op::NodeNew { slug:"order".into(), dir: String::new(), ty: ElementType::parse("uml.Class"), title:"X".into(), stereotype: vec![], description: None, abstract_: false }]).unwrap_err();
         assert!(dup.reason.contains("already exists"));
@@ -966,9 +966,9 @@ mod tests {
             stereotype: Some(vec!["aggregateRoot".into()]), abstract_: None, ty: None,
         }]).unwrap();
         assert_eq!(out[0].0, "a/order.md", "node.set never moves the file");
-        assert!(out[0].1.contains("title: \"Sales Order\""));
+        assert!(out[0].1.contains("title: Sales Order"));
         assert!(out[0].1.contains("# Sales Order"));
-        assert!(out[0].1.contains("stereotype: [\"aggregateRoot\"]"));
+        assert!(out[0].1.contains("stereotype: [aggregateRoot]"));
     }
 
     #[test]
@@ -1045,7 +1045,7 @@ mod tests {
             stereotype: None, abstract_: None, ty: None,
         }]).unwrap();
         assert_eq!(out[0].0, "shop/order.md");
-        assert!(out[0].1.contains("title: \"Sales Order\""));
+        assert!(out[0].1.contains("title: Sales Order"));
     }
 
     #[test]
@@ -1140,9 +1140,9 @@ mod tests {
             key: "dia".into(), title: Some("Order lifecycle".into()),
             description: Some("Notes for reviewers".into()), display: None,
         }]).unwrap();
-        assert!(out[0].1.contains("title: \"Order lifecycle\""));
+        assert!(out[0].1.contains("title: Order lifecycle"));
         assert!(out[0].1.contains("# Order lifecycle"), "H1 kept in sync");
-        assert!(out[0].1.contains("description: \"Notes for reviewers\""));
+        assert!(out[0].1.contains("description: Notes for reviewers"));
     }
 
     #[test]
@@ -1152,7 +1152,7 @@ mod tests {
         }]).unwrap();
         assert!(set[0].1.contains("showAttributes: false"));
         assert!(set[0].1.contains("maxAttributes: 6"));
-        assert!(set[0].1.contains("stereotypeFilter: [\"entity\"]"));
+        assert!(set[0].1.contains("stereotypeFilter: [entity]"));
 
         // A second DiagramSet with a display that omits maxAttributes/stereotypeFilter
         // must drop those stale keys entirely (whole-block replace).
@@ -1195,6 +1195,6 @@ mod tests {
             key: "shop/dia".into(), title: Some("D2".into()), description: None, display: None,
         }]).unwrap();
         assert_eq!(out[0].0, "shop/dia.md");
-        assert!(out[0].1.contains("title: \"D2\""));
+        assert!(out[0].1.contains("title: D2"));
     }
 }

@@ -145,6 +145,24 @@ pub fn parse_frontmatter(text: &str) -> (Frontmatter, String) {
 /// `List` renders each item recursively (so a nested `List` renders in its
 /// own bracket form), so this never panics on anything `parse_value` can
 /// produce — including the nested-bracket case (`x: [a, [b]]`).
+/// True when a bare `s` would `parse_value` back as something other than the
+/// same `Str` — the only cases where quoting is required. A comma is NOT listed:
+/// a top-level scalar with a comma is safe bare (only bracketed values split),
+/// and a *list item* with a comma is unrepresentable either way (the parser
+/// splits list items on every comma, quote-blind), so quoting it wouldn't help.
+fn scalar_needs_quote(s: &str) -> bool {
+    s.is_empty()
+        || s != s.trim()
+        || s == "true"
+        || s == "false"
+        || NUM_RE.is_match(s)
+        || (s.starts_with('[') && s.ends_with(']'))
+        || s.starts_with('"')
+        || s.contains('"')
+        || s.contains('\\')
+        || s.contains('\n')
+}
+
 fn render_value(v: &FmValue) -> String {
     match v {
         FmValue::Num(n) => {
@@ -155,7 +173,13 @@ fn render_value(v: &FmValue) -> String {
             }
         }
         FmValue::Bool(b) => b.to_string(),
-        FmValue::Str(s) => format!("\"{}\"", s.replace('\\', "\\\\").replace('"', "\\\"")),
+        FmValue::Str(s) => {
+            if scalar_needs_quote(s) {
+                format!("\"{}\"", s.replace('\\', "\\\\").replace('"', "\\\""))
+            } else {
+                s.clone()
+            }
+        }
         FmValue::List(items) => {
             let inner = items.iter().map(render_value).collect::<Vec<_>>().join(", ");
             format!("[{inner}]")
@@ -205,8 +229,47 @@ mod tests {
         let (fm, _) = parse_frontmatter(text);
         assert_eq!(
             render_frontmatter(&fm),
-            "type: \"uml.Class\"\nstereotype: [\"a\", \"b\"]\ntitle: \"Order\""
+            "type: uml.Class\nstereotype: [a, b]\ntitle: Order"
         );
+    }
+
+    #[test]
+    fn render_leaves_safe_scalars_unquoted() {
+        // Plain string scalars that can't be misread as another type render
+        // bare — no decorative quotes on `type`, `title`, prose, slashes, colons.
+        let text = "---\ntype: uml.Class\ntitle: New Package flow\ndescription: Re-roots docs under <parent>/<slug>/, then appends.\n---\n";
+        let (fm, _) = parse_frontmatter(text);
+        assert_eq!(
+            render_frontmatter(&fm),
+            "type: uml.Class\ntitle: New Package flow\ndescription: Re-roots docs under <parent>/<slug>/, then appends.",
+        );
+    }
+
+    #[test]
+    fn render_quotes_scalars_that_would_reparse_wrong() {
+        // A string that looks like a bool/num/list/empty must stay quoted so it
+        // round-trips as a Str, not the ambiguous type it resembles.
+        for raw in ["true", "false", "42", "-3.5", "[a]", "", " leading", "has\"quote"] {
+            let fm = Frontmatter { entries: vec![("k".into(), FmValue::Str(raw.to_string()))] };
+            let rendered = render_frontmatter(&fm);
+            let (fm2, _) = parse_frontmatter(&format!("---\n{rendered}\n---\n"));
+            assert_eq!(fm, fm2, "must round-trip {raw:?}; rendered as {rendered}");
+        }
+    }
+
+    #[test]
+    fn render_list_items_unquote_but_quote_type_lookalikes() {
+        // List items render bare too, except one that would reparse as a Num
+        // (or Bool/list) — it stays quoted so it round-trips as a Str.
+        let fm = Frontmatter {
+            entries: vec![(
+                "stereotype".into(),
+                FmValue::List(vec![FmValue::Str("entity".into()), FmValue::Str("42".into())]),
+            )],
+        };
+        assert_eq!(render_frontmatter(&fm), "stereotype: [entity, \"42\"]");
+        let (fm2, _) = parse_frontmatter(&format!("---\n{}\n---\n", render_frontmatter(&fm)));
+        assert_eq!(fm, fm2);
     }
 
     #[test]
