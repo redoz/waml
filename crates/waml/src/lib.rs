@@ -15,6 +15,7 @@ pub mod parse;
 pub mod seed;
 pub mod serialize;
 pub mod syntax;
+pub mod uml;
 pub mod validate;
 
 #[cfg(test)]

@@ -2,7 +2,7 @@ use crate::multiplicity::Multiplicity;
 
 /// `skip_serializing_if` helper: TS optionals omit a `false` flag rather than emit it.
 #[cfg(feature = "serde")]
-fn is_false(b: &bool) -> bool {
+pub(crate) fn is_false(b: &bool) -> bool {
     !*b
 }
 
@@ -632,33 +632,46 @@ impl ElementType {
             ElementType::Unknown(s) => s.clone(),
         }
     }
+}
 
-    /// True only for pool members that are genuine UML **Classifiers** (design
-    /// spec §3.1): `Class`, `Interface`, `Enum`, `DataType`, `Actor`, `UseCase`,
-    /// `Association`, and the behavior classifiers (`Behavior ⊂ Class`).
-    /// `Package`, `Note`/`Comment`, `Diagram`, and unrecognized tokens are not.
-    ///
-    /// The `UmlMetaclass` arm is written out explicitly (no `_ =>` catch-all) so
-    /// adding a metaclass forces a classifier decision here at compile time.
+/// The ontology discriminator for a substrate `Node`. `Uml(..)` isolates every
+/// UML concept behind one arm (design spec §2); a future ontology is a new arm +
+/// a new module. `Unknown(String)` keeps graceful degradation at the ontology
+/// layer, carrying the opaque `type` token.
+#[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "wasm", derive(tsify_next::Tsify))]
+#[cfg_attr(feature = "wasm", tsify(into_wasm_abi, from_wasm_abi))]
+pub enum NodeKind {
+    Uml(crate::uml::UmlNode),
+    Unknown(String),
+}
+
+impl NodeKind {
+    /// True only for nodes that are genuine UML **Classifiers** (design spec
+    /// §3.1/§3.4): the ontology is UML and the grouped kind is `Classifier`.
+    /// A compiler-enforced variant check — no runtime table.
     pub fn is_classifier(&self) -> bool {
-        match self {
-            ElementType::Uml(mc) => match mc {
-                UmlMetaclass::Class
-                | UmlMetaclass::Interface
-                | UmlMetaclass::Enum
-                | UmlMetaclass::DataType
-                | UmlMetaclass::Actor
-                | UmlMetaclass::UseCase
-                | UmlMetaclass::Association => true,
-                UmlMetaclass::Package | UmlMetaclass::Note => false,
-            },
-            // Behavior ⊂ Class: Activity / Interaction (Sequence) / StateMachine
-            // are all Classifiers.
-            ElementType::Behavior(_) => true,
-            ElementType::Diagram => false,
-            ElementType::Unknown(_) => false,
-        }
+        matches!(self, NodeKind::Uml(crate::uml::UmlNode::Classifier(_)))
     }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "wasm", derive(tsify_next::Tsify))]
+#[cfg_attr(feature = "wasm", tsify(into_wasm_abi, from_wasm_abi))]
+pub enum EdgeKind {
+    Uml(crate::uml::UmlEdge),
+    Unknown(String),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "wasm", derive(tsify_next::Tsify))]
+#[cfg_attr(feature = "wasm", tsify(into_wasm_abi, from_wasm_abi))]
+pub enum DiagramKind {
+    Uml(crate::uml::UmlDiagram),
+    Unknown(String),
 }
 
 /// A `uml.Note` anchor. Three forms, per the spec.
@@ -938,24 +951,34 @@ mod tests {
     }
 
     #[test]
-    fn is_classifier_matches_spec_table() {
-        // Genuine UML classifiers (design spec §3.1).
-        assert!(ElementType::Uml(UmlMetaclass::Class).is_classifier());
-        assert!(ElementType::Uml(UmlMetaclass::Interface).is_classifier());
-        assert!(ElementType::Uml(UmlMetaclass::Enum).is_classifier());
-        assert!(ElementType::Uml(UmlMetaclass::DataType).is_classifier());
-        assert!(ElementType::Uml(UmlMetaclass::Actor).is_classifier());
-        assert!(ElementType::Uml(UmlMetaclass::UseCase).is_classifier());
-        assert!(ElementType::Uml(UmlMetaclass::Association).is_classifier());
-        // Behavior ⊂ Class: all behavior classifiers qualify.
-        assert!(ElementType::Behavior(BehaviorKind::Activity).is_classifier());
-        assert!(ElementType::Behavior(BehaviorKind::StateMachine).is_classifier());
-        assert!(ElementType::Behavior(BehaviorKind::Sequence).is_classifier());
-        // Not classifiers.
-        assert!(!ElementType::Uml(UmlMetaclass::Package).is_classifier());
-        assert!(!ElementType::Uml(UmlMetaclass::Note).is_classifier());
-        assert!(!ElementType::Diagram.is_classifier());
-        assert!(!ElementType::Unknown("bpmn.Task".to_string()).is_classifier());
+    fn node_kind_is_classifier_matches_spec_table() {
+        use crate::uml::{Classifier, ClassifierKind, Structural, UmlNode};
+        let clsf = |k: ClassifierKind| {
+            NodeKind::Uml(UmlNode::Classifier(Classifier {
+                kind: k,
+                stereotypes: vec![],
+                abstract_: false,
+                attributes: vec![],
+                values: vec![],
+            }))
+        };
+        for k in [
+            ClassifierKind::Class,
+            ClassifierKind::Interface,
+            ClassifierKind::Enum,
+            ClassifierKind::DataType,
+            ClassifierKind::Actor,
+            ClassifierKind::UseCase,
+            ClassifierKind::Association,
+        ] {
+            assert!(clsf(k).is_classifier());
+        }
+        let pkg = NodeKind::Uml(UmlNode::Structural(Structural::Package { members: vec![] }));
+        assert!(!pkg.is_classifier());
+        let note =
+            NodeKind::Uml(UmlNode::Structural(Structural::Note { body: None, annotates: vec![] }));
+        assert!(!note.is_classifier());
+        assert!(!NodeKind::Unknown("bpmn.Task".to_string()).is_classifier());
     }
 
     #[test]

@@ -63,6 +63,17 @@ export interface DisplayDto {
 }
 
 /**
+ * A genuine UML Classifier node\'s payload (design spec §3.1).
+ */
+export interface Classifier {
+    kind: ClassifierKind;
+    stereotypes: string[];
+    abstract?: boolean;
+    attributes: Attribute[];
+    values?: string[];
+}
+
+/**
  * A resolved membership group in a diagram (heading text + resolved keys).
  */
 export interface DiagramGroup {
@@ -122,6 +133,14 @@ export interface FlowEdge {
 }
 
 /**
+ * A sequence participant node. Constructed by slice 3.
+ */
+export interface Lifeline {
+    ref?: string;
+    alias?: string;
+}
+
+/**
  * A sequence participant: IS Class or Actor, referenced by link.
  */
 export interface Lifeline {
@@ -132,6 +151,11 @@ export interface Lifeline {
      */
     ref?: string;
 }
+
+/**
+ * Activity/state-machine control pseudostates. Slice 2.
+ */
+export type PseudostateKind = "Initial" | "Final" | "Decision" | "Merge" | "Fork" | "Join";
 
 /**
  * An attribute\'s type: a display token, optionally resolved to another classifier\'s slug.
@@ -150,6 +174,11 @@ export interface Link {
 }
 
 /**
+ * Behavior/interaction node payloads. Constructed by slices 2–3.
+ */
+export type BehaviorElement = { Action: FlowBody } | { State: FlowBody } | { Pseudostate: PseudostateKind } | { ObjectNode: { object_ref?: string } } | { Fragment: { kind: FragmentKind } } | { Operand: { guard?: string } };
+
+/**
  * Combined-fragment keyword. `par` deferred (open question in spec).
  */
 export type FragmentKind = "alt" | "opt" | "loop";
@@ -165,6 +194,32 @@ export interface Bundle {
  * Flow flavor: tunes rendering only — one grammar for both.
  */
 export type FlowFlavor = "activity" | "stateMachine";
+
+/**
+ * Flow transition edge payload (design spec §3.2). Constructed by slice 2.
+ */
+export interface Transition {
+    trigger?: string;
+    guard?: string;
+    else?: boolean;
+    effect?: string;
+    carries?: string;
+    toRef?: string;
+}
+
+/**
+ * Interaction message edge payload (design spec §3.2). Constructed by slice 3.
+ */
+export interface Message {
+    verb: MessageVerb;
+    signature?: string;
+    seq: number;
+}
+
+/**
+ * Non-classifier structural elements: packages and notes/comments (spec §3.1).
+ */
+export type Structural = { Package: { members?: string[] } } | { Note: { body?: string; annotates?: NoteAnchor[] } };
 
 /**
  * One flow document: one self-rendering directed graph (model AND view).
@@ -222,6 +277,35 @@ export interface SolveResult {
 }
 
 /**
+ * Shared behavior-node body (activity action / state-machine state). Slice 2.
+ */
+export interface FlowBody {
+    partition?: string;
+    entry?: string;
+    do?: string;
+    exit?: string;
+    refines?: string;
+}
+
+/**
+ * Structural relationship edge payload (design spec §3.2). Absorbs the old
+ * `Edge` association fields.
+ */
+export interface Relationship {
+    kind: RelationshipKind;
+    name?: string | { ref: string };
+    fromEnd: RelEnd;
+    toEnd: RelEnd;
+    bidirectional: boolean;
+}
+
+/**
+ * The classifier subset of the UML metaclass set (design spec §3.1). `Package`
+ * and `Note` are NOT here — they are `Structural`, not classifiers.
+ */
+export type ClassifierKind = "Class" | "Interface" | "Enum" | "DataType" | "Association" | "Actor" | "UseCase";
+
+/**
  * The domain-agnostic projection of one markdown document. Round-trips every
  * OKF field losslessly — nothing a producer wrote is dropped: known fields are
  * promoted, the raw markdown body is retained verbatim, and any remaining
@@ -258,6 +342,35 @@ export interface Concept {
  * The message kind: fixes line and arrowhead (interaction substrate).
  */
 export type MessageVerb = "calls" | "sends" | "replies" | "creates" | "destroys";
+
+/**
+ * The ontology discriminator for a substrate `Node`. `Uml(..)` isolates every
+ * UML concept behind one arm (design spec §2); a future ontology is a new arm +
+ * a new module. `Unknown(String)` keeps graceful degradation at the ontology
+ * layer, carrying the opaque `type` token.
+ */
+export type NodeKind = { Uml: UmlNode } | { Unknown: string };
+
+/**
+ * UML diagram render payload (design spec §3.3): a flavor tag plus the render
+ * fields moved off the substrate. `profile`/`description` are retained here (spec
+ * §3.3 under-specifies them; keeping them avoids a lossy round-trip).
+ */
+export interface UmlDiagram {
+    flavor: UmlDiagramFlavor;
+    profile: string;
+    description?: string;
+    groups: DiagramGroup[];
+    display?: DiagramDisplay;
+    layout: unknown[];
+}
+
+/**
+ * UML node payload, grouped by metamodel category (design spec §3.1). An ENUM:
+ * the OKF `Concept` does NOT ride here (spec §2). The grouping — not a runtime
+ * table — decides `is_classifier`.
+ */
+export type UmlNode = { Classifier: Classifier } | { Structural: Structural } | { Behavior: BehaviorElement } | { Lifeline: Lifeline };
 
 export interface Attribute {
     name: string;
@@ -399,6 +512,10 @@ export interface SolvedGroup {
 
 export type DiagCode = "duplicate-slug" | "frontmatter-not-clean" | "unknown-type" | "malformed-attribute" | "malformed-relationship" | "malformed-flow-bullet" | "duplicate-flow-node" | "unresolved-target" | "droppable-content" | "malformed-layout" | "unresolved-layout-ref" | "layout-cycle" | "layout-conflict" | "malformed-message" | "malformed-lifeline";
 
+export type DiagramKind = { Uml: UmlDiagram } | { Unknown: string };
+
+export type EdgeKind = { Uml: UmlEdge } | { Unknown: string };
+
 export type FmValue = string | boolean | number | FmValue[];
 
 export type OpDto = { op: "node.new"; v?: number; slug: string; dir?: string; ty: string; title: string; stereotype?: string[]; desc?: string | undefined; abstract?: boolean } | { op: "node.rename"; v?: number; from: string; to: string } | { op: "node.set"; v?: number; slug: string; title?: string | undefined; desc?: string | undefined; stereotype?: string[] | undefined; abstract?: boolean | undefined; ty?: string | undefined } | { op: "node.rm"; v?: number; slug: string; cascade?: boolean } | { op: "attr.add"; v?: number; node: string; name: string; ty: string; mult?: string | undefined; vis?: string | undefined } | { op: "attr.set"; v?: number; node: string; name: string; ty?: string | undefined; mult?: string | undefined; vis?: string | undefined; rename?: string | undefined } | { op: "attr.rm"; v?: number; node: string; name: string } | { op: "value.add"; v?: number; node: string; literal: string } | { op: "value.rm"; v?: number; node: string; literal: string } | { op: "rel.add"; v?: number; source: string; kind: string; target: string; as?: string | undefined; as_ref?: string | undefined; ends?: string | undefined } | { op: "rel.set"; v?: number; source: string; kind?: string | undefined; target?: string | undefined; as?: string | undefined; ends?: string | undefined; set_as?: string | undefined; set_as_ref?: string | undefined } | { op: "rel.rm"; v?: number; source: string; kind?: string | undefined; target?: string | undefined; as?: string | undefined } | { op: "pkg.move"; v?: number; slug: string; to_dir: string } | { op: "pkg.rename"; v?: number; from: string; to: string } | { op: "pkg.delete"; v?: number; path: string; cascade?: boolean } | { op: "pkg.reorder"; v?: number; path: string; order?: string[] } | { op: "pkg.sort"; v?: number; path: string } | { op: "pkg.retitle"; v?: number; path: string; title: string } | { op: "pkg.insert"; v?: number; parent_path: string; name: string; docs?: [string, string][] } | { op: "diagram.set"; v?: number; key: string; title?: string | undefined; desc?: string | undefined; display?: DisplayDto | undefined };
@@ -408,6 +525,10 @@ export type RelationshipKind = "associates" | "aggregates" | "composes" | "speci
 export type Severity = "error" | "warning";
 
 export type Shape = "Frame" | "Box" | "Shrink";
+
+export type UmlDiagramFlavor = "Class" | "Activity" | "StateMachine" | "Sequence" | "UseCase";
+
+export type UmlEdge = { Relationship: Relationship } | { Transition: Transition } | { Message: Message } | "Containment";
 
 
 /**
