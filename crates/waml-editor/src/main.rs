@@ -1,9 +1,12 @@
+pub use makepad_widgets;
+use makepad_widgets::*;
+
+mod app;
+mod camera;
 mod load;
 mod scene;
 mod sizing;
-mod camera;
 
-fn main() {
-    // Real app shell wired in Task 8.
-    println!("waml-editor");
-}
+use app::App;
+
+app_main!(App);
