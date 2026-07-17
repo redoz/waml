@@ -109,7 +109,7 @@
     tabindex="-1"
     class="bg-white rounded-xl shadow-xl w-[460px] max-w-[92vw] max-h-[88vh] overflow-y-auto p-5"
     onclick={(e) => e.stopPropagation()}
-    style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Inter, system-ui, sans-serif;"
+    style="font-family: 'Source Sans 3 Variable', -apple-system, BlinkMacSystemFont, 'Segoe UI', Inter, system-ui, sans-serif;"
   >
     <!-- Header -->
     <div class="flex items-start justify-between gap-2 mb-4">
@@ -118,7 +118,7 @@
           <Share2 size={16} />
         </div>
         <div>
-          <div class="text-[15px] font-[650] text-slate-900">Named sharing</div>
+          <div class="text-[15px] font-[700] text-slate-900">Named sharing</div>
           <div class="text-[12px] text-slate-500">Share a model by name with a link</div>
         </div>
       </div>
@@ -142,14 +142,14 @@
       />
       <button
         onclick={copyLink}
-        class="rounded-lg bg-[#1e88e5] px-4 py-2.5 text-[13px] font-[550] text-white hover:bg-[#1976d2] cursor-pointer flex-shrink-0 flex items-center gap-[6px]"
+        class="rounded-lg bg-[#1e88e5] px-4 py-2.5 text-[13px] font-[600] text-white hover:bg-[#1976d2] cursor-pointer flex-shrink-0 flex items-center gap-[6px]"
       >
         {#if linkCopied}<Check size={15} /> Copied{:else}<Copy size={15} /> Copy{/if}
       </button>
     </div>
 
     <div class="border-t border-[#eef1f5] pt-4">
-      <div class="text-[13px] font-[650] text-slate-900 mb-1">Share as image</div>
+      <div class="text-[13px] font-[700] text-slate-900 mb-1">Share as image</div>
       <div class="text-[12px] text-slate-500 mb-3">
         Render the current diagram to a PNG you can paste or save.
       </div>
@@ -159,7 +159,7 @@
           onclick={shareAsImage}
           disabled={!canShareImage || rendering}
           title={canShareImage ? "Render this diagram to a PNG" : "Add something to the diagram first"}
-          class="flex w-full items-center justify-center gap-2 rounded-lg border border-[#d8dee8] bg-white px-4 py-2.5 text-[14px] font-[550] text-slate-900 hover:bg-[#f1f3f7] cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+          class="flex w-full items-center justify-center gap-2 rounded-lg border border-[#d8dee8] bg-white px-4 py-2.5 text-[14px] font-[600] text-slate-900 hover:bg-[#f1f3f7] cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
         >
           <ImageDown size={16} />
           {rendering ? "Rendering…" : "Share as image"}
@@ -175,13 +175,13 @@
             onclick={copyImage}
             disabled={!clipboardImageSupported}
             title={clipboardImageSupported ? "Copy the image to the clipboard" : "Your browser can't copy images — use Save or right-click the preview"}
-            class="flex-1 flex items-center justify-center gap-2 rounded-lg bg-[#1e88e5] px-4 py-2.5 text-[13px] font-[550] text-white hover:bg-[#1976d2] cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+            class="flex-1 flex items-center justify-center gap-2 rounded-lg bg-[#1e88e5] px-4 py-2.5 text-[13px] font-[600] text-white hover:bg-[#1976d2] cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
           >
             {#if imageCopied}<Check size={15} /> Copied{:else}<Clipboard size={15} /> Copy image{/if}
           </button>
           <button
             onclick={saveImage}
-            class="flex-1 flex items-center justify-center gap-2 rounded-lg border border-[#d8dee8] bg-white px-4 py-2.5 text-[13px] font-[550] text-slate-900 hover:bg-[#f1f3f7] cursor-pointer"
+            class="flex-1 flex items-center justify-center gap-2 rounded-lg border border-[#d8dee8] bg-white px-4 py-2.5 text-[13px] font-[600] text-slate-900 hover:bg-[#f1f3f7] cursor-pointer"
           >
             <Download size={15} /> Save
           </button>

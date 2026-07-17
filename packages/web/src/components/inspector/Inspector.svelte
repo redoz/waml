@@ -137,7 +137,7 @@
 {:else}
   <div
     class="bg-white border-l border-[#d8dee8] flex-shrink-0 flex flex-col z-10 shadow-[-4px_0_16px_rgba(15,23,42,0.04)] relative"
-    style={`width: ${width}px; min-width: ${MIN_WIDTH}px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Inter, system-ui, sans-serif;`}
+    style={`width: ${width}px; min-width: ${MIN_WIDTH}px; font-family: 'Source Sans 3 Variable', -apple-system, BlinkMacSystemFont, 'Segoe UI', Inter, system-ui, sans-serif;`}
   >
     <!-- Resize handle -->
     <!-- svelte-ignore a11y_no_static_element_interactions -->
@@ -151,7 +151,7 @@
 
     <!-- Header -->
     <div class="px-4 py-[14px] border-b border-[#d8dee8] flex items-center gap-2 flex-shrink-0">
-      <h3 class="text-[13.5px] font-[650] flex-1 text-slate-900">{title}</h3>
+      <h3 class="text-[13.5px] font-[700] flex-1 text-slate-900">{title}</h3>
       <button
         onclick={() => { onClose(); open = false; }}
         title="Close inspector"

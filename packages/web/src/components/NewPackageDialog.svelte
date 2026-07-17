@@ -166,7 +166,7 @@
           onclick={() => selectItem(it.id)}
           class="text-left rounded-lg border px-3 py-2 cursor-pointer {selectedId === it.id ? 'border-[#1e88e5] bg-[#e6f1fb]' : 'border-[#d8dee8] hover:bg-[#f1f3f7]'}"
         >
-          <div class="text-[13px] font-[550] text-slate-900">{it.name}</div>
+          <div class="text-[13px] font-[600] text-slate-900">{it.name}</div>
           <div class="text-[12px] text-slate-500">{it.description}</div>
         </button>
       {/each}
@@ -176,14 +176,14 @@
     <div class="flex gap-2 justify-end">
       <button
         onclick={onClose}
-        class="text-[13px] font-[550] border border-[#d8dee8] bg-white text-slate-900 rounded-lg px-4 py-[7px] cursor-pointer hover:bg-[#f1f3f7]"
+        class="text-[13px] font-[600] border border-[#d8dee8] bg-white text-slate-900 rounded-lg px-4 py-[7px] cursor-pointer hover:bg-[#f1f3f7]"
       >
         Cancel
       </button>
       <button
         onclick={submit}
         disabled={!canAdd}
-        class="text-[13px] font-[550] bg-[#1e88e5] text-white border border-[#1e88e5] rounded-lg px-4 py-[7px] cursor-pointer hover:bg-[#1976d2] disabled:opacity-50 disabled:cursor-not-allowed"
+        class="text-[13px] font-[600] bg-[#1e88e5] text-white border border-[#1e88e5] rounded-lg px-4 py-[7px] cursor-pointer hover:bg-[#1976d2] disabled:opacity-50 disabled:cursor-not-allowed"
       >
         Add
       </button>

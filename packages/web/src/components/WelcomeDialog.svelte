@@ -77,13 +77,13 @@
     <div class="flex items-center flex-wrap gap-x-3 gap-y-2 px-6 py-4 border-t border-[#e6e9f0] flex-shrink-0">
       <button
         onclick={onStartBlank}
-        class="flex items-center gap-[7px] text-[13px] font-[550] border border-[#d8dee8] bg-white text-slate-900 rounded-lg px-3 py-[8px] cursor-pointer hover:bg-[#f1f3f7]"
+        class="flex items-center gap-[7px] text-[13px] font-[600] border border-[#d8dee8] bg-white text-slate-900 rounded-lg px-3 py-[8px] cursor-pointer hover:bg-[#f1f3f7]"
       >
         <Plus size={15} /> Start blank
       </button>
       <button
         onclick={onImport}
-        class="flex items-center gap-[7px] text-[13px] font-[550] border border-[#d8dee8] bg-white text-slate-900 rounded-lg px-3 py-[8px] cursor-pointer hover:bg-[#f1f3f7]"
+        class="flex items-center gap-[7px] text-[13px] font-[600] border border-[#d8dee8] bg-white text-slate-900 rounded-lg px-3 py-[8px] cursor-pointer hover:bg-[#f1f3f7]"
       >
         <Download size={15} /> Import OKF
       </button>
@@ -92,7 +92,7 @@
         href="/okf-format.md"
         target="_blank"
         rel="noopener"
-        class="flex items-center gap-[5px] text-[12.5px] font-[550] text-[#1e88e5] hover:underline"
+        class="flex items-center gap-[5px] text-[12.5px] font-[600] text-[#1e88e5] hover:underline"
       >
         Import guide <ExternalLink size={13} />
       </a>

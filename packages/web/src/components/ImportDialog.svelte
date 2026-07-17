@@ -97,7 +97,7 @@
       <div class="flex flex-wrap items-center gap-3">
         <button
           onclick={copyInstructions}
-          class="flex items-center gap-[6px] rounded-lg bg-[#1e88e5] px-3 py-[6px] text-[12.5px] font-[550] text-white hover:bg-[#1976d2]"
+          class="flex items-center gap-[6px] rounded-lg bg-[#1e88e5] px-3 py-[6px] text-[12.5px] font-[600] text-white hover:bg-[#1976d2]"
         >
           {#if copied}
             <Check size={14} /> Copied — paste into Claude
@@ -172,14 +172,14 @@
     <div class="flex gap-2 justify-end">
       <button
         onclick={onClose}
-        class="text-[13px] font-[550] border border-[#d8dee8] bg-white text-slate-900 rounded-lg px-4 py-[7px] cursor-pointer hover:bg-[#f1f3f7]"
+        class="text-[13px] font-[600] border border-[#d8dee8] bg-white text-slate-900 rounded-lg px-4 py-[7px] cursor-pointer hover:bg-[#f1f3f7]"
       >
         Cancel
       </button>
       <button
         onclick={() => preview && onConfirm(preview.bundle, mode)}
         disabled={!preview}
-        class="text-[13px] font-[550] bg-[#1e88e5] text-white border border-[#1e88e5] rounded-lg px-4 py-[7px] cursor-pointer hover:bg-[#1976d2] disabled:opacity-50"
+        class="text-[13px] font-[600] bg-[#1e88e5] text-white border border-[#1e88e5] rounded-lg px-4 py-[7px] cursor-pointer hover:bg-[#1976d2] disabled:opacity-50"
       >
         Import
       </button>

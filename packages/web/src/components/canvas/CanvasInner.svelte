@@ -584,7 +584,7 @@
 <!-- svelte-ignore a11y_no_static_element_interactions -->
 <div
   class="flex flex-col h-screen overflow-hidden bg-[#f7f8fa]"
-  style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Inter, system-ui, sans-serif;"
+  style="font-family: 'Source Sans 3 Variable', -apple-system, BlinkMacSystemFont, 'Segoe UI', Inter, system-ui, sans-serif;"
   onkeydown={handleKeyDown}
   tabindex="0"
 >

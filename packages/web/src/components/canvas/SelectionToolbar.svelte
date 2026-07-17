@@ -62,7 +62,7 @@
 <div
   data-testid="selection-toolbar"
   class="nopan nodrag fixed bottom-6 left-1/2 z-30 -translate-x-1/2"
-  style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Inter, system-ui, sans-serif;"
+  style="font-family: 'Source Sans 3 Variable', -apple-system, BlinkMacSystemFont, 'Segoe UI', Inter, system-ui, sans-serif;"
   transition:fly={{ y: 12, duration: 150 }}
 >
   <div
