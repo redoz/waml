@@ -19,7 +19,9 @@ script_mod! {
         width: Fill
         height: Fill
         draw_bg +: { color: #x14161d }
+        draw_group +: { color: #x1b2130 }
         draw_node +: { color: #x2b3345 }
+        draw_edge +: { color: #x5a6785 }
         draw_text +: {
             color: #xe6ebf5
             text_style: theme.font_regular{font_size: 11}
@@ -44,6 +46,12 @@ pub struct GraphCanvas {
     #[redraw]
     #[live]
     draw_node: DrawColor,
+    #[redraw]
+    #[live]
+    draw_group: DrawColor,
+    #[redraw]
+    #[live]
+    draw_edge: DrawColor,
     #[redraw]
     #[live]
     draw_text: DrawText,
@@ -73,6 +81,28 @@ impl Default for Scene {
     fn default() -> Self {
         Scene { nodes: vec![], groups: vec![], edges: vec![] }
     }
+}
+
+/// Intersection of the center-to-center line from `from` to `to` with `from`'s
+/// border, in world coordinates. Operates on `waml::solve::Rect` (`x`/`y`/`w`/`h`),
+/// the type `SceneEdge` carries. Used to clip edge endpoints to node borders.
+fn border_point(from: waml::solve::Rect, to: waml::solve::Rect) -> (f64, f64) {
+    let fcx = from.x + from.w * 0.5;
+    let fcy = from.y + from.h * 0.5;
+    let tcx = to.x + to.w * 0.5;
+    let tcy = to.y + to.h * 0.5;
+    let dx = tcx - fcx;
+    let dy = tcy - fcy;
+    if dx == 0.0 && dy == 0.0 {
+        return (fcx, fcy);
+    }
+    let hw = from.w * 0.5;
+    let hh = from.h * 0.5;
+    // Scale the direction vector to the nearest border along x and y, take the closer.
+    let tx = if dx != 0.0 { (hw / dx).abs() } else { f64::INFINITY };
+    let ty = if dy != 0.0 { (hh / dy).abs() } else { f64::INFINITY };
+    let t = tx.min(ty);
+    (fcx + dx * t, fcy + dy * t)
 }
 
 impl Widget for GraphCanvas {
@@ -124,7 +154,47 @@ impl Widget for GraphCanvas {
             }
         }
 
-        // Nodes (groups + edges added in Task 7).
+        // Groups: framed rects behind everything else. Deeper nesting is drawn
+        // with the same fill; draw-order (shallow first) leaves inner groups on top.
+        for group in &self.scene.groups {
+            let (lx, ly) = self.camera.world_to_local(group.rect.x, group.rect.y);
+            let screen = Rect {
+                pos: dvec2(rect.pos.x + lx, rect.pos.y + ly),
+                size: dvec2(group.rect.w * self.camera.zoom, group.rect.h * self.camera.zoom),
+            };
+            self.draw_group.draw_abs(cx, screen);
+            if let Some(title) = &group.title {
+                self.draw_text
+                    .draw_abs(cx, dvec2(screen.pos.x + 6.0, screen.pos.y + 4.0), title);
+            }
+        }
+
+        // Edges: straight segment from source border to target border, drawn as a
+        // thin axis-aligned quad. Rotated-quad / arrow styling is a fast-follow.
+        for edge in &self.scene.edges {
+            let (sx, sy) = border_point(edge.source, edge.target);
+            let (tx, ty) = border_point(edge.target, edge.source);
+            let (a0, a1) = self.camera.world_to_local(sx, sy);
+            let (b0, b1) = self.camera.world_to_local(tx, ty);
+            let a = dvec2(rect.pos.x + a0, rect.pos.y + a1);
+            let b = dvec2(rect.pos.x + b0, rect.pos.y + b1);
+            let len = ((b.x - a.x).powi(2) + (b.y - a.y).powi(2)).sqrt();
+            if len < 1e-3 {
+                continue;
+            }
+            let thickness = 2.0;
+            // Axis-aligned bounding box of the segment: reads correctly for the
+            // orthogonal arrangements typical of `## Layout` diagrams.
+            let min = dvec2(a.x.min(b.x), a.y.min(b.y));
+            let max = dvec2(a.x.max(b.x), a.y.max(b.y));
+            let seg = Rect {
+                pos: min,
+                size: dvec2((max.x - min.x).max(thickness), (max.y - min.y).max(thickness)),
+            };
+            self.draw_edge.draw_abs(cx, seg);
+        }
+
+        // Nodes: drawn last so they sit on top of groups and edges.
         for node in &self.scene.nodes {
             let (lx, ly) = self.camera.world_to_local(node.rect.x, node.rect.y);
             let screen = Rect {
@@ -148,5 +218,31 @@ impl GraphCanvas {
         self.scene = scene;
         self.fitted = false;
         self.draw_bg.redraw(cx);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use waml::solve::Rect as WorldRect;
+
+    #[test]
+    fn border_point_exits_on_the_side_facing_the_target() {
+        // 100x100 box at origin; target far to the right -> exit on right edge x=100.
+        let from = WorldRect { x: 0.0, y: 0.0, w: 100.0, h: 100.0 };
+        let to = WorldRect { x: 500.0, y: 0.0, w: 100.0, h: 100.0 };
+        let (x, y) = border_point(from, to);
+        assert!((x - 100.0).abs() < 1e-6, "x = {x}");
+        assert!((y - 50.0).abs() < 1e-6, "y = {y}");
+    }
+
+    #[test]
+    fn border_point_handles_vertical_stack() {
+        // Target directly below -> exit on bottom edge y=100, centered x=50.
+        let from = WorldRect { x: 0.0, y: 0.0, w: 100.0, h: 100.0 };
+        let to = WorldRect { x: 0.0, y: 400.0, w: 100.0, h: 100.0 };
+        let (x, y) = border_point(from, to);
+        assert!((x - 50.0).abs() < 1e-6, "x = {x}");
+        assert!((y - 100.0).abs() < 1e-6, "y = {y}");
     }
 }
