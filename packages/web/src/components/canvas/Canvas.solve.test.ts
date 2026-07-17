@@ -1,5 +1,5 @@
 import { test, expect, beforeAll, beforeEach } from "vitest";
-import { render } from "@testing-library/svelte";
+import { render, fireEvent } from "@testing-library/svelte";
 import { tick } from "svelte";
 import { initWasm } from "@waml/wasm";
 import Canvas from "./Canvas.svelte";
@@ -53,4 +53,25 @@ test("the implicit All view falls back to dagre (no solve)", async () => {
   const a = g.nodes.find((n) => n.key === "a")!;
   const b = g.nodes.find((n) => n.key === "b")!;
   expect(a.position).not.toEqual(b.position);
+});
+
+const badRefBundle: [string, string][] = [
+  ["shop/customer.md", "---\ntype: uml.Class\ntitle: Customer\n---\n# Customer\n"],
+  ["shop/order.md", "---\ntype: uml.Class\ntitle: Order\n---\n# Order\n"],
+  [
+    "shop/orders.md",
+    "---\ntype: Diagram\ntitle: Orders\nprofile: uml-domain\n---\n# Orders\n\n## Members\n\n### All\n- [Customer](./customer.md)\n- [Order](./order.md)\n\n## Layout\n- Ghosts left of Order\n",
+  ],
+];
+
+test("a diagram referencing a non-member surfaces the diagnostics banner, and it dismisses", async () => {
+  store.load(badRefBundle);
+  const { getByRole, queryByRole } = render(Canvas);
+  await tick();
+  await tick();
+  const banner = getByRole("alert");
+  expect(banner.textContent).toMatch(/Ghosts/i);
+  await fireEvent.click(getByRole("button", { name: /dismiss layout warnings/i }));
+  await tick();
+  expect(queryByRole("alert")).toBeNull();
 });
