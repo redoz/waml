@@ -147,7 +147,7 @@ impl Widget for GraphCanvas {
         self.view_rect = rect;
         self.draw_bg.draw_abs(cx, rect);
 
-        if !self.fitted {
+        if !self.fitted && rect.size.x > 0.0 && rect.size.y > 0.0 {
             if let Some(bbox) = bounding_box(&self.scene) {
                 self.camera = Camera::fit(bbox, rect.size.x, rect.size.y, 48.0);
                 self.fitted = true;

@@ -86,4 +86,61 @@ mod tests {
         let default = select_diagram(&model, None).unwrap();
         assert_eq!(default.title, "Orders");
     }
+
+    // Two-diagram coverage: the single-diagram fixture above can't distinguish a
+    // title/key match from the fallback-to-first behavior, and never exercises
+    // the `d.key == w` arm at all. `Model`/`Diagram` have all-`pub` fields and
+    // `Model: Default`, so we build a tiny two-diagram model by hand rather than
+    // adding a second OKF fixture.
+    use waml::model::DiagramDisplay;
+
+    fn diagram(key: &str, title: &str) -> Diagram {
+        Diagram {
+            key: key.to_string(),
+            title: title.to_string(),
+            profile: "erd".to_string(),
+            description: None,
+            groups: vec![],
+            layout: vec![],
+            display: DiagramDisplay::default(),
+        }
+    }
+
+    fn two_diagram_model() -> Model {
+        Model {
+            diagrams: vec![diagram("orders-key", "Orders"), diagram("inventory-key", "Inventory")],
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn select_by_title_returns_the_specific_non_first_diagram() {
+        let model = two_diagram_model();
+        let picked = select_diagram(&model, Some("Inventory")).unwrap();
+        assert_eq!(picked.key, "inventory-key");
+        assert_eq!(picked.title, "Inventory");
+    }
+
+    #[test]
+    fn select_by_key_returns_the_specific_non_first_diagram() {
+        let model = two_diagram_model();
+        // Exercises the `d.key == w` arm: "inventory-key" is not a title.
+        let picked = select_diagram(&model, Some("inventory-key")).unwrap();
+        assert_eq!(picked.title, "Inventory");
+        assert_eq!(picked.key, "inventory-key");
+    }
+
+    #[test]
+    fn select_none_returns_the_first_diagram() {
+        let model = two_diagram_model();
+        let picked = select_diagram(&model, None).unwrap();
+        assert_eq!(picked.key, "orders-key");
+    }
+
+    #[test]
+    fn select_unknown_falls_back_to_the_first_diagram() {
+        let model = two_diagram_model();
+        let picked = select_diagram(&model, Some("nonexistent")).unwrap();
+        assert_eq!(picked.key, "orders-key");
+    }
 }
