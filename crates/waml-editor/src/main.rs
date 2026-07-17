@@ -8,6 +8,7 @@ mod cli;
 mod load;
 mod scene;
 mod sizing;
+mod tree;
 
 use app::App;
 
