@@ -1,0 +1,211 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>HUD button — press ripple</title>
+<style>
+  :root { color-scheme: light; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; }
+  body {
+    background: #eef2f7;
+    color: #26313f;
+    font: 14px/1.5 -apple-system, "Segoe UI", system-ui, sans-serif;
+    display: grid;
+    grid-template-columns: 1fr 300px;
+    min-height: 100vh;
+  }
+  #stage {
+    display: grid;
+    place-items: center;
+    perspective: 800px;
+    background:
+      radial-gradient(120% 90% at 50% 0%, #ffffff 0%, #e6ecf3 60%, #dbe3ec 100%),
+      repeating-linear-gradient(0deg,  transparent 0 23px, rgba(20,120,190,.05) 23px 24px),
+      repeating-linear-gradient(90deg, transparent 0 23px, rgba(20,120,190,.05) 23px 24px);
+  }
+  .btn {
+    --accent: 20, 150, 220;              /* clean sci-fi blue, r,g,b */
+    --round: 0px;
+    --glow: 0.9;
+    --bw: 2px;                           /* active border thickness */
+    --settle: 100ms;                     /* border ripple duration */
+    --ox: 50%;                           /* click origin, set by JS */
+    --oy: 50%;
+    position: relative;
+    width: 208px;
+    height: 66px;
+    border: none;
+    outline: none;
+    -webkit-appearance: none;
+    cursor: pointer;
+    user-select: none;
+    transform-style: preserve-3d;
+
+    background:
+      linear-gradient(180deg, rgba(255,255,255,.92), rgba(255,255,255,.74)),
+      rgba(var(--accent),.10);
+    color: #212a34;                      /* charcoal */
+    font: 600 15px/1 ui-monospace, "SF Mono", "Cascadia Code", Menlo, monospace;
+    letter-spacing: .22em;
+    text-transform: uppercase;
+    text-shadow: 0 1px 0 rgba(255,255,255,.7);
+    display: grid;
+    place-items: center;
+    border-radius: var(--round);
+
+    box-shadow:
+      0 6px 18px rgba(40,70,110,.14),
+      0 0 calc(14px * var(--glow)) rgba(var(--accent), calc(.22 * var(--glow)));
+
+    transition: transform .34s cubic-bezier(.2,.9,.25,1.1),
+                filter .18s ease, background .18s ease, box-shadow .18s ease;
+    transform: translateZ(0) rotateX(0) rotateY(0);
+  }
+  /* thin accent frame, always on */
+  .btn::before {
+    content: "";
+    position: absolute; inset: 0;
+    padding: 1.5px;
+    background: linear-gradient(180deg, rgba(var(--accent),.95), rgba(var(--accent),.55));
+    border-radius: inherit;
+    -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+    mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+    -webkit-mask-composite: xor;
+    mask-composite: exclude;
+    pointer-events: none;
+  }
+  /* thick accent frame, revealed radially from the click point on press */
+  .btn::after {
+    content: "";
+    position: absolute; inset: 0;
+    padding: var(--bw);
+    background: rgb(var(--accent));      /* solid, crisp */
+    border-radius: inherit;
+    -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+    mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+    -webkit-mask-composite: xor;
+    mask-composite: exclude;
+    clip-path: circle(0% at 50% 50%);    /* hidden at rest */
+    pointer-events: none;
+  }
+  @keyframes reveal {
+    from { clip-path: circle(0%   at var(--ox) var(--oy)); }
+    to   { clip-path: circle(150% at var(--ox) var(--oy)); }
+  }
+  .btn.down::after { animation: reveal var(--settle) ease-out forwards; }
+
+  .btn.down {
+    /* fill stays white; only the glow lifts + the border ripples */
+    box-shadow:
+      0 2px 6px rgba(40,70,110,.16),
+      0 0 calc(20px * var(--glow)) rgba(var(--accent), calc(.36 * var(--glow)));
+  }
+
+  aside {
+    padding: 20px 18px;
+    background: #ffffff;
+    border-left: 1px solid #dbe3ec;
+    overflow-y: auto;
+  }
+  h1 { font-size: 12px; letter-spacing: .16em; text-transform: uppercase; color: #1496dc; margin: 0 0 14px; }
+  label { display: block; margin: 14px 0; font-size: 12px; color: #5a6675; }
+  label .val { float: right; color: #26313f; font-variant-numeric: tabular-nums; }
+  input[type=range] { width: 100%; margin-top: 6px; accent-color: #1496dc; }
+  .swatches { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
+  .swatch { width: 30px; height: 30px; border-radius: 6px; border: 1px solid #cdd7e2; cursor: pointer; }
+  .swatch.sel { outline: 2px solid #1496dc; outline-offset: 2px; }
+  .hint { font-size: 11px; color: #8a97a6; margin-top: 18px; line-height: 1.6; }
+</style>
+</head>
+<body>
+  <div id="stage"><button class="btn" id="btn">Run diagram</button></div>
+  <aside>
+    <h1>HUD button — press ripple</h1>
+
+    <div class="swatches" id="swatches"></div>
+
+    <label>Press depth (px) <span class="val" id="v_depth"></span>
+      <input type="range" id="depth" min="0" max="24" step="1" value="2"></label>
+    <label>Active border (px) <span class="val" id="v_bw"></span>
+      <input type="range" id="bw" min="1" max="6" step="0.5" value="2"></label>
+    <label>Settle time (ms) <span class="val" id="v_settle"></span>
+      <input type="range" id="settle" min="80" max="500" step="10" value="100"></label>
+    <label>Corner radius (px) <span class="val" id="v_round"></span>
+      <input type="range" id="round" min="0" max="46" step="1" value="0"></label>
+    <label>Glow <span class="val" id="v_glow"></span>
+      <input type="range" id="glow" min="0" max="2.5" step="0.05" value="0.9"></label>
+
+    <p class="hint">
+      Press it. Center click: straight down, the thicker border widens out
+      evenly. Off-center: the clicked corner dips first, then the whole panel
+      settles flat-and-down while the fat border flows out from that point until
+      it rings the button. Release springs it back.
+    </p>
+  </aside>
+
+<script>
+  const btn  = document.getElementById('btn');
+  const ctrl = id => document.getElementById(id);
+  const ids  = ['depth','bw','settle','round','glow'];
+  function vals(){
+    const v={}; ids.forEach(k=>{ v[k]=parseFloat(ctrl(k).value); ctrl('v_'+k).textContent=v[k]; });
+    btn.style.setProperty('--round', v.round + 'px');
+    btn.style.setProperty('--glow', v.glow);
+    btn.style.setProperty('--bw', v.bw + 'px');
+    btn.style.setProperty('--settle', v.settle + 'ms');
+    return v;
+  }
+  ids.forEach(k=> ctrl(k).addEventListener('input', vals));
+
+  const colors = [
+    ['Blue',   '20, 150, 220'],
+    ['Cyan',   '0, 180, 210'],
+    ['Teal',   '20, 190, 160'],
+    ['Indigo', '90, 110, 240'],
+    ['Amber',  '230, 150, 20'],
+    ['Green',  '60, 190, 90'],
+    ['Rose',   '235, 70, 120'],
+  ];
+  const sw = document.getElementById('swatches');
+  colors.forEach((c,i)=>{ const d=document.createElement('div');
+    d.className='swatch'+(i===0?' sel':''); d.style.background=`rgb(${c[1]})`; d.title=c[0];
+    d.onclick=()=>{ btn.style.setProperty('--accent', c[1]);
+      [...sw.children].forEach(e=>e.classList.remove('sel')); d.classList.add('sel'); };
+    sw.appendChild(d); });
+
+  function setTransform(rx, ry, dz){
+    btn.style.transform = `translateZ(${dz}px) rotateX(${rx}deg) rotateY(${ry}deg)`;
+  }
+
+  btn.addEventListener('pointerdown', e=>{
+    const v = vals();
+    btn.setPointerCapture(e.pointerId);
+    const r = btn.getBoundingClientRect();
+    const fx = (e.clientX - r.left) / r.width;    // 0..1
+    const fy = (e.clientY - r.top ) / r.height;
+    // click origin for the border reveal
+    btn.style.setProperty('--ox', (fx*100).toFixed(1) + '%');
+    btn.style.setProperty('--oy', (fy*100).toFixed(1) + '%');
+
+    btn.classList.add('down');                        // fires border reveal from origin
+
+    // straight press-down, no tilt; the border ripple carries the direction
+    btn.style.transition = `transform ${v.settle}ms cubic-bezier(.2,.8,.2,1)`;
+    setTransform(0, 0, -v.depth);
+  });
+
+  function release(){
+    const v = vals();
+    btn.classList.remove('down');
+    btn.style.transition = 'transform .34s cubic-bezier(.2,.9,.25,1.1)';
+    setTransform(0, 0, 0);
+  }
+  btn.addEventListener('pointerup', release);
+  btn.addEventListener('pointercancel', release);
+
+  vals();
+</script>
+</body>
+</html>
