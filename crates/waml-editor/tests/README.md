@@ -11,7 +11,7 @@ cargo test -p waml-editor
 ```
 
 Covers the engine-agnostic modules: `load`, `sizing`, `scene`, `camera`, `cli`,
-and the `canvas::border_point` geometry helper. 23 tests, no GPU required.
+and the `canvas::border_point` geometry helper. 27 tests, no GPU required.
 
 ## Visual verification (verification of record)
 

@@ -40,7 +40,7 @@ impl Camera {
         let zoom = if bbox.w > 0.0 && bbox.h > 0.0 {
             (avail_w / bbox.w).min(avail_h / bbox.h).clamp(MIN_ZOOM, MAX_ZOOM)
         } else {
-            1.0
+            1.0_f64.clamp(MIN_ZOOM, MAX_ZOOM)
         };
         let (cx, cy) = (bbox.x + bbox.w * 0.5, bbox.y + bbox.h * 0.5);
         Camera {
