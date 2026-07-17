@@ -85,7 +85,6 @@ impl MatchEvent for App {
             log!("no diagrams in {:?}", args.dir);
             return;
         };
-        let key = diagram.key.clone();
         let (scene, diags) = build_scene(&self.model, diagram);
         for d in &diags {
             log!("diagnostic: {d:?}");
@@ -98,13 +97,6 @@ impl MatchEvent for App {
             canvas.set_scene(cx, scene);
         } else {
             log!("canvas widget not found / wrong type");
-        }
-        if let Some(mut panel) = self
-            .ui
-            .widget(cx, ids!(project_tree))
-            .borrow_mut::<crate::tree_panel::ProjectTree>()
-        {
-            panel.set_active_diagram(cx, key);
         }
     }
 
@@ -139,13 +131,6 @@ impl MatchEvent for App {
             .borrow_mut::<crate::canvas::GraphCanvas>()
         {
             canvas.set_scene(cx, scene);
-        }
-        if let Some(mut panel) = self
-            .ui
-            .widget(cx, ids!(project_tree))
-            .borrow_mut::<crate::tree_panel::ProjectTree>()
-        {
-            panel.set_active_diagram(cx, key);
         }
     }
 }
