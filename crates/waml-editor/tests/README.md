@@ -11,7 +11,8 @@ cargo test -p waml-editor
 ```
 
 Covers the engine-agnostic modules: `load`, `sizing`, `scene`, `camera`, `cli`,
-and the `canvas::border_point` geometry helper. 27 tests, no GPU required.
+the `canvas::border_point` geometry helper, `tree::build_tree`, and
+`tree_panel`'s id-map round-trip. 32 tests, no GPU required.
 
 ## Visual verification (verification of record)
 
@@ -19,10 +20,14 @@ and the `canvas::border_point` geometry helper. 27 tests, no GPU required.
 cargo run -p waml-editor -- crates/waml-editor/tests/fixtures/mini
 ```
 
-Opens the native GPU window and renders the `mini` fixture diagram (Order +
-Customer, one associates edge). Pan with left-drag, zoom with the scroll wheel;
-the camera fits the diagram on first draw. This interactive run is the
-**verification of record** for the renderer — Tasks 6-8 were confirmed this way.
+Opens the native GPU window. The window is a resizable `Splitter`: the left
+pane is the `ProjectTree` panel (a `FileTree` showing the `Mini` bundle's root
+package with the `Order`/`Customer` classifiers and the `Orders` diagram); the
+right pane is the `GraphCanvas`. Clicking the `Orders` diagram row loads it into
+the canvas (fits on first draw). Pan the canvas with left-drag, zoom with the
+scroll wheel; drag the splitter bar to resize the panes. This interactive run is
+the **verification of record** for both the renderer and the tree panel — there
+is no automated headless render check (see below).
 
 ## Headless render regression check — intentionally absent
 
@@ -62,8 +67,12 @@ independent, decisive reasons found while implementing it:
 Because the headless backend is platform-incomplete here **and** structurally
 unreachable from an external test crate, the automated headless test is omitted
 (a plan-sanctioned outcome). The interactive `cargo run` above is the
-verification of record. If the fork later fixes the Windows headless backend,
-the manual regression flow would be:
+verification of record — this applies equally to the `ProjectTree` panel added
+in Task 3: it too is a bin-private widget with no in-process render hook, so
+its `FileTree` rendering, fold state, and diagram-row click wiring are only
+exercised by the same interactive run (its data-layer pieces — `tree::build_tree`
+and the `tree_panel` id-map round-trip — remain unit-tested above). If the fork
+later fixes the Windows headless backend, the manual regression flow would be:
 
 ```bash
 # (only works once the fork's Windows headless backend compiles)
