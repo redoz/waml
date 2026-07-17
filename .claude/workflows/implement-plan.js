@@ -3,7 +3,7 @@ export const meta = {
   description:
     'Implement ONE approved implementation plan (a single top-level docs/superpowers/plans/*.md, handed by exact path) in its own isolated git worktree, using a single BATCHED, self-rotating implementer that pushes each green unit straight to origin/main. Each generation reads progress MECHANICALLY from git "Plan-Tasks" commit trailers, burns small committable green UNITS (implement -> full gate: cargo test --workspace && pnpm -r test && pnpm lint && pnpm build -> commit with a Plan-Tasks trailer -> rebase onto origin/main, re-gate, and fast-forward-push HEAD:main), and self-rotates near its quality zone (~100k context tokens); a fresh generation then resumes from the trailers, until every plan task has landed on main. Then ONE deep end-review of the cumulative diff fix-forwards the critical/high/medium defects THIS change introduced (pushing each fix), and the plan file is archived to completed/ on main. The LOCAL main checkout is left untouched — pull after.',
   whenToUse:
-    'Run when ONE written implementation plan is ready to implement. Pass {plan:"docs/superpowers/plans/<file>.md"} — the exact top-level plan path (NOT drafts/, NOT completed/, NOT a subdirectory). Pass {mode:"dry-run"} to implement + gate + commit per unit WITHOUT pushing, fix-forwarding, or archiving (an informational review only). Optionally pass {planReviewConcerns:["..."]} — a deduped checklist of prior plan-review concerns, used purely as the deep end-review\'s focusing checklist.',
+    'Run when ONE written implementation plan is ready to implement. Pass {plan:"docs/superpowers/plans/<file>.md"} — the exact top-level plan path (NOT drafts/, NOT completed/, NOT a deeper subdirectory) — OR a plan DIRECTORY {plan:"docs/superpowers/plans/<dir>/"} that holds a README.md (task index) plus task-N-*.md files (one task each). Pass {mode:"dry-run"} to implement + gate + commit per unit WITHOUT pushing, fix-forwarding, or archiving (an informational review only). Pass {local:true} (or {mode:"local"}) for a fully-LOCAL run: implement against the LOCAL main as the trunk on the plan branch with NO fetch/rebase/push and NO origin-sync — review + archive commit onto the branch, main is left untouched, and you land the branch yourself afterward. Optionally pass {planReviewConcerns:["..."]} — a deduped checklist of prior plan-review concerns, used purely as the deep end-review\'s focusing checklist.',
   phases: [
     { title: 'Preflight', detail: 'verify clean main in sync with origin and that the toolchain is present; validate the plan path' },
     {
@@ -62,8 +62,18 @@ const WORKTREES_DIR = '.claude/worktrees'
 const REPO_DIR = PROJECT.repoDir // main repo root (for worktree cleanup; never checked out off the base branch)
 const REMOTE = PROJECT.remote // the remote whose main each green unit is fast-forward-pushed to
 const BASE_BRANCH = PROJECT.baseBranch // the trunk: worktrees fork off REMOTE/main and every unit ff-pushes back onto it
-const MODE = A.mode || 'merge' // 'merge' (per-unit ff-push to origin/main; default) | 'dry-run' (per-unit gate + commit, no push, no fix-forward, no archive)
-const PLAN = A.plan // the ONE plan to implement: a repo-relative top-level plan path.
+const MODE = A.mode || 'merge' // 'merge' (per-unit ff-push to origin/main; default) | 'dry-run' (per-unit gate + commit, no push, no fix-forward, no archive) | 'local' (see LOCAL)
+const PLAN = A.plan // the ONE plan to implement: a repo-relative top-level plan path OR a plan DIRECTORY (README.md + task-N-*.md).
+
+// Fully-LOCAL run mode (A.local===true, or A.mode==='local'): implement against the LOCAL baseBranch as the trunk with
+// ZERO origin interaction — NO git fetch, NO rebase-onto-remote, NO push, NO origin-sync preflight requirement. The plan
+// BRANCH is itself the trunk: each green unit is COMMITTED onto it (carrying the same Plan/Plan-Tasks trailers, so
+// cross-generation resume-from-trailers still works), and the deep review + fix-forward + archive all run as LOCAL
+// commits on that branch. CRITICAL (Windows): local `main` is CHECKED OUT in another worktree (C:/dev/waml), so we must
+// NEVER move / `git branch -f` / push the base ref during a local run — it would fail or corrupt that checkout. ALL work
+// stays on the plan branch; `main` is left untouched and the user lands it themselves. Distinct from dry-run: local DOES
+// review + archive (on the branch); dry-run does neither. When !LOCAL, every code path below behaves exactly as before.
+const LOCAL = A.local === true || A.mode === 'local'
 
 // Adaptive rigor: the plan file's "> **Rigor:**" header tunes in-prompt TDD strictness (one-shot | tdd-per-task).
 // A.rigor is an ad-hoc override.
@@ -127,20 +137,42 @@ function gateFor(files, override) {
 // line either way. (Sourced from the PROJECT block so identity stays in one place.)
 const COMMIT_FOOTER = PROJECT.commitFooter || ''
 
-// Normalize any plan reference (slug, filename, or repo-relative path) to a bare slug:
-// strip the directory, the .md extension, and a leading YYYY-MM-DD- date prefix.
+// Normalize any plan reference (slug, filename, DIRECTORY, or repo-relative path) to a bare slug: strip a trailing
+// slash (a directory ref may carry one), the directory prefix, the .md extension (files only — a directory has none),
+// and a leading YYYY-MM-DD- date prefix. Works for BOTH a single .md file and a bare plan directory:
+//   docs/superpowers/plans/2026-07-15-foo.md                        -> foo
+//   docs/superpowers/plans/2026-07-17-ontology-substrate-seam-slice1/ -> ontology-substrate-seam-slice1
 function toSlug(s) {
-  return String(s).replace(/\\/g, '/').split('/').pop().replace(/\.md$/i, '').replace(/^\d{4}-\d{2}-\d{2}-/, '')
+  return String(s)
+    .replace(/\\/g, '/')
+    .replace(/\/+$/, '') // drop a directory ref's trailing slash BEFORE popping (else pop() would return '')
+    .split('/')
+    .pop()
+    .replace(/\.md$/i, '') // no-op for a directory (it has no .md); strips the extension for a file
+    .replace(/^\d{4}-\d{2}-\d{2}-/, '')
 }
 
-// Structural validation (fail-closed): the input must be a markdown file DIRECTLY under docs/superpowers/plans/ —
-// not drafts/, not completed/, not a subdirectory. String shape is checked here; the file's actual existence is
-// confirmed by the Setup agent (setupOk=false).
+// True iff the (normalized, no trailing slash) ref is a plan DIRECTORY rather than a single .md file: a bare name
+// directly under plans/ with no .md extension. Shape only — existence/contents are confirmed by the Setup agent.
+function isPlanDirRef(norm) {
+  return /^docs\/superpowers\/plans\/[^/]+$/.test(norm) && !/\.md$/i.test(norm)
+}
+
+// Structural validation (fail-closed): the input must be EITHER a markdown file directly under docs/superpowers/plans/
+// OR a bare plan DIRECTORY directly under it (README.md + task-N-*.md live inside) — not drafts/, not completed/, not a
+// deeper-nested path. A directory ref may carry a trailing slash. String shape is checked here; the file's/dir's actual
+// existence is confirmed by the Setup agent (setupOk=false).
 function planPathError(p) {
-  if (!p || typeof p !== 'string') return 'no plan path provided (pass {plan:"' + PLANS_DIR + '/<file>.md"})'
-  const norm = p.replace(/\\/g, '/')
-  if (!/^docs\/superpowers\/plans\/[^/]+\.md$/.test(norm))
-    return 'plan must be a markdown file directly under ' + PLANS_DIR + '/ (NOT drafts/, NOT completed/, NOT a subdirectory): ' + p
+  if (!p || typeof p !== 'string')
+    return 'no plan path provided (pass {plan:"' + PLANS_DIR + '/<file>.md"} or a plan DIRECTORY {plan:"' + PLANS_DIR + '/<dir>/"})'
+  const norm = p.replace(/\\/g, '/').replace(/\/+$/, '') // tolerate a trailing slash on a directory ref
+  const isFile = /^docs\/superpowers\/plans\/[^/]+\.md$/.test(norm)
+  // A directory ref must be a bare name under plans/ (no deeper nesting) and must NOT be a reserved dir — drafts/ and
+  // completed/ are directories directly under plans/ too, so they'd otherwise match the directory shape.
+  const dir = /^docs\/superpowers\/plans\/([^/]+)$/.exec(norm)
+  const isDir = !!dir && !/\.md$/i.test(dir[1]) && dir[1] !== 'drafts' && dir[1] !== 'completed'
+  if (!isFile && !isDir)
+    return 'plan must be a markdown file OR a directory directly under ' + PLANS_DIR + '/ (NOT drafts/, NOT completed/, NOT a deeper subdirectory): ' + p
   return null
 }
 
@@ -267,6 +299,44 @@ const ARCHIVE_SCHEMA = {
 // Prompt builders (no backticks inside; use plain quotes for code/commands)
 // ---------------------------------------------------------------------------
 function preflightPrompt() {
+  // Step 3 checks origin-sync in a normal (merge/dry-run) run; a LOCAL run has NO remote to sync against, so it instead
+  // just confirms the local base exists. Everything else (clean tree, toolchain, base-green) is identical either way.
+  const step3 = LOCAL
+    ? [
+        '3. LOCAL run — there is NO remote to sync against: DO NOT run "git fetch" and do NOT compare to any ' + REMOTE + '/*',
+        '   ref. Just confirm the local base branch exists:  git rev-parse --verify ' + BASE_BRANCH + '  (exit 0). If it does',
+        '   not exist, set ok=false, reason "local ' + BASE_BRANCH + ' branch missing". Leave ' + BASE_BRANCH + ' UNTOUCHED —',
+        '   it is checked out in another worktree and must not be moved.',
+      ]
+    : [
+        '3. Local ' + BASE_BRANCH + ' has not DIVERGED from ' + REMOTE + '. Run "git fetch ' + REMOTE + '", then:',
+        '   - if HEAD == ' + REMOTE + '/' + BASE_BRANCH + ': fine;',
+        '   - if ' + REMOTE + '/' + BASE_BRANCH + ' is an ancestor of HEAD (unpushed local commits): fine, leave them UNTOUCHED —',
+        '     plans branch off and push onto ' + REMOTE + '/' + BASE_BRANCH + ', so your local-only commits are never moved;',
+        '   - if HEAD is an ancestor of ' + REMOTE + '/' + BASE_BRANCH + ' (local behind): run "git merge --ff-only ' + REMOTE + '/' + BASE_BRANCH + '" to catch up;',
+        '   - otherwise the branch has diverged: set ok=false, reason "' + BASE_BRANCH + ' diverged from ' + REMOTE + '".',
+        '   (Test ancestry with: git merge-base --is-ancestor <maybe-ancestor> <descendant> ; exit 0 means yes.)',
+      ]
+  // Step 6 (base-green) runs a fresh REMOTE/base checkout in a normal run; a LOCAL run checks the already-checked-out
+  // local base in place (no remote to diff against).
+  const step6 = LOCAL
+    ? [
+        '6. BASE IS GREEN — do not branch off a red trunk. On the local ' + BASE_BRANCH + ' checkout run a fast compile-only',
+        '   check of the whole workspace:  cargo check --workspace --all-targets',
+        '   If it FAILS, the trunk is already broken and every unit would fail to integrate — set ok=false, reason',
+        '   "' + BASE_BRANCH + ' base is RED: <first error line>". Do NOT try to fix the base here.',
+      ]
+    : [
+        '6. BASE IS GREEN — do not branch off a red trunk. From a clean ' + REMOTE + '/' + BASE_BRANCH + ' checkout run a fast',
+        '   compile-only check of the whole workspace:  cargo check --workspace --all-targets',
+        '   If it FAILS, the trunk is already broken (often a concurrent session\'s in-flight commit) and every unit would',
+        '   fail to integrate against it — set ok=false, reason "' + BASE_BRANCH + ' base is RED: <first error line>". Do NOT',
+        '   try to fix the base here. (A compile-only check is used deliberately — running the full test suite in preflight',
+        '   would be slow; a non-compiling base is the failure that reliably blocks every integrate.)',
+      ]
+  const tail = LOCAL
+    ? 'Do NOT change any tracked files. Return ok=true only if the branch is ' + BASE_BRANCH + ', the tracked tree is clean,\nthe local ' + BASE_BRANCH + ' exists, the toolchain is present, AND the base compiles; otherwise ok=false with a precise reason.'
+    : 'Other than an allowed fast-forward of ' + BASE_BRANCH + ' in step 3, do NOT change any tracked files. Return ok=true\nonly if the branch is ' + BASE_BRANCH + ', the tracked tree is clean, ' + BASE_BRANCH + ' has not diverged, the\ntoolchain is present, AND the base compiles; otherwise ok=false with a precise reason.'
   return [
     'You are the preflight check for an autonomous plan-implementation run on the ' + PROJECT.name + ' repo.',
     'Host: Windows, PowerShell (a Bash tool is also available). This is a Rust cargo workspace (crates/*) AND a pnpm monorepo (packages/*).',
@@ -274,72 +344,103 @@ function preflightPrompt() {
     '1. Current branch is "' + BASE_BRANCH + '"  (git rev-parse --abbrev-ref HEAD).',
     '2. Working tree is clean of TRACKED changes  (git status --porcelain shows no staged/modified tracked files;',
     '   untracked files are fine — e.g. new docs).',
-    '3. Local ' + BASE_BRANCH + ' has not DIVERGED from ' + REMOTE + '. Run "git fetch ' + REMOTE + '", then:',
-    '   - if HEAD == ' + REMOTE + '/' + BASE_BRANCH + ': fine;',
-    '   - if ' + REMOTE + '/' + BASE_BRANCH + ' is an ancestor of HEAD (unpushed local commits): fine, leave them UNTOUCHED —',
-    '     plans branch off and push onto ' + REMOTE + '/' + BASE_BRANCH + ', so your local-only commits are never moved;',
-    '   - if HEAD is an ancestor of ' + REMOTE + '/' + BASE_BRANCH + ' (local behind): run "git merge --ff-only ' + REMOTE + '/' + BASE_BRANCH + '" to catch up;',
-    '   - otherwise the branch has diverged: set ok=false, reason "' + BASE_BRANCH + ' diverged from ' + REMOTE + '".',
-    '   (Test ancestry with: git merge-base --is-ancestor <maybe-ancestor> <descendant> ; exit 0 means yes.)',
+    ...step3,
     '4. The toolchain is present: "pnpm --version" succeeds, "node --version" reports >= 20, and "cargo --version" succeeds',
     '   (the green-gate runs "cargo test --workspace", so a missing Rust toolchain must fail preflight).',
     '5. Dependencies are installed: node_modules exists at the repo root (if "pnpm -r exec true" fails with a missing-',
     '   module/ELIFECYCLE error, run "pnpm install" once and re-check). Do NOT upgrade or change any dependency.',
-    '6. BASE IS GREEN — do not branch off a red trunk. From a clean ' + REMOTE + '/' + BASE_BRANCH + ' checkout run a fast',
-    '   compile-only check of the whole workspace:  cargo check --workspace --all-targets',
-    '   If it FAILS, the trunk is already broken (often a concurrent session\'s in-flight commit) and every unit would',
-    '   fail to integrate against it — set ok=false, reason "' + BASE_BRANCH + ' base is RED: <first error line>". Do NOT',
-    '   try to fix the base here. (A compile-only check is used deliberately — running the full test suite in preflight',
-    '   would be slow; a non-compiling base is the failure that reliably blocks every integrate.)',
-    'Other than an allowed fast-forward of ' + BASE_BRANCH + ' in step 3, do NOT change any tracked files. Return ok=true',
-    'only if the branch is ' + BASE_BRANCH + ', the tracked tree is clean, ' + BASE_BRANCH + ' has not diverged, the',
-    'toolchain is present, AND the base compiles; otherwise ok=false with a precise reason.',
+    ...step6,
+    tail,
   ].join('\n')
 }
 
 function setupPrompt(plan) {
+  const wt = WORKTREES_DIR + '/plan-' + plan.slug
+  // Fork the worktree off the trunk. Normal (merge/dry-run) run: fetch, branch off REMOTE/base. LOCAL run: no remote, so
+  // branch off the LOCAL base — and if the plan branch already exists (RESUMING a prior local run), REUSE it rather than
+  // deleting it, so its committed units + Plan-Tasks trailers survive for resume-from-trailers (in merge mode a prior
+  // run's work lives on the remote, so a stale local branch is safely discarded; in local mode it is the ONLY copy).
+  const forkBlock = LOCAL
+    ? [
+        '  (LOCAL run — no remote: do NOT run "git fetch".)',
+        '  If branch plan/' + plan.slug + ' does NOT yet exist, create it off the LOCAL base:',
+        '    git worktree add ' + wt + ' -b plan/' + plan.slug + ' ' + BASE_BRANCH,
+        '  If branch plan/' + plan.slug + ' ALREADY exists (you are RESUMING a prior local run — its commits carry the',
+        '  Plan-Tasks trailers this run reads back), do NOT delete it. Attach a worktree to the EXISTING branch (no -b):',
+        '    git worktree add ' + wt + ' plan/' + plan.slug,
+        '  If a stale/broken worktree dir is in the way, "git worktree remove --force ' + wt + '" (then "git worktree prune")',
+        '  and re-add — but NEVER "git branch -D plan/' + plan.slug + '" in a local run (that would delete the only copy of the work).',
+      ]
+    : [
+        '  Run:  git fetch ' + REMOTE,
+        '  Run:  git worktree add ' + wt + ' -b plan/' + plan.slug + ' ' + REMOTE + '/' + BASE_BRANCH,
+        '  - If branch plan/' + plan.slug + ' already exists from a stale run, remove the stale worktree',
+        '    ("git worktree remove --force ..." then "git branch -D plan/' + plan.slug + '") and retry.',
+      ]
+  // Validation + task-reading differ for a single-file (.md) vs a directory (README.md + task-N-*.md) plan.
+  const validateBlock = plan.isDir
+    ? [
+        '  FIRST confirm the plan DIRECTORY exists DIRECTLY under ' + PLANS_DIR + '/ and holds a README.md plus one or more',
+        '  task-N-*.md files (top level ONLY — NOT ' + PLANS_DIR + '/drafts/, NOT ' + COMPLETED_DIR + '/). If it is missing or',
+        '  has no README.md, set setupOk=false with a notes reason and STOP (return empty taskIds[], files[], summary).',
+      ]
+    : [
+        '  FIRST confirm the plan file exists DIRECTLY under ' + PLANS_DIR + '/ (top level ONLY — NOT ' + PLANS_DIR + '/drafts/,',
+        '  NOT ' + COMPLETED_DIR + '/, NOT any subdirectory). If it is missing or not a top-level plan, set setupOk=false with a',
+        '  notes reason and STOP (return empty taskIds[], empty files[], and an empty summary).',
+      ]
   return [
     'You are the SETUP step for ONE approved implementation plan in the ' + PROJECT.name + ' repo (batched implementer).',
     'Project: ' + PROJECT.name + ' — a Rust cargo workspace (crates/*) under a pnpm monorepo (packages/*).',
     'Host: Windows, PowerShell (Bash tool also available). You run in the MAIN repository directory (' + REPO_DIR + ').',
     '',
-    'Plan file: ' + plan.path + '   (slug: ' + plan.slug + ')',
+    (plan.isDir ? 'Plan DIRECTORY (README.md + task-N-*.md): ' : 'Plan file: ') + plan.path + '   (slug: ' + plan.slug + ')',
     '',
-    'STEP A — validate the path, then create an isolated worktree branched off the trunk (' + REMOTE + '/' + BASE_BRANCH + '):',
-    '  FIRST confirm the plan file exists DIRECTLY under ' + PLANS_DIR + '/ (top level ONLY — NOT ' + PLANS_DIR + '/drafts/,',
-    '  NOT ' + COMPLETED_DIR + '/, NOT any subdirectory). If it is missing or not a top-level plan, set setupOk=false with a',
-    '  notes reason and STOP (return empty taskIds[], empty files[], and an empty summary).',
-    '  Run:  git fetch ' + REMOTE,
-    '  Run:  git worktree add ' + WORKTREES_DIR + '/plan-' + plan.slug + ' -b plan/' + plan.slug + ' ' + REMOTE + '/' + BASE_BRANCH,
-    '  - If branch plan/' + plan.slug + ' already exists from a stale run, remove the stale worktree',
-    '    ("git worktree remove --force ..." then "git branch -D plan/' + plan.slug + '") and retry.',
-    '  Then capture the absolute worktree path:  git -C ' + WORKTREES_DIR + '/plan-' + plan.slug + ' rev-parse --show-toplevel',
+    'STEP A — validate the path, then create an isolated worktree branched off the trunk (' +
+      (LOCAL ? 'local ' + BASE_BRANCH : REMOTE + '/' + BASE_BRANCH) + '):',
+    ...validateBlock,
+    ...forkBlock,
+    '  Then capture the absolute worktree path:  git -C ' + wt + ' rev-parse --show-toplevel',
     '  And capture baseSha — the trunk commit this branch starts from (for the deep end-review):',
-    '    git -C ' + WORKTREES_DIR + '/plan-' + plan.slug + ' rev-parse HEAD',
+    '    git -C ' + wt + ' rev-parse HEAD',
     '  Do NOT switch the MAIN worktree off ' + BASE_BRANCH + ', and do NOT modify the local ' + BASE_BRANCH + ' branch.',
     '',
     'STEP A.5 — make the worktree buildable. This is a pnpm monorepo; a fresh worktree shares the repo history but has',
-    '  its OWN node_modules. From INSIDE the worktree (cd ' + WORKTREES_DIR + '/plan-' + plan.slug + ') run "pnpm install"',
+    '  its OWN node_modules. From INSIDE the worktree (cd ' + wt + ') run "pnpm install"',
     '  once so the packages resolve. (pnpm links from the shared store, so this is fast.) Do not change any lockfile.',
     '',
-    'STEP B — extract the plan\'s ordered TASK-IDS DETERMINISTICALLY (do NOT eyeball a long file — a large plan has been',
-    '  mis-counted as "2 tasks" that way, landing 0 commits while still reporting done). Run this EXACT command against the',
-    '  plan file and transcribe its matches — do not summarize or infer:',
-    '      grep -nE "^### Task " "' + plan.absPath + '"      (PowerShell: Select-String -Path "' + plan.absPath + '" -Pattern "^### Task ")',
-    '  Each matching line looks like "### Task 3: Reshape the edge". Return taskIds as the bare id of each match in file',
-    '  order — the text between "### " and the first ":" — e.g. ["Task 1", "Task 2", "Task 3"]. The COUNT of taskIds MUST',
-    '  equal the number of grep matches; if they differ, re-run the grep and recount. A one-shot/thin plan may have NO',
-    '  "### Task" matches — return an empty taskIds[] and still set setupOk=true (the implementer treats the whole plan as',
-    '  a single unit). "## File Structure" / "## Notes for the implementer" headings are "## " not "### Task ", so the',
-    '  grep excludes them automatically.',
+    ...(plan.isDir
+      ? [
+          'STEP B — extract the plan\'s ordered TASK-IDS DETERMINISTICALLY. This is a DIRECTORY plan: the tasks are ONE PER',
+          '  FILE — each "task-N-*.md" is "Task N". List the task files and transcribe their numbers (do NOT eyeball):',
+          '      ls "' + plan.absPath + '"      (PowerShell: Get-ChildItem "' + plan.absPath + '" -Name)',
+          '  For EVERY file named task-<N>-*.md return the id "Task <N>" (e.g. task-1-uml-module-and-seam.md -> "Task 1"),',
+          '  ordered by N ASCENDING — e.g. ["Task 1", "Task 2", "Task 3", "Task 4", "Task 5"]. Cross-check the count and order',
+          '  against the README\'s "## Task Index" section (read "' + plan.absPath + '/README.md"); if they disagree, PREFER the',
+          '  task-N-*.md filenames (they are the authoritative per-task bodies). If there are NO task-N-*.md files, return an',
+          '  empty taskIds[] and set setupOk=true (the implementer treats README.md as a single unit).',
+        ]
+      : [
+          'STEP B — extract the plan\'s ordered TASK-IDS DETERMINISTICALLY (do NOT eyeball a long file — a large plan has been',
+          '  mis-counted as "2 tasks" that way, landing 0 commits while still reporting done). Run this EXACT command against the',
+          '  plan file and transcribe its matches — do not summarize or infer:',
+          '      grep -nE "^### Task " "' + plan.absPath + '"      (PowerShell: Select-String -Path "' + plan.absPath + '" -Pattern "^### Task ")',
+          '  Each matching line looks like "### Task 3: Reshape the edge". Return taskIds as the bare id of each match in file',
+          '  order — the text between "### " and the first ":" — e.g. ["Task 1", "Task 2", "Task 3"]. The COUNT of taskIds MUST',
+          '  equal the number of grep matches; if they differ, re-run the grep and recount. A one-shot/thin plan may have NO',
+          '  "### Task" matches — return an empty taskIds[] and still set setupOk=true (the implementer treats the whole plan as',
+          '  a single unit). "## File Structure" / "## Notes for the implementer" headings are "## " not "### Task ", so the',
+          '  grep excludes them automatically.',
+        ]),
     '',
     'STEP C — summarize the plan as a whole (for the deep end-review):',
-    '  - files: every repo-relative file path the plan will create or modify, collected from the "**Files:**" blocks',
+    '  - files: every repo-relative file path the plan will create or modify, collected from the "**Files:**" blocks' +
+      (plan.isDir ? ' across the README.md and every task-N-*.md' : ''),
     '    (lines like "- Create: path", "- Modify: path", "- Test: path"). Strip surrounding backticks and any trailing',
     '    parenthetical note; keep only the bare path. De-duplicate.',
     '  - summary: one or two sentences on what the plan delivers.',
     '',
-    'STEP D — read the plan\'s HEADER TAGS (blockquote lines near the top):',
+    'STEP D — read the plan\'s HEADER TAGS (blockquote lines near the top' + (plan.isDir ? ' of README.md' : '') + '):',
     '  - RIGOR:  a line like  > **Rigor:** one-shot  -> return rigor="one-shot"; otherwise rigor="tdd-per-task" (default).',
     '    This tunes how strict the implementer is about test-first. A one-shot plan is ALLOWED to have NO "### Task"s.',
     '  - GATE:  a line like  > **Gate:** rust-only   (or "full", or "auto") -> return gate accordingly; if absent return',
@@ -347,7 +448,7 @@ function setupPrompt(plan) {
     '    forces the cargo-only gate (use for a plan that must NOT build the pnpm packages); "full" forces both halves.',
     '',
     'Do NOT implement anything and do NOT modify tracked files — only create the worktree, install deps, and read the plan.',
-    'Return setupOk (true only if the plan is a valid top-level file AND the worktree exists on branch plan/' + plan.slug + '),',
+    'Return setupOk (true only if the plan is a valid top-level ' + (plan.isDir ? 'directory (README.md present)' : 'file') + ' AND the worktree exists on branch plan/' + plan.slug + '),',
     'worktreePath (the absolute path), baseSha (the base commit captured above), branch (plan/' + plan.slug + '), taskIds[],',
     'files[] (the plan\'s touched repo-relative paths), summary (what the plan delivers), rigor ("one-shot"|"tdd-per-task"),',
     'gate ("auto"|"rust-only"|"full"), and notes.',
@@ -369,7 +470,16 @@ function implementerGenerationPrompt(plan, worktreePath, baseSha, gen, rigor, ta
     ? '     On the VERY NEXT line after Plan-Tasks — NO blank line between them — add the attribution footer so all three\n' +
       '     stay in ONE contiguous trailer block (a blank line would split the block and git would stop parsing Plan-Tasks):  ' + COMMIT_FOOTER
     : ''
-  const integrateStep = MODE === 'dry-run'
+  // Integrate step by mode: LOCAL commits stay on the plan branch (no push/fetch/rebase — main is untouchable here);
+  // dry-run keeps the commit local too; merge (default) rebases + fast-forward-pushes onto the trunk exactly as before.
+  const integrateStep = LOCAL
+    ? [
+        '  d. LOCAL MODE: do NOT push, fetch, or rebase onto any remote. The committed unit stays on the plan branch',
+        '     (plan/' + plan.slug + '), which IS the trunk for this run — its Plan/Plan-Tasks trailers are how the next',
+        '     generation resumes. Do NOT touch the local ' + BASE_BRANCH + ' ref: it is checked out in another worktree and',
+        '     must be left exactly where it is. Go straight to step e.',
+      ].join('\n')
+    : MODE === 'dry-run'
     ? '  d. DRY-RUN MODE: do NOT push. The committed unit stays local on the branch. Go straight to step e.'
     : [
         '  d. PUSH the unit straight to the trunk (' + REMOTE + '/' + BASE_BRANCH + '):',
@@ -400,9 +510,19 @@ function implementerGenerationPrompt(plan, worktreePath, baseSha, gen, rigor, ta
     '',
     'Work ENTIRELY inside this git worktree — cd into it and run all git/pnpm commands there:',
     '  ' + worktreePath,
-    'You are on branch plan/' + plan.slug + '. The plan file is your COMPLETE instruction set — READ IT by this ABSOLUTE',
-    'path (docs/superpowers/ is gitignored, so the plan lives ONLY in the main repo and is NOT inside your worktree):',
-    '  ' + plan.absPath,
+    ...(plan.isDir
+      ? [
+          'You are on branch plan/' + plan.slug + '. Your COMPLETE instruction set is a plan DIRECTORY (docs/superpowers/ is',
+          'gitignored, so it lives ONLY in the main repo, NOT inside your worktree). Read it by ABSOLUTE path:',
+          '  ' + plan.absPath + '/README.md      — the overview + "## Task Index" (task order; may hold per-task "- [ ]" checkboxes)',
+          '  ' + plan.absPath + '/task-N-*.md     — ONE file per task; each holds that task\'s body and its "- [ ]"/"- [x]" step checkboxes',
+          'Read the README for the task index, then the relevant task-N-*.md before implementing that task.',
+        ]
+      : [
+          'You are on branch plan/' + plan.slug + '. The plan file is your COMPLETE instruction set — READ IT by this ABSOLUTE',
+          'path (docs/superpowers/ is gitignored, so the plan lives ONLY in the main repo and is NOT inside your worktree):',
+          '  ' + plan.absPath,
+        ]),
     'What it delivers: ' + plan.summary,
     'Its task-ids, in order: ' + idsLine,
     '',
@@ -419,21 +539,38 @@ function implementerGenerationPrompt(plan, worktreePath, baseSha, gen, rigor, ta
     'SIGNAL A — commit trailers. Every landed unit of THIS plan carries two trailers in its commit message body:',
     '    Plan: ' + plan.slug,
     '    Plan-Tasks: <comma-separated plan task-ids this unit completed>',
-    'Scan the WHOLE trunk, NOT just ' + baseSha + '..HEAD. Critical: this generation forked off the CURRENT ' + REMOTE + '/' +
-      BASE_BRANCH + ' tip, so units a PRIOR run already pushed are now folded BELOW your fork point — a ' + baseSha +
-      '..HEAD window would show them as undone and you would redo Task 1 over already-landed work. Fetch, then scan the',
-    'trunk history filtered to this plan\'s slug:',
-    '    git fetch ' + REMOTE,
-    '    git log ' + REMOTE + '/' + BASE_BRANCH + ' --grep="Plan: ' + plan.slug + '" --format=%h%x1f%(trailers:key=Plan,valueonly)%x1f%(trailers:key=Plan-Tasks,valueonly)',
+    ...(LOCAL
+      ? [
+          'LOCAL run: the plan branch (plan/' + plan.slug + ') is itself the trunk and every unit is committed onto it, so its',
+          'OWN history holds every landed unit as an ancestor of HEAD — there is NO remote and NO fetch. Scan HEAD filtered',
+          'to this plan\'s slug:',
+          '    git log HEAD --grep="Plan: ' + plan.slug + '" --format=%h%x1f%(trailers:key=Plan,valueonly)%x1f%(trailers:key=Plan-Tasks,valueonly)',
+        ]
+      : [
+          'Scan the WHOLE trunk, NOT just ' + baseSha + '..HEAD. Critical: this generation forked off the CURRENT ' + REMOTE + '/' +
+            BASE_BRANCH + ' tip, so units a PRIOR run already pushed are now folded BELOW your fork point — a ' + baseSha +
+            '..HEAD window would show them as undone and you would redo Task 1 over already-landed work. Fetch, then scan the',
+          'trunk history filtered to this plan\'s slug:',
+          '    git fetch ' + REMOTE,
+          '    git log ' + REMOTE + '/' + BASE_BRANCH + ' --grep="Plan: ' + plan.slug + '" --format=%h%x1f%(trailers:key=Plan,valueonly)%x1f%(trailers:key=Plan-Tasks,valueonly)',
+        ]),
     'Keep only commits whose Plan trailer is EXACTLY "' + plan.slug + '"; union their Plan-Tasks ids. ROBUSTNESS: git parses',
     'trailers only from the LAST contiguous block, so a stray blank line can leave %(trailers) empty though the body has',
     'the lines — for any --grep hit with an empty parsed Plan, fall back to "git log -1 --format=%B <sha>" and scan for',
     '"^Plan:" / "^Plan-Tasks:" body lines. (A wide history scan can be capped with --since or -n a few hundred if huge.)',
     '',
     'SIGNAL B — plan checkboxes (covers work landed WITHOUT trailers, e.g. tasks done by hand before this workflow ran).',
-    'Read the plan file (' + plan.absPath + '). If a task-id\'s line is a CHECKED checkbox — "- [x] Task N" (any case, x or',
-    'X) — treat that task as DONE even if no trailer covers it. An unchecked "- [ ]" is NOT done. Plans without a checkbox',
-    'list contribute nothing from this signal — that is fine.',
+    ...(plan.isDir
+      ? [
+          'This is a DIRECTORY plan: read ' + plan.absPath + '/README.md AND each ' + plan.absPath + '/task-N-*.md. Treat "Task N"',
+          'as DONE when its README "## Task Index" line is a CHECKED "- [x]" box (x or X), OR — when the README carries no',
+          'per-task checkbox — when EVERY "- [ ]" step inside task-N-*.md is checked "- [x]". An unchecked box is NOT done.',
+        ]
+      : [
+          'Read the plan file (' + plan.absPath + '). If a task-id\'s line is a CHECKED checkbox — "- [x] Task N" (any case, x or',
+          'X) — treat that task as DONE even if no trailer covers it. An unchecked "- [ ]" is NOT done. Plans without a checkbox',
+          'list contribute nothing from this signal — that is fine.',
+        ]),
     '',
     'DONE = union(Signal A ids, Signal B checked ids), intersected with this plan\'s real task-ids. The NEXT unit starts at',
     'the LOWEST plan task-id NOT in DONE. If EVERY plan task-id is already in DONE (or, for a thin plan with no task-ids, at',
@@ -443,7 +580,7 @@ function implementerGenerationPrompt(plan, worktreePath, baseSha, gen, rigor, ta
     '',
     '=== STEP 2: DRIFT-CHECK (only when RESUMING — i.e. DONE is non-empty) ===',
     'If some units are already landed, a prior generation did work. Skim this plan\'s landed commits',
-    '(git log ' + REMOTE + '/' + BASE_BRANCH + ' --grep="Plan: ' + plan.slug + '" --oneline) and the handoff note below. If the',
+    '(git log ' + (LOCAL ? 'HEAD' : REMOTE + '/' + BASE_BRANCH) + ' --grep="Plan: ' + plan.slug + '" --oneline) and the handoff note below. If the',
     'landed work has DRIFTED from the plan, correct it before continuing. The PLAN IS',
     'LEADING — deviations from it are defects, not creativity. BUT if the PLAN ITSELF is wrong or infeasible (it asks for',
     'something that cannot be built as written), do NOT silently rewrite it: STOP and return escalate=true with the',
@@ -509,19 +646,36 @@ function progressProbePrompt(plan, worktreePath, baseSha, taskIds) {
     'Progress comes from TWO signals; report their union.',
     '',
     'SIGNAL A — commit trailers. Every landed unit of THIS plan carries "Plan: ' + plan.slug + '" and "Plan-Tasks: <ids>".',
-    'Scan the WHOLE trunk, not a fork-point window: a prior run\'s units are folded BELOW this worktree\'s base, so a',
-    baseSha + '..HEAD range would MISS them and falsely report 0 landed (the classic false-park). Run:',
-    '    git fetch ' + REMOTE,
-    '    git log ' + REMOTE + '/' + BASE_BRANCH + ' --grep="Plan: ' + plan.slug + '" --format=%h%x1f%(trailers:key=Plan,valueonly)%x1f%(trailers:key=Plan-Tasks,valueonly)',
+    ...(LOCAL
+      ? [
+          'LOCAL run: the plan branch is the trunk and every unit is committed onto it, so HEAD\'s own history holds them all',
+          '— there is NO remote and NO fetch. Run:',
+          '    git log HEAD --grep="Plan: ' + plan.slug + '" --format=%h%x1f%(trailers:key=Plan,valueonly)%x1f%(trailers:key=Plan-Tasks,valueonly)',
+        ]
+      : [
+          'Scan the WHOLE trunk, not a fork-point window: a prior run\'s units are folded BELOW this worktree\'s base, so a',
+          baseSha + '..HEAD range would MISS them and falsely report 0 landed (the classic false-park). Run:',
+          '    git fetch ' + REMOTE,
+          '    git log ' + REMOTE + '/' + BASE_BRANCH + ' --grep="Plan: ' + plan.slug + '" --format=%h%x1f%(trailers:key=Plan,valueonly)%x1f%(trailers:key=Plan-Tasks,valueonly)',
+        ]),
     'Consider ONLY commits whose "Plan:" trailer is EXACTLY "' + plan.slug + '" (the slug filter is REQUIRED — the trunk',
     'holds OTHER plans\' commits whose Plan-Tasks ids could collide). Union their Plan-Tasks ids.',
     'ROBUSTNESS — git parses trailers only from the LAST contiguous message block; a stray blank line can leave',
     '%(trailers) EMPTY though the body has the lines. For any --grep hit with an empty parsed Plan, FALL BACK to',
     '"git log -1 --format=%B <sha>" and scan for "^Plan:"/"^Plan-Tasks:" body lines. Count fallback commits identically.',
     '',
-    'SIGNAL B — plan checkboxes (covers tasks completed WITHOUT trailers, e.g. by hand before the workflow ran). Read the',
-    'plan file (' + plan.absPath + '). A task-id whose line is a CHECKED checkbox "- [x] Task N" (x or X) counts as done',
-    'even with no commit trailer. "- [ ]" does not count. A plan with no checkbox list contributes nothing here.',
+    ...(plan.isDir
+      ? [
+          'SIGNAL B — plan checkboxes (covers tasks completed WITHOUT trailers, e.g. by hand before the workflow ran).',
+          'This is a DIRECTORY plan: read ' + plan.absPath + '/README.md AND each ' + plan.absPath + '/task-N-*.md. "Task N" counts',
+          'as done when its README "## Task Index" line is a CHECKED "- [x]" box (x or X), OR — when the README has no per-task',
+          'checkbox — when EVERY "- [ ]" step inside task-N-*.md is checked. "- [ ]" does not count.',
+        ]
+      : [
+          'SIGNAL B — plan checkboxes (covers tasks completed WITHOUT trailers, e.g. by hand before the workflow ran). Read the',
+          'plan file (' + plan.absPath + '). A task-id whose line is a CHECKED checkbox "- [x] Task N" (x or X) counts as done',
+          'even with no commit trailer. "- [ ]" does not count. A plan with no checkbox list contributes nothing here.',
+        ]),
     '',
     'This plan\'s task-ids are: ' + idsLine,
     '',
@@ -570,18 +724,30 @@ function deepReviewPrompt(plan, worktreePath, baseSha, concerns) {
     'Review each concern ONCE — do not re-report the same issue under multiple lenses.',
     '',
     '=== STEP 2: READ THE CHANGE ===',
-    'First compute the REVIEW BASE — the whole plan\'s starting point on the trunk. Do NOT assume the worktree fork point:',
-    'if a PRIOR run landed some units, they are folded BELOW this fork and a diff from the fork would miss them. Instead',
-    'find this plan\'s OLDEST trunk commit and diff from its parent:',
-    '    git fetch ' + REMOTE,
-    '    REVIEW_BASE=$(git log ' + REMOTE + '/' + BASE_BRANCH + ' --grep="Plan: ' + plan.slug + '" --reverse --format=%H | head -1)^',
-    '    (if that finds NO commit — a thin plan, or work done only via checkboxes with no commits — fall back to ' + baseSha + ')',
-    'Review the cumulative contribution over REVIEW_BASE..' + REMOTE + '/' + BASE_BRANCH + ', scoped to the files this plan owns:',
-    '    git diff $REVIEW_BASE ' + REMOTE + '/' + BASE_BRANCH + ' -- ' + fileScope,
-    'Skim the commit messages:  git log --oneline $REVIEW_BASE..' + REMOTE + '/' + BASE_BRANCH + '  — then OPEN and read the',
+    ...(LOCAL
+      ? [
+          'First compute the REVIEW BASE — the whole plan\'s starting point. LOCAL run: the plan branch is the trunk and HEAD',
+          'is its tip; there is NO remote and NO fetch. Find this plan\'s OLDEST commit on the branch and diff from its parent:',
+          '    REVIEW_BASE=$(git log HEAD --grep="Plan: ' + plan.slug + '" --reverse --format=%H | head -1)^',
+          '    (if that finds NO commit — a thin plan, or work done only via checkboxes with no commits — fall back to ' + baseSha + ')',
+          'Review the cumulative contribution over REVIEW_BASE..HEAD, scoped to the files this plan owns:',
+          '    git diff $REVIEW_BASE HEAD -- ' + fileScope,
+          'Skim the commit messages:  git log --oneline $REVIEW_BASE..HEAD  — then OPEN and read the',
+        ]
+      : [
+          'First compute the REVIEW BASE — the whole plan\'s starting point on the trunk. Do NOT assume the worktree fork point:',
+          'if a PRIOR run landed some units, they are folded BELOW this fork and a diff from the fork would miss them. Instead',
+          'find this plan\'s OLDEST trunk commit and diff from its parent:',
+          '    git fetch ' + REMOTE,
+          '    REVIEW_BASE=$(git log ' + REMOTE + '/' + BASE_BRANCH + ' --grep="Plan: ' + plan.slug + '" --reverse --format=%H | head -1)^',
+          '    (if that finds NO commit — a thin plan, or work done only via checkboxes with no commits — fall back to ' + baseSha + ')',
+          'Review the cumulative contribution over REVIEW_BASE..' + REMOTE + '/' + BASE_BRANCH + ', scoped to the files this plan owns:',
+          '    git diff $REVIEW_BASE ' + REMOTE + '/' + BASE_BRANCH + ' -- ' + fileScope,
+          'Skim the commit messages:  git log --oneline $REVIEW_BASE..' + REMOTE + '/' + BASE_BRANCH + '  — then OPEN and read the',
+        ]),
     'changed code. Confirm the plan is delivered as a whole, the per-unit pieces fit together coherently, and no defect',
     'was introduced ACROSS units (the kind a single-unit review would miss).',
-    'Plan file (the requirements, ABSOLUTE path — gitignored, not in your worktree): ' + plan.absPath + '. What it delivers: ' + plan.summary,
+    'Plan ' + (plan.isDir ? 'DIRECTORY (README.md + task-N-*.md)' : 'file') + ' (the requirements, ABSOLUTE path — gitignored, not in your worktree): ' + plan.absPath + '. What it delivers: ' + plan.summary,
     '',
     '=== STEP 3: PRIOR-REVIEW MEMORY (additive focusing — IN ADDITION to, never instead of, the review above) ===',
     concernsBlock,
@@ -616,17 +782,26 @@ function fixForwardPrompt(plan, worktreePath, actionable, gate) {
     '',
     'Plan (intent/spec, ABSOLUTE path — gitignored, not in your worktree): ' + plan.absPath + ' — ' + plan.summary,
     '',
-    'For each fix: keep it minimal and scoped; a behavior change needs a test that FAILS first. Then LAND it on the trunk:',
+    'For each fix: keep it minimal and scoped; a behavior change needs a test that FAILS first. Then LAND it on the ' + (LOCAL ? 'branch:' : 'trunk:'),
     '  1. Run the scope-aware green-gate and make it pass:  ' + gate,
     '  2. Commit (Conventional Commit subject). A review-fix completes no NEW plan task, so it needs no Plan-Tasks trailer.',
     footerLine,
-    '  3. Push it straight to the trunk (' + REMOTE + '/' + BASE_BRANCH + '). Before pushing, assert "git status --porcelain"',
-    '     is EMPTY (never push a dirty tree — the gate must have validated the committed HEAD, not loose changes):',
-    '       git fetch ' + REMOTE + ' ; git rebase ' + REMOTE + '/' + BASE_BRANCH + ' ; re-run the gate ; git push ' + REMOTE + ' HEAD:' + BASE_BRANCH + '.',
-    '     On a non-fast-forward rejection, re-fetch/rebase/re-gate and retry (bounded to ' + MAX_ATTEMPTS + '); on a rebase',
-    '     CONFLICT you cannot cleanly resolve, STOP and report it. NEVER force-push.',
+    ...(LOCAL
+      ? [
+          '  3. LOCAL MODE: do NOT push, fetch, or rebase. The fix commit stays on the plan branch (plan/' + plan.slug + '),',
+          '     which is the trunk for this run. Do NOT touch the local ' + BASE_BRANCH + ' ref (checked out elsewhere). Before',
+          '     committing, assert "git status --porcelain" is EMPTY after the gate so the committed HEAD is what was gated.',
+        ]
+      : [
+          '  3. Push it straight to the trunk (' + REMOTE + '/' + BASE_BRANCH + '). Before pushing, assert "git status --porcelain"',
+          '     is EMPTY (never push a dirty tree — the gate must have validated the committed HEAD, not loose changes):',
+          '       git fetch ' + REMOTE + ' ; git rebase ' + REMOTE + '/' + BASE_BRANCH + ' ; re-run the gate ; git push ' + REMOTE + ' HEAD:' + BASE_BRANCH + '.',
+          '     On a non-fast-forward rejection, re-fetch/rebase/re-gate and retry (bounded to ' + MAX_ATTEMPTS + '); on a rebase',
+          '     CONFLICT you cannot cleanly resolve, STOP and report it. NEVER force-push.',
+        ]),
     '',
-    'Report: fixed (true ONLY if ALL listed findings are resolved AND pushed green to ' + REMOTE + '/' + BASE_BRANCH + '), commits',
+    'Report: fixed (true ONLY if ALL listed findings are resolved AND ' +
+      (LOCAL ? 'committed green on the plan branch' : 'pushed green to ' + REMOTE + '/' + BASE_BRANCH) + '), commits',
     '(short SHAs you created), and problems (precise reason if not fixed).',
   ].join('\n')
 }
@@ -639,14 +814,26 @@ function cleanRoomVerifyPrompt(plan) {
   const vwt = WORKTREES_DIR + '/verify-' + plan.slug
   return [
     'You are the CLEAN-ROOM VERIFIER for the ' + PROJECT.name + ' repo. You make NO code changes — you only confirm that the',
-    'pushed trunk tip COMPILES from a pristine checkout. Host: Windows/PowerShell (Bash also available). Run from the MAIN',
+    (LOCAL ? 'plan-branch tip' : 'pushed trunk tip') + ' COMPILES from a pristine checkout. Host: Windows/PowerShell (Bash also available). Run from the MAIN',
     'repo dir (' + REPO_DIR + ').',
     '',
-    'Every unit of this plan has been pushed to ' + REMOTE + '/' + BASE_BRANCH + '. Verify that tip compiles from clean:',
-    '  1. git fetch ' + REMOTE,
-    '  2. Create a FRESH throwaway worktree at the exact pushed tip (detached, no branch):',
-    '       git worktree add --detach "' + vwt + '" ' + REMOTE + '/' + BASE_BRANCH,
-    '     (If it already exists from a stale run: git worktree remove --force "' + vwt + '" first, then re-add.)',
+    ...(LOCAL
+      ? [
+          'Every unit of this plan is committed on the local plan branch (plan/' + plan.slug + ') — there is NO remote. Verify',
+          'that branch tip compiles from clean:',
+          '  1. (LOCAL — no remote: skip git fetch.)',
+          '  2. Create a FRESH throwaway worktree at the plan-branch tip (detached, so it does not collide with the branch\'s',
+          '     own worktree):',
+          '       git worktree add --detach "' + vwt + '" plan/' + plan.slug,
+          '     (If it already exists from a stale run: git worktree remove --force "' + vwt + '" first, then re-add.)',
+        ]
+      : [
+          'Every unit of this plan has been pushed to ' + REMOTE + '/' + BASE_BRANCH + '. Verify that tip compiles from clean:',
+          '  1. git fetch ' + REMOTE,
+          '  2. Create a FRESH throwaway worktree at the exact pushed tip (detached, no branch):',
+          '       git worktree add --detach "' + vwt + '" ' + REMOTE + '/' + BASE_BRANCH,
+          '     (If it already exists from a stale run: git worktree remove --force "' + vwt + '" first, then re-add.)',
+        ]),
     '  3. Capture the SHA:  git -C "' + vwt + '" rev-parse --short HEAD',
     '  4. From INSIDE that worktree, run the compile-only workspace check and make NOTHING else:',
     '       ' + PROJECT.gate.verify,
@@ -663,40 +850,67 @@ function cleanRoomVerifyPrompt(plan) {
 function archivePrompt(plan, worktreePath, planPath) {
   const footer = COMMIT_FOOTER ? ' (add the footer "' + COMMIT_FOOTER + '" after a blank line)' : ''
   const completedAbs = REPO_DIR + '/' + COMPLETED_DIR
+  // For a directory plan, `git mv`/`mv` moves the WHOLE directory into completed/ (yielding completed/<dir>); for a
+  // single-file plan it moves the one .md. The commands are identical either way because planPath/absPath already point
+  // at the directory or the file — only the wording changes.
+  const noun = plan.isDir ? 'plan directory' : 'plan file'
+  const headRef = LOCAL ? 'plan/' + plan.slug : REMOTE + '/' + BASE_BRANCH
+  // Step 1a (TRACKED): merge/dry-run push the archive commit onto the trunk; LOCAL commits it onto the plan branch only.
+  const step1aLand = LOCAL
+    ? [
+        '     LOCAL MODE: do NOT push/fetch/rebase — the archive commit stays on the plan branch (which is the trunk for',
+        '     this run). Do NOT touch the local ' + BASE_BRANCH + ' ref (checked out elsewhere). Set archived=true once the',
+        '     archive commit is on plan/' + plan.slug + '.',
+      ]
+    : [
+        '     Push it to the trunk (fast-forward). On non-fast-forward rejection re-fetch, rebase onto ' + REMOTE + '/' + BASE_BRANCH + ',',
+        '     re-push; retry up to ' + MAX_ATTEMPTS + ' times; NEVER force-push:',
+        '       git fetch ' + REMOTE + ' ; git rebase ' + REMOTE + '/' + BASE_BRANCH + ' ; git push ' + REMOTE + ' HEAD:' + BASE_BRANCH,
+        '     Set archived=true only if the archive commit reached ' + REMOTE + '/' + BASE_BRANCH + '.',
+      ]
+  // Step 2 cleanup: merge/dry-run tears down the plan worktree + branch (work is safely on the remote). LOCAL MUST NOT —
+  // the plan branch is the ONLY copy of the work; deleting it would destroy the run. Leave both for the user to land.
+  const step2 = LOCAL
+    ? [
+        '2. LOCAL MODE — DO NOT clean up. The plan branch (plan/' + plan.slug + ') and its worktree are the ONLY copy of the',
+        '   implemented work; the user still has to review and land them. Leave the worktree and the branch in place. NEVER',
+        '   "git branch -D plan/' + plan.slug + '" or remove the worktree here.',
+      ]
+    : [
+        '2. Clean up — run these from the MAIN repo dir, NOT from inside the worktree. On Windows "git worktree remove" can',
+        '   fail "Directory not empty" because the worktree has its own node_modules; if so, delete the directory first,',
+        '   then prune:',
+        '     cd "' + REPO_DIR + '"',
+        '     git worktree remove --force "' + worktreePath + '"   (if that fails: rm -rf "' + worktreePath + '" ; git worktree prune)',
+        '     git branch -D plan/' + plan.slug,
+      ]
   return [
-    'Final step for a fully-implemented, fully-pushed plan: archive its plan file and clean up the worktree. Host:',
+    'Final step for a fully-implemented' + (LOCAL ? '' : ', fully-pushed') + ' plan: archive its ' + noun + ' and ' +
+      (LOCAL ? 'report (do NOT tear down the branch). Host:' : 'clean up the worktree. Host:'),
     'Windows/PowerShell (Bash tool also available). Conventions: Conventional Commits.',
-    'Do NOT touch the LOCAL ' + BASE_BRANCH + ' branch or the main working directory tree (beyond moving the plan file).',
+    'Do NOT touch the LOCAL ' + BASE_BRANCH + ' branch or the main working directory tree (beyond moving the ' + noun + ').',
     '',
-    '0. DECIDE THE ARCHIVE MODE — is the plan file tracked by git? Run from the MAIN repo dir (' + REPO_DIR + '):',
+    '0. DECIDE THE ARCHIVE MODE — is the ' + noun + ' tracked by git? Run from the MAIN repo dir (' + REPO_DIR + '):',
     '     git -C "' + REPO_DIR + '" ls-files --error-unmatch "' + planPath + '"',
-    '   Exit 0 = TRACKED (do step 1a). Non-zero = UNTRACKED/gitignored (do step 1b). In THIS repo docs/superpowers/ is',
-    '   gitignored, so the plan is normally UNTRACKED — expect step 1b.',
+    '   Exit 0 = TRACKED (do step 1a). Non-zero = UNTRACKED/gitignored (do step 1b). Let the command DECIDE — do NOT assume;',
+    '   a plan may be committed (tracked) or gitignored-local depending on the repo/workflow.',
     '',
-    '1a. TRACKED plan — archive it on the trunk via the worktree. cd into the worktree (' + worktreePath + '), then' + footer + ':',
-    '     git mv "' + planPath + '" ' + COMPLETED_DIR + '/     (mkdir -p ' + COMPLETED_DIR + ' first if it does not exist)',
+    '1a. TRACKED plan — archive it ' + (LOCAL ? '' : 'on the trunk ') + 'via the worktree. cd into the worktree (' + worktreePath + '), then' + footer + ':',
+    '     git mv "' + planPath + '" ' + COMPLETED_DIR + '/     (mkdir -p ' + COMPLETED_DIR + ' first if it does not exist' + (plan.isDir ? '; moves the WHOLE directory' : '') + ')',
     '     git commit -m "chore(plans): archive ' + plan.slug + ' (implemented)"',
-    '     Push it to the trunk (fast-forward). On non-fast-forward rejection re-fetch, rebase onto ' + REMOTE + '/' + BASE_BRANCH + ',',
-    '     re-push; retry up to ' + MAX_ATTEMPTS + ' times; NEVER force-push:',
-    '       git fetch ' + REMOTE + ' ; git rebase ' + REMOTE + '/' + BASE_BRANCH + ' ; git push ' + REMOTE + ' HEAD:' + BASE_BRANCH,
-    '     Set archived=true only if the archive commit reached ' + REMOTE + '/' + BASE_BRANCH + '.',
+    ...step1aLand,
     '',
-    '1b. UNTRACKED/gitignored plan — there is NOTHING to commit or push (git never tracked it). Just move the file ON DISK',
+    '1b. UNTRACKED/gitignored plan — there is NOTHING to commit or push (git never tracked it). Just move the ' + (plan.isDir ? 'directory' : 'file') + ' ON DISK',
     '    in the MAIN repo so it leaves the active plans/ directory. Run from anywhere (absolute paths):',
     '       mkdir -p "' + completedAbs + '"',
     '       mv "' + plan.absPath + '" "' + completedAbs + '/"',
-    '    This is a pure filesystem move, no git. Set archived=true once the file is moved. headSha is not applicable',
-    '    (report the current ' + REMOTE + '/' + BASE_BRANCH + ' head:  git -C "' + REPO_DIR + '" rev-parse --short ' + REMOTE + '/' + BASE_BRANCH + ').',
+    '    This is a pure filesystem move, no git. Set archived=true once the ' + (plan.isDir ? 'directory' : 'file') + ' is moved. headSha is not applicable',
+    '    (report the current ' + headRef + ' head:  git -C "' + REPO_DIR + '" rev-parse --short ' + headRef + ').',
     '',
-    '2. Clean up — run these from the MAIN repo dir, NOT from inside the worktree. On Windows "git worktree remove" can',
-    '   fail "Directory not empty" because the worktree has its own node_modules; if so, delete the directory first,',
-    '   then prune:',
-    '     cd "' + REPO_DIR + '"',
-    '     git worktree remove --force "' + worktreePath + '"   (if that fails: rm -rf "' + worktreePath + '" ; git worktree prune)',
-    '     git branch -D plan/' + plan.slug,
+    ...step2,
     '',
-    'Report: archived (true once the plan file is in ' + COMPLETED_DIR + '/ — committed+pushed if it was tracked, else moved',
-    'on disk), headShaAfter (git rev-parse --short of ' + REMOTE + '/' + BASE_BRANCH + '), and problems (empty if clean).',
+    'Report: archived (true once the ' + noun + ' is in ' + COMPLETED_DIR + '/ — committed' + (LOCAL ? ' on the branch' : '+pushed') + ' if it was tracked, else moved',
+    'on disk), headShaAfter (git rev-parse --short of ' + headRef + '), and problems (empty if clean).',
   ].join('\n')
 }
 
@@ -901,20 +1115,21 @@ async function implementPlan(plan) {
       schema: VERIFY_SCHEMA, agentType: 'general-purpose', label: 'verify:' + plan.slug, phase: 'Review', model: MID,
     })
     if (!verify || !verify.green) {
-      problems.push('RED-MAIN: pushed trunk tip does not compile from a clean worktree: ' + (verify ? verify.problems : 'verify agent returned null'))
-      log('RED-MAIN ' + plan.slug + ': pushed ' + REMOTE + '/' + BASE_BRANCH + ' tip fails ' + PROJECT.gate.verify + ' from clean — parking before review/archive.')
+      // LOCAL parks against the plan-branch tip; merge/dry-run against the pushed trunk. Strings kept identical for merge.
+      problems.push((LOCAL ? 'RED-MAIN: plan-branch tip does not compile from a clean worktree: ' : 'RED-MAIN: pushed trunk tip does not compile from a clean worktree: ') + (verify ? verify.problems : 'verify agent returned null'))
+      log('RED-MAIN ' + plan.slug + ': ' + (LOCAL ? 'plan branch (plan/' + plan.slug + ')' : 'pushed ' + REMOTE + '/' + BASE_BRANCH) + ' tip fails ' + PROJECT.gate.verify + ' from clean — parking before review/archive.')
       return planResult(plan, branch, worktreePath, {
         completed: false,
         landedUnits: landedCommits,
         commits: landedShas,
         tasksTotal: coverage.tasksTotal,
         tasksAccounted: coverage.tasksAccounted,
-        summary: 'all task work landed but the trunk tip does not compile from clean (RED-MAIN)',
+        summary: LOCAL ? 'all task work landed but the plan-branch tip does not compile from clean (RED-MAIN)' : 'all task work landed but the trunk tip does not compile from clean (RED-MAIN)',
         problems,
-        reason: 'RED-MAIN: pushed tip does not compile from clean',
+        reason: LOCAL ? 'RED-MAIN: plan-branch tip does not compile from clean' : 'RED-MAIN: pushed tip does not compile from clean',
       })
     }
-    log('clean-room verify PASSED for ' + plan.slug + ': ' + REMOTE + '/' + BASE_BRANCH + ' tip (' + (verify.headSha || '?') + ') compiles from clean.')
+    log('clean-room verify PASSED for ' + plan.slug + ': ' + (LOCAL ? 'plan branch (plan/' + plan.slug + ')' : REMOTE + '/' + BASE_BRANCH) + ' tip (' + (verify.headSha || '?') + ') compiles from clean.')
 
     // 3b. Deep end-review; fix-forward the defects THIS change INTRODUCED (critical/high/medium) as new commits on the
     //     branch. low + deferred are informational. Gate: unresolved INTRODUCED critical/high BLOCK the close; medium is
@@ -965,7 +1180,7 @@ async function implementPlan(plan) {
         commits: landedShas,
         tasksTotal: coverage.tasksTotal,
         tasksAccounted: coverage.tasksAccounted,
-        summary: 'deep review found unresolved critical/high issues introduced by this change (all task work is already on ' + REMOTE + '/' + BASE_BRANCH + ')',
+        summary: 'deep review found unresolved critical/high issues introduced by this change (all task work is already on ' + (LOCAL ? 'branch ' + branch : REMOTE + '/' + BASE_BRANCH) + ')',
         problems,
         reason: 'deep review unresolved',
       })
@@ -1027,19 +1242,27 @@ if (pathErr) {
   return { aborted: true, reason: pathErr }
 }
 
-const plan = { slug: toSlug(PLAN), path: PLAN.replace(/\\/g, '/'), absPath: REPO_DIR + '/' + PLAN.replace(/\\/g, '/') }
+// Normalize the ref (drop a directory's trailing slash) and remember its shape. `absPath` resolves to the directory
+// for a dir plan (agents then read README.md + task-N-*.md under it) and to the file for a single-file plan.
+const planNorm = PLAN.replace(/\\/g, '/').replace(/\/+$/, '')
+const plan = { slug: toSlug(PLAN), path: planNorm, absPath: REPO_DIR + '/' + planNorm, isDir: isPlanDirRef(planNorm) }
 if (MODE === 'dry-run') log('MODE = dry-run: the plan will be implemented and gated per unit but NOT fix-forwarded or archived.')
+if (LOCAL) log('MODE = local: implementing against the LOCAL ' + BASE_BRANCH + ' as the trunk on branch plan/' + plan.slug + ' — NO fetch/rebase/push; review + archive commit onto the branch; ' + BASE_BRANCH + ' is left untouched.')
+if (plan.isDir) log('Plan is a DIRECTORY (' + plan.path + '): agents read README.md + task-N-*.md under it.')
 log('Implementing plan ' + plan.slug + ' (' + plan.path + ') via the batched self-rotating engine.')
 
 phase('Implement')
 const result = await implementPlan(plan)
 
+// Where the landed work lives, for the final report: LOCAL keeps it on the plan branch (nothing pushed); merge puts it
+// on the remote trunk. (dry-run has its own branch already.)
+const landedWhere = LOCAL ? 'branch ' + result.branch : REMOTE + '/' + BASE_BRANCH
 if (result.completed && result.reason === 'completed + archived') {
-  log('DONE  ' + result.slug + ': ' + result.landedUnits + ' unit(s) on ' + REMOTE + '/' + BASE_BRANCH + ' — ' + result.reason)
+  log('DONE  ' + result.slug + ': ' + result.landedUnits + ' unit(s) on ' + landedWhere + ' — ' + result.reason)
 } else if (result.green && MODE === 'dry-run') {
   log('OK    ' + result.slug + ' green (dry-run, committed on ' + result.branch + ', not pushed). worktree=' + (result.worktreePath || '?'))
 } else if (result.tasksAccounted && result.tasksTotal && result.tasksAccounted === result.tasksTotal) {
-  log('PARTIAL ' + result.slug + ': all task work is on ' + REMOTE + '/' + BASE_BRANCH + ' but ' + result.reason + '. ' + (result.problems || ''))
+  log('PARTIAL ' + result.slug + ': all task work is on ' + landedWhere + ' but ' + result.reason + '. ' + (result.problems || ''))
 } else {
   log(
     'FAIL  ' + result.slug + ': ' + result.reason + '. ' + result.landedUnits + ' unit(s) landed before stopping. ' +
@@ -1048,6 +1271,16 @@ if (result.completed && result.reason === 'completed + archived') {
 }
 if (MODE === 'dry-run') {
   log('NOTE: dry-run — work is committed on branch ' + result.branch + ' (worktree under ' + WORKTREES_DIR + '/), NOT pushed.')
+} else if (LOCAL && result.landedUnits) {
+  // LOCAL run: everything stayed on the plan branch; main was never touched and nothing was pushed. The user lands it.
+  // NOTE the Windows constraint: `git branch -f main <branch>` is REFUSED while main is checked out in another worktree,
+  // so the safe landing is a fast-forward merge FROM the main checkout (C:/dev/waml). This workflow does NOT do it.
+  log(
+    'NOTE: LOCAL run — the work stayed entirely on branch ' + result.branch + ' (worktree under ' + WORKTREES_DIR + '/); ' +
+      'nothing was pushed and ' + BASE_BRANCH + ' was NOT moved. To land it: review branch "' + result.branch + '", then ' +
+      'from the ' + BASE_BRANCH + ' checkout (' + REPO_DIR + ') run "git merge --ff-only ' + result.branch + '" (git refuses ' +
+      '"git branch -f ' + BASE_BRANCH + '" while ' + BASE_BRANCH + ' is checked out there). This workflow did NOT land it for you.',
+  )
 } else if (result.landedUnits) {
   log(
     'NOTE: your LOCAL ' + BASE_BRANCH + ' was left untouched; ' + REMOTE + '/' + BASE_BRANCH + ' has the pushed work. Run ' +
