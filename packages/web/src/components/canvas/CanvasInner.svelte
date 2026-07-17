@@ -19,8 +19,8 @@
 
   import { model, store } from "../../state/model.svelte";
   import { isFirstVisit, onStoreError } from "../../state/bootstrap";
-  import { runDagreLayout, NODE_W, NODE_H } from "../../canvas/layout";
-  import { toRFNode } from "./toRFNode";
+  import { runDagreLayout, runSolveLayout, type SolveLayout, NODE_W, NODE_H } from "../../canvas/layout";
+  import { toRFNode, toGroupNode } from "./toRFNode";
   import { diagramCandidateStereotypes, isDiagramEditable } from "./diagramProps";
   import { nodeTypes, edgeTypes } from "./flowTypes";
   import { buildRfEdges, buildAnchorEdges } from "./edges";
@@ -63,6 +63,7 @@
   } from "@waml/core/state/diagrams";
   import { resolveDisplay, slugify, type DiagramDisplay, type Diagram, type ModelEdge } from "@waml/okf";
   import { getProfile } from "@waml/core/profiles";
+  import { erdAwareNodeSize } from "@waml/core/canvas/layoutSize";
   import { TEMPLATES } from "@waml/core/templates";
   import { new_diagram_doc } from "@waml/wasm";
   import { persistBundle } from "@waml/core/state/persist";
@@ -142,6 +143,11 @@
   // end (onnodedragstop below).
   let rfNodes = $state<Node[]>([]);
   let rfEdges = $state<Edge[]>([]);
+
+  // Latest solver output for the active REAL Diagram (null on All/behavior views,
+  // which use dagre). Drives group-frame pseudo-nodes, collapse flags, and the
+  // diagnostics banner. Written ONLY by the imperative layoutActiveView pass.
+  let solveResult = $state<SolveLayout | null>(null);
 
   // useSvelteFlow() (confirmed via hooks/useSvelteFlow.svelte.d.ts) requires flow
   // context — available because Canvas.svelte wraps this component in
@@ -232,12 +238,27 @@
     const disp = activeDisplay;
     const diag = activeDiagram;
     const selNodes = selectionSet.nodes;
-    rfNodes = nodes
+    const solved = solveResult;
+    const memberNodes = nodes
       .filter((n) => memberSet.has(n.key))
-      .map((n) => ({
-        ...toRFNode(n, disp, diag.profile, diag.hints?.collapse?.includes(n.key) ?? false),
-        selected: selNodes.includes(n.key),
-      }));
+      .map((n) => {
+        // On a solved view, collapse comes from the solver flags (supersedes the
+        // diagram's hand-authored `hints.collapse`); on dagre views, from hints.
+        const collapsed = solved
+          ? (solved.flags[n.key]?.collapsed ?? false)
+          : (diag.hints?.collapse?.includes(n.key) ?? false);
+        return {
+          ...toRFNode(n, disp, diag.profile, collapsed),
+          selected: selNodes.includes(n.key),
+        };
+      });
+    // Append frame-group hull pseudo-nodes behind the members (toGroupNode drops
+    // Box/Shrink groups, which draw nothing). Their ids never collide with model
+    // node keys, so selection/drag/delete ignore them.
+    const groupNodes = (solved?.groups ?? [])
+      .map((grp, i) => toGroupNode(grp, i))
+      .filter((n): n is Node => n !== null);
+    rfNodes = [...groupNodes, ...memberNodes];
   });
 
   // 2) Rebuild rfEdges from the model's visible edges + anchor edges, folding in
@@ -266,6 +287,19 @@
   // 3) Persist the active diagram key on change.
   $effect(() => {
     persistActiveDiagramKey(activeDiagram.key);
+  });
+
+  // 3b) View activation: lay out the active view whenever it switches, so a real
+  // Diagram's `## Layout` prose takes effect (solver) and a freshly entered
+  // All/behavior view still leaves the origin (dagre). layoutActiveView branches
+  // solve-vs-dagre internally. Solve/layout is an IMPERATIVE pass, never reactive
+  // — so this effect depends ONLY on the primitive activeDiagramKey (stable across
+  // $model emits), and untrack() confines its $model/store reads and writes so
+  // they can't re-enter it. Re-entering a view recomputes any drag override — the
+  // spec's accepted "re-layout on view entry" limitation.
+  $effect(() => {
+    void activeDiagramKey;
+    untrack(() => layoutActiveView());
   });
 
   // 5) Mirror the bundle to localStorage on every change so a refresh/crash
@@ -405,13 +439,10 @@
   // ── Auto-layout + tool handler ─────────────────────────────────────────────
   function handleToolChange(t: Tool) {
     if (t === "layout") {
-      const { nodes, edges } = store.get();
-      const positions = runDagreLayout(nodes, edges, activeDisplay);
-      // Turn on node transitions, move everything, then frame the result — so
-      // the model visibly "organizes itself" instead of snapping. Cleared after
-      // the glide so dragging stays instant.
+      // Turn on node transitions, re-solve/relayout the active view, then frame
+      // the result — so the model visibly "organizes itself" instead of snapping.
       layoutAnimating = true;
-      positions.forEach((pos, key) => store.updateNode(key, { position: pos }));
+      layoutActiveView();
       setTimeout(() => fitView({ duration: 500, padding: 0.18 }), 30);
       setTimeout(() => {
         layoutAnimating = false;
@@ -525,13 +556,43 @@
     return svgToPngBlob(built.svg, { width: built.width, height: built.height });
   }
 
-  // Dagre-lay out the current (derived) model and feed positions into the store's
-  // overlay. The OKF bundle carries no positions, so without this every freshly
-  // loaded node piles up at the origin.
-  function layoutAll() {
+  // Lay out the active view and feed positions into the store overlay. For a REAL
+  // Diagram (a doc in $model.diagrams, key ≠ ALL_DIAGRAM_KEY) this is the prose
+  // solver; for the implicit "All"/behavior views it's dagre, exactly as before.
+  // The OKF bundle carries no positions, so without this every freshly loaded node
+  // piles up at the origin.
+  function layoutActiveView() {
+    const diag = activeDiagram;
     const g = store.get();
+    const isRealDiagram = $model.diagrams.some((d) => d.key === diag.key);
+    if (isRealDiagram) {
+      const sizes: Record<string, { w: number; h: number }> = {};
+      for (const n of g.nodes) {
+        const s = erdAwareNodeSize(n, activeDisplay);
+        sizes[n.key] = { w: s.width, h: s.height };
+      }
+      try {
+        const result = runSolveLayout(store.getBundle(), diag.key, sizes);
+        result.positions.forEach((pos, key) => store.updateNode(key, { position: pos }));
+        solveResult = result;
+      } catch (e) {
+        // A solve that throws (e.g. prose the parser rejects) must not escape a
+        // handler — leave positions untouched and surface it as a diagnostic.
+        solveResult = {
+          positions: new Map(),
+          groups: [],
+          flags: {},
+          diagnostics: [
+            { severity: "error", code: "malformed-layout", message: String(e), file: diag.key, line: 0, span: undefined },
+          ],
+        };
+      }
+      return;
+    }
+    // Implicit "All" / behavior views have no backing doc → dagre.
     const positions = runDagreLayout(g.nodes, g.edges, activeDisplay);
     positions.forEach((pos, key) => store.updateNode(key, { position: pos }));
+    solveResult = null;
   }
 
   // Replace the whole model with a bundle, then auto-layout it. A fresh model
@@ -541,7 +602,7 @@
   function loadBundleWithLayout(bundle: Bundle) {
     store.load(bundle);
     activeDiagramKey = defaultDiagramKey(store.get());
-    layoutAll();
+    layoutActiveView();
   }
 
   // Merge an incoming OKF bundle: insert it as a package (full-path identity via
@@ -555,7 +616,7 @@
   function applyMergeWithLayout(bundle: Bundle) {
     const top = bundle[0]?.[0]?.replace(/[\\/].*$/, "") ?? "";
     const name = top || "imported";
-    if (store.insertPackage("", name, bundle)) layoutAll();
+    if (store.insertPackage("", name, bundle)) layoutActiveView();
   }
 
   function handleImportConfirm(bundle: Bundle, mode: "replace" | "merge") {
@@ -574,7 +635,7 @@
       const slug = slugify(p.name);
       const docs: Bundle =
         p.tier === "diagram" ? [[`${slug}.md`, new_diagram_doc(p.kind, p.name)]] : p.bundle;
-      if (store.insertPackage(p.parentPath, slug, docs)) layoutAll();
+      if (store.insertPackage(p.parentPath, slug, docs)) layoutActiveView();
     }
     showNewPackage = false;
   }
