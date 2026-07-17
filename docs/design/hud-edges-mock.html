@@ -1,0 +1,181 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>HUD edges — UML connector set</title>
+<style>
+  :root { color-scheme: light; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; }
+  body {
+    --accent: 20, 150, 220;
+    --fill: #eaeff5;                      /* page-ish fill so hollow heads read */
+    background: #eef2f7;
+    color: #26313f;
+    font: 14px/1.5 -apple-system, "Segoe UI", system-ui, sans-serif;
+    display: grid;
+    grid-template-columns: 1fr 300px;
+    min-height: 100vh;
+  }
+  #stage {
+    display: grid;
+    place-items: center;
+    background:
+      radial-gradient(120% 90% at 50% 0%, #ffffff 0%, #e6ecf3 60%, #dbe3ec 100%),
+      repeating-linear-gradient(0deg,  transparent 0 23px, rgba(20,120,190,.05) 23px 24px),
+      repeating-linear-gradient(90deg, transparent 0 23px, rgba(20,120,190,.05) 23px 24px);
+  }
+  .board {
+    background: rgba(255,255,255,.72);
+    border: 1.5px solid rgba(var(--accent),.5);
+    padding: 8px 14px;
+  }
+  .edge   { stroke: url(#edgeGrad); stroke-width: 2; fill: none;
+            filter: drop-shadow(0 0 2.5px rgba(var(--accent), .35)); }
+  .dash   { stroke-dasharray: 7 5; }
+  .mk-stroke { stroke: rgb(var(--accent)); stroke-width: 1.7; fill: none; }
+  .mk-hollow { stroke: rgb(var(--accent)); stroke-width: 1.7; fill: var(--fill); }
+  .mk-fill   { stroke: rgb(var(--accent)); stroke-width: 1.5; fill: rgb(var(--accent)); }
+  .lbl  { font: 600 12px/1 ui-monospace, "SF Mono", "Cascadia Code", Menlo, monospace;
+          letter-spacing: .04em; fill: #212a34; }
+  .sub  { font: 500 10px/1 ui-monospace, "SF Mono", "Cascadia Code", Menlo, monospace;
+          letter-spacing: .10em; text-transform: uppercase; fill: rgb(var(--accent)); opacity: .8; }
+  .node-chip { fill: rgba(255,255,255,.9); stroke: rgb(var(--accent)); stroke-width: 1.5; }
+
+  aside { padding: 20px 18px; background: #fff; border-left: 1px solid #dbe3ec; overflow-y: auto; }
+  h1 { font-size: 12px; letter-spacing: .16em; text-transform: uppercase; color: #1496dc; margin: 0 0 14px; }
+  .swatches { display: flex; gap: 8px; flex-wrap: wrap; margin: 8px 0 18px; }
+  .swatch { width: 30px; height: 30px; border-radius: 6px; border: 1px solid #cdd7e2; cursor: pointer; }
+  .swatch.sel { outline: 2px solid #1496dc; outline-offset: 2px; }
+  .hint { font-size: 11px; color: #8a97a6; line-height: 1.6; }
+</style>
+</head>
+<body>
+  <div id="stage">
+    <svg class="board" id="board" width="520" height="452" viewBox="0 0 520 452">
+      <defs>
+        <!-- asymmetric stroke: bright at the source end, softer toward the target -->
+        <linearGradient id="edgeGrad" gradientUnits="userSpaceOnUse" x1="40" y1="0" x2="312" y2="0">
+          <stop offset="0"   stop-color="rgb(var(--accent))" stop-opacity="1"/>
+          <stop offset="0.55" stop-color="rgb(var(--accent))" stop-opacity="0.78"/>
+          <stop offset="1"   stop-color="rgb(var(--accent))" stop-opacity="0.45"/>
+        </linearGradient>
+
+        <!-- open arrowhead (association direction / dependency) -->
+        <marker id="open" markerWidth="14" markerHeight="14" refX="11" refY="6"
+                orient="auto" markerUnits="userSpaceOnUse">
+          <path class="mk-stroke" d="M1,1 L11,6 L1,11"/>
+        </marker>
+        <!-- hollow triangle (generalization / realization) -->
+        <marker id="tri" markerWidth="14" markerHeight="12" refX="10.5" refY="5.5"
+                orient="auto" markerUnits="userSpaceOnUse">
+          <path class="mk-hollow" d="M1,1 L10.5,5.5 L1,10 Z"/>
+        </marker>
+        <!-- hollow diamond (aggregation), sits at the source end -->
+        <marker id="dia-h" markerWidth="16" markerHeight="11" refX="1" refY="5"
+                orient="auto" markerUnits="userSpaceOnUse">
+          <path class="mk-hollow" d="M1,5 L7,1 L13,5 L7,9 Z"/>
+        </marker>
+        <!-- filled diamond (composition), sits at the source end -->
+        <marker id="dia-f" markerWidth="16" markerHeight="11" refX="1" refY="5"
+                orient="auto" markerUnits="userSpaceOnUse">
+          <path class="mk-fill" d="M1,5 L7,1 L13,5 L7,9 Z"/>
+        </marker>
+      </defs>
+
+      <!-- little source/target chips so ends have something to attach to -->
+      <!-- row template: chip - line - chip - label -->
+
+      <!-- 1. Association -->
+      <g transform="translate(0,34)">
+        <rect class="node-chip" x="30" y="-11" width="22" height="22"/>
+        <line class="edge" x1="52" y1="0" x2="286" y2="0"/>
+        <rect class="node-chip" x="286" y="-11" width="22" height="22"/>
+        <text class="sub" x="330" y="-4">assoc</text>
+        <text class="lbl" x="330" y="10">Association</text>
+      </g>
+
+      <!-- 2. Directed association -->
+      <g transform="translate(0,94)">
+        <rect class="node-chip" x="30" y="-11" width="22" height="22"/>
+        <line class="edge" x1="52" y1="0" x2="284" y2="0" marker-end="url(#open)"/>
+        <rect class="node-chip" x="286" y="-11" width="22" height="22"/>
+        <text class="sub" x="330" y="-4">nav</text>
+        <text class="lbl" x="330" y="10">Directed assoc.</text>
+      </g>
+
+      <!-- 3. Dependency -->
+      <g transform="translate(0,154)">
+        <rect class="node-chip" x="30" y="-11" width="22" height="22"/>
+        <line class="edge dash" x1="52" y1="0" x2="284" y2="0" marker-end="url(#open)"/>
+        <rect class="node-chip" x="286" y="-11" width="22" height="22"/>
+        <text class="sub" x="330" y="-4">uses</text>
+        <text class="lbl" x="330" y="10">Dependency</text>
+      </g>
+
+      <!-- 4. Generalization -->
+      <g transform="translate(0,214)">
+        <rect class="node-chip" x="30" y="-11" width="22" height="22"/>
+        <line class="edge" x1="52" y1="0" x2="282" y2="0" marker-end="url(#tri)"/>
+        <rect class="node-chip" x="286" y="-11" width="22" height="22"/>
+        <text class="sub" x="330" y="-4">is-a</text>
+        <text class="lbl" x="330" y="10">Generalization</text>
+      </g>
+
+      <!-- 5. Realization -->
+      <g transform="translate(0,274)">
+        <rect class="node-chip" x="30" y="-11" width="22" height="22"/>
+        <line class="edge dash" x1="52" y1="0" x2="282" y2="0" marker-end="url(#tri)"/>
+        <rect class="node-chip" x="286" y="-11" width="22" height="22"/>
+        <text class="sub" x="330" y="-4">impl</text>
+        <text class="lbl" x="330" y="10">Realization</text>
+      </g>
+
+      <!-- 6. Aggregation (hollow diamond at owner/source) -->
+      <g transform="translate(0,334)">
+        <rect class="node-chip" x="30" y="-11" width="22" height="22"/>
+        <line class="edge" x1="56" y1="0" x2="286" y2="0" marker-start="url(#dia-h)"/>
+        <rect class="node-chip" x="286" y="-11" width="22" height="22"/>
+        <text class="sub" x="330" y="-4">has-a</text>
+        <text class="lbl" x="330" y="10">Aggregation</text>
+      </g>
+
+      <!-- 7. Composition (filled diamond at owner/source) -->
+      <g transform="translate(0,394)">
+        <rect class="node-chip" x="30" y="-11" width="22" height="22"/>
+        <line class="edge" x1="56" y1="0" x2="286" y2="0" marker-start="url(#dia-f)"/>
+        <rect class="node-chip" x="286" y="-11" width="22" height="22"/>
+        <text class="sub" x="330" y="-4">owns</text>
+        <text class="lbl" x="330" y="10">Composition</text>
+      </g>
+    </svg>
+  </div>
+
+  <aside>
+    <h1>HUD edges — connector set</h1>
+    <div class="swatches" id="swatches"></div>
+    <p class="hint">
+      The UML relationship set in the shared HUD material: thin accent strokes,
+      hollow heads filled with the board color so they read as outlines, filled
+      diamond for composition. Solid vs dashed line = structural vs
+      dependency/realization. Recolor with the swatches. These become the
+      makepad edge-draw primitives (line style + endpoint marker).
+    </p>
+  </aside>
+
+<script>
+  const colors = [
+    ['Blue','20, 150, 220'], ['Cyan','0, 180, 210'], ['Teal','20, 190, 160'],
+    ['Indigo','90, 110, 240'], ['Amber','230, 150, 20'], ['Green','60, 190, 90'],
+    ['Rose','235, 70, 120'], ['Slate','100, 116, 139'],
+  ];
+  const sw = document.getElementById('swatches');
+  colors.forEach((c,i)=>{ const d=document.createElement('div');
+    d.className='swatch'+(i===0?' sel':''); d.style.background=`rgb(${c[1]})`; d.title=c[0];
+    d.onclick=()=>{ document.body.style.setProperty('--accent', c[1]);
+      [...sw.children].forEach(e=>e.classList.remove('sel')); d.classList.add('sel'); };
+    sw.appendChild(d); });
+</script>
+</body>
+</html>

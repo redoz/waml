@@ -1,0 +1,209 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>HUD node — select ripple</title>
+<style>
+  :root { color-scheme: light; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; }
+  body {
+    background: #eef2f7;
+    color: #26313f;
+    font: 14px/1.5 -apple-system, "Segoe UI", system-ui, sans-serif;
+    display: grid;
+    grid-template-columns: 1fr 300px;
+    min-height: 100vh;
+  }
+  #stage {
+    display: grid;
+    place-items: center;
+    perspective: 900px;
+    background:
+      radial-gradient(120% 90% at 50% 0%, #ffffff 0%, #e6ecf3 60%, #dbe3ec 100%),
+      repeating-linear-gradient(0deg,  transparent 0 23px, rgba(20,120,190,.05) 23px 24px),
+      repeating-linear-gradient(90deg, transparent 0 23px, rgba(20,120,190,.05) 23px 24px);
+  }
+
+  .node {
+    --accent: 20, 150, 220;
+    --round: 0px;
+    --glow: 0.9;
+    --bw: 2px;                            /* active border thickness */
+    --settle: 100ms;
+    --ox: 50%; --oy: 50%;                 /* select origin */
+    position: relative;
+    width: 236px;
+    cursor: pointer;
+    user-select: none;
+    transform-style: preserve-3d;
+    background:
+      linear-gradient(180deg, rgba(255,255,255,.94), rgba(255,255,255,.80)),
+      rgba(var(--accent),.06);
+    border-radius: var(--round);
+    color: #212a34;
+    box-shadow:
+      0 8px 22px rgba(40,70,110,.14),
+      0 0 calc(10px * var(--glow)) rgba(var(--accent), calc(.16 * var(--glow)));
+    transition: transform .3s cubic-bezier(.2,.9,.25,1.1), box-shadow .2s ease;
+  }
+  /* glow flares on select then eases away to a dim rest (slower than the ripple) */
+  @keyframes nodeglow {
+    0%   { box-shadow: 0 6px 16px rgba(40,70,110,.16), 0 0 26px rgba(var(--accent), .50); }
+    100% { box-shadow: 0 6px 16px rgba(40,70,110,.16), 0 0  5px rgba(var(--accent), .09); }
+  }
+  .node.sel {
+    /* the border carries the state; the glow flares + fades */
+    animation: nodeglow 420ms ease-out forwards;
+  }
+
+  /* header */
+  .node .hdr {
+    padding: 9px 12px 8px;
+    border-bottom: 1px solid rgba(var(--accent),.22);
+  }
+  .node .stereo {
+    font: 600 10px/1 ui-monospace, "SF Mono", "Cascadia Code", Menlo, monospace;
+    letter-spacing: .18em; text-transform: uppercase;
+    color: rgb(var(--accent));
+    opacity: .85;
+  }
+  .node .name {
+    margin-top: 3px;
+    font: 700 14px/1.15 ui-monospace, "SF Mono", "Cascadia Code", Menlo, monospace;
+    letter-spacing: .06em; text-transform: uppercase;
+    color: #212a34;
+  }
+  /* body rows */
+  .node .rows { padding: 8px 12px 10px; }
+  .node .row {
+    font: 500 12px/1.7 ui-monospace, "SF Mono", "Cascadia Code", Menlo, monospace;
+    letter-spacing: .01em;
+    color: #3a4552;
+    white-space: nowrap;
+  }
+  .node .row .k { color: rgb(var(--accent)); }   /* +/-/# marker */
+  .node .row .t { color: #7b8797; }               /* type */
+
+  /* thin frame, always on */
+  .node::before {
+    content: ""; position: absolute; inset: 0;
+    padding: 1.5px;
+    background: linear-gradient(180deg, rgba(var(--accent),.9), rgba(var(--accent),.5));
+    border-radius: inherit;
+    -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+    mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+    -webkit-mask-composite: xor; mask-composite: exclude;
+    pointer-events: none;
+  }
+  /* thick frame, revealed radially from the click point when selected */
+  .node::after {
+    content: ""; position: absolute; inset: 0;
+    padding: var(--bw);
+    background: rgb(var(--accent));
+    border-radius: inherit;
+    -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+    mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+    -webkit-mask-composite: xor; mask-composite: exclude;
+    clip-path: circle(0% at 50% 50%);
+    pointer-events: none;
+  }
+  @keyframes reveal {
+    from { clip-path: circle(0%   at var(--ox) var(--oy)); }
+    to   { clip-path: circle(150% at var(--ox) var(--oy)); }
+  }
+  /* selected: reveal and HOLD the thick border */
+  .node.sel::after { animation: reveal var(--settle) ease-out forwards; }
+
+  aside {
+    padding: 20px 18px; background: #fff;
+    border-left: 1px solid #dbe3ec; overflow-y: auto;
+  }
+  h1 { font-size: 12px; letter-spacing: .16em; text-transform: uppercase; color: #1496dc; margin: 0 0 14px; }
+  label { display: block; margin: 14px 0; font-size: 12px; color: #5a6675; }
+  label .val { float: right; color: #26313f; font-variant-numeric: tabular-nums; }
+  input[type=range] { width: 100%; margin-top: 6px; accent-color: #1496dc; }
+  .swatches { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
+  .swatch { width: 30px; height: 30px; border-radius: 6px; border: 1px solid #cdd7e2; cursor: pointer; }
+  .swatch.sel { outline: 2px solid #1496dc; outline-offset: 2px; }
+  .hint { font-size: 11px; color: #8a97a6; margin-top: 18px; line-height: 1.6; }
+</style>
+</head>
+<body>
+  <div id="stage">
+    <div class="node" id="node">
+      <div class="hdr">
+        <div class="stereo">&laquo;entity&raquo;</div>
+        <div class="name">Order</div>
+      </div>
+      <div class="rows">
+        <div class="row"><span class="k">+</span> id<span class="t"> : UUID</span></div>
+        <div class="row"><span class="k">+</span> total<span class="t"> : Money</span></div>
+        <div class="row"><span class="k">-</span> status<span class="t"> : State</span></div>
+        <div class="row"><span class="k">+</span> placedAt<span class="t"> : Date</span></div>
+      </div>
+    </div>
+  </div>
+  <aside>
+    <h1>HUD node — select ripple</h1>
+    <div class="swatches" id="swatches"></div>
+
+    <label>Active border (px) <span class="val" id="v_bw"></span>
+      <input type="range" id="bw" min="1" max="6" step="0.5" value="2"></label>
+    <label>Settle time (ms) <span class="val" id="v_settle"></span>
+      <input type="range" id="settle" min="80" max="500" step="10" value="100"></label>
+    <label>Corner radius (px) <span class="val" id="v_round"></span>
+      <input type="range" id="round" min="0" max="20" step="1" value="0"></label>
+    <label>Glow <span class="val" id="v_glow"></span>
+      <input type="range" id="glow" min="0" max="2.5" step="0.05" value="0.9"></label>
+
+    <p class="hint">
+      Same material as the button. Click the node to select: the thick accent
+      border reveals from the click point and HOLDS (nodes keep selection).
+      Click again to deselect. This is the shared HUD identity for the canvas.
+    </p>
+  </aside>
+
+<script>
+  const node = document.getElementById('node');
+  const ctrl = id => document.getElementById(id);
+  const ids  = ['bw','settle','round','glow'];
+  function vals(){
+    const v={}; ids.forEach(k=>{ v[k]=parseFloat(ctrl(k).value); ctrl('v_'+k).textContent=v[k]; });
+    node.style.setProperty('--bw', v.bw + 'px');
+    node.style.setProperty('--settle', v.settle + 'ms');
+    node.style.setProperty('--round', v.round + 'px');
+    node.style.setProperty('--glow', v.glow);
+    return v;
+  }
+  ids.forEach(k=> ctrl(k).addEventListener('input', vals));
+
+  const colors = [
+    ['Blue','20, 150, 220'], ['Cyan','0, 180, 210'], ['Teal','20, 190, 160'],
+    ['Indigo','90, 110, 240'], ['Amber','230, 150, 20'], ['Green','60, 190, 90'],
+    ['Rose','235, 70, 120'],
+  ];
+  const sw = document.getElementById('swatches');
+  colors.forEach((c,i)=>{ const d=document.createElement('div');
+    d.className='swatch'+(i===0?' sel':''); d.style.background=`rgb(${c[1]})`; d.title=c[0];
+    d.onclick=()=>{ node.style.setProperty('--accent', c[1]);
+      [...sw.children].forEach(e=>e.classList.remove('sel')); d.classList.add('sel'); };
+    sw.appendChild(d); });
+
+  node.addEventListener('pointerdown', e=>{
+    vals();
+    const r = node.getBoundingClientRect();
+    node.style.setProperty('--ox', (((e.clientX-r.left)/r.width )*100).toFixed(1)+'%');
+    node.style.setProperty('--oy', (((e.clientY-r.top )/r.height)*100).toFixed(1)+'%');
+    // toggle: re-arm the reveal animation each time it becomes selected
+    node.classList.remove('sel');
+    void node.offsetWidth;                 // reflow to restart the animation
+    if(!node.dataset.on || node.dataset.on==='0'){ node.classList.add('sel'); node.dataset.on='1'; }
+    else { node.dataset.on='0'; }
+  });
+
+  vals();
+</script>
+</body>
+</html>

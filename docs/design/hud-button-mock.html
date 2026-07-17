@@ -96,11 +96,14 @@
   }
   .btn.down::after { animation: reveal var(--settle) ease-out forwards; }
 
+  /* glow flares on press then eases away to a dim rest (slower than the ripple) */
+  @keyframes glowpulse {
+    0%   { box-shadow: 0 2px 6px rgba(40,70,110,.16), 0 0 26px rgba(var(--accent), .50); }
+    100% { box-shadow: 0 2px 6px rgba(40,70,110,.16), 0 0  5px rgba(var(--accent), .09); }
+  }
   .btn.down {
-    /* fill stays white; only the glow lifts + the border ripples */
-    box-shadow:
-      0 2px 6px rgba(40,70,110,.16),
-      0 0 calc(20px * var(--glow)) rgba(var(--accent), calc(.36 * var(--glow)));
+    /* fill stays white; the border carries the state, the glow flares + fades */
+    animation: glowpulse 420ms ease-out forwards;
   }
 
   aside {
