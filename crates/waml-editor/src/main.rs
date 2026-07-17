@@ -3,6 +3,7 @@ use makepad_widgets::*;
 
 mod app;
 mod camera;
+mod canvas;
 mod load;
 mod scene;
 mod sizing;
