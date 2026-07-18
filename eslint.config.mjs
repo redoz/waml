@@ -10,6 +10,9 @@ export default tseslint.config(
       "**/node_modules/**",
       "**/.claude/**",
       "**/.superpowers/**",
+      // Sibling git-worktree checkouts (other branches' working copies) live
+      // physically under the repo root; never lint into them.
+      ".worktrees/**",
       "packages/okf/test/fixtures/**",
       "packages/web/public/**",
       // Vendored wasm-bindgen glue (browser globals, machine-generated).
