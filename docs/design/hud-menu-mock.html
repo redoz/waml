@@ -84,10 +84,16 @@
     color: rgb(var(--accent)); opacity: .75;
   }
   .row:hover .chev, .row.is-hover .chev, .row.is-open .chev { stroke: rgb(var(--accent)); }
-  /* active (pressed): white bg + the shared thin frame.
+  /* active (pressed): white bg + the shared thin frame, with the accent
+     border-flare glow so it reads emissive rather than clinical.
      NB: the intended click feel — accent fill washing radially out INTO the
      frame (like the node select reveal) — waits for the shader port. */
-  .row:active, .row.is-active { background: #fff; }
+  .row:active, .row.is-active {
+    background: #fff;
+    box-shadow:
+      0 0 10px rgba(var(--accent), .34),
+      0 0 3px  rgba(var(--accent), .28);
+  }
   .row:active::after, .row.is-active::after {
     content: ""; position: absolute; inset: 0; padding: 1px;
     border-radius: 2px;
@@ -99,7 +105,12 @@
   }
   /* danger row carries its own hue through the states */
   .row.danger:hover, .row.danger.is-hover { background: rgba(var(--danger),.12); }
-  .row.danger:active, .row.danger.is-active { background: #fff; }
+  .row.danger:active, .row.danger.is-active {
+    background: #fff;
+    box-shadow:
+      0 0 10px rgba(var(--danger), .32),
+      0 0 3px  rgba(var(--danger), .26);
+  }
   .row.danger:active::after, .row.danger.is-active::after {
     background: rgb(var(--danger));
   }
