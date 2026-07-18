@@ -104,6 +104,19 @@ pub struct Recent {
     opened_at: u64,
 }
 
+impl Recent {
+    /// The OKF directory this recent points at.
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+
+    /// Display name (the model's root name, recorded at open time).
+    pub fn title(&self) -> &str {
+        &self.title
+    }
+}
+
+
 /// Seconds since the Unix epoch (0 if the clock somehow predates it).
 fn now_unix() -> u64 {
     SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)
@@ -234,6 +247,13 @@ mod tests {
         let out = prune_missing(list);
         assert_eq!(out.len(), 1);
         assert_eq!(out[0].path, here);
+    }
+
+    #[test]
+    fn recent_getters_return_stored_fields() {
+        let r = Recent { path: PathBuf::from("/proj"), title: "Proj".into(), opened_at: 5 };
+        assert_eq!(r.path(), Path::new("/proj"));
+        assert_eq!(r.title(), "Proj");
     }
 
     // ---- disk seam, against a temp dir (never the real home) ----
