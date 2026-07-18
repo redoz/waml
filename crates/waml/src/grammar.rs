@@ -7,7 +7,7 @@ use crate::multiplicity::Multiplicity;
 use crate::syntax::{
     ErrorNode, FlowBlock, FlowBullet, FlowNodeSyntax, FlowTargetRef, FlowTransition, LifelineLine,
     Line, LinkRef, MemberGroup, MemberLine, MembersBlock, MessagesBlock, ParsedMessage, ParsedName,
-    ParsedRel, SeqItemSyntax, SeqOperandSyntax,
+    ParsedRel, ParsedSlot, SeqItemSyntax, SeqOperandSyntax, SlotValue,
 };
 
 static ATTR_RE: LazyLock<Regex> =
@@ -17,6 +17,8 @@ static LINK_RE: LazyLock<Regex> =
 static MULT_TAIL_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^(.*?)\s+\{([^{}]*)\}$").unwrap());
 static VALUE_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^- (\S.*)$").unwrap());
+static SLOT_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^- ([A-Za-z_][A-Za-z0-9_]*): (.+)$").unwrap());
 // verb · target-title · target-slug · name-label · name-link-title · name-link-slug · ends
 static REL_RE: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(concat!(
@@ -174,6 +176,49 @@ pub fn parse_value_line(line: &str) -> Result<String, LineError> {
             range: bullet_range(line),
             message: "malformed value line".to_string(),
         })
+}
+
+/// Parse `- name: value` where value is a quoted string, a `[Label](./slug.md)`
+/// link, or a bare identifier/number. The value's surface form is preserved in
+/// `SlotValue` for byte-identical round-trip.
+pub fn parse_slot_line(line: &str) -> Result<ParsedSlot, LineError> {
+    let err = || {
+        LineError {
+        range: bullet_range(line),
+        message: "malformed slot — expected '- name: value' (value = \"quoted\", bare token, or [Label](./slug.md))".to_string(),
+    }
+    };
+    let trimmed = line.trim_end_matches('\r').trim();
+    let caps = SLOT_RE.captures(trimmed).ok_or_else(err)?;
+    let name = caps[1].to_string();
+    let raw = caps[2].trim();
+    let value = if let Some(inner) = raw.strip_prefix('"').and_then(|r| r.strip_suffix('"')) {
+        SlotValue::Quoted(inner.to_string())
+    } else if let Some(l) = parse_link_ref(raw) {
+        SlotValue::Link(l)
+    } else {
+        // A bare value must be a single token with no whitespace / stray brackets.
+        if raw.is_empty() || raw.contains(char::is_whitespace) || STRAY_BRACKET_RE.is_match(raw) {
+            return Err(err());
+        }
+        SlotValue::Bare(raw.to_string())
+    };
+    Ok(ParsedSlot {
+        name,
+        value,
+        line: 0,
+        span: None,
+    })
+}
+
+/// Exact inverse of `parse_slot_line`.
+pub fn render_slot_line(s: &ParsedSlot) -> String {
+    let v = match &s.value {
+        SlotValue::Quoted(v) => format!("\"{v}\""),
+        SlotValue::Bare(v) => v.clone(),
+        SlotValue::Link(l) => format!("[{}](./{}.md)", l.title, l.slug),
+    };
+    format!("- {}: {v}", s.name)
 }
 
 fn parse_end(part: &str) -> Option<RelEnd> {
@@ -1010,6 +1055,41 @@ pub fn render_messages_block(block: &MessagesBlock) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn slot_lines_round_trip_all_three_value_forms() {
+        for line in [
+            "- id: \"ORD-42\"",
+            "- status: PLACED",
+            "- qty: 3",
+            "- customer: [Ann](./ann.md)",
+        ] {
+            let s = parse_slot_line(line).unwrap();
+            assert_eq!(
+                render_slot_line(&s),
+                line,
+                "slot line must round-trip byte-identically"
+            );
+        }
+    }
+
+    #[test]
+    fn slot_value_classifies_quoted_bare_and_link() {
+        use crate::syntax::SlotValue;
+        assert!(
+            matches!(parse_slot_line("- id: \"ORD-42\"").unwrap().value, SlotValue::Quoted(v) if v == "ORD-42")
+        );
+        assert!(
+            matches!(parse_slot_line("- status: PLACED").unwrap().value, SlotValue::Bare(v) if v == "PLACED")
+        );
+        let SlotValue::Link(l) = parse_slot_line("- customer: [Ann](./ann.md)")
+            .unwrap()
+            .value
+        else {
+            panic!()
+        };
+        assert_eq!((l.title.as_str(), l.slug.as_str()), ("Ann", "ann"));
+    }
 
     #[test]
     fn parses_attribute_with_link_and_multiplicity() {
