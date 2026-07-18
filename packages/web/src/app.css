@@ -1,10 +1,15 @@
-@import "@fontsource-variable/source-sans-3";
+@import "@fontsource/ibm-plex-sans";
+@import "@fontsource/ibm-plex-mono";
 @import "@xyflow/svelte/dist/style.css";
+@import "./atlas.css";
+@import "./atlas-components.css";
 @import "./components/canvas/canvas.css";
 
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+body { font-family: var(--font-ui); color: var(--ink); }
 
 /* Keyboard shortcut hints. Hidden by default (opacity-0 utility on .keyhint),
    shown fully opaque under the Dock toggle (data-show-shortcuts on <html>) or

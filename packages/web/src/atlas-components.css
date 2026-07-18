@@ -1,0 +1,224 @@
+/* Atlas material + component classes — Section 2 of the spec.
+   Tokens live in atlas.css; this file is classes only. The one HUD
+   material recipe (frost fill + masked source-bright frame + low glow)
+   is defined ONCE on .hud-surface; surfaces differ only by knob overrides. */
+
+/* ── 2.0 shared HUD material ─────────────────────────────── */
+.hud-surface {
+  /* knobs (panel defaults; node/btn override below) */
+  --frost-top: .95;
+  --frost-bot: .82;
+  --frost-tint: .06;
+  --depth-y: 12px;
+  --depth-blur: 30px;
+  --depth-a: .20;
+  --bloom: .16;
+  position: relative;
+  border-radius: var(--round);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, var(--frost-top)), rgba(255, 255, 255, var(--frost-bot))),
+    rgba(var(--accent), var(--frost-tint));
+  box-shadow:
+    0 var(--depth-y) var(--depth-blur) rgba(40, 70, 110, var(--depth-a)),
+    0 0 calc(14px * var(--glow)) rgba(var(--accent), calc(var(--bloom) * var(--glow)));
+}
+/* b) source-bright masked frame — the thin resting frame, always on */
+.hud-surface::before {
+  content: ""; position: absolute; inset: 0; padding: var(--bw);
+  background: linear-gradient(150deg, rgba(var(--accent), .95), rgba(var(--accent), .5));
+  border-radius: inherit;
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+          mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor; mask-composite: exclude;
+  pointer-events: none;
+}
+/* node knobs: softer depth, warmer bloom */
+.hud-surface--node {
+  --frost-top: .94; --frost-bot: .80; --frost-tint: .06;
+  --depth-y: 8px; --depth-blur: 22px; --depth-a: .14; --bloom: .18;
+}
+/* button knobs: brighter tint + bloom, tight depth */
+.hud-surface--btn {
+  --frost-top: .92; --frost-bot: .74; --frost-tint: .10;
+  --depth-y: 6px; --depth-blur: 18px; --depth-a: .14; --bloom: .22;
+}
+
+/* ── keyframes ───────────────────────────────────────────── */
+@keyframes reveal {
+  from { clip-path: circle(0%   at var(--ox, 50%) var(--oy, 50%)); }
+  to   { clip-path: circle(150% at var(--ox, 50%) var(--oy, 50%)); }
+}
+@keyframes glowpulse {
+  0%   { box-shadow: 0 2px 6px rgba(40, 70, 110, .16), 0 0 26px rgba(var(--accent), .50); }
+  100% { box-shadow: 0 2px 6px rgba(40, 70, 110, .16), 0 0  5px rgba(var(--accent), .09); }
+}
+@keyframes nodeglow {
+  0%   { box-shadow: 0 6px 16px rgba(40, 70, 110, .16), 0 0 26px rgba(var(--accent), .50); }
+  100% { box-shadow: 0 6px 16px rgba(40, 70, 110, .16), 0 0  5px rgba(var(--accent), .09); }
+}
+
+/* ── node card ───────────────────────────────────────────── */
+.hud-node { width: 230px; cursor: grab; user-select: none; color: var(--ink); font-family: var(--font-mono); }
+.hud-node__body { position: relative; z-index: 1; }
+
+.node-hdr { padding: 9px 12px 8px; }
+.node-hdr--band { border-bottom: 1px solid rgba(var(--accent), .22); }
+.node-hdr--fill { background: rgba(var(--accent), .12); border-bottom: 1px solid rgba(var(--accent), .22); }
+
+.node-stereo {
+  text-align: center;
+  font: 600 10px/1.35 var(--font-mono);
+  letter-spacing: .18em; text-transform: uppercase;
+  color: rgb(var(--accent)); opacity: .85;
+}
+.node-name {
+  padding: 3px 12px 8px; text-align: center;
+  font: 700 13.5px/1.15 var(--font-mono);
+  letter-spacing: .06em; text-transform: uppercase; color: var(--ink);
+}
+.node-name--abstract { font-style: italic; }
+
+.node-comp { border-top: 1px solid rgba(var(--accent), .14); }
+.node-row {
+  display: flex; align-items: center; gap: 8px; padding: 5px 12px;
+  font: 500 11.5px/1.6 var(--font-mono); color: var(--ink-dim);
+  border-bottom: 1px solid rgba(var(--accent), .10);
+}
+.node-row:last-child { border-bottom: 0; }
+.node-row__vis  { flex: 0 0 auto; color: rgb(var(--accent)); }
+.node-row__name { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.node-row__ty   { flex: 0 0 auto; font-size: 10.5px; color: rgb(var(--ink-faint)); white-space: nowrap; }
+
+.node-summary { padding: 3px 12px 10px; text-align: center; font: 500 11px/1.4 var(--font-mono); color: rgb(var(--ink-faint)); }
+
+.node-more {
+  width: 100%; display: flex; align-items: center; justify-content: center; gap: 4px;
+  padding: 5px 12px; border-top: 1px solid rgba(var(--accent), .10);
+  font: 600 11px/1 var(--font-mono); letter-spacing: .04em;
+  color: rgb(var(--accent)); background: transparent; border-left: 0; border-right: 0; border-bottom: 0; cursor: pointer;
+}
+.node-more:hover { background: rgba(var(--accent), .10); }
+
+.node-badge {
+  display: inline-block; margin: 8px 12px 0; padding: 2px 7px;
+  border-radius: var(--round-chip);
+  font: 700 10px/1.4 var(--font-mono); letter-spacing: .14em; text-transform: uppercase;
+  color: rgb(var(--accent)); background: rgba(var(--accent), .12);
+}
+
+/* port nub on a node border (half in / half out) */
+.node-port {
+  width: 11px; height: 11px; border-radius: 50%;
+  background: #fff; border: 2px solid rgb(var(--accent));
+  opacity: 0; transition: opacity .12s; z-index: 10; transform: translate(-50%, -50%);
+}
+
+/* ── button (2.2) — .hud-surface .hud-surface--btn .hud-btn ─── */
+.hud-btn {
+  border: none; outline: none; -webkit-appearance: none; cursor: pointer; user-select: none;
+  display: grid; place-items: center; padding: 12px 20px;
+  color: var(--ink);
+  font: 600 15px/1 var(--font-mono); letter-spacing: .22em; text-transform: uppercase;
+  text-shadow: 0 1px 0 rgba(255, 255, 255, .7);
+  --ox: 50%; --oy: 50%;
+}
+.hud-btn--sm { padding: 7px 12px; font-size: 12px; letter-spacing: .12em; }
+/* thick accent frame, revealed radially from click point on press (JS toggles .down) */
+.hud-btn::after {
+  content: ""; position: absolute; inset: 0; padding: 2px;
+  background: rgb(var(--accent)); border-radius: inherit;
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+          mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor; mask-composite: exclude;
+  clip-path: circle(0% at 50% 50%); pointer-events: none;
+}
+.hud-btn.down::after { animation: reveal 100ms ease-out forwards; }
+.hud-btn.down { animation: glowpulse 420ms ease-out forwards; }
+.hud-btn:disabled { cursor: not-allowed; opacity: .5; }
+
+/* ── segmented (2.3) ─────────────────────────────────────── */
+.seg { display: inline-flex; border: 1px solid rgba(var(--accent), .26); border-radius: 3px; overflow: hidden; }
+.seg__btn {
+  border: 0; background: #fff; cursor: pointer; padding: 7px 12px; height: 28px;
+  font: 500 11px/1 var(--font-ui); color: rgb(var(--ink-faint));
+  border-left: 1px solid rgba(var(--accent), .18);
+}
+.seg__btn:first-child { border-left: 0; }
+.seg__btn.is-on { background: rgb(var(--accent)); color: #fff; }
+
+/* ── toggle (2.4) — square 28×18 track, square 14px knob ──── */
+.toggle {
+  flex: 0 0 auto; position: relative; width: 28px; height: 18px; cursor: pointer;
+  border-radius: 2px; background: #fff; border: 1px solid rgba(var(--accent), .35);
+  transition: background .12s ease, border-color .12s ease, box-shadow .12s ease;
+}
+.toggle::after {
+  content: ""; position: absolute; top: 0; bottom: 0; left: 2px; margin: auto 0;
+  width: 14px; height: 14px; border-radius: 2px;
+  background: transparent; border: 1px solid rgba(var(--accent), .55);
+  transition: transform .12s ease, background .12s ease, border-color .12s ease;
+}
+.toggle.is-on { background: rgb(var(--accent)); border-color: rgb(var(--accent));
+  box-shadow: 0 0 5px rgba(var(--accent), .35), 0 0 1px rgba(var(--accent), .35); }
+.toggle.is-on::after { transform: translateX(8px); background: #fff; border-color: #fff; }
+
+/* ── chips (2.5) ─────────────────────────────────────────── */
+.chip-slant {
+  display: inline-flex; align-items: center; gap: 5px; height: 22px; padding: 0 9px;
+  border: 0; border-radius: 2px; color: #22303c; background: rgba(var(--accent), .20);
+  font: 500 11.5px/1 var(--font-mono);
+}
+.chip-slant::before { content: "\00ab"; color: rgb(var(--accent)); opacity: .7; margin-right: -3px; }
+.chip-slant::after  { content: "\00bb"; color: rgb(var(--accent)); opacity: .7; margin-left: -3px; }
+.chip-slant:hover { background: rgba(var(--accent), .30); }
+
+.col-chip {
+  display: inline-flex; align-items: center; height: 20px; padding: 0 9px;
+  border-radius: 2px; cursor: pointer;
+  border: 1px solid rgba(var(--accent), .30); background: #fff; color: rgb(var(--ink-faint));
+  font: 600 10px/1 var(--font-ui);
+  transition: background .1s ease, color .1s ease, border-color .1s ease;
+}
+.col-chip.is-on { background: rgba(var(--accent), .15); border-color: rgba(var(--accent), .48); color: #22303c; }
+.col-chip.is-lock { border-style: dashed; cursor: default; color: rgb(var(--ink-faint)); opacity: .8; }
+
+/* ── inspector-style control field + focus flare ─────────── */
+.hud-field { display: grid; grid-template-columns: 78px 1fr; align-items: center; gap: 10px; margin: 9px 0; }
+.hud-field > label { font: 500 11px/1.3 var(--font-ui); color: #6a7686; }
+.hud-ctrl {
+  position: relative; width: 100%; display: flex; align-items: center;
+  background: #fff; border: 1px solid rgba(var(--accent), .26); border-radius: 3px; padding: 6px 9px;
+  font: 500 12.5px/1 var(--font-ui); color: var(--ink);
+}
+.hud-ctrl input { border: 0; outline: 0; background: transparent; width: 100%; font: inherit; color: inherit; padding: 0; }
+.hud-ctrl:focus-within {
+  border-color: rgb(var(--accent));
+  box-shadow: 0 0 0 1px rgb(var(--accent)), 0 0 5px rgba(var(--accent), .30), 0 0 1px rgba(var(--accent), .30);
+}
+
+/* ── menu (2.6) — .hud-surface + rows ────────────────────── */
+.hud-menu { padding: 6px; }
+.menu-row {
+  position: relative; display: flex; align-items: center; gap: 11px;
+  padding: 8px 11px; border-radius: 2px; cursor: default; user-select: none;
+  font: 500 12.5px/1 var(--font-ui); color: #2c3744; white-space: nowrap;
+  transition: background .08s ease, color .08s ease, box-shadow .08s ease;
+}
+.menu-row:hover { background: rgba(var(--accent), .12); color: #12212e; }
+.menu-row:active {
+  background: #fff;
+  box-shadow: 0 0 5px rgba(var(--accent), .30), 0 0 1px rgba(var(--accent), .30);
+}
+.menu-row:active::after {
+  content: ""; position: absolute; inset: 0; padding: 1px; border-radius: 2px;
+  background: rgb(var(--accent));
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+          mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor; mask-composite: exclude; pointer-events: none;
+}
+.menu-row--danger { color: rgb(var(--danger)); }
+.menu-row--danger:hover { background: rgba(var(--danger), .12); }
+.menu-row--danger:active { box-shadow: 0 0 5px rgba(var(--danger), .28), 0 0 1px rgba(var(--danger), .28); }
+.menu-row--danger:active::after { background: rgb(var(--danger)); }
+.menu-kbd { font: 600 10px/1 var(--font-mono); letter-spacing: .06em; color: rgb(var(--ink-faint)); }
+.menu-sep { height: 1px; margin: 6px 8px; background: rgba(var(--accent), .18); }

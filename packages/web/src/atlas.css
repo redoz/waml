@@ -1,0 +1,28 @@
+/* Atlas token layer — Section 1 of the atlas-restyle spec.
+   Light-only. --accent / --danger / --ink-faint are rgb TRIPLES so
+   rgba(var(--accent), α) and rgb(var(--accent)) both work. */
+:root {
+  color-scheme: light;
+
+  /* accent + danger as rgb triples (NOT hex) */
+  --accent: 20, 150, 220;
+  --danger: 235, 70, 120;
+
+  /* surfaces */
+  --canvas-bg: #eef2f7;
+  --panel-fill: #ffffff;
+  --ink: #212a34;          /* charcoal — node name / body text */
+  --ink-dim: #3a4552;      /* dimmer body text */
+  --ink-faint: 123, 135, 151;  /* TRIPLE (#7b8797) — type text, default edge stroke */
+  --hair: rgba(var(--accent), .14);
+
+  /* geometry */
+  --round: 0;
+  --round-chip: 2px;
+  --bw: 1.5px;
+  --glow: .4;
+
+  /* type */
+  --font-ui: "IBM Plex Sans", -apple-system, "Segoe UI", system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, "SF Mono", "Cascadia Code", Menlo, monospace;
+}
