@@ -266,6 +266,16 @@ impl GraphCanvas {
         self.focus_mode = true;
         self.draw_bg.redraw(cx);
     }
+
+    /// Node count of the current scene, for the statusbar mock.
+    pub fn node_count(&self) -> usize {
+        self.scene.nodes.len()
+    }
+
+    /// Current zoom as a whole-number percentage, for the statusbar mock.
+    pub fn zoom_pct(&self) -> i32 {
+        (self.camera.zoom * 100.0).round() as i32
+    }
 }
 
 #[cfg(test)]

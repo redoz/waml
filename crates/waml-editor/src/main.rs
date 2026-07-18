@@ -12,6 +12,7 @@ mod load;
 mod scene;
 mod selection_toolbar;
 mod sizing;
+mod statusbar;
 mod tool_dock;
 mod tree;
 mod tree_panel;

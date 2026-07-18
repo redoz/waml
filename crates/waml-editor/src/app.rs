@@ -13,6 +13,7 @@ script_mod! {
     use mod.widgets.DocTabs
     use mod.widgets.ToolDock
     use mod.widgets.SelectionToolbar
+    use mod.widgets.Statusbar
     use mod.widgets.SolidView
     use mod.widgets.DesktopButton
     use mod.widgets.DesktopButtonType
@@ -83,6 +84,10 @@ script_mod! {
                     }
                 }
                 body +: {
+                    View{
+                    width: Fill
+                    height: Fill
+                    flow: Down
                     Splitter{
                         width: Fill
                         height: Fill
@@ -140,6 +145,11 @@ script_mod! {
                                 }
                             }
                         }
+                    }
+                    statusbar := Statusbar{
+                        width: Fill
+                        height: 24.0
+                    }
                     }
                 }
             }
@@ -215,11 +225,36 @@ impl App {
                 }
             }
         }
+        self.sync_statusbar(cx);
     }
 
     fn refresh_doc_tabs(&mut self, cx: &mut Cx) {
         if let Some(mut doc_tabs) = self.ui.widget(cx, ids!(doc_tabs)).borrow_mut::<crate::doc_tabs::DocTabs>() {
             doc_tabs.set_tabs(cx, &self.tabs);
+        }
+    }
+
+    /// Push diagram name / node count / zoom / active tool into the bottom
+    /// statusbar. Snapshot values -- called at each sync point (tab switch,
+    /// startup, tool-dock mode change), not live during a canvas drag.
+    fn sync_statusbar(&mut self, cx: &mut Cx) {
+        let diagram_name = self.tabs.tabs.first().map(|t| t.title.clone()).unwrap_or_default();
+        let (node_count, zoom_pct) = self
+            .ui
+            .widget(cx, ids!(canvas))
+            .borrow_mut::<crate::canvas::GraphCanvas>()
+            .map(|c| (c.node_count(), c.zoom_pct()))
+            .unwrap_or((0, 100));
+        let tool_label = self
+            .ui
+            .widget(cx, ids!(tool_dock))
+            .borrow_mut::<crate::tool_dock::ToolDock>()
+            .map(|d| d.active().label())
+            .unwrap_or("Select");
+        if let Some(mut statusbar) =
+            self.ui.widget(cx, ids!(statusbar)).borrow_mut::<crate::statusbar::Statusbar>()
+        {
+            statusbar.set_state(cx, diagram_name, node_count, zoom_pct, tool_label);
         }
     }
 }
@@ -290,6 +325,7 @@ impl MatchEvent for App {
         {
             inspector.set_subject(cx, &self.model, Subject::None);
         }
+        self.sync_statusbar(cx);
     }
 
     fn handle_actions(&mut self, cx: &mut Cx, actions: &Actions) {
@@ -359,7 +395,11 @@ impl MatchEvent for App {
             .borrow_mut::<crate::tool_dock::ToolDock>()
             .and_then(|dock| dock.dock_action(actions));
         if let Some(action) = dock_action {
-            log!("tool dock: {action:?}");
+            if matches!(action, crate::tool_dock::ToolDockAction::ModeChanged(_)) {
+                self.sync_statusbar(cx);
+            } else {
+                log!("tool dock: {action:?}");
+            }
             return;
         }
 
@@ -421,6 +461,7 @@ impl AppMain for App {
         crate::doc_tabs::script_mod(vm);
         crate::tool_dock::script_mod(vm);
         crate::selection_toolbar::script_mod(vm);
+        crate::statusbar::script_mod(vm);
         self::script_mod(vm)
     }
 
@@ -442,6 +483,7 @@ impl AppMain for App {
                     {
                         dock.set_active(cx, tool);
                     }
+                    self.sync_statusbar(cx);
                 }
             }
         }
