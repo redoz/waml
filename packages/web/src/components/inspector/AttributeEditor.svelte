@@ -26,14 +26,14 @@
   };
 
   const cols = "16px minmax(100px,1fr) minmax(90px,1fr) 62px 52px minmax(120px,1.3fr) 24px";
-  const inputCls = "w-full text-[12.5px] px-[7px] py-[5px] border border-[#d8dee8] rounded-lg text-slate-900 focus:outline-none focus:border-[#1e88e5] focus:ring-2 focus:ring-[#e6f1fb]";
+  const inputCls = "w-full text-[12.5px] px-[7px] py-[5px] border border-[color:var(--hair)] rounded-lg text-slate-900 focus:outline-none focus:border-[color:rgb(var(--accent))] focus:ring-2 focus:ring-[color:rgba(var(--accent),.20)]";
 </script>
 
-<div class="border border-[#d8dee8] rounded-[10px] overflow-hidden">
+<div class="border border-[color:var(--hair)] rounded-[10px] overflow-hidden">
   <div class="overflow-x-auto">
     <div class="min-w-[540px]">
       <div
-        class="grid bg-[#f8fafc] px-[10px] py-[7px] text-[10.5px] font-semibold text-slate-500 uppercase tracking-[0.3px] border-b border-[#d8dee8] gap-[6px]"
+        class="grid bg-[color:rgba(var(--accent),.04)] px-[10px] py-[7px] text-[10.5px] font-semibold text-slate-500 uppercase tracking-[0.3px] border-b border-[color:var(--hair)] gap-[6px]"
         style={`grid-template-columns: ${cols}`}
       >
         <span></span>
@@ -68,7 +68,7 @@
             dragIdx = null;
             overIdx = null;
           }}
-          class={`grid px-[10px] py-[6px] border-b border-[#eef1f5] last:border-b-0 items-center gap-[6px] ${dragIdx === i ? "opacity-40" : ""} ${overIdx === i && dragIdx !== null && dragIdx !== i ? "bg-[#e6f1fb]" : ""}`}
+          class={`grid px-[10px] py-[6px] border-b border-[color:var(--hair)] last:border-b-0 items-center gap-[6px] ${dragIdx === i ? "opacity-40" : ""} ${overIdx === i && dragIdx !== null && dragIdx !== i ? "bg-[color:rgba(var(--accent),.10)]" : ""}`}
           style={`grid-template-columns: ${cols}`}
         >
           <!-- svelte-ignore a11y_no_static_element_interactions -->
@@ -112,7 +112,7 @@
             value={a.visibility ?? ""}
             aria-label="Visibility"
             onchange={(e) => update(i, { visibility: (e.currentTarget.value || undefined) as Visibility | undefined })}
-            class="w-full text-[11.5px] px-[4px] py-[5px] border border-[#d8dee8] rounded-lg text-slate-900"
+            class="w-full text-[11.5px] px-[4px] py-[5px] border border-[color:var(--hair)] rounded-lg text-slate-900"
           >
             {#each VISIBILITIES as v (v)}
               <option value={v}>{v || "—"}</option>
@@ -128,7 +128,7 @@
           <button
             onclick={() => remove(i)}
             title="Remove attribute"
-            class="border-none bg-transparent text-slate-300 cursor-pointer text-[15px] p-0 hover:text-[#ef4444] flex items-center justify-center"
+            class="border-none bg-transparent text-slate-300 cursor-pointer text-[15px] p-0 hover:text-[color:rgb(var(--danger))] flex items-center justify-center"
           >
             &times;
           </button>
@@ -138,7 +138,7 @@
   </div>
   <button
     onclick={add}
-    class="w-full border-none bg-white px-2 py-[8px] text-[12.5px] font-semibold text-[#1e88e5] cursor-pointer hover:bg-[#f8fafc] transition-colors border-t border-[#eef1f5]"
+    class="w-full border-none bg-[color:var(--panel-fill)] px-2 py-[8px] text-[12.5px] font-semibold text-[color:rgb(var(--accent))] cursor-pointer hover:bg-[color:rgba(var(--accent),.06)] transition-colors border-t border-[color:var(--hair)]"
   >
     + Add attribute
   </button>
