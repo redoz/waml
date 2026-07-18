@@ -6,6 +6,42 @@
 export type NoteAnchor = { targetKey: string } | { sourceKey: string; name: string } | { sourceKey: string; kind: RelationshipKind; targetKey: string };
 
 /**
+ * A behavior flow element in the shared model-level pool (design spec §3): an
+ * `Element`, NOT a classifier. Each activity/state-machine node lives here and
+ * is referenced from its owning behavior\'s view (`FlowDoc.nodes`) by `key` —
+ * exactly as a class `Diagram` references pooled classifiers by `members`.
+ */
+export interface ActivityNode {
+    /**
+     * Global pool identity: `\"{behavior}#{id}\"` (unique across the model).
+     */
+    key: string;
+    /**
+     * Local heading identity (unique within the owning behavior): the display
+     * name and the name local transitions resolve against.
+     */
+    id: string;
+    /**
+     * Owning behavior document key.
+     */
+    behavior: string;
+    kind: FlowNodeKind;
+    /**
+     * Resolved key of an `object` node\'s typing classifier.
+     */
+    objectRef?: string;
+    partition?: string;
+    entry?: string;
+    do?: string;
+    exit?: string;
+    /**
+     * Resolved key of the flow document this composite/call-behavior refines.
+     */
+    refines?: string;
+    notes?: string[];
+}
+
+/**
  * A citation: a link to an external source backing a claim, listed under a
  * `# Citations` heading (OKF §8).
  */
@@ -72,40 +108,44 @@ export interface DiagramGroup {
 }
 
 /**
- * A resolved node of a flow document.
+ * A sequence participant: IS Class or Actor, referenced by link.
  */
-export interface FlowNode {
+export interface Lifeline {
+    title: string;
+    alias?: string;
     /**
-     * Heading text minus the kind keyword — the name transitions resolve against.
+     * Resolved key of the classifier this lifeline is; None when unresolved.
      */
-    id: string;
-    kind: FlowNodeKind;
-    /**
-     * Resolved key of an `object` node\'s typing classifier.
-     */
-    objectRef?: string;
-    partition?: string;
-    entry?: string;
-    do?: string;
-    exit?: string;
-    /**
-     * Resolved key of the flow document this composite/call-behavior refines.
-     */
-    refines?: string;
-    notes?: string[];
+    ref?: string;
 }
 
 /**
- * A resolved transition (flow edge). Source/target are node identities.
+ * A typed control/object flow edge (design spec §3): a model-level pool member,
+ * referenced from its owning behavior\'s view (`FlowDoc.edges`) by `key`.
  */
 export interface FlowEdge {
+    /**
+     * Global pool identity: `\"{behavior}#e{n}\"`.
+     */
+    key: string;
+    kind: FlowEdgeKind;
+    /**
+     * Owning behavior document key.
+     */
+    behavior: string;
+    /**
+     * Source activity-node pool key (always a node in `behavior`).
+     */
     from: string;
     /**
-     * Local node identity, or the link title for a cross-document target.
+     * Target activity-node pool key for a LOCAL target; the link title for a
+     * cross-document target (matches no local node key → not drawn, mirroring
+     * the class-diagram edge rule).
      */
     to: string;
     /**
-     * Resolved key when the target was a cross-document link.
+     * Resolved key of the target *behavior document* when the target was a
+     * cross-document link.
      */
     toRef?: string;
     trigger?: string;
@@ -119,18 +159,6 @@ export interface FlowEdge {
      * Resolved key of the carried object type (`carries <link>` object flow).
      */
     carries?: string;
-}
-
-/**
- * A sequence participant: IS Class or Actor, referenced by link.
- */
-export interface Lifeline {
-    title: string;
-    alias?: string;
-    /**
-     * Resolved key of the classifier this lifeline is; None when unresolved.
-     */
-    ref?: string;
 }
 
 /**
@@ -167,7 +195,9 @@ export interface Bundle {
 export type FlowFlavor = "activity" | "stateMachine";
 
 /**
- * One flow document: one self-rendering directed graph (model AND view).
+ * One behavior document as a **view** (design spec §4): it no longer owns its
+ * nodes/edges inline — it references pooled `ActivityNode`s and `FlowEdge`s by
+ * key, exactly as a class `Diagram` references pooled classifiers by `members`.
  */
 export interface FlowDoc {
     key: string;
@@ -177,8 +207,14 @@ export interface FlowDoc {
      * Resolved key of the entity this behavior describes (frontmatter link).
      */
     describes?: string;
-    nodes: FlowNode[];
-    edges: FlowEdge[];
+    /**
+     * Pool keys of this behavior\'s `ActivityNode`s (view → pool reference).
+     */
+    nodes: string[];
+    /**
+     * Pool keys of this behavior\'s `FlowEdge`s (view → pool reference).
+     */
+    edges: string[];
 }
 
 /**
@@ -255,6 +291,12 @@ export interface Concept {
 }
 
 /**
+ * The kind of a pooled activity edge (design spec §3). Not flattened into
+ * `Association`; each kind keeps its own semantics.
+ */
+export type FlowEdgeKind = "controlFlow" | "objectFlow";
+
+/**
  * The message kind: fixes line and arrowhead (interaction substrate).
  */
 export type MessageVerb = "calls" | "sends" | "replies" | "creates" | "destroys";
@@ -325,6 +367,16 @@ export interface Model {
      * Flow-substrate behavior documents (uml.Activity / uml.StateMachine).
      */
     flows?: FlowDoc[];
+    /**
+     * Model-level pool of behavior flow elements (activity/state-machine nodes),
+     * referenced by `FlowDoc.nodes`. Design spec §3/§4.
+     */
+    activityNodes?: ActivityNode[];
+    /**
+     * Model-level pool of typed control/object flow edges, referenced by
+     * `FlowDoc.edges`. Design spec §3/§4.
+     */
+    flowEdges?: FlowEdge[];
     /**
      * Interaction-substrate behavior documents (uml.Sequence).
      */

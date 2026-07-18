@@ -137,21 +137,30 @@ fn flow_doc_json_matches_ts_field_names() {
     assert_eq!(f["key"], "m/lifecycle");
     assert_eq!(f["flavor"], "stateMachine");
     assert_eq!(f["describes"], "m/order");
-    assert_eq!(f["nodes"][0]["kind"], "initial");
-    assert_eq!(f["nodes"][2]["entry"], "reserveStock");
-    let e = &f["edges"][1];
-    assert_eq!(e["from"], "Draft");
+    // The view references pooled nodes/edges by key (no inline objects).
+    assert_eq!(f["nodes"][0], "m/lifecycle#initial");
+    assert_eq!(f["edges"][1], "m/lifecycle#e1");
+    // Activity nodes live in the model-level `activityNodes` pool.
+    assert_eq!(v["activityNodes"][0]["kind"], "initial");
+    assert_eq!(v["activityNodes"][0]["behavior"], "m/lifecycle");
+    assert_eq!(v["activityNodes"][2]["entry"], "reserveStock");
+    // Flow edges live in the typed model-level `flowEdges` pool.
+    let e = &v["flowEdges"][1];
+    assert_eq!(e["from"], "m/lifecycle#Draft");
+    assert_eq!(e["kind"], "controlFlow");
     assert_eq!(e["trigger"], "place");
     assert_eq!(e["guard"], "items > 0");
     assert_eq!(e["effect"], "reserve");
-    assert_eq!(f["edges"][2]["else"], true);
-    // classifier-only models omit the field entirely
+    assert_eq!(v["flowEdges"][2]["else"], true);
+    // classifier-only models omit the fields entirely
     let m2 = build_model(&[(
         "a.md".to_string(),
         "---\ntype: uml.Class\ntitle: A\n---\n# A\n".to_string(),
     )]);
     let v2 = serde_json::to_value(&m2).unwrap();
     assert!(v2.get("flows").is_none());
+    assert!(v2.get("activityNodes").is_none());
+    assert!(v2.get("flowEdges").is_none());
 }
 
 #[test]

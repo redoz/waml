@@ -10,8 +10,9 @@ use crate::syntax::{Document, ErrorNode, LayoutItem, Line, Section};
 use std::collections::{HashMap, HashSet};
 
 use crate::model::{
-    Attribute, BehaviorKind, Diagram, DiagramDisplay, DiagramGroup, Edge, ElementType, FlowDoc,
-    FlowEdge, FlowFlavor, FlowNode, Lifeline, Model, Node, SeqItem, SeqOperand, SequenceDoc,
+    ActivityNode, Attribute, BehaviorKind, Diagram, DiagramDisplay, DiagramGroup, Edge,
+    ElementType, FlowDoc, FlowEdge, FlowEdgeKind, FlowFlavor, Lifeline, Model, Node, SeqItem,
+    SeqOperand, SequenceDoc,
 };
 
 struct Head {
@@ -785,7 +786,7 @@ pub fn build_model(bundle: &[(String, String)]) -> Model {
         .collect();
     let (path, packages) = build_packages(&docs, &indexes);
 
-    let flows = build_flows(&parsed, &keyset);
+    let (flows, activity_nodes, flow_edges) = build_flows(&parsed, &keyset);
     let interactions = build_interactions(&parsed, &keyset);
 
     Model {
@@ -795,6 +796,8 @@ pub fn build_model(bundle: &[(String, String)]) -> Model {
         path,
         packages,
         flows,
+        activity_nodes,
+        flow_edges,
         interactions,
     }
 }
@@ -810,11 +813,15 @@ fn resolve_describes(p: &ParsedDoc, keyset: &HashSet<&str>) -> Option<String> {
 }
 
 /// Scan all parsed docs for behavior docs in the flow substrate
-/// (`uml.Activity` / `uml.StateMachine` — NOT `uml.Sequence`, which is the
-/// separate interaction substrate) and resolve their `## Nodes` block into a
-/// `FlowDoc`. A behavior doc with no `## Nodes` section (or an empty one)
-/// yields a `FlowDoc` with empty `nodes`/`edges` — never a panic.
-fn build_flows(parsed: &[ParsedDoc], keyset: &HashSet<&str>) -> Vec<FlowDoc> {
+/// (`uml.Activity` / `uml.StateMachine` — NOT `uml.Sequence`) and resolve their
+/// `## Nodes` block into a `FlowDoc` **view** plus its `ActivityNode` and
+/// `FlowEdge` **pool** members. Pool keys are `"{behavior}#{id}"` (nodes) and
+/// `"{behavior}#e{n}"` (edges). A behavior with no `## Nodes` section yields an
+/// empty view and no pool members — never a panic.
+fn build_flows(
+    parsed: &[ParsedDoc],
+    keyset: &HashSet<&str>,
+) -> (Vec<FlowDoc>, Vec<ActivityNode>, Vec<FlowEdge>) {
     use crate::syntax::{FlowBullet, FlowTargetRef};
     let flow_keys: HashSet<String> = parsed
         .iter()
@@ -826,20 +833,35 @@ fn build_flows(parsed: &[ParsedDoc], keyset: &HashSet<&str>) -> Vec<FlowDoc> {
         })
         .map(|p| p.id.clone())
         .collect();
-    let mut out = Vec::new();
+    let mut views = Vec::new();
+    let mut pool_nodes = Vec::new();
+    let mut pool_edges = Vec::new();
     for p in parsed {
         let flavor = match p.ty {
             ElementType::Behavior(BehaviorKind::Activity) => FlowFlavor::Activity,
             ElementType::Behavior(BehaviorKind::StateMachine) => FlowFlavor::StateMachine,
             _ => continue,
         };
-        let mut nodes = Vec::new();
-        let mut edges = Vec::new();
+        let behavior = p.id.clone();
+        // First pass: local identity -> kind, for object-flow classification.
+        let mut kinds: HashMap<&str, crate::model::FlowNodeKind> = HashMap::new();
         for s in &p.doc.sections {
             let Section::Nodes(block) = s else { continue };
             for n in &block.nodes {
-                let mut fnode = FlowNode {
+                kinds.entry(n.identity.as_str()).or_insert(n.kind);
+            }
+        }
+        let mut node_keys = Vec::new();
+        let mut edge_keys = Vec::new();
+        let mut edge_n = 0usize;
+        for s in &p.doc.sections {
+            let Section::Nodes(block) = s else { continue };
+            for n in &block.nodes {
+                let node_key = format!("{behavior}#{}", n.identity);
+                let mut anode = ActivityNode {
+                    key: node_key.clone(),
                     id: n.identity.clone(),
+                    behavior: behavior.clone(),
                     kind: n.kind,
                     object_ref: n
                         .object_ref
@@ -856,51 +878,73 @@ fn build_flows(parsed: &[ParsedDoc], keyset: &HashSet<&str>) -> Vec<FlowDoc> {
                 for b in n.bullets.iter().filter_map(Line::parsed) {
                     match b {
                         FlowBullet::Transition(t) => {
-                            let (to, to_ref) = match &t.target {
-                                FlowTargetRef::Local(name) => (name.clone(), None),
+                            let (to, to_ref, target_is_object) = match &t.target {
+                                FlowTargetRef::Local(name) => (
+                                    format!("{behavior}#{name}"),
+                                    None,
+                                    kinds.get(name.as_str())
+                                        == Some(&crate::model::FlowNodeKind::Object),
+                                ),
                                 FlowTargetRef::Link(l) => {
                                     let r = crate::okf::resolve_href(&p.path, &l.slug);
-                                    (l.title.clone(), flow_keys.contains(&r).then_some(r))
+                                    (l.title.clone(), flow_keys.contains(&r).then_some(r), false)
                                 }
                             };
-                            edges.push(FlowEdge {
-                                from: n.identity.clone(),
+                            let carries = t
+                                .carries
+                                .as_ref()
+                                .map(|l| crate::okf::resolve_href(&p.path, &l.slug))
+                                .filter(|k| keyset.contains(k.as_str()));
+                            // ObjectFlow iff it carries a type, or an endpoint is an object node.
+                            let kind = if carries.is_some()
+                                || n.kind == crate::model::FlowNodeKind::Object
+                                || target_is_object
+                            {
+                                FlowEdgeKind::ObjectFlow
+                            } else {
+                                FlowEdgeKind::ControlFlow
+                            };
+                            let edge_key = format!("{behavior}#e{edge_n}");
+                            edge_n += 1;
+                            edge_keys.push(edge_key.clone());
+                            pool_edges.push(FlowEdge {
+                                key: edge_key,
+                                kind,
+                                behavior: behavior.clone(),
+                                from: node_key.clone(),
                                 to,
                                 to_ref,
                                 trigger: t.trigger.clone(),
                                 guard: t.guard.clone(),
                                 is_else: t.is_else,
                                 effect: t.effect.clone(),
-                                carries: t
-                                    .carries
-                                    .as_ref()
-                                    .map(|l| crate::okf::resolve_href(&p.path, &l.slug))
-                                    .filter(|k| keyset.contains(k.as_str())),
+                                carries,
                             });
                         }
-                        FlowBullet::Entry(e) => fnode.entry = Some(e.clone()),
-                        FlowBullet::Do(e) => fnode.do_ = Some(e.clone()),
-                        FlowBullet::Exit(e) => fnode.exit = Some(e.clone()),
+                        FlowBullet::Entry(e) => anode.entry = Some(e.clone()),
+                        FlowBullet::Do(e) => anode.do_ = Some(e.clone()),
+                        FlowBullet::Exit(e) => anode.exit = Some(e.clone()),
                         FlowBullet::Refines(l) => {
                             let r = crate::okf::resolve_href(&p.path, &l.slug);
-                            fnode.refines = flow_keys.contains(&r).then_some(r);
+                            anode.refines = flow_keys.contains(&r).then_some(r);
                         }
-                        FlowBullet::Partition(name) => fnode.partition = Some(name.clone()),
+                        FlowBullet::Partition(name) => anode.partition = Some(name.clone()),
                     }
                 }
-                nodes.push(fnode);
+                node_keys.push(node_key);
+                pool_nodes.push(anode);
             }
         }
-        out.push(FlowDoc {
+        views.push(FlowDoc {
             key: p.id.clone(),
             title: doc_title(p),
             flavor,
             describes: resolve_describes(p, keyset),
-            nodes,
-            edges,
+            nodes: node_keys,
+            edges: edge_keys,
         });
     }
-    out
+    (views, pool_nodes, pool_edges)
 }
 
 /// Scan all parsed docs for `uml.Sequence` behavior docs and resolve their
@@ -1726,8 +1770,8 @@ mod model_tests {
     }
 
     #[test]
-    fn builds_flow_doc_with_resolved_links_and_edges() {
-        use crate::model::{FlowFlavor, FlowNodeKind};
+    fn builds_flow_view_and_pools_with_resolved_links_and_edges() {
+        use crate::model::{FlowEdgeKind, FlowFlavor, FlowNodeKind};
         let b = vec![
             ("m/order.md".into(), "---\ntype: uml.Class\ntitle: Order\n---\n# Order\n".into()),
             ("m/sub.md".into(), "---\ntype: uml.Activity\ntitle: Sub\n---\n# Sub\n\n## Nodes\n\n### initial\n- transitions to final\n\n### final\n".into()),
@@ -1735,22 +1779,46 @@ mod model_tests {
              "---\ntype: uml.StateMachine\ntitle: Order Lifecycle\ndescribes: [Order](./order.md)\n---\n# Order Lifecycle\n\n## Nodes\n\n### initial\n- transitions to Draft\n\n### Draft\n- on `place` when `items > 0` transitions to Placed: `reserve`\n- partition: Sales\n\n### Placed\n- entry: `reserveStock`\n- refines [Sub](./sub.md)\n- transitions to Ship carries [Order](./order.md)\n\n### Ship\n- transitions to final\n\n### final\n".into()),
         ];
         let m = build_model(&b);
+        // Two behavior VIEWS.
         assert_eq!(m.flows.len(), 2);
         let f = m.flows.iter().find(|f| f.key == "m/lifecycle").unwrap();
         assert_eq!(f.flavor, FlowFlavor::StateMachine);
         assert_eq!(f.describes.as_deref(), Some("m/order"));
+        // The view references pooled nodes/edges by key (no inline objects).
         assert_eq!(f.nodes.len(), 5);
-        assert_eq!(f.nodes[0].kind, FlowNodeKind::Initial);
-        assert_eq!(f.nodes[1].partition.as_deref(), Some("Sales"));
-        assert_eq!(f.nodes[2].entry.as_deref(), Some("reserveStock"));
-        assert_eq!(f.nodes[2].refines.as_deref(), Some("m/sub"));
+        assert_eq!(f.nodes[0], "m/lifecycle#initial");
         assert_eq!(f.edges.len(), 4);
-        let placed = f.edges.iter().find(|e| e.to == "Placed").unwrap();
+        // Activity nodes live in the model-level pool.
+        let node = |key: &str| m.activity_nodes.iter().find(|n| n.key == key).unwrap();
+        assert_eq!(node("m/lifecycle#initial").kind, FlowNodeKind::Initial);
+        assert_eq!(node("m/lifecycle#initial").behavior, "m/lifecycle");
+        assert_eq!(
+            node("m/lifecycle#Draft").partition.as_deref(),
+            Some("Sales")
+        );
+        assert_eq!(
+            node("m/lifecycle#Placed").entry.as_deref(),
+            Some("reserveStock")
+        );
+        assert_eq!(node("m/lifecycle#Placed").refines.as_deref(), Some("m/sub"));
+        // Flow edges live in the typed model-level pool.
+        let edges: Vec<_> = m
+            .flow_edges
+            .iter()
+            .filter(|e| e.behavior == "m/lifecycle")
+            .collect();
+        assert_eq!(edges.len(), 4);
+        let placed = edges.iter().find(|e| e.to == "m/lifecycle#Placed").unwrap();
+        assert_eq!(placed.from, "m/lifecycle#Draft");
         assert_eq!(placed.trigger.as_deref(), Some("place"));
         assert_eq!(placed.guard.as_deref(), Some("items > 0"));
         assert_eq!(placed.effect.as_deref(), Some("reserve"));
-        let ship = f.edges.iter().find(|e| e.to == "Ship").unwrap();
+        assert_eq!(placed.kind, FlowEdgeKind::ControlFlow);
+        let ship = edges.iter().find(|e| e.to == "m/lifecycle#Ship").unwrap();
         assert_eq!(ship.carries.as_deref(), Some("m/order"));
+        assert_eq!(ship.kind, FlowEdgeKind::ObjectFlow);
+        // The pool spans both behaviors (the `Sub` activity's nodes are here too).
+        assert!(m.activity_nodes.iter().any(|n| n.key == "m/sub#initial"));
     }
 
     #[test]

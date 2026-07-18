@@ -369,14 +369,22 @@ pub enum FlowFlavor {
     StateMachine,
 }
 
-/// A resolved node of a flow document.
+/// A behavior flow element in the shared model-level pool (design spec §3): an
+/// `Element`, NOT a classifier. Each activity/state-machine node lives here and
+/// is referenced from its owning behavior's view (`FlowDoc.nodes`) by `key` —
+/// exactly as a class `Diagram` references pooled classifiers by `members`.
 #[derive(Debug, Clone, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "wasm", derive(tsify_next::Tsify))]
 #[cfg_attr(feature = "wasm", tsify(into_wasm_abi, from_wasm_abi))]
-pub struct FlowNode {
-    /// Heading text minus the kind keyword — the name transitions resolve against.
+pub struct ActivityNode {
+    /// Global pool identity: `"{behavior}#{id}"` (unique across the model).
+    pub key: String,
+    /// Local heading identity (unique within the owning behavior): the display
+    /// name and the name local transitions resolve against.
     pub id: String,
+    /// Owning behavior document key.
+    pub behavior: String,
     pub kind: FlowNodeKind,
     /// Resolved key of an `object` node's typing classifier.
     #[cfg_attr(
@@ -417,16 +425,40 @@ pub struct FlowNode {
     pub notes: Vec<String>,
 }
 
-/// A resolved transition (flow edge). Source/target are node identities.
+/// The kind of a pooled activity edge (design spec §3). Not flattened into
+/// `Association`; each kind keeps its own semantics.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(rename_all = "camelCase"))]
+#[cfg_attr(feature = "wasm", derive(tsify_next::Tsify))]
+#[cfg_attr(feature = "wasm", tsify(into_wasm_abi, from_wasm_abi))]
+pub enum FlowEdgeKind {
+    /// Plain sequencing between activity nodes.
+    ControlFlow,
+    /// Carries an object token (an `object`-node endpoint, or a `carries` type).
+    ObjectFlow,
+}
+
+/// A typed control/object flow edge (design spec §3): a model-level pool member,
+/// referenced from its owning behavior's view (`FlowDoc.edges`) by `key`.
 #[derive(Debug, Clone, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "wasm", derive(tsify_next::Tsify))]
 #[cfg_attr(feature = "wasm", tsify(into_wasm_abi, from_wasm_abi))]
 pub struct FlowEdge {
+    /// Global pool identity: `"{behavior}#e{n}"`.
+    pub key: String,
+    pub kind: FlowEdgeKind,
+    /// Owning behavior document key.
+    pub behavior: String,
+    /// Source activity-node pool key (always a node in `behavior`).
     pub from: String,
-    /// Local node identity, or the link title for a cross-document target.
+    /// Target activity-node pool key for a LOCAL target; the link title for a
+    /// cross-document target (matches no local node key → not drawn, mirroring
+    /// the class-diagram edge rule).
     pub to: String,
-    /// Resolved key when the target was a cross-document link.
+    /// Resolved key of the target *behavior document* when the target was a
+    /// cross-document link.
     #[cfg_attr(
         feature = "serde",
         serde(rename = "toRef", default, skip_serializing_if = "Option::is_none")
@@ -461,7 +493,9 @@ pub struct FlowEdge {
     pub carries: Option<String>,
 }
 
-/// One flow document: one self-rendering directed graph (model AND view).
+/// One behavior document as a **view** (design spec §4): it no longer owns its
+/// nodes/edges inline — it references pooled `ActivityNode`s and `FlowEdge`s by
+/// key, exactly as a class `Diagram` references pooled classifiers by `members`.
 #[derive(Debug, Clone, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "wasm", derive(tsify_next::Tsify))]
@@ -476,8 +510,10 @@ pub struct FlowDoc {
         serde(default, skip_serializing_if = "Option::is_none")
     )]
     pub describes: Option<String>,
-    pub nodes: Vec<FlowNode>,
-    pub edges: Vec<FlowEdge>,
+    /// Pool keys of this behavior's `ActivityNode`s (view → pool reference).
+    pub nodes: Vec<String>,
+    /// Pool keys of this behavior's `FlowEdge`s (view → pool reference).
+    pub edges: Vec<String>,
 }
 
 /// The message kind: fixes line and arrowhead (interaction substrate).
@@ -889,6 +925,24 @@ pub struct Model {
         serde(default, skip_serializing_if = "Vec::is_empty")
     )]
     pub flows: Vec<FlowDoc>,
+    /// Model-level pool of behavior flow elements (activity/state-machine nodes),
+    /// referenced by `FlowDoc.nodes`. Design spec §3/§4.
+    #[cfg_attr(
+        feature = "serde",
+        serde(
+            rename = "activityNodes",
+            default,
+            skip_serializing_if = "Vec::is_empty"
+        )
+    )]
+    pub activity_nodes: Vec<ActivityNode>,
+    /// Model-level pool of typed control/object flow edges, referenced by
+    /// `FlowDoc.edges`. Design spec §3/§4.
+    #[cfg_attr(
+        feature = "serde",
+        serde(rename = "flowEdges", default, skip_serializing_if = "Vec::is_empty")
+    )]
+    pub flow_edges: Vec<FlowEdge>,
     /// Interaction-substrate behavior documents (uml.Sequence).
     #[cfg_attr(
         feature = "serde",
