@@ -66,11 +66,30 @@ script_mod! {
         width: Fill
         height: Fill
         show_bg: true
-        // Panel carries the Atlas HUD frame (see draw_hud.rs): glass `surface`
-        // fill ringed by the source-bright accent stroke, same primitive the
-        // canvas nodes use. Padding insets the FileTree so it stops painting
-        // `surface` over the 1.5px frame ring at the panel edge.
-        draw_bg: mod.draw.HudFrame{ color: atlas.field_bg }
+        // Panel carries the Atlas HUD frame. Unlike the inspector / tool_dock
+        // panels -- which own a `draw_bg: DrawColor` field and can point it
+        // straight at `mod.draw.HudFrame` -- this widget derefs `View`, whose
+        // `draw_bg` is a `DrawQuad`; a `DrawColor` object can't swap onto it.
+        // So the HudFrame material is inlined onto the DrawQuad here. Keep this
+        // shader in sync with `draw_hud.rs` (glass `field_bg` fill ringed by the
+        // source-bright accent stroke, 150deg alpha gradient). Padding insets the
+        // FileTree so it stops painting `field_bg` over the 1.5px frame ring.
+        draw_bg +: {
+            color: atlas.field_bg
+            border_hi: uniform(atlas.frame_hi)
+            border_lo: uniform(atlas.frame_lo)
+            pixel: fn() {
+                let inset = 1.5
+                let sdf = Sdf2d.viewport(self.pos * self.rect_size)
+                sdf.rect(inset, inset, self.rect_size.x - inset * 2.0, self.rect_size.y - inset * 2.0)
+                sdf.fill_keep(self.color)
+                let dir = vec2(0.5, 0.8660254)
+                let span = 1.3660254
+                let t = clamp((self.pos.x * dir.x + self.pos.y * dir.y) / span, 0.0, 1.0)
+                sdf.stroke(mix(self.border_hi, self.border_lo, t), inset)
+                return sdf.result
+            }
+        }
         padding: 6.0
 
         file_tree := FileTree {
