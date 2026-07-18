@@ -102,30 +102,34 @@
 
 <!-- svelte-ignore a11y_click_events_have_key_events -->
 <!-- svelte-ignore a11y_no_static_element_interactions -->
-<div class="fixed inset-0 z-50 flex items-center justify-center bg-black/30" onclick={onClose}>
+<div
+  class="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/30"
+  style="font-family: var(--font-ui);"
+  onclick={onClose}
+>
   <div
     role="dialog"
     aria-label="Share model"
     tabindex="-1"
-    class="bg-white rounded-xl shadow-xl w-[460px] max-w-[92vw] max-h-[88vh] overflow-y-auto p-5"
+    class="hud-surface relative w-[460px] max-w-[95vw] max-h-[88vh] flex flex-col overflow-hidden"
     onclick={(e) => e.stopPropagation()}
-    style="font-family: 'Source Sans 3 Variable', -apple-system, BlinkMacSystemFont, 'Segoe UI', Inter, system-ui, sans-serif;"
   >
+    <div class="relative z-[1] flex flex-col overflow-y-auto p-6">
     <!-- Header -->
     <div class="flex items-start justify-between gap-2 mb-4">
       <div class="flex items-center gap-3">
-        <div class="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-lg bg-[#e6f1fb] text-[#1e88e5]">
+        <div class="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-[var(--round-chip)] bg-[color:rgba(var(--accent),.12)] text-[color:rgb(var(--accent))]">
           <Share2 size={16} />
         </div>
         <div>
-          <div class="text-[15px] font-[700] text-slate-900">Named sharing</div>
-          <div class="text-[12px] text-slate-500">Share a model by name with a link</div>
+          <div class="text-[15px] font-[700] text-[color:var(--ink)]">Named sharing</div>
+          <div class="text-[12px] text-[color:rgb(var(--ink-faint))]">Share a model by name with a link</div>
         </div>
       </div>
       <button
         onclick={onClose}
         aria-label="Close"
-        class="w-[30px] h-[30px] flex items-center justify-center rounded-md text-slate-500 hover:bg-[#f1f3f7]"
+        class="w-[30px] h-[30px] flex items-center justify-center rounded-[var(--round-chip)] text-[color:rgb(var(--ink-faint))] hover:bg-[color:rgba(var(--accent),.12)] hover:text-[color:rgb(var(--accent))]"
       >
         <X size={18} />
       </button>
@@ -138,19 +142,19 @@
         value={shareUrl}
         readonly
         aria-label="Share URL"
-        class="flex-1 min-w-0 rounded-lg border border-[#d8dee8] px-3 py-2.5 text-[13px] text-slate-700 bg-[#f7f8fa] outline-none select-all cursor-text"
+        class="flex-1 min-w-0 rounded-[var(--round-chip)] border border-[color:var(--hair)] px-3 py-2.5 text-[13px] text-[color:var(--ink-dim)] bg-white outline-none select-all cursor-text focus:border-[color:rgb(var(--accent))] focus:ring-2 focus:ring-[color:rgba(var(--accent),.20)]"
       />
       <button
         onclick={copyLink}
-        class="rounded-lg bg-[#1e88e5] px-4 py-2.5 text-[13px] font-[600] text-white hover:bg-[#1976d2] cursor-pointer flex-shrink-0 flex items-center gap-[6px]"
+        class="rounded-[var(--round-chip)] bg-[color:rgb(var(--accent))] px-4 py-2.5 text-[13px] font-[600] text-white hover:brightness-95 cursor-pointer flex-shrink-0 flex items-center gap-[6px]"
       >
         {#if linkCopied}<Check size={15} /> Copied{:else}<Copy size={15} /> Copy{/if}
       </button>
     </div>
 
-    <div class="border-t border-[#eef1f5] pt-4">
-      <div class="text-[13px] font-[700] text-slate-900 mb-1">Share as image</div>
-      <div class="text-[12px] text-slate-500 mb-3">
+    <div class="border-t border-[color:rgba(var(--accent),.14)] pt-4">
+      <div class="text-[13px] font-[700] text-[color:var(--ink)] mb-1">Share as image</div>
+      <div class="text-[12px] text-[color:rgb(var(--ink-faint))] mb-3">
         Render the current diagram to a PNG you can paste or save.
       </div>
 
@@ -159,7 +163,7 @@
           onclick={shareAsImage}
           disabled={!canShareImage || rendering}
           title={canShareImage ? "Render this diagram to a PNG" : "Add something to the diagram first"}
-          class="flex w-full items-center justify-center gap-2 rounded-lg border border-[#d8dee8] bg-white px-4 py-2.5 text-[14px] font-[600] text-slate-900 hover:bg-[#f1f3f7] cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+          class="flex w-full items-center justify-center gap-2 rounded-[var(--round-chip)] border border-[color:var(--hair)] bg-white px-4 py-2.5 text-[14px] font-[600] text-[color:var(--ink)] hover:bg-[color:rgba(var(--accent),.10)] cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
         >
           <ImageDown size={16} />
           {rendering ? "Rendering…" : "Share as image"}
@@ -167,7 +171,7 @@
       {:else}
         <!-- Preview — right-clickable so users can copy/save manually where the
              Clipboard API is unavailable (e.g. Firefox). -->
-        <div class="mb-3 rounded-lg border border-[#d8dee8] bg-[#f7f8fa] p-2 flex items-center justify-center overflow-hidden">
+        <div class="mb-3 rounded-[var(--round-chip)] border border-[color:var(--hair)] bg-[color:rgba(var(--accent),.06)] p-2 flex items-center justify-center overflow-hidden">
           <img src={previewUrl} alt="Diagram preview" class="max-h-[220px] max-w-full object-contain" />
         </div>
         <div class="flex gap-2">
@@ -175,13 +179,13 @@
             onclick={copyImage}
             disabled={!clipboardImageSupported}
             title={clipboardImageSupported ? "Copy the image to the clipboard" : "Your browser can't copy images — use Save or right-click the preview"}
-            class="flex-1 flex items-center justify-center gap-2 rounded-lg bg-[#1e88e5] px-4 py-2.5 text-[13px] font-[600] text-white hover:bg-[#1976d2] cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+            class="flex-1 flex items-center justify-center gap-2 rounded-[var(--round-chip)] bg-[color:rgb(var(--accent))] px-4 py-2.5 text-[13px] font-[600] text-white hover:brightness-95 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
           >
             {#if imageCopied}<Check size={15} /> Copied{:else}<Clipboard size={15} /> Copy image{/if}
           </button>
           <button
             onclick={saveImage}
-            class="flex-1 flex items-center justify-center gap-2 rounded-lg border border-[#d8dee8] bg-white px-4 py-2.5 text-[13px] font-[600] text-slate-900 hover:bg-[#f1f3f7] cursor-pointer"
+            class="flex-1 flex items-center justify-center gap-2 rounded-[var(--round-chip)] border border-[color:var(--hair)] bg-white px-4 py-2.5 text-[13px] font-[600] text-[color:var(--ink)] hover:bg-[color:rgba(var(--accent),.10)] cursor-pointer"
           >
             <Download size={15} /> Save
           </button>
@@ -189,10 +193,11 @@
       {/if}
 
       {#if renderError}
-        <div class="mt-3 text-[12px] text-[#b42318]">{renderError}</div>
+        <div class="mt-3 text-[12px] text-[color:rgb(var(--danger))]">{renderError}</div>
       {:else if !canShareImage}
-        <div class="mt-3 text-[12px] text-slate-400">Add an object to the diagram to share it as an image.</div>
+        <div class="mt-3 text-[12px] text-[color:rgb(var(--ink-faint))]">Add an object to the diagram to share it as an image.</div>
       {/if}
+    </div>
     </div>
   </div>
 </div>
