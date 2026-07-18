@@ -1,13 +1,13 @@
 <script lang="ts">
   import { SvelteFlow, SvelteFlowProvider, Background, BackgroundVariant, Controls, type Edge, type Node } from "@xyflow/svelte";
-  import type { FlowDoc } from "@waml/okf";
-  import { flowToRf } from "../../../canvas/flowGraph";
+  import type { FlowDoc, ModelGraph } from "@waml/okf";
+  import { flowToRf, resolveFlow } from "../../../canvas/flowGraph";
   import FlowStepNode from "./FlowStepNode.svelte";
   import FlowControlNode from "./FlowControlNode.svelte";
   import FlowObjectNode from "./FlowObjectNode.svelte";
   import TransitionEdge from "./TransitionEdge.svelte";
 
-  let { doc }: { doc: FlowDoc } = $props();
+  let { doc, graph }: { doc: FlowDoc; graph: ModelGraph } = $props();
 
   const nodeTypes = { flowStep: FlowStepNode, flowControl: FlowControlNode, flowObject: FlowObjectNode };
   const edgeTypes = { transition: TransitionEdge };
@@ -15,7 +15,7 @@
   let nodes = $state<Node[]>([]);
   let edges = $state<Edge[]>([]);
   $effect(() => {
-    const rf = flowToRf(doc);
+    const rf = flowToRf(resolveFlow(doc, graph));
     nodes = rf.nodes;
     edges = rf.edges;
   });
