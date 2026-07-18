@@ -12,6 +12,7 @@ script_mod! {
     use mod.widgets.Inspector
     use mod.widgets.DocTabs
     use mod.widgets.ToolDock
+    use mod.widgets.SelectionToolbar
     use mod.widgets.SolidView
     use mod.widgets.DesktopButton
     use mod.widgets.DesktopButtonType
@@ -124,6 +125,10 @@ script_mod! {
                                             height: Fill
                                         }
                                     }
+                                    selection_toolbar := SelectionToolbar{
+                                        width: Fill
+                                        height: 44.0
+                                    }
                                 }
                                 b: View{
                                     width: Fill
@@ -180,6 +185,13 @@ impl App {
                 {
                     inspector.set_subject(cx, &self.model, Subject::None);
                 }
+                if let Some(mut toolbar) = self
+                    .ui
+                    .widget(cx, ids!(selection_toolbar))
+                    .borrow_mut::<crate::selection_toolbar::SelectionToolbar>()
+                {
+                    toolbar.set_selection(cx, None);
+                }
             }
             TabKind::Classifier => {
                 let scene = build_focus_scene(&self.model, &active.key);
@@ -192,6 +204,14 @@ impl App {
                     self.ui.widget(cx, ids!(inspector)).borrow_mut::<crate::inspector_panel::Inspector>()
                 {
                     inspector.set_subject(cx, &self.model, Subject::Classifier(active.key.clone()));
+                }
+                if let Some(mut toolbar) = self
+                    .ui
+                    .widget(cx, ids!(selection_toolbar))
+                    .borrow_mut::<crate::selection_toolbar::SelectionToolbar>()
+                {
+                    // Single-classifier focus only in this mock -- always 1.
+                    toolbar.set_selection(cx, Some(1));
                 }
             }
         }
@@ -343,6 +363,33 @@ impl MatchEvent for App {
             return;
         }
 
+        // Selection toolbar: `Delete` closes the focused classifier's doc
+        // tab (in-memory only -- the Model is never touched); `New Diagram`
+        // is a mock no-op (diagram creation is out of scope for this pass).
+        let toolbar_action = self
+            .ui
+            .widget(cx, ids!(selection_toolbar))
+            .borrow_mut::<crate::selection_toolbar::SelectionToolbar>()
+            .and_then(|toolbar| toolbar.toolbar_action(actions));
+        match toolbar_action {
+            Some(crate::selection_toolbar::SelectionToolbarAction::Delete) => {
+                if let Some(active) = self.tabs.active_tab() {
+                    if active.kind == TabKind::Classifier {
+                        let id = active.id;
+                        self.tabs.close(id);
+                        self.refresh_doc_tabs(cx);
+                        self.sync_active_tab(cx);
+                    }
+                }
+                return;
+            }
+            Some(crate::selection_toolbar::SelectionToolbarAction::NewDiagram) => {
+                log!("selection toolbar: New Diagram (mock no-op)");
+                return;
+            }
+            _ => {}
+        }
+
         // Doc tab strip: click a tab to activate it, or its close button.
         let tab_action = self
             .ui
@@ -373,6 +420,7 @@ impl AppMain for App {
         crate::inspector_panel::script_mod(vm);
         crate::doc_tabs::script_mod(vm);
         crate::tool_dock::script_mod(vm);
+        crate::selection_toolbar::script_mod(vm);
         self::script_mod(vm)
     }
 

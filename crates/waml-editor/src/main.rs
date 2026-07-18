@@ -10,6 +10,7 @@ mod inspector;
 mod inspector_panel;
 mod load;
 mod scene;
+mod selection_toolbar;
 mod sizing;
 mod tool_dock;
 mod tree;
