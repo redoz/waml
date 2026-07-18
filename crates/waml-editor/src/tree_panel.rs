@@ -1,8 +1,9 @@
 //! The `ProjectTree` widget: a thin container that drives makepad's shipped
 //! `FileTree` immediate-mode from a pure `ProjectTree` (see `tree.rs`). Provides
-//! scroll/fold/selection for free. Kind is encoded as a glyph prefix in each
-//! leaf's name; packages use the built-in folder icon. On a diagram-row click it
-//! emits `ProjectTreeAction::SelectDiagram(key)`.
+//! scroll/fold/selection for free. Each row's kind (see `TreeKind`) is shown as
+//! a HUD glyph icon overlaid at the left of the row via `DrawSvg::draw_abs`, in
+//! immediate mode right after `FileTree` draws that row. On a diagram-row click
+//! it emits `ProjectTreeAction::SelectDiagram(key)`.
 //!
 //! Structure mirrors studio's `DesktopFileTree` / `FlatFileTree`, minus the
 //! filter page and git-status dots.
@@ -15,6 +16,31 @@ script_mod! {
     use mod.prelude.widgets_internal.*
     use mod.widgets.*
 
+    mod.widgets.TreeIconsBase = #(TreeIcons::script_component(vm))
+
+    mod.widgets.TreeIcons = set_type_default() do mod.widgets.TreeIconsBase{
+        class +: {
+            svg: crate_resource("self:resources/icons/class.svg")
+            color: #xc8c8d4
+        }
+        package +: {
+            svg: crate_resource("self:resources/icons/package.svg")
+            color: #xc8c8d4
+        }
+        diagram +: {
+            svg: crate_resource("self:resources/icons/diagram.svg")
+            color: #xc8c8d4
+        }
+        flow +: {
+            svg: crate_resource("self:resources/icons/flow.svg")
+            color: #xc8c8d4
+        }
+        note +: {
+            svg: crate_resource("self:resources/icons/note.svg")
+            color: #xc8c8d4
+        }
+    }
+
     mod.widgets.ProjectTreeBase = #(ProjectTree::register_widget(vm))
 
     mod.widgets.ProjectTree = set_type_default() do mod.widgets.ProjectTreeBase{
@@ -22,13 +48,16 @@ script_mod! {
         height: Fill
         show_bg: true
         draw_bg +: { color: #x1b1b24 }
+
         file_tree := FileTree {
             // Roomier rows + larger humanist type, and flat (no zebra striping)
             // so the panel reads as a calm modern sidebar, not a 90s list box.
+            // Left padding is widened to leave room for the 16px glyph icon
+            // drawn (in immediate mode) at the start of each row.
             node_height: 30.0
 
             file_node +: {
-                padding: Inset{left: 16.0}
+                padding: Inset{left: 26.0}
                 indent_width: 18.0
                 draw_text +: {
                     text_style: theme.font_regular{font_size: 12}
@@ -41,7 +70,7 @@ script_mod! {
             }
 
             folder_node +: {
-                padding: Inset{left: 16.0}
+                padding: Inset{left: 26.0}
                 indent_width: 18.0
                 draw_text +: {
                     text_style: theme.font_bold{font_size: 12}
@@ -50,6 +79,12 @@ script_mod! {
                     color_1: #x1b1b24
                     color_2: #x1b1b24
                     color_active: #x3d3560
+                }
+                // The built-in folder box icon is redundant with our own
+                // package.svg overlay; make it fully transparent.
+                draw_icon +: {
+                    color: #x00000000
+                    color_active: #x00000000
                 }
             }
 
@@ -68,6 +103,32 @@ pub enum ProjectTreeAction {
     FocusClassifier(String),
 }
 
+/// The per-kind glyph set, drawn in immediate mode at the left of each tree
+/// row. `FileTree`'s own row draw path (`draw_file`/`draw_folder`) has no hook
+/// for arbitrary SVG icons on leaf rows, and its folder icon is a hardcoded
+/// SDF box shape, so icons are overlaid separately via `DrawSvg::draw_abs`
+/// after the tree finishes its own drawing for the frame.
+#[derive(Script, ScriptHook)]
+pub struct TreeIcons {
+    #[live]
+    class: DrawSvg,
+    #[live]
+    package: DrawSvg,
+    #[live]
+    diagram: DrawSvg,
+    #[live]
+    flow: DrawSvg,
+    #[live]
+    note: DrawSvg,
+}
+
+/// Row height in the `FileTree` DSL (`node_height: 30.0`); used to vertically
+/// center the icon within each row.
+const ROW_HEIGHT: f64 = 30.0;
+const ICON_SIZE: f64 = 16.0;
+const ICON_LEFT_MARGIN: f64 = 6.0;
+const ICON_DEPTH_INDENT: f64 = 18.0;
+
 #[derive(Script, ScriptHook, Widget)]
 pub struct ProjectTree {
     #[deref]
@@ -78,24 +139,14 @@ pub struct ProjectTree {
     id_to_key: HashMap<LiveId, String>,
     #[rust]
     id_to_kind: HashMap<LiveId, TreeKind>,
+    #[live]
+    icons: TreeIcons,
 }
 
 // Tree-row selection highlight is click-only, provided by `FileTree`'s own
 // built-in selection state. The vendored makepad fork exposes no public API
 // to programmatically select/highlight a row, so there is no way to sync the
 // highlighted row to the currently-active diagram from outside a click.
-
-/// The glyph prefix that encodes a leaf's kind in its row name. Packages use the
-/// built-in folder icon and are never passed here.
-fn glyph(kind: TreeKind) -> &'static str {
-    match kind {
-        TreeKind::Diagram => "▤ ",
-        TreeKind::Class => "◻ ",
-        TreeKind::Behavior => "⤳ ",
-        TreeKind::Note => "✎ ",
-        TreeKind::Package | TreeKind::Unknown => "",
-    }
-}
 
 /// Walk the tree once, building both id maps. Kept free-standing so it is unit
 /// testable without a `Cx`.
@@ -118,19 +169,40 @@ fn build_id_maps(tree: &ProjectTreeData) -> (HashMap<LiveId, String>, HashMap<Li
     (keys, kinds)
 }
 
-/// Emit `begin_folder`/`end_folder` for packages and `file` for leaves. A
-/// collapsed folder returns `Err` from `begin_folder`; skip its children then.
-fn draw_nodes(cx: &mut Cx2d, ft: &mut FileTree, nodes: &[TreeNode]) {
+/// Draw the row-leading glyph for `kind` at `row_top`, indented by `depth`.
+/// `Unknown` has no matching HUD glyph and is skipped, leaving a bare row.
+fn draw_row_icon(cx: &mut Cx2d, icons: &mut TreeIcons, kind: TreeKind, row_top: Vec2d, depth: usize) {
+    let icon = match kind {
+        TreeKind::Class => &mut icons.class,
+        TreeKind::Package => &mut icons.package,
+        TreeKind::Diagram => &mut icons.diagram,
+        TreeKind::Behavior => &mut icons.flow,
+        TreeKind::Note => &mut icons.note,
+        TreeKind::Unknown => return,
+    };
+    let x = row_top.x + ICON_LEFT_MARGIN + depth as f64 * ICON_DEPTH_INDENT;
+    let y = row_top.y + (ROW_HEIGHT - ICON_SIZE) / 2.0;
+    icon.draw_abs(cx, Rect { pos: dvec2(x, y), size: dvec2(ICON_SIZE, ICON_SIZE) });
+}
+
+/// Emit `begin_folder`/`end_folder` for packages and `file` for leaves, and
+/// overlay a HUD glyph icon at the left of every row. A collapsed folder
+/// returns `Err` from `begin_folder`; skip its children then (its own row is
+/// still drawn either way, so the icon is drawn unconditionally).
+fn draw_nodes(cx: &mut Cx2d, ft: &mut FileTree, nodes: &[TreeNode], icons: &mut TreeIcons, depth: usize) {
     for node in nodes {
         let id = LiveId::from_str(&node.key);
+        let row_top = cx.turtle().pos();
         if matches!(node.kind, TreeKind::Package) {
-            if ft.begin_folder(cx, id, &node.title).is_ok() {
-                draw_nodes(cx, ft, &node.children);
+            let opened = ft.begin_folder(cx, id, &node.title).is_ok();
+            draw_row_icon(cx, icons, node.kind, row_top, depth);
+            if opened {
+                draw_nodes(cx, ft, &node.children, icons, depth + 1);
                 ft.end_folder();
             }
         } else {
-            let label = format!("{}{}", glyph(node.kind), node.title);
-            ft.file(cx, id, &label);
+            ft.file(cx, id, &node.title);
+            draw_row_icon(cx, icons, node.kind, row_top, depth);
         }
     }
 }
@@ -139,7 +211,7 @@ impl Widget for ProjectTree {
     fn draw_walk(&mut self, cx: &mut Cx2d, scope: &mut Scope, walk: Walk) -> DrawStep {
         while let Some(step) = self.view.draw_walk(cx, scope, walk).step() {
             if let Some(mut file_tree) = step.as_file_tree().borrow_mut() {
-                draw_nodes(cx, &mut file_tree, &self.tree.roots);
+                draw_nodes(cx, &mut file_tree, &self.tree.roots, &mut self.icons, 0);
             }
         }
         DrawStep::done()
