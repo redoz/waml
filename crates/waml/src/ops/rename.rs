@@ -48,9 +48,19 @@ fn rename_in_doc(doc: &mut Document, from: &str, to: &str) -> bool {
                     changed: &mut bool,
                 ) {
                     for m in g.members.iter_mut().filter_map(Line::parsed_mut) {
-                        if m.slug == from {
-                            m.slug = to.to_string();
-                            *changed = true;
+                        match m {
+                            crate::syntax::MemberItem::Member(ml) => {
+                                if ml.slug == from {
+                                    ml.slug = to.to_string();
+                                    *changed = true;
+                                }
+                            }
+                            crate::syntax::MemberItem::Instance(inst) => {
+                                if inst.classifier.slug == from {
+                                    inst.classifier.slug = to.to_string();
+                                    *changed = true;
+                                }
+                            }
                         }
                     }
                     for c in &mut g.children {

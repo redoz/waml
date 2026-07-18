@@ -5,9 +5,10 @@ use crate::diagnostic::DiagCode;
 use crate::model::{Attribute, FlowNodeKind, RelEnd, RelationshipKind, TypeRef, Visibility};
 use crate::multiplicity::Multiplicity;
 use crate::syntax::{
-    ErrorNode, FlowBlock, FlowBullet, FlowNodeSyntax, FlowTargetRef, FlowTransition, LifelineLine,
-    Line, LinkRef, MemberGroup, MemberLine, MembersBlock, MessagesBlock, ParsedMessage, ParsedName,
-    ParsedRel, ParsedSlot, SeqItemSyntax, SeqOperandSyntax, SlotValue,
+    ErrorNode, FlowBlock, FlowBullet, FlowNodeSyntax, FlowTargetRef, FlowTransition,
+    InlineInstance, LifelineLine, Line, LinkRef, MemberGroup, MemberItem, MemberLine, MembersBlock,
+    MessagesBlock, ParsedMessage, ParsedName, ParsedRel, ParsedSlot, SeqItemSyntax,
+    SeqOperandSyntax, SlotValue,
 };
 
 static ATTR_RE: LazyLock<Regex> =
@@ -19,6 +20,20 @@ static MULT_TAIL_RE: LazyLock<Regex> =
 static VALUE_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^- (\S.*)$").unwrap());
 static SLOT_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^- ([A-Za-z_][A-Za-z0-9_]*): (.+)$").unwrap());
+static INLINE_INSTANCE_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(
+        r"^- instance of \[([^\]]+)\]\(\./(.+?)\.md\) as ([A-Za-z_][A-Za-z0-9_]*)(?: with (.+))?$",
+    )
+    .unwrap()
+});
+static SLOT_ASSIGN_RE: LazyLock<Regex> = LazyLock::new(|| {
+    // one `<name> set to <value>` assignment, value = quoted | link | bare token,
+    // with the remaining clause (after ` and `) captured for the next iteration.
+    Regex::new(
+        r#"^([A-Za-z_][A-Za-z0-9_]*) set to ("[^"]*"|\[[^\]]+\]\(\./.+?\.md\)|\S+)(?: and (.*))?$"#,
+    )
+    .unwrap()
+});
 // verb · target-title · target-slug · name-label · name-link-title · name-link-slug · ends
 static REL_RE: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(concat!(
@@ -183,6 +198,104 @@ pub fn parse_value_line(line: &str) -> Result<String, LineError> {
         })
 }
 
+/// Classify a slot value's surface form. `None` if it is not a valid value.
+pub fn classify_slot_value(raw: &str) -> Option<SlotValue> {
+    let raw = raw.trim();
+    if let Some(inner) = raw.strip_prefix('"').and_then(|r| r.strip_suffix('"')) {
+        Some(SlotValue::Quoted(inner.to_string()))
+    } else if let Some(l) = parse_link_ref(raw) {
+        Some(SlotValue::Link(l))
+    } else if raw.is_empty() || raw.contains(char::is_whitespace) || STRAY_BRACKET_RE.is_match(raw)
+    {
+        // A bare value must be a single token with no whitespace / stray brackets.
+        None
+    } else {
+        Some(SlotValue::Bare(raw.to_string()))
+    }
+}
+
+/// Render a slot value's surface form (exact inverse of `classify_slot_value`).
+pub fn render_slot_value(v: &SlotValue) -> String {
+    match v {
+        SlotValue::Quoted(s) => format!("\"{s}\""),
+        SlotValue::Bare(s) => s.clone(),
+        SlotValue::Link(l) => format!("[{}](./{}.md)", l.title, l.slug),
+    }
+}
+
+/// Parse a `<n> set to <v> and <n2> set to <v2> …` clause into ordered slots.
+fn parse_slot_clause(clause: &str, whole: &str) -> Result<Vec<ParsedSlot>, LineError> {
+    let err = || LineError {
+        range: bullet_range(whole),
+        message: "malformed instance slot clause — expected '<name> set to <value>[ and …]'"
+            .to_string(),
+    };
+    let mut out = Vec::new();
+    let mut rest = clause.trim().to_string();
+    while !rest.is_empty() {
+        let caps = SLOT_ASSIGN_RE.captures(&rest).ok_or_else(err)?;
+        let name = caps[1].to_string();
+        let value = classify_slot_value(&caps[2]).ok_or_else(err)?;
+        out.push(ParsedSlot {
+            name,
+            value,
+            line: 0,
+            span: None,
+        });
+        rest = caps
+            .get(3)
+            .map(|m| m.as_str().trim().to_string())
+            .unwrap_or_default();
+    }
+    Ok(out)
+}
+
+/// Parse `- instance of [Classifier](./c.md) as <name>[ with <clause>]`.
+pub fn parse_inline_instance(line: &str) -> Result<InlineInstance, LineError> {
+    let err = || {
+        LineError {
+        range: bullet_range(line),
+        message: "malformed inline instance — expected '- instance of [Title](./slug.md) as <name>[ with <n> set to <v> and …]'".to_string(),
+    }
+    };
+    let trimmed = line.trim_end_matches('\r').trim();
+    let caps = INLINE_INSTANCE_RE.captures(trimmed).ok_or_else(err)?;
+    let classifier = LinkRef {
+        title: caps[1].to_string(),
+        slug: caps[2].to_string(),
+    };
+    let name = caps[3].to_string();
+    let slots = match caps.get(4) {
+        Some(clause) => parse_slot_clause(clause.as_str(), trimmed)?,
+        None => Vec::new(),
+    };
+    Ok(InlineInstance {
+        classifier,
+        name,
+        slots,
+        line: 0,
+        span: None,
+    })
+}
+
+/// Exact inverse of `parse_inline_instance` (canonical ` and `-joined clause).
+pub fn render_inline_instance(i: &InlineInstance) -> String {
+    let mut s = format!(
+        "- instance of [{}](./{}.md) as {}",
+        i.classifier.title, i.classifier.slug, i.name
+    );
+    if !i.slots.is_empty() {
+        let clause = i
+            .slots
+            .iter()
+            .map(|sl| format!("{} set to {}", sl.name, render_slot_value(&sl.value)))
+            .collect::<Vec<_>>()
+            .join(" and ");
+        s.push_str(&format!(" with {clause}"));
+    }
+    s
+}
+
 /// Parse `- name: value` where value is a quoted string, a `[Label](./slug.md)`
 /// link, or a bare identifier/number. The value's surface form is preserved in
 /// `SlotValue` for byte-identical round-trip.
@@ -196,18 +309,7 @@ pub fn parse_slot_line(line: &str) -> Result<ParsedSlot, LineError> {
     let trimmed = line.trim_end_matches('\r').trim();
     let caps = SLOT_RE.captures(trimmed).ok_or_else(err)?;
     let name = caps[1].to_string();
-    let raw = caps[2].trim();
-    let value = if let Some(inner) = raw.strip_prefix('"').and_then(|r| r.strip_suffix('"')) {
-        SlotValue::Quoted(inner.to_string())
-    } else if let Some(l) = parse_link_ref(raw) {
-        SlotValue::Link(l)
-    } else {
-        // A bare value must be a single token with no whitespace / stray brackets.
-        if raw.is_empty() || raw.contains(char::is_whitespace) || STRAY_BRACKET_RE.is_match(raw) {
-            return Err(err());
-        }
-        SlotValue::Bare(raw.to_string())
-    };
+    let value = classify_slot_value(caps[2].trim()).ok_or_else(err)?;
     Ok(ParsedSlot {
         name,
         value,
@@ -218,11 +320,7 @@ pub fn parse_slot_line(line: &str) -> Result<ParsedSlot, LineError> {
 
 /// Exact inverse of `parse_slot_line`.
 pub fn render_slot_line(s: &ParsedSlot) -> String {
-    let v = match &s.value {
-        SlotValue::Quoted(v) => format!("\"{v}\""),
-        SlotValue::Bare(v) => v.clone(),
-        SlotValue::Link(l) => format!("[{}](./{}.md)", l.title, l.slug),
-    };
+    let v = render_slot_value(&s.value);
     format!("- {}: {v}", s.name)
 }
 
@@ -387,17 +485,29 @@ pub fn parse_members_block(content: &str, content_abs_start: usize, src: &str) -
             Ok(mut m) => {
                 m.line = line_no;
                 m.span = Some(crate::parse::find_link_span(raw, &m.title, &m.slug));
-                Line::Parsed(m)
+                Line::Parsed(MemberItem::Member(m))
             }
             // A non-heading, non-member line would be silently dropped by
-            // serialize — preserve it as a positioned droppable-content error.
-            Err(_) => Line::Error(ErrorNode {
-                raw: raw.to_string(),
-                line: line_no,
-                span: bullet_range(raw),
-                code: DiagCode::DroppableContent,
-                message: crate::parse::DROPPABLE_MSG.to_string(),
-            }),
+            // serialize — preserve it as a positioned droppable-content error,
+            // unless it is an inline instance (design spec §4.2).
+            Err(_) => match parse_inline_instance(raw) {
+                Ok(mut inst) => {
+                    inst.line = line_no;
+                    inst.span = Some(crate::parse::find_link_span(
+                        raw,
+                        &inst.classifier.title,
+                        &inst.classifier.slug,
+                    ));
+                    Line::Parsed(MemberItem::Instance(inst))
+                }
+                Err(_) => Line::Error(ErrorNode {
+                    raw: raw.to_string(),
+                    line: line_no,
+                    span: bullet_range(raw),
+                    code: DiagCode::DroppableContent,
+                    message: crate::parse::DROPPABLE_MSG.to_string(),
+                }),
+            },
         };
         match stack.last_mut() {
             Some(g) => g.members.push(node),
@@ -423,7 +533,12 @@ pub fn render_members_block(block: &MembersBlock) -> String {
         for m in &g.members {
             out.push('\n');
             match m {
-                crate::syntax::Line::Parsed(ml) => out.push_str(&render_member_line(ml)),
+                crate::syntax::Line::Parsed(MemberItem::Member(ml)) => {
+                    out.push_str(&render_member_line(ml))
+                }
+                crate::syntax::Line::Parsed(MemberItem::Instance(i)) => {
+                    out.push_str(&render_inline_instance(i))
+                }
                 crate::syntax::Line::Error(e) => out.push_str(&e.raw),
             }
         }
@@ -1097,6 +1212,34 @@ mod tests {
     }
 
     #[test]
+    fn inline_instance_lines_round_trip() {
+        for line in [
+            "- instance of [Order](./order.md) as order42",
+            "- instance of [Order](./order.md) as order42 with id set to \"ORD-42\" and status set to PLACED",
+            "- instance of [Order](./order.md) as o with owner set to [Ann](./ann.md)",
+        ] {
+            let i = parse_inline_instance(line).unwrap();
+            assert_eq!(
+                render_inline_instance(&i),
+                line,
+                "inline instance must round-trip byte-identically"
+            );
+        }
+        let i = parse_inline_instance("- instance of [Order](./order.md) as order42 with id set to \"ORD-42\" and status set to PLACED").unwrap();
+        assert_eq!(
+            (
+                i.classifier.title.as_str(),
+                i.classifier.slug.as_str(),
+                i.name.as_str()
+            ),
+            ("Order", "order", "order42")
+        );
+        assert_eq!(i.slots.len(), 2);
+        assert_eq!(i.slots[0].name, "id");
+        assert_eq!(i.slots[1].name, "status");
+    }
+
+    #[test]
     fn parses_attribute_with_link_and_multiplicity() {
         let a = parse_attribute_line("- status: [OrderStatus](./order-status.md) {0..1}").unwrap();
         assert_eq!(a.name, "status");
@@ -1234,10 +1377,10 @@ mod tests {
         assert_eq!(block.groups.len(), 2);
         assert_eq!(block.groups[0].name, "Users");
         assert_eq!(block.groups[0].depth, 3);
-        assert_eq!(
-            block.groups[0].members[0].parsed().unwrap().slug,
-            "customer"
-        );
+        let MemberItem::Member(m) = block.groups[0].members[0].parsed().unwrap() else {
+            panic!("expected a plain member")
+        };
+        assert_eq!(m.slug, "customer");
         assert_eq!(block.groups[0].children[0].name, "VIP");
         assert_eq!(block.groups[0].children[0].depth, 4);
         assert_eq!(block.groups[1].name, "Orders");

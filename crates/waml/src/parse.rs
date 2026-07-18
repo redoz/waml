@@ -814,9 +814,11 @@ pub fn build_model(bundle: &[(String, String)]) -> Model {
         .collect();
     let keyset: HashSet<&str> = classifiers.iter().map(|p| p.id.as_str()).collect();
 
-    let nodes = classifiers.iter().map(|p| build_node(p, &keyset)).collect();
-    let edges: Vec<Edge> = build_edges(&classifiers, &keyset);
-    let diagrams: Vec<Diagram> = build_diagrams(&parsed, &keyset);
+    let mut nodes: Vec<Node> = classifiers.iter().map(|p| build_node(p, &keyset)).collect();
+    let mut edges: Vec<Edge> = build_edges(&classifiers, &keyset);
+    let (diagrams, inst_nodes, inst_edges) = build_diagrams(&parsed, &keyset);
+    nodes.extend(inst_nodes);
+    edges.extend(inst_edges);
 
     // Discover the package forest from directory structure (index/log excluded).
     let docs: Vec<(String, String, String)> = parsed
@@ -1213,29 +1215,98 @@ fn build_edges(classifiers: &[&ParsedDoc], keyset: &HashSet<&str>) -> Vec<Edge> 
 fn resolve_group(
     g: &crate::syntax::MemberGroup,
     referring_path: &str,
+    diagram_key: &str,
     keyset: &HashSet<&str>,
 ) -> DiagramGroup {
+    use crate::syntax::MemberItem;
     DiagramGroup {
         name: g.name.clone(),
         members: g
             .members
             .iter()
             .filter_map(Line::parsed)
-            .filter_map(|m| {
-                let resolved = crate::okf::resolve_href(referring_path, &m.slug);
-                keyset.contains(resolved.as_str()).then_some(resolved)
+            .filter_map(|item| match item {
+                MemberItem::Member(m) => {
+                    let resolved = crate::okf::resolve_href(referring_path, &m.slug);
+                    keyset.contains(resolved.as_str()).then_some(resolved)
+                }
+                // Promoted inline instance: its pool key always exists (we create it).
+                MemberItem::Instance(inst) => Some(format!("{diagram_key}#{}", inst.name)),
             })
             .collect(),
         children: g
             .children
             .iter()
-            .map(|c| resolve_group(c, referring_path, keyset))
+            .map(|c| resolve_group(c, referring_path, diagram_key, keyset))
             .collect(),
     }
 }
 
-fn build_diagrams(parsed: &[ParsedDoc], keyset: &HashSet<&str>) -> Vec<Diagram> {
+/// Recursively promote every inline `## Members` instance in `g` to a pool
+/// `InstanceSpecification` node (keyed `{diagram}#{name}`, mirrors
+/// `build_flows`' `{behavior}#id` pooling) and an `InstanceOf` edge to its
+/// (resolved) classifier.
+fn promote_inline_instances(
+    g: &crate::syntax::MemberGroup,
+    p: &ParsedDoc,
+    diagram_key: &str,
+    keyset: &HashSet<&str>,
+    nodes: &mut Vec<Node>,
+    edges: &mut Vec<Edge>,
+) {
+    use crate::syntax::MemberItem;
+    for item in g.members.iter().filter_map(Line::parsed) {
+        let MemberItem::Instance(inst) = item else {
+            continue;
+        };
+        let node_key = format!("{diagram_key}#{}", inst.name);
+        let mut concept =
+            crate::okf::project(&format!("{node_key}.md"), &format!("# {}\n", inst.name));
+        concept.title = Some(inst.name.clone());
+        nodes.push(Node {
+            concept,
+            key: node_key.clone(),
+            ty: ElementType::Uml(crate::model::UmlMetaclass::InstanceSpecification),
+            stereotypes: vec![],
+            abstract_: false,
+            attributes: vec![],
+            values: vec![],
+            note_body: None,
+            annotates: vec![],
+            members: vec![],
+            slots: inst
+                .slots
+                .iter()
+                .map(|s| resolve_slot(s, &p.path, keyset))
+                .collect(),
+        });
+        // `instance of` edge to the resolved classifier (skipped if unresolved;
+        // validate warns in Task 6).
+        let target = crate::okf::resolve_href(&p.path, &inst.classifier.slug);
+        if keyset.contains(target.as_str()) {
+            edges.push(Edge {
+                source: node_key.clone(),
+                target,
+                kind: crate::model::RelationshipKind::InstanceOf,
+                name: None,
+                from_end: crate::model::RelEnd::default(),
+                to_end: crate::model::RelEnd::default(),
+                bidirectional: false,
+            });
+        }
+    }
+    for c in &g.children {
+        promote_inline_instances(c, p, diagram_key, keyset, nodes, edges);
+    }
+}
+
+fn build_diagrams(
+    parsed: &[ParsedDoc],
+    keyset: &HashSet<&str>,
+) -> (Vec<Diagram>, Vec<Node>, Vec<Edge>) {
     let mut out = Vec::new();
+    let mut inst_nodes: Vec<Node> = Vec::new();
+    let mut inst_edges: Vec<Edge> = Vec::new();
     for p in parsed.iter().filter(|p| p.ty == ElementType::Diagram) {
         let fm = &p.doc.frontmatter;
         let title = fm
@@ -1248,6 +1319,7 @@ fn build_diagrams(parsed: &[ParsedDoc], keyset: &HashSet<&str>) -> Vec<Diagram> 
             .unwrap_or("uml-domain")
             .to_string();
 
+        let diagram_key = p.id.clone();
         let mut groups = Vec::new();
         let mut layout = Vec::new();
         for s in &p.doc.sections {
@@ -1256,8 +1328,18 @@ fn build_diagrams(parsed: &[ParsedDoc], keyset: &HashSet<&str>) -> Vec<Diagram> 
                     groups = block
                         .groups
                         .iter()
-                        .map(|g| resolve_group(g, &p.path, keyset))
+                        .map(|g| resolve_group(g, &p.path, &diagram_key, keyset))
                         .collect();
+                    for g in &block.groups {
+                        promote_inline_instances(
+                            g,
+                            p,
+                            &diagram_key,
+                            keyset,
+                            &mut inst_nodes,
+                            &mut inst_edges,
+                        );
+                    }
                 }
                 Section::Layout(items) => {
                     layout = items
@@ -1307,7 +1389,7 @@ fn build_diagrams(parsed: &[ParsedDoc], keyset: &HashSet<&str>) -> Vec<Diagram> 
             display,
         });
     }
-    out
+    (out, inst_nodes, inst_edges)
 }
 
 #[cfg(test)]
