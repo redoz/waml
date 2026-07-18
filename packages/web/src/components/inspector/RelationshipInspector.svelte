@@ -21,6 +21,8 @@
     includes: "Use-case «include» — dashed open arrow, base → included use case.",
     extends: "Use-case «extend» — dashed open arrow, extension → base use case.",
     annotates: "Note anchor — uml.Note only; never selectable here.",
+    instanceof: "Classifier link — uml.InstanceSpecification only; never selectable here.",
+    links: "Object-diagram link — uml.InstanceSpecification only; never selectable here.",
   };
 
   // `annotates` is a uml.Note-only verb (anchors live on the note node, not on edges) — hide it from the edge verb select.

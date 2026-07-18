@@ -206,6 +206,7 @@ mod tests {
             note_body: None,
             annotates: vec![],
             members: members.iter().map(|s| s.to_string()).collect(),
+            slots: vec![],
         }
     }
 

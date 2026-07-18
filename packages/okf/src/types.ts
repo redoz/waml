@@ -7,6 +7,7 @@ export type Visibility = "+" | "-" | "#" | "~";
 export type {
   TypeRef,
   Attribute,
+  Slot,
   RelEnd,
   RelationshipKind,
   NoteAnchor,
@@ -32,6 +33,7 @@ export type {
 
 import type {
   Attribute,
+  Slot,
   RelEnd,
   RelationshipKind,
   NoteAnchor,
@@ -62,6 +64,8 @@ export interface ModelNode {
   stereotypes: string[];
   abstract?: boolean;
   attributes: Attribute[];
+  /** Slot values on a uml.InstanceSpecification node (design spec §3.3). Absent on non-instances. */
+  slots?: Slot[];
   /** uml.Enum literals. */
   values?: string[];
   /** uml.Note markdown prose (from ## Body). Distinct from the generic verbatim
