@@ -14,24 +14,24 @@
   let open = $state(false);
 </script>
 
-<div class="rounded-lg border border-[#e9edf2] bg-white">
-  <button onclick={() => (open = !open)} class="w-full flex items-center gap-2 px-3 py-2 text-left hover:bg-[#f8fafc]">
+<div class="rounded-[var(--round-chip)] border border-[color:var(--hair)] bg-[color:var(--panel-fill)]">
+  <button onclick={() => (open = !open)} class="w-full flex items-center gap-2 px-3 py-2 text-left hover:bg-[color:rgba(var(--accent),.12)]">
     {#if open}
-      <ChevronDown size={14} class="text-slate-400" />
+      <ChevronDown size={14} class="text-[color:rgb(var(--ink-faint))]" />
     {:else}
-      <ChevronRight size={14} class="text-slate-400" />
+      <ChevronRight size={14} class="text-[color:rgb(var(--ink-faint))]" />
     {/if}
-    <DataNodeIcon size={14} class="text-slate-500" />
-    <span class="text-[13px] font-medium flex-1">{title}</span>
-    <span class="text-[11px] text-slate-500">{fields.length} fields</span>
+    <DataNodeIcon size={14} class="text-[color:rgb(var(--ink-faint))]" />
+    <span class="text-[13px] font-medium flex-1 text-[color:var(--ink)]">{title}</span>
+    <span class="text-[11px] text-[color:rgb(var(--ink-faint))]">{fields.length} fields</span>
   </button>
   {#if open}
-    <table class="w-full text-[12px] border-t border-[#eef1f5]">
+    <table class="w-full text-[12px] border-t border-[color:var(--hair)]">
       <tbody>
         {#each fields as f (f.name)}
-          <tr class="border-b border-[#f3f5f8] last:border-0">
-            <td class="px-3 py-1.5 font-mono text-slate-700">{f.name}</td>
-            <td class="px-3 py-1.5 text-slate-500">{f.type.name}</td>
+          <tr class="border-b border-[color:rgba(var(--accent),.10)] last:border-0">
+            <td class="px-3 py-1.5 font-[family-name:var(--font-mono)] text-[color:var(--ink-dim)]">{f.name}</td>
+            <td class="px-3 py-1.5 text-[color:rgb(var(--ink-faint))]">{f.type.name}</td>
           </tr>
         {/each}
       </tbody>
