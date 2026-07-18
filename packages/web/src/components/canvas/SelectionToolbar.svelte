@@ -97,7 +97,7 @@
         aria-label="Delete selection"
         title="Delete the selected objects and relationships"
         class="hud-surface hud-surface--btn hud-btn hud-btn--sm st-action st-danger"
-        style="--accent:235, 70, 120"
+        style="--accent: var(--danger)"
       >
         <Trash2 size={14} /> Delete selection
         <KeyHint keys={keyLabel("selection.delete")} />
