@@ -204,10 +204,17 @@ describe("toModelGraph", () => {
     const seq: SequenceDoc = {
       key: "s/place-order",
       title: "Place Order",
-      lifelines: [{ title: "Customer", ref: "s/customer" }, { title: "Order", alias: "order" }],
-      messages: [
-        { item: "message", from: "Customer", verb: "calls", to: "order", signature: "place(items)" },
-        { item: "fragment", kind: "alt", operands: [{ guard: "paid", items: [] }, { items: [] }] },
+      nodes: [
+        { node: "lifeline", id: "Customer", title: "Customer", ref: "s/customer" },
+        { node: "lifeline", id: "order", title: "Order", alias: "order" },
+        { node: "operand", id: "f0.o0", guard: "paid", items: [] },
+        { node: "operand", id: "f0.o1", items: [] },
+        { node: "fragment", id: "f0", kind: "alt", operands: ["f0.o0", "f0.o1"] },
+      ],
+      edges: [{ id: "m0", from: "Customer", verb: "calls", to: "order", signature: "place(items)" }],
+      items: [
+        { item: "message", edge: "m0" },
+        { item: "fragment", node: "f0" },
       ],
     };
     const rust = { nodes: [], edges: [], diagrams: [], path: "", packages: [], interactions: [seq] };

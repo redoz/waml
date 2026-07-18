@@ -9,9 +9,9 @@
   type MessageRow = Extract<SeqRow, { kind: "message" }>;
   // Solid+filled = calls (sync); solid+open = sends (async);
   // dashed+open = replies; dashed→new lifeline = creates; →✕ = destroys.
-  const dashed = (r: MessageRow) => r.item.verb === "replies" || r.item.verb === "creates";
-  const filled = (r: MessageRow) => r.item.verb === "calls";
-  const destroyed = (r: MessageRow) => r.item.verb === "destroys";
+  const dashed = (r: MessageRow) => r.edge.verb === "replies" || r.edge.verb === "creates";
+  const filled = (r: MessageRow) => r.edge.verb === "calls";
+  const destroyed = (r: MessageRow) => r.edge.verb === "destroys";
   // Picks the arrow marker for a row: filled > destroys-✕ > default open.
   const markerFor = (r: MessageRow) => (filled(r) ? "url(#seq-arrow-filled)" : destroyed(r) ? "url(#seq-arrow-x)" : "url(#seq-arrow-open)");
 </script>
@@ -45,8 +45,8 @@
         {:else}
           <line x1={row.fromX} y1={row.y} x2={row.toX} y2={row.y} stroke="#334155" stroke-width="1.5" stroke-dasharray={dashed(row) ? "5 3" : undefined} marker-end={markerFor(row)} />
         {/if}
-        {#if row.item.signature}
-          <text x={(row.fromX + row.toX) / 2} y={row.y - 6} text-anchor="middle" font-size="11" fill="#334155">{row.item.signature}</text>
+        {#if row.edge.signature}
+          <text x={(row.fromX + row.toX) / 2} y={row.y - 6} text-anchor="middle" font-size="11" fill="#334155">{row.edge.signature}</text>
         {/if}
       {:else if row.kind === "fragmentStart"}
         <rect x={row.x0} y={row.y} width={row.x1 - row.x0} height={layout.height - row.y - 20} fill="none" stroke="#94a3b8" stroke-width="1.2" />

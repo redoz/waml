@@ -173,14 +173,28 @@ fn sequence_doc_json_matches_ts_field_names() {
     let m = build_model(&b);
     let v = serde_json::to_value(&m).unwrap();
     let s = &v["interactions"][0];
-    assert_eq!(s["lifelines"][0]["ref"], "s/order");
-    assert_eq!(s["lifelines"][0]["alias"], "order");
-    assert_eq!(s["messages"][0]["item"], "message");
-    assert_eq!(s["messages"][0]["verb"], "calls");
-    assert_eq!(s["messages"][0]["signature"], "tick()");
-    assert_eq!(s["messages"][1]["item"], "fragment");
-    assert_eq!(s["messages"][1]["kind"], "opt");
-    assert_eq!(s["messages"][1]["operands"][0]["guard"], "ready");
+    // Lifelines are tagged nodes keyed by their handle; `ref`/`alias` preserved.
+    assert_eq!(s["nodes"][0]["node"], "lifeline");
+    assert_eq!(s["nodes"][0]["id"], "order");
+    assert_eq!(s["nodes"][0]["ref"], "s/order");
+    assert_eq!(s["nodes"][0]["alias"], "order");
+    // Messages become ordered edges (`m0`, `m1`, … in time order).
+    assert_eq!(s["edges"][0]["id"], "m0");
+    assert_eq!(s["edges"][0]["verb"], "calls");
+    assert_eq!(s["edges"][0]["signature"], "tick()");
+    // The root item stream references the edge, then the fragment (document order).
+    assert_eq!(s["items"][0]["item"], "message");
+    assert_eq!(s["items"][0]["edge"], "m0");
+    assert_eq!(s["items"][1]["item"], "fragment");
+    assert_eq!(s["items"][1]["node"], "f0");
+    // Containment: the operand is emitted before its fragment; guard + nested edge kept.
+    assert_eq!(s["nodes"][1]["node"], "operand");
+    assert_eq!(s["nodes"][1]["id"], "f0.o0");
+    assert_eq!(s["nodes"][1]["guard"], "ready");
+    assert_eq!(s["nodes"][1]["items"][0]["edge"], "m1");
+    assert_eq!(s["nodes"][2]["node"], "fragment");
+    assert_eq!(s["nodes"][2]["kind"], "opt");
+    assert_eq!(s["nodes"][2]["operands"][0], "f0.o0");
 }
 
 #[test]

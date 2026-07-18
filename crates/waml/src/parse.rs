@@ -11,8 +11,8 @@ use std::collections::{HashMap, HashSet};
 
 use crate::model::{
     ActivityNode, Attribute, BehaviorKind, Diagram, DiagramDisplay, DiagramGroup, Edge,
-    ElementType, FlowDoc, FlowEdge, FlowEdgeKind, FlowFlavor, Lifeline, Model, Node, SeqItem,
-    SeqOperand, SequenceDoc,
+    ElementType, FlowDoc, FlowEdge, FlowEdgeKind, FlowFlavor, Model, Node, SeqChild, SeqEdge,
+    SeqNode, SequenceDoc,
 };
 
 struct Head {
@@ -954,80 +954,134 @@ fn build_flows(
 /// (view still renders, `title` is kept verbatim).
 fn build_interactions(parsed: &[ParsedDoc], keyset: &HashSet<&str>) -> Vec<SequenceDoc> {
     use crate::syntax::SeqItemSyntax;
+
+    // Walk the nested `## Messages` syntax into the flat pools, assigning
+    // deterministic ids: `m{n}` messages in document (time) order, `f{n}`
+    // fragments in pre-order, `f{n}.o{j}` operands. Recursive.
+    fn build_items(
+        src: &[Line<SeqItemSyntax>],
+        handle_of: &dyn Fn(&str) -> String,
+        nodes: &mut Vec<SeqNode>,
+        edges: &mut Vec<SeqEdge>,
+        msg: &mut usize,
+        frag: &mut usize,
+    ) -> Vec<SeqChild> {
+        let mut out = Vec::new();
+        for it in src.iter().filter_map(Line::parsed) {
+            match it {
+                SeqItemSyntax::Message(m) => {
+                    let id = format!("m{}", *msg);
+                    *msg += 1;
+                    edges.push(SeqEdge {
+                        id: id.clone(),
+                        from: handle_of(&m.from),
+                        verb: m.verb,
+                        to: handle_of(&m.to),
+                        signature: m.signature.clone(),
+                    });
+                    out.push(SeqChild::Message { edge: id });
+                }
+                SeqItemSyntax::Fragment { kind, operands, .. } => {
+                    let fid = format!("f{}", *frag);
+                    *frag += 1;
+                    let mut operand_ids = Vec::new();
+                    for (j, o) in operands.iter().enumerate() {
+                        let oid = format!("{fid}.o{j}");
+                        let items = build_items(&o.items, handle_of, nodes, edges, msg, frag);
+                        nodes.push(SeqNode::Operand {
+                            id: oid.clone(),
+                            guard: o.guard.clone(),
+                            items,
+                        });
+                        operand_ids.push(oid);
+                    }
+                    nodes.push(SeqNode::Fragment {
+                        id: fid.clone(),
+                        kind: *kind,
+                        operands: operand_ids,
+                    });
+                    out.push(SeqChild::Fragment { node: fid });
+                }
+            }
+        }
+        out
+    }
+
     let mut out = Vec::new();
     for p in parsed {
         if p.ty != ElementType::Behavior(BehaviorKind::Sequence) {
             continue;
         }
-        let mut lifelines: Vec<Lifeline> = Vec::new();
+        // Lifelines become `SeqNode::Lifeline`s (participant columns), in
+        // declaration order. A lifeline's id is its handle: alias, else title.
+        let mut lifelines: Vec<SeqNode> = Vec::new();
         for s in &p.doc.sections {
             let Section::Lifelines(lines) = s else {
                 continue;
             };
             for l in lines.iter().filter_map(Line::parsed) {
                 let resolved = crate::okf::resolve_href(&p.path, &l.link.slug);
-                lifelines.push(Lifeline {
-                    title: l.link.title.clone(),
-                    alias: l.alias.clone(),
+                let alias = l.alias.clone();
+                let title = l.link.title.clone();
+                let id = alias.clone().unwrap_or_else(|| title.clone());
+                lifelines.push(SeqNode::Lifeline {
+                    id,
+                    title,
+                    alias,
                     ref_: keyset.contains(resolved.as_str()).then_some(resolved),
                 });
             }
         }
         // A participant token (alias, title, or `[Title](./slug.md)` link)
-        // canonicalizes to a lifeline's handle: its alias when declared, else
-        // its title. Unresolved tokens are kept verbatim (validate warns;
-        // render degrades).
-        let handle_of = |token: &str| -> String {
-            let name = match crate::grammar::parse_link_ref(token) {
-                Some(l) => l.title,
-                None => token.to_string(),
+        // canonicalizes to a lifeline's handle (its id). Unresolved tokens are
+        // kept verbatim (validate warns; render degrades). Scoped so its borrow
+        // of `lifelines` ends before we move `lifelines` into `nodes`.
+        let (frag_nodes, edges, items) = {
+            let handle_of = |token: &str| -> String {
+                let name = match crate::grammar::parse_link_ref(token) {
+                    Some(l) => l.title,
+                    None => token.to_string(),
+                };
+                for n in &lifelines {
+                    if let SeqNode::Lifeline {
+                        id, title, alias, ..
+                    } = n
+                    {
+                        if alias.as_deref() == Some(name.as_str()) || *title == name {
+                            return id.clone();
+                        }
+                    }
+                }
+                name
             };
-            for l in &lifelines {
-                if l.alias.as_deref() == Some(name.as_str()) || l.title == name {
-                    return l.alias.clone().unwrap_or_else(|| l.title.clone());
+            let mut frag_nodes: Vec<SeqNode> = Vec::new();
+            let mut edges: Vec<SeqEdge> = Vec::new();
+            let mut msg = 0usize;
+            let mut frag = 0usize;
+            let mut items: Vec<SeqChild> = Vec::new();
+            for s in &p.doc.sections {
+                if let Section::Messages(block) = s {
+                    items = build_items(
+                        &block.items,
+                        &handle_of,
+                        &mut frag_nodes,
+                        &mut edges,
+                        &mut msg,
+                        &mut frag,
+                    );
                 }
             }
-            name
+            (frag_nodes, edges, items)
         };
-        fn items_of(
-            items: &[Line<SeqItemSyntax>],
-            handle_of: &dyn Fn(&str) -> String,
-        ) -> Vec<SeqItem> {
-            items
-                .iter()
-                .filter_map(Line::parsed)
-                .map(|it| match it {
-                    SeqItemSyntax::Message(m) => SeqItem::Message {
-                        from: handle_of(&m.from),
-                        verb: m.verb,
-                        to: handle_of(&m.to),
-                        signature: m.signature.clone(),
-                    },
-                    SeqItemSyntax::Fragment { kind, operands, .. } => SeqItem::Fragment {
-                        kind: *kind,
-                        operands: operands
-                            .iter()
-                            .map(|o| SeqOperand {
-                                guard: o.guard.clone(),
-                                items: items_of(&o.items, handle_of),
-                            })
-                            .collect(),
-                    },
-                })
-                .collect()
-        }
-        let mut messages = Vec::new();
-        for s in &p.doc.sections {
-            if let Section::Messages(block) = s {
-                messages = items_of(&block.items, &handle_of);
-            }
-        }
+        let mut nodes = lifelines;
+        nodes.extend(frag_nodes);
         out.push(SequenceDoc {
             key: p.id.clone(),
             title: doc_title(p),
             describes: resolve_describes(p, keyset),
-            lifelines,
-            messages,
+            nodes,
+            edges,
+            items,
         });
     }
     out
@@ -1836,7 +1890,7 @@ mod model_tests {
 
     #[test]
     fn builds_sequence_doc_with_resolved_lifelines_and_nested_messages() {
-        use crate::model::{FragmentKind, MessageVerb, SeqItem};
+        use crate::model::{FragmentKind, MessageVerb, SeqChild, SeqNode};
         let b = vec![
             ("s/customer.md".into(), "---\ntype: uml.Actor\ntitle: Customer\n---\n# Customer\n".into()),
             ("s/order.md".into(), "---\ntype: uml.Class\ntitle: Order\n---\n# Order\n".into()),
@@ -1848,33 +1902,76 @@ mod model_tests {
         let s = &m.interactions[0];
         assert_eq!(s.key, "s/place-order");
         assert_eq!(s.describes.as_deref(), Some("s/order"));
-        assert_eq!(s.lifelines.len(), 3);
-        assert_eq!(s.lifelines[0].ref_.as_deref(), Some("s/customer"));
-        assert_eq!(s.lifelines[1].alias.as_deref(), Some("order"));
-        assert_eq!(
-            s.lifelines[2].ref_, None,
-            "unresolved lifeline degrades to link title only"
-        );
-        assert_eq!(s.messages.len(), 3);
-        let SeqItem::Message {
-            from,
-            verb,
-            to,
-            signature,
-        } = &s.messages[0]
-        else {
+
+        // Node lookup by id (works across every variant via an or-pattern).
+        let by_id = |id: &str| {
+            s.nodes
+                .iter()
+                .find(|n| match n {
+                    SeqNode::Lifeline { id: i, .. }
+                    | SeqNode::Fragment { id: i, .. }
+                    | SeqNode::Operand { id: i, .. } => i == id,
+                })
+                .unwrap()
+        };
+
+        // Lifelines are `SeqNode::Lifeline`s, first and in declaration order.
+        let lifelines: Vec<_> = s
+            .nodes
+            .iter()
+            .filter(|n| matches!(n, SeqNode::Lifeline { .. }))
+            .collect();
+        assert_eq!(lifelines.len(), 3);
+        let SeqNode::Lifeline { id, ref_, .. } = lifelines[0] else {
+            panic!()
+        };
+        assert_eq!(id, "Customer");
+        assert_eq!(ref_.as_deref(), Some("s/customer"));
+        let SeqNode::Lifeline { alias, .. } = lifelines[1] else {
+            panic!()
+        };
+        assert_eq!(alias.as_deref(), Some("order"));
+        let SeqNode::Lifeline { ref_, .. } = lifelines[2] else {
             panic!()
         };
         assert_eq!(
-            (from.as_str(), *verb, to.as_str()),
+            *ref_, None,
+            "unresolved lifeline degrades to link title only"
+        );
+
+        // Four messages become four ordered edges (document/time order).
+        assert_eq!(s.edges.len(), 4);
+
+        // Root item stream: message, fragment, message.
+        assert_eq!(s.items.len(), 3);
+        let SeqChild::Message { edge } = &s.items[0] else {
+            panic!()
+        };
+        let m0 = s.edges.iter().find(|e| &e.id == edge).unwrap();
+        assert_eq!(
+            (m0.from.as_str(), m0.verb, m0.to.as_str()),
             ("Customer", MessageVerb::Calls, "order")
         );
-        assert_eq!(signature.as_deref(), Some("place(items)"));
-        let SeqItem::Fragment { kind, operands } = &s.messages[1] else {
+        assert_eq!(m0.signature.as_deref(), Some("place(items)"));
+        assert!(matches!(&s.items[2], SeqChild::Message { .. }));
+
+        // The fragment keeps its kind + two operands; the first operand keeps its guard.
+        let SeqChild::Fragment { node } = &s.items[1] else {
+            panic!()
+        };
+        let SeqNode::Fragment { kind, operands, .. } = by_id(node) else {
             panic!()
         };
         assert_eq!(*kind, FragmentKind::Alt);
         assert_eq!(operands.len(), 2);
-        assert_eq!(operands[0].guard.as_deref(), Some("paid"));
+        let SeqNode::Operand { guard, items, .. } = by_id(&operands[0]) else {
+            panic!()
+        };
+        assert_eq!(guard.as_deref(), Some("paid"));
+        assert_eq!(
+            items.len(),
+            1,
+            "the `paid` operand carries the `ship()` message"
+        );
     }
 }

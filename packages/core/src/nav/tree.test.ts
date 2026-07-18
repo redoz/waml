@@ -28,7 +28,7 @@ const g = {
     { ...node("billing", "billing", "uml.Package"), members: [] },
   ],
   flows: [{ key: "checkout-flow", title: "Checkout flow", flavor: "activity", nodes: [], edges: [] }],
-  interactions: [{ key: "checkout-seq", title: "Checkout sequence", lifelines: [], messages: [] }],
+  interactions: [{ key: "checkout-seq", title: "Checkout sequence", nodes: [], edges: [], items: [] }],
 } as unknown as ModelGraph;
 
 test("diagrams float to the top of a package regardless of members order", () => {

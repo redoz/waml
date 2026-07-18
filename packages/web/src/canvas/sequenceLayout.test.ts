@@ -5,22 +5,24 @@ import { layoutSequence } from "./sequenceLayout";
 const DOC: SequenceDoc = {
   key: "s/place-order",
   title: "Place Order",
-  lifelines: [
-    { title: "Customer", ref: "s/customer" },
-    { title: "Order", alias: "order", ref: "s/order" },
-    { title: "Warehouse", alias: "wh" },
+  nodes: [
+    { node: "lifeline", id: "Customer", title: "Customer", ref: "s/customer" },
+    { node: "lifeline", id: "order", title: "Order", alias: "order", ref: "s/order" },
+    { node: "lifeline", id: "wh", title: "Warehouse", alias: "wh" },
+    { node: "operand", id: "f0.o0", guard: "paid", items: [{ item: "message", edge: "m1" }] },
+    { node: "operand", id: "f0.o1", items: [{ item: "message", edge: "m2" }] },
+    { node: "fragment", id: "f0", kind: "alt", operands: ["f0.o0", "f0.o1"] },
   ],
-  messages: [
-    { item: "message", from: "Customer", verb: "calls", to: "order", signature: "place(items)" },
-    {
-      item: "fragment",
-      kind: "alt",
-      operands: [
-        { guard: "paid", items: [{ item: "message", from: "order", verb: "calls", to: "wh", signature: "ship()" }] },
-        { items: [{ item: "message", from: "order", verb: "sends", to: "Customer", signature: "paymentFailed()" }] },
-      ],
-    },
-    { item: "message", from: "order", verb: "replies", to: "Customer" },
+  edges: [
+    { id: "m0", from: "Customer", verb: "calls", to: "order", signature: "place(items)" },
+    { id: "m1", from: "order", verb: "calls", to: "wh", signature: "ship()" },
+    { id: "m2", from: "order", verb: "sends", to: "Customer", signature: "paymentFailed()" },
+    { id: "m3", from: "order", verb: "replies", to: "Customer" },
+  ],
+  items: [
+    { item: "message", edge: "m0" },
+    { item: "fragment", node: "f0" },
+    { item: "message", edge: "m3" },
   ],
 };
 
@@ -55,7 +57,8 @@ describe("layoutSequence", () => {
   it("marks a message with equal endpoints as a self message", () => {
     const selfDoc: SequenceDoc = {
       ...DOC,
-      messages: [{ item: "message", from: "order", verb: "calls", to: "order", signature: "validate()" }],
+      edges: [{ id: "m0", from: "order", verb: "calls", to: "order", signature: "validate()" }],
+      items: [{ item: "message", edge: "m0" }],
     };
     const l = layoutSequence(selfDoc);
     const row = l.rows[0] as Extract<(typeof l.rows)[number], { kind: "message" }>;

@@ -99,24 +99,47 @@ export interface DisplayDto {
 }
 
 /**
+ * A message reference or a nested-fragment reference inside an ordered
+ * interaction stream (the interaction root, or a fragment operand). Document
+ * order within the list is time order (design spec §6). `edge`/`node` are ids
+ * into `SequenceDoc.edges` / `SequenceDoc.nodes`.
+ */
+export type SeqChild = { item: "message"; edge: string } | { item: "fragment"; node: string };
+
+/**
+ * A message: an interaction-LOCAL, ORDERED edge (design spec §6). It is NOT a
+ * reusable pool edge and NOT an Association — its identity is bound to this
+ * interaction\'s time axis. `from`/`to` are lifeline node ids (a lifeline\'s
+ * handle: its alias, else its title).
+ */
+export interface SeqEdge {
+    /**
+     * Doc-unique id (`m0`, `m1`, … in document/time order), referenced by a
+     * container\'s ordered `items`.
+     */
+    id: string;
+    from: string;
+    verb: MessageVerb;
+    to: string;
+    signature?: string;
+}
+
+/**
+ * A node of an interaction\'s flat model: a participant lifeline, a combined
+ * fragment, or a fragment operand. These are interaction-LOCAL (design spec
+ * §6) — not members of the shared Element pool. Containment is preserved by id
+ * reference: a fragment lists its operand ids; an operand lists its ordered
+ * items (message edges + nested fragment nodes).
+ */
+export type SeqNode = { node: "lifeline"; id: string; title: string; alias?: string; ref?: string } | { node: "fragment"; id: string; kind: FragmentKind; operands: string[] } | { node: "operand"; id: string; guard?: string; items: SeqChild[] };
+
+/**
  * A resolved membership group in a diagram (heading text + resolved keys).
  */
 export interface DiagramGroup {
     name: string;
     members: string[];
     children: DiagramGroup[];
-}
-
-/**
- * A sequence participant: IS Class or Actor, referenced by link.
- */
-export interface Lifeline {
-    title: string;
-    alias?: string;
-    /**
-     * Resolved key of the classifier this lifeline is; None when unresolved.
-     */
-    ref?: string;
 }
 
 /**
@@ -218,27 +241,30 @@ export interface FlowDoc {
 }
 
 /**
- * One operand of a combined fragment. `guard: None` = the `else` operand.
- */
-export interface SeqOperand {
-    guard?: string;
-    items: SeqItem[];
-}
-
-/**
- * One ordered interaction item: document order is time order.
- */
-export type SeqItem = { item: "message"; from: string; verb: MessageVerb; to: string; signature?: string } | { item: "fragment"; kind: FragmentKind; operands: SeqOperand[] };
-
-/**
- * One sequence document: lifelines + ordered messages (model AND view).
+ * One interaction (`uml.Sequence`): a flat, interaction-local model of
+ * lifelines/fragments/operands (`nodes`) and ordered messages (`edges`), with
+ * containment preserved via `items` (the root stream) plus each fragment\'s
+ * operand ids and each operand\'s item stream. This is the RUNTIME view; the
+ * on-disk `## Lifelines`/`## Messages` form (nested) is a separate storage
+ * shape (design spec §9 — storage/runtime need not be 1:1).
  */
 export interface SequenceDoc {
     key: string;
     title: string;
     describes?: string;
-    lifelines: Lifeline[];
-    messages: SeqItem[];
+    /**
+     * Lifelines + fragments + operands; resolve by `id`. Lifelines appear first,
+     * in declaration order (participant column order).
+     */
+    nodes: SeqNode[];
+    /**
+     * Messages, ORDERED (document order = time order); interaction-local.
+     */
+    edges: SeqEdge[];
+    /**
+     * The interaction root\'s ordered item stream (message/fragment refs).
+     */
+    items: SeqChild[];
 }
 
 /**

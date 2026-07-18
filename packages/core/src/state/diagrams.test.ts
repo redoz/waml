@@ -33,7 +33,7 @@ describe("defaultDiagramKey", () => {
       nodes: [node("a")], edges: [], path: "", packages: [],
       diagrams: [{ key: "d1", title: "D", profile: "p", members: ["a"] }],
       flows: [{ key: "f1", title: "F", flavor: "activity", nodes: [], edges: [] }] as ModelGraph["flows"],
-      interactions: [{ key: "s1", title: "S", lifelines: [], messages: [] }] as ModelGraph["interactions"],
+      interactions: [{ key: "s1", title: "S", nodes: [], edges: [], items: [] }] as ModelGraph["interactions"],
     };
     expect(defaultDiagramKey(g)).toBe("d1");
   });
@@ -47,7 +47,7 @@ describe("defaultDiagramKey", () => {
   it("no diagrams or flows, has interactions ⇒ first interaction key", () => {
     const g: ModelGraph = {
       nodes: [node("a")], edges: [], diagrams: [], path: "", packages: [],
-      interactions: [{ key: "s1", title: "S", lifelines: [], messages: [] }] as ModelGraph["interactions"],
+      interactions: [{ key: "s1", title: "S", nodes: [], edges: [], items: [] }] as ModelGraph["interactions"],
     };
     expect(defaultDiagramKey(g)).toBe("s1");
   });

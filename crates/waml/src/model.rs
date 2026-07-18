@@ -582,64 +582,96 @@ impl FragmentKind {
     }
 }
 
-/// A sequence participant: IS Class or Actor, referenced by link.
-#[derive(Debug, Clone, PartialEq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-#[cfg_attr(feature = "wasm", derive(tsify_next::Tsify))]
-#[cfg_attr(feature = "wasm", tsify(into_wasm_abi, from_wasm_abi))]
-pub struct Lifeline {
-    pub title: String,
-    #[cfg_attr(
-        feature = "serde",
-        serde(default, skip_serializing_if = "Option::is_none")
-    )]
-    pub alias: Option<String>,
-    /// Resolved key of the classifier this lifeline is; None when unresolved.
-    #[cfg_attr(
-        feature = "serde",
-        serde(rename = "ref", default, skip_serializing_if = "Option::is_none")
-    )]
-    pub ref_: Option<String>,
-}
-
-/// One operand of a combined fragment. `guard: None` = the `else` operand.
-#[derive(Debug, Clone, PartialEq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-#[cfg_attr(feature = "wasm", derive(tsify_next::Tsify))]
-#[cfg_attr(feature = "wasm", tsify(into_wasm_abi, from_wasm_abi))]
-pub struct SeqOperand {
-    #[cfg_attr(
-        feature = "serde",
-        serde(default, skip_serializing_if = "Option::is_none")
-    )]
-    pub guard: Option<String>,
-    pub items: Vec<SeqItem>,
-}
-
-/// One ordered interaction item: document order is time order.
+/// A message reference or a nested-fragment reference inside an ordered
+/// interaction stream (the interaction root, or a fragment operand). Document
+/// order within the list is time order (design spec §6). `edge`/`node` are ids
+/// into `SequenceDoc.edges` / `SequenceDoc.nodes`.
 #[derive(Debug, Clone, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "serde", serde(tag = "item", rename_all = "lowercase"))]
 #[cfg_attr(feature = "wasm", derive(tsify_next::Tsify))]
 #[cfg_attr(feature = "wasm", tsify(into_wasm_abi, from_wasm_abi))]
-pub enum SeqItem {
-    Message {
-        from: String,
-        verb: MessageVerb,
-        to: String,
+pub enum SeqChild {
+    Message { edge: String },
+    Fragment { node: String },
+}
+
+/// A message: an interaction-LOCAL, ORDERED edge (design spec §6). It is NOT a
+/// reusable pool edge and NOT an Association — its identity is bound to this
+/// interaction's time axis. `from`/`to` are lifeline node ids (a lifeline's
+/// handle: its alias, else its title).
+#[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "wasm", derive(tsify_next::Tsify))]
+#[cfg_attr(feature = "wasm", tsify(into_wasm_abi, from_wasm_abi))]
+pub struct SeqEdge {
+    /// Doc-unique id (`m0`, `m1`, … in document/time order), referenced by a
+    /// container's ordered `items`.
+    pub id: String,
+    pub from: String,
+    pub verb: MessageVerb,
+    pub to: String,
+    #[cfg_attr(
+        feature = "serde",
+        serde(default, skip_serializing_if = "Option::is_none")
+    )]
+    pub signature: Option<String>,
+}
+
+/// A node of an interaction's flat model: a participant lifeline, a combined
+/// fragment, or a fragment operand. These are interaction-LOCAL (design spec
+/// §6) — not members of the shared Element pool. Containment is preserved by id
+/// reference: a fragment lists its operand ids; an operand lists its ordered
+/// items (message edges + nested fragment nodes).
+#[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(tag = "node", rename_all = "lowercase"))]
+#[cfg_attr(feature = "wasm", derive(tsify_next::Tsify))]
+#[cfg_attr(feature = "wasm", tsify(into_wasm_abi, from_wasm_abi))]
+pub enum SeqNode {
+    /// A participant column. `ref_` types-by a pool CLASSIFIER (design spec §6);
+    /// widening to `InstanceSpecification` is §7.4 (out of scope here). `id` is
+    /// the lifeline handle (alias, else title) that messages reference.
+    Lifeline {
+        id: String,
+        title: String,
         #[cfg_attr(
             feature = "serde",
             serde(default, skip_serializing_if = "Option::is_none")
         )]
-        signature: Option<String>,
+        alias: Option<String>,
+        #[cfg_attr(
+            feature = "serde",
+            serde(rename = "ref", default, skip_serializing_if = "Option::is_none")
+        )]
+        ref_: Option<String>,
     },
+    /// A combined fragment (`alt`/`opt`/`loop`). `operands` are its `Operand`
+    /// node ids, in order.
     Fragment {
+        id: String,
         kind: FragmentKind,
-        operands: Vec<SeqOperand>,
+        operands: Vec<String>,
+    },
+    /// One operand of a combined fragment. `guard: None` = the `else` operand.
+    /// `items` is the ordered message/fragment stream (time order).
+    Operand {
+        id: String,
+        #[cfg_attr(
+            feature = "serde",
+            serde(default, skip_serializing_if = "Option::is_none")
+        )]
+        guard: Option<String>,
+        items: Vec<SeqChild>,
     },
 }
 
-/// One sequence document: lifelines + ordered messages (model AND view).
+/// One interaction (`uml.Sequence`): a flat, interaction-local model of
+/// lifelines/fragments/operands (`nodes`) and ordered messages (`edges`), with
+/// containment preserved via `items` (the root stream) plus each fragment's
+/// operand ids and each operand's item stream. This is the RUNTIME view; the
+/// on-disk `## Lifelines`/`## Messages` form (nested) is a separate storage
+/// shape (design spec §9 — storage/runtime need not be 1:1).
 #[derive(Debug, Clone, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "wasm", derive(tsify_next::Tsify))]
@@ -652,8 +684,13 @@ pub struct SequenceDoc {
         serde(default, skip_serializing_if = "Option::is_none")
     )]
     pub describes: Option<String>,
-    pub lifelines: Vec<Lifeline>,
-    pub messages: Vec<SeqItem>,
+    /// Lifelines + fragments + operands; resolve by `id`. Lifelines appear first,
+    /// in declaration order (participant column order).
+    pub nodes: Vec<SeqNode>,
+    /// Messages, ORDERED (document order = time order); interaction-local.
+    pub edges: Vec<SeqEdge>,
+    /// The interaction root's ordered item stream (message/fragment refs).
+    pub items: Vec<SeqChild>,
 }
 
 /// An element's `type`. Graceful degradation is a type-level guarantee: any

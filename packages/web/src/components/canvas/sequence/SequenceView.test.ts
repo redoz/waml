@@ -6,10 +6,17 @@ import SequenceView from "./SequenceView.svelte";
 const DOC: SequenceDoc = {
   key: "s/place-order",
   title: "Place Order",
-  lifelines: [{ title: "Customer" }, { title: "Order", alias: "order" }],
-  messages: [
-    { item: "message", from: "Customer", verb: "calls", to: "order", signature: "place(items)" },
-    { item: "message", from: "order", verb: "replies", to: "Customer", signature: "confirmation" },
+  nodes: [
+    { node: "lifeline", id: "Customer", title: "Customer" },
+    { node: "lifeline", id: "order", title: "Order", alias: "order" },
+  ],
+  edges: [
+    { id: "m0", from: "Customer", verb: "calls", to: "order", signature: "place(items)" },
+    { id: "m1", from: "order", verb: "replies", to: "Customer", signature: "confirmation" },
+  ],
+  items: [
+    { item: "message", edge: "m0" },
+    { item: "message", edge: "m1" },
   ],
 };
 
@@ -26,10 +33,17 @@ describe("SequenceView", () => {
     const doc: SequenceDoc = {
       key: "s/teardown",
       title: "Teardown",
-      lifelines: [{ title: "Manager" }, { title: "Worker" }],
-      messages: [
-        { item: "message", from: "Manager", verb: "sends", to: "Worker", signature: "stop()" },
-        { item: "message", from: "Manager", verb: "destroys", to: "Worker" },
+      nodes: [
+        { node: "lifeline", id: "Manager", title: "Manager" },
+        { node: "lifeline", id: "Worker", title: "Worker" },
+      ],
+      edges: [
+        { id: "m0", from: "Manager", verb: "sends", to: "Worker", signature: "stop()" },
+        { id: "m1", from: "Manager", verb: "destroys", to: "Worker" },
+      ],
+      items: [
+        { item: "message", edge: "m0" },
+        { item: "message", edge: "m1" },
       ],
     };
     const { container } = render(SequenceView, { props: { doc } });
