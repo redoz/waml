@@ -36,6 +36,7 @@ script_mod! {
                         width: Fit
                         height: Fill
                         align: Align{x: 0.0, y: 0.5}
+                        margin: Inset{left: 5.0, top: 5.0}
                         padding: Inset{left: 12.0, right: 10.0, top: 8.0, bottom: 8.0}
                         Label{
                             text: "WAML"
@@ -45,10 +46,22 @@ script_mod! {
                             }
                         }
                     }
-                    pkg_name_view := View{
-                        width: Fill
+                    sep := View{
+                        width: Fit
                         height: Fill
-                        align: Center
+                        align: Align{x: 0.0, y: 0.5}
+                        Label{
+                            text: "/"
+                            draw_text +: {
+                                color: atlas.text_dim
+                                text_style: theme.font_regular{font_size: 16}
+                            }
+                        }
+                    }
+                    pkg_name_view := View{
+                        width: Fit
+                        height: Fill
+                        align: Align{x: 0.0, y: 0.5}
                         pkg_name := Label{
                             text: ""
                             draw_text +: {
@@ -56,6 +69,10 @@ script_mod! {
                                 text_style: theme.font_regular{font_size: 13}
                             }
                         }
+                    }
+                    doc_tabs := DocTabs{
+                        width: Fill
+                        height: Fill
                     }
                     windows_buttons := View {
                         visible: false
@@ -104,20 +121,6 @@ script_mod! {
                     width: Fill
                     height: Fill
                     flow: Down
-                    // Top tab bar: docked, full width, above the canvas.
-                    View{
-                        width: Fill
-                        height: 34.0
-                        flow: Right
-                        diagram_switcher := DiagramSwitcher{
-                            width: 180.0
-                            height: Fill
-                        }
-                        doc_tabs := DocTabs{
-                            width: Fill
-                            height: Fill
-                        }
-                    }
                     // Body: a fullscreen canvas base with floating HUD panels
                     // over it. In an Overlay flow every child gets the full body
                     // rect, so each panel is wrapped in a Fill/Fill View whose
