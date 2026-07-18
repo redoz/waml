@@ -69,6 +69,11 @@ pub struct GraphCanvas {
     camera: Camera,
     #[rust]
     fitted: bool,
+    /// Set by `set_focus`: on the next draw, pin the camera at 1.5x zoom
+    /// centered on the (already 1.5x-scaled) focus node instead of the usual
+    /// fit-to-view. Cleared once applied.
+    #[rust]
+    focus_mode: bool,
     #[rust]
     view_rect: Rect,
     #[rust]
@@ -161,7 +166,17 @@ impl Widget for GraphCanvas {
 
         if !self.fitted && rect.size.x > 0.0 && rect.size.y > 0.0 {
             if let Some(bbox) = bounding_box(&self.scene) {
-                self.camera = Camera::fit(bbox, rect.size.x, rect.size.y, 48.0);
+                self.camera = if self.focus_mode {
+                    let zoom = 1.5;
+                    let (cx_, cy_) = (bbox.x + bbox.w * 0.5, bbox.y + bbox.h * 0.5);
+                    Camera {
+                        pan_x: cx_ - rect.size.x * 0.5 / zoom,
+                        pan_y: cy_ - rect.size.y * 0.5 / zoom,
+                        zoom,
+                    }
+                } else {
+                    Camera::fit(bbox, rect.size.x, rect.size.y, 48.0)
+                };
                 self.fitted = true;
             }
         }
@@ -238,6 +253,17 @@ impl GraphCanvas {
     pub fn set_scene(&mut self, cx: &mut Cx, scene: Scene) {
         self.scene = scene;
         self.fitted = false;
+        self.focus_mode = false;
+        self.draw_bg.redraw(cx);
+    }
+
+    /// Like `set_scene`, but pins the camera at 1.5x zoom centered on the
+    /// node instead of fitting the whole scene to the view. Used for the
+    /// classifier-focus doc tab.
+    pub fn set_focus(&mut self, cx: &mut Cx, scene: Scene) {
+        self.scene = scene;
+        self.fitted = false;
+        self.focus_mode = true;
         self.draw_bg.redraw(cx);
     }
 }

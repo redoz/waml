@@ -5,6 +5,7 @@ mod app;
 mod camera;
 mod canvas;
 mod cli;
+mod doc_tabs;
 mod inspector;
 mod inspector_panel;
 mod load;

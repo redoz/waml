@@ -1,3 +1,4 @@
+use crate::doc_tabs::{OpenTabs, TabKind};
 use crate::inspector::Subject;
 use crate::load;
 use crate::scene::{build_focus_scene, build_scene};
@@ -9,6 +10,7 @@ script_mod! {
     use mod.widgets.GraphCanvas
     use mod.widgets.ProjectTree
     use mod.widgets.Inspector
+    use mod.widgets.DocTabs
     use mod.widgets.SolidView
     use mod.widgets.DesktopButton
     use mod.widgets.DesktopButtonType
@@ -103,6 +105,11 @@ script_mod! {
                                 a: View{
                                     width: Fill
                                     height: Fill
+                                    flow: Down
+                                    doc_tabs := DocTabs{
+                                        width: Fill
+                                        height: 34.0
+                                    }
                                     canvas := GraphCanvas{
                                         width: Fill
                                         height: Fill
@@ -131,6 +138,60 @@ pub struct App {
     ui: WidgetRef,
     #[rust]
     model: Model,
+    #[rust]
+    tabs: OpenTabs,
+}
+
+impl App {
+    /// Point the canvas + inspector at the currently active doc tab. Diagram
+    /// tabs rebuild+fit the full diagram scene (inspector empty state, since
+    /// diagram hit-test selection is out of scope); classifier tabs pin the
+    /// 1.5x focus render and point the inspector at that classifier.
+    fn sync_active_tab(&mut self, cx: &mut Cx) {
+        let Some(active) = self.tabs.active_tab().cloned() else {
+            return;
+        };
+        match active.kind {
+            TabKind::Diagram => {
+                let built =
+                    self.model.diagrams.iter().find(|d| d.key == active.key).map(|d| build_scene(&self.model, d));
+                if let Some((scene, diags)) = built {
+                    for d in &diags {
+                        log!("diagnostic: {d:?}");
+                    }
+                    if let Some(mut canvas) =
+                        self.ui.widget(cx, ids!(canvas)).borrow_mut::<crate::canvas::GraphCanvas>()
+                    {
+                        canvas.set_scene(cx, scene);
+                    }
+                }
+                if let Some(mut inspector) =
+                    self.ui.widget(cx, ids!(inspector)).borrow_mut::<crate::inspector_panel::Inspector>()
+                {
+                    inspector.set_subject(cx, &self.model, Subject::None);
+                }
+            }
+            TabKind::Classifier => {
+                let scene = build_focus_scene(&self.model, &active.key);
+                if let Some(mut canvas) =
+                    self.ui.widget(cx, ids!(canvas)).borrow_mut::<crate::canvas::GraphCanvas>()
+                {
+                    canvas.set_focus(cx, scene);
+                }
+                if let Some(mut inspector) =
+                    self.ui.widget(cx, ids!(inspector)).borrow_mut::<crate::inspector_panel::Inspector>()
+                {
+                    inspector.set_subject(cx, &self.model, Subject::Classifier(active.key.clone()));
+                }
+            }
+        }
+    }
+
+    fn refresh_doc_tabs(&mut self, cx: &mut Cx) {
+        if let Some(mut doc_tabs) = self.ui.widget(cx, ids!(doc_tabs)).borrow_mut::<crate::doc_tabs::DocTabs>() {
+            doc_tabs.set_tabs(cx, &self.tabs);
+        }
+    }
 }
 
 impl MatchEvent for App {
@@ -189,67 +250,77 @@ impl MatchEvent for App {
         } else {
             log!("canvas widget not found / wrong type");
         }
+
+        self.tabs = OpenTabs::diagram_base(diagram.key.clone(), diagram.title.clone());
+        self.refresh_doc_tabs(cx);
+        if let Some(mut inspector) = self
+            .ui
+            .widget(cx, ids!(inspector))
+            .borrow_mut::<crate::inspector_panel::Inspector>()
+        {
+            inspector.set_subject(cx, &self.model, Subject::None);
+        }
     }
 
     fn handle_actions(&mut self, cx: &mut Cx, actions: &Actions) {
-        // Classifier focus: single-click a class row -> render that one node in
-        // the canvas and point the inspector at it.
+        // Classifier focus: single-click a class row -> open/replace the
+        // single preview tab, focus-render that node in the canvas, and
+        // point the inspector at it.
         let focused = self
             .ui
             .widget(cx, ids!(project_tree))
             .borrow_mut::<crate::tree_panel::ProjectTree>()
             .and_then(|panel| panel.focused_classifier(actions));
         if let Some(key) = focused {
-            if self.model.nodes.iter().any(|n| n.key == key) {
-                let scene = build_focus_scene(&self.model, &key);
-                if let Some(mut canvas) = self
-                    .ui
-                    .widget(cx, ids!(canvas))
-                    .borrow_mut::<crate::canvas::GraphCanvas>()
-                {
-                    canvas.set_scene(cx, scene);
-                }
-                if let Some(mut inspector) = self
-                    .ui
-                    .widget(cx, ids!(inspector))
-                    .borrow_mut::<crate::inspector_panel::Inspector>()
-                {
-                    inspector.set_subject(cx, &self.model, Subject::Classifier(key));
-                }
+            if let Some(node) = self.model.nodes.iter().find(|n| n.key == key) {
+                let title = node.concept.title.clone().unwrap_or_else(|| node.key.clone());
+                self.tabs.open_preview(key, title);
+                self.refresh_doc_tabs(cx);
+                self.sync_active_tab(cx);
             }
             return;
         }
 
+        // Diagram row: swap the permanent Diagram tab's content and activate it.
         let selected = self
             .ui
             .widget(cx, ids!(project_tree))
             .borrow_mut::<crate::tree_panel::ProjectTree>()
             .and_then(|panel| panel.selected_diagram(actions));
-        let Some(key) = selected else {
+        if let Some(key) = selected {
+            let Some(diagram) = self.model.diagrams.iter().find(|d| d.key == key) else {
+                log!("SelectDiagram: no diagram with key {key:?}");
+                return;
+            };
+            if let Some(base) = self.tabs.tabs.first_mut() {
+                base.key = diagram.key.clone();
+                base.title = diagram.title.clone();
+            }
+            let base_id = self.tabs.tabs.first().map(|t| t.id).unwrap_or_default();
+            self.tabs.activate(base_id);
+            self.refresh_doc_tabs(cx);
+            self.sync_active_tab(cx);
             return;
-        };
-
-        // Rebuild the scene for the clicked diagram. `built` is owned, so the
-        // borrow of `self.model` ends before the `self.ui` borrows below.
-        let built = self
-            .model
-            .diagrams
-            .iter()
-            .find(|d| d.key == key)
-            .map(|d| build_scene(&self.model, d));
-        let Some((scene, diags)) = built else {
-            log!("SelectDiagram: no diagram with key {key:?}");
-            return;
-        };
-        for d in &diags {
-            log!("diagnostic: {d:?}");
         }
-        if let Some(mut canvas) = self
+
+        // Doc tab strip: click a tab to activate it, or its close button.
+        let tab_action = self
             .ui
-            .widget(cx, ids!(canvas))
-            .borrow_mut::<crate::canvas::GraphCanvas>()
-        {
-            canvas.set_scene(cx, scene);
+            .widget(cx, ids!(doc_tabs))
+            .borrow_mut::<crate::doc_tabs::DocTabs>()
+            .and_then(|tabs| tabs.tab_action(actions));
+        match tab_action {
+            Some(crate::doc_tabs::DocTabsAction::Activate(id)) => {
+                self.tabs.activate(id);
+                self.refresh_doc_tabs(cx);
+                self.sync_active_tab(cx);
+            }
+            Some(crate::doc_tabs::DocTabsAction::Close(id)) => {
+                self.tabs.close(id);
+                self.refresh_doc_tabs(cx);
+                self.sync_active_tab(cx);
+            }
+            _ => {}
         }
     }
 }
@@ -260,6 +331,7 @@ impl AppMain for App {
         crate::canvas::script_mod(vm);
         crate::tree_panel::script_mod(vm);
         crate::inspector_panel::script_mod(vm);
+        crate::doc_tabs::script_mod(vm);
         self::script_mod(vm)
     }
 
