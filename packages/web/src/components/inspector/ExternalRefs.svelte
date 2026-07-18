@@ -1,5 +1,6 @@
 <script lang="ts">
   import type { ModelNode, ModelEdge, Diagram } from "@waml/okf";
+  import { labelCls } from "./field-styles";
 
   let { nodeKey, nodes, edges, members, diagrams, onNavigate }: {
     nodeKey: string;
@@ -31,7 +32,7 @@
 
 {#if refs.length > 0}
   <div>
-    <span class="block text-[11px] font-semibold text-slate-500 uppercase tracking-[0.3px] mb-[6px]">
+    <span class={labelCls}>
       External references
     </span>
     <div class="flex flex-wrap gap-[6px]">
@@ -41,7 +42,7 @@
           disabled={!target}
           onclick={() => target && onNavigate(target, r.other)}
           title={target ? "Open the diagram containing this node" : "Not on any diagram"}
-          class="rounded-full border border-[#d8dee8] bg-white px-[10px] py-[4px] text-[11.5px] text-slate-600 hover:border-[#1e88e5] hover:text-[#1e88e5] disabled:opacity-50"
+          class="rounded-[var(--round-chip)] border border-[color:rgba(var(--accent),.30)] bg-white px-[10px] py-[4px] text-[11.5px] text-[color:rgb(var(--ink-faint))] hover:border-[color:rgb(var(--accent))] hover:text-[color:rgb(var(--accent))] disabled:opacity-50"
         >
           {r.label}
         </button>
