@@ -6,7 +6,7 @@
   import StereotypeRow from "./StereotypeRow.svelte";
   import AttributeRow from "./AttributeRow.svelte";
   import RowsCompartment from "./RowsCompartment.svelte";
-  import { NODE_FONT, type OkfNodeData } from "./types";
+  import { hexToTriple, type OkfNodeData } from "./types";
 
   let { data, keyword, header }: { data: OkfNodeData; keyword?: string; header?: Snippet } = $props();
 
@@ -29,14 +29,15 @@
     data.stereotypes.reduce<string | undefined>((acc, s) => display.stereotypeColors[s] ?? acc, undefined),
   );
   let headerColor = $derived(overrideHeader ?? st.header);
+  let accentTriple = $derived(hexToTriple(headerColor));
 
+  // Structural per-node style: self-theme the accent triple; thick border and
+  // hexagon shape stay as inline structural declarations (not Tailwind).
   let boxStyle = $derived.by(() => {
-    const decls: string[] = [`font-family:${NODE_FONT}`];
-    if (headerColor) decls.push(`border-top-color:${headerColor}`, `border-top-width:4px`);
-    if (st.border === "thick") decls.push(`border-color:${headerColor ?? "#334155"}`, `border-width:2.5px`);
-    if (overrideHeader) decls.push(`background-color:color-mix(in srgb, ${overrideHeader} 12%, white)`);
+    const decls: string[] = [`--accent:${accentTriple}`];
+    if (st.border === "thick") decls.push(`--bw:2.5px`);
     if (st.shape === "hexagon") {
-      decls.push(`clip-path:polygon(8% 0, 92% 0, 100% 50%, 92% 100%, 8% 100%, 0 50%)`, `border-radius:0`);
+      decls.push(`clip-path:polygon(8% 0, 92% 0, 100% 50%, 92% 100%, 8% 100%, 0 50%)`);
     }
     return decls.join(";");
   });
@@ -44,24 +45,24 @@
 
 <div
   data-stereotyped={hasStereotypeStyle ? true : undefined}
-  class="relative bg-white border-[1.5px] border-[#d8dee8] rounded-xl shadow-[0_2px_8px_rgba(15,23,42,0.05)] cursor-grab hover:border-[#c2cad8] select-none w-[230px]"
+  class="hud-surface hud-surface--node hud-node"
   style={boxStyle}
 >
   <NodePorts />
-  <div class="relative z-[1]">
+  <div class="hud-node__body">
     {@render header?.()}
-    {#if showStereotype}
-      <StereotypeRow stereotypes={stereotypeTags} {keyword} />
-    {/if}
-    <div class={`px-3 pb-[9px] pt-[3px] text-center text-[13.5px] font-semibold text-slate-900 ${data.abstract ? "italic" : ""}`}>
-      {data.concept.title ?? "Untitled"}
+    <div class={`node-hdr ${headerColor ? "node-hdr--fill" : "node-hdr--band"}`}>
+      {#if showStereotype}
+        <StereotypeRow stereotypes={stereotypeTags} {keyword} />
+      {/if}
+      <div class={`node-name ${data.abstract ? "node-name--abstract" : ""}`}>
+        {data.concept.title ?? "Untitled"}
+      </div>
     </div>
     {#if isDetailed && data.values && data.values.length > 0}
       <RowsCompartment rows={data.values.length}>
         {#snippet render(i: number)}
-          <div class="px-3 py-[5px] text-[11.5px] text-slate-800 border-b border-[#f3f5f8] last:border-b-0">
-            {data.values?.[i]}
-          </div>
+          <div class="node-row"><span class="node-row__name">{data.values?.[i]}</span></div>
         {/snippet}
       </RowsCompartment>
     {/if}
@@ -73,7 +74,7 @@
       </RowsCompartment>
     {/if}
     {#if !isDetailed}
-      <div class="px-3 pb-[10px] text-center text-[11px] text-slate-500">
+      <div class="node-summary">
         {data.values ? `${data.values.length} values` : `${data.attributes.length} attribute${data.attributes.length === 1 ? "" : "s"}`}
       </div>
     {/if}

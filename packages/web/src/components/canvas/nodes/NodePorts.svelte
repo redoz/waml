@@ -14,12 +14,11 @@
   // explicit transform, overriding SvelteFlow's per-side default offsets so all
   // four straddle the edge symmetrically and stay grabbable from just inside.
   // Handle's `style` prop is a plain CSS string (unlike React Flow's style object).
-  const dotBase =
-    "width:11px;height:11px;border-radius:50%;background:#fff;border:2px solid #1e88e5;" +
-    "opacity:0;transition:opacity 0.12s;z-index:10;transform:translate(-50%, -50%);";
+  // Per-side offsets only; visual style comes from the global `.node-port` class
+  // (accent-themed, revealed on hover/select via canvas.css .node-handle rule).
 </script>
 
-<Handle type="source" position={Position.Left} id="l" isConnectable class="node-handle" style={`${dotBase}left:0;top:50%;`} />
-<Handle type="source" position={Position.Right} id="r" isConnectable class="node-handle" style={`${dotBase}left:100%;top:50%;`} />
-<Handle type="source" position={Position.Top} id="t" isConnectable class="node-handle" style={`${dotBase}left:50%;top:0;`} />
-<Handle type="source" position={Position.Bottom} id="b" isConnectable class="node-handle" style={`${dotBase}left:50%;top:100%;`} />
+<Handle type="source" position={Position.Left} id="l" isConnectable class="node-handle node-port" style="left:0;top:50%;" />
+<Handle type="source" position={Position.Right} id="r" isConnectable class="node-handle node-port" style="left:100%;top:50%;" />
+<Handle type="source" position={Position.Top} id="t" isConnectable class="node-handle node-port" style="left:50%;top:0;" />
+<Handle type="source" position={Position.Bottom} id="b" isConnectable class="node-handle node-port" style="left:50%;top:100%;" />

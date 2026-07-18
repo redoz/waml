@@ -26,7 +26,7 @@ test("showMultiplicity off drops the suffix; showTypes on keeps the type", () =>
 
 test("both off renders no trailing type/mult column", () => {
   const { container } = render(AttributeRow, { props: { a: attr(), showTypes: false, showMultiplicity: false } });
-  expect(container.querySelector("span.font-mono.text-\\[10\\.5px\\]")).toBeNull();
+  expect(container.querySelector(".node-row__ty")).toBeNull();
 });
 
 test("multiplicity of exactly '1' is never printed", () => {
@@ -40,5 +40,5 @@ test("visibility marker gated by showVisibility", () => {
   const on = render(AttributeRow, { props: { a: attr(), showVisibility: true } });
   expect(on.container.textContent).toContain("+");
   const off = render(AttributeRow, { props: { a: attr(), showVisibility: false } });
-  expect(off.container.querySelector("span.font-mono")?.textContent).not.toContain("+");
+  expect(off.container.querySelector(".node-row__vis")?.textContent ?? "").not.toContain("+");
 });
