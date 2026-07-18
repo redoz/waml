@@ -6,6 +6,7 @@ mod camera;
 mod canvas;
 mod card;
 mod cli;
+mod config;
 mod diagram_switcher;
 mod doc_tabs;
 mod draw_hud;

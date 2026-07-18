@@ -426,6 +426,9 @@ impl MatchEvent for App {
         };
         self.ui.label(cx, ids!(pkg_name)).set_text(cx, root_name);
 
+        // Record this open in the recents store (best-effort; see config.rs).
+        crate::config::push_recent(&args.dir, root_name);
+
         let tree = crate::tree::build_tree(&self.model);
         if let Some(mut panel) = self
             .ui
