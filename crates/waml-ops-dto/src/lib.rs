@@ -294,12 +294,16 @@ fn vis_opt(s: &Option<String>) -> Result<Option<Visibility>, String> {
         None => Ok(None),
         Some(c) => {
             let ch = c.chars().next().ok_or("empty visibility")?;
-            Visibility::from_marker(ch).map(Some).ok_or_else(|| format!("bad visibility '{c}'"))
+            Visibility::from_marker(ch)
+                .map(Some)
+                .ok_or_else(|| format!("bad visibility '{c}'"))
         }
     }
 }
 fn ends_opt(s: &Option<String>) -> Result<Option<(RelEnd, RelEnd)>, String> {
-    s.as_ref().map(|e| parse_ends(e).ok_or_else(|| format!("bad ends '{e}'"))).transpose()
+    s.as_ref()
+        .map(|e| parse_ends(e).ok_or_else(|| format!("bad ends '{e}'")))
+        .transpose()
 }
 fn kind_req(s: &str) -> Result<RelationshipKind, String> {
     RelationshipKind::parse(s).ok_or_else(|| format!("unknown verb '{s}'"))
@@ -317,17 +321,32 @@ fn rel_sel(
     as_sel: &Option<String>,
 ) -> Result<Selector, String> {
     let by = match (kind, target, as_sel) {
-        (Some(k), Some(t), _) => RelBy::Endpoint { kind: kind_req(k)?, target: t.clone() },
+        (Some(k), Some(t), _) => RelBy::Endpoint {
+            kind: kind_req(k)?,
+            target: t.clone(),
+        },
         (_, _, Some(n)) => RelBy::Named(n.clone()),
         _ => return Err("relationship selector needs kind+target or as".into()),
     };
-    Ok(Selector::Rel { source: source.to_string(), by })
+    Ok(Selector::Rel {
+        source: source.to_string(),
+        by,
+    })
 }
 
 impl OpDto {
     pub fn to_op(&self) -> Result<Op, String> {
         match self {
-            OpDto::NodeNew { v, slug, dir, ty, title, stereotype, desc, abstract_ } => {
+            OpDto::NodeNew {
+                v,
+                slug,
+                dir,
+                ty,
+                title,
+                stereotype,
+                desc,
+                abstract_,
+            } => {
                 check_v(*v, "node.new")?;
                 Ok(Op::NodeNew {
                     slug: slug.clone(),
@@ -341,9 +360,20 @@ impl OpDto {
             }
             OpDto::NodeRename { v, from, to } => {
                 check_v(*v, "node.rename")?;
-                Ok(Op::NodeRename { from: from.clone(), to: to.clone() })
+                Ok(Op::NodeRename {
+                    from: from.clone(),
+                    to: to.clone(),
+                })
             }
-            OpDto::NodeSet { v, slug, title, desc, stereotype, abstract_, ty } => {
+            OpDto::NodeSet {
+                v,
+                slug,
+                title,
+                desc,
+                stereotype,
+                abstract_,
+                ty,
+            } => {
                 check_v(*v, "node.set")?;
                 Ok(Op::NodeSet {
                     slug: slug.clone(),
@@ -356,9 +386,19 @@ impl OpDto {
             }
             OpDto::NodeRm { v, slug, cascade } => {
                 check_v(*v, "node.rm")?;
-                Ok(Op::NodeRm { slug: slug.clone(), cascade: *cascade })
+                Ok(Op::NodeRm {
+                    slug: slug.clone(),
+                    cascade: *cascade,
+                })
             }
-            OpDto::AttrAdd { v, node, name, ty, mult, vis } => {
+            OpDto::AttrAdd {
+                v,
+                node,
+                name,
+                ty,
+                mult,
+                vis,
+            } => {
                 check_v(*v, "attr.add")?;
                 Ok(Op::AttrAdd {
                     node: node.clone(),
@@ -368,7 +408,15 @@ impl OpDto {
                     visibility: vis_opt(vis)?,
                 })
             }
-            OpDto::AttrSet { v, node, name, ty, mult, vis, rename } => {
+            OpDto::AttrSet {
+                v,
+                node,
+                name,
+                ty,
+                mult,
+                vis,
+                rename,
+            } => {
                 check_v(*v, "attr.set")?;
                 Ok(Op::AttrSet {
                     node: node.clone(),
@@ -381,17 +429,34 @@ impl OpDto {
             }
             OpDto::AttrRm { v, node, name } => {
                 check_v(*v, "attr.rm")?;
-                Ok(Op::AttrRm { node: node.clone(), name: name.clone() })
+                Ok(Op::AttrRm {
+                    node: node.clone(),
+                    name: name.clone(),
+                })
             }
             OpDto::ValueAdd { v, node, literal } => {
                 check_v(*v, "value.add")?;
-                Ok(Op::ValueAdd { node: node.clone(), literal: literal.clone() })
+                Ok(Op::ValueAdd {
+                    node: node.clone(),
+                    literal: literal.clone(),
+                })
             }
             OpDto::ValueRm { v, node, literal } => {
                 check_v(*v, "value.rm")?;
-                Ok(Op::ValueRm { node: node.clone(), literal: literal.clone() })
+                Ok(Op::ValueRm {
+                    node: node.clone(),
+                    literal: literal.clone(),
+                })
             }
-            OpDto::RelAdd { v, source, kind, target, as_label, as_ref, ends } => {
+            OpDto::RelAdd {
+                v,
+                source,
+                kind,
+                target,
+                as_label,
+                as_ref,
+                ends,
+            } => {
                 check_v(*v, "rel.add")?;
                 Ok(Op::RelAdd {
                     source: source.clone(),
@@ -401,7 +466,16 @@ impl OpDto {
                     ends: ends_opt(ends)?,
                 })
             }
-            OpDto::RelSet { v, source, kind, target, as_sel, ends, set_label, set_as_ref } => {
+            OpDto::RelSet {
+                v,
+                source,
+                kind,
+                target,
+                as_sel,
+                ends,
+                set_label,
+                set_as_ref,
+            } => {
                 check_v(*v, "rel.set")?;
                 Ok(Op::RelSet {
                     selector: rel_sel(source, kind, target, as_sel)?,
@@ -409,35 +483,63 @@ impl OpDto {
                     name: name_of(set_label, set_as_ref),
                 })
             }
-            OpDto::RelRm { v, source, kind, target, as_sel } => {
+            OpDto::RelRm {
+                v,
+                source,
+                kind,
+                target,
+                as_sel,
+            } => {
                 check_v(*v, "rel.rm")?;
-                Ok(Op::RelRm { selector: rel_sel(source, kind, target, as_sel)? })
+                Ok(Op::RelRm {
+                    selector: rel_sel(source, kind, target, as_sel)?,
+                })
             }
             OpDto::PkgMove { v, slug, to_dir } => {
                 check_v(*v, "pkg.move")?;
-                Ok(Op::PkgMove { slug: slug.clone(), to_dir: to_dir.clone() })
+                Ok(Op::PkgMove {
+                    slug: slug.clone(),
+                    to_dir: to_dir.clone(),
+                })
             }
             OpDto::PkgRename { v, from, to } => {
                 check_v(*v, "pkg.rename")?;
-                Ok(Op::PkgRename { from: from.clone(), to: to.clone() })
+                Ok(Op::PkgRename {
+                    from: from.clone(),
+                    to: to.clone(),
+                })
             }
             OpDto::PkgDelete { v, path, cascade } => {
                 check_v(*v, "pkg.delete")?;
-                Ok(Op::PkgDelete { path: path.clone(), cascade: *cascade })
+                Ok(Op::PkgDelete {
+                    path: path.clone(),
+                    cascade: *cascade,
+                })
             }
             OpDto::PkgReorder { v, path, order } => {
                 check_v(*v, "pkg.reorder")?;
-                Ok(Op::PkgReorder { path: path.clone(), order: order.clone() })
+                Ok(Op::PkgReorder {
+                    path: path.clone(),
+                    order: order.clone(),
+                })
             }
             OpDto::PkgRetitle { v, path, title } => {
                 check_v(*v, "pkg.retitle")?;
-                Ok(Op::PkgRetitle { path: path.clone(), title: title.clone() })
+                Ok(Op::PkgRetitle {
+                    path: path.clone(),
+                    title: title.clone(),
+                })
             }
             OpDto::PkgSort { v, path } => {
                 check_v(*v, "pkg.sort")?;
                 Ok(Op::PkgSort { path: path.clone() })
             }
-            OpDto::PkgInsert { v, parent_path, name, docs } => {
+            OpDto::PkgInsert {
+                v,
+                parent_path,
+                name,
+                docs,
+            } => {
                 check_v(*v, "pkg.insert")?;
                 Ok(Op::PkgInsert {
                     parent_path: parent_path.clone(),
@@ -445,7 +547,13 @@ impl OpDto {
                     docs: docs.clone(),
                 })
             }
-            OpDto::DiagramSet { v, key, title, desc, display } => {
+            OpDto::DiagramSet {
+                v,
+                key,
+                title,
+                desc,
+                display,
+            } => {
                 check_v(*v, "diagram.set")?;
                 Ok(Op::DiagramSet {
                     key: key.clone(),
@@ -468,7 +576,15 @@ impl OpDto {
             None => (None, None),
         };
         match op {
-            Op::NodeNew { slug, dir, ty, title, stereotype, description, abstract_ } => OpDto::NodeNew {
+            Op::NodeNew {
+                slug,
+                dir,
+                ty,
+                title,
+                stereotype,
+                description,
+                abstract_,
+            } => OpDto::NodeNew {
                 v: 1,
                 slug: slug.clone(),
                 dir: dir.clone(),
@@ -478,8 +594,19 @@ impl OpDto {
                 desc: description.clone(),
                 abstract_: *abstract_,
             },
-            Op::NodeRename { from, to } => OpDto::NodeRename { v: 1, from: from.clone(), to: to.clone() },
-            Op::NodeSet { slug, title, description, stereotype, abstract_, ty } => OpDto::NodeSet {
+            Op::NodeRename { from, to } => OpDto::NodeRename {
+                v: 1,
+                from: from.clone(),
+                to: to.clone(),
+            },
+            Op::NodeSet {
+                slug,
+                title,
+                description,
+                stereotype,
+                abstract_,
+                ty,
+            } => OpDto::NodeSet {
                 v: 1,
                 slug: slug.clone(),
                 title: title.clone(),
@@ -488,8 +615,18 @@ impl OpDto {
                 abstract_: *abstract_,
                 ty: ty.as_ref().map(|t| t.as_str()),
             },
-            Op::NodeRm { slug, cascade } => OpDto::NodeRm { v: 1, slug: slug.clone(), cascade: *cascade },
-            Op::AttrAdd { node, name, ty_token, multiplicity, visibility } => OpDto::AttrAdd {
+            Op::NodeRm { slug, cascade } => OpDto::NodeRm {
+                v: 1,
+                slug: slug.clone(),
+                cascade: *cascade,
+            },
+            Op::AttrAdd {
+                node,
+                name,
+                ty_token,
+                multiplicity,
+                visibility,
+            } => OpDto::AttrAdd {
                 v: 1,
                 node: node.clone(),
                 name: name.clone(),
@@ -497,7 +634,14 @@ impl OpDto {
                 mult: Some(multiplicity.as_str().to_string()),
                 vis: visibility.map(|x| x.marker().to_string()),
             },
-            Op::AttrSet { node, name, ty_token, multiplicity, visibility, rename } => OpDto::AttrSet {
+            Op::AttrSet {
+                node,
+                name,
+                ty_token,
+                multiplicity,
+                visibility,
+                rename,
+            } => OpDto::AttrSet {
                 v: 1,
                 node: node.clone(),
                 name: name.clone(),
@@ -506,10 +650,28 @@ impl OpDto {
                 vis: visibility.map(|x| x.marker().to_string()),
                 rename: rename.clone(),
             },
-            Op::AttrRm { node, name } => OpDto::AttrRm { v: 1, node: node.clone(), name: name.clone() },
-            Op::ValueAdd { node, literal } => OpDto::ValueAdd { v: 1, node: node.clone(), literal: literal.clone() },
-            Op::ValueRm { node, literal } => OpDto::ValueRm { v: 1, node: node.clone(), literal: literal.clone() },
-            Op::RelAdd { source, kind, target, name, ends } => {
+            Op::AttrRm { node, name } => OpDto::AttrRm {
+                v: 1,
+                node: node.clone(),
+                name: name.clone(),
+            },
+            Op::ValueAdd { node, literal } => OpDto::ValueAdd {
+                v: 1,
+                node: node.clone(),
+                literal: literal.clone(),
+            },
+            Op::ValueRm { node, literal } => OpDto::ValueRm {
+                v: 1,
+                node: node.clone(),
+                literal: literal.clone(),
+            },
+            Op::RelAdd {
+                source,
+                kind,
+                target,
+                name,
+                ends,
+            } => {
                 let (as_label, as_ref) = name_parts(name);
                 OpDto::RelAdd {
                     v: 1,
@@ -521,28 +683,79 @@ impl OpDto {
                     ends: ends_str(ends),
                 }
             }
-            Op::RelSet { selector, ends, name } => {
+            Op::RelSet {
+                selector,
+                ends,
+                name,
+            } => {
                 let (source, kind, target, as_sel) = sel_parts(selector);
                 let (set_label, set_as_ref) = name_parts(name);
-                OpDto::RelSet { v: 1, source, kind, target, as_sel, ends: ends_str(ends), set_label, set_as_ref }
+                OpDto::RelSet {
+                    v: 1,
+                    source,
+                    kind,
+                    target,
+                    as_sel,
+                    ends: ends_str(ends),
+                    set_label,
+                    set_as_ref,
+                }
             }
             Op::RelRm { selector } => {
                 let (source, kind, target, as_sel) = sel_parts(selector);
-                OpDto::RelRm { v: 1, source, kind, target, as_sel }
+                OpDto::RelRm {
+                    v: 1,
+                    source,
+                    kind,
+                    target,
+                    as_sel,
+                }
             }
-            Op::PkgMove { slug, to_dir } => OpDto::PkgMove { v: 1, slug: slug.clone(), to_dir: to_dir.clone() },
-            Op::PkgRename { from, to } => OpDto::PkgRename { v: 1, from: from.clone(), to: to.clone() },
-            Op::PkgDelete { path, cascade } => OpDto::PkgDelete { v: 1, path: path.clone(), cascade: *cascade },
-            Op::PkgReorder { path, order } => OpDto::PkgReorder { v: 1, path: path.clone(), order: order.clone() },
-            Op::PkgSort { path } => OpDto::PkgSort { v: 1, path: path.clone() },
-            Op::PkgRetitle { path, title } => OpDto::PkgRetitle { v: 1, path: path.clone(), title: title.clone() },
-            Op::PkgInsert { parent_path, name, docs } => OpDto::PkgInsert {
+            Op::PkgMove { slug, to_dir } => OpDto::PkgMove {
+                v: 1,
+                slug: slug.clone(),
+                to_dir: to_dir.clone(),
+            },
+            Op::PkgRename { from, to } => OpDto::PkgRename {
+                v: 1,
+                from: from.clone(),
+                to: to.clone(),
+            },
+            Op::PkgDelete { path, cascade } => OpDto::PkgDelete {
+                v: 1,
+                path: path.clone(),
+                cascade: *cascade,
+            },
+            Op::PkgReorder { path, order } => OpDto::PkgReorder {
+                v: 1,
+                path: path.clone(),
+                order: order.clone(),
+            },
+            Op::PkgSort { path } => OpDto::PkgSort {
+                v: 1,
+                path: path.clone(),
+            },
+            Op::PkgRetitle { path, title } => OpDto::PkgRetitle {
+                v: 1,
+                path: path.clone(),
+                title: title.clone(),
+            },
+            Op::PkgInsert {
+                parent_path,
+                name,
+                docs,
+            } => OpDto::PkgInsert {
                 v: 1,
                 parent_path: parent_path.clone(),
                 name: name.clone(),
                 docs: docs.clone(),
             },
-            Op::DiagramSet { key, title, description, display } => OpDto::DiagramSet {
+            Op::DiagramSet {
+                key,
+                title,
+                description,
+                display,
+            } => OpDto::DiagramSet {
                 v: 1,
                 key: key.clone(),
                 title: title.clone(),
@@ -557,12 +770,24 @@ impl OpDto {
 #[allow(dead_code)]
 fn sel_parts(sel: &Selector) -> (String, Option<String>, Option<String>, Option<String>) {
     match sel {
-        Selector::Rel { source, by: RelBy::Endpoint { kind, target } } =>
-            (source.clone(), Some(kind.as_str().to_string()), Some(target.clone()), None),
-        Selector::Rel { source, by: RelBy::Named(n) } => (source.clone(), None, None, Some(n.clone())),
+        Selector::Rel {
+            source,
+            by: RelBy::Endpoint { kind, target },
+        } => (
+            source.clone(),
+            Some(kind.as_str().to_string()),
+            Some(target.clone()),
+            None,
+        ),
+        Selector::Rel {
+            source,
+            by: RelBy::Named(n),
+        } => (source.clone(), None, None, Some(n.clone())),
         // node/attr/value selectors never reach a rel op; render source-only as a defensive default
         Selector::Node(s) => (s.clone(), None, None, None),
-        Selector::Attr { node, .. } | Selector::Value { node, .. } => (node.clone(), None, None, None),
+        Selector::Attr { node, .. } | Selector::Value { node, .. } => {
+            (node.clone(), None, None, None)
+        }
     }
 }
 
@@ -578,10 +803,21 @@ mod tests {
 
     #[test]
     fn parses_attr_add_line() {
-        let op = round_trip(r#"{"v":1,"op":"attr.add","node":"order","name":"total","ty":"Money","mult":"0..1"}"#);
+        let op = round_trip(
+            r#"{"v":1,"op":"attr.add","node":"order","name":"total","ty":"Money","mult":"0..1"}"#,
+        );
         match op {
-            Op::AttrAdd { node, name, ty_token, multiplicity, .. } => {
-                assert_eq!((node.as_str(), name.as_str(), ty_token.as_str()), ("order", "total", "Money"));
+            Op::AttrAdd {
+                node,
+                name,
+                ty_token,
+                multiplicity,
+                ..
+            } => {
+                assert_eq!(
+                    (node.as_str(), name.as_str(), ty_token.as_str()),
+                    ("order", "total", "Money")
+                );
                 assert_eq!(multiplicity.as_str(), "0..1");
             }
             _ => panic!("wrong op"),
@@ -593,7 +829,8 @@ mod tests {
         // absent v defaults to 1
         let _ = round_trip(r#"{"op":"value.add","node":"e","literal":"X"}"#);
         // explicit unknown v is rejected
-        let dto: OpDto = serde_json::from_str(r#"{"v":2,"op":"value.add","node":"e","literal":"X"}"#).unwrap();
+        let dto: OpDto =
+            serde_json::from_str(r#"{"v":2,"op":"value.add","node":"e","literal":"X"}"#).unwrap();
         assert!(dto.to_op().is_err());
     }
 
@@ -640,7 +877,10 @@ mod tests {
                 description: Some("x".into()),
                 abstract_: true,
             },
-            Op::NodeRename { from: "a".into(), to: "b".into() },
+            Op::NodeRename {
+                from: "a".into(),
+                to: "b".into(),
+            },
             Op::NodeSet {
                 slug: "order".into(),
                 title: Some("O".into()),
@@ -649,7 +889,10 @@ mod tests {
                 abstract_: Some(false),
                 ty: None,
             },
-            Op::NodeRm { slug: "x".into(), cascade: true },
+            Op::NodeRm {
+                slug: "x".into(),
+                cascade: true,
+            },
             Op::AttrAdd {
                 node: "order".into(),
                 name: "total".into(),
@@ -665,9 +908,18 @@ mod tests {
                 visibility: None,
                 rename: Some("amount".into()),
             },
-            Op::AttrRm { node: "order".into(), name: "total".into() },
-            Op::ValueAdd { node: "e".into(), literal: "PLACED".into() },
-            Op::ValueRm { node: "e".into(), literal: "DRAFT".into() },
+            Op::AttrRm {
+                node: "order".into(),
+                name: "total".into(),
+            },
+            Op::ValueAdd {
+                node: "e".into(),
+                literal: "PLACED".into(),
+            },
+            Op::ValueRm {
+                node: "e".into(),
+                literal: "DRAFT".into(),
+            },
             Op::RelAdd {
                 source: "order".into(),
                 kind: RelationshipKind::Composes,
@@ -678,18 +930,43 @@ mod tests {
             Op::RelSet {
                 selector: Selector::Rel {
                     source: "order".into(),
-                    by: RelBy::Endpoint { kind: RelationshipKind::Composes, target: "order-line".into() },
+                    by: RelBy::Endpoint {
+                        kind: RelationshipKind::Composes,
+                        target: "order-line".into(),
+                    },
                 },
                 ends: parse_ends("1 to *"),
                 name: None,
             },
-            Op::RelRm { selector: Selector::Rel { source: "order".into(), by: RelBy::Named("has".into()) } },
-            Op::PkgMove { slug: "order".into(), to_dir: "billing".into() },
-            Op::PkgRename { from: "a".into(), to: "b".into() },
-            Op::PkgDelete { path: "sales".into(), cascade: false },
-            Op::PkgReorder { path: "sales".into(), order: vec!["a".into()] },
-            Op::PkgSort { path: "sales".into() },
-            Op::PkgRetitle { path: "sales".into(), title: "Sales Domain".into() },
+            Op::RelRm {
+                selector: Selector::Rel {
+                    source: "order".into(),
+                    by: RelBy::Named("has".into()),
+                },
+            },
+            Op::PkgMove {
+                slug: "order".into(),
+                to_dir: "billing".into(),
+            },
+            Op::PkgRename {
+                from: "a".into(),
+                to: "b".into(),
+            },
+            Op::PkgDelete {
+                path: "sales".into(),
+                cascade: false,
+            },
+            Op::PkgReorder {
+                path: "sales".into(),
+                order: vec!["a".into()],
+            },
+            Op::PkgSort {
+                path: "sales".into(),
+            },
+            Op::PkgRetitle {
+                path: "sales".into(),
+                title: "Sales Domain".into(),
+            },
             Op::PkgInsert {
                 parent_path: "sales".into(),
                 name: "orders".into(),
@@ -723,7 +1000,11 @@ mod tests {
         for op in &ops {
             let line = serde_json::to_string(&OpDto::from_op(op)).unwrap();
             let back: OpDto = serde_json::from_str(&line).unwrap();
-            assert_eq!(&back.to_op().unwrap(), op, "wire round-trip changed op: {line}");
+            assert_eq!(
+                &back.to_op().unwrap(),
+                op,
+                "wire round-trip changed op: {line}"
+            );
         }
     }
 
@@ -732,7 +1013,10 @@ mod tests {
         let op = Op::PkgInsert {
             parent_path: "sales".into(),
             name: "orders".into(),
-            docs: vec![("t/order.md".into(), "---\ntype: uml.Class\ntitle: Order\n---\n# Order\n".into())],
+            docs: vec![(
+                "t/order.md".into(),
+                "---\ntype: uml.Class\ntitle: Order\n---\n# Order\n".into(),
+            )],
         };
         let line = serde_json::to_string(&OpDto::from_op(&op)).unwrap();
         assert!(line.contains("\"op\":\"pkg.insert\""), "wire tag: {line}");
@@ -749,7 +1033,10 @@ mod tests {
             display: None,
         });
         let line = serde_json::to_string(&dto).unwrap();
-        assert!(line.contains("\"op\":\"diagram.set\""), "unexpected wire tag: {line}");
+        assert!(
+            line.contains("\"op\":\"diagram.set\""),
+            "unexpected wire tag: {line}"
+        );
     }
 
     #[test]
@@ -775,6 +1062,10 @@ mod tests {
         let dto = OpDto::from_op(&op);
         let line = serde_json::to_string(&dto).unwrap();
         let back: OpDto = serde_json::from_str(&line).unwrap();
-        assert_eq!(back.to_op().unwrap(), op, "absent maxAttributes/stereotypeFilter must round-trip as None: {line}");
+        assert_eq!(
+            back.to_op().unwrap(),
+            op,
+            "absent maxAttributes/stereotypeFilter must round-trip as None: {line}"
+        );
     }
 }

@@ -146,10 +146,16 @@ fn frontmatter_is_empty(fm: &Frontmatter) -> bool {
 
 /// Frontmatter keys that project onto dedicated `Concept` fields (everything
 /// else survives in `extra`).
-const KNOWN_KEYS: &[&str] = &["type", "title", "description", "resource", "tags", "timestamp"];
+const KNOWN_KEYS: &[&str] = &[
+    "type",
+    "title",
+    "description",
+    "resource",
+    "tags",
+    "timestamp",
+];
 
-static LINK_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"\[([^\]]*)\]\(([^)]+)\)").unwrap());
+static LINK_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\[([^\]]*)\]\(([^)]+)\)").unwrap());
 
 /// The concept ID for a bundle path: full path with a trailing `.md` removed
 /// and backslashes normalized to `/` (OKF §2).
@@ -222,7 +228,10 @@ fn first_h1(body: &str) -> Option<String> {
     let mut in_h1 = false;
     for ev in Parser::new_ext(body, Options::empty()) {
         match ev {
-            Event::Start(Tag::Heading { level: HeadingLevel::H1, .. }) => in_h1 = true,
+            Event::Start(Tag::Heading {
+                level: HeadingLevel::H1,
+                ..
+            }) => in_h1 = true,
             Event::End(TagEnd::Heading(HeadingLevel::H1)) => in_h1 = false,
             Event::Text(t) | Event::Code(t) => {
                 if in_h1 {
@@ -239,14 +248,20 @@ fn first_h1(body: &str) -> Option<String> {
 fn extract_links(text: &str) -> Vec<Link> {
     LINK_RE
         .captures_iter(text)
-        .map(|c| Link { text: c[1].to_string(), href: c[2].to_string() })
+        .map(|c| Link {
+            text: c[1].to_string(),
+            href: c[2].to_string(),
+        })
         .collect()
 }
 
 fn extract_citations(text: &str) -> Vec<Citation> {
     LINK_RE
         .captures_iter(text)
-        .map(|c| Citation { text: c[1].to_string(), href: c[2].to_string() })
+        .map(|c| Citation {
+            text: c[1].to_string(),
+            href: c[2].to_string(),
+        })
         .collect()
 }
 
@@ -299,7 +314,10 @@ pub fn project(path: &str, src: &str) -> Concept {
 /// its `type` (UML or not) or reserved role.
 pub fn build_bundle(bundle: &[(String, String)]) -> Bundle {
     Bundle {
-        concepts: bundle.iter().map(|(path, src)| project(path, src)).collect(),
+        concepts: bundle
+            .iter()
+            .map(|(path, src)| project(path, src))
+            .collect(),
     }
 }
 
@@ -316,7 +334,10 @@ mod tests {
 
     #[test]
     fn resolve_href_same_dir() {
-        assert_eq!(resolve_href("tables/index.md", "./orders.md"), "tables/orders");
+        assert_eq!(
+            resolve_href("tables/index.md", "./orders.md"),
+            "tables/orders"
+        );
     }
 
     #[test]
@@ -326,12 +347,18 @@ mod tests {
 
     #[test]
     fn resolve_href_nested_multi_segment() {
-        assert_eq!(resolve_href("tables/index.md", "./sub/x.md"), "tables/sub/x");
+        assert_eq!(
+            resolve_href("tables/index.md", "./sub/x.md"),
+            "tables/sub/x"
+        );
     }
 
     #[test]
     fn resolve_href_parent_dir_escape() {
-        assert_eq!(resolve_href("tables/orders.md", "../shop/order.md"), "shop/order");
+        assert_eq!(
+            resolve_href("tables/orders.md", "../shop/order.md"),
+            "shop/order"
+        );
     }
 
     #[test]
@@ -387,7 +414,10 @@ mod tests {
     #[test]
     fn title_falls_back_to_first_h1_when_frontmatter_title_absent() {
         // No `title:` frontmatter → concept.title resolves to the H1 text.
-        let c = project("shop/order.md", "---\ntype: uml.Class\n---\n# Order Heading\n\n## Attributes\n- id: X\n");
+        let c = project(
+            "shop/order.md",
+            "---\ntype: uml.Class\n---\n# Order Heading\n\n## Attributes\n- id: X\n",
+        );
         assert_eq!(c.title.as_deref(), Some("Order Heading"));
     }
 
@@ -399,13 +429,17 @@ mod tests {
 
     #[test]
     fn title_is_none_when_neither_frontmatter_nor_h1_present() {
-        let c = project("x.md", "---\ntype: uml.Class\n---\n\nprose with no heading\n");
+        let c = project(
+            "x.md",
+            "---\ntype: uml.Class\n---\n\nprose with no heading\n",
+        );
         assert_eq!(c.title, None);
     }
 
     #[test]
     fn uml_doc_also_projects_to_a_concept() {
-        let src = "---\ntype: uml.Class\ntitle: Order\n---\n# Order\n\n## Attributes\n- id: OrderId\n";
+        let src =
+            "---\ntype: uml.Class\ntitle: Order\n---\n# Order\n\n## Attributes\n- id: OrderId\n";
         let c = project("shop/order.md", src);
         assert_eq!(c.id, "shop/order");
         assert_eq!(c.ty, "uml.Class");
@@ -416,9 +450,18 @@ mod tests {
     #[test]
     fn build_bundle_lands_every_doc_including_reserved() {
         let bundle = vec![
-            ("index.md".to_string(), "# Root Index\n\n* [Order](order.md)\n".to_string()),
-            ("order.md".to_string(), "---\ntype: uml.Class\ntitle: Order\n---\n# Order\n".to_string()),
-            ("log.md".to_string(), "# Update Log\n\n## 2026-05-22\n* Created.\n".to_string()),
+            (
+                "index.md".to_string(),
+                "# Root Index\n\n* [Order](order.md)\n".to_string(),
+            ),
+            (
+                "order.md".to_string(),
+                "---\ntype: uml.Class\ntitle: Order\n---\n# Order\n".to_string(),
+            ),
+            (
+                "log.md".to_string(),
+                "# Update Log\n\n## 2026-05-22\n* Created.\n".to_string(),
+            ),
         ];
         let b = build_bundle(&bundle);
         assert_eq!(b.concepts.len(), 3);
@@ -432,7 +475,10 @@ mod tests {
     #[cfg(feature = "serde")]
     #[test]
     fn concept_serializes_with_type_field_and_omits_empty() {
-        let c = project("shop/order.md", "---\ntype: uml.Class\ntitle: Order\n---\n# Order\n");
+        let c = project(
+            "shop/order.md",
+            "---\ntype: uml.Class\ntitle: Order\n---\n# Order\n",
+        );
         let v = serde_json::to_value(&c).unwrap();
         assert_eq!(v["type"], "uml.Class");
         assert_eq!(v["id"], "shop/order");

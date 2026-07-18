@@ -98,9 +98,7 @@ fn glyph(kind: TreeKind) -> &'static str {
 
 /// Walk the tree once, building both id maps. Kept free-standing so it is unit
 /// testable without a `Cx`.
-fn build_id_maps(
-    tree: &ProjectTreeData,
-) -> (HashMap<LiveId, String>, HashMap<LiveId, TreeKind>) {
+fn build_id_maps(tree: &ProjectTreeData) -> (HashMap<LiveId, String>, HashMap<LiveId, TreeKind>) {
     fn walk(
         nodes: &[TreeNode],
         keys: &mut HashMap<LiveId, String>,
@@ -224,9 +222,18 @@ mod tests {
             let id = LiveId::from_str(key);
             assert_eq!(id_to_key.get(&id).map(String::as_str), Some(key));
         }
-        assert_eq!(id_to_kind.get(&LiveId::from_str("orders-diagram")).copied(), Some(TreeKind::Diagram));
-        assert_eq!(id_to_kind.get(&LiveId::from_str("customer")).copied(), Some(TreeKind::Class));
-        assert_eq!(id_to_kind.get(&LiveId::from_str("")).copied(), Some(TreeKind::Package));
+        assert_eq!(
+            id_to_kind.get(&LiveId::from_str("orders-diagram")).copied(),
+            Some(TreeKind::Diagram)
+        );
+        assert_eq!(
+            id_to_kind.get(&LiveId::from_str("customer")).copied(),
+            Some(TreeKind::Class)
+        );
+        assert_eq!(
+            id_to_kind.get(&LiveId::from_str("")).copied(),
+            Some(TreeKind::Package)
+        );
         assert_eq!(id_to_key.len(), 3);
     }
 }

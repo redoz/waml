@@ -79,8 +79,7 @@ impl MatchEvent for App {
             log!("project_tree widget not found / wrong type");
         }
 
-        let Some(diagram) = crate::cli::select_diagram(&self.model, args.diagram.as_deref())
-        else {
+        let Some(diagram) = crate::cli::select_diagram(&self.model, args.diagram.as_deref()) else {
             log!("no diagrams in {:?}", args.dir);
             return;
         };

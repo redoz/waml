@@ -11,7 +11,12 @@ pub fn expand_text(display_path: &str, text: &str) -> Vec<(String, String)> {
     if text.contains("<!--") {
         let parts = split_bundle(text);
         // split_bundle returns "pasted/doc.md" for unmarked text; only trust it if markers existed.
-        if parts.len() > 1 || parts.first().map(|(p, _)| p != "pasted/doc.md").unwrap_or(false) {
+        if parts.len() > 1
+            || parts
+                .first()
+                .map(|(p, _)| p != "pasted/doc.md")
+                .unwrap_or(false)
+        {
             return parts;
         }
     }
@@ -84,7 +89,10 @@ pub fn read_ndjson(src: &str) -> std::io::Result<Vec<(usize, String)>> {
 
 /// Write only changed/added entries; delete entries dropped from the bundle.
 /// Returns a human list of what happened.
-pub fn write_back(old: &[(String, String)], new: &[(String, String)]) -> std::io::Result<Vec<String>> {
+pub fn write_back(
+    old: &[(String, String)],
+    new: &[(String, String)],
+) -> std::io::Result<Vec<String>> {
     let om: BTreeMap<&str, &str> = old.iter().map(|(p, c)| (p.as_str(), c.as_str())).collect();
     let nm: BTreeMap<&str, &str> = new.iter().map(|(p, c)| (p.as_str(), c.as_str())).collect();
     let mut touched = Vec::new();
@@ -131,9 +139,16 @@ mod tests {
         // section that follows the stray comment — intact.
         let text = "---\ntype: uml.Class\ntitle: Order\n---\n# Order\n\n<!-- reviewed: needs follow-up -->\n\n## Relationships\n- depends [Ghost](./ghost.md)\n";
         let docs = expand_text("shop/order.md", text);
-        assert_eq!(docs.len(), 1, "a stray non-.md comment must not split the document");
+        assert_eq!(
+            docs.len(),
+            1,
+            "a stray non-.md comment must not split the document"
+        );
         assert_eq!(docs[0].0, "shop/order.md");
-        assert_eq!(docs[0].1, text, "content must be kept intact, nothing discarded");
+        assert_eq!(
+            docs[0].1, text,
+            "content must be kept intact, nothing discarded"
+        );
     }
 
     #[test]

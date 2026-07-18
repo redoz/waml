@@ -85,6 +85,10 @@ mod tests {
         let md = new_diagram_doc("class", "My Domain");
         let bundle = vec![("pkg/my-domain.md".to_string(), md)];
         let model = build_model(&bundle);
-        assert!(model.diagrams.iter().any(|d| d.title == "My Domain"), "diagram present: {:?}", model.diagrams);
+        assert!(
+            model.diagrams.iter().any(|d| d.title == "My Domain"),
+            "diagram present: {:?}",
+            model.diagrams
+        );
     }
 }

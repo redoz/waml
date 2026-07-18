@@ -82,7 +82,10 @@ pub fn solve_bundle(
         .find(|d| d.key == diagram_key)
         .ok_or_else(|| format!("no diagram with key '{diagram_key}'"))?;
     let (solved, diagnostics) = waml::solve::solve_diagram(diagram, &sizes, &cfg);
-    Ok(SolveResult { solved, diagnostics })
+    Ok(SolveResult {
+        solved,
+        diagnostics,
+    })
 }
 
 // ── wasm-bindgen surface (structured JS values via serde-wasm-bindgen) ────────
@@ -152,7 +155,9 @@ pub fn reindex(bundle: JsValue) -> Result<JsValue, JsValue> {
 /// Split a multi-document bundle string into `[path, markdown][]`.
 #[wasm_bindgen]
 pub fn split_bundle(text: &str) -> Result<JsValue, JsValue> {
-    Ok(serde_wasm_bindgen::to_value(&waml::parse::split_bundle(text))?)
+    Ok(serde_wasm_bindgen::to_value(&waml::parse::split_bundle(
+        text,
+    ))?)
 }
 
 /// Markdown for one empty diagram document of `kind` (`"class"`/`"domain"`,

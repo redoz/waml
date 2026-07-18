@@ -18,9 +18,7 @@ pub fn parse(argv: &[String]) -> Result<Args, String> {
         match argv[i].as_str() {
             "--diagram" => {
                 i += 1;
-                diagram = Some(
-                    argv.get(i).cloned().ok_or("--diagram requires a value")?,
-                );
+                diagram = Some(argv.get(i).cloned().ok_or("--diagram requires a value")?);
             }
             other if dir.is_none() => dir = Some(PathBuf::from(other)),
             other => return Err(format!("unexpected argument: {other}")),
@@ -108,7 +106,10 @@ mod tests {
 
     fn two_diagram_model() -> Model {
         Model {
-            diagrams: vec![diagram("orders-key", "Orders"), diagram("inventory-key", "Inventory")],
+            diagrams: vec![
+                diagram("orders-key", "Orders"),
+                diagram("inventory-key", "Inventory"),
+            ],
             ..Default::default()
         }
     }

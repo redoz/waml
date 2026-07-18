@@ -75,7 +75,9 @@ fn check_operand_refs(
                 check_operand_refs(it, keyset, group_names, path, line, diags);
             }
         }
-        OperandRef::Paren(inner) => check_operand_refs(inner, keyset, group_names, path, line, diags),
+        OperandRef::Paren(inner) => {
+            check_operand_refs(inner, keyset, group_names, path, line, diags)
+        }
     }
 }
 
@@ -93,16 +95,19 @@ fn operand_key(op: &Operand) -> Option<String> {
 /// Depth-first cycle check over a directed adjacency map.
 fn has_cycle(graph: &HashMap<String, Vec<String>>) -> bool {
     // 0 = unvisited, 1 = on stack, 2 = done
-    fn dfs(node: &str, graph: &HashMap<String, Vec<String>>, state: &mut HashMap<String, u8>) -> bool {
+    fn dfs(
+        node: &str,
+        graph: &HashMap<String, Vec<String>>,
+        state: &mut HashMap<String, u8>,
+    ) -> bool {
         state.insert(node.to_string(), 1);
         if let Some(succs) = graph.get(node) {
             for s in succs {
                 match state.get(s).copied().unwrap_or(0) {
                     1 => return true,
-                    0
-                        if dfs(s, graph, state) => {
-                            return true;
-                        }
+                    0 if dfs(s, graph, state) => {
+                        return true;
+                    }
                     _ => {}
                 }
             }
@@ -247,13 +252,22 @@ pub fn link(docs: &[(String, ElementType, Document)]) -> Vec<Diagnostic> {
                     for it in items.iter().filter_map(Line::parsed) {
                         let ops: Vec<&Operand> = match &it.stmt {
                             LayoutStatement::Standalone(op) => vec![op],
-                            LayoutStatement::Placement { operands, .. } => operands.iter().collect(),
+                            LayoutStatement::Placement { operands, .. } => {
+                                operands.iter().collect()
+                            }
                             LayoutStatement::Alignment { left, right } => {
                                 vec![&left.operand, &right.operand]
                             }
                         };
                         for op in ops {
-                            check_operand_refs(op, &keyset, &group_names, path, it.line, &mut diags);
+                            check_operand_refs(
+                                op,
+                                &keyset,
+                                &group_names,
+                                path,
+                                it.line,
+                                &mut diags,
+                            );
                         }
                     }
 
@@ -261,13 +275,16 @@ pub fn link(docs: &[(String, ElementType, Document)]) -> Vec<Diagnostic> {
                     let mut vertical: HashMap<String, Vec<String>> = HashMap::new();
                     let mut first_placement_line: Option<usize> = None;
                     for it in items.iter().filter_map(Line::parsed) {
-                        let LayoutStatement::Placement { operands, directions } = &it.stmt else {
+                        let LayoutStatement::Placement {
+                            operands,
+                            directions,
+                        } = &it.stmt
+                        else {
                             continue;
                         };
                         first_placement_line.get_or_insert(it.line);
                         for (i, dir) in directions.iter().enumerate() {
-                            let (a, b) =
-                                (operand_key(&operands[i]), operand_key(&operands[i + 1]));
+                            let (a, b) = (operand_key(&operands[i]), operand_key(&operands[i + 1]));
                             let (Some(a), Some(b)) = (a, b) else { continue };
                             // Edge points from the operand that must come first to the one after it.
                             let (graph, from, to) = match dir {
@@ -282,7 +299,11 @@ pub fn link(docs: &[(String, ElementType, Document)]) -> Vec<Diagnostic> {
                     if has_cycle(&horizontal) || has_cycle(&vertical) {
                         let line = first_placement_line
                             .or_else(|| {
-                                items.iter().filter_map(Line::parsed).map(|it| it.line).next()
+                                items
+                                    .iter()
+                                    .filter_map(Line::parsed)
+                                    .map(|it| it.line)
+                                    .next()
                             })
                             .unwrap_or(1);
                         diags.push(Diagnostic::new(
@@ -309,7 +330,9 @@ pub fn link(docs: &[(String, ElementType, Document)]) -> Vec<Diagnostic> {
                             ));
                         }
                         for b in n.bullets.iter().filter_map(Line::parsed) {
-                            let FlowBullet::Transition(t) = b else { continue };
+                            let FlowBullet::Transition(t) = b else {
+                                continue;
+                            };
                             if let FlowTargetRef::Local(name) = &t.target {
                                 if !counts.contains_key(name.as_str()) {
                                     diags.push(Diagnostic::warn(
@@ -405,7 +428,10 @@ mod tests {
         let b = vec![("a/order.md".into(),
             "---\ntype: uml.Class\ntitle: Order\n---\n# Order\n\n## Relationships\n- depends [Ghost](./ghost.md)\n".into())];
         let d = validate(&b);
-        let t = d.iter().find(|x| x.code == DiagCode::UnresolvedTarget).unwrap();
+        let t = d
+            .iter()
+            .find(|x| x.code == DiagCode::UnresolvedTarget)
+            .unwrap();
         assert_eq!(t.line, 8);
         let (s, e) = t.span.expect("unresolved target must span the link");
         assert!(s < e);
@@ -462,12 +488,19 @@ mod tests {
     #[test]
     fn diagram_member_link_resolves_against_referring_diagrams_dir() {
         let b = vec![
-            ("tables/dia.md".into(),
-             "---\ntype: Diagram\ntitle: D\n---\n# D\n\n## Members\n- [Order](./order.md)\n".into()),
-            ("tables/order.md".into(),
-             "---\ntype: uml.Class\ntitle: Order\n---\n# Order\n".into()),
-            ("shop/order.md".into(),
-             "---\ntype: uml.Class\ntitle: ShopOrder\n---\n# ShopOrder\n".into()),
+            (
+                "tables/dia.md".into(),
+                "---\ntype: Diagram\ntitle: D\n---\n# D\n\n## Members\n- [Order](./order.md)\n"
+                    .into(),
+            ),
+            (
+                "tables/order.md".into(),
+                "---\ntype: uml.Class\ntitle: Order\n---\n# Order\n".into(),
+            ),
+            (
+                "shop/order.md".into(),
+                "---\ntype: uml.Class\ntitle: ShopOrder\n---\n# ShopOrder\n".into(),
+            ),
         ];
         let d = validate(&b);
         assert!(
@@ -510,8 +543,11 @@ mod tests {
 
     #[test]
     fn flags_malformed_attribute() {
-        let b = vec![("a/x.md".into(),
-            "---\ntype: uml.Class\ntitle: X\n---\n# X\n\n## Attributes\n- bad line without colon\n".into())];
+        let b = vec![(
+            "a/x.md".into(),
+            "---\ntype: uml.Class\ntitle: X\n---\n# X\n\n## Attributes\n- bad line without colon\n"
+                .into(),
+        )];
         let d = validate(&b);
         assert_eq!(d.len(), 1);
         assert_eq!(d[0].code, DiagCode::MalformedAttribute);
@@ -523,11 +559,22 @@ mod tests {
         // key on their distinct full paths (`a/order`, `b/order`) — no
         // DuplicateSlug false positive.
         let b = vec![
-            ("a/order.md".into(), "---\ntype: uml.Class\ntitle: Order\n---\n# Order\n".into()),
-            ("b/order.md".into(), "---\ntype: uml.Class\ntitle: Order2\n---\n# Order2\n".into()),
+            (
+                "a/order.md".into(),
+                "---\ntype: uml.Class\ntitle: Order\n---\n# Order\n".into(),
+            ),
+            (
+                "b/order.md".into(),
+                "---\ntype: uml.Class\ntitle: Order2\n---\n# Order2\n".into(),
+            ),
         ];
         let d = validate(&b);
-        assert_eq!(d.iter().filter(|x| x.code == DiagCode::DuplicateSlug).count(), 0);
+        assert_eq!(
+            d.iter()
+                .filter(|x| x.code == DiagCode::DuplicateSlug)
+                .count(),
+            0
+        );
     }
 
     #[test]
@@ -535,17 +582,30 @@ mod tests {
         // Two docs projecting to the *same* full id (identical bundle-relative
         // path) still collide.
         let b = vec![
-            ("a/order.md".into(), "---\ntype: uml.Class\ntitle: Order\n---\n# Order\n".into()),
-            ("a/order.md".into(), "---\ntype: uml.Class\ntitle: Order2\n---\n# Order2\n".into()),
+            (
+                "a/order.md".into(),
+                "---\ntype: uml.Class\ntitle: Order\n---\n# Order\n".into(),
+            ),
+            (
+                "a/order.md".into(),
+                "---\ntype: uml.Class\ntitle: Order2\n---\n# Order2\n".into(),
+            ),
         ];
         let d = validate(&b);
-        assert_eq!(d.iter().filter(|x| x.code == DiagCode::DuplicateSlug).count(), 2);
+        assert_eq!(
+            d.iter()
+                .filter(|x| x.code == DiagCode::DuplicateSlug)
+                .count(),
+            2
+        );
     }
 
     #[test]
     fn unresolved_member_is_only_a_warning() {
-        let b = vec![("d/dia.md".into(),
-            "---\ntype: Diagram\ntitle: D\n---\n# D\n\n## Members\n- [Ghost](./ghost.md)\n".into())];
+        let b = vec![(
+            "d/dia.md".into(),
+            "---\ntype: Diagram\ntitle: D\n---\n# D\n\n## Members\n- [Ghost](./ghost.md)\n".into(),
+        )];
         let d = validate(&b);
         assert_eq!(d.len(), 1);
         assert_eq!(d[0].code, DiagCode::UnresolvedTarget);
@@ -556,16 +616,20 @@ mod tests {
     fn flags_frontmatter_that_is_not_a_metadata_block() {
         // A missing closing fence breaks metadata-block recognition (pulldown-cmark
         // 0.12.2 tolerates a leading blank line, but not an unterminated block).
-        let b = vec![("a/x.md".into(),
-            "---\ntype: uml.Class\ntitle: X\n# X\n".into())];
+        let b = vec![(
+            "a/x.md".into(),
+            "---\ntype: uml.Class\ntitle: X\n# X\n".into(),
+        )];
         let d = validate(&b);
         assert!(d.iter().any(|x| x.code == DiagCode::FrontmatterNotClean));
     }
 
     #[test]
     fn warns_on_unknown_type() {
-        let b = vec![("a/x.md".into(),
-            "---\ntype: bpmn.Task\ntitle: X\n---\n# X\n".into())];
+        let b = vec![(
+            "a/x.md".into(),
+            "---\ntype: bpmn.Task\ntitle: X\n---\n# X\n".into(),
+        )];
         let d = validate(&b);
         let w = d.iter().find(|x| x.code == DiagCode::UnknownType).unwrap();
         assert_eq!(w.severity, crate::diagnostic::Severity::Warning);
@@ -574,8 +638,10 @@ mod tests {
 
     #[test]
     fn clean_document_has_no_diagnostics() {
-        let b = vec![("a/x.md".into(),
-            "---\ntype: uml.Class\ntitle: X\n---\n# X\n\n## Attributes\n- id: XId\n".into())];
+        let b = vec![(
+            "a/x.md".into(),
+            "---\ntype: uml.Class\ntitle: X\n---\n# X\n\n## Attributes\n- id: XId\n".into(),
+        )];
         assert!(validate(&b).is_empty());
     }
 
@@ -584,8 +650,11 @@ mod tests {
         // Frontmatter opens with `---` but closes with `...` (both are valid
         // YAML-style metadata block closers). The body after it must still be
         // scanned — it must not be silently skipped.
-        let b = vec![("a/x.md".into(),
-            "---\ntype: uml.Class\ntitle: X\n...\n# X\n\n## Attributes\n- bad line without colon\n".into())];
+        let b = vec![(
+            "a/x.md".into(),
+            "---\ntype: uml.Class\ntitle: X\n...\n# X\n\n## Attributes\n- bad line without colon\n"
+                .into(),
+        )];
         let d = validate(&b);
         assert!(d.iter().any(|x| x.code == DiagCode::MalformedAttribute));
     }
@@ -632,7 +701,8 @@ mod tests {
             "---\ntype: uml.Enum\ntitle: X\n---\n# X\n\n## Values\n- DRAFT\nA stray comment line.\n".into())];
         let d = validate(&b);
         assert!(
-            d.iter().any(|x| x.code == DiagCode::DroppableContent && x.severity == Severity::Error),
+            d.iter()
+                .any(|x| x.code == DiagCode::DroppableContent && x.severity == Severity::Error),
             "expected a DroppableContent Error, got: {d:?}"
         );
     }
@@ -646,7 +716,8 @@ mod tests {
             "---\ntype: Diagram\ntitle: D\n---\n# D\n\n## Members\n- [Customer](./customer.md)\nA stray note.\n".into())];
         let d = validate(&b);
         assert!(
-            d.iter().any(|x| x.code == DiagCode::DroppableContent && x.severity == Severity::Error),
+            d.iter()
+                .any(|x| x.code == DiagCode::DroppableContent && x.severity == Severity::Error),
             "expected a DroppableContent Error, got: {d:?}"
         );
     }
@@ -656,12 +727,19 @@ mod tests {
         // The member bullet sits on line 8; its unresolved-target diagnostic must
         // point at that line (not 0) and carry a link span — the member walk fills
         // `MemberLine.line`/`.span`.
-        let b = vec![("d/dia.md".into(),
-            "---\ntype: Diagram\ntitle: D\n---\n# D\n\n## Members\n- [Ghost](./ghost.md)\n".into())];
+        let b = vec![(
+            "d/dia.md".into(),
+            "---\ntype: Diagram\ntitle: D\n---\n# D\n\n## Members\n- [Ghost](./ghost.md)\n".into(),
+        )];
         let d = validate(&b);
-        let t = d.iter().find(|x| x.code == DiagCode::UnresolvedTarget).unwrap();
+        let t = d
+            .iter()
+            .find(|x| x.code == DiagCode::UnresolvedTarget)
+            .unwrap();
         assert_eq!(t.line, 8, "member diagnostic must point at the bullet line");
-        let (s, e) = t.span.expect("member unresolved-target must carry a link span");
+        let (s, e) = t
+            .span
+            .expect("member unresolved-target must carry a link span");
         assert!(s < e);
     }
 
@@ -700,7 +778,10 @@ mod tests {
         let b = vec![("a/x.md".into(),
             "---\ntype: uml.Class\ntitle: X\n---\n# X\n\n## Relationships\n- composes [OrderLine: v2](./order-line.md)\n".into())];
         let d = validate(&b);
-        let rel = d.iter().find(|x| x.code == DiagCode::MalformedRelationship).unwrap();
+        let rel = d
+            .iter()
+            .find(|x| x.code == DiagCode::MalformedRelationship)
+            .unwrap();
         assert!(rel.message.contains("requires"), "got: {}", rel.message);
     }
 
@@ -708,7 +789,8 @@ mod tests {
     fn malformed_layout_line_is_an_error() {
         let bundle = vec![(
             "d.md".to_string(),
-            "---\ntype: Diagram\ntitle: D\n---\n# D\n\n## Layout\n- Users nonsense Orders\n".to_string(),
+            "---\ntype: Diagram\ntitle: D\n---\n# D\n\n## Layout\n- Users nonsense Orders\n"
+                .to_string(),
         )];
         let diags = validate(&bundle);
         assert!(diags.iter().any(|d| d.code == DiagCode::MalformedLayout));
@@ -721,8 +803,10 @@ mod tests {
             "---\ntype: Diagram\ntitle: D\n---\n# D\n\n## Members\n\n### Users\n- [Customer](./customer.md)\n".to_string(),
         )];
         let diags = validate(&bundle);
-        assert!(!diags.iter().any(|d| d.code == DiagCode::DroppableContent),
-            "### group heading must not be flagged droppable");
+        assert!(
+            !diags.iter().any(|d| d.code == DiagCode::DroppableContent),
+            "### group heading must not be flagged droppable"
+        );
     }
 
     #[test]
@@ -734,7 +818,10 @@ mod tests {
         ];
         let diags = validate(&bundle);
         // "Users" is a declared group, "Ghosts" resolves to nothing -> one warning.
-        let refs: Vec<_> = diags.iter().filter(|d| d.code == DiagCode::UnresolvedLayoutRef).collect();
+        let refs: Vec<_> = diags
+            .iter()
+            .filter(|d| d.code == DiagCode::UnresolvedLayoutRef)
+            .collect();
         assert_eq!(refs.len(), 1);
         assert!(refs[0].message.contains("Ghosts"));
     }
@@ -746,14 +833,20 @@ mod tests {
         // ("Order") carries no directory of its own, so it must still
         // resolve by unique basename match, same as `solve::resolve`.
         let bundle = vec![
-            ("tables/dia.md".to_string(),
-             "---\ntype: Diagram\ntitle: D\n---\n# D\n\n## Layout\n- Order\n".to_string()),
-            ("tables/order.md".to_string(),
-             "---\ntype: uml.Class\ntitle: Order\n---\n# Order\n".to_string()),
+            (
+                "tables/dia.md".to_string(),
+                "---\ntype: Diagram\ntitle: D\n---\n# D\n\n## Layout\n- Order\n".to_string(),
+            ),
+            (
+                "tables/order.md".to_string(),
+                "---\ntype: uml.Class\ntitle: Order\n---\n# Order\n".to_string(),
+            ),
         ];
         let diags = validate(&bundle);
         assert!(
-            diags.iter().all(|d| d.code != DiagCode::UnresolvedLayoutRef),
+            diags
+                .iter()
+                .all(|d| d.code != DiagCode::UnresolvedLayoutRef),
             "expected bare layout ref to resolve by unique basename, got: {diags:?}"
         );
     }
@@ -763,22 +856,31 @@ mod tests {
         // Two full-path keys share the basename `order` (`tables/order`,
         // `shop/order`) — the bare ref must NOT silently pick one.
         let bundle = vec![
-            ("tables/dia.md".to_string(),
-             "---\ntype: Diagram\ntitle: D\n---\n# D\n\n## Layout\n- Order\n".to_string()),
-            ("tables/order.md".to_string(),
-             "---\ntype: uml.Class\ntitle: Order\n---\n# Order\n".to_string()),
-            ("shop/order.md".to_string(),
-             "---\ntype: uml.Class\ntitle: ShopOrder\n---\n# ShopOrder\n".to_string()),
+            (
+                "tables/dia.md".to_string(),
+                "---\ntype: Diagram\ntitle: D\n---\n# D\n\n## Layout\n- Order\n".to_string(),
+            ),
+            (
+                "tables/order.md".to_string(),
+                "---\ntype: uml.Class\ntitle: Order\n---\n# Order\n".to_string(),
+            ),
+            (
+                "shop/order.md".to_string(),
+                "---\ntype: uml.Class\ntitle: ShopOrder\n---\n# ShopOrder\n".to_string(),
+            ),
         ];
         let diags = validate(&bundle);
-        assert!(diags.iter().any(|d| d.code == DiagCode::UnresolvedLayoutRef));
+        assert!(diags
+            .iter()
+            .any(|d| d.code == DiagCode::UnresolvedLayoutRef));
     }
 
     #[test]
     fn contradictory_placement_is_a_cycle_error() {
         let bundle = vec![(
             "d.md".to_string(),
-            "---\ntype: Diagram\ntitle: D\n---\n# D\n\n## Layout\n- A left of B\n- B left of A\n".to_string(),
+            "---\ntype: Diagram\ntitle: D\n---\n# D\n\n## Layout\n- A left of B\n- B left of A\n"
+                .to_string(),
         )];
         let diags = validate(&bundle);
         assert!(diags.iter().any(|d| d.code == DiagCode::LayoutCycle));
@@ -825,7 +927,9 @@ mod tests {
             ("c/customer.md".into(), "---\ntype: uml.Class\ntitle: Customer\n---\n# Customer\n".into()),
         ];
         let d = validate(&b);
-        let m = d.iter().find(|x| x.code == DiagCode::MalformedRelationship)
+        let m = d
+            .iter()
+            .find(|x| x.code == DiagCode::MalformedRelationship)
             .expect("classifier↔classifier associates without ends must be flagged");
         assert_eq!(m.line, 8);
     }
@@ -843,7 +947,10 @@ mod tests {
         let b = vec![("f/a.md".into(),
             "---\ntype: uml.Activity\ntitle: A\n---\n# A\n\n## Nodes\n\n### initial\n- transitions to Ghost\n\n### final\n".into())];
         let d = validate(&b);
-        let t = d.iter().find(|x| x.code == DiagCode::UnresolvedTarget).unwrap();
+        let t = d
+            .iter()
+            .find(|x| x.code == DiagCode::UnresolvedTarget)
+            .unwrap();
         assert_eq!(t.severity, Severity::Warning);
         assert_eq!(t.line, 10);
     }
@@ -864,7 +971,10 @@ mod tests {
              "---\ntype: uml.Sequence\ntitle: S\n---\n# S\n\n## Lifelines\n- [Customer](./customer.md)\n\n## Messages\n- Customer calls Ghost: `x()`\n".into()),
         ];
         let d = validate(&b);
-        let w = d.iter().find(|x| x.code == DiagCode::UnresolvedTarget && x.message.contains("Ghost")).unwrap();
+        let w = d
+            .iter()
+            .find(|x| x.code == DiagCode::UnresolvedTarget && x.message.contains("Ghost"))
+            .unwrap();
         assert_eq!(w.severity, Severity::Warning);
         assert_eq!(w.line, 11);
     }
@@ -881,7 +991,10 @@ mod tests {
              "---\ntype: uml.Sequence\ntitle: S\n---\n# S\n\n## Lifelines\n- [Customer](./customer.md)\n\n## Messages\n- alt\n  - when `guard`\n    - Customer calls Ghost: `x()`\n  - else\n    - Customer calls Customer: `y()`\n".into()),
         ];
         let d = validate(&b);
-        let w = d.iter().find(|x| x.code == DiagCode::UnresolvedTarget && x.message.contains("Ghost")).unwrap();
+        let w = d
+            .iter()
+            .find(|x| x.code == DiagCode::UnresolvedTarget && x.message.contains("Ghost"))
+            .unwrap();
         assert_eq!(w.severity, Severity::Warning);
         assert_eq!(w.line, 13);
     }

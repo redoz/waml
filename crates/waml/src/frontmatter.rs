@@ -1,10 +1,9 @@
-use std::sync::LazyLock;
 use regex::Regex;
+use std::sync::LazyLock;
 
 static BLOCK_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"(?s)^---\n(.*?)\n---\n?(.*)$").unwrap());
-static NUM_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"^-?\d+(\.\d+)?$").unwrap());
+static NUM_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^-?\d+(\.\d+)?$").unwrap());
 
 #[derive(Debug, Clone, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -181,7 +180,11 @@ fn render_value(v: &FmValue) -> String {
             }
         }
         FmValue::List(items) => {
-            let inner = items.iter().map(render_value).collect::<Vec<_>>().join(", ");
+            let inner = items
+                .iter()
+                .map(render_value)
+                .collect::<Vec<_>>()
+                .join(", ");
             format!("[{inner}]")
         }
     }
@@ -205,7 +208,10 @@ mod tests {
         let (fm, body) = parse_frontmatter(text);
         assert_eq!(fm.get_str("type"), Some("uml.Class"));
         assert_eq!(fm.get_str("title"), Some("Order"));
-        assert_eq!(fm.get_string_list("stereotype"), vec!["aggregateRoot", "entity"]);
+        assert_eq!(
+            fm.get_string_list("stereotype"),
+            vec!["aggregateRoot", "entity"]
+        );
         assert_eq!(fm.get_bool("abstract"), Some(true));
         assert_eq!(body, "# Order\n\nbody text");
     }
@@ -249,8 +255,19 @@ mod tests {
     fn render_quotes_scalars_that_would_reparse_wrong() {
         // A string that looks like a bool/num/list/empty must stay quoted so it
         // round-trips as a Str, not the ambiguous type it resembles.
-        for raw in ["true", "false", "42", "-3.5", "[a]", "", " leading", "has\"quote"] {
-            let fm = Frontmatter { entries: vec![("k".into(), FmValue::Str(raw.to_string()))] };
+        for raw in [
+            "true",
+            "false",
+            "42",
+            "-3.5",
+            "[a]",
+            "",
+            " leading",
+            "has\"quote",
+        ] {
+            let fm = Frontmatter {
+                entries: vec![("k".into(), FmValue::Str(raw.to_string()))],
+            };
             let rendered = render_frontmatter(&fm);
             let (fm2, _) = parse_frontmatter(&format!("---\n{rendered}\n---\n"));
             assert_eq!(fm, fm2, "must round-trip {raw:?}; rendered as {rendered}");
@@ -264,7 +281,10 @@ mod tests {
         let fm = Frontmatter {
             entries: vec![(
                 "stereotype".into(),
-                FmValue::List(vec![FmValue::Str("entity".into()), FmValue::Str("42".into())]),
+                FmValue::List(vec![
+                    FmValue::Str("entity".into()),
+                    FmValue::Str("42".into()),
+                ]),
             )],
         };
         assert_eq!(render_frontmatter(&fm), "stereotype: [entity, \"42\"]");

@@ -30,7 +30,10 @@ fn model_json_matches_ts_field_names() {
     assert_eq!(node["key"], "m/order");
     // Flat title/description/body are DELETED — the concept is the single source.
     assert!(node.get("title").is_none(), "flat title deleted: {node}");
-    assert!(node.get("description").is_none(), "flat description deleted: {node}");
+    assert!(
+        node.get("description").is_none(),
+        "flat description deleted: {node}"
+    );
     assert!(node.get("body").is_none(), "flat body deleted: {node}");
     assert_eq!(node["concept"]["id"], "m/order");
     assert_eq!(node["concept"]["title"], "Order");
@@ -100,7 +103,10 @@ fn package_node_and_model_path() {
     assert!(json.contains("\"members\":[\"order\",\"customer\"]"));
     // classifier with no members must omit field entirely.
     let bare = Node {
-        concept: waml::okf::project("order.md", "---\ntype: uml.Class\ntitle: Order\n---\n# Order\n"),
+        concept: waml::okf::project(
+            "order.md",
+            "---\ntype: uml.Class\ntitle: Order\n---\n# Order\n",
+        ),
         key: "order".into(),
         ty: ElementType::Uml(UmlMetaclass::Class),
         stereotypes: vec![],
@@ -112,7 +118,10 @@ fn package_node_and_model_path() {
         members: vec![],
     };
     let bj = serde_json::to_string(&bare).unwrap();
-    assert!(!bj.contains("members"), "empty members must be omitted: {bj}");
+    assert!(
+        !bj.contains("members"),
+        "empty members must be omitted: {bj}"
+    );
 }
 
 #[test]
@@ -137,7 +146,10 @@ fn flow_doc_json_matches_ts_field_names() {
     assert_eq!(e["effect"], "reserve");
     assert_eq!(f["edges"][2]["else"], true);
     // classifier-only models omit the field entirely
-    let m2 = build_model(&vec![("a.md".to_string(), "---\ntype: uml.Class\ntitle: A\n---\n# A\n".to_string())]);
+    let m2 = build_model(&vec![(
+        "a.md".to_string(),
+        "---\ntype: uml.Class\ntitle: A\n---\n# A\n".to_string(),
+    )]);
     let v2 = serde_json::to_value(&m2).unwrap();
     assert!(v2.get("flows").is_none());
 }

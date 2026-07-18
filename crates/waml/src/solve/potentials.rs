@@ -8,7 +8,10 @@ pub struct Potentials {
 
 impl Potentials {
     pub fn new(n: usize) -> Potentials {
-        Potentials { parent: (0..n).collect(), pot: vec![0.0; n] }
+        Potentials {
+            parent: (0..n).collect(),
+            pot: vec![0.0; n],
+        }
     }
 
     /// Root of `i` and `coord[i] - coord[root]`, with path compression.
@@ -49,7 +52,7 @@ mod tests {
     fn tracks_composed_offsets() {
         let mut p = Potentials::new(3);
         p.union(0, 1, 10.0).unwrap(); // coord1 = coord0 + 10
-        p.union(1, 2, 5.0).unwrap();  // coord2 = coord1 + 5
+        p.union(1, 2, 5.0).unwrap(); // coord2 = coord1 + 5
         let (r0, d0) = p.find(0);
         let (r2, d2) = p.find(2);
         assert_eq!(r0, r2);

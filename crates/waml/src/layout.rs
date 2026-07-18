@@ -1,15 +1,18 @@
 //! Tokenizer, recursive-descent parser, and renderer for the `## Layout`
 //! diagram-arrangement language. See docs/waml-spec.md (Diagram documents).
 
-use std::sync::LazyLock;
-use regex::Regex;
 use crate::syntax::*;
+use regex::Regex;
+use std::sync::LazyLock;
 
 /// Render one `## Layout` statement back to its `- …` bullet text.
 pub fn render_layout_line(stmt: &LayoutStatement) -> String {
     let body = match stmt {
         LayoutStatement::Standalone(op) => render_operand(op),
-        LayoutStatement::Placement { operands, directions } => {
+        LayoutStatement::Placement {
+            operands,
+            directions,
+        } => {
             let mut s = render_operand(&operands[0]);
             for (d, op) in directions.iter().zip(&operands[1..]) {
                 s.push_str(&format!(" {} {}", dir_str(*d), render_operand(op)));
@@ -17,7 +20,11 @@ pub fn render_layout_line(stmt: &LayoutStatement) -> String {
             s
         }
         LayoutStatement::Alignment { left, right } => {
-            format!("{} aligned with {}", render_anchored(left), render_anchored(right))
+            format!(
+                "{} aligned with {}",
+                render_anchored(left),
+                render_anchored(right)
+            )
         }
     };
     format!("- {body}")
@@ -36,7 +43,12 @@ fn render_operand(op: &Operand) -> String {
         s.push_str(&format!(" as {}", axis_str(ax)));
     }
     if !op.hints.is_empty() {
-        let hs = op.hints.iter().map(render_hint).collect::<Vec<_>>().join(", ");
+        let hs = op
+            .hints
+            .iter()
+            .map(render_hint)
+            .collect::<Vec<_>>()
+            .join(", ");
         s.push_str(&format!(" with {hs}"));
     }
     s
@@ -47,7 +59,11 @@ fn render_ref(r: &OperandRef) -> String {
         OperandRef::Name(NameRef::Link { title, slug }) => format!("[{title}](./{slug}.md)"),
         OperandRef::Name(NameRef::Bare(name)) => render_bare_name(name),
         OperandRef::InlineGroup { axis, items } => {
-            let list = items.iter().map(render_operand).collect::<Vec<_>>().join(", ");
+            let list = items
+                .iter()
+                .map(render_operand)
+                .collect::<Vec<_>>()
+                .join(", ");
             format!("{} of {list}", axis_str(*axis))
         }
         OperandRef::Paren(inner) => format!("({})", render_operand(inner)),
@@ -58,10 +74,16 @@ fn render_ref(r: &OperandRef) -> String {
 /// would split on (whitespace or a delimiter).
 fn render_bare_name(name: &str) -> String {
     let needs_quote = name.is_empty()
-        || name.chars().any(|c| c.is_whitespace() || matches!(c, '(' | ')' | ',' | '[' | ']' | '"'))
+        || name
+            .chars()
+            .any(|c| c.is_whitespace() || matches!(c, '(' | ')' | ',' | '[' | ']' | '"'))
         || name.eq_ignore_ascii_case("column")
         || name.eq_ignore_ascii_case("row");
-    if needs_quote { format!("\"{name}\"") } else { name.to_string() }
+    if needs_quote {
+        format!("\"{name}\"")
+    } else {
+        name.to_string()
+    }
 }
 
 fn render_hint(h: &Hint) -> String {
@@ -103,7 +125,10 @@ fn edge_str(e: Edge) -> &'static str {
 }
 
 fn axis_str(a: Axis) -> &'static str {
-    match a { Axis::Row => "row", Axis::Column => "column" }
+    match a {
+        Axis::Row => "row",
+        Axis::Column => "column",
+    }
 }
 
 // Anchored at the start: `[title](./slug.md)`. Slug may contain a directory prefix.
@@ -142,9 +167,18 @@ fn lex_layout(body: &str) -> Option<Vec<Tok>> {
             continue;
         }
         match c {
-            '(' => { out.push(Tok::LParen); i += 1; }
-            ')' => { out.push(Tok::RParen); i += 1; }
-            ',' => { out.push(Tok::Comma); i += 1; }
+            '(' => {
+                out.push(Tok::LParen);
+                i += 1;
+            }
+            ')' => {
+                out.push(Tok::RParen);
+                i += 1;
+            }
+            ',' => {
+                out.push(Tok::Comma);
+                i += 1;
+            }
             '[' => {
                 let rest: String = chars[i..].iter().collect();
                 let cap = LAYOUT_LINK_RE.captures(&rest)?;
@@ -184,10 +218,15 @@ fn lex_layout(body: &str) -> Option<Vec<Tok>> {
     Some(out)
 }
 
-struct Cur<'a> { toks: &'a [Tok], pos: usize }
+struct Cur<'a> {
+    toks: &'a [Tok],
+    pos: usize,
+}
 
 impl<'a> Cur<'a> {
-    fn peek(&self) -> Option<&Tok> { self.toks.get(self.pos) }
+    fn peek(&self) -> Option<&Tok> {
+        self.toks.get(self.pos)
+    }
     fn peek_word(&self) -> Option<&str> {
         match self.toks.get(self.pos) {
             Some(Tok::Word(w)) => Some(w.as_str()),
@@ -196,7 +235,9 @@ impl<'a> Cur<'a> {
     }
     fn bump(&mut self) -> Option<&Tok> {
         let t = self.toks.get(self.pos);
-        if t.is_some() { self.pos += 1; }
+        if t.is_some() {
+            self.pos += 1;
+        }
         t
     }
     /// Consume the next token iff it is `Word(w)` (case-insensitive).
@@ -208,22 +249,40 @@ impl<'a> Cur<'a> {
             false
         }
     }
-    fn done(&self) -> bool { self.pos >= self.toks.len() }
+    fn done(&self) -> bool {
+        self.pos >= self.toks.len()
+    }
 }
 
 fn eat_direction(cur: &mut Cur) -> Option<Direction> {
     match cur.peek_word()?.to_ascii_lowercase().as_str() {
-        "above" => { cur.bump(); Some(Direction::Above) }
-        "below" => { cur.bump(); Some(Direction::Below) }
+        "above" => {
+            cur.bump();
+            Some(Direction::Above)
+        }
+        "below" => {
+            cur.bump();
+            Some(Direction::Below)
+        }
         "left" => {
             let save = cur.pos;
             cur.bump();
-            if cur.eat_word("of") { Some(Direction::LeftOf) } else { cur.pos = save; None }
+            if cur.eat_word("of") {
+                Some(Direction::LeftOf)
+            } else {
+                cur.pos = save;
+                None
+            }
         }
         "right" => {
             let save = cur.pos;
             cur.bump();
-            if cur.eat_word("of") { Some(Direction::RightOf) } else { cur.pos = save; None }
+            if cur.eat_word("of") {
+                Some(Direction::RightOf)
+            } else {
+                cur.pos = save;
+                None
+            }
         }
         _ => None,
     }
@@ -242,7 +301,10 @@ fn try_parse_placement(toks: &[Tok]) -> Option<LayoutStatement> {
     if !cur.done() {
         return None;
     }
-    Some(LayoutStatement::Placement { operands, directions })
+    Some(LayoutStatement::Placement {
+        operands,
+        directions,
+    })
 }
 
 /// Parse one `## Layout` bullet (leading `- ` required). Returns `Err` if the
@@ -267,7 +329,10 @@ fn parse_layout_line_opt(line: &str) -> Option<LayoutStatement> {
     if let Some(stmt) = try_parse_placement(&toks) {
         return Some(stmt);
     }
-    let mut cur = Cur { toks: &toks, pos: 0 };
+    let mut cur = Cur {
+        toks: &toks,
+        pos: 0,
+    };
     let op = parse_operand(&mut cur)?;
     if !cur.done() {
         return None;
@@ -292,8 +357,14 @@ fn parse_operand(cur: &mut Cur) -> Option<Operand> {
 fn parse_axis(cur: &mut Cur) -> Option<Axis> {
     let w = cur.peek_word()?.to_ascii_lowercase();
     match w.as_str() {
-        "row" => { cur.bump(); Some(Axis::Row) }
-        "column" => { cur.bump(); Some(Axis::Column) }
+        "row" => {
+            cur.bump();
+            Some(Axis::Row)
+        }
+        "column" => {
+            cur.bump();
+            Some(Axis::Column)
+        }
         _ => None,
     }
 }
@@ -316,11 +387,26 @@ fn parse_hints(cur: &mut Cur) -> Option<Vec<Hint>> {
 fn parse_hint(cur: &mut Cur) -> Option<Hint> {
     let w = cur.peek_word()?.to_ascii_lowercase();
     match w.as_str() {
-        "frame" => { cur.bump(); Some(Hint::Shape(Shape::Frame)) }
-        "box" => { cur.bump(); Some(Hint::Shape(Shape::Box)) }
-        "shrink" => { cur.bump(); Some(Hint::Shape(Shape::Shrink)) }
-        "emphasized" => { cur.bump(); Some(Hint::Flag(Flag::Emphasized)) }
-        "collapsed" => { cur.bump(); Some(Hint::Flag(Flag::Collapsed)) }
+        "frame" => {
+            cur.bump();
+            Some(Hint::Shape(Shape::Frame))
+        }
+        "box" => {
+            cur.bump();
+            Some(Hint::Shape(Shape::Box))
+        }
+        "shrink" => {
+            cur.bump();
+            Some(Hint::Shape(Shape::Shrink))
+        }
+        "emphasized" => {
+            cur.bump();
+            Some(Hint::Flag(Flag::Emphasized))
+        }
+        "collapsed" => {
+            cur.bump();
+            Some(Hint::Flag(Flag::Collapsed))
+        }
         "no" | "small" | "medium" | "large" => {
             let m = match w.as_str() {
                 "no" => Margin::No,
@@ -351,7 +437,10 @@ fn parse_ref(cur: &mut Cur) -> Option<OperandRef> {
         }
         Tok::Link { .. } => {
             if let Some(Tok::Link { title, slug }) = cur.bump() {
-                Some(OperandRef::Name(NameRef::Link { title: title.clone(), slug: slug.clone() }))
+                Some(OperandRef::Name(NameRef::Link {
+                    title: title.clone(),
+                    slug: slug.clone(),
+                }))
             } else {
                 None
             }
@@ -366,7 +455,11 @@ fn parse_ref(cur: &mut Cur) -> Option<OperandRef> {
         Tok::Word(w) => {
             let lw = w.to_ascii_lowercase();
             if lw == "column" || lw == "row" {
-                let axis = if lw == "column" { Axis::Column } else { Axis::Row };
+                let axis = if lw == "column" {
+                    Axis::Column
+                } else {
+                    Axis::Row
+                };
                 cur.bump();
                 if !cur.eat_word("of") {
                     // `column`/`row` are reserved keywords: a bare occurrence not
@@ -438,7 +531,12 @@ fn parse_anchored(toks: &[Tok]) -> Option<Anchored> {
                 Some(e) => {
                     let save = cur.pos;
                     cur.bump();
-                    if cur.eat_word("of") { Some(e) } else { cur.pos = save; None }
+                    if cur.eat_word("of") {
+                        Some(e)
+                    } else {
+                        cur.pos = save;
+                        None
+                    }
                 }
                 None => None,
             }
@@ -459,17 +557,23 @@ mod tests {
     #[test]
     fn lexes_link_word_paren_comma_and_quote() {
         let toks = lex_layout("column of [Order](./order.md), (Users) as \"my group\"").unwrap();
-        assert_eq!(toks, vec![
-            Tok::Word("column".into()),
-            Tok::Word("of".into()),
-            Tok::Link { title: "Order".into(), slug: "order".into() },
-            Tok::Comma,
-            Tok::LParen,
-            Tok::Word("Users".into()),
-            Tok::RParen,
-            Tok::Word("as".into()),
-            Tok::Quoted("my group".into()),
-        ]);
+        assert_eq!(
+            toks,
+            vec![
+                Tok::Word("column".into()),
+                Tok::Word("of".into()),
+                Tok::Link {
+                    title: "Order".into(),
+                    slug: "order".into()
+                },
+                Tok::Comma,
+                Tok::LParen,
+                Tok::Word("Users".into()),
+                Tok::RParen,
+                Tok::Word("as".into()),
+                Tok::Quoted("my group".into()),
+            ]
+        );
     }
 
     #[test]
@@ -492,7 +596,10 @@ mod tests {
         assert_eq!(
             parse_layout_line("- [Order](./order.md)"),
             Ok(LayoutStatement::Standalone(Operand {
-                ref_: OperandRef::Name(NameRef::Link { title: "Order".into(), slug: "order".into() }),
+                ref_: OperandRef::Name(NameRef::Link {
+                    title: "Order".into(),
+                    slug: "order".into()
+                }),
                 axis: None,
                 hints: vec![],
             }))
@@ -508,7 +615,7 @@ mod tests {
 
     #[test]
     fn rejects_line_without_bullet_and_trailing_garbage() {
-        assert!(parse_layout_line("Orders").is_err());       // no "- " bullet
+        assert!(parse_layout_line("Orders").is_err()); // no "- " bullet
         assert!(parse_layout_line("- Orders Extra").is_err()); // two bare words, no relation
     }
 
@@ -516,25 +623,33 @@ mod tests {
     fn parses_as_axis_and_with_hints() {
         use crate::syntax::*;
         let stmt = parse_layout_line("- Users as column with frame and large margin").unwrap();
-        let LayoutStatement::Standalone(op) = stmt else { panic!("expected standalone") };
+        let LayoutStatement::Standalone(op) = stmt else {
+            panic!("expected standalone")
+        };
         assert_eq!(op.axis, Some(Axis::Column));
-        assert_eq!(op.hints, vec![
-            Hint::Shape(Shape::Frame),
-            Hint::Margin(Margin::Large),
-        ]);
+        assert_eq!(
+            op.hints,
+            vec![Hint::Shape(Shape::Frame), Hint::Margin(Margin::Large),]
+        );
     }
 
     #[test]
     fn parses_all_hint_kinds_and_margins_word() {
         use crate::syntax::*;
-        let stmt = parse_layout_line("- Order with box, no margins, emphasized, collapsed").unwrap();
-        let LayoutStatement::Standalone(op) = stmt else { panic!("expected standalone") };
-        assert_eq!(op.hints, vec![
-            Hint::Shape(Shape::Box),
-            Hint::Margin(Margin::No),
-            Hint::Flag(Flag::Emphasized),
-            Hint::Flag(Flag::Collapsed),
-        ]);
+        let stmt =
+            parse_layout_line("- Order with box, no margins, emphasized, collapsed").unwrap();
+        let LayoutStatement::Standalone(op) = stmt else {
+            panic!("expected standalone")
+        };
+        assert_eq!(
+            op.hints,
+            vec![
+                Hint::Shape(Shape::Box),
+                Hint::Margin(Margin::No),
+                Hint::Flag(Flag::Emphasized),
+                Hint::Flag(Flag::Collapsed),
+            ]
+        );
     }
 
     #[test]
@@ -546,7 +661,9 @@ mod tests {
     fn parses_quoted_standalone_operand() {
         use crate::syntax::*;
         let stmt = parse_layout_line("- \"My Group\"").unwrap();
-        let LayoutStatement::Standalone(op) = stmt else { panic!("expected standalone") };
+        let LayoutStatement::Standalone(op) = stmt else {
+            panic!("expected standalone")
+        };
         assert_eq!(op.ref_, OperandRef::Name(NameRef::Bare("My Group".into())));
         assert_eq!(op.axis, None);
         assert_eq!(op.hints, vec![]);
@@ -563,8 +680,12 @@ mod tests {
         use crate::syntax::*;
         // `with` binds to Account (nearest operand), NOT the whole column.
         let stmt = parse_layout_line("- column of Customer, Account with large margin").unwrap();
-        let LayoutStatement::Standalone(op) = stmt else { panic!() };
-        let OperandRef::InlineGroup { axis, items } = op.ref_ else { panic!("expected inline group") };
+        let LayoutStatement::Standalone(op) = stmt else {
+            panic!()
+        };
+        let OperandRef::InlineGroup { axis, items } = op.ref_ else {
+            panic!("expected inline group")
+        };
         assert_eq!(axis, Axis::Column);
         assert_eq!(items.len(), 2);
         assert!(op.hints.is_empty(), "outer operand carries no hints");
@@ -575,9 +696,13 @@ mod tests {
     fn parens_rebind_with_to_the_whole_group() {
         use crate::syntax::*;
         let stmt = parse_layout_line("- (column of Customer, Account) with large margin").unwrap();
-        let LayoutStatement::Standalone(op) = stmt else { panic!() };
+        let LayoutStatement::Standalone(op) = stmt else {
+            panic!()
+        };
         assert_eq!(op.hints, vec![Hint::Margin(Margin::Large)]);
-        let OperandRef::Paren(inner) = op.ref_ else { panic!("expected paren") };
+        let OperandRef::Paren(inner) = op.ref_ else {
+            panic!("expected paren")
+        };
         assert!(inner.hints.is_empty());
         assert!(matches!(inner.ref_, OperandRef::InlineGroup { .. }));
     }
@@ -586,8 +711,12 @@ mod tests {
     fn parses_nested_inline_groups() {
         use crate::syntax::*;
         let stmt = parse_layout_line("- row of (column of Customer, Account), Orders").unwrap();
-        let LayoutStatement::Standalone(op) = stmt else { panic!() };
-        let OperandRef::InlineGroup { axis, items } = op.ref_ else { panic!() };
+        let LayoutStatement::Standalone(op) = stmt else {
+            panic!()
+        };
+        let OperandRef::InlineGroup { axis, items } = op.ref_ else {
+            panic!()
+        };
         assert_eq!(axis, Axis::Row);
         assert_eq!(items.len(), 2);
         assert!(matches!(items[0].ref_, OperandRef::Paren(_)));
@@ -597,12 +726,24 @@ mod tests {
     fn parses_single_and_chained_placement() {
         use crate::syntax::*;
         let stmt = parse_layout_line("- Users left of Orders").unwrap();
-        let LayoutStatement::Placement { operands, directions } = stmt else { panic!("expected placement") };
+        let LayoutStatement::Placement {
+            operands,
+            directions,
+        } = stmt
+        else {
+            panic!("expected placement")
+        };
         assert_eq!(operands.len(), 2);
         assert_eq!(directions, vec![Direction::LeftOf]);
 
         let stmt = parse_layout_line("- Order above OrderLine above Payment").unwrap();
-        let LayoutStatement::Placement { operands, directions } = stmt else { panic!() };
+        let LayoutStatement::Placement {
+            operands,
+            directions,
+        } = stmt
+        else {
+            panic!()
+        };
         assert_eq!(operands.len(), 3);
         assert_eq!(directions, vec![Direction::Above, Direction::Above]);
     }
@@ -616,7 +757,10 @@ mod tests {
             ("- A above B", Direction::Above),
             ("- A below B", Direction::Below),
         ] {
-            let LayoutStatement::Placement { directions, .. } = parse_layout_line(text).unwrap() else { panic!() };
+            let LayoutStatement::Placement { directions, .. } = parse_layout_line(text).unwrap()
+            else {
+                panic!()
+            };
             assert_eq!(directions, vec![dir]);
         }
     }
@@ -626,7 +770,13 @@ mod tests {
         use crate::syntax::*;
         // greedy `with` on the first operand, then a trailing relation
         let stmt = parse_layout_line("- Users with frame left of Orders").unwrap();
-        let LayoutStatement::Placement { operands, directions } = stmt else { panic!() };
+        let LayoutStatement::Placement {
+            operands,
+            directions,
+        } = stmt
+        else {
+            panic!()
+        };
         assert_eq!(directions, vec![Direction::LeftOf]);
         assert_eq!(operands[0].hints, vec![Hint::Shape(Shape::Frame)]);
     }
@@ -635,17 +785,24 @@ mod tests {
     fn parses_anchored_alignment() {
         use crate::syntax::*;
         let stmt = parse_layout_line("- top of VIP aligned with top of Orders").unwrap();
-        let LayoutStatement::Alignment { left, right } = stmt else { panic!("expected alignment") };
+        let LayoutStatement::Alignment { left, right } = stmt else {
+            panic!("expected alignment")
+        };
         assert_eq!(left.edge, Some(Edge::Top));
         assert_eq!(right.edge, Some(Edge::Top));
-        assert_eq!(left.operand.ref_, OperandRef::Name(NameRef::Bare("VIP".into())));
+        assert_eq!(
+            left.operand.ref_,
+            OperandRef::Name(NameRef::Bare("VIP".into()))
+        );
     }
 
     #[test]
     fn parses_bare_center_to_center_alignment() {
         use crate::syntax::*;
         let stmt = parse_layout_line("- X aligned with Y").unwrap();
-        let LayoutStatement::Alignment { left, right } = stmt else { panic!() };
+        let LayoutStatement::Alignment { left, right } = stmt else {
+            panic!()
+        };
         assert_eq!(left.edge, None);
         assert_eq!(right.edge, None);
     }
@@ -654,7 +811,9 @@ mod tests {
     fn edge_left_is_not_read_as_placement_direction() {
         use crate::syntax::*;
         let stmt = parse_layout_line("- left of X aligned with right of Y").unwrap();
-        let LayoutStatement::Alignment { left, right } = stmt else { panic!("expected alignment, not placement") };
+        let LayoutStatement::Alignment { left, right } = stmt else {
+            panic!("expected alignment, not placement")
+        };
         assert_eq!(left.edge, Some(Edge::Left));
         assert_eq!(right.edge, Some(Edge::Right));
     }
@@ -672,9 +831,11 @@ mod tests {
             "- row of (column of Customer, Account), Orders",
             "- [Money](./money.md) with collapsed",
         ] {
-            let parsed = parse_layout_line(line).unwrap_or_else(|_| panic!("failed to parse: {line}"));
+            let parsed =
+                parse_layout_line(line).unwrap_or_else(|_| panic!("failed to parse: {line}"));
             let rendered = render_layout_line(&parsed);
-            let reparsed = parse_layout_line(&rendered).unwrap_or_else(|_| panic!("failed to reparse: {rendered}"));
+            let reparsed = parse_layout_line(&rendered)
+                .unwrap_or_else(|_| panic!("failed to reparse: {rendered}"));
             assert_eq!(parsed, reparsed, "not a fixpoint: {line} -> {rendered}");
         }
     }
@@ -695,6 +856,9 @@ mod tests {
     #[test]
     fn hint_joiner_normalizes_to_comma() {
         let parsed = parse_layout_line("- Users with frame and large margin").unwrap();
-        assert_eq!(render_layout_line(&parsed), "- Users with frame, large margin");
+        assert_eq!(
+            render_layout_line(&parsed),
+            "- Users with frame, large margin"
+        );
     }
 }

@@ -1,13 +1,13 @@
-use std::sync::LazyLock;
 use regex::Regex;
+use std::sync::LazyLock;
 
 use crate::diagnostic::DiagCode;
 use crate::model::{Attribute, FlowNodeKind, RelEnd, RelationshipKind, TypeRef, Visibility};
 use crate::multiplicity::Multiplicity;
 use crate::syntax::{
     ErrorNode, FlowBlock, FlowBullet, FlowNodeSyntax, FlowTargetRef, FlowTransition, LifelineLine,
-    Line, LinkRef, MemberGroup, MemberLine, MembersBlock, MessagesBlock, ParsedMessage,
-    ParsedName, ParsedRel, SeqItemSyntax, SeqOperandSyntax,
+    Line, LinkRef, MemberGroup, MemberLine, MembersBlock, MessagesBlock, ParsedMessage, ParsedName,
+    ParsedRel, SeqItemSyntax, SeqOperandSyntax,
 };
 
 static ATTR_RE: LazyLock<Regex> =
@@ -16,8 +16,7 @@ static LINK_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^\[([^\]]+)\]\(\./(.+?)\.md\)$").unwrap());
 static MULT_TAIL_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^(.*?)\s+\{([^{}]*)\}$").unwrap());
-static VALUE_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"^- (\S.*)$").unwrap());
+static VALUE_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^- (\S.*)$").unwrap());
 // verb · target-title · target-slug · name-label · name-link-title · name-link-slug · ends
 static REL_RE: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(concat!(
@@ -25,12 +24,14 @@ static REL_RE: LazyLock<Regex> = LazyLock::new(|| {
         r"\[([^\]]+)\]\(\./(.+?)\.md\)",
         r#"(?: as (?:"([^"]*)"|\[([^\]]+)\]\(\./(.+?)\.md\)))?"#,
         r"(?:\s*:\s*(.+))?$",
-    )).unwrap()
+    ))
+    .unwrap()
 });
 static END_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^(\S+)(?:\s+([A-Za-z][A-Za-z0-9_]*))?$").unwrap());
-static LIFELINE_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"^- \[([^\]]+)\]\(\./(.+?)\.md\)(?: as ([A-Za-z][A-Za-z0-9_]*))?$").unwrap());
+static LIFELINE_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"^- \[([^\]]+)\]\(\./(.+?)\.md\)(?: as ([A-Za-z][A-Za-z0-9_]*))?$").unwrap()
+});
 static MESSAGE_RE: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"^- (.+?) (calls|sends|replies|creates|destroys) (.+?)(?::\s*`([^`]+)`)?$").unwrap()
 });
@@ -40,8 +41,7 @@ static SEQ_OPERAND_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^- (?:when `([^`]+)`|else)$").unwrap());
 static MEMBER_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^- \[([^\]]*)\]\(\./(.+?)\.md\)\s*$").unwrap());
-static STRAY_BRACKET_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"[\[\](){}]").unwrap());
+static STRAY_BRACKET_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"[\[\](){}]").unwrap());
 static FLOW_TRANSITION_RE: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(concat!(
         r"^- ",
@@ -91,8 +91,18 @@ fn has_multiplicity_ends(line: &str) -> bool {
 /// Human-readable message for a malformed `## Relationships` bullet.
 pub fn rel_error_message(line: &str) -> String {
     const ENDED: [&str; 2] = ["aggregates", "composes"];
-    const OTHER: [&str; 5] = ["specializes", "implements", "depends", "includes", "extends"];
-    let verb = line.trim_start_matches("- ").split_whitespace().next().unwrap_or("");
+    const OTHER: [&str; 5] = [
+        "specializes",
+        "implements",
+        "depends",
+        "includes",
+        "extends",
+    ];
+    let verb = line
+        .trim_start_matches("- ")
+        .split_whitespace()
+        .next()
+        .unwrap_or("");
     let has_ends = has_multiplicity_ends(line);
     if ENDED.contains(&verb) && !has_ends {
         format!("'{verb}' requires ': <near> to <far>' multiplicity ends")
@@ -108,31 +118,51 @@ pub fn rel_error_message(line: &str) -> String {
 }
 
 pub fn parse_attribute_line(line: &str) -> Result<Attribute, LineError> {
-    let err = |msg: &str| LineError { range: bullet_range(line), message: msg.to_string() };
+    let err = |msg: &str| LineError {
+        range: bullet_range(line),
+        message: msg.to_string(),
+    };
     let trimmed = line.trim_end_matches('\r').trim();
-    let caps = ATTR_RE.captures(trimmed).ok_or_else(|| err("malformed attribute line"))?;
-    let visibility = caps.get(1).and_then(|m| Visibility::from_marker(m.as_str().chars().next()?));
+    let caps = ATTR_RE
+        .captures(trimmed)
+        .ok_or_else(|| err("malformed attribute line"))?;
+    let visibility = caps
+        .get(1)
+        .and_then(|m| Visibility::from_marker(m.as_str().chars().next()?));
     let name = caps[2].to_string();
     let mut rest = caps[3].trim().to_string();
     let mut multiplicity = Multiplicity::default();
     if let Some(mm) = MULT_TAIL_RE.captures(&rest) {
         // A trailing `{…}` token must hold a valid multiplicity; anything else
         // (malformed braces) makes the whole line not an attribute.
-        multiplicity = Multiplicity::parse(&mm[2]).ok_or_else(|| err("malformed attribute line"))?;
+        multiplicity =
+            Multiplicity::parse(&mm[2]).ok_or_else(|| err("malformed attribute line"))?;
         rest = mm[1].trim().to_string();
     }
     let ty = if let Some(link) = LINK_RE.captures(&rest) {
         // Raw captured href stem (dir prefix intact, `.md` already stripped by
         // the regex) — resolution against the referring doc's directory
         // happens downstream in `parse::resolve_attr`.
-        TypeRef { name: link[1].to_string(), ref_: Some(link[2].to_string()) }
+        TypeRef {
+            name: link[1].to_string(),
+            ref_: Some(link[2].to_string()),
+        }
     } else {
         if rest.is_empty() || STRAY_BRACKET_RE.is_match(&rest) {
             return Err(err("malformed attribute line")); // malformed link / stray brackets
         }
-        TypeRef { name: rest, ref_: None }
+        TypeRef {
+            name: rest,
+            ref_: None,
+        }
     };
-    Ok(Attribute { name, ty, multiplicity, visibility, description: None })
+    Ok(Attribute {
+        name,
+        ty,
+        multiplicity,
+        visibility,
+        description: None,
+    })
 }
 
 pub fn parse_value_line(line: &str) -> Result<String, LineError> {
@@ -140,7 +170,10 @@ pub fn parse_value_line(line: &str) -> Result<String, LineError> {
     VALUE_RE
         .captures(trimmed)
         .map(|c| c[1].trim().to_string())
-        .ok_or_else(|| LineError { range: bullet_range(line), message: "malformed value line".to_string() })
+        .ok_or_else(|| LineError {
+            range: bullet_range(line),
+            message: "malformed value line".to_string(),
+        })
 }
 
 fn parse_end(part: &str) -> Option<RelEnd> {
@@ -183,7 +216,10 @@ pub fn parse_relationship_line(line: &str) -> Result<ParsedRel, LineError> {
     let name = if let Some(label) = m.get(4) {
         Some(ParsedName::Label(label.as_str().to_string()))
     } else if let (Some(t), Some(s)) = (m.get(5), m.get(6)) {
-        Some(ParsedName::Ref { title: t.as_str().to_string(), slug: s.as_str().to_string() })
+        Some(ParsedName::Ref {
+            title: t.as_str().to_string(),
+            slug: s.as_str().to_string(),
+        })
     } else {
         None
     };
@@ -250,7 +286,12 @@ pub fn parse_members_block(content: &str, content_abs_start: usize, src: &str) -
     }
 
     let mut groups: Vec<MemberGroup> = Vec::new();
-    let mut implicit = MemberGroup { name: String::new(), depth: 0, members: vec![], children: vec![] };
+    let mut implicit = MemberGroup {
+        name: String::new(),
+        depth: 0,
+        members: vec![],
+        children: vec![],
+    };
     let mut stack: Vec<MemberGroup> = Vec::new();
     let mut fence: Option<char> = None;
     let mut offset = 0usize;
@@ -282,7 +323,12 @@ pub fn parse_members_block(content: &str, content_abs_start: usize, src: &str) -
 
         if let Some((depth, name)) = heading_depth(t) {
             close_to(&mut stack, &mut groups, depth);
-            stack.push(MemberGroup { name, depth, members: vec![], children: vec![] });
+            stack.push(MemberGroup {
+                name,
+                depth,
+                members: vec![],
+                children: vec![],
+            });
             continue;
         }
 
@@ -343,7 +389,10 @@ pub fn render_members_block(block: &MembersBlock) -> String {
 }
 
 pub fn render_attribute_line(a: &Attribute) -> String {
-    let vis = a.visibility.map(|v| format!("{} ", v.marker())).unwrap_or_default();
+    let vis = a
+        .visibility
+        .map(|v| format!("{} ", v.marker()))
+        .unwrap_or_default();
     let ty = match &a.ty.ref_ {
         Some(slug) => format!("[{}](./{}.md)", a.ty.name, slug),
         None => a.ty.name.clone(),
@@ -380,7 +429,12 @@ pub fn render_relationship_line(r: &ParsedRel) -> String {
     if !r.kind.is_ended() || !has_ends {
         format!("- {} {link}{name}", r.kind.as_str())
     } else {
-        format!("- {} {link}{name}: {} to {}", r.kind.as_str(), render_end(&r.from_end), render_end(&r.to_end))
+        format!(
+            "- {} {link}{name}: {} to {}",
+            r.kind.as_str(),
+            render_end(&r.from_end),
+            render_end(&r.to_end)
+        )
     }
 }
 
@@ -390,9 +444,10 @@ pub fn render_member_line(m: &MemberLine) -> String {
 
 /// Whole-string `[Title](./slug.md)` reference, or `None`.
 pub fn parse_link_ref(s: &str) -> Option<LinkRef> {
-    LINK_RE
-        .captures(s.trim())
-        .map(|c| LinkRef { title: c[1].to_string(), slug: c[2].to_string() })
+    LINK_RE.captures(s.trim()).map(|c| LinkRef {
+        title: c[1].to_string(),
+        slug: c[2].to_string(),
+    })
 }
 
 /// Human-readable message for a malformed flow bullet.
@@ -418,7 +473,10 @@ pub fn parse_flow_bullet(line: &str) -> Result<FlowBullet, LineError> {
             is_else: m.get(3).is_some(),
             target,
             carries: match (m.get(5), m.get(6)) {
-                (Some(t), Some(s)) => Some(LinkRef { title: t.as_str().to_string(), slug: s.as_str().to_string() }),
+                (Some(t), Some(s)) => Some(LinkRef {
+                    title: t.as_str().to_string(),
+                    slug: s.as_str().to_string(),
+                }),
                 _ => None,
             },
             effect: m.get(7).map(|x| x.as_str().to_string()),
@@ -434,12 +492,18 @@ pub fn parse_flow_bullet(line: &str) -> Result<FlowBullet, LineError> {
         });
     }
     if let Some(m) = FLOW_REFINES_RE.captures(trimmed) {
-        return Ok(FlowBullet::Refines(LinkRef { title: m[1].to_string(), slug: m[2].to_string() }));
+        return Ok(FlowBullet::Refines(LinkRef {
+            title: m[1].to_string(),
+            slug: m[2].to_string(),
+        }));
     }
     if let Some(m) = FLOW_PARTITION_RE.captures(trimmed) {
         return Ok(FlowBullet::Partition(m[1].trim().to_string()));
     }
-    Err(LineError { range: bullet_range(line), message: flow_error_message(trimmed) })
+    Err(LineError {
+        range: bullet_range(line),
+        message: flow_error_message(trimmed),
+    })
 }
 
 /// Split a `###` heading's text into (kind, identity, object link). The
@@ -471,7 +535,11 @@ pub fn render_flow_heading(n: &FlowNodeSyntax) -> String {
         },
         k => {
             let kw = k.keyword().expect("non-plain kinds have a keyword");
-            if n.identity == kw { format!("### {kw}") } else { format!("### {kw} {}", n.identity) }
+            if n.identity == kw {
+                format!("### {kw}")
+            } else {
+                format!("### {kw} {}", n.identity)
+            }
         }
     }
 }
@@ -549,7 +617,14 @@ pub fn parse_flow_block(content: &str, content_abs_start: usize, src: &str) -> F
 
         if let Some(rest) = t.strip_prefix("### ") {
             let (kind, identity, object_ref) = parse_flow_heading(rest);
-            nodes.push(FlowNodeSyntax { kind, identity, object_ref, bullets: vec![], notes: vec![], line: line_no });
+            nodes.push(FlowNodeSyntax {
+                kind,
+                identity,
+                object_ref,
+                bullets: vec![],
+                notes: vec![],
+                line: line_no,
+            });
             in_notes = false;
             continue;
         }
@@ -597,7 +672,10 @@ pub fn parse_flow_block(content: &str, content_abs_start: usize, src: &str) -> F
             node.bullets.push(Line::Error(droppable()));
         }
     }
-    FlowBlock { nodes, preamble_errors }
+    FlowBlock {
+        nodes,
+        preamble_errors,
+    }
 }
 
 /// Render a flow block, `## Nodes` heading included, as canonical Markdown.
@@ -638,7 +716,10 @@ pub fn parse_lifeline_line(line: &str) -> Result<LifelineLine, LineError> {
         message: "malformed lifeline — expected '- [Title](./slug.md)[ as alias]' (a lifeline IS a Class or Actor, so it is a link)".to_string(),
     })?;
     Ok(LifelineLine {
-        link: LinkRef { title: m[1].to_string(), slug: m[2].to_string() },
+        link: LinkRef {
+            title: m[1].to_string(),
+            slug: m[2].to_string(),
+        },
         alias: m.get(3).map(|x| x.as_str().to_string()),
         line: 0,
         span: None,
@@ -646,7 +727,11 @@ pub fn parse_lifeline_line(line: &str) -> Result<LifelineLine, LineError> {
 }
 
 fn message_error_message(line: &str) -> String {
-    let first = line.trim_start_matches("- ").split_whitespace().next().unwrap_or("");
+    let first = line
+        .trim_start_matches("- ")
+        .split_whitespace()
+        .next()
+        .unwrap_or("");
     if first == "par" {
         "'par' fragments are deferred — supported fragments are alt, opt, loop".to_string()
     } else {
@@ -662,7 +747,8 @@ pub fn parse_message_line(line: &str) -> Result<ParsedMessage, LineError> {
     })?;
     Ok(ParsedMessage {
         from: m[1].trim().to_string(),
-        verb: crate::model::MessageVerb::parse(&m[2]).expect("regex alternation is the closed verb set"),
+        verb: crate::model::MessageVerb::parse(&m[2])
+            .expect("regex alternation is the closed verb set"),
         to: m[3].trim().to_string(),
         signature: m.get(4).map(|x| x.as_str().to_string()),
         line: 0,
@@ -691,8 +777,19 @@ pub fn parse_messages_block(content: &str, content_abs_start: usize, src: &str) 
     use crate::model::FragmentKind;
 
     enum Open {
-        Fragment { kind: FragmentKind, operands: Vec<SeqOperandSyntax>, errors: Vec<ErrorNode>, line: usize, level: usize },
-        Operand { guard: Option<String>, items: Vec<Line<SeqItemSyntax>>, line: usize, level: usize },
+        Fragment {
+            kind: FragmentKind,
+            operands: Vec<SeqOperandSyntax>,
+            errors: Vec<ErrorNode>,
+            line: usize,
+            level: usize,
+        },
+        Operand {
+            guard: Option<String>,
+            items: Vec<Line<SeqItemSyntax>>,
+            line: usize,
+            level: usize,
+        },
     }
     fn level_of(o: &Open) -> usize {
         match o {
@@ -701,16 +798,33 @@ pub fn parse_messages_block(content: &str, content_abs_start: usize, src: &str) 
     }
     fn close_one(stack: &mut Vec<Open>, top: &mut Vec<Line<SeqItemSyntax>>) {
         match stack.pop().expect("close_one on non-empty stack") {
-            Open::Operand { guard, items, line, .. } => match stack.last_mut() {
-                Some(Open::Fragment { operands, .. }) => operands.push(SeqOperandSyntax { guard, items, line }),
+            Open::Operand {
+                guard, items, line, ..
+            } => match stack.last_mut() {
+                Some(Open::Fragment { operands, .. }) => {
+                    operands.push(SeqOperandSyntax { guard, items, line })
+                }
                 _ => unreachable!("an operand only ever opened under a fragment"),
             },
-            Open::Fragment { kind, operands, errors, line, .. } => {
-                let item = Line::Parsed(SeqItemSyntax::Fragment { kind, operands, errors, line });
+            Open::Fragment {
+                kind,
+                operands,
+                errors,
+                line,
+                ..
+            } => {
+                let item = Line::Parsed(SeqItemSyntax::Fragment {
+                    kind,
+                    operands,
+                    errors,
+                    line,
+                });
                 match stack.last_mut() {
                     Some(Open::Operand { items, .. }) => items.push(item),
                     None => top.push(item),
-                    Some(Open::Fragment { .. }) => unreachable!("a fragment is never opened under a fragment"),
+                    Some(Open::Fragment { .. }) => {
+                        unreachable!("a fragment is never opened under a fragment")
+                    }
                 }
             }
         }
@@ -763,7 +877,10 @@ pub fn parse_messages_block(content: &str, content_abs_start: usize, src: &str) 
         };
 
         if !t.starts_with("- ") {
-            let e = mk_err(DiagCode::DroppableContent, crate::parse::DROPPABLE_MSG.to_string());
+            let e = mk_err(
+                DiagCode::DroppableContent,
+                crate::parse::DROPPABLE_MSG.to_string(),
+            );
             match stack.last_mut() {
                 Some(Open::Operand { items, .. }) => items.push(Line::Error(e)),
                 Some(Open::Fragment { errors, .. }) => errors.push(e),
@@ -793,7 +910,8 @@ pub fn parse_messages_block(content: &str, content_abs_start: usize, src: &str) 
             continue;
         }
         if let Some(m) = SEQ_FRAGMENT_RE.captures(t) {
-            let kind = crate::model::FragmentKind::parse(&m[1]).expect("regex alternation is the closed set");
+            let kind = crate::model::FragmentKind::parse(&m[1])
+                .expect("regex alternation is the closed set");
             if in_fragment {
                 let e = mk_err(
                     DiagCode::MalformedMessage,
@@ -803,7 +921,13 @@ pub fn parse_messages_block(content: &str, content_abs_start: usize, src: &str) 
                     errors.push(e);
                 }
             } else {
-                stack.push(Open::Fragment { kind, operands: vec![], errors: vec![], line: line_no, level });
+                stack.push(Open::Fragment {
+                    kind,
+                    operands: vec![],
+                    errors: vec![],
+                    line: line_no,
+                    level,
+                });
             }
             continue;
         }
@@ -853,7 +977,12 @@ pub fn render_messages_block(block: &MessagesBlock) -> String {
                     out.push_str(&"  ".repeat(depth));
                     out.push_str(&render_message_line(m));
                 }
-                Line::Parsed(SeqItemSyntax::Fragment { kind, operands, errors, .. }) => {
+                Line::Parsed(SeqItemSyntax::Fragment {
+                    kind,
+                    operands,
+                    errors,
+                    ..
+                }) => {
                     out.push_str(&"  ".repeat(depth));
                     out.push_str(&format!("- {}", kind.as_str()));
                     for e in errors {
@@ -886,7 +1015,13 @@ mod tests {
     fn parses_attribute_with_link_and_multiplicity() {
         let a = parse_attribute_line("- status: [OrderStatus](./order-status.md) {0..1}").unwrap();
         assert_eq!(a.name, "status");
-        assert_eq!(a.ty, TypeRef { name: "OrderStatus".to_string(), ref_: Some("order-status".to_string()) });
+        assert_eq!(
+            a.ty,
+            TypeRef {
+                name: "OrderStatus".to_string(),
+                ref_: Some("order-status".to_string())
+            }
+        );
         assert_eq!(a.multiplicity.as_str(), "0..1");
         assert_eq!(a.visibility, None);
     }
@@ -896,7 +1031,13 @@ mod tests {
         let a = parse_attribute_line("- - id: OrderId").unwrap();
         assert_eq!(a.visibility, Some(Visibility::Private));
         assert_eq!(a.name, "id");
-        assert_eq!(a.ty, TypeRef { name: "OrderId".to_string(), ref_: None });
+        assert_eq!(
+            a.ty,
+            TypeRef {
+                name: "OrderId".to_string(),
+                ref_: None
+            }
+        );
         assert_eq!(a.multiplicity.as_str(), "1");
     }
 
@@ -920,18 +1061,37 @@ mod tests {
 
     #[test]
     fn parses_ended_relationship_with_roles() {
-        let r = parse_relationship_line("- associates [Customer](./customer.md): 1 order to 1 customer").unwrap();
+        let r = parse_relationship_line(
+            "- associates [Customer](./customer.md): 1 order to 1 customer",
+        )
+        .unwrap();
         assert_eq!(r.kind, RelationshipKind::Associates);
         assert_eq!(r.target_slug, "customer");
-        assert_eq!(r.from_end, RelEnd { multiplicity: Multiplicity::parse("1"), role: Some("order".to_string()), navigable: None });
+        assert_eq!(
+            r.from_end,
+            RelEnd {
+                multiplicity: Multiplicity::parse("1"),
+                role: Some("order".to_string()),
+                navigable: None
+            }
+        );
         assert_eq!(r.to_end.role.as_deref(), Some("customer"));
     }
 
     #[test]
     fn parses_unended_relationship_with_named_link() {
-        let r = parse_relationship_line("- specializes [Animal](./animal.md) as [Kinship](./kinship.md)").unwrap();
+        let r = parse_relationship_line(
+            "- specializes [Animal](./animal.md) as [Kinship](./kinship.md)",
+        )
+        .unwrap();
         assert_eq!(r.kind, RelationshipKind::Specializes);
-        assert_eq!(r.name, Some(ParsedName::Ref { title: "Kinship".to_string(), slug: "kinship".to_string() }));
+        assert_eq!(
+            r.name,
+            Some(ParsedName::Ref {
+                title: "Kinship".to_string(),
+                slug: "kinship".to_string()
+            })
+        );
     }
 
     #[test]
@@ -944,7 +1104,10 @@ mod tests {
     fn renders_attribute_omitting_default_multiplicity() {
         let a = Attribute {
             name: "id".to_string(),
-            ty: TypeRef { name: "OrderId".to_string(), ref_: None },
+            ty: TypeRef {
+                name: "OrderId".to_string(),
+                ref_: None,
+            },
             multiplicity: Multiplicity::default(),
             visibility: None,
             description: None,
@@ -966,7 +1129,10 @@ mod tests {
         assert_eq!(block.groups.len(), 2);
         assert_eq!(block.groups[0].name, "Users");
         assert_eq!(block.groups[0].depth, 3);
-        assert_eq!(block.groups[0].members[0].parsed().unwrap().slug, "customer");
+        assert_eq!(
+            block.groups[0].members[0].parsed().unwrap().slug,
+            "customer"
+        );
         assert_eq!(block.groups[0].children[0].name, "VIP");
         assert_eq!(block.groups[0].children[0].depth, 4);
         assert_eq!(block.groups[1].name, "Orders");
@@ -1029,9 +1195,12 @@ mod tests {
 
     #[test]
     fn parses_full_transition_bullet() {
-        let FlowBullet::Transition(t) =
-            parse_flow_bullet("- on `ship` when `paid` transitions to Shipped carries [Order](./order.md): `notify`").unwrap()
-        else { panic!("expected a transition") };
+        let FlowBullet::Transition(t) = parse_flow_bullet(
+            "- on `ship` when `paid` transitions to Shipped carries [Order](./order.md): `notify`",
+        )
+        .unwrap() else {
+            panic!("expected a transition")
+        };
         assert_eq!(t.trigger.as_deref(), Some("ship"));
         assert_eq!(t.guard.as_deref(), Some("paid"));
         assert!(!t.is_else);
@@ -1042,34 +1211,68 @@ mod tests {
 
     #[test]
     fn parses_completion_else_and_link_target_transitions() {
-        let FlowBullet::Transition(t) = parse_flow_bullet("- transitions to final").unwrap() else { panic!() };
+        let FlowBullet::Transition(t) = parse_flow_bullet("- transitions to final").unwrap() else {
+            panic!()
+        };
         assert_eq!(t.target, FlowTargetRef::Local("final".to_string()));
         assert!(t.trigger.is_none() && t.guard.is_none() && !t.is_else);
 
-        let FlowBullet::Transition(t) = parse_flow_bullet("- else transitions to Hold").unwrap() else { panic!() };
+        let FlowBullet::Transition(t) = parse_flow_bullet("- else transitions to Hold").unwrap()
+        else {
+            panic!()
+        };
         assert!(t.is_else);
 
         let FlowBullet::Transition(t) =
-            parse_flow_bullet("- transitions to [Fulfilment](./fulfilment.md)").unwrap() else { panic!() };
+            parse_flow_bullet("- transitions to [Fulfilment](./fulfilment.md)").unwrap()
+        else {
+            panic!()
+        };
         assert!(matches!(t.target, FlowTargetRef::Link(ref l) if l.slug == "fulfilment"));
     }
 
     #[test]
     fn parses_internals_refines_and_partition() {
-        assert_eq!(parse_flow_bullet("- entry: `reserveStock`").unwrap(), FlowBullet::Entry("reserveStock".to_string()));
-        assert_eq!(parse_flow_bullet("- do: `poll`").unwrap(), FlowBullet::Do("poll".to_string()));
-        assert_eq!(parse_flow_bullet("- exit: `release`").unwrap(), FlowBullet::Exit("release".to_string()));
-        assert!(matches!(parse_flow_bullet("- refines [SubFlow](./sub.md)").unwrap(), FlowBullet::Refines(ref l) if l.slug == "sub"));
-        assert_eq!(parse_flow_bullet("- partition: Warehouse").unwrap(), FlowBullet::Partition("Warehouse".to_string()));
+        assert_eq!(
+            parse_flow_bullet("- entry: `reserveStock`").unwrap(),
+            FlowBullet::Entry("reserveStock".to_string())
+        );
+        assert_eq!(
+            parse_flow_bullet("- do: `poll`").unwrap(),
+            FlowBullet::Do("poll".to_string())
+        );
+        assert_eq!(
+            parse_flow_bullet("- exit: `release`").unwrap(),
+            FlowBullet::Exit("release".to_string())
+        );
+        assert!(
+            matches!(parse_flow_bullet("- refines [SubFlow](./sub.md)").unwrap(), FlowBullet::Refines(ref l) if l.slug == "sub")
+        );
+        assert_eq!(
+            parse_flow_bullet("- partition: Warehouse").unwrap(),
+            FlowBullet::Partition("Warehouse".to_string())
+        );
         assert!(parse_flow_bullet("- goes to X").is_err());
-        assert!(parse_flow_bullet("- when paid transitions to X").is_err(), "guards must be backticked");
+        assert!(
+            parse_flow_bullet("- when paid transitions to X").is_err(),
+            "guards must be backticked"
+        );
     }
 
     #[test]
     fn parses_flow_headings() {
-        assert_eq!(parse_flow_heading("Draft"), (FlowNodeKind::Plain, "Draft".to_string(), None));
-        assert_eq!(parse_flow_heading("initial"), (FlowNodeKind::Initial, "initial".to_string(), None));
-        assert_eq!(parse_flow_heading("decision Ready to ship?"), (FlowNodeKind::Decision, "Ready to ship?".to_string(), None));
+        assert_eq!(
+            parse_flow_heading("Draft"),
+            (FlowNodeKind::Plain, "Draft".to_string(), None)
+        );
+        assert_eq!(
+            parse_flow_heading("initial"),
+            (FlowNodeKind::Initial, "initial".to_string(), None)
+        );
+        assert_eq!(
+            parse_flow_heading("decision Ready to ship?"),
+            (FlowNodeKind::Decision, "Ready to ship?".to_string(), None)
+        );
         let (k, id, obj) = parse_flow_heading("object [Order](./order.md)");
         assert_eq!(k, FlowNodeKind::Object);
         assert_eq!(id, "Order");
@@ -1103,7 +1306,14 @@ mod tests {
             "object [Order](./order.md)",
         ] {
             let (kind, identity, object_ref) = parse_flow_heading(heading);
-            let n = FlowNodeSyntax { kind, identity, object_ref, bullets: Vec::new(), notes: Vec::new(), line: 0 };
+            let n = FlowNodeSyntax {
+                kind,
+                identity,
+                object_ref,
+                bullets: Vec::new(),
+                notes: Vec::new(),
+                line: 0,
+            };
             assert_eq!(render_flow_heading(&n), format!("### {heading}"));
         }
     }
@@ -1118,7 +1328,10 @@ mod tests {
         assert_eq!(l.alias.as_deref(), Some("order"));
         let l = parse_lifeline_line("- [Customer](./customer.md)").unwrap();
         assert_eq!(l.alias, None);
-        assert!(parse_lifeline_line("- Customer").is_err(), "a lifeline IS a link");
+        assert!(
+            parse_lifeline_line("- Customer").is_err(),
+            "a lifeline IS a link"
+        );
     }
 
     #[test]
@@ -1139,14 +1352,17 @@ mod tests {
         let content = "- Customer calls order: `place(items)`\n- alt\n  - when `paid`\n    - order calls wh: `ship()`\n  - else\n    - order sends Customer: `paymentFailed()`\n- order replies Customer: `confirmation`";
         let block = parse_messages_block(content, 0, content);
         assert_eq!(block.items.len(), 3);
-        let SeqItemSyntax::Fragment { kind, operands, .. } = block.items[1].parsed().unwrap() else {
+        let SeqItemSyntax::Fragment { kind, operands, .. } = block.items[1].parsed().unwrap()
+        else {
             panic!("expected a fragment")
         };
         assert_eq!(*kind, FragmentKind::Alt);
         assert_eq!(operands.len(), 2);
         assert_eq!(operands[0].guard.as_deref(), Some("paid"));
         assert_eq!(operands[1].guard, None); // else
-        let SeqItemSyntax::Message(m) = operands[0].items[0].parsed().unwrap() else { panic!() };
+        let SeqItemSyntax::Message(m) = operands[0].items[0].parsed().unwrap() else {
+            panic!()
+        };
         assert_eq!(m.to, "wh");
     }
 
@@ -1165,8 +1381,14 @@ mod tests {
         let content = "- when `paid`\n- par\n- Customer calls order";
         let block = parse_messages_block(content, 0, content);
         assert_eq!(block.items.len(), 3);
-        assert!(block.items[0].parsed().is_none(), "operand outside a fragment is an error line");
-        assert!(block.items[1].parsed().is_none(), "'par' is deferred and degrades");
+        assert!(
+            block.items[0].parsed().is_none(),
+            "operand outside a fragment is an error line"
+        );
+        assert!(
+            block.items[1].parsed().is_none(),
+            "'par' is deferred and degrades"
+        );
         assert!(block.items[2].parsed().is_some());
     }
 }

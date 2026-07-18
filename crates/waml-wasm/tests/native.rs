@@ -3,14 +3,14 @@
 use std::collections::BTreeMap;
 use waml::solve::{Rect, Size, SizeMap, SolveConfig};
 use waml_wasm::{
-    apply_ops_bundle, build_bundle_json, build_model_json, fmt_bundle, solve_bundle,
-    validate_json,
+    apply_ops_bundle, build_bundle_json, build_model_json, fmt_bundle, solve_bundle, validate_json,
 };
 
 fn bundle() -> Vec<(String, String)> {
     vec![(
         "m/order.md".into(),
-        "---\ntype: uml.Class\ntitle: Order\n---\n# Order\n\n## Attributes\n- id: OrderId {1}\n".into(),
+        "---\ntype: uml.Class\ntitle: Order\n---\n# Order\n\n## Attributes\n- id: OrderId {1}\n"
+            .into(),
     )]
 }
 
@@ -119,7 +119,10 @@ fn build_bundle_json_round_trips_every_okf_field_and_leaves_uml_intact() {
     assert_eq!(pb["timestamp"], "2026-05-22");
     assert!(pb["body"].as_str().unwrap().contains("# Dataplex Playbook"));
     assert_eq!(pb["links"][0]["href"], "/tables/customers.md");
-    assert_eq!(pb["citations"][0]["href"], "https://cloud.google.com/blog/x");
+    assert_eq!(
+        pb["citations"][0]["href"],
+        "https://cloud.google.com/blog/x"
+    );
     // Unknown frontmatter survives in `extra`; known keys do not leak in.
     assert_eq!(pb["extra"]["owner"], "data-team");
     assert!(pb["extra"].get("type").is_none());
@@ -174,10 +177,16 @@ fn build_model_json_nests_okf_concept_on_each_node() {
     // The UML node no longer carries flat title/description/body — those live
     // only on the nested `concept` (single authoritative source), which the node
     // still gains alongside its UML-tier fields.
-    let order = nodes.iter().find(|n| n["key"] == "shop/order").expect("order node");
+    let order = nodes
+        .iter()
+        .find(|n| n["key"] == "shop/order")
+        .expect("order node");
     assert_eq!(order["type"], "uml.Class");
     assert!(order.get("title").is_none(), "flat title deleted: {order}");
-    assert!(order.get("description").is_none(), "flat description deleted: {order}");
+    assert!(
+        order.get("description").is_none(),
+        "flat description deleted: {order}"
+    );
     assert!(order.get("body").is_none(), "flat body deleted: {order}");
     assert_eq!(order["attributes"][0]["name"], "id");
     // The nested concept mirrors okf::project: id = full path minus `.md`, and is
@@ -188,7 +197,10 @@ fn build_model_json_nests_okf_concept_on_each_node() {
 
     // The non-UML Playbook is still a classifier node; its `concept` carries
     // every OKF field the flat Node drops.
-    let pb = nodes.iter().find(|n| n["key"] == "playbooks/dataplex").expect("playbook node");
+    let pb = nodes
+        .iter()
+        .find(|n| n["key"] == "playbooks/dataplex")
+        .expect("playbook node");
     let c = &pb["concept"];
     assert_eq!(c["id"], "playbooks/dataplex");
     assert_eq!(c["type"], "Playbook");
@@ -241,19 +253,62 @@ fn sizes_200x90() -> SizeMap {
 
 #[test]
 fn solve_bundle_matches_golden_rects() {
-    let r = solve_bundle(&layout_bundle(), "shop/orders", sizes_200x90(), SolveConfig::default()).unwrap();
-    assert!(r.diagnostics.is_empty(), "expected no diagnostics, got: {:?}", r.diagnostics);
-    assert_eq!(r.solved.nodes["shop/customer"], Rect { x: 16.0, y: 16.0, w: 200.0, h: 90.0 });
-    assert_eq!(r.solved.nodes["shop/account"], Rect { x: 16.0, y: 122.0, w: 200.0, h: 90.0 });
-    assert_eq!(r.solved.nodes["shop/order"], Rect { x: 264.0, y: 69.0, w: 200.0, h: 90.0 });
+    let r = solve_bundle(
+        &layout_bundle(),
+        "shop/orders",
+        sizes_200x90(),
+        SolveConfig::default(),
+    )
+    .unwrap();
+    assert!(
+        r.diagnostics.is_empty(),
+        "expected no diagnostics, got: {:?}",
+        r.diagnostics
+    );
+    assert_eq!(
+        r.solved.nodes["shop/customer"],
+        Rect {
+            x: 16.0,
+            y: 16.0,
+            w: 200.0,
+            h: 90.0
+        }
+    );
+    assert_eq!(
+        r.solved.nodes["shop/account"],
+        Rect {
+            x: 16.0,
+            y: 122.0,
+            w: 200.0,
+            h: 90.0
+        }
+    );
+    assert_eq!(
+        r.solved.nodes["shop/order"],
+        Rect {
+            x: 264.0,
+            y: 69.0,
+            w: 200.0,
+            h: 90.0
+        }
+    );
     // Two groups: framed "Users" shrink "Orders".
     assert_eq!(r.solved.groups.len(), 2);
 }
 
 #[test]
 fn solve_bundle_unknown_key_errs() {
-    let err = solve_bundle(&layout_bundle(), "nope", sizes_200x90(), SolveConfig::default()).unwrap_err();
-    assert!(err.contains("nope"), "error should name missing key, got: {err}");
+    let err = solve_bundle(
+        &layout_bundle(),
+        "nope",
+        sizes_200x90(),
+        SolveConfig::default(),
+    )
+    .unwrap_err();
+    assert!(
+        err.contains("nope"),
+        "error should name missing key, got: {err}"
+    );
 }
 
 #[test]
@@ -268,7 +323,10 @@ fn solve_bundle_surfaces_unresolved_operand_diagnostic() {
     diagram.1.push_str("- Ghosts left of Orders\n");
     let r = solve_bundle(&b, "shop/orders", sizes_200x90(), SolveConfig::default()).unwrap();
     assert!(
-        r.diagnostics.iter().any(|d| d.code == waml::diagnostic::DiagCode::UnresolvedLayoutRef),
-        "expected unresolved-layout-ref diagnostic, got: {:?}", r.diagnostics
+        r.diagnostics
+            .iter()
+            .any(|d| d.code == waml::diagnostic::DiagCode::UnresolvedLayoutRef),
+        "expected unresolved-layout-ref diagnostic, got: {:?}",
+        r.diagnostics
     );
 }

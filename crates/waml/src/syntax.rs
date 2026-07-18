@@ -65,7 +65,10 @@ pub enum Section {
     Members(MembersBlock),
     Layout(Vec<Line<LayoutItem>>),
     /// An unrecognized `## Section`, preserved verbatim (graceful degradation).
-    Unknown { title: String, raw: String },
+    Unknown {
+        title: String,
+        raw: String,
+    },
 }
 
 /// A relationship's optional `as …` name, as written in one document.
@@ -122,7 +125,10 @@ pub struct MemberGroup {
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum LayoutStatement {
     /// `A left of B above C` — N operands, N-1 directions.
-    Placement { operands: Vec<Operand>, directions: Vec<Direction> },
+    Placement {
+        operands: Vec<Operand>,
+        directions: Vec<Direction>,
+    },
     /// `top of X aligned with top of Y`
     Alignment { left: Anchored, right: Anchored },
     /// A lone operand — meaningful when it carries `as`/`with` treatment.
@@ -131,15 +137,29 @@ pub enum LayoutStatement {
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub enum Direction { LeftOf, RightOf, Above, Below }
+pub enum Direction {
+    LeftOf,
+    RightOf,
+    Above,
+    Below,
+}
 
 #[derive(Debug, Clone, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub struct Anchored { pub edge: Option<Edge>, pub operand: Operand }
+pub struct Anchored {
+    pub edge: Option<Edge>,
+    pub operand: Operand,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub enum Edge { Top, Bottom, Left, Right, Center }
+pub enum Edge {
+    Top,
+    Bottom,
+    Left,
+    Right,
+    Center,
+}
 
 #[derive(Debug, Clone, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -151,7 +171,10 @@ pub struct Operand {
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub enum Axis { Row, Column }
+pub enum Axis {
+    Row,
+    Column,
+}
 
 #[derive(Debug, Clone, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -170,21 +193,37 @@ pub enum NameRef {
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub enum Hint { Shape(Shape), Margin(Margin), Flag(Flag) }
+pub enum Hint {
+    Shape(Shape),
+    Margin(Margin),
+    Flag(Flag),
+}
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "wasm", derive(tsify_next::Tsify))]
 #[cfg_attr(feature = "wasm", tsify(into_wasm_abi, from_wasm_abi))]
-pub enum Shape { Frame, Box, Shrink }
+pub enum Shape {
+    Frame,
+    Box,
+    Shrink,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub enum Margin { No, Small, Medium, Large }
+pub enum Margin {
+    No,
+    Small,
+    Medium,
+    Large,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub enum Flag { Emphasized, Collapsed }
+pub enum Flag {
+    Emphasized,
+    Collapsed,
+}
 
 /// A parsed `[Title](./slug.md)` reference (unresolved slug stem).
 #[derive(Debug, Clone, PartialEq)]
@@ -344,13 +383,24 @@ mod tests {
     fn layout_statement_is_constructible() {
         let stmt = LayoutStatement::Placement {
             operands: vec![
-                Operand { ref_: OperandRef::Name(NameRef::Bare("Users".into())), axis: None, hints: vec![] },
-                Operand { ref_: OperandRef::Name(NameRef::Bare("Orders".into())), axis: None, hints: vec![] },
+                Operand {
+                    ref_: OperandRef::Name(NameRef::Bare("Users".into())),
+                    axis: None,
+                    hints: vec![],
+                },
+                Operand {
+                    ref_: OperandRef::Name(NameRef::Bare("Orders".into())),
+                    axis: None,
+                    hints: vec![],
+                },
             ],
             directions: vec![Direction::LeftOf],
         };
         match stmt {
-            LayoutStatement::Placement { operands, directions } => {
+            LayoutStatement::Placement {
+                operands,
+                directions,
+            } => {
                 assert_eq!(operands.len(), 2);
                 assert_eq!(directions, vec![Direction::LeftOf]);
             }

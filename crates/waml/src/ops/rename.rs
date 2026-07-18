@@ -41,7 +41,12 @@ fn rename_in_doc(doc: &mut Document, from: &str, to: &str) -> bool {
                 }
             }
             Section::Members(block) => {
-                fn rename_in_group(g: &mut crate::syntax::MemberGroup, from: &str, to: &str, changed: &mut bool) {
+                fn rename_in_group(
+                    g: &mut crate::syntax::MemberGroup,
+                    from: &str,
+                    to: &str,
+                    changed: &mut bool,
+                ) {
                     for m in g.members.iter_mut().filter_map(Line::parsed_mut) {
                         if m.slug == from {
                             m.slug = to.to_string();
@@ -119,8 +124,15 @@ pub(crate) fn op_node_rename(work: &mut Bundle, from: &str, to: &str) -> Result<
     let from_basename = slug_of(&work[idx].0);
     let dest_path = replace_basename(&work[idx].0, to);
     let dest_id = okf::id_of(&dest_path);
-    if work.iter().enumerate().any(|(i, (p, _))| i != idx && okf::id_of(p) == dest_id) {
-        return Err(OpError::at("node.rename", format!("target slug '{to}' already exists")));
+    if work
+        .iter()
+        .enumerate()
+        .any(|(i, (p, _))| i != idx && okf::id_of(p) == dest_id)
+    {
+        return Err(OpError::at(
+            "node.rename",
+            format!("target slug '{to}' already exists"),
+        ));
     }
     for (_, text) in work.iter_mut() {
         let mut doc = parse_document(text);
@@ -152,7 +164,14 @@ mod tests {
 
     #[test]
     fn rename_rewrites_every_referrer_and_rekeys_the_file() {
-        let out = apply(&bundle(), &[Op::NodeRename { from: "order-line".into(), to: "line-item".into() }]).unwrap();
+        let out = apply(
+            &bundle(),
+            &[Op::NodeRename {
+                from: "order-line".into(),
+                to: "line-item".into(),
+            }],
+        )
+        .unwrap();
 
         // file re-keyed, directory preserved
         assert!(out.iter().any(|(p, _)| p == "shop/line-item.md"));
@@ -174,19 +193,42 @@ mod tests {
             ("shop/tree-node.md".to_string(),
              "---\ntype: uml.Class\ntitle: TreeNode\n---\n# TreeNode\n\n## Attributes\n- parent: [TreeNode](./tree-node.md)\n\n## Relationships\n- composes [TreeNode](./tree-node.md) as [TreeNode](./tree-node.md): 1 to 0..* children\n".to_string()),
         ];
-        let out = apply(&b, &[Op::NodeRename { from: "tree-node".into(), to: "node".into() }]).unwrap();
+        let out = apply(
+            &b,
+            &[Op::NodeRename {
+                from: "tree-node".into(),
+                to: "node".into(),
+            }],
+        )
+        .unwrap();
 
         let doc = &out.iter().find(|(p, _)| p == "shop/node.md").unwrap().1;
-        assert!(doc.contains("(./node.md)"), "self-reference repointed to new slug");
-        assert!(!doc.contains("(./tree-node.md)"), "no stale self-reference left");
+        assert!(
+            doc.contains("(./node.md)"),
+            "self-reference repointed to new slug"
+        );
+        assert!(
+            !doc.contains("(./tree-node.md)"),
+            "no stale self-reference left"
+        );
         assert!(doc.contains("[TreeNode]"), "title preserved");
     }
 
     #[test]
     fn rename_refuses_a_slug_collision() {
         let mut b = bundle();
-        b.push(("shop/line-item.md".to_string(), "---\ntype: uml.Class\ntitle: LineItem\n---\n# LineItem\n".to_string()));
-        let err = apply(&b, &[Op::NodeRename { from: "order-line".into(), to: "line-item".into() }]).unwrap_err();
+        b.push((
+            "shop/line-item.md".to_string(),
+            "---\ntype: uml.Class\ntitle: LineItem\n---\n# LineItem\n".to_string(),
+        ));
+        let err = apply(
+            &b,
+            &[Op::NodeRename {
+                from: "order-line".into(),
+                to: "line-item".into(),
+            }],
+        )
+        .unwrap_err();
         assert!(err.reason.contains("already exists"));
     }
 
@@ -198,15 +240,30 @@ mod tests {
             ("shop/diagram.md".to_string(),
              "---\ntype: Diagram\ntitle: D\nprofile: uml-domain\n---\n# D\n\n## Members\n- [Order](./order.md)\n\n## Layout\n- [Order](./order.md) with collapsed\n".to_string()),
         ];
-        let out = apply(&b, &[Op::NodeRename { from: "order".into(), to: "invoice".into() }]).unwrap();
+        let out = apply(
+            &b,
+            &[Op::NodeRename {
+                from: "order".into(),
+                to: "invoice".into(),
+            }],
+        )
+        .unwrap();
 
         let diagram = &out.iter().find(|(p, _)| p == "shop/diagram.md").unwrap().1;
-        assert!(diagram.contains("## Layout\n- [Order](./invoice.md) with collapsed"), "layout link repointed: {diagram}");
-        assert!(!diagram.contains("(./order.md)"), "no stale layout link left: {diagram}");
+        assert!(
+            diagram.contains("## Layout\n- [Order](./invoice.md) with collapsed"),
+            "layout link repointed: {diagram}"
+        );
+        assert!(
+            !diagram.contains("(./order.md)"),
+            "no stale layout link left: {diagram}"
+        );
 
         let diags = crate::validate::validate(&out);
         assert!(
-            diags.iter().all(|d| d.code != crate::diagnostic::DiagCode::UnresolvedLayoutRef),
+            diags
+                .iter()
+                .all(|d| d.code != crate::diagnostic::DiagCode::UnresolvedLayoutRef),
             "renamed bundle must validate cleanly: {diags:?}"
         );
     }
@@ -221,22 +278,45 @@ mod tests {
             ("shop/diagram.md".to_string(),
              "---\ntype: Diagram\ntitle: D\nprofile: uml-domain\n---\n# D\n\n## Members\n- [Order](./order.md)\n- [Customer](./customer.md)\n\n## Layout\n- order left of customer\n".to_string()),
         ];
-        let out = apply(&b, &[Op::NodeRename { from: "order".into(), to: "invoice".into() }]).unwrap();
+        let out = apply(
+            &b,
+            &[Op::NodeRename {
+                from: "order".into(),
+                to: "invoice".into(),
+            }],
+        )
+        .unwrap();
 
         let diagram = &out.iter().find(|(p, _)| p == "shop/diagram.md").unwrap().1;
-        assert!(diagram.contains("invoice left of customer"), "bare layout operand repointed: {diagram}");
-        assert!(!diagram.contains("order left of"), "no stale bare layout operand left: {diagram}");
+        assert!(
+            diagram.contains("invoice left of customer"),
+            "bare layout operand repointed: {diagram}"
+        );
+        assert!(
+            !diagram.contains("order left of"),
+            "no stale bare layout operand left: {diagram}"
+        );
     }
 
     #[test]
     fn rename_resolves_from_by_full_path_id_and_still_rewrites_referrers() {
         // `from` addressed as the parse/graph layer's full bundle-path id
         // (`shop/order-line`), not the bare basename `order-line`.
-        let out = apply(&bundle(), &[Op::NodeRename { from: "shop/order-line".into(), to: "line-item".into() }]).unwrap();
+        let out = apply(
+            &bundle(),
+            &[Op::NodeRename {
+                from: "shop/order-line".into(),
+                to: "line-item".into(),
+            }],
+        )
+        .unwrap();
 
         assert!(out.iter().any(|(p, _)| p == "shop/line-item.md"));
         let order = &out.iter().find(|(p, _)| p == "shop/order.md").unwrap().1;
-        assert!(order.contains("(./line-item.md)"), "links repointed when `from` is a full-path id");
+        assert!(
+            order.contains("(./line-item.md)"),
+            "links repointed when `from` is a full-path id"
+        );
         assert!(!order.contains("(./order-line.md)"), "no stale link left");
     }
 
@@ -246,9 +326,22 @@ mod tests {
         // block the rename (full-path keying allows same-basename docs to
         // coexist across directories).
         let mut b = bundle();
-        b.push(("billing/line-item.md".to_string(), "---\ntype: uml.Class\ntitle: LineItem\n---\n# LineItem\n".to_string()));
-        let out = apply(&b, &[Op::NodeRename { from: "order-line".into(), to: "line-item".into() }]).unwrap();
+        b.push((
+            "billing/line-item.md".to_string(),
+            "---\ntype: uml.Class\ntitle: LineItem\n---\n# LineItem\n".to_string(),
+        ));
+        let out = apply(
+            &b,
+            &[Op::NodeRename {
+                from: "order-line".into(),
+                to: "line-item".into(),
+            }],
+        )
+        .unwrap();
         assert!(out.iter().any(|(p, _)| p == "shop/line-item.md"));
-        assert!(out.iter().any(|(p, _)| p == "billing/line-item.md"), "unrelated same-basename doc untouched");
+        assert!(
+            out.iter().any(|(p, _)| p == "billing/line-item.md"),
+            "unrelated same-basename doc untouched"
+        );
     }
 }

@@ -75,11 +75,35 @@ pub struct Diagnostic {
 }
 
 impl Diagnostic {
-    pub fn new(code: DiagCode, message: impl Into<String>, file: impl Into<String>, line: usize) -> Diagnostic {
-        Diagnostic { severity: code.severity(), code, message: message.into(), file: file.into(), line, span: None }
+    pub fn new(
+        code: DiagCode,
+        message: impl Into<String>,
+        file: impl Into<String>,
+        line: usize,
+    ) -> Diagnostic {
+        Diagnostic {
+            severity: code.severity(),
+            code,
+            message: message.into(),
+            file: file.into(),
+            line,
+            span: None,
+        }
     }
-    pub fn warn(code: DiagCode, message: impl Into<String>, file: impl Into<String>, line: usize) -> Diagnostic {
-        Diagnostic { severity: Severity::Warning, code, message: message.into(), file: file.into(), line, span: None }
+    pub fn warn(
+        code: DiagCode,
+        message: impl Into<String>,
+        file: impl Into<String>,
+        line: usize,
+    ) -> Diagnostic {
+        Diagnostic {
+            severity: Severity::Warning,
+            code,
+            message: message.into(),
+            file: file.into(),
+            line,
+            span: None,
+        }
     }
     /// Attach a byte range (relative to the diagnostic's line) to this diagnostic.
     pub fn with_span(mut self, span: (usize, usize)) -> Diagnostic {

@@ -4,7 +4,11 @@ use waml::solve::{pretty, solve_diagram, Size, SizeMap, SolveConfig};
 use waml::syntax::*;
 
 fn bare(name: &str) -> Operand {
-    Operand { ref_: OperandRef::Name(NameRef::Bare(name.into())), axis: None, hints: vec![] }
+    Operand {
+        ref_: OperandRef::Name(NameRef::Bare(name.into())),
+        axis: None,
+        hints: vec![],
+    }
 }
 
 #[test]
@@ -21,12 +25,23 @@ fn orders_domain_diagram_solves_to_expected_layout() {
         profile: "uml-domain".into(),
         description: None,
         groups: vec![
-            DiagramGroup { name: "Users".into(), members: vec!["customer".into(), "account".into()], children: vec![] },
-            DiagramGroup { name: "Orders".into(), members: vec!["order".into()], children: vec![] },
+            DiagramGroup {
+                name: "Users".into(),
+                members: vec!["customer".into(), "account".into()],
+                children: vec![],
+            },
+            DiagramGroup {
+                name: "Orders".into(),
+                members: vec!["order".into()],
+                children: vec![],
+            },
         ],
         layout: vec![
             LayoutStatement::Standalone(users_treated),
-            LayoutStatement::Placement { operands: vec![bare("Users"), bare("Orders")], directions: vec![Direction::LeftOf] },
+            LayoutStatement::Placement {
+                operands: vec![bare("Users"), bare("Orders")],
+                directions: vec![Direction::LeftOf],
+            },
         ],
         display: DiagramDisplay::default(),
     };

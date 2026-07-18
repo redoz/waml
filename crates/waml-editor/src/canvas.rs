@@ -79,14 +79,22 @@ pub struct GraphCanvas {
 
 impl Default for Camera {
     fn default() -> Self {
-        Camera { pan_x: 0.0, pan_y: 0.0, zoom: 1.0 }
+        Camera {
+            pan_x: 0.0,
+            pan_y: 0.0,
+            zoom: 1.0,
+        }
     }
 }
 
 // An empty scene is the sensible startup default (fed a real one via set_scene).
 impl Default for Scene {
     fn default() -> Self {
-        Scene { nodes: vec![], groups: vec![], edges: vec![] }
+        Scene {
+            nodes: vec![],
+            groups: vec![],
+            edges: vec![],
+        }
     }
 }
 
@@ -106,8 +114,16 @@ fn border_point(from: waml::solve::Rect, to: waml::solve::Rect) -> (f64, f64) {
     let hw = from.w * 0.5;
     let hh = from.h * 0.5;
     // Scale the direction vector to the nearest border along x and y, take the closer.
-    let tx = if dx != 0.0 { (hw / dx).abs() } else { f64::INFINITY };
-    let ty = if dy != 0.0 { (hh / dy).abs() } else { f64::INFINITY };
+    let tx = if dx != 0.0 {
+        (hw / dx).abs()
+    } else {
+        f64::INFINITY
+    };
+    let ty = if dy != 0.0 {
+        (hh / dy).abs()
+    } else {
+        f64::INFINITY
+    };
     let t = tx.min(ty);
     (fcx + dx * t, fcy + dy * t)
 }
@@ -167,7 +183,10 @@ impl Widget for GraphCanvas {
             let (lx, ly) = self.camera.world_to_local(group.rect.x, group.rect.y);
             let screen = Rect {
                 pos: dvec2(rect.pos.x + lx, rect.pos.y + ly),
-                size: dvec2(group.rect.w * self.camera.zoom, group.rect.h * self.camera.zoom),
+                size: dvec2(
+                    group.rect.w * self.camera.zoom,
+                    group.rect.h * self.camera.zoom,
+                ),
             };
             self.draw_group.draw_abs(cx, screen);
             if let Some(title) = &group.title {
@@ -196,7 +215,10 @@ impl Widget for GraphCanvas {
             let max = dvec2(a.x.max(b.x), a.y.max(b.y));
             let seg = Rect {
                 pos: min,
-                size: dvec2((max.x - min.x).max(thickness), (max.y - min.y).max(thickness)),
+                size: dvec2(
+                    (max.x - min.x).max(thickness),
+                    (max.y - min.y).max(thickness),
+                ),
             };
             self.draw_edge.draw_abs(cx, seg);
         }
@@ -206,7 +228,10 @@ impl Widget for GraphCanvas {
             let (lx, ly) = self.camera.world_to_local(node.rect.x, node.rect.y);
             let screen = Rect {
                 pos: dvec2(rect.pos.x + lx, rect.pos.y + ly),
-                size: dvec2(node.rect.w * self.camera.zoom, node.rect.h * self.camera.zoom),
+                size: dvec2(
+                    node.rect.w * self.camera.zoom,
+                    node.rect.h * self.camera.zoom,
+                ),
             };
             self.draw_node.draw_abs(cx, screen);
             self.draw_text.draw_abs(
@@ -236,8 +261,18 @@ mod tests {
     #[test]
     fn border_point_exits_on_the_side_facing_the_target() {
         // 100x100 box at origin; target far to the right -> exit on right edge x=100.
-        let from = WorldRect { x: 0.0, y: 0.0, w: 100.0, h: 100.0 };
-        let to = WorldRect { x: 500.0, y: 0.0, w: 100.0, h: 100.0 };
+        let from = WorldRect {
+            x: 0.0,
+            y: 0.0,
+            w: 100.0,
+            h: 100.0,
+        };
+        let to = WorldRect {
+            x: 500.0,
+            y: 0.0,
+            w: 100.0,
+            h: 100.0,
+        };
         let (x, y) = border_point(from, to);
         assert!((x - 100.0).abs() < 1e-6, "x = {x}");
         assert!((y - 50.0).abs() < 1e-6, "y = {y}");
@@ -246,8 +281,18 @@ mod tests {
     #[test]
     fn border_point_handles_vertical_stack() {
         // Target directly below -> exit on bottom edge y=100, centered x=50.
-        let from = WorldRect { x: 0.0, y: 0.0, w: 100.0, h: 100.0 };
-        let to = WorldRect { x: 0.0, y: 400.0, w: 100.0, h: 100.0 };
+        let from = WorldRect {
+            x: 0.0,
+            y: 0.0,
+            w: 100.0,
+            h: 100.0,
+        };
+        let to = WorldRect {
+            x: 0.0,
+            y: 400.0,
+            w: 100.0,
+            h: 100.0,
+        };
         let (x, y) = border_point(from, to);
         assert!((x - 50.0).abs() < 1e-6, "x = {x}");
         assert!((y - 100.0).abs() < 1e-6, "y = {y}");

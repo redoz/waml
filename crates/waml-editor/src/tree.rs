@@ -224,7 +224,8 @@ mod tests {
         // The fixture's one diagram appears somewhere, as a Diagram leaf.
         let dkey = model.diagrams[0].key.clone();
         assert!(
-            flat.iter().any(|(k, kind)| *k == dkey && *kind == TreeKind::Diagram),
+            flat.iter()
+                .any(|(k, kind)| *k == dkey && *kind == TreeKind::Diagram),
             "diagram {dkey:?} missing from {flat:?}"
         );
         // Every resolved row has a known kind (no dangling => Unknown leaks).
@@ -236,25 +237,49 @@ mod tests {
         let model = Model {
             path: "Root".to_string(),
             packages: vec![
-                node("", ElementType::Uml(UmlMetaclass::Package), "Root", vec!["sub"]),
-                node("sub", ElementType::Uml(UmlMetaclass::Package), "Sub Pkg", vec!["cls"]),
+                node(
+                    "",
+                    ElementType::Uml(UmlMetaclass::Package),
+                    "Root",
+                    vec!["sub"],
+                ),
+                node(
+                    "sub",
+                    ElementType::Uml(UmlMetaclass::Package),
+                    "Sub Pkg",
+                    vec!["cls"],
+                ),
             ],
-            nodes: vec![node("cls", ElementType::Uml(UmlMetaclass::Class), "Cls", vec![])],
+            nodes: vec![node(
+                "cls",
+                ElementType::Uml(UmlMetaclass::Class),
+                "Cls",
+                vec![],
+            )],
             ..Default::default()
         };
         let tree = build_tree(&model);
 
         assert_eq!(tree.roots.len(), 1);
         let root = &tree.roots[0];
-        assert_eq!((root.key.as_str(), root.title.as_str(), root.kind), ("", "Root", TreeKind::Package));
+        assert_eq!(
+            (root.key.as_str(), root.title.as_str(), root.kind),
+            ("", "Root", TreeKind::Package)
+        );
 
         assert_eq!(root.children.len(), 1);
         let sub = &root.children[0];
-        assert_eq!((sub.key.as_str(), sub.title.as_str(), sub.kind), ("sub", "Sub Pkg", TreeKind::Package));
+        assert_eq!(
+            (sub.key.as_str(), sub.title.as_str(), sub.kind),
+            ("sub", "Sub Pkg", TreeKind::Package)
+        );
 
         assert_eq!(sub.children.len(), 1);
         let cls = &sub.children[0];
-        assert_eq!((cls.key.as_str(), cls.title.as_str(), cls.kind), ("cls", "Cls", TreeKind::Class));
+        assert_eq!(
+            (cls.key.as_str(), cls.title.as_str(), cls.kind),
+            ("cls", "Cls", TreeKind::Class)
+        );
         assert!(cls.children.is_empty());
     }
 
@@ -286,9 +311,15 @@ mod tests {
 
         assert_eq!(tree.roots.len(), 1);
         let root = &tree.roots[0];
-        assert_eq!((root.key.as_str(), root.title.as_str(), root.kind), ("", "bundle", TreeKind::Package));
+        assert_eq!(
+            (root.key.as_str(), root.title.as_str(), root.kind),
+            ("", "bundle", TreeKind::Package)
+        );
         assert_eq!(root.children.len(), 2);
-        assert!(root.children.iter().all(|c| c.kind == TreeKind::Diagram && c.children.is_empty()));
+        assert!(root
+            .children
+            .iter()
+            .all(|c| c.kind == TreeKind::Diagram && c.children.is_empty()));
         assert_eq!(root.children[0].key, "d1");
         assert_eq!(root.children[1].key, "d2");
     }

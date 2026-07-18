@@ -19,7 +19,11 @@ fn tmp() -> std::path::PathBuf {
 #[test]
 fn attr_add_writes_the_file() {
     let d = tmp();
-    std::fs::write(d.join("order.md"), "---\ntype: uml.Class\ntitle: Order\n---\n# Order\n").unwrap();
+    std::fs::write(
+        d.join("order.md"),
+        "---\ntype: uml.Class\ntitle: Order\n---\n# Order\n",
+    )
+    .unwrap();
     let status = bin()
         .args(["attr", "add", "order", "total", "Money", "--dir"])
         .arg(&d)
@@ -33,7 +37,11 @@ fn attr_add_writes_the_file() {
 #[test]
 fn emit_prints_an_op_line_without_writing() {
     let d = tmp();
-    std::fs::write(d.join("order.md"), "---\ntype: uml.Class\ntitle: Order\n---\n# Order\n").unwrap();
+    std::fs::write(
+        d.join("order.md"),
+        "---\ntype: uml.Class\ntitle: Order\n---\n# Order\n",
+    )
+    .unwrap();
     let out = bin()
         .args(["attr", "add", "order", "total", "Money", "--emit", "--dir"])
         .arg(&d)
@@ -43,7 +51,9 @@ fn emit_prints_an_op_line_without_writing() {
     let line = String::from_utf8(out.stdout).unwrap();
     assert!(line.contains("\"op\":\"attr.add\""));
     // file untouched
-    assert!(!std::fs::read_to_string(d.join("order.md")).unwrap().contains("total"));
+    assert!(!std::fs::read_to_string(d.join("order.md"))
+        .unwrap()
+        .contains("total"));
 }
 
 #[test]
@@ -54,6 +64,10 @@ fn duplicate_attr_exits_1() {
         "---\ntype: uml.Class\ntitle: Order\n---\n# Order\n\n## Attributes\n- id: OrderId\n",
     )
     .unwrap();
-    let status = bin().args(["attr", "add", "order", "id", "X", "--dir"]).arg(&d).status().unwrap();
+    let status = bin()
+        .args(["attr", "add", "order", "id", "X", "--dir"])
+        .arg(&d)
+        .status()
+        .unwrap();
     assert_eq!(status.code(), Some(1));
 }

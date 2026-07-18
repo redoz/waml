@@ -1,7 +1,5 @@
 use crate::frontmatter::render_frontmatter;
-use crate::grammar::{
-    render_attribute_line, render_members_block, render_relationship_line,
-};
+use crate::grammar::{render_attribute_line, render_members_block, render_relationship_line};
 use crate::model::Attribute;
 use crate::syntax::{Document, LayoutItem, Line, ParsedRel, Section};
 
@@ -53,19 +51,35 @@ fn render_section(s: &Section) -> String {
     match s {
         Section::Body(body) => format!("## Body\n{body}"),
         Section::Attributes(attrs) => {
-            let body = attrs.iter().map(render_line_attr).collect::<Vec<_>>().join("\n");
+            let body = attrs
+                .iter()
+                .map(render_line_attr)
+                .collect::<Vec<_>>()
+                .join("\n");
             format!("## Attributes\n{body}")
         }
         Section::Values(values) => {
-            let body = values.iter().map(render_line_value).collect::<Vec<_>>().join("\n");
+            let body = values
+                .iter()
+                .map(render_line_value)
+                .collect::<Vec<_>>()
+                .join("\n");
             format!("## Values\n{body}")
         }
         Section::Relationships(rels) => {
-            let body = rels.iter().map(render_line_rel).collect::<Vec<_>>().join("\n");
+            let body = rels
+                .iter()
+                .map(render_line_rel)
+                .collect::<Vec<_>>()
+                .join("\n");
             format!("## Relationships\n{body}")
         }
         Section::Notes(notes) => {
-            let body = notes.iter().map(render_line_value).collect::<Vec<_>>().join("\n");
+            let body = notes
+                .iter()
+                .map(render_line_value)
+                .collect::<Vec<_>>()
+                .join("\n");
             format!("## Notes\n{body}")
         }
         Section::Nodes(block) => crate::grammar::render_flow_block(block),
@@ -88,7 +102,11 @@ fn render_section(s: &Section) -> String {
                 .map(render_line_layout)
                 .collect::<Vec<_>>()
                 .join("\n");
-            if body.is_empty() { "## Layout".to_string() } else { format!("## Layout\n{body}") }
+            if body.is_empty() {
+                "## Layout".to_string()
+            } else {
+                format!("## Layout\n{body}")
+            }
         }
         Section::Unknown { raw, .. } => raw.trim_end().to_string(),
     }
@@ -198,7 +216,8 @@ mod tests {
         let once = serialize_document(&parse_document(src));
         let twice = serialize_document(&parse_document(&once));
         assert_eq!(once, twice);
-        assert!(once.contains("## Lifelines\n- [Customer](./customer.md)\n- [Order](./order.md) as order"));
+        assert!(once
+            .contains("## Lifelines\n- [Customer](./customer.md)\n- [Order](./order.md) as order"));
         assert!(once.contains("- alt\n  - when `paid`\n    - order calls wh: `ship()`"));
     }
 }

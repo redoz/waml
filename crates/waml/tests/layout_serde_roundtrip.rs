@@ -20,10 +20,16 @@ fn bundle() -> Vec<(String, String)> {
 fn diagram_layout_survives_serde_roundtrip() {
     let model = build_model(&bundle());
     let diagram = &model.diagrams[0];
-    assert!(!diagram.layout.is_empty(), "fixture must have layout statements");
+    assert!(
+        !diagram.layout.is_empty(),
+        "fixture must have layout statements"
+    );
 
     let json = serde_json::to_string(diagram).unwrap();
     let back: waml::model::Diagram = serde_json::from_str(&json).unwrap();
 
-    assert_eq!(back.layout, diagram.layout, "layout must round-trip byte-equal");
+    assert_eq!(
+        back.layout, diagram.layout,
+        "layout must round-trip byte-equal"
+    );
 }

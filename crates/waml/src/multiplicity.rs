@@ -1,11 +1,9 @@
-use std::sync::LazyLock;
 use regex::Regex;
+use std::sync::LazyLock;
 
-static MULT_RE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"^(?:[1-9]\d*|\*|(?:0|[1-9]\d*)\.\.(?:[1-9]\d*|\*))$").unwrap()
-});
-static RANGE_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"^(\d+)\.\.(\d+)$").unwrap());
+static MULT_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^(?:[1-9]\d*|\*|(?:0|[1-9]\d*)\.\.(?:[1-9]\d*|\*))$").unwrap());
+static RANGE_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^(\d+)\.\.(\d+)$").unwrap());
 
 /// A UML multiplicity, validated against the BNF and stored in canonical string form.
 #[derive(Debug, Clone, PartialEq, Eq)]

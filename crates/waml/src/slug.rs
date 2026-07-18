@@ -1,5 +1,5 @@
-use std::sync::LazyLock;
 use regex::Regex;
+use std::sync::LazyLock;
 
 static CAMEL: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"([a-z0-9])([A-Z])").unwrap());
 static ACRONYM: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"([A-Z]+)([A-Z][a-z])").unwrap());
@@ -13,7 +13,11 @@ pub fn slugify(text: &str, fallback: &str) -> String {
     let s = s.to_lowercase();
     let s = NON_ALNUM.replace_all(&s, "-");
     let s = EDGE_DASH.replace_all(&s, "").into_owned();
-    if s.is_empty() { fallback.to_string() } else { s }
+    if s.is_empty() {
+        fallback.to_string()
+    } else {
+        s
+    }
 }
 
 #[cfg(test)]

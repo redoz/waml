@@ -58,8 +58,11 @@ impl Workspace {
     /// Per-file LSP diagnostics for the whole bundle. Non-WAML files get an
     /// empty vec (so the client clears any stale squiggles).
     pub fn diagnostics(&self) -> Vec<(String, Vec<lsp::Diagnostic>)> {
-        let bundle: Vec<(String, String)> =
-            self.docs.iter().map(|(p, t)| (p.clone(), t.clone())).collect();
+        let bundle: Vec<(String, String)> = self
+            .docs
+            .iter()
+            .map(|(p, t)| (p.clone(), t.clone()))
+            .collect();
         let all = waml::validate::validate(&bundle);
         let mut out: Vec<(String, Vec<lsp::Diagnostic>)> = Vec::new();
         for (path, text) in &bundle {
@@ -103,7 +106,10 @@ mod tests {
     #[test]
     fn plain_markdown_is_filtered_out() {
         let mut ws = Workspace::new();
-        ws.overlay("notes.md".into(), "# just notes\n\nnot waml at all\n".into());
+        ws.overlay(
+            "notes.md".into(),
+            "# just notes\n\nnot waml at all\n".into(),
+        );
         let diags = ws.diagnostics();
         assert!(diags
             .iter()
@@ -124,7 +130,11 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         let file = dir.join("order.md");
         let mut f = std::fs::File::create(&file).unwrap();
-        write!(f, "---\ntype: uml.Class\ntitle: Order\n---\n# Order\n\n## Attributes\n- id: OrderId\n").unwrap();
+        write!(
+            f,
+            "---\ntype: uml.Class\ntitle: Order\n---\n# Order\n\n## Attributes\n- id: OrderId\n"
+        )
+        .unwrap();
         drop(f);
 
         let mut ws = Workspace::new();
@@ -145,7 +155,10 @@ mod tests {
             ))),
             "open buffer must overlay its seeded disk copy under ONE key (no duplicate-slug), got: {diags:?}"
         );
-        let entries = diags.iter().filter(|(p, _)| p.ends_with("order.md")).count();
+        let entries = diags
+            .iter()
+            .filter(|(p, _)| p.ends_with("order.md"))
+            .count();
         assert_eq!(entries, 1, "exactly one bundle entry for the opened file");
 
         let _ = std::fs::remove_dir_all(&dir);
@@ -158,9 +171,13 @@ mod tests {
             "order.md".into(),
             "---\ntype: uml.Class\ntitle: Order\n---\n# Order\n\n## Relationships\n- depends [Ghost](./ghost.md)\n".into(),
         );
-        let (_, ds) = ws.diagnostics().into_iter().find(|(p, _)| p == "order.md").unwrap();
-        assert!(ds
-            .iter()
-            .any(|d| matches!(&d.code, Some(lsp::NumberOrString::String(s)) if s == "unresolved-target")));
+        let (_, ds) = ws
+            .diagnostics()
+            .into_iter()
+            .find(|(p, _)| p == "order.md")
+            .unwrap();
+        assert!(ds.iter().any(
+            |d| matches!(&d.code, Some(lsp::NumberOrString::String(s)) if s == "unresolved-target")
+        ));
     }
 }

@@ -379,20 +379,41 @@ pub struct FlowNode {
     pub id: String,
     pub kind: FlowNodeKind,
     /// Resolved key of an `object` node's typing classifier.
-    #[cfg_attr(feature = "serde", serde(rename = "objectRef", default, skip_serializing_if = "Option::is_none"))]
+    #[cfg_attr(
+        feature = "serde",
+        serde(rename = "objectRef", default, skip_serializing_if = "Option::is_none")
+    )]
     pub object_ref: Option<String>,
-    #[cfg_attr(feature = "serde", serde(default, skip_serializing_if = "Option::is_none"))]
+    #[cfg_attr(
+        feature = "serde",
+        serde(default, skip_serializing_if = "Option::is_none")
+    )]
     pub partition: Option<String>,
-    #[cfg_attr(feature = "serde", serde(default, skip_serializing_if = "Option::is_none"))]
+    #[cfg_attr(
+        feature = "serde",
+        serde(default, skip_serializing_if = "Option::is_none")
+    )]
     pub entry: Option<String>,
-    #[cfg_attr(feature = "serde", serde(rename = "do", default, skip_serializing_if = "Option::is_none"))]
+    #[cfg_attr(
+        feature = "serde",
+        serde(rename = "do", default, skip_serializing_if = "Option::is_none")
+    )]
     pub do_: Option<String>,
-    #[cfg_attr(feature = "serde", serde(default, skip_serializing_if = "Option::is_none"))]
+    #[cfg_attr(
+        feature = "serde",
+        serde(default, skip_serializing_if = "Option::is_none")
+    )]
     pub exit: Option<String>,
     /// Resolved key of the flow document this composite/call-behavior refines.
-    #[cfg_attr(feature = "serde", serde(default, skip_serializing_if = "Option::is_none"))]
+    #[cfg_attr(
+        feature = "serde",
+        serde(default, skip_serializing_if = "Option::is_none")
+    )]
     pub refines: Option<String>,
-    #[cfg_attr(feature = "serde", serde(default, skip_serializing_if = "Vec::is_empty"))]
+    #[cfg_attr(
+        feature = "serde",
+        serde(default, skip_serializing_if = "Vec::is_empty")
+    )]
     pub notes: Vec<String>,
 }
 
@@ -406,19 +427,37 @@ pub struct FlowEdge {
     /// Local node identity, or the link title for a cross-document target.
     pub to: String,
     /// Resolved key when the target was a cross-document link.
-    #[cfg_attr(feature = "serde", serde(rename = "toRef", default, skip_serializing_if = "Option::is_none"))]
+    #[cfg_attr(
+        feature = "serde",
+        serde(rename = "toRef", default, skip_serializing_if = "Option::is_none")
+    )]
     pub to_ref: Option<String>,
-    #[cfg_attr(feature = "serde", serde(default, skip_serializing_if = "Option::is_none"))]
+    #[cfg_attr(
+        feature = "serde",
+        serde(default, skip_serializing_if = "Option::is_none")
+    )]
     pub trigger: Option<String>,
-    #[cfg_attr(feature = "serde", serde(default, skip_serializing_if = "Option::is_none"))]
+    #[cfg_attr(
+        feature = "serde",
+        serde(default, skip_serializing_if = "Option::is_none")
+    )]
     pub guard: Option<String>,
     /// Decision default branch (`else transitions to …`).
-    #[cfg_attr(feature = "serde", serde(rename = "else", default, skip_serializing_if = "is_false"))]
+    #[cfg_attr(
+        feature = "serde",
+        serde(rename = "else", default, skip_serializing_if = "is_false")
+    )]
     pub is_else: bool,
-    #[cfg_attr(feature = "serde", serde(default, skip_serializing_if = "Option::is_none"))]
+    #[cfg_attr(
+        feature = "serde",
+        serde(default, skip_serializing_if = "Option::is_none")
+    )]
     pub effect: Option<String>,
     /// Resolved key of the carried object type (`carries <link>` object flow).
-    #[cfg_attr(feature = "serde", serde(default, skip_serializing_if = "Option::is_none"))]
+    #[cfg_attr(
+        feature = "serde",
+        serde(default, skip_serializing_if = "Option::is_none")
+    )]
     pub carries: Option<String>,
 }
 
@@ -432,7 +471,10 @@ pub struct FlowDoc {
     pub title: String,
     pub flavor: FlowFlavor,
     /// Resolved key of the entity this behavior describes (frontmatter link).
-    #[cfg_attr(feature = "serde", serde(default, skip_serializing_if = "Option::is_none"))]
+    #[cfg_attr(
+        feature = "serde",
+        serde(default, skip_serializing_if = "Option::is_none")
+    )]
     pub describes: Option<String>,
     pub nodes: Vec<FlowNode>,
     pub edges: Vec<FlowEdge>,
@@ -729,7 +771,10 @@ pub struct Node {
     pub annotates: Vec<NoteAnchor>,
     /// Owned member keys (classifiers, diagrams, sub-packages), in progressive-
     /// disclosure order. Meaningful only on `uml.Package` nodes; empty elsewhere.
-    #[cfg_attr(feature = "serde", serde(default, skip_serializing_if = "Vec::is_empty"))]
+    #[cfg_attr(
+        feature = "serde",
+        serde(default, skip_serializing_if = "Vec::is_empty")
+    )]
     pub members: Vec<String>,
 }
 
@@ -752,14 +797,20 @@ pub struct Diagram {
     pub key: String,
     pub title: String,
     pub profile: String,
-    #[cfg_attr(feature = "serde", serde(default, skip_serializing_if = "Option::is_none"))]
+    #[cfg_attr(
+        feature = "serde",
+        serde(default, skip_serializing_if = "Option::is_none")
+    )]
     pub description: Option<String>,
     pub groups: Vec<DiagramGroup>,
     // `layout` carries the raw layout AST (`syntax::LayoutStatement`). Serialized
     // end to end (Phase 2) so the frontend can read the layout relations.
     #[cfg_attr(feature = "wasm", tsify(type = "unknown[]"))]
     pub layout: Vec<crate::syntax::LayoutStatement>,
-    #[cfg_attr(feature = "serde", serde(default, skip_serializing_if = "DiagramDisplay::is_empty"))]
+    #[cfg_attr(
+        feature = "serde",
+        serde(default, skip_serializing_if = "DiagramDisplay::is_empty")
+    )]
     pub display: DiagramDisplay,
 }
 
@@ -817,13 +868,22 @@ pub struct Model {
     pub path: String,
     /// Discovered `uml.Package` nodes (root + nested). Kept out of `nodes` so
     /// classifier consumers are unaffected.
-    #[cfg_attr(feature = "serde", serde(default, skip_serializing_if = "Vec::is_empty"))]
+    #[cfg_attr(
+        feature = "serde",
+        serde(default, skip_serializing_if = "Vec::is_empty")
+    )]
     pub packages: Vec<Node>,
     /// Flow-substrate behavior documents (uml.Activity / uml.StateMachine).
-    #[cfg_attr(feature = "serde", serde(default, skip_serializing_if = "Vec::is_empty"))]
+    #[cfg_attr(
+        feature = "serde",
+        serde(default, skip_serializing_if = "Vec::is_empty")
+    )]
     pub flows: Vec<FlowDoc>,
     /// Interaction-substrate behavior documents (uml.Sequence).
-    #[cfg_attr(feature = "serde", serde(default, skip_serializing_if = "Vec::is_empty"))]
+    #[cfg_attr(
+        feature = "serde",
+        serde(default, skip_serializing_if = "Vec::is_empty")
+    )]
     pub interactions: Vec<SequenceDoc>,
 }
 
@@ -845,7 +905,10 @@ mod tests {
 
     #[test]
     fn diagram_display_with_a_set_field_is_not_empty() {
-        let d = DiagramDisplay { show_attributes: Some(false), ..Default::default() };
+        let d = DiagramDisplay {
+            show_attributes: Some(false),
+            ..Default::default()
+        };
         assert!(!d.is_empty(), "any set field makes the display non-empty");
     }
 
@@ -878,21 +941,42 @@ mod tests {
             ElementType::Uml(UmlMetaclass::UseCase)
         );
         assert_eq!(ElementType::Uml(UmlMetaclass::Actor).as_str(), "uml.Actor");
-        assert_eq!(ElementType::Uml(UmlMetaclass::UseCase).as_str(), "uml.UseCase");
+        assert_eq!(
+            ElementType::Uml(UmlMetaclass::UseCase).as_str(),
+            "uml.UseCase"
+        );
     }
 
     #[test]
     fn behavior_types_parse_and_round_trip() {
-        assert_eq!(ElementType::parse("uml.Activity"), ElementType::Behavior(BehaviorKind::Activity));
-        assert_eq!(ElementType::parse("uml.StateMachine"), ElementType::Behavior(BehaviorKind::StateMachine));
-        assert_eq!(ElementType::parse("uml.Sequence"), ElementType::Behavior(BehaviorKind::Sequence));
-        assert_eq!(ElementType::Behavior(BehaviorKind::StateMachine).as_str(), "uml.StateMachine");
+        assert_eq!(
+            ElementType::parse("uml.Activity"),
+            ElementType::Behavior(BehaviorKind::Activity)
+        );
+        assert_eq!(
+            ElementType::parse("uml.StateMachine"),
+            ElementType::Behavior(BehaviorKind::StateMachine)
+        );
+        assert_eq!(
+            ElementType::parse("uml.Sequence"),
+            ElementType::Behavior(BehaviorKind::Sequence)
+        );
+        assert_eq!(
+            ElementType::Behavior(BehaviorKind::StateMachine).as_str(),
+            "uml.StateMachine"
+        );
     }
 
     #[test]
     fn includes_and_extends_are_endless_dependency_verbs() {
-        assert_eq!(RelationshipKind::parse("includes"), Some(RelationshipKind::Includes));
-        assert_eq!(RelationshipKind::parse("extends"), Some(RelationshipKind::Extends));
+        assert_eq!(
+            RelationshipKind::parse("includes"),
+            Some(RelationshipKind::Includes)
+        );
+        assert_eq!(
+            RelationshipKind::parse("extends"),
+            Some(RelationshipKind::Extends)
+        );
         assert_eq!(RelationshipKind::Includes.as_str(), "includes");
         assert_eq!(RelationshipKind::Extends.as_str(), "extends");
         assert!(!RelationshipKind::Includes.is_ended());
@@ -931,10 +1015,7 @@ mod tests {
     fn classifier_type_round_trips_to_string() {
         assert_eq!(ElementType::Uml(UmlMetaclass::Enum).as_str(), "uml.Enum");
         assert_eq!(ElementType::Diagram.as_str(), "Diagram");
-        assert_eq!(
-            ElementType::Unknown("x.Y".to_string()).as_str(),
-            "x.Y"
-        );
+        assert_eq!(ElementType::Unknown("x.Y".to_string()).as_str(), "x.Y");
     }
 
     #[test]
@@ -975,8 +1056,14 @@ mod tests {
             annotates: vec![],
             members: vec![],
         };
-        let model = Model { nodes: vec![node], ..Default::default() };
-        assert_eq!(model.node("order").and_then(|n| n.concept.title.as_deref()), Some("Order"));
+        let model = Model {
+            nodes: vec![node],
+            ..Default::default()
+        };
+        assert_eq!(
+            model.node("order").and_then(|n| n.concept.title.as_deref()),
+            Some("Order")
+        );
         assert!(model.node("missing").is_none());
     }
 
@@ -995,14 +1082,21 @@ mod tests {
         for k in [FragmentKind::Alt, FragmentKind::Opt, FragmentKind::Loop] {
             assert_eq!(FragmentKind::parse(k.as_str()), Some(k));
         }
-        assert_eq!(FragmentKind::parse("par"), None, "par operands are deferred");
+        assert_eq!(
+            FragmentKind::parse("par"),
+            None,
+            "par operands are deferred"
+        );
     }
 
     #[test]
     fn attribute_defaults_multiplicity_to_one() {
         let a = Attribute {
             name: "id".to_string(),
-            ty: TypeRef { name: "OrderId".to_string(), ref_: None },
+            ty: TypeRef {
+                name: "OrderId".to_string(),
+                ref_: None,
+            },
             multiplicity: Multiplicity::default(),
             visibility: None,
             description: None,

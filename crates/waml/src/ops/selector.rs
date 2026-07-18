@@ -27,14 +27,16 @@ pub enum RelBy {
     /// By its `as "name"` label.
     Named(String),
     /// By its verb (`RelationshipKind`) and target endpoint slug.
-    Endpoint { kind: RelationshipKind, target: String },
+    Endpoint {
+        kind: RelationshipKind,
+        target: String,
+    },
 }
 
 // Leading `[Title](./slug.md)` anchor link, capturing the slug; then an
 // optional tail describing what's addressed relative to that node.
-static SEL_RE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"^\[[^\]]+\]\(\./(?P<src>[^)]+?)\.md\)(?P<tail>.*)$").unwrap()
-});
+static SEL_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^\[[^\]]+\]\(\./(?P<src>[^)]+?)\.md\)(?P<tail>.*)$").unwrap());
 // Tail: ` <verb> [Title](./slug.md)` — an endpoint-form relationship.
 static ENDPOINT_TAIL: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r#"^\s+(?P<verb>\w+)\s+\[[^\]]+\]\(\./(?P<tgt>[^)]+?)\.md\)$"#).unwrap()
@@ -70,17 +72,29 @@ pub fn parse_selector(s: &str) -> Option<Selector> {
         let kind = RelationshipKind::parse(&t["verb"])?;
         return Some(Selector::Rel {
             source: src,
-            by: RelBy::Endpoint { kind, target: basename(&t["tgt"]) },
+            by: RelBy::Endpoint {
+                kind,
+                target: basename(&t["tgt"]),
+            },
         });
     }
     if let Some(t) = NAMED_TAIL.captures(tail) {
-        return Some(Selector::Rel { source: src, by: RelBy::Named(t["name"].to_string()) });
+        return Some(Selector::Rel {
+            source: src,
+            by: RelBy::Named(t["name"].to_string()),
+        });
     }
     if let Some(t) = ATTR_TAIL.captures(tail) {
-        return Some(Selector::Attr { node: src, name: t["name"].trim().to_string() });
+        return Some(Selector::Attr {
+            node: src,
+            name: t["name"].trim().to_string(),
+        });
     }
     if let Some(t) = VALUE_TAIL.captures(tail) {
-        return Some(Selector::Value { node: src, literal: t["lit"].trim().to_string() });
+        return Some(Selector::Value {
+            node: src,
+            literal: t["lit"].trim().to_string(),
+        });
     }
     None
 }
@@ -91,10 +105,16 @@ pub fn parse_selector(s: &str) -> Option<Selector> {
 pub fn render_selector(sel: &Selector) -> String {
     match sel {
         Selector::Node(s) => s.clone(),
-        Selector::Rel { source, by: RelBy::Endpoint { kind, target } } => {
+        Selector::Rel {
+            source,
+            by: RelBy::Endpoint { kind, target },
+        } => {
             format!("{source} {} {target}", kind.as_str())
         }
-        Selector::Rel { source, by: RelBy::Named(name) } => format!("{source} as \"{name}\""),
+        Selector::Rel {
+            source,
+            by: RelBy::Named(name),
+        } => format!("{source} as \"{name}\""),
         Selector::Attr { node, name } => format!("{node} attr {name}"),
         Selector::Value { node, literal } => format!("{node} value {literal}"),
     }
@@ -106,49 +126,99 @@ mod tests {
 
     #[test]
     fn parses_classifier_anchor_as_node() {
-        assert_eq!(parse_selector("[Order](./order.md)"), Some(Selector::Node("order".into())));
+        assert_eq!(
+            parse_selector("[Order](./order.md)"),
+            Some(Selector::Node("order".into()))
+        );
     }
 
     #[test]
     fn parses_endpoint_anchor_as_rel() {
         let got = parse_selector("[Order](./order.md) composes [OrderLine](./order-line.md)");
-        assert_eq!(got, Some(Selector::Rel {
-            source: "order".into(),
-            by: RelBy::Endpoint { kind: RelationshipKind::Composes, target: "order-line".into() },
-        }));
+        assert_eq!(
+            got,
+            Some(Selector::Rel {
+                source: "order".into(),
+                by: RelBy::Endpoint {
+                    kind: RelationshipKind::Composes,
+                    target: "order-line".into()
+                },
+            })
+        );
     }
 
     #[test]
     fn parses_named_anchor_as_rel() {
         let got = parse_selector("[Order](./order.md) as \"places\"");
-        assert_eq!(got, Some(Selector::Rel { source: "order".into(), by: RelBy::Named("places".into()) }));
+        assert_eq!(
+            got,
+            Some(Selector::Rel {
+                source: "order".into(),
+                by: RelBy::Named("places".into())
+            })
+        );
     }
 
     #[test]
     fn parses_attr_and_value_extensions() {
-        assert_eq!(parse_selector("[Order](./order.md) attr total"),
-            Some(Selector::Attr { node: "order".into(), name: "total".into() }));
-        assert_eq!(parse_selector("[OrderStatus](./order-status.md) value PLACED"),
-            Some(Selector::Value { node: "order-status".into(), literal: "PLACED".into() }));
+        assert_eq!(
+            parse_selector("[Order](./order.md) attr total"),
+            Some(Selector::Attr {
+                node: "order".into(),
+                name: "total".into()
+            })
+        );
+        assert_eq!(
+            parse_selector("[OrderStatus](./order-status.md) value PLACED"),
+            Some(Selector::Value {
+                node: "order-status".into(),
+                literal: "PLACED".into()
+            })
+        );
     }
 
     #[test]
     fn rejects_garbage() {
         assert_eq!(parse_selector("not selector"), None);
-        assert_eq!(parse_selector("[Order](./order.md) frobnicates [X](./x.md)"), None);
+        assert_eq!(
+            parse_selector("[Order](./order.md) frobnicates [X](./x.md)"),
+            None
+        );
     }
 
     #[test]
     fn renders_compact_display_form() {
         assert_eq!(render_selector(&Selector::Node("order".into())), "order");
-        assert_eq!(render_selector(&Selector::Rel {
-            source: "order".into(),
-            by: RelBy::Endpoint { kind: RelationshipKind::Composes, target: "order-line".into() },
-        }), "order composes order-line");
-        assert_eq!(render_selector(&Selector::Rel { source: "order".into(), by: RelBy::Named("places".into()) }),
-            "order as \"places\"");
-        assert_eq!(render_selector(&Selector::Attr { node: "order".into(), name: "total".into() }), "order attr total");
-        assert_eq!(render_selector(&Selector::Value { node: "order-status".into(), literal: "PLACED".into() }),
-            "order-status value PLACED");
+        assert_eq!(
+            render_selector(&Selector::Rel {
+                source: "order".into(),
+                by: RelBy::Endpoint {
+                    kind: RelationshipKind::Composes,
+                    target: "order-line".into()
+                },
+            }),
+            "order composes order-line"
+        );
+        assert_eq!(
+            render_selector(&Selector::Rel {
+                source: "order".into(),
+                by: RelBy::Named("places".into())
+            }),
+            "order as \"places\""
+        );
+        assert_eq!(
+            render_selector(&Selector::Attr {
+                node: "order".into(),
+                name: "total".into()
+            }),
+            "order attr total"
+        );
+        assert_eq!(
+            render_selector(&Selector::Value {
+                node: "order-status".into(),
+                literal: "PLACED".into()
+            }),
+            "order-status value PLACED"
+        );
     }
 }

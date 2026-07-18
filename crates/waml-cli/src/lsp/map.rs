@@ -62,8 +62,14 @@ pub fn to_lsp_diagnostic(d: &Diagnostic, line_text: &str) -> lsp::Diagnostic {
     };
     lsp::Diagnostic {
         range: lsp::Range {
-            start: lsp::Position { line, character: start_ch },
-            end: lsp::Position { line, character: end_ch },
+            start: lsp::Position {
+                line,
+                character: start_ch,
+            },
+            end: lsp::Position {
+                line,
+                character: end_ch,
+            },
         },
         severity: Some(severity(d.severity)),
         code: Some(lsp::NumberOrString::String(d.code.as_str().to_string())),
@@ -112,6 +118,12 @@ mod tests {
         let line = "- depends [Café](./cafe.md)";
         let byte_start = line.find("[Café]").unwrap();
         let u = utf16_col(line, byte_start);
-        assert_eq!(u as usize, line[..byte_start].chars().map(char::len_utf16).sum::<usize>());
+        assert_eq!(
+            u as usize,
+            line[..byte_start]
+                .chars()
+                .map(char::len_utf16)
+                .sum::<usize>()
+        );
     }
 }

@@ -1,13 +1,13 @@
 //! Diagram layout solver: resolve a `model::Diagram` into absolute pixel rects.
 //! See docs/superpowers/specs/2026-07-12-diagram-layout-solver-design.md.
 
-use std::collections::BTreeMap;
 use crate::diagnostic::Diagnostic;
-use crate::syntax::{Axis, Shape, Margin, Direction, Edge};
+use crate::syntax::{Axis, Direction, Edge, Margin, Shape};
+use std::collections::BTreeMap;
 
-pub mod resolve;
-pub mod potentials;
 pub mod geometry;
+pub mod potentials;
+pub mod resolve;
 
 // Wire (solver IO) types live in a nested module so that the `Tsify` derive's
 // generated `VectorIntoWasmAbi`/`VectorFromWasmAbi` impls — which reference the
@@ -16,38 +16,57 @@ pub mod geometry;
 // in this module's scope). Re-exported below so all existing `solve::X` paths
 // (including `super::X` imports in `resolve.rs`/`geometry.rs`) are unaffected.
 mod wire {
-    use std::collections::BTreeMap;
     use crate::syntax::Shape;
+    use std::collections::BTreeMap;
 
     #[derive(Debug, Clone, Copy, PartialEq)]
     #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
     #[cfg_attr(feature = "wasm", derive(tsify_next::Tsify))]
     #[cfg_attr(feature = "wasm", tsify(into_wasm_abi, from_wasm_abi))]
-    pub struct Size { pub w: f64, pub h: f64 }
+    pub struct Size {
+        pub w: f64,
+        pub h: f64,
+    }
 
     #[derive(Debug, Clone, Copy, PartialEq)]
     #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
     #[cfg_attr(feature = "wasm", derive(tsify_next::Tsify))]
     #[cfg_attr(feature = "wasm", tsify(into_wasm_abi, from_wasm_abi))]
-    pub struct Rect { pub x: f64, pub y: f64, pub w: f64, pub h: f64 }
+    pub struct Rect {
+        pub x: f64,
+        pub y: f64,
+        pub w: f64,
+        pub h: f64,
+    }
 
     #[derive(Debug, Clone, Copy, PartialEq)]
     #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
     #[cfg_attr(feature = "wasm", derive(tsify_next::Tsify))]
     #[cfg_attr(feature = "wasm", tsify(into_wasm_abi, from_wasm_abi))]
-    pub struct SolveConfig { pub margin_px: [f64; 4], pub chip: Size }
+    pub struct SolveConfig {
+        pub margin_px: [f64; 4],
+        pub chip: Size,
+    }
 
     #[derive(Debug, Clone, Copy, Default, PartialEq)]
     #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
     #[cfg_attr(feature = "wasm", derive(tsify_next::Tsify))]
     #[cfg_attr(feature = "wasm", tsify(into_wasm_abi, from_wasm_abi))]
-    pub struct FlagSet { pub emphasized: bool, pub collapsed: bool }
+    pub struct FlagSet {
+        pub emphasized: bool,
+        pub collapsed: bool,
+    }
 
     #[derive(Debug, Clone, PartialEq)]
     #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
     #[cfg_attr(feature = "wasm", derive(tsify_next::Tsify))]
     #[cfg_attr(feature = "wasm", tsify(into_wasm_abi, from_wasm_abi))]
-    pub struct SolvedGroup { pub rect: Rect, pub shape: Shape, pub title: Option<String>, pub depth: u8 }
+    pub struct SolvedGroup {
+        pub rect: Rect,
+        pub shape: Shape,
+        pub title: Option<String>,
+        pub depth: u8,
+    }
 
     #[derive(Debug, Clone, PartialEq)]
     #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -75,7 +94,10 @@ pub type SizeMap = BTreeMap<String, Size>;
 
 impl Default for SolveConfig {
     fn default() -> Self {
-        SolveConfig { margin_px: [0.0, 8.0, 16.0, 32.0], chip: Size { w: 96.0, h: 28.0 } }
+        SolveConfig {
+            margin_px: [0.0, 8.0, 16.0, 32.0],
+            chip: Size { w: 96.0, h: 28.0 },
+        }
     }
 }
 
@@ -100,7 +122,10 @@ pub enum BoxId {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub enum BoxKind { Leaf, Group }
+pub enum BoxKind {
+    Leaf,
+    Group,
+}
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Box {
@@ -117,8 +142,17 @@ pub struct Box {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Constraint {
-    Place { a: BoxId, b: BoxId, dir: Direction },
-    Align { a: BoxId, a_edge: Edge, b: BoxId, b_edge: Edge },
+    Place {
+        a: BoxId,
+        b: BoxId,
+        dir: Direction,
+    },
+    Align {
+        a: BoxId,
+        a_edge: Edge,
+        b: BoxId,
+        b_edge: Edge,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -131,7 +165,10 @@ pub struct Scene {
 pub fn pretty(solved: &Solved) -> String {
     let mut out = String::new();
     for (k, r) in &solved.nodes {
-        out.push_str(&format!("node {k} @ {:.0},{:.0} {:.0}x{:.0}\n", r.x, r.y, r.w, r.h));
+        out.push_str(&format!(
+            "node {k} @ {:.0},{:.0} {:.0}x{:.0}\n",
+            r.x, r.y, r.w, r.h
+        ));
     }
     for g in &solved.groups {
         let title = g.title.as_deref().unwrap_or("");
@@ -142,7 +179,10 @@ pub fn pretty(solved: &Solved) -> String {
     }
     for (k, f) in &solved.flags {
         if f.emphasized || f.collapsed {
-            out.push_str(&format!("flags {k} emphasized={} collapsed={}\n", f.emphasized, f.collapsed));
+            out.push_str(&format!(
+                "flags {k} emphasized={} collapsed={}\n",
+                f.emphasized, f.collapsed
+            ));
         }
     }
     out
@@ -167,11 +207,34 @@ mod tests {
     #[test]
     fn pretty_dumps_nodes_deterministically() {
         let mut nodes = BTreeMap::new();
-        nodes.insert("b".to_string(), Rect { x: 10.0, y: 0.0, w: 200.0, h: 90.0 });
-        nodes.insert("a".to_string(), Rect { x: 0.0, y: 0.0, w: 200.0, h: 90.0 });
-        let solved = Solved { nodes, groups: vec![], flags: BTreeMap::new() };
+        nodes.insert(
+            "b".to_string(),
+            Rect {
+                x: 10.0,
+                y: 0.0,
+                w: 200.0,
+                h: 90.0,
+            },
+        );
+        nodes.insert(
+            "a".to_string(),
+            Rect {
+                x: 0.0,
+                y: 0.0,
+                w: 200.0,
+                h: 90.0,
+            },
+        );
+        let solved = Solved {
+            nodes,
+            groups: vec![],
+            flags: BTreeMap::new(),
+        };
         // BTreeMap orders keys: a before b.
-        assert_eq!(pretty(&solved), "node a @ 0,0 200x90\nnode b @ 10,0 200x90\n");
+        assert_eq!(
+            pretty(&solved),
+            "node a @ 0,0 200x90\nnode b @ 10,0 200x90\n"
+        );
     }
 
     #[test]
@@ -194,8 +257,20 @@ mod tests {
 
         // Output serializes with maps as JSON objects (serde_json default).
         let mut nodes = BTreeMap::new();
-        nodes.insert("a".to_string(), Rect { x: 1.0, y: 2.0, w: 3.0, h: 4.0 });
-        let solved = Solved { nodes, groups: vec![], flags: BTreeMap::new() };
+        nodes.insert(
+            "a".to_string(),
+            Rect {
+                x: 1.0,
+                y: 2.0,
+                w: 3.0,
+                h: 4.0,
+            },
+        );
+        let solved = Solved {
+            nodes,
+            groups: vec![],
+            flags: BTreeMap::new(),
+        };
         let v: serde_json::Value = serde_json::to_value(&solved).unwrap();
         assert_eq!(v["nodes"]["a"]["x"], 1.0);
         assert_eq!(v["nodes"]["a"]["w"], 3.0);
