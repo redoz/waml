@@ -792,7 +792,7 @@ name = "makepad-latex-math"
 version = "0.1.0"
 source = "git+https://github.com/redoz/makepad.git?rev=4f9ce7a8bb3fd19e5c61dcf13edd2e6d4a04cefc#4f9ce7a8bb3fd19e5c61dcf13edd2e6d4a04cefc"
 dependencies = [
- "ttf-parser",
+ "ttf-parser 0.24.1",
 ]
 
 [[package]]
@@ -1003,7 +1003,7 @@ dependencies = [
  "makepad-html",
  "makepad-latex-math",
  "pulldown-cmark 0.12.2 (git+https://github.com/redoz/makepad.git?rev=4f9ce7a8bb3fd19e5c61dcf13edd2e6d4a04cefc)",
- "ttf-parser",
+ "ttf-parser 0.24.1",
  "unicode-segmentation 1.12.0",
 ]
 
@@ -1357,7 +1357,7 @@ dependencies = [
  "bytemuck",
  "makepad-error-log",
  "smallvec 1.15.1",
- "ttf-parser",
+ "ttf-parser 0.24.1",
  "unicode-bidi-mirroring",
  "unicode-ccc",
  "unicode-properties",
@@ -1749,6 +1749,12 @@ version = "0.24.1"
 source = "git+https://github.com/redoz/makepad.git?rev=4f9ce7a8bb3fd19e5c61dcf13edd2e6d4a04cefc#4f9ce7a8bb3fd19e5c61dcf13edd2e6d4a04cefc"
 
 [[package]]
+name = "ttf-parser"
+version = "0.25.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d2df906b07856748fa3f6e0ad0cbaa047052d4a7dd609e231c4f72cee8c36f31"
+
+[[package]]
 name = "unicase"
 version = "2.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1840,6 +1846,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tsify-next",
+ "ttf-parser 0.25.1",
  "wasm-bindgen",
  "wasm-bindgen-utils",
 ]
