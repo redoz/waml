@@ -5,6 +5,7 @@ mod app;
 mod camera;
 mod canvas;
 mod cli;
+mod diagram_switcher;
 mod doc_tabs;
 mod inspector;
 mod inspector_panel;

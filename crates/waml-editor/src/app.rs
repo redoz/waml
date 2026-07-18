@@ -11,6 +11,7 @@ script_mod! {
     use mod.widgets.ProjectTree
     use mod.widgets.Inspector
     use mod.widgets.DocTabs
+    use mod.widgets.DiagramSwitcher
     use mod.widgets.ToolDock
     use mod.widgets.SelectionToolbar
     use mod.widgets.Statusbar
@@ -113,9 +114,18 @@ script_mod! {
                                     width: Fill
                                     height: Fill
                                     flow: Down
-                                    doc_tabs := DocTabs{
+                                    View{
                                         width: Fill
                                         height: 34.0
+                                        flow: Right
+                                        diagram_switcher := DiagramSwitcher{
+                                            width: 180.0
+                                            height: Fill
+                                        }
+                                        doc_tabs := DocTabs{
+                                            width: Fill
+                                            height: Fill
+                                        }
                                     }
                                     View{
                                         width: Fill
@@ -234,6 +244,36 @@ impl App {
         }
     }
 
+    /// Swap the base (first) tab's diagram and re-activate it. Shared by the
+    /// tree panel's diagram row and the caption-area diagram switcher (U7) --
+    /// both just need to name a diagram key, everything else is identical.
+    fn switch_diagram(&mut self, cx: &mut Cx, key: &str) {
+        let Some(diagram) = self.model.diagrams.iter().find(|d| d.key == key) else {
+            log!("switch_diagram: no diagram with key {key:?}");
+            return;
+        };
+        if let Some(base) = self.tabs.tabs.first_mut() {
+            base.key = diagram.key.clone();
+            base.title = diagram.title.clone();
+        }
+        let base_id = self.tabs.tabs.first().map(|t| t.id).unwrap_or_default();
+        self.tabs.activate(base_id);
+        self.refresh_doc_tabs(cx);
+        self.sync_active_tab(cx);
+        self.sync_diagram_switcher_current(cx);
+    }
+
+    /// Push the base tab's current diagram title into the switcher's trigger
+    /// chip. Called wherever the base tab's diagram changes.
+    fn sync_diagram_switcher_current(&mut self, cx: &mut Cx) {
+        let title = self.tabs.tabs.first().map(|t| t.title.clone()).unwrap_or_default();
+        if let Some(mut switcher) =
+            self.ui.widget(cx, ids!(diagram_switcher)).borrow_mut::<crate::diagram_switcher::DiagramSwitcher>()
+        {
+            switcher.set_current(cx, &title);
+        }
+    }
+
     /// Push diagram name / node count / zoom / active tool into the bottom
     /// statusbar. Snapshot values -- called at each sync point (tab switch,
     /// startup, tool-dock mode change), not live during a canvas drag.
@@ -326,6 +366,10 @@ impl MatchEvent for App {
             inspector.set_subject(cx, &self.model, Subject::None);
         }
         self.sync_statusbar(cx);
+
+        // Diagram switcher (U7): push the base tab's current diagram title
+        // into the trigger chip once here.
+        self.sync_diagram_switcher_current(cx);
     }
 
     fn handle_actions(&mut self, cx: &mut Cx, actions: &Actions) {
@@ -354,18 +398,24 @@ impl MatchEvent for App {
             .borrow_mut::<crate::tree_panel::ProjectTree>()
             .and_then(|panel| panel.selected_diagram(actions));
         if let Some(key) = selected {
-            let Some(diagram) = self.model.diagrams.iter().find(|d| d.key == key) else {
-                log!("SelectDiagram: no diagram with key {key:?}");
-                return;
-            };
-            if let Some(base) = self.tabs.tabs.first_mut() {
-                base.key = diagram.key.clone();
-                base.title = diagram.title.clone();
+            self.switch_diagram(cx, &key);
+            return;
+        }
+
+        // Diagram switcher chip (caption area, U7): click cycles the base
+        // tab to the next `Model::diagrams` entry (wrapping), same
+        // swap-and-activate path as the tree panel's diagram row.
+        let switcher_clicked = self
+            .ui
+            .widget(cx, ids!(diagram_switcher))
+            .borrow_mut::<crate::diagram_switcher::DiagramSwitcher>()
+            .and_then(|switcher| switcher.switcher_action(actions));
+        if let Some(crate::diagram_switcher::DiagramSwitcherAction::Clicked) = switcher_clicked {
+            let keys: Vec<String> = self.model.diagrams.iter().map(|d| d.key.clone()).collect();
+            let current = self.tabs.tabs.first().map(|t| t.key.clone()).unwrap_or_default();
+            if let Some(next) = crate::diagram_switcher::next_diagram_key(&keys, &current) {
+                self.switch_diagram(cx, &next);
             }
-            let base_id = self.tabs.tabs.first().map(|t| t.id).unwrap_or_default();
-            self.tabs.activate(base_id);
-            self.refresh_doc_tabs(cx);
-            self.sync_active_tab(cx);
             return;
         }
 
@@ -459,6 +509,7 @@ impl AppMain for App {
         crate::tree_panel::script_mod(vm);
         crate::inspector_panel::script_mod(vm);
         crate::doc_tabs::script_mod(vm);
+        crate::diagram_switcher::script_mod(vm);
         crate::tool_dock::script_mod(vm);
         crate::selection_toolbar::script_mod(vm);
         crate::statusbar::script_mod(vm);
