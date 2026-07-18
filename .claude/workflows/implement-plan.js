@@ -85,14 +85,21 @@ const PLAN_REVIEW_CONCERNS = Array.isArray(A.planReviewConcerns)
   : []
 
 // Per-agent model tiers (cost calibration). The session model (opus, inherited when no `model` is set) is RESERVED
-// for the agents that exercise real engineering JUDGEMENT — the implementer generations, the deep end-review, and the
-// fix-forward. The mechanical agents drop a tier to MID:
+// for the agents that exercise real engineering JUDGEMENT — the deep end-review and the fix-forward. The mechanical
+// agents drop a tier to MID:
 //   MID (sonnet) — preflight, setup, probe, archive: rule-following shell (branch/tree checks; worktree provisioning +
 //                  plan parse; git-trailer reading; git mv + cleanup). Consequential, but not judgement-heavy.
 // NOTE: the progress probe used to run on haiku, but haiku 502s DETERMINISTICALLY at the local inference gateway
 // ("Unable to safely convert buffered response to SSE") — a null probe then read as landedCommits=0 and false-parked a
 // run that had actually advanced. The probe is on MID now; do not drop it back to haiku until the gateway is fixed.
 const MID = 'sonnet'
+
+// The IMPLEMENTER generation tier. Sonnet by default: for the DETAILED plans this repo writes (exact code blocks + TDD
+// steps + exact commands) implementation is near-mechanical transcribe -> gate -> commit, so opus is wasted there — and
+// the escalate/bounded-retry guards make a weaker model PARK rather than corrupt on divergence. Bump to opus for a
+// thin/exploratory plan that needs real mid-implementation judgement via {implementerModel:'opus'}. The deep end-review
+// + fix-forward are deliberately NOT pinned — they inherit the session model (opus), where the judgement actually pays.
+const IMPLEMENTER_MODEL = A.implementerModel || MID
 
 // Absolute path to the self-rotation helper (committed locally). The plan worktree is branched off the base branch,
 // which HAS this script once committed — but agents run it via Bash by ABSOLUTE path to be robust regardless.
@@ -1002,7 +1009,7 @@ async function implementPlan(plan) {
       const marker = 'CTXFILL::' + plan.slug + '::GEN' + gen
       const g = await agent(
         implementerGenerationPrompt(plan, worktreePath, baseSha, gen, rigor, taskIds, handoffNote, marker, gate),
-        { schema: GEN_SCHEMA, agentType: 'general-purpose', label: 'impl-gen' + gen + ':' + plan.slug, phase: 'Implement' },
+        { schema: GEN_SCHEMA, agentType: 'general-purpose', label: 'impl-gen' + gen + ':' + plan.slug, phase: 'Implement', model: IMPLEMENTER_MODEL },
       )
       if (g && g.handoffNote) handoffNote = g.handoffNote
 
