@@ -410,10 +410,14 @@ impl MatchEvent for App {
                 return;
             }
         };
-        let model = match load::load_model(&args.dir) {
+        let Some(ref dir) = args.dir else {
+            // TODO: show start screen (Task 4)
+            return;
+        };
+        let model = match load::load_model(dir) {
             Ok(m) => m,
             Err(e) => {
-                log!("failed to load OKF dir {:?}: {e}", args.dir);
+                log!("failed to load OKF dir {:?}: {e}", dir);
                 return;
             }
         };
@@ -427,7 +431,7 @@ impl MatchEvent for App {
         self.ui.label(cx, ids!(pkg_name)).set_text(cx, root_name);
 
         // Record this open in the recents store (best-effort; see config.rs).
-        crate::config::push_recent(&args.dir, root_name);
+        crate::config::push_recent(dir, root_name);
 
         let tree = crate::tree::build_tree(&self.model);
         if let Some(mut panel) = self

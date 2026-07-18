@@ -5,7 +5,7 @@ use waml::model::{Diagram, Model};
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Args {
-    pub dir: PathBuf,
+    pub dir: Option<PathBuf>,
     pub diagram: Option<String>,
 }
 
@@ -25,10 +25,7 @@ pub fn parse(argv: &[String]) -> Result<Args, String> {
         }
         i += 1;
     }
-    Ok(Args {
-        dir: dir.ok_or("usage: waml-editor <okf-dir> [--diagram <name>]")?,
-        diagram,
-    })
+    Ok(Args { dir, diagram })
 }
 
 /// Pick a diagram by title or key; fall back to the first diagram.
@@ -54,19 +51,28 @@ mod tests {
     #[test]
     fn parses_dir_only() {
         let a = parse(&argv(&["waml-editor", "some/dir"])).unwrap();
-        assert_eq!(a.dir, PathBuf::from("some/dir"));
+        assert_eq!(a.dir, Some(PathBuf::from("some/dir")));
         assert_eq!(a.diagram, None);
     }
 
     #[test]
     fn parses_dir_and_diagram_flag() {
         let a = parse(&argv(&["waml-editor", "some/dir", "--diagram", "Orders"])).unwrap();
+        assert_eq!(a.dir, Some(PathBuf::from("some/dir")));
         assert_eq!(a.diagram.as_deref(), Some("Orders"));
     }
 
     #[test]
-    fn missing_dir_is_an_error() {
-        assert!(parse(&argv(&["waml-editor"])).is_err());
+    fn missing_dir_is_ok() {
+        // No-arg launch is valid now (it opens the start screen); dir is None.
+        let a = parse(&argv(&["waml-editor"])).unwrap();
+        assert_eq!(a.dir, None);
+        assert_eq!(a.diagram, None);
+    }
+
+    #[test]
+    fn unknown_flag_is_still_an_error() {
+        assert!(parse(&argv(&["waml-editor", "a", "b"])).is_err());
     }
 
     #[test]
