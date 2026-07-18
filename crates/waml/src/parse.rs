@@ -763,12 +763,7 @@ pub fn build_model(bundle: &[(String, String)]) -> Model {
     // AND view for their own substrate — they never become classifier nodes.
     let classifiers: Vec<&ParsedDoc> = parsed
         .iter()
-        .filter(|p| {
-            p.ty != ElementType::Diagram
-                && !matches!(p.ty, ElementType::Behavior(_))
-                && p.slug != "index"
-                && p.slug != "log"
-        })
+        .filter(|p| !p.ty.is_view() && p.slug != "index" && p.slug != "log")
         .collect();
     let keyset: HashSet<&str> = classifiers.iter().map(|p| p.id.as_str()).collect();
 

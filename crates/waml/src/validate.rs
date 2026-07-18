@@ -162,7 +162,7 @@ pub fn link(docs: &[(String, ElementType, Document)]) -> Vec<Diagnostic> {
     for (path, ty, _doc) in docs {
         let slug = crate::okf::id_of(path);
         *slug_count.entry(slug.clone()).or_insert(0) += 1;
-        if *ty != ElementType::Diagram && !matches!(ty, ElementType::Behavior(_)) {
+        if !ty.is_view() {
             keyset.insert(slug);
         }
     }
