@@ -624,7 +624,7 @@ fn op_attr_rm(work: &mut Bundle, node: &str, name: &str) -> Result<(), OpError> 
     edit_doc(work, node, "attr.rm", |doc| {
         let attrs = attrs_mut(doc);
         let before = attrs.len();
-        attrs.retain(|a| a.parsed().is_none_or(|x| x.name != name));
+        attrs.retain(|a| a.parsed().map_or(true, |x| x.name != name));
         if attrs.len() == before {
             return Err(OpError::at(
                 "attr.rm",
@@ -653,7 +653,7 @@ fn op_value_rm(work: &mut Bundle, node: &str, literal: &str) -> Result<(), OpErr
     edit_doc(work, node, "value.rm", |doc| {
         let values = values_mut(doc);
         let before = values.len();
-        values.retain(|l| l.parsed().is_none_or(|v| v != literal));
+        values.retain(|l| l.parsed().map_or(true, |v| v != literal));
         if values.len() == before {
             return Err(OpError::at(
                 "value.rm",
@@ -758,7 +758,7 @@ fn op_rel_rm(work: &mut Bundle, selector: &Selector) -> Result<(), OpError> {
     edit_doc(work, &source, "rel.rm", |doc| {
         let rels = rels_mut(doc);
         let before = rels.len();
-        rels.retain(|r| r.parsed().is_none_or(|x| !rel_matches(x, &by)));
+        rels.retain(|r| r.parsed().map_or(true, |x| !rel_matches(x, &by)));
         if rels.len() == before {
             return Err(
                 OpError::at("rel.rm", format!("no relationship '{disp}'")).with_sel(disp.clone())
@@ -1461,7 +1461,7 @@ mod tests {
     #[test]
     fn node_new_writes_into_target_directory() {
         let out = apply(
-            &vec![],
+            &[],
             &[Op::NodeNew {
                 slug: "order".into(),
                 dir: "sales".into(),

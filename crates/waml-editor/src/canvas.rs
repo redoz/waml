@@ -87,17 +87,6 @@ impl Default for Camera {
     }
 }
 
-// An empty scene is the sensible startup default (fed a real one via set_scene).
-impl Default for Scene {
-    fn default() -> Self {
-        Scene {
-            nodes: vec![],
-            groups: vec![],
-            edges: vec![],
-        }
-    }
-}
-
 /// Intersection of the center-to-center line from `from` to `to` with `from`'s
 /// border, in world coordinates. Operates on `waml::solve::Rect` (`x`/`y`/`w`/`h`),
 /// the type `SceneEdge` carries. Used to clip edge endpoints to node borders.

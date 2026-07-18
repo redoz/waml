@@ -21,7 +21,8 @@ pub struct SceneEdge {
     pub kind: RelationshipKind,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+// An empty scene (derived Default) is the sensible startup default (fed a real one via set_scene).
+#[derive(Debug, Clone, PartialEq, Default)]
 pub struct Scene {
     pub nodes: Vec<SceneNode>,
     pub groups: Vec<SolvedGroup>,

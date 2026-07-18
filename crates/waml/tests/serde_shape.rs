@@ -146,7 +146,7 @@ fn flow_doc_json_matches_ts_field_names() {
     assert_eq!(e["effect"], "reserve");
     assert_eq!(f["edges"][2]["else"], true);
     // classifier-only models omit the field entirely
-    let m2 = build_model(&vec![(
+    let m2 = build_model(&[(
         "a.md".to_string(),
         "---\ntype: uml.Class\ntitle: A\n---\n# A\n".to_string(),
     )]);

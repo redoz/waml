@@ -169,8 +169,8 @@ pub(super) fn solve_cluster(
 
     // X components packed left-to-right by first-member list order.
     let mut xcomps: BTreeMap<usize, Vec<usize>> = BTreeMap::new();
-    for i in 0..n {
-        xcomps.entry(rootx[i]).or_default().push(i);
+    for (i, &root) in rootx.iter().enumerate() {
+        xcomps.entry(root).or_default().push(i);
     }
     let mut order: Vec<(usize, Vec<usize>)> = xcomps.into_iter().collect();
     order.sort_by_key(|(_, v)| *v.iter().min().unwrap());
@@ -192,8 +192,8 @@ pub(super) fn solve_cluster(
 
     // Y components normalized so each top sits at 0 (shared band).
     let mut ycomps: BTreeMap<usize, Vec<usize>> = BTreeMap::new();
-    for i in 0..n {
-        ycomps.entry(rooty[i]).or_default().push(i);
+    for (i, &root) in rooty.iter().enumerate() {
+        ycomps.entry(root).or_default().push(i);
     }
     let mut originy: BTreeMap<usize, f64> = BTreeMap::new();
     for (root, members) in &ycomps {

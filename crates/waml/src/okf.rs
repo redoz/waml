@@ -16,21 +16,16 @@ use crate::frontmatter::{parse_frontmatter, Frontmatter};
 
 /// Reserved-file role. Every document lands in the bundle regardless of role;
 /// `index.md`/`log.md` are flagged so consumers can treat them specially.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "serde", serde(rename_all = "lowercase"))]
 #[cfg_attr(feature = "wasm", derive(tsify_next::Tsify))]
 #[cfg_attr(feature = "wasm", tsify(into_wasm_abi, from_wasm_abi))]
 pub enum ConceptRole {
+    #[default]
     Concept,
     Index,
     Log,
-}
-
-impl Default for ConceptRole {
-    fn default() -> ConceptRole {
-        ConceptRole::Concept
-    }
 }
 
 /// An untyped OKF link (`[text](href)`) drawn from a concept's body (OKF §5.3).
@@ -233,10 +228,8 @@ fn first_h1(body: &str) -> Option<String> {
                 ..
             }) => in_h1 = true,
             Event::End(TagEnd::Heading(HeadingLevel::H1)) => in_h1 = false,
-            Event::Text(t) | Event::Code(t) => {
-                if in_h1 {
-                    title.push_str(&t);
-                }
+            Event::Text(t) | Event::Code(t) if in_h1 => {
+                title.push_str(&t);
             }
             _ => {}
         }
