@@ -153,6 +153,11 @@
     font: 700 9.5px/1 ui-monospace, "SF Mono", "Cascadia Code", Menlo, monospace;
     letter-spacing: .16em; text-transform: uppercase; color: #8a97a6; margin-bottom: 9px;
   }
+  /* a lighter sub-heading inside a section (e.g. stereotypes under Header) */
+  .subh {
+    font: 700 9px/1 ui-monospace, "SF Mono", "Cascadia Code", Menlo, monospace;
+    letter-spacing: .14em; text-transform: uppercase; color: #9aa6b4; margin: 14px 0 8px;
+  }
 
   /* anatomy: every compartment listed and drag-reorderable, uniform */
   /* each row carries its own top+bottom grounding line (collapsed between neighbours)
@@ -208,11 +213,13 @@
   }
   .chip.slant {
     display: inline-flex; align-items: center; gap: 5px; height: 22px;
-    padding: 0 11px 0 13px; border: 0; border-radius: 0; color: #22303c;
+    padding: 0 9px; border: 0; border-radius: 2px; color: #22303c;
     background: rgba(var(--accent),.20);
-    clip-path: polygon(7px 0, 100% 0, calc(100% - 7px) 100%, 0 100%);
     font: 500 11.5px/1 ui-monospace, "SF Mono", "Cascadia Code", Menlo, monospace;
   }
+  .chip.slant::before { content: "\00ab"; color: rgb(var(--accent)); opacity: .7; margin-right: -3px; }
+  .chip.slant::after  { content: "\00bb"; color: rgb(var(--accent)); opacity: .7; margin-left: -3px; }
+  .chip.slant .x { order: 2; }
   .chip.slant:hover { background: rgba(var(--accent),.30); }
   .chip.slant .x { display: grid; place-items: center; width: 14px; height: 14px; cursor: pointer; opacity: 0; }
   .chip.slant:hover .x { opacity: 1; }
@@ -239,6 +246,9 @@
   }
   .seg button:first-child { border-left: 0; }
   .seg button.on { background: rgb(var(--accent)); color: #fff; }
+  /* stereotype Render cap — many narrow cells, stretched full-width */
+  .field > .seg[data-cls="stc"] { justify-self: stretch; }
+  .seg[data-cls="stc"] button { flex: 1 1 0; padding: 6px 0; text-align: center; }
 
   /* inline accent swatches */
   .accrow { display: flex; gap: 6px; flex-wrap: wrap; }
@@ -316,6 +326,24 @@
                 <button data-v="hdr-fill">Fill</button>
               </div>
             </div>
+            <div class="subh">Allowed stereotypes</div>
+            <div class="tagfield">
+              <span class="chip slant">entity<span class="x"><svg width="9" height="9" viewBox="0 0 24 24"><line class="xg" x1="6" y1="6" x2="18" y2="18"/><line class="xg" x1="18" y1="6" x2="6" y2="18"/></svg></span></span>
+              <span class="chip slant">aggregate<span class="x"><svg width="9" height="9" viewBox="0 0 24 24"><line class="xg" x1="6" y1="6" x2="18" y2="18"/><line class="xg" x1="18" y1="6" x2="6" y2="18"/></svg></span></span>
+              <input class="entry" placeholder="Add stereotype&hellip;">
+            </div>
+            <p class="fieldnote">Shown in order. Empty will show all.</p>
+            <div class="field">
+              <label>Render</label>
+              <div class="seg" data-cls="stc">
+                <button class="on" data-v="stc-all">All</button>
+                <button data-v="stc-1">1</button>
+                <button data-v="stc-2">2</button>
+                <button data-v="stc-3">3</button>
+                <button data-v="stc-4">4</button>
+                <button data-v="stc-5">5</button>
+              </div>
+            </div>
           </div>
 
           <div class="sect">
@@ -350,25 +378,15 @@
                 </div>
               </div>
 
-              <div class="item" draggable="true" data-comp="ports">
-                <div class="crow">
-                  <svg class="grip" width="14" height="14" viewBox="0 0 24 24"><line x1="6" y1="9" x2="18" y2="9"/><line x1="6" y1="15" x2="18" y2="15"/></svg>
-                  <span class="clbl">Ports</span>
-                  <div class="toggle"></div>
-                </div>
-              </div>
-
             </div>
           </div>
 
           <div class="sect">
-            <div class="sect-h">Allowed stereotypes</div>
-            <div class="tagfield">
-              <span class="chip slant">entity<span class="x"><svg width="9" height="9" viewBox="0 0 24 24"><line class="xg" x1="6" y1="6" x2="18" y2="18"/><line class="xg" x1="18" y1="6" x2="6" y2="18"/></svg></span></span>
-              <span class="chip slant">aggregate<span class="x"><svg width="9" height="9" viewBox="0 0 24 24"><line class="xg" x1="6" y1="6" x2="18" y2="18"/><line class="xg" x1="18" y1="6" x2="6" y2="18"/></svg></span></span>
-              <input class="entry" placeholder="Add stereotype&hellip;">
+            <div class="sect-h">Ports</div>
+            <div class="field">
+              <label>Show</label>
+              <div class="toggle" data-comp="ports"></div>
             </div>
-            <p class="fieldnote">Empty allows any &mdash; or none, if the type carries no stereotype.</p>
           </div>
 
         </div>
@@ -384,18 +402,20 @@
       source-bright frame, low glow. A live preview sits on its own inset canvas
       and reacts to every control. <b>Appearance</b> leads with the accent
       identity colour &mdash; the thing you change most. <b>Header</b> sets
-      whether the top band shows and its treatment (Band / Fill). <b>Body</b>
-      lists the compartments &mdash; Attributes, Operations, Ports &mdash;
-      drag-reorderable by the grip, the order mirroring straight into the
-      preview; each toggles on/off and a disabled one is simply not rendered, its
-      own options dimming to inert (Operations, here). Under Attributes and
-      Operations, column chips choose which
-      member fields show: Name is locked on, then Visibility, Type, Cardinality
-      (attributes) or Visibility, Params, Return (operations). <b>Allowed
-      stereotypes</b> reuses the slant-tag editor &mdash; the stereotypes an
-      instance may carry (the slant reads as guillemets, so the &laquo;&raquo;
-      drop away); empty allows any. Corner radius, border
-      weight and glow are canvas-wide Atlas theme, set once elsewhere.
+      whether the top band shows and its treatment (Band / Fill), and carries
+      <b>Allowed stereotypes</b> &mdash; square &laquo;guillemet&raquo; chips
+      &mdash; because the stereotype renders in that band; they order
+      left-to-right and a Render cap keeps the front ones; empty allows any.
+      <b>Body</b> lists the stacked
+      compartments &mdash; Attributes, Operations &mdash; drag-reorderable by the
+      grip, the order mirroring straight into the preview; each toggles on/off and
+      a disabled one is simply not rendered, its own options dimming to inert
+      (Operations, here). Under each, column chips choose which member fields
+      show: Name is locked on, then Visibility, Type, Cardinality (attributes) or
+      Visibility, Params, Return (operations). <b>Ports</b> sit on the node border
+      rather than in the body stack, so they get a plain on/off apart from the
+      drag list. Corner radius, border weight and glow are canvas-wide Atlas
+      theme, set once elsewhere.
     </p>
   </aside>
 
