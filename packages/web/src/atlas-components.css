@@ -135,6 +135,9 @@
 .hud-btn.down::after { animation: reveal 100ms ease-out forwards; }
 .hud-btn.down { animation: glowpulse 420ms ease-out forwards; }
 .hud-btn:disabled { cursor: not-allowed; opacity: .5; }
+/* Keyboard focus indicator (WCAG 2.4.7) — the reset above clears the default
+   outline, so restore a visible accent ring for keyboard users only. */
+.hud-btn:focus-visible { outline: 2px solid rgb(var(--accent)); outline-offset: 2px; }
 
 /* ── segmented (2.3) ─────────────────────────────────────── */
 .seg { display: inline-flex; border: 1px solid rgba(var(--accent), .26); border-radius: 3px; overflow: hidden; }

@@ -125,6 +125,9 @@
     border-radius: 2px; padding: 4px 6px; cursor: pointer;
   }
   .ep-trigger:hover { background: rgba(var(--accent), .10); }
+  /* Keyboard focus indicator (WCAG 2.4.7) — restores the accent ring dropped
+     when this trigger converted off Tailwind's `focus:ring-2`. */
+  .ep-trigger:focus-visible { outline: 2px solid rgb(var(--accent)); outline-offset: 1px; }
   .ep-label { flex: 1; text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ink); font-weight: 600; }
   .ep-label--empty { color: rgb(var(--ink-faint)); font-weight: 500; }
   .ep-chev { flex: none; color: rgb(var(--ink-faint)); transition: transform .15s ease; }

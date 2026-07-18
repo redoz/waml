@@ -120,4 +120,7 @@
   .st-input:focus { border-color: rgb(var(--accent)); box-shadow: 0 0 0 1px rgb(var(--accent)); }
   .st-text { border: 0; background: transparent; cursor: pointer; padding: 7px 10px; border-radius: 2px; font: 500 12px/1 var(--font-ui); color: rgb(var(--ink-faint)); }
   .st-text:hover { background: rgba(var(--accent), .12); color: rgb(var(--accent)); }
+  /* Restore the Del-shortcut hover reveal lost when this button dropped
+     Tailwind's `group` hook (KeyHint is opacity-0 until revealed). */
+  .st-danger:hover :global(.keyhint) { opacity: 1; }
 </style>
