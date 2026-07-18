@@ -701,6 +701,16 @@ impl ElementType {
             ElementType::Unknown(_) => false,
         }
     }
+
+    /// True for element types that are **views / notation**, not pooled
+    /// classifiers: `Diagram` (a class-diagram view) and every behavior kind
+    /// (activity / state machine / interaction — each a view over pooled
+    /// behavior elements, design spec §4). A view never contributes a
+    /// classifier `Node` to `Model.nodes` and is never a relationship/link
+    /// target. Distinct from `is_classifier()`, which is `true` for behaviors.
+    pub fn is_view(&self) -> bool {
+        matches!(self, ElementType::Diagram | ElementType::Behavior(_))
+    }
 }
 
 /// A `uml.Note` anchor. Three forms, per the spec.
@@ -1037,6 +1047,20 @@ mod tests {
         assert!(!ElementType::Uml(UmlMetaclass::Note).is_classifier());
         assert!(!ElementType::Diagram.is_classifier());
         assert!(!ElementType::Unknown("bpmn.Task".to_string()).is_classifier());
+    }
+
+    #[test]
+    fn is_view_flags_diagrams_and_behaviors() {
+        // Views / notation — never pooled classifiers, never link targets.
+        assert!(ElementType::Diagram.is_view());
+        assert!(ElementType::Behavior(BehaviorKind::Activity).is_view());
+        assert!(ElementType::Behavior(BehaviorKind::StateMachine).is_view());
+        assert!(ElementType::Behavior(BehaviorKind::Sequence).is_view());
+        // Pool members (classifiers, notes, unknowns) are not views.
+        assert!(!ElementType::Uml(UmlMetaclass::Class).is_view());
+        assert!(!ElementType::Uml(UmlMetaclass::Note).is_view());
+        assert!(!ElementType::Uml(UmlMetaclass::Package).is_view());
+        assert!(!ElementType::Unknown("bpmn.Task".to_string()).is_view());
     }
 
     #[test]
