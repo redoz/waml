@@ -104,76 +104,83 @@ script_mod! {
                     width: Fill
                     height: Fill
                     flow: Down
-                    Splitter{
+                    // Top tab bar: docked, full width, above the canvas.
+                    View{
                         width: Fill
-                        height: Fill
-                        axis: SplitterAxis.Horizontal
-                        align: SplitterAlign.FromA(280.0)
-                        a: View{
-                            width: Fill
+                        height: 34.0
+                        flow: Right
+                        diagram_switcher := DiagramSwitcher{
+                            width: 180.0
                             height: Fill
-                            project_tree := ProjectTree{
-                                width: Fill
-                                height: Fill
-                            }
                         }
-                        b: View{
+                        doc_tabs := DocTabs{
                             width: Fill
                             height: Fill
-                            Splitter{
-                                width: Fill
-                                height: Fill
-                                axis: SplitterAxis.Horizontal
-                                align: SplitterAlign.FromB(320.0)
-                                a: View{
-                                    width: Fill
-                                    height: Fill
-                                    flow: Down
-                                    View{
-                                        width: Fill
-                                        height: 34.0
-                                        flow: Right
-                                        diagram_switcher := DiagramSwitcher{
-                                            width: 180.0
-                                            height: Fill
-                                        }
-                                        doc_tabs := DocTabs{
-                                            width: Fill
-                                            height: Fill
-                                        }
-                                    }
-                                    View{
-                                        width: Fill
-                                        height: Fill
-                                        flow: Right
-                                        tool_dock := ToolDock{
-                                            width: 48.0
-                                            height: Fill
-                                        }
-                                        canvas := GraphCanvas{
-                                            width: Fill
-                                            height: Fill
-                                        }
-                                    }
-                                    selection_toolbar := SelectionToolbar{
-                                        width: Fill
-                                        height: 44.0
-                                    }
-                                }
-                                b: View{
-                                    width: Fill
-                                    height: Fill
-                                    inspector := Inspector{
-                                        width: Fill
-                                        height: Fill
-                                    }
-                                }
-                            }
                         }
                     }
-                    statusbar := Statusbar{
+                    // Body: a fullscreen canvas base with floating HUD panels
+                    // over it. In an Overlay flow every child gets the full body
+                    // rect, so each panel is wrapped in a Fill/Fill View whose
+                    // `align` parks it in a corner/edge; the panel's own margin
+                    // leaves canvas ground showing around it. The wrappers carry
+                    // no bg and don't grab pointer events over empty area, so the
+                    // canvas keeps its pan/zoom in the gaps between panels.
+                    View{
                         width: Fill
-                        height: 24.0
+                        height: Fill
+                        flow: Overlay
+                        canvas := GraphCanvas{
+                            width: Fill
+                            height: Fill
+                        }
+                        // Tool dock: left edge, vertically centered.
+                        View{
+                            width: Fill
+                            height: Fill
+                            align: Align{x: 0.0, y: 0.5}
+                            tool_dock := ToolDock{
+                                width: 48.0
+                                // Hugs its 7 buttons (7 * ITEM_H 44); the widget
+                                // draws items manually so Fit collapses to 0 --
+                                // an explicit height is required. Vertically
+                                // centered, right of the project tree (12+280+12).
+                                height: 308.0
+                                margin: Inset{left: 304.0}
+                            }
+                        }
+                        // Project tree: far left edge.
+                        View{
+                            width: Fill
+                            height: Fill
+                            align: Align{x: 0.0, y: 0.0}
+                            project_tree := ProjectTree{
+                                width: 280.0
+                                height: Fill
+                                margin: Inset{left: 12.0, top: 12.0, bottom: 12.0}
+                            }
+                        }
+                        // Inspector: top-right.
+                        View{
+                            width: Fill
+                            height: Fill
+                            align: Align{x: 1.0, y: 0.0}
+                            inspector := Inspector{
+                                width: 320.0
+                                height: Fill
+                                margin: Inset{right: 12.0, top: 12.0, bottom: 12.0}
+                            }
+                        }
+                        // Selection toolbar: bottom, centered.
+                        View{
+                            width: Fill
+                            height: Fill
+                            align: Align{x: 0.5, y: 1.0}
+                            selection_toolbar := SelectionToolbar{
+                                width: Fit
+                                height: 44.0
+                                margin: Inset{bottom: 12.0}
+                            }
+                        }
                     }
                     }
                     shortcuts_overlay := ShortcutsOverlay{

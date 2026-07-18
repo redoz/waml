@@ -66,7 +66,12 @@ script_mod! {
         width: Fill
         height: Fill
         show_bg: true
-        draw_bg +: { color: atlas.surface }
+        // Panel carries the Atlas HUD frame (see draw_hud.rs): glass `surface`
+        // fill ringed by the source-bright accent stroke, same primitive the
+        // canvas nodes use. Padding insets the FileTree so it stops painting
+        // `surface` over the 1.5px frame ring at the panel edge.
+        draw_bg: mod.draw.HudFrame{ color: atlas.field_bg }
+        padding: 6.0
 
         file_tree := FileTree {
             // Roomier rows + larger humanist type, and flat (no zebra striping)
@@ -83,8 +88,8 @@ script_mod! {
                     text_style: theme.font_regular{font_size: 12}
                 }
                 draw_bg +: {
-                    color_1: atlas.surface
-                    color_2: atlas.surface
+                    color_1: atlas.field_bg
+                    color_2: atlas.field_bg
                     color_active: atlas.selection
                 }
             }
@@ -97,8 +102,8 @@ script_mod! {
                     text_style: theme.font_bold{font_size: 12}
                 }
                 draw_bg +: {
-                    color_1: atlas.surface
-                    color_2: atlas.surface
+                    color_1: atlas.field_bg
+                    color_2: atlas.field_bg
                     color_active: atlas.selection
                 }
                 // The built-in folder box icon is redundant with our own
@@ -110,7 +115,7 @@ script_mod! {
             }
 
             filler +: {
-                pixel: fn() { return atlas.surface }
+                pixel: fn() { return atlas.field_bg }
             }
         }
     }

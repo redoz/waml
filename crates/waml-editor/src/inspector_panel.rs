@@ -26,7 +26,7 @@ script_mod! {
     mod.widgets.Inspector = set_type_default() do mod.widgets.InspectorBase{
         width: Fill
         height: Fill
-        draw_bg +: { color: atlas.surface }
+        draw_bg: mod.draw.HudFrame{ color: atlas.field_bg }
         draw_edge +: { color: atlas.frame_hi }
         draw_title +: {
             color: atlas.text
