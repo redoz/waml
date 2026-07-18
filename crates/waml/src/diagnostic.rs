@@ -29,6 +29,9 @@ pub enum DiagCode {
     LayoutConflict,
     MalformedMessage,
     MalformedLifeline,
+    SlotUnknownAttribute,
+    InstanceOfNonClassifier,
+    InstanceOfUnresolved,
 }
 
 impl DiagCode {
@@ -49,12 +52,19 @@ impl DiagCode {
             DiagCode::LayoutConflict => "layout-conflict",
             DiagCode::MalformedMessage => "malformed-message",
             DiagCode::MalformedLifeline => "malformed-lifeline",
+            DiagCode::SlotUnknownAttribute => "slot-unknown-attribute",
+            DiagCode::InstanceOfNonClassifier => "instance-of-non-classifier",
+            DiagCode::InstanceOfUnresolved => "instance-of-unresolved",
         }
     }
     /// Default severity for this code (a specific site may downgrade to a warning).
     pub fn severity(self) -> Severity {
         match self {
-            DiagCode::UnknownType | DiagCode::UnresolvedLayoutRef => Severity::Warning,
+            DiagCode::UnknownType
+            | DiagCode::UnresolvedLayoutRef
+            | DiagCode::SlotUnknownAttribute
+            | DiagCode::InstanceOfNonClassifier
+            | DiagCode::InstanceOfUnresolved => Severity::Warning,
             _ => Severity::Error,
         }
     }
@@ -121,6 +131,24 @@ mod tests {
         assert_eq!(DiagCode::UnresolvedTarget.as_str(), "unresolved-target");
         assert_eq!(DiagCode::UnknownType.severity(), Severity::Warning);
         assert_eq!(DiagCode::MalformedAttribute.severity(), Severity::Error);
+        assert_eq!(
+            DiagCode::SlotUnknownAttribute.as_str(),
+            "slot-unknown-attribute"
+        );
+        assert_eq!(
+            DiagCode::InstanceOfNonClassifier.as_str(),
+            "instance-of-non-classifier"
+        );
+        assert_eq!(
+            DiagCode::InstanceOfUnresolved.as_str(),
+            "instance-of-unresolved"
+        );
+        assert_eq!(DiagCode::SlotUnknownAttribute.severity(), Severity::Warning);
+        assert_eq!(
+            DiagCode::InstanceOfNonClassifier.severity(),
+            Severity::Warning
+        );
+        assert_eq!(DiagCode::InstanceOfUnresolved.severity(), Severity::Warning);
     }
 
     #[test]

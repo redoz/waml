@@ -157,6 +157,43 @@ fn check_group_members(
     }
 }
 
+/// Warn (never error) on an `instance of` target: unresolved → `InstanceOfUnresolved`;
+/// resolved but not a classifier (incl. another instance) → `InstanceOfNonClassifier`.
+#[allow(clippy::too_many_arguments)]
+fn check_instance_of_target(
+    target_slug: &str,
+    resolved: &str,
+    in_keyset: bool,
+    target_ty: Option<&ElementType>,
+    path: &str,
+    line: usize,
+    span: Option<(usize, usize)>,
+    diags: &mut Vec<Diagnostic>,
+) {
+    let push = |code: DiagCode, msg: String, diags: &mut Vec<Diagnostic>| {
+        let mut d = Diagnostic::warn(code, msg, path, line);
+        if let Some(sp) = span {
+            d = d.with_span(sp);
+        }
+        diags.push(d);
+    };
+    if !in_keyset {
+        push(
+            DiagCode::InstanceOfUnresolved,
+            format!("'instance of' target './{target_slug}.md' resolves to no document"),
+            diags,
+        );
+    } else if !target_ty.map(ElementType::is_classifier).unwrap_or(false) {
+        push(
+            DiagCode::InstanceOfNonClassifier,
+            format!(
+                "'instance of' target '{resolved}' is not a classifier — you do not instantiate an instance"
+            ),
+            diags,
+        );
+    }
+}
+
 /// The semantic (cross-document) pass over already-parsed documents: reports
 /// `DuplicateSlug`, `UnresolvedTarget` (relationships + diagram members),
 /// `UnresolvedLayoutRef`, and `LayoutCycle`, reusing the positions recorded in
@@ -176,6 +213,23 @@ pub fn link(docs: &[(String, ElementType, Document)]) -> Vec<Diagnostic> {
     for (path, ty, _doc) in docs {
         types.insert(crate::okf::id_of(path), ty.clone());
     }
+    let docs_by_key: HashMap<String, &Document> = docs
+        .iter()
+        .map(|(p, _, d)| (crate::okf::id_of(p), d))
+        .collect();
+    // Attribute names declared by a (classifier) document, for slot conformance.
+    let attr_names_of = |key: &str| -> Option<HashSet<String>> {
+        let doc = docs_by_key.get(key)?;
+        let mut names = HashSet::new();
+        for s in &doc.sections {
+            if let Section::Attributes(a) = s {
+                for at in a.iter().filter_map(Line::parsed) {
+                    names.insert(at.name.clone());
+                }
+            }
+        }
+        Some(names)
+    };
 
     for (path, ty, doc) in docs {
         let slug = crate::okf::id_of(path);
@@ -203,6 +257,14 @@ pub fn link(docs: &[(String, ElementType, Document)]) -> Vec<Diagnostic> {
             match s {
                 Section::Relationships(rels) => {
                     for r in rels.iter().filter_map(Line::parsed) {
+                        // Instance-authored edges get warn-only conformance
+                        // checks below — never the hard UnresolvedTarget Error.
+                        if matches!(
+                            r.kind,
+                            RelationshipKind::InstanceOf | RelationshipKind::Links
+                        ) {
+                            continue;
+                        }
                         let resolved = crate::okf::resolve_href(path, &r.target_slug);
                         if !keyset.contains(&resolved) {
                             let mut d = Diagnostic::new(
@@ -402,6 +464,127 @@ pub fn link(docs: &[(String, ElementType, Document)]) -> Vec<Diagnostic> {
                     check_items(&block.items, &names, path, &mut diags);
                 }
                 _ => {}
+            }
+        }
+
+        // ── Instance conformance (design spec §5), all warn-only ──────────
+        if *ty == ElementType::Uml(UmlMetaclass::InstanceSpecification) {
+            // Standalone instance doc: `instance of` targets + `## Slots`.
+            let mut classifier: Option<String> = None;
+            for s in &doc.sections {
+                let Section::Relationships(rels) = s else {
+                    continue;
+                };
+                for r in rels.iter().filter_map(Line::parsed) {
+                    if r.kind != RelationshipKind::InstanceOf {
+                        continue;
+                    }
+                    let resolved = crate::okf::resolve_href(path, &r.target_slug);
+                    let in_keyset = keyset.contains(&resolved);
+                    check_instance_of_target(
+                        &r.target_slug,
+                        &resolved,
+                        in_keyset,
+                        types.get(&resolved),
+                        path,
+                        r.line,
+                        r.span,
+                        &mut diags,
+                    );
+                    if in_keyset
+                        && types
+                            .get(&resolved)
+                            .map(ElementType::is_classifier)
+                            .unwrap_or(false)
+                    {
+                        classifier.get_or_insert(resolved);
+                    }
+                }
+            }
+            if let Some(ck) = &classifier {
+                if let Some(names) = attr_names_of(ck) {
+                    for s in &doc.sections {
+                        let Section::Slots(slots) = s else {
+                            continue;
+                        };
+                        for sl in slots.iter().filter_map(Line::parsed) {
+                            if !names.contains(&sl.name) {
+                                diags.push(Diagnostic::warn(
+                                    DiagCode::SlotUnknownAttribute,
+                                    format!(
+                                        "slot '{}' is not an attribute of classifier '{ck}'",
+                                        sl.name
+                                    ),
+                                    path,
+                                    sl.line,
+                                ));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        if *ty == ElementType::Diagram {
+            // Inline instances promoted from a diagram's `## Members`.
+            use crate::syntax::MemberItem;
+            #[allow(clippy::too_many_arguments)]
+            fn walk_inline(
+                g: &MemberGroup,
+                path: &str,
+                keyset: &HashSet<String>,
+                types: &HashMap<String, ElementType>,
+                attr_names_of: &dyn Fn(&str) -> Option<HashSet<String>>,
+                diags: &mut Vec<Diagnostic>,
+            ) {
+                for item in g.members.iter().filter_map(Line::parsed) {
+                    let MemberItem::Instance(inst) = item else {
+                        continue;
+                    };
+                    let resolved = crate::okf::resolve_href(path, &inst.classifier.slug);
+                    let in_keyset = keyset.contains(&resolved);
+                    check_instance_of_target(
+                        &inst.classifier.slug,
+                        &resolved,
+                        in_keyset,
+                        types.get(&resolved),
+                        path,
+                        inst.line,
+                        inst.span,
+                        diags,
+                    );
+                    if in_keyset
+                        && types
+                            .get(&resolved)
+                            .map(ElementType::is_classifier)
+                            .unwrap_or(false)
+                    {
+                        if let Some(names) = attr_names_of(&resolved) {
+                            for sl in &inst.slots {
+                                if !names.contains(&sl.name) {
+                                    diags.push(Diagnostic::warn(
+                                        DiagCode::SlotUnknownAttribute,
+                                        format!(
+                                            "slot '{}' is not an attribute of classifier '{resolved}'",
+                                            sl.name
+                                        ),
+                                        path,
+                                        inst.line,
+                                    ));
+                                }
+                            }
+                        }
+                    }
+                }
+                for c in &g.children {
+                    walk_inline(c, path, keyset, types, attr_names_of, diags);
+                }
+            }
+            for s in &doc.sections {
+                if let Section::Members(block) = s {
+                    for g in &block.groups {
+                        walk_inline(g, path, &keyset, &types, &attr_names_of, &mut diags);
+                    }
+                }
             }
         }
     }
@@ -983,6 +1166,72 @@ mod tests {
             .unwrap();
         assert_eq!(w.severity, Severity::Warning);
         assert_eq!(w.line, 11);
+    }
+
+    #[test]
+    fn instance_of_unresolved_classifier_warns() {
+        let b = vec![(
+            "m/order42.md".into(),
+            "---\ntype: uml.InstanceSpecification\ntitle: order42\n---\n# order42\n\n## Relationships\n- instance of [Gone](./gone.md)\n".into(),
+        )];
+        let d = crate::validate::validate(&b);
+        let w = d
+            .iter()
+            .find(|x| x.code == DiagCode::InstanceOfUnresolved)
+            .unwrap();
+        assert_eq!(w.severity, crate::diagnostic::Severity::Warning);
+        assert!(
+            d.iter().all(|x| x.code != DiagCode::UnresolvedTarget),
+            "instance-of must NOT surface as a hard UnresolvedTarget"
+        );
+    }
+
+    #[test]
+    fn instance_of_non_classifier_target_warns() {
+        let b = vec![
+            ("m/order42.md".into(), "---\ntype: uml.InstanceSpecification\ntitle: order42\n---\n# order42\n\n## Relationships\n- instance of [line42](./line42.md)\n".into()),
+            ("m/line42.md".into(), "---\ntype: uml.InstanceSpecification\ntitle: line42\n---\n# line42\n".into()),
+        ];
+        let d = crate::validate::validate(&b);
+        assert!(d.iter().any(|x| x.code == DiagCode::InstanceOfNonClassifier
+            && x.severity == crate::diagnostic::Severity::Warning));
+    }
+
+    #[test]
+    fn slot_unknown_attribute_warns() {
+        let b = vec![
+            ("m/order.md".into(), "---\ntype: uml.Class\ntitle: Order\n---\n# Order\n\n## Attributes\n- id: OrderId {1}\n".into()),
+            ("m/order42.md".into(), "---\ntype: uml.InstanceSpecification\ntitle: order42\n---\n# order42\n\n## Relationships\n- instance of [Order](./order.md)\n\n## Slots\n- id: \"ORD-42\"\n- bogus: 3\n".into()),
+        ];
+        let d = crate::validate::validate(&b);
+        let w: Vec<_> = d
+            .iter()
+            .filter(|x| x.code == DiagCode::SlotUnknownAttribute)
+            .collect();
+        assert_eq!(
+            w.len(),
+            1,
+            "only the unknown slot 'bogus' warns; 'id' is a known attribute"
+        );
+        assert_eq!(w[0].severity, crate::diagnostic::Severity::Warning);
+    }
+
+    #[test]
+    fn conformant_instance_produces_no_instance_warnings() {
+        let b = vec![
+            ("m/order.md".into(), "---\ntype: uml.Class\ntitle: Order\n---\n# Order\n\n## Attributes\n- id: OrderId {1}\n- status: Status {1}\n".into()),
+            ("m/order42.md".into(), "---\ntype: uml.InstanceSpecification\ntitle: order42\n---\n# order42\n\n## Relationships\n- instance of [Order](./order.md)\n\n## Slots\n- id: \"ORD-42\"\n- status: PLACED\n".into()),
+        ];
+        let d = crate::validate::validate(&b);
+        assert!(
+            d.iter().all(|x| !matches!(
+                x.code,
+                DiagCode::SlotUnknownAttribute
+                    | DiagCode::InstanceOfNonClassifier
+                    | DiagCode::InstanceOfUnresolved
+            )),
+            "a conformant instance must emit no instance-conformance diagnostics: {d:?}"
+        );
     }
 
     #[test]

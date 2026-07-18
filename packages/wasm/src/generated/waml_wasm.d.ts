@@ -495,7 +495,7 @@ export interface SolvedGroup {
     depth: number;
 }
 
-export type DiagCode = "duplicate-slug" | "frontmatter-not-clean" | "unknown-type" | "malformed-attribute" | "malformed-relationship" | "malformed-flow-bullet" | "duplicate-flow-node" | "unresolved-target" | "droppable-content" | "malformed-layout" | "unresolved-layout-ref" | "layout-cycle" | "layout-conflict" | "malformed-message" | "malformed-lifeline";
+export type DiagCode = "duplicate-slug" | "frontmatter-not-clean" | "unknown-type" | "malformed-attribute" | "malformed-relationship" | "malformed-flow-bullet" | "duplicate-flow-node" | "unresolved-target" | "droppable-content" | "malformed-layout" | "unresolved-layout-ref" | "layout-cycle" | "layout-conflict" | "malformed-message" | "malformed-lifeline" | "slot-unknown-attribute" | "instance-of-non-classifier" | "instance-of-unresolved";
 
 export type FmValue = string | boolean | number | FmValue[];
 
