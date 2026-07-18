@@ -12,8 +12,8 @@
     onSelectAssociation?: (edgeId: string) => void;
   } = $props();
 
-  const valueCls = "text-[13px] text-slate-900 whitespace-pre-wrap break-words";
-  const emptyCls = "text-[13px] text-slate-400 italic";
+  const valueCls = "text-[13px] text-[color:var(--ink)] whitespace-pre-wrap break-words";
+  const emptyCls = "text-[13px] text-[color:rgb(var(--ink-faint))] italic";
 
   const isEnum = $derived(node.type === "uml.Enum");
   const associations = $derived(nodeAssociations(node, edges, nodes));
@@ -42,7 +42,7 @@
       <div class={valueCls}>{node.type}</div>
     </div>
     {#if node.abstract}
-      <span class="text-[12px] font-semibold text-[#1e88e5] bg-[#e6f1fb] rounded px-2 py-1">abstract</span>
+      <span class="text-[12px] font-semibold text-[color:rgb(var(--accent))] bg-[color:rgba(var(--accent),.12)] rounded-[var(--round-chip)] px-2 py-1">abstract</span>
     {/if}
   </div>
   <div>
@@ -62,11 +62,11 @@
             <button
               type="button"
               onclick={() => onSelectAssociation?.(a.id)}
-              class="w-full text-left text-[13px] text-slate-900 break-words flex items-baseline gap-[6px] rounded-md -mx-1 px-1 py-[2px] hover:bg-[#f1f3f7] focus:outline-none focus:ring-2 focus:ring-[#e6f1fb]"
+              class="w-full text-left text-[13px] text-[color:var(--ink)] break-words flex items-baseline gap-[6px] rounded-[var(--round-chip)] -mx-1 px-1 py-[2px] hover:bg-[color:rgba(var(--accent),.10)] focus:outline-none focus:ring-2 focus:ring-[color:rgba(var(--accent),.20)]"
             >
-              <span class="text-slate-400 font-mono">{a.outgoing ? "→" : "←"}</span>
+              <span class="text-[color:rgb(var(--ink-faint))] font-mono">{a.outgoing ? "→" : "←"}</span>
               <span class="font-semibold">{a.otherTitle}</span>
-              <span class="text-[11px] text-slate-500">{a.kind}{a.role ? ` (${a.role})` : ""}{a.multiplicity ? ` [${a.multiplicity}]` : ""}</span>
+              <span class="text-[11px] text-[color:rgb(var(--ink-faint))]">{a.kind}{a.role ? ` (${a.role})` : ""}{a.multiplicity ? ` [${a.multiplicity}]` : ""}</span>
             </button>
           </li>
         {/each}
@@ -79,7 +79,7 @@
     <div>
       <span class={labelCls}>Values</span>
       {#if (node.values ?? []).length > 0}
-        <ul class="text-[13px] text-slate-900 list-disc pl-5">
+        <ul class="text-[13px] text-[color:var(--ink)] list-disc pl-5">
           {#each node.values ?? [] as v (v)}
             <li>{v}</li>
           {/each}
@@ -94,7 +94,7 @@
       {#if node.attributes.length > 0}
         <ul class="flex flex-col gap-[4px]">
           {#each node.attributes as a, i (i)}
-            <li class="text-[13px] text-slate-900 font-mono break-words">
+            <li class="text-[13px] text-[color:var(--ink)] font-mono break-words">
               {a.visibility ?? ""}{a.name}: {a.type.name}{a.multiplicity && a.multiplicity !== "1" ? ` [${a.multiplicity}]` : ""}
             </li>
           {/each}
