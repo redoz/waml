@@ -7,22 +7,52 @@
   const isKeywordOnly = $derived(n.id === n.kind);
 </script>
 
+<!-- Control nodes (initial / final / decision-merge / fork-join): solid marker
+     glyphs. Their silhouettes are the flow-control shape convention, kept
+     literal; all chrome — solid fills route through --ink, borders/strokes
+     through rgb(var(--ink-faint)), diamond field through --panel-fill, and the
+     caption through --font-mono. -->
 <div class="relative flex flex-col items-center select-none">
   <FlowPorts />
   {#if n.kind === "initial"}
-    <svg width="36" height="36"><circle cx="18" cy="18" r="10" fill="#334155" /></svg>
+    <svg width="36" height="36"><circle cx="18" cy="18" r="10" class="ctl-fill" /></svg>
   {:else if n.kind === "final"}
     <svg width="36" height="36">
-      <circle cx="18" cy="18" r="12" fill="none" stroke="#334155" stroke-width="2" />
-      <circle cx="18" cy="18" r="7" fill="#334155" />
+      <circle cx="18" cy="18" r="12" fill="none" class="ctl-stroke" stroke-width="2" />
+      <circle cx="18" cy="18" r="7" class="ctl-fill" />
     </svg>
   {:else if n.kind === "decision" || n.kind === "merge"}
-    <svg width="56" height="56"><path d="M28,4 L52,28 L28,52 L4,28 z" fill="#fff" stroke="#334155" stroke-width="2" /></svg>
+    <svg width="56" height="56"><path d="M28,4 L52,28 L28,52 L4,28 z" class="ctl-field ctl-stroke" stroke-width="2" /></svg>
   {:else}
     <!-- fork / join: synchronization bar -->
-    <div class="h-[10px] w-[120px] rounded-[2px] bg-[#334155]"></div>
+    <div class="ctl-bar"></div>
   {/if}
   {#if !isKeywordOnly}
-    <div class="mt-1 max-w-[140px] text-center text-[11px] font-medium text-slate-700">{n.id}</div>
+    <div class="ctl-name">{n.id}</div>
   {/if}
 </div>
+
+<style>
+  .ctl-fill {
+    fill: var(--ink);
+  }
+  .ctl-field {
+    fill: var(--panel-fill);
+  }
+  .ctl-stroke {
+    stroke: rgb(var(--ink-faint));
+  }
+  .ctl-bar {
+    height: 10px;
+    width: 120px;
+    border-radius: var(--round-chip);
+    background: var(--ink);
+  }
+  .ctl-name {
+    margin-top: 4px;
+    max-width: 140px;
+    text-align: center;
+    font: 500 11px/1.2 var(--font-mono);
+    color: var(--ink-dim);
+  }
+</style>
