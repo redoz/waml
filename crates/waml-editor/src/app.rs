@@ -12,6 +12,7 @@ script_mod! {
     use mod.widgets.Inspector
     use mod.widgets.DocTabs
     use mod.widgets.DiagramSwitcher
+    use mod.widgets.ShortcutsOverlay
     use mod.widgets.ToolDock
     use mod.widgets.SelectionToolbar
     use mod.widgets.Statusbar
@@ -88,6 +89,19 @@ script_mod! {
                     View{
                     width: Fill
                     height: Fill
+                    // Overlay flow: `main_column` and `shortcuts_overlay`
+                    // both get the full turtle rect (see `Flow::Overlay` in
+                    // makepad's turtle.rs); `shortcuts_overlay` is declared
+                    // second, so it paints over the whole column when open,
+                    // and draws nothing when closed. Plain flow:Down
+                    // siblings can't do this -- Fill/Fill would split space
+                    // between them instead of overlapping (see U7's paint-
+                    // order writeup on `DiagramSwitcher` for the sibling
+                    // z-order rules this sidesteps).
+                    flow: Overlay
+                    main_column := View{
+                    width: Fill
+                    height: Fill
                     flow: Down
                     Splitter{
                         width: Fill
@@ -159,6 +173,11 @@ script_mod! {
                     statusbar := Statusbar{
                         width: Fill
                         height: 24.0
+                    }
+                    }
+                    shortcuts_overlay := ShortcutsOverlay{
+                        width: Fill
+                        height: Fill
                     }
                     }
                 }
@@ -271,6 +290,27 @@ impl App {
             self.ui.widget(cx, ids!(diagram_switcher)).borrow_mut::<crate::diagram_switcher::DiagramSwitcher>()
         {
             switcher.set_current(cx, &title);
+        }
+    }
+
+    /// Toggle the keybinding-hint overlay (U8), triggered by the tool
+    /// dock's `Shortcuts` button or the `?` hotkey.
+    fn toggle_shortcuts_overlay(&mut self, cx: &mut Cx) {
+        if let Some(mut overlay) =
+            self.ui.widget(cx, ids!(shortcuts_overlay)).borrow_mut::<crate::shortcuts_overlay::ShortcutsOverlay>()
+        {
+            let next = !overlay.visible();
+            overlay.set_visible(cx, next);
+        }
+    }
+
+    /// Force the overlay's visibility (used by the `Escape` hotkey, which
+    /// should only ever close it, never toggle it open).
+    fn set_shortcuts_overlay(&mut self, cx: &mut Cx, visible: bool) {
+        if let Some(mut overlay) =
+            self.ui.widget(cx, ids!(shortcuts_overlay)).borrow_mut::<crate::shortcuts_overlay::ShortcutsOverlay>()
+        {
+            overlay.set_visible(cx, visible);
         }
     }
 
@@ -437,19 +477,33 @@ impl MatchEvent for App {
         }
 
         // Tool dock: mode clicks (Select/Add/Connect) update their own
-        // highlight already; one-shot action buttons are mock no-ops here
-        // (Shortcuts gets a real overlay in a later unit).
+        // highlight already; `Shortcuts` toggles the keybinding overlay
+        // (U8); the rest of the one-shot action buttons stay mock no-ops.
         let dock_action = self
             .ui
             .widget(cx, ids!(tool_dock))
             .borrow_mut::<crate::tool_dock::ToolDock>()
             .and_then(|dock| dock.dock_action(actions));
         if let Some(action) = dock_action {
-            if matches!(action, crate::tool_dock::ToolDockAction::ModeChanged(_)) {
-                self.sync_statusbar(cx);
-            } else {
-                log!("tool dock: {action:?}");
+            match action {
+                crate::tool_dock::ToolDockAction::ModeChanged(_) => self.sync_statusbar(cx),
+                crate::tool_dock::ToolDockAction::Triggered(crate::tool_dock::Tool::Shortcuts) => {
+                    self.toggle_shortcuts_overlay(cx);
+                }
+                other => log!("tool dock: {other:?}"),
             }
+            return;
+        }
+
+        // Shortcuts overlay (U8): `?` (dock button or hotkey) or clicking
+        // anywhere on the overlay's scrim closes it again.
+        let overlay_dismissed = self
+            .ui
+            .widget(cx, ids!(shortcuts_overlay))
+            .borrow_mut::<crate::shortcuts_overlay::ShortcutsOverlay>()
+            .and_then(|overlay| overlay.overlay_action(actions));
+        if let Some(crate::shortcuts_overlay::ShortcutsOverlayAction::Dismissed) = overlay_dismissed {
+            self.toggle_shortcuts_overlay(cx);
             return;
         }
 
@@ -510,6 +564,7 @@ impl AppMain for App {
         crate::inspector_panel::script_mod(vm);
         crate::doc_tabs::script_mod(vm);
         crate::diagram_switcher::script_mod(vm);
+        crate::shortcuts_overlay::script_mod(vm);
         crate::tool_dock::script_mod(vm);
         crate::selection_toolbar::script_mod(vm);
         crate::statusbar::script_mod(vm);
@@ -535,6 +590,14 @@ impl AppMain for App {
                         dock.set_active(cx, tool);
                     }
                     self.sync_statusbar(cx);
+                }
+                // Shortcuts overlay (U8): `?` opens it, `Escape` closes it --
+                // same global-hotkey guard (nothing holding key focus) as
+                // the tool-dock modes above.
+                match ke.key_code {
+                    KeyCode::Slash => self.toggle_shortcuts_overlay(cx),
+                    KeyCode::Escape => self.set_shortcuts_overlay(cx, false),
+                    _ => {}
                 }
             }
         }

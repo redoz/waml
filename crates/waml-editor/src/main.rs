@@ -12,6 +12,7 @@ mod inspector_panel;
 mod load;
 mod scene;
 mod selection_toolbar;
+mod shortcuts_overlay;
 mod sizing;
 mod statusbar;
 mod tool_dock;
