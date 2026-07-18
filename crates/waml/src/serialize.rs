@@ -1,5 +1,7 @@
 use crate::frontmatter::render_frontmatter;
-use crate::grammar::{render_attribute_line, render_members_block, render_relationship_line};
+use crate::grammar::{
+    render_attribute_line, render_members_block, render_relationship_line, render_slot_line,
+};
 use crate::model::Attribute;
 use crate::syntax::{Document, LayoutItem, Line, ParsedRel, Section};
 
@@ -35,15 +37,16 @@ fn section_order(s: &Section) -> u8 {
     match s {
         Section::Body(_) => 0,
         Section::Attributes(_) => 1,
-        Section::Values(_) => 2,
-        Section::Relationships(_) => 3,
-        Section::Notes(_) => 4,
-        Section::Nodes(_) => 5,
-        Section::Lifelines(_) => 6,
-        Section::Messages(_) => 7,
-        Section::Members(_) => 8,
-        Section::Layout(_) => 9,
-        Section::Unknown { .. } => 10,
+        Section::Slots(_) => 2,
+        Section::Values(_) => 3,
+        Section::Relationships(_) => 4,
+        Section::Notes(_) => 5,
+        Section::Nodes(_) => 6,
+        Section::Lifelines(_) => 7,
+        Section::Messages(_) => 8,
+        Section::Members(_) => 9,
+        Section::Layout(_) => 10,
+        Section::Unknown { .. } => 11,
     }
 }
 
@@ -57,6 +60,17 @@ fn render_section(s: &Section) -> String {
                 .collect::<Vec<_>>()
                 .join("\n");
             format!("## Attributes\n{body}")
+        }
+        Section::Slots(slots) => {
+            let body = slots
+                .iter()
+                .map(|l| match l {
+                    Line::Parsed(s) => render_slot_line(s),
+                    Line::Error(e) => e.raw.clone(),
+                })
+                .collect::<Vec<_>>()
+                .join("\n");
+            format!("## Slots\n{body}")
         }
         Section::Values(values) => {
             let body = values
@@ -152,6 +166,14 @@ mod tests {
         let out = serialize_document(&parse_document(ORDER));
         assert!(out.contains("- id: OrderId\n"));
         assert!(out.contains("- status: [OrderStatus](./order-status.md) {0..1}"));
+    }
+
+    #[test]
+    fn serialize_round_trips_slots_section() {
+        let text = "---\ntype: uml.InstanceSpecification\ntitle: order42\n---\n\n# order42\n\n## Slots\n- id: \"ORD-42\"\n- status: PLACED\n- owner: [Ann](./ann.md)\n";
+        let (doc, _) = crate::parse::parse(text);
+        let once = serialize_document(&doc);
+        assert_eq!(once, text, "## Slots must round-trip byte-identically");
     }
 
     #[test]

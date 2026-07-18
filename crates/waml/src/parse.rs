@@ -3,7 +3,7 @@ use pulldown_cmark::{Event, HeadingLevel, Options, Parser, Tag, TagEnd};
 use crate::diagnostic::{DiagCode, Diagnostic};
 use crate::frontmatter::parse_frontmatter;
 use crate::grammar::{
-    bullet_range, parse_attribute_line, parse_relationship_line, parse_value_line,
+    bullet_range, parse_attribute_line, parse_relationship_line, parse_slot_line, parse_value_line,
 };
 use crate::syntax::{Document, ErrorNode, LayoutItem, Line, Section};
 
@@ -131,6 +131,18 @@ fn walk_section(
             DiagCode::MalformedAttribute,
             |line, _ln| parse_attribute_line(line),
         )),
+        "slots" => Section::Slots(walk_bullets(
+            content,
+            content_abs_start,
+            src,
+            DiagCode::DroppableContent,
+            |line, ln| {
+                parse_slot_line(line).map(|mut s| {
+                    s.line = ln;
+                    s
+                })
+            },
+        )),
         "values" => Section::Values(walk_bullets(
             content,
             content_abs_start,
@@ -256,6 +268,7 @@ pub fn diagnostics_of(doc: &Document) -> Vec<Diagnostic> {
     for s in &doc.sections {
         match s {
             Section::Attributes(v) => push_line_errors(v, &mut out),
+            Section::Slots(v) => push_line_errors(v, &mut out),
             Section::Values(v) => push_line_errors(v, &mut out),
             Section::Notes(v) => push_line_errors(v, &mut out),
             Section::Relationships(v) => push_line_errors(v, &mut out),
@@ -526,9 +539,33 @@ fn resolve_attr(attr: &Attribute, referring_path: &str, keyset: &HashSet<&str>) 
     a
 }
 
+fn resolve_slot(
+    s: &crate::syntax::ParsedSlot,
+    referring_path: &str,
+    keyset: &HashSet<&str>,
+) -> crate::model::Slot {
+    use crate::syntax::SlotValue;
+    match &s.value {
+        SlotValue::Quoted(v) | SlotValue::Bare(v) => crate::model::Slot {
+            name: s.name.clone(),
+            value: v.clone(),
+            ref_: None,
+        },
+        SlotValue::Link(l) => {
+            let resolved = crate::okf::resolve_href(referring_path, &l.slug);
+            crate::model::Slot {
+                name: s.name.clone(),
+                value: l.title.clone(),
+                ref_: keyset.contains(resolved.as_str()).then_some(resolved), // else degrade to display token
+            }
+        }
+    }
+}
+
 fn build_node(p: &ParsedDoc, keyset: &HashSet<&str>) -> Node {
     let fm = &p.doc.frontmatter;
     let mut attributes = Vec::new();
+    let mut slots = Vec::new();
     let mut values = Vec::new();
     let mut body = None;
     for s in &p.doc.sections {
@@ -538,6 +575,13 @@ fn build_node(p: &ParsedDoc, keyset: &HashSet<&str>) -> Node {
                     .iter()
                     .filter_map(Line::parsed)
                     .map(|x| resolve_attr(x, &p.path, keyset))
+                    .collect()
+            }
+            Section::Slots(s) => {
+                slots = s
+                    .iter()
+                    .filter_map(Line::parsed)
+                    .map(|x| resolve_slot(x, &p.path, keyset))
                     .collect()
             }
             Section::Values(v) => values = v.iter().filter_map(Line::parsed).cloned().collect(),
@@ -558,7 +602,7 @@ fn build_node(p: &ParsedDoc, keyset: &HashSet<&str>) -> Node {
         note_body: body,       // uml.Note prose (`## Body`)
         annotates: Vec::new(), // deferred: uml.Note anchors
         members: Vec::new(),   // classifiers own no members
-        slots: Vec::new(),
+        slots,
     }
 }
 

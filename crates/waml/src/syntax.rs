@@ -53,6 +53,8 @@ pub struct Document {
 pub enum Section {
     Attributes(Vec<Line<Attribute>>),
     Values(Vec<Line<String>>),
+    /// An `InstanceSpecification`'s slot values.
+    Slots(Vec<Line<ParsedSlot>>),
     Relationships(Vec<Line<ParsedRel>>),
     Body(String),
     Notes(Vec<Line<String>>),
@@ -69,6 +71,29 @@ pub enum Section {
         title: String,
         raw: String,
     },
+}
+
+/// A `## Slots` value's SURFACE form (preserved for byte-identical round-trip),
+/// distinct from the resolved `model::Slot`.
+#[derive(Debug, Clone, PartialEq)]
+pub enum SlotValue {
+    /// A `"quoted string"` literal (quotes are part of the surface form).
+    Quoted(String),
+    /// A bare identifier or number (`PLACED`, `3`).
+    Bare(String),
+    /// A `[Label](./slug.md)` link (instance-valued slot); resolved downstream.
+    Link(LinkRef),
+}
+
+/// One `## Slots` bullet: `- name: value`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ParsedSlot {
+    pub name: String,
+    pub value: SlotValue,
+    /// 1-based line within the document (0 until filled by `parse`).
+    pub line: usize,
+    /// Byte range within `line`, if positioned by `parse`.
+    pub span: Option<(usize, usize)>,
 }
 
 /// A relationship's optional `as …` name, as written in one document.

@@ -288,3 +288,30 @@ fn classifier_type_wire_strings_are_stable() {
     let ct: ElementType = serde_json::from_str("\"uml.Class\"").unwrap();
     assert_eq!(ct, ElementType::Uml(UmlMetaclass::Class));
 }
+
+#[test]
+fn instance_doc_slots_shape_and_ref_resolution() {
+    let b = vec![
+        ("m/ann.md".into(), "---\ntype: uml.Class\ntitle: Ann\n---\n# Ann\n".into()),
+        ("m/order42.md".into(),
+         "---\ntype: uml.InstanceSpecification\ntitle: order42\n---\n# order42\n\n## Slots\n- id: \"ORD-42\"\n- status: PLACED\n- owner: [Ann](./ann.md)\n".into()),
+    ];
+    let m = build_model(&b);
+    let v = serde_json::to_value(&m).unwrap();
+    let inst = v["nodes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|n| n["key"] == "m/order42")
+        .unwrap();
+    assert_eq!(inst["type"], "uml.InstanceSpecification");
+    assert_eq!(inst["slots"][0]["name"], "id");
+    assert_eq!(inst["slots"][0]["value"], "ORD-42");
+    assert!(inst["slots"][0].get("ref").is_none());
+    assert_eq!(inst["slots"][2]["name"], "owner");
+    assert_eq!(inst["slots"][2]["value"], "Ann");
+    assert_eq!(
+        inst["slots"][2]["ref"], "m/ann",
+        "link-valued slot resolves to a pool key"
+    );
+}
