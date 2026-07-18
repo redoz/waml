@@ -1,0 +1,256 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>HUD tag editor</title>
+<style>
+  :root { color-scheme: light; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; }
+  body {
+    --accent: 20, 150, 220;
+    --danger: 235, 70, 120;
+    --fill: #eaeff5;
+    --glow: 0.4;
+    background: #eef2f7;
+    color: #26313f;
+    font: 14px/1.5 -apple-system, "Segoe UI", system-ui, sans-serif;
+    display: grid;
+    grid-template-columns: 1fr 300px;
+    min-height: 100vh;
+  }
+  #stage {
+    display: grid; place-items: center; padding: 40px;
+    background:
+      radial-gradient(120% 90% at 50% 0%, #ffffff 0%, #e6ecf3 60%, #dbe3ec 100%),
+      repeating-linear-gradient(0deg,  transparent 0 23px, rgba(20,120,190,.05) 23px 24px),
+      repeating-linear-gradient(90deg, transparent 0 23px, rgba(20,120,190,.05) 23px 24px);
+  }
+  .board { display: grid; gap: 26px; width: 360px; }
+  .cap {
+    font: 700 9.5px/1 ui-monospace, "SF Mono", "Cascadia Code", Menlo, monospace;
+    letter-spacing: .16em; text-transform: uppercase;
+    color: #8a97a6; margin: 0 0 9px 2px;
+  }
+
+  /* field-like container in the shared HUD material */
+  .field {
+    position: relative;
+    display: flex; flex-wrap: wrap; align-items: center; gap: 6px;
+    padding: 8px 9px;
+    background:
+      linear-gradient(180deg, rgba(255,255,255,.95), rgba(255,255,255,.82)),
+      rgba(var(--accent),.06);
+    border: 1px solid rgba(var(--accent),.26); border-radius: 4px;
+    box-shadow:
+      0 8px 22px rgba(40,70,110,.14),
+      0 0 calc(12px * var(--glow)) rgba(var(--accent), calc(.14 * var(--glow)));
+  }
+  /* focus: crisp 1px accent ring + tight border-flare (shared active language) */
+  .field.focus {
+    border-color: rgb(var(--accent));
+    box-shadow:
+      0 0 0 1px rgb(var(--accent)),
+      0 0 5px rgba(var(--accent), .30),
+      0 0 1px rgba(var(--accent), .30);
+  }
+
+  /* removable tag chip — accent-tint pill */
+  .chip {
+    display: inline-flex; align-items: center; gap: 6px;
+    height: 24px; padding: 0 5px 0 10px; border-radius: 999px;
+    background: rgba(var(--accent),.12);
+    border: 1px solid rgba(var(--accent),.30);
+    font: 500 12px/1 -apple-system, "Segoe UI", system-ui, sans-serif;
+    color: #22303c; white-space: nowrap;
+    transition: background .1s ease, border-color .1s ease;
+  }
+  .chip .x {
+    display: grid; place-items: center; width: 15px; height: 15px;
+    border-radius: 999px; cursor: pointer;
+    opacity: 0; margin-left: -2px; transition: opacity .1s ease, background .1s ease;
+  }
+  .chip:hover, .chip.is-hover { background: rgba(var(--accent),.18); border-color: rgba(var(--accent),.45); }
+  .chip:hover .x, .chip.is-hover .x { opacity: 1; }
+  .chip .x:hover { background: rgba(var(--danger),.16); }
+  .chip .x:hover .xg { stroke: rgb(var(--danger)); }
+  .chip .xg { stroke: #7c8998; stroke-width: 2; fill: none; stroke-linecap: round; }
+
+  /* shape variants */
+  .chip.sq { border-radius: 4px; }                       /* squared corners */
+  .chip.sq .x { border-radius: 3px; }
+  /* slant chip — parallelogram; clip-path replaces the border, fill carries the
+     edge. Each tag sets its own hue via a local --accent. */
+  .chip.slant { border: 0; border-radius: 0; background: rgba(var(--accent),.20);
+                clip-path: polygon(7px 0, 100% 0, calc(100% - 7px) 100%, 0 100%);
+                padding: 0 13px 0 15px; color: #22303c; }
+  .chip.slant:hover, .chip.slant.is-hover { background: rgba(var(--accent),.30); }
+  .chip.slant .x { margin: 0; }
+  /* slanted suggestion swatch inside the autocomplete rows */
+  .opt .tag.slant { border: 0; border-radius: 0; background: rgba(var(--accent),.20);
+                    clip-path: polygon(6px 0, 100% 0, calc(100% - 6px) 100%, 0 100%); padding: 0 11px; }
+
+  /* read-only field: filled chips, no remove, no input, calmer frame */
+  .field.ro { box-shadow: 0 6px 16px rgba(40,70,110,.10); border-color: rgba(var(--accent),.20); }
+  .field.ro .chip { cursor: default; }
+  .field.ro .chip .x { display: none; }
+  .field.ro .chip:hover { background: rgba(var(--accent),.12); border-color: rgba(var(--accent),.30); }
+
+  /* text input that grows into the remaining row space */
+  .field .entry {
+    flex: 1 1 60px; min-width: 60px; height: 24px;
+    border: 0; outline: 0; background: transparent;
+    font: 500 12.5px/1 -apple-system, "Segoe UI", system-ui, sans-serif;
+    color: #26313f; padding: 0 4px;
+  }
+  .field .entry::placeholder { color: #a4b0bd; }
+  /* fake caret so the focused still-frame reads live */
+  .caret-txt { color: #26313f; font: 500 12.5px/1 -apple-system, "Segoe UI", system-ui, sans-serif; padding: 0 1px 0 4px; }
+  .caret-txt::after {
+    content: ""; display: inline-block; width: 1.5px; height: 15px; margin-left: 1px;
+    background: rgb(var(--accent)); vertical-align: -3px;
+  }
+
+  /* autocomplete flyout — same panel material as the menu */
+  .ac {
+    position: absolute; top: calc(100% + 6px); left: 0; width: 100%;
+    padding: 6px; z-index: 5;
+    background:
+      linear-gradient(180deg, rgba(255,255,255,.95), rgba(255,255,255,.82)),
+      rgba(var(--accent),.06);
+    box-shadow:
+      0 12px 30px rgba(40,70,110,.20),
+      0 0 calc(14px * var(--glow)) rgba(var(--accent), calc(.16 * var(--glow)));
+  }
+  .ac::before {
+    content: ""; position: absolute; inset: 0; padding: 1.5px;
+    background: linear-gradient(150deg, rgba(var(--accent),.95), rgba(var(--accent),.5));
+    -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+    mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+    -webkit-mask-composite: xor; mask-composite: exclude;
+    pointer-events: none;
+  }
+  .opt {
+    display: flex; align-items: center; gap: 9px;
+    padding: 7px 9px; border-radius: 2px; cursor: default;
+    font: 500 12.5px/1 -apple-system, "Segoe UI", system-ui, sans-serif;
+    color: #2c3744; white-space: nowrap;
+  }
+  .opt .tag {
+    display: inline-flex; align-items: center; height: 18px; padding: 0 8px;
+    border-radius: 999px; background: rgba(var(--accent),.12);
+    border: 1px solid rgba(var(--accent),.28); color: #22303c;
+    font: 500 11px/1 -apple-system, "Segoe UI", system-ui, sans-serif;
+  }
+  .opt .use { margin-left: auto; font: 500 10.5px/1 ui-monospace, "SF Mono", Menlo, monospace; color: #9aa6b4; }
+  /* highlighted / hovered suggestion: soft accent wash (shared hover language) */
+  .opt:hover, .opt.is-hover { background: rgba(var(--accent),.12); color: #12212e; }
+  .opt:hover .use, .opt.is-hover .use { color: rgb(var(--accent)); opacity: .8; }
+  .opt.mk { color: rgb(var(--accent)); font-weight: 600; }
+  .opt.mk .plus { stroke: rgb(var(--accent)); stroke-width: 2; fill: none; stroke-linecap: round; }
+  .opt.mk .q { color: #22303c; font-weight: 500; }
+  .ac .sep { height: 1px; margin: 5px 7px; background: rgba(var(--accent),.18); }
+
+  /* the focused example needs headroom for its dropdown */
+  .drop-space { min-height: 190px; }
+
+  aside { padding: 20px 18px; background: #fff; border-left: 1px solid #dbe3ec; overflow-y: auto; }
+  h1 { font-size: 12px; letter-spacing: .16em; text-transform: uppercase; color: #1496dc; margin: 0 0 14px; }
+  .swatches { display: flex; gap: 8px; flex-wrap: wrap; margin: 8px 0 18px; }
+  .swatch { width: 30px; height: 30px; border-radius: 6px; border: 1px solid #cdd7e2; cursor: pointer; }
+  .swatch.sel { outline: 2px solid #1496dc; outline-offset: 2px; }
+  .hint { font-size: 11px; color: #8a97a6; line-height: 1.6; }
+</style>
+</head>
+<body>
+  <div id="stage">
+    <div class="board">
+
+      <!-- resting field with chips; one chip forced to hover to reveal remove -->
+      <div>
+        <p class="cap">Resting</p>
+        <div class="field" style="gap:3px;">
+          <span class="chip slant" style="--accent:90,110,240;">domain<span class="x"><svg width="9" height="9" viewBox="0 0 24 24"><line class="xg" x1="6" y1="6" x2="18" y2="18"/><line class="xg" x1="18" y1="6" x2="6" y2="18"/></svg></span></span>
+          <span class="chip slant is-hover" style="--accent:0,180,210;">review<span class="x"><svg width="9" height="9" viewBox="0 0 24 24"><line class="xg" x1="6" y1="6" x2="18" y2="18"/><line class="xg" x1="18" y1="6" x2="6" y2="18"/></svg></span></span>
+          <span class="chip slant" style="--accent:60,190,90;">core<span class="x"><svg width="9" height="9" viewBox="0 0 24 24"><line class="xg" x1="6" y1="6" x2="18" y2="18"/><line class="xg" x1="18" y1="6" x2="6" y2="18"/></svg></span></span>
+          <input class="entry" placeholder="Add tag&hellip;">
+        </div>
+      </div>
+
+      <!-- focused field: ring+flare + fake caret + autocomplete flyout -->
+      <div class="drop-space">
+        <p class="cap">Focused &middot; typing</p>
+        <div class="field focus" style="gap:3px;">
+          <span class="chip slant" style="--accent:90,110,240;">domain<span class="x"><svg width="9" height="9" viewBox="0 0 24 24"><line class="xg" x1="6" y1="6" x2="18" y2="18"/><line class="xg" x1="18" y1="6" x2="6" y2="18"/></svg></span></span>
+          <span class="chip slant" style="--accent:60,190,90;">core<span class="x"><svg width="9" height="9" viewBox="0 0 24 24"><line class="xg" x1="6" y1="6" x2="18" y2="18"/><line class="xg" x1="18" y1="6" x2="6" y2="18"/></svg></span></span>
+          <span class="caret-txt">rev</span>
+
+          <div class="ac">
+            <div class="opt is-hover"><span class="tag slant" style="--accent:0,180,210;">review</span><span class="use">18</span></div>
+            <div class="opt"><span class="tag slant" style="--accent:0,180,210;">revised</span><span class="use">4</span></div>
+            <div class="opt"><span class="tag slant" style="--accent:0,180,210;">reviewed</span><span class="use">2</span></div>
+            <div class="sep"></div>
+            <div class="opt mk">
+              <svg class="plus" width="13" height="13" viewBox="0 0 24 24"><line x1="12" y1="6" x2="12" y2="18"/><line x1="6" y1="12" x2="18" y2="12"/></svg>
+              Create <span class="q">&ldquo;rev&rdquo;</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- tightly-packed colored run: slants tessellate into a category strip -->
+      <div>
+        <p class="cap">Colored &middot; tight</p>
+        <div class="field" style="gap:2px; flex-wrap:nowrap;">
+          <span class="chip slant" style="--accent:20,150,220;">frontend</span>
+          <span class="chip slant" style="--accent:20,190,160;">api</span>
+          <span class="chip slant" style="--accent:230,150,20;">urgent</span>
+          <span class="chip slant" style="--accent:235,70,120;">draft</span>
+        </div>
+      </div>
+
+      <!-- read-only field: static labels, no remove, no input -->
+      <div>
+        <p class="cap">Read-only</p>
+        <div class="field ro" style="gap:3px;">
+          <span class="chip slant" style="--accent:90,110,240;">domain</span>
+          <span class="chip slant" style="--accent:0,180,210;">review</span>
+          <span class="chip slant" style="--accent:60,190,90;">core</span>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <aside>
+    <h1>HUD tag editor</h1>
+    <div class="swatches" id="swatches"></div>
+    <p class="hint">
+      Chips/tags input in the shared HUD material: frosted field, thin
+      source-bright frame, low glow. Tags are slanted parallelogram chips, each
+      carrying its own category hue; the &times; reveals on hover and warms to
+      danger (second chip forced hovered). The focused field takes the crisp 1px
+      accent ring + tight border-flare shared with the button, menu, and
+      inspector active state, with a live caret. Its autocomplete flyout reuses
+      the menu panel material &mdash; accent hairline, soft-wash highlighted row,
+      dim mono usage counts, and a Create-new row in the accent. Packed tight,
+      the slants tessellate into a category strip. Recolor with the swatches.
+    </p>
+  </aside>
+
+<script>
+  const colors = [
+    ['Blue','20, 150, 220'], ['Cyan','0, 180, 210'], ['Teal','20, 190, 160'],
+    ['Indigo','90, 110, 240'], ['Amber','230, 150, 20'], ['Green','60, 190, 90'],
+    ['Rose','235, 70, 120'], ['Slate','100, 116, 139'],
+  ];
+  const sw = document.getElementById('swatches');
+  colors.forEach((c,i)=>{ const d=document.createElement('div');
+    d.className='swatch'+(i===0?' sel':''); d.style.background=`rgb(${c[1]})`; d.title=c[0];
+    d.onclick=()=>{ document.body.style.setProperty('--accent', c[1]);
+      [...sw.children].forEach(e=>e.classList.remove('sel')); d.classList.add('sel'); };
+    sw.appendChild(d); });
+</script>
+</body>
+</html>
