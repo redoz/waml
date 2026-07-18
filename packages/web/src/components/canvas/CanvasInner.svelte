@@ -654,8 +654,8 @@
 <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
 <!-- svelte-ignore a11y_no_static_element_interactions -->
 <div
-  class="flex flex-col h-screen overflow-hidden bg-[#f7f8fa]"
-  style="font-family: 'Source Sans 3 Variable', -apple-system, BlinkMacSystemFont, 'Segoe UI', Inter, system-ui, sans-serif;"
+  class="flex flex-col h-screen overflow-hidden bg-[var(--canvas-bg)]"
+  style="font-family: var(--font-ui);"
   onkeydown={handleKeyDown}
   tabindex="0"
 >
@@ -838,7 +838,7 @@
             gap={22}
             size={1.3}
             patternColor="#e2e6ec"
-            bgColor={centralPanel ? "#ffffff" : undefined}
+            bgColor={centralPanel ? "var(--panel-fill)" : undefined}
           />
           <!-- Controls `position` accepts PanelPosition ("bottom-left" etc.),
                confirmed via @xyflow/system dist/esm/types/general.d.ts. The
@@ -876,10 +876,10 @@
       <!-- Empty canvas CTA -->
       {#if $model.nodes.length === 0 && !activeFlow && !activeSequence}
         <div
-          class="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 text-center text-slate-500 pointer-events-none z-[1]"
+          class="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 text-center text-[rgb(var(--ink-faint))] pointer-events-none z-[1]"
           style="font-size:15px;"
         >
-          <div><strong class="text-slate-900">Empty canvas</strong></div>
+          <div><strong class="text-[var(--ink)]">Empty canvas</strong></div>
           <div class="mt-[6px] text-[13px] leading-[1.6]">
             Double-click anywhere to add an object.<br />
             Drag from a node's port to create a relationship.
@@ -1007,10 +1007,10 @@
     >
       {#if inspectorFocusedKind === "diagram"}
         <!-- Diagram scope: name only for now; full properties live elsewhere. -->
-        <div class="text-[14px] font-semibold text-slate-900">
+        <div class="text-[14px] font-semibold text-[var(--ink)]">
           {activeDiagram.title?.trim() || "Untitled diagram"}
         </div>
-        <div class="mt-1 text-[12px] font-medium uppercase tracking-wide text-slate-400">Diagram</div>
+        <div class="mt-1 text-[12px] font-medium uppercase tracking-wide text-[rgb(var(--ink-faint))]">Diagram</div>
       {:else}
         <InspectorReadonly
           selection={focused}
