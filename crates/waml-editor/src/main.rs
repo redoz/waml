@@ -11,6 +11,7 @@ mod inspector_panel;
 mod load;
 mod scene;
 mod sizing;
+mod tool_dock;
 mod tree;
 mod tree_panel;
 

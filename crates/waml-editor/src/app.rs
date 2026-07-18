@@ -11,6 +11,7 @@ script_mod! {
     use mod.widgets.ProjectTree
     use mod.widgets.Inspector
     use mod.widgets.DocTabs
+    use mod.widgets.ToolDock
     use mod.widgets.SolidView
     use mod.widgets.DesktopButton
     use mod.widgets.DesktopButtonType
@@ -110,9 +111,18 @@ script_mod! {
                                         width: Fill
                                         height: 34.0
                                     }
-                                    canvas := GraphCanvas{
+                                    View{
                                         width: Fill
                                         height: Fill
+                                        flow: Right
+                                        tool_dock := ToolDock{
+                                            width: 48.0
+                                            height: Fill
+                                        }
+                                        canvas := GraphCanvas{
+                                            width: Fill
+                                            height: Fill
+                                        }
                                     }
                                 }
                                 b: View{
@@ -320,6 +330,19 @@ impl MatchEvent for App {
             return;
         }
 
+        // Tool dock: mode clicks (Select/Add/Connect) update their own
+        // highlight already; one-shot action buttons are mock no-ops here
+        // (Shortcuts gets a real overlay in a later unit).
+        let dock_action = self
+            .ui
+            .widget(cx, ids!(tool_dock))
+            .borrow_mut::<crate::tool_dock::ToolDock>()
+            .and_then(|dock| dock.dock_action(actions));
+        if let Some(action) = dock_action {
+            log!("tool dock: {action:?}");
+            return;
+        }
+
         // Doc tab strip: click a tab to activate it, or its close button.
         let tab_action = self
             .ui
@@ -349,10 +372,31 @@ impl AppMain for App {
         crate::tree_panel::script_mod(vm);
         crate::inspector_panel::script_mod(vm);
         crate::doc_tabs::script_mod(vm);
+        crate::tool_dock::script_mod(vm);
         self::script_mod(vm)
     }
 
     fn handle_event(&mut self, cx: &mut Cx, event: &Event) {
+        // Tool-dock hotkeys (V/N/C): global, visual-only mode switch. Only
+        // live while nothing holds key focus, so they don't fight with the
+        // inspector's inline-edit text entry.
+        if let Event::KeyDown(ke) = event {
+            if cx.key_focus() == Area::Empty {
+                let letter = match ke.key_code {
+                    KeyCode::KeyV => Some('V'),
+                    KeyCode::KeyN => Some('N'),
+                    KeyCode::KeyC => Some('C'),
+                    _ => None,
+                };
+                if let Some(tool) = letter.and_then(crate::tool_dock::tool_for_hotkey) {
+                    if let Some(mut dock) =
+                        self.ui.widget(cx, ids!(tool_dock)).borrow_mut::<crate::tool_dock::ToolDock>()
+                    {
+                        dock.set_active(cx, tool);
+                    }
+                }
+            }
+        }
         self.match_event(cx, event);
         self.ui.handle_event(cx, event, &mut Scope::empty());
     }
