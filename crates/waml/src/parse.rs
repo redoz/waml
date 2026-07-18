@@ -558,6 +558,7 @@ fn build_node(p: &ParsedDoc, keyset: &HashSet<&str>) -> Node {
         note_body: body,       // uml.Note prose (`## Body`)
         annotates: Vec::new(), // deferred: uml.Note anchors
         members: Vec::new(),   // classifiers own no members
+        slots: Vec::new(),
     }
 }
 
@@ -745,6 +746,7 @@ fn build_packages(
                 note_body: None,
                 annotates: vec![],
                 members,
+                slots: vec![],
             }
         })
         .collect();

@@ -33,6 +33,7 @@ export type {
   RelEnd,
   TypeRef,
   Attribute,
+  Slot,
   RelationshipKind,
   NoteAnchor,
   DiagramGroup,

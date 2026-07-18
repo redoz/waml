@@ -91,6 +91,25 @@ pub struct Attribute {
     pub description: Option<String>,
 }
 
+/// A slot value on an `InstanceSpecification` (design spec §3.2): a named value
+/// that stands in for a classifier attribute, rather than declaring one. Mirrors
+/// `Attribute` for serde/tsify.
+#[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "wasm", derive(tsify_next::Tsify))]
+#[cfg_attr(feature = "wasm", tsify(into_wasm_abi, from_wasm_abi))]
+pub struct Slot {
+    pub name: String,
+    pub value: String,
+    /// Set when the slot value resolves to another pool element (an
+    /// instance-valued slot); a display token otherwise.
+    #[cfg_attr(
+        feature = "serde",
+        serde(rename = "ref", default, skip_serializing_if = "Option::is_none")
+    )]
+    pub ref_: Option<String>,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "serde", serde(rename_all = "lowercase"))]
@@ -106,6 +125,8 @@ pub enum RelationshipKind {
     Annotates,
     Includes,
     Extends,
+    InstanceOf,
+    Links,
 }
 
 impl RelationshipKind {
@@ -120,6 +141,8 @@ impl RelationshipKind {
             RelationshipKind::Annotates => "annotates",
             RelationshipKind::Includes => "includes",
             RelationshipKind::Extends => "extends",
+            RelationshipKind::InstanceOf => "instance of",
+            RelationshipKind::Links => "links",
         }
     }
     pub fn parse(s: &str) -> Option<RelationshipKind> {
@@ -133,6 +156,8 @@ impl RelationshipKind {
             "annotates" => Some(RelationshipKind::Annotates),
             "includes" => Some(RelationshipKind::Includes),
             "extends" => Some(RelationshipKind::Extends),
+            "instance of" => Some(RelationshipKind::InstanceOf),
+            "links" => Some(RelationshipKind::Links),
             _ => None,
         }
     }
@@ -864,6 +889,13 @@ pub struct Node {
         serde(default, skip_serializing_if = "Vec::is_empty")
     )]
     pub members: Vec<String>,
+    /// Slot values on an `InstanceSpecification` node (design spec §3.3). Empty
+    /// on every non-instance node.
+    #[cfg_attr(
+        feature = "serde",
+        serde(default, skip_serializing_if = "Vec::is_empty")
+    )]
+    pub slots: Vec<Slot>,
 }
 
 /// A resolved membership group in a diagram (heading text + resolved keys).
@@ -1030,6 +1062,8 @@ mod tests {
             RelationshipKind::Annotates,
             RelationshipKind::Includes,
             RelationshipKind::Extends,
+            RelationshipKind::InstanceOf,
+            RelationshipKind::Links,
         ] {
             assert_eq!(RelationshipKind::parse(k.as_str()), Some(k));
         }
@@ -1193,6 +1227,7 @@ mod tests {
             note_body: None,
             annotates: vec![],
             members: vec![],
+            slots: vec![],
         };
         let model = Model {
             nodes: vec![node],

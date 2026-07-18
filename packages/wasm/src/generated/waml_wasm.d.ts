@@ -143,6 +143,21 @@ export interface DiagramGroup {
 }
 
 /**
+ * A slot value on an `InstanceSpecification` (design spec §3.2): a named value
+ * that stands in for a classifier attribute, rather than declaring one. Mirrors
+ * `Attribute` for serde/tsify.
+ */
+export interface Slot {
+    name: string;
+    value: string;
+    /**
+     * Set when the slot value resolves to another pool element (an
+     * instance-valued slot); a display token otherwise.
+     */
+    ref?: string;
+}
+
+/**
  * A typed control/object flow edge (design spec §3): a model-level pool member,
  * referenced from its owning behavior\'s view (`FlowDoc.edges`) by `key`.
  */
@@ -437,6 +452,11 @@ export interface Node {
      * disclosure order. Meaningful only on `uml.Package` nodes; empty elsewhere.
      */
     members?: string[];
+    /**
+     * Slot values on an `InstanceSpecification` node (design spec §3.3). Empty
+     * on every non-instance node.
+     */
+    slots?: Slot[];
 }
 
 export interface Rect {
@@ -481,7 +501,7 @@ export type FmValue = string | boolean | number | FmValue[];
 
 export type OpDto = { op: "node.new"; v?: number; slug: string; dir?: string; ty: string; title: string; stereotype?: string[]; desc?: string | undefined; abstract?: boolean } | { op: "node.rename"; v?: number; from: string; to: string } | { op: "node.set"; v?: number; slug: string; title?: string | undefined; desc?: string | undefined; stereotype?: string[] | undefined; abstract?: boolean | undefined; ty?: string | undefined } | { op: "node.rm"; v?: number; slug: string; cascade?: boolean } | { op: "attr.add"; v?: number; node: string; name: string; ty: string; mult?: string | undefined; vis?: string | undefined } | { op: "attr.set"; v?: number; node: string; name: string; ty?: string | undefined; mult?: string | undefined; vis?: string | undefined; rename?: string | undefined } | { op: "attr.rm"; v?: number; node: string; name: string } | { op: "value.add"; v?: number; node: string; literal: string } | { op: "value.rm"; v?: number; node: string; literal: string } | { op: "rel.add"; v?: number; source: string; kind: string; target: string; as?: string | undefined; as_ref?: string | undefined; ends?: string | undefined } | { op: "rel.set"; v?: number; source: string; kind?: string | undefined; target?: string | undefined; as?: string | undefined; ends?: string | undefined; set_as?: string | undefined; set_as_ref?: string | undefined } | { op: "rel.rm"; v?: number; source: string; kind?: string | undefined; target?: string | undefined; as?: string | undefined } | { op: "pkg.move"; v?: number; slug: string; to_dir: string } | { op: "pkg.rename"; v?: number; from: string; to: string } | { op: "pkg.delete"; v?: number; path: string; cascade?: boolean } | { op: "pkg.reorder"; v?: number; path: string; order?: string[] } | { op: "pkg.sort"; v?: number; path: string } | { op: "pkg.retitle"; v?: number; path: string; title: string } | { op: "pkg.insert"; v?: number; parent_path: string; name: string; docs?: [string, string][] } | { op: "diagram.set"; v?: number; key: string; title?: string | undefined; desc?: string | undefined; display?: DisplayDto | undefined };
 
-export type RelationshipKind = "associates" | "aggregates" | "composes" | "specializes" | "implements" | "depends" | "annotates" | "includes" | "extends";
+export type RelationshipKind = "associates" | "aggregates" | "composes" | "specializes" | "implements" | "depends" | "annotates" | "includes" | "extends" | "instanceof" | "links";
 
 export type Severity = "error" | "warning";
 

@@ -89,6 +89,7 @@ fn package_node_and_model_path() {
         note_body: None,
         annotates: vec![],
         members: vec!["order".into(), "customer".into()],
+        slots: vec![],
     };
     let model = Model {
         nodes: vec![],
@@ -116,11 +117,63 @@ fn package_node_and_model_path() {
         note_body: None,
         annotates: vec![],
         members: vec![],
+        slots: vec![],
     };
     let bj = serde_json::to_string(&bare).unwrap();
     assert!(
         !bj.contains("members"),
         "empty members must be omitted: {bj}"
+    );
+}
+
+#[test]
+fn slot_serializes_with_ref_key_and_skips_none() {
+    use waml::model::Slot;
+    let bare = Slot {
+        name: "id".into(),
+        value: "ORD-42".into(),
+        ref_: None,
+    };
+    let v = serde_json::to_value(&bare).unwrap();
+    assert_eq!(v["name"], "id");
+    assert_eq!(v["value"], "ORD-42");
+    assert!(v.get("ref").is_none(), "None ref must be omitted: {v}");
+
+    let linked = Slot {
+        name: "customer".into(),
+        value: "Ann".into(),
+        ref_: Some("m/ann".into()),
+    };
+    assert_eq!(serde_json::to_value(&linked).unwrap()["ref"], "m/ann");
+}
+
+#[test]
+fn instance_edge_kinds_serialize_lowercase() {
+    use waml::model::RelationshipKind;
+    assert_eq!(
+        serde_json::to_value(RelationshipKind::InstanceOf).unwrap(),
+        serde_json::json!("instanceof")
+    );
+    assert_eq!(
+        serde_json::to_value(RelationshipKind::Links).unwrap(),
+        serde_json::json!("links")
+    );
+    // Markdown verb (as_str) keeps the authored spelling.
+    assert_eq!(RelationshipKind::InstanceOf.as_str(), "instance of");
+    assert_eq!(RelationshipKind::Links.as_str(), "links");
+    assert!(!RelationshipKind::InstanceOf.is_ended());
+    assert!(!RelationshipKind::Links.is_ended());
+}
+
+#[test]
+fn classifier_node_omits_empty_slots() {
+    // A plain class must omit `slots` entirely (skip-if-empty, mirrors values).
+    let m = build_model(&bundle());
+    let v = serde_json::to_value(&m).unwrap();
+    assert!(
+        v["nodes"][0].get("slots").is_none(),
+        "empty slots must be omitted: {}",
+        v["nodes"][0]
     );
 }
 
