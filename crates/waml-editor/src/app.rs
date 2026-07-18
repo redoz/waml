@@ -303,6 +303,23 @@ impl MatchEvent for App {
             return;
         }
 
+        // Inline-edit commit: the inspector emits `Edited(subject_key)` when a
+        // field's value actually changed. Promote the tab pointing at that
+        // subject from preview to persisted (title de-dims).
+        let edited_key = self
+            .ui
+            .widget(cx, ids!(inspector))
+            .borrow_mut::<crate::inspector_panel::Inspector>()
+            .and_then(|inspector| inspector.edited(actions));
+        if let Some(key) = edited_key {
+            if let Some(tab) = self.tabs.tabs.iter().find(|t| t.key == key) {
+                let id = tab.id;
+                self.tabs.promote(id);
+                self.refresh_doc_tabs(cx);
+            }
+            return;
+        }
+
         // Doc tab strip: click a tab to activate it, or its close button.
         let tab_action = self
             .ui

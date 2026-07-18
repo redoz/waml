@@ -13,6 +13,16 @@ pub enum Subject {
     Classifier(String),
 }
 
+/// An editable inspector field. Overrides are keyed `(subject_key, FieldId)`.
+/// UX mock scope A/B: title + description; attribute-row editing is a
+/// fast-follow (see `AttrField`, used once attribute rows gain the same
+/// inline-edit affordance).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum FieldId {
+    Title,
+    Description,
+}
+
 /// One attribute row, pre-rendered to display strings.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AttrRow {
@@ -35,6 +45,19 @@ pub struct InspectorView {
 fn kind_label(ty: &ElementType) -> String {
     let s = ty.as_str();
     s.strip_prefix("uml.").unwrap_or(&s).to_string()
+}
+
+/// Resolve a field's effective value: the override if present, else the
+/// model's value. Pure — the widget calls this keyed per `(subject_key,
+/// field)`; unit-tested here without any `Cx`.
+pub fn effective_field(view: &InspectorView, field: FieldId, over: Option<&String>) -> String {
+    if let Some(v) = over {
+        return v.clone();
+    }
+    match field {
+        FieldId::Title => view.title.clone(),
+        FieldId::Description => view.description.clone().unwrap_or_default(),
+    }
 }
 
 /// Project `subject` against `model`. Returns `None` for `Subject::None` and for
@@ -104,5 +127,45 @@ mod tests {
     fn missing_key_yields_empty_state() {
         let model = mini();
         assert!(build_view(&model, &Subject::Classifier("does-not-exist".into())).is_none());
+    }
+
+    #[test]
+    fn effective_field_falls_back_to_model_when_no_override() {
+        let model = mini();
+        let key = model.nodes[0].key.clone();
+        let view = build_view(&model, &Subject::Classifier(key)).unwrap();
+        assert_eq!(effective_field(&view, FieldId::Title, None), view.title);
+    }
+
+    #[test]
+    fn effective_field_prefers_override_over_model() {
+        let model = mini();
+        let key = model.nodes[0].key.clone();
+        let view = build_view(&model, &Subject::Classifier(key)).unwrap();
+        let over = "Renamed Title".to_string();
+        assert_eq!(effective_field(&view, FieldId::Title, Some(&over)), "Renamed Title");
+        // The source view (and thus the model it was built from) is untouched.
+        assert_ne!(view.title, "Renamed Title");
+    }
+
+    #[test]
+    fn overrides_are_keyed_per_subject() {
+        use std::collections::HashMap;
+
+        let model = mini();
+        let mut overrides: HashMap<(String, FieldId), String> = HashMap::new();
+        overrides.insert(("a".into(), FieldId::Title), "A edited".into());
+        overrides.insert(("b".into(), FieldId::Title), "B edited".into());
+
+        let key = model.nodes[0].key.clone();
+        let view = build_view(&model, &Subject::Classifier(key)).unwrap();
+
+        let a = effective_field(&view, FieldId::Title, overrides.get(&("a".to_string(), FieldId::Title)));
+        let b = effective_field(&view, FieldId::Title, overrides.get(&("b".to_string(), FieldId::Title)));
+        let c = effective_field(&view, FieldId::Title, overrides.get(&("c".to_string(), FieldId::Title)));
+
+        assert_eq!(a, "A edited");
+        assert_eq!(b, "B edited");
+        assert_eq!(c, view.title, "an unedited subject falls back to the model");
     }
 }
