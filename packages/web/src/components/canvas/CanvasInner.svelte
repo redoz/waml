@@ -797,7 +797,7 @@
         />
       {/if}
       {#if activeFlow}
-        <FlowView doc={activeFlow} />
+        <FlowView doc={activeFlow} graph={$model} />
       {:else if activeSequence}
         <SequenceView doc={activeSequence} />
       {:else}

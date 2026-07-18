@@ -1,12 +1,13 @@
 import dagre from "@dagrejs/dagre";
 import type { Edge, Node } from "@xyflow/svelte";
-import type { FlowDoc, FlowEdge, FlowNode } from "@waml/okf";
+import type { ActivityNode, FlowDoc, FlowEdge, FlowFlavor, ModelGraph } from "@waml/okf";
 
-// ── Flow substrate rendering (behavioral substrates spec) ────────────────────
-// A flow document is self-rendering: dagre lays the directed graph out at
-// render time (relational, never coordinates — nothing is stored).
+// ── Flow substrate rendering (behavior model/view split) ─────────────────────
+// A behavior document is a VIEW: it references pooled activity nodes / flow
+// edges by key. `resolveFlow` dereferences those against the model pools; the
+// resolved graph is laid out at render time by dagre (relational, never stored).
 
-export function flowNodeSize(n: FlowNode): { width: number; height: number } {
+export function flowNodeSize(n: ActivityNode): { width: number; height: number } {
   switch (n.kind) {
     case "initial":
     case "final":
@@ -35,7 +36,7 @@ export function transitionLabel(e: FlowEdge): string {
   return [head, eff].filter(Boolean).join(" ").trim();
 }
 
-const KIND_TO_TYPE: Record<FlowNode["kind"], string> = {
+const KIND_TO_TYPE: Record<ActivityNode["kind"], string> = {
   plain: "flowStep",
   object: "flowObject",
   initial: "flowControl",
@@ -46,41 +47,56 @@ const KIND_TO_TYPE: Record<FlowNode["kind"], string> = {
   join: "flowControl",
 };
 
-export function flowToRf(doc: FlowDoc): { nodes: Node[]; edges: Edge[] } {
+export interface ResolvedFlow {
+  flavor: FlowFlavor;
+  nodes: ActivityNode[];
+  edges: FlowEdge[];
+}
+
+/** Dereference a behavior VIEW's node/edge keys against the model-level pools. */
+export function resolveFlow(doc: FlowDoc, graph: ModelGraph): ResolvedFlow {
+  const nodeByKey = new Map((graph.activityNodes ?? []).map((n) => [n.key, n]));
+  const edgeByKey = new Map((graph.flowEdges ?? []).map((e) => [e.key, e]));
+  const nodes = doc.nodes.map((key) => nodeByKey.get(key)).filter((n): n is ActivityNode => n != null);
+  const edges = doc.edges.map((key) => edgeByKey.get(key)).filter((e): e is FlowEdge => e != null);
+  return { flavor: doc.flavor, nodes, edges };
+}
+
+export function flowToRf(view: ResolvedFlow): { nodes: Node[]; edges: Edge[] } {
   const g = new dagre.graphlib.Graph();
   g.setDefaultEdgeLabel(() => ({}));
   g.setGraph({ rankdir: "TB", nodesep: 50, ranksep: 70 });
-  for (const n of doc.nodes) {
+  for (const n of view.nodes) {
     const s = flowNodeSize(n);
-    g.setNode(n.id, { width: s.width, height: s.height });
+    g.setNode(n.key, { width: s.width, height: s.height });
   }
-  const local = new Set(doc.nodes.map((n) => n.id));
-  for (const e of doc.edges) if (local.has(e.from) && local.has(e.to)) g.setEdge(e.from, e.to);
+  const local = new Set(view.nodes.map((n) => n.key));
+  for (const e of view.edges) if (local.has(e.from) && local.has(e.to)) g.setEdge(e.from, e.to);
   dagre.layout(g);
 
-  const nodes: Node[] = doc.nodes.map((n) => {
+  const nodes: Node[] = view.nodes.map((n) => {
     const s = flowNodeSize(n);
-    const pos = g.node(n.id);
+    const pos = g.node(n.key);
     return {
-      id: n.id,
+      id: n.key,
       type: KIND_TO_TYPE[n.kind],
       position: { x: (pos?.x ?? 0) - s.width / 2, y: (pos?.y ?? 0) - s.height / 2 },
-      data: { node: n, flavor: doc.flavor } as unknown as Record<string, unknown>,
+      data: { node: n, flavor: view.flavor } as unknown as Record<string, unknown>,
       draggable: false,
       connectable: false,
       selectable: false,
     };
   });
-  const kindById = new Map(doc.nodes.map((n) => [n.id, n.kind]));
-  const edges: Edge[] = doc.edges
+  const kindByKey = new Map(view.nodes.map((n) => [n.key, n.kind]));
+  const edges: Edge[] = view.edges
     .filter((e) => local.has(e.from) && local.has(e.to))
-    .map((e, i) => ({
-      id: `t${i}`,
+    .map((e) => ({
+      id: e.key,
       source: e.from,
       target: e.to,
       type: "transition",
       // flavor picks the path shape; fromKind lets a decision source snap to a tip.
-      data: { label: transitionLabel(e), carries: e.carries, flavor: doc.flavor, fromKind: kindById.get(e.from) } as unknown as Record<string, unknown>,
+      data: { label: transitionLabel(e), carries: e.carries, flavor: view.flavor, fromKind: kindByKey.get(e.from) } as unknown as Record<string, unknown>,
       selectable: false,
     }));
   return { nodes, edges };

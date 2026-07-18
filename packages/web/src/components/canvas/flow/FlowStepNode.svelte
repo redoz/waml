@@ -1,8 +1,8 @@
 <script lang="ts">
-  import type { FlowFlavor, FlowNode } from "@waml/okf";
+  import type { ActivityNode, FlowFlavor } from "@waml/okf";
   import FlowPorts from "./FlowPorts.svelte";
 
-  let { data }: { data: { node: FlowNode; flavor: FlowFlavor } } = $props();
+  let { data }: { data: { node: ActivityNode; flavor: FlowFlavor } } = $props();
   const n = $derived(data.node);
   const internals = $derived(
     [
