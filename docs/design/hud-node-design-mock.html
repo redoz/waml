@@ -155,7 +155,10 @@
   }
 
   /* anatomy: every compartment listed and drag-reorderable, uniform */
-  .item { border-radius: 5px; transition: background .1s ease; }
+  /* each row carries its own top+bottom grounding line (collapsed between neighbours)
+     so the hairline travels with the row while dragging */
+  .item { border-top: 1px solid rgba(var(--accent),.16); border-bottom: 1px solid rgba(var(--accent),.16);
+          margin-bottom: -1px; transition: background .1s ease; }
   .item:hover { background: rgba(var(--accent),.05); }
   .item.dragging { opacity: .45; }
   /* a disabled compartment reads dimmed and its options go inert */
@@ -176,7 +179,7 @@
   .cols { display: flex; flex-wrap: wrap; gap: 5px; margin: 0 0 6px 29px; }
   .col {
     display: inline-flex; align-items: center; height: 20px; padding: 0 9px;
-    border-radius: 999px; cursor: pointer;
+    border-radius: 2px; cursor: pointer;
     border: 1px solid rgba(var(--accent),.30); background: #fff; color: #8a97a6;
     font: 600 10px/1 -apple-system, "Segoe UI", system-ui, sans-serif;
     transition: background .1s ease, color .1s ease, border-color .1s ease;
@@ -186,15 +189,16 @@
 
   /* HUD toggle — a square knob in a squared accent-framed track just under two
      knobs wide; the track fills and flares when on */
-  .toggle { flex: 0 0 auto; position: relative; width: 28px; height: 20px; cursor: pointer;
-            border-radius: 3px; background: #fff; border: 1px solid rgba(var(--accent),.35);
+  .toggle { flex: 0 0 auto; position: relative; width: 28px; height: 18px; cursor: pointer;
+            border-radius: 2px; background: #fff; border: 1px solid rgba(var(--accent),.35);
             transition: background .12s ease, border-color .12s ease, box-shadow .12s ease; }
-  .toggle::after { content: ""; position: absolute; top: 2px; left: 2px; width: 16px; height: 16px;
-                   border-radius: 2px; background: #b3bdca;
-                   transition: transform .12s ease, background .12s ease; }
+  .toggle::after { content: ""; position: absolute; top: 0; bottom: 0; left: 2px; margin: auto 0;
+                   width: 14px; height: 14px;
+                   border-radius: 2px; background: transparent; border: 1px solid rgba(var(--accent),.55);
+                   transition: transform .12s ease, background .12s ease, border-color .12s ease; }
   .toggle.on { background: rgb(var(--accent)); border-color: rgb(var(--accent));
                box-shadow: 0 0 5px rgba(var(--accent),.35), 0 0 1px rgba(var(--accent),.35); }
-  .toggle.on::after { transform: translateX(8px); background: #fff; }
+  .toggle.on::after { transform: translateX(8px); background: #fff; border-color: #fff; }
 
   /* stereotype tag field — reuses the slant-chip tag editor */
   .tagfield {
@@ -227,6 +231,7 @@
 
   /* segmented control (shared with inspector) */
   .seg { display: inline-flex; border: 1px solid rgba(var(--accent),.26); border-radius: 3px; overflow: hidden; }
+  .field > .seg { justify-self: start; }
   .seg button {
     border: 0; background: #fff; cursor: pointer; padding: 6px 13px; height: 27px;
     font: 500 11px/1 -apple-system, "Segoe UI", system-ui, sans-serif;
