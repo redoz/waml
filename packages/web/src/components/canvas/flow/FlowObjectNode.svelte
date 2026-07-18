@@ -6,10 +6,34 @@
   const n = $derived(data.node);
 </script>
 
-<!-- Object/data node: plain rectangle, typed by a link when resolved. -->
-<div
-  class="relative flex h-[48px] w-[160px] items-center justify-center border-[1.5px] border-[#c8d2e0] bg-[#f8fafc] px-3 text-center select-none"
->
+<!-- Object/data node: plain rectangle (no radius) — the sharp-cornered
+     silhouette is the data-object shape convention (vs the activity/state
+     node's rounded rect), so it is kept literal; all chrome — border, fill,
+     ink, fonts — routes through Atlas tokens. -->
+<div class="object-node">
   <FlowPorts />
-  <div class="text-[12px] font-semibold text-slate-800" class:underline={!!n.objectRef}>{n.id}</div>
+  <div class="object-name" class:underline={!!n.objectRef}>{n.id}</div>
 </div>
+
+<style>
+  .object-node {
+    position: relative;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 160px;
+    height: 48px;
+    padding: 0 12px;
+    text-align: center;
+    user-select: none;
+    border: var(--bw) solid rgb(var(--ink-faint));
+    background: var(--panel-fill);
+  }
+  .object-name {
+    font: 600 12px/1.2 var(--font-mono);
+    color: var(--ink);
+  }
+  .underline {
+    text-decoration: underline;
+  }
+</style>
