@@ -1,6 +1,8 @@
 ---
 type: uml.Class
 title: Order
+stereotype: [aggregateRoot]
+abstract: true
 ---
 # Order
 

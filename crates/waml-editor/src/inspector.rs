@@ -32,13 +32,26 @@ pub struct AttrRow {
     pub visibility: String, // "+"/"-"/"#"/"~" or ""
 }
 
+/// One association row, pre-rendered to display strings. Derived from
+/// `Model::edges` where `key` is either endpoint -- read-only breadth (U6),
+/// not an editable field.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AssocRow {
+    pub kind: String,          // RelationshipKind::as_str(), e.g. "associates"
+    pub direction: &'static str, // "->" (key is source) or "<-" (key is target)
+    pub other_label: String,   // the other endpoint's title, falling back to its key
+}
+
 /// The flattened read model the panel renders.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct InspectorView {
     pub title: String,
     pub kind_label: String,
+    pub abstract_flag: bool,
+    pub stereotypes: Vec<String>,
     pub description: Option<String>,
     pub attributes: Vec<AttrRow>,
+    pub associations: Vec<AssocRow>,
 }
 
 /// Human label for a classifier's element type: `uml.Class` -> `Class`.
@@ -79,11 +92,39 @@ pub fn build_view(model: &Model, subject: &Subject) -> Option<InspectorView> {
         })
         .collect();
 
+    let node_label = |k: &str| -> String {
+        model
+            .nodes
+            .iter()
+            .find(|n| n.key == k)
+            .and_then(|n| n.concept.title.clone())
+            .unwrap_or_else(|| k.to_string())
+    };
+    let mut associations = Vec::new();
+    for edge in &model.edges {
+        if &edge.source == key {
+            associations.push(AssocRow {
+                kind: edge.kind.as_str().to_string(),
+                direction: "->",
+                other_label: node_label(&edge.target),
+            });
+        } else if &edge.target == key {
+            associations.push(AssocRow {
+                kind: edge.kind.as_str().to_string(),
+                direction: "<-",
+                other_label: node_label(&edge.source),
+            });
+        }
+    }
+
     Some(InspectorView {
         title: node.concept.title.clone().unwrap_or_else(|| node.key.clone()),
         kind_label: kind_label(&node.ty),
+        abstract_flag: node.abstract_,
+        stereotypes: node.stereotypes.clone(),
         description: node.concept.description.clone(),
         attributes,
+        associations,
     })
 }
 
@@ -96,6 +137,16 @@ mod tests {
     fn mini() -> Model {
         let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/mini");
         load::load_model(&dir).unwrap()
+    }
+
+    fn key_for(model: &Model, title: &str) -> String {
+        model
+            .nodes
+            .iter()
+            .find(|n| n.concept.title.as_deref() == Some(title))
+            .unwrap_or_else(|| panic!("no node titled {title}"))
+            .key
+            .clone()
     }
 
     #[test]
@@ -115,6 +166,48 @@ mod tests {
             assert_eq!(row.name, attr.name);
             assert_eq!(row.ty, attr.ty.name);
         }
+    }
+
+    #[test]
+    fn classifier_projects_abstract_flag_and_stereotypes() {
+        let model = mini();
+        let key = key_for(&model, "Order");
+        let view = build_view(&model, &Subject::Classifier(key)).unwrap();
+        assert!(view.abstract_flag);
+        assert_eq!(view.stereotypes, vec!["aggregateRoot".to_string()]);
+    }
+
+    #[test]
+    fn classifier_without_abstract_or_stereotype_defaults_empty() {
+        let model = mini();
+        let key = key_for(&model, "Customer");
+        let view = build_view(&model, &Subject::Classifier(key)).unwrap();
+        assert!(!view.abstract_flag);
+        assert!(view.stereotypes.is_empty());
+    }
+
+    #[test]
+    fn classifier_projects_outgoing_association() {
+        let model = mini();
+        let key = key_for(&model, "Order");
+        let view = build_view(&model, &Subject::Classifier(key)).unwrap();
+        assert_eq!(view.associations.len(), 1);
+        let assoc = &view.associations[0];
+        assert_eq!(assoc.kind, "associates");
+        assert_eq!(assoc.direction, "->");
+        assert_eq!(assoc.other_label, "Customer");
+    }
+
+    #[test]
+    fn classifier_projects_incoming_association() {
+        let model = mini();
+        let key = key_for(&model, "Customer");
+        let view = build_view(&model, &Subject::Classifier(key)).unwrap();
+        assert_eq!(view.associations.len(), 1);
+        let assoc = &view.associations[0];
+        assert_eq!(assoc.kind, "associates");
+        assert_eq!(assoc.direction, "<-");
+        assert_eq!(assoc.other_label, "Order");
     }
 
     #[test]

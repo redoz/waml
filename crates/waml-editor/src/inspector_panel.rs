@@ -194,8 +194,27 @@ impl Widget for Inspector {
         self.field_rects.push((FieldId::Title, title_rect));
         y += TITLE_H;
 
-        self.draw_dim.draw_abs(cx, dvec2(x, y), &view.kind_label);
-        y += ROW_H + GAP;
+        // Kind + abstract badge, e.g. "Class  (abstract)". Read-only breadth (U6).
+        let kind_line = if view.abstract_flag {
+            format!("{}  (abstract)", view.kind_label)
+        } else {
+            view.kind_label.clone()
+        };
+        self.draw_dim.draw_abs(cx, dvec2(x, y), &kind_line);
+        y += ROW_H;
+
+        // Stereotype chips, e.g. "<<aggregateRoot>> <<entity>>". Read-only breadth (U6).
+        if !view.stereotypes.is_empty() {
+            let chips = view
+                .stereotypes
+                .iter()
+                .map(|s| format!("<<{s}>>"))
+                .collect::<Vec<_>>()
+                .join(" ");
+            self.draw_dim.draw_abs(cx, dvec2(x, y), &chips);
+            y += ROW_H;
+        }
+        y += GAP;
 
         if !view.attributes.is_empty() {
             self.draw_dim.draw_abs(cx, dvec2(x, y), "ATTRIBUTES");
@@ -212,6 +231,20 @@ impl Widget for Inspector {
                     format!("  [{}]", attr.multiplicity)
                 };
                 let line = format!("{vis}{}: {}{mult}", attr.name, attr.ty);
+                self.draw_label.draw_abs(cx, dvec2(x, y), &line);
+                y += ROW_H;
+            }
+            y += GAP;
+        }
+
+        // Associations: read-only, derived from Model::edges (U6 breadth). Not
+        // click-to-edit -- there's no single scalar override target for a
+        // relationship yet.
+        if !view.associations.is_empty() {
+            self.draw_dim.draw_abs(cx, dvec2(x, y), "ASSOCIATIONS");
+            y += ROW_H;
+            for assoc in &view.associations {
+                let line = format!("{} {} {}", assoc.direction, assoc.other_label, assoc.kind);
                 self.draw_label.draw_abs(cx, dvec2(x, y), &line);
                 y += ROW_H;
             }
