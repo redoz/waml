@@ -1844,6 +1844,40 @@ mod model_tests {
     }
 
     #[test]
+    fn instance_of_and_links_become_pool_edges() {
+        let b = vec![
+            ("m/order.md".into(), "---\ntype: uml.Class\ntitle: Order\n---\n# Order\n".into()),
+            ("m/assoc.md".into(), "---\ntype: uml.Association\ntitle: Order-Line\n---\n# Order-Line\n".into()),
+            ("m/line42.md".into(), "---\ntype: uml.InstanceSpecification\ntitle: line42\n---\n# line42\n".into()),
+            ("m/order42.md".into(),
+             "---\ntype: uml.InstanceSpecification\ntitle: order42\n---\n# order42\n\n## Relationships\n- instance of [Order](./order.md)\n- links [line42](./line42.md) as [Order-Line](./assoc.md)\n".into()),
+        ];
+        let m = build_model(&b);
+        let io = m
+            .edges
+            .iter()
+            .find(|e| e.kind == RelationshipKind::InstanceOf)
+            .unwrap();
+        assert_eq!(
+            (io.source.as_str(), io.target.as_str()),
+            ("m/order42", "m/order")
+        );
+        let lk = m
+            .edges
+            .iter()
+            .find(|e| e.kind == RelationshipKind::Links)
+            .unwrap();
+        assert_eq!(
+            (lk.source.as_str(), lk.target.as_str()),
+            ("m/order42", "m/line42")
+        );
+        assert_eq!(
+            lk.name,
+            Some(crate::model::AssocName::Assoc("m/assoc".into()))
+        );
+    }
+
+    #[test]
     fn builds_diagram_groups_and_layout() {
         let diagram = "---\ntype: Diagram\ntitle: Orders\nprofile: uml-domain\n---\n# Orders\n\n## Members\n\n### Users\n- [Customer](./customer.md)\n\n### Orders\n- [Order](./order.md)\n\n## Layout\n- Users left of Orders\n";
         let bundle = vec![

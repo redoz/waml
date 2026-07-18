@@ -22,7 +22,7 @@ static SLOT_RE: LazyLock<Regex> =
 // verb · target-title · target-slug · name-label · name-link-title · name-link-slug · ends
 static REL_RE: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(concat!(
-        r"^- (associates|aggregates|composes|specializes|implements|depends|includes|extends) ",
+        r"^- (associates|aggregates|composes|specializes|implements|depends|includes|extends|instance of|links) ",
         r"\[([^\]]+)\]\(\./(.+?)\.md\)",
         r#"(?: as (?:"([^"]*)"|\[([^\]]+)\]\(\./(.+?)\.md\)))?"#,
         r"(?:\s*:\s*(.+))?$",
@@ -93,12 +93,13 @@ fn has_multiplicity_ends(line: &str) -> bool {
 /// Human-readable message for a malformed `## Relationships` bullet.
 pub fn rel_error_message(line: &str) -> String {
     const ENDED: [&str; 2] = ["aggregates", "composes"];
-    const OTHER: [&str; 5] = [
+    const OTHER: [&str; 6] = [
         "specializes",
         "implements",
         "depends",
         "includes",
         "extends",
+        "links",
     ];
     let verb = line
         .trim_start_matches("- ")
@@ -112,7 +113,11 @@ pub fn rel_error_message(line: &str) -> String {
         format!("'{verb}' does not take multiplicity ends")
     } else if verb == "annotates" {
         "note anchors ('annotates') are not supported yet".to_string()
-    } else if !ENDED.contains(&verb) && !OTHER.contains(&verb) && verb != "associates" {
+    } else if !ENDED.contains(&verb)
+        && !OTHER.contains(&verb)
+        && verb != "associates"
+        && verb != "instance"
+    {
         format!("unknown relationship verb '{verb}'")
     } else {
         "malformed relationship line".to_string()
@@ -1200,6 +1205,26 @@ mod tests {
         let line = "- composes [OrderLine](./order-line.md): 1 to 1..* lines";
         let r = parse_relationship_line(line).unwrap();
         assert_eq!(render_relationship_line(&r), line);
+    }
+
+    #[test]
+    fn instance_of_and_links_relationships_round_trip() {
+        for line in [
+            "- instance of [Order](./order.md)",
+            "- links [order42-line](./order42-line.md) as [Order→OrderLine](./order-orderline-assoc.md)",
+        ] {
+            let r = parse_relationship_line(line).unwrap();
+            assert_eq!(render_relationship_line(&r), line, "must round-trip byte-identically");
+        }
+        assert_eq!(
+            parse_relationship_line("- instance of [Order](./order.md)")
+                .unwrap()
+                .kind,
+            RelationshipKind::InstanceOf
+        );
+        let links = parse_relationship_line("- links [l](./l.md) as [A](./a.md)").unwrap();
+        assert_eq!(links.kind, RelationshipKind::Links);
+        assert!(matches!(links.name, Some(ParsedName::Ref { .. })));
     }
 
     #[test]
