@@ -9,6 +9,7 @@
 <script lang="ts">
   import type { Template } from "@waml/core/templates";
   import { slugify } from "@waml/okf";
+  import { X } from "lucide-svelte";
 
   let { templates, packages, projectName, onAdd, onClose }: {
     templates: Template[];
@@ -116,37 +117,48 @@
 <!-- svelte-ignore a11y_click_events_have_key_events -->
 <!-- svelte-ignore a11y_no_static_element_interactions -->
 <div
-  class="fixed inset-0 z-[60] flex items-center justify-center bg-black/40"
+  class="fixed inset-0 z-[60] flex items-center justify-center bg-slate-900/30"
+  style="font-family: var(--font-ui);"
   onclick={(e) => { if (e.target === e.currentTarget) onClose(); }}
 >
-  <div class="bg-white rounded-xl shadow-xl w-[480px] max-w-[95vw] p-6 flex flex-col gap-4">
+  <div
+    class="hud-surface relative w-[480px] max-w-[95vw] flex flex-col overflow-hidden"
+    onclick={(e) => e.stopPropagation()}
+  >
+    <div class="relative z-[1] flex flex-col gap-4 p-6">
     <div class="flex items-center justify-between">
-      <h2 class="text-[15px] font-semibold text-slate-900">New package</h2>
-      <button onclick={onClose} class="text-slate-400 hover:text-slate-700 text-xl leading-none px-1">✕</button>
+      <h2 class="text-[15px] font-semibold text-[color:var(--ink)]">New package</h2>
+      <button
+        onclick={onClose}
+        aria-label="Close"
+        class="w-[30px] h-[30px] flex items-center justify-center rounded-[var(--round-chip)] text-[color:rgb(var(--ink-faint))] hover:bg-[color:rgba(var(--accent),.12)] hover:text-[color:rgb(var(--accent))]"
+      >
+        <X size={18} />
+      </button>
     </div>
 
     <!-- Name + placement, on top -->
     <div class="flex flex-col gap-3">
-      <label class="flex flex-col gap-1 text-[12px] font-medium text-slate-500">
+      <label class="flex flex-col gap-1 text-[12px] font-medium text-[color:rgb(var(--ink-faint))]">
         Name
         <input
           aria-label="Package name"
           bind:value={name}
           oninput={() => (nameDirty = true)}
           placeholder={defaultName}
-          class="text-[13px] px-2 py-[7px] border border-[#d8dee8] rounded-md text-slate-900 focus:outline-none focus:border-[#1e88e5] focus:ring-2 focus:ring-[#e6f1fb]"
+          class="text-[13px] px-2 py-[7px] border border-[color:var(--hair)] rounded-[var(--round-chip)] text-[color:var(--ink)] bg-white focus:outline-none focus:border-[color:rgb(var(--accent))] focus:ring-2 focus:ring-[color:rgba(var(--accent),.20)]"
         />
       </label>
       {#if collision}
-        <p class="text-[12px] text-[#d93025] -mt-1">name already used here</p>
+        <p class="text-[12px] text-[color:rgb(var(--danger))] -mt-1">name already used here</p>
       {/if}
 
-      <label class="flex flex-col gap-1 text-[12px] font-medium text-slate-500">
+      <label class="flex flex-col gap-1 text-[12px] font-medium text-[color:rgb(var(--ink-faint))]">
         Place in
         <select
           aria-label="Place in"
           bind:value={parentPath}
-          class="text-[13px] px-2 py-[7px] border border-[#d8dee8] rounded-md text-slate-900 bg-white cursor-pointer focus:outline-none focus:border-[#1e88e5] focus:ring-2 focus:ring-[#e6f1fb]"
+          class="text-[13px] px-2 py-[7px] border border-[color:var(--hair)] rounded-[var(--round-chip)] text-[color:var(--ink)] bg-white cursor-pointer focus:outline-none focus:border-[color:rgb(var(--accent))] focus:ring-2 focus:ring-[color:rgba(var(--accent),.20)]"
         >
           <option value="">{projectName}</option>
           {#each placeOptions as o (o.key)}
@@ -157,17 +169,17 @@
     </div>
 
     <!-- Starter list -->
-    <div class="flex flex-col gap-1.5 border-t border-slate-100 pt-3">
-      <span class="text-[12px] font-medium text-slate-500">Start from</span>
+    <div class="flex flex-col gap-1.5 border-t border-[color:rgba(var(--accent),.14)] pt-3">
+      <span class="text-[12px] font-medium text-[color:rgb(var(--ink-faint))]">Start from</span>
       <div class="flex flex-col gap-1.5 max-h-64 overflow-auto">
       {#each items as it (it.id)}
         <button
           type="button"
           onclick={() => selectItem(it.id)}
-          class="text-left rounded-lg border px-3 py-2 cursor-pointer {selectedId === it.id ? 'border-[#1e88e5] bg-[#e6f1fb]' : 'border-[#d8dee8] hover:bg-[#f1f3f7]'}"
+          class="text-left rounded-[var(--round-chip)] border px-3 py-2 cursor-pointer {selectedId === it.id ? 'border-[color:rgb(var(--accent))] bg-[color:rgba(var(--accent),.10)]' : 'border-[color:var(--hair)] hover:bg-[color:rgba(var(--accent),.06)]'}"
         >
-          <div class="text-[13px] font-[600] text-slate-900">{it.name}</div>
-          <div class="text-[12px] text-slate-500">{it.description}</div>
+          <div class="text-[13px] font-[600] text-[color:var(--ink)]">{it.name}</div>
+          <div class="text-[12px] text-[color:var(--ink-dim)]">{it.description}</div>
         </button>
       {/each}
       </div>
@@ -176,17 +188,18 @@
     <div class="flex gap-2 justify-end">
       <button
         onclick={onClose}
-        class="text-[13px] font-[600] border border-[#d8dee8] bg-white text-slate-900 rounded-lg px-4 py-[7px] cursor-pointer hover:bg-[#f1f3f7]"
+        class="text-[13px] font-[600] border border-[color:var(--hair)] bg-white text-[color:var(--ink)] rounded-[var(--round-chip)] px-4 py-[7px] cursor-pointer hover:bg-[color:rgba(var(--accent),.10)]"
       >
         Cancel
       </button>
       <button
         onclick={submit}
         disabled={!canAdd}
-        class="text-[13px] font-[600] bg-[#1e88e5] text-white border border-[#1e88e5] rounded-lg px-4 py-[7px] cursor-pointer hover:bg-[#1976d2] disabled:opacity-50 disabled:cursor-not-allowed"
+        class="text-[13px] font-[600] bg-[color:rgb(var(--accent))] text-white border border-[color:rgb(var(--accent))] rounded-[var(--round-chip)] px-4 py-[7px] cursor-pointer hover:brightness-95 disabled:opacity-50 disabled:cursor-not-allowed"
       >
         Add
       </button>
+    </div>
     </div>
   </div>
 </div>
