@@ -1,0 +1,298 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>HUD context menu</title>
+<style>
+  :root { color-scheme: light; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; }
+  body {
+    --accent: 20, 150, 220;
+    --danger: 235, 70, 120;
+    --fill: #eaeff5;
+    --glow: 0.4;
+    background: #eef2f7;
+    color: #26313f;
+    font: 14px/1.5 -apple-system, "Segoe UI", system-ui, sans-serif;
+    display: grid;
+    grid-template-columns: 1fr 300px;
+    min-height: 100vh;
+  }
+  #stage {
+    display: grid; place-items: center; padding: 40px;
+    background:
+      radial-gradient(120% 90% at 50% 0%, #ffffff 0%, #e6ecf3 60%, #dbe3ec 100%),
+      repeating-linear-gradient(0deg,  transparent 0 23px, rgba(20,120,190,.05) 23px 24px),
+      repeating-linear-gradient(90deg, transparent 0 23px, rgba(20,120,190,.05) 23px 24px);
+  }
+
+  /* frosted panel + source-bright frame + low glow — shared HUD material */
+  .menu {
+    position: relative;
+    width: 224px;
+    padding: 5px;
+    background:
+      linear-gradient(180deg, rgba(255,255,255,.95), rgba(255,255,255,.82)),
+      rgba(var(--accent),.06);
+    box-shadow:
+      0 12px 30px rgba(40,70,110,.20),
+      0 0 calc(14px * var(--glow)) rgba(var(--accent), calc(.16 * var(--glow)));
+  }
+  .menu::before {
+    content: ""; position: absolute; inset: 0; padding: 1.5px;
+    background: linear-gradient(150deg, rgba(var(--accent),.95), rgba(var(--accent),.5));
+    -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+    mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+    -webkit-mask-composite: xor; mask-composite: exclude;
+    pointer-events: none;
+  }
+
+  /* target header — stereotype + name, like the node card */
+  .menu .hdr {
+    display: flex; align-items: center; gap: 8px;
+    padding: 7px 9px 8px; margin: 0 1px 4px;
+    border-bottom: 1px solid rgba(var(--accent),.22);
+  }
+  .menu .hdr .meta { display: grid; gap: 2px; min-width: 0; }
+  .menu .hdr .stereo {
+    font: 600 9px/1 ui-monospace, "SF Mono", "Cascadia Code", Menlo, monospace;
+    letter-spacing: .18em; text-transform: uppercase;
+    color: rgb(var(--accent)); opacity: .85;
+  }
+  .menu .hdr .name {
+    font: 700 12px/1 ui-monospace, "SF Mono", "Cascadia Code", Menlo, monospace;
+    letter-spacing: .05em; color: #212a34;
+  }
+
+  .row {
+    position: relative;
+    display: flex; align-items: center; gap: 9px;
+    padding: 6px 9px; border-radius: 2px;
+    cursor: default; user-select: none;
+    font: 500 12.5px/1 -apple-system, "Segoe UI", system-ui, sans-serif;
+    color: #2c3744; white-space: nowrap;
+    transition: background .08s ease, color .08s ease, box-shadow .08s ease;
+  }
+  /* hover / open: soft accent wash, shortcut warms to accent — no frame yet */
+  .row:hover, .row.is-hover, .row.is-open {
+    background: rgba(var(--accent),.12);
+    color: #12212e;
+  }
+  .row:hover .kbd, .row.is-hover .kbd, .row.is-open .kbd {
+    color: rgb(var(--accent)); opacity: .75;
+  }
+  .row:hover .chev, .row.is-hover .chev, .row.is-open .chev { stroke: rgb(var(--accent)); }
+  /* active (pressed): white bg + the shared thin frame.
+     NB: the intended click feel — accent fill washing radially out INTO the
+     frame (like the node select reveal) — waits for the shader port. */
+  .row:active, .row.is-active { background: #fff; }
+  .row:active::after, .row.is-active::after {
+    content: ""; position: absolute; inset: 0; padding: 1px;
+    border-radius: 2px;
+    background: rgb(var(--accent));
+    -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+    mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+    -webkit-mask-composite: xor; mask-composite: exclude;
+    pointer-events: none;
+  }
+  /* danger row carries its own hue through the states */
+  .row.danger:hover, .row.danger.is-hover { background: rgba(var(--danger),.12); }
+  .row.danger:active, .row.danger.is-active { background: #fff; }
+  .row.danger:active::after, .row.danger.is-active::after {
+    background: rgb(var(--danger));
+  }
+  .row .lbl { flex: 1 1 auto; }
+  /* right-aligned shortcut / submenu affordance */
+  .row .kbd {
+    font: 600 10px/1 ui-monospace, "SF Mono", "Cascadia Code", Menlo, monospace;
+    letter-spacing: .06em; color: #9aa6b4;
+  }
+  .row.danger { color: rgb(var(--danger)); }
+  .row.danger .ico { stroke: rgb(var(--danger)); }
+  .row.danger .ico .hollow { fill: rgba(var(--danger), .10); }
+
+  .sep { height: 1px; margin: 4px 8px; background: rgba(var(--accent),.18); }
+
+  /* submenu flyout — same material, opens to the right of its row */
+  .submenu {
+    position: absolute; top: -6px; left: 100%; margin-left: 7px;
+    width: 178px; padding: 5px; z-index: 5;
+    display: none;
+    background:
+      linear-gradient(180deg, rgba(255,255,255,.95), rgba(255,255,255,.82)),
+      rgba(var(--accent),.06);
+    box-shadow:
+      0 12px 30px rgba(40,70,110,.20),
+      0 0 calc(14px * var(--glow)) rgba(var(--accent), calc(.16 * var(--glow)));
+  }
+  .submenu::before {
+    content: ""; position: absolute; inset: 0; padding: 1.5px;
+    background: linear-gradient(150deg, rgba(var(--accent),.95), rgba(var(--accent),.5));
+    -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+    mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+    -webkit-mask-composite: xor; mask-composite: exclude;
+    pointer-events: none;
+  }
+  .row.has-sub:hover > .submenu, .row.is-open > .submenu { display: block; }
+
+  .ico   { flex: 0 0 auto; stroke: rgb(var(--accent)); stroke-width: 1.6; fill: none;
+           stroke-linejoin: round; stroke-linecap: round; }
+  .ico .hollow { fill: var(--fill); }
+  .chev  { flex: 0 0 auto; stroke: #9aa6b4; stroke-width: 1.8; fill: none;
+           stroke-linejoin: round; stroke-linecap: round; }
+
+  aside { padding: 20px 18px; background: #fff; border-left: 1px solid #dbe3ec; overflow-y: auto; }
+  h1 { font-size: 12px; letter-spacing: .16em; text-transform: uppercase; color: #1496dc; margin: 0 0 14px; }
+  .swatches { display: flex; gap: 8px; flex-wrap: wrap; margin: 8px 0 18px; }
+  .swatch { width: 30px; height: 30px; border-radius: 6px; border: 1px solid #cdd7e2; cursor: pointer; }
+  .swatch.sel { outline: 2px solid #1496dc; outline-offset: 2px; }
+  .hint { font-size: 11px; color: #8a97a6; line-height: 1.6; }
+</style>
+</head>
+<body>
+  <div id="stage">
+    <div class="menu">
+
+      <div class="hdr">
+        <svg class="ico" width="18" height="18" viewBox="0 0 24 24">
+          <rect class="hollow" x="4.5" y="5" width="15" height="14" rx="2"/>
+          <line x1="4.5" y1="9.5" x2="19.5" y2="9.5"/>
+        </svg>
+        <div class="meta">
+          <div class="stereo">&laquo;class&raquo;</div>
+          <div class="name">Order</div>
+        </div>
+      </div>
+
+      <div class="row">
+        <svg class="ico" width="16" height="16" viewBox="0 0 24 24">
+          <path class="hollow" d="M4.5,5 h9 v14 h-9 Z"/>
+          <line x1="9.5" y1="12" x2="19" y2="12"/>
+          <path d="M15.5,9 L19,12 L15.5,15"/>
+        </svg>
+        <span class="lbl">Open</span>
+        <span class="kbd">&#9166;</span>
+      </div>
+
+      <div class="row">
+        <svg class="ico" width="16" height="16" viewBox="0 0 24 24">
+          <path class="hollow" d="M14.5,5 L18.5,9 L9,18.5 L5,18.5 L5,14.5 Z"/>
+          <line x1="12.5" y1="7" x2="16.5" y2="11"/>
+        </svg>
+        <span class="lbl">Rename</span>
+        <span class="kbd">F2</span>
+      </div>
+
+      <div class="row has-sub is-open">
+        <svg class="ico" width="16" height="16" viewBox="0 0 24 24">
+          <line x1="12" y1="5.5" x2="12" y2="18.5"/>
+          <line x1="5.5" y1="12" x2="18.5" y2="12"/>
+        </svg>
+        <span class="lbl">Add child</span>
+        <svg class="chev" width="14" height="14" viewBox="0 0 24 24"><path d="M9,6 L15,12 L9,18"/></svg>
+
+        <div class="submenu">
+          <div class="row">
+            <svg class="ico" width="16" height="16" viewBox="0 0 24 24">
+              <rect class="hollow" x="4.5" y="5" width="15" height="14" rx="2"/>
+              <line x1="4.5" y1="9.5" x2="19.5" y2="9.5"/>
+            </svg>
+            <span class="lbl">Class</span>
+          </div>
+          <div class="row is-hover">
+            <svg class="ico" width="16" height="16" viewBox="0 0 24 24">
+              <circle class="hollow" cx="12" cy="12" r="7.5" pathLength="12" stroke-dasharray="3.4 0.6" stroke-linecap="butt"/>
+            </svg>
+            <span class="lbl">Interface</span>
+          </div>
+          <div class="row">
+            <svg class="ico" width="16" height="16" viewBox="0 0 24 24">
+              <rect class="hollow" x="5"  y="5"  width="7" height="7" rx="1"/>
+              <rect class="hollow" x="13" y="5"  width="7" height="7" rx="1"/>
+              <rect class="hollow" x="5"  y="13" width="7" height="7" rx="1"/>
+            </svg>
+            <span class="lbl">Enum</span>
+          </div>
+          <div class="row">
+            <svg class="ico" width="16" height="16" viewBox="0 0 24 24">
+              <path class="hollow" d="M12,4.5 L18.5,8.25 L18.5,15.75 L12,19.5 L5.5,15.75 L5.5,8.25 Z"/>
+            </svg>
+            <span class="lbl">DataType</span>
+          </div>
+          <div class="row">
+            <svg class="ico" width="16" height="16" viewBox="0 0 24 24">
+              <path class="hollow" d="M6.5,4.5 L14,4.5 L17.5,8 L17.5,19.5 L6.5,19.5 Z"/>
+              <path d="M14,4.5 L14,8 L17.5,8"/>
+            </svg>
+            <span class="lbl">Note</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="sep"></div>
+
+      <div class="row is-active">
+        <svg class="ico" width="16" height="16" viewBox="0 0 24 24">
+          <rect class="hollow" x="8" y="8" width="10.5" height="10.5" rx="1.5"/>
+          <path d="M14.5,8 V6 A1.5,1.5 0 0 0 13,4.5 H6 A1.5,1.5 0 0 0 4.5,6 V13 A1.5,1.5 0 0 0 6,14.5 H8"/>
+        </svg>
+        <span class="lbl">Copy</span>
+        <span class="kbd">&#8984;C</span>
+      </div>
+
+      <div class="row">
+        <svg class="ico" width="16" height="16" viewBox="0 0 24 24">
+          <rect class="hollow" x="5.5" y="6" width="13" height="13" rx="1.5"/>
+          <rect class="hollow" x="9" y="3.5" width="6" height="3.5" rx="1"/>
+        </svg>
+        <span class="lbl">Paste</span>
+        <span class="kbd">&#8984;V</span>
+      </div>
+
+      <div class="sep"></div>
+
+      <div class="row danger is-hover">
+        <svg class="ico" width="16" height="16" viewBox="0 0 24 24">
+          <line x1="5" y1="7" x2="19" y2="7"/>
+          <path class="hollow" d="M6.5,7 L7.5,19 H16.5 L17.5,7"/>
+          <path d="M9.5,7 V5 H14.5 V7"/>
+          <line x1="10" y1="10.5" x2="10" y2="15.5"/>
+          <line x1="14" y1="10.5" x2="14" y2="15.5"/>
+        </svg>
+        <span class="lbl">Delete</span>
+        <span class="kbd">Del</span>
+      </div>
+
+    </div>
+  </div>
+
+  <aside>
+    <h1>HUD context menu</h1>
+    <div class="swatches" id="swatches"></div>
+    <p class="hint">
+      Same material as the button, node, and item glyphs: frosted-white panel,
+      thin source-bright accent frame, low glow. A target header carries the
+      stereotype + name (reusing the item glyph); rows pair a HUD glyph with a
+      charcoal label and a dim mono shortcut. Separators are accent-tint hairlines;
+      the submenu row shows a chevron; Delete carries the danger accent. Recolor
+      with the swatches. This is the resting state — hover / submenu states next.
+    </p>
+  </aside>
+
+<script>
+  const colors = [
+    ['Blue','20, 150, 220'], ['Cyan','0, 180, 210'], ['Teal','20, 190, 160'],
+    ['Indigo','90, 110, 240'], ['Amber','230, 150, 20'], ['Green','60, 190, 90'],
+    ['Rose','235, 70, 120'], ['Slate','100, 116, 139'],
+  ];
+  const sw = document.getElementById('swatches');
+  colors.forEach((c,i)=>{ const d=document.createElement('div');
+    d.className='swatch'+(i===0?' sel':''); d.style.background=`rgb(${c[1]})`; d.title=c[0];
+    d.onclick=()=>{ document.body.style.setProperty('--accent', c[1]);
+      [...sw.children].forEach(e=>e.classList.remove('sel')); d.classList.add('sel'); };
+    sw.appendChild(d); });
+</script>
+</body>
+</html>
