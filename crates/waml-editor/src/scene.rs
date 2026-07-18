@@ -13,6 +13,16 @@ pub struct SceneNode {
     /// by `canvas.rs`'s renderer (via `node_style`) to pick an accent color
     /// and optional stereotype guillemet label (U9 mock).
     pub element_type: ElementType,
+    /// User-declared stereotypes (e.g. `aggregateRoot`), rendered as the card's
+    /// «guillemet» eyebrow above the title. Distinct from the metaclass-derived
+    /// `node_style::stereotype_label` (which handles «interface» etc.); this is
+    /// the node's own `stereotype:` front-matter list.
+    pub stereotypes: Vec<String>,
+    /// Attribute compartment rows (visibility marker + name + type token),
+    /// projected via `inspector::build_view` so the canvas renderer and the
+    /// inspector panel share one member projection. Empty for nodes with no
+    /// attributes; only drawn by the focus card today.
+    pub attributes: Vec<crate::inspector::AttrRow>,
     pub rect: Rect,
     pub emphasized: bool,
     pub collapsed: bool,
@@ -31,6 +41,29 @@ pub struct Scene {
     pub nodes: Vec<SceneNode>,
     pub groups: Vec<SolvedGroup>,
     pub edges: Vec<SceneEdge>,
+}
+
+/// Project classifier `key`'s attribute compartment rows via the shared
+/// `inspector::build_view` seam, so the canvas card and the inspector panel
+/// never re-derive UML member extraction. A non-classifier or missing key
+/// yields no rows.
+fn attribute_rows(model: &Model, key: &str) -> Vec<crate::inspector::AttrRow> {
+    use crate::inspector::{build_view, Subject};
+    build_view(model, &Subject::Classifier(key.to_string()))
+        .map(|v| v.attributes)
+        .unwrap_or_default()
+}
+
+/// The card's «stereotype» eyebrow label (raw, no guillemets): the node's own
+/// declared stereotypes if any, else the metaclass-derived label. Shared by the
+/// focus-card sizer (`build_focus_scene`) and its renderer (`draw_focus_card`)
+/// so both measure and draw the same line.
+pub fn focus_eyebrow(stereotypes: &[String], ty: &ElementType) -> Option<String> {
+    if !stereotypes.is_empty() {
+        Some(stereotypes.join(", "))
+    } else {
+        crate::node_style::stereotype_label(ty).map(str::to_string)
+    }
 }
 
 /// Solve `diagram` against `model` and flatten the result into a `Scene`.
@@ -53,10 +86,14 @@ pub fn build_scene(model: &Model, diagram: &Diagram) -> (Scene, Vec<Diagnostic>)
         let element_type = model_node
             .map(|n| n.ty.clone())
             .unwrap_or_else(|| ElementType::Unknown(String::new()));
+        let attributes = attribute_rows(model, key);
+        let stereotypes = model_node.map(|n| n.stereotypes.clone()).unwrap_or_default();
         nodes.push(SceneNode {
             key: key.clone(),
             title,
             element_type,
+            stereotypes,
+            attributes,
             rect: *rect,
             emphasized: flags.emphasized,
             collapsed: flags.collapsed,
@@ -95,14 +132,19 @@ pub fn build_focus_scene(model: &Model, key: &str) -> Scene {
         return Scene { nodes: vec![], groups: vec![], edges: vec![] };
     };
     let title = node.concept.title.clone().unwrap_or_else(|| node.key.clone());
-    let size = crate::sizing::size_of(node, &waml::model::DiagramDisplay::default());
-    let scale = 1.5;
-    let rect = Rect { x: 0.0, y: 0.0, w: size.w * scale, h: size.h * scale };
+    let attributes = attribute_rows(model, key);
+    // The focus card is drawn at zoom 1.0 (world px == screen px), so size it
+    // to wrap the exact compartment layout the renderer will draw.
+    let eyebrow = focus_eyebrow(&node.stereotypes, &node.ty);
+    let layout = crate::sizing::focus_card_layout(&title, &attributes, eyebrow.as_deref());
+    let rect = Rect { x: 0.0, y: 0.0, w: layout.card_w, h: layout.card_h };
     Scene {
         nodes: vec![SceneNode {
             key: key.to_string(),
             title,
             element_type: node.ty.clone(),
+            stereotypes: node.stereotypes.clone(),
+            attributes,
             rect,
             emphasized: true,
             collapsed: false,
@@ -167,6 +209,50 @@ mod tests {
                 ("payment-gateway", "PaymentGateway"),
             ]
         );
+    }
+
+    #[test]
+    fn focus_scene_node_carries_attribute_rows() {
+        let model = mini();
+        let key = model
+            .nodes
+            .iter()
+            .find(|n| n.concept.title.as_deref() == Some("Order"))
+            .unwrap()
+            .key
+            .clone();
+        let scene = build_focus_scene(&model, &key);
+        let node = &scene.nodes[0];
+        // Mirrors order.md's `## Attributes` block, in order.
+        assert_eq!(node.attributes.len(), 2);
+        assert_eq!(node.attributes[0].name, "id");
+        assert_eq!(node.attributes[0].ty, "OrderId");
+        assert_eq!(node.attributes[1].name, "total");
+        assert_eq!(node.attributes[1].ty, "Decimal");
+    }
+
+    #[test]
+    fn focus_scene_node_carries_declared_stereotypes() {
+        let model = mini();
+        let key = model
+            .nodes
+            .iter()
+            .find(|n| n.concept.title.as_deref() == Some("Order"))
+            .unwrap()
+            .key
+            .clone();
+        let scene = build_focus_scene(&model, &key);
+        // order.md declares `stereotype: [aggregateRoot]`.
+        assert_eq!(scene.nodes[0].stereotypes, vec!["aggregateRoot".to_string()]);
+    }
+
+    #[test]
+    fn build_scene_nodes_carry_attribute_rows() {
+        let model = mini();
+        let (scene, _) = build_scene(&model, &model.diagrams[0]);
+        let order = scene.nodes.iter().find(|n| n.key == "order").unwrap();
+        assert_eq!(order.attributes.len(), 2);
+        assert_eq!(order.attributes[0].name, "id");
     }
 
     #[test]

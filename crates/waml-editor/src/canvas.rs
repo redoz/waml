@@ -23,8 +23,28 @@ script_mod! {
         height: Fill
         draw_bg +: { color: atlas.canvas_ground }
         draw_group +: { color: atlas.group_fill }
-        draw_node +: { color: atlas.surface }
-        draw_node_border +: { color: atlas.accent }
+        // Node card: a rounded near-white glass panel carrying the Atlas
+        // "source-bright" frame -- a thin accent stroke that is brightest at
+        // the top-left corner (`frame_hi`) and fades toward the bottom-right
+        // (`frame_lo`), the asymmetric bevel from the HUD mocks. Fill and
+        // frame are one SDF quad (mirrors the fork's own gradient-border
+        // button shader, `widgets/src/button.rs`).
+        draw_node +: {
+            color: atlas.field_bg
+            border_hi: uniform(atlas.frame_hi)
+            border_lo: uniform(atlas.frame_lo)
+            pixel: fn() {
+                let sdf = Sdf2d.viewport(self.pos * self.rect_size)
+                sdf.rect(1.5, 1.5, self.rect_size.x - 3.0, self.rect_size.y - 3.0)
+                sdf.fill_keep(self.color)
+                // Diagonal source-bright frame: bright top-left (frame_hi) ->
+                // dim bottom-right (frame_lo).
+                let bdir = clamp((self.pos.x + self.pos.y) * 0.5, 0.0, 1.0)
+                let stroke = mix(self.border_hi, self.border_lo, bdir)
+                sdf.stroke(stroke, 1.5)
+                return sdf.result
+            }
+        }
         draw_edge +: { color: atlas.text_dim }
         // U9 node-kind accent bars (see `node_style::AccentBucket`): a thin
         // strip drawn along a node's top edge, distinct per kind bucket.
@@ -48,6 +68,64 @@ script_mod! {
                 line_spacing: 1.2
             }
         }
+        // Compartment-body text variants (single IBM Plex Sans face -- no bold
+        // ttf shipped, so the title fakes weight with a larger size). Each just
+        // repaints `draw_text` in an Atlas semantic color; they mirror the
+        // per-bucket `draw_accent_*` fields above.
+        draw_text_title +: {
+            color: atlas.text
+            text_style: TextStyle{
+                font_size: 15
+                font_family: FontFamily{
+                    latin := FontMember{res: crate_resource("self:resources/fonts/IBMPlexSans-Regular.ttf") asc: -0.1 desc: 0.0}
+                }
+                line_spacing: 1.2
+            }
+        }
+        // Each carries the full body text_style: a color-only `+:` override
+        // leaves the DrawText fontless and it silently renders nothing.
+        draw_text_dim +: {
+            color: atlas.text_dim
+            text_style: TextStyle{
+                font_size: 12
+                font_family: FontFamily{
+                    latin := FontMember{res: crate_resource("self:resources/fonts/IBMPlexSans-Regular.ttf") asc: -0.1 desc: 0.0}
+                }
+                line_spacing: 1.2
+            }
+        }
+        draw_text_type +: {
+            color: atlas.accent
+            text_style: TextStyle{
+                font_size: 12
+                font_family: FontFamily{
+                    latin := FontMember{res: crate_resource("self:resources/fonts/IBMPlexSans-Regular.ttf") asc: -0.1 desc: 0.0}
+                }
+                line_spacing: 1.2
+            }
+        }
+        draw_text_pub +: {
+            color: atlas.bucket_green
+            text_style: TextStyle{
+                font_size: 12
+                font_family: FontFamily{
+                    latin := FontMember{res: crate_resource("self:resources/fonts/IBMPlexSans-Regular.ttf") asc: -0.1 desc: 0.0}
+                }
+                line_spacing: 1.2
+            }
+        }
+        draw_text_priv +: {
+            color: atlas.danger
+            text_style: TextStyle{
+                font_size: 12
+                font_family: FontFamily{
+                    latin := FontMember{res: crate_resource("self:resources/fonts/IBMPlexSans-Regular.ttf") asc: -0.1 desc: 0.0}
+                }
+                line_spacing: 1.2
+            }
+        }
+        // Compartment divider: a thin hairline in the frame accent's dim tint.
+        draw_divider +: { color: atlas.surface_border }
     }
 }
 
@@ -68,12 +146,6 @@ pub struct GraphCanvas {
     #[redraw]
     #[live]
     draw_node: DrawColor,
-    /// Thin accent-colored frame under every node's fill (source-bright
-    /// frame, simplified to a flat stroke -- see Atlas `frame_hi`/`frame_lo`
-    /// for the two-stop version used on declarative panels).
-    #[redraw]
-    #[live]
-    draw_node_border: DrawColor,
     #[redraw]
     #[live]
     draw_group: DrawColor,
@@ -107,6 +179,24 @@ pub struct GraphCanvas {
     #[redraw]
     #[live]
     draw_text: DrawText,
+    #[redraw]
+    #[live]
+    draw_text_title: DrawText,
+    #[redraw]
+    #[live]
+    draw_text_dim: DrawText,
+    #[redraw]
+    #[live]
+    draw_text_type: DrawText,
+    #[redraw]
+    #[live]
+    draw_text_pub: DrawText,
+    #[redraw]
+    #[live]
+    draw_text_priv: DrawText,
+    #[redraw]
+    #[live]
+    draw_divider: DrawColor,
 
     #[rust]
     scene: Scene,
@@ -212,7 +302,10 @@ impl Widget for GraphCanvas {
         if !self.fitted && rect.size.x > 0.0 && rect.size.y > 0.0 {
             if let Some(bbox) = bounding_box(&self.scene) {
                 self.camera = if self.focus_mode {
-                    let zoom = 1.5;
+                    // Zoom 1.0 so the card's world units equal screen pixels and
+                    // its fixed-px compartment text lines up exactly (the card is
+                    // sized in `sizing::focus_card_layout` to wrap that layout).
+                    let zoom = 1.0;
                     let (cx_, cy_) = (bbox.x + bbox.w * 0.5, bbox.y + bbox.h * 0.5);
                     Camera {
                         pan_x: cx_ - rect.size.x * 0.5 / zoom,
@@ -272,8 +365,11 @@ impl Widget for GraphCanvas {
             self.draw_edge.draw_abs(cx, seg);
         }
 
-        // Nodes: drawn last so they sit on top of groups and edges.
-        for node in &self.scene.nodes {
+        // Nodes: drawn last so they sit on top of groups and edges. Cloned out
+        // of `self.scene` so the body render can take `&mut self`
+        // (`draw_focus_card`) without holding an immutable borrow of the scene.
+        let nodes = self.scene.nodes.clone();
+        for node in &nodes {
             let (lx, ly) = self.camera.world_to_local(node.rect.x, node.rect.y);
             let screen = Rect {
                 pos: dvec2(rect.pos.x + lx, rect.pos.y + ly),
@@ -282,16 +378,9 @@ impl Widget for GraphCanvas {
                     node.rect.h * self.camera.zoom,
                 ),
             };
-            // Node stroke = accent (source-bright frame, flattened to a
-            // single 1.5px stroke): paint the border rect first, then an
-            // inset fill on top so only a thin ring of the border shows.
-            self.draw_node_border.draw_abs(cx, screen);
-            let inset = 1.5;
-            let fill = Rect {
-                pos: dvec2(screen.pos.x + inset, screen.pos.y + inset),
-                size: dvec2((screen.size.x - 2.0 * inset).max(0.0), (screen.size.y - 2.0 * inset).max(0.0)),
-            };
-            self.draw_node.draw_abs(cx, fill);
+            // Node card: rounded near-white glass fill + source-bright accent
+            // frame, both in draw_node's SDF shader (see script_mod above).
+            self.draw_node.draw_abs(cx, screen);
 
             // U9: a thin accent bar along the node's top edge, colored by its
             // element-type bucket (`node_style::accent_bucket`). `None` (plain
@@ -311,19 +400,23 @@ impl Widget for GraphCanvas {
                 AccentBucket::Unknown => self.draw_accent_unknown.draw_abs(cx, bar),
             }
 
-            // U9: an optional "«stereotype»" guillemet line above the title,
-            // e.g. "«interface»" for `uml.Interface`. Plain classes (no
-            // label) keep the pre-U9 single-line layout.
-            let mut text_y = screen.pos.y + 10.0;
-            if let Some(label) = stereotype_label(&node.element_type) {
-                self.draw_text.draw_abs(
-                    cx,
-                    dvec2(screen.pos.x + 10.0, text_y),
-                    &format!("\u{ab}{label}\u{bb}"),
-                );
-                text_y += 14.0;
+            if self.focus_mode {
+                self.draw_focus_card(cx, screen, node);
+            } else {
+                // Overview: the compact pre-U9 look -- an optional «stereotype»
+                // guillemet line above the title, no compartment body.
+                let mut text_y = screen.pos.y + 10.0;
+                if let Some(label) = stereotype_label(&node.element_type) {
+                    self.draw_text.draw_abs(
+                        cx,
+                        dvec2(screen.pos.x + 10.0, text_y),
+                        &format!("\u{ab}{label}\u{bb}"),
+                    );
+                    text_y += 14.0;
+                }
+                self.draw_text
+                    .draw_abs(cx, dvec2(screen.pos.x + 10.0, text_y), &node.title);
             }
-            self.draw_text.draw_abs(cx, dvec2(screen.pos.x + 10.0, text_y), &node.title);
         }
 
         DrawStep::done()
@@ -331,6 +424,64 @@ impl Widget for GraphCanvas {
 }
 
 impl GraphCanvas {
+    /// Draw the classifier focus card's compartments into `screen` (the card's
+    /// on-screen rect, sized by `sizing::focus_card_layout` to wrap this exact
+    /// layout at zoom 1.0): «stereotype» eyebrow, title, a hairline divider,
+    /// then one attribute row each (visibility marker, name, dim `:`, blue type
+    /// token). Columns come from the same `focus_card_layout` that sized the box,
+    /// and row metrics from the shared `sizing::CARD_*` constants, so the box and
+    /// the drawn layout never drift.
+    fn draw_focus_card(&mut self, cx: &mut Cx2d, screen: Rect, node: &crate::scene::SceneNode) {
+        use crate::sizing::{
+            CARD_DIVIDER_GAP, CARD_EYEBROW_H, CARD_PAD_L, CARD_PAD_T, CARD_ROW_H, CARD_TITLE_H,
+        };
+        // Measure this card's columns from the SAME layout that sized its box in
+        // `build_focus_scene`, so the name/type columns line up with the hull.
+        let eyebrow = crate::scene::focus_eyebrow(&node.stereotypes, &node.element_type);
+        let layout =
+            crate::sizing::focus_card_layout(&node.title, &node.attributes, eyebrow.as_deref());
+        let left = screen.pos.x + CARD_PAD_L;
+        let mut y = screen.pos.y + CARD_PAD_T;
+
+        // «stereotype» eyebrow (dim): the node's own declared stereotypes if any
+        // (e.g. «aggregateRoot»), else the metaclass label (e.g. «interface»).
+        if let Some(label) = &eyebrow {
+            self.draw_text_dim
+                .draw_abs(cx, dvec2(left, y), &crate::sizing::eyebrow_text(label));
+            y += CARD_EYEBROW_H;
+        }
+
+        // Title (faux-bold via the larger `draw_text_title` size).
+        self.draw_text_title.draw_abs(cx, dvec2(left, y), &node.title);
+        y += CARD_TITLE_H;
+
+        // Attribute compartment: a divider, then the rows.
+        let divider = Rect {
+            pos: dvec2(screen.pos.x + 2.0, y),
+            size: dvec2((screen.size.x - 4.0).max(0.0), 1.0),
+        };
+        self.draw_divider.draw_abs(cx, divider);
+        y += CARD_DIVIDER_GAP;
+
+        let name_x = screen.pos.x + layout.name_x;
+        let type_x = screen.pos.x + layout.type_x;
+        for attr in &node.attributes {
+            // Visibility marker: + public (green), - private (red), # / ~ dim.
+            match attr.visibility.as_str() {
+                "+" => self.draw_text_pub.draw_abs(cx, dvec2(left, y), "+"),
+                "-" => self.draw_text_priv.draw_abs(cx, dvec2(left, y), "-"),
+                "" => {}
+                other => self.draw_text_dim.draw_abs(cx, dvec2(left, y), other),
+            }
+            self.draw_text.draw_abs(cx, dvec2(name_x, y), &attr.name);
+            if !attr.ty.is_empty() {
+                self.draw_text_dim.draw_abs(cx, dvec2(type_x - 8.0, y), ":");
+                self.draw_text_type.draw_abs(cx, dvec2(type_x, y), &attr.ty);
+            }
+            y += CARD_ROW_H;
+        }
+    }
+
     pub fn set_scene(&mut self, cx: &mut Cx, scene: Scene) {
         self.scene = scene;
         self.fitted = false;
