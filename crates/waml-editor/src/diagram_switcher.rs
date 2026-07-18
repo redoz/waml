@@ -41,7 +41,7 @@ script_mod! {
             text_style: TextStyle{
                 font_size: 12
                 font_family: FontFamily{
-                    latin := FontMember{res: crate_resource("self:resources/fonts/IBMPlexSans-Regular.ttf") asc: -0.1 desc: 0.0}
+                    latin := FontMember{res: crate_resource("self:resources/fonts/IBM_Plex_Sans/IBMPlexSans-Regular.ttf") asc: -0.1 desc: 0.0}
                 }
                 line_spacing: 1.2
             }
@@ -51,7 +51,7 @@ script_mod! {
             text_style: TextStyle{
                 font_size: 11
                 font_family: FontFamily{
-                    latin := FontMember{res: crate_resource("self:resources/fonts/IBMPlexSans-Regular.ttf") asc: -0.1 desc: 0.0}
+                    latin := FontMember{res: crate_resource("self:resources/fonts/IBM_Plex_Sans/IBMPlexSans-Regular.ttf") asc: -0.1 desc: 0.0}
                 }
                 line_spacing: 1.2
             }
