@@ -11,9 +11,11 @@ approved design; a separate implementation plan is written from it.
   Tailwind stays installed until ALL surfaces (this pass + later passes) are
   converted, then removed in a final cleanup commit.
 - **Scope this pass** (covered surfaces): nodes (ClassifierBox / GenericNode /
-  OkfNode + UML node types), `inspector/*`, tags/stereotype rows, edges,
-  buttons, menus/toolbars. **Out** for later passes: dialogs (except the modal
-  shell), TopBar, Navigator, sequence view, Dock.
+  OkfNode + **all** `Uml*Node` types — the classifier-shaped ones plus the
+  non-classifier shapes `UmlNoteNode` / `UmlActorNode` / `UmlUseCaseNode` /
+  `UmlPackageNode`), `inspector/*`, tags/stereotype rows, edges, buttons,
+  menus/toolbars. **Out** for later passes: dialogs (except the modal shell),
+  TopBar, Navigator, sequence view, Dock.
 - **Font**: IBM Plex Sans (UI) + IBM Plex Mono (node identifiers / code); drop
   Source Sans 3. Bundle via `@fontsource/ibm-plex-sans` + `@fontsource/ibm-plex-mono`.
 - **Light-only** (dark deferred — see `atlas-theme-decision` memory).
@@ -135,6 +137,13 @@ active = white bg + thin masked accent frame + small glow (emissive press).
    ElementPicker → tokens.
 7. **Toolbars/menus** — `SelectionToolbar` pill → `.hud-surface` + `.hud-btn` +
    `.row.danger`; any context menu → `.menu`/`.row`.
+8. **Non-classifier UML nodes** — the shapes that don't ride ClassifierBox:
+   `UmlUseCaseNode` (ellipse → `.hud-surface--node` with `border-radius:50%`),
+   `UmlNoteNode` (folded-corner → bespoke two-layer clip-path frame + drop-shadow
+   glow), `UmlActorNode` (stickman glyph → accent SVG strokes + drop-shadow glow),
+   `UmlPackageNode` (tabbed folder → ClassifierBox body + a frosted accent tab).
+   Each self-themes via inline `--accent` (`hexToTriple`) like the classifier
+   nodes; all fully off Tailwind + hex.
 
 Rationale: node surfaces render under the solver's measured sizing, so prove
 them first; edges depend on node geometry; panels/toolbars are independent
@@ -154,6 +163,10 @@ chrome, last.
 | `InspectorPanel` | `bg-white border-[#d8dee8] rounded-xl shadow-…` | `.hud-surface` (panel knobs) |
 | Inspector kind badge | `bg-[#e6f1fb] text-[#1e88e5]` | `rgba(var(--accent),.12)` + `rgb(var(--accent))` |
 | `SelectionToolbar` | pill `bg-white border rounded-xl`; btns `#1e88e5`/`#dc2626` | `.hud-surface` + `.hud-btn`; danger = `--danger` |
+| `UmlUseCaseNode` | ellipse `border-[#c8d2e0] bg-white shadow-…` | `.hud-surface--node` + `border-radius:50%` (frame/glow inherit the ellipse) |
+| `UmlNoteNode` | folded `clip-path`, cream `bg-[#fffdf3] border-[#e3d9a8]` | frost fill + two-layer clip-path accent frame + `drop-shadow` glow; accent crease |
+| `UmlActorNode` | SVG stickman `stroke:#334155`; `text-slate-800` | strokes `rgb(var(--accent))` + `drop-shadow` glow; name Plex Mono uppercase |
+| `UmlPackageNode` | tab `border-[#d8dee8] bg-white` + ClassifierBox | ClassifierBox body (Atlas) + frosted accent-hairline tab |
 
 ### 3.3 Cross-cutting decisions (approved)
 
@@ -194,6 +207,7 @@ A surface is **done** only when fully off Tailwind. Ledger (this pass):
 | RelEdge + canvas.css select | ☐ | ☐ |
 | InspectorPanel | ☐ | ☐ |
 | SelectionToolbar | ☐ | ☐ |
+| UmlUseCaseNode / UmlNoteNode / UmlActorNode / UmlPackageNode | ☐ | ☐ |
 
 **Mechanical "Tailwind-free" check** per converted file (zero hits = clean):
 ```bash
@@ -223,6 +237,8 @@ Mock ↔ surface pairing for the visual diff:
 - `RelEdge` → `hud-edges-mock.html`
 - `InspectorPanel` → `hud-inspector-mock.html`
 - `SelectionToolbar` → `hud-button-mock.html` + `hud-menu-mock.html`
+- `UmlUseCaseNode` / `UmlNoteNode` / `UmlActorNode` / `UmlPackageNode` →
+  `hud-icons-mock.html` (shape/glyph treatment) + `hud-node-mock.html` (material)
 
 Seeding app state to reach each surface (a node with stereotype + attributes, a
 selected edge, inspector open) — the plan step scripts or hand-drives it via the
