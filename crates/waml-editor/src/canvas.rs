@@ -6,6 +6,7 @@
 //! Structure/hit-handling mirror the fork's `widgets/src/map/view.rs`.
 
 use crate::camera::Camera;
+use crate::node_style::{accent_bucket, stereotype_label, AccentBucket};
 use crate::scene::{bounding_box, Scene};
 use makepad_widgets::*;
 
@@ -23,6 +24,16 @@ script_mod! {
         draw_group +: { color: #x24242f }
         draw_node +: { color: #x3a3a52 }
         draw_edge +: { color: #x6b6b8a }
+        // U9 node-kind accent bars (see `node_style::AccentBucket`): a thin
+        // strip drawn along a node's top edge, distinct per kind bucket.
+        draw_accent_interface +: { color: #x4a8fa8 }
+        draw_accent_enum +: { color: #xc9973f }
+        draw_accent_note +: { color: #xd9c25a }
+        draw_accent_actor +: { color: #x5aa06b }
+        draw_accent_usecase +: { color: #x8ea84a }
+        draw_accent_package +: { color: #x6b5aa0 }
+        draw_accent_behavior +: { color: #xa05a8f }
+        draw_accent_unknown +: { color: #xa85a5a }
         draw_text +: {
             color: #xf0f0f6
             text_style: TextStyle{
@@ -59,6 +70,30 @@ pub struct GraphCanvas {
     #[redraw]
     #[live]
     draw_edge: DrawColor,
+    #[redraw]
+    #[live]
+    draw_accent_interface: DrawColor,
+    #[redraw]
+    #[live]
+    draw_accent_enum: DrawColor,
+    #[redraw]
+    #[live]
+    draw_accent_note: DrawColor,
+    #[redraw]
+    #[live]
+    draw_accent_actor: DrawColor,
+    #[redraw]
+    #[live]
+    draw_accent_usecase: DrawColor,
+    #[redraw]
+    #[live]
+    draw_accent_package: DrawColor,
+    #[redraw]
+    #[live]
+    draw_accent_behavior: DrawColor,
+    #[redraw]
+    #[live]
+    draw_accent_unknown: DrawColor,
     #[redraw]
     #[live]
     draw_text: DrawText,
@@ -238,11 +273,38 @@ impl Widget for GraphCanvas {
                 ),
             };
             self.draw_node.draw_abs(cx, screen);
-            self.draw_text.draw_abs(
-                cx,
-                dvec2(screen.pos.x + 10.0, screen.pos.y + 10.0),
-                &node.title,
-            );
+
+            // U9: a thin accent bar along the node's top edge, colored by its
+            // element-type bucket (`node_style::accent_bucket`). `None` (plain
+            // `Class`, `Association`, unresolved `Diagram`) draws nothing --
+            // that's the pre-U9 look.
+            let bar_h = 4.0_f64.min(screen.size.y);
+            let bar = Rect { pos: screen.pos, size: dvec2(screen.size.x, bar_h) };
+            match accent_bucket(&node.element_type) {
+                AccentBucket::None => {}
+                AccentBucket::Interface => self.draw_accent_interface.draw_abs(cx, bar),
+                AccentBucket::Enum => self.draw_accent_enum.draw_abs(cx, bar),
+                AccentBucket::Note => self.draw_accent_note.draw_abs(cx, bar),
+                AccentBucket::Actor => self.draw_accent_actor.draw_abs(cx, bar),
+                AccentBucket::UseCase => self.draw_accent_usecase.draw_abs(cx, bar),
+                AccentBucket::Package => self.draw_accent_package.draw_abs(cx, bar),
+                AccentBucket::Behavior => self.draw_accent_behavior.draw_abs(cx, bar),
+                AccentBucket::Unknown => self.draw_accent_unknown.draw_abs(cx, bar),
+            }
+
+            // U9: an optional "«stereotype»" guillemet line above the title,
+            // e.g. "«interface»" for `uml.Interface`. Plain classes (no
+            // label) keep the pre-U9 single-line layout.
+            let mut text_y = screen.pos.y + 10.0;
+            if let Some(label) = stereotype_label(&node.element_type) {
+                self.draw_text.draw_abs(
+                    cx,
+                    dvec2(screen.pos.x + 10.0, text_y),
+                    &format!("\u{ab}{label}\u{bb}"),
+                );
+                text_y += 14.0;
+            }
+            self.draw_text.draw_abs(cx, dvec2(screen.pos.x + 10.0, text_y), &node.title);
         }
 
         DrawStep::done()

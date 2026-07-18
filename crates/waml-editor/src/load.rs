@@ -48,7 +48,7 @@ mod tests {
         let paths: Vec<&str> = bundle.iter().map(|(p, _)| p.as_str()).collect();
         assert_eq!(
             paths,
-            ["customer.md", "index.md", "order.md", "orders-diagram.md"]
+            ["customer.md", "index.md", "order.md", "orders-diagram.md", "payment-gateway.md"]
         );
         // Contents are the raw file text.
         let order = bundle.iter().find(|(p, _)| p == "order.md").unwrap();
@@ -58,7 +58,8 @@ mod tests {
     #[test]
     fn load_model_builds_two_nodes_one_diagram() {
         let model = load_model(&fixture_dir()).unwrap();
-        assert_eq!(model.nodes.len(), 2);
+        // Order, Customer, and the U9 PaymentGateway interface (kind-styling fixture).
+        assert_eq!(model.nodes.len(), 3);
         assert_eq!(model.diagrams.len(), 1);
         assert_eq!(model.edges.len(), 1);
     }

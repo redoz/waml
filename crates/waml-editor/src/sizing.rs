@@ -147,8 +147,8 @@ mod tests {
         let model = load::load_model(&dir).unwrap();
         let diagram = &model.diagrams[0];
         let map = size_map(&model, diagram);
-        // Both classifiers get a compact size (fixture diagram shows no attributes).
-        assert_eq!(map.len(), 2);
+        // All three classifiers get a compact size (fixture diagram shows no attributes).
+        assert_eq!(map.len(), 3);
         for size in map.values() {
             assert_eq!(
                 *size,

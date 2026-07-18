@@ -10,6 +10,7 @@ mod doc_tabs;
 mod inspector;
 mod inspector_panel;
 mod load;
+mod node_style;
 mod scene;
 mod selection_toolbar;
 mod shortcuts_overlay;

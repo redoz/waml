@@ -2,13 +2,17 @@
 //! Nothing below this module touches makepad; nothing here touches a GPU.
 
 use waml::diagnostic::Diagnostic;
-use waml::model::{Diagram, Model, RelationshipKind};
+use waml::model::{Diagram, ElementType, Model, RelationshipKind};
 use waml::solve::{solve_diagram, Rect, SolveConfig, SolvedGroup};
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct SceneNode {
     pub key: String,
     pub title: String,
+    /// The node's model element type (`uml.Class`, `uml.Interface`, ...), used
+    /// by `canvas.rs`'s renderer (via `node_style`) to pick an accent color
+    /// and optional stereotype guillemet label (U9 mock).
+    pub element_type: ElementType,
     pub rect: Rect,
     pub emphasized: bool,
     pub collapsed: bool,
@@ -36,26 +40,23 @@ pub fn build_scene(model: &Model, diagram: &Diagram) -> (Scene, Vec<Diagnostic>)
     let sizes = crate::sizing::size_map(model, diagram);
     let (solved, diags) = solve_diagram(diagram, &sizes, &SolveConfig::default());
 
-    let title_of: BTreeMap<&str, String> = model
-        .nodes
-        .iter()
-        .map(|n| {
-            (
-                n.key.as_str(),
-                n.concept.title.clone().unwrap_or_else(|| n.key.clone()),
-            )
-        })
-        .collect();
+    let node_of: BTreeMap<&str, &waml::model::Node> =
+        model.nodes.iter().map(|n| (n.key.as_str(), n)).collect();
 
     let mut nodes = Vec::with_capacity(solved.nodes.len());
     for (key, rect) in &solved.nodes {
         let flags = solved.flags.get(key).copied().unwrap_or_default();
+        let model_node = node_of.get(key.as_str()).copied();
+        let title = model_node
+            .and_then(|n| n.concept.title.clone())
+            .unwrap_or_else(|| key.clone());
+        let element_type = model_node
+            .map(|n| n.ty.clone())
+            .unwrap_or_else(|| ElementType::Unknown(String::new()));
         nodes.push(SceneNode {
             key: key.clone(),
-            title: title_of
-                .get(key.as_str())
-                .cloned()
-                .unwrap_or_else(|| key.clone()),
+            title,
+            element_type,
             rect: *rect,
             emphasized: flags.emphasized,
             collapsed: flags.collapsed,
@@ -101,6 +102,7 @@ pub fn build_focus_scene(model: &Model, key: &str) -> Scene {
         nodes: vec![SceneNode {
             key: key.to_string(),
             title,
+            element_type: node.ty.clone(),
             rect,
             emphasized: true,
             collapsed: false,
@@ -157,7 +159,27 @@ mod tests {
             .map(|n| (n.key.as_str(), n.title.as_str()))
             .collect();
         titles.sort();
-        assert_eq!(titles, [("customer", "Customer"), ("order", "Order")]);
+        assert_eq!(
+            titles,
+            [
+                ("customer", "Customer"),
+                ("order", "Order"),
+                ("payment-gateway", "PaymentGateway"),
+            ]
+        );
+    }
+
+    #[test]
+    fn scene_nodes_carry_their_model_element_type() {
+        let model = mini();
+        let (scene, _) = build_scene(&model, &model.diagrams[0]);
+        let order = scene.nodes.iter().find(|n| n.key == "order").unwrap();
+        let gateway = scene.nodes.iter().find(|n| n.key == "payment-gateway").unwrap();
+        assert_eq!(order.element_type, ElementType::Uml(waml::model::UmlMetaclass::Class));
+        assert_eq!(
+            gateway.element_type,
+            ElementType::Uml(waml::model::UmlMetaclass::Interface)
+        );
     }
 
     #[test]
