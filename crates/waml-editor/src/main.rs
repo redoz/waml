@@ -18,6 +18,7 @@ mod scene;
 mod selection_toolbar;
 mod shortcuts_overlay;
 mod sizing;
+mod start_screen;
 mod statusbar;
 mod theme_atlas;
 mod tool_dock;

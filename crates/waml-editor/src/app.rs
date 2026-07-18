@@ -648,6 +648,7 @@ impl AppMain for App {
         crate::tool_dock::script_mod(vm);
         crate::selection_toolbar::script_mod(vm);
         crate::statusbar::script_mod(vm);
+        crate::start_screen::script_mod(vm);
         self::script_mod(vm)
     }
 
