@@ -11,15 +11,25 @@
 
 <div
   data-group-frame
-  class="pointer-events-none relative h-full w-full rounded-lg border-2 border-dashed border-slate-300 bg-slate-50/40"
+  class="group-frame pointer-events-none relative h-full w-full"
   style={`width:${group.width}px;height:${group.height}px;`}
 >
   {#if group.title}
-    <div
-      data-group-frame-title
-      class="absolute -top-[10px] left-3 bg-[#f7f8fa] px-2 text-[12px] font-semibold text-slate-500"
-    >
+    <div data-group-frame-title class="group-frame__title absolute -top-[10px] left-3 px-2">
       {group.title}
     </div>
   {/if}
 </div>
+
+<style>
+  .group-frame {
+    border-radius: var(--round);
+    border: var(--bw) dashed rgba(var(--ink-faint), 0.5);
+    background: rgba(var(--ink-faint), 0.05);
+  }
+  .group-frame__title {
+    background: var(--canvas-bg);
+    font: 600 12px/1.3 var(--font-ui);
+    color: rgb(var(--ink-faint));
+  }
+</style>
