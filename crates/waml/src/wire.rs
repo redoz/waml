@@ -14,6 +14,7 @@ use crate::model::{
 };
 use crate::okf::Concept;
 use crate::syntax::LayoutStatement;
+use std::collections::HashMap;
 
 #[derive(Debug, Clone, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -140,31 +141,42 @@ pub struct WireDiagram {
 /// `Model.concepts` here without changing this signature or the wasm caller.
 pub fn build_wire(model: &Model) -> WireGraph {
     WireGraph {
-        nodes: model.nodes.iter().map(wire_node).collect(),
+        nodes: model
+            .nodes
+            .iter()
+            .map(|n| wire_node(n, &model.concepts))
+            .collect(),
         edges: model.edges.iter().map(wire_edge).collect(),
         diagrams: model.diagrams.iter().map(wire_diagram).collect(),
         path: model.path.clone(),
-        packages: model.packages.iter().map(wire_node).collect(),
+        packages: model
+            .packages
+            .iter()
+            .map(|n| wire_node(n, &model.concepts))
+            .collect(),
         flows: model.flows.clone(),
         interactions: model.interactions.clone(),
     }
 }
 
-// Task 2: the object-model `Node` still carries `concept` + flat UML fields, so
-// this copies them straight across. Task 3 rewrites the body to read `concept`
-// from `Model.concepts` and the UML fields via `Node` accessors.
-fn wire_node(n: &Node) -> WireNode {
+/// Project a substrate `Node` (Concept off-node, spec §2) into the flat wire
+/// shape: the concept is re-joined from `Model.concepts`, and every UML field
+/// is read via `Node` accessors rather than a raw field/variant match.
+fn wire_node(n: &Node, concepts: &HashMap<String, Concept>) -> WireNode {
     WireNode {
-        concept: n.concept.clone(),
+        concept: concepts
+            .get(&n.key)
+            .cloned()
+            .expect("every wire node has a Concept in Model.concepts (build_model invariant)"),
         key: n.key.clone(),
-        ty: n.ty.clone(),
-        stereotypes: n.stereotypes.clone(),
-        abstract_: n.abstract_,
-        attributes: n.attributes.clone(),
-        values: n.values.clone(),
-        note_body: n.note_body.clone(),
-        annotates: n.annotates.clone(),
-        members: n.members.clone(),
+        ty: n.ty(),
+        stereotypes: n.stereotypes().to_vec(),
+        abstract_: n.is_abstract(),
+        attributes: n.attributes().to_vec(),
+        values: n.values().to_vec(),
+        note_body: n.note_body().map(str::to_string),
+        annotates: n.annotates().to_vec(),
+        members: n.members().to_vec(),
     }
 }
 

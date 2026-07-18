@@ -276,7 +276,11 @@ enum BundleFormat {
 fn main() {
     let cli = Cli::parse();
     let code = match cli.command {
-        Command::Check { paths, stdin, format } => {
+        Command::Check {
+            paths,
+            stdin,
+            format,
+        } => {
             let bundle = match io::read_bundle(&paths, stdin) {
                 Ok(b) => b,
                 Err(e) => {
@@ -292,7 +296,11 @@ fn main() {
             println!("{out}");
             commands::check_exit_code(&diags)
         }
-        Command::Fmt { paths, check, stdout } => {
+        Command::Fmt {
+            paths,
+            check,
+            stdout,
+        } => {
             let files = match io::read_files(&paths) {
                 Ok(f) => f,
                 Err(e) => {
@@ -334,61 +342,177 @@ fn main() {
         Command::Show { slug, query } => run_show(&slug, &query),
         Command::Refs { slug, query } => run_refs(&slug, &query),
         Command::List { r#type, query } => run_list(&r#type, &query),
-        Command::Bundle { dir, format, out, export_name } => run_bundle(&dir, format, out, export_name),
+        Command::Bundle {
+            dir,
+            format,
+            out,
+            export_name,
+        } => run_bundle(&dir, format, out, export_name),
     };
     std::process::exit(code);
 }
 
 fn node_dto(a: NodeCmd) -> OpDto {
     match a {
-        NodeCmd::New { slug, r#type, title, stereotype, desc, r#abstract } => {
-            OpDto::NodeNew { v: 1, slug, dir: String::new(), ty: r#type, title, stereotype, desc, abstract_: r#abstract }
-        }
+        NodeCmd::New {
+            slug,
+            r#type,
+            title,
+            stereotype,
+            desc,
+            r#abstract,
+        } => OpDto::NodeNew {
+            v: 1,
+            slug,
+            dir: String::new(),
+            ty: r#type,
+            title,
+            stereotype,
+            desc,
+            abstract_: r#abstract,
+        },
         NodeCmd::Rename { from, to } => OpDto::NodeRename { v: 1, from, to },
-        NodeCmd::Set { slug, title, desc, stereotype, r#abstract, r#type } => {
-            OpDto::NodeSet { v: 1, slug, title, desc, stereotype, abstract_: r#abstract, ty: r#type }
-        }
-        NodeCmd::Rm { slug, cascade } => OpDto::NodeRm { v: 1, slug, cascade },
+        NodeCmd::Set {
+            slug,
+            title,
+            desc,
+            stereotype,
+            r#abstract,
+            r#type,
+        } => OpDto::NodeSet {
+            v: 1,
+            slug,
+            title,
+            desc,
+            stereotype,
+            abstract_: r#abstract,
+            ty: r#type,
+        },
+        NodeCmd::Rm { slug, cascade } => OpDto::NodeRm {
+            v: 1,
+            slug,
+            cascade,
+        },
     }
 }
 
 fn attr_dto(a: AttrCmd) -> OpDto {
     match a {
-        AttrCmd::Add { node, name, r#type, mult, vis } => {
-            OpDto::AttrAdd { v: 1, node, name, ty: r#type, mult, vis }
-        }
-        AttrCmd::Set { node, name, r#type, mult, vis, rename } => {
-            OpDto::AttrSet { v: 1, node, name, ty: r#type, mult, vis, rename }
-        }
+        AttrCmd::Add {
+            node,
+            name,
+            r#type,
+            mult,
+            vis,
+        } => OpDto::AttrAdd {
+            v: 1,
+            node,
+            name,
+            ty: r#type,
+            mult,
+            vis,
+        },
+        AttrCmd::Set {
+            node,
+            name,
+            r#type,
+            mult,
+            vis,
+            rename,
+        } => OpDto::AttrSet {
+            v: 1,
+            node,
+            name,
+            ty: r#type,
+            mult,
+            vis,
+            rename,
+        },
         AttrCmd::Rm { node, name } => OpDto::AttrRm { v: 1, node, name },
     }
 }
 
 fn value_dto(a: ValueCmd) -> OpDto {
     match a {
-        ValueCmd::Add { node, literal } => OpDto::ValueAdd { v: 1, node, literal },
-        ValueCmd::Rm { node, literal } => OpDto::ValueRm { v: 1, node, literal },
+        ValueCmd::Add { node, literal } => OpDto::ValueAdd {
+            v: 1,
+            node,
+            literal,
+        },
+        ValueCmd::Rm { node, literal } => OpDto::ValueRm {
+            v: 1,
+            node,
+            literal,
+        },
     }
 }
 
 fn rel_dto(a: RelCmd) -> OpDto {
     match a {
-        RelCmd::Add { source, verb, target, ends, as_label, as_ref } => {
-            OpDto::RelAdd { v: 1, source, kind: verb, target, as_label, as_ref, ends }
-        }
-        RelCmd::Set { source, verb, target, as_sel, ends, set_label, set_as_ref } => {
-            OpDto::RelSet { v: 1, source, kind: verb, target, as_sel, ends, set_label, set_as_ref }
-        }
-        RelCmd::Rm { source, verb, target, as_sel } => OpDto::RelRm { v: 1, source, kind: verb, target, as_sel },
+        RelCmd::Add {
+            source,
+            verb,
+            target,
+            ends,
+            as_label,
+            as_ref,
+        } => OpDto::RelAdd {
+            v: 1,
+            source,
+            kind: verb,
+            target,
+            as_label,
+            as_ref,
+            ends,
+        },
+        RelCmd::Set {
+            source,
+            verb,
+            target,
+            as_sel,
+            ends,
+            set_label,
+            set_as_ref,
+        } => OpDto::RelSet {
+            v: 1,
+            source,
+            kind: verb,
+            target,
+            as_sel,
+            ends,
+            set_label,
+            set_as_ref,
+        },
+        RelCmd::Rm {
+            source,
+            verb,
+            target,
+            as_sel,
+        } => OpDto::RelRm {
+            v: 1,
+            source,
+            kind: verb,
+            target,
+            as_sel,
+        },
     }
 }
 
 fn to_blob(bundle: &[(String, String)]) -> String {
-    bundle.iter().map(|(p, c)| format!("<!-- {p} -->\n{c}")).collect::<Vec<_>>().join("\n")
+    bundle
+        .iter()
+        .map(|(p, c)| format!("<!-- {p} -->\n{c}"))
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 fn run_mutation(common: &Common, dto: OpDto) -> i32 {
-    if [common.emit, common.stdout, common.dry_run].iter().filter(|x| **x).count() > 1 {
+    if [common.emit, common.stdout, common.dry_run]
+        .iter()
+        .filter(|x| **x)
+        .count()
+        > 1
+    {
         eprintln!("waml: --emit, --stdout, --dry-run mutually exclusive");
         return 2;
     }
@@ -446,7 +570,11 @@ fn run_batch(common: &Common, ops: Vec<waml::ops::Op>) -> i32 {
             }
         }
         Err(e) => {
-            let sel = e.selector.as_ref().map(|s| format!(" [{s}]")).unwrap_or_default();
+            let sel = e
+                .selector
+                .as_ref()
+                .map(|s| format!(" [{s}]"))
+                .unwrap_or_default();
             eprintln!("waml: op {}: {}{sel}", e.index, e.reason);
             1
         }
@@ -496,14 +624,23 @@ fn run_show(slug: &str, q: &QueryArgs) -> i32 {
     };
     match q.format {
         Format::Human => {
-            println!("{} ({})", node.concept.title.as_deref().unwrap_or("Untitled"), node.ty.as_str());
-            for a in &node.attributes {
-                println!("  - {}: {} {{{}}}", a.name, a.ty.name, a.multiplicity.as_str());
+            println!("{} ({})", node.label, node.ty().as_str());
+            for a in node.attributes() {
+                println!(
+                    "  - {}: {} {{{}}}",
+                    a.name,
+                    a.ty.name,
+                    a.multiplicity.as_str()
+                );
             }
-            for v in &node.values {
+            for v in node.values() {
                 println!("  = {v}");
             }
-            for e in model.edges.iter().filter(|e| e.source == slug || e.target == slug) {
+            for e in model
+                .edges
+                .iter()
+                .filter(|e| e.source == slug || e.target == slug)
+            {
                 println!("  {} {} {}", e.source, e.kind.as_str(), e.target);
             }
             0
@@ -511,14 +648,17 @@ fn run_show(slug: &str, q: &QueryArgs) -> i32 {
         Format::Json => {
             let refs = waml::ops::referrers(&bundle, slug);
             let dto = serde_json::json!({
-                "slug": slug, "title": node.concept.title.as_deref().unwrap_or("Untitled"), "type": node.ty.as_str(),
-                "attributes": node.attributes.iter().map(|a| serde_json::json!({
+                "slug": slug, "title": node.label, "type": node.ty().as_str(),
+                "attributes": node.attributes().iter().map(|a| serde_json::json!({
                     "name": a.name, "type": a.ty.name, "ref": a.ty.ref_, "multiplicity": a.multiplicity.as_str()
                 })).collect::<Vec<_>>(),
-                "values": node.values,
+                "values": node.values(),
                 "referrers": refs,
             });
-            println!("{}", serde_json::to_string_pretty(&dto).unwrap_or_else(|_| "{}".into()));
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&dto).unwrap_or_else(|_| "{}".into())
+            );
             0
         }
     }
@@ -543,12 +683,20 @@ fn run_refs(slug: &str, q: &QueryArgs) -> i32 {
                 }
             }
         }
-        Format::Json => println!("{}", serde_json::to_string(&refs).unwrap_or_else(|_| "[]".into())),
+        Format::Json => println!(
+            "{}",
+            serde_json::to_string(&refs).unwrap_or_else(|_| "[]".into())
+        ),
     }
     0
 }
 
-fn run_bundle(dir: &PathBuf, format: BundleFormat, out: Option<PathBuf>, export_name: Option<String>) -> i32 {
+fn run_bundle(
+    dir: &PathBuf,
+    format: BundleFormat,
+    out: Option<PathBuf>,
+    export_name: Option<String>,
+) -> i32 {
     let export_name = match (format, export_name) {
         (BundleFormat::Ts, None) => {
             eprintln!("waml: --export-name required when --format ts");
@@ -589,11 +737,14 @@ fn run_list(ty: &Option<String>, q: &QueryArgs) -> i32 {
     };
     let model = waml::parse::build_model(&bundle);
     for n in &model.nodes {
-        if ty.as_deref().map(|t| t == n.ty.as_str()).unwrap_or(true) {
+        if ty.as_deref().map(|t| t == n.ty().as_str()).unwrap_or(true) {
             match q.format {
-                Format::Human => println!("{}\t{}\t{}", n.key, n.ty.as_str(), n.concept.title.as_deref().unwrap_or("Untitled")),
+                Format::Human => println!("{}\t{}\t{}", n.key, n.ty().as_str(), n.label),
                 Format::Json => {
-                    println!("{}", serde_json::json!({"slug": n.key, "type": n.ty.as_str(), "title": n.concept.title.as_deref().unwrap_or("Untitled")}))
+                    println!(
+                        "{}",
+                        serde_json::json!({"slug": n.key, "type": n.ty().as_str(), "title": n.label})
+                    )
                 }
             }
         }
@@ -609,7 +760,11 @@ mod tests {
     fn parses_check_with_json_flag() {
         let cli = Cli::try_parse_from(["waml", "check", "a.md", "--format", "json"]).unwrap();
         match cli.command {
-            Command::Check { paths, format, stdin } => {
+            Command::Check {
+                paths,
+                format,
+                stdin,
+            } => {
                 assert_eq!(paths.len(), 1);
                 assert_eq!(format, Format::Json);
                 assert!(!stdin);
@@ -632,14 +787,24 @@ mod tests {
 
     #[test]
     fn parses_attr_add() {
-        let cli = Cli::try_parse_from(["waml", "attr", "add", "order", "total", "Money", "--mult", "0..1"]).unwrap();
+        let cli = Cli::try_parse_from([
+            "waml", "attr", "add", "order", "total", "Money", "--mult", "0..1",
+        ])
+        .unwrap();
         assert!(matches!(cli.command, Command::Attr { .. }));
     }
 
     #[test]
     fn parses_rel_add_with_ends() {
         let cli = Cli::try_parse_from([
-            "waml", "rel", "add", "order", "composes", "order-line", "--ends", "1 to 1..* lines",
+            "waml",
+            "rel",
+            "add",
+            "order",
+            "composes",
+            "order-line",
+            "--ends",
+            "1 to 1..* lines",
         ])
         .unwrap();
         assert!(matches!(cli.command, Command::Rel { .. }));
@@ -647,18 +812,41 @@ mod tests {
 
     #[test]
     fn parses_apply_and_show() {
-        assert!(matches!(Cli::try_parse_from(["waml", "apply", "ops.ndjson"]).unwrap().command, Command::Apply { .. }));
-        assert!(matches!(Cli::try_parse_from(["waml", "show", "order"]).unwrap().command, Command::Show { .. }));
+        assert!(matches!(
+            Cli::try_parse_from(["waml", "apply", "ops.ndjson"])
+                .unwrap()
+                .command,
+            Command::Apply { .. }
+        ));
+        assert!(matches!(
+            Cli::try_parse_from(["waml", "show", "order"])
+                .unwrap()
+                .command,
+            Command::Show { .. }
+        ));
     }
 
     #[test]
     fn parses_bundle_with_ts_format_and_export_name() {
         let cli = Cli::try_parse_from([
-            "waml", "bundle", "dir", "--format", "ts", "--export-name", "myBundle", "--out", "out.ts",
+            "waml",
+            "bundle",
+            "dir",
+            "--format",
+            "ts",
+            "--export-name",
+            "myBundle",
+            "--out",
+            "out.ts",
         ])
         .unwrap();
         match cli.command {
-            Command::Bundle { dir, format, out, export_name } => {
+            Command::Bundle {
+                dir,
+                format,
+                out,
+                export_name,
+            } => {
                 assert_eq!(dir, PathBuf::from("dir"));
                 assert_eq!(format, BundleFormat::Ts);
                 assert_eq!(out, Some(PathBuf::from("out.ts")));
@@ -671,6 +859,12 @@ mod tests {
     #[test]
     fn parses_bundle_default_format_is_json() {
         let cli = Cli::try_parse_from(["waml", "bundle", "dir"]).unwrap();
-        assert!(matches!(cli.command, Command::Bundle { format: BundleFormat::Json, .. }));
+        assert!(matches!(
+            cli.command,
+            Command::Bundle {
+                format: BundleFormat::Json,
+                ..
+            }
+        ));
     }
 }

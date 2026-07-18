@@ -11,7 +11,8 @@ use std::collections::{HashMap, HashSet};
 
 use crate::model::{
     Attribute, BehaviorKind, Diagram, DiagramDisplay, DiagramGroup, Edge, ElementType, FlowDoc,
-    FlowEdge, FlowFlavor, FlowNode, Lifeline, Model, Node, SeqItem, SeqOperand, SequenceDoc,
+    FlowEdge, FlowFlavor, FlowNode, Lifeline, Model, Node, NodeKind, SeqItem, SeqOperand,
+    SequenceDoc,
 };
 
 struct Head {
@@ -22,7 +23,10 @@ struct Head {
 
 /// 1-based line number of byte offset `byte` within `src`.
 pub(crate) fn line_at(src: &str, byte: usize) -> usize {
-    1 + src[..byte.min(src.len())].bytes().filter(|&b| b == b'\n').count()
+    1 + src[..byte.min(src.len())]
+        .bytes()
+        .filter(|&b| b == b'\n')
+        .count()
 }
 
 /// Byte range of `[Title](./slug.md)` within `line`, or the whole bullet.
@@ -112,18 +116,33 @@ fn walk_bullets<T>(
 /// Build a `Section` from its heading title and content, wiring bullet sections
 /// with in-tree `Line::Error` nodes. `content_abs_start` is the byte offset of
 /// `content`'s first byte within `src`.
-fn walk_section(title: &str, content: &str, content_abs_start: usize, src: &str, raw_full: &str) -> Section {
+fn walk_section(
+    title: &str,
+    content: &str,
+    content_abs_start: usize,
+    src: &str,
+    raw_full: &str,
+) -> Section {
     match title.to_lowercase().as_str() {
         "attributes" => Section::Attributes(walk_bullets(
-            content, content_abs_start, src, DiagCode::MalformedAttribute,
+            content,
+            content_abs_start,
+            src,
+            DiagCode::MalformedAttribute,
             |line, _ln| parse_attribute_line(line),
         )),
         "values" => Section::Values(walk_bullets(
-            content, content_abs_start, src, DiagCode::DroppableContent,
+            content,
+            content_abs_start,
+            src,
+            DiagCode::DroppableContent,
             |line, _ln| parse_value_line(line),
         )),
         "relationships" => Section::Relationships(walk_bullets(
-            content, content_abs_start, src, DiagCode::MalformedRelationship,
+            content,
+            content_abs_start,
+            src,
+            DiagCode::MalformedRelationship,
             |line, ln| {
                 parse_relationship_line(line).map(|mut r| {
                     r.line = ln;
@@ -132,9 +151,16 @@ fn walk_section(title: &str, content: &str, content_abs_start: usize, src: &str,
                 })
             },
         )),
-        "nodes" => Section::Nodes(crate::grammar::parse_flow_block(content, content_abs_start, src)),
+        "nodes" => Section::Nodes(crate::grammar::parse_flow_block(
+            content,
+            content_abs_start,
+            src,
+        )),
         "lifelines" => Section::Lifelines(walk_bullets(
-            content, content_abs_start, src, DiagCode::MalformedLifeline,
+            content,
+            content_abs_start,
+            src,
+            DiagCode::MalformedLifeline,
             |line, ln| {
                 crate::grammar::parse_lifeline_line(line).map(|mut l| {
                     l.line = ln;
@@ -143,18 +169,37 @@ fn walk_section(title: &str, content: &str, content_abs_start: usize, src: &str,
                 })
             },
         )),
-        "messages" => Section::Messages(crate::grammar::parse_messages_block(content, content_abs_start, src)),
-        "members" => Section::Members(crate::grammar::parse_members_block(content, content_abs_start, src)),
+        "messages" => Section::Messages(crate::grammar::parse_messages_block(
+            content,
+            content_abs_start,
+            src,
+        )),
+        "members" => Section::Members(crate::grammar::parse_members_block(
+            content,
+            content_abs_start,
+            src,
+        )),
         "body" => Section::Body(content.trim().to_string()),
         "notes" => Section::Notes(walk_bullets(
-            content, content_abs_start, src, DiagCode::DroppableContent,
+            content,
+            content_abs_start,
+            src,
+            DiagCode::DroppableContent,
             |line, _ln| parse_value_line(line),
         )),
         "layout" => Section::Layout(walk_bullets(
-            content, content_abs_start, src, DiagCode::MalformedLayout,
-            |line, ln| crate::layout::parse_layout_line(line).map(|stmt| LayoutItem { line: ln, stmt }),
+            content,
+            content_abs_start,
+            src,
+            DiagCode::MalformedLayout,
+            |line, ln| {
+                crate::layout::parse_layout_line(line).map(|stmt| LayoutItem { line: ln, stmt })
+            },
         )),
-        _ => Section::Unknown { title: title.to_string(), raw: raw_full.trim_end().to_string() },
+        _ => Section::Unknown {
+            title: title.to_string(),
+            raw: raw_full.trim_end().to_string(),
+        },
     }
 }
 
@@ -176,15 +221,24 @@ fn push_group_errors(g: &crate::syntax::MemberGroup, out: &mut Vec<Diagnostic>) 
 
 /// Push a `## Messages` block's `Line::Error` nodes as diagnostics, recursing
 /// into fragment operands (and each fragment's own misplaced-line errors).
-fn push_seq_errors(items: &[crate::syntax::Line<crate::syntax::SeqItemSyntax>], out: &mut Vec<Diagnostic>) {
+fn push_seq_errors(
+    items: &[crate::syntax::Line<crate::syntax::SeqItemSyntax>],
+    out: &mut Vec<Diagnostic>,
+) {
     for it in items {
         match it {
             crate::syntax::Line::Error(e) => {
                 out.push(Diagnostic::new(e.code, e.message.clone(), "", e.line).with_span(e.span));
             }
-            crate::syntax::Line::Parsed(crate::syntax::SeqItemSyntax::Fragment { operands, errors, .. }) => {
+            crate::syntax::Line::Parsed(crate::syntax::SeqItemSyntax::Fragment {
+                operands,
+                errors,
+                ..
+            }) => {
                 for e in errors {
-                    out.push(Diagnostic::new(e.code, e.message.clone(), "", e.line).with_span(e.span));
+                    out.push(
+                        Diagnostic::new(e.code, e.message.clone(), "", e.line).with_span(e.span),
+                    );
                 }
                 for op in operands {
                     push_seq_errors(&op.items, out);
@@ -215,7 +269,9 @@ pub fn diagnostics_of(doc: &Document) -> Vec<Diagnostic> {
             }
             Section::Nodes(block) => {
                 for e in &block.preamble_errors {
-                    out.push(Diagnostic::new(e.code, e.message.clone(), "", e.line).with_span(e.span));
+                    out.push(
+                        Diagnostic::new(e.code, e.message.clone(), "", e.line).with_span(e.span),
+                    );
                 }
                 for n in &block.nodes {
                     push_line_errors(&n.bullets, &mut out);
@@ -299,7 +355,12 @@ fn scan_frontmatter_and_preamble(src: &str) -> Vec<Diagnostic> {
         if !trimmed.is_empty() {
             let is_h1 = trimmed.starts_with('#') && !trimmed.starts_with("##");
             if !is_h1 {
-                diags.push(Diagnostic::new(DiagCode::DroppableContent, DROPPABLE_MSG, "", n));
+                diags.push(Diagnostic::new(
+                    DiagCode::DroppableContent,
+                    DROPPABLE_MSG,
+                    "",
+                    n,
+                ));
             }
         }
     }
@@ -325,9 +386,15 @@ pub fn parse(src: &str) -> (Document, Vec<Diagnostic>) {
 
     for (ev, range) in parser {
         match ev {
-            Event::Start(Tag::Heading { level: HeadingLevel::H1, .. }) => in_h1 = true,
+            Event::Start(Tag::Heading {
+                level: HeadingLevel::H1,
+                ..
+            }) => in_h1 = true,
             Event::End(TagEnd::Heading(HeadingLevel::H1)) => in_h1 = false,
-            Event::Start(Tag::Heading { level: HeadingLevel::H2, .. }) => {
+            Event::Start(Tag::Heading {
+                level: HeadingLevel::H2,
+                ..
+            }) => {
                 in_h2 = true;
                 cur_title = String::new();
                 pending_heading_start = range.start;
@@ -354,16 +421,29 @@ pub fn parse(src: &str) -> (Document, Vec<Diagnostic>) {
 
     let mut sections = Vec::new();
     for (i, head) in heads.iter().enumerate() {
-        let end = heads.get(i + 1).map(|h| h.heading_start).unwrap_or(body.len());
+        let end = heads
+            .get(i + 1)
+            .map(|h| h.heading_start)
+            .unwrap_or(body.len());
         let raw_slice = &body[head.content_start..end];
         let lead = raw_slice.len() - raw_slice.trim_start().len();
         let content = raw_slice.trim();
         let content_abs_start = body_offset + head.content_start + lead;
         let raw_full = &body[head.heading_start..end];
-        sections.push(walk_section(&head.title, content, content_abs_start, src, raw_full));
+        sections.push(walk_section(
+            &head.title,
+            content,
+            content_abs_start,
+            src,
+            raw_full,
+        ));
     }
 
-    let doc = Document { frontmatter, title: title.trim().to_string(), sections };
+    let doc = Document {
+        frontmatter,
+        title: title.trim().to_string(),
+        sections,
+    };
     let mut diags = diagnostics_of(&doc);
     diags.extend(scan_frontmatter_and_preamble(src));
     (doc, diags)
@@ -425,7 +505,14 @@ fn parse_bundle(bundle: &[(String, String)]) -> Vec<ParsedDoc> {
             let doc = parse_document(text);
             let ty = ElementType::parse(doc.frontmatter.get_str("type").unwrap_or("uml.Class"));
             let concept = crate::okf::project(path, text);
-            ParsedDoc { path: path.clone(), slug: doc_slug(path), id: crate::okf::id_of(path), ty, doc, concept }
+            ParsedDoc {
+                path: path.clone(),
+                slug: doc_slug(path),
+                id: crate::okf::id_of(path),
+                ty,
+                doc,
+                concept,
+            }
         })
         .collect()
 }
@@ -439,46 +526,83 @@ fn resolve_attr(attr: &Attribute, referring_path: &str, keyset: &HashSet<&str>) 
     a
 }
 
-fn build_node(p: &ParsedDoc, keyset: &HashSet<&str>) -> Node {
+fn build_node(p: &ParsedDoc, keyset: &HashSet<&str>) -> (Node, crate::okf::Concept) {
+    use crate::uml::{Classifier, ClassifierKind, Structural, UmlNode};
     let fm = &p.doc.frontmatter;
     let mut attributes = Vec::new();
     let mut values = Vec::new();
     let mut body = None;
     for s in &p.doc.sections {
         match s {
-            Section::Attributes(a) => attributes = a.iter().filter_map(Line::parsed).map(|x| resolve_attr(x, &p.path, keyset)).collect(),
+            Section::Attributes(a) => {
+                attributes = a
+                    .iter()
+                    .filter_map(Line::parsed)
+                    .map(|x| resolve_attr(x, &p.path, keyset))
+                    .collect()
+            }
             Section::Values(v) => values = v.iter().filter_map(Line::parsed).cloned().collect(),
             Section::Body(b) => body = Some(b.clone()),
             _ => {}
         }
     }
-    // title/description/verbatim body now live only on `concept` (single source,
-    // resolved in `okf::project`). `note_body` carries the `## Body` prose.
-    Node {
-        concept: p.concept.clone(),
+    let stereotypes = fm.get_string_list("stereotype");
+    let abstract_ = fm.get_bool("abstract") == Some(true);
+
+    // Map the parse-time ElementType onto the ontology seam. `classifiers` in
+    // `build_model` already excludes Diagram/Behavior/index/log; Package is built
+    // in `build_packages`. So only Classifier metaclasses, Note, and Unknown reach here.
+    let kind = match &p.ty {
+        ElementType::Uml(mc) => match ClassifierKind::parse(mc.name()) {
+            Some(ck) => NodeKind::Uml(UmlNode::Classifier(Classifier {
+                kind: ck,
+                stereotypes,
+                abstract_,
+                attributes,
+                values,
+            })),
+            // Only `Note` has no ClassifierKind here (Package is elsewhere).
+            None => NodeKind::Uml(UmlNode::Structural(Structural::Note {
+                body,
+                annotates: Vec::new(), // deferred: uml.Note anchors
+            })),
+        },
+        ElementType::Unknown(s) => NodeKind::Unknown(s.clone()),
+        ElementType::Diagram | ElementType::Behavior(_) => {
+            unreachable!("Diagram/Behavior docs are not built as nodes")
+        }
+    };
+
+    let node = Node {
         key: p.id.clone(),
-        ty: p.ty.clone(),
-        stereotypes: fm.get_string_list("stereotype"),
-        abstract_: fm.get_bool("abstract") == Some(true),
-        attributes,
-        values,
-        note_body: body, // uml.Note prose (`## Body`)
-        annotates: Vec::new(), // deferred: uml.Note anchors
-        members: Vec::new(),    // classifiers own no members
-    }
+        label: doc_title(p),
+        kind,
+    };
+    (node, p.concept.clone())
 }
 
 /// Resolved title of a doc (frontmatter `title`, else H1, else its slug).
 fn doc_title(p: &ParsedDoc) -> String {
-    p.doc.frontmatter.get_str("title").map(String::from).unwrap_or_else(|| {
-        if p.doc.title.is_empty() { p.slug.clone() } else { p.doc.title.clone() }
-    })
+    p.doc
+        .frontmatter
+        .get_str("title")
+        .map(String::from)
+        .unwrap_or_else(|| {
+            if p.doc.title.is_empty() {
+                p.slug.clone()
+            } else {
+                p.doc.title.clone()
+            }
+        })
 }
 
 /// Directory of a bundle path ("" for root). Forward-slash normalized.
 fn dir_of(path: &str) -> String {
     let p = path.replace('\\', "/");
-    match p.rfind('/') { Some(i) => p[..i].to_string(), None => String::new() }
+    match p.rfind('/') {
+        Some(i) => p[..i].to_string(),
+        None => String::new(),
+    }
 }
 
 /// Parsed shape of a frontmatter-less `index.md`.
@@ -498,14 +622,22 @@ fn parse_index(dir: &str, text: &str) -> IndexDoc {
     let mut order = vec![];
     let re = regex::Regex::new(r"^\s*[*-]\s*\[[^\]]*\]\(([^)]+)\)(?:\s*-\s*(.*))?$").unwrap();
     let mut seen_bullet = false;
-    let referring = if dir.is_empty() { "index.md".to_string() } else { format!("{dir}/index.md") };
+    let referring = if dir.is_empty() {
+        "index.md".to_string()
+    } else {
+        format!("{dir}/index.md")
+    };
     for line in text.lines() {
         if let Some(c) = re.captures(line) {
             seen_bullet = true;
             let url = c.get(1).unwrap().as_str();
             let key = if let Some(sub) = url.strip_suffix('/') {
                 let seg = sub.trim_start_matches("./").trim_end_matches('/');
-                if dir.is_empty() { seg.to_string() } else { format!("{dir}/{seg}") }
+                if dir.is_empty() {
+                    seg.to_string()
+                } else {
+                    format!("{dir}/{seg}")
+                }
             } else {
                 crate::okf::resolve_href(&referring, url)
             };
@@ -534,7 +666,7 @@ fn parse_index(dir: &str, text: &str) -> IndexDoc {
 fn build_packages(
     docs: &[(String, String, String)],
     indexes: &std::collections::BTreeMap<String, String>,
-) -> (String, Vec<Node>) {
+) -> (String, Vec<(Node, crate::okf::Concept)>) {
     use std::collections::{BTreeMap, BTreeSet};
     // Every directory that contains a doc, plus all ancestor dirs, is a package.
     let mut dirs: BTreeSet<String> = BTreeSet::new();
@@ -543,7 +675,9 @@ fn build_packages(
         let mut d = dir_of(path);
         loop {
             dirs.insert(d.clone());
-            if d.is_empty() { break; }
+            if d.is_empty() {
+                break;
+            }
             d = dir_of(&d);
         }
     }
@@ -554,11 +688,16 @@ fn build_packages(
     }
     // child docs
     for (path, key, title) in docs {
-        members.get_mut(&dir_of(path)).unwrap().push((title.clone(), key.clone()));
+        members
+            .get_mut(&dir_of(path))
+            .unwrap()
+            .push((title.clone(), key.clone()));
     }
     // child sub-packages: each non-root dir is a member of its parent, sorted by last segment.
     for d in &dirs {
-        if d.is_empty() { continue; }
+        if d.is_empty() {
+            continue;
+        }
         let parent = dir_of(d);
         let seg = d.rsplit('/').next().unwrap_or(d).to_string();
         members.get_mut(&parent).unwrap().push((seg, d.clone()));
@@ -567,7 +706,11 @@ fn build_packages(
         .iter()
         .map(|d| {
             let mut ms = members.get(d).cloned().unwrap_or_default();
-            ms.sort_by(|a, b| a.0.to_lowercase().cmp(&b.0.to_lowercase()).then(a.1.cmp(&b.1)));
+            ms.sort_by(|a, b| {
+                a.0.to_lowercase()
+                    .cmp(&b.0.to_lowercase())
+                    .then(a.1.cmp(&b.1))
+            });
             // Discovered member keys, already in A–Z order.
             let discovered: Vec<String> = ms.into_iter().map(|(_, k)| k).collect();
             let title = if d.is_empty() {
@@ -575,8 +718,11 @@ fn build_packages(
             } else {
                 d.rsplit('/').next().unwrap_or(d).to_string()
             };
-            let index_path =
-                if d.is_empty() { "index.md".to_string() } else { format!("{d}/index.md") };
+            let index_path = if d.is_empty() {
+                "index.md".to_string()
+            } else {
+                format!("{d}/index.md")
+            };
 
             // Reconcile against a real index.md when present: listed survivors
             // keep their order, unlisted discovered members are appended A–Z,
@@ -608,18 +754,14 @@ fn build_packages(
             concept.title = (!title.is_empty()).then(|| title.clone());
             concept.description = intro;
 
-            Node {
-                concept,
+            let node = Node {
                 key: d.clone(),
-                ty: ElementType::Uml(crate::model::UmlMetaclass::Package),
-                stereotypes: vec![],
-                abstract_: false,
-                attributes: vec![],
-                values: vec![],
-                note_body: None,
-                annotates: vec![],
-                members,
-            }
+                label: title.clone(),
+                kind: crate::model::NodeKind::Uml(crate::uml::UmlNode::Structural(
+                    crate::uml::Structural::Package { members },
+                )),
+            };
+            (node, concept)
         })
         .collect();
 
@@ -647,7 +789,8 @@ pub fn build_model(bundle: &[(String, String)]) -> Model {
         .collect();
     let keyset: HashSet<&str> = classifiers.iter().map(|p| p.id.as_str()).collect();
 
-    let nodes = classifiers.iter().map(|p| build_node(p, &keyset)).collect();
+    let node_pairs: Vec<(Node, crate::okf::Concept)> =
+        classifiers.iter().map(|p| build_node(p, &keyset)).collect();
     let edges: Vec<Edge> = build_edges(&classifiers, &keyset);
     let diagrams: Vec<Diagram> = build_diagrams(&parsed, &keyset);
 
@@ -663,12 +806,34 @@ pub fn build_model(bundle: &[(String, String)]) -> Model {
         .filter(|(path, _)| doc_slug(path) == "index")
         .map(|(path, text)| (dir_of(path), text.clone()))
         .collect();
-    let (path, packages) = build_packages(&docs, &indexes);
+    let (path, package_pairs) = build_packages(&docs, &indexes);
 
     let flows = build_flows(&parsed, &keyset);
     let interactions = build_interactions(&parsed, &keyset);
 
-    Model { nodes, edges, diagrams, path, packages, flows, interactions }
+    let mut concepts: std::collections::HashMap<String, crate::okf::Concept> =
+        std::collections::HashMap::new();
+    let mut nodes = Vec::with_capacity(node_pairs.len());
+    for (n, c) in node_pairs {
+        concepts.insert(n.key.clone(), c);
+        nodes.push(n);
+    }
+    let mut packages = Vec::with_capacity(package_pairs.len());
+    for (n, c) in package_pairs {
+        concepts.insert(n.key.clone(), c);
+        packages.push(n);
+    }
+
+    Model {
+        nodes,
+        edges,
+        diagrams,
+        path,
+        packages,
+        flows,
+        interactions,
+        concepts,
+    }
 }
 
 /// Resolve a frontmatter `describes: [T](./t.md)` link against the classifier keyset.
@@ -690,7 +855,12 @@ fn build_flows(parsed: &[ParsedDoc], keyset: &HashSet<&str>) -> Vec<FlowDoc> {
     use crate::syntax::{FlowBullet, FlowTargetRef};
     let flow_keys: HashSet<String> = parsed
         .iter()
-        .filter(|p| matches!(p.ty, ElementType::Behavior(BehaviorKind::Activity | BehaviorKind::StateMachine)))
+        .filter(|p| {
+            matches!(
+                p.ty,
+                ElementType::Behavior(BehaviorKind::Activity | BehaviorKind::StateMachine)
+            )
+        })
         .map(|p| p.id.clone())
         .collect();
     let mut out = Vec::new();
@@ -784,7 +954,9 @@ fn build_interactions(parsed: &[ParsedDoc], keyset: &HashSet<&str>) -> Vec<Seque
         }
         let mut lifelines: Vec<Lifeline> = Vec::new();
         for s in &p.doc.sections {
-            let Section::Lifelines(lines) = s else { continue };
+            let Section::Lifelines(lines) = s else {
+                continue;
+            };
             for l in lines.iter().filter_map(Line::parsed) {
                 let resolved = crate::okf::resolve_href(&p.path, &l.link.slug);
                 lifelines.push(Lifeline {
@@ -810,7 +982,10 @@ fn build_interactions(parsed: &[ParsedDoc], keyset: &HashSet<&str>) -> Vec<Seque
             }
             name
         };
-        fn items_of(items: &[Line<SeqItemSyntax>], handle_of: &dyn Fn(&str) -> String) -> Vec<SeqItem> {
+        fn items_of(
+            items: &[Line<SeqItemSyntax>],
+            handle_of: &dyn Fn(&str) -> String,
+        ) -> Vec<SeqItem> {
             items
                 .iter()
                 .filter_map(Line::parsed)
@@ -825,7 +1000,10 @@ fn build_interactions(parsed: &[ParsedDoc], keyset: &HashSet<&str>) -> Vec<Seque
                         kind: *kind,
                         operands: operands
                             .iter()
-                            .map(|o| SeqOperand { guard: o.guard.clone(), items: items_of(&o.items, handle_of) })
+                            .map(|o| SeqOperand {
+                                guard: o.guard.clone(),
+                                items: items_of(&o.items, handle_of),
+                            })
                             .collect(),
                     },
                 })
@@ -859,7 +1037,9 @@ fn build_edges(classifiers: &[&ParsedDoc], keyset: &HashSet<&str>) -> Vec<Edge> 
     for p in classifiers {
         let from = &p.id;
         for s in &p.doc.sections {
-            let Section::Relationships(rels) = s else { continue };
+            let Section::Relationships(rels) = s else {
+                continue;
+            };
             for r in rels.iter().filter_map(Line::parsed) {
                 let to = crate::okf::resolve_href(&p.path, &r.target_slug);
                 if !keyset.contains(to.as_str()) || &to == from {
@@ -870,7 +1050,9 @@ fn build_edges(classifiers: &[&ParsedDoc], keyset: &HashSet<&str>) -> Vec<Edge> 
                     Some(ParsedName::Label(l)) => Some(AssocName::Label(l.clone())),
                     Some(ParsedName::Ref { slug, .. }) => {
                         let resolved = crate::okf::resolve_href(&p.path, slug);
-                        keyset.contains(resolved.as_str()).then_some(AssocName::Assoc(resolved))
+                        keyset
+                            .contains(resolved.as_str())
+                            .then_some(AssocName::Assoc(resolved))
                     }
                 };
 
@@ -921,7 +1103,11 @@ fn build_edges(classifiers: &[&ParsedDoc], keyset: &HashSet<&str>) -> Vec<Edge> 
     edges
 }
 
-fn resolve_group(g: &crate::syntax::MemberGroup, referring_path: &str, keyset: &HashSet<&str>) -> DiagramGroup {
+fn resolve_group(
+    g: &crate::syntax::MemberGroup,
+    referring_path: &str,
+    keyset: &HashSet<&str>,
+) -> DiagramGroup {
     DiagramGroup {
         name: g.name.clone(),
         members: g
@@ -933,7 +1119,11 @@ fn resolve_group(g: &crate::syntax::MemberGroup, referring_path: &str, keyset: &
                 keyset.contains(resolved.as_str()).then_some(resolved)
             })
             .collect(),
-        children: g.children.iter().map(|c| resolve_group(c, referring_path, keyset)).collect(),
+        children: g
+            .children
+            .iter()
+            .map(|c| resolve_group(c, referring_path, keyset))
+            .collect(),
     }
 }
 
@@ -941,7 +1131,10 @@ fn build_diagrams(parsed: &[ParsedDoc], keyset: &HashSet<&str>) -> Vec<Diagram> 
     let mut out = Vec::new();
     for p in parsed.iter().filter(|p| p.ty == ElementType::Diagram) {
         let fm = &p.doc.frontmatter;
-        let title = fm.get_str("title").map(String::from).unwrap_or_else(|| "Untitled diagram".to_string());
+        let title = fm
+            .get_str("title")
+            .map(String::from)
+            .unwrap_or_else(|| "Untitled diagram".to_string());
         let profile = fm
             .get_str("profile")
             .filter(|s| !s.is_empty())
@@ -953,10 +1146,18 @@ fn build_diagrams(parsed: &[ParsedDoc], keyset: &HashSet<&str>) -> Vec<Diagram> 
         for s in &p.doc.sections {
             match s {
                 Section::Members(block) => {
-                    groups = block.groups.iter().map(|g| resolve_group(g, &p.path, keyset)).collect();
+                    groups = block
+                        .groups
+                        .iter()
+                        .map(|g| resolve_group(g, &p.path, keyset))
+                        .collect();
                 }
                 Section::Layout(items) => {
-                    layout = items.iter().filter_map(Line::parsed).map(|it| it.stmt.clone()).collect();
+                    layout = items
+                        .iter()
+                        .filter_map(Line::parsed)
+                        .map(|it| it.stmt.clone())
+                        .collect();
                 }
                 _ => {}
             }
@@ -967,13 +1168,17 @@ fn build_diagrams(parsed: &[ParsedDoc], keyset: &HashSet<&str>) -> Vec<Diagram> 
             Some(crate::frontmatter::FmValue::Num(n)) if *n > 0.0 => Some(*n as u32),
             _ => None,
         };
-        let stereotype_filter = fm.get("stereotypeFilter").map(|_| fm.get_string_list("stereotypeFilter"));
+        let stereotype_filter = fm
+            .get("stereotypeFilter")
+            .map(|_| fm.get_string_list("stereotypeFilter"));
 
         let display = DiagramDisplay {
             show_attributes: fm.get_bool("showAttributes"),
             // New boolean key; fall back to the legacy `attributeDetail` enum so
             // pre-migration .waml files still resolve ("name-type" ⇒ show types).
-            show_type: fm.get_bool("showType").or_else(|| fm.get_str("attributeDetail").map(|s| s == "name-type")),
+            show_type: fm
+                .get_bool("showType")
+                .or_else(|| fm.get_str("attributeDetail").map(|s| s == "name-type")),
             show_attribute_visibility: fm.get_bool("showAttributeVisibility"),
             show_attribute_multiplicity: fm.get_bool("showAttributeMultiplicity"),
             max_attributes,
@@ -985,7 +1190,15 @@ fn build_diagrams(parsed: &[ParsedDoc], keyset: &HashSet<&str>) -> Vec<Diagram> 
             stereotype_colors: fm.get_string_list("stereotypeColors"),
         };
 
-        out.push(Diagram { key: p.id.clone(), title, profile, description, groups, layout, display });
+        out.push(Diagram {
+            key: p.id.clone(),
+            title,
+            profile,
+            description,
+            groups,
+            layout,
+            display,
+        });
     }
     out
 }
@@ -1023,7 +1236,10 @@ mod tests {
         assert_eq!(x.show_cardinality, Some(false));
         assert_eq!(x.show_labels, Some(true));
         assert_eq!(x.show_stereotype, Some(false));
-        assert_eq!(x.stereotype_filter, Some(vec!["entity".to_string(), "valueObject".to_string()]));
+        assert_eq!(
+            x.stereotype_filter,
+            Some(vec!["entity".to_string(), "valueObject".to_string()])
+        );
         assert_eq!(x.stereotype_colors, vec!["entity:#ffedd5".to_string()]);
     }
 
@@ -1044,15 +1260,32 @@ mod tests {
         let o = build_model(&diagram_bundle("attributeDetail: name-only\n"));
         assert_eq!(o.diagrams[0].display.show_type, Some(false));
         // Explicit new key wins over the legacy key.
-        let both = build_model(&diagram_bundle("showType: false\nattributeDetail: name-type\n"));
+        let both = build_model(&diagram_bundle(
+            "showType: false\nattributeDetail: name-type\n",
+        ));
         assert_eq!(both.diagrams[0].display.show_type, Some(false));
     }
 
     #[test]
     fn build_diagrams_maps_max_attributes_floor() {
-        assert_eq!(build_model(&diagram_bundle("maxAttributes: 6\n")).diagrams[0].display.max_attributes, Some(6));
-        assert_eq!(build_model(&diagram_bundle("maxAttributes: 0\n")).diagrams[0].display.max_attributes, None);
-        assert_eq!(build_model(&diagram_bundle("")).diagrams[0].display.max_attributes, None);
+        assert_eq!(
+            build_model(&diagram_bundle("maxAttributes: 6\n")).diagrams[0]
+                .display
+                .max_attributes,
+            Some(6)
+        );
+        assert_eq!(
+            build_model(&diagram_bundle("maxAttributes: 0\n")).diagrams[0]
+                .display
+                .max_attributes,
+            None
+        );
+        assert_eq!(
+            build_model(&diagram_bundle("")).diagrams[0]
+                .display
+                .max_attributes,
+            None
+        );
     }
 
     #[test]
@@ -1065,22 +1298,37 @@ mod tests {
     #[test]
     fn build_model_discovers_nested_packages_from_directories() {
         let b = vec![
-            ("sales/order.md".to_string(), "---\ntype: uml.Class\ntitle: Order\n---\n# Order\n".to_string()),
-            ("sales/orders/order-line.md".to_string(), "---\ntype: uml.Class\ntitle: OrderLine\n---\n# OrderLine\n".to_string()),
-            ("billing/invoice.md".to_string(), "---\ntype: uml.Class\ntitle: Invoice\n---\n# Invoice\n".to_string()),
+            (
+                "sales/order.md".to_string(),
+                "---\ntype: uml.Class\ntitle: Order\n---\n# Order\n".to_string(),
+            ),
+            (
+                "sales/orders/order-line.md".to_string(),
+                "---\ntype: uml.Class\ntitle: OrderLine\n---\n# OrderLine\n".to_string(),
+            ),
+            (
+                "billing/invoice.md".to_string(),
+                "---\ntype: uml.Class\ntitle: Invoice\n---\n# Invoice\n".to_string(),
+            ),
         ];
         let m = build_model(&b);
         // classifiers remain flat in `nodes`
         assert_eq!(m.nodes.len(), 3);
         // packages: root "", "sales", "sales/orders", "billing"
-        let keys: std::collections::HashSet<_> = m.packages.iter().map(|p| p.key.as_str()).collect();
-        assert!(keys.contains("") && keys.contains("sales") && keys.contains("sales/orders") && keys.contains("billing"));
+        let keys: std::collections::HashSet<_> =
+            m.packages.iter().map(|p| p.key.as_str()).collect();
+        assert!(
+            keys.contains("")
+                && keys.contains("sales")
+                && keys.contains("sales/orders")
+                && keys.contains("billing")
+        );
         let root = m.packages.iter().find(|p| p.key.is_empty()).unwrap();
-        assert_eq!(root.members, vec!["billing".to_string(), "sales".to_string()]); // A–Z sub-packages
+        assert_eq!(root.members(), ["billing".to_string(), "sales".to_string()]); // A–Z sub-packages
         let sales = m.packages.iter().find(|p| p.key == "sales").unwrap();
         // members = child classifier "order" + sub-package "sales/orders", A–Z by title/name
-        assert!(sales.members.contains(&"sales/order".to_string()));
-        assert!(sales.members.contains(&"sales/orders".to_string()));
+        assert!(sales.members().contains(&"sales/order".to_string()));
+        assert!(sales.members().contains(&"sales/orders".to_string()));
     }
 
     #[test]
@@ -1099,25 +1347,41 @@ mod tests {
         // index.md docs are not classifiers
         assert!(m.nodes.iter().all(|n| n.key != "index"));
         let sales = m.packages.iter().find(|p| p.key == "sales").unwrap();
-        assert_eq!(sales.concept.description.as_deref(), Some("Sales bounded context."));
+        assert_eq!(
+            m.concept("sales").and_then(|c| c.description.as_deref()),
+            Some("Sales bounded context.")
+        );
         // listed order first (customer, order), then unlisted appended (invoice)
         assert_eq!(
-            sales.members,
-            vec!["sales/customer".to_string(), "sales/order".to_string(), "sales/invoice".to_string()]
+            sales.members(),
+            [
+                "sales/customer".to_string(),
+                "sales/order".to_string(),
+                "sales/invoice".to_string()
+            ]
         );
     }
 
     #[test]
     fn build_model_flat_bundle_yields_single_root_package() {
         let b = vec![
-            ("order.md".to_string(), "---\ntype: uml.Class\ntitle: Order\n---\n# Order\n".to_string()),
-            ("customer.md".to_string(), "---\ntype: uml.Class\ntitle: Customer\n---\n# Customer\n".to_string()),
+            (
+                "order.md".to_string(),
+                "---\ntype: uml.Class\ntitle: Order\n---\n# Order\n".to_string(),
+            ),
+            (
+                "customer.md".to_string(),
+                "---\ntype: uml.Class\ntitle: Customer\n---\n# Customer\n".to_string(),
+            ),
         ];
         let m = build_model(&b);
         assert_eq!(m.packages.len(), 1);
         let root = &m.packages[0];
         assert_eq!(root.key, "");
-        assert_eq!(root.members, vec!["customer".to_string(), "order".to_string()]);
+        assert_eq!(
+            root.members(),
+            ["customer".to_string(), "order".to_string()]
+        );
     }
 
     const ORDER: &str = "---\ntype: uml.Class\nstereotype: [aggregateRoot, entity]\ntitle: Order\n---\n# Order\n\n## Attributes\n- id: OrderId\n- status: [OrderStatus](./order-status.md) {0..1}\n\n## Relationships\n- composes [OrderLine](./order-line.md): 1 to 1..* lines\n\n## Provenance\nHand-authored. Keep me.\n";
@@ -1127,24 +1391,39 @@ mod tests {
         let doc = parse_document(ORDER);
         assert_eq!(doc.frontmatter.get_str("title"), Some("Order"));
         assert_eq!(doc.title, "Order");
-        let attrs = doc.sections.iter().find_map(|s| match s {
-            Section::Attributes(a) => Some(a),
-            _ => None,
-        }).unwrap();
+        let attrs = doc
+            .sections
+            .iter()
+            .find_map(|s| match s {
+                Section::Attributes(a) => Some(a),
+                _ => None,
+            })
+            .unwrap();
         assert_eq!(attrs.len(), 2);
-        assert_eq!(attrs[1].parsed().unwrap().ty.ref_.as_deref(), Some("order-status"));
-        let rels = doc.sections.iter().find_map(|s| match s {
-            Section::Relationships(r) => Some(r),
-            _ => None,
-        }).unwrap();
+        assert_eq!(
+            attrs[1].parsed().unwrap().ty.ref_.as_deref(),
+            Some("order-status")
+        );
+        let rels = doc
+            .sections
+            .iter()
+            .find_map(|s| match s {
+                Section::Relationships(r) => Some(r),
+                _ => None,
+            })
+            .unwrap();
         assert_eq!(rels[0].parsed().unwrap().kind, RelationshipKind::Composes);
     }
 
     #[test]
     fn parse_reports_malformed_attribute_with_span_and_line() {
-        let src = "---\ntype: uml.Class\ntitle: X\n---\n# X\n\n## Attributes\n- bad line without colon\n";
+        let src =
+            "---\ntype: uml.Class\ntitle: X\n---\n# X\n\n## Attributes\n- bad line without colon\n";
         let (_doc, diags) = parse(src);
-        let d = diags.iter().find(|d| d.code == DiagCode::MalformedAttribute).unwrap();
+        let d = diags
+            .iter()
+            .find(|d| d.code == DiagCode::MalformedAttribute)
+            .unwrap();
         assert_eq!(d.line, 8);
         let span = d.span.expect("malformed attribute must carry a span");
         assert!(span.0 < span.1);
@@ -1154,7 +1433,10 @@ mod tests {
     fn parse_reports_unknown_type_on_frontmatter_line() {
         let src = "---\ntype: bpmn.Task\ntitle: X\n---\n# X\n";
         let (_doc, diags) = parse(src);
-        let d = diags.iter().find(|d| d.code == DiagCode::UnknownType).unwrap();
+        let d = diags
+            .iter()
+            .find(|d| d.code == DiagCode::UnknownType)
+            .unwrap();
         assert_eq!(d.line, 2);
         assert_eq!(d.severity, crate::diagnostic::Severity::Warning);
     }
@@ -1171,10 +1453,26 @@ mod tests {
         use crate::syntax::{Line, Section};
         let src = "---\ntype: uml.Class\ntitle: X\n---\n# X\n\n## Attributes\n- id: XId\n- bad line without colon\n";
         let (doc, _diags) = parse(src);
-        let attrs = doc.sections.iter().find_map(|s| match s {
-            Section::Attributes(a) => Some(a), _ => None }).unwrap();
-        assert_eq!(attrs.len(), 2, "the malformed line must be kept as an error node, not dropped");
-        let err = attrs.iter().find_map(|l| match l { Line::Error(e) => Some(e), _ => None }).unwrap();
+        let attrs = doc
+            .sections
+            .iter()
+            .find_map(|s| match s {
+                Section::Attributes(a) => Some(a),
+                _ => None,
+            })
+            .unwrap();
+        assert_eq!(
+            attrs.len(),
+            2,
+            "the malformed line must be kept as an error node, not dropped"
+        );
+        let err = attrs
+            .iter()
+            .find_map(|l| match l {
+                Line::Error(e) => Some(e),
+                _ => None,
+            })
+            .unwrap();
         assert!(err.raw.contains("bad line without colon"));
         // Diagnostics are derived from the same error node.
         let (_d, diags) = parse(src);
@@ -1188,10 +1486,14 @@ mod tests {
         use crate::model::FlowNodeKind;
         use crate::syntax::{FlowBullet, Section};
         let doc = parse_document(LIFECYCLE);
-        let block = doc.sections.iter().find_map(|s| match s {
-            Section::Nodes(b) => Some(b),
-            _ => None,
-        }).expect("## Nodes must parse into Section::Nodes");
+        let block = doc
+            .sections
+            .iter()
+            .find_map(|s| match s {
+                Section::Nodes(b) => Some(b),
+                _ => None,
+            })
+            .expect("## Nodes must parse into Section::Nodes");
         // NOTE: the fixture has 6 `###` node headings (initial, Draft, Placed,
         // Shipped, Cancelled, final); the plan's brief asserted 7 / index 6,
         // an off-by-one against its own literal fixture text — corrected here.
@@ -1199,8 +1501,18 @@ mod tests {
         assert_eq!(block.nodes[0].kind, FlowNodeKind::Initial);
         assert_eq!(block.nodes[1].identity, "Draft");
         assert_eq!(block.nodes[1].bullets.len(), 2);
-        assert_eq!(block.nodes[1].notes.iter().filter_map(crate::syntax::Line::parsed).next().unwrap(), "Auto-expires after 24h.");
-        assert!(matches!(block.nodes[2].bullets[0].parsed().unwrap(), FlowBullet::Entry(e) if e == "reserveStock"));
+        assert_eq!(
+            block.nodes[1]
+                .notes
+                .iter()
+                .filter_map(crate::syntax::Line::parsed)
+                .next()
+                .unwrap(),
+            "Auto-expires after 24h."
+        );
+        assert!(
+            matches!(block.nodes[2].bullets[0].parsed().unwrap(), FlowBullet::Entry(e) if e == "reserveStock")
+        );
         assert_eq!(block.nodes[5].kind, FlowNodeKind::Final);
     }
 
@@ -1208,21 +1520,37 @@ mod tests {
     fn malformed_flow_bullet_is_preserved_and_diagnosed() {
         let src = "---\ntype: uml.Activity\ntitle: A\n---\n# A\n\n## Nodes\n\n### Ship\n- goes to Deliver\n";
         let (doc, diags) = parse(src);
-        let d = diags.iter().find(|d| d.code == DiagCode::MalformedFlowBullet).unwrap();
+        let d = diags
+            .iter()
+            .find(|d| d.code == DiagCode::MalformedFlowBullet)
+            .unwrap();
         assert_eq!(d.line, 10);
         // preserved, not dropped
         use crate::syntax::{Line, Section};
-        let block = doc.sections.iter().find_map(|s| match s { Section::Nodes(b) => Some(b), _ => None }).unwrap();
-        assert!(matches!(&block.nodes[0].bullets[0], Line::Error(e) if e.raw.contains("goes to Deliver")));
+        let block = doc
+            .sections
+            .iter()
+            .find_map(|s| match s {
+                Section::Nodes(b) => Some(b),
+                _ => None,
+            })
+            .unwrap();
+        assert!(
+            matches!(&block.nodes[0].bullets[0], Line::Error(e) if e.raw.contains("goes to Deliver"))
+        );
     }
 
     #[test]
     fn preserves_unknown_section_verbatim() {
         let doc = parse_document(ORDER);
-        let unknown = doc.sections.iter().find_map(|s| match s {
-            Section::Unknown { title, raw } => Some((title.clone(), raw.clone())),
-            _ => None,
-        }).unwrap();
+        let unknown = doc
+            .sections
+            .iter()
+            .find_map(|s| match s {
+                Section::Unknown { title, raw } => Some((title.clone(), raw.clone())),
+                _ => None,
+            })
+            .unwrap();
         assert_eq!(unknown.0, "Provenance");
         assert!(unknown.1.contains("Hand-authored. Keep me."));
         assert!(unknown.1.starts_with("## Provenance"));
@@ -1261,10 +1589,20 @@ mod tests {
         // point: it belongs to the surrounding document, not a new one.
         let blob = "# Order\n\nSome intro text.\n\n<!-- reviewed: TODO -->\n\nMore text after the comment.\n";
         let parts = split_bundle(blob);
-        assert_eq!(parts.len(), 1, "a stray non-.md comment must not split the blob");
+        assert_eq!(
+            parts.len(),
+            1,
+            "a stray non-.md comment must not split the blob"
+        );
         assert_eq!(parts[0].0, "pasted/doc.md");
-        assert!(parts[0].1.contains("Some intro text."), "content before the comment must be kept");
-        assert!(parts[0].1.contains("More text after the comment."), "content after the comment must be kept");
+        assert!(
+            parts[0].1.contains("Some intro text."),
+            "content before the comment must be kept"
+        );
+        assert!(
+            parts[0].1.contains("More text after the comment."),
+            "content after the comment must be kept"
+        );
 
         // A genuine `.md` marker must still split the blob.
         let real = "<!-- shop/x.md -->\n# X\n";
@@ -1293,20 +1631,34 @@ mod model_tests {
         let m = build_model(&bundle());
         assert_eq!(m.nodes.len(), 2);
         let order = m.node("shop/order").unwrap();
-        assert_eq!(order.concept.title.as_deref(), Some("Order"));
-        assert_eq!(order.ty, ElementType::Uml(UmlMetaclass::Class));
-        assert_eq!(order.stereotypes, vec!["aggregateRoot", "entity"]);
-        assert_eq!(order.attributes.len(), 3);
+        assert_eq!(order.label, "Order");
+        assert_eq!(order.ty(), ElementType::Uml(UmlMetaclass::Class));
+        assert_eq!(
+            order.stereotypes(),
+            ["aggregateRoot".to_string(), "entity".to_string()]
+        );
+        assert_eq!(order.attributes().len(), 3);
     }
 
     #[test]
     fn behavior_docs_are_not_classifier_nodes() {
         let b = vec![
-            ("m/order.md".into(), "---\ntype: uml.Class\ntitle: Order\n---\n# Order\n".into()),
-            ("m/lifecycle.md".into(), "---\ntype: uml.StateMachine\ntitle: Order Lifecycle\n---\n# Order Lifecycle\n".into()),
+            (
+                "m/order.md".into(),
+                "---\ntype: uml.Class\ntitle: Order\n---\n# Order\n".into(),
+            ),
+            (
+                "m/lifecycle.md".into(),
+                "---\ntype: uml.StateMachine\ntitle: Order Lifecycle\n---\n# Order Lifecycle\n"
+                    .into(),
+            ),
         ];
         let m = build_model(&b);
-        assert_eq!(m.nodes.len(), 1, "a behavior doc must not become a classifier node");
+        assert_eq!(
+            m.nodes.len(),
+            1,
+            "a behavior doc must not become a classifier node"
+        );
         assert!(m.node("m/lifecycle").is_none());
     }
 
@@ -1315,16 +1667,22 @@ mod model_tests {
         let m = build_model(&bundle());
         let order = m.node("shop/order").unwrap();
         // resolvable link keeps its ref, resolved to the full id
-        assert_eq!(order.attributes[1].ty.ref_.as_deref(), Some("shop/order-status"));
+        assert_eq!(
+            order.attributes()[1].ty.ref_.as_deref(),
+            Some("shop/order-status")
+        );
         // unresolvable link degrades to a bare token (ref dropped), name preserved
-        assert_eq!(order.attributes[2].ty.name, "Missing");
-        assert_eq!(order.attributes[2].ty.ref_, None);
+        assert_eq!(order.attributes()[2].ty.name, "Missing");
+        assert_eq!(order.attributes()[2].ty.ref_, None);
     }
 
     #[test]
     fn collects_enum_values() {
         let m = build_model(&bundle());
-        assert_eq!(m.node("shop/order-status").unwrap().values, vec!["DRAFT", "PLACED"]);
+        assert_eq!(
+            m.node("shop/order-status").unwrap().values(),
+            ["DRAFT".to_string(), "PLACED".to_string()]
+        );
     }
 
     fn rel_bundle() -> Vec<(String, String)> {
@@ -1341,7 +1699,11 @@ mod model_tests {
     #[test]
     fn builds_composition_edge() {
         let m = build_model(&rel_bundle());
-        let comp = m.edges.iter().find(|e| e.kind == crate::model::RelationshipKind::Composes).unwrap();
+        let comp = m
+            .edges
+            .iter()
+            .find(|e| e.kind == crate::model::RelationshipKind::Composes)
+            .unwrap();
         assert_eq!(comp.source, "a/order");
         assert_eq!(comp.target, "a/order-line");
         assert_eq!(comp.to_end.role.as_deref(), Some("lines"));
@@ -1351,8 +1713,16 @@ mod model_tests {
     #[test]
     fn reciprocal_associates_collapse_to_one_bidirectional_edge() {
         let m = build_model(&rel_bundle());
-        let assocs: Vec<_> = m.edges.iter().filter(|e| e.kind == crate::model::RelationshipKind::Associates).collect();
-        assert_eq!(assocs.len(), 1, "reciprocal associates must collapse to one edge");
+        let assocs: Vec<_> = m
+            .edges
+            .iter()
+            .filter(|e| e.kind == crate::model::RelationshipKind::Associates)
+            .collect();
+        assert_eq!(
+            assocs.len(),
+            1,
+            "reciprocal associates must collapse to one edge"
+        );
         assert!(assocs[0].bidirectional);
         assert_eq!(assocs[0].from_end.navigable, Some(true));
         assert_eq!(assocs[0].to_end.navigable, Some(true));
@@ -1370,8 +1740,14 @@ mod model_tests {
     fn builds_diagram_groups_and_layout() {
         let diagram = "---\ntype: Diagram\ntitle: Orders\nprofile: uml-domain\n---\n# Orders\n\n## Members\n\n### Users\n- [Customer](./customer.md)\n\n### Orders\n- [Order](./order.md)\n\n## Layout\n- Users left of Orders\n";
         let bundle = vec![
-            ("customer.md".to_string(), "---\ntype: uml.Class\ntitle: Customer\n---\n# Customer\n".to_string()),
-            ("order.md".to_string(), "---\ntype: uml.Class\ntitle: Order\n---\n# Order\n".to_string()),
+            (
+                "customer.md".to_string(),
+                "---\ntype: uml.Class\ntitle: Customer\n---\n# Customer\n".to_string(),
+            ),
+            (
+                "order.md".to_string(),
+                "---\ntype: uml.Class\ntitle: Order\n---\n# Order\n".to_string(),
+            ),
             ("orders.md".to_string(), diagram.to_string()),
         ];
         let model = build_model(&bundle);
@@ -1380,7 +1756,10 @@ mod model_tests {
         assert_eq!(d.groups[0].name, "Users");
         assert_eq!(d.groups[0].members, vec!["customer".to_string()]);
         assert_eq!(d.layout.len(), 1);
-        assert!(matches!(d.layout[0], crate::syntax::LayoutStatement::Placement { .. }));
+        assert!(matches!(
+            d.layout[0],
+            crate::syntax::LayoutStatement::Placement { .. }
+        ));
     }
 
     #[test]
@@ -1441,12 +1820,28 @@ mod model_tests {
         assert_eq!(s.lifelines.len(), 3);
         assert_eq!(s.lifelines[0].ref_.as_deref(), Some("s/customer"));
         assert_eq!(s.lifelines[1].alias.as_deref(), Some("order"));
-        assert_eq!(s.lifelines[2].ref_, None, "unresolved lifeline degrades to link title only");
+        assert_eq!(
+            s.lifelines[2].ref_, None,
+            "unresolved lifeline degrades to link title only"
+        );
         assert_eq!(s.messages.len(), 3);
-        let SeqItem::Message { from, verb, to, signature } = &s.messages[0] else { panic!() };
-        assert_eq!((from.as_str(), *verb, to.as_str()), ("Customer", MessageVerb::Calls, "order"));
+        let SeqItem::Message {
+            from,
+            verb,
+            to,
+            signature,
+        } = &s.messages[0]
+        else {
+            panic!()
+        };
+        assert_eq!(
+            (from.as_str(), *verb, to.as_str()),
+            ("Customer", MessageVerb::Calls, "order")
+        );
         assert_eq!(signature.as_deref(), Some("place(items)"));
-        let SeqItem::Fragment { kind, operands } = &s.messages[1] else { panic!() };
+        let SeqItem::Fragment { kind, operands } = &s.messages[1] else {
+            panic!()
+        };
         assert_eq!(*kind, FragmentKind::Alt);
         assert_eq!(operands.len(), 2);
         assert_eq!(operands[0].guard.as_deref(), Some("paid"));

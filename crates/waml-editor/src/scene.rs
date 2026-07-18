@@ -38,7 +38,7 @@ pub fn build_scene(model: &Model, diagram: &Diagram) -> (Scene, Vec<Diagnostic>)
     let title_of: BTreeMap<&str, String> = model
         .nodes
         .iter()
-        .map(|n| (n.key.as_str(), n.concept.title.clone().unwrap_or_else(|| n.key.clone())))
+        .map(|n| (n.key.as_str(), n.label.clone()))
         .collect();
 
     let mut nodes = Vec::with_capacity(solved.nodes.len());
@@ -46,7 +46,10 @@ pub fn build_scene(model: &Model, diagram: &Diagram) -> (Scene, Vec<Diagnostic>)
         let flags = solved.flags.get(key).copied().unwrap_or_default();
         nodes.push(SceneNode {
             key: key.clone(),
-            title: title_of.get(key.as_str()).cloned().unwrap_or_else(|| key.clone()),
+            title: title_of
+                .get(key.as_str())
+                .cloned()
+                .unwrap_or_else(|| key.clone()),
             rect: *rect,
             emphasized: flags.emphasized,
             collapsed: flags.collapsed,
@@ -59,11 +62,22 @@ pub fn build_scene(model: &Model, diagram: &Diagram) -> (Scene, Vec<Diagnostic>)
         if let (Some(&source), Some(&target)) =
             (solved.nodes.get(&e.source), solved.nodes.get(&e.target))
         {
-            edges.push(SceneEdge { source, target, kind: e.kind });
+            edges.push(SceneEdge {
+                source,
+                target,
+                kind: e.kind,
+            });
         }
     }
 
-    (Scene { nodes, groups: solved.groups.clone(), edges }, diags)
+    (
+        Scene {
+            nodes,
+            groups: solved.groups.clone(),
+            edges,
+        },
+        diags,
+    )
 }
 
 /// Axis-aligned bounding box over all node and group rects, or `None` if empty.
@@ -82,7 +96,12 @@ pub fn bounding_box(scene: &Scene) -> Option<Rect> {
         max_x = max_x.max(r.x + r.w);
         max_y = max_y.max(r.y + r.h);
     }
-    Some(Rect { x: min_x, y: min_y, w: max_x - min_x, h: max_y - min_y })
+    Some(Rect {
+        x: min_x,
+        y: min_y,
+        w: max_x - min_x,
+        h: max_y - min_y,
+    })
 }
 
 #[cfg(test)]
@@ -102,8 +121,11 @@ mod tests {
         let (scene, diags) = build_scene(&model, &model.diagrams[0]);
         assert!(diags.is_empty(), "unexpected diagnostics: {diags:?}");
 
-        let mut titles: Vec<(&str, &str)> =
-            scene.nodes.iter().map(|n| (n.key.as_str(), n.title.as_str())).collect();
+        let mut titles: Vec<(&str, &str)> = scene
+            .nodes
+            .iter()
+            .map(|n| (n.key.as_str(), n.title.as_str()))
+            .collect();
         titles.sort();
         assert_eq!(titles, [("customer", "Customer"), ("order", "Order")]);
     }
@@ -149,7 +171,11 @@ mod tests {
 
     #[test]
     fn bounding_box_none_for_empty_scene() {
-        let scene = Scene { nodes: vec![], groups: vec![], edges: vec![] };
+        let scene = Scene {
+            nodes: vec![],
+            groups: vec![],
+            edges: vec![],
+        };
         assert!(bounding_box(&scene).is_none());
     }
 }

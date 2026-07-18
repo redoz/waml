@@ -15,16 +15,32 @@ fn member_url(dir: &str, e: &IndexEntry) -> String {
         let seg = e.key.rsplit('/').next().unwrap_or(&e.key);
         format!("{seg}/")
     } else {
-        let rel = e.key.strip_prefix(dir).and_then(|s| s.strip_prefix('/')).unwrap_or(&e.key);
+        let rel = e
+            .key
+            .strip_prefix(dir)
+            .and_then(|s| s.strip_prefix('/'))
+            .unwrap_or(&e.key);
         format!("./{rel}.md")
     }
 }
 
-pub fn render_index(dir: &str, title: Option<&str>, description: Option<&str>, members: &[IndexEntry]) -> String {
-    let fallback = if dir.is_empty() { "index" } else { dir.rsplit('/').next().unwrap_or(dir) };
+pub fn render_index(
+    dir: &str,
+    title: Option<&str>,
+    description: Option<&str>,
+    members: &[IndexEntry],
+) -> String {
+    let fallback = if dir.is_empty() {
+        "index"
+    } else {
+        dir.rsplit('/').next().unwrap_or(dir)
+    };
     // A custom title (parsed from the existing H1, or set by pkg.retitle) is
     // emitted verbatim; only an absent/blank title falls back to the basename.
-    let heading = title.map(str::trim).filter(|t| !t.is_empty()).unwrap_or(fallback);
+    let heading = title
+        .map(str::trim)
+        .filter(|t| !t.is_empty())
+        .unwrap_or(fallback);
     let mut out = format!("# {heading}\n");
     if let Some(d) = description.filter(|d| !d.trim().is_empty()) {
         out.push('\n');
@@ -53,34 +69,38 @@ pub fn reindex_bundle(bundle: &[(String, String)]) -> Vec<(String, String)> {
     // key -> (title, is_package, blurb-source description)
     let mut meta = std::collections::HashMap::new();
     for n in &model.nodes {
-        meta.insert(
-            n.key.clone(),
-            (n.concept.title.clone().unwrap_or_else(|| n.key.clone()), false, n.concept.description.clone()),
-        );
+        let desc = model.concept(&n.key).and_then(|c| c.description.clone());
+        meta.insert(n.key.clone(), (n.label.clone(), false, desc));
     }
     for d in &model.diagrams {
         meta.insert(d.key.clone(), (d.title.clone(), false, None));
     }
     for p in &model.packages {
-        let title = p.concept.title.clone().unwrap_or_else(|| p.key.clone());
-        meta.insert(p.key.clone(), (title, true, None));
+        meta.insert(p.key.clone(), (p.label.clone(), true, None));
     }
     // start from concept/diagram docs (drop existing index.md), then append fresh indexes
     let mut out: Vec<(String, String)> = bundle
         .iter()
-        .filter(|(p, _)| !p.rsplit(['/', '\\']).next().unwrap_or(p).eq_ignore_ascii_case("index.md"))
+        .filter(|(p, _)| {
+            !p.rsplit(['/', '\\'])
+                .next()
+                .unwrap_or(p)
+                .eq_ignore_ascii_case("index.md")
+        })
         .cloned()
         .collect();
     for pkg in &model.packages {
         let entries: Vec<IndexEntry> = pkg
-            .members
+            .members()
             .iter()
             .filter_map(|k| {
                 meta.get(k).map(|(title, is_pkg, desc)| IndexEntry {
                     key: k.clone(),
                     title: title.clone(),
                     is_package: *is_pkg,
-                    blurb: desc.as_ref().map(|d| d.lines().next().unwrap_or("").to_string()),
+                    blurb: desc
+                        .as_ref()
+                        .map(|d| d.lines().next().unwrap_or("").to_string()),
                 })
             })
             .collect();
@@ -90,14 +110,17 @@ pub fn reindex_bundle(bundle: &[(String, String)]) -> Vec<(String, String)> {
             format!("{}/index.md", pkg.key)
         };
         // Root's name is the model path (root index.md H1); nested packages carry
-        // it on concept.title. Preserve either verbatim instead of resetting to
-        // the dir basename.
+        // it on `label`. Preserve either verbatim instead of resetting to the dir
+        // basename.
         let title: Option<&str> = if pkg.key.is_empty() {
             (!model.path.is_empty()).then_some(model.path.as_str())
         } else {
-            pkg.concept.title.as_deref()
+            Some(pkg.label.as_str())
         };
-        out.push((path, render_index(&pkg.key, title, pkg.concept.description.as_deref(), &entries)));
+        let description = model
+            .concept(&pkg.key)
+            .and_then(|c| c.description.as_deref());
+        out.push((path, render_index(&pkg.key, title, description, &entries)));
     }
     out
 }
@@ -109,8 +132,18 @@ mod tests {
     #[test]
     fn render_index_emits_intro_and_listing() {
         let members = vec![
-            IndexEntry { key: "sales/orders".into(), title: "orders".into(), blurb: None, is_package: true },
-            IndexEntry { key: "customer".into(), title: "Customer".into(), blurb: Some("a buyer".into()), is_package: false },
+            IndexEntry {
+                key: "sales/orders".into(),
+                title: "orders".into(),
+                blurb: None,
+                is_package: true,
+            },
+            IndexEntry {
+                key: "customer".into(),
+                title: "Customer".into(),
+                blurb: Some("a buyer".into()),
+                is_package: false,
+            },
         ];
         // title None => fall back to the dir basename.
         let out = render_index("sales", None, Some("Sales bounded context."), &members);
@@ -124,7 +157,10 @@ mod tests {
     #[test]
     fn render_index_emits_a_custom_title_verbatim() {
         let out = render_index("sales", Some("Sales Domain"), None, &[]);
-        assert!(out.starts_with("# Sales Domain\n"), "custom title must be the H1: {out}");
+        assert!(
+            out.starts_with("# Sales Domain\n"),
+            "custom title must be the H1: {out}"
+        );
     }
 
     #[test]
@@ -137,26 +173,43 @@ mod tests {
     #[test]
     fn reindex_preserves_a_custom_root_index_title() {
         let b = vec![
-            ("index.md".to_string(), "# My Domain\n\n* [Order](./order.md)\n".to_string()),
-            ("order.md".to_string(), "---\ntype: uml.Class\ntitle: Order\n---\n# Order\n".to_string()),
+            (
+                "index.md".to_string(),
+                "# My Domain\n\n* [Order](./order.md)\n".to_string(),
+            ),
+            (
+                "order.md".to_string(),
+                "---\ntype: uml.Class\ntitle: Order\n---\n# Order\n".to_string(),
+            ),
         ];
         let out = reindex_bundle(&b);
         let root = &out.iter().find(|(p, _)| p == "index.md").unwrap().1;
-        assert!(root.starts_with("# My Domain\n"), "root H1 must survive reindex, got: {root}");
+        assert!(
+            root.starts_with("# My Domain\n"),
+            "root H1 must survive reindex, got: {root}"
+        );
     }
 
     #[test]
     fn reindex_bundle_creates_index_for_each_directory() {
         let b = vec![
-            ("sales/order.md".to_string(), "---\ntype: uml.Class\ntitle: Order\n---\n# Order\n".to_string()),
-            ("sales/orders/line.md".to_string(), "---\ntype: uml.Class\ntitle: Line\n---\n# Line\n".to_string()),
+            (
+                "sales/order.md".to_string(),
+                "---\ntype: uml.Class\ntitle: Order\n---\n# Order\n".to_string(),
+            ),
+            (
+                "sales/orders/line.md".to_string(),
+                "---\ntype: uml.Class\ntitle: Line\n---\n# Line\n".to_string(),
+            ),
         ];
         let out = reindex_bundle(&b);
         assert!(out.iter().any(|(p, _)| p == "index.md"));
         assert!(out.iter().any(|(p, _)| p == "sales/index.md"));
         assert!(out.iter().any(|(p, _)| p == "sales/orders/index.md"));
         // concept docs untouched
-        assert_eq!(out.iter().find(|(p, _)| p == "sales/order.md").unwrap().1,
-                   b.iter().find(|(p, _)| p == "sales/order.md").unwrap().1);
+        assert_eq!(
+            out.iter().find(|(p, _)| p == "sales/order.md").unwrap().1,
+            b.iter().find(|(p, _)| p == "sales/order.md").unwrap().1
+        );
     }
 }

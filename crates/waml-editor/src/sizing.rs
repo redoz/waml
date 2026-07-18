@@ -17,20 +17,25 @@ pub const ERD_DEFAULT_ROW_CAP: u32 = 10;
 /// Size one node for the solver.
 pub fn size_of(node: &Node, display: &DiagramDisplay) -> Size {
     let show = display.show_attributes.unwrap_or(false);
-    if show && !node.attributes.is_empty() {
+    if show && !node.attributes().is_empty() {
         let cap = display.max_attributes.unwrap_or(ERD_DEFAULT_ROW_CAP).max(1) as usize;
-        let rows = node.attributes.len().min(cap);
-        Size { w: ERD_W, h: ERD_HEADER_H + rows as f64 * ERD_ROW_H }
+        let rows = node.attributes().len().min(cap);
+        Size {
+            w: ERD_W,
+            h: ERD_HEADER_H + rows as f64 * ERD_ROW_H,
+        }
     } else {
-        Size { w: COMPACT_W, h: COMPACT_H }
+        Size {
+            w: COMPACT_W,
+            h: COMPACT_H,
+        }
     }
 }
 
 /// Build a `SizeMap` for every diagram member that resolves to a classifier node.
 pub fn size_map(model: &Model, diagram: &Diagram) -> SizeMap {
     use std::collections::BTreeMap;
-    let lookup: BTreeMap<&str, &Node> =
-        model.nodes.iter().map(|n| (n.key.as_str(), n)).collect();
+    let lookup: BTreeMap<&str, &Node> = model.nodes.iter().map(|n| (n.key.as_str(), n)).collect();
 
     let mut keys = Vec::new();
     collect_member_keys(&diagram.groups, &mut keys);
@@ -62,26 +67,44 @@ mod tests {
             "e.md".to_string(),
             format!(
                 "---\ntype: uml.Class\ntitle: E\n---\n# E\n\n## Attributes\n{}",
-                (0..n).map(|i| format!("- f{i}: String {{1}}\n")).collect::<String>()
+                (0..n)
+                    .map(|i| format!("- f{i}: String {{1}}\n"))
+                    .collect::<String>()
             ),
         )];
-        waml::parse::build_model(&bundle).nodes.into_iter().next().unwrap()
+        waml::parse::build_model(&bundle)
+            .nodes
+            .into_iter()
+            .next()
+            .unwrap()
     }
 
     #[test]
     fn compact_when_attributes_hidden() {
         let node = node_with_attrs(3);
         let display = DiagramDisplay::default(); // show_attributes = None => hidden
-        assert_eq!(size_of(&node, &display), Size { w: COMPACT_W, h: COMPACT_H });
+        assert_eq!(
+            size_of(&node, &display),
+            Size {
+                w: COMPACT_W,
+                h: COMPACT_H
+            }
+        );
     }
 
     #[test]
     fn erd_size_scales_with_capped_rows() {
         let node = node_with_attrs(3);
-        let display = DiagramDisplay { show_attributes: Some(true), ..Default::default() };
+        let display = DiagramDisplay {
+            show_attributes: Some(true),
+            ..Default::default()
+        };
         assert_eq!(
             size_of(&node, &display),
-            Size { w: ERD_W, h: ERD_HEADER_H + 3.0 * ERD_ROW_H }
+            Size {
+                w: ERD_W,
+                h: ERD_HEADER_H + 3.0 * ERD_ROW_H
+            }
         );
     }
 
@@ -95,15 +118,27 @@ mod tests {
         };
         assert_eq!(
             size_of(&node, &display),
-            Size { w: ERD_W, h: ERD_HEADER_H + 4.0 * ERD_ROW_H }
+            Size {
+                w: ERD_W,
+                h: ERD_HEADER_H + 4.0 * ERD_ROW_H
+            }
         );
     }
 
     #[test]
     fn compact_when_entity_has_no_attributes() {
         let node = node_with_attrs(0);
-        let display = DiagramDisplay { show_attributes: Some(true), ..Default::default() };
-        assert_eq!(size_of(&node, &display), Size { w: COMPACT_W, h: COMPACT_H });
+        let display = DiagramDisplay {
+            show_attributes: Some(true),
+            ..Default::default()
+        };
+        assert_eq!(
+            size_of(&node, &display),
+            Size {
+                w: COMPACT_W,
+                h: COMPACT_H
+            }
+        );
     }
 
     #[test]
@@ -115,7 +150,13 @@ mod tests {
         // Both classifiers get a compact size (fixture diagram shows no attributes).
         assert_eq!(map.len(), 2);
         for size in map.values() {
-            assert_eq!(*size, Size { w: COMPACT_W, h: COMPACT_H });
+            assert_eq!(
+                *size,
+                Size {
+                    w: COMPACT_W,
+                    h: COMPACT_H
+                }
+            );
         }
     }
 }

@@ -20,30 +20,29 @@ fn bundle() -> Vec<(String, String)> {
 }
 
 #[test]
-fn model_json_matches_ts_field_names() {
-    let model = build_model(&bundle());
-    let v = serde_json::to_value(&model).unwrap();
-
-    let node = &v["nodes"][0];
-    // TS ModelNode uses `type` and `key`, not `ty`.
-    assert_eq!(node["type"], "uml.Class");
-    assert_eq!(node["key"], "m/order");
-    // Flat title/description/body are DELETED — the concept is the single source.
-    assert!(node.get("title").is_none(), "flat title deleted: {node}");
-    assert!(node.get("description").is_none(), "flat description deleted: {node}");
-    assert!(node.get("body").is_none(), "flat body deleted: {node}");
-    assert_eq!(node["concept"]["id"], "m/order");
-    assert_eq!(node["concept"]["title"], "Order");
-    // Attribute.type is a TypeRef ({ name, ref? }); multiplicity is canonical string.
-    assert_eq!(node["attributes"][0]["name"], "id");
-    assert_eq!(node["attributes"][0]["type"]["name"], "OrderId");
-    assert_eq!(node["attributes"][0]["multiplicity"], "1");
-
-    let edge = &v["edges"][0];
-    // TS ModelEdge uses `from`/`to`, kind lowercase string.
-    assert_eq!(edge["kind"], "composes");
-    assert_eq!(edge["from"], "m/order");
-    assert_eq!(edge["to"], "m/line");
+fn node_reshape_keeps_wire_flat_and_accessors_work() {
+    let m = build_model(&[(
+        "shop/order.md".to_string(),
+        "---\ntype: uml.Class\nstereotype: [entity]\ntitle: Order\n---\n# Order\n\n## Attributes\n- id: OrderId\n".to_string(),
+    )]);
+    // Object model: Concept is OFF the node; it lives in Model.concepts.
+    let n = m.nodes.iter().find(|n| n.key == "shop/order").unwrap();
+    assert_eq!(n.label, "Order");
+    assert!(n.kind.is_classifier());
+    assert_eq!(n.attributes().len(), 1);
+    assert_eq!(n.stereotypes(), ["entity".to_string()]);
+    assert_eq!(
+        m.concept("shop/order").and_then(|c| c.title.as_deref()),
+        Some("Order")
+    );
+    // Wire is still flat + carries the re-joined concept.
+    let v = serde_json::to_value(waml::wire::build_wire(&m)).unwrap();
+    let wn = &v["nodes"][0];
+    assert_eq!(wn["type"], "uml.Class");
+    assert_eq!(wn["key"], "shop/order");
+    assert_eq!(wn["concept"]["title"], "Order");
+    assert_eq!(wn["stereotypes"][0], "entity");
+    assert_eq!(wn["attributes"][0]["name"], "id");
 }
 
 #[test]
@@ -79,9 +78,19 @@ fn wire_diagram_members_are_flattened_in_rust() {
     let wire = waml::wire::build_wire(&build_model(&b));
     let v = serde_json::to_value(&wire).unwrap();
     let members = v["diagrams"][0]["members"].as_array().unwrap();
-    assert!(members.iter().any(|m| m == "x"), "flat members must include x: {members:?}");
-    assert!(members.iter().any(|m| m == "y"), "flat nested members must include y: {members:?}");
-    assert!(v["diagrams"][0].get("groups").is_none(), "wire diagram has no groups: {}", v["diagrams"][0]);
+    assert!(
+        members.iter().any(|m| m == "x"),
+        "flat members must include x: {members:?}"
+    );
+    assert!(
+        members.iter().any(|m| m == "y"),
+        "flat nested members must include y: {members:?}"
+    );
+    assert!(
+        v["diagrams"][0].get("groups").is_none(),
+        "wire diagram has no groups: {}",
+        v["diagrams"][0]
+    );
 }
 
 #[test]
@@ -113,17 +122,14 @@ fn assoc_name_matches_ts_union_shape() {
 
 #[test]
 fn package_node_and_model_path() {
+    use waml::model::NodeKind;
+    use waml::uml::{Classifier, ClassifierKind, Structural, UmlNode};
     let pkg = Node {
-        concept: waml::okf::project("sales/index.md", "# sales\n\nSales bounded context.\n"),
         key: "sales".into(),
-        ty: ElementType::Uml(UmlMetaclass::Package),
-        stereotypes: vec![],
-        abstract_: false,
-        attributes: vec![],
-        values: vec![],
-        note_body: None,
-        annotates: vec![],
-        members: vec!["order".into(), "customer".into()],
+        label: "sales".into(),
+        kind: NodeKind::Uml(UmlNode::Structural(Structural::Package {
+            members: vec!["order".into(), "customer".into()],
+        })),
     };
     let model = Model {
         nodes: vec![],
@@ -136,21 +142,22 @@ fn package_node_and_model_path() {
     let json = serde_json::to_string(&model).unwrap();
     assert!(json.contains("\"path\":\"acme-model\""));
     assert!(json.contains("\"members\":[\"order\",\"customer\"]"));
-    // classifier with no members must omit field entirely.
     let bare = Node {
-        concept: waml::okf::project("order.md", "---\ntype: uml.Class\ntitle: Order\n---\n# Order\n"),
         key: "order".into(),
-        ty: ElementType::Uml(UmlMetaclass::Class),
-        stereotypes: vec![],
-        abstract_: false,
-        attributes: vec![],
-        values: vec![],
-        note_body: None,
-        annotates: vec![],
-        members: vec![],
+        label: "Order".into(),
+        kind: NodeKind::Uml(UmlNode::Classifier(Classifier {
+            kind: ClassifierKind::Class,
+            stereotypes: vec![],
+            abstract_: false,
+            attributes: vec![],
+            values: vec![],
+        })),
     };
     let bj = serde_json::to_string(&bare).unwrap();
-    assert!(!bj.contains("members"), "empty members must be omitted: {bj}");
+    assert!(
+        !bj.contains("members"),
+        "a classifier has no members field: {bj}"
+    );
 }
 
 #[test]
@@ -175,7 +182,10 @@ fn flow_doc_json_matches_ts_field_names() {
     assert_eq!(e["effect"], "reserve");
     assert_eq!(f["edges"][2]["else"], true);
     // classifier-only models omit the field entirely
-    let m2 = build_model(&vec![("a.md".to_string(), "---\ntype: uml.Class\ntitle: A\n---\n# A\n".to_string())]);
+    let m2 = build_model(&vec![(
+        "a.md".to_string(),
+        "---\ntype: uml.Class\ntitle: A\n---\n# A\n".to_string(),
+    )]);
     let v2 = serde_json::to_value(&m2).unwrap();
     assert!(v2.get("flows").is_none());
 }

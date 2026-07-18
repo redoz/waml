@@ -383,6 +383,20 @@ export type MessageVerb = "calls" | "sends" | "replies" | "creates" | "destroys"
 export type NodeKind = { Uml: UmlNode } | { Unknown: string };
 
 /**
+ * The ontology-agnostic substrate node (design spec §2): identity (`key`),
+ * render label (`label`), and its ontology payload (`kind`). The OKF `Concept`
+ * is NOT here — it is a parse-time projection of storage, kept on
+ * `Model.concepts` and re-joined only on the Rust wire projection
+ * (`crate::wire`). UML-specific data lives behind `kind` in `crate::uml`;
+ * callers reach it via the accessors below (never a raw field/variant match).
+ */
+export interface Node {
+    key: string;
+    label: string;
+    kind: NodeKind;
+}
+
+/**
  * UML diagram render payload (design spec §3.3): a flavor tag plus the render
  * fields moved off the substrate. `profile`/`description` are retained here (spec
  * §3.3 under-specifies them; keeping them avoids a lossy round-trip).
@@ -473,36 +487,14 @@ export interface Model {
      * Interaction-substrate behavior documents (uml.Sequence).
      */
     interactions?: SequenceDoc[];
-}
-
-export interface Node {
     /**
-     * Lossless OKF projection of this node\'s source document (OKF tier) and the
-     * single authoritative source for `title`/`description`/verbatim `body` (read
-     * via `concept.title`/`concept.description`/`concept.body`) plus the non-UML
-     * OKF fields (`tags`/`resource`/`timestamp`/`links`/`citations`/`role`/`extra`).
-     * Populated from `crate::okf::project` (single source).
+     * Parse-time OKF projection of each node\'s source document (design spec §2:
+     * Concept is a projection of storage, off the object-model `Node`). Keyed by
+     * `node.key` (packages key by their dir; the `Concept.id` inside keeps its
+     * natural path). `build_wire` re-joins it onto the wire; native readers use
+     * `Model::concept`. Not part of the wire — the wire re-flattens it.
      */
-    concept: Concept;
-    key: string;
-    type: string;
-    stereotypes: string[];
-    abstract?: boolean;
-    attributes: Attribute[];
-    values?: string[];
-    /**
-     * A `uml.Note`\'s markdown prose (from its `## Body` section). Distinct from
-     * the generic verbatim `concept.body`: this is the Note-specific rendered
-     * prose. Sole reader is the note node renderer. Title/description/verbatim
-     * body now live only on `concept` (the single authoritative source).
-     */
-    note_body?: string;
-    annotates?: NoteAnchor[];
-    /**
-     * Owned member keys (classifiers, diagrams, sub-packages), in progressive-
-     * disclosure order. Meaningful only on `uml.Package` nodes; empty elsewhere.
-     */
-    members?: string[];
+    concepts?: Record<string, Concept>;
 }
 
 export interface Rect {

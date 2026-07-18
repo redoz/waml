@@ -256,7 +256,7 @@ pub enum UmlMetaclass {
 }
 
 impl UmlMetaclass {
-    fn parse(metaclass: &str) -> Option<UmlMetaclass> {
+    pub fn parse(metaclass: &str) -> Option<UmlMetaclass> {
         match metaclass {
             "Class" => Some(UmlMetaclass::Class),
             "Interface" => Some(UmlMetaclass::Interface),
@@ -270,7 +270,7 @@ impl UmlMetaclass {
             _ => None,
         }
     }
-    fn name(self) -> &'static str {
+    pub fn name(self) -> &'static str {
         match self {
             UmlMetaclass::Class => "Class",
             UmlMetaclass::Interface => "Interface",
@@ -379,20 +379,41 @@ pub struct FlowNode {
     pub id: String,
     pub kind: FlowNodeKind,
     /// Resolved key of an `object` node's typing classifier.
-    #[cfg_attr(feature = "serde", serde(rename = "objectRef", default, skip_serializing_if = "Option::is_none"))]
+    #[cfg_attr(
+        feature = "serde",
+        serde(rename = "objectRef", default, skip_serializing_if = "Option::is_none")
+    )]
     pub object_ref: Option<String>,
-    #[cfg_attr(feature = "serde", serde(default, skip_serializing_if = "Option::is_none"))]
+    #[cfg_attr(
+        feature = "serde",
+        serde(default, skip_serializing_if = "Option::is_none")
+    )]
     pub partition: Option<String>,
-    #[cfg_attr(feature = "serde", serde(default, skip_serializing_if = "Option::is_none"))]
+    #[cfg_attr(
+        feature = "serde",
+        serde(default, skip_serializing_if = "Option::is_none")
+    )]
     pub entry: Option<String>,
-    #[cfg_attr(feature = "serde", serde(rename = "do", default, skip_serializing_if = "Option::is_none"))]
+    #[cfg_attr(
+        feature = "serde",
+        serde(rename = "do", default, skip_serializing_if = "Option::is_none")
+    )]
     pub do_: Option<String>,
-    #[cfg_attr(feature = "serde", serde(default, skip_serializing_if = "Option::is_none"))]
+    #[cfg_attr(
+        feature = "serde",
+        serde(default, skip_serializing_if = "Option::is_none")
+    )]
     pub exit: Option<String>,
     /// Resolved key of the flow document this composite/call-behavior refines.
-    #[cfg_attr(feature = "serde", serde(default, skip_serializing_if = "Option::is_none"))]
+    #[cfg_attr(
+        feature = "serde",
+        serde(default, skip_serializing_if = "Option::is_none")
+    )]
     pub refines: Option<String>,
-    #[cfg_attr(feature = "serde", serde(default, skip_serializing_if = "Vec::is_empty"))]
+    #[cfg_attr(
+        feature = "serde",
+        serde(default, skip_serializing_if = "Vec::is_empty")
+    )]
     pub notes: Vec<String>,
 }
 
@@ -406,19 +427,37 @@ pub struct FlowEdge {
     /// Local node identity, or the link title for a cross-document target.
     pub to: String,
     /// Resolved key when the target was a cross-document link.
-    #[cfg_attr(feature = "serde", serde(rename = "toRef", default, skip_serializing_if = "Option::is_none"))]
+    #[cfg_attr(
+        feature = "serde",
+        serde(rename = "toRef", default, skip_serializing_if = "Option::is_none")
+    )]
     pub to_ref: Option<String>,
-    #[cfg_attr(feature = "serde", serde(default, skip_serializing_if = "Option::is_none"))]
+    #[cfg_attr(
+        feature = "serde",
+        serde(default, skip_serializing_if = "Option::is_none")
+    )]
     pub trigger: Option<String>,
-    #[cfg_attr(feature = "serde", serde(default, skip_serializing_if = "Option::is_none"))]
+    #[cfg_attr(
+        feature = "serde",
+        serde(default, skip_serializing_if = "Option::is_none")
+    )]
     pub guard: Option<String>,
     /// Decision default branch (`else transitions to …`).
-    #[cfg_attr(feature = "serde", serde(rename = "else", default, skip_serializing_if = "is_false"))]
+    #[cfg_attr(
+        feature = "serde",
+        serde(rename = "else", default, skip_serializing_if = "is_false")
+    )]
     pub is_else: bool,
-    #[cfg_attr(feature = "serde", serde(default, skip_serializing_if = "Option::is_none"))]
+    #[cfg_attr(
+        feature = "serde",
+        serde(default, skip_serializing_if = "Option::is_none")
+    )]
     pub effect: Option<String>,
     /// Resolved key of the carried object type (`carries <link>` object flow).
-    #[cfg_attr(feature = "serde", serde(default, skip_serializing_if = "Option::is_none"))]
+    #[cfg_attr(
+        feature = "serde",
+        serde(default, skip_serializing_if = "Option::is_none")
+    )]
     pub carries: Option<String>,
 }
 
@@ -432,7 +471,10 @@ pub struct FlowDoc {
     pub title: String,
     pub flavor: FlowFlavor,
     /// Resolved key of the entity this behavior describes (frontmatter link).
-    #[cfg_attr(feature = "serde", serde(default, skip_serializing_if = "Option::is_none"))]
+    #[cfg_attr(
+        feature = "serde",
+        serde(default, skip_serializing_if = "Option::is_none")
+    )]
     pub describes: Option<String>,
     pub nodes: Vec<FlowNode>,
     pub edges: Vec<FlowEdge>,
@@ -699,51 +741,112 @@ pub enum NoteAnchor {
     },
 }
 
+/// The ontology-agnostic substrate node (design spec §2): identity (`key`),
+/// render label (`label`), and its ontology payload (`kind`). The OKF `Concept`
+/// is NOT here — it is a parse-time projection of storage, kept on
+/// `Model.concepts` and re-joined only on the Rust wire projection
+/// (`crate::wire`). UML-specific data lives behind `kind` in `crate::uml`;
+/// callers reach it via the accessors below (never a raw field/variant match).
 #[derive(Debug, Clone, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "wasm", derive(tsify_next::Tsify))]
 #[cfg_attr(feature = "wasm", tsify(into_wasm_abi, from_wasm_abi))]
 pub struct Node {
-    /// Lossless OKF projection of this node's source document (OKF tier) and the
-    /// single authoritative source for `title`/`description`/verbatim `body` (read
-    /// via `concept.title`/`concept.description`/`concept.body`) plus the non-UML
-    /// OKF fields (`tags`/`resource`/`timestamp`/`links`/`citations`/`role`/`extra`).
-    /// Populated from `crate::okf::project` (single source).
-    pub concept: crate::okf::Concept,
     pub key: String,
-    #[cfg_attr(feature = "serde", serde(rename = "type"))]
-    #[cfg_attr(feature = "wasm", tsify(type = "string"))]
-    pub ty: ElementType,
-    pub stereotypes: Vec<String>,
-    #[cfg_attr(
-        feature = "serde",
-        serde(rename = "abstract", default, skip_serializing_if = "is_false")
-    )]
-    pub abstract_: bool,
-    pub attributes: Vec<Attribute>,
-    #[cfg_attr(
-        feature = "serde",
-        serde(default, skip_serializing_if = "Vec::is_empty")
-    )]
-    pub values: Vec<String>,
-    /// A `uml.Note`'s markdown prose (from its `## Body` section). Distinct from
-    /// the generic verbatim `concept.body`: this is the Note-specific rendered
-    /// prose. Sole reader is the note node renderer. Title/description/verbatim
-    /// body now live only on `concept` (the single authoritative source).
-    #[cfg_attr(
-        feature = "serde",
-        serde(default, skip_serializing_if = "Option::is_none")
-    )]
-    pub note_body: Option<String>,
-    #[cfg_attr(
-        feature = "serde",
-        serde(default, skip_serializing_if = "Vec::is_empty")
-    )]
-    pub annotates: Vec<NoteAnchor>,
+    pub label: String,
+    pub kind: NodeKind,
+}
+
+impl Node {
+    fn uml(&self) -> Option<&crate::uml::UmlNode> {
+        match &self.kind {
+            NodeKind::Uml(u) => Some(u),
+            NodeKind::Unknown(_) => None,
+        }
+    }
+
+    pub fn classifier(&self) -> Option<&crate::uml::Classifier> {
+        match self.uml()? {
+            crate::uml::UmlNode::Classifier(c) => Some(c),
+            _ => None,
+        }
+    }
+
+    pub fn attributes(&self) -> &[Attribute] {
+        self.classifier()
+            .map(|c| c.attributes.as_slice())
+            .unwrap_or(&[])
+    }
+
+    pub fn stereotypes(&self) -> &[String] {
+        self.classifier()
+            .map(|c| c.stereotypes.as_slice())
+            .unwrap_or(&[])
+    }
+
+    pub fn values(&self) -> &[String] {
+        self.classifier()
+            .map(|c| c.values.as_slice())
+            .unwrap_or(&[])
+    }
+
+    pub fn is_abstract(&self) -> bool {
+        self.classifier().map(|c| c.abstract_).unwrap_or(false)
+    }
+
     /// Owned member keys (classifiers, diagrams, sub-packages), in progressive-
     /// disclosure order. Meaningful only on `uml.Package` nodes; empty elsewhere.
-    #[cfg_attr(feature = "serde", serde(default, skip_serializing_if = "Vec::is_empty"))]
-    pub members: Vec<String>,
+    pub fn members(&self) -> &[String] {
+        match self.uml() {
+            Some(crate::uml::UmlNode::Structural(crate::uml::Structural::Package { members })) => {
+                members.as_slice()
+            }
+            _ => &[],
+        }
+    }
+
+    /// A `uml.Note`'s markdown prose (from its `## Body` section). Sole reader is
+    /// the note node renderer.
+    pub fn note_body(&self) -> Option<&str> {
+        match self.uml() {
+            Some(crate::uml::UmlNode::Structural(crate::uml::Structural::Note {
+                body, ..
+            })) => body.as_deref(),
+            _ => None,
+        }
+    }
+
+    pub fn annotates(&self) -> &[NoteAnchor] {
+        match self.uml() {
+            Some(crate::uml::UmlNode::Structural(crate::uml::Structural::Note {
+                annotates,
+                ..
+            })) => annotates.as_slice(),
+            _ => &[],
+        }
+    }
+
+    /// Recompute the parse-time `ElementType` token for legacy/native readers and
+    /// the wire (`WireNode.ty`). Slice 1 nodes are only Classifier/Structural/Unknown;
+    /// Behavior/Lifeline nodes are constructed by later slices.
+    pub fn ty(&self) -> ElementType {
+        match &self.kind {
+            NodeKind::Uml(crate::uml::UmlNode::Classifier(c)) => {
+                ElementType::parse(&format!("uml.{}", c.kind.name()))
+            }
+            NodeKind::Uml(crate::uml::UmlNode::Structural(crate::uml::Structural::Package {
+                ..
+            })) => ElementType::Uml(UmlMetaclass::Package),
+            NodeKind::Uml(crate::uml::UmlNode::Structural(crate::uml::Structural::Note {
+                ..
+            })) => ElementType::Uml(UmlMetaclass::Note),
+            NodeKind::Uml(crate::uml::UmlNode::Behavior(_))
+            | NodeKind::Uml(crate::uml::UmlNode::Lifeline(_)) => {
+                unreachable!("behavior/lifeline nodes are constructed in slices 2-3")
+            }
+            NodeKind::Unknown(s) => ElementType::Unknown(s.clone()),
+        }
+    }
 }
 
 /// A resolved membership group in a diagram (heading text + resolved keys).
@@ -765,14 +868,20 @@ pub struct Diagram {
     pub key: String,
     pub title: String,
     pub profile: String,
-    #[cfg_attr(feature = "serde", serde(default, skip_serializing_if = "Option::is_none"))]
+    #[cfg_attr(
+        feature = "serde",
+        serde(default, skip_serializing_if = "Option::is_none")
+    )]
     pub description: Option<String>,
     pub groups: Vec<DiagramGroup>,
     // `layout` carries the raw layout AST (`syntax::LayoutStatement`). Serialized
     // end to end (Phase 2) so the frontend can read the layout relations.
     #[cfg_attr(feature = "wasm", tsify(type = "unknown[]"))]
     pub layout: Vec<crate::syntax::LayoutStatement>,
-    #[cfg_attr(feature = "serde", serde(default, skip_serializing_if = "DiagramDisplay::is_empty"))]
+    #[cfg_attr(
+        feature = "serde",
+        serde(default, skip_serializing_if = "DiagramDisplay::is_empty")
+    )]
     pub display: DiagramDisplay,
 }
 
@@ -830,19 +939,43 @@ pub struct Model {
     pub path: String,
     /// Discovered `uml.Package` nodes (root + nested). Kept out of `nodes` so
     /// classifier consumers are unaffected.
-    #[cfg_attr(feature = "serde", serde(default, skip_serializing_if = "Vec::is_empty"))]
+    #[cfg_attr(
+        feature = "serde",
+        serde(default, skip_serializing_if = "Vec::is_empty")
+    )]
     pub packages: Vec<Node>,
     /// Flow-substrate behavior documents (uml.Activity / uml.StateMachine).
-    #[cfg_attr(feature = "serde", serde(default, skip_serializing_if = "Vec::is_empty"))]
+    #[cfg_attr(
+        feature = "serde",
+        serde(default, skip_serializing_if = "Vec::is_empty")
+    )]
     pub flows: Vec<FlowDoc>,
     /// Interaction-substrate behavior documents (uml.Sequence).
-    #[cfg_attr(feature = "serde", serde(default, skip_serializing_if = "Vec::is_empty"))]
+    #[cfg_attr(
+        feature = "serde",
+        serde(default, skip_serializing_if = "Vec::is_empty")
+    )]
     pub interactions: Vec<SequenceDoc>,
+    /// Parse-time OKF projection of each node's source document (design spec §2:
+    /// Concept is a projection of storage, off the object-model `Node`). Keyed by
+    /// `node.key` (packages key by their dir; the `Concept.id` inside keeps its
+    /// natural path). `build_wire` re-joins it onto the wire; native readers use
+    /// `Model::concept`. Not part of the wire — the wire re-flattens it.
+    #[cfg_attr(
+        feature = "serde",
+        serde(default, skip_serializing_if = "std::collections::HashMap::is_empty")
+    )]
+    #[cfg_attr(feature = "wasm", tsify(type = "Record<string, Concept>"))]
+    pub concepts: std::collections::HashMap<String, crate::okf::Concept>,
 }
 
 impl Model {
     pub fn node(&self, key: &str) -> Option<&Node> {
         self.nodes.iter().find(|n| n.key == key)
+    }
+
+    pub fn concept(&self, key: &str) -> Option<&crate::okf::Concept> {
+        self.concepts.get(key)
     }
 }
 
@@ -858,7 +991,10 @@ mod tests {
 
     #[test]
     fn diagram_display_with_a_set_field_is_not_empty() {
-        let d = DiagramDisplay { show_attributes: Some(false), ..Default::default() };
+        let d = DiagramDisplay {
+            show_attributes: Some(false),
+            ..Default::default()
+        };
         assert!(!d.is_empty(), "any set field makes the display non-empty");
     }
 
@@ -891,21 +1027,42 @@ mod tests {
             ElementType::Uml(UmlMetaclass::UseCase)
         );
         assert_eq!(ElementType::Uml(UmlMetaclass::Actor).as_str(), "uml.Actor");
-        assert_eq!(ElementType::Uml(UmlMetaclass::UseCase).as_str(), "uml.UseCase");
+        assert_eq!(
+            ElementType::Uml(UmlMetaclass::UseCase).as_str(),
+            "uml.UseCase"
+        );
     }
 
     #[test]
     fn behavior_types_parse_and_round_trip() {
-        assert_eq!(ElementType::parse("uml.Activity"), ElementType::Behavior(BehaviorKind::Activity));
-        assert_eq!(ElementType::parse("uml.StateMachine"), ElementType::Behavior(BehaviorKind::StateMachine));
-        assert_eq!(ElementType::parse("uml.Sequence"), ElementType::Behavior(BehaviorKind::Sequence));
-        assert_eq!(ElementType::Behavior(BehaviorKind::StateMachine).as_str(), "uml.StateMachine");
+        assert_eq!(
+            ElementType::parse("uml.Activity"),
+            ElementType::Behavior(BehaviorKind::Activity)
+        );
+        assert_eq!(
+            ElementType::parse("uml.StateMachine"),
+            ElementType::Behavior(BehaviorKind::StateMachine)
+        );
+        assert_eq!(
+            ElementType::parse("uml.Sequence"),
+            ElementType::Behavior(BehaviorKind::Sequence)
+        );
+        assert_eq!(
+            ElementType::Behavior(BehaviorKind::StateMachine).as_str(),
+            "uml.StateMachine"
+        );
     }
 
     #[test]
     fn includes_and_extends_are_endless_dependency_verbs() {
-        assert_eq!(RelationshipKind::parse("includes"), Some(RelationshipKind::Includes));
-        assert_eq!(RelationshipKind::parse("extends"), Some(RelationshipKind::Extends));
+        assert_eq!(
+            RelationshipKind::parse("includes"),
+            Some(RelationshipKind::Includes)
+        );
+        assert_eq!(
+            RelationshipKind::parse("extends"),
+            Some(RelationshipKind::Extends)
+        );
         assert_eq!(RelationshipKind::Includes.as_str(), "includes");
         assert_eq!(RelationshipKind::Extends.as_str(), "extends");
         assert!(!RelationshipKind::Includes.is_ended());
@@ -944,10 +1101,7 @@ mod tests {
     fn classifier_type_round_trips_to_string() {
         assert_eq!(ElementType::Uml(UmlMetaclass::Enum).as_str(), "uml.Enum");
         assert_eq!(ElementType::Diagram.as_str(), "Diagram");
-        assert_eq!(
-            ElementType::Unknown("x.Y".to_string()).as_str(),
-            "x.Y"
-        );
+        assert_eq!(ElementType::Unknown("x.Y".to_string()).as_str(), "x.Y");
     }
 
     #[test]
@@ -975,31 +1129,46 @@ mod tests {
         }
         let pkg = NodeKind::Uml(UmlNode::Structural(Structural::Package { members: vec![] }));
         assert!(!pkg.is_classifier());
-        let note =
-            NodeKind::Uml(UmlNode::Structural(Structural::Note { body: None, annotates: vec![] }));
+        let note = NodeKind::Uml(UmlNode::Structural(Structural::Note {
+            body: None,
+            annotates: vec![],
+        }));
         assert!(!note.is_classifier());
         assert!(!NodeKind::Unknown("bpmn.Task".to_string()).is_classifier());
     }
 
     #[test]
     fn model_looks_up_nodes_by_key() {
+        use crate::uml::{Classifier, ClassifierKind, UmlNode};
         let node = Node {
-            concept: crate::okf::project(
+            key: "order".to_string(),
+            label: "Order".to_string(),
+            kind: NodeKind::Uml(UmlNode::Classifier(Classifier {
+                kind: ClassifierKind::Class,
+                stereotypes: vec![],
+                abstract_: false,
+                attributes: vec![],
+                values: vec![],
+            })),
+        };
+        let mut concepts = std::collections::HashMap::new();
+        concepts.insert(
+            "order".to_string(),
+            crate::okf::project(
                 "order.md",
                 "---\ntype: uml.Class\ntitle: Order\n---\n# Order\n",
             ),
-            key: "order".to_string(),
-            ty: ElementType::Uml(UmlMetaclass::Class),
-            stereotypes: vec![],
-            abstract_: false,
-            attributes: vec![],
-            values: vec![],
-            note_body: None,
-            annotates: vec![],
-            members: vec![],
+        );
+        let model = Model {
+            nodes: vec![node],
+            concepts,
+            ..Default::default()
         };
-        let model = Model { nodes: vec![node], ..Default::default() };
-        assert_eq!(model.node("order").and_then(|n| n.concept.title.as_deref()), Some("Order"));
+        assert_eq!(model.node("order").map(|n| n.label.as_str()), Some("Order"));
+        assert_eq!(
+            model.concept("order").and_then(|c| c.title.as_deref()),
+            Some("Order")
+        );
         assert!(model.node("missing").is_none());
     }
 
@@ -1018,14 +1187,21 @@ mod tests {
         for k in [FragmentKind::Alt, FragmentKind::Opt, FragmentKind::Loop] {
             assert_eq!(FragmentKind::parse(k.as_str()), Some(k));
         }
-        assert_eq!(FragmentKind::parse("par"), None, "par operands are deferred");
+        assert_eq!(
+            FragmentKind::parse("par"),
+            None,
+            "par operands are deferred"
+        );
     }
 
     #[test]
     fn attribute_defaults_multiplicity_to_one() {
         let a = Attribute {
             name: "id".to_string(),
-            ty: TypeRef { name: "OrderId".to_string(), ref_: None },
+            ty: TypeRef {
+                name: "OrderId".to_string(),
+                ref_: None,
+            },
             multiplicity: Multiplicity::default(),
             visibility: None,
             description: None,

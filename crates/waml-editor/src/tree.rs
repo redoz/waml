@@ -54,15 +54,13 @@ pub fn build_tree(model: &Model) -> ProjectTree {
     // Unified key -> (title, kind) over all five collections.
     let mut meta: HashMap<String, (String, TreeKind)> = HashMap::new();
     for n in &model.nodes {
-        let title = n.concept.title.clone().unwrap_or_else(|| n.key.clone());
-        meta.insert(n.key.clone(), (title, kind_of(&n.ty)));
+        meta.insert(n.key.clone(), (n.label.clone(), kind_of(&n.ty())));
     }
     for d in &model.diagrams {
         meta.insert(d.key.clone(), (d.title.clone(), TreeKind::Diagram));
     }
     for p in &model.packages {
-        let title = p.concept.title.clone().unwrap_or_else(|| p.key.clone());
-        meta.insert(p.key.clone(), (title, TreeKind::Package));
+        meta.insert(p.key.clone(), (p.label.clone(), TreeKind::Package));
     }
     for f in &model.flows {
         meta.insert(f.key.clone(), (f.title.clone(), TreeKind::Behavior));
@@ -82,7 +80,7 @@ pub fn build_tree(model: &Model) -> ProjectTree {
             key: String::new(),
             title: root_title,
             kind: TreeKind::Package,
-            children: build_children(&root_pkg.members, model, &meta),
+            children: build_children(root_pkg.members(), model, &meta),
         };
         ProjectTree { roots: vec![root] }
     } else {
@@ -124,7 +122,7 @@ fn build_children(
                     .packages
                     .iter()
                     .find(|p| &p.key == k)
-                    .map(|p| build_children(&p.members, model, meta))
+                    .map(|p| build_children(p.members(), model, meta))
                     .unwrap_or_default()
             } else {
                 vec![]
@@ -144,8 +142,8 @@ mod tests {
     use super::*;
     use crate::load;
     use std::path::Path;
-    use waml::model::{ElementType, Model, Node, UmlMetaclass};
-    use waml::okf::Concept;
+    use waml::model::{ElementType, Model, Node, NodeKind, UmlMetaclass};
+    use waml::uml::{Classifier, ClassifierKind, Structural, UmlNode};
 
     fn mini() -> Model {
         let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/mini");
@@ -165,35 +163,30 @@ mod tests {
         out
     }
 
-    fn concept(title: &str) -> Concept {
-        Concept {
-            id: String::new(),
-            ty: String::new(),
-            title: Some(title.to_string()),
-            description: None,
-            resource: None,
-            tags: vec![],
-            timestamp: None,
-            body: String::new(),
-            links: vec![],
-            citations: vec![],
-            role: Default::default(),
-            extra: Default::default(),
-        }
-    }
-
     fn node(key: &str, ty: ElementType, title: &str, members: Vec<&str>) -> Node {
+        let kind = match ty {
+            ElementType::Uml(UmlMetaclass::Package) => {
+                NodeKind::Uml(UmlNode::Structural(Structural::Package {
+                    members: members.iter().map(|s| s.to_string()).collect(),
+                }))
+            }
+            ElementType::Uml(mc) => NodeKind::Uml(UmlNode::Classifier(Classifier {
+                kind: ClassifierKind::parse(mc.name())
+                    .expect("test helper only builds classifier metaclasses"),
+                stereotypes: vec![],
+                abstract_: false,
+                attributes: vec![],
+                values: vec![],
+            })),
+            ElementType::Unknown(s) => NodeKind::Unknown(s),
+            ElementType::Behavior(_) | ElementType::Diagram => {
+                unreachable!("test helper does not build behavior/diagram nodes")
+            }
+        };
         Node {
-            concept: concept(title),
             key: key.to_string(),
-            ty,
-            stereotypes: vec![],
-            abstract_: false,
-            attributes: vec![],
-            values: vec![],
-            note_body: None,
-            annotates: vec![],
-            members: members.iter().map(|s| s.to_string()).collect(),
+            label: title.to_string(),
+            kind,
         }
     }
 
@@ -224,7 +217,8 @@ mod tests {
         // The fixture's one diagram appears somewhere, as a Diagram leaf.
         let dkey = model.diagrams[0].key.clone();
         assert!(
-            flat.iter().any(|(k, kind)| *k == dkey && *kind == TreeKind::Diagram),
+            flat.iter()
+                .any(|(k, kind)| *k == dkey && *kind == TreeKind::Diagram),
             "diagram {dkey:?} missing from {flat:?}"
         );
         // Every resolved row has a known kind (no dangling => Unknown leaks).
@@ -236,25 +230,49 @@ mod tests {
         let model = Model {
             path: "Root".to_string(),
             packages: vec![
-                node("", ElementType::Uml(UmlMetaclass::Package), "Root", vec!["sub"]),
-                node("sub", ElementType::Uml(UmlMetaclass::Package), "Sub Pkg", vec!["cls"]),
+                node(
+                    "",
+                    ElementType::Uml(UmlMetaclass::Package),
+                    "Root",
+                    vec!["sub"],
+                ),
+                node(
+                    "sub",
+                    ElementType::Uml(UmlMetaclass::Package),
+                    "Sub Pkg",
+                    vec!["cls"],
+                ),
             ],
-            nodes: vec![node("cls", ElementType::Uml(UmlMetaclass::Class), "Cls", vec![])],
+            nodes: vec![node(
+                "cls",
+                ElementType::Uml(UmlMetaclass::Class),
+                "Cls",
+                vec![],
+            )],
             ..Default::default()
         };
         let tree = build_tree(&model);
 
         assert_eq!(tree.roots.len(), 1);
         let root = &tree.roots[0];
-        assert_eq!((root.key.as_str(), root.title.as_str(), root.kind), ("", "Root", TreeKind::Package));
+        assert_eq!(
+            (root.key.as_str(), root.title.as_str(), root.kind),
+            ("", "Root", TreeKind::Package)
+        );
 
         assert_eq!(root.children.len(), 1);
         let sub = &root.children[0];
-        assert_eq!((sub.key.as_str(), sub.title.as_str(), sub.kind), ("sub", "Sub Pkg", TreeKind::Package));
+        assert_eq!(
+            (sub.key.as_str(), sub.title.as_str(), sub.kind),
+            ("sub", "Sub Pkg", TreeKind::Package)
+        );
 
         assert_eq!(sub.children.len(), 1);
         let cls = &sub.children[0];
-        assert_eq!((cls.key.as_str(), cls.title.as_str(), cls.kind), ("cls", "Cls", TreeKind::Class));
+        assert_eq!(
+            (cls.key.as_str(), cls.title.as_str(), cls.kind),
+            ("cls", "Cls", TreeKind::Class)
+        );
         assert!(cls.children.is_empty());
     }
 
@@ -286,9 +304,15 @@ mod tests {
 
         assert_eq!(tree.roots.len(), 1);
         let root = &tree.roots[0];
-        assert_eq!((root.key.as_str(), root.title.as_str(), root.kind), ("", "bundle", TreeKind::Package));
+        assert_eq!(
+            (root.key.as_str(), root.title.as_str(), root.kind),
+            ("", "bundle", TreeKind::Package)
+        );
         assert_eq!(root.children.len(), 2);
-        assert!(root.children.iter().all(|c| c.kind == TreeKind::Diagram && c.children.is_empty()));
+        assert!(root
+            .children
+            .iter()
+            .all(|c| c.kind == TreeKind::Diagram && c.children.is_empty()));
         assert_eq!(root.children[0].key, "d1");
         assert_eq!(root.children[1].key, "d2");
     }
