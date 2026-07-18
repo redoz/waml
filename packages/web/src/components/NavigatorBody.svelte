@@ -198,43 +198,43 @@
   }
 </script>
 
-<div role="menu" tabindex="-1" class="relative flex flex-col h-full min-h-0 py-1 text-[13px] text-slate-900">
+<div role="menu" tabindex="-1" class="relative flex flex-col h-full min-h-0 py-1 text-[13px] text-[color:var(--ink)]">
   <!-- Search + type chip row -->
   <div class="flex items-center gap-1.5 px-2 py-1">
     <input
       aria-label="Search model"
       bind:value={query}
       placeholder="Search model"
-      class="flex-1 min-w-0 px-2 py-[6px] border border-[#d8dee8] rounded-md text-slate-900 focus:outline-none focus:border-[#1e88e5] focus:ring-2 focus:ring-[#e6f1fb]"
+      class="flex-1 min-w-0 px-2 py-[6px] border border-[color:rgba(var(--accent),.26)] rounded-[var(--round-chip)] text-[color:var(--ink)] focus:outline-none focus:border-[color:rgb(var(--accent))] focus:ring-2 focus:ring-[color:rgba(var(--accent),.20)]"
     />
     <button
       aria-label="Filter by type"
       onclick={rotateChip}
-      class="flex items-center gap-[3px] px-2 py-[6px] rounded-md border border-[#d8dee8] text-slate-600 cursor-pointer hover:bg-[#f1f3f7]"
+      class="flex items-center gap-[3px] px-2 py-[6px] rounded-[var(--round-chip)] border border-[color:rgba(var(--accent),.26)] text-[color:var(--ink-dim)] cursor-pointer hover:bg-[color:rgba(var(--accent),.12)]"
     >
-      {deprefix(typeFilter)} <ChevronDown size={13} class="text-slate-400" />
+      {deprefix(typeFilter)} <ChevronDown size={13} class="text-[color:rgb(var(--ink-faint))]" />
     </button>
   </div>
 
   <!-- Scope breadcrumb -->
-  <div class="flex items-center flex-wrap gap-[2px] px-3 py-1 text-[12px] text-slate-500">
+  <div class="flex items-center flex-wrap gap-[2px] px-3 py-1 text-[12px] text-[color:rgb(var(--ink-faint))]">
     {#each crumbs as crumb, i (crumb.key)}
-      {#if i > 0}<span class="text-slate-300">/</span>{/if}
+      {#if i > 0}<span class="text-[color:rgba(var(--ink-faint),.5)]">/</span>{/if}
       <button
         onclick={() => onScope?.(crumb.key)}
-        class="px-1 rounded cursor-pointer hover:bg-[#f1f3f7] hover:text-slate-900"
+        class="px-1 rounded-[var(--round-chip)] cursor-pointer hover:bg-[color:rgba(var(--accent),.12)] hover:text-[color:var(--ink)]"
       >
         {crumb.label}
       </button>
     {/each}
   </div>
 
-  <div class="my-1 border-t border-[#eef1f5]"></div>
+  <div class="my-1 border-t border-[color:rgba(var(--accent),.18)]"></div>
 
   <!-- Title with the matched substring wrapped in <mark> (search results). -->
   {#snippet marked(title: string)}
     {@const span = matchSpan(title, query)}
-    {#if span}{title.slice(0, span[0])}<mark class="rounded-[2px] bg-[#fff3bf] text-inherit"
+    {#if span}{title.slice(0, span[0])}<mark class="rounded-[var(--round-chip)] bg-[color:rgba(var(--accent),.22)] text-inherit"
         >{title.slice(span[0], span[1])}</mark
       >{title.slice(span[1])}{:else}{title}{/if}
   {/snippet}
@@ -249,9 +249,9 @@
       oncontextmenu={(e) => { e.preventDefault(); openCtx(row); }}
       onclick={() => activateResult(row)}
       style="padding-left:{8 + row.depth * 16}px"
-      class="w-full text-left pr-3 py-[5px] cursor-pointer flex items-center gap-[7px] text-slate-900 hover:bg-[#f1f3f7]"
+      class="w-full text-left pr-3 py-[5px] cursor-pointer flex items-center gap-[7px] text-[color:var(--ink)] hover:bg-[color:rgba(var(--accent),.12)]"
     >
-      <Icon size={15} class="flex-shrink-0 text-slate-500" />
+      <Icon size={15} class="flex-shrink-0 text-[color:rgb(var(--ink-faint))]" />
       <span class="truncate flex-1">{@render marked(row.title)}</span>
     </button>
   {/snippet}
@@ -260,10 +260,10 @@
   <div class="flex-1 min-h-0 overflow-y-auto py-0.5">
     {#if search}
       {#if search.state === "empty-all"}
-        <div class="px-3 py-6 text-center text-[12.5px] text-slate-400">No matches found</div>
+        <div class="px-3 py-6 text-center text-[12.5px] text-[color:rgb(var(--ink-faint))]">No matches found</div>
       {:else if search.state === "empty-scope"}
-        <div class="px-3 py-3 text-center text-[12.5px] text-slate-400">No matches in {scopeLabel}</div>
-        <div class="px-3 pb-1 text-[11px] font-[600] uppercase tracking-wide text-slate-400">Elsewhere in model</div>
+        <div class="px-3 py-3 text-center text-[12.5px] text-[color:rgb(var(--ink-faint))]">No matches in {scopeLabel}</div>
+        <div class="px-3 pb-1 text-[11px] font-[600] uppercase tracking-wide text-[color:rgb(var(--ink-faint))]">Elsewhere in model</div>
         {#each search.elsewhere as row (row.key)}
           {@render resultRow(row)}
         {/each}
@@ -285,17 +285,17 @@
           oncontextmenu={(e) => { e.preventDefault(); openCtx(row); }}
           onclick={() => activateRow(row)}
           style="padding-left:{8 + row.depth * 16}px"
-          class="group w-full text-left pr-3 py-[5px] cursor-pointer flex items-center gap-[7px] hover:bg-[#f1f3f7] {isActiveRow(row) ? 'text-[#1e88e5] font-[600]' : 'text-slate-900'}"
+          class="group w-full text-left pr-3 py-[5px] cursor-pointer flex items-center gap-[7px] hover:bg-[color:rgba(var(--accent),.12)] {isActiveRow(row) ? 'text-[color:rgb(var(--accent))] font-[600]' : 'text-[color:var(--ink)]'}"
         >
           <GripVertical
             size={13}
-            class="flex-shrink-0 text-slate-300 opacity-0 group-hover:opacity-100 cursor-grab"
+            class="flex-shrink-0 text-[color:rgba(var(--ink-faint),.5)] opacity-0 group-hover:opacity-100 cursor-grab"
             aria-hidden="true"
           />
-          <Icon size={15} class="flex-shrink-0 text-slate-500" />
+          <Icon size={15} class="flex-shrink-0 text-[color:rgb(var(--ink-faint))]" />
           <span class="truncate flex-1">{row.title}</span>
           {#if isActiveRow(row)}
-            <Check size={15} class="flex-shrink-0 text-[#1e88e5]" />
+            <Check size={15} class="flex-shrink-0 text-[color:rgb(var(--accent))]" />
           {/if}
         </button>
       {/each}
@@ -309,14 +309,14 @@
     <div class="fixed inset-0 z-40" onclick={closeMenus}></div>
     <div
       role="menu"
-      class="absolute z-50 left-1/2 -translate-x-1/2 top-[120px] w-[220px] rounded-lg border border-[#d8dee8] bg-white shadow-[0_8px_24px_rgba(15,23,42,0.18)] py-1"
+      class="absolute z-50 left-1/2 -translate-x-1/2 top-[120px] w-[220px] rounded-[var(--round-chip)] border border-[color:rgba(var(--accent),.26)] bg-[color:var(--panel-fill)] shadow-[0_8px_24px_rgba(40,70,110,0.18)] py-1"
     >
       {#if containing.length <= 1}
         {#if containing.length === 1}
           <button
             role="menuitem"
             onclick={() => { onViewInDiagram?.(key, containing[0].key); closeMenus(); }}
-            class="w-full text-left text-[13px] text-slate-900 px-3 py-2 cursor-pointer hover:bg-[#f1f3f7]"
+            class="w-full text-left text-[13px] text-[color:var(--ink)] px-3 py-2 cursor-pointer hover:bg-[color:rgba(var(--accent),.12)]"
           >
             View in diagram
           </button>
@@ -324,17 +324,17 @@
         <button
           role="menuitem"
           onclick={() => { onAddToNewDiagram?.(key); closeMenus(); }}
-          class="w-full text-left text-[13px] text-slate-900 px-3 py-2 cursor-pointer hover:bg-[#f1f3f7]"
+          class="w-full text-left text-[13px] text-[color:var(--ink)] px-3 py-2 cursor-pointer hover:bg-[color:rgba(var(--accent),.12)]"
         >
           Add to new diagram
         </button>
       {:else}
-        <div class="px-3 py-2 text-[12px] text-slate-500">View in diagram</div>
+        <div class="px-3 py-2 text-[12px] text-[color:rgb(var(--ink-faint))]">View in diagram</div>
         {#each containing as d (d.key)}
           <button
             role="menuitem"
             onclick={() => { onViewInDiagram?.(key, d.key); closeMenus(); }}
-            class="w-full text-left text-[13px] text-slate-900 pl-6 pr-3 py-2 cursor-pointer hover:bg-[#f1f3f7]"
+            class="w-full text-left text-[13px] text-[color:var(--ink)] pl-6 pr-3 py-2 cursor-pointer hover:bg-[color:rgba(var(--accent),.12)]"
           >
             {d.title}
           </button>
@@ -342,16 +342,16 @@
         <button
           role="menuitem"
           onclick={() => { onAddToNewDiagram?.(key); closeMenus(); }}
-          class="w-full text-left text-[13px] text-slate-900 px-3 py-2 cursor-pointer hover:bg-[#f1f3f7]"
+          class="w-full text-left text-[13px] text-[color:var(--ink)] px-3 py-2 cursor-pointer hover:bg-[color:rgba(var(--accent),.12)]"
         >
           Add to new diagram
         </button>
       {/if}
-      <div class="my-1 border-t border-[#eef1f5]"></div>
+      <div class="my-1 border-t border-[color:rgba(var(--accent),.18)]"></div>
       <button
         role="menuitem"
         onclick={() => { onEditProperties?.(key); closeMenus(); }}
-        class="w-full text-left text-[13px] text-slate-900 px-3 py-2 cursor-pointer hover:bg-[#f1f3f7]"
+        class="w-full text-left text-[13px] text-[color:var(--ink)] px-3 py-2 cursor-pointer hover:bg-[color:rgba(var(--accent),.12)]"
       >
         View / edit properties
       </button>
@@ -364,7 +364,7 @@
     <div class="fixed inset-0 z-40" onclick={closeMenus}></div>
     <div
       role="menu"
-      class="absolute z-50 left-1/2 -translate-x-1/2 top-[120px] w-[230px] rounded-lg border border-[#d8dee8] bg-white shadow-[0_8px_24px_rgba(15,23,42,0.18)] py-1"
+      class="absolute z-50 left-1/2 -translate-x-1/2 top-[120px] w-[230px] rounded-[var(--round-chip)] border border-[color:rgba(var(--accent),.26)] bg-[color:var(--panel-fill)] shadow-[0_8px_24px_rgba(40,70,110,0.18)] py-1"
     >
       <!-- New package — inline name input -->
       {#if ctxMode === "package"}
@@ -375,15 +375,15 @@
             bind:value={ctxInput}
             placeholder="New package name"
             autofocus
-            class="flex-1 min-w-0 text-[13px] px-2 py-[6px] border border-[#d8dee8] rounded-md text-slate-900 focus:outline-none focus:border-[#1e88e5] focus:ring-2 focus:ring-[#e6f1fb]"
+            class="flex-1 min-w-0 text-[13px] px-2 py-[6px] border border-[color:rgba(var(--accent),.26)] rounded-[var(--round-chip)] text-[color:var(--ink)] focus:outline-none focus:border-[color:rgb(var(--accent))] focus:ring-2 focus:ring-[color:rgba(var(--accent),.20)]"
           />
-          <button type="submit" class="text-[12.5px] font-[600] text-[#1e88e5] px-2 py-[6px] rounded-md cursor-pointer hover:bg-[#e6f1fb]">Add</button>
+          <button type="submit" class="text-[12.5px] font-[600] text-[color:rgb(var(--accent))] px-2 py-[6px] rounded-[var(--round-chip)] cursor-pointer hover:bg-[color:rgba(var(--accent),.12)]">Add</button>
         </form>
       {:else}
         <button
           role="menuitem"
           onclick={() => startMode("package")}
-          class="w-full text-left text-[13px] text-slate-900 px-3 py-2 cursor-pointer hover:bg-[#f1f3f7]"
+          class="w-full text-left text-[13px] text-[color:var(--ink)] px-3 py-2 cursor-pointer hover:bg-[color:rgba(var(--accent),.12)]"
         >
           New package
         </button>
@@ -394,7 +394,7 @@
         <button
           role="menuitem"
           onclick={() => { onCreateNode?.(ctxTargetPkg, token); closeMenus(); }}
-          class="w-full text-left text-[13px] text-slate-900 px-3 py-2 cursor-pointer hover:bg-[#f1f3f7]"
+          class="w-full text-left text-[13px] text-[color:var(--ink)] px-3 py-2 cursor-pointer hover:bg-[color:rgba(var(--accent),.12)]"
         >
           New {deprefix(token)}
         </button>
@@ -409,21 +409,21 @@
             bind:value={ctxInput}
             placeholder="New diagram name"
             autofocus
-            class="flex-1 min-w-0 text-[13px] px-2 py-[6px] border border-[#d8dee8] rounded-md text-slate-900 focus:outline-none focus:border-[#1e88e5] focus:ring-2 focus:ring-[#e6f1fb]"
+            class="flex-1 min-w-0 text-[13px] px-2 py-[6px] border border-[color:rgba(var(--accent),.26)] rounded-[var(--round-chip)] text-[color:var(--ink)] focus:outline-none focus:border-[color:rgb(var(--accent))] focus:ring-2 focus:ring-[color:rgba(var(--accent),.20)]"
           />
-          <button type="submit" class="text-[12.5px] font-[600] text-[#1e88e5] px-2 py-[6px] rounded-md cursor-pointer hover:bg-[#e6f1fb]">Add</button>
+          <button type="submit" class="text-[12.5px] font-[600] text-[color:rgb(var(--accent))] px-2 py-[6px] rounded-[var(--round-chip)] cursor-pointer hover:bg-[color:rgba(var(--accent),.12)]">Add</button>
         </form>
       {:else}
         <button
           role="menuitem"
           onclick={() => startMode("diagram")}
-          class="w-full text-left text-[13px] text-slate-900 px-3 py-2 cursor-pointer hover:bg-[#f1f3f7]"
+          class="w-full text-left text-[13px] text-[color:var(--ink)] px-3 py-2 cursor-pointer hover:bg-[color:rgba(var(--accent),.12)]"
         >
           New diagram
         </button>
       {/if}
 
-      <div class="my-1 border-t border-[#eef1f5]"></div>
+      <div class="my-1 border-t border-[color:rgba(var(--accent),.18)]"></div>
 
       <!-- Rename — inline input seeded with the current title -->
       {#if ctxMode === "rename"}
@@ -434,15 +434,15 @@
             bind:value={ctxInput}
             placeholder="Rename"
             autofocus
-            class="flex-1 min-w-0 text-[13px] px-2 py-[6px] border border-[#d8dee8] rounded-md text-slate-900 focus:outline-none focus:border-[#1e88e5] focus:ring-2 focus:ring-[#e6f1fb]"
+            class="flex-1 min-w-0 text-[13px] px-2 py-[6px] border border-[color:rgba(var(--accent),.26)] rounded-[var(--round-chip)] text-[color:var(--ink)] focus:outline-none focus:border-[color:rgb(var(--accent))] focus:ring-2 focus:ring-[color:rgba(var(--accent),.20)]"
           />
-          <button type="submit" class="text-[12.5px] font-[600] text-slate-600 px-2 py-[6px] rounded-md cursor-pointer hover:bg-[#f1f3f7]">Rename</button>
+          <button type="submit" class="text-[12.5px] font-[600] text-[color:var(--ink-dim)] px-2 py-[6px] rounded-[var(--round-chip)] cursor-pointer hover:bg-[color:rgba(var(--accent),.12)]">Rename</button>
         </form>
       {:else}
         <button
           role="menuitem"
           onclick={() => startMode("rename")}
-          class="w-full text-left text-[13px] text-slate-900 px-3 py-2 cursor-pointer hover:bg-[#f1f3f7]"
+          class="w-full text-left text-[13px] text-[color:var(--ink)] px-3 py-2 cursor-pointer hover:bg-[color:rgba(var(--accent),.12)]"
         >
           Rename
         </button>
@@ -451,17 +451,17 @@
       <button
         role="menuitem"
         onclick={() => { onSort?.(ctxTargetPkg); closeMenus(); }}
-        class="w-full text-left text-[13px] text-slate-900 px-3 py-2 cursor-pointer hover:bg-[#f1f3f7]"
+        class="w-full text-left text-[13px] text-[color:var(--ink)] px-3 py-2 cursor-pointer hover:bg-[color:rgba(var(--accent),.12)]"
       >
         Sort A–Z
       </button>
 
-      <div class="my-1 border-t border-[#eef1f5]"></div>
+      <div class="my-1 border-t border-[color:rgba(var(--accent),.18)]"></div>
 
       <button
         role="menuitem"
         onclick={requestDelete}
-        class="w-full text-left text-[13px] text-[#d64545] px-3 py-2 cursor-pointer hover:bg-[#fdeded]"
+        class="w-full text-left text-[13px] text-[color:rgb(var(--danger))] px-3 py-2 cursor-pointer hover:bg-[color:rgba(var(--danger),.12)]"
       >
         Delete…
       </button>
@@ -475,26 +475,26 @@
     <div class="fixed inset-0 z-40" onclick={closeMenus}></div>
     <div
       role="menu"
-      class="absolute z-50 left-1/2 -translate-x-1/2 top-[120px] w-[230px] rounded-lg border border-[#d8dee8] bg-white shadow-[0_8px_24px_rgba(15,23,42,0.18)] py-1"
+      class="absolute z-50 left-1/2 -translate-x-1/2 top-[120px] w-[230px] rounded-[var(--round-chip)] border border-[color:rgba(var(--accent),.26)] bg-[color:var(--panel-fill)] shadow-[0_8px_24px_rgba(40,70,110,0.18)] py-1"
     >
-      <div class="px-3 py-2 text-[12.5px] text-slate-600">
-        Delete <span class="font-[600] text-slate-900">{deletePrompt.title}</span>?
+      <div class="px-3 py-2 text-[12.5px] text-[color:var(--ink-dim)]">
+        Delete <span class="font-[600] text-[color:var(--ink)]">{deletePrompt.title}</span>?
       </div>
       <button
         onclick={() => { onDelete?.(key, "package", "cascade"); closeMenus(); }}
-        class="w-full text-left text-[13px] text-[#d64545] px-3 py-2 cursor-pointer hover:bg-[#fdeded]"
+        class="w-full text-left text-[13px] text-[color:rgb(var(--danger))] px-3 py-2 cursor-pointer hover:bg-[color:rgba(var(--danger),.12)]"
       >
         Delete children too
       </button>
       <button
         onclick={() => { onDelete?.(key, "package", "reparent"); closeMenus(); }}
-        class="w-full text-left text-[13px] text-slate-900 px-3 py-2 cursor-pointer hover:bg-[#f1f3f7]"
+        class="w-full text-left text-[13px] text-[color:var(--ink)] px-3 py-2 cursor-pointer hover:bg-[color:rgba(var(--accent),.12)]"
       >
         Move to parent
       </button>
       <button
         onclick={closeMenus}
-        class="w-full text-left text-[13px] text-slate-500 px-3 py-2 cursor-pointer hover:bg-[#f1f3f7]"
+        class="w-full text-left text-[13px] text-[color:rgb(var(--ink-faint))] px-3 py-2 cursor-pointer hover:bg-[color:rgba(var(--accent),.12)]"
       >
         Cancel
       </button>
