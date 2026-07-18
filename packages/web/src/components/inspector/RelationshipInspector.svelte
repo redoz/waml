@@ -2,7 +2,7 @@
   import type { ModelEdge, ModelNode, RelationshipKind, RelEnd } from "@waml/okf";
   import { RELATIONSHIP_KINDS, ENDED_KINDS } from "@waml/okf";
   import InfoTip from "./InfoTip.svelte";
-  import { inputCls } from "./field-styles";
+  import { inputCls, labelCls } from "./field-styles";
 
   let { edge, fromNode, toNode, onUpdate }: {
     edge: ModelEdge;
@@ -35,7 +35,7 @@
 
 {#snippet endEditor(title: string, end: RelEnd, onChange: (end: RelEnd) => void)}
   <div class="flex gap-[6px]">
-    <label class="flex-1 text-[11px] text-slate-500">
+    <label class="flex-1 text-[11px] text-[color:rgb(var(--ink-faint))]">
       {title} multiplicity
       <input
         aria-label={`${title} multiplicity`}
@@ -46,7 +46,7 @@
         class={inputCls}
       />
     </label>
-    <label class="flex-1 text-[11px] text-slate-500">
+    <label class="flex-1 text-[11px] text-[color:rgb(var(--ink-faint))]">
       {title} role
       <input
         aria-label={`${title} role`}
@@ -61,11 +61,11 @@
 {/snippet}
 
 <div class="flex flex-col gap-[15px]">
-  <div class="text-[13px] text-slate-500">
-    <strong class="text-slate-900">{fromTitle}</strong> → <strong class="text-slate-900">{toTitle}</strong>
+  <div class="text-[13px] text-[color:rgb(var(--ink-faint))]">
+    <strong class="text-[color:var(--ink)]">{fromTitle}</strong> → <strong class="text-[color:var(--ink)]">{toTitle}</strong>
   </div>
   <div>
-    <label for="rel-kind" class="flex items-center gap-[5px] text-[11px] font-semibold text-slate-500 uppercase tracking-[0.3px] mb-[6px]">
+    <label for="rel-kind" class={`${labelCls} flex items-center gap-[5px]`}>
       Kind <InfoTip text={KIND_HELP[edge.kind]} />
     </label>
     <select
@@ -96,11 +96,11 @@
           fromEnd: { ...edge.fromEnd, navigable: e.currentTarget.checked ? true : undefined },
           toEnd: { ...edge.toEnd, navigable: true },
         })}
-        class="w-4 h-4 mt-[1px] accent-[#1e88e5] cursor-pointer"
+        class="w-4 h-4 mt-[1px] accent-[rgb(var(--accent))] cursor-pointer"
       />
       <span class="text-[12.5px]">
         <strong class="text-[13px]">Bidirectional</strong>
-        <span class="text-slate-500 mt-[2px] leading-[1.4] block">Both ends navigable — arrowheads on both ends.</span>
+        <span class="text-[color:rgb(var(--ink-faint))] mt-[2px] leading-[1.4] block">Both ends navigable — arrowheads on both ends.</span>
       </span>
     </label>
   {/if}
