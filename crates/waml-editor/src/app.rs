@@ -3,6 +3,7 @@ use crate::inspector::Subject;
 use crate::load;
 use crate::scene::{build_focus_scene, build_scene};
 use makepad_widgets::*;
+use std::path::Path;
 use waml::model::Model;
 
 script_mod! {
@@ -20,6 +21,7 @@ script_mod! {
     use mod.widgets.SolidView
     use mod.widgets.DesktopButton
     use mod.widgets.DesktopButtonType
+    use mod.widgets.StartScreen
 
     startup() do #(App::script_component(vm)){
         ui: Root{
@@ -138,6 +140,9 @@ script_mod! {
                     width: Fill
                     height: Fill
                     flow: Down
+                    // Starts hidden: the start screen (no-arg launch) shows
+                    // over this; `App` flips it visible once a project opens.
+                    visible: false
                     // Body: a fullscreen canvas base with floating HUD panels
                     // over it. In an Overlay flow every child gets the full body
                     // rect, so each panel is wrapped in a Fill/Fill View whose
@@ -207,6 +212,10 @@ script_mod! {
                         width: Fill
                         height: Fill
                     }
+                    start_screen := StartScreen{
+                        width: Fill
+                        height: Fill
+                    }
                     }
                 }
             }
@@ -222,6 +231,10 @@ pub struct App {
     model: Model,
     #[rust]
     tabs: OpenTabs,
+    /// Recents last rendered into the start screen, so an `OpenRecent(i)`
+    /// action resolves to a path without re-reading disk or index drift.
+    #[rust]
+    start_recents: Vec<crate::config::Recent>,
 }
 
 impl App {
@@ -398,27 +411,17 @@ impl App {
             statusbar.set_state(cx, diagram_name, node_count, zoom_pct, tool_label);
         }
     }
-}
 
-impl MatchEvent for App {
-    fn handle_startup(&mut self, cx: &mut Cx) {
-        let argv: Vec<String> = std::env::args().collect();
-        let args = match crate::cli::parse(&argv) {
-            Ok(a) => a,
-            Err(e) => {
-                log!("{e}");
-                return;
-            }
-        };
-        let Some(ref dir) = args.dir else {
-            // TODO: show start screen (Task 4)
-            return;
-        };
+    /// Load `dir` and populate the editor (tree, canvas, tabs, inspector,
+    /// statusbar, diagram switcher). Returns `false` (having `log!`d) if the
+    /// model fails to load or has no diagrams -- the caller then leaves the
+    /// start screen up rather than revealing a blank editor.
+    fn open_dir(&mut self, cx: &mut Cx, dir: &Path, wanted_diagram: Option<&str>) -> bool {
         let model = match load::load_model(dir) {
             Ok(m) => m,
             Err(e) => {
                 log!("failed to load OKF dir {:?}: {e}", dir);
-                return;
+                return false;
             }
         };
         self.model = model;
@@ -444,9 +447,9 @@ impl MatchEvent for App {
             log!("project_tree widget not found / wrong type");
         }
 
-        let Some(diagram) = crate::cli::select_diagram(&self.model, args.diagram.as_deref()) else {
-            log!("no diagrams in {:?}", args.dir);
-            return;
+        let Some(diagram) = crate::cli::select_diagram(&self.model, wanted_diagram) else {
+            log!("no diagrams in {:?}", dir);
+            return false;
         };
         let (scene, diags) = build_scene(&self.model, diagram);
         for d in &diags {
@@ -476,6 +479,68 @@ impl MatchEvent for App {
         // Diagram switcher (U7): push the base tab's current diagram title
         // into the trigger chip once here.
         self.sync_diagram_switcher_current(cx);
+        true
+    }
+
+    /// Reveal the editor, hide the start screen. `main_column` is a `View`
+    /// (honors `WidgetRef::set_visible`); `StartScreen` is a custom widget
+    /// whose no-op default `Widget::set_visible` means we must toggle its own
+    /// `visible` flag via the borrowed inherent method instead.
+    fn show_editor(&mut self, cx: &mut Cx) {
+        self.ui.widget(cx, ids!(main_column)).set_visible(cx, true);
+        if let Some(mut screen) = self
+            .ui
+            .widget(cx, ids!(start_screen))
+            .borrow_mut::<crate::start_screen::StartScreen>()
+        {
+            screen.set_visible(cx, false);
+        }
+    }
+
+    /// Load recents into the start screen and reveal it, hiding the editor.
+    fn show_start_screen(&mut self, cx: &mut Cx) {
+        self.start_recents = crate::config::recents();
+        let rows: Vec<crate::start_screen::RecentRow> = self
+            .start_recents
+            .iter()
+            .map(|r| crate::start_screen::RecentRow {
+                title: r.title().to_string(),
+                path: r.path().display().to_string(),
+            })
+            .collect();
+        if let Some(mut screen) = self
+            .ui
+            .widget(cx, ids!(start_screen))
+            .borrow_mut::<crate::start_screen::StartScreen>()
+        {
+            screen.set_recents(cx, rows);
+            screen.set_visible(cx, true);
+        }
+        self.ui.widget(cx, ids!(main_column)).set_visible(cx, false);
+    }
+}
+
+impl MatchEvent for App {
+    fn handle_startup(&mut self, cx: &mut Cx) {
+        let argv: Vec<String> = std::env::args().collect();
+        let args = match crate::cli::parse(&argv) {
+            Ok(a) => a,
+            Err(e) => {
+                log!("{e}");
+                return;
+            }
+        };
+        match args.dir {
+            Some(dir) => {
+                if self.open_dir(cx, &dir, args.diagram.as_deref()) {
+                    self.show_editor(cx);
+                } else {
+                    // Bad dir -> fall back to the start screen, never a blank window.
+                    self.show_start_screen(cx);
+                }
+            }
+            None => self.show_start_screen(cx),
+        }
     }
 
     fn handle_actions(&mut self, cx: &mut Cx, actions: &Actions) {
@@ -570,6 +635,36 @@ impl MatchEvent for App {
                 other => log!("tool dock: {other:?}"),
             }
             return;
+        }
+
+        // Start screen: recent-project rows open directly; New/Open project
+        // stay stubs (`log!` only) until the template picker / rfd dialog
+        // land in a later slice.
+        if let Some(screen) = self
+            .ui
+            .widget(cx, ids!(start_screen))
+            .borrow_mut::<crate::start_screen::StartScreen>()
+        {
+            if let Some(action) = screen.screen_action(actions) {
+                drop(screen); // release the borrow before opening a project
+                match action {
+                    crate::start_screen::StartScreenAction::OpenRecent(i) => {
+                        if let Some(recent) = self.start_recents.get(i).cloned() {
+                            if self.open_dir(cx, recent.path(), None) {
+                                self.show_editor(cx);
+                            }
+                        }
+                    }
+                    crate::start_screen::StartScreenAction::NewProject => {
+                        log!("New project: not yet implemented (template picker is a later slice)");
+                    }
+                    crate::start_screen::StartScreenAction::OpenProject => {
+                        log!("Open project: not yet implemented (rfd picker is a later slice)");
+                    }
+                    crate::start_screen::StartScreenAction::None => {}
+                }
+                return;
+            }
         }
 
         // Shortcuts overlay (U8): `?` (dock button or hotkey) or clicking

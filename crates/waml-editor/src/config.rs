@@ -116,7 +116,6 @@ impl Recent {
     }
 }
 
-
 /// Seconds since the Unix epoch (0 if the clock somehow predates it).
 fn now_unix() -> u64 {
     SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)
@@ -148,7 +147,6 @@ fn add_or_promote(
 }
 
 /// Drop entries whose `path` no longer exists on disk, preserving MRU order.
-#[allow(dead_code)] // read side lands with the start-window slice; used by tests
 fn prune_missing(recents: Vec<Recent>) -> Vec<Recent> {
     recents.into_iter().filter(|r| r.path.exists()).collect()
 }
@@ -160,7 +158,6 @@ fn prune_missing(recents: Vec<Recent>) -> Vec<Recent> {
 /// Load `editor.json`, drop entries whose `path` no longer exists (dead recents
 /// self-heal on read), and return the survivors in MRU order. Pruning is applied
 /// to the returned list only; the next `push_recent` persists the pruned state.
-#[allow(dead_code)] // consumed by the forthcoming start-window slice
 pub fn recents() -> Vec<Recent> {
     let config: EditorConfig = load(EDITOR_FILE);
     prune_missing(config.recents)

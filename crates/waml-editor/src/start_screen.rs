@@ -21,35 +21,21 @@ script_mod! {
         draw_bg +: { color: atlas.ground }
         draw_pane +: { color: atlas.surface }
         draw_row_hover +: { color: atlas.selection }
+        // Shared theme fonts (same as `shortcuts_overlay`'s title). Per-field
+        // inline `latin := FontMember{...}` families left every DrawText but
+        // the last one with an empty font family at runtime; the pre-loaded
+        // `theme.font_*` members resolve reliably.
         draw_title +: {
             color: atlas.text
-            text_style: TextStyle{
-                font_size: 14
-                font_family: FontFamily{
-                    latin := FontMember{res: crate_resource("self:resources/fonts/IBMPlexSans-Regular.ttf") asc: -0.1 desc: 0.0}
-                }
-                line_spacing: 1.2
-            }
+            text_style: theme.font_regular{font_size: 14 line_spacing: 1.2}
         }
         draw_dim +: {
             color: atlas.text_dim
-            text_style: TextStyle{
-                font_size: 11
-                font_family: FontFamily{
-                    latin := FontMember{res: crate_resource("self:resources/fonts/IBMPlexSans-Regular.ttf") asc: -0.1 desc: 0.0}
-                }
-                line_spacing: 1.2
-            }
+            text_style: theme.font_regular{font_size: 11 line_spacing: 1.2}
         }
         draw_accent +: {
             color: atlas.accent
-            text_style: TextStyle{
-                font_size: 22
-                font_family: FontFamily{
-                    latin := FontMember{res: crate_resource("self:resources/fonts/IBMPlexSans-Regular.ttf") asc: -0.1 desc: 0.0}
-                }
-                line_spacing: 1.2
-            }
+            text_style: theme.font_bold{font_size: 22 line_spacing: 1.2}
         }
     }
 }
@@ -122,10 +108,19 @@ pub struct StartScreen {
     hot_rects: Vec<(Hot, Rect)>,
     #[rust]
     hovered: Option<Hot>,
+    // Self-managed like `ShortcutsOverlay`: the fork's `Widget::set_visible`
+    // default is a no-op and custom widgets have no DSL `visible` property, so
+    // hiding is a `#[rust]` flag gated in `handle_event`/`draw_walk`. Defaults
+    // false -> the screen starts hidden; `App` reveals it via `set_visible`.
+    #[rust]
+    visible: bool,
 }
 
 impl Widget for StartScreen {
     fn handle_event(&mut self, cx: &mut Cx, event: &Event, _scope: &mut Scope) {
+        if !self.visible {
+            return;
+        }
         let uid = self.widget_uid();
         match event.hits_with_capture_overload(cx, self.draw_bg.area(), true) {
             Hit::FingerUp(fe) if fe.is_primary_hit() => {
@@ -163,6 +158,10 @@ impl Widget for StartScreen {
 
     fn draw_walk(&mut self, cx: &mut Cx2d, _scope: &mut Scope, walk: Walk) -> DrawStep {
         let rect = cx.walk_turtle(walk);
+        if !self.visible {
+            // Nothing drawn -- `main_column` (painted first) shows through.
+            return DrawStep::done();
+        }
         self.draw_bg.draw_abs(cx, rect);
         self.hot_rects.clear();
 
@@ -222,14 +221,24 @@ impl Widget for StartScreen {
     }
 }
 
-// removed in Task 4 when App wires the widget
-#[allow(dead_code)]
 impl StartScreen {
     /// Replace the rendered recents. `App` calls this before showing the screen.
     pub fn set_recents(&mut self, cx: &mut Cx, rows: Vec<RecentRow>) {
         self.rows = rows;
         self.hovered = None;
         self.draw_bg.redraw(cx);
+    }
+
+    /// Show/hide the screen. Mirrors `ShortcutsOverlay::set_visible`: while
+    /// hidden, `draw_walk` returns early so `draw_bg`'s `Area` is never
+    /// assigned a draw-list id and `draw_bg.redraw` is a no-op -- so force a
+    /// full repaint to flip state on the first toggle.
+    pub fn set_visible(&mut self, cx: &mut Cx, visible: bool) {
+        if self.visible != visible {
+            self.visible = visible;
+            self.hovered = None;
+            cx.redraw_all();
+        }
     }
 
     /// Convenience reader for `App`, mirroring `ToolDock::dock_action`.
