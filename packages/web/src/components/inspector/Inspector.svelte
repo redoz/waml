@@ -74,7 +74,7 @@
 </script>
 
 {#snippet emptyState()}
-  <div class="px-6 py-[46px] text-center text-slate-500 text-[13px] leading-[1.6]">
+  <div class="px-6 py-[46px] text-center text-[color:rgb(var(--ink-faint))] text-[13px] leading-[1.6]">
     <svg
       viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width={1.5}
       width={42} height={42}
@@ -97,10 +97,10 @@
     onclick={onClick}
     title="Open inspector"
     aria-label="Open inspector"
-    class="group absolute right-0 top-1/2 -translate-y-1/2 z-20 flex h-[46px] w-[32px] items-center justify-center rounded-l-xl border border-r-0 border-[#d8dee8] bg-white text-slate-500 shadow-[-3px_0_12px_rgba(15,23,42,0.07)] cursor-pointer transition-colors hover:bg-[#f1f3f7] hover:text-[#1e88e5]"
+    class="group absolute right-0 top-1/2 -translate-y-1/2 z-20 flex h-[46px] w-[32px] items-center justify-center rounded-l-[var(--round-chip)] border border-r-0 border-[color:var(--hair)] bg-white text-[color:rgb(var(--ink-faint))] shadow-[-3px_0_12px_rgba(40,70,110,0.10)] cursor-pointer transition-colors hover:bg-[color:rgba(var(--accent),.10)] hover:text-[color:rgb(var(--accent))]"
   >
     <PanelRightOpen size={18} />
-    <span class="pointer-events-none absolute right-[calc(100%+8px)] top-1/2 -translate-y-1/2 whitespace-nowrap rounded-md bg-slate-900 px-2 py-1 text-[12px] font-medium text-white opacity-0 transition-opacity group-hover:opacity-100 shadow-[0_6px_18px_rgba(15,23,42,0.28)]">
+    <span class="pointer-events-none absolute right-[calc(100%+8px)] top-1/2 -translate-y-1/2 whitespace-nowrap rounded-[var(--round-chip)] bg-[color:var(--ink)] px-2 py-1 text-[12px] font-medium text-white opacity-0 transition-opacity group-hover:opacity-100 shadow-[0_6px_18px_rgba(40,70,110,0.28)]">
       Open inspector
     </span>
   </button>
@@ -136,8 +136,8 @@
   </div>
 {:else}
   <div
-    class="bg-white border-l border-[#d8dee8] flex-shrink-0 flex flex-col z-10 shadow-[-4px_0_16px_rgba(15,23,42,0.04)] relative"
-    style={`width: ${width}px; min-width: ${MIN_WIDTH}px; font-family: 'Source Sans 3 Variable', -apple-system, BlinkMacSystemFont, 'Segoe UI', Inter, system-ui, sans-serif;`}
+    class="bg-white border-l border-[color:var(--hair)] flex-shrink-0 flex flex-col z-10 shadow-[-4px_0_16px_rgba(40,70,110,0.06)] relative"
+    style={`width: ${width}px; min-width: ${MIN_WIDTH}px; font-family: var(--font-ui);`}
   >
     <!-- Resize handle -->
     <!-- svelte-ignore a11y_no_static_element_interactions -->
@@ -146,16 +146,16 @@
       class="absolute left-0 top-0 w-[7px] h-full cursor-col-resize z-[18] group"
       title="Drag to resize"
     >
-      <div class="absolute left-[2px] top-0 w-[2px] h-full bg-transparent group-hover:bg-[#1e88e5] transition-colors"></div>
+      <div class="absolute left-[2px] top-0 w-[2px] h-full bg-transparent group-hover:bg-[color:rgb(var(--accent))] transition-colors"></div>
     </div>
 
     <!-- Header -->
-    <div class="px-4 py-[14px] border-b border-[#d8dee8] flex items-center gap-2 flex-shrink-0">
-      <h3 class="text-[13.5px] font-[700] flex-1 text-slate-900">{title}</h3>
+    <div class="px-4 py-[14px] border-b border-[color:var(--hair)] flex items-center gap-2 flex-shrink-0">
+      <h3 class="text-[13.5px] font-[700] flex-1 text-[color:var(--ink)]">{title}</h3>
       <button
         onclick={() => { onClose(); open = false; }}
         title="Close inspector"
-        class="cursor-pointer text-slate-500 border-none bg-none text-[18px] leading-none hover:text-slate-900 transition-colors p-0 bg-transparent"
+        class="cursor-pointer text-[color:rgb(var(--ink-faint))] border-none bg-none text-[18px] leading-none hover:text-[color:var(--ink)] transition-colors p-0 bg-transparent"
       >
         ×
       </button>
