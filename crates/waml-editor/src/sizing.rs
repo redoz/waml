@@ -73,16 +73,16 @@ pub fn focus_card_layout(
     attrs: &[crate::inspector::AttrRow],
     eyebrow: Option<&str>,
 ) -> FocusCardLayout {
-    use waml::solve::sizing::text_width;
+    use waml::solve::sizing::{text_width, Font};
 
     // Name column sits past a marker column wide enough for a "+"/"-" glyph.
-    let marker_w = text_width("+", CARD_BODY_FS);
+    let marker_w = text_width("+", CARD_BODY_FS, Font::Sans);
     let name_x = CARD_PAD_L + marker_w + CARD_MARKER_GAP;
 
     // Type column sits past the widest name, with room for the dim `:` in between.
     let max_name_w = attrs
         .iter()
-        .map(|a| text_width(&a.name, CARD_BODY_FS))
+        .map(|a| text_width(&a.name, CARD_BODY_FS, Font::Sans))
         .fold(0.0_f64, f64::max);
     let type_x = name_x + max_name_w + CARD_NAME_TYPE_GAP;
 
@@ -90,16 +90,20 @@ pub fn focus_card_layout(
     let max_type_w = attrs
         .iter()
         .filter(|a| !a.ty.is_empty())
-        .map(|a| text_width(&a.ty, CARD_BODY_FS))
+        .map(|a| text_width(&a.ty, CARD_BODY_FS, Font::Sans))
         .fold(0.0_f64, f64::max);
     let eyebrow_w = eyebrow
-        .map(|l| CARD_PAD_L + text_width(&eyebrow_text(l), CARD_BODY_FS))
+        .map(|l| CARD_PAD_L + text_width(&eyebrow_text(l), CARD_BODY_FS, Font::Sans))
         .unwrap_or(0.0);
-    let title_w = CARD_PAD_L + text_width(title, CARD_TITLE_FS);
+    let title_w = CARD_PAD_L + text_width(title, CARD_TITLE_FS, Font::Sans);
     let content_w = title_w.max(eyebrow_w).max(type_x + max_type_w);
     let card_w = content_w + CARD_PAD_R;
 
-    let eyebrow_h = if eyebrow.is_some() { CARD_EYEBROW_H } else { 0.0 };
+    let eyebrow_h = if eyebrow.is_some() {
+        CARD_EYEBROW_H
+    } else {
+        0.0
+    };
     let card_h = CARD_PAD_T
         + eyebrow_h
         + CARD_TITLE_H
@@ -317,20 +321,24 @@ mod tests {
         // DSL points at `pts * 96/72` logical px, so measuring at that lpx size is
         // what keeps the «stereotype» eyebrow and type tokens inside the hull.
         // (Regression guard for the pt->lpx factor: drop it and this fails.)
-        use waml::solve::sizing::text_width;
+        use waml::solve::sizing::{text_width, Font};
         let title_pt = 15.0 * 96.0 / 72.0;
         let body_pt = 12.0 * 96.0 / 72.0;
         let attrs = [attr("id", "OrderId", "+"), attr("total", "Decimal", "-")];
         let l = focus_card_layout("Order", &attrs, Some("aggregateRoot"));
 
         // Eyebrow drawn from the left pad; its rendered end must fit.
-        let eyebrow_end = 16.0 + text_width(&eyebrow_text("aggregateRoot"), body_pt);
-        assert!(l.card_w >= eyebrow_end, "eyebrow {eyebrow_end} > card {}", l.card_w);
+        let eyebrow_end = 16.0 + text_width(&eyebrow_text("aggregateRoot"), body_pt, Font::Sans);
+        assert!(
+            l.card_w >= eyebrow_end,
+            "eyebrow {eyebrow_end} > card {}",
+            l.card_w
+        );
         // Title likewise.
-        let title_end = 16.0 + text_width("Order", title_pt);
+        let title_end = 16.0 + text_width("Order", title_pt, Font::Sans);
         assert!(l.card_w >= title_end);
         // Widest type token drawn at the type column must fit.
-        let type_end = l.type_x + text_width("Decimal", body_pt);
+        let type_end = l.type_x + text_width("Decimal", body_pt, Font::Sans);
         assert!(l.card_w >= type_end, "type {type_end} > card {}", l.card_w);
     }
 
