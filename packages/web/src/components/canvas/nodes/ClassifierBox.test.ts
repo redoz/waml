@@ -87,7 +87,7 @@ test("uml-domain hides visibility as a floor even when showAttributeVisibility i
     props: { data: mkAttrData(disp({ showAttributes: true, showAttributeVisibility: true })) },
   });
   // marker "+" must not appear as an attribute-visibility glyph
-  expect(container.querySelector(".relative.flex span.font-mono")?.textContent ?? "").not.toContain("+");
+  expect(container.querySelector(".node-row__vis")?.textContent ?? "").not.toContain("+");
 });
 
 test("showAttributeMultiplicity drives the {mult} suffix independent of showType", () => {
@@ -107,12 +107,12 @@ test("a profile that allows visibility still requires showAttributeVisibility (A
   const on = render(ClassifierBox, {
     props: { data: mkAttrData(disp({ showAttributes: true, showAttributeVisibility: true }), "mock-visibility-open") },
   });
-  expect(on.container.querySelector(".relative.flex span.font-mono")?.textContent ?? "").toContain("+");
+  expect(on.container.querySelector(".node-row__vis")?.textContent ?? "").toContain("+");
 
   const off = render(ClassifierBox, {
     props: { data: mkAttrData(disp({ showAttributes: true, showAttributeVisibility: false }), "mock-visibility-open") },
   });
-  expect(off.container.querySelector(".relative.flex span.font-mono")?.textContent ?? "").not.toContain("+");
+  expect(off.container.querySelector(".node-row__vis")?.textContent ?? "").not.toContain("+");
 });
 
 const mkManyAttrs = (display: DiagramDisplay): OkfNodeData =>
@@ -181,20 +181,16 @@ test("showStereotype false renders neither keyword nor tags", () => {
 
 const style = (container: HTMLElement) => (container.firstElementChild as HTMLElement).getAttribute("style") ?? "";
 
-// Note: jsdom (via the `cssstyle` package) normalizes recognized color
-// declarations set through `element.style.cssText` — which is how Svelte 5
-// applies a dynamic `style={...}` attribute — into `rgb(r, g, b)` form
-// before reflecting them back through `getAttribute("style")`. So these
-// assertions match on the normalized rgb() form rather than the literal hex
-// input, even though we're reading the raw attribute string (not the CSSOM)
-// per the jsdom + color-mix() note above.
-test("a stereotype color overrides the header accent and adds a wash", () => {
+// `--accent` is a custom property, so jsdom's `cssstyle` normalization (which
+// only rewrites recognized color declarations) leaves its rgb-triple value
+// as the literal string we set via hexToTriple(); we assert on that raw form.
+test("a stereotype color overrides the header accent and fills the header", () => {
   const { container } = render(ClassifierBox, {
     props: { data: mkTags(disp({ showStereotype: true, stereotypeColors: { entity: "#ff0000" } })) },
   });
   const s = style(container);
-  expect(s).toContain("border-top-color: rgb(255, 0, 0)");
-  expect(s).toContain("color-mix(in srgb, rgb(255, 0, 0) 12%, white)");
+  expect(s).toContain("--accent: 255, 0, 0");
+  expect(container.querySelector(".node-hdr--fill")).not.toBeNull();
 });
 
 test("override color follows later-wins precedence across stereotypes", () => {
@@ -202,12 +198,15 @@ test("override color follows later-wins precedence across stereotypes", () => {
     props: { data: mkTags(disp({ showStereotype: true, stereotypeColors: { entity: "#111111", valueObject: "#222222" } })) },
   });
   // data.stereotypes = ["entity", "valueObject"] ⇒ valueObject wins
-  expect(style(container)).toContain("border-top-color: rgb(34, 34, 34)");
+  expect(style(container)).toContain("--accent: 34, 34, 34");
 });
 
-test("no override keeps the plain white background (no wash)", () => {
+test("no override and no profile header color keeps the default accent band header (no fill)", () => {
+  // "entity" alone carries no profile header color (unlike "valueObject"/"aggregateRoot"),
+  // so headerColor stays undefined and the header falls back to the plain band.
   const { container } = render(ClassifierBox, {
-    props: { data: mkTags(disp({ showStereotype: true, stereotypeColors: {} })) },
+    props: { data: mkData(disp({ showStereotype: true })) },
   });
-  expect(style(container)).not.toContain("color-mix");
+  expect(style(container)).toContain("--accent: 20, 150, 220");
+  expect(container.querySelector(".node-hdr--band")).not.toBeNull();
 });
