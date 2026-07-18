@@ -149,15 +149,15 @@
 </script>
 
 {#snippet header(docked: boolean)}
-  <div class="px-4 py-[13px] border-b border-[#d8dee8] flex items-center gap-2 flex-shrink-0 bg-white">
-    <h2 class="text-[14px] font-[700] flex-1 min-w-0 truncate text-slate-900">{title}</h2>
+  <div class="relative z-[1] px-4 py-[13px] border-b border-[color:rgba(var(--accent),.22)] flex items-center gap-2 flex-shrink-0">
+    <h2 class="text-[14px] font-[700] flex-1 min-w-0 truncate text-[color:var(--ink)]">{title}</h2>
     {#if docked}
       <button
         onclick={() => (collapsed = !collapsed)}
         aria-label={collapsed ? "Expand navigator" : "Collapse navigator"}
         aria-expanded={!collapsed}
         title={collapsed ? "Expand navigator" : "Collapse navigator"}
-        class="w-[30px] h-[30px] flex items-center justify-center rounded-md text-slate-500 hover:bg-[#f1f3f7]"
+        class="w-[30px] h-[30px] flex items-center justify-center rounded-[var(--round-chip)] text-[color:rgb(var(--ink-faint))] hover:bg-[color:rgba(var(--accent),.12)] hover:text-[color:rgb(var(--accent))]"
       >
         <span class={`flex transition-transform duration-200 ${collapsed ? "rotate-180" : ""}`}>
           <ChevronUp size={16} />
@@ -168,7 +168,7 @@
         aria-label={pinned ? "Let it dim when idle" : "Keep solid"}
         aria-pressed={pinned}
         title={pinned ? "Let it dim when idle" : "Keep solid"}
-        class={`w-[30px] h-[30px] flex items-center justify-center rounded-md transition-colors ${pinned ? "text-[#1e88e5] bg-[#e6f1fb]" : "text-slate-500 hover:bg-[#f1f3f7]"}`}
+        class={`w-[30px] h-[30px] flex items-center justify-center rounded-[var(--round-chip)] transition-colors ${pinned ? "text-[color:rgb(var(--accent))] bg-[color:rgba(var(--accent),.12)]" : "text-[color:rgb(var(--ink-faint))] hover:bg-[color:rgba(var(--accent),.12)] hover:text-[color:rgb(var(--accent))]"}`}
       >
         {#if pinned}<Pin size={16} />{:else}<PinOff size={16} />{/if}
       </button>
@@ -178,7 +178,7 @@
         aria-label="Pin navigator to left"
         aria-pressed={false}
         title="Pin navigator to left"
-        class="w-[30px] h-[30px] flex items-center justify-center rounded-md transition-colors text-slate-500 hover:bg-[#f1f3f7]"
+        class="w-[30px] h-[30px] flex items-center justify-center rounded-[var(--round-chip)] transition-colors text-[color:rgb(var(--ink-faint))] hover:bg-[color:rgba(var(--accent),.12)] hover:text-[color:rgb(var(--accent))]"
       >
         <PanelLeft size={16} />
       </button>
@@ -187,7 +187,7 @@
       onclick={onClose}
       aria-label="Close"
       title="Close"
-      class="w-[30px] h-[30px] flex items-center justify-center rounded-md text-slate-500 hover:bg-[#f1f3f7] text-[20px] leading-none"
+      class="w-[30px] h-[30px] flex items-center justify-center rounded-[var(--round-chip)] text-[color:rgb(var(--ink-faint))] hover:bg-[color:rgba(var(--accent),.12)] hover:text-[color:rgb(var(--accent))] text-[20px] leading-none"
     >
       ×
     </button>
@@ -202,7 +202,7 @@
       data-testid="nav-scrim"
       onclick={onClose}
       class="fixed inset-0 z-[60] flex items-center justify-center bg-slate-900/30 p-4"
-      style="font-family: 'Source Sans 3 Variable', -apple-system, BlinkMacSystemFont, 'Segoe UI', Inter, system-ui, sans-serif;"
+      style="font-family: var(--font-ui);"
     >
       <!-- svelte-ignore a11y_no_static_element_interactions -->
       <div
@@ -212,10 +212,10 @@
         aria-label={title}
         tabindex="-1"
         onclick={(e) => e.stopPropagation()}
-        class="relative w-full max-w-[620px] h-[95vh] max-h-[95vh] flex flex-col rounded-2xl border border-[#d8dee8] bg-white shadow-[0_16px_48px_rgba(15,23,42,0.22)] overflow-hidden"
+        class="hud-surface relative w-full max-w-[620px] h-[95vh] max-h-[95vh] flex flex-col overflow-hidden"
       >
         {@render header(false)}
-        <div class="flex-1 min-h-0 overflow-hidden">
+        <div class="relative z-[1] flex-1 min-h-0 overflow-hidden">
           <NavigatorBody {...body} />
         </div>
       </div>
@@ -224,7 +224,7 @@
     <aside
       aria-label="Model navigator"
       style={`width: ${width}px`}
-      class={`absolute top-3 left-3 max-w-[calc(100%-24px)] max-h-[calc(100%-24px)] bg-white border border-[#d8dee8] rounded-xl overflow-hidden shadow-[0_8px_24px_rgba(15,23,42,0.14)] z-[16] flex flex-col transition-opacity duration-200 ${translucent ? "opacity-40" : "opacity-100"}`}
+      class={`hud-surface absolute top-3 left-3 max-w-[calc(100%-24px)] max-h-[calc(100%-24px)] overflow-hidden z-[16] flex flex-col transition-opacity duration-200 ${translucent ? "opacity-40" : "opacity-100"}`}
       onpointerenter={engage}
       onpointerleave={disengage}
       onfocusin={engage}
@@ -235,11 +235,11 @@
         data-testid="nav-resize"
         onmousedown={onResizeMouseDown}
         title="Drag to resize"
-        class="absolute right-0 top-0 bottom-0 w-[6px] -mr-[3px] cursor-col-resize z-[17] hover:bg-[#1e88e5]/20"
+        class="absolute right-0 top-0 bottom-0 w-[6px] -mr-[3px] cursor-col-resize z-[17] hover:bg-[color:rgba(var(--accent),.20)]"
       ></div>
       {@render header(true)}
       {#if !collapsed}
-        <div class="flex-1 min-h-0 overflow-hidden">
+        <div class="relative z-[1] flex-1 min-h-0 overflow-hidden">
           <NavigatorBody {...body} />
         </div>
       {/if}
