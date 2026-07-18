@@ -35,7 +35,7 @@
   // hexagon shape stay as inline structural declarations (not Tailwind).
   let boxStyle = $derived.by(() => {
     const decls: string[] = [`--accent:${accentTriple}`];
-    if (st.border === "thick") decls.push(`--bw:2.5px`);
+    if (st.border === "thick") decls.push(`--bw:2px`);
     if (st.shape === "hexagon") {
       decls.push(`clip-path:polygon(8% 0, 92% 0, 100% 50%, 92% 100%, 8% 100%, 0 50%)`);
     }
