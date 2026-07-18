@@ -54,12 +54,12 @@
         {/each}
       </datalist>
     </div>
-    <label class="flex items-end gap-[7px] pb-[9px] cursor-pointer text-[12.5px] text-slate-700">
+    <label class="flex items-end gap-[7px] pb-[9px] cursor-pointer text-[12.5px] text-[color:var(--ink-dim)]">
       <input
         type="checkbox"
         checked={node.abstract ?? false}
         onchange={(e) => onUpdate({ abstract: e.currentTarget.checked || undefined })}
-        class="w-4 h-4 accent-[#1e88e5] cursor-pointer"
+        class="w-4 h-4 accent-[rgb(var(--accent))] cursor-pointer"
       />
       abstract
     </label>
@@ -91,17 +91,17 @@
             <button
               type="button"
               onclick={() => onSelectAssociation?.(a.id)}
-              class="w-full text-left text-[13px] text-slate-900 break-words flex items-baseline gap-[6px] rounded-md -mx-1 px-1 py-[2px] hover:bg-[#f1f3f7] focus:outline-none focus:ring-2 focus:ring-[#e6f1fb]"
+              class="w-full text-left text-[13px] text-[color:var(--ink)] break-words flex items-baseline gap-[6px] rounded-[var(--round-chip)] -mx-1 px-1 py-[2px] hover:bg-[color:rgba(var(--accent),.10)] focus:outline-none focus:ring-2 focus:ring-[color:rgba(var(--accent),.20)]"
             >
-              <span class="text-slate-400 font-mono">{a.outgoing ? "→" : "←"}</span>
+              <span class="text-[color:rgb(var(--ink-faint))] font-mono">{a.outgoing ? "→" : "←"}</span>
               <span class="font-semibold">{a.otherTitle}</span>
-              <span class="text-[11px] text-slate-500">{a.kind}{a.role ? ` (${a.role})` : ""}{a.multiplicity ? ` [${a.multiplicity}]` : ""}</span>
+              <span class="text-[11px] text-[color:rgb(var(--ink-faint))]">{a.kind}{a.role ? ` (${a.role})` : ""}{a.multiplicity ? ` [${a.multiplicity}]` : ""}</span>
             </button>
           </li>
         {/each}
       </ul>
     {:else}
-      <div class="text-[13px] text-slate-400 italic">No associations</div>
+      <div class="text-[13px] text-[color:rgb(var(--ink-faint))] italic">No associations</div>
     {/if}
   </div>
   {#if isEnum}
