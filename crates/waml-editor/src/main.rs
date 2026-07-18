@@ -4,6 +4,7 @@ use makepad_widgets::*;
 mod app;
 mod camera;
 mod canvas;
+mod card;
 mod cli;
 mod diagram_switcher;
 mod doc_tabs;
