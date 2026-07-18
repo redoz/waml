@@ -26,5 +26,5 @@
 </script>
 
 {#if sourceNode && targetNode && path}
-  <BaseEdge {id} {path} style="stroke:#94a3b8;stroke-width:1.2;stroke-dasharray:4 3;" />
+  <BaseEdge {id} {path} style="stroke:rgb(var(--ink-faint));stroke-width:1.2;stroke-dasharray:4 3;" />
 {/if}

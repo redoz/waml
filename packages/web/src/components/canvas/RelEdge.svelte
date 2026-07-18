@@ -75,10 +75,12 @@
     return p;
   });
 
-  const stroke = $derived(selected ? "#1e88e5" : "#64748b");
+  const stroke = $derived(selected ? "rgb(var(--accent))" : "rgb(var(--ink-faint))");
   const strokeWidth = $derived(selected ? 2.5 : 1.8);
   const edgeStyle = $derived(
-    `stroke:${stroke};stroke-width:${strokeWidth};${DASHED.has(kind) ? "stroke-dasharray:6 4;" : ""}${style ?? ""}`,
+    `stroke:${stroke};stroke-width:${strokeWidth};${DASHED.has(kind) ? "stroke-dasharray:6 4;" : ""}${
+      selected ? "filter:drop-shadow(0 0 2.5px rgba(var(--accent),.35));" : ""
+    }${style ?? ""}`,
   );
 
   // Verb → end adornments (spec table).
@@ -96,7 +98,7 @@
       defs.push({ type: "diamond", mid: "diamond-filled", fill: stroke });
       markerStart = `url(#diamond-filled-${id})`;
     } else if (kind === "aggregates") {
-      defs.push({ type: "diamond", mid: "diamond-hollow", fill: "#fff" });
+      defs.push({ type: "diamond", mid: "diamond-hollow", fill: "var(--panel-fill)" });
       markerStart = `url(#diamond-hollow-${id})`;
     } else if (kind === "specializes" || kind === "implements") {
       defs.push({ type: "triangle" });
@@ -157,7 +159,7 @@
         </marker>
       {:else if m.type === "triangle"}
         <marker id="triangle-{id}" markerWidth="14" markerHeight="12" refX="12" refY="6" orient="auto" markerUnits="userSpaceOnUse">
-          <path d="M1,1 L12,6 L1,11 z" fill="#fff" stroke={stroke} stroke-width="1.2" />
+          <path d="M1,1 L12,6 L1,11 z" fill="var(--panel-fill)" stroke={stroke} stroke-width="1.2" />
         </marker>
       {:else if m.type === "arrow"}
         <marker
@@ -187,7 +189,7 @@
       x={l.x}
       y={l.y}
       class="nodrag nopan"
-      style="background:rgba(255,255,255,0.9);border-radius:4px;padding:0 4px;font-size:10.5px;font-weight:600;color:#334155;white-space:nowrap;"
+      style="background:linear-gradient(180deg,rgba(255,255,255,.95),rgba(255,255,255,.82));border-radius:0;padding:1px 5px;font-family:var(--font-mono);font-size:10.5px;font-weight:600;letter-spacing:.04em;color:var(--ink);box-shadow:0 0 0 1px rgba(var(--accent),.22);white-space:nowrap;"
     >
       {l.text}
     </EdgeLabel>
@@ -197,7 +199,7 @@
       x={nameLabel.x}
       y={nameLabel.y}
       class="nodrag nopan"
-      style="background:rgba(255,255,255,0.9);border-radius:4px;padding:0 4px;font-size:10.5px;font-weight:600;color:#334155;white-space:nowrap;"
+      style="background:linear-gradient(180deg,rgba(255,255,255,.95),rgba(255,255,255,.82));border-radius:0;padding:1px 5px;font-family:var(--font-mono);font-size:10.5px;font-weight:600;letter-spacing:.04em;color:var(--ink);box-shadow:0 0 0 1px rgba(var(--accent),.22);white-space:nowrap;"
     >
       {nameLabel.text}
     </EdgeLabel>
@@ -207,7 +209,7 @@
       x={(geometry.sx + geometry.tx) / 2}
       y={(geometry.sy + geometry.ty) / 2 - 10}
       class="nodrag nopan"
-      style="background:rgba(255,255,255,0.9);border-radius:4px;padding:0 4px;font-size:10.5px;font-weight:600;color:#334155;white-space:nowrap;"
+      style="background:linear-gradient(180deg,rgba(255,255,255,.95),rgba(255,255,255,.82));border-radius:0;padding:1px 5px;font-family:var(--font-mono);font-size:10.5px;font-weight:600;letter-spacing:.04em;color:var(--ink);box-shadow:0 0 0 1px rgba(var(--accent),.22);white-space:nowrap;"
     >
       {stereo}
     </EdgeLabel>
