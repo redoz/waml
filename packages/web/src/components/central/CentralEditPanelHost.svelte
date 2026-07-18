@@ -97,7 +97,7 @@
   <div class="flex items-center gap-2 min-w-0">
     {#if focusedKind}
       {@const KindIcon = KIND_ICON[focusedKind]}
-      <span class="flex-none w-[26px] h-[26px] flex items-center justify-center rounded-md text-[#1e88e5] bg-[#e6f1fb]">
+      <span class="flex-none w-[26px] h-[26px] flex items-center justify-center rounded-[var(--round-chip)] text-[color:rgb(var(--accent))] bg-[color:rgba(var(--accent),.12)]">
         <KindIcon size={15} />
       </span>
     {/if}
