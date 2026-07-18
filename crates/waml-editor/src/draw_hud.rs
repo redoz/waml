@@ -22,28 +22,31 @@ script_mod! {
     use mod.prelude.widgets_internal.*
     use mod.atlas
 
-    // Knobs default to the Atlas tokens; a consumer overrides only what differs
-    // (usually just `color`). `angle` is a CSS linear-gradient angle in degrees;
-    // the shader converts it with *pi/180 (radians() is avoided so the shader
-    // leans only on sin/cos, which the fork's own shaders use). `span` normalizes
-    // the two gradient stops to the box corners, matching CSS behavior. The
-    // projection is written out longhand to avoid depending on dot().
+    // The gradient stops default to the Atlas tokens (token `uniform(...)`s
+    // resolve correctly here); a consumer overrides only the per-instance
+    // `color` fill. The scalar knobs -- 1.5px border, sharp corners, 150deg
+    // gradient -- are shader LITERALS, not `uniform(...)` defaults: numeric
+    // uniform defaults do NOT apply in this fork (they leave the value garbage,
+    // which collapsed the SDF box and flooded the whole card), whereas inline
+    // shader literals are proven (the prior hand-inlined `draw_node` used them).
+    // The 150deg CSS direction is precomputed: (sin150, -cos150) = (0.5, 0.866),
+    // y-down; `span` = |x|+|y| normalizes the stops to the box corners (CSS
+    // behavior). Projection is longhand to avoid dot(). Making the scalars
+    // runtime knobs again is a follow-up once the uniform-default path is
+    // understood.
     mod.draw.HudFrame = mod.draw.DrawColor{
         border_hi: uniform(atlas.frame_hi)
         border_lo: uniform(atlas.frame_lo)
-        border_width: uniform(1.5)
-        radius: uniform(0.0)
-        angle: uniform(150.0)
         pixel: fn() {
             let sdf = Sdf2d.viewport(self.pos * self.rect_size)
-            let bw = self.border_width
-            sdf.box(bw, bw, self.rect_size.x - bw * 2.0, self.rect_size.y - bw * 2.0, self.radius)
+            // Sharp corners: `sdf.rect`, NOT `sdf.box(..., 0.0)` -- a zero corner
+            // radius degenerates `box`. (Rounded variants get their own primitive.)
+            sdf.rect(1.5, 1.5, self.rect_size.x - 3.0, self.rect_size.y - 3.0)
             sdf.fill_keep(self.color)
-            let a = self.angle * 0.017453293
-            let dir = vec2(sin(a), -cos(a))
-            let span = abs(dir.x) + abs(dir.y)
+            let dir = vec2(0.5, 0.8660254)
+            let span = 1.3660254
             let t = clamp((self.pos.x * dir.x + self.pos.y * dir.y) / span, 0.0, 1.0)
-            sdf.stroke(mix(self.border_hi, self.border_lo, t), bw)
+            sdf.stroke(mix(self.border_hi, self.border_lo, t), 1.5)
             return sdf.result
         }
     }
