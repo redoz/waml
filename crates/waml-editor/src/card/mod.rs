@@ -6,17 +6,13 @@
 //! taffy is native-only and lives only in this crate — `waml`/`waml-wasm` never
 //! depend on it.
 
-// This module's public API is not yet consumed outside its own tests — that
-// wiring lands in the plan's final task (`scene.rs`/`canvas.rs` calling into
-// `class_shape`/`card_size`/`measure`), which will make every item below
-// reachable and this allow removable.
-#![allow(dead_code)]
-
 use waml::solve::sizing::{self, PT_TO_LPX};
 
 /// Which embedded face a leaf measures against (maps to `sizing::Font`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Font {
+    /// Reserved for a future non-mono `StyleSheet`; `mono_sheet` is all-Mono today.
+    #[allow(dead_code)]
     Sans,
     Mono,
 }
@@ -52,6 +48,8 @@ pub enum Token {
     TextDim,
     Accent,
     Amber,
+    /// Reserved for form-field styling; not yet used by `mono_sheet`.
+    #[allow(dead_code)]
     Field,
 }
 

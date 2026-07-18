@@ -58,74 +58,61 @@ script_mod! {
         draw_accent_package +: { color: atlas.bucket_green }
         draw_accent_behavior +: { color: atlas.bucket_rose }
         draw_accent_unknown +: { color: atlas.bucket_slate }
+        // Sans body pen: overview node titles + group titles (the non-card text).
         draw_text +: {
             color: atlas.text
             text_style: TextStyle{
                 font_size: 12
                 font_family: FontFamily{
-                    latin := FontMember{res: crate_resource("self:resources/fonts/IBMPlexSans-Regular.ttf") asc: -0.1 desc: 0.0}
+                    latin := FontMember{res: crate_resource("self:resources/fonts/IBM_Plex_Sans/IBMPlexSans-Regular.ttf") asc: -0.1 desc: 0.0}
                 }
                 line_spacing: 1.2
             }
         }
-        // Compartment-body text variants (single IBM Plex Sans face -- no bold
-        // ttf shipped, so the title fakes weight with a larger size). Each just
-        // repaints `draw_text` in an Atlas semantic color; they mirror the
-        // per-bucket `draw_accent_*` fields above.
-        draw_text_title +: {
-            color: atlas.text
-            text_style: TextStyle{
-                font_size: 15
-                font_family: FontFamily{
-                    latin := FontMember{res: crate_resource("self:resources/fonts/IBMPlexSans-Regular.ttf") asc: -0.1 desc: 0.0}
-                }
-                line_spacing: 1.2
-            }
-        }
-        // Each carries the full body text_style: a color-only `+:` override
-        // leaves the DrawText fontless and it silently renders nothing.
-        draw_text_dim +: {
+        // Focus-card mono pens. The card is all IBM Plex Mono; each pen carries a
+        // FULL text_style (a color-only `+:` override renders NOTHING) and is
+        // keyed by (weight, Atlas color). The renderer overrides `font_size` per
+        // placed leaf, so the declared size here is only a default.
+        draw_mono_dim +: {
             color: atlas.text_dim
             text_style: TextStyle{
-                font_size: 12
+                font_size: 11
                 font_family: FontFamily{
-                    latin := FontMember{res: crate_resource("self:resources/fonts/IBMPlexSans-Regular.ttf") asc: -0.1 desc: 0.0}
+                    latin := FontMember{res: crate_resource("self:resources/fonts/IBM_Plex_Mono/IBMPlexMono-Regular.ttf") asc: -0.1 desc: 0.0}
                 }
                 line_spacing: 1.2
             }
         }
-        draw_text_type +: {
+        draw_mono_bold +: {
+            color: atlas.text
+            text_style: TextStyle{
+                font_size: 14
+                font_family: FontFamily{
+                    latin := FontMember{res: crate_resource("self:resources/fonts/IBM_Plex_Mono/IBMPlexMono-Bold.ttf") asc: -0.1 desc: 0.0}
+                }
+                line_spacing: 1.2
+            }
+        }
+        draw_mono_accent +: {
             color: atlas.accent
             text_style: TextStyle{
-                font_size: 12
+                font_size: 11
                 font_family: FontFamily{
-                    latin := FontMember{res: crate_resource("self:resources/fonts/IBMPlexSans-Regular.ttf") asc: -0.1 desc: 0.0}
+                    latin := FontMember{res: crate_resource("self:resources/fonts/IBM_Plex_Mono/IBMPlexMono-Regular.ttf") asc: -0.1 desc: 0.0}
                 }
                 line_spacing: 1.2
             }
         }
-        draw_text_pub +: {
-            color: atlas.bucket_green
+        draw_mono_amber +: {
+            color: atlas.bucket_amber
             text_style: TextStyle{
-                font_size: 12
+                font_size: 11
                 font_family: FontFamily{
-                    latin := FontMember{res: crate_resource("self:resources/fonts/IBMPlexSans-Regular.ttf") asc: -0.1 desc: 0.0}
+                    latin := FontMember{res: crate_resource("self:resources/fonts/IBM_Plex_Mono/IBMPlexMono-Regular.ttf") asc: -0.1 desc: 0.0}
                 }
                 line_spacing: 1.2
             }
         }
-        draw_text_priv +: {
-            color: atlas.danger
-            text_style: TextStyle{
-                font_size: 12
-                font_family: FontFamily{
-                    latin := FontMember{res: crate_resource("self:resources/fonts/IBMPlexSans-Regular.ttf") asc: -0.1 desc: 0.0}
-                }
-                line_spacing: 1.2
-            }
-        }
-        // Compartment divider: a thin hairline in the frame accent's dim tint.
-        draw_divider +: { color: atlas.surface_border }
     }
 }
 
@@ -181,22 +168,16 @@ pub struct GraphCanvas {
     draw_text: DrawText,
     #[redraw]
     #[live]
-    draw_text_title: DrawText,
+    draw_mono_dim: DrawText,
     #[redraw]
     #[live]
-    draw_text_dim: DrawText,
+    draw_mono_bold: DrawText,
     #[redraw]
     #[live]
-    draw_text_type: DrawText,
+    draw_mono_accent: DrawText,
     #[redraw]
     #[live]
-    draw_text_pub: DrawText,
-    #[redraw]
-    #[live]
-    draw_text_priv: DrawText,
-    #[redraw]
-    #[live]
-    draw_divider: DrawColor,
+    draw_mono_amber: DrawText,
 
     #[rust]
     scene: Scene,
@@ -427,62 +408,33 @@ impl Widget for GraphCanvas {
 }
 
 impl GraphCanvas {
-    /// Draw the classifier focus card's compartments into `screen` (the card's
-    /// on-screen rect, sized by `sizing::focus_card_layout` to wrap this exact
-    /// layout at zoom 1.0): «stereotype» eyebrow, title, a hairline divider,
-    /// then one attribute row each (visibility marker, name, dim `:`, blue type
-    /// token). Columns come from the same `focus_card_layout` that sized the box,
-    /// and row metrics from the shared `sizing::CARD_*` constants, so the box and
-    /// the drawn layout never drift.
+    /// Draw the classifier focus card by laying out its `Shape` box-tree
+    /// (`card::class_shape` under `card::mono_sheet`) with taffy and walking the
+    /// placed text leaves, each drawn with the mono pen selected by its
+    /// (weight, Atlas color) — the card is styled entirely by the box-tree.
     fn draw_focus_card(&mut self, cx: &mut Cx2d, screen: Rect, node: &crate::scene::SceneNode) {
-        use crate::sizing::{
-            CARD_DIVIDER_GAP, CARD_EYEBROW_H, CARD_PAD_L, CARD_PAD_T, CARD_ROW_H, CARD_TITLE_H,
-        };
-        // Measure this card's columns from the SAME layout that sized its box in
-        // `build_focus_scene`, so the name/type columns line up with the hull.
-        let eyebrow = crate::scene::focus_eyebrow(&node.stereotypes, &node.element_type);
-        let layout =
-            crate::sizing::focus_card_layout(&node.title, &node.attributes, eyebrow.as_deref());
-        let left = screen.pos.x + CARD_PAD_L;
-        let mut y = screen.pos.y + CARD_PAD_T;
-
-        // «stereotype» eyebrow (dim): the node's own declared stereotypes if any
-        // (e.g. «aggregateRoot»), else the metaclass label (e.g. «interface»).
-        if let Some(label) = &eyebrow {
-            self.draw_text_dim
-                .draw_abs(cx, dvec2(left, y), &crate::sizing::eyebrow_text(label));
-            y += CARD_EYEBROW_H;
-        }
-
-        // Title (faux-bold via the larger `draw_text_title` size).
-        self.draw_text_title
-            .draw_abs(cx, dvec2(left, y), &node.title);
-        y += CARD_TITLE_H;
-
-        // Attribute compartment: a divider, then the rows.
-        let divider = Rect {
-            pos: dvec2(screen.pos.x + 2.0, y),
-            size: dvec2((screen.size.x - 4.0).max(0.0), 1.0),
-        };
-        self.draw_divider.draw_abs(cx, divider);
-        y += CARD_DIVIDER_GAP;
-
-        let name_x = screen.pos.x + layout.name_x;
-        let type_x = screen.pos.x + layout.type_x;
-        for attr in &node.attributes {
-            // Visibility marker: + public (green), - private (red), # / ~ dim.
-            match attr.visibility.as_str() {
-                "+" => self.draw_text_pub.draw_abs(cx, dvec2(left, y), "+"),
-                "-" => self.draw_text_priv.draw_abs(cx, dvec2(left, y), "-"),
-                "" => {}
-                other => self.draw_text_dim.draw_abs(cx, dvec2(left, y), other),
+        use crate::card::{self, Token, Weight};
+        let texts = card::card_texts(node, &card::mono_sheet());
+        for pt in &texts {
+            let pos = dvec2(screen.pos.x + pt.x, screen.pos.y + pt.y);
+            match (pt.style.weight, pt.style.color) {
+                (Weight::Bold, _) => {
+                    self.draw_mono_bold.text_style.font_size = pt.style.size_pt as f32; // TextStyle.font_size is f32
+                    self.draw_mono_bold.draw_abs(cx, pos, &pt.text);
+                }
+                (Weight::Regular, Token::Accent) => {
+                    self.draw_mono_accent.text_style.font_size = pt.style.size_pt as f32; // TextStyle.font_size is f32
+                    self.draw_mono_accent.draw_abs(cx, pos, &pt.text);
+                }
+                (Weight::Regular, Token::Amber) => {
+                    self.draw_mono_amber.text_style.font_size = pt.style.size_pt as f32; // TextStyle.font_size is f32
+                    self.draw_mono_amber.draw_abs(cx, pos, &pt.text);
+                }
+                (Weight::Regular, _) => {
+                    self.draw_mono_dim.text_style.font_size = pt.style.size_pt as f32; // TextStyle.font_size is f32
+                    self.draw_mono_dim.draw_abs(cx, pos, &pt.text);
+                }
             }
-            self.draw_text.draw_abs(cx, dvec2(name_x, y), &attr.name);
-            if !attr.ty.is_empty() {
-                self.draw_text_dim.draw_abs(cx, dvec2(type_x - 8.0, y), ":");
-                self.draw_text_type.draw_abs(cx, dvec2(type_x, y), &attr.ty);
-            }
-            y += CARD_ROW_H;
         }
     }
 

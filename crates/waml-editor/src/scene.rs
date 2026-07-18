@@ -143,27 +143,32 @@ pub fn build_focus_scene(model: &Model, key: &str) -> Scene {
         .clone()
         .unwrap_or_else(|| node.key.clone());
     let attributes = attribute_rows(model, key);
-    // The focus card is drawn at zoom 1.0 (world px == screen px), so size it
-    // to wrap the exact compartment layout the renderer will draw.
-    let eyebrow = focus_eyebrow(&node.stereotypes, &node.ty);
-    let layout = crate::sizing::focus_card_layout(&title, &attributes, eyebrow.as_deref());
-    let rect = Rect {
+    // The focus card is drawn at zoom 1.0 (world px == screen px). Build the
+    // scene node, then size its rect to the exact hull the card box-tree hugs.
+    let mut scene_node = SceneNode {
+        key: key.to_string(),
+        title,
+        element_type: node.ty.clone(),
+        stereotypes: node.stereotypes.clone(),
+        attributes,
+        rect: Rect {
+            x: 0.0,
+            y: 0.0,
+            w: 0.0,
+            h: 0.0,
+        },
+        emphasized: true,
+        collapsed: false,
+    };
+    let (w, h) = crate::card::card_size(&scene_node, &crate::card::mono_sheet());
+    scene_node.rect = Rect {
         x: 0.0,
         y: 0.0,
-        w: layout.card_w,
-        h: layout.card_h,
+        w,
+        h,
     };
     Scene {
-        nodes: vec![SceneNode {
-            key: key.to_string(),
-            title,
-            element_type: node.ty.clone(),
-            stereotypes: node.stereotypes.clone(),
-            attributes,
-            rect,
-            emphasized: true,
-            collapsed: false,
-        }],
+        nodes: vec![scene_node],
         groups: vec![],
         edges: vec![],
     }
