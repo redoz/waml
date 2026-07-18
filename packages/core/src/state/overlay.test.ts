@@ -177,18 +177,27 @@ describe("toModelGraph", () => {
     expect(n.concept).toEqual({ id: "shop/order", type: "uml.Class", body: "# Order\n" });
   });
 
-  it("passes flow docs through to the ModelGraph", () => {
+  it("passes flow views and their pools through to the ModelGraph", () => {
     const flow: FlowDoc = {
       key: "m/lifecycle",
       title: "Order Lifecycle",
       flavor: "stateMachine",
       describes: "m/order",
-      nodes: [{ id: "initial", kind: "initial" }, { id: "Draft", kind: "plain", entry: "reserveStock" }],
-      edges: [{ from: "initial", to: "Draft" }],
+      nodes: ["m/lifecycle#initial", "m/lifecycle#Draft"],
+      edges: ["m/lifecycle#e0"],
     };
-    const rust = { nodes: [], edges: [], diagrams: [], path: "", packages: [], flows: [flow] };
+    const activityNodes = [
+      { key: "m/lifecycle#initial", id: "initial", behavior: "m/lifecycle", kind: "initial" },
+      { key: "m/lifecycle#Draft", id: "Draft", behavior: "m/lifecycle", kind: "plain", entry: "reserveStock" },
+    ];
+    const flowEdges = [
+      { key: "m/lifecycle#e0", kind: "controlFlow", behavior: "m/lifecycle", from: "m/lifecycle#initial", to: "m/lifecycle#Draft" },
+    ];
+    const rust = { nodes: [], edges: [], diagrams: [], path: "", packages: [], flows: [flow], activityNodes, flowEdges };
     const g = toModelGraph(rust as never, emptyOverlay());
     expect(g.flows).toEqual([flow]);
+    expect(g.activityNodes).toEqual(activityNodes);
+    expect(g.flowEdges).toEqual(flowEdges);
   });
 
   it("passes sequence docs through to the ModelGraph", () => {
