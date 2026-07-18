@@ -31,11 +31,10 @@
   let headerColor = $derived(overrideHeader ?? st.header);
   let accentTriple = $derived(hexToTriple(headerColor));
 
-  // Structural per-node style: self-theme the accent triple; thick border and
-  // hexagon shape stay as inline structural declarations (not Tailwind).
+  // Structural per-node style: self-theme the accent triple; hexagon shape
+  // stays as an inline structural declaration (not Tailwind).
   let boxStyle = $derived.by(() => {
     const decls: string[] = [`--accent:${accentTriple}`];
-    if (st.border === "thick") decls.push(`--bw:2px`);
     if (st.shape === "hexagon") {
       decls.push(`clip-path:polygon(8% 0, 92% 0, 100% 50%, 92% 100%, 8% 100%, 0 50%)`);
     }
