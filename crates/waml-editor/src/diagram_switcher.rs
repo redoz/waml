@@ -124,13 +124,21 @@ impl Widget for DiagramSwitcher {
     fn draw_walk(&mut self, cx: &mut Cx2d, _scope: &mut Scope, walk: Walk) -> DrawStep {
         let rect = cx.walk_turtle(walk);
         self.draw_bg.draw_abs(cx, rect);
-        self.draw_edge.draw_abs(cx, Rect { pos: rect.pos, size: dvec2(rect.size.x, 1.5) });
+        self.draw_edge.draw_abs(
+            cx,
+            Rect {
+                pos: rect.pos,
+                size: dvec2(rect.size.x, 1.5),
+            },
+        );
 
         let text_y = rect.pos.y + rect.size.y * 0.5 - 6.0;
-        self.draw_label.draw_abs(cx, dvec2(rect.pos.x + 10.0, text_y), &self.current_title);
+        self.draw_label
+            .draw_abs(cx, dvec2(rect.pos.x + 10.0, text_y), &self.current_title);
         // Plain ASCII caret -- unicode glyphs render as tofu with the sole
         // vendored font, per the same finding recorded in `tool_dock.rs`.
-        self.draw_caret.draw_abs(cx, dvec2(rect.pos.x + rect.size.x - 16.0, text_y), ">");
+        self.draw_caret
+            .draw_abs(cx, dvec2(rect.pos.x + rect.size.x - 16.0, text_y), ">");
 
         DrawStep::done()
     }

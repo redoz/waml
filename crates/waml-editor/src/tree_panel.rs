@@ -205,7 +205,13 @@ fn build_id_maps(tree: &ProjectTreeData) -> (HashMap<LiveId, String>, HashMap<Li
 /// fractional placement is a prime blur source for `DrawSvg`'s vector
 /// geometry (no GPU-side antialiasing expansion re-centers it), so a
 /// subpixel `x`/`y` softens otherwise-crisp thin strokes.
-fn draw_row_icon(cx: &mut Cx2d, icons: &mut TreeIcons, kind: TreeKind, row_top: Vec2d, depth: usize) {
+fn draw_row_icon(
+    cx: &mut Cx2d,
+    icons: &mut TreeIcons,
+    kind: TreeKind,
+    row_top: Vec2d,
+    depth: usize,
+) {
     let icon = match kind {
         TreeKind::Class => &mut icons.class,
         TreeKind::Interface => &mut icons.interface,
@@ -220,14 +226,26 @@ fn draw_row_icon(cx: &mut Cx2d, icons: &mut TreeIcons, kind: TreeKind, row_top: 
     };
     let x = (row_top.x + ICON_LEFT_MARGIN + depth as f64 * ICON_DEPTH_INDENT).round();
     let y = (row_top.y + (ROW_HEIGHT - ICON_SIZE) / 2.0).round();
-    icon.draw_abs(cx, Rect { pos: dvec2(x, y), size: dvec2(ICON_SIZE, ICON_SIZE) });
+    icon.draw_abs(
+        cx,
+        Rect {
+            pos: dvec2(x, y),
+            size: dvec2(ICON_SIZE, ICON_SIZE),
+        },
+    );
 }
 
 /// Emit `begin_folder`/`end_folder` for packages and `file` for leaves, and
 /// overlay a HUD glyph icon at the left of every row. A collapsed folder
 /// returns `Err` from `begin_folder`; skip its children then (its own row is
 /// still drawn either way, so the icon is drawn unconditionally).
-fn draw_nodes(cx: &mut Cx2d, ft: &mut FileTree, nodes: &[TreeNode], icons: &mut TreeIcons, depth: usize) {
+fn draw_nodes(
+    cx: &mut Cx2d,
+    ft: &mut FileTree,
+    nodes: &[TreeNode],
+    icons: &mut TreeIcons,
+    depth: usize,
+) {
     for node in nodes {
         let id = LiveId::from_str(&node.key);
         let row_top = cx.turtle().pos();
@@ -271,7 +289,12 @@ impl Widget for ProjectTree {
                         // used to share `TreeKind::Class` before per-glyph
                         // rows split them out); keep them clickable the same
                         // way Class rows are.
-                        Some(TreeKind::Class | TreeKind::Interface | TreeKind::Enum | TreeKind::DataType) => {
+                        Some(
+                            TreeKind::Class
+                            | TreeKind::Interface
+                            | TreeKind::Enum
+                            | TreeKind::DataType,
+                        ) => {
                             cx.widget_action(uid, ProjectTreeAction::FocusClassifier(key.clone()));
                         }
                         _ => {}

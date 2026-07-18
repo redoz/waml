@@ -149,16 +149,31 @@ impl Widget for ShortcutsOverlay {
         let panel_h = TITLE_H + BINDINGS.len() as f64 * ROW_H + PANEL_PAD * 2.0;
         let panel_x = rect.pos.x + rect.size.x * 0.5 - PANEL_W * 0.5;
         let panel_y = rect.pos.y + rect.size.y * 0.5 - panel_h * 0.5;
-        self.panel_rect = Rect { pos: dvec2(panel_x, panel_y), size: dvec2(PANEL_W, panel_h) };
+        self.panel_rect = Rect {
+            pos: dvec2(panel_x, panel_y),
+            size: dvec2(PANEL_W, panel_h),
+        };
         self.draw_panel.draw_abs(cx, self.panel_rect);
-        self.draw_edge.draw_abs(cx, Rect { pos: self.panel_rect.pos, size: dvec2(self.panel_rect.size.x, 1.5) });
+        self.draw_edge.draw_abs(
+            cx,
+            Rect {
+                pos: self.panel_rect.pos,
+                size: dvec2(self.panel_rect.size.x, 1.5),
+            },
+        );
 
-        self.draw_title.draw_abs(cx, dvec2(panel_x + PANEL_PAD, panel_y + PANEL_PAD), "Shortcuts");
+        self.draw_title.draw_abs(
+            cx,
+            dvec2(panel_x + PANEL_PAD, panel_y + PANEL_PAD),
+            "Shortcuts",
+        );
 
         let mut y = panel_y + PANEL_PAD + TITLE_H;
         for (key, desc) in BINDINGS {
-            self.draw_key.draw_abs(cx, dvec2(panel_x + PANEL_PAD, y), key);
-            self.draw_desc.draw_abs(cx, dvec2(panel_x + PANEL_PAD + KEY_COL_W, y), desc);
+            self.draw_key
+                .draw_abs(cx, dvec2(panel_x + PANEL_PAD, y), key);
+            self.draw_desc
+                .draw_abs(cx, dvec2(panel_x + PANEL_PAD + KEY_COL_W, y), desc);
             y += ROW_H;
         }
 

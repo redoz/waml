@@ -37,9 +37,9 @@ pub struct AttrRow {
 /// not an editable field.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AssocRow {
-    pub kind: String,          // RelationshipKind::as_str(), e.g. "associates"
+    pub kind: String,            // RelationshipKind::as_str(), e.g. "associates"
     pub direction: &'static str, // "->" (key is source) or "<-" (key is target)
-    pub other_label: String,   // the other endpoint's title, falling back to its key
+    pub other_label: String,     // the other endpoint's title, falling back to its key
 }
 
 /// The flattened read model the panel renders.
@@ -88,7 +88,10 @@ pub fn build_view(model: &Model, subject: &Subject) -> Option<InspectorView> {
             name: a.name.clone(),
             ty: a.ty.name.clone(),
             multiplicity: a.multiplicity.as_str().to_string(),
-            visibility: a.visibility.map(|v| v.marker().to_string()).unwrap_or_default(),
+            visibility: a
+                .visibility
+                .map(|v| v.marker().to_string())
+                .unwrap_or_default(),
         })
         .collect();
 
@@ -118,7 +121,11 @@ pub fn build_view(model: &Model, subject: &Subject) -> Option<InspectorView> {
     }
 
     Some(InspectorView {
-        title: node.concept.title.clone().unwrap_or_else(|| node.key.clone()),
+        title: node
+            .concept
+            .title
+            .clone()
+            .unwrap_or_else(|| node.key.clone()),
         kind_label: kind_label(&node.ty),
         abstract_flag: node.abstract_,
         stereotypes: node.stereotypes.clone(),
@@ -236,7 +243,10 @@ mod tests {
         let key = model.nodes[0].key.clone();
         let view = build_view(&model, &Subject::Classifier(key)).unwrap();
         let over = "Renamed Title".to_string();
-        assert_eq!(effective_field(&view, FieldId::Title, Some(&over)), "Renamed Title");
+        assert_eq!(
+            effective_field(&view, FieldId::Title, Some(&over)),
+            "Renamed Title"
+        );
         // The source view (and thus the model it was built from) is untouched.
         assert_ne!(view.title, "Renamed Title");
     }
@@ -253,9 +263,21 @@ mod tests {
         let key = model.nodes[0].key.clone();
         let view = build_view(&model, &Subject::Classifier(key)).unwrap();
 
-        let a = effective_field(&view, FieldId::Title, overrides.get(&("a".to_string(), FieldId::Title)));
-        let b = effective_field(&view, FieldId::Title, overrides.get(&("b".to_string(), FieldId::Title)));
-        let c = effective_field(&view, FieldId::Title, overrides.get(&("c".to_string(), FieldId::Title)));
+        let a = effective_field(
+            &view,
+            FieldId::Title,
+            overrides.get(&("a".to_string(), FieldId::Title)),
+        );
+        let b = effective_field(
+            &view,
+            FieldId::Title,
+            overrides.get(&("b".to_string(), FieldId::Title)),
+        );
+        let c = effective_field(
+            &view,
+            FieldId::Title,
+            overrides.get(&("c".to_string(), FieldId::Title)),
+        );
 
         assert_eq!(a, "A edited");
         assert_eq!(b, "B edited");

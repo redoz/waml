@@ -34,7 +34,12 @@ script_mod! {
 }
 
 /// Pure so the join format is unit-tested without a `Cx`.
-pub fn status_line(diagram_name: &str, node_count: usize, zoom_pct: i32, tool_label: &str) -> String {
+pub fn status_line(
+    diagram_name: &str,
+    node_count: usize,
+    zoom_pct: i32,
+    tool_label: &str,
+) -> String {
     let noun = if node_count == 1 { "node" } else { "nodes" };
     format!("{diagram_name}    {node_count} {noun}    Zoom {zoom_pct}%    Tool: {tool_label}")
 }
@@ -75,15 +80,28 @@ impl Widget for Statusbar {
     fn draw_walk(&mut self, cx: &mut Cx2d, _scope: &mut Scope, walk: Walk) -> DrawStep {
         let rect = cx.walk_turtle(walk);
         self.draw_bg.draw_abs(cx, rect);
-        let line = status_line(&self.diagram_name, self.node_count, self.zoom_pct, &self.tool_label);
+        let line = status_line(
+            &self.diagram_name,
+            self.node_count,
+            self.zoom_pct,
+            &self.tool_label,
+        );
         let text_y = rect.pos.y + rect.size.y * 0.5 - 6.0;
-        self.draw_text.draw_abs(cx, dvec2(rect.pos.x + 12.0, text_y), &line);
+        self.draw_text
+            .draw_abs(cx, dvec2(rect.pos.x + 12.0, text_y), &line);
         DrawStep::done()
     }
 }
 
 impl Statusbar {
-    pub fn set_state(&mut self, cx: &mut Cx, diagram_name: String, node_count: usize, zoom_pct: i32, tool_label: &str) {
+    pub fn set_state(
+        &mut self,
+        cx: &mut Cx,
+        diagram_name: String,
+        node_count: usize,
+        zoom_pct: i32,
+        tool_label: &str,
+    ) {
         self.diagram_name = diagram_name;
         self.node_count = node_count;
         self.zoom_pct = zoom_pct;

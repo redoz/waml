@@ -87,7 +87,9 @@ pub fn build_scene(model: &Model, diagram: &Diagram) -> (Scene, Vec<Diagnostic>)
             .map(|n| n.ty.clone())
             .unwrap_or_else(|| ElementType::Unknown(String::new()));
         let attributes = attribute_rows(model, key);
-        let stereotypes = model_node.map(|n| n.stereotypes.clone()).unwrap_or_default();
+        let stereotypes = model_node
+            .map(|n| n.stereotypes.clone())
+            .unwrap_or_default();
         nodes.push(SceneNode {
             key: key.clone(),
             title,
@@ -129,15 +131,28 @@ pub fn build_scene(model: &Model, diagram: &Diagram) -> (Scene, Vec<Diagnostic>)
 /// in the tree). An unknown key yields an empty scene.
 pub fn build_focus_scene(model: &Model, key: &str) -> Scene {
     let Some(node) = model.nodes.iter().find(|n| n.key == key) else {
-        return Scene { nodes: vec![], groups: vec![], edges: vec![] };
+        return Scene {
+            nodes: vec![],
+            groups: vec![],
+            edges: vec![],
+        };
     };
-    let title = node.concept.title.clone().unwrap_or_else(|| node.key.clone());
+    let title = node
+        .concept
+        .title
+        .clone()
+        .unwrap_or_else(|| node.key.clone());
     let attributes = attribute_rows(model, key);
     // The focus card is drawn at zoom 1.0 (world px == screen px), so size it
     // to wrap the exact compartment layout the renderer will draw.
     let eyebrow = focus_eyebrow(&node.stereotypes, &node.ty);
     let layout = crate::sizing::focus_card_layout(&title, &attributes, eyebrow.as_deref());
-    let rect = Rect { x: 0.0, y: 0.0, w: layout.card_w, h: layout.card_h };
+    let rect = Rect {
+        x: 0.0,
+        y: 0.0,
+        w: layout.card_w,
+        h: layout.card_h,
+    };
     Scene {
         nodes: vec![SceneNode {
             key: key.to_string(),
@@ -243,7 +258,10 @@ mod tests {
             .clone();
         let scene = build_focus_scene(&model, &key);
         // order.md declares `stereotype: [aggregateRoot]`.
-        assert_eq!(scene.nodes[0].stereotypes, vec!["aggregateRoot".to_string()]);
+        assert_eq!(
+            scene.nodes[0].stereotypes,
+            vec!["aggregateRoot".to_string()]
+        );
     }
 
     #[test]
@@ -260,8 +278,15 @@ mod tests {
         let model = mini();
         let (scene, _) = build_scene(&model, &model.diagrams[0]);
         let order = scene.nodes.iter().find(|n| n.key == "order").unwrap();
-        let gateway = scene.nodes.iter().find(|n| n.key == "payment-gateway").unwrap();
-        assert_eq!(order.element_type, ElementType::Uml(waml::model::UmlMetaclass::Class));
+        let gateway = scene
+            .nodes
+            .iter()
+            .find(|n| n.key == "payment-gateway")
+            .unwrap();
+        assert_eq!(
+            order.element_type,
+            ElementType::Uml(waml::model::UmlMetaclass::Class)
+        );
         assert_eq!(
             gateway.element_type,
             ElementType::Uml(waml::model::UmlMetaclass::Interface)

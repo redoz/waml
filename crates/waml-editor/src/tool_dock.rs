@@ -224,7 +224,13 @@ impl Widget for ToolDock {
     fn draw_walk(&mut self, cx: &mut Cx2d, _scope: &mut Scope, walk: Walk) -> DrawStep {
         let rect = cx.walk_turtle(walk);
         self.draw_bg.draw_abs(cx, rect);
-        self.draw_edge.draw_abs(cx, Rect { pos: rect.pos, size: dvec2(rect.size.x, 1.5) });
+        self.draw_edge.draw_abs(
+            cx,
+            Rect {
+                pos: rect.pos,
+                size: dvec2(rect.size.x, 1.5),
+            },
+        );
         self.item_rects.clear();
 
         let mut y = rect.pos.y;
@@ -234,19 +240,27 @@ impl Widget for ToolDock {
             if i == 3 {
                 y += GROUP_GAP;
             }
-            let item_rect = Rect { pos: dvec2(rect.pos.x, y), size: dvec2(rect.size.x, ITEM_H) };
+            let item_rect = Rect {
+                pos: dvec2(rect.pos.x, y),
+                size: dvec2(rect.size.x, ITEM_H),
+            };
             let is_active = tool.is_mode() && tool == self.active;
             if is_active {
                 self.draw_item_active.draw_abs(cx, item_rect);
             }
 
             let glyph_x = rect.pos.x + rect.size.x * 0.5 - 5.0;
-            let draw_glyph = if is_active { &mut self.draw_glyph_active } else { &mut self.draw_glyph_dim };
+            let draw_glyph = if is_active {
+                &mut self.draw_glyph_active
+            } else {
+                &mut self.draw_glyph_dim
+            };
             draw_glyph.draw_abs(cx, dvec2(glyph_x, item_rect.pos.y + GLYPH_Y), tool.glyph());
 
             if let Some(hint) = tool.hotkey_hint() {
                 let hint_x = rect.pos.x + rect.size.x * 0.5 - 3.0;
-                self.draw_hint.draw_abs(cx, dvec2(hint_x, item_rect.pos.y + HINT_Y), hint);
+                self.draw_hint
+                    .draw_abs(cx, dvec2(hint_x, item_rect.pos.y + HINT_Y), hint);
             }
 
             self.item_rects.push((tool, item_rect));

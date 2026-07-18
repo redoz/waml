@@ -48,7 +48,13 @@ mod tests {
         let paths: Vec<&str> = bundle.iter().map(|(p, _)| p.as_str()).collect();
         assert_eq!(
             paths,
-            ["customer.md", "index.md", "order.md", "orders-diagram.md", "payment-gateway.md"]
+            [
+                "customer.md",
+                "index.md",
+                "order.md",
+                "orders-diagram.md",
+                "payment-gateway.md"
+            ]
         );
         // Contents are the raw file text.
         let order = bundle.iter().find(|(p, _)| p == "order.md").unwrap();

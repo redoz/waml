@@ -387,7 +387,10 @@ impl Widget for GraphCanvas {
             // `Class`, `Association`, unresolved `Diagram`) draws nothing --
             // that's the pre-U9 look.
             let bar_h = 4.0_f64.min(screen.size.y);
-            let bar = Rect { pos: screen.pos, size: dvec2(screen.size.x, bar_h) };
+            let bar = Rect {
+                pos: screen.pos,
+                size: dvec2(screen.size.x, bar_h),
+            };
             match accent_bucket(&node.element_type) {
                 AccentBucket::None => {}
                 AccentBucket::Interface => self.draw_accent_interface.draw_abs(cx, bar),
@@ -452,7 +455,8 @@ impl GraphCanvas {
         }
 
         // Title (faux-bold via the larger `draw_text_title` size).
-        self.draw_text_title.draw_abs(cx, dvec2(left, y), &node.title);
+        self.draw_text_title
+            .draw_abs(cx, dvec2(left, y), &node.title);
         y += CARD_TITLE_H;
 
         // Attribute compartment: a divider, then the rows.

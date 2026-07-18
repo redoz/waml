@@ -208,47 +208,59 @@ impl App {
         };
         match active.kind {
             TabKind::Diagram => {
-                let built =
-                    self.model.diagrams.iter().find(|d| d.key == active.key).map(|d| build_scene(&self.model, d));
+                let built = self
+                    .model
+                    .diagrams
+                    .iter()
+                    .find(|d| d.key == active.key)
+                    .map(|d| build_scene(&self.model, d));
                 if let Some((scene, diags)) = built {
                     for d in &diags {
                         log!("diagnostic: {d:?}");
                     }
-                    if let Some(mut canvas) =
-                        self.ui.widget(cx, ids!(canvas)).borrow_mut::<crate::canvas::GraphCanvas>()
+                    if let Some(mut canvas) = self
+                        .ui
+                        .widget(cx, ids!(canvas))
+                        .borrow_mut::<crate::canvas::GraphCanvas>()
                     {
                         canvas.set_scene(cx, scene);
                     }
                 }
-                if let Some(mut inspector) =
-                    self.ui.widget(cx, ids!(inspector)).borrow_mut::<crate::inspector_panel::Inspector>()
+                if let Some(mut inspector) = self
+                    .ui
+                    .widget(cx, ids!(inspector))
+                    .borrow_mut::<crate::inspector_panel::Inspector>()
                 {
                     inspector.set_subject(cx, &self.model, Subject::None);
                 }
-                if let Some(mut toolbar) = self
-                    .ui
-                    .widget(cx, ids!(selection_toolbar))
-                    .borrow_mut::<crate::selection_toolbar::SelectionToolbar>()
+                if let Some(mut toolbar) =
+                    self.ui
+                        .widget(cx, ids!(selection_toolbar))
+                        .borrow_mut::<crate::selection_toolbar::SelectionToolbar>()
                 {
                     toolbar.set_selection(cx, None);
                 }
             }
             TabKind::Classifier => {
                 let scene = build_focus_scene(&self.model, &active.key);
-                if let Some(mut canvas) =
-                    self.ui.widget(cx, ids!(canvas)).borrow_mut::<crate::canvas::GraphCanvas>()
+                if let Some(mut canvas) = self
+                    .ui
+                    .widget(cx, ids!(canvas))
+                    .borrow_mut::<crate::canvas::GraphCanvas>()
                 {
                     canvas.set_focus(cx, scene);
                 }
-                if let Some(mut inspector) =
-                    self.ui.widget(cx, ids!(inspector)).borrow_mut::<crate::inspector_panel::Inspector>()
+                if let Some(mut inspector) = self
+                    .ui
+                    .widget(cx, ids!(inspector))
+                    .borrow_mut::<crate::inspector_panel::Inspector>()
                 {
                     inspector.set_subject(cx, &self.model, Subject::Classifier(active.key.clone()));
                 }
-                if let Some(mut toolbar) = self
-                    .ui
-                    .widget(cx, ids!(selection_toolbar))
-                    .borrow_mut::<crate::selection_toolbar::SelectionToolbar>()
+                if let Some(mut toolbar) =
+                    self.ui
+                        .widget(cx, ids!(selection_toolbar))
+                        .borrow_mut::<crate::selection_toolbar::SelectionToolbar>()
                 {
                     // Single-classifier focus only in this mock -- always 1.
                     toolbar.set_selection(cx, Some(1));
@@ -259,7 +271,11 @@ impl App {
     }
 
     fn refresh_doc_tabs(&mut self, cx: &mut Cx) {
-        if let Some(mut doc_tabs) = self.ui.widget(cx, ids!(doc_tabs)).borrow_mut::<crate::doc_tabs::DocTabs>() {
+        if let Some(mut doc_tabs) = self
+            .ui
+            .widget(cx, ids!(doc_tabs))
+            .borrow_mut::<crate::doc_tabs::DocTabs>()
+        {
             doc_tabs.set_tabs(cx, &self.tabs);
         }
     }
@@ -286,9 +302,16 @@ impl App {
     /// Push the base tab's current diagram title into the switcher's trigger
     /// chip. Called wherever the base tab's diagram changes.
     fn sync_diagram_switcher_current(&mut self, cx: &mut Cx) {
-        let title = self.tabs.tabs.first().map(|t| t.title.clone()).unwrap_or_default();
-        if let Some(mut switcher) =
-            self.ui.widget(cx, ids!(diagram_switcher)).borrow_mut::<crate::diagram_switcher::DiagramSwitcher>()
+        let title = self
+            .tabs
+            .tabs
+            .first()
+            .map(|t| t.title.clone())
+            .unwrap_or_default();
+        if let Some(mut switcher) = self
+            .ui
+            .widget(cx, ids!(diagram_switcher))
+            .borrow_mut::<crate::diagram_switcher::DiagramSwitcher>()
         {
             switcher.set_current(cx, &title);
         }
@@ -297,8 +320,10 @@ impl App {
     /// Toggle the keybinding-hint overlay (U8), triggered by the tool
     /// dock's `Shortcuts` button or the `?` hotkey.
     fn toggle_shortcuts_overlay(&mut self, cx: &mut Cx) {
-        if let Some(mut overlay) =
-            self.ui.widget(cx, ids!(shortcuts_overlay)).borrow_mut::<crate::shortcuts_overlay::ShortcutsOverlay>()
+        if let Some(mut overlay) = self
+            .ui
+            .widget(cx, ids!(shortcuts_overlay))
+            .borrow_mut::<crate::shortcuts_overlay::ShortcutsOverlay>()
         {
             let next = !overlay.visible();
             overlay.set_visible(cx, next);
@@ -308,8 +333,10 @@ impl App {
     /// Force the overlay's visibility (used by the `Escape` hotkey, which
     /// should only ever close it, never toggle it open).
     fn set_shortcuts_overlay(&mut self, cx: &mut Cx, visible: bool) {
-        if let Some(mut overlay) =
-            self.ui.widget(cx, ids!(shortcuts_overlay)).borrow_mut::<crate::shortcuts_overlay::ShortcutsOverlay>()
+        if let Some(mut overlay) = self
+            .ui
+            .widget(cx, ids!(shortcuts_overlay))
+            .borrow_mut::<crate::shortcuts_overlay::ShortcutsOverlay>()
         {
             overlay.set_visible(cx, visible);
         }
@@ -319,7 +346,12 @@ impl App {
     /// statusbar. Snapshot values -- called at each sync point (tab switch,
     /// startup, tool-dock mode change), not live during a canvas drag.
     fn sync_statusbar(&mut self, cx: &mut Cx) {
-        let diagram_name = self.tabs.tabs.first().map(|t| t.title.clone()).unwrap_or_default();
+        let diagram_name = self
+            .tabs
+            .tabs
+            .first()
+            .map(|t| t.title.clone())
+            .unwrap_or_default();
         let (node_count, zoom_pct) = self
             .ui
             .widget(cx, ids!(canvas))
@@ -332,8 +364,10 @@ impl App {
             .borrow_mut::<crate::tool_dock::ToolDock>()
             .map(|d| d.active().label())
             .unwrap_or("Select");
-        if let Some(mut statusbar) =
-            self.ui.widget(cx, ids!(statusbar)).borrow_mut::<crate::statusbar::Statusbar>()
+        if let Some(mut statusbar) = self
+            .ui
+            .widget(cx, ids!(statusbar))
+            .borrow_mut::<crate::statusbar::Statusbar>()
         {
             statusbar.set_state(cx, diagram_name, node_count, zoom_pct, tool_label);
         }
@@ -364,9 +398,7 @@ impl MatchEvent for App {
         } else {
             self.model.path.as_str()
         };
-        self.ui
-            .label(cx, ids!(pkg_name))
-            .set_text(cx, root_name);
+        self.ui.label(cx, ids!(pkg_name)).set_text(cx, root_name);
 
         let tree = crate::tree::build_tree(&self.model);
         if let Some(mut panel) = self
@@ -424,7 +456,11 @@ impl MatchEvent for App {
             .and_then(|panel| panel.focused_classifier(actions));
         if let Some(key) = focused {
             if let Some(node) = self.model.nodes.iter().find(|n| n.key == key) {
-                let title = node.concept.title.clone().unwrap_or_else(|| node.key.clone());
+                let title = node
+                    .concept
+                    .title
+                    .clone()
+                    .unwrap_or_else(|| node.key.clone());
                 self.tabs.open_preview(key, title);
                 self.refresh_doc_tabs(cx);
                 self.sync_active_tab(cx);
@@ -453,7 +489,12 @@ impl MatchEvent for App {
             .and_then(|switcher| switcher.switcher_action(actions));
         if let Some(crate::diagram_switcher::DiagramSwitcherAction::Clicked) = switcher_clicked {
             let keys: Vec<String> = self.model.diagrams.iter().map(|d| d.key.clone()).collect();
-            let current = self.tabs.tabs.first().map(|t| t.key.clone()).unwrap_or_default();
+            let current = self
+                .tabs
+                .tabs
+                .first()
+                .map(|t| t.key.clone())
+                .unwrap_or_default();
             if let Some(next) = crate::diagram_switcher::next_diagram_key(&keys, &current) {
                 self.switch_diagram(cx, &next);
             }
@@ -503,7 +544,8 @@ impl MatchEvent for App {
             .widget(cx, ids!(shortcuts_overlay))
             .borrow_mut::<crate::shortcuts_overlay::ShortcutsOverlay>()
             .and_then(|overlay| overlay.overlay_action(actions));
-        if let Some(crate::shortcuts_overlay::ShortcutsOverlayAction::Dismissed) = overlay_dismissed {
+        if let Some(crate::shortcuts_overlay::ShortcutsOverlayAction::Dismissed) = overlay_dismissed
+        {
             self.toggle_shortcuts_overlay(cx);
             return;
         }
@@ -586,8 +628,10 @@ impl AppMain for App {
                     _ => None,
                 };
                 if let Some(tool) = letter.and_then(crate::tool_dock::tool_for_hotkey) {
-                    if let Some(mut dock) =
-                        self.ui.widget(cx, ids!(tool_dock)).borrow_mut::<crate::tool_dock::ToolDock>()
+                    if let Some(mut dock) = self
+                        .ui
+                        .widget(cx, ids!(tool_dock))
+                        .borrow_mut::<crate::tool_dock::ToolDock>()
                     {
                         dock.set_active(cx, tool);
                     }

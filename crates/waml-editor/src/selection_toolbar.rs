@@ -124,7 +124,10 @@ impl Widget for SelectionToolbar {
                 // resolved post-layout.
                 let bg_rect = self.draw_bg.area().rect(cx);
                 for (action, rel_rect) in self.item_rects.clone() {
-                    let rect = Rect { pos: bg_rect.pos + rel_rect.pos, size: rel_rect.size };
+                    let rect = Rect {
+                        pos: bg_rect.pos + rel_rect.pos,
+                        size: rel_rect.size,
+                    };
                     if rect.contains(fe.abs) {
                         let action = match action {
                             Action::NewDiagram => SelectionToolbarAction::NewDiagram,
@@ -156,21 +159,33 @@ impl Widget for SelectionToolbar {
         let pill_w = PILL_PAD * 2.0 + LABEL_W + GAP + NEW_DIAGRAM_W + GAP + DELETE_W;
         let pill_x = (rect.size.x - pill_w) * 0.5;
         let pill_y = (rect.size.y - PILL_H) * 0.5;
-        let pill_rect = Rect { pos: rect.pos + dvec2(pill_x, pill_y), size: dvec2(pill_w, PILL_H) };
+        let pill_rect = Rect {
+            pos: rect.pos + dvec2(pill_x, pill_y),
+            size: dvec2(pill_w, PILL_H),
+        };
         self.draw_pill.draw_abs(cx, pill_rect);
 
         let text_y = pill_y + PILL_H * 0.5 - 7.0;
         let mut x = pill_x + PILL_PAD;
-        self.draw_label.draw_abs(cx, rect.pos + dvec2(x, text_y), &label_for_count(count));
+        self.draw_label
+            .draw_abs(cx, rect.pos + dvec2(x, text_y), &label_for_count(count));
         x += LABEL_W + GAP;
 
-        let new_diagram_rect = Rect { pos: dvec2(x, pill_y), size: dvec2(NEW_DIAGRAM_W, PILL_H) };
-        self.draw_action.draw_abs(cx, rect.pos + dvec2(x, text_y), "+ New Diagram");
+        let new_diagram_rect = Rect {
+            pos: dvec2(x, pill_y),
+            size: dvec2(NEW_DIAGRAM_W, PILL_H),
+        };
+        self.draw_action
+            .draw_abs(cx, rect.pos + dvec2(x, text_y), "+ New Diagram");
         self.item_rects.push((Action::NewDiagram, new_diagram_rect));
         x += NEW_DIAGRAM_W + GAP;
 
-        let delete_rect = Rect { pos: dvec2(x, pill_y), size: dvec2(DELETE_W, PILL_H) };
-        self.draw_action.draw_abs(cx, rect.pos + dvec2(x, text_y), "Delete");
+        let delete_rect = Rect {
+            pos: dvec2(x, pill_y),
+            size: dvec2(DELETE_W, PILL_H),
+        };
+        self.draw_action
+            .draw_abs(cx, rect.pos + dvec2(x, text_y), "Delete");
         self.item_rects.push((Action::Delete, delete_rect));
 
         DrawStep::done()

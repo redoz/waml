@@ -96,7 +96,10 @@ pub struct OpenTabs {
 /// replaces this with `OpenTabs::diagram_base(..)` once the model is loaded.
 impl Default for OpenTabs {
     fn default() -> Self {
-        OpenTabs { tabs: vec![], active: LiveId::default() }
+        OpenTabs {
+            tabs: vec![],
+            active: LiveId::default(),
+        }
     }
 }
 
@@ -105,8 +108,17 @@ impl OpenTabs {
     pub fn diagram_base(key: impl Into<String>, title: impl Into<String>) -> OpenTabs {
         let key = key.into();
         let id = diagram_tab_id();
-        let tab = DocTab { id, key, title: title.into(), kind: TabKind::Diagram, preview: false };
-        OpenTabs { active: id, tabs: vec![tab] }
+        let tab = DocTab {
+            id,
+            key,
+            title: title.into(),
+            kind: TabKind::Diagram,
+            preview: false,
+        };
+        OpenTabs {
+            active: id,
+            tabs: vec![tab],
+        }
     }
 
     fn preview_index(&self) -> Option<usize> {
@@ -121,11 +133,23 @@ impl OpenTabs {
         let title = title.into();
         let id = classifier_tab_id(&key);
         if let Some(idx) = self.preview_index() {
-            self.tabs[idx] = DocTab { id, key, title, kind: TabKind::Classifier, preview: true };
+            self.tabs[idx] = DocTab {
+                id,
+                key,
+                title,
+                kind: TabKind::Classifier,
+                preview: true,
+            };
         } else {
             // No preview slot: append at the end, after any persisted tabs
             // (matches editors that always open new tabs rightmost).
-            self.tabs.push(DocTab { id, key, title, kind: TabKind::Classifier, preview: true });
+            self.tabs.push(DocTab {
+                id,
+                key,
+                title,
+                kind: TabKind::Classifier,
+                preview: true,
+            });
         }
         self.active = id;
         id
@@ -149,8 +173,16 @@ impl OpenTabs {
         };
         self.tabs.remove(idx);
         if self.active == id {
-            let new_idx = if idx < self.tabs.len() { idx } else { idx.saturating_sub(1) };
-            self.active = self.tabs.get(new_idx).map(|t| t.id).unwrap_or(self.tabs[0].id);
+            let new_idx = if idx < self.tabs.len() {
+                idx
+            } else {
+                idx.saturating_sub(1)
+            };
+            self.active = self
+                .tabs
+                .get(new_idx)
+                .map(|t| t.id)
+                .unwrap_or(self.tabs[0].id);
         }
     }
 
@@ -274,7 +306,13 @@ impl Widget for DocTabs {
     fn draw_walk(&mut self, cx: &mut Cx2d, _scope: &mut Scope, walk: Walk) -> DrawStep {
         let rect = cx.walk_turtle(walk);
         self.draw_bg.draw_abs(cx, rect);
-        self.draw_edge.draw_abs(cx, Rect { pos: rect.pos, size: dvec2(rect.size.x, 1.5) });
+        self.draw_edge.draw_abs(
+            cx,
+            Rect {
+                pos: rect.pos,
+                size: dvec2(rect.size.x, 1.5),
+            },
+        );
 
         self.tab_rects.clear();
         self.close_rects.clear();
@@ -283,7 +321,10 @@ impl Widget for DocTabs {
         for (i, tab) in self.tabs.iter().enumerate() {
             let closable = tab.kind != TabKind::Diagram;
             let w = if i == 0 { TAB_W_BASE } else { TAB_W };
-            let tab_rect = Rect { pos: dvec2(x, rect.pos.y), size: dvec2(w, rect.size.y) };
+            let tab_rect = Rect {
+                pos: dvec2(x, rect.pos.y),
+                size: dvec2(w, rect.size.y),
+            };
             let is_active = tab.id == self.active;
 
             if is_active {
@@ -306,7 +347,8 @@ impl Widget for DocTabs {
                     pos: dvec2(x + w - CLOSE_W, rect.pos.y),
                     size: dvec2(CLOSE_W, rect.size.y),
                 };
-                self.draw_close.draw_abs(cx, dvec2(close_rect.pos.x + 4.0, text_y), "\u{d7}");
+                self.draw_close
+                    .draw_abs(cx, dvec2(close_rect.pos.x + 4.0, text_y), "\u{d7}");
                 self.close_rects.push((tab.id, close_rect));
             }
 

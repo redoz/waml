@@ -46,7 +46,10 @@ fn kind_of(ty: &ElementType) -> TreeKind {
         ElementType::Uml(UmlMetaclass::Enum) => TreeKind::Enum,
         ElementType::Uml(UmlMetaclass::DataType) => TreeKind::DataType,
         ElementType::Uml(
-            UmlMetaclass::Class | UmlMetaclass::Association | UmlMetaclass::Actor | UmlMetaclass::UseCase,
+            UmlMetaclass::Class
+            | UmlMetaclass::Association
+            | UmlMetaclass::Actor
+            | UmlMetaclass::UseCase,
         ) => TreeKind::Class,
         ElementType::Behavior(BehaviorKind::Sequence) => TreeKind::Sequence,
         ElementType::Behavior(_) => TreeKind::Behavior,

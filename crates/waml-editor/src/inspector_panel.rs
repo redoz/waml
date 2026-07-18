@@ -176,7 +176,13 @@ impl Widget for Inspector {
         let rect = cx.walk_turtle(walk);
         self.view_rect = rect;
         self.draw_bg.draw_abs(cx, rect);
-        self.draw_edge.draw_abs(cx, Rect { pos: rect.pos, size: dvec2(rect.size.x, 1.5) });
+        self.draw_edge.draw_abs(
+            cx,
+            Rect {
+                pos: rect.pos,
+                size: dvec2(rect.size.x, 1.5),
+            },
+        );
         self.field_rects.clear();
 
         let Some(view) = self.view.clone() else {
@@ -191,12 +197,17 @@ impl Widget for Inspector {
         let mut y = rect.pos.y + PAD;
 
         // Title: click-to-edit.
-        let title_rect = Rect { pos: dvec2(x, y), size: dvec2(field_w, TITLE_H) };
+        let title_rect = Rect {
+            pos: dvec2(x, y),
+            size: dvec2(field_w, TITLE_H),
+        };
         if self.editing == Some(FieldId::Title) {
             self.draw_field_bg.draw_abs(cx, title_rect);
-            self.draw_title.draw_abs(cx, dvec2(x, y), &format!("{}\u{2502}", self.edit_buffer));
+            self.draw_title
+                .draw_abs(cx, dvec2(x, y), &format!("{}\u{2502}", self.edit_buffer));
         } else {
-            self.draw_title.draw_abs(cx, dvec2(x, y), &self.effective_title(&view));
+            self.draw_title
+                .draw_abs(cx, dvec2(x, y), &self.effective_title(&view));
         }
         self.field_rects.push((FieldId::Title, title_rect));
         y += TITLE_H;
@@ -262,10 +273,14 @@ impl Widget for Inspector {
         // so there's always an affordance to add one.
         self.draw_dim.draw_abs(cx, dvec2(x, y), "DESCRIPTION");
         y += ROW_H;
-        let desc_rect = Rect { pos: dvec2(x, y), size: dvec2(field_w, ROW_H) };
+        let desc_rect = Rect {
+            pos: dvec2(x, y),
+            size: dvec2(field_w, ROW_H),
+        };
         if self.editing == Some(FieldId::Description) {
             self.draw_field_bg.draw_abs(cx, desc_rect);
-            self.draw_label.draw_abs(cx, dvec2(x, y), &format!("{}\u{2502}", self.edit_buffer));
+            self.draw_label
+                .draw_abs(cx, dvec2(x, y), &format!("{}\u{2502}", self.edit_buffer));
         } else {
             let text = self.effective_description(&view);
             if text.is_empty() {
@@ -300,13 +315,17 @@ impl Inspector {
 
     fn effective_title(&self, view: &InspectorView) -> String {
         let key = self.subject_key();
-        let over = key.as_ref().and_then(|k| self.overrides.get(&(k.clone(), FieldId::Title)));
+        let over = key
+            .as_ref()
+            .and_then(|k| self.overrides.get(&(k.clone(), FieldId::Title)));
         effective_field(view, FieldId::Title, over)
     }
 
     fn effective_description(&self, view: &InspectorView) -> String {
         let key = self.subject_key();
-        let over = key.as_ref().and_then(|k| self.overrides.get(&(k.clone(), FieldId::Description)));
+        let over = key
+            .as_ref()
+            .and_then(|k| self.overrides.get(&(k.clone(), FieldId::Description)));
         effective_field(view, FieldId::Description, over)
     }
 
@@ -338,7 +357,8 @@ impl Inspector {
         };
         if let Some(key) = self.subject_key() {
             if self.edit_buffer != self.edit_original {
-                self.overrides.insert((key.clone(), field), self.edit_buffer.clone());
+                self.overrides
+                    .insert((key.clone(), field), self.edit_buffer.clone());
                 cx.widget_action(uid, InspectorAction::Edited(key));
             }
         }
