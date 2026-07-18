@@ -8,6 +8,7 @@ mod card;
 mod cli;
 mod diagram_switcher;
 mod doc_tabs;
+mod draw_hud;
 mod inspector;
 mod inspector_panel;
 mod load;

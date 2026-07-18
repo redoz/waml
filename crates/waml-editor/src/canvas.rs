@@ -23,32 +23,12 @@ script_mod! {
         height: Fill
         draw_bg +: { color: atlas.canvas_ground }
         draw_group +: { color: atlas.group_fill }
-        // Node card: a rounded near-white glass panel carrying the Atlas
-        // "source-bright" frame -- a thin accent stroke that is brightest at
-        // the top-left corner (`frame_hi`) and fades toward the bottom-right
-        // (`frame_lo`), the asymmetric bevel from the HUD mocks. Fill and
-        // frame are one SDF quad (mirrors the fork's own gradient-border
-        // button shader, `widgets/src/button.rs`).
-        draw_node +: {
-            color: atlas.field_bg
-            border_hi: uniform(atlas.frame_hi)
-            border_lo: uniform(atlas.frame_lo)
-            // Camera zoom, pushed per frame so the frame inset + stroke width
-            // grow with the box instead of staying a fixed screen-pixel hairline.
-            zoom: uniform(1.0)
-            pixel: fn() {
-                let inset = 1.5 * self.zoom
-                let sdf = Sdf2d.viewport(self.pos * self.rect_size)
-                sdf.rect(inset, inset, self.rect_size.x - inset * 2.0, self.rect_size.y - inset * 2.0)
-                sdf.fill_keep(self.color)
-                // Diagonal source-bright frame: bright top-left (frame_hi) ->
-                // dim bottom-right (frame_lo).
-                let bdir = clamp((self.pos.x + self.pos.y) * 0.5, 0.0, 1.0)
-                let stroke = mix(self.border_hi, self.border_lo, bdir)
-                sdf.stroke(stroke, 1.5 * self.zoom)
-                return sdf.result
-            }
-        }
+        // Node card: a near-white glass panel carrying the Atlas
+        // "source-bright" frame -- the reusable `HudFrame` primitive (see
+        // `draw_hud.rs`): a thin accent stroke fading along a 150deg diagonal,
+        // bright top-left (`frame_hi`) to dim bottom-right (`frame_lo`). Only
+        // the fill differs from the frame defaults, so we override just `color`.
+        draw_node: mod.draw.HudFrame{ color: atlas.field_bg }
         draw_edge +: { color: atlas.text_dim }
         // U9 node-kind accent bars (see `node_style::AccentBucket`): a thin
         // strip drawn along a node's top edge, distinct per kind bucket.
