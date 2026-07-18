@@ -17,6 +17,7 @@ use waml::model::Model;
 
 script_mod! {
     use mod.prelude.widgets_internal.*
+    use mod.atlas
     use mod.widgets.*
     use mod.text.*
 
@@ -25,9 +26,10 @@ script_mod! {
     mod.widgets.Inspector = set_type_default() do mod.widgets.InspectorBase{
         width: Fill
         height: Fill
-        draw_bg +: { color: #x1b1b24 }
+        draw_bg +: { color: atlas.surface }
+        draw_edge +: { color: atlas.frame_hi }
         draw_title +: {
-            color: #xf0f0f6
+            color: atlas.text
             text_style: TextStyle{
                 font_size: 16
                 font_family: FontFamily{
@@ -37,7 +39,7 @@ script_mod! {
             }
         }
         draw_label +: {
-            color: #xc8c8d4
+            color: atlas.text_dim
             text_style: TextStyle{
                 font_size: 12
                 font_family: FontFamily{
@@ -47,7 +49,7 @@ script_mod! {
             }
         }
         draw_dim +: {
-            color: #x9a9aae
+            color: atlas.text_dim
             text_style: TextStyle{
                 font_size: 12
                 font_family: FontFamily{
@@ -56,7 +58,7 @@ script_mod! {
                 line_spacing: 1.2
             }
         }
-        draw_field_bg +: { color: #x24242f }
+        draw_field_bg +: { color: atlas.field_bg }
     }
 }
 
@@ -84,6 +86,10 @@ pub struct Inspector {
     #[redraw]
     #[live]
     draw_bg: DrawColor,
+    /// Subtle source-bright top edge (shared HUD panel material).
+    #[redraw]
+    #[live]
+    draw_edge: DrawColor,
     #[redraw]
     #[live]
     draw_title: DrawText,
@@ -170,6 +176,7 @@ impl Widget for Inspector {
         let rect = cx.walk_turtle(walk);
         self.view_rect = rect;
         self.draw_bg.draw_abs(cx, rect);
+        self.draw_edge.draw_abs(cx, Rect { pos: rect.pos, size: dvec2(rect.size.x, 1.5) });
         self.field_rects.clear();
 
         let Some(view) = self.view.clone() else {

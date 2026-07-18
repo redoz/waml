@@ -10,6 +10,7 @@ use makepad_widgets::*;
 
 script_mod! {
     use mod.prelude.widgets_internal.*
+    use mod.atlas
     use mod.widgets.*
     use mod.text.*
 
@@ -18,9 +19,9 @@ script_mod! {
     mod.widgets.Statusbar = set_type_default() do mod.widgets.StatusbarBase{
         width: Fill
         height: 24.0
-        draw_bg +: { color: #x24242f }
+        draw_bg +: { color: atlas.surface }
         draw_text +: {
-            color: #x9a9aae
+            color: atlas.text_dim
             text_style: TextStyle{
                 font_size: 11
                 font_family: FontFamily{

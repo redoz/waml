@@ -25,6 +25,7 @@ use makepad_widgets::*;
 
 script_mod! {
     use mod.prelude.widgets_internal.*
+    use mod.atlas
     use mod.widgets.*
     use mod.text.*
 
@@ -33,9 +34,10 @@ script_mod! {
     mod.widgets.DiagramSwitcher = set_type_default() do mod.widgets.DiagramSwitcherBase{
         width: 180.0
         height: Fill
-        draw_bg +: { color: #x24242f }
+        draw_bg +: { color: atlas.surface }
+        draw_edge +: { color: atlas.frame_hi }
         draw_label +: {
-            color: #xf0f0f6
+            color: atlas.text
             text_style: TextStyle{
                 font_size: 12
                 font_family: FontFamily{
@@ -45,7 +47,7 @@ script_mod! {
             }
         }
         draw_caret +: {
-            color: #x9a9aae
+            color: atlas.text_dim
             text_style: TextStyle{
                 font_size: 11
                 font_family: FontFamily{
@@ -92,6 +94,10 @@ pub struct DiagramSwitcher {
     #[redraw]
     #[live]
     draw_bg: DrawColor,
+    /// Subtle source-bright top edge (shared HUD panel material).
+    #[redraw]
+    #[live]
+    draw_edge: DrawColor,
     #[redraw]
     #[live]
     draw_label: DrawText,
@@ -118,6 +124,7 @@ impl Widget for DiagramSwitcher {
     fn draw_walk(&mut self, cx: &mut Cx2d, _scope: &mut Scope, walk: Walk) -> DrawStep {
         let rect = cx.walk_turtle(walk);
         self.draw_bg.draw_abs(cx, rect);
+        self.draw_edge.draw_abs(cx, Rect { pos: rect.pos, size: dvec2(rect.size.x, 1.5) });
 
         let text_y = rect.pos.y + rect.size.y * 0.5 - 6.0;
         self.draw_label.draw_abs(cx, dvec2(rect.pos.x + 10.0, text_y), &self.current_title);

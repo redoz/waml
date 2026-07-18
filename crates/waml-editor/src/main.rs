@@ -16,6 +16,7 @@ mod selection_toolbar;
 mod shortcuts_overlay;
 mod sizing;
 mod statusbar;
+mod theme_atlas;
 mod tool_dock;
 mod tree;
 mod tree_panel;

@@ -14,30 +14,33 @@ use std::collections::HashMap;
 
 script_mod! {
     use mod.prelude.widgets_internal.*
+    use mod.atlas
     use mod.widgets.*
 
     mod.widgets.TreeIconsBase = #(TreeIcons::script_component(vm))
 
+    // HUD icon material (hud-icons-mock.html `.ico`): accent stroke, hollow
+    // interiors -- tint stays accent regardless of row state.
     mod.widgets.TreeIcons = set_type_default() do mod.widgets.TreeIconsBase{
         class +: {
             svg: crate_resource("self:resources/icons/class.svg")
-            color: #xc8c8d4
+            color: atlas.accent
         }
         package +: {
             svg: crate_resource("self:resources/icons/package.svg")
-            color: #xc8c8d4
+            color: atlas.accent
         }
         diagram +: {
             svg: crate_resource("self:resources/icons/diagram.svg")
-            color: #xc8c8d4
+            color: atlas.accent
         }
         flow +: {
             svg: crate_resource("self:resources/icons/flow.svg")
-            color: #xc8c8d4
+            color: atlas.accent
         }
         note +: {
             svg: crate_resource("self:resources/icons/note.svg")
-            color: #xc8c8d4
+            color: atlas.accent
         }
     }
 
@@ -47,7 +50,7 @@ script_mod! {
         width: Fill
         height: Fill
         show_bg: true
-        draw_bg +: { color: #x1b1b24 }
+        draw_bg +: { color: atlas.surface }
 
         file_tree := FileTree {
             // Roomier rows + larger humanist type, and flat (no zebra striping)
@@ -60,12 +63,13 @@ script_mod! {
                 padding: Inset{left: 26.0}
                 indent_width: 18.0
                 draw_text +: {
+                    color: atlas.text
                     text_style: theme.font_regular{font_size: 12}
                 }
                 draw_bg +: {
-                    color_1: #x1b1b24
-                    color_2: #x1b1b24
-                    color_active: #x3d3560
+                    color_1: atlas.surface
+                    color_2: atlas.surface
+                    color_active: atlas.selection
                 }
             }
 
@@ -73,12 +77,13 @@ script_mod! {
                 padding: Inset{left: 26.0}
                 indent_width: 18.0
                 draw_text +: {
+                    color: atlas.text
                     text_style: theme.font_bold{font_size: 12}
                 }
                 draw_bg +: {
-                    color_1: #x1b1b24
-                    color_2: #x1b1b24
-                    color_active: #x3d3560
+                    color_1: atlas.surface
+                    color_2: atlas.surface
+                    color_active: atlas.selection
                 }
                 // The built-in folder box icon is redundant with our own
                 // package.svg overlay; make it fully transparent.
@@ -89,7 +94,7 @@ script_mod! {
             }
 
             filler +: {
-                pixel: fn() { return #x1b1b24 }
+                pixel: fn() { return atlas.surface }
             }
         }
     }

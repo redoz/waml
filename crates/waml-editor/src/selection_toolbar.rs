@@ -13,6 +13,7 @@ use makepad_widgets::*;
 
 script_mod! {
     use mod.prelude.widgets_internal.*
+    use mod.atlas
     use mod.widgets.*
     use mod.text.*
 
@@ -21,10 +22,10 @@ script_mod! {
     mod.widgets.SelectionToolbar = set_type_default() do mod.widgets.SelectionToolbarBase{
         width: Fill
         height: 44.0
-        draw_bg +: { color: #x1b1b24 }
-        draw_pill +: { color: #x24242f }
+        draw_bg +: { color: atlas.ground }
+        draw_pill +: { color: atlas.surface }
         draw_label +: {
-            color: #xc8c8d4
+            color: atlas.text_dim
             text_style: TextStyle{
                 font_size: 12
                 font_family: FontFamily{
@@ -34,7 +35,7 @@ script_mod! {
             }
         }
         draw_action +: {
-            color: #xf0f0f6
+            color: atlas.text
             text_style: TextStyle{
                 font_size: 12
                 font_family: FontFamily{

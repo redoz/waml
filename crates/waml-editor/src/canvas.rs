@@ -12,6 +12,7 @@ use makepad_widgets::*;
 
 script_mod! {
     use mod.prelude.widgets_internal.*
+    use mod.atlas
     use mod.widgets.*
     use mod.text.*
 
@@ -20,22 +21,25 @@ script_mod! {
     mod.widgets.GraphCanvas = set_type_default() do mod.widgets.GraphCanvasBase{
         width: Fill
         height: Fill
-        draw_bg +: { color: #x1b1b24 }
-        draw_group +: { color: #x24242f }
-        draw_node +: { color: #x3a3a52 }
-        draw_edge +: { color: #x6b6b8a }
+        draw_bg +: { color: atlas.canvas_ground }
+        draw_group +: { color: atlas.group_fill }
+        draw_node +: { color: atlas.surface }
+        draw_node_border +: { color: atlas.accent }
+        draw_edge +: { color: atlas.text_dim }
         // U9 node-kind accent bars (see `node_style::AccentBucket`): a thin
         // strip drawn along a node's top edge, distinct per kind bucket.
-        draw_accent_interface +: { color: #x4a8fa8 }
-        draw_accent_enum +: { color: #xc9973f }
-        draw_accent_note +: { color: #xd9c25a }
-        draw_accent_actor +: { color: #x5aa06b }
-        draw_accent_usecase +: { color: #x8ea84a }
-        draw_accent_package +: { color: #x6b5aa0 }
-        draw_accent_behavior +: { color: #xa05a8f }
-        draw_accent_unknown +: { color: #xa85a5a }
+        // Colors are the Atlas bucket set (hud-icons-mock.html swatches),
+        // assigned in `AccentBucket` declaration order.
+        draw_accent_interface +: { color: atlas.bucket_blue }
+        draw_accent_enum +: { color: atlas.bucket_cyan }
+        draw_accent_note +: { color: atlas.bucket_teal }
+        draw_accent_actor +: { color: atlas.bucket_indigo }
+        draw_accent_usecase +: { color: atlas.bucket_amber }
+        draw_accent_package +: { color: atlas.bucket_green }
+        draw_accent_behavior +: { color: atlas.bucket_rose }
+        draw_accent_unknown +: { color: atlas.bucket_slate }
         draw_text +: {
-            color: #xf0f0f6
+            color: atlas.text
             text_style: TextStyle{
                 font_size: 12
                 font_family: FontFamily{
@@ -64,6 +68,12 @@ pub struct GraphCanvas {
     #[redraw]
     #[live]
     draw_node: DrawColor,
+    /// Thin accent-colored frame under every node's fill (source-bright
+    /// frame, simplified to a flat stroke -- see Atlas `frame_hi`/`frame_lo`
+    /// for the two-stop version used on declarative panels).
+    #[redraw]
+    #[live]
+    draw_node_border: DrawColor,
     #[redraw]
     #[live]
     draw_group: DrawColor,
@@ -272,7 +282,16 @@ impl Widget for GraphCanvas {
                     node.rect.h * self.camera.zoom,
                 ),
             };
-            self.draw_node.draw_abs(cx, screen);
+            // Node stroke = accent (source-bright frame, flattened to a
+            // single 1.5px stroke): paint the border rect first, then an
+            // inset fill on top so only a thin ring of the border shows.
+            self.draw_node_border.draw_abs(cx, screen);
+            let inset = 1.5;
+            let fill = Rect {
+                pos: dvec2(screen.pos.x + inset, screen.pos.y + inset),
+                size: dvec2((screen.size.x - 2.0 * inset).max(0.0), (screen.size.y - 2.0 * inset).max(0.0)),
+            };
+            self.draw_node.draw_abs(cx, fill);
 
             // U9: a thin accent bar along the node's top edge, colored by its
             // element-type bucket (`node_style::accent_bucket`). `None` (plain

@@ -10,6 +10,7 @@ use makepad_widgets::*;
 
 script_mod! {
     use mod.prelude.widgets_internal.*
+    use mod.atlas
     use mod.widgets.*
     use mod.text.*
 
@@ -18,10 +19,11 @@ script_mod! {
     mod.widgets.ToolDock = set_type_default() do mod.widgets.ToolDockBase{
         width: 48.0
         height: Fill
-        draw_bg +: { color: #x24242f }
-        draw_item_active +: { color: #x3d3560 }
+        draw_bg +: { color: atlas.surface }
+        draw_edge +: { color: atlas.frame_hi }
+        draw_item_active +: { color: atlas.selection }
         draw_glyph_active +: {
-            color: #xf0f0f6
+            color: atlas.accent
             text_style: TextStyle{
                 font_size: 16
                 font_family: FontFamily{
@@ -31,7 +33,7 @@ script_mod! {
             }
         }
         draw_glyph_dim +: {
-            color: #x9a9aae
+            color: atlas.text_dim
             text_style: TextStyle{
                 font_size: 16
                 font_family: FontFamily{
@@ -41,7 +43,7 @@ script_mod! {
             }
         }
         draw_hint +: {
-            color: #x9a9aae
+            color: atlas.text_dim
             text_style: TextStyle{
                 font_size: 9
                 font_family: FontFamily{
@@ -173,6 +175,10 @@ pub struct ToolDock {
     #[redraw]
     #[live]
     draw_bg: DrawColor,
+    /// Subtle source-bright top edge (shared HUD panel material).
+    #[redraw]
+    #[live]
+    draw_edge: DrawColor,
     #[redraw]
     #[live]
     draw_item_active: DrawColor,
@@ -218,6 +224,7 @@ impl Widget for ToolDock {
     fn draw_walk(&mut self, cx: &mut Cx2d, _scope: &mut Scope, walk: Walk) -> DrawStep {
         let rect = cx.walk_turtle(walk);
         self.draw_bg.draw_abs(cx, rect);
+        self.draw_edge.draw_abs(cx, Rect { pos: rect.pos, size: dvec2(rect.size.x, 1.5) });
         self.item_rects.clear();
 
         let mut y = rect.pos.y;

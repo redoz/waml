@@ -7,6 +7,7 @@ use waml::model::Model;
 
 script_mod! {
     use mod.prelude.widgets.*
+    use mod.atlas
     use mod.widgets.GraphCanvas
     use mod.widgets.ProjectTree
     use mod.widgets.Inspector
@@ -30,7 +31,7 @@ script_mod! {
                     visible: false
                     flow: Right
                     height: Fit
-                    draw_bg.color: #x24242f
+                    draw_bg.color: atlas.surface
                     wordmark := View{
                         width: Fit
                         height: Fill
@@ -39,7 +40,7 @@ script_mod! {
                         Label{
                             text: "WAML"
                             draw_text +: {
-                                color: #xf0f0f6
+                                color: atlas.accent
                                 text_style: theme.font_bold{font_size: 22}
                             }
                         }
@@ -51,7 +52,7 @@ script_mod! {
                         pkg_name := Label{
                             text: ""
                             draw_text +: {
-                                color: #xc8c8d4
+                                color: atlas.text_dim
                                 text_style: theme.font_regular{font_size: 13}
                             }
                         }
@@ -559,6 +560,7 @@ impl MatchEvent for App {
 impl AppMain for App {
     fn script_mod(vm: &mut ScriptVm) -> ScriptValue {
         crate::makepad_widgets::script_mod(vm);
+        crate::theme_atlas::script_mod(vm);
         crate::canvas::script_mod(vm);
         crate::tree_panel::script_mod(vm);
         crate::inspector_panel::script_mod(vm);

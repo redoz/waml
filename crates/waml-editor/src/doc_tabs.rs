@@ -10,6 +10,7 @@ use makepad_widgets::*;
 
 script_mod! {
     use mod.prelude.widgets_internal.*
+    use mod.atlas
     use mod.widgets.*
     use mod.text.*
 
@@ -18,10 +19,11 @@ script_mod! {
     mod.widgets.DocTabs = set_type_default() do mod.widgets.DocTabsBase{
         width: Fill
         height: 34.0
-        draw_bg +: { color: #x24242f }
-        draw_tab_active +: { color: #x3d3560 }
+        draw_bg +: { color: atlas.surface }
+        draw_edge +: { color: atlas.frame_hi }
+        draw_tab_active +: { color: atlas.selection }
         draw_text_active +: {
-            color: #xf0f0f6
+            color: atlas.text
             text_style: TextStyle{
                 font_size: 12
                 font_family: FontFamily{
@@ -31,7 +33,7 @@ script_mod! {
             }
         }
         draw_text_persisted +: {
-            color: #xc8c8d4
+            color: atlas.text_dim
             text_style: TextStyle{
                 font_size: 12
                 font_family: FontFamily{
@@ -41,7 +43,7 @@ script_mod! {
             }
         }
         draw_text_preview +: {
-            color: #x9a9aae
+            color: atlas.text_dim
             text_style: TextStyle{
                 font_size: 12
                 font_family: FontFamily{
@@ -51,7 +53,7 @@ script_mod! {
             }
         }
         draw_close +: {
-            color: #x9a9aae
+            color: atlas.text_dim
             text_style: TextStyle{
                 font_size: 12
                 font_family: FontFamily{
@@ -216,6 +218,10 @@ pub struct DocTabs {
     #[redraw]
     #[live]
     draw_bg: DrawColor,
+    /// Subtle source-bright top edge (shared HUD panel material).
+    #[redraw]
+    #[live]
+    draw_edge: DrawColor,
     #[redraw]
     #[live]
     draw_tab_active: DrawColor,
@@ -268,6 +274,7 @@ impl Widget for DocTabs {
     fn draw_walk(&mut self, cx: &mut Cx2d, _scope: &mut Scope, walk: Walk) -> DrawStep {
         let rect = cx.walk_turtle(walk);
         self.draw_bg.draw_abs(cx, rect);
+        self.draw_edge.draw_abs(cx, Rect { pos: rect.pos, size: dvec2(rect.size.x, 1.5) });
 
         self.tab_rects.clear();
         self.close_rects.clear();

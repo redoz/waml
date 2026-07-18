@@ -21,6 +21,7 @@ use makepad_widgets::*;
 
 script_mod! {
     use mod.prelude.widgets_internal.*
+    use mod.atlas
     use mod.widgets.*
     use mod.text.*
 
@@ -29,14 +30,15 @@ script_mod! {
     mod.widgets.ShortcutsOverlay = set_type_default() do mod.widgets.ShortcutsOverlayBase{
         width: Fill
         height: Fill
-        draw_scrim +: { color: #x1b1b24e6 }
-        draw_panel +: { color: #x24242f }
+        draw_scrim +: { color: atlas.scrim }
+        draw_panel +: { color: atlas.surface }
+        draw_edge +: { color: atlas.frame_hi }
         draw_title +: {
-            color: #xf0f0f6
+            color: atlas.text
             text_style: theme.font_bold{font_size: 16}
         }
         draw_key +: {
-            color: #xf0f0f6
+            color: atlas.text
             text_style: TextStyle{
                 font_size: 13
                 font_family: FontFamily{
@@ -46,7 +48,7 @@ script_mod! {
             }
         }
         draw_desc +: {
-            color: #xc8c8d4
+            color: atlas.text_dim
             text_style: TextStyle{
                 font_size: 13
                 font_family: FontFamily{
@@ -98,6 +100,10 @@ pub struct ShortcutsOverlay {
     #[redraw]
     #[live]
     draw_panel: DrawColor,
+    /// Subtle source-bright top edge (shared HUD panel material).
+    #[redraw]
+    #[live]
+    draw_edge: DrawColor,
     #[redraw]
     #[live]
     draw_title: DrawText,
@@ -145,6 +151,7 @@ impl Widget for ShortcutsOverlay {
         let panel_y = rect.pos.y + rect.size.y * 0.5 - panel_h * 0.5;
         self.panel_rect = Rect { pos: dvec2(panel_x, panel_y), size: dvec2(PANEL_W, panel_h) };
         self.draw_panel.draw_abs(cx, self.panel_rect);
+        self.draw_edge.draw_abs(cx, Rect { pos: self.panel_rect.pos, size: dvec2(self.panel_rect.size.x, 1.5) });
 
         self.draw_title.draw_abs(cx, dvec2(panel_x + PANEL_PAD, panel_y + PANEL_PAD), "Shortcuts");
 
