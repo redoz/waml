@@ -65,12 +65,12 @@
     onclick={() => { if (!disabled) onToggle(); }}
     class="flex w-full items-center justify-between gap-3 rounded-lg px-2 py-1.5 text-left transition-colors {disabled
       ? 'opacity-40 cursor-not-allowed'
-      : 'hover:bg-[#f1f3f7]'}"
+      : 'hover:bg-[color:rgba(var(--accent),.12)]'}"
   >
     <span class="text-[13px] font-medium text-slate-800">{label}</span>
     <span
       class="relative inline-flex h-[18px] w-[32px] flex-shrink-0 items-center rounded-full transition-colors {checked
-        ? 'bg-[#1e88e5]'
+        ? 'bg-[color:rgb(var(--accent))]'
         : 'bg-slate-300'}"
     >
       <span
@@ -86,7 +86,7 @@
   {#if !editable}
     <div
       role="note"
-      class="mx-1 rounded-lg bg-[#fff7ed] px-3 py-2 text-[12px] leading-snug text-[#9a3412]"
+      class="mx-1 rounded-lg bg-amber-50 px-3 py-2 text-[12px] leading-snug text-amber-900"
     >
       Display and note settings save to a diagram. The <strong>All</strong> view can't store them — create
       a diagram to customize.
@@ -128,7 +128,7 @@
     </div>
   </section>
 
-  <section class="flex flex-col border-t border-[#d8dee8] pt-4">
+  <section class="flex flex-col border-t border-[color:var(--hair)] pt-4">
     <h3 class="px-2 {labelCls}">Attributes</h3>
     <div>
       {@render toggleRow("Show attributes", display.showAttributes, () =>
@@ -157,7 +157,7 @@
               const n = Number((e.currentTarget as HTMLInputElement).value);
               if (Number.isFinite(n) && n >= 1) patch({ maxAttributes: Math.floor(n) });
             }}
-            class="w-16 rounded-md border border-slate-300 px-2 py-1 text-[13px] disabled:opacity-40"
+            class="w-16 rounded-md border border-[color:var(--hair)] px-2 py-1 text-[13px] disabled:opacity-40"
           />
           <button
             type="button"
@@ -167,7 +167,7 @@
               if (!attrDisabled) patch({ maxAttributes: undefined });
             }}
             class="rounded-md px-2 py-1 text-[12px] font-semibold {display.maxAttributes === undefined
-              ? 'bg-white text-[#1e88e5] shadow-sm'
+              ? 'bg-white text-[color:rgb(var(--accent))] shadow-sm'
               : 'text-slate-500'}"
           >
             Unlimited
@@ -177,7 +177,7 @@
     </div>
   </section>
 
-  <section class="flex flex-col border-t border-[#d8dee8] pt-4">
+  <section class="flex flex-col border-t border-[color:var(--hair)] pt-4">
     <h3 class="px-2 {labelCls}">Relationships</h3>
     <div>
       {@render toggleRow("Show roles", display.showRoles, () =>
@@ -192,7 +192,7 @@
     </div>
   </section>
 
-  <section class="flex flex-col border-t border-[#d8dee8] pt-4">
+  <section class="flex flex-col border-t border-[color:var(--hair)] pt-4">
     <h3 class="px-2 {labelCls}">Stereotypes</h3>
     <div>
       {@render toggleRow("Show stereotype", display.showStereotype, () =>
@@ -232,7 +232,7 @@
                 type="color" aria-label={`Color for ${name}`} disabled={stereoDisabled}
                 value={display.stereotypeColors[name] ?? "#dddddd"}
                 oninput={(e) => setColor(name, (e.currentTarget as HTMLInputElement).value)}
-                class="h-6 w-8 rounded border border-slate-300" />
+                class="h-6 w-8 rounded border border-[color:var(--hair)]" />
               <span class="flex-1">{name}</span>
               {#if display.stereotypeColors[name]}
                 <button
