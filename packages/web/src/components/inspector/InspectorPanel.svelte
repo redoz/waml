@@ -120,9 +120,8 @@
 
 <aside
   aria-label="Inspector"
-  style={`width: ${width}px`}
-  class={`absolute top-3 right-3 max-w-[calc(100%-24px)] max-h-[calc(100%-24px)] bg-white border border-[#d8dee8] rounded-xl overflow-hidden
-    shadow-[0_8px_24px_rgba(15,23,42,0.14)] z-[16] flex flex-col transition-opacity duration-200 ${translucent ? "opacity-40" : "opacity-100"}`}
+  style={`width: ${width}px; ${translucent ? "opacity:.4" : "opacity:1"}`}
+  class="hud-surface insp-panel"
   onpointerenter={engage}
   onpointerleave={disengage}
   onfocusin={engage}
@@ -131,32 +130,17 @@
   <!-- Left-edge drag handle to resize (only when a body is shown) -->
   {#if hasSelection && !collapsed}
     <!-- svelte-ignore a11y_no_static_element_interactions -->
-    <div
-      onmousedown={onResizeMouseDown}
-      title="Drag to resize"
-      class="absolute left-0 top-0 bottom-0 w-[6px] -ml-[3px] cursor-col-resize z-[17] hover:bg-[#1e88e5]/20"
-    ></div>
+    <div onmousedown={onResizeMouseDown} title="Drag to resize" class="insp-resize"></div>
   {/if}
 
-  <div class={`flex items-center gap-2 p-4 ${hasSelection && !collapsed ? "border-b border-[#d8dee8]" : ""}`}>
+  <div class={`insp-head ${hasSelection && !collapsed ? "insp-head--divide" : ""}`}>
     {#if focusedKind}
       {@const KindIcon = KIND_ICON[focusedKind]}
-      <span class="inspector-kind flex-none w-[26px] h-[26px] flex items-center justify-center rounded-md text-[#1e88e5] bg-[#e6f1fb]">
-        <KindIcon size={15} />
-      </span>
+      <span class="insp-kind"><KindIcon size={15} /></span>
     {/if}
-    <div class="flex-1 min-w-0">
-      <ElementPicker {options} {selectedKey} {onSelect} />
-    </div>
+    <div style="flex:1;min-width:0"><ElementPicker {options} {selectedKey} {onSelect} /></div>
     {#if hasSelection}
-      <button
-        onclick={onEdit}
-        aria-label="Edit element"
-        title="Edit element"
-        class="w-[30px] h-[30px] flex items-center justify-center rounded-md text-slate-500 hover:bg-[#f1f3f7]"
-      >
-        <Pencil size={15} />
-      </button>
+      <button onclick={onEdit} aria-label="Edit element" title="Edit element" class="insp-iconbtn"><Pencil size={15} /></button>
     {/if}
     {#if hasSelection}
       <button
@@ -164,11 +148,9 @@
         aria-label={collapsed ? "Expand inspector" : "Collapse inspector"}
         aria-expanded={!collapsed}
         title={collapsed ? "Expand inspector" : "Collapse inspector"}
-        class="w-[30px] h-[30px] flex items-center justify-center rounded-md text-slate-500 hover:bg-[#f1f3f7]"
+        class="insp-iconbtn"
       >
-        <span class={`flex transition-transform duration-200 ${collapsed ? "rotate-180" : ""}`}>
-          <ChevronUp size={16} />
-        </span>
+        <span class="insp-caret" style={collapsed ? "transform:rotate(180deg)" : ""}><ChevronUp size={16} /></span>
       </button>
     {/if}
     <button
@@ -176,21 +158,44 @@
       aria-label={pinned ? "Let it dim when idle" : "Keep solid"}
       aria-pressed={pinned}
       title={pinned ? "Let it dim when idle" : "Keep solid"}
-      class={`w-[30px] h-[30px] flex items-center justify-center rounded-md transition-colors ${pinned ? "text-[#1e88e5] bg-[#e6f1fb]" : "text-slate-500 hover:bg-[#f1f3f7]"}`}
+      class={`insp-iconbtn ${pinned ? "is-active" : ""}`}
     >
-      {#if pinned}
-        <Pin size={16} />
-      {:else}
-        <PinOff size={16} />
-      {/if}
+      {#if pinned}<Pin size={16} />{:else}<PinOff size={16} />{/if}
     </button>
   </div>
 
   {#if hasSelection && !collapsed}
-    <div class="flex-1 min-h-0 overflow-y-auto">
-      <div transition:foldFade={{ duration: 200 }} class="p-4">
+    <div class="insp-body">
+      <div transition:foldFade={{ duration: 200 }} class="insp-body-inner">
         {@render children?.()}
       </div>
     </div>
   {/if}
 </aside>
+
+<style>
+  .insp-panel {
+    position: absolute; top: 12px; right: 12px;
+    max-width: calc(100% - 24px); max-height: calc(100% - 24px);
+    overflow: hidden; z-index: 16;
+    display: flex; flex-direction: column;
+    transition: opacity .2s ease;
+  }
+  .insp-resize { position: absolute; left: 0; top: 0; bottom: 0; width: 6px; margin-left: -3px; cursor: col-resize; z-index: 17; }
+  .insp-resize:hover { background: rgba(var(--accent), .20); }
+  .insp-head { display: flex; align-items: center; gap: 8px; padding: 12px; position: relative; z-index: 1; }
+  .insp-head--divide { border-bottom: 1px solid rgba(var(--accent), .22); }
+  .insp-kind {
+    flex: none; width: 26px; height: 26px; display: grid; place-items: center;
+    border-radius: 2px; color: rgb(var(--accent)); background: rgba(var(--accent), .12);
+  }
+  .insp-iconbtn {
+    width: 30px; height: 30px; display: grid; place-items: center; border: 0; background: transparent;
+    border-radius: 2px; color: rgb(var(--ink-faint)); cursor: pointer;
+  }
+  .insp-iconbtn:hover { background: rgba(var(--accent), .12); color: rgb(var(--accent)); }
+  .insp-iconbtn.is-active { color: rgb(var(--accent)); background: rgba(var(--accent), .12); }
+  .insp-body { flex: 1; min-height: 0; overflow-y: auto; position: relative; z-index: 1; }
+  .insp-body-inner { padding: 16px; }
+  .insp-caret { display: flex; transition: transform .2s ease; }
+</style>

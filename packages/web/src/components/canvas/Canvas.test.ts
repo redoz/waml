@@ -64,13 +64,13 @@ describe("pinnable Inspector (always present, never closes)", () => {
 
   it("exposes a pin control that makes the panel translucent while idle", async () => {
     render(Canvas);
-    const panel = screen.getByRole("complementary", { name: "Inspector" });
-    expect(panel.classList.contains("opacity-40")).toBe(false);
+    const panel = screen.getByRole("complementary", { name: "Inspector" }) as HTMLElement;
+    expect(panel.style.opacity).toBe("1");
     await fireEvent.click(within(panel).getByRole("button", { name: /let it dim when idle/i }));
     await tick();
-    expect(panel.classList.contains("opacity-40")).toBe(true);
+    expect(panel.style.opacity).toBe("0.4");
     await fireEvent.pointerEnter(panel);
-    expect(panel.classList.contains("opacity-40")).toBe(false);
+    expect(panel.style.opacity).toBe("1");
   });
 
   // Task 2 seam: the picker lists the active diagram's member nodes, and

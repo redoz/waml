@@ -96,19 +96,19 @@ describe("InspectorPanel", () => {
     const { container } = setup({ selectedKey: null, focusedKind: undefined });
     expect(screen.queryByText(/select an element to edit/i)).toBeNull();
     expect(screen.queryByRole("button", { name: /collapse inspector/i })).toBeNull();
-    expect(container.querySelector(".inspector-kind")).toBeNull();
+    expect(container.querySelector(".insp-kind")).toBeNull();
   });
 
   it("with a node focused: shows the kind icon and a collapse control", () => {
     const { container } = setup({ focusedKind: "node" });
-    expect(container.querySelector(".inspector-kind svg")).toBeTruthy();
+    expect(container.querySelector(".insp-kind svg")).toBeTruthy();
     expect(screen.getByRole("button", { name: "Collapse inspector" })).toBeTruthy();
   });
 
   it("with the diagram focused: shows a kind icon and an Edit button that fires onEdit", async () => {
     const onEdit = vi.fn();
     const { container } = setup({ selectedKey: "d1", focusedKind: "diagram", onEdit });
-    expect(container.querySelector(".inspector-kind svg")).toBeTruthy();
+    expect(container.querySelector(".insp-kind svg")).toBeTruthy();
     await fireEvent.click(screen.getByRole("button", { name: "Edit element" }));
     expect(onEdit).toHaveBeenCalledTimes(1);
   });
@@ -139,23 +139,23 @@ describe("InspectorPanel", () => {
 
   it("is opaque when pinned and translucent when unpinned + idle", () => {
     setup({ pinned: true });
-    expect(screen.getByRole("complementary").classList.contains("opacity-40")).toBe(false);
+    expect((screen.getByRole("complementary") as HTMLElement).style.opacity).toBe("1");
     setup({ pinned: false });
     const asides = screen.getAllByRole("complementary");
-    expect(asides[asides.length - 1].classList.contains("opacity-40")).toBe(true);
+    expect((asides[asides.length - 1] as HTMLElement).style.opacity).toBe("0.4");
   });
 
   it("becomes opaque on hover, translucent again after the pointer leaves", async () => {
     setup({ pinned: false, hideDelay: 20 });
-    const aside = screen.getByRole("complementary");
-    expect(aside.classList.contains("opacity-40")).toBe(true);
+    const aside = screen.getByRole("complementary") as HTMLElement;
+    expect(aside.style.opacity).toBe("0.4");
     await fireEvent.pointerEnter(aside);
-    expect(aside.classList.contains("opacity-40")).toBe(false);
+    expect(aside.style.opacity).toBe("1");
     await fireEvent.pointerLeave(aside);
-    expect(aside.classList.contains("opacity-40")).toBe(false);
+    expect(aside.style.opacity).toBe("1");
     await new Promise((r) => setTimeout(r, 40));
     await tick();
-    expect(aside.classList.contains("opacity-40")).toBe(true);
+    expect(aside.style.opacity).toBe("0.4");
   });
 
   it("shows an Edit button only when a node/edge is focused, and fires onEdit", async () => {
