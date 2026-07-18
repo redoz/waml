@@ -66,7 +66,7 @@ In `crates/waml-editor/src/cli.rs`, replace the three parse tests (`parses_dir_o
 
 - [ ] **Step 2: Run the tests to verify they fail**
 
-Run: `cargo test -p waml-editor cli::tests --lib`
+Run: `cargo test -p waml-editor cli::tests`
 Expected: FAIL — the `select_diagram` fixture tests still call `select_diagram(&model, ...)` and pass, but `parses_dir_only` / `missing_dir_is_ok` fail to compile/assert because `Args.dir` is still `PathBuf`.
 
 - [ ] **Step 3: Make `Args.dir` optional and drop the missing-dir error**
@@ -89,7 +89,7 @@ pub struct Args {
 
 - [ ] **Step 4: Run the tests to verify they pass**
 
-Run: `cargo test -p waml-editor cli::tests --lib`
+Run: `cargo test -p waml-editor cli::tests`
 Expected: PASS (all cli tests, including the unchanged `select_diagram` ones).
 
 - [ ] **Step 5: Commit**
@@ -126,7 +126,7 @@ In the `tests` module of `crates/waml-editor/src/config.rs`, add:
 
 - [ ] **Step 2: Run the test to verify it fails**
 
-Run: `cargo test -p waml-editor config::tests::recent_getters_return_stored_fields --lib`
+Run: `cargo test -p waml-editor config::tests::recent_getters_return_stored_fields`
 Expected: FAIL — no method `path`/`title` on `Recent`.
 
 - [ ] **Step 3: Add the getters**
@@ -149,7 +149,7 @@ impl Recent {
 
 - [ ] **Step 4: Run the test to verify it passes**
 
-Run: `cargo test -p waml-editor config::tests --lib`
+Run: `cargo test -p waml-editor config::tests`
 Expected: PASS (all config tests).
 
 - [ ] **Step 5: Commit**
@@ -453,7 +453,7 @@ Expected: builds clean (no warnings). If dead-code warnings fire on the widget A
 
 - [ ] **Step 5: Run the unit test**
 
-Run: `cargo test -p waml-editor start_screen::tests --lib`
+Run: `cargo test -p waml-editor start_screen::tests`
 Expected: PASS.
 
 - [ ] **Step 6: Commit**
