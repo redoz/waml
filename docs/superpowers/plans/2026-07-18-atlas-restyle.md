@@ -82,7 +82,7 @@ Both must pass. `check` is `svelte-check`; `build` runs `svelte-check` + `vite b
 
 ---
 
-## Task 1: Foundation — tokens, material kit, fonts
+### Task 1: Foundation — tokens, material kit, fonts
 
 **Files:**
 - Create: `packages/web/src/atlas.css`
@@ -437,7 +437,7 @@ git commit -m "feat(web): add Atlas token + material kit, swap to IBM Plex fonts
 
 ---
 
-## Task 2: Node leaves — StereotypeRow / AttributeRow / RowsCompartment
+### Task 2: Node leaves — StereotypeRow / AttributeRow / RowsCompartment
 
 **Files:**
 - Modify: `packages/web/src/components/canvas/nodes/StereotypeRow.svelte` (whole template)
@@ -525,7 +525,7 @@ git commit -m "feat(web): convert node leaf rows to Atlas classes"
 
 ---
 
-## Task 3: ClassifierBox keystone + NodePorts + self-theming
+### Task 3: ClassifierBox keystone + NodePorts + self-theming
 
 **Files:**
 - Modify: `packages/web/src/components/canvas/nodes/ClassifierBox.svelte` (script `boxStyle` + whole template)
@@ -643,7 +643,7 @@ git commit -m "feat(web): Atlas ClassifierBox keystone + self-theming ports"
 
 ---
 
-## Task 4: GenericNode badge
+### Task 4: GenericNode badge
 
 **Files:**
 - Modify: `packages/web/src/components/canvas/nodes/GenericNode.svelte` (the header snippet)
@@ -684,7 +684,7 @@ git commit -m "feat(web): Atlas GenericNode square badge chip"
 
 ---
 
-## Task 5: Edges — RelEdge / AnchorEdge + canvas.css selection
+### Task 5: Edges — RelEdge / AnchorEdge + canvas.css selection
 
 **Files:**
 - Modify: `packages/web/src/components/canvas/RelEdge.svelte` (script `stroke`/`edgeStyle`, marker fills, EdgeLabel styles)
@@ -777,7 +777,7 @@ git commit -m "feat(web): Atlas edges + token-driven selection ring"
 
 ---
 
-## Task 6: InspectorPanel + ElementPicker
+### Task 6: InspectorPanel + ElementPicker
 
 **Files:**
 - Modify: `packages/web/src/components/inspector/InspectorPanel.svelte` (shell `<aside>` class, resize handle, kind badge, header buttons)
@@ -987,7 +987,7 @@ git commit -m "feat(web): Atlas inspector panel + element picker"
 
 ---
 
-## Task 7: SelectionToolbar (+ press-ripple action)
+### Task 7: SelectionToolbar (+ press-ripple action)
 
 **Files:**
 - Create: `packages/web/src/lib/hudPress.ts` (Svelte `use:` action for the button ripple)
@@ -1133,7 +1133,7 @@ git commit -m "feat(web): Atlas selection toolbar + hud press-ripple action"
 
 ---
 
-## Task 8: Non-classifier UML nodes (note / actor / use-case / package)
+### Task 8: Non-classifier UML nodes (note / actor / use-case / package)
 
 **Files:**
 - Modify: `packages/web/src/components/canvas/nodes/UmlUseCaseNode.svelte` (whole template + scoped `<style>`)
