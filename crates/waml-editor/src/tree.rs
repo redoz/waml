@@ -2,14 +2,18 @@
 //! Nothing here touches makepad; the `LiveId` bridge lives in `tree_panel.rs`.
 
 use std::collections::HashMap;
-use waml::model::{ElementType, Model, UmlMetaclass};
+use waml::model::{BehaviorKind, ElementType, Model, UmlMetaclass};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TreeKind {
     Package,
     Class,
+    Interface,
+    Enum,
+    DataType,
     Diagram,
     Behavior,
+    Sequence,
     Note,
     Unknown,
 }
@@ -27,21 +31,24 @@ pub struct ProjectTree {
     pub roots: Vec<TreeNode>,
 }
 
-/// Map a resolved element type to the panel's coarse kind. Written without a
-/// `_ =>` catch-all on the `Uml` arm so a new metaclass forces a decision here.
+/// Map a resolved element type to the panel's kind, used to pick both the
+/// row glyph (`tree_panel::draw_row_icon`) and click routing. Written without
+/// a `_ =>` catch-all on the `Uml` arm so a new metaclass forces a decision
+/// here. Interface/Enum/DataType get their own glyph-bearing variant (matching
+/// `node_style::AccentBucket`'s granularity); Association/Actor/UseCase still
+/// fold into the plain `Class` glyph, and `Sequence` behaviors get their own
+/// glyph while other behavior kinds share the generic `Behavior` one.
 fn kind_of(ty: &ElementType) -> TreeKind {
     match ty {
         ElementType::Uml(UmlMetaclass::Package) => TreeKind::Package,
         ElementType::Uml(UmlMetaclass::Note) => TreeKind::Note,
+        ElementType::Uml(UmlMetaclass::Interface) => TreeKind::Interface,
+        ElementType::Uml(UmlMetaclass::Enum) => TreeKind::Enum,
+        ElementType::Uml(UmlMetaclass::DataType) => TreeKind::DataType,
         ElementType::Uml(
-            UmlMetaclass::Class
-            | UmlMetaclass::Interface
-            | UmlMetaclass::Enum
-            | UmlMetaclass::DataType
-            | UmlMetaclass::Association
-            | UmlMetaclass::Actor
-            | UmlMetaclass::UseCase,
+            UmlMetaclass::Class | UmlMetaclass::Association | UmlMetaclass::Actor | UmlMetaclass::UseCase,
         ) => TreeKind::Class,
+        ElementType::Behavior(BehaviorKind::Sequence) => TreeKind::Sequence,
         ElementType::Behavior(_) => TreeKind::Behavior,
         ElementType::Diagram => TreeKind::Diagram,
         ElementType::Unknown(_) => TreeKind::Unknown,
@@ -230,6 +237,20 @@ mod tests {
         );
         // Every resolved row has a known kind (no dangling => Unknown leaks).
         assert!(flat.iter().all(|(_, kind)| *kind != TreeKind::Unknown));
+
+        // `uml.Interface` nodes (PaymentGateway) resolve to the finer
+        // `TreeKind::Interface`, not the coarse `Class` glyph.
+        let payment_gateway = model
+            .nodes
+            .iter()
+            .find(|n| n.concept.title.as_deref() == Some("PaymentGateway"))
+            .expect("mini fixture has a PaymentGateway node");
+        assert!(
+            flat.iter()
+                .any(|(k, kind)| *k == payment_gateway.key && *kind == TreeKind::Interface),
+            "PaymentGateway ({:?}) missing TreeKind::Interface in {flat:?}",
+            payment_gateway.key
+        );
     }
 
     #[test]

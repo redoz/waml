@@ -1,8 +1,8 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
-  <rect x="4.5" y="4" width="5" height="4" fill="#c8c8d4" fill-opacity="0.16" stroke="#c8c8d4" stroke-width="1.6"/>
-  <rect x="14.5" y="4" width="5" height="4" fill="#c8c8d4" fill-opacity="0.16" stroke="#c8c8d4" stroke-width="1.6"/>
-  <line x1="7" y1="8" x2="7" y2="20" stroke="#c8c8d4" stroke-width="1.6" stroke-dasharray="2.2 2.2"/>
-  <line x1="17" y1="8" x2="17" y2="20" stroke="#c8c8d4" stroke-width="1.6" stroke-dasharray="2.2 2.2"/>
-  <line x1="7" y1="15" x2="17" y2="15" stroke="#c8c8d4" stroke-width="1.6"/>
-  <path d="M13.8,12.5 L17,15 L13.8,17.5" fill="none" stroke="#c8c8d4" stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round"/>
+  <rect x="4.5" y="4" width="5" height="4" fill="#c8c8d4" fill-opacity="0.16" stroke="#c8c8d4" stroke-width="2.2"/>
+  <rect x="14.5" y="4" width="5" height="4" fill="#c8c8d4" fill-opacity="0.16" stroke="#c8c8d4" stroke-width="2.2"/>
+  <line x1="7" y1="8" x2="7" y2="20" stroke="#c8c8d4" stroke-width="2.2" stroke-dasharray="2.2 2.2"/>
+  <line x1="17" y1="8" x2="17" y2="20" stroke="#c8c8d4" stroke-width="2.2" stroke-dasharray="2.2 2.2"/>
+  <line x1="7" y1="15" x2="17" y2="15" stroke="#c8c8d4" stroke-width="2.2"/>
+  <path d="M13.8,12.5 L17,15 L13.8,17.5" fill="none" stroke="#c8c8d4" stroke-width="2.2" stroke-linejoin="round" stroke-linecap="round"/>
 </svg>

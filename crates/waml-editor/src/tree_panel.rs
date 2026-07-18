@@ -26,6 +26,18 @@ script_mod! {
             svg: crate_resource("self:resources/icons/class.svg")
             color: atlas.accent
         }
+        interface +: {
+            svg: crate_resource("self:resources/icons/interface.svg")
+            color: atlas.accent
+        }
+        enum_type +: {
+            svg: crate_resource("self:resources/icons/enum.svg")
+            color: atlas.accent
+        }
+        datatype +: {
+            svg: crate_resource("self:resources/icons/datatype.svg")
+            color: atlas.accent
+        }
         package +: {
             svg: crate_resource("self:resources/icons/package.svg")
             color: atlas.accent
@@ -36,6 +48,10 @@ script_mod! {
         }
         flow +: {
             svg: crate_resource("self:resources/icons/flow.svg")
+            color: atlas.accent
+        }
+        sequence +: {
+            svg: crate_resource("self:resources/icons/sequence.svg")
             color: atlas.accent
         }
         note +: {
@@ -118,11 +134,19 @@ pub struct TreeIcons {
     #[live]
     class: DrawSvg,
     #[live]
+    interface: DrawSvg,
+    #[live]
+    enum_type: DrawSvg,
+    #[live]
+    datatype: DrawSvg,
+    #[live]
     package: DrawSvg,
     #[live]
     diagram: DrawSvg,
     #[live]
     flow: DrawSvg,
+    #[live]
+    sequence: DrawSvg,
     #[live]
     note: DrawSvg,
 }
@@ -130,7 +154,7 @@ pub struct TreeIcons {
 /// Row height in the `FileTree` DSL (`node_height: 30.0`); used to vertically
 /// center the icon within each row.
 const ROW_HEIGHT: f64 = 30.0;
-const ICON_SIZE: f64 = 16.0;
+const ICON_SIZE: f64 = 14.0;
 const ICON_LEFT_MARGIN: f64 = 6.0;
 const ICON_DEPTH_INDENT: f64 = 18.0;
 
@@ -176,17 +200,26 @@ fn build_id_maps(tree: &ProjectTreeData) -> (HashMap<LiveId, String>, HashMap<Li
 
 /// Draw the row-leading glyph for `kind` at `row_top`, indented by `depth`.
 /// `Unknown` has no matching HUD glyph and is skipped, leaving a bare row.
+///
+/// The draw position is rounded to whole device pixels before `draw_abs`:
+/// fractional placement is a prime blur source for `DrawSvg`'s vector
+/// geometry (no GPU-side antialiasing expansion re-centers it), so a
+/// subpixel `x`/`y` softens otherwise-crisp thin strokes.
 fn draw_row_icon(cx: &mut Cx2d, icons: &mut TreeIcons, kind: TreeKind, row_top: Vec2d, depth: usize) {
     let icon = match kind {
         TreeKind::Class => &mut icons.class,
+        TreeKind::Interface => &mut icons.interface,
+        TreeKind::Enum => &mut icons.enum_type,
+        TreeKind::DataType => &mut icons.datatype,
         TreeKind::Package => &mut icons.package,
         TreeKind::Diagram => &mut icons.diagram,
         TreeKind::Behavior => &mut icons.flow,
+        TreeKind::Sequence => &mut icons.sequence,
         TreeKind::Note => &mut icons.note,
         TreeKind::Unknown => return,
     };
-    let x = row_top.x + ICON_LEFT_MARGIN + depth as f64 * ICON_DEPTH_INDENT;
-    let y = row_top.y + (ROW_HEIGHT - ICON_SIZE) / 2.0;
+    let x = (row_top.x + ICON_LEFT_MARGIN + depth as f64 * ICON_DEPTH_INDENT).round();
+    let y = (row_top.y + (ROW_HEIGHT - ICON_SIZE) / 2.0).round();
     icon.draw_abs(cx, Rect { pos: dvec2(x, y), size: dvec2(ICON_SIZE, ICON_SIZE) });
 }
 
@@ -234,7 +267,11 @@ impl Widget for ProjectTree {
                         Some(TreeKind::Diagram) => {
                             cx.widget_action(uid, ProjectTreeAction::SelectDiagram(key.clone()));
                         }
-                        Some(TreeKind::Class) => {
+                        // Interface/Enum/DataType are classifiers too (they
+                        // used to share `TreeKind::Class` before per-glyph
+                        // rows split them out); keep them clickable the same
+                        // way Class rows are.
+                        Some(TreeKind::Class | TreeKind::Interface | TreeKind::Enum | TreeKind::DataType) => {
                             cx.widget_action(uid, ProjectTreeAction::FocusClassifier(key.clone()));
                         }
                         _ => {}
