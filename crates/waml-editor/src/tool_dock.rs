@@ -57,8 +57,9 @@ script_mod! {
 
 /// A tool-dock entry. `Select`/`Add`/`Connect` are mutually-exclusive
 /// "modes"; the rest are one-shot actions.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum Tool {
+    #[default]
     Select,
     Add,
     Connect,
@@ -128,12 +129,6 @@ impl Tool {
     }
 }
 
-impl Default for Tool {
-    fn default() -> Self {
-        Tool::Select
-    }
-}
-
 /// Map a hotkey letter to the mode it switches to. Pure so it's testable
 /// without a `Cx`; the widget/App layer decides *when* to apply it (e.g.
 /// only while nothing else holds key focus).
@@ -150,8 +145,10 @@ pub fn tool_for_hotkey(letter: char) -> Option<Tool> {
 pub enum ToolDockAction {
     #[default]
     None,
-    /// A mode (`Select`/`Add`/`Connect`) became active.
-    ModeChanged(Tool),
+    /// A mode (`Select`/`Add`/`Connect`) became active. Carries the new mode for
+    /// callers that want it; today's only listener (`sync_statusbar`) re-reads
+    /// the mode from `self` instead, so this field is intentionally unread here.
+    ModeChanged(#[allow(dead_code)] Tool),
     /// A one-shot action button was clicked.
     Triggered(Tool),
 }
