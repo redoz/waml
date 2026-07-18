@@ -1,0 +1,306 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>HUD tag radial menu</title>
+<style>
+  :root { color-scheme: light; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; }
+  body {
+    --accent: 20, 150, 220;
+    --danger: 235, 70, 120;
+    --fill: #eaeff5;
+    --glow: 0.4;
+    background: #eef2f7;
+    color: #26313f;
+    font: 14px/1.5 -apple-system, "Segoe UI", system-ui, sans-serif;
+    display: grid;
+    grid-template-columns: 1fr 300px;
+    min-height: 100vh;
+  }
+  #stage {
+    display: grid; place-items: center; padding: 40px;
+    background:
+      radial-gradient(120% 90% at 50% 0%, #ffffff 0%, #e6ecf3 60%, #dbe3ec 100%),
+      repeating-linear-gradient(0deg,  transparent 0 23px, rgba(20,120,190,.05) 23px 24px),
+      repeating-linear-gradient(90deg, transparent 0 23px, rgba(20,120,190,.05) 23px 24px);
+  }
+  .board { display: flex; flex-wrap: wrap; gap: 36px; justify-content: center; }
+  .dial-wrap { display: grid; justify-items: center; gap: 14px; }
+  .cap {
+    font: 700 9.5px/1 ui-monospace, "SF Mono", "Cascadia Code", Menlo, monospace;
+    letter-spacing: .16em; text-transform: uppercase;
+    color: #8a97a6;
+  }
+
+  /* target-tag caption — the slant chip being acted on, with its own hue */
+  .target { display: inline-flex; align-items: center; gap: 8px; }
+  .target .st {
+    font: 700 9px/1 ui-monospace, "SF Mono", "Cascadia Code", Menlo, monospace;
+    letter-spacing: .16em; text-transform: uppercase; color: #9aa6b4;
+  }
+  .chip.slant {
+    display: inline-flex; align-items: center; height: 22px;
+    padding: 0 13px 0 15px; border: 0; border-radius: 0; color: #22303c;
+    background: rgba(var(--accent),.20);
+    clip-path: polygon(7px 0, 100% 0, calc(100% - 7px) 100%, 0 100%);
+    font: 500 12px/1 -apple-system, "Segoe UI", system-ui, sans-serif;
+  }
+
+  /* the dial: one frosted HUD disc, low glow, source-bright accent ring.
+     wedges are pie sectors divided by accent-hairline spokes. */
+  .dial {
+    filter: drop-shadow(0 14px 26px rgba(40,70,110,.20))
+            drop-shadow(0 0 calc(16px * var(--glow)) rgba(var(--accent), calc(.20 * var(--glow))));
+  }
+  .disc-base { fill: rgba(255,255,255,.90); }
+
+  /* each quadrant (wedge + its rim arc + label) fades as one unit while you
+     swipe: the nearer the cursor rides to the rim, the more the passed-over
+     options recede — fill, glyph, and their slice of the frame together —
+     until only the armed one holds. */
+  .quad { transition: opacity .12s ease; }
+  .quad.dim  { opacity: .48; }   /* mid-swipe — others recede */
+  .quad.gone { opacity: .14; }   /* near rim — others all but faded out */
+
+  .wedge {
+    fill: rgba(var(--accent),.05);
+    stroke: rgba(var(--accent),.22); stroke-width: 1;
+    transition: fill .1s ease;
+  }
+  .wedge:hover, .wedge.is-hover { fill: rgba(var(--accent),.15); }
+  .wedge.is-arming { fill: rgba(var(--accent),.18); }
+  /* committed (flick-toward the rim): brightest wash + emissive edge glow */
+  .wedge.is-flick {
+    fill: rgba(var(--accent),.28);
+    filter: drop-shadow(0 0 7px rgba(var(--accent), .55));
+  }
+  /* delete wedge carries the danger hue through its states */
+  .wedge.danger:hover, .wedge.danger.is-hover { fill: rgba(var(--danger),.15); }
+  .wedge.danger.is-arming { fill: rgba(var(--danger),.18); }
+  .wedge.danger.is-flick {
+    fill: rgba(var(--danger),.28);
+    filter: drop-shadow(0 0 7px rgba(var(--danger), .55));
+  }
+
+  /* source-bright frame — split into per-slice arcs so the outline fades
+     with its quadrant */
+  .ring-arc { fill: none; stroke: rgb(var(--accent)); stroke-width: 1.5; opacity: .9; }
+
+  /* labels: upright icon + sans caption, centred in each quadrant */
+  .lbl .ico { stroke: rgb(var(--accent)); stroke-width: 1.6; fill: none;
+              stroke-linejoin: round; stroke-linecap: round; }
+  .lbl .ico .hollow { fill: var(--fill); }
+  .lbl text {
+    font: 600 12px/1 -apple-system, "Segoe UI", system-ui, sans-serif;
+    fill: #2c3744; text-anchor: middle;
+  }
+  .lbl.on .ico { stroke-width: 1.8; }
+  .lbl.on text { fill: #12212e; }
+  .lbl.danger .ico { stroke: rgb(var(--danger)); }
+  .lbl.danger .ico .hollow { fill: rgba(var(--danger),.10); }
+  .lbl.danger text { fill: rgb(var(--danger)); }
+
+  /* central hub — cancel target / press origin, white with accent ring */
+  .hub-fill { fill: #fff; stroke: rgba(var(--accent),.55); stroke-width: 1.5; }
+  .hub-x { stroke: #8a97a6; stroke-width: 2; stroke-linecap: round; }
+
+  aside { padding: 20px 18px; background: #fff; border-left: 1px solid #dbe3ec; overflow-y: auto; }
+  h1 { font-size: 12px; letter-spacing: .16em; text-transform: uppercase; color: #1496dc; margin: 0 0 14px; }
+  .swatches { display: flex; gap: 8px; flex-wrap: wrap; margin: 8px 0 18px; }
+  .swatch { width: 30px; height: 30px; border-radius: 6px; border: 1px solid #cdd7e2; cursor: pointer; }
+  .swatch.sel { outline: 2px solid #1496dc; outline-offset: 2px; }
+  .hint { font-size: 11px; color: #8a97a6; line-height: 1.6; }
+</style>
+</head>
+<body>
+  <div id="stage">
+    <div class="board">
+
+      <!-- 1 · resting: hub centred, all four options equal -->
+      <div class="dial-wrap">
+        <div class="target"><span class="st">&laquo;tag&raquo;</span><span class="chip slant" style="--accent:0,180,210;">review</span></div>
+        <svg class="dial" width="240" height="240" viewBox="0 0 300 300">
+          <circle class="disc-base" cx="150" cy="150" r="130"/>
+
+          <g class="quad">
+            <path class="wedge" d="M150,150 L58.1,58.1 A130,130 0 0 1 241.9,58.1 Z"/>
+            <path class="ring-arc" d="M58.1,58.1 A130,130 0 0 1 241.9,58.1"/>
+            <g class="lbl">
+              <svg x="139" y="46" width="22" height="22" viewBox="0 0 24 24" class="ico">
+                <path class="hollow" d="M14.5,5 L18.5,9 L9,18.5 L5,18.5 L5,14.5 Z"/><line x1="12.5" y1="7" x2="16.5" y2="11"/>
+              </svg><text x="150" y="84">Rename</text>
+            </g>
+          </g>
+          <g class="quad">
+            <path class="wedge" d="M150,150 L241.9,58.1 A130,130 0 0 1 241.9,241.9 Z"/>
+            <path class="ring-arc" d="M241.9,58.1 A130,130 0 0 1 241.9,241.9"/>
+            <g class="lbl">
+              <svg x="221" y="128" width="22" height="22" viewBox="0 0 24 24" class="ico">
+                <circle class="hollow" cx="9.5" cy="12" r="5.5"/><circle class="hollow" cx="14.5" cy="12" r="5.5"/>
+              </svg><text x="232" y="166">Merge</text>
+            </g>
+          </g>
+          <g class="quad">
+            <path class="wedge danger" d="M150,150 L241.9,241.9 A130,130 0 0 1 58.1,241.9 Z"/>
+            <path class="ring-arc" d="M241.9,241.9 A130,130 0 0 1 58.1,241.9"/>
+            <g class="lbl danger">
+              <svg x="139" y="214" width="22" height="22" viewBox="0 0 24 24" class="ico">
+                <line x1="5" y1="7" x2="19" y2="7"/><path class="hollow" d="M6.5,7 L7.5,19 H16.5 L17.5,7"/><path d="M9.5,7 V5 H14.5 V7"/><line x1="10" y1="10.5" x2="10" y2="15.5"/><line x1="14" y1="10.5" x2="14" y2="15.5"/>
+              </svg><text x="150" y="252">Delete</text>
+            </g>
+          </g>
+          <g class="quad">
+            <path class="wedge" d="M150,150 L58.1,241.9 A130,130 0 0 1 58.1,58.1 Z"/>
+            <path class="ring-arc" d="M58.1,241.9 A130,130 0 0 1 58.1,58.1"/>
+            <g class="lbl">
+              <svg x="57" y="128" width="22" height="22" viewBox="0 0 24 24" class="ico">
+                <path class="hollow" d="M12,4.5 C12,4.5 6.5,11 6.5,14.5 a5.5,5.5 0 0 0 11,0 C17.5,11 12,4.5 12,4.5 Z"/>
+              </svg><text x="68" y="166">Color</text>
+            </g>
+          </g>
+
+          <circle class="hub-fill" cx="150" cy="150" r="30"/>
+          <line class="hub-x" x1="143" y1="143" x2="157" y2="157"/><line class="hub-x" x1="157" y1="143" x2="143" y2="157"/>
+        </svg>
+        <div class="cap">Resting &middot; held open</div>
+      </div>
+
+      <!-- 2 · mid-swipe toward Color: others recede to half -->
+      <div class="dial-wrap">
+        <div class="target"><span class="st">&laquo;tag&raquo;</span><span class="chip slant" style="--accent:0,180,210;">review</span></div>
+        <svg class="dial" width="240" height="240" viewBox="0 0 300 300">
+          <circle class="disc-base" cx="150" cy="150" r="130"/>
+
+          <g class="quad dim">
+            <path class="wedge" d="M150,150 L58.1,58.1 A130,130 0 0 1 241.9,58.1 Z"/>
+            <path class="ring-arc" d="M58.1,58.1 A130,130 0 0 1 241.9,58.1"/>
+            <g class="lbl">
+              <svg x="139" y="46" width="22" height="22" viewBox="0 0 24 24" class="ico">
+                <path class="hollow" d="M14.5,5 L18.5,9 L9,18.5 L5,18.5 L5,14.5 Z"/><line x1="12.5" y1="7" x2="16.5" y2="11"/>
+              </svg><text x="150" y="84">Rename</text>
+            </g>
+          </g>
+          <g class="quad dim">
+            <path class="wedge" d="M150,150 L241.9,58.1 A130,130 0 0 1 241.9,241.9 Z"/>
+            <path class="ring-arc" d="M241.9,58.1 A130,130 0 0 1 241.9,241.9"/>
+            <g class="lbl">
+              <svg x="221" y="128" width="22" height="22" viewBox="0 0 24 24" class="ico">
+                <circle class="hollow" cx="9.5" cy="12" r="5.5"/><circle class="hollow" cx="14.5" cy="12" r="5.5"/>
+              </svg><text x="232" y="166">Merge</text>
+            </g>
+          </g>
+          <g class="quad dim">
+            <path class="wedge danger" d="M150,150 L241.9,241.9 A130,130 0 0 1 58.1,241.9 Z"/>
+            <path class="ring-arc" d="M241.9,241.9 A130,130 0 0 1 58.1,241.9"/>
+            <g class="lbl danger">
+              <svg x="139" y="214" width="22" height="22" viewBox="0 0 24 24" class="ico">
+                <line x1="5" y1="7" x2="19" y2="7"/><path class="hollow" d="M6.5,7 L7.5,19 H16.5 L17.5,7"/><path d="M9.5,7 V5 H14.5 V7"/><line x1="10" y1="10.5" x2="10" y2="15.5"/><line x1="14" y1="10.5" x2="14" y2="15.5"/>
+              </svg><text x="150" y="252">Delete</text>
+            </g>
+          </g>
+          <g class="quad">
+            <path class="wedge is-arming" d="M150,150 L58.1,241.9 A130,130 0 0 1 58.1,58.1 Z"/>
+            <path class="ring-arc" d="M58.1,241.9 A130,130 0 0 1 58.1,58.1"/>
+            <g class="lbl on">
+              <svg x="57" y="128" width="22" height="22" viewBox="0 0 24 24" class="ico">
+                <path class="hollow" d="M12,4.5 C12,4.5 6.5,11 6.5,14.5 a5.5,5.5 0 0 0 11,0 C17.5,11 12,4.5 12,4.5 Z"/>
+              </svg><text x="68" y="166">Color</text>
+            </g>
+          </g>
+
+          <circle class="hub-fill" cx="150" cy="150" r="30"/>
+          <line class="hub-x" x1="143" y1="143" x2="157" y2="157"/><line class="hub-x" x1="157" y1="143" x2="143" y2="157"/>
+        </svg>
+        <div class="cap">Swiping &middot; Color arming</div>
+      </div>
+
+      <!-- 3 · near the rim: others all but faded, Color holds -->
+      <div class="dial-wrap">
+        <div class="target"><span class="st">&laquo;tag&raquo;</span><span class="chip slant" style="--accent:0,180,210;">review</span></div>
+        <svg class="dial" width="240" height="240" viewBox="0 0 300 300">
+          <circle class="disc-base" cx="150" cy="150" r="130"/>
+
+          <g class="quad gone">
+            <path class="wedge" d="M150,150 L58.1,58.1 A130,130 0 0 1 241.9,58.1 Z"/>
+            <path class="ring-arc" d="M58.1,58.1 A130,130 0 0 1 241.9,58.1"/>
+            <g class="lbl">
+              <svg x="139" y="46" width="22" height="22" viewBox="0 0 24 24" class="ico">
+                <path class="hollow" d="M14.5,5 L18.5,9 L9,18.5 L5,18.5 L5,14.5 Z"/><line x1="12.5" y1="7" x2="16.5" y2="11"/>
+              </svg><text x="150" y="84">Rename</text>
+            </g>
+          </g>
+          <g class="quad gone">
+            <path class="wedge" d="M150,150 L241.9,58.1 A130,130 0 0 1 241.9,241.9 Z"/>
+            <path class="ring-arc" d="M241.9,58.1 A130,130 0 0 1 241.9,241.9"/>
+            <g class="lbl">
+              <svg x="221" y="128" width="22" height="22" viewBox="0 0 24 24" class="ico">
+                <circle class="hollow" cx="9.5" cy="12" r="5.5"/><circle class="hollow" cx="14.5" cy="12" r="5.5"/>
+              </svg><text x="232" y="166">Merge</text>
+            </g>
+          </g>
+          <g class="quad gone">
+            <path class="wedge danger" d="M150,150 L241.9,241.9 A130,130 0 0 1 58.1,241.9 Z"/>
+            <path class="ring-arc" d="M241.9,241.9 A130,130 0 0 1 58.1,241.9"/>
+            <g class="lbl danger">
+              <svg x="139" y="214" width="22" height="22" viewBox="0 0 24 24" class="ico">
+                <line x1="5" y1="7" x2="19" y2="7"/><path class="hollow" d="M6.5,7 L7.5,19 H16.5 L17.5,7"/><path d="M9.5,7 V5 H14.5 V7"/><line x1="10" y1="10.5" x2="10" y2="15.5"/><line x1="14" y1="10.5" x2="14" y2="15.5"/>
+              </svg><text x="150" y="252">Delete</text>
+            </g>
+          </g>
+          <g class="quad">
+            <path class="wedge is-flick" d="M150,150 L58.1,241.9 A130,130 0 0 1 58.1,58.1 Z"/>
+            <path class="ring-arc" d="M58.1,241.9 A130,130 0 0 1 58.1,58.1"/>
+            <g class="lbl on">
+              <svg x="57" y="128" width="22" height="22" viewBox="0 0 24 24" class="ico">
+                <path class="hollow" d="M12,4.5 C12,4.5 6.5,11 6.5,14.5 a5.5,5.5 0 0 0 11,0 C17.5,11 12,4.5 12,4.5 Z"/>
+              </svg><text x="68" y="166">Color</text>
+            </g>
+          </g>
+
+          <circle class="hub-fill" cx="150" cy="150" r="30"/>
+          <line class="hub-x" x1="143" y1="143" x2="157" y2="157"/><line class="hub-x" x1="157" y1="143" x2="143" y2="157"/>
+        </svg>
+        <div class="cap">Near rim &middot; Color committed</div>
+      </div>
+
+    </div>
+  </div>
+
+  <aside>
+    <h1>HUD tag radial</h1>
+    <div class="swatches" id="swatches"></div>
+    <p class="hint">
+      Long-press a tag &mdash; a radial marking menu blooms in the shared HUD
+      material: frosted disc, thin source-bright accent ring, low glow. Four
+      quadrant wedges divided by accent-hairline spokes &mdash; Rename, Merge,
+      Delete, Color &mdash; each an upright HUD glyph over a sans label; the
+      central hub is the press origin and the cancel target. As you swipe, the
+      options you pass over fade in proportion to how far the cursor rides toward
+      the rim &mdash; fill, glyph, and their slice of the frame together: at rest
+      all four hold equal (dial 1); mid-swipe the rest recede to half while your
+      heading brightens (dial 2); near the rim the others all but vanish and the
+      armed wedge takes hold with a brighter wash and an emissive edge flare
+      (dial 3). Delete carries the danger accent. The acted-on tag rides above as
+      its own slanted swatch. Recolor the menu accent with the swatches; the tag
+      keeps its own hue.
+    </p>
+  </aside>
+
+<script>
+  const colors = [
+    ['Blue','20, 150, 220'], ['Cyan','0, 180, 210'], ['Teal','20, 190, 160'],
+    ['Indigo','90, 110, 240'], ['Amber','230, 150, 20'], ['Green','60, 190, 90'],
+    ['Rose','235, 70, 120'], ['Slate','100, 116, 139'],
+  ];
+  const sw = document.getElementById('swatches');
+  colors.forEach((c,i)=>{ const d=document.createElement('div');
+    d.className='swatch'+(i===0?' sel':''); d.style.background=`rgb(${c[1]})`; d.title=c[0];
+    d.onclick=()=>{ document.body.style.setProperty('--accent', c[1]);
+      [...sw.children].forEach(e=>e.classList.remove('sel')); d.classList.add('sel'); };
+    sw.appendChild(d); });
+</script>
+</body>
+</html>
