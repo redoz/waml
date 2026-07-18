@@ -33,15 +33,19 @@ script_mod! {
             color: atlas.field_bg
             border_hi: uniform(atlas.frame_hi)
             border_lo: uniform(atlas.frame_lo)
+            // Camera zoom, pushed per frame so the frame inset + stroke width
+            // grow with the box instead of staying a fixed screen-pixel hairline.
+            zoom: uniform(1.0)
             pixel: fn() {
+                let inset = 1.5 * self.zoom
                 let sdf = Sdf2d.viewport(self.pos * self.rect_size)
-                sdf.rect(1.5, 1.5, self.rect_size.x - 3.0, self.rect_size.y - 3.0)
+                sdf.rect(inset, inset, self.rect_size.x - inset * 2.0, self.rect_size.y - inset * 2.0)
                 sdf.fill_keep(self.color)
                 // Diagonal source-bright frame: bright top-left (frame_hi) ->
                 // dim bottom-right (frame_lo).
                 let bdir = clamp((self.pos.x + self.pos.y) * 0.5, 0.0, 1.0)
                 let stroke = mix(self.border_hi, self.border_lo, bdir)
-                sdf.stroke(stroke, 1.5)
+                sdf.stroke(stroke, 1.5 * self.zoom)
                 return sdf.result
             }
         }
@@ -303,6 +307,11 @@ impl Widget for GraphCanvas {
         // Contents (text offsets, font sizes, hairline weights) scale by the same
         // factor as the box geometry, so a zoomed shape magnifies its interior too.
         let zoom = self.camera.zoom;
+        // Node frame inset + stroke live in draw_node's SDF shader; feed zoom in
+        // as a uniform so the border thickens with the box rather than staying a
+        // fixed screen-pixel hairline.
+        self.draw_node
+            .set_uniform(cx, live_id!(zoom), &[zoom as f32]);
 
         // Groups: framed rects behind everything else. Deeper nesting is drawn
         // with the same fill; draw-order (shallow first) leaves inner groups on top.
