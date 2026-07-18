@@ -300,6 +300,10 @@ impl Widget for GraphCanvas {
             }
         }
 
+        // Contents (text offsets, font sizes, hairline weights) scale by the same
+        // factor as the box geometry, so a zoomed shape magnifies its interior too.
+        let zoom = self.camera.zoom;
+
         // Groups: framed rects behind everything else. Deeper nesting is drawn
         // with the same fill; draw-order (shallow first) leaves inner groups on top.
         for group in &self.scene.groups {
@@ -313,8 +317,12 @@ impl Widget for GraphCanvas {
             };
             self.draw_group.draw_abs(cx, screen);
             if let Some(title) = &group.title {
-                self.draw_text
-                    .draw_abs(cx, dvec2(screen.pos.x + 6.0, screen.pos.y + 4.0), title);
+                self.draw_text.text_style.font_size = (12.0 * zoom) as f32;
+                self.draw_text.draw_abs(
+                    cx,
+                    dvec2(screen.pos.x + 6.0 * zoom, screen.pos.y + 4.0 * zoom),
+                    title,
+                );
             }
         }
 
@@ -331,7 +339,7 @@ impl Widget for GraphCanvas {
             if len < 1e-3 {
                 continue;
             }
-            let thickness = 2.0;
+            let thickness = 2.0 * zoom;
             // Axis-aligned bounding box of the segment: reads correctly for the
             // orthogonal arrangements typical of `## Layout` diagrams.
             let min = dvec2(a.x.min(b.x), a.y.min(b.y));
@@ -367,7 +375,7 @@ impl Widget for GraphCanvas {
             // element-type bucket (`node_style::accent_bucket`). `None` (plain
             // `Class`, `Association`, unresolved `Diagram`) draws nothing --
             // that's the pre-U9 look.
-            let bar_h = 4.0_f64.min(screen.size.y);
+            let bar_h = (4.0 * zoom).min(screen.size.y);
             let bar = Rect {
                 pos: screen.pos,
                 size: dvec2(screen.size.x, bar_h),
@@ -385,21 +393,22 @@ impl Widget for GraphCanvas {
             }
 
             if self.focus_mode {
-                self.draw_focus_card(cx, screen, node);
+                self.draw_focus_card(cx, screen, node, zoom);
             } else {
                 // Overview: the compact pre-U9 look -- an optional «stereotype»
                 // guillemet line above the title, no compartment body.
-                let mut text_y = screen.pos.y + 10.0;
+                self.draw_text.text_style.font_size = (12.0 * zoom) as f32;
+                let mut text_y = screen.pos.y + 10.0 * zoom;
                 if let Some(label) = stereotype_label(&node.element_type) {
                     self.draw_text.draw_abs(
                         cx,
-                        dvec2(screen.pos.x + 10.0, text_y),
+                        dvec2(screen.pos.x + 10.0 * zoom, text_y),
                         &format!("\u{ab}{label}\u{bb}"),
                     );
-                    text_y += 14.0;
+                    text_y += 14.0 * zoom;
                 }
                 self.draw_text
-                    .draw_abs(cx, dvec2(screen.pos.x + 10.0, text_y), &node.title);
+                    .draw_abs(cx, dvec2(screen.pos.x + 10.0 * zoom, text_y), &node.title);
             }
         }
 
@@ -412,26 +421,33 @@ impl GraphCanvas {
     /// (`card::class_shape` under `card::mono_sheet`) with taffy and walking the
     /// placed text leaves, each drawn with the mono pen selected by its
     /// (weight, Atlas color) — the card is styled entirely by the box-tree.
-    fn draw_focus_card(&mut self, cx: &mut Cx2d, screen: Rect, node: &crate::scene::SceneNode) {
+    fn draw_focus_card(
+        &mut self,
+        cx: &mut Cx2d,
+        screen: Rect,
+        node: &crate::scene::SceneNode,
+        zoom: f64,
+    ) {
         use crate::card::{self, Token, Weight};
         let texts = card::card_texts(node, &card::mono_sheet());
         for pt in &texts {
-            let pos = dvec2(screen.pos.x + pt.x, screen.pos.y + pt.y);
+            let pos = dvec2(screen.pos.x + pt.x * zoom, screen.pos.y + pt.y * zoom);
+            let size = (pt.style.size_pt * zoom) as f32; // TextStyle.font_size is f32
             match (pt.style.weight, pt.style.color) {
                 (Weight::Bold, _) => {
-                    self.draw_mono_bold.text_style.font_size = pt.style.size_pt as f32; // TextStyle.font_size is f32
+                    self.draw_mono_bold.text_style.font_size = size;
                     self.draw_mono_bold.draw_abs(cx, pos, &pt.text);
                 }
                 (Weight::Regular, Token::Accent) => {
-                    self.draw_mono_accent.text_style.font_size = pt.style.size_pt as f32; // TextStyle.font_size is f32
+                    self.draw_mono_accent.text_style.font_size = size;
                     self.draw_mono_accent.draw_abs(cx, pos, &pt.text);
                 }
                 (Weight::Regular, Token::Amber) => {
-                    self.draw_mono_amber.text_style.font_size = pt.style.size_pt as f32; // TextStyle.font_size is f32
+                    self.draw_mono_amber.text_style.font_size = size;
                     self.draw_mono_amber.draw_abs(cx, pos, &pt.text);
                 }
                 (Weight::Regular, _) => {
-                    self.draw_mono_dim.text_style.font_size = pt.style.size_pt as f32; // TextStyle.font_size is f32
+                    self.draw_mono_dim.text_style.font_size = size;
                     self.draw_mono_dim.draw_abs(cx, pos, &pt.text);
                 }
             }
