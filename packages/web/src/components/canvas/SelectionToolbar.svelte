@@ -8,6 +8,7 @@
   import { fly } from "svelte/transition";
   import KeyHint from "../KeyHint.svelte";
   import { keyLabel } from "../../lib/shortcuts";
+  import { hudPress } from "../../lib/hudPress";
 
   let {
     nodeCount,
@@ -61,13 +62,10 @@
      underneath. Fixed → positions against the viewport, not the selection. -->
 <div
   data-testid="selection-toolbar"
-  class="nopan nodrag fixed bottom-6 left-1/2 z-30 -translate-x-1/2"
-  style="font-family: 'Source Sans 3 Variable', -apple-system, BlinkMacSystemFont, 'Segoe UI', Inter, system-ui, sans-serif;"
+  class="nopan nodrag st-dock"
   transition:fly={{ y: 12, duration: 150 }}
 >
-  <div
-    class="flex items-center gap-1 rounded-xl border border-[#d8dee8] bg-white p-[6px] shadow-[0_8px_24px_rgba(15,23,42,0.14)]"
-  >
+  <div class="hud-surface st-pill">
     {#if naming}
       <!-- svelte-ignore a11y_autofocus -->
       <input
@@ -76,43 +74,30 @@
         onkeydown={onKey}
         placeholder="New diagram name"
         autofocus
-        class="w-[180px] text-[13px] px-2 py-[6px] border border-[#d8dee8] rounded-md text-slate-900 focus:outline-none focus:border-[#1e88e5] focus:ring-2 focus:ring-[#e6f1fb]"
+        class="st-input"
       />
-      <button
-        onclick={confirm}
-        aria-label="Create diagram"
-        class="rounded-lg bg-[#1e88e5] px-3 py-[7px] text-[12px] font-semibold text-white hover:bg-[#1976d2] whitespace-nowrap"
-      >
-        Create diagram
-      </button>
-      <button
-        onclick={cancel}
-        aria-label="Cancel"
-        class="rounded-lg px-2 py-[7px] text-[12px] font-medium text-slate-500 hover:bg-[#f1f3f7]"
-      >
-        Cancel
-      </button>
+      <button use:hudPress onclick={confirm} aria-label="Create diagram" class="hud-surface hud-surface--btn hud-btn hud-btn--sm">Create diagram</button>
+      <button onclick={cancel} aria-label="Cancel" class="st-text">Cancel</button>
     {:else}
-      <span class="px-2 text-[12px] font-medium text-slate-500 whitespace-nowrap">{summary}</span>
-      <div class="h-[20px] w-px bg-[#e2e6ec]"></div>
+      <span class="st-summary">{summary}</span>
+      <div class="st-sep"></div>
       <button
+        use:hudPress
         onclick={startNaming}
         disabled={!canCreate}
         aria-label="New diagram from selection"
-        title={canCreate
-          ? "New diagram seeded with the selected objects"
-          : "Select at least one object to create a diagram"}
-        class="flex items-center gap-[6px] rounded-lg px-2.5 py-[7px] text-[12px] font-semibold whitespace-nowrap transition-colors {canCreate
-          ? 'text-[#1e88e5] hover:bg-[#e6f1fb] cursor-pointer'
-          : 'text-slate-300 cursor-not-allowed'}"
+        title={canCreate ? "New diagram seeded with the selected objects" : "Select at least one object to create a diagram"}
+        class="hud-surface hud-surface--btn hud-btn hud-btn--sm st-action"
       >
         <LayoutDashboard size={14} /> New diagram from selection
       </button>
       <button
+        use:hudPress
         onclick={onDelete}
         aria-label="Delete selection"
         title="Delete the selected objects and relationships"
-        class="group relative flex items-center gap-[6px] rounded-lg px-2.5 py-[7px] text-[12px] font-semibold text-slate-500 hover:bg-[#fdf2f2] hover:text-[#dc2626] cursor-pointer whitespace-nowrap transition-colors"
+        class="hud-surface hud-surface--btn hud-btn hud-btn--sm st-action st-danger"
+        style="--accent:235, 70, 120"
       >
         <Trash2 size={14} /> Delete selection
         <KeyHint keys={keyLabel("selection.delete")} />
@@ -120,3 +105,19 @@
     {/if}
   </div>
 </div>
+
+<style>
+  .st-dock { position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%); z-index: 30; }
+  .st-pill { display: flex; align-items: center; gap: 6px; padding: 6px; }
+  .st-summary { padding: 0 8px; font: 500 12px/1 var(--font-ui); color: rgb(var(--ink-faint)); white-space: nowrap; }
+  .st-sep { width: 1px; height: 20px; background: rgba(var(--accent), .18); }
+  /* compact hud-btn overrides for the toolbar: real text label, not wide caps */
+  .st-action, .st-danger { display: inline-flex; align-items: center; gap: 6px; text-transform: none; letter-spacing: .02em; font-weight: 600; font-family: var(--font-ui); font-size: 12px; }
+  .st-input {
+    width: 180px; font: 500 13px/1 var(--font-ui); padding: 6px 8px; color: var(--ink);
+    background: #fff; border: 1px solid rgba(var(--accent), .26); border-radius: 3px; outline: 0;
+  }
+  .st-input:focus { border-color: rgb(var(--accent)); box-shadow: 0 0 0 1px rgb(var(--accent)); }
+  .st-text { border: 0; background: transparent; cursor: pointer; padding: 7px 10px; border-radius: 2px; font: 500 12px/1 var(--font-ui); color: rgb(var(--ink-faint)); }
+  .st-text:hover { background: rgba(var(--accent), .12); color: rgb(var(--accent)); }
+</style>

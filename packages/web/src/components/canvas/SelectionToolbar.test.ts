@@ -12,9 +12,7 @@ describe("SelectionToolbar", () => {
   it("docks to the bottom-center of the viewport", () => {
     render(SelectionToolbar, { nodeCount: 1, edgeCount: 0, onNewDiagram: () => {}, onDelete: () => {} });
     const bar = screen.getByTestId("selection-toolbar") as HTMLElement;
-    expect(bar.className).toContain("fixed");
-    expect(bar.className).toContain("bottom-6");
-    expect(bar.className).toContain("left-1/2");
+    expect(bar.className).toContain("st-dock");
   });
 
   it("disables 'New diagram from selection' when only edges are selected", () => {
