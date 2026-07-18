@@ -496,11 +496,10 @@ pub fn referrers(work: &Bundle, slug: &str) -> Vec<String> {
             }),
             Section::Members(block) => {
                 fn group_has(g: &crate::syntax::MemberGroup, slug: &str) -> bool {
-                    g.members
-                        .iter()
-                        .filter_map(Line::parsed)
-                        .any(|m| m.slug == slug)
-                        || g.children.iter().any(|c| group_has(c, slug))
+                    g.members.iter().filter_map(Line::parsed).any(|m| match m {
+                        crate::syntax::MemberItem::Member(ml) => ml.slug == slug,
+                        crate::syntax::MemberItem::Instance(inst) => inst.classifier.slug == slug,
+                    }) || g.children.iter().any(|c| group_has(c, slug))
                 }
                 block.groups.iter().any(|g| group_has(g, &target))
             }

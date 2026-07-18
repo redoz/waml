@@ -315,3 +315,39 @@ fn instance_doc_slots_shape_and_ref_resolution() {
         "link-valued slot resolves to a pool key"
     );
 }
+
+#[test]
+fn inline_instance_is_promoted_to_a_pool_node_with_edge_and_membership() {
+    let b = vec![
+        ("m/order.md".into(), "---\ntype: uml.Class\ntitle: Order\n---\n# Order\n".into()),
+        ("m/objects.md".into(),
+         "---\ntype: Diagram\ntitle: Objects\nprofile: uml-domain\n---\n# Objects\n\n## Members\n- [Order](./order.md)\n- instance of [Order](./order.md) as order42 with id set to \"ORD-42\" and status set to PLACED\n".into()),
+    ];
+    let m = build_model(&b);
+    let v = serde_json::to_value(&m).unwrap();
+    // Promoted pool node keyed {diagram}#name.
+    let inst = v["nodes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|n| n["key"] == "m/objects#order42")
+        .unwrap();
+    assert_eq!(inst["type"], "uml.InstanceSpecification");
+    assert_eq!(inst["slots"][0]["value"], "ORD-42");
+    assert_eq!(inst["slots"][1]["value"], "PLACED");
+    // InstanceOf edge to the classifier.
+    let io = v["edges"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|e| e["kind"] == "instanceof" && e["from"] == "m/objects#order42")
+        .unwrap();
+    assert_eq!(io["to"], "m/order");
+    // Auto-added to the diagram's members.
+    let members = &v["diagrams"][0]["groups"][0]["members"];
+    assert!(members
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|k| k == "m/objects#order42"));
+}

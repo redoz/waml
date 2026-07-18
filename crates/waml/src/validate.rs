@@ -131,7 +131,13 @@ fn check_group_members(
     path: &str,
     diags: &mut Vec<Diagnostic>,
 ) {
-    for m in g.members.iter().filter_map(Line::parsed) {
+    use crate::syntax::MemberItem;
+    for item in g.members.iter().filter_map(Line::parsed) {
+        // Inline instances are not plain members — their classifier resolution
+        // is validated separately (Task 6).
+        let MemberItem::Member(m) = item else {
+            continue;
+        };
         let resolved = crate::okf::resolve_href(path, &m.slug);
         if !keyset.contains(&resolved) {
             let mut d = Diagnostic::warn(

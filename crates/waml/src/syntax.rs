@@ -129,6 +129,28 @@ pub struct MemberLine {
     pub span: Option<(usize, usize)>,
 }
 
+/// One `## Members` bullet: a plain member ref, or an inline instance that is
+/// promoted to a pool `InstanceSpecification` node (design spec §4.2).
+#[derive(Debug, Clone, PartialEq)]
+pub enum MemberItem {
+    Member(MemberLine),
+    Instance(InlineInstance),
+}
+
+/// An inline `## Members` instance: `- instance of [Classifier](./c.md) as
+/// <name>[ with <n> set to <v> and …]`. Promoted to a pool node keyed
+/// `{diagram}#<name>` (mirrors `build_flows`), auto-added to the diagram's members.
+#[derive(Debug, Clone, PartialEq)]
+pub struct InlineInstance {
+    pub classifier: LinkRef,
+    pub name: String,
+    pub slots: Vec<ParsedSlot>,
+    /// 1-based line within the document (0 until filled by `parse`).
+    pub line: usize,
+    /// Byte range within `line`, if positioned by `parse`.
+    pub span: Option<(usize, usize)>,
+}
+
 /// The `## Members` section: a forest of groups. A flat bullet list (no
 /// sub-headings) is a single implicit top-level group (name `""`, depth 0).
 #[derive(Debug, Clone, PartialEq)]
@@ -142,7 +164,7 @@ pub struct MembersBlock {
 pub struct MemberGroup {
     pub name: String,
     pub depth: u8,
-    pub members: Vec<Line<MemberLine>>,
+    pub members: Vec<Line<MemberItem>>,
     pub children: Vec<MemberGroup>,
 }
 

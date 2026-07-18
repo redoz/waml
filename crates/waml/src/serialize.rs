@@ -177,6 +177,17 @@ mod tests {
     }
 
     #[test]
+    fn serialize_round_trips_inline_instance_member() {
+        let text = "---\ntype: Diagram\ntitle: Objects\nprofile: uml-domain\n---\n\n# Objects\n\n## Members\n- [Order](./order.md)\n- instance of [Order](./order.md) as order42 with id set to \"ORD-42\" and status set to PLACED\n";
+        let (doc, _) = crate::parse::parse(text);
+        assert_eq!(
+            serialize_document(&doc),
+            text,
+            "inline instance member must round-trip byte-identically"
+        );
+    }
+
+    #[test]
     fn serialize_is_a_semantic_fixpoint_with_nested_bracket_frontmatter() {
         // Regression for the fmt panic: a nested-bracket frontmatter value
         // (e.g. `stereotype: [a, [b]]`) must serialize without panicking, and
