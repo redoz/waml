@@ -11,7 +11,7 @@
   body {
     --accent: 20, 150, 220;
     --fill: #eaeff5;
-    --glow: 0.9;
+    --glow: 0.4;
     background: #eef2f7;
     color: #26313f;
     font: 14px/1.5 -apple-system, "Segoe UI", system-ui, sans-serif;
@@ -47,7 +47,7 @@
     -webkit-mask-composite: xor; mask-composite: exclude;
     pointer-events: none;
   }
-  .ico   { stroke: rgb(var(--accent)); stroke-width: 2; fill: none;
+  .ico   { stroke: rgb(var(--accent)); stroke-width: 1.6; fill: none;
            stroke-linejoin: round; stroke-linecap: round; }
   .ico .hollow { fill: var(--fill); }
   .ico .solid  { fill: rgb(var(--accent)); stroke: none; }
@@ -84,7 +84,7 @@
 
       <div class="item">
         <div class="chip"><svg class="ico" width="32" height="32" viewBox="0 0 24 24">
-          <circle class="hollow" cx="12" cy="12" r="6.5" stroke-dasharray="3 2.6"/>
+          <circle class="hollow" cx="12" cy="12" r="7.5" pathLength="12" stroke-dasharray="3.4 0.6" stroke-linecap="butt"/>
         </svg></div>
         <div class="lbl">Interface</div><div class="sub">uml.Interface</div>
       </div>
@@ -107,9 +107,10 @@
 
       <div class="item">
         <div class="chip"><svg class="ico" width="32" height="32" viewBox="0 0 24 24">
-          <path class="hollow" d="M12,4 L19,8 L12,11 L5,8 Z"/>
-          <path class="hollow" d="M5,8 L12,11 L12,20 L5,16 Z"/>
-          <path class="hollow" d="M19,8 L12,11 L12,20 L19,16 Z"/>
+          <path d="M12,4 L19,8 L19,15.5 L12,19 L5,15.5 L5,8 Z" fill="var(--fill)" stroke="none"/>
+          <path d="M12,4 L19,8 L19,15.5 L12,19 L5,15.5 L5,8 Z"/>
+          <path d="M5,8 L12,11.5 L19,8"/>
+          <path d="M12,11.5 L12,19"/>
         </svg></div>
         <div class="lbl">Package</div><div class="sub">uml.Package</div>
       </div>
@@ -149,8 +150,8 @@
           <rect class="hollow" x="14.5" y="4" width="5" height="4"/>
           <line x1="7" y1="8" x2="7" y2="20" stroke-dasharray="2.2 2.2"/>
           <line x1="17" y1="8" x2="17" y2="20" stroke-dasharray="2.2 2.2"/>
-          <line x1="7" y1="13" x2="17" y2="13"/>
-          <path d="M14.5,11 L17,13 L14.5,15"/>
+          <line x1="7" y1="15" x2="17" y2="15"/>
+          <path d="M13.8,12.5 L17,15 L13.8,17.5"/>
         </svg></div>
         <div class="lbl">Sequence</div><div class="sub">seq.Doc</div>
       </div>
@@ -159,14 +160,14 @@
 
     <div class="tree">
       <div class="trow"><svg class="ico" width="16" height="16" viewBox="0 0 24 24"><rect class="hollow" x="4.5" y="5" width="15" height="14" rx="2"/><line x1="4.5" y1="9.5" x2="19.5" y2="9.5"/></svg> Order</div>
-      <div class="trow"><svg class="ico" width="16" height="16" viewBox="0 0 24 24"><circle class="hollow" cx="12" cy="12" r="6.5" stroke-dasharray="3 2.6"/></svg> Payable</div>
+      <div class="trow"><svg class="ico" width="16" height="16" viewBox="0 0 24 24"><circle class="hollow" cx="12" cy="12" r="7.5" pathLength="12" stroke-dasharray="3.4 0.6" stroke-linecap="butt"/></svg> Payable</div>
       <div class="trow"><svg class="ico" width="16" height="16" viewBox="0 0 24 24"><rect class="hollow" x="5" y="5" width="7" height="7" rx="1"/><rect class="hollow" x="13" y="5" width="7" height="7" rx="1"/><rect class="hollow" x="5" y="13" width="7" height="7" rx="1"/></svg> Status</div>
       <div class="trow"><svg class="ico" width="16" height="16" viewBox="0 0 24 24"><path class="hollow" d="M12,4.5 L18.5,8.25 L18.5,15.75 L12,19.5 L5.5,15.75 L5.5,8.25 Z"/></svg> Money</div>
-      <div class="trow"><svg class="ico" width="16" height="16" viewBox="0 0 24 24"><path class="hollow" d="M12,4 L19,8 L12,11 L5,8 Z"/><path class="hollow" d="M5,8 L12,11 L12,20 L5,16 Z"/><path class="hollow" d="M19,8 L12,11 L12,20 L19,16 Z"/></svg> orders</div>
+      <div class="trow"><svg class="ico" width="16" height="16" viewBox="0 0 24 24"><path d="M12,4 L19,8 L19,15.5 L12,19 L5,15.5 L5,8 Z" fill="var(--fill)" stroke="none"/><path d="M12,4 L19,8 L19,15.5 L12,19 L5,15.5 L5,8 Z"/><path d="M5,8 L12,11.5 L19,8"/><path d="M12,11.5 L12,19"/></svg> orders</div>
       <div class="trow"><svg class="ico" width="16" height="16" viewBox="0 0 24 24"><path class="hollow" d="M6.5,4.5 L14,4.5 L17.5,8 L17.5,19.5 L6.5,19.5 Z"/><path d="M14,4.5 L14,8 L17.5,8"/></svg> reviewer note</div>
       <div class="trow"><svg class="ico" width="16" height="16" viewBox="0 0 24 24"><line x1="9" y1="8" x2="15" y2="8"/><line x1="8" y1="10" x2="11" y2="15"/><line x1="16" y1="10" x2="13" y2="15"/><circle class="hollow" cx="7" cy="8" r="2.4"/><circle class="hollow" cx="17" cy="8" r="2.4"/><circle class="hollow" cx="12" cy="17" r="2.4"/></svg> Domain view</div>
       <div class="trow"><svg class="ico" width="16" height="16" viewBox="0 0 24 24"><line x1="8" y1="5" x2="16" y2="5"/><line x1="12" y1="5" x2="12" y2="17"/><path d="M8,13 L12,17.5 L16,13"/></svg> Checkout flow</div>
-      <div class="trow"><svg class="ico" width="16" height="16" viewBox="0 0 24 24"><rect class="hollow" x="4.5" y="4" width="5" height="4"/><rect class="hollow" x="14.5" y="4" width="5" height="4"/><line x1="7" y1="8" x2="7" y2="20" stroke-dasharray="2.2 2.2"/><line x1="17" y1="8" x2="17" y2="20" stroke-dasharray="2.2 2.2"/><line x1="7" y1="13" x2="17" y2="13"/><path d="M14.5,11 L17,13 L14.5,15"/></svg> Place order</div>
+      <div class="trow"><svg class="ico" width="16" height="16" viewBox="0 0 24 24"><rect class="hollow" x="4.5" y="4" width="5" height="4"/><rect class="hollow" x="14.5" y="4" width="5" height="4"/><line x1="7" y1="8" x2="7" y2="20" stroke-dasharray="2.2 2.2"/><line x1="17" y1="8" x2="17" y2="20" stroke-dasharray="2.2 2.2"/><line x1="7" y1="15" x2="17" y2="15"/><path d="M13.8,12.5 L17,15 L13.8,17.5"/></svg> Place order</div>
     </div>
   </div>
 
