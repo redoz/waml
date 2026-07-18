@@ -275,6 +275,154 @@ pub fn measure(shape: &Shape) -> Placed {
     Placed { size, texts }
 }
 
+/// Per-element typography + spacing for `class_shape`. One default sheet drives
+/// the whole card today; a later config cascade will mutate/replace it.
+pub struct StyleSheet {
+    pub eyebrow: TextStyle,
+    pub title: TextStyle,
+    pub marker: TextStyle,
+    pub name: TextStyle,
+    pub colon: TextStyle,
+    pub ty: TextStyle,
+    pub cardinality: TextStyle,
+    /// Padding around the whole card.
+    pub card_pad: Edges,
+    /// Gap between the eyebrow and the title inside the header column.
+    pub header_gap: f64,
+    /// Gap between cells inside one attribute row.
+    pub row_gap: f64,
+    /// Gap between the header and each row (and between rows) in the outer column.
+    pub rows_gap: f64,
+}
+
+/// The hard-coded all-mono default look (the mockup). Sizes are starting points;
+/// tune in the visual pass. `letter_spacing` is 0 everywhere so measured width
+/// always equals the drawn glyphs (the render path does not apply spacing yet).
+pub fn mono_sheet() -> StyleSheet {
+    let body = |color: Token, weight: Weight| TextStyle {
+        font: Font::Mono,
+        size_pt: 11.0,
+        weight,
+        color,
+        casing: Casing::None,
+        letter_spacing: 0.0,
+    };
+    StyleSheet {
+        eyebrow: TextStyle {
+            font: Font::Mono,
+            size_pt: 10.0,
+            weight: Weight::Regular,
+            color: Token::TextDim,
+            casing: Casing::Upper,
+            letter_spacing: 0.0,
+        },
+        title: TextStyle {
+            font: Font::Mono,
+            size_pt: 14.0,
+            weight: Weight::Bold,
+            color: Token::Text,
+            casing: Casing::Upper,
+            letter_spacing: 0.0,
+        },
+        marker: body(Token::Accent, Weight::Regular),
+        name: body(Token::Text, Weight::Bold),
+        colon: body(Token::TextDim, Weight::Regular),
+        ty: body(Token::Accent, Weight::Regular),
+        cardinality: body(Token::Amber, Weight::Regular),
+        card_pad: Edges {
+            l: 16.0,
+            t: 10.0,
+            r: 16.0,
+            b: 14.0,
+        },
+        header_gap: 2.0,
+        row_gap: 6.0,
+        rows_gap: 6.0,
+    }
+}
+
+/// Build the classifier focus card's `Shape` tree from a `SceneNode` and a
+/// `StyleSheet`. Header column («eyebrow» + title) then one hug-style row per
+/// attribute: `<vis> <name> : <Type> [<mult>]`, each part omitted when empty.
+pub fn class_shape(node: &crate::scene::SceneNode, sheet: &StyleSheet) -> Shape {
+    let eyebrow = crate::scene::focus_eyebrow(&node.stereotypes, &node.element_type);
+
+    let mut header_children = Vec::new();
+    if let Some(label) = eyebrow {
+        header_children.push(Shape::Text {
+            text: format!("\u{ab}{label}\u{bb}"),
+            style: sheet.eyebrow,
+        });
+    }
+    header_children.push(Shape::Text {
+        text: node.title.clone(),
+        style: sheet.title,
+    });
+    let header = Shape::Box {
+        dir: Dir::Col,
+        gap: sheet.header_gap,
+        pad: Edges::ZERO,
+        hidden: false,
+        children: header_children,
+    };
+
+    let mut rows = vec![header];
+    for attr in &node.attributes {
+        let mut cells = Vec::new();
+        if !attr.visibility.is_empty() {
+            cells.push(Shape::Text {
+                text: attr.visibility.clone(),
+                style: sheet.marker,
+            });
+        }
+        cells.push(Shape::Text {
+            text: attr.name.clone(),
+            style: sheet.name,
+        });
+        if !attr.ty.is_empty() {
+            cells.push(Shape::Text {
+                text: ":".to_string(),
+                style: sheet.colon,
+            });
+            cells.push(Shape::Text {
+                text: attr.ty.clone(),
+                style: sheet.ty,
+            });
+        }
+        if !attr.multiplicity.is_empty() {
+            cells.push(Shape::Text {
+                text: format!("[{}]", attr.multiplicity),
+                style: sheet.cardinality,
+            });
+        }
+        rows.push(Shape::Box {
+            dir: Dir::Row,
+            gap: sheet.row_gap,
+            pad: Edges::ZERO,
+            hidden: false,
+            children: cells,
+        });
+    }
+
+    Shape::Box {
+        dir: Dir::Col,
+        gap: sheet.rows_gap,
+        pad: sheet.card_pad,
+        hidden: false,
+        children: rows,
+    }
+}
+
+/// Hull size the focus card hugs to, for the scene node rect.
+pub fn card_size(node: &crate::scene::SceneNode, sheet: &StyleSheet) -> (f64, f64) {
+    measure(&class_shape(node, sheet)).size
+}
+
+/// Absolute placed text leaves the renderer draws.
+pub fn card_texts(node: &crate::scene::SceneNode, sheet: &StyleSheet) -> Vec<PlacedText> {
+    measure(&class_shape(node, sheet)).texts
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -337,5 +485,107 @@ mod tests {
     #[test]
     fn longer_text_leaf_is_wider() {
         assert!(measure(&leaf("bbbb")).size.0 > measure(&leaf("a")).size.0);
+    }
+
+    use crate::inspector::AttrRow;
+    use crate::scene::SceneNode;
+    use waml::model::{ElementType, UmlMetaclass};
+    use waml::solve::Rect;
+
+    fn attr(name: &str, ty: &str, vis: &str, mult: &str) -> AttrRow {
+        AttrRow {
+            name: name.to_string(),
+            ty: ty.to_string(),
+            multiplicity: mult.to_string(),
+            visibility: vis.to_string(),
+        }
+    }
+
+    fn scene_node(title: &str, stereotypes: Vec<String>, attributes: Vec<AttrRow>) -> SceneNode {
+        SceneNode {
+            key: "k".to_string(),
+            title: title.to_string(),
+            element_type: ElementType::Uml(UmlMetaclass::Class),
+            stereotypes,
+            attributes,
+            rect: Rect {
+                x: 0.0,
+                y: 0.0,
+                w: 0.0,
+                h: 0.0,
+            },
+            emphasized: true,
+            collapsed: false,
+        }
+    }
+
+    fn drawn(node: &SceneNode) -> Vec<String> {
+        card_texts(node, &mono_sheet())
+            .iter()
+            .map(|t| t.text.clone())
+            .collect()
+    }
+
+    #[test]
+    fn title_is_uppercased_and_present() {
+        let n = scene_node("Order", vec![], vec![]);
+        assert!(drawn(&n).contains(&"ORDER".to_string()));
+    }
+
+    #[test]
+    fn declared_stereotype_becomes_an_uppercased_guillemet_eyebrow() {
+        let n = scene_node("Order", vec!["aggregateRoot".to_string()], vec![]);
+        assert!(drawn(&n).contains(&"\u{ab}AGGREGATEROOT\u{bb}".to_string()));
+    }
+
+    #[test]
+    fn a_full_row_draws_marker_name_colon_type() {
+        let n = scene_node("Order", vec![], vec![attr("id", "OrderId", "+", "")]);
+        let s = drawn(&n);
+        assert!(s.contains(&"+".to_string()));
+        assert!(s.contains(&"id".to_string()));
+        assert!(s.contains(&":".to_string()));
+        assert!(s.contains(&"OrderId".to_string()));
+    }
+
+    #[test]
+    fn empty_type_omits_colon_and_type() {
+        let n = scene_node("Order", vec![], vec![attr("id", "", "", "")]);
+        let s = drawn(&n);
+        assert!(!s.contains(&":".to_string()));
+        assert!(s.contains(&"id".to_string()));
+    }
+
+    #[test]
+    fn cardinality_present_only_when_multiplicity_set() {
+        let without = scene_node("Order", vec![], vec![attr("id", "Int", "+", "")]);
+        assert!(!drawn(&without).iter().any(|s| s.starts_with('[')));
+        let with = scene_node("Order", vec![], vec![attr("id", "Int", "+", "1..*")]);
+        assert!(drawn(&with).contains(&"[1..*]".to_string()));
+    }
+
+    #[test]
+    fn card_size_grows_with_a_longer_type() {
+        let short = scene_node("Order", vec![], vec![attr("id", "Int", "+", "")]);
+        let long = scene_node(
+            "Order",
+            vec![],
+            vec![attr("id", "AVeryLongTypeName", "+", "")],
+        );
+        assert!(card_size(&long, &mono_sheet()).0 > card_size(&short, &mono_sheet()).0);
+    }
+
+    #[test]
+    fn card_size_grows_taller_with_more_rows() {
+        let one = scene_node("Order", vec![], vec![attr("id", "Int", "+", "")]);
+        let two = scene_node(
+            "Order",
+            vec![],
+            vec![
+                attr("id", "Int", "+", ""),
+                attr("total", "Decimal", "-", ""),
+            ],
+        );
+        assert!(card_size(&two, &mono_sheet()).1 > card_size(&one, &mono_sheet()).1);
     }
 }
