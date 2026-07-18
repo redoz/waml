@@ -21,7 +21,7 @@ script_mod! {
         width: Fill
         height: Fill
         show_bg: true
-        draw_bg +: { color: #x14161d }
+        draw_bg +: { color: #x1b1b24 }
         file_tree := FileTree {
             // Roomier rows + larger humanist type, and flat (no zebra striping)
             // so the panel reads as a calm modern sidebar, not a 90s list box.
@@ -34,9 +34,9 @@ script_mod! {
                     text_style: theme.font_regular{font_size: 12}
                 }
                 draw_bg +: {
-                    color_1: #x14161d
-                    color_2: #x14161d
-                    color_active: #x2b3540
+                    color_1: #x1b1b24
+                    color_2: #x1b1b24
+                    color_active: #x3d3560
                 }
             }
 
@@ -47,14 +47,14 @@ script_mod! {
                     text_style: theme.font_bold{font_size: 12}
                 }
                 draw_bg +: {
-                    color_1: #x14161d
-                    color_2: #x14161d
-                    color_active: #x2b3540
+                    color_1: #x1b1b24
+                    color_2: #x1b1b24
+                    color_active: #x3d3560
                 }
             }
 
             filler +: {
-                pixel: fn() { return #x14161d }
+                pixel: fn() { return #x1b1b24 }
             }
         }
     }
@@ -65,6 +65,7 @@ pub enum ProjectTreeAction {
     #[default]
     None,
     SelectDiagram(String),
+    FocusClassifier(String),
 }
 
 #[derive(Script, ScriptHook, Widget)]
@@ -150,9 +151,16 @@ impl Widget for ProjectTree {
         self.view.handle_event(cx, event, scope);
         if let Event::Actions(actions) = event {
             if let Some(id) = file_tree.file_clicked(actions) {
-                if self.id_to_kind.get(&id).copied() == Some(TreeKind::Diagram) {
-                    if let Some(key) = self.id_to_key.get(&id) {
-                        cx.widget_action(uid, ProjectTreeAction::SelectDiagram(key.clone()));
+                let kind = self.id_to_kind.get(&id).copied();
+                if let Some(key) = self.id_to_key.get(&id) {
+                    match kind {
+                        Some(TreeKind::Diagram) => {
+                            cx.widget_action(uid, ProjectTreeAction::SelectDiagram(key.clone()));
+                        }
+                        Some(TreeKind::Class) => {
+                            cx.widget_action(uid, ProjectTreeAction::FocusClassifier(key.clone()));
+                        }
+                        _ => {}
                     }
                 }
             }
@@ -179,6 +187,14 @@ impl ProjectTree {
     pub fn selected_diagram(&self, actions: &Actions) -> Option<String> {
         let item = actions.find_widget_action(self.widget_uid())?;
         if let ProjectTreeAction::SelectDiagram(key) = item.cast() {
+            return Some(key);
+        }
+        None
+    }
+
+    pub fn focused_classifier(&self, actions: &Actions) -> Option<String> {
+        let item = actions.find_widget_action(self.widget_uid())?;
+        if let ProjectTreeAction::FocusClassifier(key) = item.cast() {
             return Some(key);
         }
         None

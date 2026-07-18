@@ -86,6 +86,30 @@ pub fn build_scene(model: &Model, diagram: &Diagram) -> (Scene, Vec<Diagnostic>)
     )
 }
 
+/// Build a single-node `Scene` focused on classifier `key`, sized 1.5x its
+/// natural box. Used by the classifier focus view (double/single-click a class
+/// in the tree). An unknown key yields an empty scene.
+pub fn build_focus_scene(model: &Model, key: &str) -> Scene {
+    let Some(node) = model.nodes.iter().find(|n| n.key == key) else {
+        return Scene { nodes: vec![], groups: vec![], edges: vec![] };
+    };
+    let title = node.concept.title.clone().unwrap_or_else(|| node.key.clone());
+    let size = crate::sizing::size_of(node, &waml::model::DiagramDisplay::default());
+    let scale = 1.5;
+    let rect = Rect { x: 0.0, y: 0.0, w: size.w * scale, h: size.h * scale };
+    Scene {
+        nodes: vec![SceneNode {
+            key: key.to_string(),
+            title,
+            rect,
+            emphasized: true,
+            collapsed: false,
+        }],
+        groups: vec![],
+        edges: vec![],
+    }
+}
+
 /// Axis-aligned bounding box over all node and group rects, or `None` if empty.
 pub fn bounding_box(scene: &Scene) -> Option<Rect> {
     let mut rects = scene

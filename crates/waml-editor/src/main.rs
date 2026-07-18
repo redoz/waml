@@ -5,6 +5,8 @@ mod app;
 mod camera;
 mod canvas;
 mod cli;
+mod inspector;
+mod inspector_panel;
 mod load;
 mod scene;
 mod sizing;

@@ -19,12 +19,12 @@ script_mod! {
     mod.widgets.GraphCanvas = set_type_default() do mod.widgets.GraphCanvasBase{
         width: Fill
         height: Fill
-        draw_bg +: { color: #x14161d }
-        draw_group +: { color: #x1b2130 }
-        draw_node +: { color: #x2b3345 }
-        draw_edge +: { color: #x5a6785 }
+        draw_bg +: { color: #x1b1b24 }
+        draw_group +: { color: #x24242f }
+        draw_node +: { color: #x3a3a52 }
+        draw_edge +: { color: #x6b6b8a }
         draw_text +: {
-            color: #xe6ebf5
+            color: #xf0f0f6
             text_style: TextStyle{
                 font_size: 12
                 font_family: FontFamily{
