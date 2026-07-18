@@ -120,9 +120,9 @@
     <button
       onclick={onClick}
       aria-label={tip}
-      class="w-[38px] h-[38px] rounded-[9px] border-none flex items-center justify-center cursor-pointer transition-colors {active
-        ? 'bg-[#e6f1fb] text-[#1e88e5]'
-        : 'bg-transparent text-slate-500 hover:bg-[#f1f3f7] hover:text-slate-900'}"
+      class="w-[38px] h-[38px] rounded-[var(--round-chip)] border-none flex items-center justify-center cursor-pointer transition-colors {active
+        ? 'bg-[color:rgba(var(--accent),.12)] text-[color:rgb(var(--accent))]'
+        : 'bg-transparent text-[color:rgb(var(--ink-faint))] hover:bg-[color:rgba(var(--accent),.12)] hover:text-[color:rgb(var(--accent))]'}"
     >
       {@render icon()}
     </button>
@@ -135,9 +135,10 @@
 
 <div
   data-dock
-  class="absolute top-[calc(50%-34px)] -translate-y-1/2 bg-white border border-[#d8dee8] rounded-xl p-[6px] flex flex-col gap-1 z-20 shadow-[0_4px_16px_rgba(15,23,42,0.06)] transition-[left] duration-200"
-  style={`left: ${leftOffset}px; font-family: 'Source Sans 3 Variable', -apple-system, BlinkMacSystemFont, 'Segoe UI', Inter, system-ui, sans-serif;`}
+  class="absolute top-[calc(50%-34px)] -translate-y-1/2 z-20 transition-[left] duration-200"
+  style={`left: ${leftOffset}px; font-family: var(--font-ui);`}
 >
+  <div class="hud-surface flex flex-col gap-1 p-[6px]">
   {@render toolButton(selectIcon, "Select & move (V)", activeTool === "select", () => onToolChange("select"), keyLabel("tool.select"))}
   {@render toolButton(
     addIcon,
@@ -154,10 +155,10 @@
     keyLabel("tool.connect"),
   )}
 
-  <div class="h-px bg-[#d8dee8] mx-1 my-[3px]"></div>
+  <div class="h-px bg-[color:rgba(var(--accent),.18)] mx-1 my-[3px]"></div>
   {@render toolButton(layoutIcon, "Auto-layout (Dagre)", false, () => onToolChange("layout"))}
 
-  <div class="h-px bg-[#d8dee8] mx-1 my-[3px]"></div>
+  <div class="h-px bg-[color:rgba(var(--accent),.18)] mx-1 my-[3px]"></div>
 
   <!-- Diagram properties: opens the central edit panel's diagram-properties
        context, configuring the active diagram's per-diagram render settings. -->
@@ -165,22 +166,22 @@
     <button
       onclick={() => onOpenProperties?.()}
       aria-label="Diagram properties"
-      class="w-[38px] h-[38px] rounded-[9px] border-none flex items-center justify-center cursor-pointer transition-colors bg-transparent text-slate-500 hover:bg-[#f1f3f7] hover:text-slate-900"
+      class="w-[38px] h-[38px] rounded-[var(--round-chip)] border-none flex items-center justify-center cursor-pointer transition-colors bg-transparent text-[color:rgb(var(--ink-faint))] hover:bg-[color:rgba(var(--accent),.12)] hover:text-[color:rgb(var(--accent))]"
     >
       {@render slidersIcon()}
     </button>
     {@render dockTip("Diagram properties")}
   </div>
 
-  <div class="h-px bg-[#d8dee8] mx-1 my-[3px]"></div>
+  <div class="h-px bg-[color:rgba(var(--accent),.18)] mx-1 my-[3px]"></div>
   <div class="relative group">
     <button
       onclick={() => hints.toggle()}
       aria-label="Show keyboard shortcuts"
       aria-pressed={hints.show}
-      class="w-[38px] h-[38px] rounded-[9px] border-none flex items-center justify-center cursor-pointer transition-colors {hints.show
-        ? 'bg-[#e6f1fb] text-[#1e88e5]'
-        : 'bg-transparent text-slate-500 hover:bg-[#f1f3f7] hover:text-slate-900'}"
+      class="w-[38px] h-[38px] rounded-[var(--round-chip)] border-none flex items-center justify-center cursor-pointer transition-colors {hints.show
+        ? 'bg-[color:rgba(var(--accent),.12)] text-[color:rgb(var(--accent))]'
+        : 'bg-transparent text-[color:rgb(var(--ink-faint))] hover:bg-[color:rgba(var(--accent),.12)] hover:text-[color:rgb(var(--accent))]'}"
     >
       <Keyboard size={19} />
     </button>
@@ -188,18 +189,19 @@
     {@render dockTip("Show keyboard shortcuts (?)")}
   </div>
 
-  <div class="h-px bg-[#d8dee8] mx-1 my-[3px]"></div>
+  <div class="h-px bg-[color:rgba(var(--accent),.18)] mx-1 my-[3px]"></div>
   <div class="relative group">
     <button
       onclick={onClear}
       disabled={clearDisabled}
       aria-label="Clear canvas — delete everything"
-      class="w-[38px] h-[38px] rounded-[9px] border-none flex items-center justify-center transition-colors {clearDisabled
-        ? 'bg-transparent text-slate-300 cursor-not-allowed'
-        : 'bg-transparent text-slate-500 cursor-pointer hover:bg-[#fdf2f2] hover:text-[#dc2626]'}"
+      class="w-[38px] h-[38px] rounded-[var(--round-chip)] border-none flex items-center justify-center transition-colors {clearDisabled
+        ? 'bg-transparent text-[color:rgba(var(--ink-faint),.5)] cursor-not-allowed'
+        : 'bg-transparent text-[color:rgb(var(--ink-faint))] cursor-pointer hover:bg-[color:rgba(var(--danger),.12)] hover:text-[color:rgb(var(--danger))]'}"
     >
       {@render trashIcon()}
     </button>
     {@render dockTip(clearDisabled ? "Clear canvas — nothing to clear" : "Clear canvas — delete everything")}
+  </div>
   </div>
 </div>
