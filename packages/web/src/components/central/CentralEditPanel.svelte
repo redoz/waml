@@ -83,7 +83,7 @@
   onclick={onClose}
   out:fade={{ duration: 200 }}
   class={`fixed inset-0 z-[60] flex items-center justify-center ${holeRect ? "" : "bg-slate-900/30"} ${fullHeight ? "p-4" : "p-8"}`}
-  style="font-family: 'Source Sans 3 Variable', -apple-system, BlinkMacSystemFont, 'Segoe UI', Inter, system-ui, sans-serif;"
+  style="font-family: var(--font-ui);"
 >
   {#if holeRect}
     <!-- Hole-punch: box-shadow spread fills the whole viewport except this
@@ -103,19 +103,19 @@
     tabindex="-1"
     onclick={(e) => e.stopPropagation()}
     out:fade={{ duration: 150 }}
-    class={`relative w-full max-w-[620px] ${fullHeight ? "h-[95vh] max-h-[95vh]" : "max-h-[85vh]"} flex flex-col rounded-2xl border border-[#d8dee8] shadow-[0_16px_48px_rgba(15,23,42,0.22)] overflow-hidden`}
+    class={`relative w-full max-w-[620px] ${fullHeight ? "h-[95vh] max-h-[95vh]" : "max-h-[85vh]"} flex flex-col rounded-[var(--round)] border border-[color:var(--hair)] shadow-[0_16px_48px_rgba(40,70,110,0.20)] overflow-hidden`}
   >
-    <div class="px-5 py-[15px] border-b border-[#d8dee8] flex items-center gap-2 flex-shrink-0 bg-white">
+    <div class="px-5 py-[15px] border-b border-[color:rgba(var(--accent),.22)] flex items-center gap-2 flex-shrink-0 bg-[color:var(--panel-fill)]">
       {#if header}
         <div class="flex-1 min-w-0">{@render header()}</div>
       {:else}
-        <h2 class="text-[15px] font-[700] flex-1 text-slate-900 truncate">{title}</h2>
+        <h2 class="text-[15px] font-semibold flex-1 text-[color:var(--ink)] truncate">{title}</h2>
       {/if}
       <button
         onclick={onClose}
         aria-label="Close"
         title="Close"
-        class="cursor-pointer text-slate-500 bg-transparent border-none text-[20px] leading-none hover:text-slate-900 transition-colors p-0"
+        class="w-[30px] h-[30px] flex items-center justify-center rounded-[var(--round-chip)] cursor-pointer text-[color:rgb(var(--ink-faint))] bg-transparent border-none text-[20px] leading-none hover:bg-[color:rgba(var(--accent),.12)] hover:text-[color:rgb(var(--accent))] transition-colors p-0"
       >
         ×
       </button>
@@ -126,7 +126,7 @@
            host to frame the focal node/edge. -->
       <div bind:this={previewEl} data-testid="central-preview" class="h-[220px] flex-shrink-0"></div>
     {/if}
-    <div class="px-5 py-5 overflow-y-auto flex-1 min-h-0 bg-white">
+    <div class="px-5 py-5 overflow-y-auto flex-1 min-h-0 bg-[color:var(--panel-fill)]">
       {@render children()}
     </div>
   </div>
