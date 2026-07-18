@@ -21,7 +21,9 @@ script_mod! {
         height: 34.0
         draw_bg +: { color: atlas.surface }
         draw_edge +: { color: atlas.frame_hi }
-        draw_tab_active +: { color: atlas.selection }
+        draw_tab +: { color: atlas.field_bg }
+        draw_accent +: { color: atlas.accent }
+        draw_divider +: { color: atlas.surface_border }
         draw_text_active +: {
             color: atlas.text
             text_style: TextStyle{
@@ -213,10 +215,13 @@ pub fn classifier_tab_id(key: &str) -> LiveId {
 // Widget
 // ---------------------------------------------------------------------------
 
-const TAB_W_BASE: f64 = 120.0;
-const TAB_W: f64 = 160.0;
 const CLOSE_W: f64 = 22.0;
 const TEXT_PAD: f64 = 12.0;
+/// Gap between a tab's label and its close hit-area.
+const CLOSE_GAP: f64 = 6.0;
+/// Inset from the bar's top edge down to the tab card, so the card's top
+/// accent line is visible and tabs float below the window's top edge.
+const TOP_MARGIN: f64 = 6.0;
 const MAX_TITLE_CHARS: usize = 18;
 
 fn truncate_title(s: &str) -> String {
@@ -254,9 +259,18 @@ pub struct DocTabs {
     #[redraw]
     #[live]
     draw_edge: DrawColor,
+    /// The active tab's raised rounded-top card (near-white `field_bg`).
     #[redraw]
     #[live]
-    draw_tab_active: DrawColor,
+    draw_tab: DrawColor,
+    /// 2px accent strip along the active tab's top edge.
+    #[redraw]
+    #[live]
+    draw_accent: DrawColor,
+    /// 1px hairline between adjacent inactive tabs.
+    #[redraw]
+    #[live]
+    draw_divider: DrawColor,
     #[redraw]
     #[live]
     draw_text_active: DrawText,
@@ -320,19 +334,57 @@ impl Widget for DocTabs {
         let mut x = rect.pos.x;
         for (i, tab) in self.tabs.iter().enumerate() {
             let closable = tab.kind != TabKind::Diagram;
-            let w = if i == 0 { TAB_W_BASE } else { TAB_W };
+            let title = truncate_title(&tab.title);
+            // Content-size each tab to its label so the close x sits snug to
+            // the title instead of stranded at a fixed-width right edge.
+            let text_w = self
+                .draw_text_active
+                .layout(cx, 0.0, 0.0, None, false, Align::default(), &title)
+                .size_in_lpxs
+                .width as f64;
+            let w = if closable {
+                TEXT_PAD + text_w + CLOSE_GAP + CLOSE_W
+            } else {
+                TEXT_PAD + text_w + TEXT_PAD
+            };
             let tab_rect = Rect {
-                pos: dvec2(x, rect.pos.y),
-                size: dvec2(w, rect.size.y),
+                pos: dvec2(x, rect.pos.y + TOP_MARGIN),
+                size: dvec2(w, rect.size.y - TOP_MARGIN),
             };
             let is_active = tab.id == self.active;
 
             if is_active {
-                self.draw_tab_active.draw_abs(cx, tab_rect);
+                // Raised sharp-cornered card + a 2px accent strip spanning its
+                // top edge (Atlas is a sharp-corner language -- no rounding).
+                self.draw_tab.draw_abs(cx, tab_rect);
+                self.draw_accent.draw_abs(
+                    cx,
+                    Rect {
+                        pos: tab_rect.pos,
+                        size: dvec2(w, 2.0),
+                    },
+                );
+            } else {
+                // A hairline on this tab's right edge separating it from the
+                // next tab -- but skip the divider flanking the active tab
+                // (its raised fill already separates it) and the strip's end.
+                let next_active = self
+                    .tabs
+                    .get(i + 1)
+                    .map(|t| t.id == self.active)
+                    .unwrap_or(true);
+                if !next_active {
+                    self.draw_divider.draw_abs(
+                        cx,
+                        Rect {
+                            pos: dvec2(x + w - 1.0, tab_rect.pos.y + 4.0),
+                            size: dvec2(1.0, tab_rect.size.y - 8.0),
+                        },
+                    );
+                }
             }
 
-            let text_y = rect.pos.y + rect.size.y * 0.5 - 7.0;
-            let title = truncate_title(&tab.title);
+            let text_y = tab_rect.pos.y + tab_rect.size.y * 0.5 - 7.0;
             let draw_text = if is_active {
                 &mut self.draw_text_active
             } else if tab.preview {
@@ -344,8 +396,8 @@ impl Widget for DocTabs {
 
             if closable {
                 let close_rect = Rect {
-                    pos: dvec2(x + w - CLOSE_W, rect.pos.y),
-                    size: dvec2(CLOSE_W, rect.size.y),
+                    pos: dvec2(x + w - CLOSE_W, tab_rect.pos.y),
+                    size: dvec2(CLOSE_W, tab_rect.size.y),
                 };
                 self.draw_close
                     .draw_abs(cx, dvec2(close_rect.pos.x + 4.0, text_y), "\u{d7}");
