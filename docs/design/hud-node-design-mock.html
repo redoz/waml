@@ -1,0 +1,475 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>HUD node design editor</title>
+<style>
+  :root { color-scheme: light; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; }
+  body {
+    --accent: 20, 150, 220;
+    --danger: 235, 70, 120;
+    --fill: #eaeff5;
+    --glow: 0.4;
+    background: #eef2f7;
+    color: #26313f;
+    font: 14px/1.5 -apple-system, "Segoe UI", system-ui, sans-serif;
+    display: grid;
+    grid-template-columns: 1fr 300px;
+    min-height: 100vh;
+  }
+  #stage {
+    display: grid; place-items: center; padding: 40px;
+    background:
+      radial-gradient(120% 90% at 50% 0%, #ffffff 0%, #e6ecf3 60%, #dbe3ec 100%),
+      repeating-linear-gradient(0deg,  transparent 0 23px, rgba(20,120,190,.05) 23px 24px),
+      repeating-linear-gradient(90deg, transparent 0 23px, rgba(20,120,190,.05) 23px 24px);
+  }
+
+  /* frosted panel + source-bright frame + low glow — shared HUD material */
+  .pane {
+    position: relative;
+    width: 660px;
+    background:
+      linear-gradient(180deg, rgba(255,255,255,.95), rgba(255,255,255,.82)),
+      rgba(var(--accent),.06);
+    box-shadow:
+      0 12px 30px rgba(40,70,110,.20),
+      0 0 calc(14px * var(--glow)) rgba(var(--accent), calc(.16 * var(--glow)));
+  }
+  .pane::before {
+    content: ""; position: absolute; inset: 0; padding: 1.5px;
+    background: linear-gradient(150deg, rgba(var(--accent),.95), rgba(var(--accent),.5));
+    -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+    mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+    -webkit-mask-composite: xor; mask-composite: exclude;
+    pointer-events: none;
+  }
+
+  /* identity header — palette glyph + «node design» stereotype + type name */
+  .phead {
+    display: flex; align-items: center; gap: 11px;
+    padding: 13px 15px;
+    border-bottom: 1px solid rgba(var(--accent),.22);
+  }
+  .phead .meta { display: grid; gap: 3px; min-width: 0; }
+  .phead .stereo {
+    font: 600 9px/1 ui-monospace, "SF Mono", "Cascadia Code", Menlo, monospace;
+    letter-spacing: .18em; text-transform: uppercase;
+    color: rgb(var(--accent)); opacity: .85;
+  }
+  .phead .name {
+    font: 700 15px/1 -apple-system, "Segoe UI", system-ui, sans-serif;
+    letter-spacing: .01em; color: #212a34;
+  }
+
+  /* two-pane body: live preview on its own inset canvas | controls */
+  .editor { display: grid; grid-template-columns: 258px 1fr; }
+  .stagecell {
+    display: grid; place-items: center; padding: 26px;
+    border-right: 1px solid rgba(var(--accent),.14);
+    background:
+      radial-gradient(120% 90% at 50% 0%, #ffffff 0%, #e9eef4 70%, #dfe6ee 100%),
+      repeating-linear-gradient(0deg,  transparent 0 19px, rgba(20,120,190,.055) 19px 20px),
+      repeating-linear-gradient(90deg, transparent 0 19px, rgba(20,120,190,.055) 19px 20px);
+  }
+
+  /* live node preview — the canvas card material, driven by the controls.
+     corner radius / border weight / glow are canvas-wide theme, fixed here. */
+  .node {
+    --round: 0px; --bw: 1.5px;
+    position: relative; width: 200px;
+    background:
+      linear-gradient(180deg, rgba(255,255,255,.94), rgba(255,255,255,.80)),
+      rgba(var(--accent),.06);
+    border-radius: var(--round); color: #212a34;
+    box-shadow:
+      0 8px 22px rgba(40,70,110,.14),
+      0 0 calc(12px * var(--glow)) rgba(var(--accent), calc(.18 * var(--glow)));
+  }
+  .node::before {
+    content: ""; position: absolute; inset: 0; padding: var(--bw);
+    background: linear-gradient(180deg, rgba(var(--accent),.9), rgba(var(--accent),.5));
+    border-radius: inherit;
+    -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+    mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+    -webkit-mask-composite: xor; mask-composite: exclude;
+    pointer-events: none;
+  }
+  /* header + compartments share the same top/bottom rounding as siblings shift */
+  .node .hdr {
+    padding: 8px 11px 7px; border-bottom: 1px solid rgba(var(--accent),.22);
+  }
+  .node.hdr-fill .hdr { background: rgba(var(--accent),.12); }
+  .node .stereo {
+    font: 600 9px/1 ui-monospace, "SF Mono", "Cascadia Code", Menlo, monospace;
+    letter-spacing: .18em; text-transform: uppercase; color: rgb(var(--accent)); opacity: .85;
+  }
+  .node .name {
+    margin-top: 3px;
+    font: 700 13px/1.15 ui-monospace, "SF Mono", "Cascadia Code", Menlo, monospace;
+    letter-spacing: .06em; text-transform: uppercase; color: #212a34;
+  }
+  .node .comp { padding: 7px 11px 8px; border-top: 1px solid rgba(var(--accent),.14); }
+  .node .row {
+    font: 500 11px/1.6 ui-monospace, "SF Mono", "Cascadia Code", Menlo, monospace;
+    color: #3a4552; white-space: nowrap;
+  }
+  .node .vis { color: rgb(var(--accent)); }   /* +/-/# visibility marker */
+  .node .ty, .node .ret { color: #7b8797; }    /* type / return */
+  .node .card { color: #a58a2a; }              /* cardinality */
+  .node .params { color: #7b8797; }
+  /* disabled = simply not rendered. first shown block keeps clean edges. */
+  .node .off { display: none; }
+  .node > :not(.off).edge-top { border-top: 0; }
+  .node > :not(.off).edge-top,
+  .node > :not(.off):first-of-type { border-radius: var(--round) var(--round) 0 0; border-top: 0; }
+  .node > :not(.off):last-of-type { border-radius: 0 0 var(--round) var(--round); }
+
+  /* per-compartment column visibility — a class on the node hides each span */
+  .node:not(.c-at-vis)  [data-comp="attributes"] .vis    { display: none; }
+  .node:not(.c-at-ty)   [data-comp="attributes"] .ty     { display: none; }
+  .node:not(.c-at-card) [data-comp="attributes"] .card   { display: none; }
+  .node:not(.c-op-vis)  [data-comp="operations"] .vis    { display: none; }
+  .node:not(.c-op-par)  [data-comp="operations"] .params { display: none; }
+  .node:not(.c-op-ret)  [data-comp="operations"] .ret    { display: none; }
+
+  /* port nubs on the side edges, toggled by the Ports compartment */
+  .node .ports i {
+    position: absolute; width: 8px; height: 8px; border-radius: 2px;
+    background: #fff; border: 1.5px solid rgb(var(--accent));
+  }
+  .node .ports .l1 { left: -4px; top: 44%; }
+  .node .ports .l2 { left: -4px; top: 66%; }
+  .node .ports .r1 { right: -4px; top: 52%; }
+
+  /* controls column — sections split by accent hairlines */
+  .sect { padding: 12px 16px 14px; border-bottom: 1px solid rgba(var(--accent),.14); }
+  .sect:last-child { border-bottom: 0; }
+  .sect-h {
+    display: flex; align-items: center; gap: 7px;
+    font: 700 9.5px/1 ui-monospace, "SF Mono", "Cascadia Code", Menlo, monospace;
+    letter-spacing: .16em; text-transform: uppercase; color: #8a97a6; margin-bottom: 9px;
+  }
+
+  /* anatomy: every compartment listed and drag-reorderable, uniform */
+  .item { border-radius: 5px; transition: background .1s ease; }
+  .item:hover { background: rgba(var(--accent),.05); }
+  .item.dragging { opacity: .45; }
+  /* a disabled compartment reads dimmed and its options go inert */
+  .item.off .clbl { color: #aab4c1; }
+  .item.off .cols { opacity: .38; pointer-events: none; }
+  .field.faded { opacity: .38; pointer-events: none; }
+  .cols, .field.faded { transition: opacity .12s ease; }
+  .crow {
+    display: flex; align-items: center; gap: 9px; padding: 6px 6px;
+    font: 600 12.5px/1 -apple-system, "Segoe UI", system-ui, sans-serif; color: #26313f;
+    cursor: grab;
+  }
+  .crow .grip { flex: 0 0 auto; stroke: #b3bdca; stroke-width: 1.8; stroke-linecap: round; }
+  .item:hover .grip { stroke: rgb(var(--accent)); }
+  .crow .clbl { flex: 1 1 auto; }
+
+  /* column chips under a compartment — which member fields render */
+  .cols { display: flex; flex-wrap: wrap; gap: 5px; margin: 0 0 6px 29px; }
+  .col {
+    display: inline-flex; align-items: center; height: 20px; padding: 0 9px;
+    border-radius: 999px; cursor: pointer;
+    border: 1px solid rgba(var(--accent),.30); background: #fff; color: #8a97a6;
+    font: 600 10px/1 -apple-system, "Segoe UI", system-ui, sans-serif;
+    transition: background .1s ease, color .1s ease, border-color .1s ease;
+  }
+  .col.on { background: rgba(var(--accent),.15); border-color: rgba(var(--accent),.48); color: #22303c; }
+  .col.lock { border-style: dashed; cursor: default; color: #7b8797; opacity: .8; }
+
+  /* HUD toggle — a square knob in a squared accent-framed track just under two
+     knobs wide; the track fills and flares when on */
+  .toggle { flex: 0 0 auto; position: relative; width: 28px; height: 20px; cursor: pointer;
+            border-radius: 3px; background: #fff; border: 1px solid rgba(var(--accent),.35);
+            transition: background .12s ease, border-color .12s ease, box-shadow .12s ease; }
+  .toggle::after { content: ""; position: absolute; top: 2px; left: 2px; width: 16px; height: 16px;
+                   border-radius: 2px; background: #b3bdca;
+                   transition: transform .12s ease, background .12s ease; }
+  .toggle.on { background: rgb(var(--accent)); border-color: rgb(var(--accent));
+               box-shadow: 0 0 5px rgba(var(--accent),.35), 0 0 1px rgba(var(--accent),.35); }
+  .toggle.on::after { transform: translateX(8px); background: #fff; }
+
+  /* stereotype tag field — reuses the slant-chip tag editor */
+  .tagfield {
+    display: flex; flex-wrap: wrap; align-items: center; gap: 4px;
+    padding: 6px 8px; background: #fff;
+    border: 1px solid rgba(var(--accent),.26); border-radius: 4px;
+  }
+  .chip.slant {
+    display: inline-flex; align-items: center; gap: 5px; height: 22px;
+    padding: 0 11px 0 13px; border: 0; border-radius: 0; color: #22303c;
+    background: rgba(var(--accent),.20);
+    clip-path: polygon(7px 0, 100% 0, calc(100% - 7px) 100%, 0 100%);
+    font: 500 11.5px/1 ui-monospace, "SF Mono", "Cascadia Code", Menlo, monospace;
+  }
+  .chip.slant:hover { background: rgba(var(--accent),.30); }
+  .chip.slant .x { display: grid; place-items: center; width: 14px; height: 14px; cursor: pointer; opacity: 0; }
+  .chip.slant:hover .x { opacity: 1; }
+  .chip.slant .x:hover .xg { stroke: rgb(var(--danger)); }
+  .chip.slant .xg { stroke: #7c8998; stroke-width: 2; fill: none; stroke-linecap: round; }
+  .tagfield .entry {
+    flex: 1 1 70px; min-width: 70px; height: 22px; border: 0; outline: 0; background: transparent;
+    font: 500 12px/1 -apple-system, "Segoe UI", system-ui, sans-serif; color: #26313f; padding: 0 4px;
+  }
+  .tagfield .entry::placeholder { color: #a4b0bd; }
+  .fieldnote { font: 500 10.5px/1.4 -apple-system, "Segoe UI", system-ui, sans-serif; color: #9aa6b4; margin: 7px 0 0; }
+
+  /* appearance field rows: label + control */
+  .field { display: grid; grid-template-columns: 66px 1fr; align-items: center; gap: 12px; margin: 11px 0; }
+  .field > label { font: 500 11px/1.3 -apple-system, "Segoe UI", system-ui, sans-serif; color: #6a7686; }
+
+  /* segmented control (shared with inspector) */
+  .seg { display: inline-flex; border: 1px solid rgba(var(--accent),.26); border-radius: 3px; overflow: hidden; }
+  .seg button {
+    border: 0; background: #fff; cursor: pointer; padding: 6px 13px; height: 27px;
+    font: 500 11px/1 -apple-system, "Segoe UI", system-ui, sans-serif;
+    color: #7b8797; border-left: 1px solid rgba(var(--accent),.18);
+  }
+  .seg button:first-child { border-left: 0; }
+  .seg button.on { background: rgb(var(--accent)); color: #fff; }
+
+  /* inline accent swatches */
+  .accrow { display: flex; gap: 6px; flex-wrap: wrap; }
+  .sw { width: 20px; height: 20px; border-radius: 5px; border: 1px solid rgba(0,0,0,.10); cursor: pointer; }
+  .sw.sel { outline: 2px solid rgb(var(--accent)); outline-offset: 2px; }
+
+  .ico { flex: 0 0 auto; stroke: rgb(var(--accent)); stroke-width: 1.6; fill: none; stroke-linejoin: round; stroke-linecap: round; }
+  .ico .hollow { fill: var(--fill); }
+
+  aside { padding: 20px 18px; background: #fff; border-left: 1px solid #dbe3ec; overflow-y: auto; }
+  h1 { font-size: 12px; letter-spacing: .16em; text-transform: uppercase; color: #1496dc; margin: 0 0 14px; }
+  .hint { font-size: 11px; color: #8a97a6; line-height: 1.6; }
+</style>
+</head>
+<body>
+  <div id="stage">
+    <div class="pane" id="pane">
+
+      <div class="phead">
+        <svg class="ico" width="20" height="20" viewBox="0 0 24 24">
+          <rect class="hollow" x="4" y="4" width="16" height="16" rx="3"/>
+          <circle cx="9" cy="9" r="1.4" fill="rgb(var(--accent))" stroke="none"/>
+          <circle cx="15" cy="9" r="1.4" fill="rgb(var(--accent))" stroke="none"/>
+          <circle cx="9" cy="15" r="1.4" fill="rgb(var(--accent))" stroke="none"/>
+        </svg>
+        <div class="meta">
+          <div class="stereo">&laquo;node design&raquo;</div>
+          <div class="name">Entity</div>
+        </div>
+      </div>
+
+      <div class="editor">
+
+        <!-- live preview on an inset canvas -->
+        <div class="stagecell">
+          <div class="node hdr-band c-at-vis c-at-ty c-op-vis c-op-par c-op-ret" id="node">
+            <div class="ports off" data-comp="ports"><i class="l1"></i><i class="l2"></i><i class="r1"></i></div>
+            <div class="hdr" data-comp="header">
+              <div class="stereo">&laquo;entity&raquo;</div>
+              <div class="name">Order</div>
+            </div>
+            <div class="comp" data-comp="attributes">
+              <div class="row"><span class="vis">+</span> <span class="nm">id</span><span class="ty"> : UUID</span><span class="card"> [1]</span></div>
+              <div class="row"><span class="vis">+</span> <span class="nm">total</span><span class="ty"> : Money</span><span class="card"> [1]</span></div>
+              <div class="row"><span class="vis">-</span> <span class="nm">items</span><span class="ty"> : Line</span><span class="card"> [1..*]</span></div>
+            </div>
+            <div class="comp off" data-comp="operations">
+              <div class="row"><span class="vis">+</span> <span class="nm">place</span><span class="params">(pay)</span><span class="ret"> : void</span></div>
+              <div class="row"><span class="vis">+</span> <span class="nm">cancel</span><span class="params">()</span><span class="ret"> : void</span></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- controls -->
+        <div class="controls">
+
+          <div class="sect">
+            <div class="sect-h">Appearance</div>
+            <div class="field">
+              <label>Accent</label>
+              <div class="accrow" id="swatches"></div>
+            </div>
+          </div>
+
+          <div class="sect">
+            <div class="sect-h">Header</div>
+            <div class="field">
+              <label>Show</label>
+              <div class="toggle on" data-comp="header"></div>
+            </div>
+            <div class="field" id="hdrStyle">
+              <label>Style</label>
+              <div class="seg" data-cls="hdr">
+                <button class="on" data-v="hdr-band">Band</button>
+                <button data-v="hdr-fill">Fill</button>
+              </div>
+            </div>
+          </div>
+
+          <div class="sect">
+            <div class="sect-h">Body &middot; drag to reorder</div>
+            <div class="anatomy" id="anatomy">
+
+              <div class="item" draggable="true" data-comp="attributes">
+                <div class="crow">
+                  <svg class="grip" width="14" height="14" viewBox="0 0 24 24"><line x1="6" y1="9" x2="18" y2="9"/><line x1="6" y1="15" x2="18" y2="15"/></svg>
+                  <span class="clbl">Attributes</span>
+                  <div class="toggle on"></div>
+                </div>
+                <div class="cols">
+                  <span class="col lock">Name</span>
+                  <span class="col on" data-cls="c-at-vis">Visibility</span>
+                  <span class="col on" data-cls="c-at-ty">Type</span>
+                  <span class="col" data-cls="c-at-card">Cardinality</span>
+                </div>
+              </div>
+
+              <div class="item off" draggable="true" data-comp="operations">
+                <div class="crow">
+                  <svg class="grip" width="14" height="14" viewBox="0 0 24 24"><line x1="6" y1="9" x2="18" y2="9"/><line x1="6" y1="15" x2="18" y2="15"/></svg>
+                  <span class="clbl">Operations</span>
+                  <div class="toggle"></div>
+                </div>
+                <div class="cols">
+                  <span class="col lock">Name</span>
+                  <span class="col on" data-cls="c-op-vis">Visibility</span>
+                  <span class="col on" data-cls="c-op-par">Params</span>
+                  <span class="col on" data-cls="c-op-ret">Return</span>
+                </div>
+              </div>
+
+              <div class="item" draggable="true" data-comp="ports">
+                <div class="crow">
+                  <svg class="grip" width="14" height="14" viewBox="0 0 24 24"><line x1="6" y1="9" x2="18" y2="9"/><line x1="6" y1="15" x2="18" y2="15"/></svg>
+                  <span class="clbl">Ports</span>
+                  <div class="toggle"></div>
+                </div>
+              </div>
+
+            </div>
+          </div>
+
+          <div class="sect">
+            <div class="sect-h">Allowed stereotypes</div>
+            <div class="tagfield">
+              <span class="chip slant">entity<span class="x"><svg width="9" height="9" viewBox="0 0 24 24"><line class="xg" x1="6" y1="6" x2="18" y2="18"/><line class="xg" x1="18" y1="6" x2="6" y2="18"/></svg></span></span>
+              <span class="chip slant">aggregate<span class="x"><svg width="9" height="9" viewBox="0 0 24 24"><line class="xg" x1="6" y1="6" x2="18" y2="18"/><line class="xg" x1="18" y1="6" x2="6" y2="18"/></svg></span></span>
+              <input class="entry" placeholder="Add stereotype&hellip;">
+            </div>
+            <p class="fieldnote">Empty allows any &mdash; or none, if the type carries no stereotype.</p>
+          </div>
+
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <aside>
+    <h1>HUD node design</h1>
+    <p class="hint">
+      A node-type design editor in the shared HUD material: frosted panel, thin
+      source-bright frame, low glow. A live preview sits on its own inset canvas
+      and reacts to every control. <b>Appearance</b> leads with the accent
+      identity colour &mdash; the thing you change most. <b>Header</b> sets
+      whether the top band shows and its treatment (Band / Fill). <b>Body</b>
+      lists the compartments &mdash; Attributes, Operations, Ports &mdash;
+      drag-reorderable by the grip, the order mirroring straight into the
+      preview; each toggles on/off and a disabled one is simply not rendered, its
+      own options dimming to inert (Operations, here). Under Attributes and
+      Operations, column chips choose which
+      member fields show: Name is locked on, then Visibility, Type, Cardinality
+      (attributes) or Visibility, Params, Return (operations). <b>Allowed
+      stereotypes</b> reuses the slant-tag editor &mdash; the stereotypes an
+      instance may carry (the slant reads as guillemets, so the &laquo;&raquo;
+      drop away); empty allows any. Corner radius, border
+      weight and glow are canvas-wide Atlas theme, set once elsewhere.
+    </p>
+  </aside>
+
+<script>
+  const pane = document.getElementById('pane');
+  const node = document.getElementById('node');
+  const list = document.getElementById('anatomy');
+
+  // accent swatches
+  const colors = [
+    ['Blue','20, 150, 220'], ['Cyan','0, 180, 210'], ['Teal','20, 190, 160'],
+    ['Indigo','90, 110, 240'], ['Amber','230, 150, 20'], ['Green','60, 190, 90'],
+    ['Rose','235, 70, 120'], ['Slate','100, 116, 139'],
+  ];
+  const sw = document.getElementById('swatches');
+  colors.forEach((c,i)=>{ const d=document.createElement('div');
+    d.className='sw'+(i===0?' sel':''); d.style.background=`rgb(${c[1]})`; d.title=c[0];
+    d.onclick=()=>{ pane.style.setProperty('--accent', c[1]);
+      [...sw.children].forEach(e=>e.classList.remove('sel')); d.classList.add('sel'); };
+    sw.appendChild(d); });
+
+  // compartment order in the list mirrors into the preview (ports nubs stay put)
+  function syncPreview(){
+    [...list.querySelectorAll('.item')].forEach(it=>{
+      if(it.dataset.comp==='ports') return;
+      const el = node.querySelector(`[data-comp="${it.dataset.comp}"]`);
+      if(el) node.appendChild(el);
+    });
+  }
+
+  // compartment toggles → show / hide in preview (disabled = not rendered)
+  document.querySelectorAll('.toggle[data-comp], .item .toggle').forEach(t=>{
+    t.onclick=()=>{
+      t.classList.toggle('on');
+      const on = t.classList.contains('on');
+      const comp = t.dataset.comp || t.closest('[data-comp]').dataset.comp;
+      const el = node.querySelector(`[data-comp="${comp}"]`);
+      if(el) el.classList.toggle('off', !on);
+      // dim this compartment's own options while it's off
+      const item = t.closest('.item');
+      if(item) item.classList.toggle('off', !on);
+      if(comp==='header') document.getElementById('hdrStyle').classList.toggle('faded', !on);
+    };
+  });
+
+  // column chips → toggle a node class that hides/shows the member field
+  document.querySelectorAll('.col[data-cls]').forEach(c=>{
+    c.onclick=()=>{ c.classList.toggle('on'); node.classList.toggle(c.dataset.cls, c.classList.contains('on')); };
+  });
+
+  // header treatment segmented control
+  document.querySelectorAll('.seg').forEach(seg=>{
+    seg.querySelectorAll('button').forEach(b=> b.onclick=()=>{
+      seg.querySelectorAll('button').forEach(x=>x.classList.remove('on')); b.classList.add('on');
+      if(seg.dataset.cls==='hdr'){ node.classList.remove('hdr-band','hdr-fill'); node.classList.add(b.dataset.v); }
+    });
+  });
+
+  // stereotype chips: remove on ✕ click
+  document.querySelectorAll('.tagfield .chip .x').forEach(x=>
+    x.onclick=()=> x.closest('.chip').remove());
+
+  // drag-reorder the anatomy list, mirror into the preview
+  let dragEl = null;
+  list.querySelectorAll('.item').forEach(it=>{
+    it.addEventListener('dragstart', ()=>{ dragEl = it; it.classList.add('dragging'); });
+    it.addEventListener('dragend',   ()=>{ it.classList.remove('dragging'); syncPreview(); });
+  });
+  list.addEventListener('dragover', e=>{
+    e.preventDefault();
+    const els = [...list.querySelectorAll('.item:not(.dragging)')];
+    const after = els.reduce((closest, child)=>{
+      const box = child.getBoundingClientRect();
+      const offset = e.clientY - box.top - box.height/2;
+      return (offset < 0 && offset > closest.offset) ? {offset, el: child} : closest;
+    }, {offset: -Infinity}).el;
+    if(!dragEl) return;
+    if(after) list.insertBefore(dragEl, after); else list.appendChild(dragEl);
+  });
+</script>
+</body>
+</html>
