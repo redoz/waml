@@ -34,9 +34,9 @@ pub fn accent_bucket(ty: &ElementType) -> AccentBucket {
         ElementType::Uml(UmlMetaclass::Actor) => AccentBucket::Actor,
         ElementType::Uml(UmlMetaclass::UseCase) => AccentBucket::UseCase,
         ElementType::Uml(UmlMetaclass::Package) => AccentBucket::Package,
-        ElementType::Uml(UmlMetaclass::Class) | ElementType::Uml(UmlMetaclass::Association) => {
-            AccentBucket::None
-        }
+        ElementType::Uml(UmlMetaclass::Class)
+        | ElementType::Uml(UmlMetaclass::Association)
+        | ElementType::Uml(UmlMetaclass::InstanceSpecification) => AccentBucket::None,
         ElementType::Behavior(_) => AccentBucket::Behavior,
         ElementType::Diagram => AccentBucket::None,
         ElementType::Unknown(_) => AccentBucket::Unknown,
@@ -55,6 +55,7 @@ pub fn stereotype_label(ty: &ElementType) -> Option<&'static str> {
         ElementType::Uml(UmlMetaclass::UseCase) => Some("useCase"),
         ElementType::Uml(UmlMetaclass::Package) => Some("package"),
         ElementType::Uml(UmlMetaclass::Class) | ElementType::Uml(UmlMetaclass::Association) => None,
+        ElementType::Uml(UmlMetaclass::InstanceSpecification) => Some("instance"),
         ElementType::Behavior(BehaviorKind::Activity) => Some("activity"),
         ElementType::Behavior(BehaviorKind::StateMachine) => Some("stateMachine"),
         ElementType::Behavior(BehaviorKind::Sequence) => Some("sequence"),

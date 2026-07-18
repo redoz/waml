@@ -253,6 +253,7 @@ pub enum UmlMetaclass {
     Association,
     Actor,
     UseCase,
+    InstanceSpecification,
 }
 
 impl UmlMetaclass {
@@ -267,6 +268,7 @@ impl UmlMetaclass {
             "Association" => Some(UmlMetaclass::Association),
             "Actor" => Some(UmlMetaclass::Actor),
             "UseCase" => Some(UmlMetaclass::UseCase),
+            "InstanceSpecification" => Some(UmlMetaclass::InstanceSpecification),
             _ => None,
         }
     }
@@ -281,6 +283,7 @@ impl UmlMetaclass {
             UmlMetaclass::Association => "Association",
             UmlMetaclass::Actor => "Actor",
             UmlMetaclass::UseCase => "UseCase",
+            UmlMetaclass::InstanceSpecification => "InstanceSpecification",
         }
     }
 }
@@ -765,7 +768,9 @@ impl ElementType {
                 | UmlMetaclass::Actor
                 | UmlMetaclass::UseCase
                 | UmlMetaclass::Association => true,
-                UmlMetaclass::Package | UmlMetaclass::Note => false,
+                UmlMetaclass::Package
+                | UmlMetaclass::Note
+                | UmlMetaclass::InstanceSpecification => false,
             },
             // Behavior ⊂ Class: Activity / Interaction (Sequence) / StateMachine
             // are all Classifiers.
@@ -1136,6 +1141,7 @@ mod tests {
         // Not classifiers.
         assert!(!ElementType::Uml(UmlMetaclass::Package).is_classifier());
         assert!(!ElementType::Uml(UmlMetaclass::Note).is_classifier());
+        assert!(!ElementType::Uml(UmlMetaclass::InstanceSpecification).is_classifier());
         assert!(!ElementType::Diagram.is_classifier());
         assert!(!ElementType::Unknown("bpmn.Task".to_string()).is_classifier());
     }
@@ -1151,7 +1157,24 @@ mod tests {
         assert!(!ElementType::Uml(UmlMetaclass::Class).is_view());
         assert!(!ElementType::Uml(UmlMetaclass::Note).is_view());
         assert!(!ElementType::Uml(UmlMetaclass::Package).is_view());
+        assert!(!ElementType::Uml(UmlMetaclass::InstanceSpecification).is_view());
         assert!(!ElementType::Unknown("bpmn.Task".to_string()).is_view());
+    }
+
+    #[test]
+    fn instance_specification_metaclass_round_trips_and_is_not_a_classifier() {
+        assert_eq!(
+            ElementType::parse("uml.InstanceSpecification"),
+            ElementType::Uml(UmlMetaclass::InstanceSpecification)
+        );
+        assert_eq!(
+            ElementType::Uml(UmlMetaclass::InstanceSpecification).as_str(),
+            "uml.InstanceSpecification"
+        );
+        // An instance is NOT a classifier (spec §3.1) and NOT a view (it is a
+        // pool member).
+        assert!(!ElementType::Uml(UmlMetaclass::InstanceSpecification).is_classifier());
+        assert!(!ElementType::Uml(UmlMetaclass::InstanceSpecification).is_view());
     }
 
     #[test]

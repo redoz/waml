@@ -35,9 +35,10 @@ pub struct ProjectTree {
 /// row glyph (`tree_panel::draw_row_icon`) and click routing. Written without
 /// a `_ =>` catch-all on the `Uml` arm so a new metaclass forces a decision
 /// here. Interface/Enum/DataType get their own glyph-bearing variant (matching
-/// `node_style::AccentBucket`'s granularity); Association/Actor/UseCase still
-/// fold into the plain `Class` glyph, and `Sequence` behaviors get their own
-/// glyph while other behavior kinds share the generic `Behavior` one.
+/// `node_style::AccentBucket`'s granularity); Association/Actor/UseCase/
+/// InstanceSpecification still fold into the plain `Class` glyph, and
+/// `Sequence` behaviors get their own glyph while other behavior kinds share
+/// the generic `Behavior` one.
 fn kind_of(ty: &ElementType) -> TreeKind {
     match ty {
         ElementType::Uml(UmlMetaclass::Package) => TreeKind::Package,
@@ -49,7 +50,8 @@ fn kind_of(ty: &ElementType) -> TreeKind {
             UmlMetaclass::Class
             | UmlMetaclass::Association
             | UmlMetaclass::Actor
-            | UmlMetaclass::UseCase,
+            | UmlMetaclass::UseCase
+            | UmlMetaclass::InstanceSpecification,
         ) => TreeKind::Class,
         ElementType::Behavior(BehaviorKind::Sequence) => TreeKind::Sequence,
         ElementType::Behavior(_) => TreeKind::Behavior,
