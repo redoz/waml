@@ -31,6 +31,11 @@ script_mod! {
         accent: uniform(atlas.accent)
         border_hi: uniform(atlas.frame_hi)
         border_lo: uniform(atlas.frame_lo)
+        // Fill gradient stops. Light: field_bg #xffffff -> surface faint-cool,
+        // i.e. the mock's white -> .74. Dark: lifted slate -> slate, so the
+        // button reads as dark glass instead of a white slab.
+        fill_hi: uniform(atlas.field_bg)
+        fill_lo: uniform(atlas.surface)
         hover: uniform(0.0)
         flare: uniform(0.0)
         reveal: uniform(0.0)
@@ -41,11 +46,9 @@ script_mod! {
             let inset = 1.5
             let w = self.rect_size.x - inset * 2.0
             let h = self.rect_size.y - inset * 2.0
-            // White -> faint-cool vertical fill (mock: white .92 -> .74); the
-            // press flare lifts it briefly toward a bright accent tint.
-            let white = vec4(1.0, 1.0, 1.0, 1.0)
-            let cool = vec4(0.957, 0.973, 0.988, 1.0)
-            let fill = mix(mix(white, cool, self.pos.y), mix(white, self.accent, 0.14), self.flare * 0.5)
+            // Vertical fill from the two themed stops (mock: white .92 -> .74);
+            // the press flare lifts it briefly toward a bright accent tint.
+            let fill = mix(mix(self.fill_hi, self.fill_lo, self.pos.y), mix(self.fill_hi, self.accent, 0.14), self.flare * 0.5)
             sdf.rect(inset, inset, w, h)
             sdf.fill_keep(fill)
             // Rest frame: the source-bright 150deg fade, thickening on hover.

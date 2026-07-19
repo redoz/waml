@@ -23,22 +23,26 @@ use makepad_widgets::*;
 script_mod! {
     use mod.prelude.widgets_internal.*
     use mod.draw
+    use mod.atlas
 
     mod.draw.LogoMark = mod.draw.DrawQuad{
+        // Greyscale ramp stops, themed (light: dark greys; dark: light silver).
+        seg_hi: uniform(atlas.logo_hi)
+        seg_mid: uniform(atlas.logo_mid)
+        seg_lo: uniform(atlas.logo_lo)
         pixel: fn() {
             let r = self.rect_size
             let p = self.pos * r
             let aa = 1.2
 
-            // Per-segment fill colors (recolor here). Greyscale ramp: value is
-            // the luminance of each stroke, left-to-right (seg1..seg6).
-            // 3-level ramp, pattern 1,3,3,2,2,1 (1 lightest, 3 darkest).
-            let k1 = vec3(0.40, 0.40, 0.40)
-            let k2 = vec3(0.15, 0.15, 0.15)
-            let k3 = vec3(0.15, 0.15, 0.15)
-            let k4 = vec3(0.28, 0.28, 0.28)
-            let k5 = vec3(0.28, 0.28, 0.28)
-            let k6 = vec3(0.40, 0.40, 0.40)
+            // Per-segment fill colors from the themed ramp: 3 luminance stops,
+            // pattern 1,3,3,2,2,1 (hi lightest, lo darkest), left-to-right.
+            let k1 = vec3(self.seg_hi.x, self.seg_hi.y, self.seg_hi.z)
+            let k2 = vec3(self.seg_lo.x, self.seg_lo.y, self.seg_lo.z)
+            let k3 = vec3(self.seg_lo.x, self.seg_lo.y, self.seg_lo.z)
+            let k4 = vec3(self.seg_mid.x, self.seg_mid.y, self.seg_mid.z)
+            let k5 = vec3(self.seg_mid.x, self.seg_mid.y, self.seg_mid.z)
+            let k6 = vec3(self.seg_hi.x, self.seg_hi.y, self.seg_hi.z)
 
             // ---- seg2 (thin up-stroke) ----
             let s2a = vec2(0.3142, 1.0000) * r

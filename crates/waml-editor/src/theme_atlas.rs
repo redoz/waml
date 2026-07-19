@@ -62,6 +62,13 @@ script_mod! {
         text: #x26313f
         text_dim: #x8a97a6
 
+        // Wordmark logo (`logo.rs`) greyscale ramp: three luminance stops
+        // (lightest / mid / darkest) for the folded-W bars. Dark mode flips to
+        // a light silver so the mark reads on its ground.
+        logo_hi: #x666666
+        logo_mid: #x474747
+        logo_lo: #x262626
+
         // Node-kind accent bucket colors (`node_style::AccentBucket`), taken
         // verbatim from the HUD swatch set (hud-icons-mock.html /
         // hud-inspector-mock.html / hud-node-mock.html JS `colors` array).
@@ -75,7 +82,68 @@ script_mod! {
         bucket_slate: #x64748b
     }
 
-    // The one theme in play. Dark mode later = add `mod.themes.atlas_dark`
-    // with the same field names and repoint this alias -- no widget changes.
+    // Dark mode. Same field names as `atlas_light`, so no widget script_mod
+    // changes are needed -- `App::script_mod` repoints `mod.atlas` at this
+    // block when the persisted theme is Dark (see `config::ThemeMode`).
+    //
+    // Anchored on five picked colors: two dark grounds (#x23001e plum,
+    // #x284b63 slate), one teal accent (#x58a4b0), and two light texts
+    // (#xa9bcd0 dim, #xd8dbe2 primary). The remaining tokens are shades
+    // derived off those anchors, keeping the light theme's relative
+    // luminance ordering (editable field brightest, canvas ground darkest).
+    mod.themes.atlas_dark = {
+        let atlas = me
+
+        // Backdrops (darkest -> up): canvas below panels, ground the app
+        // base, group_fill the lifted plum behind a package/group frame.
+        ground: #x23001e
+        canvas_ground: #x1b0016
+        group_fill: #x2e0a28
+
+        // Glass surfaces: slate panels; field_bg is a lifted slate (the
+        // most-elevated / "brightest" editable control, mirroring light's
+        // #xffffff-over-surface relationship).
+        surface: #x284b63
+        surface_border: #x58a4b059
+        field_bg: #x33607d
+
+        // Teal accent; selection tint bumped slightly vs light so it reads
+        // on the dark ground.
+        accent: #x58a4b0
+        accent_soft: #x58a4b024
+        selection: #x58a4b033
+        frame_hi: #x58a4b0f2
+        frame_lo: #x58a4b080
+
+        // Modal scrim: dim cool-dark, mode-invariant (same as light).
+        scrim: #x1b2836b3
+
+        // Destructive affordance (rose reads on dark unchanged).
+        danger: #xeb4678
+
+        // Text.
+        text: #xd8dbe2
+        text_dim: #xa9bcd0
+
+        // Wordmark logo ramp: light silver, cool-tinted to match the palette,
+        // so the folded-W reads on the plum ground.
+        logo_hi: #xe4e7ec
+        logo_mid: #xb8bfc9
+        logo_lo: #x8b95a3
+
+        // Node-kind accent buckets: saturated HUD swatches, unchanged --
+        // they read on both grounds.
+        bucket_blue: #x1496dc
+        bucket_cyan: #x00b4d2
+        bucket_teal: #x14bea0
+        bucket_indigo: #x5a6ef0
+        bucket_amber: #xe69614
+        bucket_green: #x3cbe5a
+        bucket_rose: #xeb4678
+        bucket_slate: #x64748b
+    }
+
+    // Default alias points at light; `App::script_mod` repoints it at
+    // `atlas_dark` when the persisted `ThemeMode` is Dark.
     mod.atlas = mod.themes.atlas_light
 }

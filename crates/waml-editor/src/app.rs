@@ -891,6 +891,14 @@ impl AppMain for App {
     fn script_mod(vm: &mut ScriptVm) -> ScriptValue {
         crate::makepad_widgets::script_mod(vm);
         crate::theme_atlas::script_mod(vm);
+        // Repoint `mod.atlas` at the dark block when the persisted theme is
+        // Dark. Re-read on every script_mod so a live-edit reload picks up a
+        // toggle. `atlas_light` stays the default alias inside theme_atlas.
+        if crate::config::theme() == crate::config::ThemeMode::Dark {
+            script_eval!(vm, {
+                mod.atlas = mod.themes.atlas_dark
+            });
+        }
         crate::icons::script_mod(vm);
         crate::frame::script_mod(vm);
         crate::icon::script_mod(vm);
