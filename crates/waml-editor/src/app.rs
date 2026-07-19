@@ -315,11 +315,9 @@ impl App {
             log!("switch_diagram: no diagram with key {key:?}");
             return;
         };
-        if let Some(base) = self.tabs.tabs.first_mut() {
-            base.key = diagram.key.clone();
-            base.title = diagram.title.clone();
-        }
-        let base_id = self.tabs.tabs.first().map(|t| t.id).unwrap_or_default();
+        let base_id = self
+            .tabs
+            .set_diagram_base(diagram.key.clone(), diagram.title.clone());
         self.tabs.activate(base_id);
         self.refresh_doc_tabs(cx);
         self.sync_active_tab(cx);
@@ -332,7 +330,8 @@ impl App {
         let title = self
             .tabs
             .tabs
-            .first()
+            .iter()
+            .find(|t| t.kind == TabKind::Diagram)
             .map(|t| t.title.clone())
             .unwrap_or_default();
         if let Some(mut switcher) = self
@@ -520,7 +519,8 @@ impl MatchEvent for App {
             let current = self
                 .tabs
                 .tabs
-                .first()
+                .iter()
+                .find(|t| t.kind == TabKind::Diagram)
                 .map(|t| t.key.clone())
                 .unwrap_or_default();
             if let Some(next) = crate::diagram_switcher::next_diagram_key(&keys, &current) {
