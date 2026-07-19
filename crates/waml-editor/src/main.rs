@@ -5,6 +5,7 @@ mod app;
 mod camera;
 mod canvas;
 mod card;
+mod caption_button;
 mod cli;
 mod config;
 mod action_link;
