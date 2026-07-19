@@ -56,10 +56,17 @@ script_mod! {
 pub struct App {
     #[live]
     ui: WidgetRef,
+    // First-frame kick: the SDF DrawQuad bg doesn't paint until something
+    // invalidates its area (else it stays blank until the first hover), so
+    // force one redraw once the UI is up.
+    #[rust]
+    kick: NextFrame,
 }
 
 impl MatchEvent for App {
-    fn handle_startup(&mut self, _cx: &mut Cx) {}
+    fn handle_startup(&mut self, cx: &mut Cx) {
+        self.kick = cx.new_next_frame();
+    }
 }
 
 impl AppMain for App {
@@ -70,6 +77,9 @@ impl AppMain for App {
     }
 
     fn handle_event(&mut self, cx: &mut Cx, event: &Event) {
+        if self.kick.is_event(event).is_some() {
+            self.ui.redraw(cx);
+        }
         self.match_event(cx, event);
         self.ui.handle_event(cx, event, &mut Scope::empty());
     }
