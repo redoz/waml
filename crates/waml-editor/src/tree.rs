@@ -39,7 +39,7 @@ pub struct ProjectTree {
 /// InstanceSpecification still fold into the plain `Class` glyph, and
 /// `Sequence` behaviors get their own glyph while other behavior kinds share
 /// the generic `Behavior` one.
-fn kind_of(ty: &ElementType) -> TreeKind {
+pub fn kind_of(ty: &ElementType) -> TreeKind {
     match ty {
         ElementType::Uml(UmlMetaclass::Package) => TreeKind::Package,
         ElementType::Uml(UmlMetaclass::Note) => TreeKind::Note,

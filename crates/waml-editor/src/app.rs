@@ -31,17 +31,25 @@ script_mod! {
                     visible: false
                     flow: Right
                     height: Fit
-                    draw_bg.color: atlas.surface
+                    draw_bg.color: atlas.field_bg
+                    // Fixed-width nav cluster so the first doc tab's left edge
+                    // lines up with the project tree's right edge (12 margin +
+                    // 280 tree width = 292).
+                    nav := View{
+                        width: 292.0
+                        height: Fill
+                        flow: Right
+                        align: Align{y: 0.5}
                     wordmark := View{
                         width: Fit
                         height: Fill
                         align: Align{x: 0.0, y: 0.5}
-                        margin: Inset{left: 5.0, top: 5.0}
-                        padding: Inset{left: 12.0, right: 10.0, top: 8.0, bottom: 8.0}
+                        margin: Inset{left: 2.0}
+                        padding: Inset{left: 6.0, right: 10.0}
                         Label{
                             text: "WAML"
                             draw_text +: {
-                                color: atlas.accent
+                                color: atlas.text
                                 text_style: theme.font_bold{font_size: 22}
                             }
                         }
@@ -66,9 +74,18 @@ script_mod! {
                             text: ""
                             draw_text +: {
                                 color: atlas.text_dim
-                                text_style: theme.font_regular{font_size: 13}
+                                // Inline font with the same asc/desc trim as the
+                                // doc tabs so the metric box centers on the glyphs
+                                // (theme.font_regular rides high when box-centered).
+                                text_style: TextStyle{
+                                    font_size: 13
+                                    font_family: FontFamily{
+                                        latin := FontMember{res: crate_resource("self:resources/fonts/IBM_Plex_Sans/IBMPlexSans-Regular.ttf") asc: -0.1 desc: 0.0}
+                                    }
+                                }
                             }
                         }
+                    }
                     }
                     doc_tabs := DocTabs{
                         width: Fill
@@ -471,7 +488,8 @@ impl MatchEvent for App {
                     .title
                     .clone()
                     .unwrap_or_else(|| node.key.clone());
-                self.tabs.open_preview(key, title);
+                self.tabs
+                    .open_preview(key, title, crate::tree::kind_of(&node.ty));
                 self.refresh_doc_tabs(cx);
                 self.sync_active_tab(cx);
             }
@@ -660,5 +678,24 @@ impl AppMain for App {
         }
         self.match_event(cx, event);
         self.ui.handle_event(cx, event, &mut Scope::empty());
+
+        // The Window widget marks the entire caption bar (minus the window
+        // min/max/close buttons) as an OS window-drag region, which swallows
+        // pointer events over the doc-tab strip living there -- tab clicks and
+        // hover never reach the widget. Re-answer the drag query as `Client`
+        // over the tab strip so it behaves as a normal interactive area. This
+        // runs after `ui.handle_event`, so this `set` overrides the Window's
+        // `Caption` answer (last write wins before the platform reads it).
+        if let Event::WindowDragQuery(dq) = event {
+            let over_tab = self
+                .ui
+                .widget(cx, ids!(doc_tabs))
+                .borrow::<crate::doc_tabs::DocTabs>()
+                .map(|tabs| tabs.hits_any_tab(dq.abs))
+                .unwrap_or(false);
+            if over_tab {
+                dq.response.set(WindowDragQueryResponse::Client);
+            }
+        }
     }
 }

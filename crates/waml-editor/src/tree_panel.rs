@@ -175,6 +175,26 @@ pub struct TreeIcons {
     note: DrawSvg,
 }
 
+impl TreeIcons {
+    /// The glyph `DrawSvg` for `kind`, or `None` for `Unknown` (which has no
+    /// matching HUD glyph). Shared by the tree rows and the doc-tab strip so
+    /// both pick from one icon set.
+    pub fn icon_for(&mut self, kind: TreeKind) -> Option<&mut DrawSvg> {
+        Some(match kind {
+            TreeKind::Class => &mut self.class,
+            TreeKind::Interface => &mut self.interface,
+            TreeKind::Enum => &mut self.enum_type,
+            TreeKind::DataType => &mut self.datatype,
+            TreeKind::Package => &mut self.package,
+            TreeKind::Diagram => &mut self.diagram,
+            TreeKind::Behavior => &mut self.flow,
+            TreeKind::Sequence => &mut self.sequence,
+            TreeKind::Note => &mut self.note,
+            TreeKind::Unknown => return None,
+        })
+    }
+}
+
 /// Row height in the `FileTree` DSL (`node_height: 30.0`); used to vertically
 /// center the icon within each row.
 const ROW_HEIGHT: f64 = 30.0;
@@ -236,17 +256,8 @@ fn draw_row_icon(
     row_top: Vec2d,
     depth: usize,
 ) {
-    let icon = match kind {
-        TreeKind::Class => &mut icons.class,
-        TreeKind::Interface => &mut icons.interface,
-        TreeKind::Enum => &mut icons.enum_type,
-        TreeKind::DataType => &mut icons.datatype,
-        TreeKind::Package => &mut icons.package,
-        TreeKind::Diagram => &mut icons.diagram,
-        TreeKind::Behavior => &mut icons.flow,
-        TreeKind::Sequence => &mut icons.sequence,
-        TreeKind::Note => &mut icons.note,
-        TreeKind::Unknown => return,
+    let Some(icon) = icons.icon_for(kind) else {
+        return;
     };
     let x = (row_top.x + ICON_LEFT_MARGIN + depth as f64 * ICON_DEPTH_INDENT).round();
     let y = (row_top.y + (ROW_HEIGHT - ICON_SIZE) / 2.0).round();

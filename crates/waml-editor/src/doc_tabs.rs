@@ -6,6 +6,8 @@
 //! tracked positions, click regions captured during `draw_walk` and hit-tested
 //! against on `FingerUp`).
 
+use crate::tree::TreeKind;
+use crate::tree_panel::TreeIcons;
 use makepad_widgets::*;
 
 script_mod! {
@@ -19,25 +21,24 @@ script_mod! {
     mod.widgets.DocTabs = set_type_default() do mod.widgets.DocTabsBase{
         width: Fill
         height: 34.0
-        draw_bg +: { color: atlas.surface }
+        draw_bg +: { color: atlas.field_bg }
         draw_edge +: { color: atlas.frame_hi }
-        draw_tab +: { color: atlas.field_bg }
+        draw_tab +: { color: atlas.canvas_ground }
         draw_accent +: { color: atlas.accent }
         draw_divider +: { color: atlas.surface_border }
+        // Inactive-tab hover wash: a translucent accent tint so the pointer
+        // clearly reads as "clickable" against the white bar.
+        draw_hover +: { color: atlas.selection }
+        // Active tab: heavier weight (fork theme bold sans) so the focused
+        // document reads as selected even before the accent strip registers.
         draw_text_active +: {
             color: atlas.text
-            text_style: TextStyle{
-                font_size: 12
-                font_family: FontFamily{
-                    latin := FontMember{res: crate_resource("self:resources/fonts/IBM_Plex_Sans/IBMPlexSans-Regular.ttf") asc: -0.1 desc: 0.0}
-                }
-                line_spacing: 1.2
-            }
+            text_style: theme.font_bold{font_size: 11}
         }
         draw_text_persisted +: {
             color: atlas.text_dim
             text_style: TextStyle{
-                font_size: 12
+                font_size: 11
                 font_family: FontFamily{
                     latin := FontMember{res: crate_resource("self:resources/fonts/IBM_Plex_Sans/IBMPlexSans-Regular.ttf") asc: -0.1 desc: 0.0}
                 }
@@ -47,7 +48,7 @@ script_mod! {
         draw_text_preview +: {
             color: atlas.text_dim
             text_style: TextStyle{
-                font_size: 12
+                font_size: 11
                 font_family: FontFamily{
                     latin := FontMember{res: crate_resource("self:resources/fonts/IBM_Plex_Sans/IBMPlexSans-Regular.ttf") asc: -0.1 desc: 0.0}
                 }
@@ -80,6 +81,9 @@ pub struct DocTab {
     pub key: String,
     pub title: String,
     pub kind: TabKind,
+    /// The node's tree kind, used to pick the leading glyph (same icon set as
+    /// the project tree). The Diagram base tab carries `TreeKind::Diagram`.
+    pub node_kind: TreeKind,
     /// A preview tab is replaced in place by the next classifier click; an
     /// inline-edit commit "pins" it (`promote`), after which it behaves like
     /// any other persisted tab.
@@ -115,6 +119,7 @@ impl OpenTabs {
             key,
             title: title.into(),
             kind: TabKind::Diagram,
+            node_kind: TreeKind::Diagram,
             preview: false,
         };
         OpenTabs {
@@ -130,7 +135,12 @@ impl OpenTabs {
     /// A classifier single-click: replace the single preview slot in place
     /// (never duplicates, never piles up), or insert one right after the base
     /// if none exists yet. Always activates the resulting tab.
-    pub fn open_preview(&mut self, key: impl Into<String>, title: impl Into<String>) -> LiveId {
+    pub fn open_preview(
+        &mut self,
+        key: impl Into<String>,
+        title: impl Into<String>,
+        node_kind: TreeKind,
+    ) -> LiveId {
         let key = key.into();
         let title = title.into();
         let id = classifier_tab_id(&key);
@@ -140,6 +150,7 @@ impl OpenTabs {
                 key,
                 title,
                 kind: TabKind::Classifier,
+                node_kind,
                 preview: true,
             };
         } else {
@@ -150,6 +161,7 @@ impl OpenTabs {
                 key,
                 title,
                 kind: TabKind::Classifier,
+                node_kind,
                 preview: true,
             });
         }
@@ -219,9 +231,13 @@ const CLOSE_W: f64 = 22.0;
 const TEXT_PAD: f64 = 12.0;
 /// Gap between a tab's label and its close hit-area.
 const CLOSE_GAP: f64 = 6.0;
+/// Leading per-kind glyph, matched to the tree's `ICON_SIZE`.
+const ICON_SIZE: f64 = 14.0;
+/// Gap between the leading glyph and the tab label.
+const ICON_GAP: f64 = 6.0;
 /// Inset from the bar's top edge down to the tab card, so the card's top
 /// accent line is visible and tabs float below the window's top edge.
-const TOP_MARGIN: f64 = 6.0;
+const TOP_MARGIN: f64 = 14.0;
 const MAX_TITLE_CHARS: usize = 18;
 
 fn truncate_title(s: &str) -> String {
@@ -271,6 +287,10 @@ pub struct DocTabs {
     #[redraw]
     #[live]
     draw_divider: DrawColor,
+    /// Hover wash under the pointed-at inactive tab.
+    #[redraw]
+    #[live]
+    draw_hover: DrawColor,
     #[redraw]
     #[live]
     draw_text_active: DrawText,
@@ -283,6 +303,10 @@ pub struct DocTabs {
     #[redraw]
     #[live]
     draw_close: DrawText,
+    /// Per-kind leading glyph set, reusing the project tree's icon material so
+    /// tabs and tree read as one system.
+    #[live]
+    icons: TreeIcons,
 
     #[rust]
     tabs: Vec<DocTab>,
@@ -292,13 +316,28 @@ pub struct DocTabs {
     tab_rects: Vec<(LiveId, Rect)>,
     #[rust]
     close_rects: Vec<(LiveId, Rect)>,
+    /// Tab under the pointer (hover wash); `default` = none.
+    #[rust]
+    hovered: LiveId,
+    /// Tab held down (press feedback); `default` = none.
+    #[rust]
+    pressed: LiveId,
 }
 
 impl Widget for DocTabs {
     fn handle_event(&mut self, cx: &mut Cx, event: &Event, _scope: &mut Scope) {
         let uid = self.widget_uid();
         match event.hits_with_capture_overload(cx, self.draw_bg.area(), true) {
+            Hit::FingerDown(fe) => {
+                let id = self.tab_at(fe.abs);
+                if self.pressed != id {
+                    self.pressed = id;
+                    self.draw_bg.redraw(cx);
+                }
+            }
             Hit::FingerUp(fe) if fe.is_primary_hit() => {
+                self.pressed = LiveId::default();
+                self.draw_bg.redraw(cx);
                 for (id, rect) in self.close_rects.iter().rev() {
                     if rect.contains(fe.abs) {
                         cx.widget_action(uid, DocTabsAction::Close(*id));
@@ -312,7 +351,21 @@ impl Widget for DocTabs {
                     }
                 }
             }
-            Hit::FingerHoverIn(_) => cx.set_cursor(MouseCursor::Hand),
+            Hit::FingerHoverIn(fe) | Hit::FingerHoverOver(fe) => {
+                cx.set_cursor(MouseCursor::Hand);
+                let id = self.tab_at(fe.abs);
+                if self.hovered != id {
+                    self.hovered = id;
+                    self.draw_bg.redraw(cx);
+                }
+            }
+            Hit::FingerHoverOut(_) => {
+                if self.hovered != LiveId::default() || self.pressed != LiveId::default() {
+                    self.hovered = LiveId::default();
+                    self.pressed = LiveId::default();
+                    self.draw_bg.redraw(cx);
+                }
+            }
             _ => {}
         }
     }
@@ -342,10 +395,13 @@ impl Widget for DocTabs {
                 .layout(cx, 0.0, 0.0, None, false, Align::default(), &title)
                 .size_in_lpxs
                 .width as f64;
+            // Every tab leads with a kind glyph, so its content width folds in
+            // the icon box + gap ahead of the label.
+            let lead = TEXT_PAD + ICON_SIZE + ICON_GAP;
             let w = if closable {
-                TEXT_PAD + text_w + CLOSE_GAP + CLOSE_W
+                lead + text_w + CLOSE_GAP + CLOSE_W
             } else {
-                TEXT_PAD + text_w + TEXT_PAD
+                lead + text_w + TEXT_PAD
             };
             let tab_rect = Rect {
                 pos: dvec2(x, rect.pos.y + TOP_MARGIN),
@@ -364,7 +420,26 @@ impl Widget for DocTabs {
                         size: dvec2(w, 2.0),
                     },
                 );
+                // Thick left + right edges frame the raised card against the
+                // surface, reading as a defined tab on both flanks.
+                const BORDER_W: f64 = 2.0;
+                for edge_x in [tab_rect.pos.x, tab_rect.pos.x + w - BORDER_W] {
+                    self.draw_divider.draw_abs(
+                        cx,
+                        Rect {
+                            pos: dvec2(edge_x, tab_rect.pos.y + 2.0),
+                            size: dvec2(BORDER_W, tab_rect.size.y - 2.0),
+                        },
+                    );
+                }
             } else {
+                // Press preview reuses the active card fill; hover is a
+                // lighter wash. Drawn under the divider + label.
+                if self.pressed == tab.id {
+                    self.draw_tab.draw_abs(cx, tab_rect);
+                } else if self.hovered == tab.id {
+                    self.draw_hover.draw_abs(cx, tab_rect);
+                }
                 // A hairline on this tab's right edge separating it from the
                 // next tab -- but skip the divider flanking the active tab
                 // (its raised fill already separates it) and the strip's end.
@@ -384,6 +459,20 @@ impl Widget for DocTabs {
                 }
             }
 
+            // Leading per-kind glyph, vertically centered in the card. Pixel-
+            // rounded like the tree rows -- fractional placement blurs DrawSvg.
+            if let Some(icon) = self.icons.icon_for(tab.node_kind) {
+                let ix = (x + TEXT_PAD).round();
+                let iy = (tab_rect.pos.y + (tab_rect.size.y - ICON_SIZE) / 2.0).round();
+                icon.draw_abs(
+                    cx,
+                    Rect {
+                        pos: dvec2(ix, iy),
+                        size: dvec2(ICON_SIZE, ICON_SIZE),
+                    },
+                );
+            }
+
             let text_y = tab_rect.pos.y + tab_rect.size.y * 0.5 - 7.0;
             let draw_text = if is_active {
                 &mut self.draw_text_active
@@ -392,7 +481,7 @@ impl Widget for DocTabs {
             } else {
                 &mut self.draw_text_persisted
             };
-            draw_text.draw_abs(cx, dvec2(x + TEXT_PAD, text_y), &title);
+            draw_text.draw_abs(cx, dvec2(x + lead, text_y), &title);
 
             if closable {
                 let close_rect = Rect {
@@ -413,6 +502,24 @@ impl Widget for DocTabs {
 }
 
 impl DocTabs {
+    /// Whether `abs` lands on an actual tab card (not the empty strip beyond
+    /// the last tab). Used by the window drag-query so only tabs are treated
+    /// as interactive client area; the rest of the strip stays draggable.
+    pub fn hits_any_tab(&self, abs: DVec2) -> bool {
+        self.tab_at(abs) != LiveId::default()
+    }
+
+    /// The tab whose card contains `abs`, or `LiveId::default()` for none.
+    /// Uses the rects captured during the last `draw_walk`.
+    fn tab_at(&self, abs: DVec2) -> LiveId {
+        for (id, rect) in self.tab_rects.iter().rev() {
+            if rect.contains(abs) {
+                return *id;
+            }
+        }
+        LiveId::default()
+    }
+
     pub fn set_tabs(&mut self, cx: &mut Cx, open: &OpenTabs) {
         self.tabs = open.tabs.clone();
         self.active = open.active;
@@ -447,12 +554,12 @@ mod tests {
     #[test]
     fn open_preview_twice_replaces_the_single_preview_slot() {
         let mut open = OpenTabs::diagram_base("d", "Diagram");
-        open.open_preview("customer", "Customer");
+        open.open_preview("customer", "Customer", TreeKind::Class);
         assert_eq!(open.tabs.len(), 2);
         assert!(open.tabs[1].preview);
         assert_eq!(open.active, open.tabs[1].id);
 
-        open.open_preview("order", "Order");
+        open.open_preview("order", "Order", TreeKind::Class);
         // Still base + one preview -- never piles up.
         assert_eq!(open.tabs.len(), 2);
         assert_eq!(open.tabs[1].key, "order");
@@ -463,9 +570,9 @@ mod tests {
     #[test]
     fn promote_then_open_preview_keeps_the_promoted_tab_and_adds_a_fresh_preview() {
         let mut open = OpenTabs::diagram_base("d", "Diagram");
-        let customer_id = open.open_preview("customer", "Customer");
+        let customer_id = open.open_preview("customer", "Customer", TreeKind::Class);
         open.promote(customer_id);
-        open.open_preview("order", "Order");
+        open.open_preview("order", "Order", TreeKind::Class);
 
         assert_eq!(open.tabs.len(), 3);
         assert_eq!(open.tabs[1].key, "customer");
@@ -477,7 +584,7 @@ mod tests {
     #[test]
     fn promote_is_idempotent() {
         let mut open = OpenTabs::diagram_base("d", "Diagram");
-        let id = open.open_preview("customer", "Customer");
+        let id = open.open_preview("customer", "Customer", TreeKind::Class);
         open.promote(id);
         open.promote(id);
         assert!(!open.tabs[1].preview);
@@ -486,11 +593,11 @@ mod tests {
     #[test]
     fn close_activates_right_adjacent_then_left_then_base() {
         let mut open = OpenTabs::diagram_base("d", "Diagram");
-        let a = open.open_preview("a", "A");
+        let a = open.open_preview("a", "A", TreeKind::Class);
         open.promote(a);
-        let b = open.open_preview("b", "B");
+        let b = open.open_preview("b", "B", TreeKind::Class);
         open.promote(b);
-        let c = open.open_preview("c", "C");
+        let c = open.open_preview("c", "C", TreeKind::Class);
         open.promote(c);
         // tabs: [base, a, b, c], active = c
 
