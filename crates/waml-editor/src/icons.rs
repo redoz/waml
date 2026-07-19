@@ -271,28 +271,42 @@ script_mod! {
         }
     }
 
-    // Paintbrush (vertical): ferrule box + two bristle ticks + handle.
+    // Paintbrush (vertical): two bristle ticks, ferrule box, and brush body.
+    // Faithful port of resources/icons/paintbrush-vertical.svg via scripts/
+    // gen-icon.py (ferrule + brush corners are the source's `a` fillets).
     mod.draw.IconPaintbrush = mod.draw.DrawColor{
         pixel: fn() {
             let s = self.rect_size.x
-            let w = s * 0.075
+            let w = s * 0.068
             let sdf = Sdf2d.viewport(self.pos * self.rect_size)
-            sdf.box(s * 0.25, s * 0.13, s * 0.50, s * 0.37, s * 0.06)
+            sdf.move_to(s * 0.4145, s * 0.0723)
+            sdf.line_to(s * 0.4145, s * 0.1579)
             sdf.stroke(self.color, w)
-            sdf.move_to(s * 0.42, s * 0.04)
-            sdf.line_to(s * 0.42, s * 0.13)
+            sdf.move_to(s * 0.5855, s * 0.0723)
+            sdf.line_to(s * 0.5855, s * 0.2434)
             sdf.stroke(self.color, w)
-            sdf.move_to(s * 0.58, s * 0.04)
-            sdf.line_to(s * 0.58, s * 0.13)
+            sdf.move_to(s * 0.7138, s * 0.0723)
+            sdf.arc_to(s * 0.7138, s * 0.1151, s * 0.0428, -1.5708, 0.0000)
+            sdf.line_to(s * 0.7566, s * 0.5000)
+            sdf.line_to(s * 0.2434, s * 0.5000)
+            sdf.line_to(s * 0.2434, s * 0.1151)
+            sdf.arc_to(s * 0.2862, s * 0.1151, s * 0.0428, 3.1416, 4.7124)
+            sdf.line_to(s * 0.7138, s * 0.0723)
             sdf.stroke(self.color, w)
-            sdf.move_to(s * 0.25, s * 0.50)
-            sdf.line_to(s * 0.30, s * 0.63)
-            sdf.line_to(s * 0.44, s * 0.63)
-            sdf.line_to(s * 0.44, s * 0.86)
-            sdf.line_to(s * 0.56, s * 0.86)
-            sdf.line_to(s * 0.56, s * 0.63)
-            sdf.line_to(s * 0.70, s * 0.63)
-            sdf.line_to(s * 0.75, s * 0.50)
+            sdf.move_to(s * 0.2434, s * 0.5000)
+            sdf.arc_to(s * 0.2434, s * 0.5428, s * 0.0428, -1.5708, -3.1416)
+            sdf.line_to(s * 0.2006, s * 0.5855)
+            sdf.arc_to(s * 0.2862, s * 0.5855, s * 0.0855, 3.1416, 1.5708)
+            sdf.line_to(s * 0.3717, s * 0.6711)
+            sdf.arc_to(s * 0.3717, s * 0.7138, s * 0.0428, -1.5708, 0.0000)
+            sdf.line_to(s * 0.4145, s * 0.8379)
+            sdf.arc_to(s * 0.5000, s * 0.8379, s * 0.0855, 3.1416, 0.0000)
+            sdf.line_to(s * 0.5855, s * 0.7138)
+            sdf.arc_to(s * 0.6283, s * 0.7138, s * 0.0428, 3.1416, 4.7124)
+            sdf.line_to(s * 0.7138, s * 0.6711)
+            sdf.arc_to(s * 0.7138, s * 0.5855, s * 0.0855, 1.5708, 0.0000)
+            sdf.line_to(s * 0.7994, s * 0.5428)
+            sdf.arc_to(s * 0.7566, s * 0.5428, s * 0.0428, 0.0000, -1.5708)
             sdf.stroke(self.color, w)
             return sdf.result
         }
