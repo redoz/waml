@@ -94,26 +94,31 @@ script_mod! {
     mod.themes.atlas_dark = {
         let atlas = me
 
-        // Backdrops (darkest -> up): canvas below panels, ground the app
-        // base, group_fill the lifted plum behind a package/group frame.
+        // Backdrops: burgundy `ground` is the app base; the canvas sits a
+        // step *lighter* (not darker) so the diagram field reads as a lifted
+        // plum surface, and `group_fill` a step lighter still.
         ground: #x23001e
-        canvas_ground: #x1b0016
-        group_fill: #x2e0a28
+        canvas_ground: #x2d0827
+        group_fill: #x3a1233
 
-        // Glass surfaces: slate panels; field_bg is a lifted slate (the
-        // most-elevated / "brightest" editable control, mirroring light's
-        // #xffffff-over-surface relationship).
-        surface: #x284b63
-        surface_border: #x58a4b059
-        field_bg: #x33607d
+        // Glass surfaces, all on the burgundy ramp (this is a *dark* theme --
+        // no blue-slate panels). `surface` is the muted plum for bars/pills;
+        // `field_bg` is the lifted plum the panels + node cards ride on (the
+        // most-elevated / "brightest" surface, mirroring light's
+        // #xffffff-over-surface relationship). Teal-tinted border throughout.
+        surface: #x371433
+        surface_border: #x347a8859
+        field_bg: #x431a3d
 
-        // Teal accent; selection tint bumped slightly vs light so it reads
-        // on the dark ground.
-        accent: #x58a4b0
-        accent_soft: #x58a4b024
-        selection: #x58a4b033
-        frame_hi: #x58a4b0f2
-        frame_lo: #x58a4b080
+        // Teal accent, deepened from the light `#x58a4b0` anchor so it reads
+        // as a dark-theme accent (the light teal washed out on the burgundy
+        // ground). Selection tint bumped slightly so it reads on the dark
+        // ground.
+        accent: #x347a88
+        accent_soft: #x347a8824
+        selection: #x347a8833
+        frame_hi: #x347a88f2
+        frame_lo: #x347a8880
 
         // Modal scrim: dim cool-dark, mode-invariant (same as light).
         scrim: #x1b2836b3

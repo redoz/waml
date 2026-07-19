@@ -248,6 +248,10 @@ pub struct App {
     /// action resolves to a path without re-reading disk or index drift.
     #[rust]
     start_recents: Vec<crate::config::Recent>,
+    /// Which screen is live (editor vs start), so a theme live-edit reload
+    /// re-hydrates the right one. See `rehydrate`.
+    #[rust]
+    editor_shown: bool,
 }
 
 impl App {
@@ -527,6 +531,7 @@ impl App {
     /// whose no-op default `Widget::set_visible` means we must toggle its own
     /// `visible` flag via the borrowed inherent method instead.
     fn show_editor(&mut self, cx: &mut Cx) {
+        self.editor_shown = true;
         self.ui.widget(cx, ids!(main_column)).set_visible(cx, true);
         if let Some(mut screen) = self
             .ui
@@ -535,6 +540,38 @@ impl App {
         {
             screen.set_visible(cx, false);
         }
+    }
+
+    /// Re-push every imperatively-set widget content after a theme live-edit
+    /// (`Event::LiveEdit` -> `Apply::Reload`) wiped it. Reads from the in-memory
+    /// `model`/`tabs`, so the open project and active tab survive the toggle;
+    /// the tool-dock mode (back to `Select`) and the inspector element-picker
+    /// are the only bits not restored, both cheap to re-touch by hand.
+    fn rehydrate(&mut self, cx: &mut Cx) {
+        if !self.editor_shown {
+            // Start screen: `show_start_screen` re-reads recents and re-shows.
+            self.show_start_screen(cx);
+            return;
+        }
+        let root_name = if self.model.path.is_empty() {
+            "bundle"
+        } else {
+            self.model.path.as_str()
+        };
+        self.ui.label(cx, ids!(pkg_name)).set_text(cx, root_name);
+
+        let tree = crate::tree::build_tree(&self.model);
+        if let Some(mut panel) = self
+            .ui
+            .widget(cx, ids!(project_tree))
+            .borrow_mut::<crate::tree_panel::ProjectTree>()
+        {
+            panel.set_tree(cx, tree);
+        }
+        self.refresh_doc_tabs(cx);
+        self.sync_active_tab(cx);
+        self.sync_diagram_switcher_current(cx);
+        self.show_editor(cx);
     }
 
     /// Load recents into the start screen and reveal it, hiding the editor.
@@ -558,6 +595,7 @@ impl App {
             screen.set_visible(cx, true);
         }
         self.ui.widget(cx, ids!(main_column)).set_visible(cx, false);
+        self.editor_shown = false;
     }
 }
 
@@ -919,6 +957,13 @@ impl AppMain for App {
     }
 
     fn handle_event(&mut self, cx: &mut Cx, event: &Event) {
+        // Theme live-edit: the framework has already re-run `script_mod` and
+        // `Apply::Reload`ed the widget tree (wiping imperatively-pushed
+        // content) *before* this `Event::LiveEdit` lands, so re-hydrate now.
+        if let Event::LiveEdit = event {
+            self.rehydrate(cx);
+        }
+
         // Tool-dock hotkeys (V/N/C): global, visual-only mode switch. Only
         // live while nothing holds key focus, so they don't fight with the
         // inspector's inline-edit text entry.
@@ -946,6 +991,15 @@ impl AppMain for App {
                 match ke.key_code {
                     KeyCode::Slash => self.toggle_shortcuts_overlay(cx),
                     KeyCode::Escape => self.set_shortcuts_overlay(cx, false),
+                    // Theme toggle: persist the flip, then request a live-edit.
+                    // The reload re-runs `script_mod` (repointing `mod.atlas`)
+                    // and `Apply::Reload`s the tree; `Event::LiveEdit` then
+                    // lands in `rehydrate` to re-push the wiped content.
+                    KeyCode::KeyT => {
+                        let mode = crate::config::toggle_theme();
+                        log!("theme toggled -> {mode:?}");
+                        cx.request_live_edit();
+                    }
                     _ => {}
                 }
             }
