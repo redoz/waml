@@ -1,35 +1,17 @@
-//! Node sizing for the solver. Derived from first principles (see constants);
-//! not ported from any prior implementation.
+//! Node sizing for the solver. Every node is measured to its full card hull
+//! (`card::card_size`) — "everything on", no per-diagram gating. Derived from
+//! the card box-tree; not ported from any prior implementation.
 
-use waml::model::{Diagram, DiagramDisplay, DiagramGroup, Model, Node};
+use waml::model::{Diagram, DiagramGroup, Model, Node};
 use waml::solve::{Size, SizeMap};
 
-/// Compact box used for every node by default and for entities that show no rows.
-pub const COMPACT_W: f64 = 200.0;
-pub const COMPACT_H: f64 = 90.0;
-/// ERD box (entity with attribute rows shown).
-pub const ERD_W: f64 = 220.0;
-pub const ERD_HEADER_H: f64 = 44.0;
-pub const ERD_ROW_H: f64 = 22.0;
-/// Row cap when the diagram does not set `max_attributes`.
-pub const ERD_DEFAULT_ROW_CAP: u32 = 10;
-
-/// Size one node for the solver.
-pub fn size_of(node: &Node, display: &DiagramDisplay) -> Size {
-    let show = display.show_attributes.unwrap_or(false);
-    if show && !node.attributes.is_empty() {
-        let cap = display.max_attributes.unwrap_or(ERD_DEFAULT_ROW_CAP).max(1) as usize;
-        let rows = node.attributes.len().min(cap);
-        Size {
-            w: ERD_W,
-            h: ERD_HEADER_H + rows as f64 * ERD_ROW_H,
-        }
-    } else {
-        Size {
-            w: COMPACT_W,
-            h: COMPACT_H,
-        }
-    }
+/// Size one node for the solver by measuring its projected card hull. The rect
+/// the solver lays out then equals the card the renderer draws, so card text
+/// lands exactly inside its box.
+pub fn size_of(model: &Model, node: &Node) -> Size {
+    let scene_node = crate::scene::project_scene_node(model, node);
+    let (w, h) = crate::card::card_size(&scene_node, &crate::card::mono_sheet());
+    Size { w, h }
 }
 
 /// Build a `SizeMap` for every diagram member that resolves to a classifier node.
@@ -43,7 +25,7 @@ pub fn size_map(model: &Model, diagram: &Diagram) -> SizeMap {
     let mut map = SizeMap::new();
     for key in keys {
         if let Some(node) = lookup.get(key.as_str()) {
-            map.insert(key.clone(), size_of(node, &diagram.display));
+            map.insert(key.clone(), size_of(model, node));
         }
     }
     map
@@ -62,101 +44,90 @@ mod tests {
     use crate::load;
     use std::path::Path;
 
-    fn node_with_attrs(n: usize) -> Node {
+    fn mini() -> Model {
+        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/mini");
+        load::load_model(&dir).unwrap()
+    }
+
+    /// Build a single-node model whose one classifier has `n` attributes, each
+    /// typed `ty`. Returns the model so `size_of` can be called with it.
+    fn model_with_attrs(n: usize, ty: &str) -> Model {
         let bundle = vec![(
             "e.md".to_string(),
             format!(
                 "---\ntype: uml.Class\ntitle: E\n---\n# E\n\n## Attributes\n{}",
                 (0..n)
-                    .map(|i| format!("- f{i}: String {{1}}\n"))
+                    .map(|i| format!("- f{i}: {ty} {{1}}\n"))
                     .collect::<String>()
             ),
         )];
         waml::parse::build_model(&bundle)
-            .nodes
-            .into_iter()
-            .next()
-            .unwrap()
     }
 
-    #[test]
-    fn compact_when_attributes_hidden() {
-        let node = node_with_attrs(3);
-        let display = DiagramDisplay::default(); // show_attributes = None => hidden
-        assert_eq!(
-            size_of(&node, &display),
-            Size {
-                w: COMPACT_W,
-                h: COMPACT_H
-            }
+    fn node0(model: &Model) -> &Node {
+        &model.nodes[0]
+    }
+
+    /// The card hull the renderer draws against, for a model's first node.
+    fn hull(model: &Model) -> Size {
+        let (w, h) = crate::card::card_size(
+            &crate::scene::project_scene_node(model, node0(model)),
+            &crate::card::mono_sheet(),
         );
+        Size { w, h }
     }
 
     #[test]
-    fn erd_size_scales_with_capped_rows() {
-        let node = node_with_attrs(3);
-        let display = DiagramDisplay {
-            show_attributes: Some(true),
-            ..Default::default()
-        };
-        assert_eq!(
-            size_of(&node, &display),
-            Size {
-                w: ERD_W,
-                h: ERD_HEADER_H + 3.0 * ERD_ROW_H
-            }
-        );
+    fn size_of_measures_the_card_hull() {
+        let model = model_with_attrs(2, "String");
+        assert_eq!(size_of(&model, node0(&model)), hull(&model));
     }
 
     #[test]
-    fn erd_rows_capped_by_max_attributes() {
-        let node = node_with_attrs(20);
-        let display = DiagramDisplay {
-            show_attributes: Some(true),
-            max_attributes: Some(4),
-            ..Default::default()
-        };
-        assert_eq!(
-            size_of(&node, &display),
-            Size {
-                w: ERD_W,
-                h: ERD_HEADER_H + 4.0 * ERD_ROW_H
-            }
-        );
+    fn hull_grows_taller_with_more_attribute_rows() {
+        let one = model_with_attrs(1, "String");
+        let three = model_with_attrs(3, "String");
+        let short = size_of(&one, node0(&one));
+        let tall = size_of(&three, node0(&three));
+        assert!(tall.h > short.h, "more rows should be taller");
     }
 
     #[test]
-    fn compact_when_entity_has_no_attributes() {
-        let node = node_with_attrs(0);
-        let display = DiagramDisplay {
-            show_attributes: Some(true),
-            ..Default::default()
-        };
-        assert_eq!(
-            size_of(&node, &display),
-            Size {
-                w: COMPACT_W,
-                h: COMPACT_H
-            }
-        );
+    fn hull_grows_wider_with_a_longer_attribute_type() {
+        let short = model_with_attrs(1, "Int");
+        let long = model_with_attrs(1, "AVeryLongTypeName");
+        let narrow = size_of(&short, node0(&short));
+        let wide = size_of(&long, node0(&long));
+        assert!(wide.w > narrow.w, "longer type name should be wider");
     }
 
     #[test]
-    fn size_map_covers_every_resolved_member() {
-        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/mini");
-        let model = load::load_model(&dir).unwrap();
+    fn node_without_attributes_still_has_positive_hull() {
+        let model = model_with_attrs(0, "String");
+        let size = size_of(&model, node0(&model));
+        assert!(size.w > 0.0 && size.h > 0.0);
+    }
+
+    #[test]
+    fn size_map_covers_every_resolved_member_with_positive_sizes() {
+        let model = mini();
         let diagram = &model.diagrams[0];
         let map = size_map(&model, diagram);
-        // All three classifiers get a compact size (fixture diagram shows no attributes).
+        // The mini fixture diagram lists three classifiers.
         assert_eq!(map.len(), 3);
         for size in map.values() {
-            assert_eq!(
-                *size,
-                Size {
-                    w: COMPACT_W,
-                    h: COMPACT_H
-                }
-            );
+            assert!(size.w > 0.0 && size.h > 0.0);
+        }
+    }
+
+    #[test]
+    fn size_map_matches_card_hull_for_each_member() {
+        let model = mini();
+        let diagram = &model.diagrams[0];
+        let map = size_map(&model, diagram);
+        for (key, size) in map.iter() {
+            let node = model.nodes.iter().find(|n| &n.key == key).unwrap();
+            assert_eq!(*size, size_of(&model, node));
         }
     }
 }
