@@ -63,6 +63,10 @@ script_mod! {
                 indent_width: 18.0
                 draw_text +: {
                     color: atlas.text
+                    // Selection is a translucent accent tint over white, so keep
+                    // selected-row text the same dark ink instead of the
+                    // FileTree default (white), which is unreadable on it.
+                    color_active: atlas.text
                     text_style: theme.font_regular{font_size: 12}
                 }
                 draw_bg +: {
@@ -77,6 +81,7 @@ script_mod! {
                 indent_width: 18.0
                 draw_text +: {
                     color: atlas.text
+                    color_active: atlas.text
                     text_style: theme.font_bold{font_size: 12}
                 }
                 draw_bg +: {
