@@ -428,16 +428,27 @@ script_mod! {
         }
     }
 
-    // Square-minus: rounded square with a minus.
+    // Square-minus: rounded square with a minus. Faithful port of resources/
+    // icons/square-minus.svg via scripts/gen-icon.py (the <rect rx="2"> box is
+    // authored as its four corner `a` arcs, not sdf.box).
     mod.draw.IconSquareMinus = mod.draw.DrawColor{
         pixel: fn() {
             let s = self.rect_size.x
-            let w = s * 0.075
+            let w = s * 0.068
             let sdf = Sdf2d.viewport(self.pos * self.rect_size)
-            sdf.box(s * 0.13, s * 0.13, s * 0.74, s * 0.74, s * 0.09)
+            sdf.move_to(s * 0.2006, s * 0.1151)
+            sdf.line_to(s * 0.7994, s * 0.1151)
+            sdf.arc_to(s * 0.7994, s * 0.2006, s * 0.0855, -1.5708, 0.0000)
+            sdf.line_to(s * 0.8849, s * 0.7994)
+            sdf.arc_to(s * 0.7994, s * 0.7994, s * 0.0855, 0.0000, 1.5708)
+            sdf.line_to(s * 0.2006, s * 0.8849)
+            sdf.arc_to(s * 0.2006, s * 0.7994, s * 0.0855, 1.5708, 3.1416)
+            sdf.line_to(s * 0.1151, s * 0.2006)
+            sdf.arc_to(s * 0.2006, s * 0.2006, s * 0.0855, 3.1416, 4.7124)
+            sdf.line_to(s * 0.2006, s * 0.1151)
             sdf.stroke(self.color, w)
-            sdf.move_to(s * 0.33, s * 0.5)
-            sdf.line_to(s * 0.67, s * 0.5)
+            sdf.move_to(s * 0.3289, s * 0.5000)
+            sdf.line_to(s * 0.6711, s * 0.5000)
             sdf.stroke(self.color, w)
             return sdf.result
         }
