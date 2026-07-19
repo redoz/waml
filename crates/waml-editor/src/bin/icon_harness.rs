@@ -27,6 +27,9 @@ script_mod! {
         width: Fill
         height: Fill
         draw_bg +: { color: atlas.field_bg }
+        // Full text_style (font_family included) -- a partial/color-only
+        // override renders nothing (see canvas.rs).
+        draw_label +: { text_style: theme.font_regular{ font_size: 9.0 } }
     }
 
     startup() do #(IconHarness::script_component(vm)){
@@ -58,17 +61,25 @@ pub struct IconGrid {
     #[live]
     draw_bg: DrawColor,
     #[live]
+    draw_label: DrawText,
+    #[live]
     icons: TreeIcons,
     /// Toggled by Space; swaps the backdrop so glyph contrast is checked on
     /// both Atlas modes without a rebuild.
     #[rust]
     dark: bool,
+    /// Mouse-wheel scroll offset (the grid is taller than the window once the
+    /// full Lucide set is present), plus the clamp bound recomputed each draw.
+    #[rust]
+    scroll_y: f64,
+    #[rust]
+    max_scroll: f64,
 }
 
 /// Real display sizes to prove per icon. The tree/doc-tabs draw at 14px; the
 /// neighbours flank it so hinting drift across sizes is visible at a glance.
 const SIZES: [f64; 3] = [14.0, 16.0, 20.0];
-const ROW_H: f64 = 88.0;
+const ROW_H: f64 = 98.0;
 const ZOOM: f64 = 72.0;
 const PAD: f64 = 28.0;
 /// Horizontal stride between the two icon columns.
@@ -79,13 +90,24 @@ impl Widget for IconGrid {
         let rect = cx.walk_turtle(walk);
         self.draw_bg.draw_abs(cx, rect);
 
-        let ox = (rect.pos.x + PAD).round();
-        let oy = (rect.pos.y + PAD).round();
-
-        // Three columns so the (now 23) glyphs fit a reasonable window height.
+        // Three columns; the grid is taller than the window once the full
+        // Lucide set is present, so it scrolls (mouse wheel, see handle_event).
         let all = self.icons.labeled_mut();
         let per_col = all.len().div_ceil(3);
-        for (i, (_name, icon)) in all.into_iter().enumerate() {
+        let content_h = 2.0 * PAD + per_col as f64 * ROW_H;
+        self.max_scroll = (content_h - rect.size.y).max(0.0);
+        self.scroll_y = self.scroll_y.clamp(0.0, self.max_scroll);
+
+        let ox = (rect.pos.x + PAD).round();
+        let oy = (rect.pos.y + PAD - self.scroll_y).round();
+
+        // Label ink flipped for contrast against whichever backdrop is active.
+        self.draw_label.color = if self.dark {
+            vec4(0.66, 0.74, 0.82, 1.0)
+        } else {
+            vec4(0.34, 0.41, 0.49, 1.0)
+        };
+        for (i, (name, icon)) in all.into_iter().enumerate() {
             let col = i / per_col;
             let row = i % per_col;
             let col_x = (ox + col as f64 * COL_W).round();
@@ -112,13 +134,16 @@ impl Widget for IconGrid {
                     size: dvec2(ZOOM, ZOOM),
                 },
             );
+            // Icon name under the small-size band.
+            self.draw_label
+                .draw_abs(cx, dvec2(col_x, (row_top + ZOOM + 6.0).round()), name);
         }
         DrawStep::done()
     }
 
     fn handle_event(&mut self, cx: &mut Cx, event: &Event, _scope: &mut Scope) {
-        if let Event::KeyDown(ke) = event {
-            if ke.key_code == KeyCode::Space {
+        match event {
+            Event::KeyDown(ke) if ke.key_code == KeyCode::Space => {
                 self.dark = !self.dark;
                 self.draw_bg.color = if self.dark {
                     vec4(0.055, 0.078, 0.11, 1.0)
@@ -127,6 +152,14 @@ impl Widget for IconGrid {
                 };
                 self.draw_bg.redraw(cx);
             }
+            Event::Scroll(e) => {
+                let prev = self.scroll_y;
+                self.scroll_y = (self.scroll_y + e.scroll.y).clamp(0.0, self.max_scroll);
+                if self.scroll_y != prev {
+                    self.draw_bg.redraw(cx);
+                }
+            }
+            _ => {}
         }
     }
 }
