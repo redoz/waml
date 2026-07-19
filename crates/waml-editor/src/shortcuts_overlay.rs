@@ -65,6 +65,7 @@ pub const BINDINGS: &[(&str, &str)] = &[
     ("V", "Select tool"),
     ("N", "Add tool"),
     ("C", "Connect tool"),
+    ("T", "Toggle light/dark theme"),
     ("?", "Toggle this overlay"),
     ("Esc", "Close this overlay"),
 ];

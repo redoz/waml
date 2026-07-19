@@ -191,11 +191,6 @@ pub fn theme() -> ThemeMode {
 
 /// Persist `mode` as the chosen UI theme, preserving the rest of the config.
 /// Best-effort -- a write failure is logged and swallowed.
-// Not yet called: the in-app theme toggle is a later step. Exercised by
-// `theme_defaults_light_and_round_trips_dark` via the round-trip it stands in
-// for. For now, testing dark mode means writing `"theme":"dark"` into
-// `~/.waml/editor.json` by hand and relaunching.
-#[allow(dead_code)]
 pub fn set_theme(mode: ThemeMode) {
     let mut config: EditorConfig = load(EDITOR_FILE);
     config.version = EDITOR_VERSION;
@@ -203,6 +198,18 @@ pub fn set_theme(mode: ThemeMode) {
     if let Err(e) = store(EDITOR_FILE, &config) {
         log!("waml-editor: failed to persist theme {:?}: {e}", mode);
     }
+}
+
+/// Flip the persisted theme (`Light` <-> `Dark`) and return the new mode. Drives
+/// the in-app toggle: the caller persists via this, then `cx.request_live_edit()`
+/// so `App::script_mod` re-runs and repoints `mod.atlas` at the new block.
+pub fn toggle_theme() -> ThemeMode {
+    let next = match theme() {
+        ThemeMode::Light => ThemeMode::Dark,
+        ThemeMode::Dark => ThemeMode::Light,
+    };
+    set_theme(next);
+    next
 }
 
 /// Record an open: add or promote `path` to the front (MRU), refresh its
