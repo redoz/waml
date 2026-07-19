@@ -87,10 +87,10 @@ script_mod! {
             color: atlas.text_dim
             text_style: theme.font_regular{font_size: 11 line_spacing: 1.2}
         }
-        draw_accent +: {
-            color: atlas.accent
-            text_style: theme.font_bold{font_size: 22 line_spacing: 1.2}
-        }
+        // App wordmark logo (the 6-color "W"), drawn as an anti-aliased SDF (see
+        // `logo.rs`) -- a DrawSvg stair-stepped at this size. Colon (not `+:`)
+        // assignment so the custom `pixel: fn()` actually attaches.
+        draw_logo: mod.draw.LogoMark{}
         // Header subtitle -- smaller than the row text, dim.
         draw_sub +: {
             color: atlas.text_dim
@@ -158,6 +158,10 @@ const SHADOW_PAD: f64 = 56.0;
 const SHADOW_DROP: f64 = 6.0;
 // Leading accent node-marker on a recents row (a small square canvas-entity dot).
 const MARKER: f64 = 7.0;
+// App wordmark logo (SDF, see `logo.rs`) drawn in the card header. Height sets
+// the visual size; width holds the logo's tight content aspect (~1.749).
+const LOGO_H: f64 = 30.0;
+const LOGO_W: f64 = 52.5;
 
 #[derive(Script, ScriptHook, Widget)]
 pub struct StartScreen {
@@ -199,7 +203,7 @@ pub struct StartScreen {
     draw_dim: DrawText,
     #[redraw]
     #[live]
-    draw_accent: DrawText,
+    draw_logo: DrawQuad,
     #[redraw]
     #[live]
     draw_sub: DrawText,
@@ -331,7 +335,13 @@ impl Widget for StartScreen {
         self.draw_frame.draw_abs(cx, card);
 
         // Header band (relative to the card), closed by a hairline divider.
-        self.draw_accent.draw_abs(cx, dvec2(card.pos.x + PANE_PAD, card.pos.y + 22.0), "WAML");
+        self.draw_logo.draw_abs(
+            cx,
+            Rect {
+                pos: dvec2(card.pos.x + PANE_PAD, card.pos.y + 20.0),
+                size: dvec2(LOGO_W, LOGO_H),
+            },
+        );
         self.draw_sub.draw_abs(
             cx,
             dvec2(card.pos.x + PANE_PAD, card.pos.y + 54.0),

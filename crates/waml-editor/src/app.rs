@@ -48,12 +48,16 @@ script_mod! {
                         align: Align{x: 0.0, y: 0.5}
                         margin: Inset{left: 2.0}
                         padding: Inset{left: 6.0, right: 10.0}
-                        Label{
-                            text: "WAML"
-                            draw_text +: {
-                                color: atlas.text
-                                text_style: theme.font_bold{font_size: 22}
-                            }
+                        // 6-color "W" wordmark, drawn as an anti-aliased SDF (see
+                        // `logo.rs`) -- DrawSvg stair-stepped at this size. Fixed
+                        // size holds the logo's ~1.749 content aspect. `SolidView`
+                        // (not `View`) because its `draw_bg` is a `DrawColor`, so
+                        // the `LogoMark` DrawColor subclass can attach; a plain
+                        // `View`'s `draw_bg` is a `DrawQuad` and rejects it.
+                        SolidView{
+                            width: 45.5
+                            height: 26.0
+                            draw_bg: mod.draw.LogoMark{}
                         }
                     }
                     sep := View{
@@ -833,6 +837,7 @@ impl AppMain for App {
         crate::tool_dock::script_mod(vm);
         crate::selection_toolbar::script_mod(vm);
         crate::statusbar::script_mod(vm);
+        crate::logo::script_mod(vm);
         crate::waml_button::script_mod(vm);
         crate::start_screen::script_mod(vm);
         self::script_mod(vm)
