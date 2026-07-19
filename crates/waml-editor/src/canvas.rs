@@ -222,9 +222,79 @@ fn border_point(from: waml::solve::Rect, to: waml::solve::Rect) -> (f64, f64) {
     (fcx + dx * t, fcy + dy * t)
 }
 
+/// Index of the topmost node whose on-screen rect contains `abs`, or `None`.
+/// Topmost = last-drawn, so we scan in reverse. Pure (takes world rects +
+/// camera), matching the draw-time transform in `draw_walk`.
+pub fn node_at(
+    node_rects: &[waml::solve::Rect],
+    camera: &Camera,
+    view: Rect,
+    abs: DVec2,
+) -> Option<usize> {
+    for (i, nr) in node_rects.iter().enumerate().rev() {
+        let (lx, ly) = camera.world_to_local(nr.x, nr.y);
+        let screen = Rect {
+            pos: dvec2(view.pos.x + lx, view.pos.y + ly),
+            size: dvec2(nr.w * camera.zoom, nr.h * camera.zoom),
+        };
+        if screen.contains(abs) {
+            return Some(i);
+        }
+    }
+    None
+}
+
+/// The four node commands a radial reports. Handlers are logging stubs for now
+/// (there is no node-editing command path yet -- mirrors the `tool_dock` mock).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum NodeCommand {
+    Open,
+    Style,
+    Markdown,
+    Remove,
+}
+
+/// Map a radial-committed `LiveId` to a node command. `None` = not one of ours.
+pub fn node_command_for(id: LiveId) -> Option<NodeCommand> {
+    if id == live_id!(open) {
+        Some(NodeCommand::Open)
+    } else if id == live_id!(style) {
+        Some(NodeCommand::Style)
+    } else if id == live_id!(markdown) {
+        Some(NodeCommand::Markdown)
+    } else if id == live_id!(remove) {
+        Some(NodeCommand::Remove)
+    } else {
+        None
+    }
+}
+
+/// Canvas -> App action (same convention as `ToolDockAction`).
+#[derive(Clone, Debug, Default)]
+pub enum GraphCanvasAction {
+    #[default]
+    None,
+    /// A right-press landed on a node: open the radial at `abs` for `node`.
+    /// `node` is carried for a later task's node-scoped command dispatch --
+    /// unread until then, same convention as `radial::HUB_RADIUS`.
+    NodeMenu {
+        abs: DVec2,
+        #[allow(dead_code)]
+        node: usize,
+    },
+}
+
 impl Widget for GraphCanvas {
     fn handle_event(&mut self, cx: &mut Cx, event: &Event, _scope: &mut Scope) {
         match event.hits_with_capture_overload(cx, self.draw_bg.area(), true) {
+            Hit::FingerDown(fe) if fe.mouse_button() == Some(MouseButton::SECONDARY) => {
+                let rects: Vec<waml::solve::Rect> =
+                    self.scene.nodes.iter().map(|n| n.rect).collect();
+                if let Some(node) = node_at(&rects, &self.camera, self.view_rect, fe.abs) {
+                    let uid = self.widget_uid();
+                    cx.widget_action(uid, GraphCanvasAction::NodeMenu { abs: fe.abs, node });
+                }
+            }
             Hit::FingerDown(fe) if fe.is_primary_hit() => {
                 self.drag_start_abs = Some(fe.abs);
                 self.drag_start_pan = (self.camera.pan_x, self.camera.pan_y);
@@ -465,6 +535,15 @@ impl GraphCanvas {
         self.scene.nodes.len()
     }
 
+    /// Convenience reader for `App` (mirrors `ToolDock::dock_action`).
+    pub fn canvas_action(&self, actions: &Actions) -> Option<GraphCanvasAction> {
+        let item = actions.find_widget_action(self.widget_uid())?;
+        match item.cast() {
+            GraphCanvasAction::None => None,
+            action => Some(action),
+        }
+    }
+
     /// Current zoom as a whole-number percentage, for the statusbar mock.
     pub fn zoom_pct(&self) -> i32 {
         (self.camera.zoom * 100.0).round() as i32
@@ -514,5 +593,50 @@ mod tests {
         let (x, y) = border_point(from, to);
         assert!((x - 50.0).abs() < 1e-6, "x = {x}");
         assert!((y - 100.0).abs() < 1e-6, "y = {y}");
+    }
+
+    #[test]
+    fn node_at_hits_the_topmost_node_under_the_point() {
+        let rects = vec![
+            WorldRect {
+                x: 0.0,
+                y: 0.0,
+                w: 100.0,
+                h: 60.0,
+            },
+            WorldRect {
+                x: 200.0,
+                y: 0.0,
+                w: 100.0,
+                h: 60.0,
+            },
+        ];
+        let camera = Camera {
+            pan_x: 0.0,
+            pan_y: 0.0,
+            zoom: 1.0,
+        };
+        let view = Rect {
+            pos: dvec2(0.0, 0.0),
+            size: dvec2(800.0, 600.0),
+        };
+        assert_eq!(node_at(&rects, &camera, view, dvec2(50.0, 30.0)), Some(0));
+        assert_eq!(node_at(&rects, &camera, view, dvec2(250.0, 30.0)), Some(1));
+        assert_eq!(node_at(&rects, &camera, view, dvec2(150.0, 30.0)), None);
+    }
+
+    #[test]
+    fn node_command_maps_the_four_committed_ids() {
+        assert_eq!(node_command_for(live_id!(open)), Some(NodeCommand::Open));
+        assert_eq!(node_command_for(live_id!(style)), Some(NodeCommand::Style));
+        assert_eq!(
+            node_command_for(live_id!(markdown)),
+            Some(NodeCommand::Markdown)
+        );
+        assert_eq!(
+            node_command_for(live_id!(remove)),
+            Some(NodeCommand::Remove)
+        );
+        assert_eq!(node_command_for(live_id!(bogus)), None);
     }
 }

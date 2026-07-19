@@ -22,6 +22,7 @@ script_mod! {
     use mod.widgets.DesktopButton
     use mod.widgets.DesktopButtonType
     use mod.widgets.StartScreen
+    use mod.widgets.Radial
 
     startup() do #(App::script_component(vm)){
         ui: Root{
@@ -217,6 +218,14 @@ script_mod! {
                         height: Fill
                     }
                     start_screen := StartScreen{
+                        width: Fill
+                        height: Fill
+                    }
+                    // Node radial (Task 4): last overlay child so it paints
+                    // above the canvas + every other panel. Same Overlay-flow
+                    // idiom as `shortcuts_overlay` -- fills the window, draws
+                    // nothing (see `Radial::draw_walk`) while closed.
+                    radial := Radial{
                         width: Fill
                         height: Fill
                     }
@@ -552,6 +561,43 @@ impl App {
     }
 }
 
+/// The four node-radial commands (Remove = danger). Ids are what `Radial`
+/// reports on commit; `crate::canvas::node_command_for` maps them back.
+pub fn node_radial_items() -> Vec<crate::radial::RadialItem> {
+    use crate::icon::{Icon, IconShape};
+    use crate::radial::RadialItem;
+    vec![
+        RadialItem {
+            id: live_id!(open),
+            label: "Open".into(),
+            icon: Icon::Shape(IconShape::Open),
+            danger: false,
+            enabled: true,
+        },
+        RadialItem {
+            id: live_id!(style),
+            label: "Style".into(),
+            icon: Icon::Shape(IconShape::Style),
+            danger: false,
+            enabled: true,
+        },
+        RadialItem {
+            id: live_id!(markdown),
+            label: "Markdown".into(),
+            icon: Icon::Shape(IconShape::Markdown),
+            danger: false,
+            enabled: true,
+        },
+        RadialItem {
+            id: live_id!(remove),
+            label: "Remove".into(),
+            icon: Icon::Shape(IconShape::Remove),
+            danger: true,
+            enabled: true,
+        },
+    ]
+}
+
 /// Humanize a recent's `opened_at` (unix seconds) as a coarse relative stamp
 /// ("just now", "yesterday", "3 weeks ago") for the start-screen row -- easier
 /// to scan than an absolute date and self-explanatory without a header.
@@ -730,6 +776,25 @@ impl MatchEvent for App {
             return;
         }
 
+        // Node radial (Task 4): a right-press landed on a node -> open the
+        // radial disc at the press point with the four node commands.
+        let canvas_menu = self
+            .ui
+            .widget(cx, ids!(canvas))
+            .borrow_mut::<crate::canvas::GraphCanvas>()
+            .and_then(|c| c.canvas_action(actions));
+        if let Some(crate::canvas::GraphCanvasAction::NodeMenu { abs, node: _ }) = canvas_menu {
+            let items = node_radial_items();
+            if let Some(mut radial) = self
+                .ui
+                .widget(cx, ids!(radial))
+                .borrow_mut::<crate::radial::Radial>()
+            {
+                radial.open(cx, abs, items, cx.seconds_since_app_start());
+            }
+            return;
+        }
+
         // Start screen: recent-project rows open directly; New/Open project
         // stay stubs (`log!` only) until the template picker / rfd dialog
         // land in a later slice.
@@ -878,6 +943,27 @@ impl AppMain for App {
             }
         }
         self.match_event(cx, event);
+
+        // Radial: while open, it consumes pointer/keys; a commit maps to a
+        // node command (logging stub -- no node-edit path exists yet).
+        let outcome = self
+            .ui
+            .widget(cx, ids!(radial))
+            .borrow_mut::<crate::radial::Radial>()
+            .filter(|r| r.is_open())
+            .map(|mut r| r.handle(cx, event));
+        if let Some(outcome) = outcome {
+            match outcome {
+                crate::radial::RadialOutcome::Committed(id) => {
+                    if let Some(cmd) = crate::canvas::node_command_for(id) {
+                        log!("node command: {cmd:?}");
+                    }
+                }
+                crate::radial::RadialOutcome::Cancelled => {}
+                crate::radial::RadialOutcome::None => {}
+            }
+        }
+
         self.ui.handle_event(cx, event, &mut Scope::empty());
 
         // The Window widget marks the entire caption bar (minus the window

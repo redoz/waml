@@ -277,7 +277,7 @@ script_mod! {
             let d = vec2(p.x - self.cx, p.y - self.cy)
             let r = length(d)
             // Angle clockwise from 12 o'clock (matches Rust `wedge_index`).
-            let ang = modf(atan(d.x, -d.y) + 6.2831853, 6.2831853)
+            let ang = modf(atan2(d.x, -d.y) + 6.2831853, 6.2831853)
             let in_ring = step(self.hub, r) * (1.0 - step(self.rim, r))
             // Wrap-aware wedge mask: wedge 0's span crosses 0 deg (a0 > a1
             // after rem_euclid), so a plain step/step test renders it empty.
