@@ -120,7 +120,10 @@ script_mod! {
                 height: 1.5
                 show_bg: true
                 draw_bg +: {
-                    color: atlas.accent_soft
+                    // Header hairline: the accent blue at full opacity.
+                    // `frame_lo` (0x80/50%) / 0xBF read too faint; no exact
+                    // token, so literal.
+                    color: #x1496dcff
                     pixel: fn() {
                         let sdf = Sdf2d.viewport(self.pos * self.rect_size)
                         sdf.rect(0.0, 0.0, self.rect_size.x, self.rect_size.y)
@@ -150,17 +153,46 @@ script_mod! {
                             text_style: theme.font_bold{font_size: 10 line_spacing: 1.2}
                         }
                     }
-                    // The dynamic recents list. Rows are created from the `Row`
-                    // template at draw time (see `draw_walk`). `Fit` height so it
-                    // sizes to its rows inside the `Fit` card.
-                    recents_list := FlatList {
+                    // Bordered frame around the recents list. Stroke-only (no
+                    // fill) so the card surface shows through; sharp `sdf.rect`
+                    // per the 0-radius `sdf.box` flood gotcha. The 1px padding
+                    // keeps rows off the stroke. The draw loop finds the inner
+                    // FlatList via `as_flat_list()` during traversal, so this
+                    // extra nesting does not touch the id path.
+                    list_frame := View {
                         width: Fill
-                        height: Fit
-                        flow: Down
+                        // Fixed tall height so the recents box anchors the card
+                        // (short lists still read as a real panel); the inner
+                        // `Fill` FlatList scrolls when recents overflow.
+                        height: 320.0
+                        show_bg: true
+                        padding: Inset{left: 1.0, right: 1.0, top: 1.0, bottom: 1.0}
+                        draw_bg +: {
+                            // List box border: accent blue at 50% alpha, softer
+                            // than the 100% header divider so the inner frame
+                            // recedes.
+                            color: atlas.frame_lo
+                            pixel: fn() {
+                                let inset = 0.5
+                                let sdf = Sdf2d.viewport(self.pos * self.rect_size)
+                                sdf.rect(inset, inset, self.rect_size.x - inset * 2.0, self.rect_size.y - inset * 2.0)
+                                sdf.stroke(self.color, 1.0)
+                                return sdf.result
+                            }
+                        }
 
-                        // Task 2 row template: the real `RecentRowView` widget
-                        // (marker + stacked title/path + right-anchored stamp).
-                        Row := mod.widgets.RecentRowView { }
+                        // The dynamic recents list. Rows are created from the `Row`
+                        // template at draw time (see `draw_walk`). `Fit` height so it
+                        // sizes to its rows inside the `Fit` card.
+                        recents_list := FlatList {
+                            width: Fill
+                            height: Fill
+                            flow: Down
+
+                            // Task 2 row template: the real `RecentRowView` widget
+                            // (marker + stacked title/path + right-anchored stamp).
+                            Row := mod.widgets.RecentRowView { }
+                        }
                     }
                 }
 

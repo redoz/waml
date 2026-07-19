@@ -26,7 +26,7 @@ script_mod! {
         height: Fit
         flow: Right
         align: Align{y: 0.5}
-        padding: Inset{left: 12.0, right: 12.0, top: 8.0, bottom: 8.0}
+        padding: Inset{left: 12.0, right: 12.0, top: 5.0, bottom: 5.0}
         spacing: 12.0
 
         // Accent bullet: a sharp 7x7 solid square (0-radius `sdf.box` floods
@@ -48,37 +48,47 @@ script_mod! {
             }
         }
 
-        // Title over path, stacked. `Fill` width so this column eats all the
-        // slack and pushes `when` flush to the right edge -- the whole
-        // right-anchor mechanism, no measuring.
+        // Title line over path, stacked. The timestamp rides the TITLE line
+        // (shares its horizontal centerline with `title`), so the path spans
+        // the full column width below. `title` is `Fill` inside `titlerow`,
+        // eating the slack and shoving the `Fit` `when` flush right -- the
+        // whole right-anchor mechanism, no measuring.
         textcol := View {
             width: Fill
             height: Fit
             flow: Down
-            spacing: 2.0
-            title := Label {
-                text: ""
-                draw_text +: {
-                    color: atlas.text
-                    text_style: theme.font_regular{font_size: 12 line_spacing: 1.2}
+            spacing: 0.0
+
+            titlerow := View {
+                width: Fill
+                height: Fit
+                flow: Right
+                align: Align{y: 0.5}
+                title := Label {
+                    width: Fill
+                    text: ""
+                    draw_text +: {
+                        color: atlas.text
+                        text_style: theme.font_regular{font_size: 12 line_spacing: 1.0}
+                    }
+                }
+                // Right-anchored last-opened stamp. `Fit` width -> `title`'s
+                // `Fill` shoves it to the right edge, on the title's line.
+                when := Label {
+                    text: ""
+                    draw_text +: {
+                        color: atlas.text_dim
+                        text_style: theme.font_regular{font_size: 10 line_spacing: 1.0}
+                    }
                 }
             }
+
             path := Label {
                 text: ""
                 draw_text +: {
                     color: atlas.text_dim
-                    text_style: theme.font_regular{font_size: 10 line_spacing: 1.2}
+                    text_style: theme.font_regular{font_size: 10 line_spacing: 1.0}
                 }
-            }
-        }
-
-        // Right-anchored last-opened stamp. `Fit` width -> the `Fill` on
-        // `textcol` shoves it to the right edge.
-        when := Label {
-            text: ""
-            draw_text +: {
-                color: atlas.text_dim
-                text_style: theme.font_regular{font_size: 10 line_spacing: 1.2}
             }
         }
     }
@@ -104,7 +114,7 @@ impl Widget for RecentRowView {
 impl RecentRowView {
     /// Set the bold project title (top line).
     pub fn set_title(&mut self, cx: &mut Cx, s: &str) {
-        self.view.label(cx, ids!(textcol.title)).set_text(cx, s);
+        self.view.label(cx, ids!(textcol.titlerow.title)).set_text(cx, s);
     }
     /// Set the dim project path (second line).
     pub fn set_path(&mut self, cx: &mut Cx, s: &str) {
@@ -112,7 +122,7 @@ impl RecentRowView {
     }
     /// Set the right-anchored last-opened stamp.
     pub fn set_when(&mut self, cx: &mut Cx, s: &str) {
-        self.view.label(cx, ids!(when)).set_text(cx, s);
+        self.view.label(cx, ids!(textcol.titlerow.when)).set_text(cx, s);
     }
 }
 
