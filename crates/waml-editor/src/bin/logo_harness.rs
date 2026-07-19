@@ -31,20 +31,34 @@ script_mod! {
                     padding: 40
                     flow: Right
                     align: Align{x: 0.5, y: 0.5}
-                    spacing: 80
+                    spacing: 48
 
                     // Reference: the raw vector via DrawSvg (Icon's default
                     // color -1,-1,-1,-1 = keep the SVG's own fills).
                     Icon{
-                        icon_walk: Walk{ width: 440, height: Fit }
+                        icon_walk: Walk{ width: 300, height: Fit }
                         draw_icon.svg: crate_resource("self:resources/waml.svg")
                     }
                     // The SDF port. SolidView (its draw_bg is a DrawQuad) so the
                     // LogoMark subclass attaches; box holds the ~1.749 aspect.
                     SolidView{
-                        width: 440
-                        height: 252
+                        width: 300
+                        height: 172
                         draw_bg: mod.draw.LogoMark{}
+                    }
+                    // Small renders to inspect the seams / AA at title-bar
+                    // scale, where the hairline & miter artifacts show up.
+                    View{
+                        width: Fit
+                        height: Fit
+                        flow: Down
+                        spacing: 16
+                        align: Align{x: 0.0, y: 0.5}
+                        SolidView{ width: 96.0 height: 54.9 draw_bg: mod.draw.LogoMark{} }
+                        SolidView{ width: 64.0 height: 36.6 draw_bg: mod.draw.LogoMark{} }
+                        SolidView{ width: 52.0 height: 29.7 draw_bg: mod.draw.LogoMark{} }
+                        SolidView{ width: 38.0 height: 21.7 draw_bg: mod.draw.LogoMark{} }
+                        SolidView{ width: 26.0 height: 14.9 draw_bg: mod.draw.LogoMark{} }
                     }
                 }
             }

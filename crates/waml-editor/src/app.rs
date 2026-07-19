@@ -55,8 +55,8 @@ script_mod! {
                         // the `LogoMark` DrawColor subclass can attach; a plain
                         // `View`'s `draw_bg` is a `DrawQuad` and rejects it.
                         SolidView{
-                            width: 45.5
-                            height: 26.0
+                            width: 52.0
+                            height: 29.7
                             draw_bg: mod.draw.LogoMark{}
                         }
                     }

@@ -29,12 +29,6 @@ script_mod! {
             let r = self.rect_size
             let p = self.pos * r
             let aa = 1.2
-            // Dilate every bar ~0.75px so adjacent bars overlap instead of
-            // meeting edge-to-edge. Edge-to-edge, both bars' AA falloff dips
-            // coverage below 1 at the shared seam, so the background bleeds a
-            // bright hairline through the gap; the overlap lets the top (fold-
-            // order) bar cover the seam cleanly.
-            let grow = 0.75
 
             // Per-segment fill colors (recolor here). Greyscale ramp: value is
             // the luminance of each stroke, left-to-right (seg1..seg6).
@@ -142,22 +136,44 @@ script_mod! {
             let d5da = dot(p - s5d, n5da * (0.0 - sign(dot(n5da, m5 - s5d))))
             let dq5 = max(max(d5ab, d5bc), max(d5cd, d5da))
 
-            // Composite in fold order: 2,4,6 then 1,3,5 over the top.
-            // Premultiplied "over" per bar (opaque color, aa-px soft edge).
-            let c2 = clamp(0.5 - (dq2 - grow) / aa, 0.0, 1.0)
-            let acc2 = vec4(k2, 1.0) * c2
-            let c4 = clamp(0.5 - (dq4 - grow) / aa, 0.0, 1.0)
-            let acc4 = vec4(k4, 1.0) * c4 + acc2 * (1.0 - c4)
-            let c6 = clamp(0.5 - (dq6 - grow) / aa, 0.0, 1.0)
-            let acc6 = vec4(k6, 1.0) * c6 + acc4 * (1.0 - c6)
-            let c1 = clamp(0.5 - (dq1 - grow) / aa, 0.0, 1.0)
-            let acc1 = vec4(k1, 1.0) * c1 + acc6 * (1.0 - c1)
-            let c3 = clamp(0.5 - (dq3 - grow) / aa, 0.0, 1.0)
-            let acc3 = vec4(k3, 1.0) * c3 + acc1 * (1.0 - c3)
-            let c5 = clamp(0.5 - (dq5 - grow) / aa, 0.0, 1.0)
-            let acc5 = vec4(k5, 1.0) * c5 + acc3 * (1.0 - c5)
+            // Per-bar AA coverage (0.5 exactly on each bar's own edge).
+            let cc1 = clamp(0.5 - dq1 / aa, 0.0, 1.0)
+            let cc2 = clamp(0.5 - dq2 / aa, 0.0, 1.0)
+            let cc3 = clamp(0.5 - dq3 / aa, 0.0, 1.0)
+            let cc4 = clamp(0.5 - dq4 / aa, 0.0, 1.0)
+            let cc5 = clamp(0.5 - dq5 / aa, 0.0, 1.0)
+            let cc6 = clamp(0.5 - dq6 / aa, 0.0, 1.0)
 
-            return acc5
+            // COLOR: fold-order "over" composite (2,4,6 then 1,3,5 on top) so
+            // the two shades blend smoothly across each internal seam. Its own
+            // alpha dips at seams, so we keep only its un-premultiplied color.
+            let acc2 = vec4(k2, 1.0) * cc2
+            let acc4 = vec4(k4, 1.0) * cc4 + acc2 * (1.0 - cc4)
+            let acc6 = vec4(k6, 1.0) * cc6 + acc4 * (1.0 - cc6)
+            let acc1 = vec4(k1, 1.0) * cc1 + acc6 * (1.0 - cc1)
+            let acc3 = vec4(k3, 1.0) * cc3 + acc1 * (1.0 - cc3)
+            let acc5 = vec4(k5, 1.0) * cc5 + acc3 * (1.0 - cc5)
+            let straight = acc5.rgb / max(acc5.a, 0.0001)
+
+            // ALPHA: silhouette coverage = sum of the TWO largest per-bar
+            // coverages. On an internal seam the two abutting bars each read 0.5
+            // and sum to 1 (no background hairline); on a true outer edge only
+            // one bar contributes, giving normal AA -- and since nothing is
+            // dilated, sharp tips stay sharp (no miter spikes). Track top two:
+            let t1 = max(cc1, cc2)
+            let t2 = min(cc1, cc2)
+            let u1 = max(t1, cc3)
+            let u2 = max(t2, min(t1, cc3))
+            let v1 = max(u1, cc4)
+            let v2 = max(u2, min(u1, cc4))
+            let w1 = max(v1, cc5)
+            let w2 = max(v2, min(v1, cc5))
+            let x1 = max(w1, cc6)
+            let x2 = max(w2, min(w1, cc6))
+            let cover = clamp(x1 + x2, 0.0, 1.0)
+
+            // Blended color, premultiplied by the hole-free silhouette coverage.
+            return vec4(straight * cover, cover)
         }
     }
 }
