@@ -30,13 +30,15 @@ script_mod! {
             let p = self.pos * r
             let aa = 1.2
 
-            // Per-segment fill colors (recolor here).
-            let k1 = vec3(0.9020, 0.3137, 0.3137)
-            let k2 = vec3(0.9412, 0.6667, 0.2353)
-            let k3 = vec3(0.3137, 0.6275, 0.9020)
-            let k4 = vec3(0.6667, 0.4314, 0.8627)
-            let k5 = vec3(0.3529, 0.7843, 0.4706)
-            let k6 = vec3(0.4706, 0.4706, 0.4706)
+            // Per-segment fill colors (recolor here). Greyscale ramp: value is
+            // the luminance of each stroke, left-to-right (seg1..seg6).
+            // 3-level ramp, pattern 1,3,3,2,2,1 (1 lightest, 3 darkest).
+            let k1 = vec3(0.40, 0.40, 0.40)
+            let k2 = vec3(0.15, 0.15, 0.15)
+            let k3 = vec3(0.15, 0.15, 0.15)
+            let k4 = vec3(0.28, 0.28, 0.28)
+            let k5 = vec3(0.28, 0.28, 0.28)
+            let k6 = vec3(0.40, 0.40, 0.40)
 
             // ---- seg2 (thin up-stroke) ----
             let s2a = vec2(0.3142, 1.0000) * r
