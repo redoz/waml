@@ -73,12 +73,12 @@ script_mod! {
         height: Fill
         // Transparent `color` -- the shader paints the whole fill.
         draw_bg: mod.draw.WamlButton{ color: #x00000000 }
-        // Uppercased at the call site (mock uses uppercase letterspaced mono; we
-        // reuse the shared bold sans to stay clear of the fork's inline-font
-        // empty-family quirk).
+        // Sentence-case label at the call site (toned down from the mock's
+        // shouty uppercase); regular weight sans, staying clear of the fork's
+        // inline-font empty-family quirk.
         draw_label +: {
             color: atlas.text
-            text_style: theme.font_bold{font_size: 11 line_spacing: 1.2}
+            text_style: theme.font_regular{font_size: 10 line_spacing: 1.2}
         }
     }
 }
@@ -90,7 +90,7 @@ const FLARE_SECS: f64 = 0.45;
 // Label placement inside the button: inset from the left edge, vertically
 // centered (the `8.0` is half the ~16px cap height of the label font).
 const LABEL_PAD_X: f64 = 16.0;
-const LABEL_HALF_H: f64 = 8.0;
+const LABEL_HALF_H: f64 = 7.0;
 
 #[derive(Script, ScriptHook, Widget)]
 pub struct WamlButton {
@@ -110,6 +110,15 @@ pub struct WamlButton {
     #[live]
     draw_label: DrawText,
 
+    /// Sentence-case button label, set per-instance in the DSL (e.g.
+    /// `WamlButton { text: "New project" }`).
+    #[live]
+    text: String,
+
+    /// Pointer-over state, driven from FingerHoverIn/Out; thickens the frame.
+    #[rust]
+    hovered: bool,
+
     // Press ripple/flare state (see module docs). `pressed` gates the next-frame
     // loop; `org` is the click point in 0..1 button space; `reveal`/`flare` are
     // the animated uniforms fed to the shader.
@@ -127,17 +136,50 @@ pub struct WamlButton {
     next_frame: NextFrame,
 }
 
-impl Widget for WamlButton {
-    // Event-passive: parents drive this component through the inherent methods
-    // below (`press`/`tick`/`release`/`draw_at`), so a stray tree route can
-    // never double-handle a press.
-    fn handle_event(&mut self, _cx: &mut Cx, _event: &Event, _scope: &mut Scope) {}
+/// Emitted when the button is clicked (FingerUp over its own area).
+#[derive(Clone, Debug, Default)]
+pub enum WamlButtonAction {
+    #[default]
+    None,
+    Clicked,
+}
 
-    // Provided for completeness (DSL-tree placement): draw filling the walk
-    // rect, labelless. Immediate-mode parents call `draw_at` instead.
+impl Widget for WamlButton {
+    fn handle_event(&mut self, cx: &mut Cx, event: &Event, _scope: &mut Scope) {
+        let uid = self.widget_uid();
+        // Advance the press ripple if this is our scheduled next frame.
+        if self.tick(cx, event) {
+            return;
+        }
+        match event.hits(cx, self.draw_bg.area()) {
+            Hit::FingerDown(fe) if fe.is_primary_hit() => {
+                let rect = self.draw_bg.area().rect(cx);
+                self.press(cx, rect, fe.abs, fe.time);
+            }
+            Hit::FingerHoverIn(_) => {
+                cx.set_cursor(MouseCursor::Hand);
+                self.hovered = true;
+                self.draw_bg.redraw(cx);
+            }
+            Hit::FingerHoverOut(_) => {
+                self.hovered = false;
+                self.draw_bg.redraw(cx);
+            }
+            Hit::FingerUp(fe) if fe.is_primary_hit() => {
+                self.release(cx);
+                if fe.is_over {
+                    cx.widget_action(uid, WamlButtonAction::Clicked);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    // Fill the laid-out walk rect with the label, drawing the press ripple/frame.
     fn draw_walk(&mut self, cx: &mut Cx2d, _scope: &mut Scope, walk: Walk) -> DrawStep {
         let rect = cx.walk_turtle(walk);
-        self.draw_at(cx, rect, "", false);
+        let label = self.text.clone();
+        self.draw_at(cx, rect, &label, self.hovered);
         DrawStep::done()
     }
 }
@@ -189,6 +231,13 @@ impl WamlButton {
         }
     }
 
+    /// True when this button emitted a click in `actions`.
+    pub fn clicked(&self, actions: &Actions) -> bool {
+        actions
+            .find_widget_action(self.widget_uid())
+            .is_some_and(|a| matches!(a.cast(), WamlButtonAction::Clicked))
+    }
+
     /// Draw the button filling `rect` with `label` (drawn as given -- the caller
     /// uppercases). `hovered` thickens the accent frame.
     pub fn draw_at(&mut self, cx: &mut Cx2d, rect: Rect, label: &str, hovered: bool) {
@@ -203,5 +252,12 @@ impl WamlButton {
             dvec2(rect.pos.x + LABEL_PAD_X, rect.pos.y + rect.size.y * 0.5 - LABEL_HALF_H),
             label,
         );
+    }
+}
+
+impl WamlButtonRef {
+    /// See [`WamlButton::clicked`].
+    pub fn clicked(&self, actions: &Actions) -> bool {
+        self.borrow().is_some_and(|inner| inner.clicked(actions))
     }
 }
