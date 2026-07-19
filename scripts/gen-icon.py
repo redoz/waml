@@ -188,13 +188,64 @@ def emit_path(d, lines):
         prev_cmd = u
 
 
+def attrs(tag):
+    return {k: v for k, v in re.findall(r'([\w-]+)="([^"]*)"', tag)}
+
+
+def element_d(name, tag):
+    """Convert a drawable svg element to an equivalent path `d` string.
+
+    Lucide draws not just <path> but <circle>/<rect>/<line>/<polyline>. Routing
+    each through one path emitter keeps the arc/fit machinery in one place. A
+    full circle is two semicircle arcs; a rounded rect is four corner arcs.
+    """
+    a = attrs(tag)
+    f = lambda k, d=0.0: float(a.get(k, d))
+    if name == 'path':
+        return a.get('d')
+    if name == 'circle':
+        cx, cy, r = f('cx'), f('cy'), f('r')
+        return ("M%g %g A%g %g 0 0 1 %g %g A%g %g 0 0 1 %g %g"
+                % (cx + r, cy, r, r, cx - r, cy, r, r, cx + r, cy))
+    if name == 'ellipse':  # emitted as its bounding circle's x-radius (Lucide rx==ry)
+        cx, cy, r = f('cx'), f('cy'), f('rx')
+        return ("M%g %g A%g %g 0 0 1 %g %g A%g %g 0 0 1 %g %g"
+                % (cx + r, cy, r, r, cx - r, cy, r, r, cx + r, cy))
+    if name == 'line':
+        return "M%g %g L%g %g" % (f('x1'), f('y1'), f('x2'), f('y2'))
+    if name == 'polyline' or name == 'polygon':
+        pts = [float(n) for n in NUM.findall(a.get('points', ''))]
+        if len(pts) < 4:
+            return None
+        d = "M%g %g" % (pts[0], pts[1])
+        for i in range(2, len(pts), 2):
+            d += " L%g %g" % (pts[i], pts[i + 1])
+        if name == 'polygon':
+            d += " Z"
+        return d
+    if name == 'rect':
+        x, y, w, h = f('x'), f('y'), f('width'), f('height')
+        rx = f('rx', f('ry'))
+        ry = f('ry', rx)
+        if rx <= 0:
+            return "M%g %g L%g %g L%g %g L%g %g Z" % (x, y, x + w, y, x + w, y + h, x, y + h)
+        return (("M%g %g L%g %g A%g %g 0 0 1 %g %g L%g %g A%g %g 0 0 1 %g %g "
+                 "L%g %g A%g %g 0 0 1 %g %g L%g %g A%g %g 0 0 1 %g %g Z")
+                % (x + rx, y, x + w - rx, y, rx, ry, x + w, y + ry,
+                   x + w, y + h - ry, rx, ry, x + w - rx, y + h,
+                   x + rx, y + h, rx, ry, x, y + h - ry,
+                   x, y + ry, rx, ry, x + rx, y))
+
+
 def main():
     if len(sys.argv) < 2:
         sys.exit("usage: gen-icon.py <path-to.svg>")
     svg = open(sys.argv[1], encoding='utf-8').read()
-    ds = re.findall(r'<path[^>]*\bd="([^"]*)"', svg)
+    # Drawable elements in document order (Lucide paints them in this order).
+    elems = re.findall(r'<(path|circle|ellipse|rect|line|polyline|polygon)\b([^>]*)>', svg)
+    ds = [d for name, tag in elems if (d := element_d(name, tag))]
     if not ds:
-        sys.exit("no <path d=...> found in " + sys.argv[1])
+        sys.exit("no drawable elements found in " + sys.argv[1])
     lines = ["            let w = s * %.3f" % STROKE_W,
              "            let sdf = Sdf2d.viewport(self.pos * self.rect_size)"]
     for d in ds:

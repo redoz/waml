@@ -381,20 +381,25 @@ script_mod! {
         }
     }
 
-    // Spline: two endpoint nodes joined by a curve (polyline approximation).
+    // Spline: two endpoint node rings joined by a true quarter sweep. Faithful
+    // port of resources/icons/spline.svg via scripts/gen-icon.py (the joining
+    // stroke is the source's circular `A` arc, not a hand-flattened polyline;
+    // the nodes are its two <circle> elements as stroked rings).
     mod.draw.IconSpline = mod.draw.DrawColor{
         pixel: fn() {
             let s = self.rect_size.x
-            let w = s * 0.075
+            let w = s * 0.068
             let sdf = Sdf2d.viewport(self.pos * self.rect_size)
-            sdf.move_to(s * 0.21, s * 0.70)
-            sdf.line_to(s * 0.28, s * 0.42)
-            sdf.line_to(s * 0.42, s * 0.28)
-            sdf.line_to(s * 0.70, s * 0.21)
+            sdf.move_to(s * 0.8849, s * 0.2006)
+            sdf.arc_to(s * 0.7994, s * 0.2006, s * 0.0855, 0.0000, 3.1416)
+            sdf.arc_to(s * 0.7994, s * 0.2006, s * 0.0855, 3.1416, 6.2832)
             sdf.stroke(self.color, w)
-            sdf.circle(s * 0.79, s * 0.21, s * 0.10)
+            sdf.move_to(s * 0.2862, s * 0.7994)
+            sdf.arc_to(s * 0.2006, s * 0.7994, s * 0.0855, 0.0000, 3.1416)
+            sdf.arc_to(s * 0.2006, s * 0.7994, s * 0.0855, 3.1416, 6.2832)
             sdf.stroke(self.color, w)
-            sdf.circle(s * 0.21, s * 0.79, s * 0.10)
+            sdf.move_to(s * 0.2006, s * 0.7138)
+            sdf.arc_to(s * 0.7138, s * 0.7138, s * 0.5132, 3.1416, 4.7124)
             sdf.stroke(self.color, w)
             return sdf.result
         }
