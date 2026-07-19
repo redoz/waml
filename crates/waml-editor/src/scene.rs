@@ -66,6 +66,33 @@ pub fn focus_eyebrow(stereotypes: &[String], ty: &ElementType) -> Option<String>
     }
 }
 
+/// Project model `node` into a `SceneNode` with a zeroed rect. The rect is
+/// filled later — from the solver in `build_scene`, or measured to the card
+/// hull in `sizing`. One place derives title / element_type / stereotypes /
+/// attributes so measurement and drawing never diverge. `emphasized` and
+/// `collapsed` default to `false`; callers set them from solved flags.
+pub fn project_scene_node(model: &Model, node: &waml::model::Node) -> SceneNode {
+    SceneNode {
+        key: node.key.clone(),
+        title: node
+            .concept
+            .title
+            .clone()
+            .unwrap_or_else(|| node.key.clone()),
+        element_type: node.ty.clone(),
+        stereotypes: node.stereotypes.clone(),
+        attributes: attribute_rows(model, &node.key),
+        rect: Rect {
+            x: 0.0,
+            y: 0.0,
+            w: 0.0,
+            h: 0.0,
+        },
+        emphasized: false,
+        collapsed: false,
+    }
+}
+
 /// Solve `diagram` against `model` and flatten the result into a `Scene`.
 pub fn build_scene(model: &Model, diagram: &Diagram) -> (Scene, Vec<Diagnostic>) {
     use std::collections::BTreeMap;
@@ -79,27 +106,30 @@ pub fn build_scene(model: &Model, diagram: &Diagram) -> (Scene, Vec<Diagnostic>)
     let mut nodes = Vec::with_capacity(solved.nodes.len());
     for (key, rect) in &solved.nodes {
         let flags = solved.flags.get(key).copied().unwrap_or_default();
-        let model_node = node_of.get(key.as_str()).copied();
-        let title = model_node
-            .and_then(|n| n.concept.title.clone())
-            .unwrap_or_else(|| key.clone());
-        let element_type = model_node
-            .map(|n| n.ty.clone())
-            .unwrap_or_else(|| ElementType::Unknown(String::new()));
-        let attributes = attribute_rows(model, key);
-        let stereotypes = model_node
-            .map(|n| n.stereotypes.clone())
-            .unwrap_or_default();
-        nodes.push(SceneNode {
-            key: key.clone(),
-            title,
-            element_type,
-            stereotypes,
-            attributes,
-            rect: *rect,
-            emphasized: flags.emphasized,
-            collapsed: flags.collapsed,
-        });
+        let mut node = match node_of.get(key.as_str()).copied() {
+            Some(model_node) => project_scene_node(model, model_node),
+            // Keys with no resolving model node (synthetic/unknown) fall back to
+            // a title-only node: key as title, Unknown type, no members.
+            None => SceneNode {
+                key: key.clone(),
+                title: key.clone(),
+                element_type: ElementType::Unknown(String::new()),
+                stereotypes: Vec::new(),
+                attributes: Vec::new(),
+                rect: Rect {
+                    x: 0.0,
+                    y: 0.0,
+                    w: 0.0,
+                    h: 0.0,
+                },
+                emphasized: false,
+                collapsed: false,
+            },
+        };
+        node.rect = *rect;
+        node.emphasized = flags.emphasized;
+        node.collapsed = flags.collapsed;
+        nodes.push(node);
     }
 
     // Only edges whose endpoints both appear in the solved layout are drawable.
@@ -267,6 +297,27 @@ mod tests {
             scene.nodes[0].stereotypes,
             vec!["aggregateRoot".to_string()]
         );
+    }
+
+    #[test]
+    fn project_scene_node_carries_concept_and_members() {
+        let model = mini();
+        let node = model.nodes.iter().find(|n| n.key == "order").unwrap();
+        let projected = project_scene_node(&model, node);
+
+        assert_eq!(projected.title, "Order");
+        assert_eq!(
+            projected.element_type,
+            ElementType::Uml(waml::model::UmlMetaclass::Class)
+        );
+        // order.md declares `stereotype: [aggregateRoot]`.
+        assert_eq!(projected.stereotypes, vec!["aggregateRoot".to_string()]);
+        // Mirrors order.md's `## Attributes` block, in order.
+        assert_eq!(projected.attributes.len(), 2);
+        assert_eq!(projected.attributes[0].name, "id");
+        assert_eq!(projected.attributes[0].ty, "OrderId");
+        assert_eq!(projected.attributes[1].name, "total");
+        assert_eq!(projected.attributes[1].ty, "Decimal");
     }
 
     #[test]
