@@ -457,7 +457,9 @@ script_mod! {
             sdf.circle(self.cx, self.cy, self.rim)
             sdf.stroke(vec4(stroke.x, stroke.y, stroke.z, stroke.w * in_wedge), 1.2)
             let o = sdf.result
-            return vec4(o.x, o.y, o.z, o.w * self.fade)
+            // `sdf.result` is already premultiplied; scale rgb by fade too so the
+            // bloom dims correctly (alpha-only would over-brighten mid-bloom).
+            return vec4(o.x * self.fade, o.y * self.fade, o.z * self.fade, o.w * self.fade)
         }
     }
 
@@ -497,7 +499,12 @@ script_mod! {
             let within = step(self.hub, r) * (1.0 - step(self.rim, r))
             let on = within * in_arc * (1.0 - smoothstep(0.4, 1.1, perp))
             let o = mix(col, vec4(self.spoke_col.x, self.spoke_col.y, self.spoke_col.z, 1.0), on)
-            return vec4(o.x, o.y, o.z, o.w * self.fade)
+            // Output PREMULTIPLIED alpha (makepad blends Src=ONE, Dst=INV_SRC_ALPHA).
+            // `col`/`spoke` are straight, so scale rgb by the final coverage --
+            // otherwise a light `disc_col` leaks full colour into the transparent
+            // DComp popup composite (an opaque white square) even where alpha ~0.
+            let a = o.w * self.fade
+            return vec4(o.x * a, o.y * a, o.z * a, a)
         }
     }
 
@@ -522,7 +529,8 @@ script_mod! {
             sdf.line_to(c.x - e, c.y + e)
             sdf.stroke(vec4(self.mark_col.x, self.mark_col.y, self.mark_col.z, 1.0), 2.0)
             let o = sdf.result
-            return vec4(o.x, o.y, o.z, o.w * self.fade)
+            // Premultiplied (see RadialWedge): scale rgb by fade, not just alpha.
+            return vec4(o.x * self.fade, o.y * self.fade, o.z * self.fade, o.w * self.fade)
         }
     }
 

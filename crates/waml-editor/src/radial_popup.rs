@@ -141,20 +141,23 @@ impl RadialPopup {
 
         // Radial blooms around the popup centre (in popup-local coords).
         let local_center = dvec2(POPUP_SIZE * 0.5, POPUP_SIZE * 0.5);
-        // Clip bounds for the edge-adaptive fan, expressed in popup-local coords.
-        // The parent window's client rect maps to popup-local by the same shift
-        // that puts `center` at `local_center` (a window-local point `p` lands at
-        // `p - center + POPUP_SIZE/2`). NOTE: this clips the fan at the *window*
-        // edge, not the monitor edge -- correct when maximized (client rect ~=
-        // work area), merely conservative (adapts a touch early, never off-screen)
-        // for a small floating window. True screen-edge adaptation for the
-        // floating popup needs a makepad monitor-rect API (a follow-up, same shape
-        // as the DComp transparent-popup addition).
-        let bounds = Rect {
-            pos: local_center - center,
-            size: parent_client,
+        // Clip bounds for the edge-adaptive fan. This popup is a FREE-FLOATING
+        // transparent OS window that overflows the main window onto the desktop,
+        // so the main-window edge is NOT a real constraint -- only the monitor
+        // edge is. The logo anchor sits in the window's top-left corner, so
+        // clipping to the window rect would ALWAYS collapse the fan to a 90 deg
+        // corner quadrant (all wedges crammed down-right). The correct constraint
+        // is the monitor work area, which needs a makepad monitor-rect API (a
+        // follow-up, same shape as the DComp transparent-popup addition). Until
+        // then, leave the fan unconstrained -> a full disc that blooms around the
+        // logo and spills onto the desktop, as this popup is designed to do.
+        let unconstrained = Rect {
+            pos: local_center - dvec2(1.0e6, 1.0e6),
+            size: dvec2(2.0e6, 2.0e6),
         };
-        self.radial.open_popup(cx, local_center, bounds, items, time);
+        let _ = parent_client;
+        self.radial
+            .open_popup(cx, local_center, unconstrained, items, time);
     }
 
     fn popup_window_id(&self) -> Option<WindowId> {
