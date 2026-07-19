@@ -29,6 +29,12 @@ script_mod! {
             let r = self.rect_size
             let p = self.pos * r
             let aa = 1.2
+            // Dilate every bar ~0.75px so adjacent bars overlap instead of
+            // meeting edge-to-edge. Edge-to-edge, both bars' AA falloff dips
+            // coverage below 1 at the shared seam, so the background bleeds a
+            // bright hairline through the gap; the overlap lets the top (fold-
+            // order) bar cover the seam cleanly.
+            let grow = 0.75
 
             // Per-segment fill colors (recolor here). Greyscale ramp: value is
             // the luminance of each stroke, left-to-right (seg1..seg6).
@@ -138,17 +144,17 @@ script_mod! {
 
             // Composite in fold order: 2,4,6 then 1,3,5 over the top.
             // Premultiplied "over" per bar (opaque color, aa-px soft edge).
-            let c2 = clamp(0.5 - dq2 / aa, 0.0, 1.0)
+            let c2 = clamp(0.5 - (dq2 - grow) / aa, 0.0, 1.0)
             let acc2 = vec4(k2, 1.0) * c2
-            let c4 = clamp(0.5 - dq4 / aa, 0.0, 1.0)
+            let c4 = clamp(0.5 - (dq4 - grow) / aa, 0.0, 1.0)
             let acc4 = vec4(k4, 1.0) * c4 + acc2 * (1.0 - c4)
-            let c6 = clamp(0.5 - dq6 / aa, 0.0, 1.0)
+            let c6 = clamp(0.5 - (dq6 - grow) / aa, 0.0, 1.0)
             let acc6 = vec4(k6, 1.0) * c6 + acc4 * (1.0 - c6)
-            let c1 = clamp(0.5 - dq1 / aa, 0.0, 1.0)
+            let c1 = clamp(0.5 - (dq1 - grow) / aa, 0.0, 1.0)
             let acc1 = vec4(k1, 1.0) * c1 + acc6 * (1.0 - c1)
-            let c3 = clamp(0.5 - dq3 / aa, 0.0, 1.0)
+            let c3 = clamp(0.5 - (dq3 - grow) / aa, 0.0, 1.0)
             let acc3 = vec4(k3, 1.0) * c3 + acc1 * (1.0 - c3)
-            let c5 = clamp(0.5 - dq5 / aa, 0.0, 1.0)
+            let c5 = clamp(0.5 - (dq5 - grow) / aa, 0.0, 1.0)
             let acc5 = vec4(k5, 1.0) * c5 + acc3 * (1.0 - c5)
 
             return acc5
