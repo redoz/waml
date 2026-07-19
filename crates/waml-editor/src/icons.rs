@@ -661,6 +661,48 @@ script_mod! {
         }
     }
 
+    // Moon: crescent -- outer 9-unit arc meeting an inner 6-unit arc, joined by
+    // the source's two short bezier fillets (flattened).
+    // Faithful port of resources/icons/moon.svg via scripts/gen-icon.py; scale
+    // nudged up (A=0.048, B=-0.076) to match the list glyphs (same ~3-unit
+    // viewBox padding), center held at c=12.
+    mod.draw.IconMoon = mod.draw.DrawColor{
+        pixel: fn() {
+            let s = self.rect_size.x
+            let w = s * 0.068
+            let sdf = Sdf2d.viewport(self.pos * self.rect_size)
+            sdf.move_to(s * 0.9313, s * 0.5233)
+            sdf.arc_to(s * 0.4999, s * 0.5000, s * 0.4320, 0.0539, 4.6584)
+            sdf.line_to(s * 0.4812, s * 0.0689)
+            sdf.line_to(s * 0.4855, s * 0.0700)
+            sdf.line_to(s * 0.4892, s * 0.0719)
+            sdf.line_to(s * 0.4925, s * 0.0745)
+            sdf.line_to(s * 0.4952, s * 0.0777)
+            sdf.line_to(s * 0.4974, s * 0.0814)
+            sdf.line_to(s * 0.4989, s * 0.0854)
+            sdf.line_to(s * 0.4998, s * 0.0897)
+            sdf.line_to(s * 0.4999, s * 0.0941)
+            sdf.line_to(s * 0.4994, s * 0.0986)
+            sdf.line_to(s * 0.4980, s * 0.1030)
+            sdf.line_to(s * 0.4959, s * 0.1072)
+            sdf.arc_to(s * 0.7401, s * 0.2599, s * 0.2880, -2.5830, -5.2710)
+            sdf.line_to(s * 0.8970, s * 0.5019)
+            sdf.line_to(s * 0.9014, s * 0.5006)
+            sdf.line_to(s * 0.9059, s * 0.5000)
+            sdf.line_to(s * 0.9103, s * 0.5002)
+            sdf.line_to(s * 0.9146, s * 0.5010)
+            sdf.line_to(s * 0.9186, s * 0.5025)
+            sdf.line_to(s * 0.9222, s * 0.5047)
+            sdf.line_to(s * 0.9254, s * 0.5074)
+            sdf.line_to(s * 0.9280, s * 0.5107)
+            sdf.line_to(s * 0.9299, s * 0.5144)
+            sdf.line_to(s * 0.9311, s * 0.5187)
+            sdf.line_to(s * 0.9313, s * 0.5233)
+            sdf.stroke(self.color, w)
+            return sdf.result
+        }
+    }
+
     mod.widgets.TreeIconsBase = #(TreeIcons::script_component(vm))
 
     // Each field is a `DrawColor` pointing at its icon shader; the accent tint
@@ -690,6 +732,7 @@ script_mod! {
         list_expand: mod.draw.IconListExpand{ color: atlas.accent }
         pencil: mod.draw.IconPencil{ color: atlas.accent }
         menu: mod.draw.IconMenu{ color: atlas.accent }
+        moon: mod.draw.IconMoon{ color: atlas.accent }
     }
 }
 
@@ -745,6 +788,8 @@ pub struct TreeIcons {
     pub pencil: DrawColor,
     #[live]
     pub menu: DrawColor,
+    #[live]
+    pub moon: DrawColor,
 }
 
 impl TreeIcons {
@@ -752,7 +797,7 @@ impl TreeIcons {
     /// `icon_harness` bin's proof-grid; the shipping tree/doc-tabs pick glyphs by
     /// `TreeKind` via `icon_for` in `tree_panel.rs` instead.
     #[allow(dead_code)]
-    pub fn labeled_mut(&mut self) -> [(&'static str, &mut DrawColor); 24] {
+    pub fn labeled_mut(&mut self) -> [(&'static str, &mut DrawColor); 25] {
         [
             ("class", &mut self.class),
             ("interface", &mut self.interface),
@@ -778,6 +823,7 @@ impl TreeIcons {
             ("expand", &mut self.list_expand),
             ("pencil", &mut self.pencil),
             ("menu", &mut self.menu),
+            ("moon", &mut self.moon),
         ]
     }
 }
