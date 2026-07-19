@@ -11,6 +11,7 @@
 //! routing / real buttons (Task 3) land later. The `StartScreen` widget now
 //! derefs a `View` (the `inspector_panel.rs` hybrid pattern).
 
+use crate::recent_row::RecentRowViewWidgetRefExt;
 use makepad_widgets::*;
 
 script_mod! {
@@ -157,23 +158,9 @@ script_mod! {
                         height: Fit
                         flow: Down
 
-                        // Task 1 row template: title-only. Marker / path line /
-                        // right-anchored timestamp arrive with `RecentRowView`
-                        // in Task 2.
-                        Row := View {
-                            width: Fill
-                            height: Fit
-                            flow: Right
-                            align: Align{y: 0.5}
-                            padding: Inset{left: 12.0, right: 12.0, top: 8.0, bottom: 8.0}
-                            title := Label {
-                                text: ""
-                                draw_text +: {
-                                    color: atlas.text
-                                    text_style: theme.font_regular{font_size: 12 line_spacing: 1.2}
-                                }
-                            }
-                        }
+                        // Task 2 row template: the real `RecentRowView` widget
+                        // (marker + stacked title/path + right-anchored stamp).
+                        Row := mod.widgets.RecentRowView { }
                     }
                 }
 
@@ -249,9 +236,8 @@ script_mod! {
 pub(crate) struct RecentRow {
     pub title: String,
     pub path: String,
-    /// Preformatted local "M/D/YYYY h:mm AM/PM" last-opened stamp. Not rendered
-    /// in the Task 1 title-only row template; wired into `RecentRowView` in Task 2.
-    #[allow(dead_code)]
+    /// Preformatted local "M/D/YYYY h:mm AM/PM" last-opened stamp. Rendered
+    /// right-anchored in the `RecentRowView` row.
     pub when: String,
 }
 
@@ -313,14 +299,20 @@ impl Widget for StartScreen {
                     // separate tree node to keep visible/hidden).
                     let item_id = LiveId::from_str("empty");
                     let row = list.item(cx, item_id, id!(Row)).unwrap();
-                    row.label(cx, ids!(title)).set_text(cx, "No recent projects");
+                    let rv = row.as_recent_row_view();
+                    rv.set_title(cx, "No recent projects");
+                    rv.set_path(cx, "");
+                    rv.set_when(cx, "");
                     row.draw_all(cx, &mut Scope::empty());
                 } else {
                     for row_data in self.rows.iter() {
                         // Stable per-recent id keeps a row's widget across redraws.
                         let item_id = LiveId::from_str(&row_data.path);
                         let row = list.item(cx, item_id, id!(Row)).unwrap();
-                        row.label(cx, ids!(title)).set_text(cx, &row_data.title);
+                        let rv = row.as_recent_row_view();
+                        rv.set_title(cx, &row_data.title);
+                        rv.set_path(cx, &row_data.path);
+                        rv.set_when(cx, &row_data.when);
                         row.draw_all(cx, &mut Scope::empty());
                     }
                 }
