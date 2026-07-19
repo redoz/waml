@@ -108,10 +108,15 @@ script_mod! {
                     draw_bg: mod.draw.LogoMark{}
                 }
                 sub := Label {
-                    text: "Create or open a project to get started"
+                    text: "Create or open a model to get started"
+                    // Negative bottom margin drops the label box past the row
+                    // bottom so its baseline seats on the logo baseline (the
+                    // wordmark is already bottom-tight; this cancels the Label's
+                    // sub-baseline leading, not any logo padding).
+                    margin: Inset{bottom: -3.0}
                     draw_text +: {
                         color: atlas.text_dim
-                        text_style: theme.font_regular{font_size: 10 line_spacing: 1.2}
+                        text_style: theme.font_regular{font_size: 9 line_spacing: 1.0}
                     }
                 }
             }
@@ -219,14 +224,8 @@ script_mod! {
                     // label, hover wash, no button chrome. Each emits its own
                     // `ActionLinkAction::Clicked` that `handle_actions` maps to a
                     // `StartScreenAction`. `Fit` height (no fixed button rows).
-                    link_new := mod.widgets.ActionLink {
-                        icon := { draw_bg: mod.draw.IconNewProject{ color: atlas.accent } }
-                        label := { text: "Create a new project" }
-                    }
-                    link_open := mod.widgets.ActionLink {
-                        icon := { draw_bg: mod.draw.IconOpenProject{ color: atlas.accent } }
-                        label := { text: "Open a project" }
-                    }
+                    link_new := mod.widgets.ActionLink { text: "Create a new model" kind: 0.0 }
+                    link_open := mod.widgets.ActionLink { text: "Open a model" kind: 1.0 }
                 }
             }
         }
@@ -297,7 +296,7 @@ impl Widget for StartScreen {
                     let item_id = LiveId::from_str("empty");
                     let row = list.item(cx, item_id, id!(Row)).unwrap();
                     let rv = row.as_recent_row_view();
-                    rv.set_title(cx, "No recent projects");
+                    rv.set_title(cx, "No recent models");
                     rv.set_path(cx, "");
                     rv.set_when(cx, "");
                     rv.set_clickable(false);

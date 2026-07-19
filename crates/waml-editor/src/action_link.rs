@@ -9,13 +9,19 @@
 //! only consumer, and the VS "Get started" look (icon + descriptive text link)
 //! reads lighter than a filled button for the launcher's two actions.
 //!
-//! Interaction contract is copied verbatim from `RecentRowView` (the proven
-//! `#[deref] View` hybrid): `handle_event` hit-tests its own area and fires on
-//! `FingerUp`, FingerHoverIn/Out drives a `hovered` flag, and `draw_walk` pushes
-//! that into the `hover` uniform on the root `draw_bg` wash before delegating.
-//! The icon is a small `SolidView` child whose `draw_bg` shader is picked per
-//! instance in the DSL (`IconNewProject` / `IconOpenProject`) -- the same
-//! shader-per-glyph idiom as `icons.rs`, so no per-instance uniform plumbing.
+//! Interaction contract is copied from `RecentRowView` (the proven `#[deref]
+//! View` hybrid): `handle_event` hit-tests its own area and fires on `FingerUp`,
+//! FingerHoverIn/Out drives a `hovered` flag, and `draw_walk` pushes state into
+//! the root `draw_bg` uniforms before delegating.
+//!
+//! The label + glyph are selected by the widget's OWN `#[live]` scalar props
+//! (`text`, `kind`), NOT by DSL instance overrides: this fork's `script_mod`
+//! DSL has no child-override on an instance (`icon = {..}` errors "variable not
+//! found"; `icon := {..}` replaces the child with an untyped object that never
+//! renders). So the icon is folded into the root shader (plus when `kind` < 0.5,
+//! folder otherwise) and the label text is pushed onto the child `Label` from
+//! `self.text` each `draw_walk` -- both settable per instance as root props (the
+//! same way the retired `WamlButton` carried a `#[live] text`).
 
 use makepad_widgets::*;
 
@@ -25,43 +31,6 @@ script_mod! {
     use mod.widgets.*
     use mod.text.*
 
-    // "New project" glyph: a plus sign built from two crossing bars. Solid
-    // `sdf.rect` fills ONLY (no `sdf.box` -- 0-radius floods this fork; no paths
-    // -- they degenerate near edges). Geometry normalized against `rect_size`.
-    // A `DrawQuad` subclass (like `LogoMark`) so it slots into a plain `View`'s
-    // `draw_bg` (typed `DrawQuad`); the accent tint rides a `color` uniform.
-    mod.draw.IconNewProject = mod.draw.DrawQuad{
-        color: uniform(atlas.accent)
-        pixel: fn() {
-            let s = self.rect_size.x
-            let sdf = Sdf2d.viewport(self.pos * self.rect_size)
-            // Horizontal bar.
-            sdf.rect(s * 0.15, s * 0.43, s * 0.70, s * 0.14)
-            sdf.fill(self.color)
-            // Vertical bar.
-            sdf.rect(s * 0.43, s * 0.15, s * 0.14, s * 0.70)
-            sdf.fill(self.color)
-            return sdf.result
-        }
-    }
-
-    // "Open project" glyph: a folder = a body rect + a smaller tab rect riding
-    // the top-left. Solid `sdf.rect` fills ONLY (same degeneracy rules as above).
-    mod.draw.IconOpenProject = mod.draw.DrawQuad{
-        color: uniform(atlas.accent)
-        pixel: fn() {
-            let s = self.rect_size.x
-            let sdf = Sdf2d.viewport(self.pos * self.rect_size)
-            // Tab (top-left), sitting just above the body.
-            sdf.rect(s * 0.12, s * 0.26, s * 0.34, s * 0.16)
-            sdf.fill(self.color)
-            // Folder body; overlaps the tab so they read as one shape.
-            sdf.rect(s * 0.12, s * 0.38, s * 0.76, s * 0.44)
-            sdf.fill(self.color)
-            return sdf.result
-        }
-    }
-
     mod.widgets.ActionLinkBase = #(ActionLink::register_widget(vm))
 
     mod.widgets.ActionLink = set_type_default() do mod.widgets.ActionLinkBase{
@@ -69,36 +38,54 @@ script_mod! {
         height: Fit
         flow: Right
         align: Align{y: 0.5}
-        padding: Inset{left: 8.0, right: 8.0, top: 6.0, bottom: 6.0}
-        spacing: 10.0
+        // Left padding clears the 16px icon the root shader draws at x=8.
+        padding: Inset{left: 32.0, right: 8.0, top: 6.0, bottom: 6.0}
+        spacing: 0.0
         show_bg: true
 
-        // Hover wash: the same subtle premultiplied accent fill as
-        // `RecentRowView`, faded by the `hover` uniform (0 rest / 1 pointer-over)
-        // the widget sets from FingerHoverIn/Out. Full-rect return (no `sdf.box`),
-        // premultiplied so a low-alpha tint reads as a wash, not a bloom.
+        // Root shader: a subtle premultiplied hover wash (faded by the `hover`
+        // uniform) PLUS the accent glyph at the left -- a plus when `kind` < 0.5,
+        // a folder otherwise. Folding the icon in here sidesteps per-child uniform
+        // plumbing (no instance child-override in this DSL). `sdf.rect` ONLY
+        // (0-radius `sdf.box` floods this fork); drawn in PIXEL space so the
+        // square glyph isn't stretched by the wide row. Premultiplied like
+        // `CardShadow`/`RecentRowView` so a low-alpha wash reads as a wash.
         draw_bg +: {
             color: atlas.accent
             hover: uniform(0.0)
+            kind: uniform(0.0)
             pixel: fn() {
+                let p = self.pos * self.rect_size
+                let ix = 8.0
+                let iy = self.rect_size.y * 0.5 - 8.0
+                let s = 16.0
+                let sdf = Sdf2d.viewport(p)
+                // Branchless glyph select: an `if` on the uniform silently no-ops
+                // in this fork's shader VM, so draw BOTH glyphs and push the
+                // unwanted one far off-screen in x (step gate) -- the visible icon
+                // box only ever samples one. `kind` < 0.5 = plus, else folder.
+                let plus_off = self.kind * 9999.0
+                let fold_off = (1.0 - self.kind) * 9999.0
+                // Plus: horizontal + vertical bar.
+                sdf.rect(ix + s * 0.15 + plus_off, iy + s * 0.43, s * 0.70, s * 0.14)
+                sdf.fill(self.color)
+                sdf.rect(ix + s * 0.43 + plus_off, iy + s * 0.15, s * 0.14, s * 0.70)
+                sdf.fill(self.color)
+                // Folder: top-left tab + body.
+                sdf.rect(ix + s * 0.12 + fold_off, iy + s * 0.26, s * 0.34, s * 0.16)
+                sdf.fill(self.color)
+                sdf.rect(ix + s * 0.12 + fold_off, iy + s * 0.38, s * 0.76, s * 0.44)
+                sdf.fill(self.color)
+                let icon = sdf.result
                 let a = 0.12 * self.hover
-                return vec4(self.color.x * a, self.color.y * a, self.color.z * a, a)
+                let wash = vec4(self.color.x * a, self.color.y * a, self.color.z * a, a)
+                // Icon over wash (icon.w is its coverage).
+                return icon + wash * (1.0 - icon.w)
             }
         }
 
-        // Accent glyph. A fixed 16px `View` whose `draw_bg` shader is chosen per
-        // instance (default = plus; the DSL instance overrides to the folder). A
-        // plain `View` (not `SolidView`) so its `draw_bg` slot takes a `DrawColor`
-        // icon shader by full assignment.
-        icon := View {
-            width: 16.0
-            height: 16.0
-            show_bg: true
-            draw_bg: mod.draw.IconNewProject{ color: atlas.accent }
-        }
-
-        // Prose label. Set per instance via `label := { text: "..." }` (mirrors
-        // how `RecentRowView` carries static text on child Labels).
+        // Prose label. Text is pushed from `self.text` in `draw_walk` (the DSL
+        // instance sets the widget's `text:` prop, not this child directly).
         label := Label {
             text: ""
             draw_text +: {
@@ -120,9 +107,19 @@ pub enum ActionLinkAction {
 
 #[derive(Script, ScriptHook, Widget)]
 pub struct ActionLink {
-    /// The link row: the icon + prose label declared in the DSL tree above.
+    /// The link row: the folded-icon root `draw_bg` + prose label declared in
+    /// the DSL tree above.
     #[deref]
     view: View,
+
+    /// Prose label, set per instance via the DSL `text:` prop; pushed onto the
+    /// child `Label` each `draw_walk`.
+    #[live]
+    text: String,
+    /// Icon selector fed to the root shader's `kind` uniform: 0 = plus (new),
+    /// 1 = folder (open).
+    #[live]
+    kind: f32,
 
     /// Pointer-over state, self-managed from FingerHoverIn/Out; fed to the
     /// `hover` uniform on the root `draw_bg` each `draw_walk` for the wash.
@@ -150,12 +147,14 @@ impl Widget for ActionLink {
         }
     }
 
-    // Push the hover state into the wash uniform, then delegate the draw so the
-    // icon + label render.
+    // Push label text + hover/kind uniforms, then delegate so the label renders
+    // over the folded-icon root shader.
     fn draw_walk(&mut self, cx: &mut Cx2d, scope: &mut Scope, walk: Walk) -> DrawStep {
+        self.view.label(cx, ids!(label)).set_text(cx, &self.text);
         self.view
             .draw_bg
             .set_uniform(cx, live_id!(hover), &[if self.hovered { 1.0 } else { 0.0 }]);
+        self.view.draw_bg.set_uniform(cx, live_id!(kind), &[self.kind]);
         self.view.draw_walk(cx, scope, walk)
     }
 }
