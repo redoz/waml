@@ -555,27 +555,30 @@ script_mod! {
     }
 
     // List collapse (down-up): three rows + chevrons pointing inward.
+    // Faithful port of resources/icons/list-chevrons-down-up.svg via
+    // scripts/gen-icon.py; scale nudged up (A=0.048, B=-0.076) to sit on the
+    // SVG in the harness, center held at c=12.
     mod.draw.IconListCollapse = mod.draw.DrawColor{
         pixel: fn() {
             let s = self.rect_size.x
-            let w = s * 0.075
+            let w = s * 0.068
             let sdf = Sdf2d.viewport(self.pos * self.rect_size)
-            sdf.move_to(s * 0.13, s * 0.21)
-            sdf.line_to(s * 0.46, s * 0.21)
+            sdf.move_to(s * 0.0680, s * 0.1640)
+            sdf.line_to(s * 0.4520, s * 0.1640)
             sdf.stroke(self.color, w)
-            sdf.move_to(s * 0.13, s * 0.50)
-            sdf.line_to(s * 0.46, s * 0.50)
+            sdf.move_to(s * 0.0680, s * 0.5000)
+            sdf.line_to(s * 0.4520, s * 0.5000)
             sdf.stroke(self.color, w)
-            sdf.move_to(s * 0.13, s * 0.79)
-            sdf.line_to(s * 0.46, s * 0.79)
+            sdf.move_to(s * 0.0680, s * 0.8360)
+            sdf.line_to(s * 0.4520, s * 0.8360)
             sdf.stroke(self.color, w)
-            sdf.move_to(s * 0.625, s * 0.21)
-            sdf.line_to(s * 0.75, s * 0.33)
-            sdf.line_to(s * 0.875, s * 0.21)
+            sdf.move_to(s * 0.6440, s * 0.1640)
+            sdf.line_to(s * 0.7880, s * 0.3080)
+            sdf.line_to(s * 0.9320, s * 0.1640)
             sdf.stroke(self.color, w)
-            sdf.move_to(s * 0.625, s * 0.79)
-            sdf.line_to(s * 0.75, s * 0.67)
-            sdf.line_to(s * 0.875, s * 0.79)
+            sdf.move_to(s * 0.6440, s * 0.8360)
+            sdf.line_to(s * 0.7880, s * 0.6920)
+            sdf.line_to(s * 0.9320, s * 0.8360)
             sdf.stroke(self.color, w)
             return sdf.result
         }
