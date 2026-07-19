@@ -86,12 +86,26 @@ fn store<T: Serialize>(file: &str, val: &T) -> io::Result<()> {
 // Editor payload.
 // ---------------------------------------------------------------------------
 
+/// The editor UI theme. Exactly two modes -- see `theme_atlas.rs`.
+#[derive(Serialize, Deserialize, Clone, Copy, Default, Debug, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum ThemeMode {
+    /// Light (Atlas) -- the default.
+    #[default]
+    Light,
+    /// Dark (Atlas).
+    Dark,
+}
+
 #[derive(Serialize, Deserialize, Default, Debug, PartialEq)]
 struct EditorConfig {
     /// Current schema version.
     version: u32,
     /// Recent projects, MRU order (front = most recent).
     recents: Vec<Recent>,
+    /// Chosen UI theme; absent in older files -> `ThemeMode::default()`.
+    #[serde(default)]
+    theme: ThemeMode,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
@@ -166,6 +180,29 @@ fn prune_missing(recents: Vec<Recent>) -> Vec<Recent> {
 pub fn recents() -> Vec<Recent> {
     let config: EditorConfig = load(EDITOR_FILE);
     prune_missing(config.recents)
+}
+
+/// Load `editor.json` and return the persisted UI theme (`Light` when the file
+/// is missing, malformed, or predates the `theme` field).
+pub fn theme() -> ThemeMode {
+    let config: EditorConfig = load(EDITOR_FILE);
+    config.theme
+}
+
+/// Persist `mode` as the chosen UI theme, preserving the rest of the config.
+/// Best-effort -- a write failure is logged and swallowed.
+// Not yet called: the in-app theme toggle is a later step. Exercised by
+// `theme_defaults_light_and_round_trips_dark` via the round-trip it stands in
+// for. For now, testing dark mode means writing `"theme":"dark"` into
+// `~/.waml/editor.json` by hand and relaunching.
+#[allow(dead_code)]
+pub fn set_theme(mode: ThemeMode) {
+    let mut config: EditorConfig = load(EDITOR_FILE);
+    config.version = EDITOR_VERSION;
+    config.theme = mode;
+    if let Err(e) = store(EDITOR_FILE, &config) {
+        log!("waml-editor: failed to persist theme {:?}: {e}", mode);
+    }
 }
 
 /// Record an open: add or promote `path` to the front (MRU), refresh its
@@ -284,10 +321,37 @@ mod tests {
         let cfg = EditorConfig {
             version: EDITOR_VERSION,
             recents: vec![rec("/x", 7), rec("/y", 8)],
+            theme: ThemeMode::Dark,
         };
         store_to(tmp.path(), EDITOR_FILE, &cfg).unwrap();
         let back: EditorConfig = load_from(tmp.path(), EDITOR_FILE);
         assert_eq!(back, cfg);
+    }
+
+    #[test]
+    fn theme_defaults_light_and_round_trips_dark() {
+        let tmp = TempDir::new();
+        // Missing field / missing file -> Light.
+        let cfg: EditorConfig = load_from(tmp.path(), EDITOR_FILE);
+        assert_eq!(cfg.theme, ThemeMode::Light);
+        // Dark survives a store/load round-trip.
+        let cfg = EditorConfig { version: EDITOR_VERSION, recents: Vec::new(), theme: ThemeMode::Dark };
+        store_to(tmp.path(), EDITOR_FILE, &cfg).unwrap();
+        let back: EditorConfig = load_from(tmp.path(), EDITOR_FILE);
+        assert_eq!(back.theme, ThemeMode::Dark);
+    }
+
+    #[test]
+    fn theme_field_absent_in_old_file_loads_light() {
+        let tmp = TempDir::new();
+        // A v1 file written before the `theme` field existed.
+        std::fs::write(
+            tmp.path().join(EDITOR_FILE),
+            br#"{"version":1,"recents":[]}"#,
+        )
+        .unwrap();
+        let cfg: EditorConfig = load_from(tmp.path(), EDITOR_FILE);
+        assert_eq!(cfg.theme, ThemeMode::Light, "absent theme field -> default Light");
     }
 
     /// Minimal temp dir: the repo has no temp-dir dev-dependency, so we make a

@@ -45,8 +45,8 @@ script_mod! {
         // set for the hit-test area.
         draw_bg: mod.draw.DrawColor{
             color: atlas.ground
-            hi: uniform(#xeef4fb)
-            lo: uniform(#xccd9e8)
+            hi: uniform(atlas.ground)
+            lo: uniform(atlas.canvas_ground)
             pixel: fn() {
                 let d = length((self.pos - vec2(0.5, 0.0)) * vec2(1.0, 1.25))
                 return mix(self.hi, self.lo, clamp(d, 0.0, 1.0))
