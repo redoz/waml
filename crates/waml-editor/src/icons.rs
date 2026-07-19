@@ -436,24 +436,35 @@ script_mod! {
         }
     }
 
-    // Spline-pointer: a spline curve with a cursor pointer at the tail.
+    // Spline-pointer: a spline sweep with a cursor pointer at the tail plus two
+    // node rings. Faithful port of resources/icons/spline-pointer.svg via
+    // scripts/gen-icon.py (cursor + curve are the source's `a`/`A` arcs, the
+    // nodes its two <circle> elements).
     mod.draw.IconSplinePointer = mod.draw.DrawColor{
         pixel: fn() {
             let s = self.rect_size.x
-            let w = s * 0.075
+            let w = s * 0.068
             let sdf = Sdf2d.viewport(self.pos * self.rect_size)
-            sdf.move_to(s * 0.21, s * 0.70)
-            sdf.line_to(s * 0.28, s * 0.42)
-            sdf.line_to(s * 0.42, s * 0.28)
-            sdf.line_to(s * 0.70, s * 0.21)
+            sdf.move_to(s * 0.5015, s * 0.5291)
+            sdf.arc_to(s * 0.5212, s * 0.5212, s * 0.0213, 2.7623, 5.0917)
+            sdf.line_to(s * 0.9140, s * 0.6511)
+            sdf.arc_to(s * 0.9063, s * 0.6711, s * 0.0214, -1.1983, 1.2683)
+            sdf.line_to(s * 0.7653, s * 0.7371)
+            sdf.arc_to(s * 0.7780, s * 0.7780, s * 0.0428, -1.8706, -2.8417)
+            sdf.line_to(s * 0.6915, s * 0.9126)
+            sdf.arc_to(s * 0.6711, s * 0.9063, s * 0.0214, 0.3025, 2.7691)
+            sdf.line_to(s * 0.5015, s * 0.5291)
             sdf.stroke(self.color, w)
-            sdf.circle(s * 0.79, s * 0.21, s * 0.10)
+            sdf.move_to(s * 0.2006, s * 0.7138)
+            sdf.arc_to(s * 0.7138, s * 0.7138, s * 0.5132, 3.1416, 4.7124)
             sdf.stroke(self.color, w)
-            sdf.move_to(s * 0.50, s * 0.52)
-            sdf.line_to(s * 0.58, s * 0.90)
-            sdf.line_to(s * 0.66, s * 0.70)
-            sdf.line_to(s * 0.86, s * 0.62)
-            sdf.close_path()
+            sdf.move_to(s * 0.8849, s * 0.2006)
+            sdf.arc_to(s * 0.7994, s * 0.2006, s * 0.0855, 0.0000, 3.1416)
+            sdf.arc_to(s * 0.7994, s * 0.2006, s * 0.0855, 3.1416, 6.2832)
+            sdf.stroke(self.color, w)
+            sdf.move_to(s * 0.2862, s * 0.7994)
+            sdf.arc_to(s * 0.2006, s * 0.7994, s * 0.0855, 0.0000, 3.1416)
+            sdf.arc_to(s * 0.2006, s * 0.7994, s * 0.0855, 3.1416, 6.2832)
             sdf.stroke(self.color, w)
             return sdf.result
         }
