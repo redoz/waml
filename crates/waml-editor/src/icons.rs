@@ -281,33 +281,43 @@ script_mod! {
         }
     }
 
-    // Pin: the Lucide pushpin silhouette -- flared top cap, pinched stem, wide
-    // collar, needle. Traced (viewBox 0..24 -> 0..1, y down) and vertically
-    // inset to keep every vertex >=0.11 off the edge (path strokes degenerate
-    // near the viewport border).
+    // Pin: the Lucide pushpin, a faithful port of resources/icons/pin.svg.
+    // Straight runs are line_to; the seven rounded fillets + the cap are the
+    // SVG's circular `a` arcs, expressed directly as sdf.arc_to centerline
+    // segments (no hand-flattened polyline). Every arc is rx==ry, so a single
+    // radius suffices. The endpoint->center conversion and the cell fit are done
+    // offline by scripts/gen-pin-icon.py (norm(c) = 0.042768*c - 0.013216, uniform
+    // + isotropic so arc angles pass through unchanged); regenerate this body by
+    // rerunning it. The fit holds the stroke inside the
+    // cell (Sdf2d.viewport clips at rect_size, unlike DrawSvg which bleeds its
+    // stroke outside). Sdf2d.stroke(w) treats w as the HALF-width.
     mod.draw.IconPin = mod.draw.DrawColor{
         pixel: fn() {
             let s = self.rect_size.x
-            let w = s * 0.085
+            let w = s * 0.068
             let sdf = Sdf2d.viewport(self.pos * self.rect_size)
-            sdf.move_to(s * 0.33, s * 0.12)
-            sdf.line_to(s * 0.67, s * 0.12)
-            sdf.line_to(s * 0.67, s * 0.27)
-            sdf.line_to(s * 0.625, s * 0.30)
-            sdf.line_to(s * 0.625, s * 0.45)
-            sdf.line_to(s * 0.792, s * 0.63)
-            sdf.line_to(s * 0.792, s * 0.66)
-            sdf.line_to(s * 0.75, s * 0.69)
-            sdf.line_to(s * 0.25, s * 0.69)
-            sdf.line_to(s * 0.208, s * 0.66)
-            sdf.line_to(s * 0.208, s * 0.63)
-            sdf.line_to(s * 0.375, s * 0.45)
-            sdf.line_to(s * 0.375, s * 0.30)
-            sdf.line_to(s * 0.33, s * 0.27)
-            sdf.close_path()
+            sdf.move_to(s * 0.3717, s * 0.4470)
+            sdf.arc_to(s * 0.2862, s * 0.4469, s * 0.0855, 0.0005, 1.1096)
+            sdf.line_to(s * 0.2481, s * 0.5620)
+            sdf.arc_to(s * 0.2862, s * 0.6386, s * 0.0855, -2.0320, -3.1411)
+            sdf.line_to(s * 0.2006, s * 0.6711)
+            sdf.arc_to(s * 0.2434, s * 0.6711, s * 0.0428, 3.1416, 1.5708)
+            sdf.line_to(s * 0.7566, s * 0.7138)
+            sdf.arc_to(s * 0.7566, s * 0.6711, s * 0.0428, 1.5708, 0.0000)
+            sdf.line_to(s * 0.7994, s * 0.6386)
+            sdf.arc_to(s * 0.7138, s * 0.6386, s * 0.0855, -0.0005, -1.1096)
+            sdf.line_to(s * 0.6758, s * 0.5235)
+            sdf.arc_to(s * 0.7138, s * 0.4469, s * 0.0855, 2.0320, 3.1411)
+            sdf.line_to(s * 0.6283, s * 0.2862)
+            sdf.arc_to(s * 0.6711, s * 0.2862, s * 0.0428, 3.1416, 4.7124)
+            sdf.arc_to(s * 0.6711, s * 0.1579, s * 0.0855, 1.5708, -1.5708)
+            sdf.line_to(s * 0.3289, s * 0.0723)
+            sdf.arc_to(s * 0.3289, s * 0.1579, s * 0.0855, -1.5708, -4.7124)
+            sdf.arc_to(s * 0.3289, s * 0.2862, s * 0.0428, -1.5708, 0.0000)
+            sdf.line_to(s * 0.3717, s * 0.4470)
             sdf.stroke(self.color, w)
-            sdf.move_to(s * 0.5, s * 0.69)
-            sdf.line_to(s * 0.5, s * 0.89)
+            sdf.move_to(s * 0.5000, s * 0.7138)
+            sdf.line_to(s * 0.5000, s * 0.9277)
             sdf.stroke(self.color, w)
             return sdf.result
         }

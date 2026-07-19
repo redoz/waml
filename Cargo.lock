@@ -5,7 +5,7 @@ version = 3
 [[package]]
 name = "ab_glyph_rasterizer"
 version = "0.1.8"
-source = "git+https://github.com/redoz/makepad.git?rev=4f9ce7a8bb3fd19e5c61dcf13edd2e6d4a04cefc#4f9ce7a8bb3fd19e5c61dcf13edd2e6d4a04cefc"
+source = "git+https://github.com/redoz/makepad.git?rev=2d7f5f4a5c5407ec31880400f01b87e3c95dba24#2d7f5f4a5c5407ec31880400f01b87e3c95dba24"
 
 [[package]]
 name = "aho-corasick"
@@ -69,7 +69,7 @@ dependencies = [
 [[package]]
 name = "arrayvec"
 version = "0.7.6"
-source = "git+https://github.com/redoz/makepad.git?rev=4f9ce7a8bb3fd19e5c61dcf13edd2e6d4a04cefc#4f9ce7a8bb3fd19e5c61dcf13edd2e6d4a04cefc"
+source = "git+https://github.com/redoz/makepad.git?rev=2d7f5f4a5c5407ec31880400f01b87e3c95dba24#2d7f5f4a5c5407ec31880400f01b87e3c95dba24"
 
 [[package]]
 name = "arrayvec"
@@ -80,9 +80,9 @@ checksum = "d3fb67a6e08acf24fdeccbac2cb6ac4305825bd1f117462e0e6f2f193345ad56"
 [[package]]
 name = "ash"
 version = "0.38.0+1.3.281"
-source = "git+https://github.com/redoz/makepad.git?rev=4f9ce7a8bb3fd19e5c61dcf13edd2e6d4a04cefc#4f9ce7a8bb3fd19e5c61dcf13edd2e6d4a04cefc"
+source = "git+https://github.com/redoz/makepad.git?rev=2d7f5f4a5c5407ec31880400f01b87e3c95dba24#2d7f5f4a5c5407ec31880400f01b87e3c95dba24"
 dependencies = [
- "libloading 0.8.9 (git+https://github.com/redoz/makepad.git?rev=4f9ce7a8bb3fd19e5c61dcf13edd2e6d4a04cefc)",
+ "libloading 0.8.9 (git+https://github.com/redoz/makepad.git?rev=2d7f5f4a5c5407ec31880400f01b87e3c95dba24)",
 ]
 
 [[package]]
@@ -110,7 +110,7 @@ dependencies = [
 [[package]]
 name = "bit-set"
 version = "0.8.0"
-source = "git+https://github.com/redoz/makepad.git?rev=4f9ce7a8bb3fd19e5c61dcf13edd2e6d4a04cefc#4f9ce7a8bb3fd19e5c61dcf13edd2e6d4a04cefc"
+source = "git+https://github.com/redoz/makepad.git?rev=2d7f5f4a5c5407ec31880400f01b87e3c95dba24#2d7f5f4a5c5407ec31880400f01b87e3c95dba24"
 dependencies = [
  "bit-vec",
 ]
@@ -118,7 +118,7 @@ dependencies = [
 [[package]]
 name = "bit-vec"
 version = "0.8.0"
-source = "git+https://github.com/redoz/makepad.git?rev=4f9ce7a8bb3fd19e5c61dcf13edd2e6d4a04cefc#4f9ce7a8bb3fd19e5c61dcf13edd2e6d4a04cefc"
+source = "git+https://github.com/redoz/makepad.git?rev=2d7f5f4a5c5407ec31880400f01b87e3c95dba24#2d7f5f4a5c5407ec31880400f01b87e3c95dba24"
 
 [[package]]
 name = "bitflags"
@@ -129,7 +129,7 @@ checksum = "bef38d45163c2f1dde094a7dfd33ccf595c92905c8f8f4fdc18d06fb1037718a"
 [[package]]
 name = "bitflags"
 version = "2.10.0"
-source = "git+https://github.com/redoz/makepad.git?rev=4f9ce7a8bb3fd19e5c61dcf13edd2e6d4a04cefc#4f9ce7a8bb3fd19e5c61dcf13edd2e6d4a04cefc"
+source = "git+https://github.com/redoz/makepad.git?rev=2d7f5f4a5c5407ec31880400f01b87e3c95dba24#2d7f5f4a5c5407ec31880400f01b87e3c95dba24"
 
 [[package]]
 name = "bitflags"
@@ -155,12 +155,12 @@ checksum = "72f5acc6cb2ba439de613abc23857ec3d78374d8ed5ac84e9d11336e87da8649"
 [[package]]
 name = "bytemuck"
 version = "1.25.0"
-source = "git+https://github.com/redoz/makepad.git?rev=4f9ce7a8bb3fd19e5c61dcf13edd2e6d4a04cefc#4f9ce7a8bb3fd19e5c61dcf13edd2e6d4a04cefc"
+source = "git+https://github.com/redoz/makepad.git?rev=2d7f5f4a5c5407ec31880400f01b87e3c95dba24#2d7f5f4a5c5407ec31880400f01b87e3c95dba24"
 
 [[package]]
 name = "byteorder"
 version = "1.5.0"
-source = "git+https://github.com/redoz/makepad.git?rev=4f9ce7a8bb3fd19e5c61dcf13edd2e6d4a04cefc#4f9ce7a8bb3fd19e5c61dcf13edd2e6d4a04cefc"
+source = "git+https://github.com/redoz/makepad.git?rev=2d7f5f4a5c5407ec31880400f01b87e3c95dba24#2d7f5f4a5c5407ec31880400f01b87e3c95dba24"
 
 [[package]]
 name = "bytes"
@@ -177,12 +177,12 @@ checksum = "9330f8b2ff13f34540b44e946ef35111825727b38d33286ef986142615121801"
 [[package]]
 name = "cfg-if"
 version = "1.0.4"
-source = "git+https://github.com/redoz/makepad.git?rev=4f9ce7a8bb3fd19e5c61dcf13edd2e6d4a04cefc#4f9ce7a8bb3fd19e5c61dcf13edd2e6d4a04cefc"
+source = "git+https://github.com/redoz/makepad.git?rev=2d7f5f4a5c5407ec31880400f01b87e3c95dba24#2d7f5f4a5c5407ec31880400f01b87e3c95dba24"
 
 [[package]]
 name = "cfg_aliases"
 version = "0.2.1"
-source = "git+https://github.com/redoz/makepad.git?rev=4f9ce7a8bb3fd19e5c61dcf13edd2e6d4a04cefc#4f9ce7a8bb3fd19e5c61dcf13edd2e6d4a04cefc"
+source = "git+https://github.com/redoz/makepad.git?rev=2d7f5f4a5c5407ec31880400f01b87e3c95dba24#2d7f5f4a5c5407ec31880400f01b87e3c95dba24"
 
 [[package]]
 name = "cfg_aliases"
@@ -258,7 +258,7 @@ dependencies = [
 [[package]]
 name = "crunchy"
 version = "0.2.4"
-source = "git+https://github.com/redoz/makepad.git?rev=4f9ce7a8bb3fd19e5c61dcf13edd2e6d4a04cefc#4f9ce7a8bb3fd19e5c61dcf13edd2e6d4a04cefc"
+source = "git+https://github.com/redoz/makepad.git?rev=2d7f5f4a5c5407ec31880400f01b87e3c95dba24#2d7f5f4a5c5407ec31880400f01b87e3c95dba24"
 
 [[package]]
 name = "ctor"
@@ -341,17 +341,17 @@ dependencies = [
 [[package]]
 name = "downcast-rs"
 version = "1.2.1"
-source = "git+https://github.com/redoz/makepad.git?rev=4f9ce7a8bb3fd19e5c61dcf13edd2e6d4a04cefc#4f9ce7a8bb3fd19e5c61dcf13edd2e6d4a04cefc"
+source = "git+https://github.com/redoz/makepad.git?rev=2d7f5f4a5c5407ec31880400f01b87e3c95dba24#2d7f5f4a5c5407ec31880400f01b87e3c95dba24"
 
 [[package]]
 name = "equivalent"
 version = "1.0.2"
-source = "git+https://github.com/redoz/makepad.git?rev=4f9ce7a8bb3fd19e5c61dcf13edd2e6d4a04cefc#4f9ce7a8bb3fd19e5c61dcf13edd2e6d4a04cefc"
+source = "git+https://github.com/redoz/makepad.git?rev=2d7f5f4a5c5407ec31880400f01b87e3c95dba24#2d7f5f4a5c5407ec31880400f01b87e3c95dba24"
 
 [[package]]
 name = "foldhash"
 version = "0.2.0"
-source = "git+https://github.com/redoz/makepad.git?rev=4f9ce7a8bb3fd19e5c61dcf13edd2e6d4a04cefc#4f9ce7a8bb3fd19e5c61dcf13edd2e6d4a04cefc"
+source = "git+https://github.com/redoz/makepad.git?rev=2d7f5f4a5c5407ec31880400f01b87e3c95dba24#2d7f5f4a5c5407ec31880400f01b87e3c95dba24"
 
 [[package]]
 name = "form_urlencoded"
@@ -441,7 +441,7 @@ dependencies = [
 [[package]]
 name = "fxhash"
 version = "0.2.1"
-source = "git+https://github.com/redoz/makepad.git?rev=4f9ce7a8bb3fd19e5c61dcf13edd2e6d4a04cefc#4f9ce7a8bb3fd19e5c61dcf13edd2e6d4a04cefc"
+source = "git+https://github.com/redoz/makepad.git?rev=2d7f5f4a5c5407ec31880400f01b87e3c95dba24#2d7f5f4a5c5407ec31880400f01b87e3c95dba24"
 dependencies = [
  "byteorder",
 ]
@@ -485,7 +485,7 @@ checksum = "e5274423e17b7c9fc20b6e7e208532f9b19825d82dfd615708b70edd83df41f1"
 [[package]]
 name = "hashbrown"
 version = "0.16.1"
-source = "git+https://github.com/redoz/makepad.git?rev=4f9ce7a8bb3fd19e5c61dcf13edd2e6d4a04cefc#4f9ce7a8bb3fd19e5c61dcf13edd2e6d4a04cefc"
+source = "git+https://github.com/redoz/makepad.git?rev=2d7f5f4a5c5407ec31880400f01b87e3c95dba24#2d7f5f4a5c5407ec31880400f01b87e3c95dba24"
 dependencies = [
  "foldhash",
 ]
@@ -499,7 +499,7 @@ checksum = "2304e00983f87ffb38b55b444b5e3b60a884b5d30c0fca7d82fe33449bbe55ea"
 [[package]]
 name = "hexf-parse"
 version = "0.2.1"
-source = "git+https://github.com/redoz/makepad.git?rev=4f9ce7a8bb3fd19e5c61dcf13edd2e6d4a04cefc#4f9ce7a8bb3fd19e5c61dcf13edd2e6d4a04cefc"
+source = "git+https://github.com/redoz/makepad.git?rev=2d7f5f4a5c5407ec31880400f01b87e3c95dba24#2d7f5f4a5c5407ec31880400f01b87e3c95dba24"
 
 [[package]]
 name = "hilog-sys"
@@ -619,7 +619,7 @@ dependencies = [
 [[package]]
 name = "indexmap"
 version = "2.13.0"
-source = "git+https://github.com/redoz/makepad.git?rev=4f9ce7a8bb3fd19e5c61dcf13edd2e6d4a04cefc#4f9ce7a8bb3fd19e5c61dcf13edd2e6d4a04cefc"
+source = "git+https://github.com/redoz/makepad.git?rev=2d7f5f4a5c5407ec31880400f01b87e3c95dba24#2d7f5f4a5c5407ec31880400f01b87e3c95dba24"
 dependencies = [
  "equivalent",
  "hashbrown 0.16.1",
@@ -667,10 +667,10 @@ dependencies = [
 [[package]]
 name = "libloading"
 version = "0.8.9"
-source = "git+https://github.com/redoz/makepad.git?rev=4f9ce7a8bb3fd19e5c61dcf13edd2e6d4a04cefc#4f9ce7a8bb3fd19e5c61dcf13edd2e6d4a04cefc"
+source = "git+https://github.com/redoz/makepad.git?rev=2d7f5f4a5c5407ec31880400f01b87e3c95dba24#2d7f5f4a5c5407ec31880400f01b87e3c95dba24"
 dependencies = [
- "cfg-if 1.0.4 (git+https://github.com/redoz/makepad.git?rev=4f9ce7a8bb3fd19e5c61dcf13edd2e6d4a04cefc)",
- "windows-link 0.2.1 (git+https://github.com/redoz/makepad.git?rev=4f9ce7a8bb3fd19e5c61dcf13edd2e6d4a04cefc)",
+ "cfg-if 1.0.4 (git+https://github.com/redoz/makepad.git?rev=2d7f5f4a5c5407ec31880400f01b87e3c95dba24)",
+ "windows-link 0.2.1 (git+https://github.com/redoz/makepad.git?rev=2d7f5f4a5c5407ec31880400f01b87e3c95dba24)",
 ]
 
 [[package]]
@@ -700,7 +700,7 @@ dependencies = [
 [[package]]
 name = "log"
 version = "0.4.29"
-source = "git+https://github.com/redoz/makepad.git?rev=4f9ce7a8bb3fd19e5c61dcf13edd2e6d4a04cefc#4f9ce7a8bb3fd19e5c61dcf13edd2e6d4a04cefc"
+source = "git+https://github.com/redoz/makepad.git?rev=2d7f5f4a5c5407ec31880400f01b87e3c95dba24#2d7f5f4a5c5407ec31880400f01b87e3c95dba24"
 
 [[package]]
 name = "log"
@@ -733,7 +733,7 @@ dependencies = [
 [[package]]
 name = "makepad-apple-sys"
 version = "1.0.0"
-source = "git+https://github.com/redoz/makepad.git?rev=4f9ce7a8bb3fd19e5c61dcf13edd2e6d4a04cefc#4f9ce7a8bb3fd19e5c61dcf13edd2e6d4a04cefc"
+source = "git+https://github.com/redoz/makepad.git?rev=2d7f5f4a5c5407ec31880400f01b87e3c95dba24#2d7f5f4a5c5407ec31880400f01b87e3c95dba24"
 dependencies = [
  "makepad-objc-sys",
 ]
@@ -741,12 +741,12 @@ dependencies = [
 [[package]]
 name = "makepad-byteorder-lite"
 version = "0.1.0"
-source = "git+https://github.com/redoz/makepad.git?rev=4f9ce7a8bb3fd19e5c61dcf13edd2e6d4a04cefc#4f9ce7a8bb3fd19e5c61dcf13edd2e6d4a04cefc"
+source = "git+https://github.com/redoz/makepad.git?rev=2d7f5f4a5c5407ec31880400f01b87e3c95dba24#2d7f5f4a5c5407ec31880400f01b87e3c95dba24"
 
 [[package]]
 name = "makepad-derive-wasm-bridge"
 version = "1.0.0"
-source = "git+https://github.com/redoz/makepad.git?rev=4f9ce7a8bb3fd19e5c61dcf13edd2e6d4a04cefc#4f9ce7a8bb3fd19e5c61dcf13edd2e6d4a04cefc"
+source = "git+https://github.com/redoz/makepad.git?rev=2d7f5f4a5c5407ec31880400f01b87e3c95dba24#2d7f5f4a5c5407ec31880400f01b87e3c95dba24"
 dependencies = [
  "makepad-micro-proc-macro",
 ]
@@ -754,7 +754,7 @@ dependencies = [
 [[package]]
 name = "makepad-derive-widget"
 version = "2.0.0"
-source = "git+https://github.com/redoz/makepad.git?rev=4f9ce7a8bb3fd19e5c61dcf13edd2e6d4a04cefc#4f9ce7a8bb3fd19e5c61dcf13edd2e6d4a04cefc"
+source = "git+https://github.com/redoz/makepad.git?rev=2d7f5f4a5c5407ec31880400f01b87e3c95dba24#2d7f5f4a5c5407ec31880400f01b87e3c95dba24"
 dependencies = [
  "makepad-live-id",
  "makepad-micro-proc-macro",
@@ -763,7 +763,7 @@ dependencies = [
 [[package]]
 name = "makepad-draw"
 version = "2.0.0"
-source = "git+https://github.com/redoz/makepad.git?rev=4f9ce7a8bb3fd19e5c61dcf13edd2e6d4a04cefc#4f9ce7a8bb3fd19e5c61dcf13edd2e6d4a04cefc"
+source = "git+https://github.com/redoz/makepad.git?rev=2d7f5f4a5c5407ec31880400f01b87e3c95dba24#2d7f5f4a5c5407ec31880400f01b87e3c95dba24"
 dependencies = [
  "ab_glyph_rasterizer",
  "fxhash",
@@ -787,7 +787,7 @@ dependencies = [
 [[package]]
 name = "makepad-error-log"
 version = "1.0.0"
-source = "git+https://github.com/redoz/makepad.git?rev=4f9ce7a8bb3fd19e5c61dcf13edd2e6d4a04cefc#4f9ce7a8bb3fd19e5c61dcf13edd2e6d4a04cefc"
+source = "git+https://github.com/redoz/makepad.git?rev=2d7f5f4a5c5407ec31880400f01b87e3c95dba24#2d7f5f4a5c5407ec31880400f01b87e3c95dba24"
 dependencies = [
  "makepad-micro-serde",
 ]
@@ -795,22 +795,22 @@ dependencies = [
 [[package]]
 name = "makepad-filesystem-watcher"
 version = "0.1.0"
-source = "git+https://github.com/redoz/makepad.git?rev=4f9ce7a8bb3fd19e5c61dcf13edd2e6d4a04cefc#4f9ce7a8bb3fd19e5c61dcf13edd2e6d4a04cefc"
+source = "git+https://github.com/redoz/makepad.git?rev=2d7f5f4a5c5407ec31880400f01b87e3c95dba24#2d7f5f4a5c5407ec31880400f01b87e3c95dba24"
 
 [[package]]
 name = "makepad-futures"
 version = "1.0.0"
-source = "git+https://github.com/redoz/makepad.git?rev=4f9ce7a8bb3fd19e5c61dcf13edd2e6d4a04cefc#4f9ce7a8bb3fd19e5c61dcf13edd2e6d4a04cefc"
+source = "git+https://github.com/redoz/makepad.git?rev=2d7f5f4a5c5407ec31880400f01b87e3c95dba24#2d7f5f4a5c5407ec31880400f01b87e3c95dba24"
 
 [[package]]
 name = "makepad-futures-legacy"
 version = "1.0.0"
-source = "git+https://github.com/redoz/makepad.git?rev=4f9ce7a8bb3fd19e5c61dcf13edd2e6d4a04cefc#4f9ce7a8bb3fd19e5c61dcf13edd2e6d4a04cefc"
+source = "git+https://github.com/redoz/makepad.git?rev=2d7f5f4a5c5407ec31880400f01b87e3c95dba24#2d7f5f4a5c5407ec31880400f01b87e3c95dba24"
 
 [[package]]
 name = "makepad-gif"
 version = "0.1.0"
-source = "git+https://github.com/redoz/makepad.git?rev=4f9ce7a8bb3fd19e5c61dcf13edd2e6d4a04cefc#4f9ce7a8bb3fd19e5c61dcf13edd2e6d4a04cefc"
+source = "git+https://github.com/redoz/makepad.git?rev=2d7f5f4a5c5407ec31880400f01b87e3c95dba24#2d7f5f4a5c5407ec31880400f01b87e3c95dba24"
 dependencies = [
  "weezl",
 ]
@@ -818,9 +818,9 @@ dependencies = [
 [[package]]
 name = "makepad-half"
 version = "2.7.1"
-source = "git+https://github.com/redoz/makepad.git?rev=4f9ce7a8bb3fd19e5c61dcf13edd2e6d4a04cefc#4f9ce7a8bb3fd19e5c61dcf13edd2e6d4a04cefc"
+source = "git+https://github.com/redoz/makepad.git?rev=2d7f5f4a5c5407ec31880400f01b87e3c95dba24#2d7f5f4a5c5407ec31880400f01b87e3c95dba24"
 dependencies = [
- "cfg-if 1.0.4 (git+https://github.com/redoz/makepad.git?rev=4f9ce7a8bb3fd19e5c61dcf13edd2e6d4a04cefc)",
+ "cfg-if 1.0.4 (git+https://github.com/redoz/makepad.git?rev=2d7f5f4a5c5407ec31880400f01b87e3c95dba24)",
  "crunchy",
  "num-traits",
  "zerocopy",
@@ -829,7 +829,7 @@ dependencies = [
 [[package]]
 name = "makepad-html"
 version = "1.0.0"
-source = "git+https://github.com/redoz/makepad.git?rev=4f9ce7a8bb3fd19e5c61dcf13edd2e6d4a04cefc#4f9ce7a8bb3fd19e5c61dcf13edd2e6d4a04cefc"
+source = "git+https://github.com/redoz/makepad.git?rev=2d7f5f4a5c5407ec31880400f01b87e3c95dba24#2d7f5f4a5c5407ec31880400f01b87e3c95dba24"
 dependencies = [
  "makepad-live-id",
 ]
@@ -843,7 +843,7 @@ checksum = "9775cbec5fa0647500c3e5de7c850280a88335d1d2d770e5aa2332b801ba7064"
 [[package]]
 name = "makepad-latex-math"
 version = "0.1.0"
-source = "git+https://github.com/redoz/makepad.git?rev=4f9ce7a8bb3fd19e5c61dcf13edd2e6d4a04cefc#4f9ce7a8bb3fd19e5c61dcf13edd2e6d4a04cefc"
+source = "git+https://github.com/redoz/makepad.git?rev=2d7f5f4a5c5407ec31880400f01b87e3c95dba24#2d7f5f4a5c5407ec31880400f01b87e3c95dba24"
 dependencies = [
  "ttf-parser 0.24.1",
 ]
@@ -851,7 +851,7 @@ dependencies = [
 [[package]]
 name = "makepad-live-id"
 version = "1.0.0"
-source = "git+https://github.com/redoz/makepad.git?rev=4f9ce7a8bb3fd19e5c61dcf13edd2e6d4a04cefc#4f9ce7a8bb3fd19e5c61dcf13edd2e6d4a04cefc"
+source = "git+https://github.com/redoz/makepad.git?rev=2d7f5f4a5c5407ec31880400f01b87e3c95dba24#2d7f5f4a5c5407ec31880400f01b87e3c95dba24"
 dependencies = [
  "makepad-live-id-macros",
 ]
@@ -859,7 +859,7 @@ dependencies = [
 [[package]]
 name = "makepad-live-id-macros"
 version = "1.0.0"
-source = "git+https://github.com/redoz/makepad.git?rev=4f9ce7a8bb3fd19e5c61dcf13edd2e6d4a04cefc#4f9ce7a8bb3fd19e5c61dcf13edd2e6d4a04cefc"
+source = "git+https://github.com/redoz/makepad.git?rev=2d7f5f4a5c5407ec31880400f01b87e3c95dba24#2d7f5f4a5c5407ec31880400f01b87e3c95dba24"
 dependencies = [
  "makepad-micro-proc-macro",
 ]
@@ -867,7 +867,7 @@ dependencies = [
 [[package]]
 name = "makepad-live-reload-core"
 version = "0.1.0"
-source = "git+https://github.com/redoz/makepad.git?rev=4f9ce7a8bb3fd19e5c61dcf13edd2e6d4a04cefc#4f9ce7a8bb3fd19e5c61dcf13edd2e6d4a04cefc"
+source = "git+https://github.com/redoz/makepad.git?rev=2d7f5f4a5c5407ec31880400f01b87e3c95dba24#2d7f5f4a5c5407ec31880400f01b87e3c95dba24"
 dependencies = [
  "makepad-filesystem-watcher",
 ]
@@ -875,7 +875,7 @@ dependencies = [
 [[package]]
 name = "makepad-math"
 version = "1.0.0"
-source = "git+https://github.com/redoz/makepad.git?rev=4f9ce7a8bb3fd19e5c61dcf13edd2e6d4a04cefc#4f9ce7a8bb3fd19e5c61dcf13edd2e6d4a04cefc"
+source = "git+https://github.com/redoz/makepad.git?rev=2d7f5f4a5c5407ec31880400f01b87e3c95dba24#2d7f5f4a5c5407ec31880400f01b87e3c95dba24"
 dependencies = [
  "makepad-micro-serde",
 ]
@@ -883,12 +883,12 @@ dependencies = [
 [[package]]
 name = "makepad-micro-proc-macro"
 version = "1.0.0"
-source = "git+https://github.com/redoz/makepad.git?rev=4f9ce7a8bb3fd19e5c61dcf13edd2e6d4a04cefc#4f9ce7a8bb3fd19e5c61dcf13edd2e6d4a04cefc"
+source = "git+https://github.com/redoz/makepad.git?rev=2d7f5f4a5c5407ec31880400f01b87e3c95dba24#2d7f5f4a5c5407ec31880400f01b87e3c95dba24"
 
 [[package]]
 name = "makepad-micro-serde"
 version = "1.0.0"
-source = "git+https://github.com/redoz/makepad.git?rev=4f9ce7a8bb3fd19e5c61dcf13edd2e6d4a04cefc#4f9ce7a8bb3fd19e5c61dcf13edd2e6d4a04cefc"
+source = "git+https://github.com/redoz/makepad.git?rev=2d7f5f4a5c5407ec31880400f01b87e3c95dba24#2d7f5f4a5c5407ec31880400f01b87e3c95dba24"
 dependencies = [
  "makepad-live-id",
  "makepad-micro-serde-derive",
@@ -897,7 +897,7 @@ dependencies = [
 [[package]]
 name = "makepad-micro-serde-derive"
 version = "1.0.0"
-source = "git+https://github.com/redoz/makepad.git?rev=4f9ce7a8bb3fd19e5c61dcf13edd2e6d4a04cefc#4f9ce7a8bb3fd19e5c61dcf13edd2e6d4a04cefc"
+source = "git+https://github.com/redoz/makepad.git?rev=2d7f5f4a5c5407ec31880400f01b87e3c95dba24#2d7f5f4a5c5407ec31880400f01b87e3c95dba24"
 dependencies = [
  "makepad-micro-proc-macro",
 ]
@@ -905,7 +905,7 @@ dependencies = [
 [[package]]
 name = "makepad-network"
 version = "1.0.0"
-source = "git+https://github.com/redoz/makepad.git?rev=4f9ce7a8bb3fd19e5c61dcf13edd2e6d4a04cefc#4f9ce7a8bb3fd19e5c61dcf13edd2e6d4a04cefc"
+source = "git+https://github.com/redoz/makepad.git?rev=2d7f5f4a5c5407ec31880400f01b87e3c95dba24#2d7f5f4a5c5407ec31880400f01b87e3c95dba24"
 dependencies = [
  "makepad-apple-sys",
  "makepad-error-log",
@@ -919,12 +919,12 @@ dependencies = [
 [[package]]
 name = "makepad-objc-sys"
 version = "1.0.0"
-source = "git+https://github.com/redoz/makepad.git?rev=4f9ce7a8bb3fd19e5c61dcf13edd2e6d4a04cefc#4f9ce7a8bb3fd19e5c61dcf13edd2e6d4a04cefc"
+source = "git+https://github.com/redoz/makepad.git?rev=2d7f5f4a5c5407ec31880400f01b87e3c95dba24#2d7f5f4a5c5407ec31880400f01b87e3c95dba24"
 
 [[package]]
 name = "makepad-platform"
 version = "2.0.0"
-source = "git+https://github.com/redoz/makepad.git?rev=4f9ce7a8bb3fd19e5c61dcf13edd2e6d4a04cefc#4f9ce7a8bb3fd19e5c61dcf13edd2e6d4a04cefc"
+source = "git+https://github.com/redoz/makepad.git?rev=2d7f5f4a5c5407ec31880400f01b87e3c95dba24#2d7f5f4a5c5407ec31880400f01b87e3c95dba24"
 dependencies = [
  "ash",
  "bitflags 2.10.0",
@@ -961,12 +961,12 @@ dependencies = [
 [[package]]
 name = "makepad-regex"
 version = "0.1.0"
-source = "git+https://github.com/redoz/makepad.git?rev=4f9ce7a8bb3fd19e5c61dcf13edd2e6d4a04cefc#4f9ce7a8bb3fd19e5c61dcf13edd2e6d4a04cefc"
+source = "git+https://github.com/redoz/makepad.git?rev=2d7f5f4a5c5407ec31880400f01b87e3c95dba24#2d7f5f4a5c5407ec31880400f01b87e3c95dba24"
 
 [[package]]
 name = "makepad-script"
 version = "1.0.0"
-source = "git+https://github.com/redoz/makepad.git?rev=4f9ce7a8bb3fd19e5c61dcf13edd2e6d4a04cefc#4f9ce7a8bb3fd19e5c61dcf13edd2e6d4a04cefc"
+source = "git+https://github.com/redoz/makepad.git?rev=2d7f5f4a5c5407ec31880400f01b87e3c95dba24#2d7f5f4a5c5407ec31880400f01b87e3c95dba24"
 dependencies = [
  "makepad-error-log",
  "makepad-html",
@@ -980,7 +980,7 @@ dependencies = [
 [[package]]
 name = "makepad-script-derive"
 version = "1.0.0"
-source = "git+https://github.com/redoz/makepad.git?rev=4f9ce7a8bb3fd19e5c61dcf13edd2e6d4a04cefc#4f9ce7a8bb3fd19e5c61dcf13edd2e6d4a04cefc"
+source = "git+https://github.com/redoz/makepad.git?rev=2d7f5f4a5c5407ec31880400f01b87e3c95dba24#2d7f5f4a5c5407ec31880400f01b87e3c95dba24"
 dependencies = [
  "makepad-micro-proc-macro",
 ]
@@ -988,7 +988,7 @@ dependencies = [
 [[package]]
 name = "makepad-script-std"
 version = "1.0.0"
-source = "git+https://github.com/redoz/makepad.git?rev=4f9ce7a8bb3fd19e5c61dcf13edd2e6d4a04cefc#4f9ce7a8bb3fd19e5c61dcf13edd2e6d4a04cefc"
+source = "git+https://github.com/redoz/makepad.git?rev=2d7f5f4a5c5407ec31880400f01b87e3c95dba24#2d7f5f4a5c5407ec31880400f01b87e3c95dba24"
 dependencies = [
  "makepad-network",
  "makepad-script",
@@ -997,12 +997,12 @@ dependencies = [
 [[package]]
 name = "makepad-shared-bytes"
 version = "1.0.0"
-source = "git+https://github.com/redoz/makepad.git?rev=4f9ce7a8bb3fd19e5c61dcf13edd2e6d4a04cefc#4f9ce7a8bb3fd19e5c61dcf13edd2e6d4a04cefc"
+source = "git+https://github.com/redoz/makepad.git?rev=2d7f5f4a5c5407ec31880400f01b87e3c95dba24#2d7f5f4a5c5407ec31880400f01b87e3c95dba24"
 
 [[package]]
 name = "makepad-studio-protocol"
 version = "0.1.0"
-source = "git+https://github.com/redoz/makepad.git?rev=4f9ce7a8bb3fd19e5c61dcf13edd2e6d4a04cefc#4f9ce7a8bb3fd19e5c61dcf13edd2e6d4a04cefc"
+source = "git+https://github.com/redoz/makepad.git?rev=2d7f5f4a5c5407ec31880400f01b87e3c95dba24#2d7f5f4a5c5407ec31880400f01b87e3c95dba24"
 dependencies = [
  "bitflags 2.10.0",
  "makepad-error-log",
@@ -1014,7 +1014,7 @@ dependencies = [
 [[package]]
 name = "makepad-svg"
 version = "1.0.0"
-source = "git+https://github.com/redoz/makepad.git?rev=4f9ce7a8bb3fd19e5c61dcf13edd2e6d4a04cefc#4f9ce7a8bb3fd19e5c61dcf13edd2e6d4a04cefc"
+source = "git+https://github.com/redoz/makepad.git?rev=2d7f5f4a5c5407ec31880400f01b87e3c95dba24#2d7f5f4a5c5407ec31880400f01b87e3c95dba24"
 dependencies = [
  "makepad-html",
  "makepad-live-id",
@@ -1023,7 +1023,7 @@ dependencies = [
 [[package]]
 name = "makepad-tsdf"
 version = "0.1.0"
-source = "git+https://github.com/redoz/makepad.git?rev=4f9ce7a8bb3fd19e5c61dcf13edd2e6d4a04cefc#4f9ce7a8bb3fd19e5c61dcf13edd2e6d4a04cefc"
+source = "git+https://github.com/redoz/makepad.git?rev=2d7f5f4a5c5407ec31880400f01b87e3c95dba24#2d7f5f4a5c5407ec31880400f01b87e3c95dba24"
 dependencies = [
  "makepad-math",
  "makepad-micro-serde",
@@ -1032,7 +1032,7 @@ dependencies = [
 [[package]]
 name = "makepad-wasm-bridge"
 version = "1.0.0"
-source = "git+https://github.com/redoz/makepad.git?rev=4f9ce7a8bb3fd19e5c61dcf13edd2e6d4a04cefc#4f9ce7a8bb3fd19e5c61dcf13edd2e6d4a04cefc"
+source = "git+https://github.com/redoz/makepad.git?rev=2d7f5f4a5c5407ec31880400f01b87e3c95dba24#2d7f5f4a5c5407ec31880400f01b87e3c95dba24"
 dependencies = [
  "makepad-derive-wasm-bridge",
  "makepad-live-id",
@@ -1041,7 +1041,7 @@ dependencies = [
 [[package]]
 name = "makepad-webp"
 version = "0.2.4"
-source = "git+https://github.com/redoz/makepad.git?rev=4f9ce7a8bb3fd19e5c61dcf13edd2e6d4a04cefc#4f9ce7a8bb3fd19e5c61dcf13edd2e6d4a04cefc"
+source = "git+https://github.com/redoz/makepad.git?rev=2d7f5f4a5c5407ec31880400f01b87e3c95dba24#2d7f5f4a5c5407ec31880400f01b87e3c95dba24"
 dependencies = [
  "makepad-byteorder-lite",
 ]
@@ -1049,13 +1049,13 @@ dependencies = [
 [[package]]
 name = "makepad-widgets"
 version = "2.0.0"
-source = "git+https://github.com/redoz/makepad.git?rev=4f9ce7a8bb3fd19e5c61dcf13edd2e6d4a04cefc#4f9ce7a8bb3fd19e5c61dcf13edd2e6d4a04cefc"
+source = "git+https://github.com/redoz/makepad.git?rev=2d7f5f4a5c5407ec31880400f01b87e3c95dba24#2d7f5f4a5c5407ec31880400f01b87e3c95dba24"
 dependencies = [
  "makepad-derive-widget",
  "makepad-draw",
  "makepad-html",
  "makepad-latex-math",
- "pulldown-cmark 0.12.2 (git+https://github.com/redoz/makepad.git?rev=4f9ce7a8bb3fd19e5c61dcf13edd2e6d4a04cefc)",
+ "pulldown-cmark 0.12.2 (git+https://github.com/redoz/makepad.git?rev=2d7f5f4a5c5407ec31880400f01b87e3c95dba24)",
  "ttf-parser 0.24.1",
  "unicode-segmentation 1.12.0",
 ]
@@ -1063,7 +1063,7 @@ dependencies = [
 [[package]]
 name = "makepad-zune-bmp"
 version = "0.5.2"
-source = "git+https://github.com/redoz/makepad.git?rev=4f9ce7a8bb3fd19e5c61dcf13edd2e6d4a04cefc#4f9ce7a8bb3fd19e5c61dcf13edd2e6d4a04cefc"
+source = "git+https://github.com/redoz/makepad.git?rev=2d7f5f4a5c5407ec31880400f01b87e3c95dba24#2d7f5f4a5c5407ec31880400f01b87e3c95dba24"
 dependencies = [
  "log 0.4.33",
  "makepad-zune-core",
@@ -1072,7 +1072,7 @@ dependencies = [
 [[package]]
 name = "makepad-zune-core"
 version = "0.5.1"
-source = "git+https://github.com/redoz/makepad.git?rev=4f9ce7a8bb3fd19e5c61dcf13edd2e6d4a04cefc#4f9ce7a8bb3fd19e5c61dcf13edd2e6d4a04cefc"
+source = "git+https://github.com/redoz/makepad.git?rev=2d7f5f4a5c5407ec31880400f01b87e3c95dba24#2d7f5f4a5c5407ec31880400f01b87e3c95dba24"
 dependencies = [
  "log 0.4.33",
 ]
@@ -1080,7 +1080,7 @@ dependencies = [
 [[package]]
 name = "makepad-zune-inflate"
 version = "0.2.54"
-source = "git+https://github.com/redoz/makepad.git?rev=4f9ce7a8bb3fd19e5c61dcf13edd2e6d4a04cefc#4f9ce7a8bb3fd19e5c61dcf13edd2e6d4a04cefc"
+source = "git+https://github.com/redoz/makepad.git?rev=2d7f5f4a5c5407ec31880400f01b87e3c95dba24#2d7f5f4a5c5407ec31880400f01b87e3c95dba24"
 dependencies = [
  "simd-adler32",
 ]
@@ -1088,7 +1088,7 @@ dependencies = [
 [[package]]
 name = "makepad-zune-jpeg"
 version = "0.5.15"
-source = "git+https://github.com/redoz/makepad.git?rev=4f9ce7a8bb3fd19e5c61dcf13edd2e6d4a04cefc#4f9ce7a8bb3fd19e5c61dcf13edd2e6d4a04cefc"
+source = "git+https://github.com/redoz/makepad.git?rev=2d7f5f4a5c5407ec31880400f01b87e3c95dba24#2d7f5f4a5c5407ec31880400f01b87e3c95dba24"
 dependencies = [
  "makepad-zune-core",
 ]
@@ -1096,7 +1096,7 @@ dependencies = [
 [[package]]
 name = "makepad-zune-png"
 version = "0.5.2"
-source = "git+https://github.com/redoz/makepad.git?rev=4f9ce7a8bb3fd19e5c61dcf13edd2e6d4a04cefc#4f9ce7a8bb3fd19e5c61dcf13edd2e6d4a04cefc"
+source = "git+https://github.com/redoz/makepad.git?rev=2d7f5f4a5c5407ec31880400f01b87e3c95dba24#2d7f5f4a5c5407ec31880400f01b87e3c95dba24"
 dependencies = [
  "makepad-zune-core",
  "makepad-zune-inflate",
@@ -1105,7 +1105,7 @@ dependencies = [
 [[package]]
 name = "makepad-zune-qoi"
 version = "0.5.2"
-source = "git+https://github.com/redoz/makepad.git?rev=4f9ce7a8bb3fd19e5c61dcf13edd2e6d4a04cefc#4f9ce7a8bb3fd19e5c61dcf13edd2e6d4a04cefc"
+source = "git+https://github.com/redoz/makepad.git?rev=2d7f5f4a5c5407ec31880400f01b87e3c95dba24#2d7f5f4a5c5407ec31880400f01b87e3c95dba24"
 dependencies = [
  "makepad-zune-core",
 ]
@@ -1113,7 +1113,7 @@ dependencies = [
 [[package]]
 name = "memchr"
 version = "2.7.6"
-source = "git+https://github.com/redoz/makepad.git?rev=4f9ce7a8bb3fd19e5c61dcf13edd2e6d4a04cefc#4f9ce7a8bb3fd19e5c61dcf13edd2e6d4a04cefc"
+source = "git+https://github.com/redoz/makepad.git?rev=2d7f5f4a5c5407ec31880400f01b87e3c95dba24#2d7f5f4a5c5407ec31880400f01b87e3c95dba24"
 
 [[package]]
 name = "memchr"
@@ -1124,12 +1124,12 @@ checksum = "cf8baf1c55e62ffcace7a9f06f4bd9cd3f0c4beb022d3b367256b91b87513d98"
 [[package]]
 name = "naga"
 version = "27.0.3"
-source = "git+https://github.com/redoz/makepad.git?rev=4f9ce7a8bb3fd19e5c61dcf13edd2e6d4a04cefc#4f9ce7a8bb3fd19e5c61dcf13edd2e6d4a04cefc"
+source = "git+https://github.com/redoz/makepad.git?rev=2d7f5f4a5c5407ec31880400f01b87e3c95dba24#2d7f5f4a5c5407ec31880400f01b87e3c95dba24"
 dependencies = [
  "arrayvec 0.7.6",
  "bit-set",
  "bitflags 2.13.1",
- "cfg-if 1.0.4 (git+https://github.com/redoz/makepad.git?rev=4f9ce7a8bb3fd19e5c61dcf13edd2e6d4a04cefc)",
+ "cfg-if 1.0.4 (git+https://github.com/redoz/makepad.git?rev=2d7f5f4a5c5407ec31880400f01b87e3c95dba24)",
  "cfg_aliases 0.2.1",
  "hashbrown 0.16.1",
  "hexf-parse",
@@ -1208,7 +1208,7 @@ dependencies = [
 [[package]]
 name = "num-traits"
 version = "0.2.20"
-source = "git+https://github.com/redoz/makepad.git?rev=4f9ce7a8bb3fd19e5c61dcf13edd2e6d4a04cefc#4f9ce7a8bb3fd19e5c61dcf13edd2e6d4a04cefc"
+source = "git+https://github.com/redoz/makepad.git?rev=2d7f5f4a5c5407ec31880400f01b87e3c95dba24#2d7f5f4a5c5407ec31880400f01b87e3c95dba24"
 
 [[package]]
 name = "objc2"
@@ -1234,7 +1234,7 @@ checksum = "8d380ab6c951261a0e44306245bc960b3b3367f099a7da7156bd1a3cacaf783c"
 [[package]]
 name = "once_cell"
 version = "1.21.3"
-source = "git+https://github.com/redoz/makepad.git?rev=4f9ce7a8bb3fd19e5c61dcf13edd2e6d4a04cefc#4f9ce7a8bb3fd19e5c61dcf13edd2e6d4a04cefc"
+source = "git+https://github.com/redoz/makepad.git?rev=2d7f5f4a5c5407ec31880400f01b87e3c95dba24#2d7f5f4a5c5407ec31880400f01b87e3c95dba24"
 
 [[package]]
 name = "once_cell"
@@ -1308,7 +1308,7 @@ checksum = "a89322df9ebe1c1578d689c92318e070967d1042b512afbe49518723f4e6d5cd"
 [[package]]
 name = "pkg-config"
 version = "0.3.32"
-source = "git+https://github.com/redoz/makepad.git?rev=4f9ce7a8bb3fd19e5c61dcf13edd2e6d4a04cefc#4f9ce7a8bb3fd19e5c61dcf13edd2e6d4a04cefc"
+source = "git+https://github.com/redoz/makepad.git?rev=2d7f5f4a5c5407ec31880400f01b87e3c95dba24#2d7f5f4a5c5407ec31880400f01b87e3c95dba24"
 
 [[package]]
 name = "potential_utf"
@@ -1342,11 +1342,11 @@ dependencies = [
 [[package]]
 name = "pulldown-cmark"
 version = "0.12.2"
-source = "git+https://github.com/redoz/makepad.git?rev=4f9ce7a8bb3fd19e5c61dcf13edd2e6d4a04cefc#4f9ce7a8bb3fd19e5c61dcf13edd2e6d4a04cefc"
+source = "git+https://github.com/redoz/makepad.git?rev=2d7f5f4a5c5407ec31880400f01b87e3c95dba24#2d7f5f4a5c5407ec31880400f01b87e3c95dba24"
 dependencies = [
  "bitflags 2.10.0",
  "memchr 2.7.6",
- "unicase 2.9.0 (git+https://github.com/redoz/makepad.git?rev=4f9ce7a8bb3fd19e5c61dcf13edd2e6d4a04cefc)",
+ "unicase 2.9.0 (git+https://github.com/redoz/makepad.git?rev=2d7f5f4a5c5407ec31880400f01b87e3c95dba24)",
 ]
 
 [[package]]
@@ -1410,7 +1410,7 @@ checksum = "d6f6ff9a378485b298a5286656da665ba74413d36db0979633275d2e708145d4"
 [[package]]
 name = "rustc-hash"
 version = "1.1.0"
-source = "git+https://github.com/redoz/makepad.git?rev=4f9ce7a8bb3fd19e5c61dcf13edd2e6d4a04cefc#4f9ce7a8bb3fd19e5c61dcf13edd2e6d4a04cefc"
+source = "git+https://github.com/redoz/makepad.git?rev=2d7f5f4a5c5407ec31880400f01b87e3c95dba24#2d7f5f4a5c5407ec31880400f01b87e3c95dba24"
 
 [[package]]
 name = "rustversion"
@@ -1421,7 +1421,7 @@ checksum = "cf54715a573b99ac80df0bc206da022bcd442c974952c7b9720069370852e21f"
 [[package]]
 name = "rustybuzz"
 version = "0.18.0"
-source = "git+https://github.com/redoz/makepad.git?rev=4f9ce7a8bb3fd19e5c61dcf13edd2e6d4a04cefc#4f9ce7a8bb3fd19e5c61dcf13edd2e6d4a04cefc"
+source = "git+https://github.com/redoz/makepad.git?rev=2d7f5f4a5c5407ec31880400f01b87e3c95dba24#2d7f5f4a5c5407ec31880400f01b87e3c95dba24"
 dependencies = [
  "bitflags 2.10.0",
  "bytemuck",
@@ -1437,7 +1437,7 @@ dependencies = [
 [[package]]
 name = "scoped-tls"
 version = "1.0.1"
-source = "git+https://github.com/redoz/makepad.git?rev=4f9ce7a8bb3fd19e5c61dcf13edd2e6d4a04cefc#4f9ce7a8bb3fd19e5c61dcf13edd2e6d4a04cefc"
+source = "git+https://github.com/redoz/makepad.git?rev=2d7f5f4a5c5407ec31880400f01b87e3c95dba24#2d7f5f4a5c5407ec31880400f01b87e3c95dba24"
 
 [[package]]
 name = "scopeguard"
@@ -1448,7 +1448,7 @@ checksum = "94143f37725109f92c262ed2cf5e59bce7498c01bcc1502d7b9afe439a4e9f49"
 [[package]]
 name = "sdfer"
 version = "0.2.1"
-source = "git+https://github.com/redoz/makepad.git?rev=4f9ce7a8bb3fd19e5c61dcf13edd2e6d4a04cefc#4f9ce7a8bb3fd19e5c61dcf13edd2e6d4a04cefc"
+source = "git+https://github.com/redoz/makepad.git?rev=2d7f5f4a5c5407ec31880400f01b87e3c95dba24#2d7f5f4a5c5407ec31880400f01b87e3c95dba24"
 
 [[package]]
 name = "serde"
@@ -1551,7 +1551,7 @@ dependencies = [
 [[package]]
 name = "simd-adler32"
 version = "0.3.9"
-source = "git+https://github.com/redoz/makepad.git?rev=4f9ce7a8bb3fd19e5c61dcf13edd2e6d4a04cefc#4f9ce7a8bb3fd19e5c61dcf13edd2e6d4a04cefc"
+source = "git+https://github.com/redoz/makepad.git?rev=2d7f5f4a5c5407ec31880400f01b87e3c95dba24#2d7f5f4a5c5407ec31880400f01b87e3c95dba24"
 
 [[package]]
 name = "slab"
@@ -1571,7 +1571,7 @@ dependencies = [
 [[package]]
 name = "smallvec"
 version = "1.15.1"
-source = "git+https://github.com/redoz/makepad.git?rev=4f9ce7a8bb3fd19e5c61dcf13edd2e6d4a04cefc#4f9ce7a8bb3fd19e5c61dcf13edd2e6d4a04cefc"
+source = "git+https://github.com/redoz/makepad.git?rev=2d7f5f4a5c5407ec31880400f01b87e3c95dba24#2d7f5f4a5c5407ec31880400f01b87e3c95dba24"
 
 [[package]]
 name = "smallvec"
@@ -1582,7 +1582,7 @@ checksum = "8ed6a63f02c8539c91a8685a86f4099661ba3da017932f6ebbea6de3f0fa7c90"
 [[package]]
 name = "spirv"
 version = "0.3.0+sdk-1.3.268.0"
-source = "git+https://github.com/redoz/makepad.git?rev=4f9ce7a8bb3fd19e5c61dcf13edd2e6d4a04cefc#4f9ce7a8bb3fd19e5c61dcf13edd2e6d4a04cefc"
+source = "git+https://github.com/redoz/makepad.git?rev=2d7f5f4a5c5407ec31880400f01b87e3c95dba24#2d7f5f4a5c5407ec31880400f01b87e3c95dba24"
 dependencies = [
  "bitflags 2.13.1",
 ]
@@ -1656,7 +1656,7 @@ dependencies = [
 [[package]]
 name = "thiserror"
 version = "2.0.18"
-source = "git+https://github.com/redoz/makepad.git?rev=4f9ce7a8bb3fd19e5c61dcf13edd2e6d4a04cefc#4f9ce7a8bb3fd19e5c61dcf13edd2e6d4a04cefc"
+source = "git+https://github.com/redoz/makepad.git?rev=2d7f5f4a5c5407ec31880400f01b87e3c95dba24#2d7f5f4a5c5407ec31880400f01b87e3c95dba24"
 dependencies = [
  "thiserror-impl 2.0.18",
 ]
@@ -1675,7 +1675,7 @@ dependencies = [
 [[package]]
 name = "thiserror-impl"
 version = "2.0.18"
-source = "git+https://github.com/redoz/makepad.git?rev=4f9ce7a8bb3fd19e5c61dcf13edd2e6d4a04cefc#4f9ce7a8bb3fd19e5c61dcf13edd2e6d4a04cefc"
+source = "git+https://github.com/redoz/makepad.git?rev=2d7f5f4a5c5407ec31880400f01b87e3c95dba24#2d7f5f4a5c5407ec31880400f01b87e3c95dba24"
 dependencies = [
  "makepad-micro-proc-macro",
 ]
@@ -1868,7 +1868,7 @@ dependencies = [
 [[package]]
 name = "ttf-parser"
 version = "0.24.1"
-source = "git+https://github.com/redoz/makepad.git?rev=4f9ce7a8bb3fd19e5c61dcf13edd2e6d4a04cefc#4f9ce7a8bb3fd19e5c61dcf13edd2e6d4a04cefc"
+source = "git+https://github.com/redoz/makepad.git?rev=2d7f5f4a5c5407ec31880400f01b87e3c95dba24#2d7f5f4a5c5407ec31880400f01b87e3c95dba24"
 
 [[package]]
 name = "ttf-parser"
@@ -1885,22 +1885,22 @@ checksum = "dbc4bc3a9f746d862c45cb89d705aa10f187bb96c76001afab07a0d35ce60142"
 [[package]]
 name = "unicase"
 version = "2.9.0"
-source = "git+https://github.com/redoz/makepad.git?rev=4f9ce7a8bb3fd19e5c61dcf13edd2e6d4a04cefc#4f9ce7a8bb3fd19e5c61dcf13edd2e6d4a04cefc"
+source = "git+https://github.com/redoz/makepad.git?rev=2d7f5f4a5c5407ec31880400f01b87e3c95dba24#2d7f5f4a5c5407ec31880400f01b87e3c95dba24"
 
 [[package]]
 name = "unicode-bidi"
 version = "0.3.18"
-source = "git+https://github.com/redoz/makepad.git?rev=4f9ce7a8bb3fd19e5c61dcf13edd2e6d4a04cefc#4f9ce7a8bb3fd19e5c61dcf13edd2e6d4a04cefc"
+source = "git+https://github.com/redoz/makepad.git?rev=2d7f5f4a5c5407ec31880400f01b87e3c95dba24#2d7f5f4a5c5407ec31880400f01b87e3c95dba24"
 
 [[package]]
 name = "unicode-bidi-mirroring"
 version = "0.3.0"
-source = "git+https://github.com/redoz/makepad.git?rev=4f9ce7a8bb3fd19e5c61dcf13edd2e6d4a04cefc#4f9ce7a8bb3fd19e5c61dcf13edd2e6d4a04cefc"
+source = "git+https://github.com/redoz/makepad.git?rev=2d7f5f4a5c5407ec31880400f01b87e3c95dba24#2d7f5f4a5c5407ec31880400f01b87e3c95dba24"
 
 [[package]]
 name = "unicode-ccc"
 version = "0.3.0"
-source = "git+https://github.com/redoz/makepad.git?rev=4f9ce7a8bb3fd19e5c61dcf13edd2e6d4a04cefc#4f9ce7a8bb3fd19e5c61dcf13edd2e6d4a04cefc"
+source = "git+https://github.com/redoz/makepad.git?rev=2d7f5f4a5c5407ec31880400f01b87e3c95dba24#2d7f5f4a5c5407ec31880400f01b87e3c95dba24"
 
 [[package]]
 name = "unicode-ident"
@@ -1911,22 +1911,22 @@ checksum = "e6e4313cd5fcd3dad5cafa179702e2b244f760991f45397d14d4ebf38247da75"
 [[package]]
 name = "unicode-linebreak"
 version = "0.1.5"
-source = "git+https://github.com/redoz/makepad.git?rev=4f9ce7a8bb3fd19e5c61dcf13edd2e6d4a04cefc#4f9ce7a8bb3fd19e5c61dcf13edd2e6d4a04cefc"
+source = "git+https://github.com/redoz/makepad.git?rev=2d7f5f4a5c5407ec31880400f01b87e3c95dba24#2d7f5f4a5c5407ec31880400f01b87e3c95dba24"
 
 [[package]]
 name = "unicode-properties"
 version = "0.1.4"
-source = "git+https://github.com/redoz/makepad.git?rev=4f9ce7a8bb3fd19e5c61dcf13edd2e6d4a04cefc#4f9ce7a8bb3fd19e5c61dcf13edd2e6d4a04cefc"
+source = "git+https://github.com/redoz/makepad.git?rev=2d7f5f4a5c5407ec31880400f01b87e3c95dba24#2d7f5f4a5c5407ec31880400f01b87e3c95dba24"
 
 [[package]]
 name = "unicode-script"
 version = "0.5.8"
-source = "git+https://github.com/redoz/makepad.git?rev=4f9ce7a8bb3fd19e5c61dcf13edd2e6d4a04cefc#4f9ce7a8bb3fd19e5c61dcf13edd2e6d4a04cefc"
+source = "git+https://github.com/redoz/makepad.git?rev=2d7f5f4a5c5407ec31880400f01b87e3c95dba24#2d7f5f4a5c5407ec31880400f01b87e3c95dba24"
 
 [[package]]
 name = "unicode-segmentation"
 version = "1.12.0"
-source = "git+https://github.com/redoz/makepad.git?rev=4f9ce7a8bb3fd19e5c61dcf13edd2e6d4a04cefc#4f9ce7a8bb3fd19e5c61dcf13edd2e6d4a04cefc"
+source = "git+https://github.com/redoz/makepad.git?rev=2d7f5f4a5c5407ec31880400f01b87e3c95dba24#2d7f5f4a5c5407ec31880400f01b87e3c95dba24"
 
 [[package]]
 name = "unicode-segmentation"
@@ -2120,7 +2120,7 @@ dependencies = [
 [[package]]
 name = "wayland-backend"
 version = "0.3.12"
-source = "git+https://github.com/redoz/makepad.git?rev=4f9ce7a8bb3fd19e5c61dcf13edd2e6d4a04cefc#4f9ce7a8bb3fd19e5c61dcf13edd2e6d4a04cefc"
+source = "git+https://github.com/redoz/makepad.git?rev=2d7f5f4a5c5407ec31880400f01b87e3c95dba24#2d7f5f4a5c5407ec31880400f01b87e3c95dba24"
 dependencies = [
  "downcast-rs",
  "libc",
@@ -2132,7 +2132,7 @@ dependencies = [
 [[package]]
 name = "wayland-client"
 version = "0.31.12"
-source = "git+https://github.com/redoz/makepad.git?rev=4f9ce7a8bb3fd19e5c61dcf13edd2e6d4a04cefc#4f9ce7a8bb3fd19e5c61dcf13edd2e6d4a04cefc"
+source = "git+https://github.com/redoz/makepad.git?rev=2d7f5f4a5c5407ec31880400f01b87e3c95dba24#2d7f5f4a5c5407ec31880400f01b87e3c95dba24"
 dependencies = [
  "bitflags 2.13.1",
  "libc",
@@ -2142,7 +2142,7 @@ dependencies = [
 [[package]]
 name = "wayland-egl"
 version = "0.32.9"
-source = "git+https://github.com/redoz/makepad.git?rev=4f9ce7a8bb3fd19e5c61dcf13edd2e6d4a04cefc#4f9ce7a8bb3fd19e5c61dcf13edd2e6d4a04cefc"
+source = "git+https://github.com/redoz/makepad.git?rev=2d7f5f4a5c5407ec31880400f01b87e3c95dba24#2d7f5f4a5c5407ec31880400f01b87e3c95dba24"
 dependencies = [
  "wayland-backend",
  "wayland-sys",
@@ -2151,7 +2151,7 @@ dependencies = [
 [[package]]
 name = "wayland-protocols"
 version = "0.32.10"
-source = "git+https://github.com/redoz/makepad.git?rev=4f9ce7a8bb3fd19e5c61dcf13edd2e6d4a04cefc#4f9ce7a8bb3fd19e5c61dcf13edd2e6d4a04cefc"
+source = "git+https://github.com/redoz/makepad.git?rev=2d7f5f4a5c5407ec31880400f01b87e3c95dba24#2d7f5f4a5c5407ec31880400f01b87e3c95dba24"
 dependencies = [
  "bitflags 2.13.1",
  "wayland-backend",
@@ -2161,7 +2161,7 @@ dependencies = [
 [[package]]
 name = "wayland-sys"
 version = "0.31.8"
-source = "git+https://github.com/redoz/makepad.git?rev=4f9ce7a8bb3fd19e5c61dcf13edd2e6d4a04cefc#4f9ce7a8bb3fd19e5c61dcf13edd2e6d4a04cefc"
+source = "git+https://github.com/redoz/makepad.git?rev=2d7f5f4a5c5407ec31880400f01b87e3c95dba24#2d7f5f4a5c5407ec31880400f01b87e3c95dba24"
 dependencies = [
  "log 0.4.29",
  "pkg-config",
@@ -2180,12 +2180,12 @@ dependencies = [
 [[package]]
 name = "weezl"
 version = "0.1.12"
-source = "git+https://github.com/redoz/makepad.git?rev=4f9ce7a8bb3fd19e5c61dcf13edd2e6d4a04cefc#4f9ce7a8bb3fd19e5c61dcf13edd2e6d4a04cefc"
+source = "git+https://github.com/redoz/makepad.git?rev=2d7f5f4a5c5407ec31880400f01b87e3c95dba24#2d7f5f4a5c5407ec31880400f01b87e3c95dba24"
 
 [[package]]
 name = "windows"
 version = "0.62.2"
-source = "git+https://github.com/redoz/makepad.git?rev=4f9ce7a8bb3fd19e5c61dcf13edd2e6d4a04cefc#4f9ce7a8bb3fd19e5c61dcf13edd2e6d4a04cefc"
+source = "git+https://github.com/redoz/makepad.git?rev=2d7f5f4a5c5407ec31880400f01b87e3c95dba24#2d7f5f4a5c5407ec31880400f01b87e3c95dba24"
 dependencies = [
  "windows-collections",
  "windows-core",
@@ -2195,7 +2195,7 @@ dependencies = [
 [[package]]
 name = "windows-collections"
 version = "0.3.2"
-source = "git+https://github.com/redoz/makepad.git?rev=4f9ce7a8bb3fd19e5c61dcf13edd2e6d4a04cefc#4f9ce7a8bb3fd19e5c61dcf13edd2e6d4a04cefc"
+source = "git+https://github.com/redoz/makepad.git?rev=2d7f5f4a5c5407ec31880400f01b87e3c95dba24#2d7f5f4a5c5407ec31880400f01b87e3c95dba24"
 dependencies = [
  "windows-core",
 ]
@@ -2203,9 +2203,9 @@ dependencies = [
 [[package]]
 name = "windows-core"
 version = "0.62.2"
-source = "git+https://github.com/redoz/makepad.git?rev=4f9ce7a8bb3fd19e5c61dcf13edd2e6d4a04cefc#4f9ce7a8bb3fd19e5c61dcf13edd2e6d4a04cefc"
+source = "git+https://github.com/redoz/makepad.git?rev=2d7f5f4a5c5407ec31880400f01b87e3c95dba24#2d7f5f4a5c5407ec31880400f01b87e3c95dba24"
 dependencies = [
- "windows-link 0.2.1 (git+https://github.com/redoz/makepad.git?rev=4f9ce7a8bb3fd19e5c61dcf13edd2e6d4a04cefc)",
+ "windows-link 0.2.1 (git+https://github.com/redoz/makepad.git?rev=2d7f5f4a5c5407ec31880400f01b87e3c95dba24)",
  "windows-result",
  "windows-strings",
 ]
@@ -2213,7 +2213,7 @@ dependencies = [
 [[package]]
 name = "windows-future"
 version = "0.3.2"
-source = "git+https://github.com/redoz/makepad.git?rev=4f9ce7a8bb3fd19e5c61dcf13edd2e6d4a04cefc#4f9ce7a8bb3fd19e5c61dcf13edd2e6d4a04cefc"
+source = "git+https://github.com/redoz/makepad.git?rev=2d7f5f4a5c5407ec31880400f01b87e3c95dba24#2d7f5f4a5c5407ec31880400f01b87e3c95dba24"
 dependencies = [
  "windows-core",
 ]
@@ -2227,22 +2227,22 @@ checksum = "f0805222e57f7521d6a62e36fa9163bc891acd422f971defe97d64e70d0a4fe5"
 [[package]]
 name = "windows-link"
 version = "0.2.1"
-source = "git+https://github.com/redoz/makepad.git?rev=4f9ce7a8bb3fd19e5c61dcf13edd2e6d4a04cefc#4f9ce7a8bb3fd19e5c61dcf13edd2e6d4a04cefc"
+source = "git+https://github.com/redoz/makepad.git?rev=2d7f5f4a5c5407ec31880400f01b87e3c95dba24#2d7f5f4a5c5407ec31880400f01b87e3c95dba24"
 
 [[package]]
 name = "windows-result"
 version = "0.4.1"
-source = "git+https://github.com/redoz/makepad.git?rev=4f9ce7a8bb3fd19e5c61dcf13edd2e6d4a04cefc#4f9ce7a8bb3fd19e5c61dcf13edd2e6d4a04cefc"
+source = "git+https://github.com/redoz/makepad.git?rev=2d7f5f4a5c5407ec31880400f01b87e3c95dba24#2d7f5f4a5c5407ec31880400f01b87e3c95dba24"
 dependencies = [
- "windows-link 0.2.1 (git+https://github.com/redoz/makepad.git?rev=4f9ce7a8bb3fd19e5c61dcf13edd2e6d4a04cefc)",
+ "windows-link 0.2.1 (git+https://github.com/redoz/makepad.git?rev=2d7f5f4a5c5407ec31880400f01b87e3c95dba24)",
 ]
 
 [[package]]
 name = "windows-strings"
 version = "0.5.1"
-source = "git+https://github.com/redoz/makepad.git?rev=4f9ce7a8bb3fd19e5c61dcf13edd2e6d4a04cefc#4f9ce7a8bb3fd19e5c61dcf13edd2e6d4a04cefc"
+source = "git+https://github.com/redoz/makepad.git?rev=2d7f5f4a5c5407ec31880400f01b87e3c95dba24#2d7f5f4a5c5407ec31880400f01b87e3c95dba24"
 dependencies = [
- "windows-link 0.2.1 (git+https://github.com/redoz/makepad.git?rev=4f9ce7a8bb3fd19e5c61dcf13edd2e6d4a04cefc)",
+ "windows-link 0.2.1 (git+https://github.com/redoz/makepad.git?rev=2d7f5f4a5c5407ec31880400f01b87e3c95dba24)",
 ]
 
 [[package]]
@@ -2416,7 +2416,7 @@ dependencies = [
 [[package]]
 name = "zerocopy"
 version = "0.8.39"
-source = "git+https://github.com/redoz/makepad.git?rev=4f9ce7a8bb3fd19e5c61dcf13edd2e6d4a04cefc#4f9ce7a8bb3fd19e5c61dcf13edd2e6d4a04cefc"
+source = "git+https://github.com/redoz/makepad.git?rev=2d7f5f4a5c5407ec31880400f01b87e3c95dba24#2d7f5f4a5c5407ec31880400f01b87e3c95dba24"
 
 [[package]]
 name = "zerofrom"

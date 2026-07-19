@@ -48,6 +48,11 @@ script_mod! {
     mod.draw.DarkTile = mod.draw.DrawColor{
         pixel: fn() { return vec4(0.10, 0.10, 0.13, 1.0) }
     }
+    // Solid chip painted on the exact glyph rect in col B, so the icon's own
+    // rect_size (the bounds the SDF is drawn into) is visible behind it.
+    mod.draw.IconRectTile = mod.draw.DrawColor{
+        pixel: fn() { return vec4(0.16, 0.17, 0.20, 1.0) }
+    }
 
     mod.widgets.CompareProbeBase = #(CompareProbe::register_widget(vm))
     mod.widgets.CompareProbe = set_type_default() do mod.widgets.CompareProbeBase{
@@ -55,6 +60,7 @@ script_mod! {
         height: Fill
         draw_check: mod.draw.CheckerTile{}
         draw_dark: mod.draw.DarkTile{}
+        draw_iconbg: mod.draw.IconRectTile{}
         draw_svg: mod.draw.DrawSvg{ svg: crate_resource("self:resources/icons/pin.svg") }
     }
 
@@ -107,6 +113,8 @@ pub struct CompareProbe {
     #[live]
     draw_dark: DrawColor,
     #[live]
+    draw_iconbg: DrawColor,
+    #[live]
     draw_svg: DrawSvg,
     #[live]
     icons: TreeIcons,
@@ -145,9 +153,10 @@ impl Widget for CompareProbe {
             self.draw_svg.color = INK;
             self.draw_svg.draw_abs(cx, Self::glyph(a, sz));
 
-            // --- Col B: SDF on checker ---
+            // --- Col B: SDF on a solid chip sized to the glyph rect ---
             let b = self.tile(ox, 1.0, y, sz);
             self.draw_check.draw_abs(cx, b);
+            self.draw_iconbg.draw_abs(cx, Self::glyph(b, sz));
             self.icons.pin.color = ACCENT;
             self.icons.pin.draw_abs(cx, Self::glyph(b, sz));
 
