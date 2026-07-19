@@ -267,7 +267,7 @@ mod tests {
         list = add_or_promote(list, Path::new("/p-new"), "t", 999);
         assert_eq!(list.len(), RECENTS_CAP);
         assert_eq!(list[0].path, PathBuf::from("/p-new"));
-        assert!(!list.iter().any(|r| r.path == PathBuf::from("/p0")), "oldest dropped");
+        assert!(!list.iter().any(|r| r.path == Path::new("/p0")), "oldest dropped");
     }
 
     #[test]

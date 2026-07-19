@@ -112,8 +112,9 @@ pub enum ToolDockAction {
     /// callers that want it; today's only listener (`sync_statusbar`) re-reads
     /// the mode from `self` instead, so this field is intentionally unread here.
     ModeChanged(#[allow(dead_code)] Tool),
-    /// A one-shot action button was clicked.
-    Triggered(Tool),
+    /// A one-shot action button was clicked. The `Tool` payload is kept for the
+    /// `log!` in `app.rs` (Debug-only) while these buttons stay mock no-ops.
+    Triggered(#[allow(dead_code)] Tool),
 }
 
 const ITEM_H: f64 = 44.0;
@@ -201,11 +202,9 @@ impl Widget for ToolDock {
                     self.draw_bg.redraw(cx);
                 }
             }
-            Hit::FingerHoverOut(_) => {
-                if self.hovered.is_some() {
-                    self.hovered = None;
-                    self.draw_bg.redraw(cx);
-                }
+            Hit::FingerHoverOut(_) if self.hovered.is_some() => {
+                self.hovered = None;
+                self.draw_bg.redraw(cx);
             }
             _ => {}
         }

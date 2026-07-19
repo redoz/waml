@@ -430,16 +430,15 @@ impl Widget for DocTabs {
                     self.draw_bg.redraw(cx);
                 }
             }
-            Hit::FingerHoverOut(_) => {
+            Hit::FingerHoverOut(_)
                 if self.hovered != LiveId::default()
                     || self.close_hovered != LiveId::default()
-                    || self.pressed != LiveId::default()
-                {
-                    self.hovered = LiveId::default();
-                    self.close_hovered = LiveId::default();
-                    self.pressed = LiveId::default();
-                    self.draw_bg.redraw(cx);
-                }
+                    || self.pressed != LiveId::default() =>
+            {
+                self.hovered = LiveId::default();
+                self.close_hovered = LiveId::default();
+                self.pressed = LiveId::default();
+                self.draw_bg.redraw(cx);
             }
             _ => {}
         }
