@@ -91,20 +91,17 @@ script_mod! {
             }
 
             // Header: wordmark + subtitle, vertically centered by `align` (no
-            // more `+ 20.0` / `+ 54.0` y-offsets). Placeholder text logo this
-            // task (the SDF LogoMark is a later styling pass).
+            // more `+ 20.0` / `+ 54.0` y-offsets).
             header := View {
                 width: Fill
                 height: Fit
                 flow: Right
                 align: Align{y: 0.5}
                 spacing: 12.0
-                logo := Label {
-                    text: "WAML"
-                    draw_text +: {
-                        color: atlas.text
-                        text_style: theme.font_bold{font_size: 20 line_spacing: 1.2}
-                    }
+                logo := SolidView {
+                    width: 77.0
+                    height: 44.0
+                    draw_bg: mod.draw.LogoMark{}
                 }
                 sub := Label {
                     text: "Create or open a project to get started"
