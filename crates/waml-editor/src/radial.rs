@@ -238,6 +238,292 @@ impl RadialCore {
     }
 }
 
+script_mod! {
+    use mod.prelude.widgets_internal.*
+    use mod.atlas
+    use mod.widgets.*
+    use mod.text.*
+
+    // One `DrawColor` per wedge, drawn with `draw_abs` (N per frame). `pixel()`
+    // renders the pie-sector fill + a per-slice rim arc (no spokes yet -- see
+    // module docs / Task 4 screenshot-tuning note). Fill alpha ramps by `state`
+    // (0 rest / 1 hover / 2 arm / 3 flick); `danger` swaps the accent hue to the
+    // danger token; `enabled`=0 forces the flat grey disabled look. `a0`/`a1`
+    // are the wedge's start/end angles (radians, set per draw); `cx`/`cy`/
+    // `hub`/`rim` are the disc geometry in this quad's local px.
+    //
+    // Note: this fork's `sdf.rs` has no `sdf.arc` primitive (only
+    // `arc_round_caps`/`arc_flat_caps`/`arc2`), so the rim is drawn as a full
+    // `sdf.circle` ring whose alpha is masked down to this wedge's angular
+    // span via `in_wedge` (the brief's own documented fallback for this case).
+    mod.draw.RadialWedge = mod.draw.DrawColor{
+        accent: uniform(atlas.accent)
+        danger_col: uniform(atlas.danger)
+        dim_col: uniform(atlas.text_dim)
+        border_hi: uniform(atlas.frame_hi)
+        border_lo: uniform(atlas.frame_lo)
+        state: uniform(0.0)
+        danger: uniform(0.0)
+        enabled: uniform(1.0)
+        cx: uniform(0.0)
+        cy: uniform(0.0)
+        hub: uniform(30.0)
+        rim: uniform(120.0)
+        a0: uniform(0.0)
+        a1: uniform(1.5707963)
+        pixel: fn() {
+            let sdf = Sdf2d.viewport(self.pos * self.rect_size)
+            let p = self.pos * self.rect_size
+            let d = vec2(p.x - self.cx, p.y - self.cy)
+            let r = length(d)
+            // Angle clockwise from 12 o'clock (matches Rust `wedge_index`).
+            let ang = modf(atan(d.x, -d.y) + 6.2831853, 6.2831853)
+            let in_ring = step(self.hub, r) * (1.0 - step(self.rim, r))
+            // Wrap-aware wedge mask: wedge 0's span crosses 0 deg (a0 > a1
+            // after rem_euclid), so a plain step/step test renders it empty.
+            let wrapped = step(self.a1, self.a0)
+            let norm = step(self.a0, ang) * (1.0 - step(self.a1, ang))
+            let across = min(step(self.a0, ang) + (1.0 - step(self.a1, ang)), 1.0)
+            let in_wedge = mix(norm, across, wrapped)
+            let mask = in_ring * in_wedge
+            // Fill alpha ramp: rest .05 / hover .15 / arm .18 / flick .28.
+            let rest = 0.05
+            let hov = mix(rest, 0.15, clamp(self.state, 0.0, 1.0))
+            let arm = mix(hov, 0.18, clamp(self.state - 1.0, 0.0, 1.0))
+            let flick_a = mix(arm, 0.28, clamp(self.state - 2.0, 0.0, 1.0))
+            let hue = mix(self.accent, self.danger_col, self.danger)
+            let live_fill = vec4(hue.x, hue.y, hue.z, flick_a * mask)
+            // Disabled: flat grey, no ramp.
+            let dis_fill = vec4(self.dim_col.x, self.dim_col.y, self.dim_col.z, 0.06 * mask)
+            let fill = mix(dis_fill, live_fill, self.enabled)
+            sdf.clear(fill)
+            // Rim arc for this slice: full-disc ring stroke masked to this
+            // wedge's angle -- the source-bright 150deg fade (HudFrame recipe).
+            let dir = vec2(0.5, 0.8660254)
+            let span = 1.3660254
+            let t = clamp((self.pos.x * dir.x + self.pos.y * dir.y) / span, 0.0, 1.0)
+            let stroke = mix(self.border_hi, self.border_lo, t)
+            sdf.circle(self.cx, self.cy, self.rim)
+            sdf.stroke(vec4(stroke.x, stroke.y, stroke.z, stroke.w * in_wedge), 1.2)
+            return sdf.result
+        }
+    }
+
+    mod.widgets.RadialBase = #(Radial::register_widget(vm))
+
+    mod.widgets.Radial = set_type_default() do mod.widgets.RadialBase{
+        width: Fill
+        height: Fill
+        draw_wedge: mod.draw.RadialWedge{ color: #x00000000 }
+        draw_hub +: { color: atlas.field_bg }
+        draw_icon: mod.draw.DrawIcon{}
+        draw_label +: {
+            color: atlas.text
+            text_style: theme.font_regular{ font_size: 10 line_spacing: 1.2 }
+        }
+    }
+}
+
+// Bloom-in duration on open (seconds).
+//
+// First landing unit: no non-test Rust caller yet -- see `DRAG_THRESHOLD`'s
+// doc comment.
+#[allow(dead_code)]
+const BLOOM_SECS: f64 = 0.12;
+
+/// First landing unit: no non-test Rust caller yet -- see `DRAG_THRESHOLD`'s
+/// doc comment.
+#[allow(dead_code)]
+#[derive(Script, ScriptHook, Widget)]
+pub struct Radial {
+    #[uid]
+    uid: WidgetUid,
+    #[source]
+    source: ScriptObjectRef,
+    #[walk]
+    walk: Walk,
+    #[layout]
+    layout: Layout,
+
+    #[redraw]
+    #[live]
+    draw_wedge: DrawColor,
+    #[redraw]
+    #[live]
+    draw_hub: DrawColor,
+    #[redraw]
+    #[live]
+    draw_icon: DrawColor,
+    #[redraw]
+    #[live]
+    draw_label: DrawText,
+
+    #[rust]
+    core: RadialCore,
+    #[rust]
+    start: f64,
+    #[rust]
+    next_frame: NextFrame,
+}
+
+impl Widget for Radial {
+    // Event-passive: the parent (`App`) drives this through the inherent methods
+    // below, so a stray tree route can never double-handle a gesture.
+    fn handle_event(&mut self, _cx: &mut Cx, _event: &Event, _scope: &mut Scope) {}
+
+    fn draw_walk(&mut self, cx: &mut Cx2d, _scope: &mut Scope, _walk: Walk) -> DrawStep {
+        self.draw(cx);
+        DrawStep::done()
+    }
+}
+
+#[allow(dead_code)]
+impl Radial {
+    pub fn is_open(&self) -> bool {
+        self.core.is_open()
+    }
+
+    /// Open at `center` (the right-press point) with `items`; starts the
+    /// bloom-in animation loop.
+    pub fn open(&mut self, cx: &mut Cx, center: DVec2, items: Vec<RadialItem>, time: f64) {
+        self.core.begin(center, items);
+        self.start = time;
+        self.next_frame = cx.new_next_frame();
+        self.draw_wedge.redraw(cx);
+    }
+
+    /// Advance the bloom animation on our scheduled next frame.
+    pub fn tick(&mut self, cx: &mut Cx, event: &Event) {
+        if self.next_frame.is_event(event).is_some() && self.core.is_open() {
+            self.next_frame = cx.new_next_frame();
+            self.draw_wedge.redraw(cx);
+        }
+    }
+
+    /// Translate an `Event` into the pure state machine and return the outcome.
+    /// The parent calls this each event while the radial is open, then acts on
+    /// a `Committed`/`Cancelled`. `None` means "still open, nothing to do".
+    pub fn handle(&mut self, cx: &mut Cx, event: &Event) -> RadialOutcome {
+        if !self.core.is_open() {
+            return RadialOutcome::None;
+        }
+        self.tick(cx, event);
+        let outcome = match event {
+            Event::MouseMove(e) => {
+                self.core.pointer_move(e.abs);
+                self.draw_wedge.redraw(cx);
+                RadialOutcome::None
+            }
+            Event::MouseUp(e) if e.button.is_secondary() => self.core.release(e.abs),
+            // In popup mode a subsequent PRIMARY click selects a wedge.
+            Event::MouseDown(e) if e.button.is_primary() => self.core.click(e.abs),
+            Event::KeyDown(ke) if ke.key_code == KeyCode::Escape => self.core.esc(),
+            _ => RadialOutcome::None,
+        };
+        if outcome != RadialOutcome::None {
+            self.draw_wedge.redraw(cx);
+        }
+        outcome
+    }
+
+    /// Draw the disc at the stored center. N wedges via `draw_abs`, then hub,
+    /// then each wedge's icon + label. Called from `draw_walk` / the parent's
+    /// draw pass.
+    pub fn draw(&mut self, cx: &mut Cx2d) {
+        if !self.core.is_open() {
+            return;
+        }
+        let center = self.core.center();
+        let n = self.core.items().len();
+        if n == 0 {
+            return;
+        }
+        let sector = std::f64::consts::TAU / n as f64;
+        // Quad bounding the whole disc; every wedge shader shares it and masks
+        // its own slice, so hit geometry is independent of this quad.
+        let quad = Rect {
+            pos: dvec2(center.x - DISC_RADIUS, center.y - DISC_RADIUS),
+            size: dvec2(DISC_RADIUS * 2.0, DISC_RADIUS * 2.0),
+        };
+        let local_c = dvec2(DISC_RADIUS, DISC_RADIUS); // center within the quad
+        let items = self.core.items().to_vec();
+        let armed = self.core.armed;
+        for (i, it) in items.iter().enumerate() {
+            // Slice angles clockwise from 12, first wedge centred on 12.
+            let a0 = (i as f64) * sector - sector * 0.5;
+            let a1 = a0 + sector;
+            let state = if !it.enabled {
+                0.0
+            } else if self.core.flick && armed == Some(i) {
+                3.0
+            } else if armed == Some(i) {
+                2.0
+            } else {
+                0.0
+            };
+            self.draw_wedge
+                .set_uniform(cx, live_id!(cx), &[local_c.x as f32]);
+            self.draw_wedge
+                .set_uniform(cx, live_id!(cy), &[local_c.y as f32]);
+            self.draw_wedge
+                .set_uniform(cx, live_id!(hub), &[HUB_RADIUS as f32]);
+            self.draw_wedge
+                .set_uniform(cx, live_id!(rim), &[DISC_RADIUS as f32]);
+            self.draw_wedge.set_uniform(
+                cx,
+                live_id!(a0),
+                &[a0.rem_euclid(std::f64::consts::TAU) as f32],
+            );
+            self.draw_wedge.set_uniform(
+                cx,
+                live_id!(a1),
+                &[a1.rem_euclid(std::f64::consts::TAU) as f32],
+            );
+            self.draw_wedge
+                .set_uniform(cx, live_id!(state), &[state as f32]);
+            self.draw_wedge
+                .set_uniform(cx, live_id!(danger), &[if it.danger { 1.0 } else { 0.0 }]);
+            self.draw_wedge.set_uniform(
+                cx,
+                live_id!(enabled),
+                &[if it.enabled { 1.0 } else { 0.0 }],
+            );
+            self.draw_wedge.draw_abs(cx, quad);
+
+            // Icon + label centred on the sector mid-angle at a fixed radius.
+            let mid = (i as f64) * sector; // mid-angle clockwise from 12
+            let icon_r = (HUB_RADIUS + DISC_RADIUS) * 0.5;
+            let ix = center.x + icon_r * mid.sin();
+            let iy = center.y - icon_r * mid.cos();
+            let icon_rect = Rect {
+                pos: dvec2(ix - 12.0, iy - 12.0),
+                size: dvec2(24.0, 24.0),
+            };
+            if !crate::icon::draw_icon(
+                cx,
+                &mut self.draw_icon,
+                icon_rect,
+                &it.icon,
+                it.danger,
+                it.enabled,
+            ) {
+                if let Some(g) = it.icon.glyph() {
+                    self.draw_label
+                        .draw_abs(cx, dvec2(ix - 4.0, iy - 8.0), &g.to_string());
+                }
+            }
+            self.draw_label
+                .draw_abs(cx, dvec2(ix - 16.0, iy + 14.0), &it.label);
+        }
+        // Hub: white fill + accent ring drawn as a small quad.
+        let hub_rect = Rect {
+            pos: dvec2(center.x - HUB_RADIUS, center.y - HUB_RADIUS),
+            size: dvec2(HUB_RADIUS * 2.0, HUB_RADIUS * 2.0),
+        };
+        self.draw_hub.draw_abs(cx, hub_rect);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -361,7 +647,10 @@ mod tests {
         c.begin(C, menu());
         c.pointer_move(right()); // drag past threshold -> marking, arms wedge 1
         assert_eq!(c.armed, Some(1));
-        assert_eq!(c.release(right()), RadialOutcome::Committed(live_id!(style)));
+        assert_eq!(
+            c.release(right()),
+            RadialOutcome::Committed(live_id!(style))
+        );
         assert!(!c.is_open());
     }
 
@@ -372,7 +661,10 @@ mod tests {
         let far_right = dvec2(C.x + 160.0, C.y); // r=160 > DISC_RADIUS
         c.pointer_move(far_right);
         assert!(c.flick);
-        assert_eq!(c.release(far_right), RadialOutcome::Committed(live_id!(style)));
+        assert_eq!(
+            c.release(far_right),
+            RadialOutcome::Committed(live_id!(style))
+        );
     }
 
     #[test]

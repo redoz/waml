@@ -829,6 +829,7 @@ impl AppMain for App {
         crate::icons::script_mod(vm);
         crate::draw_hud::script_mod(vm);
         crate::icon::script_mod(vm);
+        crate::radial::script_mod(vm);
         crate::canvas::script_mod(vm);
         crate::tree_panel::script_mod(vm);
         crate::inspector_panel::script_mod(vm);
