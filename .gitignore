@@ -10,3 +10,4 @@ dist/
 
 .worktrees/
 .tokensave/
+__pycache__/

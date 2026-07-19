@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="-13.2521 -38.848 68.4573 40.848" width="684" height="408">
+  <!-- Converted from waml.dxf. 6 zigzag segments, numbered left-to-right.
+       Change each fill= below to recolor. -->
+  <g stroke="#000" stroke-width="0.5" stroke-linejoin="round">
+    <polygon id="seg1" fill="#e65050" points="-11.2521,-36.848 -2.2521,-36.848 9,0 0,0"/>
+    <polygon id="seg2" fill="#f0aa3c" points="9,0 14.4542,-16.7864 10.0938,-31.0656 4.6396,-14.2792"/>
+    <polygon id="seg3" fill="#50a0e6" points="10.0938,-31.0656 19.0938,-31.0656 28.5802,0 19.5802,0"/>
+    <polygon id="seg4" fill="#aa6edc" points="28.5802,0 32.7826,-12.9336 28.4222,-27.2128 24.2198,-14.2792"/>
+    <polygon id="seg5" fill="#5ac878" points="28.4222,-27.2128 37.4222,-27.2128 45.7321,0 36.7321,0"/>
+    <polygon id="seg6" fill="#787878" points="45.7321,0 53.2052,-23 44.2052,-23 41.3717,-14.2792"/>
+  </g>
+</svg>

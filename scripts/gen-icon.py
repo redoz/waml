@@ -19,10 +19,11 @@ import math
 import re
 import sys
 
-# Shared Lucide fit (see gen-pin-icon.py): 24-space -> cell, stroke held inside
-# the Sdf2d.viewport clip. Uniform + isotropic so arc angles pass through.
-A = 0.042768
-B = -0.013216
+# Faithful Lucide fit: map the 24-unit viewBox 1:1 into the cell (A = 1/24,
+# B = 0), so every glyph keeps its own as-drawn margins and relative size.
+# Uniform + isotropic so arc angles pass through unchanged.
+A = 0.0416667  # 1/24
+B = 0.0
 STROKE_W = 0.068  # half-width; Sdf2d.stroke treats w as half-width
 CUBIC_STEPS = 12  # flatten resolution for C/S/Q/T
 
@@ -70,22 +71,61 @@ FLAG = re.compile(r'[01]')
 
 
 def tokenize(d):
-    """Yield (cmd_letter, [floats]) tuples, splitting arg runs per grammar."""
-    toks = re.findall(r'[MmLlHhVvCcSsQqTtAaZz]|' + NUM.pattern, d)
+    """Yield (cmd_letter, [floats]) tuples, splitting arg runs per grammar.
+
+    Position-aware so it handles SVG arc flag packing: the large-arc and sweep
+    flags (A-arg indices 3,4) are single '0'/'1' chars that may be written with
+    no separator and glued to the next number (e.g. `a1 1 0 00-1 1`). They are
+    read one char at a time; every other arg is a full number.
+    """
     argc = dict(M=2, L=2, H=1, V=1, C=6, S=4, Q=4, T=2, A=7, Z=0)
-    i = 0
+    n = len(d)
+    pos = 0
     out = []
-    while i < len(toks):
-        cmd = toks[i]
-        i += 1
-        n = argc[cmd.upper()]
-        if n == 0:
+
+    def skipsep():
+        nonlocal pos
+        while pos < n and d[pos] in ', \t\r\n':
+            pos += 1
+
+    while pos < n:
+        skipsep()
+        if pos >= n:
+            break
+        if not d[pos].isalpha():
+            pos += 1  # stray separator/garbage; skip
+            continue
+        cmd = d[pos]
+        pos += 1
+        cnt = argc[cmd.upper()]
+        if cnt == 0:
             out.append((cmd, []))
             continue
         first = True
-        while i < len(toks) and not toks[i].isalpha():
-            args = [float(x) for x in toks[i:i + n]]
-            i += n
+        while True:
+            skipsep()
+            if pos >= n or d[pos].isalpha():
+                break
+            args = []
+            ok = True
+            for k in range(cnt):
+                skipsep()
+                if cmd.upper() == 'A' and k in (3, 4):
+                    if pos < n and d[pos] in '01':
+                        args.append(float(d[pos]))
+                        pos += 1
+                    else:
+                        ok = False
+                        break
+                else:
+                    m = NUM.match(d, pos)
+                    if not m:
+                        ok = False
+                        break
+                    args.append(float(m.group()))
+                    pos = m.end()
+            if not ok or len(args) < cnt:
+                break
             out.append((cmd if first else _impl(cmd), args))
             first = False
     return out
@@ -184,7 +224,10 @@ def emit_path(d, lines):
             flatten_quad((cur[0], cur[1]), c1, end, L)
             prev_ctrl = c1
         elif u == 'Z':
-            L(start[0], start[1])
+            # Close the contour (no line caps) instead of a line back to start;
+            # an open stroke whose ends coincide leaves a round-cap "nubbin".
+            lines.append("            sdf.close_path()")
+            cur[0], cur[1] = start[0], start[1]
         prev_cmd = u
 
 
@@ -205,11 +248,11 @@ def element_d(name, tag):
         return a.get('d')
     if name == 'circle':
         cx, cy, r = f('cx'), f('cy'), f('r')
-        return ("M%g %g A%g %g 0 0 1 %g %g A%g %g 0 0 1 %g %g"
+        return ("M%g %g A%g %g 0 0 1 %g %g A%g %g 0 0 1 %g %g Z"
                 % (cx + r, cy, r, r, cx - r, cy, r, r, cx + r, cy))
     if name == 'ellipse':  # emitted as its bounding circle's x-radius (Lucide rx==ry)
         cx, cy, r = f('cx'), f('cy'), f('rx')
-        return ("M%g %g A%g %g 0 0 1 %g %g A%g %g 0 0 1 %g %g"
+        return ("M%g %g A%g %g 0 0 1 %g %g A%g %g 0 0 1 %g %g Z"
                 % (cx + r, cy, r, r, cx - r, cy, r, r, cx + r, cy))
     if name == 'line':
         return "M%g %g L%g %g" % (f('x1'), f('y1'), f('x2'), f('y2'))
