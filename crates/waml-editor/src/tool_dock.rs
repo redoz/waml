@@ -1,18 +1,37 @@
 //! Left tool dock (UX mock): a vertical icon strip mirroring the web
 //! frontend's toolbox. `Select`/`Add`/`Connect` are the exclusive active
-//! tools (mouse click or hotkey V/N/C); `AutoLayout`/`DiagramProps`/
-//! `Shortcuts`/`Clear` are one-shot action buttons (no persistent state).
-//! Hand-rolled immediate-mode widget, same convention as `doc_tabs.rs`.
-//! No tool behavior is wired into the canvas yet -- selecting a tool only
-//! changes the dock's own highlight (breadth mock, not polish).
+//! tools (mouse click or hotkey V/N/C); `DiagramProps`/`Clear` are one-shot
+//! action buttons (no persistent state). Hand-rolled immediate-mode widget,
+//! same convention as `doc_tabs.rs`. No tool behavior is wired into the canvas
+//! yet -- selecting a tool only changes the dock's own highlight (breadth
+//! mock, not polish).
+//!
+//! Each entry reads like the caption bar's `CaptionButton`: an SDF glyph (the
+//! project tree's icon material) in `atlas.text` at rest, tinted `atlas.accent`
+//! with a rounded-square accent wash behind it when hovered -- and, for a mode,
+//! while it is the active tool.
 
 use makepad_widgets::*;
+
+use crate::icons::TreeIcons;
 
 script_mod! {
     use mod.prelude.widgets_internal.*
     use mod.atlas
     use mod.widgets.*
     use mod.text.*
+
+    // Rounded selection-tinted wash behind a hovered/active glyph -- a named
+    // DrawColor-with-pixel type (an inline `pixel:` override on a plain field
+    // silently draws nothing in this fork; named `mod.draw.*` types render).
+    mod.draw.ToolWash = mod.draw.DrawColor{
+        pixel: fn() {
+            let sdf = Sdf2d.viewport(self.pos * self.rect_size)
+            sdf.box(1.0, 1.0, self.rect_size.x - 2.0, self.rect_size.y - 2.0, 4.0)
+            sdf.fill(self.color)
+            return sdf.result
+        }
+    }
 
     mod.widgets.ToolDockBase = #(ToolDock::register_widget(vm))
 
@@ -21,27 +40,13 @@ script_mod! {
         height: Fill
         draw_bg: mod.draw.AccentFrame{ color: atlas.field_bg }
         draw_edge +: { color: atlas.frame_hi }
-        draw_item_active +: { color: atlas.selection }
-        draw_glyph_active +: {
-            color: atlas.accent
-            text_style: TextStyle{
-                font_size: 16
-                font_family: FontFamily{
-                    latin := FontMember{res: crate_resource("self:resources/fonts/IBM_Plex_Sans/IBMPlexSans-Regular.ttf") asc: -0.1 desc: 0.0}
-                }
-                line_spacing: 1.2
-            }
-        }
-        draw_glyph_dim +: {
-            color: atlas.text_dim
-            text_style: TextStyle{
-                font_size: 16
-                font_family: FontFamily{
-                    latin := FontMember{res: crate_resource("self:resources/fonts/IBM_Plex_Sans/IBMPlexSans-Regular.ttf") asc: -0.1 desc: 0.0}
-                }
-                line_spacing: 1.2
-            }
-        }
+        // Hover/active wash: a rounded selection-tinted square behind the glyph
+        // (same token DocTabs' hover uses), giving the CaptionButton look.
+        draw_hover: mod.draw.ToolWash{ color: atlas.selection }
+        // Color-only holders: the icon glyphs are DrawColor SDFs whose `color`
+        // is set per draw from one of these, so no RGBA crosses Rust.
+        draw_icon_lit +: { color: atlas.accent }
+        draw_icon_idle +: { color: atlas.text }
         draw_hint +: {
             color: atlas.text_dim
             text_style: TextStyle{
@@ -63,20 +68,16 @@ pub enum Tool {
     Select,
     Add,
     Connect,
-    AutoLayout,
     DiagramProps,
-    Shortcuts,
     Clear,
 }
 
 impl Tool {
-    pub const ALL: [Tool; 7] = [
+    pub const ALL: [Tool; 5] = [
         Tool::Select,
         Tool::Add,
         Tool::Connect,
-        Tool::AutoLayout,
         Tool::DiagramProps,
-        Tool::Shortcuts,
         Tool::Clear,
     ];
 
@@ -86,33 +87,12 @@ impl Tool {
         matches!(self, Tool::Select | Tool::Add | Tool::Connect)
     }
 
-    /// Glyph drawn in the strip. No icon font is vendored yet, so these are
-    /// plain text/unicode stand-ins.
-    // Glyphs are plain Latin characters only -- IBM Plex Sans (the sole
-    // vendored font) doesn't cover most pictographic/dingbat unicode
-    // ranges, which render as tofu boxes. `\u{d7}` (multiplication sign)
-    // is the one confirmed-working symbol outside ASCII (already used for
-    // the doc-tab close button).
-    pub fn glyph(self) -> &'static str {
-        match self {
-            Tool::Select => "\u{2196}",
-            Tool::Add => "+",
-            Tool::Connect => "\u{2197}",
-            Tool::AutoLayout => "A",
-            Tool::DiagramProps => "P",
-            Tool::Shortcuts => "?",
-            Tool::Clear => "\u{d7}",
-        }
-    }
-
     pub fn label(self) -> &'static str {
         match self {
             Tool::Select => "Select",
             Tool::Add => "Add",
             Tool::Connect => "Connect",
-            Tool::AutoLayout => "Auto Layout",
             Tool::DiagramProps => "Diagram Properties",
-            Tool::Shortcuts => "Shortcuts",
             Tool::Clear => "Clear Selection",
         }
     }
@@ -154,9 +134,16 @@ pub enum ToolDockAction {
 }
 
 const ITEM_H: f64 = 44.0;
-const GLYPH_Y: f64 = 8.0;
-const HINT_Y: f64 = 28.0;
+const ICON_SIZE: f64 = 20.0;
+// Side of the rounded accent hover/active wash, centered on the glyph.
+const WASH_SIZE: f64 = 28.0;
+// Icon top for mode entries (with a hotkey hint below) vs the hint baseline.
+const ICON_Y: f64 = 5.0;
+const HINT_Y: f64 = 30.0;
 const GROUP_GAP: f64 = 10.0;
+// Index of the first action button: the mode group (Select/Add/Connect) ends
+// here, so a gap is inserted before it.
+const ACTION_START: usize = 3;
 
 #[derive(Script, ScriptHook, Widget)]
 pub struct ToolDock {
@@ -176,21 +163,32 @@ pub struct ToolDock {
     #[redraw]
     #[live]
     draw_edge: DrawColor,
+    /// Rounded accent wash behind a hovered (or active-mode) glyph.
     #[redraw]
     #[live]
-    draw_item_active: DrawColor,
+    draw_hover: DrawColor,
+    /// Color-only holders (never drawn): the icon glyph's `color` is copied from
+    /// one of these per draw, so the accent/idle RGBA stays in the DSL.
     #[redraw]
     #[live]
-    draw_glyph_active: DrawText,
+    draw_icon_lit: DrawColor,
     #[redraw]
     #[live]
-    draw_glyph_dim: DrawText,
+    draw_icon_idle: DrawColor,
     #[redraw]
     #[live]
     draw_hint: DrawText,
+    /// SDF icon set (the project tree's material), drawn per item via
+    /// `DrawColor::draw_abs`, tinted per-draw from `draw_icon_lit`/`draw_icon_idle`.
+    #[live]
+    icons: TreeIcons,
 
     #[rust]
     active: Tool,
+    /// The tool currently under the pointer (caption-button-style hover), or
+    /// `None`. Drives the accent glyph + wash.
+    #[rust]
+    hovered: Option<Tool>,
     #[rust]
     item_rects: Vec<(Tool, Rect)>,
 }
@@ -213,7 +211,24 @@ impl Widget for ToolDock {
                     }
                 }
             }
-            Hit::FingerHoverIn(_) => cx.set_cursor(MouseCursor::Hand),
+            Hit::FingerHoverIn(fe) | Hit::FingerHoverOver(fe) => {
+                cx.set_cursor(MouseCursor::Hand);
+                let hit = self
+                    .item_rects
+                    .iter()
+                    .find(|(_, rect)| rect.contains(fe.abs))
+                    .map(|(tool, _)| *tool);
+                if self.hovered != hit {
+                    self.hovered = hit;
+                    self.draw_bg.redraw(cx);
+                }
+            }
+            Hit::FingerHoverOut(_) => {
+                if self.hovered.is_some() {
+                    self.hovered = None;
+                    self.draw_bg.redraw(cx);
+                }
+            }
             _ => {}
         }
     }
@@ -234,28 +249,61 @@ impl Widget for ToolDock {
         for (i, tool) in Tool::ALL.iter().copied().enumerate() {
             // A gap after the mode group (Select/Add/Connect) separates it
             // visually from the action buttons.
-            if i == 3 {
+            if i == ACTION_START {
                 y += GROUP_GAP;
             }
             let item_rect = Rect {
                 pos: dvec2(rect.pos.x, y),
                 size: dvec2(rect.size.x, ITEM_H),
             };
+            // "Lit" like a pressed CaptionButton: the pointer is over it, or it
+            // is the active mode. Lit => accent glyph + accent wash; else the
+            // glyph rests in atlas.text.
             let is_active = tool.is_mode() && tool == self.active;
-            if is_active {
-                self.draw_item_active.draw_abs(cx, item_rect);
+            let lit = is_active || self.hovered == Some(tool);
+
+            let has_hint = tool.hotkey_hint().is_some();
+            // Modes carry a hotkey hint below, so their icon sits high; action
+            // buttons have none, so center the icon in the item.
+            let icon_y = if has_hint {
+                item_rect.pos.y + ICON_Y
+            } else {
+                item_rect.pos.y + (ITEM_H - ICON_SIZE) * 0.5
+            };
+            let cx_mid = rect.pos.x + rect.size.x * 0.5;
+            let icon_mid_y = icon_y + ICON_SIZE * 0.5;
+
+            if lit {
+                self.draw_hover.draw_abs(
+                    cx,
+                    Rect {
+                        pos: dvec2(
+                            (cx_mid - WASH_SIZE * 0.5).round(),
+                            (icon_mid_y - WASH_SIZE * 0.5).round(),
+                        ),
+                        size: dvec2(WASH_SIZE, WASH_SIZE),
+                    },
+                );
             }
 
-            let glyph_x = rect.pos.x + rect.size.x * 0.5 - 5.0;
-            let draw_glyph = if is_active {
-                &mut self.draw_glyph_active
+            // No RGBA crosses Rust: the tint is copied from a DSL-declared holder.
+            let tint = if lit {
+                self.draw_icon_lit.color
             } else {
-                &mut self.draw_glyph_dim
+                self.draw_icon_idle.color
             };
-            draw_glyph.draw_abs(cx, dvec2(glyph_x, item_rect.pos.y + GLYPH_Y), tool.glyph());
+            let icon = Self::icon_for(&mut self.icons, tool);
+            icon.color = tint;
+            icon.draw_abs(
+                cx,
+                Rect {
+                    pos: dvec2((cx_mid - ICON_SIZE * 0.5).round(), icon_y.round()),
+                    size: dvec2(ICON_SIZE, ICON_SIZE),
+                },
+            );
 
             if let Some(hint) = tool.hotkey_hint() {
-                let hint_x = rect.pos.x + rect.size.x * 0.5 - 3.0;
+                let hint_x = cx_mid - 3.0;
                 self.draw_hint
                     .draw_abs(cx, dvec2(hint_x, item_rect.pos.y + HINT_Y), hint);
             }
@@ -269,6 +317,19 @@ impl Widget for ToolDock {
 }
 
 impl ToolDock {
+    /// The SDF icon material for a tool. Takes `&mut TreeIcons` (not `&mut
+    /// self`) so the draw loop can borrow the icon without also borrowing the
+    /// rest of `self`.
+    fn icon_for(icons: &mut TreeIcons, tool: Tool) -> &mut DrawColor {
+        match tool {
+            Tool::Select => &mut icons.mouse_pointer_2,
+            Tool::Add => &mut icons.square_plus,
+            Tool::Connect => &mut icons.spline,
+            Tool::DiagramProps => &mut icons.sliders_horizontal,
+            Tool::Clear => &mut icons.circle_x,
+        }
+    }
+
     /// Set the active mode directly (used by `App` for hotkey-driven
     /// switches, bypassing the click/action round-trip).
     pub fn set_active(&mut self, cx: &mut Cx, tool: Tool) {

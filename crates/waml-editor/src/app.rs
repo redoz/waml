@@ -889,8 +889,8 @@ impl MatchEvent for App {
         }
 
         // Tool dock: mode clicks (Select/Add/Connect) update their own
-        // highlight already; `Shortcuts` toggles the keybinding overlay
-        // (U8); the rest of the one-shot action buttons stay mock no-ops.
+        // highlight already; the one-shot action buttons stay mock no-ops. The
+        // keybinding overlay (U8) is reached via the `?` hotkey below.
         let dock_action = self
             .ui
             .widget(cx, ids!(tool_dock))
@@ -899,9 +899,6 @@ impl MatchEvent for App {
         if let Some(action) = dock_action {
             match action {
                 crate::tool_dock::ToolDockAction::ModeChanged(_) => self.sync_statusbar(cx),
-                crate::tool_dock::ToolDockAction::Triggered(crate::tool_dock::Tool::Shortcuts) => {
-                    self.toggle_shortcuts_overlay(cx);
-                }
                 other => log!("tool dock: {other:?}"),
             }
             return;
