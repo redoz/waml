@@ -114,6 +114,11 @@ impl Recent {
     pub fn title(&self) -> &str {
         &self.title
     }
+
+    /// Unix seconds of the last time this project was opened.
+    pub fn opened_at(&self) -> u64 {
+        self.opened_at
+    }
 }
 
 /// Seconds since the Unix epoch (0 if the clock somehow predates it).

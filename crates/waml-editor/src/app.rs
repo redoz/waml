@@ -506,6 +506,7 @@ impl App {
             .map(|r| crate::start_screen::RecentRow {
                 title: r.title().to_string(),
                 path: r.path().display().to_string(),
+                when: format_opened(r.opened_at()),
             })
             .collect();
         if let Some(mut screen) = self
@@ -517,6 +518,48 @@ impl App {
             screen.set_visible(cx, true);
         }
         self.ui.widget(cx, ids!(main_column)).set_visible(cx, false);
+    }
+}
+
+/// Humanize a recent's `opened_at` (unix seconds) as a coarse relative stamp
+/// ("just now", "yesterday", "3 weeks ago") for the start-screen row -- easier
+/// to scan than an absolute date and self-explanatory without a header.
+fn format_opened(secs: u64) -> String {
+    const MIN: u64 = 60;
+    const HOUR: u64 = 60 * MIN;
+    const DAY: u64 = 24 * HOUR;
+    const WEEK: u64 = 7 * DAY;
+    const MONTH: u64 = 30 * DAY;
+    const YEAR: u64 = 365 * DAY;
+
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(secs);
+    let d = now.saturating_sub(secs);
+
+    // "1 unit ago" reads better as "a unit ago"; "an hour" is special-cased.
+    fn ago(n: u64, unit: &str) -> String {
+        if n == 1 {
+            format!("a {unit} ago")
+        } else {
+            format!("{n} {unit}s ago")
+        }
+    }
+    match d {
+        0..=44 => "just now".to_string(),
+        45..=89 => "a minute ago".to_string(),
+        _ if d < HOUR => ago(d / MIN, "minute"),
+        _ if d < 2 * HOUR => "an hour ago".to_string(),
+        _ if d < DAY => ago(d / HOUR, "hour"),
+        _ if d < 2 * DAY => "yesterday".to_string(),
+        _ if d < WEEK => ago(d / DAY, "day"),
+        _ if d < 2 * WEEK => "a week ago".to_string(),
+        _ if d < MONTH => ago(d / WEEK, "week"),
+        _ if d < 2 * MONTH => "a month ago".to_string(),
+        _ if d < YEAR => ago(d / MONTH, "month"),
+        _ if d < 2 * YEAR => "a year ago".to_string(),
+        _ => ago(d / YEAR, "year"),
     }
 }
 
@@ -743,6 +786,7 @@ impl AppMain for App {
         crate::tool_dock::script_mod(vm);
         crate::selection_toolbar::script_mod(vm);
         crate::statusbar::script_mod(vm);
+        crate::waml_button::script_mod(vm);
         crate::start_screen::script_mod(vm);
         self::script_mod(vm)
     }
