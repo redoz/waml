@@ -456,24 +456,30 @@ script_mod! {
         }
     }
 
-    // Trash: lid, handle, and can body.
+    // Trash: can body, lid line, and handle. Faithful port of resources/icons/
+    // trash.svg via scripts/gen-icon.py (can-bottom and handle corners are the
+    // source's rounded `a` fillets, not squared).
     mod.draw.IconTrash = mod.draw.DrawColor{
         pixel: fn() {
             let s = self.rect_size.x
-            let w = s * 0.075
+            let w = s * 0.068
             let sdf = Sdf2d.viewport(self.pos * self.rect_size)
-            sdf.move_to(s * 0.13, s * 0.27)
-            sdf.line_to(s * 0.87, s * 0.27)
+            sdf.move_to(s * 0.7994, s * 0.2434)
+            sdf.line_to(s * 0.7994, s * 0.8421)
+            sdf.arc_to(s * 0.7138, s * 0.8421, s * 0.0855, 0.0000, 1.5708)
+            sdf.line_to(s * 0.2862, s * 0.9277)
+            sdf.arc_to(s * 0.2862, s * 0.8421, s * 0.0855, 1.5708, 3.1416)
+            sdf.line_to(s * 0.2006, s * 0.2434)
             sdf.stroke(self.color, w)
-            sdf.move_to(s * 0.34, s * 0.27)
-            sdf.line_to(s * 0.34, s * 0.15)
-            sdf.line_to(s * 0.66, s * 0.15)
-            sdf.line_to(s * 0.66, s * 0.27)
+            sdf.move_to(s * 0.1151, s * 0.2434)
+            sdf.line_to(s * 0.8849, s * 0.2434)
             sdf.stroke(self.color, w)
-            sdf.move_to(s * 0.21, s * 0.27)
-            sdf.line_to(s * 0.24, s * 0.85)
-            sdf.line_to(s * 0.76, s * 0.85)
-            sdf.line_to(s * 0.79, s * 0.27)
+            sdf.move_to(s * 0.3289, s * 0.2434)
+            sdf.line_to(s * 0.3289, s * 0.1579)
+            sdf.arc_to(s * 0.4145, s * 0.1579, s * 0.0855, 3.1416, 4.7124)
+            sdf.line_to(s * 0.5855, s * 0.0723)
+            sdf.arc_to(s * 0.5855, s * 0.1579, s * 0.0855, -1.5708, 0.0000)
+            sdf.line_to(s * 0.6711, s * 0.2434)
             sdf.stroke(self.color, w)
             return sdf.result
         }
