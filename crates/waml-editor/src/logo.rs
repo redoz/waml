@@ -24,12 +24,20 @@ script_mod! {
     use mod.prelude.widgets_internal.*
     use mod.draw
     use mod.atlas
+    use mod.widgets.*
 
     mod.draw.LogoMark = mod.draw.DrawQuad{
         // Greyscale ramp stops, themed (light: dark greys; dark: light silver).
         seg_hi: uniform(atlas.logo_hi)
         seg_mid: uniform(atlas.logo_mid)
         seg_lo: uniform(atlas.logo_lo)
+        // Hover shimmer: `hover` (eased 0..1) gates the effect; `time` (seconds
+        // since hover-in) drives the traveling wave + breathe; `accent` is the
+        // colour the fold-segments flow toward. All default to rest so the
+        // start-screen card (which never sets them) draws the plain wordmark.
+        accent: uniform(atlas.accent)
+        hover: uniform(0.0)
+        time: uniform(0.0)
         pixel: fn() {
             let r = self.rect_size
             let p = self.pos * r
@@ -43,6 +51,33 @@ script_mod! {
             let k4 = vec3(self.seg_mid.x, self.seg_mid.y, self.seg_mid.z)
             let k5 = vec3(self.seg_mid.x, self.seg_mid.y, self.seg_mid.z)
             let k6 = vec3(self.seg_hi.x, self.seg_hi.y, self.seg_hi.z)
+
+            // ---- hover shimmer -----------------------------------------
+            // Accent flows across the six fold-segments (left->right x-centres
+            // ~0.15/0.31/0.47/0.62/0.75/0.88) as a phase-offset breathe plus a
+            // bright band travelling l->r and looping. `glow_i` mixes each
+            // themed grey toward `accent` BEFORE the fold-order composite, so
+            // the accent inherits the ribbon's clean seams. FIRST-PASS
+            // constants -- screenshot-tuned later in `logo_harness`.
+            let W = 4.0
+            let PHI = 1.05
+            let SPEED = 0.40
+            let WIDTH = 0.02
+            let tw = self.time * SPEED
+            let phase = tw - floor(tw)
+            let acc = vec3(self.accent.x, self.accent.y, self.accent.z)
+            let g1 = self.hover * clamp(0.45 * (0.5 + 0.5 * sin(self.time * W - 0.0 * PHI)) + exp(0.0 - (0.15 - phase) * (0.15 - phase) / WIDTH), 0.0, 1.0)
+            let g2 = self.hover * clamp(0.45 * (0.5 + 0.5 * sin(self.time * W - 1.0 * PHI)) + exp(0.0 - (0.31 - phase) * (0.31 - phase) / WIDTH), 0.0, 1.0)
+            let g3 = self.hover * clamp(0.45 * (0.5 + 0.5 * sin(self.time * W - 2.0 * PHI)) + exp(0.0 - (0.47 - phase) * (0.47 - phase) / WIDTH), 0.0, 1.0)
+            let g4 = self.hover * clamp(0.45 * (0.5 + 0.5 * sin(self.time * W - 3.0 * PHI)) + exp(0.0 - (0.62 - phase) * (0.62 - phase) / WIDTH), 0.0, 1.0)
+            let g5 = self.hover * clamp(0.45 * (0.5 + 0.5 * sin(self.time * W - 4.0 * PHI)) + exp(0.0 - (0.75 - phase) * (0.75 - phase) / WIDTH), 0.0, 1.0)
+            let g6 = self.hover * clamp(0.45 * (0.5 + 0.5 * sin(self.time * W - 5.0 * PHI)) + exp(0.0 - (0.88 - phase) * (0.88 - phase) / WIDTH), 0.0, 1.0)
+            let kg1 = mix(k1, acc, g1)
+            let kg2 = mix(k2, acc, g2)
+            let kg3 = mix(k3, acc, g3)
+            let kg4 = mix(k4, acc, g4)
+            let kg5 = mix(k5, acc, g5)
+            let kg6 = mix(k6, acc, g6)
 
             // ---- seg2 (thin up-stroke) ----
             let s2a = vec2(0.3142, 1.0000) * r
@@ -151,12 +186,12 @@ script_mod! {
             // COLOR: fold-order "over" composite (2,4,6 then 1,3,5 on top) so
             // the two shades blend smoothly across each internal seam. Its own
             // alpha dips at seams, so we keep only its un-premultiplied color.
-            let acc2 = vec4(k2, 1.0) * cc2
-            let acc4 = vec4(k4, 1.0) * cc4 + acc2 * (1.0 - cc4)
-            let acc6 = vec4(k6, 1.0) * cc6 + acc4 * (1.0 - cc6)
-            let acc1 = vec4(k1, 1.0) * cc1 + acc6 * (1.0 - cc1)
-            let acc3 = vec4(k3, 1.0) * cc3 + acc1 * (1.0 - cc3)
-            let acc5 = vec4(k5, 1.0) * cc5 + acc3 * (1.0 - cc5)
+            let acc2 = vec4(kg2, 1.0) * cc2
+            let acc4 = vec4(kg4, 1.0) * cc4 + acc2 * (1.0 - cc4)
+            let acc6 = vec4(kg6, 1.0) * cc6 + acc4 * (1.0 - cc6)
+            let acc1 = vec4(kg1, 1.0) * cc1 + acc6 * (1.0 - cc1)
+            let acc3 = vec4(kg3, 1.0) * cc3 + acc1 * (1.0 - cc3)
+            let acc5 = vec4(kg5, 1.0) * cc5 + acc3 * (1.0 - cc5)
             let straight = acc5.rgb / max(acc5.a, 0.0001)
 
             // ALPHA: silhouette coverage = sum of the TWO largest per-bar
@@ -178,6 +213,159 @@ script_mod! {
 
             // Blended color, premultiplied by the hole-free silhouette coverage.
             return vec4(straight * cover, cover)
+        }
+    }
+
+    mod.widgets.LogoMarkBase = #(LogoMark::register_widget(vm))
+
+    // The interactive top-bar wordmark widget. `draw_bg` is the SDF shader
+    // above; the Rust `LogoMark` drives its `hover`/`time` uniforms from the
+    // hover animation loop and emits `LogoAction::Clicked` on a primary press.
+    mod.widgets.LogoMark = set_type_default() do mod.widgets.LogoMarkBase{
+        width: Fill
+        height: Fill
+        draw_bg: mod.draw.LogoMark{}
+    }
+}
+
+// Hover ease-in/out duration (seconds): `hover` ramps 0->1 on enter, 1->0 on
+// leave over this window (screenshot-tuned along with the shimmer constants).
+const HOVER_SECS: f64 = 0.15;
+
+/// `LogoMark` -> `App` action (same convention as `GraphCanvasAction`). Carries
+/// the wordmark's screen-space centre so `App` can open the radial there.
+///
+/// `#[allow(dead_code)]`: the `logo_harness` bin path-includes `logo.rs` without
+/// the `App` wiring, so the payload/readers look unused in that unit.
+#[allow(dead_code)]
+#[derive(Clone, Debug, Default)]
+pub enum LogoAction {
+    #[default]
+    None,
+    Clicked(DVec2),
+}
+
+/// The interactive top-bar wordmark. Unlike `WamlButton`/`Radial` (event-passive
+/// components driven by their parent), this is a self-routing `Widget`: it
+/// hit-tests its own drawn area and runs a `NextFrame` hover-shimmer loop. Note
+/// it only receives hover/click once `App` answers `WindowDragQueryResponse::
+/// Client` over its `drawn_rect` (the caption-bar drag region swallows events
+/// otherwise -- see `app.rs`).
+#[derive(Script, ScriptHook, Widget)]
+pub struct LogoMark {
+    #[uid]
+    uid: WidgetUid,
+    #[source]
+    source: ScriptObjectRef,
+    #[walk]
+    walk: Walk,
+    #[layout]
+    layout: Layout,
+
+    #[redraw]
+    #[live]
+    draw_bg: DrawColor,
+
+    // Pointer is over the mark.
+    #[rust]
+    hovered: bool,
+    // Eased hover, 0..1, fed to the shader `hover` uniform.
+    #[rust]
+    hover: f32,
+    // `time` uniform value (seconds since the last hover-in) -- the shimmer
+    // wave/breathe clock.
+    #[rust]
+    time: f32,
+    // Wall-clock origin for `time`, reset on each hover-in.
+    #[rust]
+    anim_start: f64,
+    // Last next-frame timestamp, for frame-rate-independent easing.
+    #[rust]
+    last_time: f64,
+    // Last drawn rect (absolute) -- exposed for the drag-query override.
+    #[rust]
+    rect: Rect,
+    #[rust]
+    next_frame: NextFrame,
+}
+
+impl Widget for LogoMark {
+    fn handle_event(&mut self, cx: &mut Cx, event: &Event, _scope: &mut Scope) {
+        // Hover-shimmer animation: ease `hover` toward the target and advance the
+        // shimmer clock while active. Idle (hover==0, not hovered) stops
+        // scheduling frames -> zero cost.
+        if let Some(ne) = self.next_frame.is_event(event) {
+            let target = if self.hovered { 1.0 } else { 0.0 };
+            let dt = (ne.time - self.last_time).max(0.0);
+            self.last_time = ne.time;
+            let step = (dt / HOVER_SECS) as f32;
+            if self.hover < target {
+                self.hover = (self.hover + step).min(target);
+            } else if self.hover > target {
+                self.hover = (self.hover - step).max(target);
+            }
+            self.time = (ne.time - self.anim_start) as f32;
+            if self.hovered || self.hover > 0.0 {
+                self.next_frame = cx.new_next_frame();
+            }
+            self.draw_bg.redraw(cx);
+        }
+
+        let uid = self.widget_uid();
+        match event.hits_with_capture_overload(cx, self.draw_bg.area(), true) {
+            Hit::FingerHoverIn(_) | Hit::FingerHoverOver(_) => {
+                cx.set_cursor(MouseCursor::Hand);
+                if !self.hovered {
+                    self.hovered = true;
+                    let now = cx.seconds_since_app_start();
+                    self.anim_start = now;
+                    self.last_time = now;
+                    self.next_frame = cx.new_next_frame();
+                }
+            }
+            Hit::FingerHoverOut(_) => {
+                if self.hovered {
+                    self.hovered = false;
+                    self.last_time = cx.seconds_since_app_start();
+                    self.next_frame = cx.new_next_frame();
+                }
+            }
+            Hit::FingerDown(fe) if fe.is_primary_hit() => {
+                let center = dvec2(
+                    self.rect.pos.x + self.rect.size.x * 0.5,
+                    self.rect.pos.y + self.rect.size.y * 0.5,
+                );
+                cx.widget_action(uid, LogoAction::Clicked(center));
+            }
+            _ => {}
+        }
+    }
+
+    fn draw_walk(&mut self, cx: &mut Cx2d, _scope: &mut Scope, walk: Walk) -> DrawStep {
+        let rect = cx.walk_turtle(walk);
+        self.rect = rect;
+        self.draw_bg.set_uniform(cx, live_id!(hover), &[self.hover]);
+        self.draw_bg.set_uniform(cx, live_id!(time), &[self.time]);
+        self.draw_bg.draw_abs(cx, rect);
+        DrawStep::done()
+    }
+}
+
+#[allow(dead_code)] // readers used by `App`; unused in the `logo_harness` bin.
+impl LogoMark {
+    /// The mark's last-drawn absolute rect. `App` uses this to answer the OS
+    /// window drag-query as `Client`, so hover/click reach `handle_event`.
+    pub fn drawn_rect(&self) -> Rect {
+        self.rect
+    }
+
+    /// Reader for `App` (mirrors `GraphCanvas::canvas_action`): the wordmark
+    /// centre if a `Clicked` action landed this frame, else `None`.
+    pub fn logo_action(&self, actions: &Actions) -> Option<DVec2> {
+        let item = actions.find_widget_action(self.widget_uid())?;
+        match item.cast::<LogoAction>() {
+            LogoAction::Clicked(center) => Some(center),
+            LogoAction::None => None,
         }
     }
 }

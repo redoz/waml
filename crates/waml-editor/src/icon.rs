@@ -32,6 +32,11 @@ pub enum IconShape {
     Style,
     Markdown,
     Remove,
+    // Logo-radial glyphs (Properties/About/Cancel/Exit).
+    Properties,
+    About,
+    Cancel,
+    Exit,
 }
 
 impl IconShape {
@@ -44,6 +49,10 @@ impl IconShape {
             IconShape::Style => 1,
             IconShape::Markdown => 2,
             IconShape::Remove => 3,
+            IconShape::Properties => 4,
+            IconShape::About => 5,
+            IconShape::Cancel => 6,
+            IconShape::Exit => 7,
         }
     }
 }
@@ -101,7 +110,7 @@ script_mod! {
                 sdf.fill(col)
                 sdf.rect(m, s * 0.62, s - m * 2.0, s * 0.06)
                 sdf.fill(col)
-            } else {
+            } else if self.shape < 3.5 {
                 // Remove: an X built from two short segments (kept off the edge).
                 sdf.move_to(m, m)
                 sdf.line_to(s - m, s - m)
@@ -109,6 +118,40 @@ script_mod! {
                 sdf.move_to(s - m, m)
                 sdf.line_to(m, s - m)
                 sdf.stroke(col, 1.8)
+            } else if self.shape < 4.5 {
+                // Properties: three horizontal sliders with offset knobs.
+                sdf.rect(m, s * 0.30, s - m * 2.0, s * 0.05)
+                sdf.fill(col)
+                sdf.circle(s * 0.62, s * 0.325, s * 0.075)
+                sdf.fill(col)
+                sdf.rect(m, s * 0.475, s - m * 2.0, s * 0.05)
+                sdf.fill(col)
+                sdf.circle(s * 0.40, s * 0.50, s * 0.075)
+                sdf.fill(col)
+                sdf.rect(m, s * 0.65, s - m * 2.0, s * 0.05)
+                sdf.fill(col)
+                sdf.circle(s * 0.70, s * 0.675, s * 0.075)
+                sdf.fill(col)
+            } else if self.shape < 5.5 {
+                // About: info "i" -- a dot above a short vertical stem.
+                sdf.circle(s * 0.5, s * 0.30, s * 0.06)
+                sdf.fill(col)
+                sdf.rect(s * 0.5 - s * 0.045, s * 0.42, s * 0.09, s * 0.30)
+                sdf.fill(col)
+            } else if self.shape < 6.5 {
+                // Cancel: an X (same construction as Remove).
+                sdf.move_to(m, m)
+                sdf.line_to(s - m, s - m)
+                sdf.stroke(col, 1.8)
+                sdf.move_to(s - m, m)
+                sdf.line_to(m, s - m)
+                sdf.stroke(col, 1.8)
+            } else {
+                // Exit: power glyph -- a ring with a top stem breaking into it.
+                sdf.circle(s * 0.5, s * 0.55, s * 0.24)
+                sdf.stroke(col, 1.8)
+                sdf.rect(s * 0.5 - s * 0.03, m, s * 0.06, s * 0.30)
+                sdf.fill(col)
             }
             return sdf.result
         }
@@ -152,6 +195,10 @@ mod tests {
         assert_eq!(IconShape::Style.shader_index(), 1);
         assert_eq!(IconShape::Markdown.shader_index(), 2);
         assert_eq!(IconShape::Remove.shader_index(), 3);
+        assert_eq!(IconShape::Properties.shader_index(), 4);
+        assert_eq!(IconShape::About.shader_index(), 5);
+        assert_eq!(IconShape::Cancel.shader_index(), 6);
+        assert_eq!(IconShape::Exit.shader_index(), 7);
     }
 
     #[test]

@@ -156,6 +156,21 @@ impl RadialCore {
         self.press_pos = center;
     }
 
+    /// Open directly in persistent popup mode (a left-click open), skipping the
+    /// right-press marking gesture entirely. No button is held; a subsequent
+    /// primary `click` commits an enabled wedge or cancels in the hub/outside.
+    pub fn begin_popup(&mut self, center: DVec2, items: Vec<RadialItem>) {
+        self.open = true;
+        self.center = center;
+        self.items = items;
+        self.pressed = false;
+        self.dragged = false;
+        self.popup = true;
+        self.armed = None;
+        self.flick = false;
+        self.press_pos = center;
+    }
+
     /// Pointer moved to `cursor`. Updates armed wedge (both popup hover and
     /// marking arm), promotes to marking once past `DRAG_THRESHOLD`, and flags
     /// a flick when riding past the rim over an armed wedge.
@@ -388,6 +403,15 @@ impl Radial {
     /// bloom-in animation loop.
     pub fn open(&mut self, cx: &mut Cx, center: DVec2, items: Vec<RadialItem>, time: f64) {
         self.core.begin(center, items);
+        self.start = time;
+        self.next_frame = cx.new_next_frame();
+        self.draw_wedge.redraw(cx);
+    }
+
+    /// Open at `center` directly in persistent popup mode (a left-click open,
+    /// e.g. the logo), skipping marking mode; starts the bloom-in animation.
+    pub fn open_popup(&mut self, cx: &mut Cx, center: DVec2, items: Vec<RadialItem>, time: f64) {
+        self.core.begin_popup(center, items);
         self.start = time;
         self.next_frame = cx.new_next_frame();
         self.draw_wedge.redraw(cx);
@@ -639,6 +663,26 @@ mod tests {
         assert!(c.is_open());
         // Subsequent click on wedge 1 (right, enabled) commits its id.
         assert_eq!(c.click(right()), RadialOutcome::Committed(live_id!(style)));
+        assert!(!c.is_open());
+    }
+
+    #[test]
+    fn begin_popup_opens_in_popup_mode_and_click_commits() {
+        let mut c = RadialCore::default();
+        c.begin_popup(C, menu());
+        // Opens straight into a persistent popup (no right-press held).
+        assert!(c.is_open());
+        // A primary click on wedge 1 (right, enabled) commits immediately --
+        // no drag/marking gesture required.
+        assert_eq!(c.click(right()), RadialOutcome::Committed(live_id!(style)));
+        assert!(!c.is_open());
+    }
+
+    #[test]
+    fn begin_popup_click_in_hub_cancels() {
+        let mut c = RadialCore::default();
+        c.begin_popup(C, menu());
+        assert_eq!(c.click(C), RadialOutcome::Cancelled);
         assert!(!c.is_open());
     }
 

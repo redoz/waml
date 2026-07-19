@@ -23,6 +23,7 @@ script_mod! {
     use mod.widgets.DesktopButtonType
     use mod.widgets.StartScreen
     use mod.widgets.Radial
+    use mod.widgets.LogoMark
 
     startup() do #(App::script_component(vm)){
         ui: Root{
@@ -50,15 +51,14 @@ script_mod! {
                         margin: Inset{left: 2.0}
                         padding: Inset{left: 6.0, right: 10.0}
                         // 6-color "W" wordmark, drawn as an anti-aliased SDF (see
-                        // `logo.rs`) -- DrawSvg stair-stepped at this size. Fixed
-                        // size holds the logo's ~1.749 content aspect. `SolidView`
-                        // (not `View`) because its `draw_bg` is a `DrawColor`, so
-                        // the `LogoMark` DrawColor subclass can attach; a plain
-                        // `View`'s `draw_bg` is a `DrawQuad` and rejects it.
-                        SolidView{
+                        // `logo.rs`) -- DrawSvg stair-stepped at this size. Now an
+                        // interactive `LogoMark` widget: hover plays the shimmer,
+                        // a left-click opens the app radial (see the drag-query
+                        // override + `logo_action` wiring below). Fixed size holds
+                        // the logo's ~1.749 content aspect.
+                        logo := LogoMark{
                             width: 52.0
                             height: 29.7
-                            draw_bg: mod.draw.LogoMark{}
                         }
                     }
                     sep := View{
@@ -636,6 +636,68 @@ pub fn node_radial_items() -> Vec<crate::radial::RadialItem> {
     ]
 }
 
+/// The logo (app) radial: N=4, first wedge centred at 12 o'clock clockwise --
+/// top(0) Properties, right(1) About, bottom(2) Cancel, left(3) Exit (danger).
+/// Ids are what `Radial` reports on commit; `logo_command_for` maps them back
+/// (Cancel maps to nothing -- committing it just closes the radial).
+pub fn logo_radial_items() -> Vec<crate::radial::RadialItem> {
+    use crate::icon::{Icon, IconShape};
+    use crate::radial::RadialItem;
+    vec![
+        RadialItem {
+            id: live_id!(properties),
+            label: "Properties".into(),
+            icon: Icon::Shape(IconShape::Properties),
+            danger: false,
+            enabled: true,
+        },
+        RadialItem {
+            id: live_id!(about),
+            label: "About".into(),
+            icon: Icon::Shape(IconShape::About),
+            danger: false,
+            enabled: true,
+        },
+        RadialItem {
+            id: live_id!(cancel),
+            label: "Cancel".into(),
+            icon: Icon::Shape(IconShape::Cancel),
+            danger: false,
+            enabled: true,
+        },
+        RadialItem {
+            id: live_id!(exit),
+            label: "Exit".into(),
+            icon: Icon::Shape(IconShape::Exit),
+            danger: true,
+            enabled: true,
+        },
+    ]
+}
+
+/// The logo-radial commands `App` acts on. `Cancel` is intentionally absent:
+/// committing the Cancel wedge just closes the radial (mapped to `None`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LogoCommand {
+    Properties,
+    About,
+    Exit,
+}
+
+/// Map a radial-committed `LiveId` to a logo command. `None` = not one of ours
+/// (Cancel / node ids / unknown).
+pub fn logo_command_for(id: LiveId) -> Option<LogoCommand> {
+    if id == live_id!(properties) {
+        Some(LogoCommand::Properties)
+    } else if id == live_id!(about) {
+        Some(LogoCommand::About)
+    } else if id == live_id!(exit) {
+        Some(LogoCommand::Exit)
+    } else {
+        None
+    }
+}
+
 /// Humanize a recent's `opened_at` (unix seconds) as a coarse relative stamp
 /// ("just now", "yesterday", "3 weeks ago") for the start-screen row -- easier
 /// to scan than an absolute date and self-explanatory without a header.
@@ -833,6 +895,25 @@ impl MatchEvent for App {
             return;
         }
 
+        // Logo radial: a left-click on the top-bar wordmark opens the app menu
+        // in persistent popup mode, centred on the mark. (Hover/click only
+        // reach the widget because of the drag-query override below.)
+        let logo_center = self
+            .ui
+            .widget(cx, ids!(logo))
+            .borrow::<crate::logo::LogoMark>()
+            .and_then(|l| l.logo_action(actions));
+        if let Some(center) = logo_center {
+            if let Some(mut radial) = self
+                .ui
+                .widget(cx, ids!(radial))
+                .borrow_mut::<crate::radial::Radial>()
+            {
+                radial.open_popup(cx, center, logo_radial_items(), cx.seconds_since_app_start());
+            }
+            return;
+        }
+
         // Start screen: recent-project rows open directly; New/Open project
         // stay stubs (`log!` only) until the template picker / rfd dialog
         // land in a later slice.
@@ -1019,6 +1100,15 @@ impl AppMain for App {
                 crate::radial::RadialOutcome::Committed(id) => {
                     if let Some(cmd) = crate::canvas::node_command_for(id) {
                         log!("node command: {cmd:?}");
+                    } else if let Some(cmd) = logo_command_for(id) {
+                        match cmd {
+                            // Properties: no-op stub (no editor-settings surface yet).
+                            LogoCommand::Properties => log!("logo command: Properties (stub)"),
+                            LogoCommand::About => {
+                                cx.open_url("https://github.com/redoz/waml", OpenUrlInPlace::No)
+                            }
+                            LogoCommand::Exit => cx.quit(),
+                        }
                     }
                 }
                 crate::radial::RadialOutcome::Cancelled => {}
@@ -1042,9 +1132,38 @@ impl AppMain for App {
                 .borrow::<crate::doc_tabs::DocTabs>()
                 .map(|tabs| tabs.hits_any_tab(dq.abs))
                 .unwrap_or(false);
-            if over_tab {
+            // The wordmark also lives in the caption drag region; without this
+            // the logo never gets hover/click (the whole feature is dead).
+            let over_logo = self
+                .ui
+                .widget(cx, ids!(logo))
+                .borrow::<crate::logo::LogoMark>()
+                .map(|l| l.drawn_rect().contains(dq.abs))
+                .unwrap_or(false);
+            if over_tab || over_logo {
                 dq.response.set(WindowDragQueryResponse::Client);
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{logo_command_for, LogoCommand};
+    use makepad_widgets::*;
+
+    #[test]
+    fn logo_command_for_maps_ids_and_rejects_others() {
+        assert_eq!(
+            logo_command_for(live_id!(properties)),
+            Some(LogoCommand::Properties)
+        );
+        assert_eq!(logo_command_for(live_id!(about)), Some(LogoCommand::About));
+        assert_eq!(logo_command_for(live_id!(exit)), Some(LogoCommand::Exit));
+        // Cancel maps to nothing (the radial just closes on commit).
+        assert_eq!(logo_command_for(live_id!(cancel)), None);
+        // A node-radial id / unknown id is not ours.
+        assert_eq!(logo_command_for(live_id!(remove)), None);
+        assert_eq!(logo_command_for(live_id!(nonsense)), None);
     }
 }
