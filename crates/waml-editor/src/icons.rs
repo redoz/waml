@@ -196,26 +196,35 @@ script_mod! {
     }
 
     // Message: a speech bubble (rounded body + tail) with three text lines.
+    // Faithful port of resources/icons/message-square-text.svg via scripts/
+    // gen-icon.py (the bubble outline + tail are the source's `a` arcs, one
+    // continuous path, not sdf.box plus a separate wedge).
     // Not yet mapped to a kind -- authored ahead for later (e.g. comments/chat).
     mod.draw.IconMessage = mod.draw.DrawColor{
         pixel: fn() {
             let s = self.rect_size.x
-            let w = s * 0.075
+            let w = s * 0.068
             let sdf = Sdf2d.viewport(self.pos * self.rect_size)
-            sdf.box(s * 0.12, s * 0.14, s * 0.76, s * 0.54, s * 0.09)
+            sdf.move_to(s * 0.9277, s * 0.7138)
+            sdf.arc_to(s * 0.8421, s * 0.7138, s * 0.0855, 0.0000, 1.5708)
+            sdf.line_to(s * 0.2788, s * 0.7994)
+            sdf.arc_to(s * 0.2788, s * 0.8849, s * 0.0855, -1.5710, -2.3563)
+            sdf.line_to(s * 0.1242, s * 0.9186)
+            sdf.arc_to(s * 0.1027, s * 0.8971, s * 0.0304, 0.7855, 3.1415)
+            sdf.line_to(s * 0.0723, s * 0.2006)
+            sdf.arc_to(s * 0.1579, s * 0.2006, s * 0.0855, 3.1416, 4.7124)
+            sdf.line_to(s * 0.8421, s * 0.1151)
+            sdf.arc_to(s * 0.8421, s * 0.2006, s * 0.0855, -1.5708, 0.0000)
+            sdf.line_to(s * 0.9277, s * 0.7138)
             sdf.stroke(self.color, w)
-            sdf.move_to(s * 0.34, s * 0.68)
-            sdf.line_to(s * 0.18, s * 0.86)
-            sdf.line_to(s * 0.26, s * 0.68)
+            sdf.move_to(s * 0.2862, s * 0.4572)
+            sdf.line_to(s * 0.7138, s * 0.4572)
             sdf.stroke(self.color, w)
-            sdf.move_to(s * 0.26, s * 0.30)
-            sdf.line_to(s * 0.55, s * 0.30)
+            sdf.move_to(s * 0.2862, s * 0.6283)
+            sdf.line_to(s * 0.5428, s * 0.6283)
             sdf.stroke(self.color, w)
-            sdf.move_to(s * 0.26, s * 0.42)
-            sdf.line_to(s * 0.62, s * 0.42)
-            sdf.stroke(self.color, w)
-            sdf.move_to(s * 0.26, s * 0.54)
-            sdf.line_to(s * 0.48, s * 0.54)
+            sdf.move_to(s * 0.2862, s * 0.2862)
+            sdf.line_to(s * 0.6283, s * 0.2862)
             sdf.stroke(self.color, w)
             return sdf.result
         }
