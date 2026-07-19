@@ -23,6 +23,7 @@ script_mod! {
     use mod.widgets.DesktopButtonType
     use mod.widgets.StartScreen
     use mod.widgets.Radial
+    use mod.widgets.RadialPopup
     use mod.widgets.LogoMark
 
     startup() do #(App::script_component(vm)){
@@ -232,6 +233,11 @@ script_mod! {
                     }
                 }
             }
+            // SPIKE: transparent floating radial popup. A Root-level sibling of
+            // the main window (NOT nested inside it), so its pass is drawn
+            // sequentially after the main window's pass -- the multi-window draw
+            // idiom. Draws nothing while closed.
+            radial_popup := RadialPopup{}
         }
     }
 }
@@ -904,12 +910,23 @@ impl MatchEvent for App {
             .borrow::<crate::logo::LogoMark>()
             .and_then(|l| l.logo_action(actions));
         if let Some(center) = logo_center {
-            if let Some(mut radial) = self
-                .ui
-                .widget(cx, ids!(radial))
-                .borrow_mut::<crate::radial::Radial>()
-            {
-                radial.open_popup(cx, center, logo_radial_items(), cx.seconds_since_app_start());
+            // Logo radial opens as a TRUE transparent floating popup (per-pixel
+            // alpha, overflows the window top-left onto the desktop) rather than
+            // the in-window `radial` used by the node menu. See `radial_popup`.
+            if let Some(parent) = self.ui.window(cx, ids!(main_window)).window_id() {
+                if let Some(mut popup) = self
+                    .ui
+                    .widget(cx, ids!(radial_popup))
+                    .borrow_mut::<crate::radial_popup::RadialPopup>()
+                {
+                    popup.open(
+                        cx,
+                        parent,
+                        center,
+                        logo_radial_items(),
+                        cx.seconds_since_app_start(),
+                    );
+                }
             }
             return;
         }
@@ -1022,6 +1039,7 @@ impl AppMain for App {
         crate::frame::script_mod(vm);
         crate::icon::script_mod(vm);
         crate::radial::script_mod(vm);
+        crate::radial_popup::script_mod(vm);
         crate::canvas::script_mod(vm);
         crate::tree_panel::script_mod(vm);
         crate::inspector_panel::script_mod(vm);
@@ -1113,6 +1131,28 @@ impl AppMain for App {
                 }
                 crate::radial::RadialOutcome::Cancelled => {}
                 crate::radial::RadialOutcome::None => {}
+            }
+        }
+
+        // Logo radial popup: the floating transparent disc. Driven explicitly
+        // here (its embedded `Radial` is not routed through the widget tree), so
+        // a commit/dismiss is handled once. A commit maps to a `LogoCommand`.
+        let popup_outcome = self
+            .ui
+            .widget(cx, ids!(radial_popup))
+            .borrow_mut::<crate::radial_popup::RadialPopup>()
+            .filter(|p| p.is_open())
+            .map(|mut p| p.handle(cx, event));
+        if let Some(crate::radial::RadialOutcome::Committed(id)) = popup_outcome {
+            if let Some(cmd) = logo_command_for(id) {
+                match cmd {
+                    // Properties: no-op stub (no editor-settings surface yet).
+                    LogoCommand::Properties => log!("logo command: Properties (stub)"),
+                    LogoCommand::About => {
+                        cx.open_url("https://github.com/redoz/waml", OpenUrlInPlace::No)
+                    }
+                    LogoCommand::Exit => cx.quit(),
+                }
             }
         }
 

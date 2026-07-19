@@ -23,7 +23,7 @@ use makepad_widgets::*;
 pub const HUB_RADIUS: f64 = 30.0;
 /// Disc (rim) radius (screen px).
 #[allow(dead_code)]
-pub const DISC_RADIUS: f64 = 120.0;
+pub const DISC_RADIUS: f64 = 114.0;
 
 /// One wedge. The radial owns no command semantics -- it reports `id` back on
 /// commit and the parent maps it.
@@ -281,6 +281,7 @@ script_mod! {
         state: uniform(0.0)
         danger: uniform(0.0)
         enabled: uniform(1.0)
+        fade: uniform(1.0)
         cx: uniform(0.0)
         cy: uniform(0.0)
         hub: uniform(30.0)
@@ -321,7 +322,67 @@ script_mod! {
             let stroke = mix(self.border_hi, self.border_lo, t)
             sdf.circle(self.cx, self.cy, self.rim)
             sdf.stroke(vec4(stroke.x, stroke.y, stroke.z, stroke.w * in_wedge), 1.2)
-            return sdf.result
+            let o = sdf.result
+            return vec4(o.x, o.y, o.z, o.w * self.fade)
+        }
+    }
+
+    // Near-opaque base disc drawn ONCE behind the wedges so the popup reads as a
+    // solid card (the transparent DComp pass clears to alpha 0, so without this
+    // only the faint wedge accents would show). `rim` is the disc radius in this
+    // quad's local px (set per draw); `disc_col` defaults to the HUD field bg.
+    mod.draw.RadialDisc = mod.draw.DrawColor{
+        disc_col: uniform(atlas.field_bg)
+        spoke_col: uniform(atlas.text)
+        rim: uniform(114.0)
+        hub: uniform(30.0)
+        n: uniform(4.0)
+        fade: uniform(1.0)
+        pixel: fn() {
+            let sdf = Sdf2d.viewport(self.pos * self.rect_size)
+            let c = self.rect_size * 0.5
+            sdf.circle(c.x, c.y, self.rim)
+            sdf.fill(vec4(self.disc_col.x, self.disc_col.y, self.disc_col.z, 0.92))
+            // Divider spokes: N radial lines on the wedge boundaries (which sit
+            // at sector*(k+0.5), since wedge 0 is CENTRED on 12 o'clock). Uses
+            // the same clockwise-from-12 angle as the wedge fill.
+            let d = self.pos * self.rect_size - c
+            let r = length(d)
+            let ang = modf(atan2(d.x, -d.y) + 6.2831853, 6.2831853)
+            let sector = 6.2831853 / self.n
+            let k = floor((ang - sector * 0.5) / sector + 0.5)
+            let nearest = k * sector + sector * 0.5
+            let diff = abs(ang - nearest)
+            let diff2 = min(diff, 6.2831853 - diff)
+            let perp = r * diff2
+            let on = step(self.hub, r) * (1.0 - step(self.rim, r)) * (1.0 - smoothstep(0.4, 1.1, perp))
+            let o = mix(sdf.result, vec4(self.spoke_col.x, self.spoke_col.y, self.spoke_col.z, 1.0), on)
+            return vec4(o.x, o.y, o.z, o.w * self.fade)
+        }
+    }
+
+    // Central cancel hub: a solid dark disc with a light X mark (the cancel
+    // affordance). Replaces the default `DrawColor` square fill so the hub reads
+    // as a round token, not a white box. `hub_col` = dark fill, `mark_col` = the
+    // X stroke.
+    mod.draw.RadialHub = mod.draw.DrawColor{
+        hub_col: uniform(atlas.text)
+        mark_col: uniform(atlas.field_bg)
+        fade: uniform(1.0)
+        pixel: fn() {
+            let sdf = Sdf2d.viewport(self.pos * self.rect_size)
+            let c = self.rect_size * 0.5
+            let rad = min(c.x, c.y)
+            sdf.circle(c.x, c.y, rad - 1.0)
+            sdf.fill(vec4(self.hub_col.x, self.hub_col.y, self.hub_col.z, 1.0))
+            let e = rad * 0.4
+            sdf.move_to(c.x - e, c.y - e)
+            sdf.line_to(c.x + e, c.y + e)
+            sdf.move_to(c.x + e, c.y - e)
+            sdf.line_to(c.x - e, c.y + e)
+            sdf.stroke(vec4(self.mark_col.x, self.mark_col.y, self.mark_col.z, 1.0), 2.0)
+            let o = sdf.result
+            return vec4(o.x, o.y, o.z, o.w * self.fade)
         }
     }
 
@@ -330,8 +391,9 @@ script_mod! {
     mod.widgets.Radial = set_type_default() do mod.widgets.RadialBase{
         width: Fill
         height: Fill
+        draw_disc: mod.draw.RadialDisc{ color: #x00000000 }
         draw_wedge: mod.draw.RadialWedge{ color: #x00000000 }
-        draw_hub +: { color: atlas.field_bg }
+        draw_hub: mod.draw.RadialHub{ color: #x00000000 }
         draw_icon: mod.draw.DrawIcon{}
         draw_label +: {
             color: atlas.text
@@ -361,6 +423,9 @@ pub struct Radial {
     #[layout]
     layout: Layout,
 
+    #[redraw]
+    #[live]
+    draw_disc: DrawColor,
     #[redraw]
     #[live]
     draw_wedge: DrawColor,
@@ -464,13 +529,33 @@ impl Radial {
             return;
         }
         let sector = std::f64::consts::TAU / n as f64;
+        // Bloom-in: ease a scale (grow from 55%) and a global alpha fade over
+        // BLOOM_SECS from the open instant. Geometry radii scale so the icons
+        // ride outward; the `fade` uniform fades disc/wedge/hub alpha.
+        let elapsed = cx.seconds_since_app_start() - self.start;
+        let t = (elapsed / BLOOM_SECS).clamp(0.0, 1.0);
+        let e = 1.0 - (1.0 - t).powi(2); // ease-out quad
+        let scale = 0.55 + 0.45 * e;
+        let fade = e as f32;
+        let disc_r = DISC_RADIUS * scale;
+        let hub_r = HUB_RADIUS * scale;
         // Quad bounding the whole disc; every wedge shader shares it and masks
-        // its own slice, so hit geometry is independent of this quad.
+        // its own slice, so hit geometry is independent of this quad. Pad it a
+        // few px beyond the rim so the rim stroke + AA fall INSIDE the quad
+        // (drawing the circle flush to the quad edge clips its outer AA).
+        let pad = 3.0;
         let quad = Rect {
-            pos: dvec2(center.x - DISC_RADIUS, center.y - DISC_RADIUS),
-            size: dvec2(DISC_RADIUS * 2.0, DISC_RADIUS * 2.0),
+            pos: dvec2(center.x - disc_r - pad, center.y - disc_r - pad),
+            size: dvec2((disc_r + pad) * 2.0, (disc_r + pad) * 2.0),
         };
-        let local_c = dvec2(DISC_RADIUS, DISC_RADIUS); // center within the quad
+        let local_c = dvec2(disc_r + pad, disc_r + pad); // center within the quad
+        // Near-opaque base disc behind every wedge -> solid card look; it also
+        // draws the N divider spokes (needs the rim/hub geometry + wedge count).
+        self.draw_disc.set_uniform(cx, live_id!(rim), &[disc_r as f32]);
+        self.draw_disc.set_uniform(cx, live_id!(hub), &[hub_r as f32]);
+        self.draw_disc.set_uniform(cx, live_id!(n), &[n as f32]);
+        self.draw_disc.set_uniform(cx, live_id!(fade), &[fade]);
+        self.draw_disc.draw_abs(cx, quad);
         let items = self.core.items().to_vec();
         let armed = self.core.armed;
         for (i, it) in items.iter().enumerate() {
@@ -491,9 +576,9 @@ impl Radial {
             self.draw_wedge
                 .set_uniform(cx, live_id!(cy), &[local_c.y as f32]);
             self.draw_wedge
-                .set_uniform(cx, live_id!(hub), &[HUB_RADIUS as f32]);
+                .set_uniform(cx, live_id!(hub), &[hub_r as f32]);
             self.draw_wedge
-                .set_uniform(cx, live_id!(rim), &[DISC_RADIUS as f32]);
+                .set_uniform(cx, live_id!(rim), &[disc_r as f32]);
             self.draw_wedge.set_uniform(
                 cx,
                 live_id!(a0),
@@ -513,16 +598,17 @@ impl Radial {
                 live_id!(enabled),
                 &[if it.enabled { 1.0 } else { 0.0 }],
             );
+            self.draw_wedge.set_uniform(cx, live_id!(fade), &[fade]);
             self.draw_wedge.draw_abs(cx, quad);
 
             // Icon + label centred on the sector mid-angle at a fixed radius.
             let mid = (i as f64) * sector; // mid-angle clockwise from 12
-            let icon_r = (HUB_RADIUS + DISC_RADIUS) * 0.5;
+            let icon_r = (hub_r + disc_r) * 0.5;
             let ix = center.x + icon_r * mid.sin();
             let iy = center.y - icon_r * mid.cos();
             let icon_rect = Rect {
-                pos: dvec2(ix - 12.0, iy - 12.0),
-                size: dvec2(24.0, 24.0),
+                pos: dvec2(ix - 16.0, iy - 16.0),
+                size: dvec2(32.0, 32.0),
             };
             if !crate::icon::draw_icon(
                 cx,
@@ -540,11 +626,12 @@ impl Radial {
             self.draw_label
                 .draw_abs(cx, dvec2(ix - 16.0, iy + 14.0), &it.label);
         }
-        // Hub: white fill + accent ring drawn as a small quad.
+        // Hub: dark cancel disc + light X, scaled with the bloom.
         let hub_rect = Rect {
-            pos: dvec2(center.x - HUB_RADIUS, center.y - HUB_RADIUS),
-            size: dvec2(HUB_RADIUS * 2.0, HUB_RADIUS * 2.0),
+            pos: dvec2(center.x - hub_r, center.y - hub_r),
+            size: dvec2(hub_r * 2.0, hub_r * 2.0),
         };
+        self.draw_hub.set_uniform(cx, live_id!(fade), &[fade]);
         self.draw_hub.draw_abs(cx, hub_rect);
     }
 }
