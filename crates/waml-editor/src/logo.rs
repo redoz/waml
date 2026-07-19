@@ -264,7 +264,7 @@ pub struct LogoMark {
 
     #[redraw]
     #[live]
-    draw_bg: DrawColor,
+    draw_bg: DrawQuad,
 
     // Pointer is over the mark.
     #[rust]
