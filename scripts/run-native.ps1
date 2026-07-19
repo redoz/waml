@@ -5,4 +5,4 @@ $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
 $fixture = if ($args.Count -ge 1) { $args[0] } else { 'crates/waml-editor/tests/fixtures/mini' }
 Set-Location $root
-cargo run -p waml-editor -- $fixture
+cargo run -p waml-editor --bin waml-editor -- $fixture
