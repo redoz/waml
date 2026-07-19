@@ -639,6 +639,28 @@ script_mod! {
         }
     }
 
+    // Menu (hamburger): three full-width rows.
+    // Faithful port of resources/icons/menu.svg via scripts/gen-icon.py; scale
+    // nudged up (A=0.055, B=-0.16) to fill the cell past menu.svg's baked
+    // viewBox padding, center held at c=12.
+    mod.draw.IconMenu = mod.draw.DrawColor{
+        pixel: fn() {
+            let s = self.rect_size.x
+            let w = s * 0.068
+            let sdf = Sdf2d.viewport(self.pos * self.rect_size)
+            sdf.move_to(s * 0.0600, s * 0.1150)
+            sdf.line_to(s * 0.9400, s * 0.1150)
+            sdf.stroke(self.color, w)
+            sdf.move_to(s * 0.0600, s * 0.5000)
+            sdf.line_to(s * 0.9400, s * 0.5000)
+            sdf.stroke(self.color, w)
+            sdf.move_to(s * 0.0600, s * 0.8850)
+            sdf.line_to(s * 0.9400, s * 0.8850)
+            sdf.stroke(self.color, w)
+            return sdf.result
+        }
+    }
+
     mod.widgets.TreeIconsBase = #(TreeIcons::script_component(vm))
 
     // Each field is a `DrawColor` pointing at its icon shader; the accent tint
@@ -667,6 +689,7 @@ script_mod! {
         list_collapse: mod.draw.IconListCollapse{ color: atlas.accent }
         list_expand: mod.draw.IconListExpand{ color: atlas.accent }
         pencil: mod.draw.IconPencil{ color: atlas.accent }
+        menu: mod.draw.IconMenu{ color: atlas.accent }
     }
 }
 
@@ -720,6 +743,8 @@ pub struct TreeIcons {
     pub list_expand: DrawColor,
     #[live]
     pub pencil: DrawColor,
+    #[live]
+    pub menu: DrawColor,
 }
 
 impl TreeIcons {
@@ -727,7 +752,7 @@ impl TreeIcons {
     /// `icon_harness` bin's proof-grid; the shipping tree/doc-tabs pick glyphs by
     /// `TreeKind` via `icon_for` in `tree_panel.rs` instead.
     #[allow(dead_code)]
-    pub fn labeled_mut(&mut self) -> [(&'static str, &mut DrawColor); 23] {
+    pub fn labeled_mut(&mut self) -> [(&'static str, &mut DrawColor); 24] {
         [
             ("class", &mut self.class),
             ("interface", &mut self.interface),
@@ -752,6 +777,7 @@ impl TreeIcons {
             ("collapse", &mut self.list_collapse),
             ("expand", &mut self.list_expand),
             ("pencil", &mut self.pencil),
+            ("menu", &mut self.menu),
         ]
     }
 }

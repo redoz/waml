@@ -61,7 +61,7 @@ script_mod! {
         draw_check: mod.draw.CheckerTile{}
         draw_dark: mod.draw.DarkTile{}
         draw_iconbg: mod.draw.IconRectTile{}
-        draw_svg: mod.draw.DrawSvg{ svg: crate_resource("self:resources/icons/list-chevrons-up-down.svg") }
+        draw_svg: mod.draw.DrawSvg{ svg: crate_resource("self:resources/icons/menu.svg") }
     }
 
     startup() do #(App::script_component(vm)){
@@ -69,7 +69,7 @@ script_mod! {
             main_window := Window{
                 pass.clear_color: vec4(0.90, 0.90, 0.90, 1.0)
                 window.inner_size: vec2(760, 640)
-                window.title: "list-chevrons-up-down: SVG vs SDF vs diff"
+                window.title: "menu: SVG vs SDF vs diff"
                 body +: {
                     padding: 32
                     flow: Down
@@ -157,8 +157,8 @@ impl Widget for CompareProbe {
             let b = self.tile(ox, 1.0, y, sz);
             self.draw_check.draw_abs(cx, b);
             self.draw_iconbg.draw_abs(cx, Self::glyph(b, sz));
-            self.icons.list_expand.color = ACCENT;
-            self.icons.list_expand.draw_abs(cx, Self::glyph(b, sz));
+            self.icons.menu.color = ACCENT;
+            self.icons.menu.draw_abs(cx, Self::glyph(b, sz));
 
             // --- Col C: overlay diff on dark ---
             let c = self.tile(ox, 2.0, y, sz);
@@ -166,8 +166,8 @@ impl Widget for CompareProbe {
             let g = Self::glyph(c, sz);
             self.draw_svg.color = OVL_SVG;
             self.draw_svg.draw_abs(cx, g);
-            self.icons.list_expand.color = OVL_SDF;
-            self.icons.list_expand.draw_abs(cx, g);
+            self.icons.menu.color = OVL_SDF;
+            self.icons.menu.draw_abs(cx, g);
 
             y += sz + 2.0 * PAD + ROW_GAP;
         }
