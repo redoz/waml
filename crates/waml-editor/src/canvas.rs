@@ -6,7 +6,6 @@
 //! Structure/hit-handling mirror the fork's `widgets/src/map/view.rs`.
 
 use crate::camera::Camera;
-use crate::node_style::stereotype_label;
 use crate::scene::{bounding_box, Scene};
 use makepad_widgets::*;
 
@@ -379,7 +378,7 @@ impl Widget for GraphCanvas {
 
         // Nodes: drawn last so they sit on top of groups and edges. Cloned out
         // of `self.scene` so the body render can take `&mut self`
-        // (`draw_focus_card`) without holding an immutable borrow of the scene.
+        // (`draw_card`) without holding an immutable borrow of the scene.
         let nodes = self.scene.nodes.clone();
         for node in &nodes {
             let (lx, ly) = self.camera.world_to_local(node.rect.x, node.rect.y);
@@ -394,24 +393,8 @@ impl Widget for GraphCanvas {
             // frame, both in draw_node's SDF shader (see script_mod above).
             self.draw_node.draw_abs(cx, screen);
 
-            if self.focus_mode {
-                self.draw_focus_card(cx, screen, node, zoom);
-            } else {
-                // Overview: the compact pre-U9 look -- an optional «stereotype»
-                // guillemet line above the title, no compartment body.
-                self.draw_text.text_style.font_size = (12.0 * zoom) as f32;
-                let mut text_y = screen.pos.y + 10.0 * zoom;
-                if let Some(label) = stereotype_label(&node.element_type) {
-                    self.draw_text.draw_abs(
-                        cx,
-                        dvec2(screen.pos.x + 10.0 * zoom, text_y),
-                        &format!("\u{ab}{label}\u{bb}"),
-                    );
-                    text_y += 14.0 * zoom;
-                }
-                self.draw_text
-                    .draw_abs(cx, dvec2(screen.pos.x + 10.0 * zoom, text_y), &node.title);
-            }
+            // Every node renders the full card on top of its frame.
+            self.draw_card(cx, screen, node, zoom);
         }
 
         DrawStep::done()
@@ -419,11 +402,12 @@ impl Widget for GraphCanvas {
 }
 
 impl GraphCanvas {
-    /// Draw the classifier focus card by laying out its `Shape` box-tree
+    /// Draw a node's card by laying out its `Shape` box-tree
     /// (`card::class_shape` under `card::mono_sheet`) with taffy and walking the
     /// placed text leaves, each drawn with the mono pen selected by its
     /// (weight, Atlas color) — the card is styled entirely by the box-tree.
-    fn draw_focus_card(
+    /// Runs for every diagram node, not just the classifier focus tab.
+    fn draw_card(
         &mut self,
         cx: &mut Cx2d,
         screen: Rect,
