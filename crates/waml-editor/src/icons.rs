@@ -231,33 +231,41 @@ script_mod! {
     }
 
     // Package+: the package cube with a plus badge (add-to-package action).
+    // Faithful port of resources/icons/package-plus.svg via scripts/gen-icon.py
+    // (the box seams are the source's `a`-cornered hull, the plus its two lines).
     mod.draw.IconPackagePlus = mod.draw.DrawColor{
         pixel: fn() {
             let s = self.rect_size.x
-            let w = s * 0.075
+            let w = s * 0.068
             let sdf = Sdf2d.viewport(self.pos * self.rect_size)
-            sdf.move_to(s * 0.44, s * 0.12)
-            sdf.line_to(s * 0.72, s * 0.28)
-            sdf.line_to(s * 0.72, s * 0.58)
-            sdf.line_to(s * 0.44, s * 0.74)
-            sdf.line_to(s * 0.16, s * 0.58)
-            sdf.line_to(s * 0.16, s * 0.28)
-            sdf.close_path()
+            sdf.move_to(s * 0.5000, s * 0.9277)
+            sdf.line_to(s * 0.5000, s * 0.5000)
             sdf.stroke(self.color, w)
-            sdf.move_to(s * 0.16, s * 0.28)
-            sdf.line_to(s * 0.44, s * 0.43)
+            sdf.move_to(s * 0.6711, s * 0.7138)
+            sdf.line_to(s * 0.9277, s * 0.7138)
             sdf.stroke(self.color, w)
-            sdf.move_to(s * 0.72, s * 0.28)
-            sdf.line_to(s * 0.44, s * 0.43)
+            sdf.move_to(s * 0.7994, s * 0.5855)
+            sdf.line_to(s * 0.7994, s * 0.8421)
             sdf.stroke(self.color, w)
-            sdf.move_to(s * 0.44, s * 0.43)
-            sdf.line_to(s * 0.44, s * 0.74)
+            sdf.move_to(s * 0.8849, s * 0.4373)
+            sdf.line_to(s * 0.8849, s * 0.3289)
+            sdf.arc_to(s * 0.7994, s * 0.3290, s * 0.0855, -0.0010, -1.0472)
+            sdf.line_to(s * 0.5428, s * 0.0839)
+            sdf.arc_to(s * 0.5000, s * 0.1579, s * 0.0855, -1.0472, -2.0944)
+            sdf.line_to(s * 0.1579, s * 0.2549)
+            sdf.arc_to(s * 0.2006, s * 0.3290, s * 0.0855, -2.0944, -3.1406)
+            sdf.line_to(s * 0.1151, s * 0.6711)
+            sdf.arc_to(s * 0.2006, s * 0.6709, s * 0.0855, 3.1401, 2.0944)
+            sdf.line_to(s * 0.4572, s * 0.9161)
+            sdf.arc_to(s * 0.5000, s * 0.8420, s * 0.0855, 2.0949, 1.0477)
+            sdf.line_to(s * 0.6144, s * 0.8753)
             sdf.stroke(self.color, w)
-            sdf.move_to(s * 0.66, s * 0.78)
-            sdf.line_to(s * 0.90, s * 0.78)
+            sdf.move_to(s * 0.1275, s * 0.2862)
+            sdf.line_to(s * 0.5000, s * 0.5000)
+            sdf.line_to(s * 0.8725, s * 0.2862)
             sdf.stroke(self.color, w)
-            sdf.move_to(s * 0.78, s * 0.66)
-            sdf.line_to(s * 0.78, s * 0.90)
+            sdf.move_to(s * 0.3075, s * 0.1694)
+            sdf.line_to(s * 0.6923, s * 0.3896)
             sdf.stroke(self.color, w)
             return sdf.result
         }
