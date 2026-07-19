@@ -1,5 +1,5 @@
 use crate::doc_tabs::{OpenTabs, TabKind};
-use crate::inspector::Subject;
+use crate::inspector::{diagram_elements, Subject};
 use crate::load;
 use crate::scene::{build_focus_scene, build_scene};
 use makepad_widgets::*;
@@ -258,6 +258,8 @@ impl App {
                     for d in &diags {
                         log!("diagnostic: {d:?}");
                     }
+                    let node_keys: Vec<String> =
+                        scene.nodes.iter().map(|n| n.key.clone()).collect();
                     if let Some(mut canvas) = self
                         .ui
                         .widget(cx, ids!(canvas))
@@ -265,6 +267,7 @@ impl App {
                     {
                         canvas.set_scene(cx, scene);
                     }
+                    self.sync_inspector_elements(cx, &active.key, &active.title, &node_keys);
                 }
                 if let Some(mut inspector) = self
                     .ui
@@ -353,6 +356,26 @@ impl App {
             .borrow_mut::<crate::diagram_switcher::DiagramSwitcher>()
         {
             switcher.set_current(cx, &title);
+        }
+    }
+
+    /// Feed the inspector's element-picker the current diagram's contents
+    /// (diagram, nodes, source-anchored edges). `node_keys` are the diagram's
+    /// drawable nodes, in display order (from the built `Scene`).
+    fn sync_inspector_elements(
+        &mut self,
+        cx: &mut Cx,
+        diagram_key: &str,
+        diagram_title: &str,
+        node_keys: &[String],
+    ) {
+        let rows = diagram_elements(&self.model, diagram_key, diagram_title, node_keys);
+        if let Some(mut inspector) = self
+            .ui
+            .widget(cx, ids!(inspector))
+            .borrow_mut::<crate::inspector_panel::Inspector>()
+        {
+            inspector.set_diagram_elements(cx, rows);
         }
     }
 
@@ -455,6 +478,9 @@ impl App {
         for d in &diags {
             log!("diagnostic: {d:?}");
         }
+        let diagram_key = diagram.key.clone();
+        let diagram_title = diagram.title.clone();
+        let node_keys: Vec<String> = scene.nodes.iter().map(|n| n.key.clone()).collect();
         if let Some(mut canvas) = self
             .ui
             .widget(cx, ids!(canvas))
@@ -474,6 +500,7 @@ impl App {
         {
             inspector.set_subject(cx, &self.model, Subject::None);
         }
+        self.sync_inspector_elements(cx, &diagram_key, &diagram_title, &node_keys);
         self.sync_statusbar(cx);
 
         // Diagram switcher (U7): push the base tab's current diagram title
@@ -657,6 +684,25 @@ impl MatchEvent for App {
                 let id = tab.id;
                 self.tabs.promote(id);
                 self.refresh_doc_tabs(cx);
+            }
+            return;
+        }
+
+        // Element-picker dropdown: a node pick repoints the inspector only
+        // (inspector-local -- no tab open, no canvas move), the same path a
+        // canvas/tab selection takes.
+        let picked = self
+            .ui
+            .widget(cx, ids!(inspector))
+            .borrow_mut::<crate::inspector_panel::Inspector>()
+            .and_then(|inspector| inspector.picked(actions));
+        if let Some(key) = picked {
+            if let Some(mut inspector) = self
+                .ui
+                .widget(cx, ids!(inspector))
+                .borrow_mut::<crate::inspector_panel::Inspector>()
+            {
+                inspector.set_subject(cx, &self.model, Subject::Classifier(key));
             }
             return;
         }
