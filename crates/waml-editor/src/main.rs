@@ -17,6 +17,7 @@ mod inspector_panel;
 mod load;
 mod logo;
 mod node_style;
+mod radial;
 mod scene;
 mod selection_toolbar;
 mod shortcuts_overlay;
