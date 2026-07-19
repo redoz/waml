@@ -94,6 +94,150 @@ pub fn resolve_target(items: &[RadialItem], center: DVec2, cursor: DVec2) -> Opt
     }
 }
 
+/// Minimum drag (screen px) before a right-press is treated as a marking
+/// gesture rather than a tap.
+///
+/// First landing unit: no Rust caller yet -- Task 4 wires the open trigger.
+/// Allowed dead until then, same convention as `icon::Icon`.
+#[allow(dead_code)]
+pub const DRAG_THRESHOLD: f64 = 12.0;
+
+/// Pure, GPU-free radial state. `Default` = closed. The `Radial` widget owns
+/// one of these and forwards translated pointer input into these methods; the
+/// unit tests drive them directly.
+///
+/// First landing unit: no non-test Rust caller yet -- see `DRAG_THRESHOLD`'s
+/// doc comment.
+#[allow(dead_code)]
+#[derive(Default)]
+pub struct RadialCore {
+    open: bool,
+    center: DVec2,
+    items: Vec<RadialItem>,
+    /// Right button currently held (marking candidate).
+    pressed: bool,
+    /// Passed the drag threshold -> committed to marking mode.
+    dragged: bool,
+    /// Released as a tap -> persistent popup mode.
+    popup: bool,
+    /// Wedge currently armed/hovered (resolved, so never a disabled index).
+    pub armed: Option<usize>,
+    /// Cursor rode past the rim over an armed wedge.
+    pub flick: bool,
+    press_pos: DVec2,
+}
+
+#[allow(dead_code)]
+impl RadialCore {
+    pub fn is_open(&self) -> bool {
+        self.open
+    }
+
+    /// Items snapshot (widget reads this to draw).
+    pub fn items(&self) -> &[RadialItem] {
+        &self.items
+    }
+
+    pub fn center(&self) -> DVec2 {
+        self.center
+    }
+
+    /// Open at `center` with `items` (the press point == center == marking
+    /// origin). Right button is now held.
+    pub fn begin(&mut self, center: DVec2, items: Vec<RadialItem>) {
+        self.open = true;
+        self.center = center;
+        self.items = items;
+        self.pressed = true;
+        self.dragged = false;
+        self.popup = false;
+        self.armed = None;
+        self.flick = false;
+        self.press_pos = center;
+    }
+
+    /// Pointer moved to `cursor`. Updates armed wedge (both popup hover and
+    /// marking arm), promotes to marking once past `DRAG_THRESHOLD`, and flags
+    /// a flick when riding past the rim over an armed wedge.
+    pub fn pointer_move(&mut self, cursor: DVec2) {
+        if self.pressed && !self.dragged {
+            let moved = (cursor - self.press_pos).length();
+            if moved > DRAG_THRESHOLD {
+                self.dragged = true;
+            }
+        }
+        self.armed = resolve_target(&self.items, self.center, cursor);
+        let r = (cursor - self.center).length();
+        self.flick = self.pressed && self.dragged && self.armed.is_some() && r > DISC_RADIUS;
+    }
+
+    /// Right button released at `cursor`. A tap (no drag) enters persistent
+    /// popup mode (stays open, no outcome). A marking release commits over an
+    /// armed wedge, or cancels in the hub / over a disabled slot.
+    pub fn release(&mut self, cursor: DVec2) -> RadialOutcome {
+        if !self.dragged {
+            self.pressed = false;
+            self.popup = true;
+            return RadialOutcome::None;
+        }
+        self.pressed = false;
+        let r = (cursor - self.center).length();
+        if r < HUB_RADIUS {
+            self.close();
+            return RadialOutcome::Cancelled;
+        }
+        match resolve_target(&self.items, self.center, cursor) {
+            Some(i) => {
+                let id = self.items[i].id;
+                self.close();
+                RadialOutcome::Committed(id)
+            }
+            None => {
+                self.close();
+                RadialOutcome::Cancelled
+            }
+        }
+    }
+
+    /// A click while in persistent popup mode. Hub or outside-disc cancels; an
+    /// enabled wedge commits; a disabled wedge is a no-op that leaves the
+    /// radial open.
+    pub fn click(&mut self, cursor: DVec2) -> RadialOutcome {
+        let r = (cursor - self.center).length();
+        if r < HUB_RADIUS || r > DISC_RADIUS {
+            self.close();
+            return RadialOutcome::Cancelled;
+        }
+        match resolve_target(&self.items, self.center, cursor) {
+            Some(i) => {
+                let id = self.items[i].id;
+                self.close();
+                RadialOutcome::Committed(id)
+            }
+            None => RadialOutcome::None, // disabled wedge: no-op, stay open
+        }
+    }
+
+    /// `Esc` cancels an open radial.
+    pub fn esc(&mut self) -> RadialOutcome {
+        if self.open {
+            self.close();
+            RadialOutcome::Cancelled
+        } else {
+            RadialOutcome::None
+        }
+    }
+
+    fn close(&mut self) {
+        self.open = false;
+        self.pressed = false;
+        self.dragged = false;
+        self.popup = false;
+        self.armed = None;
+        self.flick = false;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -187,5 +331,90 @@ mod tests {
     fn resolve_target_none_in_hub() {
         let items = vec![item(live_id!(a), true), item(live_id!(b), true)];
         assert_eq!(resolve_target(&items, C, C), None);
+    }
+
+    fn menu() -> Vec<RadialItem> {
+        // N=4: wedge 0 up, 1 right, 2 down, 3 left. Wedge 2 disabled.
+        vec![
+            item(live_id!(open), true),
+            item(live_id!(style), true),
+            item(live_id!(markdown), false), // disabled
+            item(live_id!(remove), true),
+        ]
+    }
+
+    #[test]
+    fn tap_opens_persistent_popup_then_click_commits() {
+        let mut c = RadialCore::default();
+        c.begin(C, menu());
+        // Release without moving = tap -> popup, stays open, no outcome yet.
+        assert_eq!(c.release(C), RadialOutcome::None);
+        assert!(c.is_open());
+        // Subsequent click on wedge 1 (right, enabled) commits its id.
+        assert_eq!(c.click(right()), RadialOutcome::Committed(live_id!(style)));
+        assert!(!c.is_open());
+    }
+
+    #[test]
+    fn hold_drag_arms_then_release_commits() {
+        let mut c = RadialCore::default();
+        c.begin(C, menu());
+        c.pointer_move(right()); // drag past threshold -> marking, arms wedge 1
+        assert_eq!(c.armed, Some(1));
+        assert_eq!(c.release(right()), RadialOutcome::Committed(live_id!(style)));
+        assert!(!c.is_open());
+    }
+
+    #[test]
+    fn flick_past_rim_commits_and_flags_flick() {
+        let mut c = RadialCore::default();
+        c.begin(C, menu());
+        let far_right = dvec2(C.x + 160.0, C.y); // r=160 > DISC_RADIUS
+        c.pointer_move(far_right);
+        assert!(c.flick);
+        assert_eq!(c.release(far_right), RadialOutcome::Committed(live_id!(style)));
+    }
+
+    #[test]
+    fn popup_click_on_hub_cancels() {
+        let mut c = RadialCore::default();
+        c.begin(C, menu());
+        c.release(C); // -> popup
+        assert_eq!(c.click(C), RadialOutcome::Cancelled);
+        assert!(!c.is_open());
+    }
+
+    #[test]
+    fn popup_click_outside_disc_cancels() {
+        let mut c = RadialCore::default();
+        c.begin(C, menu());
+        c.release(C); // -> popup
+        let outside = dvec2(C.x + 300.0, C.y);
+        assert_eq!(c.click(outside), RadialOutcome::Cancelled);
+    }
+
+    #[test]
+    fn esc_cancels() {
+        let mut c = RadialCore::default();
+        c.begin(C, menu());
+        assert_eq!(c.esc(), RadialOutcome::Cancelled);
+        assert!(!c.is_open());
+    }
+
+    #[test]
+    fn marking_release_in_hub_cancels() {
+        let mut c = RadialCore::default();
+        c.begin(C, menu());
+        c.pointer_move(right()); // establishes marking mode (dragged)
+        assert_eq!(c.release(C), RadialOutcome::Cancelled); // released in hub
+    }
+
+    #[test]
+    fn popup_click_on_disabled_wedge_is_noop_and_stays_open() {
+        let mut c = RadialCore::default();
+        c.begin(C, menu());
+        c.release(C); // -> popup
+        assert_eq!(c.click(down()), RadialOutcome::None); // wedge 2 disabled
+        assert!(c.is_open());
     }
 }
