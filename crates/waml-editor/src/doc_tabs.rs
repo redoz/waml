@@ -29,6 +29,19 @@ script_mod! {
         // Inactive-tab hover wash: a translucent accent tint so the pointer
         // clearly reads as "clickable" against the white bar.
         draw_hover +: { color: atlas.selection }
+        // Close-area hover: a stronger square behind the x than the tab wash,
+        // so "about to close" reads clearly distinct from "hovering the tab".
+        // The one softly-rounded shape in an otherwise sharp-corner language --
+        // radius must stay > 0 (a 0 radius floods on this makepad fork).
+        draw_close_hover +: {
+            color: atlas.surface_border
+            pixel: fn() {
+                let sdf = Sdf2d.viewport(self.pos * self.rect_size)
+                sdf.box(0.0, 0.0, self.rect_size.x, self.rect_size.y, 2.0)
+                sdf.fill(self.color)
+                return sdf.result
+            }
+        }
         // Active tab: heavier weight (fork theme bold sans) so the focused
         // document reads as selected even before the accent strip registers.
         draw_text_active +: {
@@ -58,7 +71,7 @@ script_mod! {
         draw_close +: {
             color: atlas.text_dim
             text_style: TextStyle{
-                font_size: 12
+                font_size: 18
                 font_family: FontFamily{
                     latin := FontMember{res: crate_resource("self:resources/fonts/IBM_Plex_Sans/IBMPlexSans-Regular.ttf") asc: -0.1 desc: 0.0}
                 }
@@ -90,8 +103,10 @@ pub struct DocTab {
     pub preview: bool,
 }
 
-/// The open-tabs state: `tabs[0]` is always the permanent Diagram tab
-/// (`preview: false`, never closable).
+/// The open-tabs state. A fresh set seeds `tabs[0]` as the Diagram base
+/// (`preview: false`), but every tab -- the base included -- is closable, so
+/// the base is identified by `kind == TabKind::Diagram`, not by position, and
+/// may be absent. `set_diagram_base` re-seeds it at the front on demand.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OpenTabs {
     pub tabs: Vec<DocTab>,
@@ -176,12 +191,10 @@ impl OpenTabs {
         }
     }
 
-    /// Remove a tab. The Diagram base refuses. If the closed tab was active,
-    /// activate the right-adjacent tab, else the left, else the base.
+    /// Remove any tab, including the Diagram base. If the closed tab was
+    /// active, activate the right-adjacent tab, else the left; with no tabs
+    /// left the active id falls back to `LiveId::default()`.
     pub fn close(&mut self, id: LiveId) {
-        if self.tabs.first().map(|t| t.id) == Some(id) {
-            return;
-        }
         let Some(idx) = self.tabs.iter().position(|t| t.id == id) else {
             return;
         };
@@ -192,11 +205,38 @@ impl OpenTabs {
             } else {
                 idx.saturating_sub(1)
             };
-            self.active = self
-                .tabs
-                .get(new_idx)
-                .map(|t| t.id)
-                .unwrap_or(self.tabs[0].id);
+            self.active = self.tabs.get(new_idx).map(|t| t.id).unwrap_or_default();
+        }
+    }
+
+    /// Point the permanent Diagram base at `key`/`title`, re-seeding it at the
+    /// front if it was closed. Identifies the base by kind, not position (it
+    /// may sit behind classifier tabs). Returns its id; does not activate.
+    pub fn set_diagram_base(
+        &mut self,
+        key: impl Into<String>,
+        title: impl Into<String>,
+    ) -> LiveId {
+        let key = key.into();
+        let title = title.into();
+        if let Some(base) = self.tabs.iter_mut().find(|t| t.kind == TabKind::Diagram) {
+            base.key = key;
+            base.title = title;
+            base.id
+        } else {
+            let id = diagram_tab_id();
+            self.tabs.insert(
+                0,
+                DocTab {
+                    id,
+                    key,
+                    title,
+                    kind: TabKind::Diagram,
+                    node_kind: TreeKind::Diagram,
+                    preview: false,
+                },
+            );
+            id
         }
     }
 
@@ -227,10 +267,30 @@ pub fn classifier_tab_id(key: &str) -> LiveId {
 // Widget
 // ---------------------------------------------------------------------------
 
-const CLOSE_W: f64 = 22.0;
+const CLOSE_W: f64 = 32.0;
 const TEXT_PAD: f64 = 12.0;
 /// Gap between a tab's label and its close hit-area.
-const CLOSE_GAP: f64 = 6.0;
+const CLOSE_GAP: f64 = 10.0;
+// --- Close x placement -----------------------------------------------------
+// These are hand-tuned to the `draw_close` font_size (18): the `\u{d7}` glyph
+// is small within its em and carries side bearing, so the geometry can't be
+// derived from the box alone. Adjust together with that font_size.
+/// Left inset of the x glyph's draw origin inside its hit-area.
+const CLOSE_GLYPH_INSET: f64 = 7.0;
+/// Baseline drop of the x glyph from the card's vertical center.
+const CLOSE_GLYPH_DY: f64 = -13.0;
+/// The x's visual center relative to its draw origin, used to anchor the
+/// hover square on the mark, not the box.
+const CLOSE_GLYPH_CENTER_DX: f64 = 8.0;
+/// Side of the second-tier hover square drawn behind the x.
+const CLOSE_HOVER_SIZE: f64 = 23.0;
+/// The square's right edge, relative to the x's visual center. The square is
+/// anchored on this edge and grown leftward, so widening it doesn't shift the
+/// right margin.
+const CLOSE_HOVER_RIGHT_DX: f64 = 11.0;
+/// Downward nudge of the hover square from the card's vertical center, so it
+/// sits centered on the x's ink rather than its baseline box.
+const CLOSE_HOVER_DY: f64 = 2.0;
 /// Leading per-kind glyph, matched to the tree's `ICON_SIZE`.
 const ICON_SIZE: f64 = 14.0;
 /// Gap between the leading glyph and the tab label.
@@ -291,6 +351,11 @@ pub struct DocTabs {
     #[redraw]
     #[live]
     draw_hover: DrawColor,
+    /// Second-tier hover square behind the close x when the pointer is on the
+    /// close area specifically.
+    #[redraw]
+    #[live]
+    draw_close_hover: DrawColor,
     #[redraw]
     #[live]
     draw_text_active: DrawText,
@@ -319,6 +384,10 @@ pub struct DocTabs {
     /// Tab under the pointer (hover wash); `default` = none.
     #[rust]
     hovered: LiveId,
+    /// Tab whose close x is under the pointer (close-hover square); `default`
+    /// = none.
+    #[rust]
+    close_hovered: LiveId,
     /// Tab held down (press feedback); `default` = none.
     #[rust]
     pressed: LiveId,
@@ -354,14 +423,20 @@ impl Widget for DocTabs {
             Hit::FingerHoverIn(fe) | Hit::FingerHoverOver(fe) => {
                 cx.set_cursor(MouseCursor::Hand);
                 let id = self.tab_at(fe.abs);
-                if self.hovered != id {
+                let close = self.close_at(fe.abs);
+                if self.hovered != id || self.close_hovered != close {
                     self.hovered = id;
+                    self.close_hovered = close;
                     self.draw_bg.redraw(cx);
                 }
             }
             Hit::FingerHoverOut(_) => {
-                if self.hovered != LiveId::default() || self.pressed != LiveId::default() {
+                if self.hovered != LiveId::default()
+                    || self.close_hovered != LiveId::default()
+                    || self.pressed != LiveId::default()
+                {
                     self.hovered = LiveId::default();
+                    self.close_hovered = LiveId::default();
                     self.pressed = LiveId::default();
                     self.draw_bg.redraw(cx);
                 }
@@ -386,7 +461,7 @@ impl Widget for DocTabs {
 
         let mut x = rect.pos.x;
         for (i, tab) in self.tabs.iter().enumerate() {
-            let closable = tab.kind != TabKind::Diagram;
+            // Every doc tab is closable now, including the Diagram base.
             let title = truncate_title(&tab.title);
             // Content-size each tab to its label so the close x sits snug to
             // the title instead of stranded at a fixed-width right edge.
@@ -398,11 +473,7 @@ impl Widget for DocTabs {
             // Every tab leads with a kind glyph, so its content width folds in
             // the icon box + gap ahead of the label.
             let lead = TEXT_PAD + ICON_SIZE + ICON_GAP;
-            let w = if closable {
-                lead + text_w + CLOSE_GAP + CLOSE_W
-            } else {
-                lead + text_w + TEXT_PAD
-            };
+            let w = lead + text_w + CLOSE_GAP + CLOSE_W;
             let tab_rect = Rect {
                 pos: dvec2(x, rect.pos.y + TOP_MARGIN),
                 size: dvec2(w, rect.size.y - TOP_MARGIN),
@@ -483,15 +554,35 @@ impl Widget for DocTabs {
             };
             draw_text.draw_abs(cx, dvec2(x + lead, text_y), &title);
 
-            if closable {
-                let close_rect = Rect {
-                    pos: dvec2(x + w - CLOSE_W, tab_rect.pos.y),
-                    size: dvec2(CLOSE_W, tab_rect.size.y),
-                };
-                self.draw_close
-                    .draw_abs(cx, dvec2(close_rect.pos.x + 4.0, text_y), "\u{d7}");
-                self.close_rects.push((tab.id, close_rect));
+            let close_rect = Rect {
+                pos: dvec2(x + w - CLOSE_W, tab_rect.pos.y),
+                size: dvec2(CLOSE_W, tab_rect.size.y),
+            };
+            // The close glyph rides larger than the label, so it gets its own
+            // baseline to stay vertically centered in the card. The x's visual
+            // center (glyph_cx/cy) anchors both the glyph and its hover square.
+            let card_cy = tab_rect.pos.y + tab_rect.size.y * 0.5;
+            let glyph_x = close_rect.pos.x + CLOSE_GLYPH_INSET;
+            let glyph_y = card_cy + CLOSE_GLYPH_DY;
+            let glyph_cx = glyph_x + CLOSE_GLYPH_CENTER_DX;
+            // Second-tier hover: a square wash centered on the x when the
+            // pointer is on the close area specifically (distinct from the
+            // whole-tab hover wash).
+            if self.close_hovered == tab.id {
+                self.draw_close_hover.draw_abs(
+                    cx,
+                    Rect {
+                        pos: dvec2(
+                            glyph_cx + CLOSE_HOVER_RIGHT_DX - CLOSE_HOVER_SIZE,
+                            card_cy - CLOSE_HOVER_SIZE / 2.0 + CLOSE_HOVER_DY,
+                        ),
+                        size: dvec2(CLOSE_HOVER_SIZE, CLOSE_HOVER_SIZE),
+                    },
+                );
             }
+            self.draw_close
+                .draw_abs(cx, dvec2(glyph_x, glyph_y), "\u{d7}");
+            self.close_rects.push((tab.id, close_rect));
 
             self.tab_rects.push((tab.id, tab_rect));
             x += w;
@@ -513,6 +604,16 @@ impl DocTabs {
     /// Uses the rects captured during the last `draw_walk`.
     fn tab_at(&self, abs: DVec2) -> LiveId {
         for (id, rect) in self.tab_rects.iter().rev() {
+            if rect.contains(abs) {
+                return *id;
+            }
+        }
+        LiveId::default()
+    }
+
+    /// The tab whose close hit-area contains `abs`, or `LiveId::default()`.
+    fn close_at(&self, abs: DVec2) -> LiveId {
+        for (id, rect) in self.close_rects.iter().rev() {
             if rect.contains(abs) {
                 return *id;
             }
@@ -619,11 +720,51 @@ mod tests {
     }
 
     #[test]
-    fn close_refuses_the_diagram_base() {
+    fn close_removes_the_diagram_base() {
+        let mut open = OpenTabs::diagram_base("d", "Diagram");
+        let a = open.open_preview("a", "A", TreeKind::Class);
+        open.promote(a);
+        let base_id = open.tabs[0].id;
+        open.close(base_id);
+        // The base is gone; the classifier is all that remains, still active.
+        assert_eq!(open.tabs.len(), 1);
+        assert_eq!(open.tabs[0].id, a);
+        assert_eq!(open.active, a);
+    }
+
+    #[test]
+    fn close_down_to_zero_tabs_does_not_panic() {
         let mut open = OpenTabs::diagram_base("d", "Diagram");
         let base_id = open.tabs[0].id;
         open.close(base_id);
-        assert_eq!(open.tabs.len(), 1, "base tab must survive close");
+        assert!(open.tabs.is_empty());
+        assert_eq!(open.active, LiveId::default());
+    }
+
+    #[test]
+    fn set_diagram_base_reseeds_at_front_after_close() {
+        let mut open = OpenTabs::diagram_base("d", "Diagram");
+        let a = open.open_preview("a", "A", TreeKind::Class);
+        open.promote(a);
+        open.close(open.tabs[0].id);
+        // Base closed, only the classifier left; re-seeding puts a fresh
+        // Diagram base back at the front without disturbing the classifier.
+        let reseeded = open.set_diagram_base("d2", "Diagram 2");
+        assert_eq!(open.tabs.len(), 2);
+        assert_eq!(open.tabs[0].kind, TabKind::Diagram);
+        assert_eq!(open.tabs[0].id, reseeded);
+        assert_eq!(open.tabs[0].key, "d2");
+        assert_eq!(open.tabs[1].id, a);
+    }
+
+    #[test]
+    fn set_diagram_base_updates_existing_base_in_place() {
+        let mut open = OpenTabs::diagram_base("d", "Diagram");
+        let id = open.set_diagram_base("d2", "Diagram 2");
+        assert_eq!(open.tabs.len(), 1);
+        assert_eq!(id, open.tabs[0].id);
+        assert_eq!(open.tabs[0].key, "d2");
+        assert_eq!(open.tabs[0].title, "Diagram 2");
     }
 
     #[test]
