@@ -6,8 +6,8 @@
 //! tracked positions, click regions captured during `draw_walk` and hit-tested
 //! against on `FingerUp`).
 
+use crate::icons::TreeIcons;
 use crate::tree::TreeKind;
-use crate::tree_panel::TreeIcons;
 use makepad_widgets::*;
 
 script_mod! {
@@ -531,7 +531,8 @@ impl Widget for DocTabs {
             }
 
             // Leading per-kind glyph, vertically centered in the card. Pixel-
-            // rounded like the tree rows -- fractional placement blurs DrawSvg.
+            // rounded like the tree rows so the SDF strokes land on whole device
+            // pixels.
             if let Some(icon) = self.icons.icon_for(tab.node_kind) {
                 let ix = (x + TEXT_PAD).round();
                 let iy = (tab_rect.pos.y + (tab_rect.size.y - ICON_SIZE) / 2.0).round();

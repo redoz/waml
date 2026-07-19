@@ -10,6 +10,7 @@ mod config;
 mod diagram_switcher;
 mod doc_tabs;
 mod draw_hud;
+mod icons;
 mod inspector;
 mod inspector_panel;
 mod load;

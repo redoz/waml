@@ -1,13 +1,15 @@
 //! The `ProjectTree` widget: a thin container that drives makepad's shipped
 //! `FileTree` immediate-mode from a pure `ProjectTree` (see `tree.rs`). Provides
 //! scroll/fold/selection for free. Each row's kind (see `TreeKind`) is shown as
-//! a HUD glyph icon overlaid at the left of the row via `DrawSvg::draw_abs`, in
-//! immediate mode right after `FileTree` draws that row. On a diagram-row click
+//! a HUD glyph icon overlaid at the left of the row via `DrawColor::draw_abs`
+//! (the SDF glyph set in `icons.rs`), in immediate mode right after `FileTree`
+//! draws that row. On a diagram-row click
 //! it emits `ProjectTreeAction::SelectDiagram(key)`.
 //!
 //! Structure mirrors studio's `DesktopFileTree` / `FlatFileTree`, minus the
 //! filter page and git-status dots.
 
+use crate::icons::TreeIcons;
 use crate::tree::{ProjectTree as ProjectTreeData, TreeKind, TreeNode};
 use makepad_widgets::*;
 use std::collections::HashMap;
@@ -16,49 +18,6 @@ script_mod! {
     use mod.prelude.widgets_internal.*
     use mod.atlas
     use mod.widgets.*
-
-    mod.widgets.TreeIconsBase = #(TreeIcons::script_component(vm))
-
-    // HUD icon material (hud-icons-mock.html `.ico`): accent stroke, hollow
-    // interiors -- tint stays accent regardless of row state.
-    mod.widgets.TreeIcons = set_type_default() do mod.widgets.TreeIconsBase{
-        class +: {
-            svg: crate_resource("self:resources/icons/class.svg")
-            color: atlas.accent
-        }
-        interface +: {
-            svg: crate_resource("self:resources/icons/interface.svg")
-            color: atlas.accent
-        }
-        enum_type +: {
-            svg: crate_resource("self:resources/icons/enum.svg")
-            color: atlas.accent
-        }
-        datatype +: {
-            svg: crate_resource("self:resources/icons/datatype.svg")
-            color: atlas.accent
-        }
-        package +: {
-            svg: crate_resource("self:resources/icons/package.svg")
-            color: atlas.accent
-        }
-        diagram +: {
-            svg: crate_resource("self:resources/icons/diagram.svg")
-            color: atlas.accent
-        }
-        flow +: {
-            svg: crate_resource("self:resources/icons/flow.svg")
-            color: atlas.accent
-        }
-        sequence +: {
-            svg: crate_resource("self:resources/icons/sequence.svg")
-            color: atlas.accent
-        }
-        note +: {
-            svg: crate_resource("self:resources/icons/note.svg")
-            color: atlas.accent
-        }
-    }
 
     mod.widgets.ProjectTreeBase = #(ProjectTree::register_widget(vm))
 
@@ -148,38 +107,13 @@ pub enum ProjectTreeAction {
     FocusClassifier(String),
 }
 
-/// The per-kind glyph set, drawn in immediate mode at the left of each tree
-/// row. `FileTree`'s own row draw path (`draw_file`/`draw_folder`) has no hook
-/// for arbitrary SVG icons on leaf rows, and its folder icon is a hardcoded
-/// SDF box shape, so icons are overlaid separately via `DrawSvg::draw_abs`
-/// after the tree finishes its own drawing for the frame.
-#[derive(Script, ScriptHook)]
-pub struct TreeIcons {
-    #[live]
-    class: DrawSvg,
-    #[live]
-    interface: DrawSvg,
-    #[live]
-    enum_type: DrawSvg,
-    #[live]
-    datatype: DrawSvg,
-    #[live]
-    package: DrawSvg,
-    #[live]
-    diagram: DrawSvg,
-    #[live]
-    flow: DrawSvg,
-    #[live]
-    sequence: DrawSvg,
-    #[live]
-    note: DrawSvg,
-}
-
 impl TreeIcons {
-    /// The glyph `DrawSvg` for `kind`, or `None` for `Unknown` (which has no
+    /// The glyph `DrawColor` for `kind`, or `None` for `Unknown` (which has no
     /// matching HUD glyph). Shared by the tree rows and the doc-tab strip so
-    /// both pick from one icon set.
-    pub fn icon_for(&mut self, kind: TreeKind) -> Option<&mut DrawSvg> {
+    /// both pick from one icon set. The `TreeIcons` set and its SDF shaders live
+    /// in `icons.rs` (also driven by the `icon_harness` bin); this maps our
+    /// domain `TreeKind` onto its fields.
+    pub fn icon_for(&mut self, kind: TreeKind) -> Option<&mut DrawColor> {
         Some(match kind {
             TreeKind::Class => &mut self.class,
             TreeKind::Interface => &mut self.interface,
@@ -245,10 +179,9 @@ fn build_id_maps(tree: &ProjectTreeData) -> (HashMap<LiveId, String>, HashMap<Li
 /// Draw the row-leading glyph for `kind` at `row_top`, indented by `depth`.
 /// `Unknown` has no matching HUD glyph and is skipped, leaving a bare row.
 ///
-/// The draw position is rounded to whole device pixels before `draw_abs`:
-/// fractional placement is a prime blur source for `DrawSvg`'s vector
-/// geometry (no GPU-side antialiasing expansion re-centers it), so a
-/// subpixel `x`/`y` softens otherwise-crisp thin strokes.
+/// The draw position is rounded to whole device pixels before `draw_abs` so the
+/// SDF glyph's thin strokes land pixel-aligned; a subpixel `x`/`y` would soften
+/// them.
 fn draw_row_icon(
     cx: &mut Cx2d,
     icons: &mut TreeIcons,

@@ -1,7 +1,7 @@
 # Shader Tree Icons — Design
 
 **Date:** 2026-07-19
-**Status:** Approved (design), pending implementation plan
+**Status:** Implemented + shipped 2026-07-19 (see Implementation notes)
 
 ## Problem
 
@@ -99,3 +99,31 @@ workspace default-run target.
   kind set.
 - Any change to `TreeKind` or the kind→icon mapping.
 - Parameterized/atlas icon system for future icons — revisit if the set grows.
+
+## Implementation notes (shipped 2026-07-19)
+
+Diverged from the spec in two ways, both validated with the user:
+
+- **Hot-reload is false in this fork's standalone run** (`studio websocket
+  disabled`), so tuning was edit → `cargo build` → relaunch → `PrintWindow`
+  screenshot, not live. See [[makepad-fork-shader-gotchas]].
+- **Diagram-view family redesign.** The generic "little picture" silhouettes for
+  `diagram`/`flow`/`sequence` read as three unrelated doodles at 14px. Replaced
+  with a **family motif**: a full-bleed sharp `sdf.rect` square frame (margin
+  `s*0.06`) shared by all three, differing by a minimal interior mark — diagram
+  = two dots joined by a link, flow = a decision diamond, sequence = two stacked
+  message bars. `class`/`interface` = rounded card (`sdf.box` radius `s*0.09`,
+  the proven-safe value) ±header divider; `enum`/`datatype`/`package`/`note`
+  keep their silhouettes (package cube scaled up to the degeneracy-safe max,
+  top vertex `s*0.10`).
+
+`sdf.box` corner radius is a value-dependent landmine (0.13 poisons, 0.14
+blanks) and path strokes degenerate near the viewport edge — both blank
+silently. Full findings + safe values recorded in [[makepad-fork-shader-gotchas]].
+
+Wiring: `TreeIcons` + shaders live in `icons.rs`; `icon_for(TreeKind)` is an
+impl in `tree_panel.rs` (kept out of `icons.rs` so the `icon_harness` bin, which
+has no `tree` module, still compiles the shared file via `#[path]`).
+`crate::icons::script_mod` registered in `app.rs` before `tree_panel`.
+`DrawSvg`→`DrawColor` in `tree_panel`/`doc_tabs`; `resources/icons/*.svg`
+deleted. Verified live in the real editor against `tests/fixtures/mini`.
