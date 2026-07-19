@@ -103,10 +103,16 @@ script_mod! {
                 // rather than the logo's vertical center.
                 align: Align{y: 1.0}
                 spacing: 8.0
-                logo := SolidView {
+                // The splash wordmark, as the interactive `LogoMark` widget in
+                // `auto` mode: it free-runs its `mode` colour pulse (no hover
+                // gate, no click). `mode` picks the variant -- see logo.rs:
+                //   1 accent · 2 Close Encounters · 3 bucket-palette
+                //   4 molten · 5 neon · 6 electric
+                logo := LogoMark {
                     width: 77.0
                     height: 44.0
-                    draw_bg: mod.draw.LogoMark{}
+                    auto: true
+                    draw_bg: mod.draw.LogoMark{ mode: 2.0 }
                 }
                 sub := Label {
                     text: "Create or open a model to get started"
