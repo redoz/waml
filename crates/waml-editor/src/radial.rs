@@ -252,10 +252,11 @@ script_mod! {
     // are the wedge's start/end angles (radians, set per draw); `cx`/`cy`/
     // `hub`/`rim` are the disc geometry in this quad's local px.
     //
-    // Note: this fork's `sdf.rs` has no `sdf.arc` primitive (only
-    // `arc_round_caps`/`arc_flat_caps`/`arc2`), so the rim is drawn as a full
-    // `sdf.circle` ring whose alpha is masked down to this wedge's angular
-    // span via `in_wedge` (the brief's own documented fallback for this case).
+    // Note: the rim is drawn as a full `sdf.circle` ring whose alpha is masked
+    // down to this wedge's angular span via `in_wedge` (the brief's documented
+    // fallback). The fork now has `sdf.arc_to` (a centerline arc *path segment*
+    // fed to stroke) -- a future pass could stroke the rim directly instead of
+    // mask-a-full-ring, but the circle-mask is kept for now.
     mod.draw.RadialWedge = mod.draw.DrawColor{
         accent: uniform(atlas.accent)
         danger_col: uniform(atlas.danger)

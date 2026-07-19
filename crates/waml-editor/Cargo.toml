@@ -10,7 +10,7 @@ description = "Native, read-only GPU viewer for WAML/OKF diagrams."
 waml = { path = "../waml", features = ["serde"] }
 # Pinned to a fork of makepad/makepad@dev (redoz/makepad, tag waml-pin-makepad) so the exact
 # rev survives even if upstream force-pushes or yanks its dev branch. rev is the reproducible pin.
-makepad-widgets = { git = "https://github.com/redoz/makepad.git", rev = "4f9ce7a8bb3fd19e5c61dcf13edd2e6d4a04cefc" }
+makepad-widgets = { git = "https://github.com/redoz/makepad.git", rev = "2d7f5f4a5c5407ec31880400f01b87e3c95dba24" }
 taffy = "0.12.2"
 serde = { workspace = true }
 serde_json = { workspace = true }
