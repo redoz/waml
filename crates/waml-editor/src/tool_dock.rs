@@ -21,14 +21,17 @@ script_mod! {
     use mod.widgets.*
     use mod.text.*
 
-    // Rounded selection-tinted wash behind a hovered/active glyph -- a named
-    // DrawColor-with-pixel type (an inline `pixel:` override on a plain field
-    // silently draws nothing in this fork; named `mod.draw.*` types render).
+    // Rounded accent wash behind a hovered/active glyph -- the SAME highlight
+    // the caption Save/Menu buttons paint: a premultiplied low-alpha accent
+    // square (radius 2), so a dock button reads identically to a caption one.
+    // A named DrawColor-with-pixel type (an inline `pixel:` override on a plain
+    // field silently draws nothing in this fork; named `mod.draw.*` types render).
     mod.draw.ToolWash = mod.draw.DrawColor{
         pixel: fn() {
             let sdf = Sdf2d.viewport(self.pos * self.rect_size)
-            sdf.box(1.0, 1.0, self.rect_size.x - 2.0, self.rect_size.y - 2.0, 4.0)
-            sdf.fill(self.color)
+            let a = 0.16
+            sdf.box(1.0, 1.0, self.rect_size.x - 2.0, self.rect_size.y - 2.0, 2.0)
+            sdf.fill(vec4(self.color.x * a, self.color.y * a, self.color.z * a, a))
             return sdf.result
         }
     }
@@ -40,23 +43,13 @@ script_mod! {
         height: Fill
         draw_bg: mod.draw.AccentFrame{ color: atlas.field_bg }
         draw_edge +: { color: atlas.frame_hi }
-        // Hover/active wash: a rounded selection-tinted square behind the glyph
-        // (same token DocTabs' hover uses), giving the CaptionButton look.
-        draw_hover: mod.draw.ToolWash{ color: atlas.selection }
+        // Hover/active wash: the caption button's accent highlight (premult
+        // accent, faded by `ToolWash`), behind the glyph.
+        draw_hover: mod.draw.ToolWash{ color: atlas.accent }
         // Color-only holders: the icon glyphs are DrawColor SDFs whose `color`
         // is set per draw from one of these, so no RGBA crosses Rust.
         draw_icon_lit +: { color: atlas.accent }
         draw_icon_idle +: { color: atlas.text }
-        draw_hint +: {
-            color: atlas.text_dim
-            text_style: TextStyle{
-                font_size: 9
-                font_family: FontFamily{
-                    latin := FontMember{res: crate_resource("self:resources/fonts/IBM_Plex_Sans/IBMPlexSans-Regular.ttf") asc: -0.1 desc: 0.0}
-                }
-                line_spacing: 1.2
-            }
-        }
     }
 }
 
@@ -97,16 +90,6 @@ impl Tool {
         }
     }
 
-    /// Single-letter hotkey hint drawn under the glyph. `None` for entries
-    /// with no keyboard shortcut in this mock.
-    pub fn hotkey_hint(self) -> Option<&'static str> {
-        match self {
-            Tool::Select => Some("V"),
-            Tool::Add => Some("N"),
-            Tool::Connect => Some("C"),
-            _ => None,
-        }
-    }
 }
 
 /// Map a hotkey letter to the mode it switches to. Pure so it's testable
@@ -135,11 +118,9 @@ pub enum ToolDockAction {
 
 const ITEM_H: f64 = 44.0;
 const ICON_SIZE: f64 = 20.0;
-// Side of the rounded accent hover/active wash, centered on the glyph.
-const WASH_SIZE: f64 = 28.0;
-// Icon top for mode entries (with a hotkey hint below) vs the hint baseline.
-const ICON_Y: f64 = 5.0;
-const HINT_Y: f64 = 30.0;
+// Side of the rounded accent hover/active wash, centered on the glyph -- the
+// caption button's wash side, so the two highlights match.
+const WASH_SIZE: f64 = 32.0;
 const GROUP_GAP: f64 = 10.0;
 // Index of the first action button: the mode group (Select/Add/Connect) ends
 // here, so a gap is inserted before it.
@@ -175,9 +156,6 @@ pub struct ToolDock {
     #[redraw]
     #[live]
     draw_icon_idle: DrawColor,
-    #[redraw]
-    #[live]
-    draw_hint: DrawText,
     /// SDF icon set (the project tree's material), drawn per item via
     /// `DrawColor::draw_abs`, tinted per-draw from `draw_icon_lit`/`draw_icon_idle`.
     #[live]
@@ -262,14 +240,10 @@ impl Widget for ToolDock {
             let is_active = tool.is_mode() && tool == self.active;
             let lit = is_active || self.hovered == Some(tool);
 
-            let has_hint = tool.hotkey_hint().is_some();
-            // Modes carry a hotkey hint below, so their icon sits high; action
-            // buttons have none, so center the icon in the item.
-            let icon_y = if has_hint {
-                item_rect.pos.y + ICON_Y
-            } else {
-                item_rect.pos.y + (ITEM_H - ICON_SIZE) * 0.5
-            };
+            // Every entry reads like a caption Save/Menu button: one centered
+            // glyph, no hotkey letter. `+1.0` is the caption glyph's optical
+            // down-nudge (a true geometric center sits a hair high).
+            let icon_y = item_rect.pos.y + (ITEM_H - ICON_SIZE) * 0.5 + 1.0;
             let cx_mid = rect.pos.x + rect.size.x * 0.5;
             let icon_mid_y = icon_y + ICON_SIZE * 0.5;
 
@@ -301,12 +275,6 @@ impl Widget for ToolDock {
                     size: dvec2(ICON_SIZE, ICON_SIZE),
                 },
             );
-
-            if let Some(hint) = tool.hotkey_hint() {
-                let hint_x = cx_mid - 3.0;
-                self.draw_hint
-                    .draw_abs(cx, dvec2(hint_x, item_rect.pos.y + HINT_Y), hint);
-            }
 
             self.item_rects.push((tool, item_rect));
             y += ITEM_H;
