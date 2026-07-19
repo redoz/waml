@@ -98,7 +98,9 @@ script_mod! {
                 width: Fill
                 height: Fit
                 flow: Right
-                align: Align{y: 0.5}
+                // Bottom-align so the subtitle sits on the logo's baseline
+                // rather than the logo's vertical center.
+                align: Align{y: 1.0}
                 spacing: 12.0
                 logo := SolidView {
                     width: 77.0
@@ -167,7 +169,9 @@ script_mod! {
                         // `Fill` FlatList scrolls when recents overflow.
                         height: 320.0
                         show_bg: true
-                        padding: Inset{left: 1.0, right: 1.0, top: 1.0, bottom: 1.0}
+                        // Inset the FlatList off the border so rows (and their
+                        // hover wash) breathe inside the box.
+                        padding: Inset{left: 5.0, right: 5.0, top: 5.0, bottom: 5.0}
                         draw_bg +: {
                             // List box border: accent blue at 50% alpha, softer
                             // than the 100% header divider so the inner frame
