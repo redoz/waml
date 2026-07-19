@@ -5,11 +5,12 @@
 //! column, which consumes all slack and shoves the `Fit`-width `when` label to
 //! the right edge.
 //!
-//! Task 2 of the start-screen recents refactor: this replaces the title-only
-//! placeholder `Row` template `start_screen.rs` drove in Task 1. Presentation
-//! only -- the `#[deref] View` hybrid pattern (same as `inspector_panel.rs`),
-//! with granular per-line setters the parent calls per row. Click routing +
-//! hover land in Task 3, so there is no `handle_event`/action surface here.
+//! Task 3 of the start-screen recents refactor adds interaction: the row now
+//! hit-tests its own area, emits a `RecentRowViewAction::Clicked` widget-action
+//! on `FingerUp` (read by `StartScreen` through `FlatList::items_with_actions`),
+//! and self-manages a subtle hover wash driven by FingerHoverIn/Out -- the
+//! `#[deref] View` hybrid pattern (same as `inspector_panel.rs`), with granular
+//! per-line setters the parent calls per row.
 
 use makepad_widgets::*;
 
@@ -28,6 +29,21 @@ script_mod! {
         align: Align{y: 0.5}
         padding: Inset{left: 12.0, right: 12.0, top: 5.0, bottom: 5.0}
         spacing: 12.0
+        show_bg: true
+
+        // Hover wash: a subtle premultiplied accent fill behind the whole row,
+        // faded by the `hover` uniform (0 rest / 1 pointer-over) the widget sets
+        // from FingerHoverIn/Out. Full-rect return (no sdf.box, which floods at
+        // 0-radius in this fork), premultiplied like `CardShadow` so a low-alpha
+        // tint reads as a wash, not a bloom.
+        draw_bg +: {
+            color: atlas.accent
+            hover: uniform(0.0)
+            pixel: fn() {
+                let a = 0.12 * self.hover
+                return vec4(self.color.x * a, self.color.y * a, self.color.z * a, a)
+            }
+        }
 
         // Accent bullet: a sharp 7x7 solid square (0-radius `sdf.box` floods
         // this fork, so fill an `sdf.rect`, matching the `rule`/button
@@ -94,19 +110,62 @@ script_mod! {
     }
 }
 
+/// Emitted (grouped through the parent `FlatList`) when a row is clicked.
+/// `StartScreen::handle_actions` reads it via `items_with_actions` +
+/// `RecentRowViewRef::clicked` and maps the row back to a recent index.
+#[derive(Clone, Debug, Default)]
+pub enum RecentRowViewAction {
+    #[default]
+    None,
+    Clicked,
+}
+
 #[derive(Script, ScriptHook, Widget)]
 pub struct RecentRowView {
     /// The row container: the marker + stacked text column + timestamp declared
     /// in the DSL tree above.
     #[deref]
     view: View,
+
+    /// Pointer-over state, self-managed from FingerHoverIn/Out; fed to the
+    /// `hover` uniform on the root `draw_bg` each `draw_walk` for the wash.
+    #[rust]
+    hovered: bool,
+    /// Whether this row responds to hover/click. Real recents set it true; the
+    /// empty-state placeholder row leaves it false so it neither washes nor fires.
+    #[rust]
+    clickable: bool,
 }
 
 impl Widget for RecentRowView {
-    // Presentation only: delegate the draw to the container so its child Labels
-    // render. No `handle_event` (the Widget default no-op suffices) -- click
-    // routing / hover are Task 3.
+    fn handle_event(&mut self, cx: &mut Cx, event: &Event, _scope: &mut Scope) {
+        if !self.clickable {
+            return;
+        }
+        let uid = self.widget_uid();
+        match event.hits(cx, self.view.area()) {
+            Hit::FingerUp(fe) if fe.is_primary_hit() && fe.is_over => {
+                cx.widget_action(uid, RecentRowViewAction::Clicked);
+            }
+            Hit::FingerHoverIn(_) => {
+                cx.set_cursor(MouseCursor::Hand);
+                self.hovered = true;
+                self.view.redraw(cx);
+            }
+            Hit::FingerHoverOut(_) => {
+                self.hovered = false;
+                self.view.redraw(cx);
+            }
+            _ => {}
+        }
+    }
+
+    // Push the hover state into the wash uniform, then delegate the draw so the
+    // container's child Labels render.
     fn draw_walk(&mut self, cx: &mut Cx2d, scope: &mut Scope, walk: Walk) -> DrawStep {
+        self.view
+            .draw_bg
+            .set_uniform(cx, live_id!(hover), &[if self.hovered { 1.0 } else { 0.0 }]);
         self.view.draw_walk(cx, scope, walk)
     }
 }
@@ -123,6 +182,16 @@ impl RecentRowView {
     /// Set the right-anchored last-opened stamp.
     pub fn set_when(&mut self, cx: &mut Cx, s: &str) {
         self.view.label(cx, ids!(textcol.titlerow.when)).set_text(cx, s);
+    }
+    /// Toggle whether the row hovers/clicks (false for the empty-state row).
+    pub fn set_clickable(&mut self, clickable: bool) {
+        self.clickable = clickable;
+    }
+    /// True when this row emitted a click in `actions`.
+    pub fn clicked(&self, actions: &Actions) -> bool {
+        actions
+            .find_widget_action(self.widget_uid())
+            .is_some_and(|a| matches!(a.cast(), RecentRowViewAction::Clicked))
     }
 }
 
@@ -144,5 +213,14 @@ impl RecentRowViewRef {
         if let Some(mut inner) = self.borrow_mut() {
             inner.set_when(cx, s);
         }
+    }
+    pub fn set_clickable(&self, clickable: bool) {
+        if let Some(mut inner) = self.borrow_mut() {
+            inner.set_clickable(clickable);
+        }
+    }
+    /// See [`RecentRowView::clicked`].
+    pub fn clicked(&self, actions: &Actions) -> bool {
+        self.borrow().is_some_and(|inner| inner.clicked(actions))
     }
 }

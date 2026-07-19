@@ -12,6 +12,7 @@
 //! derefs a `View` (the `inspector_panel.rs` hybrid pattern).
 
 use crate::recent_row::RecentRowViewWidgetRefExt;
+use crate::waml_button::WamlButtonWidgetRefExt;
 use makepad_widgets::*;
 
 script_mod! {
@@ -210,52 +211,19 @@ script_mod! {
                             text_style: theme.font_bold{font_size: 10 line_spacing: 1.2}
                         }
                     }
-                    // PLACEHOLDER action buttons (Task 1): plain button-shaped
-                    // Views with a static centered label. Real `WamlButton`
-                    // children + click routing are Task 3.
-                    btn_new := View {
+                    // Real action buttons: `WamlButton` tree children (Atlas HUD
+                    // material + press ripple), each emitting its own
+                    // `WamlButtonAction::Clicked` that `handle_actions` maps to a
+                    // `StartScreenAction`. 30px tall, sentence-case labels.
+                    btn_new := mod.widgets.WamlButton {
                         width: Fill
                         height: 30.0
-                        show_bg: true
-                        align: Align{x: 0.5, y: 0.5}
-                        draw_bg +: {
-                            color: atlas.field_bg
-                            pixel: fn() {
-                                let sdf = Sdf2d.viewport(self.pos * self.rect_size)
-                                sdf.rect(0.0, 0.0, self.rect_size.x, self.rect_size.y)
-                                sdf.fill(self.color)
-                                return sdf.result
-                            }
-                        }
-                        Label {
-                            text: "New project"
-                            draw_text +: {
-                                color: atlas.text
-                                text_style: theme.font_regular{font_size: 12 line_spacing: 1.2}
-                            }
-                        }
+                        text: "New project"
                     }
-                    btn_open := View {
+                    btn_open := mod.widgets.WamlButton {
                         width: Fill
                         height: 30.0
-                        show_bg: true
-                        align: Align{x: 0.5, y: 0.5}
-                        draw_bg +: {
-                            color: atlas.field_bg
-                            pixel: fn() {
-                                let sdf = Sdf2d.viewport(self.pos * self.rect_size)
-                                sdf.rect(0.0, 0.0, self.rect_size.x, self.rect_size.y)
-                                sdf.fill(self.color)
-                                return sdf.result
-                            }
-                        }
-                        Label {
-                            text: "Open project"
-                            draw_text +: {
-                                color: atlas.text
-                                text_style: theme.font_regular{font_size: 12 line_spacing: 1.2}
-                            }
-                        }
+                        text: "Open project"
                     }
                 }
             }
@@ -274,9 +242,6 @@ pub(crate) struct RecentRow {
 }
 
 #[derive(Clone, Debug, Default)]
-// The three non-`None` variants are matched by `App` but not constructed until
-// Task 3 re-wires click routing; keep them so `App`'s handler stays intact.
-#[allow(dead_code)]
 pub enum StartScreenAction {
     #[default]
     None,
@@ -294,10 +259,6 @@ pub struct StartScreen {
 
     #[rust]
     rows: Vec<RecentRow>,
-    /// Hovered recent-row index. Reserved for Task 3 hover/routing; not wired yet.
-    #[rust]
-    #[allow(dead_code)]
-    hovered: Option<usize>,
     // Self-managed like `ShortcutsOverlay`: the fork's `Widget::set_visible`
     // default is a no-op and custom widgets have no DSL `visible` property, so
     // hiding is a `#[rust]` flag gated in `handle_event`/`draw_walk`. Defaults
@@ -311,9 +272,10 @@ impl Widget for StartScreen {
         if !self.visible {
             return;
         }
-        // Drive the container tree (list scrollbars, future row/button events).
-        // No hit-test routing this task -- that is Task 3.
+        // Drive the container tree (list scrollbars, row + button events), then
+        // route the grouped child actions into `StartScreenAction`s.
         self.view.handle_event(cx, event, scope);
+        self.widget_match_event(cx, event, scope);
     }
 
     fn draw_walk(&mut self, cx: &mut Cx2d, scope: &mut Scope, walk: Walk) -> DrawStep {
@@ -328,13 +290,15 @@ impl Widget for StartScreen {
             if let Some(mut list) = item.as_flat_list().borrow_mut() {
                 if self.rows.is_empty() {
                     // Empty state: one placeholder row (single code path -- no
-                    // separate tree node to keep visible/hidden).
+                    // separate tree node to keep visible/hidden). Not clickable,
+                    // so it neither washes on hover nor fires a click.
                     let item_id = LiveId::from_str("empty");
                     let row = list.item(cx, item_id, id!(Row)).unwrap();
                     let rv = row.as_recent_row_view();
                     rv.set_title(cx, "No recent projects");
                     rv.set_path(cx, "");
                     rv.set_when(cx, "");
+                    rv.set_clickable(false);
                     row.draw_all(cx, &mut Scope::empty());
                 } else {
                     for row_data in self.rows.iter() {
@@ -345,6 +309,7 @@ impl Widget for StartScreen {
                         rv.set_title(cx, &row_data.title);
                         rv.set_path(cx, &row_data.path);
                         rv.set_when(cx, &row_data.when);
+                        rv.set_clickable(true);
                         row.draw_all(cx, &mut Scope::empty());
                     }
                 }
@@ -354,11 +319,53 @@ impl Widget for StartScreen {
     }
 }
 
+/// Map a `FlatList` row `item_id` back to its index in `rows`. Rows are keyed
+/// `LiveId::from_str(&row.path)` in the draw loop, so re-hash each path and match.
+/// Pure, so the round-trip is unit-tested without a `Cx`.
+fn row_index_for(rows: &[RecentRow], item_id: LiveId) -> Option<usize> {
+    rows.iter()
+        .position(|r| LiveId::from_str(&r.path) == item_id)
+}
+
+impl WidgetMatchEvent for StartScreen {
+    fn handle_actions(&mut self, cx: &mut Cx, actions: &Actions, _scope: &mut Scope) {
+        let uid = self.widget_uid();
+
+        // Recent rows: the clicked row's grouped action carries its `item_id`;
+        // map it back to a recent index and emit `OpenRecent(i)`.
+        let list = self.view.flat_list(cx, ids!(recents_list));
+        for (item_id, item) in list.items_with_actions(actions) {
+            if item.as_recent_row_view().clicked(actions) {
+                if let Some(i) = row_index_for(&self.rows, item_id) {
+                    cx.widget_action(uid, StartScreenAction::OpenRecent(i));
+                }
+            }
+        }
+
+        // Action buttons: read the standard button-clicked convention.
+        if self
+            .view
+            .widget(cx, ids!(btn_new))
+            .as_waml_button()
+            .clicked(actions)
+        {
+            cx.widget_action(uid, StartScreenAction::NewProject);
+        }
+        if self
+            .view
+            .widget(cx, ids!(btn_open))
+            .as_waml_button()
+            .clicked(actions)
+        {
+            cx.widget_action(uid, StartScreenAction::OpenProject);
+        }
+    }
+}
+
 impl StartScreen {
     /// Replace the rendered recents. `App` calls this before showing the screen.
     pub fn set_recents(&mut self, cx: &mut Cx, rows: Vec<RecentRow>) {
         self.rows = rows;
-        self.hovered = None;
         self.view.redraw(cx);
     }
 
@@ -369,7 +376,6 @@ impl StartScreen {
     pub fn set_visible(&mut self, cx: &mut Cx, visible: bool) {
         if self.visible != visible {
             self.visible = visible;
-            self.hovered = None;
             cx.redraw_all();
         }
     }
@@ -391,5 +397,32 @@ mod tests {
     #[test]
     fn default_action_is_none() {
         assert!(matches!(StartScreenAction::default(), StartScreenAction::None));
+    }
+
+    fn row(path: &str) -> RecentRow {
+        RecentRow {
+            title: "t".into(),
+            path: path.into(),
+            when: "w".into(),
+        }
+    }
+
+    #[test]
+    fn row_index_round_trips_through_item_id() {
+        let rows = vec![row("/a"), row("/b"), row("/c")];
+        // The draw loop keys each row `LiveId::from_str(&path)`; routing must
+        // recover the same index from that id.
+        for (i, r) in rows.iter().enumerate() {
+            let id = LiveId::from_str(&r.path);
+            assert_eq!(row_index_for(&rows, id), Some(i));
+        }
+    }
+
+    #[test]
+    fn row_index_unknown_id_is_none() {
+        let rows = vec![row("/a"), row("/b")];
+        assert_eq!(row_index_for(&rows, LiveId::from_str("/nope")), None);
+        // The empty-state placeholder id must never map to a real row.
+        assert_eq!(row_index_for(&rows, LiveId::from_str("empty")), None);
     }
 }
