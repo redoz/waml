@@ -6,7 +6,7 @@
 //! Structure/hit-handling mirror the fork's `widgets/src/map/view.rs`.
 
 use crate::camera::Camera;
-use crate::node_style::{accent_bucket, stereotype_label, AccentBucket};
+use crate::node_style::stereotype_label;
 use crate::scene::{bounding_box, Scene};
 use makepad_widgets::*;
 
@@ -30,18 +30,6 @@ script_mod! {
         // the fill differs from the frame defaults, so we override just `color`.
         draw_node: mod.draw.AccentFrame{ color: atlas.field_bg }
         draw_edge +: { color: atlas.text_dim }
-        // U9 node-kind accent bars (see `node_style::AccentBucket`): a thin
-        // strip drawn along a node's top edge, distinct per kind bucket.
-        // Colors are the Atlas bucket set (hud-icons-mock.html swatches),
-        // assigned in `AccentBucket` declaration order.
-        draw_accent_interface +: { color: atlas.bucket_blue }
-        draw_accent_enum +: { color: atlas.bucket_cyan }
-        draw_accent_note +: { color: atlas.bucket_teal }
-        draw_accent_actor +: { color: atlas.bucket_indigo }
-        draw_accent_usecase +: { color: atlas.bucket_amber }
-        draw_accent_package +: { color: atlas.bucket_green }
-        draw_accent_behavior +: { color: atlas.bucket_rose }
-        draw_accent_unknown +: { color: atlas.bucket_slate }
         // Sans body pen: overview node titles + group titles (the non-card text).
         draw_text +: {
             color: atlas.text
@@ -123,30 +111,6 @@ pub struct GraphCanvas {
     #[redraw]
     #[live]
     draw_edge: DrawColor,
-    #[redraw]
-    #[live]
-    draw_accent_interface: DrawColor,
-    #[redraw]
-    #[live]
-    draw_accent_enum: DrawColor,
-    #[redraw]
-    #[live]
-    draw_accent_note: DrawColor,
-    #[redraw]
-    #[live]
-    draw_accent_actor: DrawColor,
-    #[redraw]
-    #[live]
-    draw_accent_usecase: DrawColor,
-    #[redraw]
-    #[live]
-    draw_accent_package: DrawColor,
-    #[redraw]
-    #[live]
-    draw_accent_behavior: DrawColor,
-    #[redraw]
-    #[live]
-    draw_accent_unknown: DrawColor,
     #[redraw]
     #[live]
     draw_text: DrawText,
@@ -429,27 +393,6 @@ impl Widget for GraphCanvas {
             // Node card: rounded near-white glass fill + source-bright accent
             // frame, both in draw_node's SDF shader (see script_mod above).
             self.draw_node.draw_abs(cx, screen);
-
-            // U9: a thin accent bar along the node's top edge, colored by its
-            // element-type bucket (`node_style::accent_bucket`). `None` (plain
-            // `Class`, `Association`, unresolved `Diagram`) draws nothing --
-            // that's the pre-U9 look.
-            let bar_h = (4.0 * zoom).min(screen.size.y);
-            let bar = Rect {
-                pos: screen.pos,
-                size: dvec2(screen.size.x, bar_h),
-            };
-            match accent_bucket(&node.element_type) {
-                AccentBucket::None => {}
-                AccentBucket::Interface => self.draw_accent_interface.draw_abs(cx, bar),
-                AccentBucket::Enum => self.draw_accent_enum.draw_abs(cx, bar),
-                AccentBucket::Note => self.draw_accent_note.draw_abs(cx, bar),
-                AccentBucket::Actor => self.draw_accent_actor.draw_abs(cx, bar),
-                AccentBucket::UseCase => self.draw_accent_usecase.draw_abs(cx, bar),
-                AccentBucket::Package => self.draw_accent_package.draw_abs(cx, bar),
-                AccentBucket::Behavior => self.draw_accent_behavior.draw_abs(cx, bar),
-                AccentBucket::Unknown => self.draw_accent_unknown.draw_abs(cx, bar),
-            }
 
             if self.focus_mode {
                 self.draw_focus_card(cx, screen, node, zoom);
