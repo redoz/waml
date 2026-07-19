@@ -7,6 +7,7 @@ mod canvas;
 mod card;
 mod cli;
 mod config;
+mod action_link;
 mod diagram_switcher;
 mod doc_tabs;
 mod frame;
@@ -30,7 +31,6 @@ mod theme_atlas;
 mod tool_dock;
 mod tree;
 mod tree_panel;
-mod waml_button;
 
 use app::App;
 

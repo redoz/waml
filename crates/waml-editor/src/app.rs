@@ -1050,7 +1050,7 @@ impl AppMain for App {
         crate::selection_toolbar::script_mod(vm);
         crate::statusbar::script_mod(vm);
         crate::logo::script_mod(vm);
-        crate::waml_button::script_mod(vm);
+        crate::action_link::script_mod(vm);
         crate::recent_row::script_mod(vm);
         crate::start_screen::script_mod(vm);
         self::script_mod(vm)

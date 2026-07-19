@@ -11,8 +11,8 @@
 //! routing / real buttons (Task 3) land later. The `StartScreen` widget now
 //! derefs a `View` (the `inspector_panel.rs` hybrid pattern).
 
+use crate::action_link::ActionLinkWidgetRefExt;
 use crate::recent_row::RecentRowViewWidgetRefExt;
-use crate::waml_button::WamlButtonWidgetRefExt;
 use makepad_widgets::*;
 
 script_mod! {
@@ -215,19 +215,17 @@ script_mod! {
                             text_style: theme.font_bold{font_size: 10 line_spacing: 1.2}
                         }
                     }
-                    // Real action buttons: `WamlButton` tree children (Atlas HUD
-                    // material + press ripple), each emitting its own
-                    // `WamlButtonAction::Clicked` that `handle_actions` maps to a
-                    // `StartScreenAction`. 30px tall, sentence-case labels.
-                    btn_new := mod.widgets.WamlButton {
-                        width: Fill
-                        height: 30.0
-                        text: "New project"
+                    // VS-style borderless action links: an accent icon + prose
+                    // label, hover wash, no button chrome. Each emits its own
+                    // `ActionLinkAction::Clicked` that `handle_actions` maps to a
+                    // `StartScreenAction`. `Fit` height (no fixed button rows).
+                    link_new := mod.widgets.ActionLink {
+                        icon := { draw_bg: mod.draw.IconNewProject{ color: atlas.accent } }
+                        label := { text: "Create a new project" }
                     }
-                    btn_open := mod.widgets.WamlButton {
-                        width: Fill
-                        height: 30.0
-                        text: "Open project"
+                    link_open := mod.widgets.ActionLink {
+                        icon := { draw_bg: mod.draw.IconOpenProject{ color: atlas.accent } }
+                        label := { text: "Open a project" }
                     }
                 }
             }
@@ -346,19 +344,19 @@ impl WidgetMatchEvent for StartScreen {
             }
         }
 
-        // Action buttons: read the standard button-clicked convention.
+        // Action links: read the standard clicked convention off each link.
         if self
             .view
-            .widget(cx, ids!(btn_new))
-            .as_waml_button()
+            .widget(cx, ids!(link_new))
+            .as_action_link()
             .clicked(actions)
         {
             cx.widget_action(uid, StartScreenAction::NewProject);
         }
         if self
             .view
-            .widget(cx, ids!(btn_open))
-            .as_waml_button()
+            .widget(cx, ids!(link_open))
+            .as_action_link()
             .clicked(actions)
         {
             cx.widget_action(uid, StartScreenAction::OpenProject);
