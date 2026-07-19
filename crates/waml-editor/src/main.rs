@@ -19,6 +19,7 @@ mod logo;
 mod node_style;
 mod radial;
 mod radial_popup;
+mod recent_row;
 mod scene;
 mod selection_toolbar;
 mod shortcuts_overlay;
