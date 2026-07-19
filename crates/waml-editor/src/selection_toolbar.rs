@@ -22,7 +22,7 @@ script_mod! {
     mod.widgets.SelectionToolbar = set_type_default() do mod.widgets.SelectionToolbarBase{
         width: Fill
         height: 44.0
-        draw_bg: mod.draw.HudFrame{ color: atlas.field_bg }
+        draw_bg: mod.draw.AccentFrame{ color: atlas.field_bg }
         draw_pill +: { color: atlas.surface }
         draw_label +: {
             color: atlas.text_dim

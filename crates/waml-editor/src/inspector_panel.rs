@@ -81,8 +81,8 @@ script_mod! {
         show_bg: true
         flow: Down
         // Panel carries the Atlas HUD frame. The container is a `View`, whose
-        // `draw_bg` is a `DrawQuad`; the HudFrame material is inlined onto it
-        // (keep in sync with `draw_hud.rs` / `tree_panel.rs`): glass `field_bg`
+        // `draw_bg` is a `DrawQuad`; the AccentFrame material is inlined onto it
+        // (keep in sync with `frame.rs` / `tree_panel.rs`): glass `field_bg`
         // fill ringed by the source-bright accent stroke, 150deg alpha gradient.
         draw_bg +: {
             color: atlas.field_bg

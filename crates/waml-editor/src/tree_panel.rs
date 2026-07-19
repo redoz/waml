@@ -27,10 +27,10 @@ script_mod! {
         show_bg: true
         // Panel carries the Atlas HUD frame. Unlike the inspector / tool_dock
         // panels -- which own a `draw_bg: DrawColor` field and can point it
-        // straight at `mod.draw.HudFrame` -- this widget derefs `View`, whose
+        // straight at `mod.draw.AccentFrame` -- this widget derefs `View`, whose
         // `draw_bg` is a `DrawQuad`; a `DrawColor` object can't swap onto it.
-        // So the HudFrame material is inlined onto the DrawQuad here. Keep this
-        // shader in sync with `draw_hud.rs` (glass `field_bg` fill ringed by the
+        // So the AccentFrame material is inlined onto the DrawQuad here. Keep this
+        // shader in sync with `frame.rs` (glass `field_bg` fill ringed by the
         // source-bright accent stroke, 150deg alpha gradient). Padding insets the
         // FileTree so it stops painting `field_bg` over the 1.5px frame ring.
         draw_bg +: {

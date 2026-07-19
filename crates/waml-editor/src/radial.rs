@@ -298,7 +298,7 @@ script_mod! {
             let fill = mix(dis_fill, live_fill, self.enabled)
             sdf.clear(fill)
             // Rim arc for this slice: full-disc ring stroke masked to this
-            // wedge's angle -- the source-bright 150deg fade (HudFrame recipe).
+            // wedge's angle -- the source-bright 150deg fade (AccentFrame recipe).
             let dir = vec2(0.5, 0.8660254)
             let span = 1.3660254
             let t = clamp((self.pos.x * dir.x + self.pos.y * dir.y) / span, 0.0, 1.0)

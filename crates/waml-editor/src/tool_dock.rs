@@ -19,7 +19,7 @@ script_mod! {
     mod.widgets.ToolDock = set_type_default() do mod.widgets.ToolDockBase{
         width: 48.0
         height: Fill
-        draw_bg: mod.draw.HudFrame{ color: atlas.field_bg }
+        draw_bg: mod.draw.AccentFrame{ color: atlas.field_bg }
         draw_edge +: { color: atlas.frame_hi }
         draw_item_active +: { color: atlas.selection }
         draw_glyph_active +: {

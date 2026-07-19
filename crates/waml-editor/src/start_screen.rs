@@ -54,17 +54,17 @@ script_mod! {
         }
         // Ambient lift drawn behind the card (see `CardShadow`).
         draw_shadow: mod.draw.CardShadow{ color: #x00000000 }
-        // The centered dialog card uses our standard HudFrame border, same as
+        // The centered dialog card uses our standard AccentFrame border, same as
         // every other panel (tool_dock/inspector/tree_panel).
-        draw_frame: mod.draw.HudFrame{ color: atlas.surface }
+        draw_frame: mod.draw.AccentFrame{ color: atlas.surface }
         // Thin structural rules (header divider, corner registration ticks +
         // row node-markers). `rule` is a soft hairline; `marker` is solid accent.
         draw_rule +: { color: atlas.accent_soft }
         draw_marker +: { color: atlas.accent }
-        // The recents list gets its own HudFrame, but a lighter accent than the
+        // The recents list gets its own AccentFrame, but a lighter accent than the
         // card's (the softer `surface_border`/`accent_soft` stops) and a
         // transparent fill so the card surface shows through -- border only.
-        draw_list: mod.draw.HudFrame{
+        draw_list: mod.draw.AccentFrame{
             color: #x00000000
             border_hi: atlas.surface_border
             border_lo: atlas.accent_soft

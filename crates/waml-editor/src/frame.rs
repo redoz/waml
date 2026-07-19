@@ -1,4 +1,4 @@
-//! `HudFrame`: the one reusable Atlas "HUD" frame primitive, used app-wide.
+//! `AccentFrame`: the one reusable Atlas "HUD" frame primitive, used app-wide.
 //!
 //! A `DrawColor` whose interior is a flat fill (`color`) ringed by the Atlas
 //! source-bright accent stroke -- a thin border whose color fades along a
@@ -10,7 +10,7 @@
 //! Reuse follows the fork's own gradient-border pattern (`widgets/src/button.rs`
 //! declares its shader inline on a `DrawColor` rather than a bespoke Rust draw
 //! struct). Any widget declares a field `draw_x: DrawColor`, points its DSL at
-//! `mod.draw.HudFrame{ ... }`, and calls `draw_abs`; the caller owns layout.
+//! `mod.draw.AccentFrame{ ... }`, and calls `draw_abs`; the caller owns layout.
 //!
 //! Phase 1 draws stroke + flat fill only. The full `.hud-surface` material
 //! (frost-gradient fill + depth shadow + bloom glow, with panel/node/button
@@ -33,7 +33,7 @@ script_mod! {
     // primitive). The 150deg CSS gradient direction is precomputed:
     // (sin150, -cos150) = (0.5, 0.866), y-down; `span` = |x|+|y| normalizes the
     // stops to the box corners (CSS behavior); projection is longhand (no dot()).
-    mod.draw.HudFrame = mod.draw.DrawColor{
+    mod.draw.AccentFrame = mod.draw.DrawColor{
         border_hi: uniform(atlas.frame_hi)
         border_lo: uniform(atlas.frame_lo)
         zoom: uniform(1.0)

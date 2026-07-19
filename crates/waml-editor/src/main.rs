@@ -9,7 +9,7 @@ mod cli;
 mod config;
 mod diagram_switcher;
 mod doc_tabs;
-mod draw_hud;
+mod frame;
 mod icon;
 mod icons;
 mod inspector;

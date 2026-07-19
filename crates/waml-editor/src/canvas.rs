@@ -24,11 +24,11 @@ script_mod! {
         draw_bg +: { color: atlas.canvas_ground }
         draw_group +: { color: atlas.group_fill }
         // Node card: a near-white glass panel carrying the Atlas
-        // "source-bright" frame -- the reusable `HudFrame` primitive (see
-        // `draw_hud.rs`): a thin accent stroke fading along a 150deg diagonal,
+        // "source-bright" frame -- the reusable `AccentFrame` primitive (see
+        // `frame.rs`): a thin accent stroke fading along a 150deg diagonal,
         // bright top-left (`frame_hi`) to dim bottom-right (`frame_lo`). Only
         // the fill differs from the frame defaults, so we override just `color`.
-        draw_node: mod.draw.HudFrame{ color: atlas.field_bg }
+        draw_node: mod.draw.AccentFrame{ color: atlas.field_bg }
         draw_edge +: { color: atlas.text_dim }
         // U9 node-kind accent bars (see `node_style::AccentBucket`): a thin
         // strip drawn along a node's top edge, distinct per kind bucket.

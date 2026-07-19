@@ -1,13 +1,13 @@
 //! `WamlButton`: the reusable Atlas HUD action button. A white vertical-gradient
-//! fill ringed by the same source-bright accent frame as `HudFrame`, thickening
+//! fill ringed by the same source-bright accent frame as `AccentFrame`, thickening
 //! on hover, with a press "ripple" that wipes a thick accent border out from the
 //! click origin plus a brief glow flare.
 //!
 //! Immediate-mode *component*, same convention as `tool_dock`/`start_screen`:
 //! the parent owns layout + hit-testing. It positions the button with `draw_at`,
 //! then drives the press animation with `press`/`tick`/`release`. The shader
-//! lives here (moved from `draw_hud`); the frame material still matches
-//! `HudFrame`. The `Widget` impl is intentionally event-passive -- parents call
+//! lives here (moved from `frame`); the frame material still matches
+//! `AccentFrame`. The `Widget` impl is intentionally event-passive -- parents call
 //! the inherent methods, so a stray tree route can never double-fire a press.
 
 use makepad_widgets::*;
@@ -19,7 +19,7 @@ script_mod! {
     use mod.text.*
 
     // The Atlas HUD button (see `docs/design/hud-button-mock.html`): a white
-    // vertical-gradient fill ringed by the same source-bright frame as `HudFrame`.
+    // vertical-gradient fill ringed by the same source-bright frame as `AccentFrame`.
     // Sharp corners (`sdf.rect`). Animated knobs are per-draw uniforms, driven by
     // the caller via `set_uniform` (same as canvas `draw_node`'s `zoom`):
     //   hover  0..1  -- frame brightens/thickens on pointer hover

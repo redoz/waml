@@ -892,7 +892,7 @@ impl AppMain for App {
         crate::makepad_widgets::script_mod(vm);
         crate::theme_atlas::script_mod(vm);
         crate::icons::script_mod(vm);
-        crate::draw_hud::script_mod(vm);
+        crate::frame::script_mod(vm);
         crate::icon::script_mod(vm);
         crate::radial::script_mod(vm);
         crate::canvas::script_mod(vm);

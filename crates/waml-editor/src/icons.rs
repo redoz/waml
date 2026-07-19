@@ -1,7 +1,7 @@
 //! The tree/doc-tab kind glyph set, hand-authored as SDF shaders (replacing the
 //! blurry `resources/icons/*.svg` + `DrawSvg` path). One shader per kind, so
 //! each `pixel: fn` stays small, reads alone, and hot-reloads independently --
-//! same one-shader-per-primitive idiom as `draw_hud.rs`.
+//! same one-shader-per-primitive idiom as `frame.rs`.
 //!
 //! Material: the Atlas "HUD" language -- single accent tint (`atlas.accent`),
 //! hollow interiors (low-alpha fill + thin stroke). Sharp corners use
