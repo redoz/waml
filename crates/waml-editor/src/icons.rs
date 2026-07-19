@@ -355,23 +355,27 @@ script_mod! {
         }
     }
 
-    // Share: open tray + up-and-out arrow.
+    // Share: open tray + up-and-out arrow. Faithful port of resources/icons/
+    // share.svg via scripts/gen-icon.py (shared Lucide fit; tray fillets are the
+    // svg's circular `a` arcs, not squared corners).
     mod.draw.IconShare = mod.draw.DrawColor{
         pixel: fn() {
             let s = self.rect_size.x
-            let w = s * 0.075
+            let w = s * 0.068
             let sdf = Sdf2d.viewport(self.pos * self.rect_size)
-            sdf.move_to(s * 0.17, s * 0.50)
-            sdf.line_to(s * 0.17, s * 0.85)
-            sdf.line_to(s * 0.83, s * 0.85)
-            sdf.line_to(s * 0.83, s * 0.50)
+            sdf.move_to(s * 0.5000, s * 0.0723)
+            sdf.line_to(s * 0.5000, s * 0.6283)
             sdf.stroke(self.color, w)
-            sdf.move_to(s * 0.5, s * 0.10)
-            sdf.line_to(s * 0.5, s * 0.62)
+            sdf.move_to(s * 0.6711, s * 0.2434)
+            sdf.line_to(s * 0.5000, s * 0.0723)
+            sdf.line_to(s * 0.3289, s * 0.2434)
             sdf.stroke(self.color, w)
-            sdf.move_to(s * 0.33, s * 0.25)
-            sdf.line_to(s * 0.5, s * 0.10)
-            sdf.line_to(s * 0.67, s * 0.25)
+            sdf.move_to(s * 0.1579, s * 0.5000)
+            sdf.line_to(s * 0.1579, s * 0.8421)
+            sdf.arc_to(s * 0.2434, s * 0.8421, s * 0.0855, 3.1416, 1.5708)
+            sdf.line_to(s * 0.7566, s * 0.9277)
+            sdf.arc_to(s * 0.7566, s * 0.8421, s * 0.0855, 1.5708, 0.0000)
+            sdf.line_to(s * 0.8421, s * 0.5000)
             sdf.stroke(self.color, w)
             return sdf.result
         }
