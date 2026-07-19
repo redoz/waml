@@ -1,3 +1,4 @@
+use crate::caption_button::CaptionButtonWidgetRefExt;
 use crate::doc_tabs::{OpenTabs, TabKind};
 use crate::inspector::{diagram_elements, Subject};
 use crate::load;
@@ -25,6 +26,7 @@ script_mod! {
     use mod.widgets.Radial
     use mod.widgets.RadialPopup
     use mod.widgets.LogoMark
+    use mod.widgets.CaptionButton
 
     startup() do #(App::script_component(vm)){
         ui: Root{
@@ -74,11 +76,11 @@ script_mod! {
                             }
                         }
                     }
-                    pkg_name_view := View{
+                    model_name_view := View{
                         width: Fit
                         height: Fill
                         align: Align{x: 0.0, y: 0.5}
-                        pkg_name := Label{
+                        model_name := Label{
                             text: ""
                             draw_text +: {
                                 color: atlas.text_dim
@@ -95,6 +97,10 @@ script_mod! {
                         }
                     }
                     }
+                    // Placeholder action buttons, left of the tab strip: save
+                    // then menu.
+                    save_btn := CaptionButton{ shape: 1.0 }
+                    menu_btn := CaptionButton{ shape: 0.0 }
                     doc_tabs := DocTabs{
                         width: Fill
                         height: Fill
@@ -477,7 +483,7 @@ impl App {
         } else {
             self.model.path.as_str()
         };
-        self.ui.label(cx, ids!(pkg_name)).set_text(cx, root_name);
+        self.ui.label(cx, ids!(model_name)).set_text(cx, root_name);
 
         // Record this open in the recents store (best-effort; see config.rs).
         crate::config::push_recent(dir, root_name);
@@ -564,7 +570,7 @@ impl App {
         } else {
             self.model.path.as_str()
         };
-        self.ui.label(cx, ids!(pkg_name)).set_text(cx, root_name);
+        self.ui.label(cx, ids!(model_name)).set_text(cx, root_name);
 
         let tree = crate::tree::build_tree(&self.model);
         if let Some(mut panel) = self
@@ -770,6 +776,25 @@ impl MatchEvent for App {
     }
 
     fn handle_actions(&mut self, cx: &mut Cx, actions: &Actions) {
+        // Caption action buttons -- placeholders this pass (real save / menu
+        // land later).
+        if self
+            .ui
+            .widget(cx, ids!(save_btn))
+            .as_caption_button()
+            .clicked(actions)
+        {
+            log!("caption: save clicked");
+        }
+        if self
+            .ui
+            .widget(cx, ids!(menu_btn))
+            .as_caption_button()
+            .clicked(actions)
+        {
+            log!("caption: menu clicked");
+        }
+
         // Classifier focus: single-click a class row -> open/replace the
         // single preview tab, focus-render that node in the canvas, and
         // point the inspector at it.
@@ -1061,6 +1086,7 @@ impl AppMain for App {
         crate::statusbar::script_mod(vm);
         crate::logo::script_mod(vm);
         crate::action_link::script_mod(vm);
+        crate::caption_button::script_mod(vm);
         crate::recent_row::script_mod(vm);
         crate::start_screen::script_mod(vm);
         self::script_mod(vm)
@@ -1191,7 +1217,19 @@ impl AppMain for App {
                 .borrow::<crate::logo::LogoMark>()
                 .map(|l| l.drawn_rect().contains(dq.abs))
                 .unwrap_or(false);
-            if over_tab || over_logo {
+            // The caption action buttons live in the drag region too; treat
+            // their rects as client area so clicks reach the widget.
+            let over_btn = self
+                .ui
+                .widget(cx, ids!(save_btn))
+                .as_caption_button()
+                .hits(dq.abs)
+                || self
+                    .ui
+                    .widget(cx, ids!(menu_btn))
+                    .as_caption_button()
+                    .hits(dq.abs);
+            if over_tab || over_logo || over_btn {
                 dq.response.set(WindowDragQueryResponse::Client);
             }
         }
