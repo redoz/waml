@@ -85,7 +85,7 @@ script_mod! {
                     text: ""
                     draw_text +: {
                         color: atlas.text
-                        text_style: theme.font_regular{font_size: 12 line_spacing: 1.0}
+                        text_style: theme.font_regular{font_size: atlas.size_body line_spacing: 1.0}
                     }
                 }
                 // Right-anchored last-opened stamp. `Fit` width -> `title`'s
@@ -94,7 +94,7 @@ script_mod! {
                     text: ""
                     draw_text +: {
                         color: atlas.text_dim
-                        text_style: theme.font_regular{font_size: 10 line_spacing: 1.0}
+                        text_style: theme.font_regular{font_size: atlas.size_eyebrow line_spacing: 1.0}
                     }
                 }
             }
@@ -103,7 +103,7 @@ script_mod! {
                 text: ""
                 draw_text +: {
                     color: atlas.text_dim
-                    text_style: theme.font_regular{font_size: 10 line_spacing: 1.0}
+                    text_style: theme.font_regular{font_size: atlas.size_eyebrow line_spacing: 1.0}
                 }
             }
         }

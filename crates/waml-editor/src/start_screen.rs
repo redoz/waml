@@ -14,6 +14,7 @@
 use crate::action_link::ActionLinkWidgetRefExt;
 use crate::recent_row::RecentRowViewWidgetRefExt;
 use makepad_widgets::*;
+use waml::solve::sizing::{self, Font};
 
 script_mod! {
     use mod.prelude.widgets_internal.*
@@ -101,7 +102,7 @@ script_mod! {
                 // Bottom-align so the subtitle sits on the logo's baseline
                 // rather than the logo's vertical center.
                 align: Align{y: 1.0}
-                spacing: 12.0
+                spacing: 8.0
                 logo := SolidView {
                     width: 77.0
                     height: 44.0
@@ -109,14 +110,13 @@ script_mod! {
                 }
                 sub := Label {
                     text: "Create or open a model to get started"
-                    // Negative bottom margin drops the label box past the row
-                    // bottom so its baseline seats on the logo baseline (the
-                    // wordmark is already bottom-tight; this cancels the Label's
-                    // sub-baseline leading, not any logo padding).
-                    margin: Inset{bottom: -3.0}
+                    // Baseline-seating bottom margin is set from Rust in
+                    // `draw_walk` (derived from this font's descent), so no magic
+                    // pixel constant lives here and it retracks any font_size
+                    // change automatically. See `seat_subtitle_baseline`.
                     draw_text +: {
                         color: atlas.text_dim
-                        text_style: theme.font_regular{font_size: 9 line_spacing: 1.0}
+                        text_style: theme.font_regular{font_size: atlas.size_caption line_spacing: 1.0}
                     }
                 }
             }
@@ -158,7 +158,7 @@ script_mod! {
                         text: "RECENT"
                         draw_text +: {
                             color: atlas.accent
-                            text_style: theme.font_bold{font_size: 10 line_spacing: 1.2}
+                            text_style: theme.font_bold{font_size: atlas.size_eyebrow line_spacing: 1.2}
                         }
                     }
                     // Bordered frame around the recents list. Stroke-only (no
@@ -217,7 +217,7 @@ script_mod! {
                         text: "START"
                         draw_text +: {
                             color: atlas.accent
-                            text_style: theme.font_bold{font_size: 10 line_spacing: 1.2}
+                            text_style: theme.font_bold{font_size: atlas.size_eyebrow line_spacing: 1.2}
                         }
                     }
                     // VS-style borderless action links: an accent icon + prose
@@ -268,6 +268,22 @@ pub struct StartScreen {
     visible: bool,
 }
 
+impl StartScreen {
+    /// Seat the header subtitle's baseline on the wordmark's. The header row
+    /// bottom-aligns its boxes (`align: Align{y: 1.0}`), but the Label box extends
+    /// its descent below the baseline while the wordmark is bottom-tight, so the
+    /// subtitle floats a descent's-worth too high. Push the Label box down by
+    /// exactly that descent, read from the font at the Label's own `font_size` --
+    /// no pixel constant, and it retracks any font_size change in the DSL.
+    fn seat_subtitle_baseline(&mut self, cx: &mut Cx2d) {
+        if let Some(mut sub) = self.view.label(cx, ids!(sub)).borrow_mut() {
+            let pt = sub.draw_text.text_style.font_size as f64;
+            let descent = sizing::descent(pt * sizing::PT_TO_LPX, Font::Sans);
+            sub.walk.margin.bottom = -descent;
+        }
+    }
+}
+
 impl Widget for StartScreen {
     fn handle_event(&mut self, cx: &mut Cx, event: &Event, scope: &mut Scope) {
         if !self.visible {
@@ -284,6 +300,7 @@ impl Widget for StartScreen {
             // Nothing drawn -- `main_column` (painted first) shows through.
             return DrawStep::done();
         }
+        self.seat_subtitle_baseline(cx);
         // The run_list.rs interpose idiom: walk the tree, and when the FlatList
         // step surfaces, populate one child widget per recent row from the `Row`
         // template, push data in, and draw it.

@@ -39,7 +39,7 @@ script_mod! {
         flow: Right
         align: Align{y: 0.5}
         // Left padding clears the 16px icon the root shader draws at x=8.
-        padding: Inset{left: 32.0, right: 8.0, top: 6.0, bottom: 6.0}
+        padding: Inset{left: 32.0, right: 8.0, top: 3.0, bottom: 3.0}
         spacing: 0.0
         show_bg: true
 
@@ -90,7 +90,7 @@ script_mod! {
             text: ""
             draw_text +: {
                 color: atlas.text
-                text_style: theme.font_regular{font_size: 12 line_spacing: 1.0}
+                text_style: theme.font_regular{font_size: atlas.size_caption line_spacing: 1.0}
             }
         }
     }

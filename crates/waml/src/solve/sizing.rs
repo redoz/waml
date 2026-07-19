@@ -53,14 +53,25 @@ pub fn text_width(s: &str, font_size: f64, font: Font) -> f64 {
     units * scale
 }
 
+/// Distance from the baseline up to the ascender of `font` at `font_size` px.
+pub fn ascent(font_size: f64, font: Font) -> f64 {
+    let face = face(font);
+    face.ascender() as f64 * font_size / face.units_per_em() as f64
+}
+
+/// Distance from the baseline down to the descender of `font` at `font_size` px,
+/// as a POSITIVE number. `face.descender()` is negative (below the baseline); this
+/// returns its magnitude so callers can add it as a downward offset. Use this to
+/// seat a label's baseline onto a neighbour instead of hardcoding a pixel nudge.
+pub fn descent(font_size: f64, font: Font) -> f64 {
+    let face = face(font);
+    -(face.descender() as f64) * font_size / face.units_per_em() as f64
+}
+
 /// Line height of `font` at `font_size` px: `(ascender - descender)` scaled from
 /// font units to px. Used as the row height of a text leaf in the card box-tree.
 pub fn line_height(font_size: f64, font: Font) -> f64 {
-    let face = face(font);
-    let units_per_em = face.units_per_em() as f64;
-    let ascender = face.ascender() as f64;
-    let descender = face.descender() as f64; // negative
-    (ascender - descender) * font_size / units_per_em
+    ascent(font_size, font) + descent(font_size, font)
 }
 
 #[cfg(test)]
@@ -112,6 +123,24 @@ mod tests {
         let big = line_height(24.0, Font::Mono);
         assert!(small > 0.0);
         assert!((big - 2.0 * small).abs() < 1e-6);
+    }
+
+    #[test]
+    fn descent_is_positive_and_line_height_is_ascent_plus_descent() {
+        let a = ascent(12.0, Font::Sans);
+        let d = descent(12.0, Font::Sans);
+        assert!(a > 0.0 && d > 0.0);
+        assert!((line_height(12.0, Font::Sans) - (a + d)).abs() < 1e-9);
+    }
+
+    #[test]
+    fn sans_descent_at_11pt_matches_start_screen_baseline_nudge() {
+        // The start-screen subtitle sits at DSL `font_size: 11` (points), which
+        // makepad rasterizes at 11 * PT_TO_LPX lpx. Its baseline-seating margin in
+        // start_screen.rs is derived from this descent; pin it so the DSL literal
+        // can't silently drift from the font.
+        let d = descent(11.0 * PT_TO_LPX, Font::Sans);
+        assert!((d - 4.03).abs() < 0.05, "descent = {d} lpx");
     }
 
     #[test]

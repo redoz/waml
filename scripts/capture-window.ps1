@@ -4,6 +4,11 @@
 # own client buffer -- correct on HiDPI (no downscale that hides hairlines/faint
 # tints) and immune to occluding windows / unreliable SetForegroundWindow.
 #
+# The C# below is P/Invoke ONLY (no System.Drawing types) so it compiles under
+# PowerShell 7+ (pwsh), where System.Drawing.Common is not referenced by the
+# Add-Type compiler. The bitmap work runs in PowerShell against the assembly
+# loaded by Add-Type -AssemblyName below -- works under pwsh 7 and Windows PS 5.1.
+#
 # Usage:
 #   pwsh -File scripts/capture-window.ps1 -Out shot.png [-Process waml-editor]
 param(
@@ -11,34 +16,31 @@ param(
     [string]$Process = "waml-editor"
 )
 
+Add-Type -AssemblyName System.Drawing
 Add-Type @"
 using System;
 using System.Runtime.InteropServices;
-using System.Drawing;
-using System.Drawing.Imaging;
 public class WinCap {
   [DllImport("user32.dll")] public static extern bool PrintWindow(IntPtr h, IntPtr hdc, uint f);
   [DllImport("user32.dll")] public static extern bool GetClientRect(IntPtr h, out RECT r);
   public struct RECT { public int L, T, R, B; }
-  public static bool Grab(IntPtr hwnd, string path) {
-    RECT r; GetClientRect(hwnd, out r);
-    int w = r.R - r.L, h = r.B - r.T;
-    if (w <= 0 || h <= 0) { return false; }
-    var bmp = new Bitmap(w, h, PixelFormat.Format32bppArgb);
-    var g = Graphics.FromImage(bmp);
-    IntPtr hdc = g.GetHdc();
-    PrintWindow(hwnd, hdc, 2);
-    g.ReleaseHdc(hdc);
-    bmp.Save(path, ImageFormat.Png);
-    return true;
-  }
 }
-"@ -ReferencedAssemblies System.Drawing
+"@
 
 $p = Get-Process $Process -ErrorAction SilentlyContinue |
     Where-Object { $_.MainWindowHandle -ne 0 } | Select-Object -First 1
 if (-not $p) { Write-Error "no window found for process '$Process'"; exit 1 }
-if (-not [WinCap]::Grab($p.MainWindowHandle, $Out)) {
-    Write-Error "window has zero client area (minimized?)"; exit 1
-}
+
+$hwnd = $p.MainWindowHandle
+$r = New-Object WinCap+RECT
+[WinCap]::GetClientRect($hwnd, [ref]$r) | Out-Null
+$w = $r.R - $r.L; $h = $r.B - $r.T
+if ($w -le 0 -or $h -le 0) { Write-Error "window has zero client area (minimized?)"; exit 1 }
+
+$bmp = New-Object System.Drawing.Bitmap $w, $h, ([System.Drawing.Imaging.PixelFormat]::Format32bppArgb)
+$g = [System.Drawing.Graphics]::FromImage($bmp)
+$hdc = $g.GetHdc()
+[WinCap]::PrintWindow($hwnd, $hdc, 2) | Out-Null
+$g.ReleaseHdc($hdc)
+$bmp.Save($Out, [System.Drawing.Imaging.ImageFormat]::Png)
 Write-Output ("captured $Process pid=$($p.Id) -> $Out")
