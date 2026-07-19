@@ -891,12 +891,19 @@ impl MatchEvent for App {
             .and_then(|c| c.canvas_action(actions));
         if let Some(crate::canvas::GraphCanvasAction::NodeMenu { abs, node: _ }) = canvas_menu {
             let items = node_radial_items();
+            // In-window radial: clip the fan to the main window's client rect so
+            // it collapses to a "C" near a window edge instead of clipping.
+            let sz = self.ui.window(cx, ids!(main_window)).get_inner_size(cx);
+            let bounds = Rect {
+                pos: dvec2(0.0, 0.0),
+                size: dvec2(sz.x, sz.y),
+            };
             if let Some(mut radial) = self
                 .ui
                 .widget(cx, ids!(radial))
                 .borrow_mut::<crate::radial::Radial>()
             {
-                radial.open(cx, abs, items, cx.seconds_since_app_start());
+                radial.open(cx, abs, bounds, items, cx.seconds_since_app_start());
             }
             return;
         }
@@ -914,6 +921,8 @@ impl MatchEvent for App {
             // alpha, overflows the window top-left onto the desktop) rather than
             // the in-window `radial` used by the node menu. See `radial_popup`.
             if let Some(parent) = self.ui.window(cx, ids!(main_window)).window_id() {
+                // Client size feeds the edge-adaptive "C" fan its clip bounds.
+                let sz = self.ui.window(cx, ids!(main_window)).get_inner_size(cx);
                 if let Some(mut popup) = self
                     .ui
                     .widget(cx, ids!(radial_popup))
@@ -923,6 +932,7 @@ impl MatchEvent for App {
                         cx,
                         parent,
                         center,
+                        dvec2(sz.x, sz.y),
                         logo_radial_items(),
                         cx.seconds_since_app_start(),
                     );

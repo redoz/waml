@@ -52,46 +52,164 @@ pub enum RadialOutcome {
     None,
 }
 
-/// Wedge index under `cursor`, or `None` inside the hub dead-zone. Angle is
-/// measured clockwise from 12 o'clock; the first wedge (index 0) is centred on
-/// 12 o'clock. Pure geometry -- ignores enabled/disabled (see `resolve_target`).
-///
-/// First landing unit: no non-test Rust caller yet -- see `HUB_RADIUS`'s doc
-/// comment.
+/// Trigger slack: an edge counts as "blocked" once the centre is within
+/// `DISC_RADIUS + EDGE_MARGIN` of it -- i.e. once a wedge would actually reach
+/// past it. Keeps the edge-snap from firing preemptively out in open space.
 #[allow(dead_code)]
-pub fn wedge_index(center: DVec2, cursor: DVec2, n: usize) -> Option<usize> {
-    if n == 0 {
-        return None;
-    }
-    let dx = cursor.x - center.x;
-    let dy = cursor.y - center.y;
-    let r = (dx * dx + dy * dy).sqrt();
-    if r < HUB_RADIUS {
-        return None;
-    }
-    // atan2(dx, -dy): up=0, right=+90, down=+180, left=-90 -> clockwise from 12.
-    let deg = dx.atan2(-dy).to_degrees().rem_euclid(360.0);
-    let sector = 360.0 / n as f64;
-    // First wedge centred on 0 deg => its span is [-sector/2, +sector/2).
-    let shifted = (deg + sector * 0.5).rem_euclid(360.0);
-    let idx = (shifted / sector).floor() as usize;
-    Some(idx.min(n - 1))
+pub const EDGE_MARGIN: f64 = 16.0;
+
+/// Angular layout of the wedge fan. Out in open space this is the full 360 deg
+/// disc (`span == TAU`, wedge 0 centred on 12 o'clock). Near a screen/window
+/// edge the fan collapses to a partial arc (a "C") that opens *away* from the
+/// blocked edge(s), so every wedge stays inside `bounds` and the cursor stays in
+/// the hub dead-zone. Pure geometry; the platform supplies the clip `bounds` (a
+/// monitor rect for the native floating popup, the window rect for the in-window
+/// radial / web).
+#[allow(dead_code)]
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct RadialLayout {
+    /// Leading edge of wedge 0 (radians, clockwise from 12 o'clock).
+    pub arc_start: f64,
+    /// Total angular span the fan covers (radians). `TAU` == full disc.
+    pub span: f64,
+    /// Wedge count.
+    pub n: usize,
 }
 
-/// Wedge index under `cursor` that is actually actionable: `None` in the hub
-/// dead-zone OR over a disabled wedge (spec: a disabled wedge is treated like
-/// the dead-zone -- arms nothing).
-///
-/// First landing unit: no non-test Rust caller yet -- see `HUB_RADIUS`'s doc
-/// comment.
+impl Default for RadialLayout {
+    fn default() -> Self {
+        Self::full(0)
+    }
+}
+
 #[allow(dead_code)]
-pub fn resolve_target(items: &[RadialItem], center: DVec2, cursor: DVec2) -> Option<usize> {
-    let idx = wedge_index(center, cursor, items.len())?;
+impl RadialLayout {
+    /// Open-space full disc: `n` equal sectors, wedge 0 centred on 12 o'clock.
+    pub fn full(n: usize) -> Self {
+        let sector = if n == 0 {
+            std::f64::consts::TAU
+        } else {
+            std::f64::consts::TAU / n as f64
+        };
+        Self {
+            arc_start: -sector * 0.5,
+            span: std::f64::consts::TAU,
+            n,
+        }
+    }
+
+    /// Snap the fan to fit inside `bounds` (same coord space as `center`). Each
+    /// edge within `radius + EDGE_MARGIN` removes the 180 deg half-plane pointing
+    /// at it; the fan fills the surviving arc, oriented at its centre: nothing
+    /// blocked -> full 360, one edge -> 180 semicircle, a corner -> 90 quadrant.
+    /// Opposing edges (a window narrower than the disc) impose no constraint on
+    /// that axis -- a minor clip is accepted rather than degenerating to a slit.
+    pub fn snap(center: DVec2, bounds: Rect, radius: f64, n: usize) -> Self {
+        use std::f64::consts::{FRAC_PI_2, PI};
+        let reach = radius + EDGE_MARGIN;
+        let near_left = center.x - bounds.pos.x < reach;
+        let near_right = (bounds.pos.x + bounds.size.x) - center.x < reach;
+        let near_top = center.y - bounds.pos.y < reach;
+        let near_bottom = (bounds.pos.y + bounds.size.y) - center.y < reach;
+        // Free direction on each axis (screen coords: +x right, +y down); 0 when
+        // both or neither side is blocked (no usable constraint on that axis).
+        let free_x: f64 = match (near_left, near_right) {
+            (true, false) => 1.0,
+            (false, true) => -1.0,
+            _ => 0.0,
+        };
+        let free_y: f64 = match (near_top, near_bottom) {
+            (true, false) => 1.0,
+            (false, true) => -1.0,
+            _ => 0.0,
+        };
+        if free_x == 0.0 && free_y == 0.0 {
+            return Self::full(n);
+        }
+        // Free direction -> clockwise-from-12 angle (atan2(dx, -dy)); span is a
+        // half for a single blocked edge, a quarter for a corner.
+        let center_dir = free_x.atan2(-free_y).rem_euclid(std::f64::consts::TAU);
+        let span = if free_x != 0.0 && free_y != 0.0 {
+            FRAC_PI_2
+        } else {
+            PI
+        };
+        Self {
+            arc_start: (center_dir - span * 0.5).rem_euclid(std::f64::consts::TAU),
+            span,
+            n,
+        }
+    }
+
+    fn wedge_width(&self) -> f64 {
+        self.span / self.n as f64
+    }
+
+    /// Mid-angle of wedge `i` (radians, clockwise from 12).
+    pub fn mid(&self, i: usize) -> f64 {
+        self.arc_start + (i as f64 + 0.5) * self.wedge_width()
+    }
+
+    /// Start/end angle of wedge `i` (radians, clockwise from 12; NOT wrapped).
+    pub fn wedge_bounds(&self, i: usize) -> (f64, f64) {
+        let a0 = self.arc_start + i as f64 * self.wedge_width();
+        (a0, a0 + self.wedge_width())
+    }
+
+    /// Wedge index under `cursor`, or `None` in the hub dead-zone or in the
+    /// blocked region outside a partial arc. Angle-only past the hub (the outer
+    /// rim is gated by the caller), so screen-edge clipping of the drawn disc
+    /// never changes which wedge is pickable.
+    pub fn index_at(&self, center: DVec2, cursor: DVec2) -> Option<usize> {
+        if self.n == 0 {
+            return None;
+        }
+        let d = cursor - center;
+        let r = d.length();
+        if r < HUB_RADIUS {
+            return None;
+        }
+        // atan2(dx, -dy): up=0, right=+90, down=+180, left=-90 -> clockwise.
+        let ang = d.x.atan2(-d.y).rem_euclid(std::f64::consts::TAU);
+        let rel = (ang - self.arc_start).rem_euclid(std::f64::consts::TAU);
+        // Partial arc: directions past the span are the blocked (empty) side.
+        if self.span < std::f64::consts::TAU && rel > self.span {
+            return None;
+        }
+        let idx = (rel / self.wedge_width()).floor() as usize;
+        Some(idx.min(self.n - 1))
+    }
+}
+
+/// Wedge index under `cursor` for the open-space full disc -- compat shim over
+/// `RadialLayout::full`. `None` inside the hub dead-zone.
+#[allow(dead_code)]
+pub fn wedge_index(center: DVec2, cursor: DVec2, n: usize) -> Option<usize> {
+    RadialLayout::full(n).index_at(center, cursor)
+}
+
+/// Actionable wedge under `cursor` within `layout`: `None` in the hub, in the
+/// blocked region, or over a disabled wedge (a disabled wedge arms nothing, same
+/// as the dead-zone).
+#[allow(dead_code)]
+pub fn resolve_in(
+    items: &[RadialItem],
+    layout: &RadialLayout,
+    center: DVec2,
+    cursor: DVec2,
+) -> Option<usize> {
+    let idx = layout.index_at(center, cursor)?;
     if items[idx].enabled {
         Some(idx)
     } else {
         None
     }
+}
+
+/// Full-disc convenience wrapper for `resolve_in` (open-space geometry tests).
+#[allow(dead_code)]
+pub fn resolve_target(items: &[RadialItem], center: DVec2, cursor: DVec2) -> Option<usize> {
+    resolve_in(items, &RadialLayout::full(items.len()), center, cursor)
 }
 
 /// Minimum drag (screen px) before a right-press is treated as a marking
@@ -125,6 +243,8 @@ pub struct RadialCore {
     /// Cursor rode past the rim over an armed wedge.
     pub flick: bool,
     press_pos: DVec2,
+    /// Wedge fan layout, snapped to the clip `bounds` at open time.
+    layout: RadialLayout,
 }
 
 #[allow(dead_code)]
@@ -142,9 +262,15 @@ impl RadialCore {
         self.center
     }
 
+    /// The wedge fan layout snapped at open time (the widget reads this to draw).
+    pub fn layout(&self) -> &RadialLayout {
+        &self.layout
+    }
+
     /// Open at `center` with `items` (the press point == center == marking
-    /// origin). Right button is now held.
-    pub fn begin(&mut self, center: DVec2, items: Vec<RadialItem>) {
+    /// origin), snapping the fan to fit `bounds`. Right button is now held.
+    pub fn begin(&mut self, center: DVec2, items: Vec<RadialItem>, bounds: Rect) {
+        self.layout = RadialLayout::snap(center, bounds, DISC_RADIUS, items.len());
         self.open = true;
         self.center = center;
         self.items = items;
@@ -157,9 +283,11 @@ impl RadialCore {
     }
 
     /// Open directly in persistent popup mode (a left-click open), skipping the
-    /// right-press marking gesture entirely. No button is held; a subsequent
-    /// primary `click` commits an enabled wedge or cancels in the hub/outside.
-    pub fn begin_popup(&mut self, center: DVec2, items: Vec<RadialItem>) {
+    /// right-press marking gesture entirely, snapping the fan to fit `bounds`.
+    /// No button is held; a subsequent primary `click` commits an enabled wedge
+    /// or cancels in the hub/outside.
+    pub fn begin_popup(&mut self, center: DVec2, items: Vec<RadialItem>, bounds: Rect) {
+        self.layout = RadialLayout::snap(center, bounds, DISC_RADIUS, items.len());
         self.open = true;
         self.center = center;
         self.items = items;
@@ -181,7 +309,7 @@ impl RadialCore {
                 self.dragged = true;
             }
         }
-        self.armed = resolve_target(&self.items, self.center, cursor);
+        self.armed = resolve_in(&self.items, &self.layout, self.center, cursor);
         let r = (cursor - self.center).length();
         self.flick = self.pressed && self.dragged && self.armed.is_some() && r > DISC_RADIUS;
     }
@@ -201,7 +329,7 @@ impl RadialCore {
             self.close();
             return RadialOutcome::Cancelled;
         }
-        match resolve_target(&self.items, self.center, cursor) {
+        match resolve_in(&self.items, &self.layout, self.center, cursor) {
             Some(i) => {
                 let id = self.items[i].id;
                 self.close();
@@ -214,22 +342,28 @@ impl RadialCore {
         }
     }
 
-    /// A click while in persistent popup mode. Hub or outside-disc cancels; an
-    /// enabled wedge commits; a disabled wedge is a no-op that leaves the
-    /// radial open.
+    /// A click while in persistent popup mode. Hub, outside-disc, or the blocked
+    /// (empty) region of a partial arc cancels; an enabled wedge commits; a
+    /// disabled wedge is a no-op that leaves the radial open.
     pub fn click(&mut self, cursor: DVec2) -> RadialOutcome {
         let r = (cursor - self.center).length();
         if r < HUB_RADIUS || r > DISC_RADIUS {
             self.close();
             return RadialOutcome::Cancelled;
         }
-        match resolve_target(&self.items, self.center, cursor) {
-            Some(i) => {
+        match self.layout.index_at(self.center, cursor) {
+            // A real wedge under the cursor: commit if enabled, else no-op.
+            Some(i) if self.items[i].enabled => {
                 let id = self.items[i].id;
                 self.close();
                 RadialOutcome::Committed(id)
             }
-            None => RadialOutcome::None, // disabled wedge: no-op, stay open
+            Some(_) => RadialOutcome::None, // disabled wedge: no-op, stay open
+            // Blocked region outside the arc (partial fan): treat like outside.
+            None => {
+                self.close();
+                RadialOutcome::Cancelled
+            }
         }
     }
 
@@ -338,25 +472,31 @@ script_mod! {
         hub: uniform(30.0)
         n: uniform(4.0)
         fade: uniform(1.0)
+        arc_start: uniform(0.0)
+        span: uniform(6.2831853)
         pixel: fn() {
-            let sdf = Sdf2d.viewport(self.pos * self.rect_size)
             let c = self.rect_size * 0.5
-            sdf.circle(c.x, c.y, self.rim)
-            sdf.fill(vec4(self.disc_col.x, self.disc_col.y, self.disc_col.z, 0.92))
-            // Divider spokes: N radial lines on the wedge boundaries (which sit
-            // at sector*(k+0.5), since wedge 0 is CENTRED on 12 o'clock). Uses
-            // the same clockwise-from-12 angle as the wedge fill.
             let d = self.pos * self.rect_size - c
             let r = length(d)
             let ang = modf(atan2(d.x, -d.y) + 6.2831853, 6.2831853)
-            let sector = 6.2831853 / self.n
-            let k = floor((ang - sector * 0.5) / sector + 0.5)
-            let nearest = k * sector + sector * 0.5
-            let diff = abs(ang - nearest)
-            let diff2 = min(diff, 6.2831853 - diff)
-            let perp = r * diff2
-            let on = step(self.hub, r) * (1.0 - step(self.rim, r)) * (1.0 - smoothstep(0.4, 1.1, perp))
-            let o = mix(sdf.result, vec4(self.spoke_col.x, self.spoke_col.y, self.spoke_col.z, 1.0), on)
+            // Offset into the (possibly partial) arc. A full disc has
+            // span >= TAU, so `in_arc` is 1 everywhere; a partial "C" fills only
+            // rel in [0, span] and leaves the blocked side transparent.
+            let rel = modf(ang - self.arc_start + 6.2831853, 6.2831853)
+            let full = step(6.2831, self.span)
+            let in_arc = max(full, 1.0 - step(self.span, rel))
+            // Base disc fill, AA'd on the outer rim.
+            let rim_aa = 1.0 - smoothstep(self.rim - 1.0, self.rim + 1.0, r)
+            let col = vec4(self.disc_col.x, self.disc_col.y, self.disc_col.z, 0.92 * rim_aa * in_arc)
+            // Divider spokes at the wedge boundaries arc_start + k*w, k = 0..n
+            // (the two ends of a partial arc are caps drawn as spokes too).
+            let w = self.span / self.n
+            let k = clamp(floor(rel / w + 0.5), 0.0, self.n)
+            let bnd = k * w
+            let perp = r * abs(rel - bnd)
+            let within = step(self.hub, r) * (1.0 - step(self.rim, r))
+            let on = within * in_arc * (1.0 - smoothstep(0.4, 1.1, perp))
+            let o = mix(col, vec4(self.spoke_col.x, self.spoke_col.y, self.spoke_col.z, 1.0), on)
             return vec4(o.x, o.y, o.z, o.w * self.fade)
         }
     }
@@ -464,19 +604,35 @@ impl Radial {
         self.core.is_open()
     }
 
-    /// Open at `center` (the right-press point) with `items`; starts the
+    /// Open at `center` (the right-press point) with `items`, snapping the fan to
+    /// fit `bounds` (the clip rect in `center`'s coord space); starts the
     /// bloom-in animation loop.
-    pub fn open(&mut self, cx: &mut Cx, center: DVec2, items: Vec<RadialItem>, time: f64) {
-        self.core.begin(center, items);
+    pub fn open(
+        &mut self,
+        cx: &mut Cx,
+        center: DVec2,
+        bounds: Rect,
+        items: Vec<RadialItem>,
+        time: f64,
+    ) {
+        self.core.begin(center, items, bounds);
         self.start = time;
         self.next_frame = cx.new_next_frame();
         self.draw_wedge.redraw(cx);
     }
 
     /// Open at `center` directly in persistent popup mode (a left-click open,
-    /// e.g. the logo), skipping marking mode; starts the bloom-in animation.
-    pub fn open_popup(&mut self, cx: &mut Cx, center: DVec2, items: Vec<RadialItem>, time: f64) {
-        self.core.begin_popup(center, items);
+    /// e.g. the logo), skipping marking mode, snapping the fan to fit `bounds`;
+    /// starts the bloom-in animation.
+    pub fn open_popup(
+        &mut self,
+        cx: &mut Cx,
+        center: DVec2,
+        bounds: Rect,
+        items: Vec<RadialItem>,
+        time: f64,
+    ) {
+        self.core.begin_popup(center, items, bounds);
         self.start = time;
         self.next_frame = cx.new_next_frame();
         self.draw_wedge.redraw(cx);
@@ -528,7 +684,7 @@ impl Radial {
         if n == 0 {
             return;
         }
-        let sector = std::f64::consts::TAU / n as f64;
+        let layout = *self.core.layout();
         // Bloom-in: ease a scale (grow from 55%) and a global alpha fade over
         // BLOOM_SECS from the open instant. Geometry radii scale so the icons
         // ride outward; the `fade` uniform fades disc/wedge/hub alpha.
@@ -555,13 +711,21 @@ impl Radial {
         self.draw_disc.set_uniform(cx, live_id!(hub), &[hub_r as f32]);
         self.draw_disc.set_uniform(cx, live_id!(n), &[n as f32]);
         self.draw_disc.set_uniform(cx, live_id!(fade), &[fade]);
+        // Arc window (radians): the disc fill + spokes mask to this span so a
+        // partial (edge-snapped) fan renders as a "C" instead of a full circle.
+        self.draw_disc.set_uniform(
+            cx,
+            live_id!(arc_start),
+            &[layout.arc_start.rem_euclid(std::f64::consts::TAU) as f32],
+        );
+        self.draw_disc
+            .set_uniform(cx, live_id!(span), &[layout.span as f32]);
         self.draw_disc.draw_abs(cx, quad);
         let items = self.core.items().to_vec();
         let armed = self.core.armed;
         for (i, it) in items.iter().enumerate() {
-            // Slice angles clockwise from 12, first wedge centred on 12.
-            let a0 = (i as f64) * sector - sector * 0.5;
-            let a1 = a0 + sector;
+            // Slice angles clockwise from 12, from the (possibly partial) fan.
+            let (a0, a1) = layout.wedge_bounds(i);
             let state = if !it.enabled {
                 0.0
             } else if self.core.flick && armed == Some(i) {
@@ -601,8 +765,8 @@ impl Radial {
             self.draw_wedge.set_uniform(cx, live_id!(fade), &[fade]);
             self.draw_wedge.draw_abs(cx, quad);
 
-            // Icon + label centred on the sector mid-angle at a fixed radius.
-            let mid = (i as f64) * sector; // mid-angle clockwise from 12
+            // Icon + label centred on the wedge mid-angle at a fixed radius.
+            let mid = layout.mid(i); // mid-angle clockwise from 12
             let icon_r = (hub_r + disc_r) * 0.5;
             let ix = center.x + icon_r * mid.sin();
             let iy = center.y - icon_r * mid.cos();
@@ -666,6 +830,15 @@ mod tests {
     }
     fn left() -> DVec2 {
         dvec2(C.x - 100.0, C.y)
+    }
+
+    // Open-space clip rect: C is far (> DISC_RADIUS + EDGE_MARGIN) from every
+    // edge, so the fan stays a full 360 disc and the legacy assertions hold.
+    fn open_bounds() -> Rect {
+        Rect {
+            pos: dvec2(0.0, 0.0),
+            size: dvec2(2000.0, 2000.0),
+        }
     }
 
     #[test]
@@ -744,7 +917,7 @@ mod tests {
     #[test]
     fn tap_opens_persistent_popup_then_click_commits() {
         let mut c = RadialCore::default();
-        c.begin(C, menu());
+        c.begin(C, menu(), open_bounds());
         // Release without moving = tap -> popup, stays open, no outcome yet.
         assert_eq!(c.release(C), RadialOutcome::None);
         assert!(c.is_open());
@@ -756,7 +929,7 @@ mod tests {
     #[test]
     fn begin_popup_opens_in_popup_mode_and_click_commits() {
         let mut c = RadialCore::default();
-        c.begin_popup(C, menu());
+        c.begin_popup(C, menu(), open_bounds());
         // Opens straight into a persistent popup (no right-press held).
         assert!(c.is_open());
         // A primary click on wedge 1 (right, enabled) commits immediately --
@@ -768,7 +941,7 @@ mod tests {
     #[test]
     fn begin_popup_click_in_hub_cancels() {
         let mut c = RadialCore::default();
-        c.begin_popup(C, menu());
+        c.begin_popup(C, menu(), open_bounds());
         assert_eq!(c.click(C), RadialOutcome::Cancelled);
         assert!(!c.is_open());
     }
@@ -776,7 +949,7 @@ mod tests {
     #[test]
     fn hold_drag_arms_then_release_commits() {
         let mut c = RadialCore::default();
-        c.begin(C, menu());
+        c.begin(C, menu(), open_bounds());
         c.pointer_move(right()); // drag past threshold -> marking, arms wedge 1
         assert_eq!(c.armed, Some(1));
         assert_eq!(
@@ -789,7 +962,7 @@ mod tests {
     #[test]
     fn flick_past_rim_commits_and_flags_flick() {
         let mut c = RadialCore::default();
-        c.begin(C, menu());
+        c.begin(C, menu(), open_bounds());
         let far_right = dvec2(C.x + 160.0, C.y); // r=160 > DISC_RADIUS
         c.pointer_move(far_right);
         assert!(c.flick);
@@ -802,7 +975,7 @@ mod tests {
     #[test]
     fn popup_click_on_hub_cancels() {
         let mut c = RadialCore::default();
-        c.begin(C, menu());
+        c.begin(C, menu(), open_bounds());
         c.release(C); // -> popup
         assert_eq!(c.click(C), RadialOutcome::Cancelled);
         assert!(!c.is_open());
@@ -811,7 +984,7 @@ mod tests {
     #[test]
     fn popup_click_outside_disc_cancels() {
         let mut c = RadialCore::default();
-        c.begin(C, menu());
+        c.begin(C, menu(), open_bounds());
         c.release(C); // -> popup
         let outside = dvec2(C.x + 300.0, C.y);
         assert_eq!(c.click(outside), RadialOutcome::Cancelled);
@@ -820,7 +993,7 @@ mod tests {
     #[test]
     fn esc_cancels() {
         let mut c = RadialCore::default();
-        c.begin(C, menu());
+        c.begin(C, menu(), open_bounds());
         assert_eq!(c.esc(), RadialOutcome::Cancelled);
         assert!(!c.is_open());
     }
@@ -828,7 +1001,7 @@ mod tests {
     #[test]
     fn marking_release_in_hub_cancels() {
         let mut c = RadialCore::default();
-        c.begin(C, menu());
+        c.begin(C, menu(), open_bounds());
         c.pointer_move(right()); // establishes marking mode (dragged)
         assert_eq!(c.release(C), RadialOutcome::Cancelled); // released in hub
     }
@@ -836,9 +1009,85 @@ mod tests {
     #[test]
     fn popup_click_on_disabled_wedge_is_noop_and_stays_open() {
         let mut c = RadialCore::default();
-        c.begin(C, menu());
+        c.begin(C, menu(), open_bounds());
         c.release(C); // -> popup
         assert_eq!(c.click(down()), RadialOutcome::None); // wedge 2 disabled
         assert!(c.is_open());
+    }
+
+    // --- Edge-adaptive "C" arc layout -----------------------------------------
+
+    fn approx(a: f64, b: f64) -> bool {
+        (a - b).abs() < 1e-9
+    }
+
+    // A 600x600 clip with the centre hard against an edge/corner (within
+    // DISC_RADIUS + EDGE_MARGIN) so the fan must collapse to a partial arc.
+    const TIGHT: Rect = Rect {
+        pos: DVec2 { x: 0.0, y: 0.0 },
+        size: DVec2 { x: 600.0, y: 600.0 },
+    };
+
+    #[test]
+    fn snap_open_space_is_full_disc() {
+        let l = RadialLayout::snap(C, open_bounds(), DISC_RADIUS, 4);
+        assert!(approx(l.span, std::f64::consts::TAU));
+    }
+
+    #[test]
+    fn snap_near_right_edge_opens_left_half() {
+        let center = dvec2(590.0, 300.0); // hard against the right edge
+        let l = RadialLayout::snap(center, TIGHT, DISC_RADIUS, 4);
+        assert!(approx(l.span, std::f64::consts::PI));
+        // Toward the blocked (right) side -> no wedge; into the free half -> one.
+        assert_eq!(l.index_at(center, dvec2(center.x + 90.0, center.y)), None);
+        assert!(l
+            .index_at(center, dvec2(center.x - 90.0, center.y))
+            .is_some());
+    }
+
+    #[test]
+    fn snap_corner_is_quarter() {
+        let center = dvec2(590.0, 590.0); // bottom-right corner
+        let l = RadialLayout::snap(center, TIGHT, DISC_RADIUS, 4);
+        assert!(approx(l.span, std::f64::consts::FRAC_PI_2));
+        // Into the corner (down-right) blocked; away from it (up-left) free.
+        assert_eq!(
+            l.index_at(center, dvec2(center.x + 70.0, center.y + 70.0)),
+            None
+        );
+        assert!(l
+            .index_at(center, dvec2(center.x - 70.0, center.y - 70.0))
+            .is_some());
+    }
+
+    #[test]
+    fn partial_arc_keeps_all_wedges_reachable() {
+        let center = dvec2(590.0, 300.0);
+        let l = RadialLayout::snap(center, TIGHT, DISC_RADIUS, 4);
+        let mut seen = [false; 4];
+        // Sweep the full circle at r=90; every wedge index must appear.
+        for deg in 0..360 {
+            let a = (deg as f64).to_radians();
+            let cur = dvec2(center.x + 90.0 * a.sin(), center.y - 90.0 * a.cos());
+            if let Some(i) = l.index_at(center, cur) {
+                seen[i] = true;
+            }
+        }
+        assert!(seen.iter().all(|&s| s), "all 4 wedges reachable in the C");
+    }
+
+    #[test]
+    fn click_into_blocked_region_cancels() {
+        let center = dvec2(590.0, 300.0);
+        let mut c = RadialCore::default();
+        c.begin_popup(center, menu(), TIGHT);
+        // r=90 < DISC_RADIUS, but the right side is the blocked (empty) region:
+        // treat like an outside click -> cancel, not a disabled-wedge no-op.
+        assert_eq!(
+            c.click(dvec2(center.x + 90.0, center.y)),
+            RadialOutcome::Cancelled
+        );
+        assert!(!c.is_open());
     }
 }

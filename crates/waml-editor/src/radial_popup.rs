@@ -112,6 +112,7 @@ impl RadialPopup {
         cx: &mut Cx,
         parent: WindowId,
         center: DVec2,
+        parent_client: DVec2,
         items: Vec<RadialItem>,
         time: f64,
     ) {
@@ -140,7 +141,20 @@ impl RadialPopup {
 
         // Radial blooms around the popup centre (in popup-local coords).
         let local_center = dvec2(POPUP_SIZE * 0.5, POPUP_SIZE * 0.5);
-        self.radial.open_popup(cx, local_center, items, time);
+        // Clip bounds for the edge-adaptive fan, expressed in popup-local coords.
+        // The parent window's client rect maps to popup-local by the same shift
+        // that puts `center` at `local_center` (a window-local point `p` lands at
+        // `p - center + POPUP_SIZE/2`). NOTE: this clips the fan at the *window*
+        // edge, not the monitor edge -- correct when maximized (client rect ~=
+        // work area), merely conservative (adapts a touch early, never off-screen)
+        // for a small floating window. True screen-edge adaptation for the
+        // floating popup needs a makepad monitor-rect API (a follow-up, same shape
+        // as the DComp transparent-popup addition).
+        let bounds = Rect {
+            pos: local_center - center,
+            size: parent_client,
+        };
+        self.radial.open_popup(cx, local_center, bounds, items, time);
     }
 
     fn popup_window_id(&self) -> Option<WindowId> {
