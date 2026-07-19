@@ -281,47 +281,65 @@ script_mod! {
         }
     }
 
-    // Pin: pushpin head + needle.
+    // Pin: the Lucide pushpin silhouette -- flared top cap, pinched stem, wide
+    // collar, needle. Traced (viewBox 0..24 -> 0..1, y down) and vertically
+    // inset to keep every vertex >=0.11 off the edge (path strokes degenerate
+    // near the viewport border).
     mod.draw.IconPin = mod.draw.DrawColor{
         pixel: fn() {
             let s = self.rect_size.x
-            let w = s * 0.075
+            let w = s * 0.085
             let sdf = Sdf2d.viewport(self.pos * self.rect_size)
-            sdf.move_to(s * 0.5, s * 0.71)
-            sdf.line_to(s * 0.5, s * 0.92)
+            sdf.move_to(s * 0.33, s * 0.12)
+            sdf.line_to(s * 0.67, s * 0.12)
+            sdf.line_to(s * 0.67, s * 0.27)
+            sdf.line_to(s * 0.625, s * 0.30)
+            sdf.line_to(s * 0.625, s * 0.45)
+            sdf.line_to(s * 0.792, s * 0.63)
+            sdf.line_to(s * 0.792, s * 0.66)
+            sdf.line_to(s * 0.75, s * 0.69)
+            sdf.line_to(s * 0.25, s * 0.69)
+            sdf.line_to(s * 0.208, s * 0.66)
+            sdf.line_to(s * 0.208, s * 0.63)
+            sdf.line_to(s * 0.375, s * 0.45)
+            sdf.line_to(s * 0.375, s * 0.30)
+            sdf.line_to(s * 0.33, s * 0.27)
+            sdf.close_path()
             sdf.stroke(self.color, w)
-            sdf.move_to(s * 0.32, s * 0.29)
-            sdf.line_to(s * 0.68, s * 0.29)
-            sdf.stroke(self.color, w)
-            sdf.move_to(s * 0.34, s * 0.29)
-            sdf.line_to(s * 0.40, s * 0.56)
-            sdf.line_to(s * 0.5, s * 0.71)
-            sdf.line_to(s * 0.60, s * 0.56)
-            sdf.line_to(s * 0.66, s * 0.29)
+            sdf.move_to(s * 0.5, s * 0.69)
+            sdf.line_to(s * 0.5, s * 0.89)
             sdf.stroke(self.color, w)
             return sdf.result
         }
     }
 
-    // Pin-off: pin body with a diagonal strike (unpinned).
+    // Pin-off: the pushpin outline plus a corner-to-corner strike (unpinned).
     mod.draw.IconPinOff = mod.draw.DrawColor{
         pixel: fn() {
             let s = self.rect_size.x
-            let w = s * 0.075
+            let w = s * 0.085
             let sdf = Sdf2d.viewport(self.pos * self.rect_size)
-            sdf.move_to(s * 0.5, s * 0.71)
-            sdf.line_to(s * 0.5, s * 0.92)
+            sdf.move_to(s * 0.33, s * 0.12)
+            sdf.line_to(s * 0.67, s * 0.12)
+            sdf.line_to(s * 0.67, s * 0.27)
+            sdf.line_to(s * 0.625, s * 0.30)
+            sdf.line_to(s * 0.625, s * 0.45)
+            sdf.line_to(s * 0.792, s * 0.63)
+            sdf.line_to(s * 0.792, s * 0.66)
+            sdf.line_to(s * 0.75, s * 0.69)
+            sdf.line_to(s * 0.25, s * 0.69)
+            sdf.line_to(s * 0.208, s * 0.66)
+            sdf.line_to(s * 0.208, s * 0.63)
+            sdf.line_to(s * 0.375, s * 0.45)
+            sdf.line_to(s * 0.375, s * 0.30)
+            sdf.line_to(s * 0.33, s * 0.27)
+            sdf.close_path()
             sdf.stroke(self.color, w)
-            sdf.move_to(s * 0.34, s * 0.29)
-            sdf.line_to(s * 0.40, s * 0.56)
-            sdf.line_to(s * 0.5, s * 0.71)
-            sdf.line_to(s * 0.60, s * 0.56)
+            sdf.move_to(s * 0.5, s * 0.69)
+            sdf.line_to(s * 0.5, s * 0.89)
             sdf.stroke(self.color, w)
-            sdf.move_to(s * 0.32, s * 0.29)
-            sdf.line_to(s * 0.68, s * 0.29)
-            sdf.stroke(self.color, w)
-            sdf.move_to(s * 0.10, s * 0.10)
-            sdf.line_to(s * 0.90, s * 0.90)
+            sdf.move_to(s * 0.14, s * 0.14)
+            sdf.line_to(s * 0.86, s * 0.86)
             sdf.stroke(self.color, w)
             return sdf.result
         }
