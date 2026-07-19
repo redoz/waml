@@ -539,23 +539,26 @@ script_mod! {
         }
     }
 
-    // Pencil: diagonal body tapering to a tip, with the ferrule band.
+    // Pencil: eraser-diamond body tapering to a tip, plus the ferrule crease.
+    // Faithful port of resources/icons/pencil.svg via scripts/gen-icon.py (the
+    // rounded body corners are the source's `a` fillets).
     mod.draw.IconPencil = mod.draw.DrawColor{
         pixel: fn() {
             let s = self.rect_size.x
-            let w = s * 0.075
+            let w = s * 0.068
             let sdf = Sdf2d.viewport(self.pos * self.rect_size)
-            sdf.move_to(s * 0.72, s * 0.13)
-            sdf.line_to(s * 0.88, s * 0.29)
+            sdf.move_to(s * 0.8924, s * 0.2781)
+            sdf.arc_to(s * 0.8071, s * 0.1929, s * 0.1206, 0.7855, -2.3561)
+            sdf.line_to(s * 0.1511, s * 0.6785)
+            sdf.arc_to(s * 0.2115, s * 0.7391, s * 0.0855, -2.3547, -2.8441)
+            sdf.line_to(s * 0.0732, s * 0.9001)
+            sdf.arc_to(s * 0.0937, s * 0.9063, s * 0.0214, -2.8512, -5.0044)
+            sdf.line_to(s * 0.2860, s * 0.8703)
+            sdf.arc_to(s * 0.2611, s * 0.7885, s * 0.0855, 1.2755, 0.7870)
+            sdf.line_to(s * 0.8924, s * 0.2781)
             sdf.stroke(self.color, w)
-            sdf.move_to(s * 0.72, s * 0.13)
-            sdf.line_to(s * 0.13, s * 0.72)
-            sdf.line_to(s * 0.08, s * 0.92)
-            sdf.line_to(s * 0.28, s * 0.87)
-            sdf.line_to(s * 0.88, s * 0.29)
-            sdf.stroke(self.color, w)
-            sdf.move_to(s * 0.60, s * 0.21)
-            sdf.line_to(s * 0.78, s * 0.39)
+            sdf.move_to(s * 0.6283, s * 0.2006)
+            sdf.line_to(s * 0.7994, s * 0.3717)
             sdf.stroke(self.color, w)
             return sdf.result
         }
