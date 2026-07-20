@@ -19,7 +19,6 @@
 //! a `DrawColor` hover highlight, and the shared project-tree `IconSet` SDF
 //! set (the tool dock's glyph material) for the per-row icons.
 
-use crate::icon::{Icon, IconShape};
 use crate::icons::IconSet;
 use crate::radial::{RadialItem, RadialOutcome};
 use makepad_widgets::*;
@@ -374,20 +373,6 @@ impl Widget for AppMenu {
 
 #[allow(dead_code)]
 impl AppMenu {
-    /// The project-tree glyph for a logo-menu row. Takes `&mut IconSet` (not
-    /// `&mut self`) so the draw loop can borrow one glyph without also borrowing
-    /// the rest of `self` -- the tool dock's `icon_for` pattern. Only the three
-    /// logo rows are mapped; anything else (Exit is icon-less by request, or a
-    /// `Glyph` icon) draws nothing.
-    fn glyph_for<'a>(icons: &'a mut IconSet, icon: &Icon) -> Option<&'a mut DrawColor> {
-        match icon {
-            Icon::Shape(IconShape::Properties) => Some(&mut icons.sliders_horizontal),
-            Icon::Shape(IconShape::About) => Some(&mut icons.info),
-            Icon::Shape(IconShape::Remove) => Some(&mut icons.circle_x),
-            _ => None,
-        }
-    }
-
     pub fn is_open(&self) -> bool {
         self.core.is_open()
     }
@@ -516,10 +501,7 @@ impl AppMenu {
             } else {
                 self.draw_icon_idle.color
             };
-            if let Some(glyph) = Self::glyph_for(&mut self.icons, &it.icon) {
-                glyph.color = tint;
-                glyph.draw_abs(cx, icon_rect);
-            }
+            self.icons.draw(cx, it.icon, icon_rect, tint);
             // Label, baseline roughly centred for a ~10px font.
             self.draw_label
                 .draw_abs(cx, dvec2(row.pos.x + LABEL_X, cy - 6.0), &it.label);
@@ -530,13 +512,13 @@ impl AppMenu {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::icon::{Icon, IconShape};
+    use crate::icons::Icon;
 
     fn item(id: LiveId, enabled: bool) -> RadialItem {
         RadialItem {
             id,
             label: "x".into(),
-            icon: Icon::Shape(IconShape::Open),
+            icon: Icon::PackageOpen,
             danger: false,
             enabled,
         }

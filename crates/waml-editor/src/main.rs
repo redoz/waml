@@ -13,7 +13,6 @@ mod action_link;
 mod diagram_switcher;
 mod doc_tabs;
 mod frame;
-mod icon;
 mod icons;
 mod inspector;
 mod inspector_panel;

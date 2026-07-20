@@ -11,7 +11,7 @@
 //! the cancel target. Hit-test is by angle from centre, so screen-edge
 //! clipping of the drawn disc never affects which wedge is pickable.
 
-use crate::icon::Icon;
+use crate::icons::{Icon, IconSet};
 use makepad_widgets::*;
 
 /// Central cancel zone / neutral origin radius (screen px).
@@ -542,7 +542,11 @@ script_mod! {
         draw_disc: mod.draw.RadialDisc{ color: #x00000000 }
         draw_wedge: mod.draw.RadialWedge{ color: #x00000000 }
         draw_hub: mod.draw.RadialHub{ color: #x00000000 }
-        draw_icon: mod.draw.DrawIcon{}
+        // Icon tint holders: the glyph is a catalog DrawColor SDF whose `color`
+        // is set per draw from one of these (no RGBA crosses Rust).
+        draw_icon_accent +: { color: atlas.accent }
+        draw_icon_danger +: { color: atlas.danger }
+        draw_icon_dim +: { color: atlas.text_dim }
         draw_label +: {
             color: atlas.text
             text_style: theme.font_regular{ font_size: 10 line_spacing: 1.2 }
@@ -582,7 +586,15 @@ pub struct Radial {
     draw_hub: DrawColor,
     #[redraw]
     #[live]
-    draw_icon: DrawColor,
+    draw_icon_accent: DrawColor,
+    #[redraw]
+    #[live]
+    draw_icon_danger: DrawColor,
+    #[redraw]
+    #[live]
+    draw_icon_dim: DrawColor,
+    #[live]
+    icons: IconSet,
     #[redraw]
     #[live]
     draw_label: DrawText,
@@ -782,19 +794,16 @@ impl Radial {
                 pos: dvec2(ix - 16.0, iy - 16.0),
                 size: dvec2(32.0, 32.0),
             };
-            if !crate::icon::draw_icon(
-                cx,
-                &mut self.draw_icon,
-                icon_rect,
-                &it.icon,
-                it.danger,
-                it.enabled,
-            ) {
-                if let Some(g) = it.icon.glyph() {
-                    self.draw_label
-                        .draw_abs(cx, dvec2(ix - 4.0, iy - 8.0), &g.to_string());
-                }
-            }
+            // Tint chosen Rust-side, mirroring the old DrawIcon shader's nested
+            // mix: disabled -> dim, else danger -> danger, else accent.
+            let tint = if !it.enabled {
+                self.draw_icon_dim.color
+            } else if it.danger {
+                self.draw_icon_danger.color
+            } else {
+                self.draw_icon_accent.color
+            };
+            self.icons.draw(cx, it.icon, icon_rect, tint);
             self.draw_label
                 .draw_abs(cx, dvec2(ix - 16.0, iy + 14.0), &it.label);
         }
@@ -811,13 +820,13 @@ impl Radial {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::icon::{Icon, IconShape};
+    use crate::icons::Icon;
 
     fn item(id: LiveId, enabled: bool) -> RadialItem {
         RadialItem {
             id,
             label: "x".into(),
-            icon: Icon::Shape(IconShape::Open),
+            icon: Icon::PackageOpen,
             danger: false,
             enabled,
         }

@@ -644,34 +644,34 @@ impl App {
 /// The four node-radial commands (Remove = danger). Ids are what `Radial`
 /// reports on commit; `crate::canvas::node_command_for` maps them back.
 pub fn node_radial_items() -> Vec<crate::radial::RadialItem> {
-    use crate::icon::{Icon, IconShape};
+    use crate::icons::Icon;
     use crate::radial::RadialItem;
     vec![
         RadialItem {
             id: live_id!(open),
             label: "Open".into(),
-            icon: Icon::Shape(IconShape::Open),
+            icon: Icon::PackageOpen,
             danger: false,
             enabled: true,
         },
         RadialItem {
             id: live_id!(style),
             label: "Style".into(),
-            icon: Icon::Shape(IconShape::Style),
+            icon: Icon::Paintbrush,
             danger: false,
             enabled: true,
         },
         RadialItem {
             id: live_id!(markdown),
             label: "Markdown".into(),
-            icon: Icon::Shape(IconShape::Markdown),
+            icon: Icon::SquareMenu,
             danger: false,
             enabled: true,
         },
         RadialItem {
             id: live_id!(remove),
             label: "Remove".into(),
-            icon: Icon::Shape(IconShape::Remove),
+            icon: Icon::Trash,
             danger: true,
             enabled: true,
         },
@@ -682,27 +682,27 @@ pub fn node_radial_items() -> Vec<crate::radial::RadialItem> {
 /// (danger). No Cancel row -- a drop-down dismisses via Esc / outside-click.
 /// Ids are what `AppMenu` reports on commit; `logo_command_for` maps them back.
 pub fn logo_menu_items() -> Vec<crate::radial::RadialItem> {
-    use crate::icon::{Icon, IconShape};
+    use crate::icons::Icon;
     use crate::radial::RadialItem;
     vec![
         RadialItem {
             id: live_id!(properties),
             label: "Properties".into(),
-            icon: Icon::Shape(IconShape::Properties),
+            icon: Icon::SlidersHorizontal,
             danger: false,
             enabled: true,
         },
         RadialItem {
             id: live_id!(about),
             label: "About".into(),
-            icon: Icon::Shape(IconShape::About),
+            icon: Icon::Info,
             danger: false,
             enabled: true,
         },
         RadialItem {
             id: live_id!(exit),
             label: "Exit".into(),
-            icon: Icon::Shape(IconShape::Exit),
+            icon: Icon::CircleX,
             danger: true,
             enabled: true,
         },
@@ -713,13 +713,13 @@ pub fn logo_menu_items() -> Vec<crate::radial::RadialItem> {
 /// model", which returns to the start screen. Uses the shared `app_menu`
 /// widget; the committed id is handled inline in `handle_event`.
 pub fn burger_menu_items() -> Vec<crate::radial::RadialItem> {
-    use crate::icon::{Icon, IconShape};
+    use crate::icons::Icon;
     use crate::radial::RadialItem;
     vec![RadialItem {
         id: live_id!(close_model),
         label: "Close model".into(),
-        // `Remove` keys the shared close (circle-x) glyph in `AppMenu::glyph_for`.
-        icon: Icon::Shape(IconShape::Remove),
+        // The shared close (circle-x) glyph, drawn directly from the catalog.
+        icon: Icon::CircleX,
         danger: false,
         enabled: true,
     }]
@@ -1133,7 +1133,6 @@ impl AppMain for App {
         }
         crate::icons::script_mod(vm);
         crate::frame::script_mod(vm);
-        crate::icon::script_mod(vm);
         crate::radial::script_mod(vm);
         crate::app_menu::script_mod(vm);
         crate::canvas::script_mod(vm);
