@@ -18,76 +18,6 @@ script_mod! {
     use mod.prelude.widgets_internal.*
     use mod.atlas
 
-    // Class: rounded body + a header divider line (the UML class compartment).
-    mod.draw.IconClass = mod.draw.DrawColor{
-        pixel: fn() {
-            let s = self.rect_size.x
-            let w = s * 0.085
-            let m = s * 0.16
-            let sdf = Sdf2d.viewport(self.pos * self.rect_size)
-            sdf.box(m, m, s - 2.0 * m, s - 2.0 * m, s * 0.09)
-            sdf.stroke(self.color, w)
-            // Header divider: a full-width stroke straight through the body, at
-            // the outline weight so it survives 14px (a thin fill bar vanished).
-            sdf.move_to(m, s * 0.42)
-            sdf.line_to(s - m, s * 0.42)
-            sdf.stroke(self.color, w)
-            return sdf.result
-        }
-    }
-
-    // Interface: the same rounded-square body as the class card, minus the
-    // header divider -- keeps the classifier family visually related.
-    mod.draw.IconInterface = mod.draw.DrawColor{
-        pixel: fn() {
-            let s = self.rect_size.x
-            let w = s * 0.085
-            let m = s * 0.16
-            let sdf = Sdf2d.viewport(self.pos * self.rect_size)
-            sdf.box(m, m, s - 2.0 * m, s - 2.0 * m, s * 0.09)
-            sdf.stroke(self.color, w)
-            return sdf.result
-        }
-    }
-
-    // Enum: three squares (top-left, top-right, bottom-left).
-    mod.draw.IconEnum = mod.draw.DrawColor{
-        pixel: fn() {
-            let s = self.rect_size.x
-            let w = s * 0.075
-            let m = s * 0.15
-            let g = s * 0.17
-            let d = (s - 2.0 * m - g) * 0.5
-            let r = s * 0.05
-            let sdf = Sdf2d.viewport(self.pos * self.rect_size)
-            sdf.box(m, m, d, d, r)
-            sdf.stroke(self.color, w)
-            sdf.box(m + d + g, m, d, d, r)
-            sdf.stroke(self.color, w)
-            sdf.box(m, m + d + g, d, d, r)
-            sdf.stroke(self.color, w)
-            return sdf.result
-        }
-    }
-
-    // DataType: a pointy-top hexagon outline.
-    mod.draw.IconDataType = mod.draw.DrawColor{
-        pixel: fn() {
-            let s = self.rect_size.x
-            let w = s * 0.085
-            let sdf = Sdf2d.viewport(self.pos * self.rect_size)
-            sdf.move_to(s * 0.5, s * 0.15)
-            sdf.line_to(s * 0.80, s * 0.32)
-            sdf.line_to(s * 0.80, s * 0.68)
-            sdf.line_to(s * 0.5, s * 0.85)
-            sdf.line_to(s * 0.20, s * 0.68)
-            sdf.line_to(s * 0.20, s * 0.32)
-            sdf.close_path()
-            sdf.stroke(self.color, w)
-            return sdf.result
-        }
-    }
-
     // Package: the Lucide box/cube -- outline, center seam, top-V seam, and the
     // corner flap edge.
     // Faithful port of resources/icons/package.svg via scripts/gen-icon.py.
@@ -119,86 +49,6 @@ script_mod! {
             sdf.stroke(self.color, w)
             sdf.move_to(s * 0.3125, s * 0.1779)
             sdf.line_to(s * 0.6875, s * 0.3925)
-            sdf.stroke(self.color, w)
-            return sdf.result
-        }
-    }
-
-    // Diagram-view family: a sharp canvas frame + a minimal interior mark.
-    // Diagram: two nodes joined by a link (node-graph) inside the frame.
-    mod.draw.IconDiagram = mod.draw.DrawColor{
-        pixel: fn() {
-            let s = self.rect_size.x
-            let w = s * 0.07
-            let m = s * 0.06
-            let sdf = Sdf2d.viewport(self.pos * self.rect_size)
-            sdf.rect(m, m, s - 2.0 * m, s - 2.0 * m)
-            sdf.stroke(self.color, w)
-            sdf.move_to(s * 0.40, s * 0.42)
-            sdf.line_to(s * 0.60, s * 0.58)
-            sdf.stroke(self.color, w)
-            sdf.circle(s * 0.38, s * 0.42, s * 0.07)
-            sdf.fill(self.color)
-            sdf.circle(s * 0.62, s * 0.58, s * 0.07)
-            sdf.fill(self.color)
-            return sdf.result
-        }
-    }
-
-    // Flow: a decision diamond inside the canvas frame -- activity/behavior.
-    mod.draw.IconFlow = mod.draw.DrawColor{
-        pixel: fn() {
-            let s = self.rect_size.x
-            let w = s * 0.07
-            let m = s * 0.06
-            let sdf = Sdf2d.viewport(self.pos * self.rect_size)
-            sdf.rect(m, m, s - 2.0 * m, s - 2.0 * m)
-            sdf.stroke(self.color, w)
-            sdf.move_to(s * 0.5, s * 0.30)
-            sdf.line_to(s * 0.68, s * 0.5)
-            sdf.line_to(s * 0.5, s * 0.70)
-            sdf.line_to(s * 0.32, s * 0.5)
-            sdf.close_path()
-            sdf.stroke(self.color, w)
-            return sdf.result
-        }
-    }
-
-    // Sequence: two stacked message bars inside the canvas frame -- exchange.
-    mod.draw.IconSequence = mod.draw.DrawColor{
-        pixel: fn() {
-            let s = self.rect_size.x
-            let w = s * 0.07
-            let m = s * 0.06
-            let sdf = Sdf2d.viewport(self.pos * self.rect_size)
-            sdf.rect(m, m, s - 2.0 * m, s - 2.0 * m)
-            sdf.stroke(self.color, w)
-            sdf.move_to(s * 0.32, s * 0.42)
-            sdf.line_to(s * 0.62, s * 0.42)
-            sdf.stroke(self.color, w)
-            sdf.move_to(s * 0.38, s * 0.58)
-            sdf.line_to(s * 0.68, s * 0.58)
-            sdf.stroke(self.color, w)
-            return sdf.result
-        }
-    }
-
-    // Note: a dog-eared page.
-    mod.draw.IconNote = mod.draw.DrawColor{
-        pixel: fn() {
-            let s = self.rect_size.x
-            let w = s * 0.085
-            let sdf = Sdf2d.viewport(self.pos * self.rect_size)
-            sdf.move_to(s * 0.27, s * 0.16)
-            sdf.line_to(s * 0.60, s * 0.16)
-            sdf.line_to(s * 0.75, s * 0.31)
-            sdf.line_to(s * 0.75, s * 0.84)
-            sdf.line_to(s * 0.27, s * 0.84)
-            sdf.close_path()
-            sdf.stroke(self.color, w)
-            sdf.move_to(s * 0.60, s * 0.16)
-            sdf.line_to(s * 0.60, s * 0.31)
-            sdf.line_to(s * 0.75, s * 0.31)
             sdf.stroke(self.color, w)
             return sdf.result
         }
@@ -3117,15 +2967,7 @@ script_mod! {
     // Each field is a `DrawColor` pointing at its icon shader; the accent tint
     // is set once here and stays accent regardless of row state.
     mod.widgets.IconSet = set_type_default() do mod.widgets.IconSetBase{
-        class: mod.draw.IconClass{ color: atlas.accent }
-        interface: mod.draw.IconInterface{ color: atlas.accent }
-        enum_type: mod.draw.IconEnum{ color: atlas.accent }
-        datatype: mod.draw.IconDataType{ color: atlas.accent }
         package: mod.draw.IconPackage{ color: atlas.accent }
-        diagram: mod.draw.IconDiagram{ color: atlas.accent }
-        flow: mod.draw.IconFlow{ color: atlas.accent }
-        sequence: mod.draw.IconSequence{ color: atlas.accent }
-        note: mod.draw.IconNote{ color: atlas.accent }
         message: mod.draw.IconMessage{ color: atlas.accent }
         package_plus: mod.draw.IconPackagePlus{ color: atlas.accent }
         paintbrush: mod.draw.IconPaintbrush{ color: atlas.accent }
@@ -3219,23 +3061,7 @@ script_mod! {
 #[derive(Script, ScriptHook)]
 pub struct IconSet {
     #[live]
-    pub class: DrawColor,
-    #[live]
-    pub interface: DrawColor,
-    #[live]
-    pub enum_type: DrawColor,
-    #[live]
-    pub datatype: DrawColor,
-    #[live]
     pub package: DrawColor,
-    #[live]
-    pub diagram: DrawColor,
-    #[live]
-    pub flow: DrawColor,
-    #[live]
-    pub sequence: DrawColor,
-    #[live]
-    pub note: DrawColor,
     #[live]
     pub message: DrawColor,
     #[live]
@@ -3417,15 +3243,7 @@ impl IconSet {
     /// `Icon::ALL` order (the load-bearing order invariant).
     pub fn get(&mut self, icon: Icon) -> &mut DrawColor {
         match icon {
-            Icon::Class => &mut self.class,
-            Icon::Interface => &mut self.interface,
-            Icon::EnumType => &mut self.enum_type,
-            Icon::DataType => &mut self.datatype,
             Icon::Package => &mut self.package,
-            Icon::Diagram => &mut self.diagram,
-            Icon::Flow => &mut self.flow,
-            Icon::Sequence => &mut self.sequence,
-            Icon::Note => &mut self.note,
             Icon::Message => &mut self.message,
             Icon::PackagePlus => &mut self.package_plus,
             Icon::Paintbrush => &mut self.paintbrush,
@@ -3529,15 +3347,7 @@ impl IconSet {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[allow(dead_code)] // some bins include this file without touching every variant
 pub enum Icon {
-    Class,
-    Interface,
-    EnumType,
-    DataType,
     Package,
-    Diagram,
-    Flow,
-    Sequence,
-    Note,
     Message,
     PackagePlus,
     Paintbrush,
@@ -3629,16 +3439,8 @@ pub enum Icon {
 impl Icon {
     /// Every glyph, in field order. The single source of glyph identity; the
     /// `icon_harness` proof grid iterates this.
-    pub const ALL: [Icon; 94] = [
-        Icon::Class,
-        Icon::Interface,
-        Icon::EnumType,
-        Icon::DataType,
+    pub const ALL: [Icon; 86] = [
         Icon::Package,
-        Icon::Diagram,
-        Icon::Flow,
-        Icon::Sequence,
-        Icon::Note,
         Icon::Message,
         Icon::PackagePlus,
         Icon::Paintbrush,
@@ -3730,15 +3532,7 @@ impl Icon {
     /// verbatim from the old `labeled_mut` list so the proof grid is unchanged.
     pub fn label(self) -> &'static str {
         match self {
-            Icon::Class => "class",
-            Icon::Interface => "interface",
-            Icon::EnumType => "enum",
-            Icon::DataType => "datatype",
             Icon::Package => "package",
-            Icon::Diagram => "diagram",
-            Icon::Flow => "flow",
-            Icon::Sequence => "sequence",
-            Icon::Note => "note",
             Icon::Message => "message-square-text",
             Icon::PackagePlus => "package-plus",
             Icon::Paintbrush => "paintbrush-vertical",
@@ -3833,15 +3627,15 @@ mod tests {
     use super::*;
 
     #[test]
-    fn icon_all_has_87_entries() {
-        assert_eq!(Icon::ALL.len(), 87);
+    fn icon_all_has_86_entries() {
+        assert_eq!(Icon::ALL.len(), 86);
     }
 
     #[test]
     fn icon_all_is_in_field_order_at_the_edges() {
-        assert_eq!(Icon::ALL[0], Icon::Class);
-        assert_eq!(Icon::ALL[9], Icon::Message);
-        assert_eq!(Icon::ALL[86], Icon::VectorSquare);
+        assert_eq!(Icon::ALL[0], Icon::Package);
+        assert_eq!(Icon::ALL[1], Icon::Message);
+        assert_eq!(Icon::ALL[85], Icon::ArrowLeftRight);
     }
 
     #[test]
@@ -3853,13 +3647,12 @@ mod tests {
             assert!(!l.is_empty(), "empty label for {icon:?}");
             assert!(seen.insert(l), "duplicate label {l:?}");
         }
-        assert_eq!(seen.len(), 87);
+        assert_eq!(seen.len(), 86);
     }
 
     #[test]
     fn label_reflects_lucide_slugs_not_field_names() {
         // Slugs diverge from field names for the hand-named glyphs.
-        assert_eq!(Icon::EnumType.label(), "enum");
         assert_eq!(Icon::Message.label(), "message-square-text");
         assert_eq!(Icon::Paintbrush.label(), "paintbrush-vertical");
         assert_eq!(Icon::ListCollapse.label(), "list-chevrons-down-up");
