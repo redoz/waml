@@ -596,6 +596,15 @@ pub fn validate(bundle: &[(String, String)]) -> Vec<Diagnostic> {
     let mut docs = Vec::new();
     for (path, text) in bundle {
         let (doc, mut syn) = crate::parse::parse(text);
+        // Index documents are navigation-only: their body is an H1, an optional
+        // description, and a link list (exactly what `reindex` emits). That
+        // content is legitimate, so the preamble `droppable-content` scan — which
+        // assumes prose before the first section is dropped on serialize — does
+        // not apply to them.
+        let is_index = crate::okf::role_of(path) == crate::okf::ConceptRole::Index;
+        if is_index {
+            syn.retain(|d| d.code != DiagCode::DroppableContent);
+        }
         for d in &mut syn {
             d.file = path.clone();
         }
@@ -675,6 +684,44 @@ mod tests {
                 .all(|x| x.code != DiagCode::UnresolvedTarget
                     && x.code != DiagCode::MalformedRelationship),
             "expected `../execution/pipeline-step-run.md` to parse and resolve, got: {d:?}"
+        );
+    }
+
+    #[test]
+    fn index_doc_navigation_is_not_droppable() {
+        // An index.md carries an H1, a description line, and a nav bullet list —
+        // exactly what `reindex` emits. That navigation is the document's whole
+        // purpose and must not be flagged as droppable preamble prose.
+        let b = vec![
+            (
+                "alerts/index.md".into(),
+                "# Alerts\n\nAlert docs.\n\n* [Alert](./alert.md) - a signal\n".into(),
+            ),
+            (
+                "alerts/alert.md".into(),
+                "---\ntype: uml.Class\ntitle: Alert\n---\n# Alert\n".into(),
+            ),
+        ];
+        let d = validate(&b);
+        assert!(
+            d.iter().all(|x| x.code != DiagCode::DroppableContent),
+            "index nav must not be flagged droppable, got: {d:?}"
+        );
+    }
+
+    #[test]
+    fn node_preamble_prose_is_still_droppable() {
+        // The index exemption must NOT leak to classifier docs: stray prose
+        // before the first section is still silently dropped by fmt there.
+        let b = vec![(
+            "alerts/alert.md".into(),
+            "---\ntype: uml.Class\ntitle: Alert\n---\n# Alert\n\nStray prose before a section.\n"
+                .into(),
+        )];
+        let d = validate(&b);
+        assert!(
+            d.iter().any(|x| x.code == DiagCode::DroppableContent),
+            "classifier stray prose must still be droppable, got: {d:?}"
         );
     }
 

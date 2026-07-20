@@ -189,7 +189,7 @@ pub fn resolve_href(referring_path: &str, href: &str) -> String {
 }
 
 /// The reserved role implied by a path's filename.
-fn role_of(path: &str) -> ConceptRole {
+pub(crate) fn role_of(path: &str) -> ConceptRole {
     let seg = path.rsplit(['/', '\\']).next().unwrap_or(path);
     match seg {
         "index.md" => ConceptRole::Index,
