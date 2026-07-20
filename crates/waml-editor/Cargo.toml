@@ -17,3 +17,4 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 # `home_dir()` for the `~/.waml` config root (see src/config.rs).
 dirs = "5"
+rfd = "0.15"

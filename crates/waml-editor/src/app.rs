@@ -37,13 +37,20 @@ script_mod! {
                 caption_bar: SolidView{
                     visible: false
                     flow: Right
-                    height: Fit
+                    // Fill the 44px caption slot and center children on its
+                    // vertical axis; `Fit` let the shorter content top-sit, which
+                    // read as the model name riding too high.
+                    height: Fill
+                    align: Align{y: 0.5}
                     draw_bg.color: atlas.field_bg
-                    // Fixed-width nav cluster so the first doc tab's left edge
-                    // lines up with the project tree's right edge (12 margin +
-                    // 280 tree width = 292).
+                    // Fixed-width nav cluster (212) holding the logo/sep/name. The
+                    // save + burger buttons follow it as direct caption-bar
+                    // children -- their hit/drag-query path only works there, not
+                    // nested -- adding 80px (2 * (36 + 4 margins)) so the burger's
+                    // right edge and the first doc tab both land on the tree's
+                    // right edge (12 margin + 280 tree = 292).
                     nav := View{
-                        width: 292.0
+                        width: 212.0
                         height: Fill
                         flow: Right
                         align: Align{y: 0.5}
@@ -76,31 +83,42 @@ script_mod! {
                             }
                         }
                     }
+                    // `Fill` + `clip_x` bound a long model path to the nav instead
+                    // of letting a `Fit` box grow with the path and shove the
+                    // buttons past 292. Left-aligned; the nav's fixed width holds
+                    // the layout regardless of name length.
                     model_name_view := View{
-                        width: Fit
+                        width: Fill
                         height: Fill
+                        clip_x: true
                         align: Align{x: 0.0, y: 0.5}
                         model_name := Label{
                             text: ""
                             draw_text +: {
                                 color: atlas.text_dim
-                                // Inline font with the same asc/desc trim as the
-                                // doc tabs so the metric box centers on the glyphs
-                                // (theme.font_regular rides high when box-centered).
+                                // Medium weight for a title a touch heavier than
+                                // the tabs. Trim seats the glyphs on the caption's
+                                // vertical center: the y:0.5-centered metric box
+                                // centers glyph mass when ascender-|descender| ~=
+                                // cap height, so a positive `desc` shrinks the box
+                                // bottom and drops the glyphs down (negative rode
+                                // them high).
                                 text_style: TextStyle{
                                     font_size: 13
                                     font_family: FontFamily{
-                                        latin := FontMember{res: crate_resource("self:resources/fonts/IBM_Plex_Sans/IBMPlexSans-Regular.ttf") asc: -0.1 desc: 0.0}
+                                        latin := FontMember{res: crate_resource("self:resources/fonts/IBM_Plex_Sans/IBMPlexSans-Medium.ttf") asc: 0.1 desc: 0.15}
                                     }
                                 }
                             }
                         }
                     }
                     }
-                    // Placeholder action buttons, left of the tab strip: save
-                    // then menu.
-                    save_btn := CaptionButton{ shape: 1.0 }
-                    menu_btn := CaptionButton{ shape: 0.0 }
+                    // Action buttons right after the nav, as direct caption-bar
+                    // children: save then burger. Facing margins trimmed so the
+                    // pair sits tight (2px gap instead of the button default's 6);
+                    // the outer margins hold the 292 edge (212 + 40 + 40).
+                    save_btn := CaptionButton{ shape: 1.0 margin: Inset{left: 3.0, right: 1.0} }
+                    menu_btn := CaptionButton{ shape: 0.0 margin: Inset{left: 1.0, right: 3.0} }
                     doc_tabs := DocTabs{
                         width: Fill
                         height: Fill
@@ -495,9 +513,9 @@ impl App {
     }
 
     /// Load `dir` and populate the editor (tree, canvas, tabs, inspector,
-    /// statusbar, diagram switcher). Returns `false` (having `log!`d) if the
-    /// model fails to load or has no diagrams -- the caller then leaves the
-    /// start screen up rather than revealing a blank editor.
+    /// statusbar, diagram switcher). A model with zero diagrams still opens --
+    /// empty canvas, no diagram tab. Returns `false` (having `log!`d) only when
+    /// the model fails to load, so the caller keeps the start screen up.
     fn open_dir(&mut self, cx: &mut Cx, dir: &Path, wanted_diagram: Option<&str>) -> bool {
         let model = match load::load_model(dir) {
             Ok(m) => m,
@@ -529,41 +547,67 @@ impl App {
             log!("project_tree widget not found / wrong type");
         }
 
-        let Some(diagram) = crate::cli::select_diagram(&self.model, wanted_diagram) else {
-            log!("no diagrams in {:?}", dir);
-            return false;
-        };
-        let (scene, diags) = build_scene(&self.model, diagram);
-        for d in &diags {
-            log!("diagnostic: {d:?}");
-        }
-        let diagram_key = diagram.key.clone();
-        let diagram_title = diagram.title.clone();
-        let node_keys: Vec<String> = scene.nodes.iter().map(|n| n.key.clone()).collect();
-        if let Some(mut canvas) = self
-            .ui
-            .widget(cx, ids!(canvas))
-            .borrow_mut::<crate::canvas::GraphCanvas>()
-        {
-            canvas.set_scene(cx, scene);
-        } else {
-            log!("canvas widget not found / wrong type");
-        }
+        // A model may carry zero diagrams (a pure classifier/behavior bundle). We
+        // still open it -- the tree and inspector are useful on their own -- just
+        // with an empty canvas and no active diagram tab.
+        match crate::cli::select_diagram(&self.model, wanted_diagram) {
+            Some(diagram) => {
+                let (scene, diags) = build_scene(&self.model, diagram);
+                for d in &diags {
+                    log!("diagnostic: {d:?}");
+                }
+                let diagram_key = diagram.key.clone();
+                let diagram_title = diagram.title.clone();
+                let node_keys: Vec<String> = scene.nodes.iter().map(|n| n.key.clone()).collect();
+                if let Some(mut canvas) = self
+                    .ui
+                    .widget(cx, ids!(canvas))
+                    .borrow_mut::<crate::canvas::GraphCanvas>()
+                {
+                    canvas.set_scene(cx, scene);
+                } else {
+                    log!("canvas widget not found / wrong type");
+                }
 
-        self.tabs = OpenTabs::diagram_base(diagram.key.clone(), diagram.title.clone());
-        self.refresh_doc_tabs(cx);
-        if let Some(mut inspector) = self
-            .ui
-            .widget(cx, ids!(inspector))
-            .borrow_mut::<crate::inspector_panel::Inspector>()
-        {
-            inspector.set_subject(cx, &self.model, Subject::None);
+                self.tabs = OpenTabs::diagram_base(diagram.key.clone(), diagram.title.clone());
+                self.refresh_doc_tabs(cx);
+                if let Some(mut inspector) = self
+                    .ui
+                    .widget(cx, ids!(inspector))
+                    .borrow_mut::<crate::inspector_panel::Inspector>()
+                {
+                    inspector.set_subject(cx, &self.model, Subject::None);
+                }
+                self.sync_inspector_elements(cx, &diagram_key, &diagram_title, &node_keys);
+            }
+            None => {
+                log!("no diagrams in {:?}; opening model with an empty canvas", dir);
+                // Empty scene draws nothing and `bounding_box` returns `None`, so
+                // the fit path leaves the camera untouched (no divide-by-zero). No
+                // diagram tab; the tree/inspector below still populate.
+                if let Some(mut canvas) = self
+                    .ui
+                    .widget(cx, ids!(canvas))
+                    .borrow_mut::<crate::canvas::GraphCanvas>()
+                {
+                    canvas.set_scene(cx, crate::scene::Scene::default());
+                }
+                self.tabs = OpenTabs::default();
+                self.refresh_doc_tabs(cx);
+                if let Some(mut inspector) = self
+                    .ui
+                    .widget(cx, ids!(inspector))
+                    .borrow_mut::<crate::inspector_panel::Inspector>()
+                {
+                    inspector.set_subject(cx, &self.model, Subject::None);
+                    inspector.set_diagram_elements(cx, vec![]);
+                }
+            }
         }
-        self.sync_inspector_elements(cx, &diagram_key, &diagram_title, &node_keys);
         self.sync_statusbar(cx);
 
-        // Diagram switcher (U7): push the base tab's current diagram title
-        // into the trigger chip once here.
+        // Diagram switcher (U7): push the base tab's current diagram title into
+        // the trigger chip (empty when the model carries no diagram).
         self.sync_diagram_switcher_current(cx);
         true
     }
@@ -1027,9 +1071,9 @@ impl MatchEvent for App {
             return;
         }
 
-        // Start screen: recent-project rows open directly; New/Open project
-        // stay stubs (`log!` only) until the template picker / rfd dialog
-        // land in a later slice.
+        // Start screen: recent-project rows open directly; Open project runs the
+        // native rfd folder picker; New project stays a stub (`log!` only) until
+        // the template picker lands in a later slice.
         if let Some(screen) = self
             .ui
             .widget(cx, ids!(start_screen))
@@ -1049,7 +1093,18 @@ impl MatchEvent for App {
                         log!("New project: not yet implemented (template picker is a later slice)");
                     }
                     crate::start_screen::StartScreenAction::OpenProject => {
-                        log!("Open project: not yet implemented (rfd picker is a later slice)");
+                        // Native folder picker (blocks the window while modal, as
+                        // OS file dialogs do). Cancel yields `None` (no-op); a
+                        // non-model dir makes `open_dir` log + return false, so we
+                        // stay on the start screen just like a broken recent row.
+                        if let Some(dir) = rfd::FileDialog::new()
+                            .set_title("Open a model")
+                            .pick_folder()
+                        {
+                            if self.open_dir(cx, &dir, None) {
+                                self.show_editor(cx);
+                            }
+                        }
                     }
                     crate::start_screen::StartScreenAction::None => {}
                 }
