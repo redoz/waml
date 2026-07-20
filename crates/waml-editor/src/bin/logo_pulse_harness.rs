@@ -43,12 +43,14 @@ script_mod! {
                     // Rows top->bottom = modes 1..6:
                     //   1 accent · 2 close-encounters · 3 bucket-palette
                     //   4 molten · 5 neon · 6 electric
-                    mod.widgets.LogoMark{ width: 240.0, height: 137.0, auto: true, draw_bg: mod.draw.LogoMark{ mode: 1.0 } }
-                    mod.widgets.LogoMark{ width: 240.0, height: 137.0, auto: true, draw_bg: mod.draw.LogoMark{ mode: 2.0 } }
-                    mod.widgets.LogoMark{ width: 240.0, height: 137.0, auto: true, draw_bg: mod.draw.LogoMark{ mode: 3.0 } }
-                    mod.widgets.LogoMark{ width: 240.0, height: 137.0, auto: true, draw_bg: mod.draw.LogoMark{ mode: 4.0 } }
-                    mod.widgets.LogoMark{ width: 240.0, height: 137.0, auto: true, draw_bg: mod.draw.LogoMark{ mode: 5.0 } }
-                    mod.widgets.LogoMark{ width: 240.0, height: 137.0, auto: true, draw_bg: mod.draw.LogoMark{ mode: 6.0 } }
+                    // `mode` is the widget field (Rust drives the uniform);
+                    // clicking a row crossfades it to the next variant.
+                    mod.widgets.LogoMark{ width: 240.0, height: 137.0, auto: true, mode: 1.0 }
+                    mod.widgets.LogoMark{ width: 240.0, height: 137.0, auto: true, mode: 2.0 }
+                    mod.widgets.LogoMark{ width: 240.0, height: 137.0, auto: true, mode: 3.0 }
+                    mod.widgets.LogoMark{ width: 240.0, height: 137.0, auto: true, mode: 4.0 }
+                    mod.widgets.LogoMark{ width: 240.0, height: 137.0, auto: true, mode: 5.0 }
+                    mod.widgets.LogoMark{ width: 240.0, height: 137.0, auto: true, mode: 6.0 }
                 }
             }
         }

@@ -43,6 +43,12 @@ script_mod! {
         // pulse variants (accent / Close Encounters / bucket-palette / and the
         // agent-authored molten / neon / electric sets). See `pixel`.
         mode: uniform(0.0)
+        // Crossfade coverage scale (0..1), default 1 = solid. Only the splash
+        // drives it below 1: on a logo click it draws the outgoing variant at
+        // fade=1, then the incoming variant over it at fade=0->1, cross-
+        // dissolving the two matched silhouettes. Every other instance leaves
+        // it at rest.
+        fade: uniform(1.0)
         pixel: fn() {
             let r = self.rect_size
             let p = self.pos * r
@@ -557,7 +563,10 @@ script_mod! {
             let cover = clamp(x1 + x2, 0.0, 1.0)
 
             // Blended color, premultiplied by the hole-free silhouette coverage.
-            return vec4(straight * cover, cover)
+            // `fade` scales that coverage so the splash click-crossfade can draw
+            // the incoming variant partially-transparent over the held outgoing.
+            let fcover = cover * self.fade
+            return vec4(straight * fcover, fcover)
         }
     }
 
@@ -576,6 +585,10 @@ script_mod! {
 // Hover ease-in/out duration (seconds): `hover` ramps 0->1 on enter, 1->0 on
 // leave over this window (screenshot-tuned along with the shimmer constants).
 const HOVER_SECS: f64 = 0.15;
+
+// Splash click-crossfade duration (seconds): a logo click cross-dissolves from
+// the current colour variant to the next over this window.
+const FADE_SECS: f64 = 0.4;
 
 /// `LogoMark` -> `App` action (same convention as `GraphCanvasAction`). Carries
 /// the wordmark's screen-space centre so `App` can open the radial there.
@@ -618,6 +631,13 @@ pub struct LogoMark {
     #[live]
     auto: bool,
 
+    // Splash colour-pulse variant (1..6). `#[live]` so the start-screen sets the
+    // initial variant; clicking the splash advances it (1->6, wrapping) and this
+    // field drives the shader `mode` uniform from `draw_walk`. Non-splash
+    // instances leave it 0 (the hover-shimmer mode).
+    #[live]
+    mode: f32,
+
     // Pointer is over the mark.
     #[rust]
     hovered: bool,
@@ -637,6 +657,15 @@ pub struct LogoMark {
     // Last drawn rect (absolute) -- exposed for the drag-query override.
     #[rust]
     rect: Rect,
+    // Click-crossfade state (splash/`auto` only): `prev_mode` is the outgoing
+    // variant held at full opacity while `fade_t` ramps 0->1 fading the new
+    // `mode` in over it; `fading` gates the two-pass draw in `draw_walk`.
+    #[rust]
+    prev_mode: f32,
+    #[rust]
+    fade_t: f32,
+    #[rust]
+    fading: bool,
     #[rust]
     next_frame: NextFrame,
 }
@@ -651,6 +680,15 @@ impl Widget for LogoMark {
                 // Always-on splash pulse: advance the free-running clock and
                 // keep the frame loop alive. Hover easing is unused here.
                 self.time = ne.time as f32;
+                // Advance an in-flight click crossfade toward the new variant.
+                if self.fading {
+                    let dt = (ne.time - self.last_time).max(0.0);
+                    self.fade_t = (self.fade_t + (dt / FADE_SECS) as f32).min(1.0);
+                    if self.fade_t >= 1.0 {
+                        self.fading = false;
+                    }
+                }
+                self.last_time = ne.time;
                 self.next_frame = cx.new_next_frame();
                 self.draw_bg.redraw(cx);
             } else {
@@ -671,7 +709,30 @@ impl Widget for LogoMark {
             }
         }
 
-        // Auto (splash) instances don't hit-test: no Hand cursor, no click.
+        // Splash (auto) instances ARE clickable, to cycle colour variants: a
+        // Hand cursor advertises it and a primary press advances `mode` (1..6,
+        // wrapping) then kicks off a crossfade. Unlike the top-bar mark this
+        // emits no `LogoAction` -- the click is consumed here.
+        if self.auto {
+            match event.hits(cx, self.draw_bg.area()) {
+                Hit::FingerHoverIn(_) | Hit::FingerHoverOver(_) => {
+                    cx.set_cursor(MouseCursor::Hand);
+                }
+                Hit::FingerDown(fe) if fe.is_primary_hit() => {
+                    self.prev_mode = self.mode;
+                    self.mode = self.mode % 6.0 + 1.0;
+                    self.fade_t = 0.0;
+                    self.fading = true;
+                    self.last_time = cx.seconds_since_app_start();
+                    self.next_frame = cx.new_next_frame();
+                    self.draw_bg.redraw(cx);
+                }
+                _ => {}
+            }
+        }
+
+        // Non-splash (top-bar) instances hit-test for the hover shimmer + the
+        // `LogoAction::Clicked` that opens the radial.
         if !self.auto {
             let uid = self.widget_uid();
             match event.hits_with_capture_overload(cx, self.draw_bg.area(), true) {
@@ -715,7 +776,23 @@ impl Widget for LogoMark {
         }
         self.draw_bg.set_uniform(cx, live_id!(hover), &[self.hover]);
         self.draw_bg.set_uniform(cx, live_id!(time), &[self.time]);
-        self.draw_bg.draw_abs(cx, rect);
+        if self.fading {
+            // Two-pass crossfade: outgoing variant at full coverage, then the
+            // incoming one over it at `fade_t`. The two share the identical W
+            // silhouette, so this reads as a colour cross-dissolve with a solid,
+            // hole-free hull. Differing `mode`/`fade` uniforms make makepad break
+            // the batch into two draw calls (see draw_list.rs uniform compare).
+            self.draw_bg.set_uniform(cx, live_id!(mode), &[self.prev_mode]);
+            self.draw_bg.set_uniform(cx, live_id!(fade), &[1.0]);
+            self.draw_bg.draw_abs(cx, rect);
+            self.draw_bg.set_uniform(cx, live_id!(mode), &[self.mode]);
+            self.draw_bg.set_uniform(cx, live_id!(fade), &[self.fade_t]);
+            self.draw_bg.draw_abs(cx, rect);
+        } else {
+            self.draw_bg.set_uniform(cx, live_id!(mode), &[self.mode]);
+            self.draw_bg.set_uniform(cx, live_id!(fade), &[1.0]);
+            self.draw_bg.draw_abs(cx, rect);
+        }
         DrawStep::done()
     }
 }
