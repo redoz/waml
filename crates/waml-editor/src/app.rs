@@ -762,8 +762,8 @@ pub fn burger_menu_items() -> Vec<crate::radial::RadialItem> {
     vec![RadialItem {
         id: live_id!(close_model),
         label: "Close model".into(),
-        // The shared close (circle-x) glyph, drawn directly from the catalog.
-        icon: Icon::CircleX,
+        // The door-closed glyph, drawn directly from the catalog.
+        icon: Icon::DoorClosed,
         danger: false,
         enabled: true,
     }]

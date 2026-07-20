@@ -119,15 +119,15 @@ impl IconSet {
     /// strip; the draw site fetches the shader via `IconSet::get`.
     pub fn icon_for(kind: TreeKind) -> Option<Icon> {
         Some(match kind {
-            TreeKind::Class => Icon::Class,
-            TreeKind::Interface => Icon::Interface,
-            TreeKind::Enum => Icon::EnumType,
-            TreeKind::DataType => Icon::DataType,
+            TreeKind::Class => Icon::Square,
+            TreeKind::Interface => Icon::SquareDashedTopSolid,
+            TreeKind::Enum => Icon::List,
+            TreeKind::DataType => Icon::Braces,
             TreeKind::Package => Icon::Package,
-            TreeKind::Diagram => Icon::Diagram,
-            TreeKind::Behavior => Icon::Flow,
-            TreeKind::Sequence => Icon::Sequence,
-            TreeKind::Note => Icon::Note,
+            TreeKind::Diagram => Icon::Workflow,
+            TreeKind::Behavior => Icon::Activity,
+            TreeKind::Sequence => Icon::ArrowLeftRight,
+            TreeKind::Note => Icon::StickyNote,
             TreeKind::Unknown => return None,
         })
     }
@@ -370,15 +370,15 @@ mod icon_map_tests {
 
     #[test]
     fn tree_kind_maps_to_catalog_icon() {
-        assert_eq!(IconSet::icon_for(TreeKind::Class), Some(Icon::Class));
-        assert_eq!(IconSet::icon_for(TreeKind::Interface), Some(Icon::Interface));
-        assert_eq!(IconSet::icon_for(TreeKind::Enum), Some(Icon::EnumType));
-        assert_eq!(IconSet::icon_for(TreeKind::DataType), Some(Icon::DataType));
+        assert_eq!(IconSet::icon_for(TreeKind::Class), Some(Icon::Square));
+        assert_eq!(IconSet::icon_for(TreeKind::Interface), Some(Icon::SquareDashedTopSolid));
+        assert_eq!(IconSet::icon_for(TreeKind::Enum), Some(Icon::List));
+        assert_eq!(IconSet::icon_for(TreeKind::DataType), Some(Icon::Braces));
         assert_eq!(IconSet::icon_for(TreeKind::Package), Some(Icon::Package));
-        assert_eq!(IconSet::icon_for(TreeKind::Diagram), Some(Icon::Diagram));
-        assert_eq!(IconSet::icon_for(TreeKind::Behavior), Some(Icon::Flow));
-        assert_eq!(IconSet::icon_for(TreeKind::Sequence), Some(Icon::Sequence));
-        assert_eq!(IconSet::icon_for(TreeKind::Note), Some(Icon::Note));
+        assert_eq!(IconSet::icon_for(TreeKind::Diagram), Some(Icon::Workflow));
+        assert_eq!(IconSet::icon_for(TreeKind::Behavior), Some(Icon::Activity));
+        assert_eq!(IconSet::icon_for(TreeKind::Sequence), Some(Icon::ArrowLeftRight));
+        assert_eq!(IconSet::icon_for(TreeKind::Note), Some(Icon::StickyNote));
         assert_eq!(IconSet::icon_for(TreeKind::Unknown), None);
     }
 }
