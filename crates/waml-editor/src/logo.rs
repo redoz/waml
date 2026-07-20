@@ -88,22 +88,44 @@ script_mod! {
             let g5 = self.hover * clamp(0.45 * (0.5 + 0.5 * sin(self.time * W - 4.0 * PHI)) + exp(0.0 - (0.75 - phase) * (0.75 - phase) / WIDTH), 0.0, 1.0)
             let g6 = self.hover * clamp(0.45 * (0.5 + 0.5 * sin(self.time * W - 5.0 * PHI)) + exp(0.0 - (0.88 - phase) * (0.88 - phase) / WIDTH), 0.0, 1.0)
 
-            // -- modes 1-3: shared W->A->M->L letter thump levels --
-            // Each letter is a gaussian pulse centred in the loop; a segment's
-            // level is the max over the letters that contain it. Secondary bleed
-            // (slow breathe) + per-bar flicker fill the idle bars at low
-            // amplitude (kept under the thump) so the mark never goes dead.
-            let seqT = 3.2
+            // -- modes 1-3,7: shared W->A->M->L letter levels: hero then dance --
+            // The loop is one long period (seqT): the hero W->A->M->L sweep is
+            // packed into the FRONT ~40%, then after a short beat the letters
+            // "dance" in a pseudo-random pattern through the back half, settling
+            // before the seamless wrap. Every dance term is a harmonic of the loop
+            // frequency (sin of integer*tau), so the whole cycle is EXACTLY
+            // periodic -- the repeat has no jump. The "random" look is decorrelated
+            // per-letter phase offsets, not real noise (real noise can't loop).
+            // A segment's level is the max over the letters that contain it; the
+            // colour blends (ce/pk/sg below) read the live letter levels, so each
+            // mode dances in its own palette.
+            let seqT = 6.4
             let su = self.time / seqT - floor(self.time / seqT)
-            let wdt = 0.014
-            let dW = su - 0.10
-            let dA = su - 0.32
-            let dM = su - 0.54
-            let dL = su - 0.76
-            let lvW = exp(0.0 - dW * dW / wdt)
-            let lvA = exp(0.0 - dA * dA / wdt)
-            let lvM = exp(0.0 - dM * dM / wdt)
-            let lvL = exp(0.0 - dL * dL / wdt)
+            let tau = 6.2831853 * su
+            // Hero gaussians, front-packed; wdt tuned so each pulse ~0.38s here.
+            let wdt = 0.0035
+            let dW = su - 0.06
+            let dA = su - 0.15
+            let dM = su - 0.24
+            let dL = su - 0.33
+            let hvW = exp(0.0 - dW * dW / wdt)
+            let hvA = exp(0.0 - dA * dA / wdt)
+            let hvM = exp(0.0 - dM * dM / wdt)
+            let hvL = exp(0.0 - dL * dL / wdt)
+            // Dance window: sin^2 bump over su 0.42..0.96 -- zero VALUE and SLOPE
+            // at both ends (pi/0.54 = 5.81776), so no kink where it meets the hero
+            // rest or the wrap. max(0,..) clips it to that interval.
+            let dsd = max(0.0, sin(5.81776 * (su - 0.42)))
+            let dwin = dsd * dsd
+            let dnW = dwin * clamp(0.42 + 0.40 * sin(3.0 * tau + 0.0) + 0.22 * sin(8.0 * tau + 1.3), 0.0, 0.9)
+            let dnA = dwin * clamp(0.42 + 0.40 * sin(3.0 * tau + 1.7) + 0.22 * sin(8.0 * tau + 3.1), 0.0, 0.9)
+            let dnM = dwin * clamp(0.42 + 0.40 * sin(3.0 * tau + 3.4) + 0.22 * sin(8.0 * tau + 5.0), 0.0, 0.9)
+            let dnL = dwin * clamp(0.42 + 0.40 * sin(3.0 * tau + 5.1) + 0.22 * sin(8.0 * tau + 0.7), 0.0, 0.9)
+            // Live letter level = hero pulse OR dance, whichever is brighter.
+            let lvW = max(hvW, dnW)
+            let lvA = max(hvA, dnA)
+            let lvM = max(hvM, dnM)
+            let lvL = max(hvL, dnL)
             let th1 = lvW
             let th2 = max(max(lvW, lvA), lvM)
             let th3 = max(max(lvW, lvA), lvM)
