@@ -21,9 +21,10 @@
 //! touched (UX mock only). A changed commit emits `InspectorAction::Edited`,
 //! which `App` uses to promote the active preview tab to persisted.
 
+use crate::icons::TreeIcons;
 use crate::inspector::{
     build_view, effective_field, subject_to_index, ElementKind, ElementRow, FieldId,
-    InspectorView, Subject,
+    InspectorView, Subject, PICKER_PLACEHOLDER,
 };
 use crate::node_style::{accent_bucket, AccentBucket};
 use makepad_widgets::*;
@@ -35,43 +36,6 @@ script_mod! {
     use mod.atlas
     use mod.widgets.*
     use mod.text.*
-
-    // Atlas-themed popup for the element picker (the fork default reads as a
-    // gray, off-theme menu). White `field_bg` sheet, source-bright frame, accent
-    // check mark, light `selection` row highlight, IBM Plex rows.
-    mod.widgets.InspectorPopupItem = mod.widgets.PopupMenuItem{
-        draw_text +: {
-            color: atlas.text
-            color_hover: uniform(atlas.text)
-            color_active: uniform(atlas.text)
-            text_style: TextStyle{
-                font_size: 13
-                font_family: FontFamily{
-                    latin := FontMember{res: crate_resource("self:resources/fonts/IBM_Plex_Sans/IBMPlexSans-Regular.ttf") asc: -0.1 desc: 0.0}
-                }
-            }
-        }
-        draw_bg +: {
-            color: uniform(atlas.field_bg)
-            color_hover: uniform(atlas.selection)
-            color_active: uniform(atlas.selection)
-            mark_color_active: uniform(atlas.accent)
-            border_radius: uniform(2.0)
-        }
-    }
-
-    mod.widgets.InspectorPopup = mod.widgets.PopupMenuFlat{
-        width: 250.0
-        menu_item: mod.widgets.InspectorPopupItem{}
-        // Same HUD material as the panels: frosted `field_bg` sheet ringed by
-        // the source-bright accent gradient (150deg, `frame_hi` -> `frame_lo`).
-        draw_bg +: {
-            color: uniform(atlas.field_bg)
-            border_color: uniform(atlas.frame_hi)
-            border_color_2: uniform(atlas.frame_lo)
-            border_radius: uniform(2.0)
-        }
-    }
 
     mod.widgets.InspectorBase = #(Inspector::register_widget(vm))
 
@@ -101,58 +65,16 @@ script_mod! {
             }
         }
 
-        // The element-picker bar. `element_bar` reserves the panel's top strip;
-        // right padding leaves room for the pencil/caret/pin glyphs drawn
-        // (immediate mode) in the gap. None of them are child widgets -- all
-        // hand-drawn. The dropdown's own down-arrow is dropped (the field opens
-        // on click); the only caret is the collapse/unfold toggle by the pin.
+        // The element-picker bar. `element_bar` is an empty spacer that just
+        // reserves the panel's top strip (so the container's `Fit` height keeps
+        // the bar when collapsed); everything in it -- the picker field (badge +
+        // selected label), the pencil/caret/pin glyphs, and the owned popup list
+        // -- is hand-drawn immediate-mode in `draw_walk`. The picker is no longer
+        // a fork `DropDown`: its popup is drawn here so each association row can
+        // carry the real `IconSpline` SDF (the fork `PopupMenu` is label-only).
         element_bar := View {
             width: Fill
             height: 56.0
-            flow: Right
-            align: Align{y: 0.5}
-            padding: Inset{left: 16.0, right: 100.0, top: 10.0, bottom: 10.0}
-            spacing: 8.0
-
-            element_picker := DropDown {
-                width: Fill
-                height: Fit
-                // Left padding clears the type-badge drawn over the field's left
-                // inset; the field grows taller from the top/bottom padding.
-                padding: Inset{left: 40.0, right: 10.0, top: 9.0, bottom: 9.0}
-                // The bar sits at the panel top, so always drop the list
-                // downward (default `OnSelected` aligns the selected row over
-                // the field, shoving earlier rows off the top of the window).
-                popup_menu: mod.widgets.InspectorPopup{}
-                popup_menu_position: PopupMenuPosition.BelowInput
-                // Borderless flat white field, no arrow: our own `pixel` fills a
-                // sharp `sdf.rect` (a 0-radius `sdf.box` floods this fork) and
-                // draws nothing else, so the stock down-arrow is gone.
-                draw_bg +: {
-                    color: uniform(atlas.field_bg)
-                    pixel: fn() {
-                        let sdf = Sdf2d.viewport(self.pos * self.rect_size)
-                        sdf.rect(0.0, 0.0, self.rect_size.x, self.rect_size.y)
-                        sdf.fill(self.color)
-                        return sdf.result
-                    }
-                }
-                // Grey (text_dim): the placeholder "Select an element..." reads
-                // as a hint, and a picked element reads as a subdued picker
-                // label (the body below carries the dark, prominent title).
-                draw_text +: {
-                    color: atlas.text_dim
-                    color_hover: uniform(atlas.text_dim)
-                    color_focus: uniform(atlas.text_dim)
-                    color_down: uniform(atlas.text_dim)
-                    text_style: TextStyle{
-                        font_size: 13
-                        font_family: FontFamily{
-                            latin := FontMember{res: crate_resource("self:resources/fonts/IBM_Plex_Sans/IBMPlexSans-Regular.ttf") asc: -0.1 desc: 0.0}
-                        }
-                    }
-                }
-            }
         }
 
         draw_title +: {
@@ -186,6 +108,33 @@ script_mod! {
             }
         }
         draw_field_bg +: { color: atlas.field_bg }
+        // Owned element-picker popup (replaces the fork DropDown so each edge row
+        // can draw the real `IconSpline` SDF). `draw_popup_bg` is the frosted
+        // Atlas HUD sheet; `draw_row_hi` is the hover/selected row wash;
+        // `draw_row_text`/`draw_row_sel` are the row label (dark / accent-when-
+        // selected); `draw_icon_edge` is a colour-only holder whose `color` is
+        // copied onto `icons.spline` per draw (no RGBA crosses Rust).
+        draw_popup_bg: mod.draw.AccentFrame{ color: atlas.field_bg }
+        draw_row_hi +: { color: atlas.selection }
+        draw_row_text +: {
+            color: atlas.text
+            text_style: TextStyle{
+                font_size: 13
+                font_family: FontFamily{
+                    latin := FontMember{res: crate_resource("self:resources/fonts/IBM_Plex_Sans/IBMPlexSans-Regular.ttf") asc: -0.1 desc: 0.0}
+                }
+            }
+        }
+        draw_row_sel +: {
+            color: atlas.accent
+            text_style: TextStyle{
+                font_size: 13
+                font_family: FontFamily{
+                    latin := FontMember{res: crate_resource("self:resources/fonts/IBM_Plex_Sans/IBMPlexSans-Regular.ttf") asc: -0.1 desc: 0.0}
+                }
+            }
+        }
+        draw_icon_edge +: { color: atlas.accent }
         // Pin box: a source-bright frame around a fill that reads accent when
         // pinned, empty (field_bg) when not.
         draw_pin_frame +: { color: atlas.frame_hi }
@@ -283,6 +232,23 @@ pub struct Inspector {
     #[redraw]
     #[live]
     draw_field_bg: DrawColor,
+
+    /// Owned element-picker popup. `draw_popup_bg` is the HUD sheet (AccentFrame);
+    /// `draw_row_hi` washes the hovered/selected row; `draw_row_text`/`draw_row_sel`
+    /// are the row label (dark / accent when selected). `icons` supplies the real
+    /// `IconSpline` SDF drawn on association rows, tinted from `draw_icon_edge`.
+    #[live]
+    draw_popup_bg: DrawColor,
+    #[live]
+    draw_row_hi: DrawColor,
+    #[live]
+    draw_row_text: DrawText,
+    #[live]
+    draw_row_sel: DrawText,
+    #[live]
+    draw_icon_edge: DrawColor,
+    #[live]
+    icons: TreeIcons,
     /// Pin box: frame + one of two fills (on/off), picked by `pinned`.
     #[live]
     draw_pin_frame: DrawColor,
@@ -330,10 +296,20 @@ pub struct Inspector {
     #[rust]
     field_rects: Vec<(FieldId, Rect)>,
 
-    /// The current diagram's picker rows (index 0 = placeholder). Kept in sync
-    /// with the dropdown's labels; a picked index maps back through here.
+    /// The current diagram's picker rows (index 0 = placeholder). A picked
+    /// visual row maps back to a row here by its stored element index.
     #[rust]
     elements: Vec<ElementRow>,
+    /// Owned-popup state: whether the list is open, the hit rects of the visible
+    /// rows (each paired with its index into `elements`), and the hovered row.
+    #[rust]
+    picker_open: bool,
+    #[rust]
+    picker_field_rect: Rect,
+    #[rust]
+    picker_rects: Vec<(usize, Rect)>,
+    #[rust]
+    picker_hover: Option<usize>,
     /// Pin toggle. Visual-only this cut (keep-opaque-on-blur is deferred).
     #[rust]
     pinned: bool,
@@ -369,29 +345,17 @@ const ICON: f64 = 24.0;
 const ICON_GAP: f64 = 8.0;
 // Left type-badge (drawn over the field's left inset).
 const BADGE_SIZE: f64 = 24.0;
+// Owned element-picker popup geometry (px).
+const POPUP_PAD: f64 = 8.0; // sheet inset from the panel edges + inner padding
+const ROW_H_PICK: f64 = 30.0; // per-row height in the popup list
+const ROW_ICON: f64 = 16.0; // spline-icon box on association rows
 
-/// Decorate the picker's rows for *display* in the dropdown popup. The pure
-/// `diagram_elements` projection already orders each source-anchored edge right
-/// after its node; here we render that hierarchy visually: nodes and the diagram
-/// row stay flush-left, while each edge is indented beneath its node as a
-/// `↳ Target` branch (the model label is `Source -> Target`, but under the node
-/// the source is redundant, so only the target shows).
-///
-/// Box-drawing rails (`├ └ │`) would be the natural connector, but IBM Plex Sans
-/// carries none of those glyphs (they'd render as tofu) — the `↳` hook (U+21B3,
-/// which the font *does* have) plus indentation carries the nesting instead.
-/// Kept out of `diagram_elements` so its labels stay canonical for `on_picker_
-/// changed`/`subject_to_index` and the `inspector.rs` tests.
-fn picker_labels(rows: &[ElementRow]) -> Vec<String> {
-    rows.iter()
-        .map(|r| match r.kind {
-            ElementKind::Edge => {
-                let target = r.label.rsplit(" -> ").next().unwrap_or(&r.label);
-                format!("      \u{21b3} {target}")
-            }
-            _ => r.label.clone(),
-        })
-        .collect()
+/// An association row's display text in the picker popup: just the target end.
+/// The model label is `Source -> Target`, but each edge row is drawn beneath its
+/// source node (with the `IconSpline` glyph marking it as an association), so the
+/// source is redundant. Falls back to the whole label if it isn't `A -> B`.
+fn edge_target(label: &str) -> &str {
+    label.rsplit(" -> ").next().unwrap_or(label)
 }
 
 /// RGB hex (no alpha) -> opaque `Vec4`, matching how the DSL decodes `#xrrggbb`.
@@ -421,21 +385,43 @@ fn bucket_color(b: AccentBucket) -> Vec4 {
 
 impl Widget for Inspector {
     fn handle_event(&mut self, cx: &mut Cx, event: &Event, scope: &mut Scope) {
-        // Drive the container + its children (the dropdown and its popup) first.
+        // Drive the container first.
         self.view.handle_event(cx, event, scope);
-        if let Event::Actions(actions) = event {
-            if let Some(idx) = self
-                .view
-                .drop_down(cx, ids!(element_bar.element_picker))
-                .changed(actions)
-            {
-                self.on_picker_changed(cx, idx);
-            }
-        }
 
         let uid = self.widget_uid();
         match event.hits_with_capture_overload(cx, self.view.area(), true) {
+            // Track the hovered popup row so it can wash under the pointer.
+            Hit::FingerHoverIn(fe) | Hit::FingerHoverOver(fe) if self.picker_open => {
+                let hov = self
+                    .picker_rects
+                    .iter()
+                    .find(|(_, r)| r.contains(fe.abs))
+                    .map(|(i, _)| *i);
+                if hov != self.picker_hover {
+                    self.picker_hover = hov;
+                    self.view.redraw(cx);
+                }
+            }
             Hit::FingerUp(fe) if fe.is_primary_hit() => {
+                // Owned picker popup: a row picks, anything else closes.
+                if self.picker_open {
+                    if let Some(idx) = self
+                        .picker_rects
+                        .iter()
+                        .find(|(_, r)| r.contains(fe.abs))
+                        .map(|(i, _)| *i)
+                    {
+                        self.choose_element(cx, idx);
+                    } else {
+                        self.close_picker(cx);
+                    }
+                    return;
+                }
+                // Closed: the picker field opens the list.
+                if self.picker_field_rect.contains(fe.abs) {
+                    self.open_picker(cx);
+                    return;
+                }
                 if self.pin_rect.contains(fe.abs) {
                     self.pinned = !self.pinned;
                     self.view.redraw(cx);
@@ -490,8 +476,15 @@ impl Widget for Inspector {
         // caret. Collapse the frame to hug just the bar; the parent wrapper
         // aligns this panel top-right, so a `Fit` height floats it to the top.
         let collapsed = self.proj.is_none() || self.folded;
+        // Visible popup rows = every element except the index-0 placeholder.
+        let n_rows = self.elements.len().saturating_sub(1);
+        let sheet_h = POPUP_PAD * 2.0 + (n_rows as f64) * ROW_H_PICK;
         let mut walk = walk;
-        if collapsed {
+        if self.picker_open {
+            // Grow the frame to contain the bar + the dropped list, so the list
+            // isn't clipped by the panel (the body is hidden while it's open).
+            walk.height = Size::Fixed(BAR_H + sheet_h);
+        } else if collapsed {
             walk.height = Size::Fit {
                 min: None,
                 max: None,
@@ -502,6 +495,7 @@ impl Widget for Inspector {
         let rect = self.view.area().rect(cx);
         self.view_rect = rect;
         self.field_rects.clear();
+        self.picker_rects.clear();
 
         let cy = rect.pos.y + BAR_H * 0.5;
 
@@ -562,8 +556,36 @@ impl Widget for Inspector {
         self.pencil_rect = pencil;
         self.draw_pencil.draw_abs(cx, pencil);
 
+        // Picker field label: the selected element's title (subdued, text_dim),
+        // or the placeholder when nothing is picked. Sits right of the badge; the
+        // whole left strip of the bar is the click target that opens the list.
+        let sel = subject_to_index(&self.elements, &self.subject);
+        let field_label = self
+            .elements
+            .get(sel)
+            .map(|r| r.label.clone())
+            .unwrap_or_else(|| PICKER_PLACEHOLDER.to_string());
+        let label_x = if self.proj.is_some() {
+            rect.pos.x + PAD + 4.0 + BADGE_SIZE + 10.0
+        } else {
+            rect.pos.x + PAD + 4.0
+        };
+        self.draw_dim
+            .draw_abs(cx, dvec2(label_x, cy - 7.0), &field_label);
+        self.picker_field_rect = Rect {
+            pos: rect.pos,
+            size: dvec2((pencil.pos.x - ICON_GAP - rect.pos.x).max(0.0), BAR_H),
+        };
+
+        // Owned popup list, dropped below the bar. It replaces the body while
+        // open (the frame was sized to bar + list above), so return after.
+        if self.picker_open {
+            self.draw_picker_list(cx, rect, n_rows, sel);
+            return DrawStep::done();
+        }
+
         // Body, below the bar. When collapsed the frame already hugs the bar --
-        // the placeholder lives in the dropdown itself, so there's no body.
+        // the placeholder lives in the field itself, so there's no body.
         if collapsed {
             return DrawStep::done();
         }
@@ -696,39 +718,95 @@ impl Inspector {
             .and_then(|v| v.kind_label.chars().next())
             .map(|c| c.to_uppercase().to_string())
             .unwrap_or_default();
-        let idx = subject_to_index(&self.elements, &self.subject);
-        self.view
-            .drop_down(cx, ids!(element_bar.element_picker))
-            .set_selected_item(cx, idx);
+        // Repointing closes an open picker; the field re-reads its selection
+        // from `subject_to_index` at draw time.
+        self.picker_open = false;
         self.view.redraw(cx);
     }
 
-    /// Feed the element-picker the current diagram's rows. Sets the dropdown's
-    /// labels and re-syncs its selection to the current subject. Called by `App`
-    /// whenever the current diagram changes.
+    /// Feed the element-picker the current diagram's rows. The owned popup reads
+    /// them straight from `self.elements`. Called by `App` whenever the current
+    /// diagram changes.
     pub fn set_diagram_elements(&mut self, cx: &mut Cx, rows: Vec<ElementRow>) {
-        let labels = picker_labels(&rows);
         self.elements = rows;
-        let picker = self.view.drop_down(cx, ids!(element_bar.element_picker));
-        picker.set_labels(cx, labels);
-        let idx = subject_to_index(&self.elements, &self.subject);
-        picker.set_selected_item(cx, idx);
+        self.picker_open = false;
+        self.view.redraw(cx);
     }
 
-    /// Handle a dropdown selection change. Node rows repoint the inspector (via
+    fn open_picker(&mut self, cx: &mut Cx) {
+        self.picker_open = true;
+        self.picker_hover = None;
+        self.view.redraw(cx);
+    }
+
+    fn close_picker(&mut self, cx: &mut Cx) {
+        self.picker_open = false;
+        self.picker_hover = None;
+        self.view.redraw(cx);
+    }
+
+    /// Resolve a click on popup row `idx`. Node rows repoint the inspector (via
     /// an `ElementPicked` action `App` resolves); diagram/edge/placeholder rows
-    /// are no-ops and snap the selection back to the current subject's row.
-    fn on_picker_changed(&mut self, cx: &mut Cx, idx: usize) {
-        match self.elements.get(idx).map(|r| (r.kind, r.key.clone())) {
-            Some((ElementKind::Node, key)) => {
-                cx.widget_action(self.widget_uid(), InspectorAction::ElementPicked(key));
+    /// are no-ops. Either way the list closes.
+    fn choose_element(&mut self, cx: &mut Cx, idx: usize) {
+        let picked = match self.elements.get(idx).map(|r| (r.kind, r.key.clone())) {
+            Some((ElementKind::Node, key)) => Some(key),
+            _ => None,
+        };
+        self.close_picker(cx);
+        if let Some(key) = picked {
+            cx.widget_action(self.widget_uid(), InspectorAction::ElementPicked(key));
+        }
+    }
+
+    /// Draw the owned popup list below the bar: a frosted HUD sheet, then one row
+    /// per element (skipping the index-0 placeholder). Association rows lead with
+    /// the real `IconSpline` SDF and show only the target end; node/diagram rows
+    /// align their labels to the same text column. Records each row's hit rect
+    /// (paired with its `elements` index) for `handle_event`.
+    fn draw_picker_list(&mut self, cx: &mut Cx2d, rect: Rect, n_rows: usize, sel: usize) {
+        let sheet = Rect {
+            pos: dvec2(rect.pos.x + POPUP_PAD, rect.pos.y + BAR_H),
+            size: dvec2(
+                (rect.size.x - POPUP_PAD * 2.0).max(0.0),
+                POPUP_PAD * 2.0 + (n_rows as f64) * ROW_H_PICK,
+            ),
+        };
+        self.draw_popup_bg.draw_abs(cx, sheet);
+
+        let gutter_x = sheet.pos.x + POPUP_PAD;
+        let text_x = gutter_x + ROW_ICON + 8.0;
+        let mut y = sheet.pos.y + POPUP_PAD;
+        for idx in 1..self.elements.len() {
+            let row = self.elements[idx].clone();
+            let row_rect = Rect {
+                pos: dvec2(sheet.pos.x + 3.0, y),
+                size: dvec2((sheet.size.x - 6.0).max(0.0), ROW_H_PICK),
+            };
+            if self.picker_hover == Some(idx) || idx == sel {
+                self.draw_row_hi.draw_abs(cx, row_rect);
             }
-            _ => {
-                let idx = subject_to_index(&self.elements, &self.subject);
-                self.view
-                    .drop_down(cx, ids!(element_bar.element_picker))
-                    .set_selected_item(cx, idx);
+            let text_y = y + (ROW_H_PICK - 16.0) * 0.5;
+            let (label, selected): (&str, bool) = match row.kind {
+                ElementKind::Edge => {
+                    let icon = Rect {
+                        pos: dvec2(gutter_x, y + (ROW_H_PICK - ROW_ICON) * 0.5),
+                        size: dvec2(ROW_ICON, ROW_ICON),
+                    };
+                    self.icons.spline.color = self.draw_icon_edge.color;
+                    self.icons.spline.draw_abs(cx, icon);
+                    (edge_target(&row.label), idx == sel)
+                }
+                _ => (row.label.as_str(), idx == sel),
+            };
+            if selected {
+                self.draw_row_sel.draw_abs(cx, dvec2(text_x, text_y), label);
+            } else {
+                self.draw_row_text
+                    .draw_abs(cx, dvec2(text_x, text_y), label);
             }
+            self.picker_rects.push((idx, row_rect));
+            y += ROW_H_PICK;
         }
     }
 
@@ -819,33 +897,15 @@ impl Inspector {
 mod tests {
     use super::*;
 
-    fn row(kind: ElementKind, key: &str, label: &str) -> ElementRow {
-        ElementRow {
-            key: key.to_string(),
-            label: label.to_string(),
-            kind,
-        }
+    #[test]
+    fn edge_target_returns_target_end() {
+        // Association rows show only the target; the source is implied by the
+        // node the row sits under (plus the spline glyph marking it an edge).
+        assert_eq!(edge_target("Order -> Customer"), "Customer");
     }
 
     #[test]
-    fn picker_labels_pass_node_and_diagram_through_flush_left() {
-        let labels = picker_labels(&[
-            row(ElementKind::Placeholder, "", "Select an element…"),
-            row(ElementKind::Diagram, "d1", "Orders Domain Model"),
-            row(ElementKind::Node, "n1", "Customer"),
-        ]);
-        assert_eq!(labels[0], "Select an element…");
-        assert_eq!(labels[1], "Orders Domain Model");
-        assert_eq!(labels[2], "Customer");
-    }
-
-    #[test]
-    fn picker_labels_nest_edge_as_indented_target_branch() {
-        let labels = picker_labels(&[
-            row(ElementKind::Node, "order", "Order"),
-            row(ElementKind::Edge, "order->customer", "Order -> Customer"),
-        ]);
-        // The edge shows only the target, hooked under its source node.
-        assert_eq!(labels[1], "      \u{21b3} Customer");
+    fn edge_target_falls_back_to_whole_label() {
+        assert_eq!(edge_target("Standalone"), "Standalone");
     }
 }
