@@ -13,6 +13,7 @@
 
 use makepad_widgets::*;
 
+use crate::icons::Icon;
 use crate::icons::IconSet;
 
 script_mod! {
@@ -265,7 +266,7 @@ impl Widget for ToolDock {
             } else {
                 self.draw_icon_idle.color
             };
-            let icon = Self::icon_for(&mut self.icons, tool);
+            let icon = self.icons.get(Self::icon_for(tool));
             icon.color = tint;
             icon.draw_abs(
                 cx,
@@ -284,16 +285,15 @@ impl Widget for ToolDock {
 }
 
 impl ToolDock {
-    /// The SDF icon material for a tool. Takes `&mut IconSet` (not `&mut
-    /// self`) so the draw loop can borrow the icon without also borrowing the
-    /// rest of `self`.
-    fn icon_for(icons: &mut IconSet, tool: Tool) -> &mut DrawColor {
+    /// The catalog glyph for a tool. Pure meaning->glyph map; the draw loop
+    /// fetches the shader via `IconSet::get` and tints it per-draw.
+    fn icon_for(tool: Tool) -> Icon {
         match tool {
-            Tool::Select => &mut icons.mouse_pointer_2,
-            Tool::Add => &mut icons.square_plus,
-            Tool::Connect => &mut icons.spline,
-            Tool::DiagramProps => &mut icons.sliders_horizontal,
-            Tool::Clear => &mut icons.circle_x,
+            Tool::Select => Icon::MousePointer2,
+            Tool::Add => Icon::SquarePlus,
+            Tool::Connect => Icon::Spline,
+            Tool::DiagramProps => Icon::SlidersHorizontal,
+            Tool::Clear => Icon::CircleX,
         }
     }
 
@@ -343,5 +343,20 @@ mod tests {
         for (i, tool) in Tool::ALL.iter().enumerate() {
             assert_eq!(tool.is_mode(), i < 3, "{tool:?} mode-ness mismatch");
         }
+    }
+}
+
+#[cfg(test)]
+mod icon_map_tests {
+    use super::*;
+    use crate::icons::Icon;
+
+    #[test]
+    fn tool_maps_to_catalog_icon() {
+        assert_eq!(ToolDock::icon_for(Tool::Select), Icon::MousePointer2);
+        assert_eq!(ToolDock::icon_for(Tool::Add), Icon::SquarePlus);
+        assert_eq!(ToolDock::icon_for(Tool::Connect), Icon::Spline);
+        assert_eq!(ToolDock::icon_for(Tool::DiagramProps), Icon::SlidersHorizontal);
+        assert_eq!(ToolDock::icon_for(Tool::Clear), Icon::CircleX);
     }
 }

@@ -532,10 +532,10 @@ impl Widget for DocTabs {
             // Leading per-kind glyph, vertically centered in the card. Pixel-
             // rounded like the tree rows so the SDF strokes land on whole device
             // pixels.
-            if let Some(icon) = self.icons.icon_for(tab.node_kind) {
+            if let Some(icon) = IconSet::icon_for(tab.node_kind) {
                 let ix = (x + TEXT_PAD).round();
                 let iy = (tab_rect.pos.y + (tab_rect.size.y - ICON_SIZE) / 2.0).round();
-                icon.draw_abs(
+                self.icons.get(icon).draw_abs(
                     cx,
                     Rect {
                         pos: dvec2(ix, iy),

@@ -21,6 +21,7 @@
 //! touched (UX mock only). A changed commit emits `InspectorAction::Edited`,
 //! which `App` uses to promote the active preview tab to persisted.
 
+use crate::icons::Icon;
 use crate::icons::IconSet;
 use crate::inspector::{
     build_view, effective_field, subject_to_index, ElementKind, ElementRow, FieldId,
@@ -793,8 +794,9 @@ impl Inspector {
                         pos: dvec2(gutter_x, y + (ROW_H_PICK - ROW_ICON) * 0.5),
                         size: dvec2(ROW_ICON, ROW_ICON),
                     };
-                    self.icons.spline.color = self.draw_icon_edge.color;
-                    self.icons.spline.draw_abs(cx, icon);
+                    let dc = self.icons.get(Icon::Spline);
+                    dc.color = self.draw_icon_edge.color;
+                    dc.draw_abs(cx, icon);
                     (edge_target(&row.label), idx == sel)
                 }
                 _ => (row.label.as_str(), idx == sel),

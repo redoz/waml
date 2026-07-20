@@ -9,6 +9,7 @@
 //! Structure mirrors studio's `DesktopFileTree` / `FlatFileTree`, minus the
 //! filter page and git-status dots.
 
+use crate::icons::Icon;
 use crate::icons::IconSet;
 use crate::tree::{ProjectTree as ProjectTreeData, TreeKind, TreeNode};
 use makepad_widgets::*;
@@ -113,22 +114,20 @@ pub enum ProjectTreeAction {
 }
 
 impl IconSet {
-    /// The glyph `DrawColor` for `kind`, or `None` for `Unknown` (which has no
-    /// matching HUD glyph). Shared by the tree rows and the doc-tab strip so
-    /// both pick from one icon set. The `IconSet` set and its SDF shaders live
-    /// in `icons.rs` (also driven by the `icon_harness` bin); this maps our
-    /// domain `TreeKind` onto its fields.
-    pub fn icon_for(&mut self, kind: TreeKind) -> Option<&mut DrawColor> {
+    /// The catalog glyph for `kind`, or `None` for `Unknown` (no matching HUD
+    /// glyph). Pure meaning->glyph map, shared by the tree rows and the doc-tab
+    /// strip; the draw site fetches the shader via `IconSet::get`.
+    pub fn icon_for(kind: TreeKind) -> Option<Icon> {
         Some(match kind {
-            TreeKind::Class => &mut self.class,
-            TreeKind::Interface => &mut self.interface,
-            TreeKind::Enum => &mut self.enum_type,
-            TreeKind::DataType => &mut self.datatype,
-            TreeKind::Package => &mut self.package,
-            TreeKind::Diagram => &mut self.diagram,
-            TreeKind::Behavior => &mut self.flow,
-            TreeKind::Sequence => &mut self.sequence,
-            TreeKind::Note => &mut self.note,
+            TreeKind::Class => Icon::Class,
+            TreeKind::Interface => Icon::Interface,
+            TreeKind::Enum => Icon::EnumType,
+            TreeKind::DataType => Icon::DataType,
+            TreeKind::Package => Icon::Package,
+            TreeKind::Diagram => Icon::Diagram,
+            TreeKind::Behavior => Icon::Flow,
+            TreeKind::Sequence => Icon::Sequence,
+            TreeKind::Note => Icon::Note,
             TreeKind::Unknown => return None,
         })
     }
@@ -194,12 +193,12 @@ fn draw_row_icon(
     row_top: Vec2d,
     depth: usize,
 ) {
-    let Some(icon) = icons.icon_for(kind) else {
+    let Some(icon) = IconSet::icon_for(kind) else {
         return;
     };
     let x = (row_top.x + ICON_LEFT_MARGIN + depth as f64 * ICON_DEPTH_INDENT).round();
     let y = (row_top.y + (ROW_HEIGHT - ICON_SIZE) / 2.0).round();
-    icon.draw_abs(
+    icons.get(icon).draw_abs(
         cx,
         Rect {
             pos: dvec2(x, y),
@@ -361,5 +360,25 @@ mod tests {
             Some(TreeKind::Package)
         );
         assert_eq!(id_to_key.len(), 3);
+    }
+}
+
+#[cfg(test)]
+mod icon_map_tests {
+    use super::*;
+    use crate::icons::{Icon, IconSet};
+
+    #[test]
+    fn tree_kind_maps_to_catalog_icon() {
+        assert_eq!(IconSet::icon_for(TreeKind::Class), Some(Icon::Class));
+        assert_eq!(IconSet::icon_for(TreeKind::Interface), Some(Icon::Interface));
+        assert_eq!(IconSet::icon_for(TreeKind::Enum), Some(Icon::EnumType));
+        assert_eq!(IconSet::icon_for(TreeKind::DataType), Some(Icon::DataType));
+        assert_eq!(IconSet::icon_for(TreeKind::Package), Some(Icon::Package));
+        assert_eq!(IconSet::icon_for(TreeKind::Diagram), Some(Icon::Diagram));
+        assert_eq!(IconSet::icon_for(TreeKind::Behavior), Some(Icon::Flow));
+        assert_eq!(IconSet::icon_for(TreeKind::Sequence), Some(Icon::Sequence));
+        assert_eq!(IconSet::icon_for(TreeKind::Note), Some(Icon::Note));
+        assert_eq!(IconSet::icon_for(TreeKind::Unknown), None);
     }
 }
