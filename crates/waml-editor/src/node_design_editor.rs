@@ -92,20 +92,6 @@ script_mod! {
         }
     }
 
-    // Inset-canvas ground fill (a step below the pane's white). Fixed, non-accent.
-    mod.widgets.NdeGroundBox = View{
-        show_bg: true
-        draw_bg +: {
-            color: #xe9eef4
-            pixel: fn() {
-                let sdf = Sdf2d.viewport(self.pos * self.rect_size)
-                sdf.rect(0.0, 0.0, self.rect_size.x, self.rect_size.y)
-                sdf.fill(self.color)
-                return sdf.result
-            }
-        }
-    }
-
     // Accent swatch: fixed-colour rounded chip (`color` per swatch) with a 1.5px
     // accent selection ring when `sel` > 0.5.
     mod.widgets.NdeSwatchBox = View{
@@ -186,25 +172,26 @@ script_mod! {
                 let w = self.rect_size.x
                 let h = self.rect_size.y
                 sdf.box(1.0, 1.0, w - 2.0, h - 2.0, 2.0)
-                let fa = self.on * mix(0.06, 0.15, self.enabled)
+                let fa = self.on * mix(0.10, 0.28, self.enabled)
                 sdf.fill_keep(vec4(self.accent.x * fa, self.accent.y * fa, self.accent.z * fa, fa))
-                let ba = mix(0.30, 0.48, self.on) * mix(0.5, 1.0, self.enabled)
+                let ba = mix(0.30, 0.70, self.on) * mix(0.5, 1.0, self.enabled)
                 sdf.stroke(vec4(self.accent.x, self.accent.y, self.accent.z, ba), 1.0)
                 return sdf.result
             }
         }
     }
 
-    // Guillemet stereotype chip: an accent-tint rounded fill (the `«label»` text
-    // rides on top as a child Label).
+    // Guillemet stereotype chip: an ACTIVE accent chip (these are the allowed
+    // stereotypes, so they read live -- a SOLID accent fill with white text, like
+    // a selected segment, not a dead grey pill). Text rides on top as a child.
     mod.widgets.NdeTagChipBox = View{
         show_bg: true
         draw_bg +: {
             accent: uniform(atlas.accent)
             pixel: fn() {
                 let sdf = Sdf2d.viewport(self.pos * self.rect_size)
-                sdf.box(0.0, 0.0, self.rect_size.x, self.rect_size.y, 2.0)
-                sdf.fill(vec4(self.accent.x * 0.20, self.accent.y * 0.20, self.accent.z * 0.20, 0.20))
+                sdf.box(0.0, 0.0, self.rect_size.x, self.rect_size.y, 3.0)
+                sdf.fill(vec4(self.accent.x, self.accent.y, self.accent.z, 1.0))
                 return sdf.result
             }
         }
@@ -302,7 +289,7 @@ script_mod! {
             text_style: TextStyle{
                 font_size: 11
                 font_family: FontFamily{ latin := FontMember{res: crate_resource("self:resources/fonts/IBM_Plex_Sans/IBMPlexSans-Regular.ttf") asc: -0.1 desc: 0.0} }
-                line_spacing: 1.2
+                line_spacing: 1.0
             }
         }
     }
@@ -394,10 +381,11 @@ script_mod! {
                 height: Fit
                 flow: Right
 
-                // Inset canvas cell. The live node card is drawn abs, centred in
-                // this ground, from the shared `card::measure` geometry -- so the
-                // cell carries a fixed height rather than hugging a View subtree.
-                stagecell := mod.widgets.NdeGroundBox {
+                // Inset canvas cell (no ground fill -- the node card stands on the
+                // pane's own white). The card is drawn abs, centred in this cell,
+                // from the shared `card::measure` geometry -- so the cell carries a
+                // fixed height rather than hugging a View subtree.
+                stagecell := View {
                     width: 258.0
                     height: 280.0
                     flow: Down
@@ -452,7 +440,7 @@ script_mod! {
                             width: Fill height: Fit flow: Right align: Align{y: 0.5} spacing: 12.0
                             mod.widgets.NdeCtrl { width: 66.0 text: "Style" draw_text +: { color: #x6a7686 } }
                             seg_style := mod.widgets.NdeFrameBox {
-                                width: Fit height: 27.0 flow: Right
+                                width: Fit height: 34.0 flow: Right
                                 draw_bg +: { color: #x00000000 }
                                 seg_band := mod.widgets.NdeSegBox {
                                     width: Fit height: Fill flow: Right align: Align{x: 0.5, y: 0.5}
@@ -473,14 +461,14 @@ script_mod! {
                             padding: Inset{left: 8.0, right: 8.0, top: 6.0, bottom: 6.0}
                             draw_bg +: { color: #xffffff }
                             chip0 := mod.widgets.NdeTagChipBox {
-                                width: Fit height: 22.0 flow: Right align: Align{x: 0.5, y: 0.5}
+                                width: Fit height: 34.0 flow: Right align: Align{x: 0.5, y: 0.5}
                                 padding: Inset{left: 9.0, right: 9.0, top: 0.0, bottom: 0.0}
-                                chip0_lbl := mod.widgets.NdeCtrl { text: "\u{ab}entity\u{bb}" draw_text +: { color: #x22303c } }
+                                chip0_lbl := mod.widgets.NdeCtrl { text: "\u{ab}entity\u{bb}" draw_text +: { color: #xffffff } }
                             }
                             chip1 := mod.widgets.NdeTagChipBox {
-                                width: Fit height: 22.0 flow: Right align: Align{x: 0.5, y: 0.5}
+                                width: Fit height: 34.0 flow: Right align: Align{x: 0.5, y: 0.5}
                                 padding: Inset{left: 9.0, right: 9.0, top: 0.0, bottom: 0.0}
-                                chip1_lbl := mod.widgets.NdeCtrl { text: "\u{ab}aggregate\u{bb}" draw_text +: { color: #x22303c } }
+                                chip1_lbl := mod.widgets.NdeCtrl { text: "\u{ab}aggregate\u{bb}" draw_text +: { color: #xffffff } }
                             }
                             // PLACEHOLDER: adding stereotypes needs a hand-rolled text
                             // entry -- deferred; this is a display-only placeholder.
@@ -491,7 +479,7 @@ script_mod! {
                             width: Fill height: Fit flow: Right align: Align{y: 0.5} spacing: 12.0
                             mod.widgets.NdeCtrl { width: 66.0 text: "Render" draw_text +: { color: #x6a7686 } }
                             seg_render := mod.widgets.NdeFrameBox {
-                                width: Fill height: 27.0 flow: Right
+                                width: Fill height: 34.0 flow: Right
                                 draw_bg +: { color: #x00000000 }
                                 seg_r0 := mod.widgets.NdeSegBox { width: Fill height: Fill flow: Right align: Align{x: 0.5, y: 0.5} draw_bg +: { sel: 1.0 } seg_r0_lbl := mod.widgets.NdeCtrl { text: "All" } }
                                 seg_r1 := mod.widgets.NdeSegBox { width: Fill height: Fill flow: Right align: Align{x: 0.5, y: 0.5} seg_r1_lbl := mod.widgets.NdeCtrl { text: "1" } }
@@ -526,10 +514,10 @@ script_mod! {
                             at_cols := View {
                                 width: Fill height: Fit flow: Right spacing: 5.0
                                 padding: Inset{left: 23.0, right: 0.0, top: 0.0, bottom: 8.0}
-                                col_at_name := mod.widgets.NdeChipBox { width: Fit height: 20.0 flow: Right align: Align{x: 0.5, y: 0.5} padding: Inset{left: 9.0, right: 9.0, top: 0.0, bottom: 0.0} col_at_name_lbl := mod.widgets.NdeCtrl { text: "Name" draw_text +: { color: #x7b8797 font_size: 10 } } }
-                                col_at_vis := mod.widgets.NdeChipBox { width: Fit height: 20.0 flow: Right align: Align{x: 0.5, y: 0.5} padding: Inset{left: 9.0, right: 9.0, top: 0.0, bottom: 0.0} draw_bg +: { on: 1.0 } col_at_vis_lbl := mod.widgets.NdeCtrl { text: "Visibility" draw_text +: { color: #x22303c font_size: 10 } } }
-                                col_at_ty := mod.widgets.NdeChipBox { width: Fit height: 20.0 flow: Right align: Align{x: 0.5, y: 0.5} padding: Inset{left: 9.0, right: 9.0, top: 0.0, bottom: 0.0} draw_bg +: { on: 1.0 } col_at_ty_lbl := mod.widgets.NdeCtrl { text: "Type" draw_text +: { color: #x22303c font_size: 10 } } }
-                                col_at_card := mod.widgets.NdeChipBox { width: Fit height: 20.0 flow: Right align: Align{x: 0.5, y: 0.5} padding: Inset{left: 9.0, right: 9.0, top: 0.0, bottom: 0.0} col_at_card_lbl := mod.widgets.NdeCtrl { text: "Cardinality" draw_text +: { color: #x8a97a6 font_size: 10 } } }
+                                col_at_name := mod.widgets.NdeChipBox { width: Fit height: 28.0 flow: Right align: Align{x: 0.5, y: 0.5} padding: Inset{left: 9.0, right: 9.0, top: 0.0, bottom: 0.0} col_at_name_lbl := mod.widgets.NdeCtrl { text: "Name" draw_text +: { color: #x7b8797 font_size: 10 } } }
+                                col_at_vis := mod.widgets.NdeChipBox { width: Fit height: 28.0 flow: Right align: Align{x: 0.5, y: 0.5} padding: Inset{left: 9.0, right: 9.0, top: 0.0, bottom: 0.0} draw_bg +: { on: 1.0 } col_at_vis_lbl := mod.widgets.NdeCtrl { text: "Visibility" draw_text +: { color: #x22303c font_size: 10 } } }
+                                col_at_ty := mod.widgets.NdeChipBox { width: Fit height: 28.0 flow: Right align: Align{x: 0.5, y: 0.5} padding: Inset{left: 9.0, right: 9.0, top: 0.0, bottom: 0.0} draw_bg +: { on: 1.0 } col_at_ty_lbl := mod.widgets.NdeCtrl { text: "Type" draw_text +: { color: #x22303c font_size: 10 } } }
+                                col_at_card := mod.widgets.NdeChipBox { width: Fit height: 28.0 flow: Right align: Align{x: 0.5, y: 0.5} padding: Inset{left: 9.0, right: 9.0, top: 0.0, bottom: 0.0} col_at_card_lbl := mod.widgets.NdeCtrl { text: "Cardinality" draw_text +: { color: #x8a97a6 font_size: 10 } } }
                             }
                         }
                         item_op := View {
@@ -546,10 +534,10 @@ script_mod! {
                             op_cols := View {
                                 width: Fill height: Fit flow: Right spacing: 5.0
                                 padding: Inset{left: 23.0, right: 0.0, top: 0.0, bottom: 8.0}
-                                col_op_name := mod.widgets.NdeChipBox { width: Fit height: 20.0 flow: Right align: Align{x: 0.5, y: 0.5} padding: Inset{left: 9.0, right: 9.0, top: 0.0, bottom: 0.0} draw_bg +: { enabled: 0.0 } col_op_name_lbl := mod.widgets.NdeCtrl { text: "Name" draw_text +: { color: #xaab4c1 font_size: 10 } } }
-                                col_op_vis := mod.widgets.NdeChipBox { width: Fit height: 20.0 flow: Right align: Align{x: 0.5, y: 0.5} padding: Inset{left: 9.0, right: 9.0, top: 0.0, bottom: 0.0} draw_bg +: { on: 1.0 enabled: 0.0 } col_op_vis_lbl := mod.widgets.NdeCtrl { text: "Visibility" draw_text +: { color: #xaab4c1 font_size: 10 } } }
-                                col_op_par := mod.widgets.NdeChipBox { width: Fit height: 20.0 flow: Right align: Align{x: 0.5, y: 0.5} padding: Inset{left: 9.0, right: 9.0, top: 0.0, bottom: 0.0} draw_bg +: { on: 1.0 enabled: 0.0 } col_op_par_lbl := mod.widgets.NdeCtrl { text: "Params" draw_text +: { color: #xaab4c1 font_size: 10 } } }
-                                col_op_ret := mod.widgets.NdeChipBox { width: Fit height: 20.0 flow: Right align: Align{x: 0.5, y: 0.5} padding: Inset{left: 9.0, right: 9.0, top: 0.0, bottom: 0.0} draw_bg +: { on: 1.0 enabled: 0.0 } col_op_ret_lbl := mod.widgets.NdeCtrl { text: "Return" draw_text +: { color: #xaab4c1 font_size: 10 } } }
+                                col_op_name := mod.widgets.NdeChipBox { width: Fit height: 28.0 flow: Right align: Align{x: 0.5, y: 0.5} padding: Inset{left: 9.0, right: 9.0, top: 0.0, bottom: 0.0} draw_bg +: { enabled: 0.0 } col_op_name_lbl := mod.widgets.NdeCtrl { text: "Name" draw_text +: { color: #xaab4c1 font_size: 10 } } }
+                                col_op_vis := mod.widgets.NdeChipBox { width: Fit height: 28.0 flow: Right align: Align{x: 0.5, y: 0.5} padding: Inset{left: 9.0, right: 9.0, top: 0.0, bottom: 0.0} draw_bg +: { on: 1.0 enabled: 0.0 } col_op_vis_lbl := mod.widgets.NdeCtrl { text: "Visibility" draw_text +: { color: #xaab4c1 font_size: 10 } } }
+                                col_op_par := mod.widgets.NdeChipBox { width: Fit height: 28.0 flow: Right align: Align{x: 0.5, y: 0.5} padding: Inset{left: 9.0, right: 9.0, top: 0.0, bottom: 0.0} draw_bg +: { on: 1.0 enabled: 0.0 } col_op_par_lbl := mod.widgets.NdeCtrl { text: "Params" draw_text +: { color: #xaab4c1 font_size: 10 } } }
+                                col_op_ret := mod.widgets.NdeChipBox { width: Fit height: 28.0 flow: Right align: Align{x: 0.5, y: 0.5} padding: Inset{left: 9.0, right: 9.0, top: 0.0, bottom: 0.0} draw_bg +: { on: 1.0 enabled: 0.0 } col_op_ret_lbl := mod.widgets.NdeCtrl { text: "Return" draw_text +: { color: #xaab4c1 font_size: 10 } } }
                             }
                         }
                         item_bottom := mod.widgets.NdeRule { draw_bg +: { a: 0.16 } }
@@ -702,9 +690,16 @@ pub struct NodeDesignEditor {
 }
 
 impl NodeDesignEditor {
-    /// Current accent colour (opaque).
+    /// Current accent colour (opaque) -- the *node's* designed accent, driven by
+    /// the swatch. Only the preview card reads this.
     fn accent(&self) -> Vec4 {
         rgb(ACCENTS[self.accent_idx])
+    }
+
+    /// The editor chrome's own fixed accent (Atlas blue). Chrome does NOT follow
+    /// the swatch -- picking a colour restyles the node, not the UI.
+    fn ui_accent(&self) -> Vec4 {
+        rgb(ACCENTS[0])
     }
 
     fn apply_region(&mut self, region: Region) {
@@ -790,17 +785,19 @@ impl NodeDesignEditor {
     /// itself is not in the tree -- it is drawn abs in `draw_card` from the
     /// shared `card::measure` geometry; this only syncs the chrome.)
     fn sync(&mut self, cx: &mut Cx2d) {
-        let accent = self.accent();
-        let au = [accent.x, accent.y, accent.z, 1.0];
+        // The chrome carries a FIXED accent -- only the preview node (drawn in
+        // `draw_card`) follows the selected swatch.
+        let ui = self.ui_accent();
+        let ui_au = [ui.x, ui.y, ui.z, 1.0];
         let st = self.state.clone();
 
-        // Accent-material surfaces: push the accent uniform to every one.
+        // Accent-material surfaces: push the fixed UI accent to every one.
         for path in ACCENT_VIEWS {
-            self.tint(cx, path, &au);
+            self.tint(cx, path, &ui_au);
         }
 
         // -- identity header --
-        self.set_label(cx, ids!(pane.phead.meta.phead_stereo), accent);
+        self.set_label(cx, ids!(pane.phead.meta.phead_stereo), ui);
 
         // -- controls: swatch selection rings --
         for (i, path) in SWATCH_VIEWS.iter().enumerate() {
@@ -844,7 +841,7 @@ impl NodeDesignEditor {
 
     /// Compartment row labels, grips, and column-chip on/enabled states.
     fn sync_body_controls(&self, cx: &mut Cx2d, st: &PreviewState) {
-        let accent = self.accent();
+        let accent = self.ui_accent();
         let grip_at = if st.comp_on[0] { accent } else { rgb(0xb3bdca) };
         let grip_op = if st.comp_on[1] { accent } else { rgb(0xb3bdca) };
         self.set_bg_col(cx, ids!(pane.editor.controls.sect_body.item_at.at_crow.grip_at), grip_at);
