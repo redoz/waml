@@ -6,7 +6,7 @@
 //! tracked positions, click regions captured during `draw_walk` and hit-tested
 //! against on `FingerUp`).
 
-use crate::icons::TreeIcons;
+use crate::icons::IconSet;
 use crate::tree::TreeKind;
 use makepad_widgets::*;
 
@@ -371,7 +371,7 @@ pub struct DocTabs {
     /// Per-kind leading glyph set, reusing the project tree's icon material so
     /// tabs and tree read as one system.
     #[live]
-    icons: TreeIcons,
+    icons: IconSet,
 
     #[rust]
     tabs: Vec<DocTab>,

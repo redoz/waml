@@ -15,7 +15,7 @@ mod theme_atlas;
 #[path = "../icons.rs"]
 mod icons;
 
-use icons::TreeIcons;
+use icons::{Icon, IconSet};
 
 script_mod! {
     use mod.prelude.widgets.*
@@ -63,7 +63,7 @@ pub struct IconGrid {
     #[live]
     draw_label: DrawText,
     #[live]
-    icons: TreeIcons,
+    icons: IconSet,
     /// Toggled by Space; swaps the backdrop so glyph contrast is checked on
     /// both Atlas modes without a rebuild.
     #[rust]
@@ -92,7 +92,7 @@ impl Widget for IconGrid {
 
         // Three columns; the grid is taller than the window once the full
         // Lucide set is present, so it scrolls (mouse wheel, see handle_event).
-        let all = self.icons.labeled_mut();
+        let all = Icon::ALL;
         let per_col = all.len().div_ceil(3);
         let content_h = 2.0 * PAD + per_col as f64 * ROW_H;
         self.max_scroll = (content_h - rect.size.y).max(0.0);
@@ -107,17 +107,19 @@ impl Widget for IconGrid {
         } else {
             vec4(0.34, 0.41, 0.49, 1.0)
         };
-        for (i, (name, icon)) in all.into_iter().enumerate() {
+        for (i, icon) in all.into_iter().enumerate() {
             let col = i / per_col;
             let row = i % per_col;
             let col_x = (ox + col as f64 * COL_W).round();
             let zoom_x = (col_x + 220.0).round();
             let row_top = oy + row as f64 * ROW_H;
+            let name = icon.label();
+            let dc = self.icons.get(icon);
             // Small sizes: baseline-aligned along the top band of the row.
             let mut x = col_x;
             for &sz in SIZES.iter() {
                 let y = (row_top + (ZOOM - sz) * 0.5).round();
-                icon.draw_abs(
+                dc.draw_abs(
                     cx,
                     Rect {
                         pos: dvec2(x.round(), y),
@@ -127,7 +129,7 @@ impl Widget for IconGrid {
                 x += 44.0;
             }
             // Zoom cell.
-            icon.draw_abs(
+            dc.draw_abs(
                 cx,
                 Rect {
                     pos: dvec2(zoom_x, row_top.round()),

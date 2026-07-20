@@ -24,7 +24,7 @@ mod theme_atlas;
 #[path = "../icons.rs"]
 mod icons;
 
-use icons::TreeIcons;
+use icons::IconSet;
 
 app_main!(App);
 
@@ -117,7 +117,7 @@ pub struct CompareProbe {
     #[live]
     draw_svg: DrawSvg,
     #[live]
-    icons: TreeIcons,
+    icons: IconSet,
 }
 
 impl CompareProbe {

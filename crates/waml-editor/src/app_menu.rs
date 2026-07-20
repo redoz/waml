@@ -16,11 +16,11 @@
 //! `AppMenuCore` is the pure, GPU-free geometry + state machine (unit tested).
 //! The `AppMenu` widget wraps it with the shared Atlas `AccentFrame` for the
 //! card surface (same source-bright stroke + field-bg fill as canvas nodes),
-//! a `DrawColor` hover highlight, and the shared project-tree `TreeIcons` SDF
+//! a `DrawColor` hover highlight, and the shared project-tree `IconSet` SDF
 //! set (the tool dock's glyph material) for the per-row icons.
 
 use crate::icon::{Icon, IconShape};
-use crate::icons::TreeIcons;
+use crate::icons::IconSet;
 use crate::radial::{RadialItem, RadialOutcome};
 use makepad_widgets::*;
 
@@ -273,7 +273,7 @@ script_mod! {
         // `zoom` defaults to 1.0 (screen-space hairline; no per-frame uniform).
         draw_frame: mod.draw.AccentFrame{ color: atlas.field_bg }
         draw_hover: mod.draw.DrawColor{ color: atlas.selection }
-        // Row glyphs come from the shared project-tree SDF set (`TreeIcons`, the
+        // Row glyphs come from the shared project-tree SDF set (`IconSet`, the
         // same material the tool dock draws). Each is a single-color DrawColor
         // tinted per row from these holders -- no RGBA crosses Rust (the tool
         // dock's idiom): a danger row uses `danger`, the hovered row lights to
@@ -342,7 +342,7 @@ pub struct AppMenu {
     draw_divider_bright: DrawColor,
     /// The shared project-tree SDF glyph set; a row picks one field and tints it.
     #[live]
-    icons: TreeIcons,
+    icons: IconSet,
 
     #[rust]
     core: AppMenuCore,
@@ -374,12 +374,12 @@ impl Widget for AppMenu {
 
 #[allow(dead_code)]
 impl AppMenu {
-    /// The project-tree glyph for a logo-menu row. Takes `&mut TreeIcons` (not
+    /// The project-tree glyph for a logo-menu row. Takes `&mut IconSet` (not
     /// `&mut self`) so the draw loop can borrow one glyph without also borrowing
     /// the rest of `self` -- the tool dock's `icon_for` pattern. Only the three
     /// logo rows are mapped; anything else (Exit is icon-less by request, or a
     /// `Glyph` icon) draws nothing.
-    fn glyph_for<'a>(icons: &'a mut TreeIcons, icon: &Icon) -> Option<&'a mut DrawColor> {
+    fn glyph_for<'a>(icons: &'a mut IconSet, icon: &Icon) -> Option<&'a mut DrawColor> {
         match icon {
             Icon::Shape(IconShape::Properties) => Some(&mut icons.sliders_horizontal),
             Icon::Shape(IconShape::About) => Some(&mut icons.info),

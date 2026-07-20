@@ -13,7 +13,7 @@
 
 use makepad_widgets::*;
 
-use crate::icons::TreeIcons;
+use crate::icons::IconSet;
 
 script_mod! {
     use mod.prelude.widgets_internal.*
@@ -160,7 +160,7 @@ pub struct ToolDock {
     /// SDF icon set (the project tree's material), drawn per item via
     /// `DrawColor::draw_abs`, tinted per-draw from `draw_icon_lit`/`draw_icon_idle`.
     #[live]
-    icons: TreeIcons,
+    icons: IconSet,
 
     #[rust]
     active: Tool,
@@ -284,10 +284,10 @@ impl Widget for ToolDock {
 }
 
 impl ToolDock {
-    /// The SDF icon material for a tool. Takes `&mut TreeIcons` (not `&mut
+    /// The SDF icon material for a tool. Takes `&mut IconSet` (not `&mut
     /// self`) so the draw loop can borrow the icon without also borrowing the
     /// rest of `self`.
-    fn icon_for(icons: &mut TreeIcons, tool: Tool) -> &mut DrawColor {
+    fn icon_for(icons: &mut IconSet, tool: Tool) -> &mut DrawColor {
         match tool {
             Tool::Select => &mut icons.mouse_pointer_2,
             Tool::Add => &mut icons.square_plus,

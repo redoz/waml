@@ -21,7 +21,7 @@
 //! touched (UX mock only). A changed commit emits `InspectorAction::Edited`,
 //! which `App` uses to promote the active preview tab to persisted.
 
-use crate::icons::TreeIcons;
+use crate::icons::IconSet;
 use crate::inspector::{
     build_view, effective_field, subject_to_index, ElementKind, ElementRow, FieldId,
     InspectorView, Subject, PICKER_PLACEHOLDER,
@@ -248,7 +248,7 @@ pub struct Inspector {
     #[live]
     draw_icon_edge: DrawColor,
     #[live]
-    icons: TreeIcons,
+    icons: IconSet,
     /// Pin box: frame + one of two fills (on/off), picked by `pinned`.
     #[live]
     draw_pin_frame: DrawColor,
