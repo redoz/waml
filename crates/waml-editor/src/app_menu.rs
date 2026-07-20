@@ -34,10 +34,14 @@ pub const PAD_V: f64 = 6.0;
 /// this margin off the frame edges (lpx).
 pub const PAD_H: f64 = 4.0;
 /// Gap between the anchor button's bottom edge and the card's top (lpx).
-/// May be negative to tuck the card up under the button; the `.max(CAPTION_H)`
-/// clamp at the anchor sites floors the card top at the caption/body boundary
-/// (below which the body clip rect would eat the card's top frame edge).
-pub const MENU_GAP: f64 = -2.0;
+/// Negative tucks the card up under the button so it hangs off the glyph. The
+/// card draws in the window overlay (see `AppMenu::draw_walk`), so it is not
+/// clipped at the caption/body boundary and a negative value genuinely lifts it.
+/// (The logo anchor still clamps to `CAPTION_H`; the burger does not.)
+pub const MENU_GAP: f64 = -4.0;
+/// Horizontal inset of the card from the anchor button's left edge (lpx), so
+/// the drop-down sits a touch right of the glyph rather than flush under it.
+pub const MENU_INDENT_X: f64 = 2.0;
 /// Caption-bar height (matches `window.caption_bar_height_override` in the App
 /// DSL). The card top is clamped to this so it clears the caption's clip band.
 pub const CAPTION_H: f64 = 44.0;
@@ -272,6 +276,13 @@ pub struct AppMenu {
     #[layout]
     layout: Layout,
 
+    /// Own draw list, drawn into the WINDOW OVERLAY (`begin_overlay_reuse`) so
+    /// the card escapes the body's clip rect and can hang up over the caption
+    /// band -- the same idiom the fork's `PopupMenu`/tooltip use. Without this
+    /// the card is clipped at the caption/body boundary (`CAPTION_H`).
+    #[live]
+    draw_list: DrawList2d,
+
     #[redraw]
     #[live]
     draw_frame: DrawColor,
@@ -313,7 +324,20 @@ impl Widget for AppMenu {
     fn handle_event(&mut self, _cx: &mut Cx, _event: &Event, _scope: &mut Scope) {}
 
     fn draw_walk(&mut self, cx: &mut Cx2d, _scope: &mut Scope, _walk: Walk) -> DrawStep {
+        // Draw nothing when closed (no overlay list to reuse either).
+        if !self.core.is_open() {
+            return DrawStep::done();
+        }
+        // Draw into the window overlay so the card renders over the whole window
+        // -- above the caption band, not clipped at the body's top edge (the
+        // fork `PopupMenu`/tooltip idiom). Content is placed with `draw_abs` in
+        // absolute window coords inside a full-size root turtle.
+        self.draw_list.begin_overlay_reuse(cx);
+        let size = cx.current_pass_size();
+        cx.begin_root_turtle(size, Layout::flow_overlay());
         self.draw(cx);
+        cx.end_pass_sized_turtle();
+        self.draw_list.end(cx);
         DrawStep::done()
     }
 }
