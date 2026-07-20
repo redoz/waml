@@ -19,6 +19,7 @@ mod inspector;
 mod inspector_panel;
 mod load;
 mod logo;
+mod node_design_editor;
 mod node_style;
 mod radial;
 mod recent_row;
