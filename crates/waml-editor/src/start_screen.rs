@@ -222,7 +222,7 @@ script_mod! {
                     width: 260.0
                     height: Fit
                     flow: Down
-                    spacing: 12.0
+                    spacing: 4.0
                     start_eyebrow := Label {
                         text: "START"
                         draw_text +: {
