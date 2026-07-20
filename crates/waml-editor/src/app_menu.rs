@@ -30,6 +30,9 @@ pub const MENU_W: f64 = 200.0;
 pub const ROW_H: f64 = 34.0;
 /// Top/bottom padding inside the card (screen px).
 pub const PAD_V: f64 = 6.0;
+/// Left/right padding inside the card: the row highlight + separators hold
+/// this margin off the frame edges (screen px).
+pub const PAD_H: f64 = 4.0;
 /// Gap between the logo's bottom edge and the card's top (screen px).
 pub const MENU_GAP: f64 = 4.0;
 /// Caption-bar height (matches `window.caption_bar_height_override` in the App
@@ -170,13 +173,15 @@ script_mod! {
         draw_icon_idle +: { color: atlas.text }
         draw_icon_accent +: { color: atlas.accent }
         draw_icon_danger +: { color: atlas.danger }
-        // Row separators: a dim hairline between every pair of rows, and a
-        // brighter one above the danger (Exit) row to set it apart.
-        draw_divider: mod.draw.DrawColor{ color: atlas.frame_lo }
-        draw_divider_bright: mod.draw.DrawColor{ color: atlas.frame_hi }
+        // Row separators: a very faint hairline between ordinary rows
+        // (`accent_soft`, ~14% accent), and a medium one above the danger
+        // (Exit) row (`frame_lo`, ~50%) to set it apart -- both far lighter
+        // than the frame stroke so they read as whispers, not a grid.
+        draw_divider: mod.draw.DrawColor{ color: atlas.accent_soft }
+        draw_divider_bright: mod.draw.DrawColor{ color: atlas.frame_lo }
         draw_label +: {
             color: atlas.text
-            text_style: theme.font_regular{ font_size: 11 line_spacing: 1.2 }
+            text_style: theme.font_regular{ font_size: 10 line_spacing: 1.2 }
         }
     }
 }
@@ -279,6 +284,10 @@ impl AppMenu {
             }
             Event::MouseDown(e) if e.button.is_primary() => self.core.click(e.abs),
             Event::KeyDown(ke) if ke.key_code == KeyCode::Escape => self.core.esc(),
+            // Behave like a real menu: dismiss the instant the window loses
+            // focus (alt-tab, click into another app / window). In-window
+            // clicks elsewhere already dismiss via the outside-click path.
+            Event::WindowLostFocus(_) => self.core.esc(),
             _ => RadialOutcome::None,
         };
         if outcome != RadialOutcome::None {
@@ -294,7 +303,11 @@ impl AppMenu {
         }
         let panel = self.core.panel_rect();
         // Card surface: source-bright Atlas frame + field-bg fill in one SDF
-        // pass (see `AccentFrame` in `frame.rs`), matching the canvas nodes.
+        // pass (see `AccentFrame` in `frame.rs`). `zoom` scales the frame's
+        // inset + stroke; a menu wants a thin hairline (canvas nodes ride at
+        // 1.0), so drive it below 1 -- a full-weight ring reads too heavy and
+        // detaches the card from the wordmark it drops from.
+        self.draw_frame.set_uniform(cx, live_id!(zoom), &[0.6]);
         self.draw_frame.draw_abs(cx, panel);
 
         let items = self.core.items().to_vec();
@@ -302,12 +315,17 @@ impl AppMenu {
         for (i, it) in items.iter().enumerate() {
             let row = self.core.row_rect(i);
             let cy = row.pos.y + row.size.y * 0.5;
-            // Separator at the top edge of every row after the first: a dim
-            // hairline, or the brighter one where the danger (Exit) row begins.
+            // Separator above every row after the first, inset off both frame
+            // edges (a full-bleed hairline touching the stroke reads as a boxy
+            // grid). Between ordinary rows it's a faint whisper; above the
+            // danger (Exit) row it's a brighter, real separator.
             if i > 0 {
+                // The danger separator spans the content margin; the ordinary
+                // whisper starts under the label so it reads as a group rule.
+                let left = if it.danger { PAD_H } else { 42.0 };
                 let div = Rect {
-                    pos: dvec2(panel.pos.x + 1.5, row.pos.y),
-                    size: dvec2(panel.size.x - 3.0, 1.0),
+                    pos: dvec2(panel.pos.x + left, row.pos.y),
+                    size: dvec2(panel.size.x - left - PAD_H, 1.0),
                 };
                 if it.danger {
                     self.draw_divider_bright.draw_abs(cx, div);
@@ -316,10 +334,11 @@ impl AppMenu {
                 }
             }
             if hovered == Some(i) && it.enabled {
-                // Hover highlight, inset a touch so the frame shows around it.
+                // Hover highlight, full row height but inset `PAD_H` off the
+                // frame edges so the card keeps an even internal margin.
                 let hi = Rect {
-                    pos: dvec2(row.pos.x + 3.0, row.pos.y + 2.0),
-                    size: dvec2(row.size.x - 6.0, row.size.y - 4.0),
+                    pos: dvec2(panel.pos.x + PAD_H, row.pos.y),
+                    size: dvec2(panel.size.x - PAD_H * 2.0, row.size.y),
                 };
                 self.draw_hover.draw_abs(cx, hi);
             }
@@ -327,8 +346,8 @@ impl AppMenu {
             // danger row is red, the hovered row lights to accent, the rest rest
             // in text; a disabled row (none today) would also fall to idle.
             let icon_rect = Rect {
-                pos: dvec2(row.pos.x + 12.0, cy - 10.0),
-                size: dvec2(20.0, 20.0),
+                pos: dvec2(row.pos.x + 14.0, cy - 8.0),
+                size: dvec2(16.0, 16.0),
             };
             let tint = if it.danger {
                 self.draw_icon_danger.color
@@ -341,9 +360,9 @@ impl AppMenu {
                 glyph.color = tint;
                 glyph.draw_abs(cx, icon_rect);
             }
-            // Label, baseline roughly centred for an ~11px font.
+            // Label, baseline roughly centred for a ~10px font.
             self.draw_label
-                .draw_abs(cx, dvec2(row.pos.x + 42.0, cy - 7.0), &it.label);
+                .draw_abs(cx, dvec2(row.pos.x + 42.0, cy - 6.0), &it.label);
         }
     }
 }

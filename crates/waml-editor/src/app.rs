@@ -1223,7 +1223,19 @@ impl AppMain for App {
                     .widget(cx, ids!(menu_btn))
                     .as_caption_button()
                     .hits(dq.abs);
-            if over_tab || over_logo || over_btn {
+            // While the drop-down is open, treat the WHOLE caption as client
+            // area. The header is otherwise an OS window-drag region, so a press
+            // there starts a drag and never reaches the app as a click -- the
+            // one spot the menu wouldn't dismiss from. Client-izing it turns a
+            // header press into a normal MouseDown, which the menu's
+            // outside-click path dismisses on.
+            let menu_open = self
+                .ui
+                .widget(cx, ids!(app_menu))
+                .borrow::<crate::app_menu::AppMenu>()
+                .map(|m| m.is_open())
+                .unwrap_or(false);
+            if over_tab || over_logo || over_btn || menu_open {
                 dq.response.set(WindowDragQueryResponse::Client);
             }
         }
