@@ -102,20 +102,24 @@ script_mod! {
             let seqT = 6.4
             let su = self.time / seqT - floor(self.time / seqT)
             let tau = 6.2831853 * su
-            // Hero gaussians, front-packed; wdt tuned so each pulse ~0.38s here.
+            // Hero gaussians. Centres 0.16..0.43 (spacing 0.09) so the FIRST
+            // pulse is ~0 at su=0 (exp(-0.16^2/0.0035) ~ 0.0007) and the LAST is
+            // ~0 by su=1 -- the whole hero term is flat-zero across the wrap, no
+            // pop. wdt tuned so each pulse ~0.38s at this period.
             let wdt = 0.0035
-            let dW = su - 0.06
-            let dA = su - 0.15
-            let dM = su - 0.24
-            let dL = su - 0.33
+            let dW = su - 0.16
+            let dA = su - 0.25
+            let dM = su - 0.34
+            let dL = su - 0.43
             let hvW = exp(0.0 - dW * dW / wdt)
             let hvA = exp(0.0 - dA * dA / wdt)
             let hvM = exp(0.0 - dM * dM / wdt)
             let hvL = exp(0.0 - dL * dL / wdt)
-            // Dance window: sin^2 bump over su 0.42..0.96 -- zero VALUE and SLOPE
-            // at both ends (pi/0.54 = 5.81776), so no kink where it meets the hero
-            // rest or the wrap. max(0,..) clips it to that interval.
-            let dsd = max(0.0, sin(5.81776 * (su - 0.42)))
+            // Dance window: sin^2 bump over su 0.52..0.99 -- zero VALUE and SLOPE
+            // at both ends (pi/0.47 = 6.6842), so it tapers smoothly to nothing
+            // before the wrap and there is no kink where it meets the hero rest.
+            // max(0,..) clips it to that interval.
+            let dsd = max(0.0, sin(6.6842 * (su - 0.52)))
             let dwin = dsd * dsd
             let dnW = dwin * clamp(0.42 + 0.40 * sin(3.0 * tau + 0.0) + 0.22 * sin(8.0 * tau + 1.3), 0.0, 0.9)
             let dnA = dwin * clamp(0.42 + 0.40 * sin(3.0 * tau + 1.7) + 0.22 * sin(8.0 * tau + 3.1), 0.0, 0.9)
