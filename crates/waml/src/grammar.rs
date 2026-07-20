@@ -14,7 +14,7 @@ use crate::syntax::{
 static ATTR_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^- (?:([+\-#~]) )?([A-Za-z_][A-Za-z0-9_]*): (.+)$").unwrap());
 static LINK_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"^\[([^\]]+)\]\(\./(.+?)\.md\)$").unwrap());
+    LazyLock::new(|| Regex::new(r"^\[([^\]]+)\]\((?:\./)?((?:\.\./)*.+?)\.md\)$").unwrap());
 static MULT_TAIL_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^(.*?)\s+\{([^{}]*)\}$").unwrap());
 static VALUE_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^- (\S.*)$").unwrap());
@@ -38,8 +38,8 @@ static SLOT_ASSIGN_RE: LazyLock<Regex> = LazyLock::new(|| {
 static REL_RE: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(concat!(
         r"^- (associates|aggregates|composes|specializes|implements|depends|includes|extends|instance of|links) ",
-        r"\[([^\]]+)\]\(\./(.+?)\.md\)",
-        r#"(?: as (?:"([^"]*)"|\[([^\]]+)\]\(\./(.+?)\.md\)))?"#,
+        r"\[([^\]]+)\]\((?:\./)?((?:\.\./)*.+?)\.md\)",
+        r#"(?: as (?:"([^"]*)"|\[([^\]]+)\]\((?:\./)?((?:\.\./)*.+?)\.md\)))?"#,
         r"(?:\s*:\s*(.+))?$",
     ))
     .unwrap()
@@ -553,13 +553,24 @@ pub fn render_members_block(block: &MembersBlock) -> String {
     out
 }
 
+/// Render a link href from a stored slug stem. Bare same-dir slugs regain the
+/// `./` prefix; parent-relative stems (`../…`) already carry their prefix and
+/// are emitted verbatim — the inverse of the `(?:\./)?((?:\.\./)*…)` capture.
+pub(crate) fn emit_href(slug: &str) -> String {
+    if slug.starts_with("..") {
+        format!("{slug}.md")
+    } else {
+        format!("./{slug}.md")
+    }
+}
+
 pub fn render_attribute_line(a: &Attribute) -> String {
     let vis = a
         .visibility
         .map(|v| format!("{} ", v.marker()))
         .unwrap_or_default();
     let ty = match &a.ty.ref_ {
-        Some(slug) => format!("[{}](./{}.md)", a.ty.name, slug),
+        Some(slug) => format!("[{}]({})", a.ty.name, emit_href(slug)),
         None => a.ty.name.clone(),
     };
     let mult = if a.multiplicity.as_str() == "1" {
@@ -584,11 +595,13 @@ pub fn render_ends(from: &RelEnd, to: &RelEnd) -> String {
 }
 
 pub fn render_relationship_line(r: &ParsedRel) -> String {
-    let link = format!("[{}](./{}.md)", r.target_title, r.target_slug);
+    let link = format!("[{}]({})", r.target_title, emit_href(&r.target_slug));
     let name = match &r.name {
         None => String::new(),
         Some(ParsedName::Label(s)) => format!(" as \"{s}\""),
-        Some(ParsedName::Ref { title, slug }) => format!(" as [{title}](./{slug}.md)"),
+        Some(ParsedName::Ref { title, slug }) => {
+            format!(" as [{title}]({})", emit_href(slug))
+        }
     };
     let has_ends = r.from_end.multiplicity.is_some() || r.to_end.multiplicity.is_some();
     if !r.kind.is_ended() || !has_ends {
@@ -1252,6 +1265,49 @@ mod tests {
         );
         assert_eq!(a.multiplicity.as_str(), "0..1");
         assert_eq!(a.visibility, None);
+    }
+
+    #[test]
+    fn parses_and_round_trips_parent_relative_attribute_link() {
+        // A cross-package attribute type link that steps up a directory.
+        let line = "- trigger: [Trigger](../vocabularies/trigger.md)";
+        let a = parse_attribute_line(line).unwrap();
+        assert_eq!(
+            a.ty,
+            TypeRef {
+                name: "Trigger".to_string(),
+                ref_: Some("../vocabularies/trigger".to_string())
+            }
+        );
+        assert_eq!(render_attribute_line(&a), line);
+    }
+
+    #[test]
+    fn same_dir_attribute_link_still_round_trips_with_dot_slash() {
+        // Regression: bare same-dir slugs keep the `./` prefix on the way out.
+        let line = "- status: [OrderStatus](./order-status.md) {0..1}";
+        let a = parse_attribute_line(line).unwrap();
+        assert_eq!(a.ty.ref_.as_deref(), Some("order-status"));
+        assert_eq!(render_attribute_line(&a), line);
+    }
+
+    #[test]
+    fn parses_and_round_trips_parent_relative_relationship_target() {
+        let line = "- associates [Pipeline Step Run](../execution/pipeline-step-run.md) as \"attributedTo\": 0..* to 1";
+        let r = parse_relationship_line(line).unwrap();
+        assert_eq!(r.target_slug, "../execution/pipeline-step-run");
+        assert_eq!(render_relationship_line(&r), line);
+    }
+
+    #[test]
+    fn parses_and_round_trips_parent_relative_relationship_name_link() {
+        let line = "- associates [B](./b.md) as [Assoc](../assoc/link.md): 1 to 1";
+        let r = parse_relationship_line(line).unwrap();
+        match &r.name {
+            Some(ParsedName::Ref { slug, .. }) => assert_eq!(slug, "../assoc/link"),
+            other => panic!("expected a name link, got {other:?}"),
+        }
+        assert_eq!(render_relationship_line(&r), line);
     }
 
     #[test]

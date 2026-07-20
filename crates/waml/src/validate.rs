@@ -660,6 +660,25 @@ mod tests {
     }
 
     #[test]
+    fn parent_relative_cross_package_link_resolves_and_is_not_malformed() {
+        // A node in `alerts/` reaching a node in `execution/` via `../` must
+        // parse (no malformed-relationship) and resolve (no unresolved-target).
+        let b = vec![
+            ("alerts/alert-occurrence.md".into(),
+             "---\ntype: uml.Class\ntitle: Alert Occurrence\n---\n# Alert Occurrence\n\n## Relationships\n- associates [Pipeline Step Run](../execution/pipeline-step-run.md) as \"attributedTo\": 0..* to 1\n".into()),
+            ("execution/pipeline-step-run.md".into(),
+             "---\ntype: uml.Class\ntitle: Pipeline Step Run\n---\n# Pipeline Step Run\n".into()),
+        ];
+        let d = validate(&b);
+        assert!(
+            d.iter()
+                .all(|x| x.code != DiagCode::UnresolvedTarget
+                    && x.code != DiagCode::MalformedRelationship),
+            "expected `../execution/pipeline-step-run.md` to parse and resolve, got: {d:?}"
+        );
+    }
+
+    #[test]
     fn relationship_target_does_not_fall_back_to_wrong_directory_same_basename_doc() {
         // Same shape as above but WITHOUT `tables/order.md` present — the
         // relationship must NOT resolve against `shop/order.md` (proving the

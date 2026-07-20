@@ -29,9 +29,9 @@ pub(crate) fn line_at(src: &str, byte: usize) -> usize {
         .count()
 }
 
-/// Byte range of `[Title](./slug.md)` within `line`, or the whole bullet.
+/// Byte range of `[Title](href)` within `line`, or the whole bullet.
 pub(crate) fn find_link_span(line: &str, title: &str, slug: &str) -> (usize, usize) {
-    let needle = format!("[{title}](./{slug}.md)");
+    let needle = format!("[{title}]({})", crate::grammar::emit_href(slug));
     match line.find(&needle) {
         Some(s) => (s, s + needle.len()),
         None => bullet_range(line),
