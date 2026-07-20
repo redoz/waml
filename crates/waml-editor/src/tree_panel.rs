@@ -9,7 +9,7 @@
 //! Structure mirrors studio's `DesktopFileTree` / `FlatFileTree`, minus the
 //! filter page and git-status dots.
 
-use crate::icons::TreeIcons;
+use crate::icons::IconSet;
 use crate::tree::{ProjectTree as ProjectTreeData, TreeKind, TreeNode};
 use makepad_widgets::*;
 use std::collections::HashMap;
@@ -112,10 +112,10 @@ pub enum ProjectTreeAction {
     FocusClassifier(String),
 }
 
-impl TreeIcons {
+impl IconSet {
     /// The glyph `DrawColor` for `kind`, or `None` for `Unknown` (which has no
     /// matching HUD glyph). Shared by the tree rows and the doc-tab strip so
-    /// both pick from one icon set. The `TreeIcons` set and its SDF shaders live
+    /// both pick from one icon set. The `IconSet` set and its SDF shaders live
     /// in `icons.rs` (also driven by the `icon_harness` bin); this maps our
     /// domain `TreeKind` onto its fields.
     pub fn icon_for(&mut self, kind: TreeKind) -> Option<&mut DrawColor> {
@@ -152,7 +152,7 @@ pub struct ProjectTree {
     #[rust]
     id_to_kind: HashMap<LiveId, TreeKind>,
     #[live]
-    icons: TreeIcons,
+    icons: IconSet,
 }
 
 // Tree-row selection highlight is click-only, provided by `FileTree`'s own
@@ -189,7 +189,7 @@ fn build_id_maps(tree: &ProjectTreeData) -> (HashMap<LiveId, String>, HashMap<Li
 /// them.
 fn draw_row_icon(
     cx: &mut Cx2d,
-    icons: &mut TreeIcons,
+    icons: &mut IconSet,
     kind: TreeKind,
     row_top: Vec2d,
     depth: usize,
@@ -216,7 +216,7 @@ fn draw_nodes(
     cx: &mut Cx2d,
     ft: &mut FileTree,
     nodes: &[TreeNode],
-    icons: &mut TreeIcons,
+    icons: &mut IconSet,
     depth: usize,
 ) {
     for node in nodes {

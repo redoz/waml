@@ -2888,11 +2888,11 @@ script_mod! {
         }
     }
 
-    mod.widgets.TreeIconsBase = #(TreeIcons::script_component(vm))
+    mod.widgets.IconSetBase = #(IconSet::script_component(vm))
 
     // Each field is a `DrawColor` pointing at its icon shader; the accent tint
     // is set once here and stays accent regardless of row state.
-    mod.widgets.TreeIcons = set_type_default() do mod.widgets.TreeIconsBase{
+    mod.widgets.IconSet = set_type_default() do mod.widgets.IconSetBase{
         class: mod.draw.IconClass{ color: atlas.accent }
         interface: mod.draw.IconInterface{ color: atlas.accent }
         enum_type: mod.draw.IconEnum{ color: atlas.accent }
@@ -2984,9 +2984,9 @@ script_mod! {
 }
 
 /// The per-kind glyph set, drawn in immediate mode via `DrawColor::draw_abs`.
-/// Field order matches the `TreeIcons` DSL above.
+/// Field order matches the `IconSet` DSL above.
 #[derive(Script, ScriptHook)]
-pub struct TreeIcons {
+pub struct IconSet {
     #[live]
     pub class: DrawColor,
     #[live]
@@ -3163,100 +3163,427 @@ pub struct TreeIcons {
     pub vector_square: DrawColor,
 }
 
-impl TreeIcons {
-    /// All nine glyphs paired with a short label, in a stable order. Used by the
-    /// `icon_harness` bin's proof-grid; the shipping tree/doc-tabs pick glyphs by
-    /// `TreeKind` via `icon_for` in `tree_panel.rs` instead.
-    #[allow(dead_code)]
-    pub fn labeled_mut(&mut self) -> [(&'static str, &mut DrawColor); 87] {
-        [
-            ("class", &mut self.class),
-            ("interface", &mut self.interface),
-            ("enum", &mut self.enum_type),
-            ("datatype", &mut self.datatype),
-            ("package", &mut self.package),
-            ("diagram", &mut self.diagram),
-            ("flow", &mut self.flow),
-            ("sequence", &mut self.sequence),
-            ("note", &mut self.note),
-            ("message-square-text", &mut self.message),
-            ("package-plus", &mut self.package_plus),
-            ("paintbrush-vertical", &mut self.paintbrush),
-            ("pin", &mut self.pin),
-            ("pin-off", &mut self.pin_off),
-            ("share", &mut self.share),
-            ("spline", &mut self.spline),
-            ("spline-pointer", &mut self.spline_pointer),
-            ("square-minus", &mut self.square_minus),
-            ("square-plus", &mut self.square_plus),
-            ("trash", &mut self.trash),
-            ("list-chevrons-down-up", &mut self.list_collapse),
-            ("list-chevrons-up-down", &mut self.list_expand),
-            ("pencil", &mut self.pencil),
-            ("menu", &mut self.menu),
-            ("moon", &mut self.moon),
-            ("align-center-horizontal", &mut self.align_center_horizontal),
-            ("align-center-vertical", &mut self.align_center_vertical),
-            ("align-end-horizontal", &mut self.align_end_horizontal),
-            ("align-horizontal-distribute-center", &mut self.align_horizontal_distribute_center),
-            ("align-horizontal-distribute-end", &mut self.align_horizontal_distribute_end),
-            ("align-horizontal-distribute-start", &mut self.align_horizontal_distribute_start),
-            ("align-horizontal-justify-center", &mut self.align_horizontal_justify_center),
-            ("align-horizontal-justify-end", &mut self.align_horizontal_justify_end),
-            ("align-horizontal-justify-start", &mut self.align_horizontal_justify_start),
-            ("align-horizontal-space-around", &mut self.align_horizontal_space_around),
-            ("align-horizontal-space-between", &mut self.align_horizontal_space_between),
-            ("align-start-horizontal", &mut self.align_start_horizontal),
-            ("align-start-vertical", &mut self.align_start_vertical),
-            ("align-vertical-distribute-center", &mut self.align_vertical_distribute_center),
-            ("align-vertical-distribute-end", &mut self.align_vertical_distribute_end),
-            ("align-vertical-distribute-start", &mut self.align_vertical_distribute_start),
-            ("align-vertical-justify-center", &mut self.align_vertical_justify_center),
-            ("align-vertical-justify-end", &mut self.align_vertical_justify_end),
-            ("align-vertical-justify-start", &mut self.align_vertical_justify_start),
-            ("align-vertical-space-around", &mut self.align_vertical_space_around),
-            ("align-vertical-space-between", &mut self.align_vertical_space_between),
-            ("arrow-down-a-z", &mut self.arrow_down_a_z),
-            ("arrow-down-z-a", &mut self.arrow_down_z_a),
-            ("arrow-up-a-z", &mut self.arrow_up_a_z),
-            ("between-horizontal-end", &mut self.between_horizontal_end),
-            ("between-horizontal-start", &mut self.between_horizontal_start),
-            ("between-vertical-end", &mut self.between_vertical_end),
-            ("between-vertical-start", &mut self.between_vertical_start),
-            ("cable", &mut self.cable),
-            ("chevrons-down-up", &mut self.chevrons_down_up),
-            ("chevrons-left-right-ellipsis", &mut self.chevrons_left_right_ellipsis),
-            ("chevrons-up", &mut self.chevrons_up),
-            ("chevrons-up-down", &mut self.chevrons_up_down),
-            ("circle-x", &mut self.circle_x),
-            ("eye", &mut self.eye),
-            ("eye-off", &mut self.eye_off),
-            ("frame", &mut self.frame),
-            ("funnel", &mut self.funnel),
-            ("funnel-x", &mut self.funnel_x),
-            ("grip-vertical", &mut self.grip_vertical),
-            ("info", &mut self.info),
-            ("mouse-pointer-2", &mut self.mouse_pointer_2),
-            ("package-check", &mut self.package_check),
-            ("package-open", &mut self.package_open),
-            ("panel-top", &mut self.panel_top),
-            ("radar", &mut self.radar),
-            ("save", &mut self.save),
-            ("save-check", &mut self.save_check),
-            ("save-pen", &mut self.save_pen),
-            ("scan", &mut self.scan),
-            ("sliders-horizontal", &mut self.sliders_horizontal),
-            ("square", &mut self.square),
-            ("square-dashed-top-solid", &mut self.square_dashed_top_solid),
-            ("square-menu", &mut self.square_menu),
-            ("squircle", &mut self.squircle),
-            ("squircle-dashed", &mut self.squircle_dashed),
-            ("sun", &mut self.sun),
-            ("tab", &mut self.tab),
-            ("tab-text", &mut self.tab_text),
-            ("tab-x", &mut self.tab_x),
-            ("tag-plus", &mut self.tag_plus),
-            ("vector-square", &mut self.vector_square),
-        ]
+impl IconSet {
+    /// The one place a glyph maps to its `DrawColor` shader. Field order ==
+    /// `Icon::ALL` order (the load-bearing order invariant).
+    pub fn get(&mut self, icon: Icon) -> &mut DrawColor {
+        match icon {
+            Icon::Class => &mut self.class,
+            Icon::Interface => &mut self.interface,
+            Icon::EnumType => &mut self.enum_type,
+            Icon::DataType => &mut self.datatype,
+            Icon::Package => &mut self.package,
+            Icon::Diagram => &mut self.diagram,
+            Icon::Flow => &mut self.flow,
+            Icon::Sequence => &mut self.sequence,
+            Icon::Note => &mut self.note,
+            Icon::Message => &mut self.message,
+            Icon::PackagePlus => &mut self.package_plus,
+            Icon::Paintbrush => &mut self.paintbrush,
+            Icon::Pin => &mut self.pin,
+            Icon::PinOff => &mut self.pin_off,
+            Icon::Share => &mut self.share,
+            Icon::Spline => &mut self.spline,
+            Icon::SplinePointer => &mut self.spline_pointer,
+            Icon::SquareMinus => &mut self.square_minus,
+            Icon::SquarePlus => &mut self.square_plus,
+            Icon::Trash => &mut self.trash,
+            Icon::ListCollapse => &mut self.list_collapse,
+            Icon::ListExpand => &mut self.list_expand,
+            Icon::Pencil => &mut self.pencil,
+            Icon::Menu => &mut self.menu,
+            Icon::Moon => &mut self.moon,
+            Icon::AlignCenterHorizontal => &mut self.align_center_horizontal,
+            Icon::AlignCenterVertical => &mut self.align_center_vertical,
+            Icon::AlignEndHorizontal => &mut self.align_end_horizontal,
+            Icon::AlignHorizontalDistributeCenter => &mut self.align_horizontal_distribute_center,
+            Icon::AlignHorizontalDistributeEnd => &mut self.align_horizontal_distribute_end,
+            Icon::AlignHorizontalDistributeStart => &mut self.align_horizontal_distribute_start,
+            Icon::AlignHorizontalJustifyCenter => &mut self.align_horizontal_justify_center,
+            Icon::AlignHorizontalJustifyEnd => &mut self.align_horizontal_justify_end,
+            Icon::AlignHorizontalJustifyStart => &mut self.align_horizontal_justify_start,
+            Icon::AlignHorizontalSpaceAround => &mut self.align_horizontal_space_around,
+            Icon::AlignHorizontalSpaceBetween => &mut self.align_horizontal_space_between,
+            Icon::AlignStartHorizontal => &mut self.align_start_horizontal,
+            Icon::AlignStartVertical => &mut self.align_start_vertical,
+            Icon::AlignVerticalDistributeCenter => &mut self.align_vertical_distribute_center,
+            Icon::AlignVerticalDistributeEnd => &mut self.align_vertical_distribute_end,
+            Icon::AlignVerticalDistributeStart => &mut self.align_vertical_distribute_start,
+            Icon::AlignVerticalJustifyCenter => &mut self.align_vertical_justify_center,
+            Icon::AlignVerticalJustifyEnd => &mut self.align_vertical_justify_end,
+            Icon::AlignVerticalJustifyStart => &mut self.align_vertical_justify_start,
+            Icon::AlignVerticalSpaceAround => &mut self.align_vertical_space_around,
+            Icon::AlignVerticalSpaceBetween => &mut self.align_vertical_space_between,
+            Icon::ArrowDownAZ => &mut self.arrow_down_a_z,
+            Icon::ArrowDownZA => &mut self.arrow_down_z_a,
+            Icon::ArrowUpAZ => &mut self.arrow_up_a_z,
+            Icon::BetweenHorizontalEnd => &mut self.between_horizontal_end,
+            Icon::BetweenHorizontalStart => &mut self.between_horizontal_start,
+            Icon::BetweenVerticalEnd => &mut self.between_vertical_end,
+            Icon::BetweenVerticalStart => &mut self.between_vertical_start,
+            Icon::Cable => &mut self.cable,
+            Icon::ChevronsDownUp => &mut self.chevrons_down_up,
+            Icon::ChevronsLeftRightEllipsis => &mut self.chevrons_left_right_ellipsis,
+            Icon::ChevronsUp => &mut self.chevrons_up,
+            Icon::ChevronsUpDown => &mut self.chevrons_up_down,
+            Icon::CircleX => &mut self.circle_x,
+            Icon::Eye => &mut self.eye,
+            Icon::EyeOff => &mut self.eye_off,
+            Icon::Frame => &mut self.frame,
+            Icon::Funnel => &mut self.funnel,
+            Icon::FunnelX => &mut self.funnel_x,
+            Icon::GripVertical => &mut self.grip_vertical,
+            Icon::Info => &mut self.info,
+            Icon::MousePointer2 => &mut self.mouse_pointer_2,
+            Icon::PackageCheck => &mut self.package_check,
+            Icon::PackageOpen => &mut self.package_open,
+            Icon::PanelTop => &mut self.panel_top,
+            Icon::Radar => &mut self.radar,
+            Icon::Save => &mut self.save,
+            Icon::SaveCheck => &mut self.save_check,
+            Icon::SavePen => &mut self.save_pen,
+            Icon::Scan => &mut self.scan,
+            Icon::SlidersHorizontal => &mut self.sliders_horizontal,
+            Icon::Square => &mut self.square,
+            Icon::SquareDashedTopSolid => &mut self.square_dashed_top_solid,
+            Icon::SquareMenu => &mut self.square_menu,
+            Icon::Squircle => &mut self.squircle,
+            Icon::SquircleDashed => &mut self.squircle_dashed,
+            Icon::Sun => &mut self.sun,
+            Icon::Tab => &mut self.tab,
+            Icon::TabText => &mut self.tab_text,
+            Icon::TabX => &mut self.tab_x,
+            Icon::TagPlus => &mut self.tag_plus,
+            Icon::VectorSquare => &mut self.vector_square,
+        }
+    }
+
+    /// Set `color` on the glyph's shader, then draw it into `rect`. The single
+    /// tint+draw path; callers pass a tint copied from a DSL atlas-token holder
+    /// (no RGBA crosses Rust).
+    pub fn draw(&mut self, cx: &mut Cx2d, icon: Icon, rect: Rect, color: Vec4) {
+        let dc = self.get(icon);
+        dc.color = color;
+        dc.draw_abs(cx, rect);
+    }
+}
+
+/// One variant per catalog glyph, in the exact `IconSet` field order (the
+/// load-bearing order invariant: enum == field == DSL == `ALL` == `label`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Icon {
+    Class,
+    Interface,
+    EnumType,
+    DataType,
+    Package,
+    Diagram,
+    Flow,
+    Sequence,
+    Note,
+    Message,
+    PackagePlus,
+    Paintbrush,
+    Pin,
+    PinOff,
+    Share,
+    Spline,
+    SplinePointer,
+    SquareMinus,
+    SquarePlus,
+    Trash,
+    ListCollapse,
+    ListExpand,
+    Pencil,
+    Menu,
+    Moon,
+    AlignCenterHorizontal,
+    AlignCenterVertical,
+    AlignEndHorizontal,
+    AlignHorizontalDistributeCenter,
+    AlignHorizontalDistributeEnd,
+    AlignHorizontalDistributeStart,
+    AlignHorizontalJustifyCenter,
+    AlignHorizontalJustifyEnd,
+    AlignHorizontalJustifyStart,
+    AlignHorizontalSpaceAround,
+    AlignHorizontalSpaceBetween,
+    AlignStartHorizontal,
+    AlignStartVertical,
+    AlignVerticalDistributeCenter,
+    AlignVerticalDistributeEnd,
+    AlignVerticalDistributeStart,
+    AlignVerticalJustifyCenter,
+    AlignVerticalJustifyEnd,
+    AlignVerticalJustifyStart,
+    AlignVerticalSpaceAround,
+    AlignVerticalSpaceBetween,
+    ArrowDownAZ,
+    ArrowDownZA,
+    ArrowUpAZ,
+    BetweenHorizontalEnd,
+    BetweenHorizontalStart,
+    BetweenVerticalEnd,
+    BetweenVerticalStart,
+    Cable,
+    ChevronsDownUp,
+    ChevronsLeftRightEllipsis,
+    ChevronsUp,
+    ChevronsUpDown,
+    CircleX,
+    Eye,
+    EyeOff,
+    Frame,
+    Funnel,
+    FunnelX,
+    GripVertical,
+    Info,
+    MousePointer2,
+    PackageCheck,
+    PackageOpen,
+    PanelTop,
+    Radar,
+    Save,
+    SaveCheck,
+    SavePen,
+    Scan,
+    SlidersHorizontal,
+    Square,
+    SquareDashedTopSolid,
+    SquareMenu,
+    Squircle,
+    SquircleDashed,
+    Sun,
+    Tab,
+    TabText,
+    TabX,
+    TagPlus,
+    VectorSquare,
+}
+
+impl Icon {
+    /// Every glyph, in field order. The single source of glyph identity; the
+    /// `icon_harness` proof grid iterates this.
+    pub const ALL: [Icon; 87] = [
+        Icon::Class,
+        Icon::Interface,
+        Icon::EnumType,
+        Icon::DataType,
+        Icon::Package,
+        Icon::Diagram,
+        Icon::Flow,
+        Icon::Sequence,
+        Icon::Note,
+        Icon::Message,
+        Icon::PackagePlus,
+        Icon::Paintbrush,
+        Icon::Pin,
+        Icon::PinOff,
+        Icon::Share,
+        Icon::Spline,
+        Icon::SplinePointer,
+        Icon::SquareMinus,
+        Icon::SquarePlus,
+        Icon::Trash,
+        Icon::ListCollapse,
+        Icon::ListExpand,
+        Icon::Pencil,
+        Icon::Menu,
+        Icon::Moon,
+        Icon::AlignCenterHorizontal,
+        Icon::AlignCenterVertical,
+        Icon::AlignEndHorizontal,
+        Icon::AlignHorizontalDistributeCenter,
+        Icon::AlignHorizontalDistributeEnd,
+        Icon::AlignHorizontalDistributeStart,
+        Icon::AlignHorizontalJustifyCenter,
+        Icon::AlignHorizontalJustifyEnd,
+        Icon::AlignHorizontalJustifyStart,
+        Icon::AlignHorizontalSpaceAround,
+        Icon::AlignHorizontalSpaceBetween,
+        Icon::AlignStartHorizontal,
+        Icon::AlignStartVertical,
+        Icon::AlignVerticalDistributeCenter,
+        Icon::AlignVerticalDistributeEnd,
+        Icon::AlignVerticalDistributeStart,
+        Icon::AlignVerticalJustifyCenter,
+        Icon::AlignVerticalJustifyEnd,
+        Icon::AlignVerticalJustifyStart,
+        Icon::AlignVerticalSpaceAround,
+        Icon::AlignVerticalSpaceBetween,
+        Icon::ArrowDownAZ,
+        Icon::ArrowDownZA,
+        Icon::ArrowUpAZ,
+        Icon::BetweenHorizontalEnd,
+        Icon::BetweenHorizontalStart,
+        Icon::BetweenVerticalEnd,
+        Icon::BetweenVerticalStart,
+        Icon::Cable,
+        Icon::ChevronsDownUp,
+        Icon::ChevronsLeftRightEllipsis,
+        Icon::ChevronsUp,
+        Icon::ChevronsUpDown,
+        Icon::CircleX,
+        Icon::Eye,
+        Icon::EyeOff,
+        Icon::Frame,
+        Icon::Funnel,
+        Icon::FunnelX,
+        Icon::GripVertical,
+        Icon::Info,
+        Icon::MousePointer2,
+        Icon::PackageCheck,
+        Icon::PackageOpen,
+        Icon::PanelTop,
+        Icon::Radar,
+        Icon::Save,
+        Icon::SaveCheck,
+        Icon::SavePen,
+        Icon::Scan,
+        Icon::SlidersHorizontal,
+        Icon::Square,
+        Icon::SquareDashedTopSolid,
+        Icon::SquareMenu,
+        Icon::Squircle,
+        Icon::SquircleDashed,
+        Icon::Sun,
+        Icon::Tab,
+        Icon::TabText,
+        Icon::TabX,
+        Icon::TagPlus,
+        Icon::VectorSquare,
+    ];
+
+    /// The `icon_harness` display slug (the Lucide source name), preserved
+    /// verbatim from the old `labeled_mut` list so the proof grid is unchanged.
+    pub fn label(self) -> &'static str {
+        match self {
+            Icon::Class => "class",
+            Icon::Interface => "interface",
+            Icon::EnumType => "enum",
+            Icon::DataType => "datatype",
+            Icon::Package => "package",
+            Icon::Diagram => "diagram",
+            Icon::Flow => "flow",
+            Icon::Sequence => "sequence",
+            Icon::Note => "note",
+            Icon::Message => "message-square-text",
+            Icon::PackagePlus => "package-plus",
+            Icon::Paintbrush => "paintbrush-vertical",
+            Icon::Pin => "pin",
+            Icon::PinOff => "pin-off",
+            Icon::Share => "share",
+            Icon::Spline => "spline",
+            Icon::SplinePointer => "spline-pointer",
+            Icon::SquareMinus => "square-minus",
+            Icon::SquarePlus => "square-plus",
+            Icon::Trash => "trash",
+            Icon::ListCollapse => "list-chevrons-down-up",
+            Icon::ListExpand => "list-chevrons-up-down",
+            Icon::Pencil => "pencil",
+            Icon::Menu => "menu",
+            Icon::Moon => "moon",
+            Icon::AlignCenterHorizontal => "align-center-horizontal",
+            Icon::AlignCenterVertical => "align-center-vertical",
+            Icon::AlignEndHorizontal => "align-end-horizontal",
+            Icon::AlignHorizontalDistributeCenter => "align-horizontal-distribute-center",
+            Icon::AlignHorizontalDistributeEnd => "align-horizontal-distribute-end",
+            Icon::AlignHorizontalDistributeStart => "align-horizontal-distribute-start",
+            Icon::AlignHorizontalJustifyCenter => "align-horizontal-justify-center",
+            Icon::AlignHorizontalJustifyEnd => "align-horizontal-justify-end",
+            Icon::AlignHorizontalJustifyStart => "align-horizontal-justify-start",
+            Icon::AlignHorizontalSpaceAround => "align-horizontal-space-around",
+            Icon::AlignHorizontalSpaceBetween => "align-horizontal-space-between",
+            Icon::AlignStartHorizontal => "align-start-horizontal",
+            Icon::AlignStartVertical => "align-start-vertical",
+            Icon::AlignVerticalDistributeCenter => "align-vertical-distribute-center",
+            Icon::AlignVerticalDistributeEnd => "align-vertical-distribute-end",
+            Icon::AlignVerticalDistributeStart => "align-vertical-distribute-start",
+            Icon::AlignVerticalJustifyCenter => "align-vertical-justify-center",
+            Icon::AlignVerticalJustifyEnd => "align-vertical-justify-end",
+            Icon::AlignVerticalJustifyStart => "align-vertical-justify-start",
+            Icon::AlignVerticalSpaceAround => "align-vertical-space-around",
+            Icon::AlignVerticalSpaceBetween => "align-vertical-space-between",
+            Icon::ArrowDownAZ => "arrow-down-a-z",
+            Icon::ArrowDownZA => "arrow-down-z-a",
+            Icon::ArrowUpAZ => "arrow-up-a-z",
+            Icon::BetweenHorizontalEnd => "between-horizontal-end",
+            Icon::BetweenHorizontalStart => "between-horizontal-start",
+            Icon::BetweenVerticalEnd => "between-vertical-end",
+            Icon::BetweenVerticalStart => "between-vertical-start",
+            Icon::Cable => "cable",
+            Icon::ChevronsDownUp => "chevrons-down-up",
+            Icon::ChevronsLeftRightEllipsis => "chevrons-left-right-ellipsis",
+            Icon::ChevronsUp => "chevrons-up",
+            Icon::ChevronsUpDown => "chevrons-up-down",
+            Icon::CircleX => "circle-x",
+            Icon::Eye => "eye",
+            Icon::EyeOff => "eye-off",
+            Icon::Frame => "frame",
+            Icon::Funnel => "funnel",
+            Icon::FunnelX => "funnel-x",
+            Icon::GripVertical => "grip-vertical",
+            Icon::Info => "info",
+            Icon::MousePointer2 => "mouse-pointer-2",
+            Icon::PackageCheck => "package-check",
+            Icon::PackageOpen => "package-open",
+            Icon::PanelTop => "panel-top",
+            Icon::Radar => "radar",
+            Icon::Save => "save",
+            Icon::SaveCheck => "save-check",
+            Icon::SavePen => "save-pen",
+            Icon::Scan => "scan",
+            Icon::SlidersHorizontal => "sliders-horizontal",
+            Icon::Square => "square",
+            Icon::SquareDashedTopSolid => "square-dashed-top-solid",
+            Icon::SquareMenu => "square-menu",
+            Icon::Squircle => "squircle",
+            Icon::SquircleDashed => "squircle-dashed",
+            Icon::Sun => "sun",
+            Icon::Tab => "tab",
+            Icon::TabText => "tab-text",
+            Icon::TabX => "tab-x",
+            Icon::TagPlus => "tag-plus",
+            Icon::VectorSquare => "vector-square",
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn icon_all_has_87_entries() {
+        assert_eq!(Icon::ALL.len(), 87);
+    }
+
+    #[test]
+    fn icon_all_is_in_field_order_at_the_edges() {
+        assert_eq!(Icon::ALL[0], Icon::Class);
+        assert_eq!(Icon::ALL[9], Icon::Message);
+        assert_eq!(Icon::ALL[86], Icon::VectorSquare);
+    }
+
+    #[test]
+    fn icon_labels_are_unique_and_nonempty() {
+        use std::collections::HashSet;
+        let mut seen = HashSet::new();
+        for icon in Icon::ALL {
+            let l = icon.label();
+            assert!(!l.is_empty(), "empty label for {icon:?}");
+            assert!(seen.insert(l), "duplicate label {l:?}");
+        }
+        assert_eq!(seen.len(), 87);
+    }
+
+    #[test]
+    fn label_reflects_lucide_slugs_not_field_names() {
+        // Slugs diverge from field names for the hand-named glyphs.
+        assert_eq!(Icon::EnumType.label(), "enum");
+        assert_eq!(Icon::Message.label(), "message-square-text");
+        assert_eq!(Icon::Paintbrush.label(), "paintbrush-vertical");
+        assert_eq!(Icon::ListCollapse.label(), "list-chevrons-down-up");
+        assert_eq!(Icon::ListExpand.label(), "list-chevrons-up-down");
     }
 }
