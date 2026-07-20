@@ -1079,6 +1079,10 @@ impl AppMain for App {
         crate::caption_button::script_mod(vm);
         crate::recent_row::script_mod(vm);
         crate::start_screen::script_mod(vm);
+        // Registered so the design surface compiles into the crate, but never
+        // mounted in the live UI -- it is viewable only via the
+        // `node_editor_harness` bin (see `node_design_editor.rs`).
+        crate::node_design_editor::script_mod(vm);
         self::script_mod(vm)
     }
 
