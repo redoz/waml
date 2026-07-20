@@ -24,7 +24,7 @@ script_mod! {
     use mod.widgets.DesktopButtonType
     use mod.widgets.StartScreen
     use mod.widgets.Radial
-    use mod.widgets.RadialPopup
+    use mod.widgets.AppMenu
     use mod.widgets.LogoMark
     use mod.widgets.CaptionButton
 
@@ -236,14 +236,16 @@ script_mod! {
                         width: Fill
                         height: Fill
                     }
+                    // Logo drop-down: last overlay child so it paints above
+                    // `radial` + every panel. Fills the window, draws nothing
+                    // (see `AppMenu::draw_walk`) while closed.
+                    app_menu := AppMenu{
+                        width: Fill
+                        height: Fill
+                    }
                     }
                 }
             }
-            // SPIKE: transparent floating radial popup. A Root-level sibling of
-            // the main window (NOT nested inside it), so its pass is drawn
-            // sequentially after the main window's pass -- the multi-window draw
-            // idiom. Draws nothing while closed.
-            radial_popup := RadialPopup{}
         }
     }
 }
@@ -648,11 +650,10 @@ pub fn node_radial_items() -> Vec<crate::radial::RadialItem> {
     ]
 }
 
-/// The logo (app) radial: N=4, first wedge centred at 12 o'clock clockwise --
-/// top(0) Properties, right(1) About, bottom(2) Cancel, left(3) Exit (danger).
-/// Ids are what `Radial` reports on commit; `logo_command_for` maps them back
-/// (Cancel maps to nothing -- committing it just closes the radial).
-pub fn logo_radial_items() -> Vec<crate::radial::RadialItem> {
+/// The logo (app) drop-down rows, top to bottom: Properties, About, Exit
+/// (danger). No Cancel row -- a drop-down dismisses via Esc / outside-click.
+/// Ids are what `AppMenu` reports on commit; `logo_command_for` maps them back.
+pub fn logo_menu_items() -> Vec<crate::radial::RadialItem> {
     use crate::icon::{Icon, IconShape};
     use crate::radial::RadialItem;
     vec![
@@ -667,13 +668,6 @@ pub fn logo_radial_items() -> Vec<crate::radial::RadialItem> {
             id: live_id!(about),
             label: "About".into(),
             icon: Icon::Shape(IconShape::About),
-            danger: false,
-            enabled: true,
-        },
-        RadialItem {
-            id: live_id!(cancel),
-            label: "Cancel".into(),
-            icon: Icon::Shape(IconShape::Cancel),
             danger: false,
             enabled: true,
         },
@@ -930,35 +924,28 @@ impl MatchEvent for App {
             return;
         }
 
-        // Logo radial: a left-click on the top-bar wordmark opens the app menu
-        // in persistent popup mode, centred on the mark. (Hover/click only
+        // Logo drop-down: a left-click on the top-bar wordmark opens a plain
+        // vertical menu that drops DOWN-right from the mark (the wordmark sits
+        // in the window's top-left corner, so a radial there is always
+        // degenerate -- a drop-down stays fully on-screen). (Hover/click only
         // reach the widget because of the drag-query override below.)
-        let logo_center = self
+        let logo_click = self
             .ui
             .widget(cx, ids!(logo))
             .borrow::<crate::logo::LogoMark>()
-            .and_then(|l| l.logo_action(actions));
-        if let Some(center) = logo_center {
-            // Logo radial opens as a TRUE transparent floating popup (per-pixel
-            // alpha, overflows the window top-left onto the desktop) rather than
-            // the in-window `radial` used by the node menu. See `radial_popup`.
-            if let Some(parent) = self.ui.window(cx, ids!(main_window)).window_id() {
-                // Client size feeds the edge-adaptive "C" fan its clip bounds.
-                let sz = self.ui.window(cx, ids!(main_window)).get_inner_size(cx);
-                if let Some(mut popup) = self
-                    .ui
-                    .widget(cx, ids!(radial_popup))
-                    .borrow_mut::<crate::radial_popup::RadialPopup>()
-                {
-                    popup.open(
-                        cx,
-                        parent,
-                        center,
-                        dvec2(sz.x, sz.y),
-                        logo_radial_items(),
-                        cx.seconds_since_app_start(),
-                    );
-                }
+            .and_then(|l| l.logo_action(actions).map(|_| l.drawn_rect()));
+        if let Some(logo_rect) = logo_click {
+            // Anchor the card at the logo's bottom-left so it drops down-right.
+            let anchor = dvec2(
+                logo_rect.pos.x,
+                logo_rect.pos.y + logo_rect.size.y + crate::app_menu::MENU_GAP,
+            );
+            if let Some(mut menu) = self
+                .ui
+                .widget(cx, ids!(app_menu))
+                .borrow_mut::<crate::app_menu::AppMenu>()
+            {
+                menu.open(cx, anchor, logo_menu_items());
             }
             return;
         }
@@ -1071,7 +1058,7 @@ impl AppMain for App {
         crate::frame::script_mod(vm);
         crate::icon::script_mod(vm);
         crate::radial::script_mod(vm);
-        crate::radial_popup::script_mod(vm);
+        crate::app_menu::script_mod(vm);
         crate::canvas::script_mod(vm);
         crate::tree_panel::script_mod(vm);
         crate::inspector_panel::script_mod(vm);
@@ -1168,16 +1155,16 @@ impl AppMain for App {
             }
         }
 
-        // Logo radial popup: the floating transparent disc. Driven explicitly
-        // here (its embedded `Radial` is not routed through the widget tree), so
-        // a commit/dismiss is handled once. A commit maps to a `LogoCommand`.
-        let popup_outcome = self
+        // Logo drop-down: the in-window vertical menu. Driven explicitly here
+        // (event-passive, like `radial`), so a commit/dismiss is handled once.
+        // A commit maps to a `LogoCommand`.
+        let menu_outcome = self
             .ui
-            .widget(cx, ids!(radial_popup))
-            .borrow_mut::<crate::radial_popup::RadialPopup>()
-            .filter(|p| p.is_open())
-            .map(|mut p| p.handle(cx, event));
-        if let Some(crate::radial::RadialOutcome::Committed(id)) = popup_outcome {
+            .widget(cx, ids!(app_menu))
+            .borrow_mut::<crate::app_menu::AppMenu>()
+            .filter(|m| m.is_open())
+            .map(|mut m| m.handle(cx, event));
+        if let Some(crate::radial::RadialOutcome::Committed(id)) = menu_outcome {
             if let Some(cmd) = logo_command_for(id) {
                 match cmd {
                     // Properties: no-op stub (no editor-settings surface yet).

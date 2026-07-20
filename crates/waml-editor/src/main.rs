@@ -2,6 +2,7 @@ pub use makepad_widgets;
 use makepad_widgets::*;
 
 mod app;
+mod app_menu;
 mod camera;
 mod canvas;
 mod card;
@@ -20,7 +21,6 @@ mod load;
 mod logo;
 mod node_style;
 mod radial;
-mod radial_popup;
 mod recent_row;
 mod scene;
 mod selection_toolbar;
