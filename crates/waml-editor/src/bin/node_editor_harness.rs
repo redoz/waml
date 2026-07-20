@@ -15,6 +15,28 @@ use makepad_widgets::*;
 mod theme_atlas;
 #[path = "../frame.rs"]
 mod frame;
+// The reusable node-render path the preview draws through. All makepad-free; the
+// widget builds a `scene::SceneNode` and renders it via `card::measure`. This bin
+// exercises only a slice of each module (the real app uses the rest), so silence
+// dead-code here rather than in the shared source.
+#[allow(dead_code)]
+#[path = "../load.rs"]
+mod load;
+#[allow(dead_code)]
+#[path = "../node_style.rs"]
+mod node_style;
+#[allow(dead_code)]
+#[path = "../sizing.rs"]
+mod sizing;
+#[allow(dead_code)]
+#[path = "../inspector.rs"]
+mod inspector;
+#[allow(dead_code)]
+#[path = "../card/mod.rs"]
+mod card;
+#[allow(dead_code)]
+#[path = "../scene.rs"]
+mod scene;
 #[path = "../node_design_editor.rs"]
 mod node_design_editor;
 

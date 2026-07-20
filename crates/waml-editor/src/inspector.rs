@@ -58,6 +58,21 @@ pub struct AttrRow {
     pub visibility: String, // "+"/"-"/"#"/"~" or ""
 }
 
+/// One operation row, pre-rendered to display strings: `<vis> <name>(<params>) :
+/// <ret>`. Mirrors `AttrRow` for the operations compartment. The model has no
+/// operations concept today, so `build_view` never emits these; the node design
+/// editor populates them directly on `SceneNode`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OpRow {
+    pub name: String,
+    /// `Some(sig)` renders `(sig)` glued to the name (empty `sig` -> `()`);
+    /// `None` hides the parameter list entirely (Params column off).
+    pub params: Option<String>,
+    /// Return-type token; empty omits the ` : ret` tail (Return column off).
+    pub ret: String,
+    pub visibility: String, // "+"/"-"/"#"/"~" or ""
+}
+
 /// One association row, pre-rendered to display strings. Derived from
 /// `Model::edges` where `key` is either endpoint -- read-only breadth (U6),
 /// not an editable field.

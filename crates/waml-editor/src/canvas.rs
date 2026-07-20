@@ -29,6 +29,9 @@ script_mod! {
         // the fill differs from the frame defaults, so we override just `color`.
         draw_node: mod.draw.AccentFrame{ color: atlas.field_bg }
         draw_edge +: { color: atlas.text_dim }
+        // Flat fill pen for card compartment dividers, the header accent wash, and
+        // port nubs. The renderer pushes `color` (accent/dim + alpha) per draw.
+        draw_rule +: { color: atlas.text_dim }
         // Sans body pen: overview node titles + group titles (the non-card text).
         draw_text +: {
             color: atlas.text
@@ -110,6 +113,9 @@ pub struct GraphCanvas {
     #[redraw]
     #[live]
     draw_edge: DrawColor,
+    #[redraw]
+    #[live]
+    draw_rule: DrawColor,
     #[redraw]
     #[live]
     draw_text: DrawText,
@@ -415,8 +421,43 @@ impl GraphCanvas {
         zoom: f64,
     ) {
         use crate::card::{self, Token, Weight};
-        let texts = card::card_texts(node, &card::mono_sheet());
-        for pt in &texts {
+        use crate::scene::HeaderStyle;
+        let placed = card::measure(&card::class_shape(node, &card::mono_sheet()));
+        // Accent/dim are read off the mono pens (both already resolved to the live
+        // theme) so the wash/dividers/nubs track the card's own palette.
+        let accent = self.draw_mono_accent.color;
+        let dim = self.draw_mono_dim.color;
+        let card_w = placed.size.0 * zoom;
+
+        // Header accent wash (a filled band), only when the header is `Fill`.
+        if node.header == HeaderStyle::Fill {
+            if let Some(h) = placed.header() {
+                // Symmetric inset around the header text (h.y == card_pad.t).
+                let bottom = h.y + h.h + h.y;
+                self.draw_rule.color = vec4(accent.x, accent.y, accent.z, 0.12);
+                self.draw_rule.draw_abs(
+                    cx,
+                    Rect {
+                        pos: screen.pos,
+                        size: dvec2(card_w, bottom * zoom),
+                    },
+                );
+            }
+        }
+
+        // Inter-compartment dividers (attributes | operations).
+        for dy in placed.compartment_dividers() {
+            self.draw_rule.color = vec4(dim.x, dim.y, dim.z, 0.5);
+            self.draw_rule.draw_abs(
+                cx,
+                Rect {
+                    pos: dvec2(screen.pos.x, screen.pos.y + dy * zoom),
+                    size: dvec2(card_w, (1.0 * zoom).max(1.0)),
+                },
+            );
+        }
+
+        for pt in &placed.texts {
             let pos = dvec2(screen.pos.x + pt.x * zoom, screen.pos.y + pt.y * zoom);
             let size = (pt.style.size_pt * zoom) as f32; // TextStyle.font_size is f32
             match (pt.style.weight, pt.style.color) {
@@ -437,6 +478,28 @@ impl GraphCanvas {
                     self.draw_mono_dim.draw_abs(cx, pos, &pt.text);
                 }
             }
+        }
+
+        // Port nubs: small accent squares straddling the left/right border at the
+        // card's vertical center.
+        if node.ports {
+            let nub = 6.0 * zoom;
+            let cy = screen.pos.y + placed.size.1 * 0.5 * zoom - nub * 0.5;
+            self.draw_rule.color = accent;
+            self.draw_rule.draw_abs(
+                cx,
+                Rect {
+                    pos: dvec2(screen.pos.x - nub * 0.5, cy),
+                    size: dvec2(nub, nub),
+                },
+            );
+            self.draw_rule.draw_abs(
+                cx,
+                Rect {
+                    pos: dvec2(screen.pos.x + card_w - nub * 0.5, cy),
+                    size: dvec2(nub, nub),
+                },
+            );
         }
     }
 

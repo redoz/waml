@@ -5,6 +5,21 @@ use waml::diagnostic::Diagnostic;
 use waml::model::{Diagram, ElementType, Model, RelationshipKind};
 use waml::solve::{solve_diagram, Rect, SolveConfig, SolvedGroup};
 
+/// How a node's header (eyebrow + title) is treated. Additive: `Plain` is the
+/// historical look (no wash) and is what every projected node uses, so real
+/// canvas nodes render unchanged. Only the node design editor sets `Hidden`/
+/// `Fill`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum HeaderStyle {
+    /// No header block at all.
+    Hidden,
+    /// Header with no background treatment (today's look).
+    #[default]
+    Plain,
+    /// Header band washed with the accent color.
+    Fill,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct SceneNode {
     pub key: String,
@@ -23,6 +38,16 @@ pub struct SceneNode {
     /// inspector panel share one member projection. Empty for nodes with no
     /// attributes; only drawn by the focus card today.
     pub attributes: Vec<crate::inspector::AttrRow>,
+    /// Operation compartment rows (`<vis> <name>(<params>) : <ret>`). The model
+    /// has no operations concept, so projection leaves this empty; only the node
+    /// design editor populates it. Additive: empty renders no operations block.
+    pub operations: Vec<crate::inspector::OpRow>,
+    /// Header treatment. Defaults to `Plain` (today's look) everywhere the model
+    /// projects a node; the design editor overrides it.
+    pub header: HeaderStyle,
+    /// Whether to draw port nubs straddling the card border. Off for projected
+    /// nodes; the design editor toggles it.
+    pub ports: bool,
     pub rect: Rect,
     pub emphasized: bool,
     pub collapsed: bool,
@@ -82,6 +107,9 @@ pub fn project_scene_node(model: &Model, node: &waml::model::Node) -> SceneNode 
         element_type: node.ty.clone(),
         stereotypes: node.stereotypes.clone(),
         attributes: attribute_rows(model, &node.key),
+        operations: Vec::new(),
+        header: HeaderStyle::Plain,
+        ports: false,
         rect: Rect {
             x: 0.0,
             y: 0.0,
@@ -116,6 +144,9 @@ pub fn build_scene(model: &Model, diagram: &Diagram) -> (Scene, Vec<Diagnostic>)
                 element_type: ElementType::Unknown(String::new()),
                 stereotypes: Vec::new(),
                 attributes: Vec::new(),
+                operations: Vec::new(),
+                header: HeaderStyle::Plain,
+                ports: false,
                 rect: Rect {
                     x: 0.0,
                     y: 0.0,
@@ -181,6 +212,9 @@ pub fn build_focus_scene(model: &Model, key: &str) -> Scene {
         element_type: node.ty.clone(),
         stereotypes: node.stereotypes.clone(),
         attributes,
+        operations: Vec::new(),
+        header: HeaderStyle::Plain,
+        ports: false,
         rect: Rect {
             x: 0.0,
             y: 0.0,

@@ -40,6 +40,18 @@ pub enum Dir {
     Col,
 }
 
+/// Semantic role of a `Box`, captured with its laid-out rect during `measure`
+/// so the renderer can draw the header wash and compartment dividers off exact
+/// taffy geometry rather than re-deriving it. `None` boxes (most of the tree)
+/// are not captured.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Block {
+    None,
+    Header,
+    Attributes,
+    Operations,
+}
+
 /// An Atlas semantic color the card draws with, resolved to a live theme rgba by
 /// the renderer's pre-declared pens. NEVER an rgba here.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -96,6 +108,8 @@ pub enum Shape {
         gap: f64,
         pad: Edges,
         hidden: bool,
+        /// Semantic role, captured with the box's laid-out rect (see `Block`).
+        block: Block,
         children: Vec<Shape>,
     },
 }
@@ -109,11 +123,48 @@ pub struct PlacedText {
     pub style: TextStyle,
 }
 
-/// The result of laying out a `Shape`: the hull size + every placed text leaf.
+/// A laid-out card block (header or a member compartment), captured during
+/// `flatten` so the renderer draws the header wash and compartment dividers off
+/// exact geometry. `x`/`y` are absolute within the card hull.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct PlacedBlock {
+    pub block: Block,
+    pub x: f64,
+    pub y: f64,
+    pub w: f64,
+    pub h: f64,
+}
+
+/// The result of laying out a `Shape`: the hull size, every placed text leaf,
+/// and the role-tagged block rects (`None`-role boxes excluded).
 #[derive(Clone, Debug, PartialEq)]
 pub struct Placed {
     pub size: (f64, f64),
     pub texts: Vec<PlacedText>,
+    pub blocks: Vec<PlacedBlock>,
+}
+
+impl Placed {
+    /// The header block rect, if the node has a header (present unless
+    /// `HeaderStyle::Hidden`). The renderer draws the accent wash over it.
+    pub fn header(&self) -> Option<&PlacedBlock> {
+        self.blocks.iter().find(|b| b.block == Block::Header)
+    }
+
+    /// y of a hairline divider between each pair of adjacent member compartments
+    /// (Attributes/Operations), centered in the gutter between them. Empty for a
+    /// single compartment — so today's plain nodes (attributes only) get none.
+    pub fn compartment_dividers(&self) -> Vec<f64> {
+        let members: Vec<&PlacedBlock> = self
+            .blocks
+            .iter()
+            .filter(|b| matches!(b.block, Block::Attributes | Block::Operations))
+            .collect();
+        members
+            .windows(2)
+            .map(|w| (w[0].y + w[0].h + w[1].y) * 0.5)
+            .collect()
+    }
 }
 
 /// taffy leaf context: the case-folded string + its style, used by the measure
@@ -165,6 +216,7 @@ fn build(tree: &mut taffy::TaffyTree<LeafCtx>, shape: &Shape) -> taffy::NodeId {
             gap,
             pad,
             hidden,
+            block: _,
             children,
         } => {
             let kids: Vec<NodeId> = children.iter().map(|c| build(tree, c)).collect();
@@ -202,6 +254,7 @@ fn flatten(
     ox: f64,
     oy: f64,
     out: &mut Vec<PlacedText>,
+    blocks: &mut Vec<PlacedBlock>,
 ) {
     let layout = tree.layout(node).expect("taffy layout");
     // taffy Layout.location is relative to the parent; accumulate to absolute.
@@ -218,14 +271,26 @@ fn flatten(
             });
         }
         Shape::Box {
-            hidden, children, ..
+            hidden,
+            block,
+            children,
+            ..
         } => {
             if *hidden {
                 return;
             }
+            if *block != Block::None {
+                blocks.push(PlacedBlock {
+                    block: *block,
+                    x,
+                    y,
+                    w: layout.size.width as f64,
+                    h: layout.size.height as f64,
+                });
+            }
             let kids = tree.children(node).expect("taffy children");
             for (child_node, child_shape) in kids.iter().zip(children.iter()) {
-                flatten(tree, *child_node, child_shape, x, y, out);
+                flatten(tree, *child_node, child_shape, x, y, out, blocks);
             }
         }
     }
@@ -269,8 +334,13 @@ pub fn measure(shape: &Shape) -> Placed {
         root_layout.size.height as f64,
     );
     let mut texts = Vec::new();
-    flatten(&tree, root, shape, 0.0, 0.0, &mut texts);
-    Placed { size, texts }
+    let mut blocks = Vec::new();
+    flatten(&tree, root, shape, 0.0, 0.0, &mut texts, &mut blocks);
+    Placed {
+        size,
+        texts,
+        blocks,
+    }
 }
 
 /// Per-element typography + spacing for `class_shape`. One default sheet drives
@@ -340,65 +410,148 @@ pub fn mono_sheet() -> StyleSheet {
 }
 
 /// Build the classifier focus card's `Shape` tree from a `SceneNode` and a
-/// `StyleSheet`. Header column («eyebrow» + title) then one hug-style row per
-/// attribute: `<vis> <name> : <Type> [<mult>]`, each part omitted when empty.
+/// `StyleSheet`. A header column («eyebrow» + title, unless `HeaderStyle::
+/// Hidden`), then an attributes compartment (one row `<vis> <name> : <Type>
+/// [<mult>]` per attribute) and an operations compartment (one row `<vis>
+/// <name>(<params>) : <ret>` per operation), each present only when non-empty.
+/// Compartments are role-tagged `Box`es (pad-zero, so the hull is unchanged from
+/// the historical flat layout) whose laid-out rects the renderer reads to draw
+/// the header wash and inter-compartment dividers.
 pub fn class_shape(node: &crate::scene::SceneNode, sheet: &StyleSheet) -> Shape {
-    let eyebrow = crate::scene::focus_eyebrow(&node.stereotypes, &node.element_type);
+    use crate::scene::HeaderStyle;
+    let mut rows: Vec<Shape> = Vec::new();
 
-    let mut header_children = Vec::new();
-    if let Some(label) = eyebrow {
+    // Header column, unless hidden. Fill/Plain differ only in the renderer's
+    // wash (same geometry), so both build the same box here.
+    if node.header != HeaderStyle::Hidden {
+        let eyebrow = crate::scene::focus_eyebrow(&node.stereotypes, &node.element_type);
+        let mut header_children = Vec::new();
+        if let Some(label) = eyebrow {
+            header_children.push(Shape::Text {
+                text: format!("\u{ab}{label}\u{bb}"),
+                style: sheet.eyebrow,
+            });
+        }
         header_children.push(Shape::Text {
-            text: format!("\u{ab}{label}\u{bb}"),
-            style: sheet.eyebrow,
+            text: node.title.clone(),
+            style: sheet.title,
+        });
+        rows.push(Shape::Box {
+            dir: Dir::Col,
+            gap: sheet.header_gap,
+            pad: Edges::ZERO,
+            hidden: false,
+            block: Block::Header,
+            children: header_children,
         });
     }
-    header_children.push(Shape::Text {
-        text: node.title.clone(),
-        style: sheet.title,
-    });
-    let header = Shape::Box {
-        dir: Dir::Col,
-        gap: sheet.header_gap,
-        pad: Edges::ZERO,
-        hidden: false,
-        children: header_children,
-    };
 
-    let mut rows = vec![header];
-    for attr in &node.attributes {
-        let mut cells = Vec::new();
-        if !attr.visibility.is_empty() {
+    // Attributes compartment.
+    if !node.attributes.is_empty() {
+        let mut at_rows = Vec::new();
+        for attr in &node.attributes {
+            let mut cells = Vec::new();
+            if !attr.visibility.is_empty() {
+                cells.push(Shape::Text {
+                    text: attr.visibility.clone(),
+                    style: sheet.marker,
+                });
+            }
             cells.push(Shape::Text {
-                text: attr.visibility.clone(),
-                style: sheet.marker,
+                text: attr.name.clone(),
+                style: sheet.name,
             });
-        }
-        cells.push(Shape::Text {
-            text: attr.name.clone(),
-            style: sheet.name,
-        });
-        if !attr.ty.is_empty() {
-            cells.push(Shape::Text {
-                text: ":".to_string(),
-                style: sheet.colon,
-            });
-            cells.push(Shape::Text {
-                text: attr.ty.clone(),
-                style: sheet.ty,
-            });
-        }
-        if !attr.multiplicity.is_empty() {
-            cells.push(Shape::Text {
-                text: format!("[{}]", attr.multiplicity),
-                style: sheet.cardinality,
+            if !attr.ty.is_empty() {
+                cells.push(Shape::Text {
+                    text: ":".to_string(),
+                    style: sheet.colon,
+                });
+                cells.push(Shape::Text {
+                    text: attr.ty.clone(),
+                    style: sheet.ty,
+                });
+            }
+            if !attr.multiplicity.is_empty() {
+                cells.push(Shape::Text {
+                    text: format!("[{}]", attr.multiplicity),
+                    style: sheet.cardinality,
+                });
+            }
+            at_rows.push(Shape::Box {
+                dir: Dir::Row,
+                gap: sheet.row_gap,
+                pad: Edges::ZERO,
+                hidden: false,
+                block: Block::None,
+                children: cells,
             });
         }
         rows.push(Shape::Box {
-            dir: Dir::Row,
-            gap: sheet.row_gap,
+            dir: Dir::Col,
+            gap: sheet.rows_gap,
             pad: Edges::ZERO,
             hidden: false,
-            children: cells,
+            block: Block::Attributes,
+            children: at_rows,
+        });
+    }
+
+    // Operations compartment: `<vis> <name>(<params>) : <ret>`. The name and its
+    // parenthesized parameter list are a no-gap sub-box so they read as one token.
+    if !node.operations.is_empty() {
+        let mut op_rows = Vec::new();
+        for op in &node.operations {
+            let mut cells = Vec::new();
+            if !op.visibility.is_empty() {
+                cells.push(Shape::Text {
+                    text: op.visibility.clone(),
+                    style: sheet.marker,
+                });
+            }
+            let mut sig = vec![Shape::Text {
+                text: op.name.clone(),
+                style: sheet.name,
+            }];
+            if let Some(params) = &op.params {
+                sig.push(Shape::Text {
+                    text: format!("({params})"),
+                    style: sheet.colon,
+                });
+            }
+            cells.push(Shape::Box {
+                dir: Dir::Row,
+                gap: 0.0,
+                pad: Edges::ZERO,
+                hidden: false,
+                block: Block::None,
+                children: sig,
+            });
+            if !op.ret.is_empty() {
+                cells.push(Shape::Text {
+                    text: ":".to_string(),
+                    style: sheet.colon,
+                });
+                cells.push(Shape::Text {
+                    text: op.ret.clone(),
+                    style: sheet.colon,
+                });
+            }
+            op_rows.push(Shape::Box {
+                dir: Dir::Row,
+                gap: sheet.row_gap,
+                pad: Edges::ZERO,
+                hidden: false,
+                block: Block::None,
+                children: cells,
+            });
+        }
+        rows.push(Shape::Box {
+            dir: Dir::Col,
+            gap: sheet.rows_gap,
+            pad: Edges::ZERO,
+            hidden: false,
+            block: Block::Operations,
+            children: op_rows,
         });
     }
 
@@ -407,6 +560,7 @@ pub fn class_shape(node: &crate::scene::SceneNode, sheet: &StyleSheet) -> Shape 
         gap: sheet.rows_gap,
         pad: sheet.card_pad,
         hidden: false,
+        block: Block::None,
         children: rows,
     }
 }
@@ -414,11 +568,6 @@ pub fn class_shape(node: &crate::scene::SceneNode, sheet: &StyleSheet) -> Shape 
 /// Hull size the focus card hugs to, for the scene node rect.
 pub fn card_size(node: &crate::scene::SceneNode, sheet: &StyleSheet) -> (f64, f64) {
     measure(&class_shape(node, sheet)).size
-}
-
-/// Absolute placed text leaves the renderer draws.
-pub fn card_texts(node: &crate::scene::SceneNode, sheet: &StyleSheet) -> Vec<PlacedText> {
-    measure(&class_shape(node, sheet)).texts
 }
 
 #[cfg(test)]
@@ -449,6 +598,7 @@ mod tests {
             gap: 0.0,
             pad: Edges::ZERO,
             hidden,
+            block: Block::None,
             children,
         }
     }
@@ -506,6 +656,9 @@ mod tests {
             element_type: ElementType::Uml(UmlMetaclass::Class),
             stereotypes,
             attributes,
+            operations: Vec::new(),
+            header: crate::scene::HeaderStyle::Plain,
+            ports: false,
             rect: Rect {
                 x: 0.0,
                 y: 0.0,
@@ -518,7 +671,8 @@ mod tests {
     }
 
     fn drawn(node: &SceneNode) -> Vec<String> {
-        card_texts(node, &mono_sheet())
+        measure(&class_shape(node, &mono_sheet()))
+            .texts
             .iter()
             .map(|t| t.text.clone())
             .collect()
@@ -585,5 +739,120 @@ mod tests {
             ],
         );
         assert!(card_size(&two, &mono_sheet()).1 > card_size(&one, &mono_sheet()).1);
+    }
+
+    // ---- operations compartment + header treatment + block geometry ----
+
+    fn op(name: &str, params: Option<&str>, ret: &str, vis: &str) -> crate::inspector::OpRow {
+        crate::inspector::OpRow {
+            name: name.to_string(),
+            params: params.map(str::to_string),
+            ret: ret.to_string(),
+            visibility: vis.to_string(),
+        }
+    }
+
+    #[test]
+    fn operation_row_draws_marker_name_params_and_return() {
+        let mut n = scene_node("Order", vec![], vec![]);
+        n.operations = vec![op("place", Some("pay"), "void", "+")];
+        let s = drawn(&n);
+        assert!(s.contains(&"+".to_string()));
+        assert!(s.contains(&"place".to_string()));
+        assert!(s.contains(&"(pay)".to_string()));
+        assert!(s.contains(&":".to_string()));
+        assert!(s.contains(&"void".to_string()));
+    }
+
+    #[test]
+    fn empty_params_render_as_bare_parens() {
+        let mut n = scene_node("Order", vec![], vec![]);
+        n.operations = vec![op("cancel", Some(""), "void", "+")];
+        assert!(drawn(&n).contains(&"()".to_string()));
+    }
+
+    #[test]
+    fn none_params_hides_the_parens() {
+        let mut n = scene_node("Order", vec![], vec![]);
+        n.operations = vec![op("cancel", None, "void", "+")];
+        assert!(!drawn(&n).iter().any(|s| s.starts_with('(')));
+    }
+
+    #[test]
+    fn empty_return_omits_the_return_tail() {
+        let mut n = scene_node("Order", vec![], vec![]);
+        // No colon anywhere: header/attrs are empty of types, and the op has no return.
+        n.operations = vec![op("cancel", Some(""), "", "+")];
+        assert!(!drawn(&n).contains(&":".to_string()));
+    }
+
+    #[test]
+    fn hidden_header_omits_the_title() {
+        let mut n = scene_node("Order", vec![], vec![attr("id", "Int", "+", "")]);
+        n.header = crate::scene::HeaderStyle::Hidden;
+        assert!(!drawn(&n).contains(&"ORDER".to_string()));
+    }
+
+    #[test]
+    fn plain_node_has_header_and_attributes_blocks_only() {
+        let n = scene_node("Order", vec![], vec![attr("id", "Int", "+", "")]);
+        let placed = measure(&class_shape(&n, &mono_sheet()));
+        let roles: Vec<Block> = placed.blocks.iter().map(|b| b.block).collect();
+        assert!(roles.contains(&Block::Header));
+        assert!(roles.contains(&Block::Attributes));
+        assert!(!roles.contains(&Block::Operations));
+    }
+
+    #[test]
+    fn operations_compartment_block_appears_when_ops_present() {
+        let mut n = scene_node("Order", vec![], vec![]);
+        n.operations = vec![op("place", Some(""), "void", "+")];
+        let placed = measure(&class_shape(&n, &mono_sheet()));
+        assert!(placed
+            .blocks
+            .iter()
+            .any(|b| b.block == Block::Operations));
+    }
+
+    #[test]
+    fn hidden_header_captures_no_header_block() {
+        let mut n = scene_node("Order", vec![], vec![attr("id", "Int", "+", "")]);
+        n.header = crate::scene::HeaderStyle::Hidden;
+        let placed = measure(&class_shape(&n, &mono_sheet()));
+        assert!(!placed.blocks.iter().any(|b| b.block == Block::Header));
+    }
+
+    #[test]
+    fn header_helper_returns_the_header_block_for_a_plain_node() {
+        let n = scene_node("Order", vec![], vec![]);
+        let placed = measure(&class_shape(&n, &mono_sheet()));
+        assert!(placed.header().is_some());
+    }
+
+    #[test]
+    fn a_single_compartment_node_has_no_divider() {
+        let n = scene_node("Order", vec![], vec![attr("id", "Int", "+", "")]);
+        let placed = measure(&class_shape(&n, &mono_sheet()));
+        assert!(placed.compartment_dividers().is_empty());
+    }
+
+    #[test]
+    fn two_compartments_yield_one_divider_between_them() {
+        let mut n = scene_node("Order", vec![], vec![attr("id", "Int", "+", "")]);
+        n.operations = vec![op("place", Some(""), "void", "+")];
+        let placed = measure(&class_shape(&n, &mono_sheet()));
+        let d = placed.compartment_dividers();
+        assert_eq!(d.len(), 1);
+        let at = placed
+            .blocks
+            .iter()
+            .find(|b| b.block == Block::Attributes)
+            .unwrap();
+        let ops = placed
+            .blocks
+            .iter()
+            .find(|b| b.block == Block::Operations)
+            .unwrap();
+        assert!(d[0] >= at.y + at.h - 0.01 && d[0] <= ops.y + 0.01);
     }
 }
