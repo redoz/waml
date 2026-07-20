@@ -830,16 +830,20 @@ impl MatchEvent for App {
             .as_caption_button()
             .pressed(actions)
         {
-            // Burger drop-down: reuse the shared `app_menu` widget, anchored at
-            // the button's bottom-left (clamped past the caption clip band, like
-            // the logo menu). One item for now: "Close model". Opens on the
-            // PRESS so the same gesture can drag straight into a row and release
-            // to pick (marking menu); a plain tap latches it open instead.
+            // Burger drop-down: reuse the shared `app_menu` widget, dropped from
+            // the button. One item for now: "Close model". Opens on the PRESS so
+            // the same gesture can drag straight into a row and release to pick
+            // (marking menu); a plain tap latches it open instead.
+            //
+            // Anchored a touch right of the button's left edge and tucked up
+            // under it (negative `MENU_GAP`) so the card hangs off the glyph.
+            // No caption clamp: `app_menu` now draws in the window overlay (see
+            // `AppMenu::draw_walk`), so the card renders over the caption band
+            // instead of being clipped at the body's top edge.
             let btn = self.ui.widget(cx, ids!(menu_btn)).as_caption_button().rect();
             let anchor = dvec2(
-                btn.pos.x,
-                (btn.pos.y + btn.size.y + crate::app_menu::MENU_GAP)
-                    .max(crate::app_menu::CAPTION_H),
+                btn.pos.x + crate::app_menu::MENU_INDENT_X,
+                btn.pos.y + btn.size.y + crate::app_menu::MENU_GAP,
             );
             if let Some(mut menu) = self
                 .ui
