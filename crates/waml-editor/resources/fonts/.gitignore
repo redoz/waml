@@ -1,7 +1,0 @@
-# Local font stash. Only fonts actually referenced by code are tracked;
-# the rest stay local so we can trial different families without bloating git.
-# Un-ignore a file here once it's wired in the DSL.
-*.ttf
-!IBM_Plex_Sans/IBMPlexSans-Regular.ttf
-!IBM_Plex_Mono/IBMPlexMono-Regular.ttf
-!IBM_Plex_Mono/IBMPlexMono-Bold.ttf
