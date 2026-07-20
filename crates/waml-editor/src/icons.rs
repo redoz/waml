@@ -3163,6 +3163,10 @@ pub struct IconSet {
     pub vector_square: DrawColor,
 }
 
+// Not every bin that `#[path]`-includes this file exercises the whole catalog
+// API (e.g. `logo_harness` touches only `moon`), so per-bin dead-code analysis
+// flags these as unused; the main `waml-editor` bin uses them.
+#[allow(dead_code)]
 impl IconSet {
     /// The one place a glyph maps to its `DrawColor` shader. Field order ==
     /// `Icon::ALL` order (the load-bearing order invariant).
@@ -3271,6 +3275,7 @@ impl IconSet {
 /// One variant per catalog glyph, in the exact `IconSet` field order (the
 /// load-bearing order invariant: enum == field == DSL == `ALL` == `label`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[allow(dead_code)] // some bins include this file without touching every variant
 pub enum Icon {
     Class,
     Interface,
@@ -3361,6 +3366,7 @@ pub enum Icon {
     VectorSquare,
 }
 
+#[allow(dead_code)] // ALL/label are unused in bins that don't iterate the catalog
 impl Icon {
     /// Every glyph, in field order. The single source of glyph identity; the
     /// `icon_harness` proof grid iterates this.
