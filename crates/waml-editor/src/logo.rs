@@ -39,9 +39,10 @@ script_mod! {
         hover: uniform(0.0)
         time: uniform(0.0)
         // Animation mode: 0 = hover shimmer (top-bar wordmark, the default so
-        // any plain instance is unchanged); 1..6 = always-on splash letter
-        // pulse variants (accent / Close Encounters / bucket-palette / and the
-        // agent-authored molten / neon / electric sets). See `pixel`.
+        // any plain instance is unchanged); 1..7 = always-on splash letter
+        // pulse variants (accent / Close Encounters / bucket-palette / the
+        // agent-authored molten / neon / electric sets / and per-segment
+        // desaturated-until-pulse). See `pixel`.
         mode: uniform(0.0)
         // Crossfade coverage scale (0..1), default 1 = solid. Only the splash
         // drives it below 1: on a logo click it draws the outgoing variant at
@@ -66,9 +67,9 @@ script_mod! {
             // ---- animated recolor: hover shimmer (mode 0) OR splash letter
             // pulse (modes >=1) ----------------------------------------------
             // Mode 0 is the top-bar wordmark's hover shimmer (unchanged). Modes
-            // 1..6 are the always-on splash "WAML" letter pulse (start_screen.rs).
+            // 1..7 are the always-on splash "WAML" letter pulse (start_screen.rs).
             // Every mode's math is computed, then selected branchlessly by the
-            // per-mode weights m0..m6 (exactly one is 1) -- the DSL compiles no
+            // per-mode weights m0..m7 (exactly one is 1) -- the DSL compiles no
             // `if`. Overlapping letter->segment map for the pulse variants:
             //   W = 1,2,3,4   A = 2,3   M = 2,3,4,5   L = 5,6
             let acc = vec3(self.accent.x, self.accent.y, self.accent.z)
@@ -157,6 +158,23 @@ script_mod! {
             let pk4 = (pkW * lvW + pkM * lvM + acc * eps) / (lvW + lvM + eps)
             let pk5 = (pkM * lvM + pkL * lvL + acc * eps) / (lvM + lvL + eps)
             let pk6 = (pkL * lvL + acc * eps) / (lvL + eps)
+
+            // mode 7 palette: a FIXED bucket hue per SEGMENT (not mode 3's
+            // per-letter blend). Grey at rest is free -- the final mix(k,tc,lev)
+            // fades each segment to the grey ramp as its thump level -> 0, so no
+            // idle colour floor is added (that floor is exactly what keeps mode 3
+            // idling accent instead of grey; mode 7 omits it). As a letter thumps,
+            // each of its segments lights its OWN distinct hue, so the letter reads
+            // as several colours at once. Spectrum left->right across the 7
+            // AccentBucket swatches (inspector_panel.rs bucket_color): blue, cyan,
+            // green, amber, pink, indigo -- 6 distinct so every letter (W=1,2,3,4
+            // A=2,3  M=2,3,4,5  L=5,6) spans multiple hues.
+            let sg1 = vec3(0.078, 0.588, 0.863)
+            let sg2 = vec3(0.000, 0.706, 0.824)
+            let sg3 = vec3(0.235, 0.745, 0.353)
+            let sg4 = vec3(0.902, 0.588, 0.078)
+            let sg5 = vec3(0.922, 0.275, 0.471)
+            let sg6 = vec3(0.353, 0.431, 0.941)
 
             // ================= AGENT VARIANTS (modes 4-6) =================
             // Authored by subagents; `fract`->`x-floor(x)`, `pow`->products,
@@ -401,6 +419,7 @@ script_mod! {
             let s45 = sign(self.mode - 4.5)
             let s55 = sign(self.mode - 5.5)
             let s65 = sign(self.mode - 6.5)
+            let s75 = sign(self.mode - 7.5)
             let m0 = 0.5 - 0.5 * s05
             let m1 = (0.5 + 0.5 * s05) * (0.5 - 0.5 * s15)
             let m2 = (0.5 + 0.5 * s15) * (0.5 - 0.5 * s25)
@@ -408,21 +427,22 @@ script_mod! {
             let m4 = (0.5 + 0.5 * s35) * (0.5 - 0.5 * s45)
             let m5 = (0.5 + 0.5 * s45) * (0.5 - 0.5 * s55)
             let m6 = (0.5 + 0.5 * s55) * (0.5 - 0.5 * s65)
+            let m7 = (0.5 + 0.5 * s65) * (0.5 - 0.5 * s75)
             let seq = m1 + m2 + m3
 
             // -- resolve per-segment level + target colour, then recolor --
-            let lev1 = m0 * g1 + seq * bl1 + m4 * a4lev1 + m5 * a5lev1 + m6 * a6lev1
-            let lev2 = m0 * g2 + seq * bl2 + m4 * a4lev2 + m5 * a5lev2 + m6 * a6lev2
-            let lev3 = m0 * g3 + seq * bl3 + m4 * a4lev3 + m5 * a5lev3 + m6 * a6lev3
-            let lev4 = m0 * g4 + seq * bl4 + m4 * a4lev4 + m5 * a5lev4 + m6 * a6lev4
-            let lev5 = m0 * g5 + seq * bl5 + m4 * a4lev5 + m5 * a5lev5 + m6 * a6lev5
-            let lev6 = m0 * g6 + seq * bl6 + m4 * a4lev6 + m5 * a5lev6 + m6 * a6lev6
-            let tc1 = (m0 + m1) * acc + m2 * ce1 + m3 * pk1 + m4 * a4c1 + m5 * a5c1 + m6 * a6c1
-            let tc2 = (m0 + m1) * acc + m2 * ce2 + m3 * pk2 + m4 * a4c2 + m5 * a5c2 + m6 * a6c2
-            let tc3 = (m0 + m1) * acc + m2 * ce3 + m3 * pk3 + m4 * a4c3 + m5 * a5c3 + m6 * a6c3
-            let tc4 = (m0 + m1) * acc + m2 * ce4 + m3 * pk4 + m4 * a4c4 + m5 * a5c4 + m6 * a6c4
-            let tc5 = (m0 + m1) * acc + m2 * ce5 + m3 * pk5 + m4 * a4c5 + m5 * a5c5 + m6 * a6c5
-            let tc6 = (m0 + m1) * acc + m2 * ce6 + m3 * pk6 + m4 * a4c6 + m5 * a5c6 + m6 * a6c6
+            let lev1 = m0 * g1 + seq * bl1 + m4 * a4lev1 + m5 * a5lev1 + m6 * a6lev1 + m7 * th1
+            let lev2 = m0 * g2 + seq * bl2 + m4 * a4lev2 + m5 * a5lev2 + m6 * a6lev2 + m7 * th2
+            let lev3 = m0 * g3 + seq * bl3 + m4 * a4lev3 + m5 * a5lev3 + m6 * a6lev3 + m7 * th3
+            let lev4 = m0 * g4 + seq * bl4 + m4 * a4lev4 + m5 * a5lev4 + m6 * a6lev4 + m7 * th4
+            let lev5 = m0 * g5 + seq * bl5 + m4 * a4lev5 + m5 * a5lev5 + m6 * a6lev5 + m7 * th5
+            let lev6 = m0 * g6 + seq * bl6 + m4 * a4lev6 + m5 * a5lev6 + m6 * a6lev6 + m7 * th6
+            let tc1 = (m0 + m1) * acc + m2 * ce1 + m3 * pk1 + m4 * a4c1 + m5 * a5c1 + m6 * a6c1 + m7 * sg1
+            let tc2 = (m0 + m1) * acc + m2 * ce2 + m3 * pk2 + m4 * a4c2 + m5 * a5c2 + m6 * a6c2 + m7 * sg2
+            let tc3 = (m0 + m1) * acc + m2 * ce3 + m3 * pk3 + m4 * a4c3 + m5 * a5c3 + m6 * a6c3 + m7 * sg3
+            let tc4 = (m0 + m1) * acc + m2 * ce4 + m3 * pk4 + m4 * a4c4 + m5 * a5c4 + m6 * a6c4 + m7 * sg4
+            let tc5 = (m0 + m1) * acc + m2 * ce5 + m3 * pk5 + m4 * a4c5 + m5 * a5c5 + m6 * a6c5 + m7 * sg5
+            let tc6 = (m0 + m1) * acc + m2 * ce6 + m3 * pk6 + m4 * a4c6 + m5 * a5c6 + m6 * a6c6 + m7 * sg6
             let kg1 = mix(k1, tc1, clamp(lev1, 0.0, 1.0))
             let kg2 = mix(k2, tc2, clamp(lev2, 0.0, 1.0))
             let kg3 = mix(k3, tc3, clamp(lev3, 0.0, 1.0))
@@ -631,8 +651,8 @@ pub struct LogoMark {
     #[live]
     auto: bool,
 
-    // Splash colour-pulse variant (1..6). `#[live]` so the start-screen sets the
-    // initial variant; clicking the splash advances it (1->6, wrapping) and this
+    // Splash colour-pulse variant (1..7). `#[live]` so the start-screen sets the
+    // initial variant; clicking the splash advances it (1->7, wrapping) and this
     // field drives the shader `mode` uniform from `draw_walk`. Non-splash
     // instances leave it 0 (the hover-shimmer mode).
     #[live]
@@ -720,7 +740,7 @@ impl Widget for LogoMark {
                 }
                 Hit::FingerDown(fe) if fe.is_primary_hit() => {
                     self.prev_mode = self.mode;
-                    self.mode = self.mode % 6.0 + 1.0;
+                    self.mode = self.mode % 7.0 + 1.0;
                     self.fade_t = 0.0;
                     self.fading = true;
                     self.last_time = cx.seconds_since_app_start();

@@ -5,6 +5,7 @@
 //! Rows (see logo.rs `pixel`):
 //!   1 accent      2 close-encounters   3 bucket-palette
 //!   4 molten      5 neon               6 electric
+//!   7 per-segment desaturated-until-pulse
 //!
 //! Run: `cargo run -p waml-editor --bin logo_pulse_harness`
 //! No hot-reload in a bare `cargo run` -- edit `logo.rs`, rebuild, relaunch.
@@ -33,16 +34,17 @@ script_mod! {
                 // Splash ground is a light radial; a flat light clear is close
                 // enough to judge the pulse colours against.
                 pass.clear_color: vec4(0.93, 0.94, 0.96, 1.0)
-                window.inner_size: vec2(320, 960)
-                window.title: "WAML pulse 1-6 (top->bottom)"
+                window.inner_size: vec2(320, 1140)
+                window.title: "WAML pulse 1-7 (top->bottom)"
                 body +: {
                     padding: 28
                     flow: Down
                     spacing: 18.0
 
-                    // Rows top->bottom = modes 1..6:
+                    // Rows top->bottom = modes 1..7:
                     //   1 accent · 2 close-encounters · 3 bucket-palette
                     //   4 molten · 5 neon · 6 electric
+                    //   7 per-segment desaturated-until-pulse
                     // `mode` is the widget field (Rust drives the uniform);
                     // clicking a row crossfades it to the next variant.
                     mod.widgets.LogoMark{ width: 240.0, height: 137.0, auto: true, mode: 1.0 }
@@ -51,6 +53,7 @@ script_mod! {
                     mod.widgets.LogoMark{ width: 240.0, height: 137.0, auto: true, mode: 4.0 }
                     mod.widgets.LogoMark{ width: 240.0, height: 137.0, auto: true, mode: 5.0 }
                     mod.widgets.LogoMark{ width: 240.0, height: 137.0, auto: true, mode: 6.0 }
+                    mod.widgets.LogoMark{ width: 240.0, height: 137.0, auto: true, mode: 7.0 }
                 }
             }
         }
