@@ -160,6 +160,23 @@ pub fn plan_fmt(files: &[(String, String)]) -> Vec<FmtResult> {
     let bundle_diags = validate(files); // includes semantic (link) errors, e.g. duplicate-slug
     let mut out = Vec::new();
     for (path, text) in files {
+        // Index docs are navigation-only and not round-trippable through the
+        // node serializer (their nav list would be dropped); they are rebuilt by
+        // reindex, not fmt. Pass them through verbatim so fmt neither errors on
+        // them nor destroys their content.
+        let is_index = path
+            .rsplit(['/', '\\'])
+            .next()
+            .is_some_and(|seg| seg.eq_ignore_ascii_case("index.md"));
+        if is_index {
+            out.push(FmtResult {
+                path: path.clone(),
+                formatted: text.clone(),
+                changed: false,
+                skipped: false,
+            });
+            continue;
+        }
         let (_doc, syn) = parse(text);
         let has_error = syn.iter().any(|d| d.severity == Severity::Error)
             || bundle_diags
@@ -190,6 +207,28 @@ pub fn plan_fmt(files: &[(String, String)]) -> Vec<FmtResult> {
 mod tests {
     use super::*;
     use waml::diagnostic::DiagCode;
+
+    #[test]
+    fn plan_fmt_leaves_index_docs_untouched() {
+        // An index doc's navigation is not round-trippable through the node
+        // serializer (it would be dropped), so fmt must pass it through verbatim
+        // rather than skip it as errored or rewrite it and lose the nav.
+        let files = vec![
+            (
+                "alerts/index.md".to_string(),
+                "# Alerts\n\nAlert docs.\n\n* [Alert](./alert.md) - a signal\n".to_string(),
+            ),
+            (
+                "alerts/alert.md".to_string(),
+                "---\ntype: uml.Class\ntitle: Alert\n---\n# Alert\n".to_string(),
+            ),
+        ];
+        let out = plan_fmt(&files);
+        let ix = out.iter().find(|r| r.path == "alerts/index.md").unwrap();
+        assert!(!ix.skipped, "index doc must not be skipped as errored");
+        assert!(!ix.changed, "index nav must be preserved verbatim");
+        assert_eq!(ix.formatted, files[0].1, "index content must round-trip unchanged");
+    }
 
     fn sample() -> Vec<Diagnostic> {
         vec![
