@@ -88,13 +88,19 @@ script_mod! {
         }
     }
 
-    // Package: the same hexagon read as a cube, with three interior seams.
+    // Package: the Lucide box/cube -- outline, center seam, top-V seam, and the
+    // corner flap edge.
+    // Faithful port of resources/icons/package.svg via scripts/gen-icon.py.
     mod.draw.IconPackage = mod.draw.DrawColor{
         pixel: fn() {
             let s = self.rect_size.x
             let w = s * 0.068
             let sdf = Sdf2d.viewport(self.pos * self.rect_size)
-            sdf.move_to(s * 0.8750, s * 0.3333)
+            sdf.move_to(s * 0.4583, s * 0.9054)
+            sdf.arc_to(s * 0.5000, s * 0.8332, s * 0.0833, 2.0944, 1.0472)
+            sdf.line_to(s * 0.8333, s * 0.7388)
+            sdf.arc_to(s * 0.7917, s * 0.6666, s * 0.0833, 1.0472, 0.0010)
+            sdf.line_to(s * 0.8750, s * 0.3333)
             sdf.arc_to(s * 0.7917, s * 0.3334, s * 0.0833, -0.0010, -1.0472)
             sdf.line_to(s * 0.5417, s * 0.0946)
             sdf.arc_to(s * 0.5000, s * 0.1668, s * 0.0833, -1.0472, -2.0944)
@@ -102,18 +108,17 @@ script_mod! {
             sdf.arc_to(s * 0.2083, s * 0.3334, s * 0.0833, -2.0944, -3.1406)
             sdf.line_to(s * 0.1250, s * 0.6667)
             sdf.arc_to(s * 0.2083, s * 0.6666, s * 0.0833, 3.1406, 2.0944)
-            sdf.line_to(s * 0.4583, s * 0.9054)
-            sdf.arc_to(s * 0.5000, s * 0.8332, s * 0.0833, 2.0944, 1.0472)
-            sdf.line_to(s * 0.8333, s * 0.7388)
-            sdf.arc_to(s * 0.7917, s * 0.6666, s * 0.0833, 1.0472, 0.0010)
             sdf.close_path()
-            sdf.stroke(self.color, w)
-            sdf.move_to(s * 0.1375, s * 0.2917)
-            sdf.line_to(s * 0.5000, s * 0.5000)
-            sdf.line_to(s * 0.8625, s * 0.2917)
             sdf.stroke(self.color, w)
             sdf.move_to(s * 0.5000, s * 0.9167)
             sdf.line_to(s * 0.5000, s * 0.5000)
+            sdf.stroke(self.color, w)
+            sdf.move_to(s * 0.1371, s * 0.2917)
+            sdf.line_to(s * 0.5000, s * 0.5000)
+            sdf.line_to(s * 0.8629, s * 0.2917)
+            sdf.stroke(self.color, w)
+            sdf.move_to(s * 0.3125, s * 0.1779)
+            sdf.line_to(s * 0.6875, s * 0.3925)
             sdf.stroke(self.color, w)
             return sdf.result
         }
@@ -2888,6 +2893,225 @@ script_mod! {
         }
     }
 
+    // Door closed: a door slab with a knob dot, over a floor line.
+    // Faithful port of resources/icons/door-closed.svg via scripts/gen-icon.py.
+    mod.draw.IconDoorClosed = mod.draw.DrawColor{
+        pixel: fn() {
+            let s = self.rect_size.x
+            let w = s * 0.068
+            let sdf = Sdf2d.viewport(self.pos * self.rect_size)
+            sdf.move_to(s * 0.4167, s * 0.5000)
+            sdf.line_to(s * 0.4171, s * 0.5000)
+            sdf.stroke(self.color, w)
+            sdf.move_to(s * 0.7500, s * 0.8333)
+            sdf.line_to(s * 0.7500, s * 0.2500)
+            sdf.arc_to(s * 0.6667, s * 0.2500, s * 0.0833, 0.0000, -1.5708)
+            sdf.line_to(s * 0.3333, s * 0.1667)
+            sdf.arc_to(s * 0.3333, s * 0.2500, s * 0.0833, -1.5708, -3.1416)
+            sdf.line_to(s * 0.2500, s * 0.8333)
+            sdf.stroke(self.color, w)
+            sdf.move_to(s * 0.0833, s * 0.8333)
+            sdf.line_to(s * 0.9167, s * 0.8333)
+            sdf.stroke(self.color, w)
+            return sdf.result
+        }
+    }
+
+    // Sticky note: a page with a folded bottom-right corner.
+    // Faithful port of resources/icons/sticky-note.svg via scripts/gen-icon.py.
+    mod.draw.IconStickyNote = mod.draw.DrawColor{
+        pixel: fn() {
+            let s = self.rect_size.x
+            let w = s * 0.068
+            let sdf = Sdf2d.viewport(self.pos * self.rect_size)
+            sdf.move_to(s * 0.8750, s * 0.3750)
+            sdf.arc_to(s * 0.7750, s * 0.3748, s * 0.1000, 0.0025, -0.7872)
+            sdf.line_to(s * 0.6961, s * 0.1544)
+            sdf.arc_to(s * 0.6252, s * 0.2250, s * 0.1000, -0.7836, -1.5732)
+            sdf.line_to(s * 0.2083, s * 0.1250)
+            sdf.arc_to(s * 0.2083, s * 0.2083, s * 0.0833, -1.5708, -3.1416)
+            sdf.line_to(s * 0.1250, s * 0.7917)
+            sdf.arc_to(s * 0.2083, s * 0.7917, s * 0.0833, 3.1416, 1.5708)
+            sdf.line_to(s * 0.7917, s * 0.8750)
+            sdf.arc_to(s * 0.7917, s * 0.7917, s * 0.0833, 1.5708, 0.0000)
+            sdf.close_path()
+            sdf.stroke(self.color, w)
+            sdf.move_to(s * 0.6250, s * 0.1250)
+            sdf.line_to(s * 0.6250, s * 0.3333)
+            sdf.arc_to(s * 0.6667, s * 0.3333, s * 0.0417, 3.1416, 1.5708)
+            sdf.line_to(s * 0.8750, s * 0.3750)
+            sdf.stroke(self.color, w)
+            return sdf.result
+        }
+    }
+
+    // List: three bullet dots + three rows.
+    // Faithful port of resources/icons/list.svg via scripts/gen-icon.py.
+    mod.draw.IconList = mod.draw.DrawColor{
+        pixel: fn() {
+            let s = self.rect_size.x
+            let w = s * 0.068
+            let sdf = Sdf2d.viewport(self.pos * self.rect_size)
+            sdf.move_to(s * 0.1250, s * 0.2083)
+            sdf.line_to(s * 0.1254, s * 0.2083)
+            sdf.stroke(self.color, w)
+            sdf.move_to(s * 0.1250, s * 0.5000)
+            sdf.line_to(s * 0.1254, s * 0.5000)
+            sdf.stroke(self.color, w)
+            sdf.move_to(s * 0.1250, s * 0.7917)
+            sdf.line_to(s * 0.1254, s * 0.7917)
+            sdf.stroke(self.color, w)
+            sdf.move_to(s * 0.3333, s * 0.2083)
+            sdf.line_to(s * 0.8750, s * 0.2083)
+            sdf.stroke(self.color, w)
+            sdf.move_to(s * 0.3333, s * 0.5000)
+            sdf.line_to(s * 0.8750, s * 0.5000)
+            sdf.stroke(self.color, w)
+            sdf.move_to(s * 0.3333, s * 0.7917)
+            sdf.line_to(s * 0.8750, s * 0.7917)
+            sdf.stroke(self.color, w)
+            return sdf.result
+        }
+    }
+
+    // Braces: a pair of curly braces -- value/primitive type.
+    // Faithful port of resources/icons/braces.svg via scripts/gen-icon.py.
+    mod.draw.IconBraces = mod.draw.DrawColor{
+        pixel: fn() {
+            let s = self.rect_size.x
+            let w = s * 0.068
+            let sdf = Sdf2d.viewport(self.pos * self.rect_size)
+            sdf.move_to(s * 0.3333, s * 0.1250)
+            sdf.line_to(s * 0.2917, s * 0.1250)
+            sdf.arc_to(s * 0.2917, s * 0.2083, s * 0.0833, -1.5708, -3.1416)
+            sdf.line_to(s * 0.2083, s * 0.4167)
+            sdf.arc_to(s * 0.1250, s * 0.4167, s * 0.0833, 0.0000, 1.5708)
+            sdf.arc_to(s * 0.1250, s * 0.5833, s * 0.0833, -1.5708, 0.0000)
+            sdf.line_to(s * 0.2083, s * 0.7917)
+            sdf.line_to(s * 0.2091, s * 0.8029)
+            sdf.line_to(s * 0.2113, s * 0.8138)
+            sdf.line_to(s * 0.2149, s * 0.8240)
+            sdf.line_to(s * 0.2198, s * 0.8336)
+            sdf.line_to(s * 0.2258, s * 0.8425)
+            sdf.line_to(s * 0.2328, s * 0.8505)
+            sdf.line_to(s * 0.2408, s * 0.8576)
+            sdf.line_to(s * 0.2497, s * 0.8636)
+            sdf.line_to(s * 0.2593, s * 0.8684)
+            sdf.line_to(s * 0.2696, s * 0.8720)
+            sdf.line_to(s * 0.2804, s * 0.8742)
+            sdf.line_to(s * 0.2917, s * 0.8750)
+            sdf.line_to(s * 0.3333, s * 0.8750)
+            sdf.stroke(self.color, w)
+            sdf.move_to(s * 0.6667, s * 0.8750)
+            sdf.line_to(s * 0.7083, s * 0.8750)
+            sdf.arc_to(s * 0.7083, s * 0.7917, s * 0.0833, 1.5708, 0.0000)
+            sdf.line_to(s * 0.7917, s * 0.5833)
+            sdf.line_to(s * 0.7924, s * 0.5721)
+            sdf.line_to(s * 0.7947, s * 0.5612)
+            sdf.line_to(s * 0.7982, s * 0.5510)
+            sdf.line_to(s * 0.8031, s * 0.5414)
+            sdf.line_to(s * 0.8091, s * 0.5325)
+            sdf.line_to(s * 0.8161, s * 0.5245)
+            sdf.line_to(s * 0.8242, s * 0.5174)
+            sdf.line_to(s * 0.8330, s * 0.5114)
+            sdf.line_to(s * 0.8426, s * 0.5066)
+            sdf.line_to(s * 0.8529, s * 0.5030)
+            sdf.line_to(s * 0.8637, s * 0.5008)
+            sdf.line_to(s * 0.8750, s * 0.5000)
+            sdf.arc_to(s * 0.8750, s * 0.4167, s * 0.0833, 1.5708, 3.1416)
+            sdf.line_to(s * 0.7917, s * 0.2083)
+            sdf.arc_to(s * 0.7083, s * 0.2083, s * 0.0833, 0.0000, -1.5708)
+            sdf.line_to(s * 0.6667, s * 0.1250)
+            sdf.stroke(self.color, w)
+            return sdf.result
+        }
+    }
+
+    // Workflow: two rounded-square nodes joined by an elbow link -- graph/canvas.
+    // Faithful port of resources/icons/workflow.svg via scripts/gen-icon.py.
+    mod.draw.IconWorkflow = mod.draw.DrawColor{
+        pixel: fn() {
+            let s = self.rect_size.x
+            let w = s * 0.068
+            let sdf = Sdf2d.viewport(self.pos * self.rect_size)
+            sdf.move_to(s * 0.2083, s * 0.1250)
+            sdf.line_to(s * 0.3750, s * 0.1250)
+            sdf.arc_to(s * 0.3750, s * 0.2083, s * 0.0833, -1.5708, 0.0000)
+            sdf.line_to(s * 0.4583, s * 0.3750)
+            sdf.arc_to(s * 0.3750, s * 0.3750, s * 0.0833, 0.0000, 1.5708)
+            sdf.line_to(s * 0.2083, s * 0.4583)
+            sdf.arc_to(s * 0.2083, s * 0.3750, s * 0.0833, 1.5708, 3.1416)
+            sdf.line_to(s * 0.1250, s * 0.2083)
+            sdf.arc_to(s * 0.2083, s * 0.2083, s * 0.0833, 3.1416, 4.7124)
+            sdf.close_path()
+            sdf.stroke(self.color, w)
+            sdf.move_to(s * 0.2917, s * 0.4583)
+            sdf.line_to(s * 0.2917, s * 0.6250)
+            sdf.arc_to(s * 0.3750, s * 0.6250, s * 0.0833, 3.1416, 1.5708)
+            sdf.line_to(s * 0.5417, s * 0.7083)
+            sdf.stroke(self.color, w)
+            sdf.move_to(s * 0.6250, s * 0.5417)
+            sdf.line_to(s * 0.7917, s * 0.5417)
+            sdf.arc_to(s * 0.7917, s * 0.6250, s * 0.0833, -1.5708, 0.0000)
+            sdf.line_to(s * 0.8750, s * 0.7917)
+            sdf.arc_to(s * 0.7917, s * 0.7917, s * 0.0833, 0.0000, 1.5708)
+            sdf.line_to(s * 0.6250, s * 0.8750)
+            sdf.arc_to(s * 0.6250, s * 0.7917, s * 0.0833, 1.5708, 3.1416)
+            sdf.line_to(s * 0.5417, s * 0.6250)
+            sdf.arc_to(s * 0.6250, s * 0.6250, s * 0.0833, 3.1416, 4.7124)
+            sdf.close_path()
+            sdf.stroke(self.color, w)
+            return sdf.result
+        }
+    }
+
+    // Activity: a heartbeat/pulse polyline -- behavior/activity.
+    // Faithful port of resources/icons/activity.svg via scripts/gen-icon.py.
+    mod.draw.IconActivity = mod.draw.DrawColor{
+        pixel: fn() {
+            let s = self.rect_size.x
+            let w = s * 0.068
+            let sdf = Sdf2d.viewport(self.pos * self.rect_size)
+            sdf.move_to(s * 0.9167, s * 0.5000)
+            sdf.line_to(s * 0.8133, s * 0.5000)
+            sdf.arc_to(s * 0.8132, s * 0.5833, s * 0.0833, -1.5687, -2.8682)
+            sdf.line_to(s * 0.6350, s * 0.9092)
+            sdf.arc_to(s * 0.6250, s * 0.9063, s * 0.0104, 0.2838, 2.8578)
+            sdf.line_to(s * 0.3850, s * 0.0908)
+            sdf.arc_to(s * 0.3750, s * 0.0938, s * 0.0104, -0.2838, -2.8578)
+            sdf.line_to(s * 0.2671, s * 0.4392)
+            sdf.arc_to(s * 0.1868, s * 0.4167, s * 0.0833, 0.2734, 1.5679)
+            sdf.line_to(s * 0.0833, s * 0.5000)
+            sdf.stroke(self.color, w)
+            return sdf.result
+        }
+    }
+
+    // Arrow left-right: two opposing arrows -- message exchange over time.
+    // Faithful port of resources/icons/arrow-left-right.svg via scripts/gen-icon.py.
+    mod.draw.IconArrowLeftRight = mod.draw.DrawColor{
+        pixel: fn() {
+            let s = self.rect_size.x
+            let w = s * 0.068
+            let sdf = Sdf2d.viewport(self.pos * self.rect_size)
+            sdf.move_to(s * 0.3333, s * 0.1250)
+            sdf.line_to(s * 0.1667, s * 0.2917)
+            sdf.line_to(s * 0.3333, s * 0.4583)
+            sdf.stroke(self.color, w)
+            sdf.move_to(s * 0.1667, s * 0.2917)
+            sdf.line_to(s * 0.8333, s * 0.2917)
+            sdf.stroke(self.color, w)
+            sdf.move_to(s * 0.6667, s * 0.8750)
+            sdf.line_to(s * 0.8333, s * 0.7083)
+            sdf.line_to(s * 0.6667, s * 0.5417)
+            sdf.stroke(self.color, w)
+            sdf.move_to(s * 0.8333, s * 0.7083)
+            sdf.line_to(s * 0.1667, s * 0.7083)
+            sdf.stroke(self.color, w)
+            return sdf.result
+        }
+    }
+
     mod.widgets.IconSetBase = #(IconSet::script_component(vm))
 
     // Each field is a `DrawColor` pointing at its icon shader; the accent tint
@@ -2980,6 +3204,13 @@ script_mod! {
         tab_x: mod.draw.IconTabX{ color: atlas.accent }
         tag_plus: mod.draw.IconTagPlus{ color: atlas.accent }
         vector_square: mod.draw.IconVectorSquare{ color: atlas.accent }
+        door_closed: mod.draw.IconDoorClosed{ color: atlas.accent }
+        sticky_note: mod.draw.IconStickyNote{ color: atlas.accent }
+        list: mod.draw.IconList{ color: atlas.accent }
+        braces: mod.draw.IconBraces{ color: atlas.accent }
+        workflow: mod.draw.IconWorkflow{ color: atlas.accent }
+        activity: mod.draw.IconActivity{ color: atlas.accent }
+        arrow_left_right: mod.draw.IconArrowLeftRight{ color: atlas.accent }
     }
 }
 
@@ -3161,6 +3392,20 @@ pub struct IconSet {
     pub tag_plus: DrawColor,
     #[live]
     pub vector_square: DrawColor,
+    #[live]
+    pub door_closed: DrawColor,
+    #[live]
+    pub sticky_note: DrawColor,
+    #[live]
+    pub list: DrawColor,
+    #[live]
+    pub braces: DrawColor,
+    #[live]
+    pub workflow: DrawColor,
+    #[live]
+    pub activity: DrawColor,
+    #[live]
+    pub arrow_left_right: DrawColor,
 }
 
 // Not every bin that `#[path]`-includes this file exercises the whole catalog
@@ -3259,6 +3504,13 @@ impl IconSet {
             Icon::TabX => &mut self.tab_x,
             Icon::TagPlus => &mut self.tag_plus,
             Icon::VectorSquare => &mut self.vector_square,
+            Icon::DoorClosed => &mut self.door_closed,
+            Icon::StickyNote => &mut self.sticky_note,
+            Icon::List => &mut self.list,
+            Icon::Braces => &mut self.braces,
+            Icon::Workflow => &mut self.workflow,
+            Icon::Activity => &mut self.activity,
+            Icon::ArrowLeftRight => &mut self.arrow_left_right,
         }
     }
 
@@ -3364,13 +3616,20 @@ pub enum Icon {
     TabX,
     TagPlus,
     VectorSquare,
+    DoorClosed,
+    StickyNote,
+    List,
+    Braces,
+    Workflow,
+    Activity,
+    ArrowLeftRight,
 }
 
 #[allow(dead_code)] // ALL/label are unused in bins that don't iterate the catalog
 impl Icon {
     /// Every glyph, in field order. The single source of glyph identity; the
     /// `icon_harness` proof grid iterates this.
-    pub const ALL: [Icon; 87] = [
+    pub const ALL: [Icon; 94] = [
         Icon::Class,
         Icon::Interface,
         Icon::EnumType,
@@ -3458,6 +3717,13 @@ impl Icon {
         Icon::TabX,
         Icon::TagPlus,
         Icon::VectorSquare,
+        Icon::DoorClosed,
+        Icon::StickyNote,
+        Icon::List,
+        Icon::Braces,
+        Icon::Workflow,
+        Icon::Activity,
+        Icon::ArrowLeftRight,
     ];
 
     /// The `icon_harness` display slug (the Lucide source name), preserved
@@ -3551,6 +3817,13 @@ impl Icon {
             Icon::TabX => "tab-x",
             Icon::TagPlus => "tag-plus",
             Icon::VectorSquare => "vector-square",
+            Icon::DoorClosed => "door-closed",
+            Icon::StickyNote => "sticky-note",
+            Icon::List => "list",
+            Icon::Braces => "braces",
+            Icon::Workflow => "workflow",
+            Icon::Activity => "activity",
+            Icon::ArrowLeftRight => "arrow-left-right",
         }
     }
 }
