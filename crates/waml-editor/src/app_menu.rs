@@ -32,6 +32,9 @@ pub const ROW_H: f64 = 34.0;
 pub const PAD_V: f64 = 6.0;
 /// Gap between the logo's bottom edge and the card's top (screen px).
 pub const MENU_GAP: f64 = 4.0;
+/// Caption-bar height (matches `window.caption_bar_height_override` in the App
+/// DSL). The card top is clamped to this so it clears the caption's clip band.
+pub const CAPTION_H: f64 = 44.0;
 
 /// Pure, GPU-free drop-down state. `Default` = closed. The `AppMenu` widget
 /// owns one and forwards translated pointer input into these methods; the unit
@@ -167,6 +170,10 @@ script_mod! {
         draw_icon_idle +: { color: atlas.text }
         draw_icon_accent +: { color: atlas.accent }
         draw_icon_danger +: { color: atlas.danger }
+        // Row separators: a dim hairline between every pair of rows, and a
+        // brighter one above the danger (Exit) row to set it apart.
+        draw_divider: mod.draw.DrawColor{ color: atlas.frame_lo }
+        draw_divider_bright: mod.draw.DrawColor{ color: atlas.frame_hi }
         draw_label +: {
             color: atlas.text
             text_style: theme.font_regular{ font_size: 11 line_spacing: 1.2 }
@@ -206,6 +213,13 @@ pub struct AppMenu {
     #[redraw]
     #[live]
     draw_label: DrawText,
+    /// Hairline between rows; a brighter one sits above the danger (Exit) row.
+    #[redraw]
+    #[live]
+    draw_divider: DrawColor,
+    #[redraw]
+    #[live]
+    draw_divider_bright: DrawColor,
     /// The shared project-tree SDF glyph set; a row picks one field and tints it.
     #[live]
     icons: TreeIcons,
@@ -230,12 +244,12 @@ impl AppMenu {
     /// The project-tree glyph for a logo-menu row. Takes `&mut TreeIcons` (not
     /// `&mut self`) so the draw loop can borrow one glyph without also borrowing
     /// the rest of `self` -- the tool dock's `icon_for` pattern. Only the three
-    /// logo rows are mapped; anything else (or a `Glyph` icon) draws nothing.
+    /// logo rows are mapped; anything else (Exit is icon-less by request, or a
+    /// `Glyph` icon) draws nothing.
     fn glyph_for<'a>(icons: &'a mut TreeIcons, icon: &Icon) -> Option<&'a mut DrawColor> {
         match icon {
             Icon::Shape(IconShape::Properties) => Some(&mut icons.sliders_horizontal),
             Icon::Shape(IconShape::About) => Some(&mut icons.info),
-            Icon::Shape(IconShape::Exit) => Some(&mut icons.circle_x),
             _ => None,
         }
     }
@@ -288,6 +302,19 @@ impl AppMenu {
         for (i, it) in items.iter().enumerate() {
             let row = self.core.row_rect(i);
             let cy = row.pos.y + row.size.y * 0.5;
+            // Separator at the top edge of every row after the first: a dim
+            // hairline, or the brighter one where the danger (Exit) row begins.
+            if i > 0 {
+                let div = Rect {
+                    pos: dvec2(panel.pos.x + 1.5, row.pos.y),
+                    size: dvec2(panel.size.x - 3.0, 1.0),
+                };
+                if it.danger {
+                    self.draw_divider_bright.draw_abs(cx, div);
+                } else {
+                    self.draw_divider.draw_abs(cx, div);
+                }
+            }
             if hovered == Some(i) && it.enabled {
                 // Hover highlight, inset a touch so the frame shows around it.
                 let hi = Rect {

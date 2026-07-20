@@ -936,9 +936,15 @@ impl MatchEvent for App {
             .and_then(|l| l.logo_action(actions).map(|_| l.drawn_rect()));
         if let Some(logo_rect) = logo_click {
             // Anchor the card at the logo's bottom-left so it drops down-right.
+            // The wordmark sits INSIDE the 44px caption bar (see
+            // `window.caption_bar_height_override`), but `app_menu` lives in the
+            // body, whose clip rect starts at the caption's bottom -- so clamp
+            // the top down to the caption bottom, else the card's top frame edge
+            // falls in the caption band and gets clipped away.
             let anchor = dvec2(
                 logo_rect.pos.x,
-                logo_rect.pos.y + logo_rect.size.y + crate::app_menu::MENU_GAP,
+                (logo_rect.pos.y + logo_rect.size.y + crate::app_menu::MENU_GAP)
+                    .max(crate::app_menu::CAPTION_H),
             );
             if let Some(mut menu) = self
                 .ui
