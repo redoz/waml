@@ -24,8 +24,17 @@ use crate::icons::TreeIcons;
 use crate::radial::{RadialItem, RadialOutcome};
 use makepad_widgets::*;
 
-/// Panel width (lpx).
-pub const MENU_W: f64 = 200.0;
+/// Safety cap on panel width (lpx): the card hugs its widest label -- measured
+/// by makepad's own text engine in `AppMenu::draw` -- but never grows past this,
+/// so a pathological label can't run off the window.
+pub const MENU_MAX_W: f64 = 320.0;
+/// Left offset where a row's label starts, past the leading icon gutter (lpx).
+/// Doubles as the ordinary row divider's left edge. The icon sits at x=14, 16
+/// wide, leaving a 12px gap before the label.
+pub const LABEL_X: f64 = 42.0;
+/// Trailing margin right of the widest label before the frame edge (lpx). A
+/// touch wider than the icon's 14px left inset so the card breathes on the right.
+pub const LABEL_PAD_R: f64 = 18.0;
 /// Row height (lpx).
 pub const ROW_H: f64 = 34.0;
 /// Top/bottom padding inside the card (lpx).
@@ -59,6 +68,10 @@ pub struct AppMenuCore {
     /// Card top-left in main-window coords (the drop anchor).
     anchor: DVec2,
     items: Vec<RadialItem>,
+    /// Card width (lpx). Set by the widget from makepad's measured label width
+    /// each draw (see `AppMenu::draw` / `set_width`), so the card hugs its
+    /// content instead of a fixed slab. Zero until the first draw measures it.
+    width: f64,
     /// Row under the cursor (hover highlight), or `None` off the rows.
     pub hovered: Option<usize>,
     /// Marking-menu state (mirrors `RadialCore`): a press-drag opens the menu
@@ -93,11 +106,23 @@ impl AppMenuCore {
         self.anchor
     }
 
+    /// Card width (lpx) -- see the `width` field.
+    pub fn width(&self) -> f64 {
+        self.width
+    }
+
+    /// Set the card width (lpx). The widget calls this each draw with makepad's
+    /// measured label width; the geometry (`panel_rect`, `row_rect`, `row_at`)
+    /// then hugs the content.
+    pub fn set_width(&mut self, width: f64) {
+        self.width = width;
+    }
+
     /// The whole card rect (main-window coords).
     pub fn panel_rect(&self) -> Rect {
         Rect {
             pos: self.anchor,
-            size: dvec2(MENU_W, PAD_V * 2.0 + self.items.len() as f64 * ROW_H),
+            size: dvec2(self.width, PAD_V * 2.0 + self.items.len() as f64 * ROW_H),
         }
     }
 
@@ -105,7 +130,7 @@ impl AppMenuCore {
     pub fn row_rect(&self, i: usize) -> Rect {
         Rect {
             pos: dvec2(self.anchor.x, self.anchor.y + PAD_V + i as f64 * ROW_H),
-            size: dvec2(MENU_W, ROW_H),
+            size: dvec2(self.width, ROW_H),
         }
     }
 
@@ -116,7 +141,7 @@ impl AppMenuCore {
         if n == 0 {
             return None;
         }
-        if cursor.x < self.anchor.x || cursor.x > self.anchor.x + MENU_W {
+        if cursor.x < self.anchor.x || cursor.x > self.anchor.x + self.width {
             return None;
         }
         let rel = cursor.y - (self.anchor.y + PAD_V);
@@ -133,6 +158,7 @@ impl AppMenuCore {
     pub fn open(&mut self, anchor: DVec2, press: DVec2, items: Vec<RadialItem>) {
         self.open = true;
         self.anchor = anchor;
+        self.width = 0.0; // measured on the first draw
         self.items = items;
         self.hovered = None;
         self.pressed = true;
@@ -147,6 +173,7 @@ impl AppMenuCore {
     pub fn open_popup(&mut self, anchor: DVec2, items: Vec<RadialItem>) {
         self.open = true;
         self.anchor = anchor;
+        self.width = 0.0; // measured on the first draw
         self.items = items;
         self.hovered = None;
         self.pressed = false;
@@ -163,14 +190,18 @@ impl AppMenuCore {
         self.hovered = self.row_at(cursor);
     }
 
-    /// Button released at `cursor` (marking mode only). A tap (no drag) latches
-    /// persistent `popup` mode -- the menu stays open, no outcome. A drag
-    /// release commits over an enabled row, or cancels off the rows.
+    /// Button released at `cursor`. Resolves a held press: over an enabled row
+    /// it commits, anywhere else (off the rows / ESC-equivalent) it cancels.
+    /// The one exception is a burger *tap* -- a press let up without dragging,
+    /// while still in marking mode (`!popup`) -- which latches persistent
+    /// `popup` mode instead so the menu stays open for a follow-up press-hold.
+    /// A popup press (already latched) always resolves on release: it is a
+    /// deliberate pick, not a mode-change tap.
     pub fn release(&mut self, cursor: DVec2) -> RadialOutcome {
         if !self.pressed {
             return RadialOutcome::None;
         }
-        if !self.dragged {
+        if !self.popup && !self.dragged {
             self.pressed = false;
             self.popup = true;
             return RadialOutcome::None;
@@ -189,22 +220,21 @@ impl AppMenuCore {
         }
     }
 
-    /// Primary click at `cursor`. Over an enabled row -> commit its id; over a
-    /// disabled row -> no-op (stay open); anywhere else (padding / outside the
-    /// card) -> dismiss (cancel).
-    pub fn click(&mut self, cursor: DVec2) -> RadialOutcome {
-        match self.row_at(cursor) {
-            Some(i) if self.items[i].enabled => {
-                let id = self.items[i].id;
-                self.close();
-                RadialOutcome::Committed(id)
-            }
-            Some(_) => RadialOutcome::None, // disabled row: no-op, stay open
-            None => {
-                self.close();
-                RadialOutcome::Cancelled
-            }
+    /// Primary press at `cursor` in popup (latched) mode. Over the card it arms
+    /// a held press -- the row under the cursor shows active and the release
+    /// commits it (or cancels if the cursor left the rows / ESC) -- so a popup
+    /// behaves like a real menu press-hold instead of committing on the way
+    /// down. A press outside the card dismisses it (the outside-click path).
+    pub fn press(&mut self, cursor: DVec2) -> RadialOutcome {
+        if !self.panel_rect().contains(cursor) {
+            self.close();
+            return RadialOutcome::Cancelled;
         }
+        self.pressed = true;
+        self.dragged = false;
+        self.press_pos = cursor;
+        self.hovered = self.row_at(cursor);
+        RadialOutcome::None
     }
 
     /// `Esc` dismisses an open menu.
@@ -391,9 +421,14 @@ impl AppMenu {
             }
             // Marking release (button let up after a press-drag).
             Event::MouseUp(e) if e.button.is_primary() => self.core.release(e.abs),
-            // In popup (latched) mode a subsequent primary click selects a row.
+            // In popup (latched) mode a primary press arms the row under the
+            // cursor (redraw to show it active); the matching MouseUp above
+            // resolves it (commit / cancel). A press outside the card returns
+            // Cancelled straight away (the outside-click dismiss).
             Event::MouseDown(e) if e.button.is_primary() && self.core.is_popup() => {
-                self.core.click(e.abs)
+                let out = self.core.press(e.abs);
+                self.draw_frame.redraw(cx);
+                out
             }
             Event::KeyDown(ke) if ke.key_code == KeyCode::Escape => self.core.esc(),
             // Behave like a real menu: dismiss the instant the window loses
@@ -413,6 +448,22 @@ impl AppMenu {
         if !self.core.is_open() {
             return;
         }
+        let items = self.core.items().to_vec();
+        let hovered = self.core.hovered;
+
+        // Hug the widest label using makepad's OWN text engine -- the same one
+        // that renders the labels, so the measurement matches the pixels exactly
+        // (no clip, no slab). The card is the label gutter + widest measured
+        // label + a trailing margin, capped for safety.
+        let mut widest = 0.0_f64;
+        for it in &items {
+            if let Some(run) = self.draw_label.prepare_single_line_run(cx, &it.label) {
+                widest = widest.max(run.width_in_lpxs as f64);
+            }
+        }
+        self.core
+            .set_width((LABEL_X + widest + LABEL_PAD_R).min(MENU_MAX_W));
+
         let panel = self.core.panel_rect();
         // Card surface: source-bright Atlas frame + field-bg fill in one SDF
         // pass (see `AccentFrame` in `frame.rs`). `zoom` scales the frame's
@@ -421,9 +472,6 @@ impl AppMenu {
         // detaches the card from the wordmark it drops from.
         self.draw_frame.set_uniform(cx, live_id!(zoom), &[0.6]);
         self.draw_frame.draw_abs(cx, panel);
-
-        let items = self.core.items().to_vec();
-        let hovered = self.core.hovered;
         for (i, it) in items.iter().enumerate() {
             let row = self.core.row_rect(i);
             let cy = row.pos.y + row.size.y * 0.5;
@@ -434,7 +482,7 @@ impl AppMenu {
             if i > 0 {
                 // The danger separator spans the content margin; the ordinary
                 // whisper starts under the label so it reads as a group rule.
-                let left = if it.danger { PAD_H } else { 42.0 };
+                let left = if it.danger { PAD_H } else { LABEL_X };
                 let div = Rect {
                     pos: dvec2(panel.pos.x + left, row.pos.y),
                     size: dvec2(panel.size.x - left - PAD_H, 1.0),
@@ -474,7 +522,7 @@ impl AppMenu {
             }
             // Label, baseline roughly centred for a ~10px font.
             self.draw_label
-                .draw_abs(cx, dvec2(row.pos.x + 42.0, cy - 6.0), &it.label);
+                .draw_abs(cx, dvec2(row.pos.x + LABEL_X, cy - 6.0), &it.label);
         }
     }
 }
@@ -503,6 +551,9 @@ mod tests {
     }
 
     const ANCHOR: DVec2 = DVec2 { x: 40.0, y: 60.0 };
+    // A stand-in for the makepad-measured width the widget sets each draw; the
+    // pure core can't measure text, so hit-test cases set it explicitly.
+    const TEST_W: f64 = 120.0;
 
     // A point inside row `i`.
     fn in_row(i: usize) -> DVec2 {
@@ -513,12 +564,13 @@ mod tests {
     fn row_at_maps_bands_and_rejects_outside() {
         let mut c = AppMenuCore::default();
         c.open_popup(ANCHOR, menu());
+        c.set_width(TEST_W);
         assert_eq!(c.row_at(in_row(0)), Some(0));
         assert_eq!(c.row_at(in_row(1)), Some(1));
         assert_eq!(c.row_at(in_row(2)), Some(2));
         // Left of the card, right of the card, above, below: all None.
         assert_eq!(c.row_at(dvec2(ANCHOR.x - 5.0, in_row(0).y)), None);
-        assert_eq!(c.row_at(dvec2(ANCHOR.x + MENU_W + 5.0, in_row(0).y)), None);
+        assert_eq!(c.row_at(dvec2(ANCHOR.x + c.width() + 5.0, in_row(0).y)), None);
         assert_eq!(c.row_at(dvec2(in_row(0).x, ANCHOR.y - 5.0)), None); // top pad
         assert_eq!(
             c.row_at(dvec2(in_row(0).x, ANCHOR.y + PAD_V + 3.0 * ROW_H + 1.0)),
@@ -527,27 +579,48 @@ mod tests {
     }
 
     #[test]
-    fn click_enabled_row_commits_its_id() {
+    fn popup_press_release_enabled_row_commits_its_id() {
         let mut c = AppMenuCore::default();
         c.open_popup(ANCHOR, menu());
-        assert_eq!(c.click(in_row(0)), RadialOutcome::Committed(live_id!(a)));
+        c.set_width(TEST_W);
+        // Press-hold arms the row (no commit yet), release resolves it.
+        assert_eq!(c.press(in_row(0)), RadialOutcome::None);
+        assert!(c.is_open());
+        assert_eq!(c.release(in_row(0)), RadialOutcome::Committed(live_id!(a)));
         assert!(!c.is_open());
     }
 
     #[test]
-    fn click_disabled_row_is_noop_and_stays_open() {
+    fn popup_press_release_off_rows_cancels() {
         let mut c = AppMenuCore::default();
         c.open_popup(ANCHOR, menu());
-        assert_eq!(c.click(in_row(1)), RadialOutcome::None);
-        assert!(c.is_open());
+        c.set_width(TEST_W);
+        // Press a row, drag off the card, release -> cancel (the user's
+        // "move off the menu and release to cancel").
+        assert_eq!(c.press(in_row(0)), RadialOutcome::None);
+        let off = dvec2(ANCHOR.x - 50.0, ANCHOR.y);
+        c.pointer_move(off);
+        assert_eq!(c.release(off), RadialOutcome::Cancelled);
+        assert!(!c.is_open());
     }
 
     #[test]
-    fn click_outside_dismisses() {
+    fn popup_press_release_over_disabled_row_cancels() {
         let mut c = AppMenuCore::default();
         c.open_popup(ANCHOR, menu());
+        c.set_width(TEST_W);
+        assert_eq!(c.press(in_row(1)), RadialOutcome::None); // disabled row
+        assert_eq!(c.release(in_row(1)), RadialOutcome::Cancelled);
+        assert!(!c.is_open());
+    }
+
+    #[test]
+    fn popup_press_outside_dismisses() {
+        let mut c = AppMenuCore::default();
+        c.open_popup(ANCHOR, menu());
+        c.set_width(TEST_W);
         assert_eq!(
-            c.click(dvec2(ANCHOR.x - 100.0, ANCHOR.y)),
+            c.press(dvec2(ANCHOR.x - 100.0, ANCHOR.y)),
             RadialOutcome::Cancelled
         );
         assert!(!c.is_open());
@@ -557,6 +630,7 @@ mod tests {
     fn esc_dismisses() {
         let mut c = AppMenuCore::default();
         c.open_popup(ANCHOR, menu());
+        c.set_width(TEST_W);
         assert_eq!(c.esc(), RadialOutcome::Cancelled);
         assert!(!c.is_open());
     }
@@ -565,6 +639,7 @@ mod tests {
     fn pointer_move_sets_hovered_row() {
         let mut c = AppMenuCore::default();
         c.open_popup(ANCHOR, menu());
+        c.set_width(TEST_W);
         c.pointer_move(in_row(2));
         assert_eq!(c.hovered, Some(2));
         c.pointer_move(dvec2(ANCHOR.x - 50.0, ANCHOR.y));
@@ -579,6 +654,7 @@ mod tests {
     fn press_drag_release_commits_over_enabled_row() {
         let mut c = AppMenuCore::default();
         c.open(ANCHOR, PRESS, menu());
+        c.set_width(TEST_W);
         c.pointer_move(in_row(0)); // drag down into row 0
         assert_eq!(c.release(in_row(0)), RadialOutcome::Committed(live_id!(a)));
         assert!(!c.is_open());
@@ -588,6 +664,7 @@ mod tests {
     fn press_drag_release_off_rows_cancels() {
         let mut c = AppMenuCore::default();
         c.open(ANCHOR, PRESS, menu());
+        c.set_width(TEST_W);
         c.pointer_move(in_row(0));
         let off = dvec2(ANCHOR.x - 50.0, ANCHOR.y); // dragged clear of the card
         c.pointer_move(off);
@@ -599,20 +676,24 @@ mod tests {
     fn press_drag_release_over_disabled_row_cancels() {
         let mut c = AppMenuCore::default();
         c.open(ANCHOR, PRESS, menu());
+        c.set_width(TEST_W);
         c.pointer_move(in_row(1)); // disabled row
         assert_eq!(c.release(in_row(1)), RadialOutcome::Cancelled);
         assert!(!c.is_open());
     }
 
     #[test]
-    fn tap_without_drag_latches_popup_then_clicks() {
+    fn tap_without_drag_latches_popup_then_press_release_picks() {
         let mut c = AppMenuCore::default();
         c.open(ANCHOR, PRESS, menu());
-        // Release without clearing the threshold: stays open, now click-to-pick.
+        c.set_width(TEST_W);
+        // Release without clearing the threshold: stays open, now press-to-pick.
         assert_eq!(c.release(PRESS), RadialOutcome::None);
         assert!(c.is_open());
         assert!(c.is_popup());
-        assert_eq!(c.click(in_row(2)), RadialOutcome::Committed(live_id!(c)));
+        // A latched popup press-hold: arm row 2, release commits it.
+        assert_eq!(c.press(in_row(2)), RadialOutcome::None);
+        assert_eq!(c.release(in_row(2)), RadialOutcome::Committed(live_id!(c)));
         assert!(!c.is_open());
     }
 
@@ -620,6 +701,7 @@ mod tests {
     fn tiny_move_under_threshold_is_still_a_tap() {
         let mut c = AppMenuCore::default();
         c.open(ANCHOR, PRESS, menu());
+        c.set_width(TEST_W);
         let jitter = dvec2(PRESS.x + 2.0, PRESS.y + 2.0); // < DRAG_THRESHOLD
         c.pointer_move(jitter);
         assert_eq!(c.release(jitter), RadialOutcome::None);
@@ -627,9 +709,24 @@ mod tests {
     }
 
     #[test]
+    fn set_width_drives_panel_and_hit_edges() {
+        let mut c = AppMenuCore::default();
+        c.open_popup(ANCHOR, menu());
+        c.set_width(TEST_W);
+        c.set_width(140.0);
+        assert_eq!(c.panel_rect().size.x, 140.0);
+        assert_eq!(c.row_rect(0).size.x, 140.0);
+        // The right hit edge tracks the set width.
+        let y = in_row(0).y;
+        assert_eq!(c.row_at(dvec2(ANCHOR.x + 139.0, y)), Some(0));
+        assert_eq!(c.row_at(dvec2(ANCHOR.x + 141.0, y)), None);
+    }
+
+    #[test]
     fn release_without_a_held_press_is_noop() {
         let mut c = AppMenuCore::default();
-        c.open_popup(ANCHOR, menu()); // popup mode, nothing held
+        c.open_popup(ANCHOR, menu());
+        c.set_width(TEST_W); // popup mode, nothing held
         assert_eq!(c.release(in_row(0)), RadialOutcome::None);
         assert!(c.is_open()); // untouched
     }
