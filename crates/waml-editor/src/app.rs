@@ -266,10 +266,38 @@ pub struct App {
     /// re-hydrates the right one. See `rehydrate`.
     #[rust]
     editor_shown: bool,
+    /// Who the shared `app_menu` drop-down currently belongs to. Sole source of
+    /// truth for the caption burger's held-open glow: it stays lit exactly while
+    /// the burger owns the menu. Opening the logo menu reassigns the owner (so
+    /// the glow drops), and any dismiss/commit resets it to `None`.
+    #[rust]
+    app_menu_owner: MenuOwner,
+}
+
+/// Who opened the shared `app_menu` (see `App::app_menu_owner`).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+enum MenuOwner {
+    #[default]
+    None,
+    Logo,
+    Burger,
 }
 
 impl App {
     /// Point the canvas + inspector at the currently active doc tab. Diagram
+    /// Reassign the shared `app_menu`'s owner and reflect it in the caption
+    /// burger's held-open glow (lit only while the burger owns the menu). This
+    /// is the single seam that drives the glow -- opening the logo menu, or any
+    /// dismiss/commit, calls here rather than poking the button directly (the
+    /// Win32 "menu mode" model: one owner, look derived).
+    fn set_app_menu_owner(&mut self, cx: &mut Cx, owner: MenuOwner) {
+        self.app_menu_owner = owner;
+        self.ui
+            .widget(cx, ids!(menu_btn))
+            .as_caption_button()
+            .set_held(cx, owner == MenuOwner::Burger);
+    }
+
     /// tabs rebuild+fit the full diagram scene (inspector empty state, since
     /// diagram hit-test selection is out of scope); classifier tabs pin the
     /// 1.5x focus render and point the inspector at that classifier.
@@ -681,6 +709,22 @@ pub fn logo_menu_items() -> Vec<crate::radial::RadialItem> {
     ]
 }
 
+/// The burger (caption `menu_btn`) drop-down rows. One entry for now: "Close
+/// model", which returns to the start screen. Uses the shared `app_menu`
+/// widget; the committed id is handled inline in `handle_event`.
+pub fn burger_menu_items() -> Vec<crate::radial::RadialItem> {
+    use crate::icon::{Icon, IconShape};
+    use crate::radial::RadialItem;
+    vec![RadialItem {
+        id: live_id!(close_model),
+        label: "Close model".into(),
+        // `Remove` keys the shared close (circle-x) glyph in `AppMenu::glyph_for`.
+        icon: Icon::Shape(IconShape::Remove),
+        danger: false,
+        enabled: true,
+    }]
+}
+
 /// The logo-radial commands `App` acts on. `Cancel` is intentionally absent:
 /// committing the Cancel wedge just closes the radial (mapped to `None`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -780,13 +824,33 @@ impl MatchEvent for App {
         {
             log!("caption: save clicked");
         }
-        if self
+        if let Some(press) = self
             .ui
             .widget(cx, ids!(menu_btn))
             .as_caption_button()
-            .clicked(actions)
+            .pressed(actions)
         {
-            log!("caption: menu clicked");
+            // Burger drop-down: reuse the shared `app_menu` widget, anchored at
+            // the button's bottom-left (clamped past the caption clip band, like
+            // the logo menu). One item for now: "Close model". Opens on the
+            // PRESS so the same gesture can drag straight into a row and release
+            // to pick (marking menu); a plain tap latches it open instead.
+            let btn = self.ui.widget(cx, ids!(menu_btn)).as_caption_button().rect();
+            let anchor = dvec2(
+                btn.pos.x,
+                (btn.pos.y + btn.size.y + crate::app_menu::MENU_GAP)
+                    .max(crate::app_menu::CAPTION_H),
+            );
+            if let Some(mut menu) = self
+                .ui
+                .widget(cx, ids!(app_menu))
+                .borrow_mut::<crate::app_menu::AppMenu>()
+            {
+                menu.open(cx, anchor, press, burger_menu_items());
+            }
+            // Enter menu mode owned by the burger: it lights and stays lit until
+            // the menu dismisses/commits (reset in `handle_event`).
+            self.set_app_menu_owner(cx, MenuOwner::Burger);
         }
 
         // Classifier focus: single-click a class row -> open/replace the
@@ -951,8 +1015,11 @@ impl MatchEvent for App {
                 .widget(cx, ids!(app_menu))
                 .borrow_mut::<crate::app_menu::AppMenu>()
             {
-                menu.open(cx, anchor, logo_menu_items());
+                menu.open_popup(cx, anchor, logo_menu_items());
             }
+            // Menu mode now belongs to the logo (glow follows the owner off the
+            // burger), like switching to an adjacent menu-bar item on Windows.
+            self.set_app_menu_owner(cx, MenuOwner::Logo);
             return;
         }
 
@@ -1175,7 +1242,10 @@ impl AppMain for App {
             .filter(|m| m.is_open())
             .map(|mut m| m.handle(cx, event));
         if let Some(crate::radial::RadialOutcome::Committed(id)) = menu_outcome {
-            if let Some(cmd) = logo_command_for(id) {
+            if id == live_id!(close_model) {
+                // Burger "Close model": drop the editor back to the start screen.
+                self.show_start_screen(cx);
+            } else if let Some(cmd) = logo_command_for(id) {
                 match cmd {
                     // Properties: no-op stub (no editor-settings surface yet).
                     LogoCommand::Properties => log!("logo command: Properties (stub)"),
@@ -1185,6 +1255,15 @@ impl AppMain for App {
                     LogoCommand::Exit => cx.quit(),
                 }
             }
+        }
+        // Any close (commit or dismiss -- outside-click / Esc / lost-focus all
+        // surface as one of these) ends menu mode: the single reset point, like
+        // Win32 `WM_CANCELMODE`.
+        if matches!(
+            menu_outcome,
+            Some(crate::radial::RadialOutcome::Committed(_) | crate::radial::RadialOutcome::Cancelled)
+        ) {
+            self.set_app_menu_owner(cx, MenuOwner::None);
         }
 
         self.ui.handle_event(cx, event, &mut Scope::empty());

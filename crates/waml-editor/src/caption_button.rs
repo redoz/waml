@@ -58,6 +58,7 @@ script_mod! {
         draw_bg +: {
             text_col: uniform(atlas.text)
             accent_col: uniform(atlas.accent)
+            sel_col: uniform(atlas.selection)
             hover: uniform(0.0)
             shape: uniform(0.0)
             pixel: fn() {
@@ -82,12 +83,15 @@ script_mod! {
                 let w_save = 1.2
 
                 // Hover highlight: a rounded square behind the glyph, painted
-                // first so the glyph sits on top. Premultiplied low-alpha accent,
-                // faded in by `hover` (0 => fully transparent when idle).
-                let a = 0.16 * self.hover
+                // first so the glyph sits on top. The SAME accent-tint token the
+                // app-menu rows use (`atlas.selection`, blue @ ~13% straight
+                // alpha), faded in by `hover` (0 => fully transparent when idle).
+                // Straight alpha: this fork's `sdf.fill` blends straight, so a
+                // premult `accent*a` fill would double-apply `a` and wash the
+                // tint out to a neutral grey.
                 let side = 32.0
                 sdf.box(cx - side * 0.5, cy - side * 0.5, side, side, 2.0)
-                sdf.fill(vec4(self.accent_col.x * a, self.accent_col.y * a, self.accent_col.z * a, a))
+                sdf.fill(vec4(self.sel_col.x, self.sel_col.y, self.sel_col.z, self.sel_col.w * self.hover))
 
                 // Branchless glyph select (an `if` on a uniform no-ops in this
                 // fork's draw_bg VM): fold a far off-screen shift into each
@@ -139,13 +143,17 @@ script_mod! {
     }
 }
 
-/// Emitted on a primary click over the button's own area. Read by
-/// `App::handle_actions` via `CaptionButtonRef::clicked`.
+/// Button input, read by `App::handle_actions`. `Clicked` fires on a primary
+/// release over the button (the save glyph's model). `Pressed` fires on the
+/// primary press and carries the press position, so a menu button can open its
+/// drop-down on the DOWN edge and hand the press point to a marking drag (the
+/// burger's model).
 #[derive(Clone, Debug, Default)]
 pub enum CaptionButtonAction {
     #[default]
     None,
     Clicked,
+    Pressed(DVec2),
 }
 
 #[derive(Script, ScriptHook, Widget)]
@@ -164,6 +172,12 @@ pub struct CaptionButton {
     #[rust]
     hovered: bool,
 
+    /// Held-open state, driven by `App`: true while this button's drop-down menu
+    /// is open, so the glyph keeps its active (accent) look even as the pointer
+    /// leaves to travel down the menu. OR'd into the `hover` uniform.
+    #[rust]
+    held: bool,
+
     /// Last-drawn absolute rect, cached in `draw_walk` so the window drag-query
     /// can treat this button as `Client` area without a `cx` (mirrors the way
     /// `DocTabs` caches its tab rects).
@@ -175,6 +189,9 @@ impl Widget for CaptionButton {
     fn handle_event(&mut self, cx: &mut Cx, event: &Event, _scope: &mut Scope) {
         let uid = self.widget_uid();
         match event.hits(cx, self.view.area()) {
+            Hit::FingerDown(fe) if fe.is_primary_hit() => {
+                cx.widget_action(uid, CaptionButtonAction::Pressed(fe.abs));
+            }
             Hit::FingerUp(fe) if fe.is_primary_hit() && fe.is_over => {
                 cx.widget_action(uid, CaptionButtonAction::Clicked);
             }
@@ -194,9 +211,11 @@ impl Widget for CaptionButton {
     // Push hover/shape uniforms, delegate, then cache the drawn rect for the
     // drag-query seam.
     fn draw_walk(&mut self, cx: &mut Cx2d, scope: &mut Scope, walk: Walk) -> DrawStep {
-        self.view
-            .draw_bg
-            .set_uniform(cx, live_id!(hover), &[if self.hovered { 1.0 } else { 0.0 }]);
+        self.view.draw_bg.set_uniform(
+            cx,
+            live_id!(hover),
+            &[if self.hovered || self.held { 1.0 } else { 0.0 }],
+        );
         self.view.draw_bg.set_uniform(cx, live_id!(shape), &[self.shape]);
         let step = self.view.draw_walk(cx, scope, walk);
         self.rect = self.view.area().rect(cx);
@@ -212,10 +231,36 @@ impl CaptionButton {
             .is_some_and(|a| matches!(a.cast(), CaptionButtonAction::Clicked))
     }
 
+    /// The press position when this button emitted a primary press in
+    /// `actions`, else `None`. Used to open a menu on the DOWN edge.
+    pub fn pressed(&self, actions: &Actions) -> Option<DVec2> {
+        actions
+            .find_widget_action(self.widget_uid())
+            .and_then(|a| match a.cast() {
+                CaptionButtonAction::Pressed(p) => Some(p),
+                _ => None,
+            })
+    }
+
     /// Whether `abs` lands on this button's last-drawn rect. Used by the window
     /// drag-query so the button is client area, not OS-draggable caption.
     pub fn hits(&self, abs: DVec2) -> bool {
         self.rect.contains(abs)
+    }
+
+    /// The button's last-drawn absolute rect (menu anchor: the burger drops a
+    /// drop-down from its bottom-left).
+    pub fn rect(&self) -> Rect {
+        self.rect
+    }
+
+    /// Drive the held-open state (see [`CaptionButton::held`]). Redraws only on
+    /// a change so `App` can call it every event cheaply.
+    pub fn set_held(&mut self, cx: &mut Cx, held: bool) {
+        if self.held != held {
+            self.held = held;
+            self.view.redraw(cx);
+        }
     }
 }
 
@@ -225,8 +270,25 @@ impl CaptionButtonRef {
         self.borrow().is_some_and(|inner| inner.clicked(actions))
     }
 
+    /// See [`CaptionButton::pressed`].
+    pub fn pressed(&self, actions: &Actions) -> Option<DVec2> {
+        self.borrow().and_then(|inner| inner.pressed(actions))
+    }
+
     /// See [`CaptionButton::hits`].
     pub fn hits(&self, abs: DVec2) -> bool {
         self.borrow().is_some_and(|inner| inner.hits(abs))
+    }
+
+    /// See [`CaptionButton::rect`].
+    pub fn rect(&self) -> Rect {
+        self.borrow().map(|inner| inner.rect()).unwrap_or_default()
+    }
+
+    /// See [`CaptionButton::set_held`].
+    pub fn set_held(&self, cx: &mut Cx, held: bool) {
+        if let Some(mut inner) = self.borrow_mut() {
+            inner.set_held(cx, held);
+        }
     }
 }
