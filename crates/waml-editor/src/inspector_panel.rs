@@ -370,6 +370,30 @@ const ICON_GAP: f64 = 8.0;
 // Left type-badge (drawn over the field's left inset).
 const BADGE_SIZE: f64 = 24.0;
 
+/// Decorate the picker's rows for *display* in the dropdown popup. The pure
+/// `diagram_elements` projection already orders each source-anchored edge right
+/// after its node; here we render that hierarchy visually: nodes and the diagram
+/// row stay flush-left, while each edge is indented beneath its node as a
+/// `↳ Target` branch (the model label is `Source -> Target`, but under the node
+/// the source is redundant, so only the target shows).
+///
+/// Box-drawing rails (`├ └ │`) would be the natural connector, but IBM Plex Sans
+/// carries none of those glyphs (they'd render as tofu) — the `↳` hook (U+21B3,
+/// which the font *does* have) plus indentation carries the nesting instead.
+/// Kept out of `diagram_elements` so its labels stay canonical for `on_picker_
+/// changed`/`subject_to_index` and the `inspector.rs` tests.
+fn picker_labels(rows: &[ElementRow]) -> Vec<String> {
+    rows.iter()
+        .map(|r| match r.kind {
+            ElementKind::Edge => {
+                let target = r.label.rsplit(" -> ").next().unwrap_or(&r.label);
+                format!("      \u{21b3} {target}")
+            }
+            _ => r.label.clone(),
+        })
+        .collect()
+}
+
 /// RGB hex (no alpha) -> opaque `Vec4`, matching how the DSL decodes `#xrrggbb`.
 fn rgb(hex: u32) -> Vec4 {
     Vec4 {
@@ -683,7 +707,7 @@ impl Inspector {
     /// labels and re-syncs its selection to the current subject. Called by `App`
     /// whenever the current diagram changes.
     pub fn set_diagram_elements(&mut self, cx: &mut Cx, rows: Vec<ElementRow>) {
-        let labels: Vec<String> = rows.iter().map(|r| r.label.clone()).collect();
+        let labels = picker_labels(&rows);
         self.elements = rows;
         let picker = self.view.drop_down(cx, ids!(element_bar.element_picker));
         picker.set_labels(cx, labels);
@@ -788,5 +812,40 @@ impl Inspector {
             InspectorAction::ElementPicked(key) => Some(key),
             _ => None,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn row(kind: ElementKind, key: &str, label: &str) -> ElementRow {
+        ElementRow {
+            key: key.to_string(),
+            label: label.to_string(),
+            kind,
+        }
+    }
+
+    #[test]
+    fn picker_labels_pass_node_and_diagram_through_flush_left() {
+        let labels = picker_labels(&[
+            row(ElementKind::Placeholder, "", "Select an element…"),
+            row(ElementKind::Diagram, "d1", "Orders Domain Model"),
+            row(ElementKind::Node, "n1", "Customer"),
+        ]);
+        assert_eq!(labels[0], "Select an element…");
+        assert_eq!(labels[1], "Orders Domain Model");
+        assert_eq!(labels[2], "Customer");
+    }
+
+    #[test]
+    fn picker_labels_nest_edge_as_indented_target_branch() {
+        let labels = picker_labels(&[
+            row(ElementKind::Node, "order", "Order"),
+            row(ElementKind::Edge, "order->customer", "Order -> Customer"),
+        ]);
+        // The edge shows only the target, hooked under its source node.
+        assert_eq!(labels[1], "      \u{21b3} Customer");
     }
 }
