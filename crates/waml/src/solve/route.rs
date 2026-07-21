@@ -1,23 +1,53 @@
 //! Orthogonal (Manhattan) edge router: OVG -> A* (bend penalty) -> nudge.
 //! See docs/superpowers/specs/2026-07-22-orthogonal-edge-router-design.md.
-//!
-//! Built incrementally, task by task: the OVG, A*, nudge, and hub-spreading
-//! pieces below are standalone and unit-tested before `route()` wires them
-//! together, so the plain (non-test) lib target sees them as unused in the
-//! interim. Remove this allow once the pipeline is fully wired.
-#![allow(dead_code)]
 
 use super::{Box, BoxId, Rect, Route, SolveConfig};
 use std::collections::BTreeMap;
 
+fn key_of(id: &BoxId) -> Option<String> {
+    match id {
+        BoxId::Node(k) => Some(k.clone()),
+        _ => None,
+    }
+}
+
+fn fallback_l(src: Rect, tgt: Rect) -> Vec<P> {
+    let s = (src.x + src.w / 2.0, src.y + src.h / 2.0);
+    let t = (tgt.x + tgt.w / 2.0, tgt.y + tgt.h / 2.0);
+    simplify(vec![s, (t.0, s.1), t])
+}
+
 /// Route every leaf-to-leaf edge as an orthogonal polyline avoiding obstacles.
 pub(super) fn route(
     _boxes: &[Box],
-    _rects: &BTreeMap<BoxId, Rect>,
-    _edges: &[(BoxId, BoxId)],
+    rects: &BTreeMap<BoxId, Rect>,
+    edges: &[(BoxId, BoxId)],
     _cfg: &SolveConfig,
 ) -> Vec<Route> {
-    Vec::new()
+    let mut routes: Vec<Route> = Vec::new();
+    for (s, t) in edges {
+        if s == t {
+            continue; // self-edge: out of scope
+        }
+        let (Some(source), Some(target)) = (key_of(s), key_of(t)) else {
+            continue; // group-as-endpoint: out of scope
+        };
+        let (Some(&src), Some(&tgt)) = (rects.get(s), rects.get(t)) else {
+            continue; // endpoint not in this diagram
+        };
+        let obstacles = leaf_obstacles(rects, &[s.clone(), t.clone()]);
+        let (ovg, srcv, tgtv) = build_ovg(&obstacles, src, tgt);
+        let goal = (tgt.x + tgt.w / 2.0, tgt.y + tgt.h / 2.0);
+        let points = astar(&ovg, &srcv, &tgtv, goal).unwrap_or_else(|| fallback_l(src, tgt));
+        routes.push(Route {
+            points,
+            source,
+            target,
+        });
+    }
+    hub_spread(&mut routes, rects);
+    nudge(&mut routes);
+    routes
 }
 
 const ROUTE_MARGIN: f64 = 12.0;
@@ -708,5 +738,97 @@ mod tests {
                 && (ys[0] - ys[2]).abs() > 1e-6,
             "attachments must be distinct: {ys:?}"
         );
+    }
+
+    use crate::solve::{BoxKind, FlagSet, SolveConfig};
+    use crate::syntax::{Axis, Margin, Shape};
+
+    fn nrect(x: f64, y: f64, w: f64, h: f64) -> Rect {
+        Rect { x, y, w, h }
+    }
+
+    fn leafbox(k: &str) -> Box {
+        Box {
+            id: BoxId::Node(k.into()),
+            kind: BoxKind::Leaf,
+            children: vec![],
+            axis: None,
+            shape: Shape::Shrink,
+            margin: Margin::Medium,
+            flags: FlagSet::default(),
+            title: None,
+            depth: 0,
+        }
+    }
+
+    #[test]
+    fn route_two_clear_boxes_is_straight_segment() {
+        let boxes = vec![leafbox("a"), leafbox("b")];
+        let mut rects: BTreeMap<BoxId, Rect> = BTreeMap::new();
+        rects.insert(BoxId::Node("a".into()), nrect(0.0, 0.0, 100.0, 60.0));
+        rects.insert(BoxId::Node("b".into()), nrect(300.0, 0.0, 100.0, 60.0));
+        let edges = vec![(BoxId::Node("a".into()), BoxId::Node("b".into()))];
+        let out = route(&boxes, &rects, &edges, &SolveConfig::default());
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].source, "a");
+        assert_eq!(out[0].target, "b");
+        assert_eq!(
+            out[0].points.len(),
+            2,
+            "clear LOS => straight: {:?}",
+            out[0].points
+        );
+    }
+
+    #[test]
+    fn route_detours_around_third_box() {
+        let boxes = vec![leafbox("a"), leafbox("b"), leafbox("m")];
+        let mut rects: BTreeMap<BoxId, Rect> = BTreeMap::new();
+        rects.insert(BoxId::Node("a".into()), nrect(0.0, 0.0, 100.0, 60.0));
+        rects.insert(BoxId::Node("b".into()), nrect(350.0, 0.0, 100.0, 60.0));
+        rects.insert(BoxId::Node("m".into()), nrect(150.0, -30.0, 80.0, 120.0));
+        let edges = vec![(BoxId::Node("a".into()), BoxId::Node("b".into()))];
+        let out = route(&boxes, &rects, &edges, &SolveConfig::default());
+        assert_eq!(out.len(), 1);
+        assert!(out[0].points.len() >= 4, "detour: {:?}", out[0].points);
+        let inf = inflate(nrect(150.0, -30.0, 80.0, 120.0), ROUTE_MARGIN);
+        for &(x, y) in &out[0].points {
+            assert!(!strictly_inside(&inf, x, y));
+        }
+    }
+
+    #[test]
+    fn route_skips_self_edges_and_unknown_endpoints() {
+        let boxes = vec![leafbox("a")];
+        let mut rects: BTreeMap<BoxId, Rect> = BTreeMap::new();
+        rects.insert(BoxId::Node("a".into()), nrect(0.0, 0.0, 100.0, 60.0));
+        let edges = vec![
+            (BoxId::Node("a".into()), BoxId::Node("a".into())), // self
+            (BoxId::Node("a".into()), BoxId::Node("ghost".into())), // unknown target
+        ];
+        let out = route(&boxes, &rects, &edges, &SolveConfig::default());
+        assert!(
+            out.is_empty(),
+            "self + unknown edges produce no routes: {out:?}"
+        );
+    }
+
+    #[test]
+    fn route_is_deterministic() {
+        let boxes = vec![leafbox("a"), leafbox("b"), leafbox("m")];
+        let mut rects: BTreeMap<BoxId, Rect> = BTreeMap::new();
+        rects.insert(BoxId::Node("a".into()), nrect(0.0, 0.0, 100.0, 60.0));
+        rects.insert(BoxId::Node("b".into()), nrect(350.0, 0.0, 100.0, 60.0));
+        rects.insert(BoxId::Node("m".into()), nrect(150.0, -30.0, 80.0, 120.0));
+        let edges = vec![
+            (BoxId::Node("a".into()), BoxId::Node("b".into())),
+            (BoxId::Node("a".into()), BoxId::Node("b".into())), // parallel
+        ];
+        let a = route(&boxes, &rects, &edges, &SolveConfig::default());
+        let b = route(&boxes, &rects, &edges, &SolveConfig::default());
+        assert_eq!(a, b, "identical input => identical routes");
+        assert_ne!(a[0].points, a[1].points, "parallels separated");
+        // silence unused import warning in this fixture-heavy module:
+        let _ = Axis::Row;
     }
 }
