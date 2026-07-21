@@ -277,6 +277,13 @@ pub struct App {
     ui: WidgetRef,
     #[rust]
     model: Model,
+    /// Basename of the currently-open bundle directory. The bundle's display
+    /// name falls back to this when the model carries no root name (`model.path`
+    /// is empty -- no root `index.md` H1 / frontmatter title), so an unnamed
+    /// bundle reads as its folder rather than a bare "bundle". Retained across a
+    /// theme live-edit reload (`rehydrate`), which has no `dir` in hand.
+    #[rust]
+    open_name: String,
     #[rust]
     tabs: OpenTabs,
     /// Recents last rendered into the start screen, so an `OpenRecent(i)`
@@ -564,8 +571,18 @@ impl App {
         };
         self.model = model;
 
+        // Folder basename backs the display name when the bundle has no root
+        // name of its own. `..` / drive-root degenerate to an empty basename;
+        // "bundle" is the last-ditch label.
+        self.open_name = dir
+            .file_name()
+            .and_then(|n| n.to_str())
+            .filter(|n| !n.is_empty())
+            .unwrap_or("bundle")
+            .to_string();
+
         let root_name = if self.model.path.is_empty() {
-            "bundle"
+            self.open_name.as_str()
         } else {
             self.model.path.as_str()
         };
@@ -574,7 +591,7 @@ impl App {
         // Record this open in the recents store (best-effort; see config.rs).
         crate::config::push_recent(dir, root_name);
 
-        let tree = crate::tree::build_tree(&self.model);
+        let tree = crate::tree::build_tree(&self.model, &self.open_name);
         if let Some(mut panel) = self
             .ui
             .widget(cx, ids!(project_tree))
@@ -706,13 +723,13 @@ impl App {
             return;
         }
         let root_name = if self.model.path.is_empty() {
-            "bundle"
+            self.open_name.as_str()
         } else {
             self.model.path.as_str()
         };
         self.ui.label(cx, ids!(model_name)).set_text(cx, root_name);
 
-        let tree = crate::tree::build_tree(&self.model);
+        let tree = crate::tree::build_tree(&self.model, &self.open_name);
         if let Some(mut panel) = self
             .ui
             .widget(cx, ids!(project_tree))

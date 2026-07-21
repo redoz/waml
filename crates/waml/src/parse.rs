@@ -630,18 +630,32 @@ fn dir_of(path: &str) -> String {
     }
 }
 
-/// Parsed shape of a frontmatter-less `index.md`.
+/// Parsed shape of an `index.md` (frontmatter, if any, is stripped by
+/// `parse_index`; its `title` becomes the name when present).
 struct IndexDoc {
     intro: Option<String>,
     order: Vec<String>,
     h1: String,
 }
 
-/// Parse a frontmatter-less index.md: H1, intro prose (before the first bullet),
-/// and `* [Title](url) - blurb` entries. `url` maps to a member key: `sub/` ->
+/// Parse an index.md: name, intro prose (before the first bullet), and
+/// `* [Title](url) - blurb` entries. `url` maps to a member key: `sub/` ->
 /// the dir-relative sub-package key; `./slug.md` -> the full id, resolved
 /// against this index.md's own directory (same as any other href target).
+///
+/// The name (`h1`) is the frontmatter `title` when present, else the FIRST
+/// body `#` heading. Frontmatter is stripped first, and the first heading wins
+/// (not the last), so an index that uses `#` for section groupings before the
+/// first bullet still names the package after its real title -- not whichever
+/// section header happened to sit just above the first bullet.
 fn parse_index(dir: &str, text: &str) -> IndexDoc {
+    let (fm, body) = parse_frontmatter(text);
+    let fm_title = fm
+        .get_str("title")
+        .map(str::trim)
+        .filter(|t| !t.is_empty())
+        .map(str::to_string);
+
     let mut h1 = String::new();
     let mut intro_lines: Vec<&str> = vec![];
     let mut order = vec![];
@@ -652,7 +666,7 @@ fn parse_index(dir: &str, text: &str) -> IndexDoc {
     } else {
         format!("{dir}/index.md")
     };
-    for line in text.lines() {
+    for line in body.lines() {
         if let Some(c) = re.captures(line) {
             seen_bullet = true;
             let url = c.get(1).unwrap().as_str();
@@ -670,7 +684,9 @@ fn parse_index(dir: &str, text: &str) -> IndexDoc {
         } else if !seen_bullet {
             let t = line.trim();
             if let Some(rest) = t.strip_prefix("# ") {
-                h1 = rest.trim().to_string();
+                if h1.is_empty() {
+                    h1 = rest.trim().to_string();
+                }
             } else if !t.is_empty() {
                 intro_lines.push(t);
             }
@@ -679,7 +695,7 @@ fn parse_index(dir: &str, text: &str) -> IndexDoc {
     IndexDoc {
         intro: (!intro_lines.is_empty()).then(|| intro_lines.join(" ")),
         order,
-        h1,
+        h1: fm_title.unwrap_or(h1),
     }
 }
 
@@ -1521,6 +1537,44 @@ mod tests {
         // members = child classifier "order" + sub-package "sales/orders", A–Z by title/name
         assert!(sales.members.contains(&"sales/order".to_string()));
         assert!(sales.members.contains(&"sales/orders".to_string()));
+    }
+
+    #[test]
+    fn root_index_name_prefers_frontmatter_title_over_section_h1s() {
+        // Regression (real OuroCore bundle): a root index.md with a frontmatter
+        // `title` and several `#` section headers before the first bullet must
+        // resolve the model name to the frontmatter title -- NOT the last
+        // pre-bullet `#` heading (which used to leak "Tenancy" as the name).
+        let b = vec![
+            (
+                "index.md".to_string(),
+                "---\nokf_version: \"0.1\"\ntitle: Ocuro Domain Model\n---\n# Ocuro Domain Model (intended)\n\nSome prose.\n\n# Tenancy\n\n* [Organization](tenancy/organization.md) - the tenant root\n".to_string(),
+            ),
+            (
+                "tenancy/organization.md".to_string(),
+                "---\ntype: uml.Class\ntitle: Organization\n---\n# Organization\n".to_string(),
+            ),
+        ];
+        let m = build_model(&b);
+        assert_eq!(m.path, "Ocuro Domain Model");
+    }
+
+    #[test]
+    fn root_index_name_takes_first_h1_when_no_frontmatter_title() {
+        // No frontmatter title: the FIRST `#` heading wins, not the last one
+        // seen before the first bullet.
+        let b = vec![
+            (
+                "index.md".to_string(),
+                "# Real Name\n\n# Section\n\n* [Order](order.md)\n".to_string(),
+            ),
+            (
+                "order.md".to_string(),
+                "---\ntype: uml.Class\ntitle: Order\n---\n# Order\n".to_string(),
+            ),
+        ];
+        let m = build_model(&b);
+        assert_eq!(m.path, "Real Name");
     }
 
     #[test]

@@ -61,8 +61,11 @@ pub fn kind_of(ty: &ElementType) -> TreeKind {
 }
 
 /// Flatten `model`'s package forest into a `ProjectTree`. Never empty: an
-/// absent root package yields a flat diagram fallback.
-pub fn build_tree(model: &Model) -> ProjectTree {
+/// absent root package yields a flat diagram fallback. `root_fallback` names the
+/// root when the model carries no root name (`model.path` is empty) -- callers
+/// pass the open bundle's folder basename so an unnamed bundle reads as its
+/// folder.
+pub fn build_tree(model: &Model, root_fallback: &str) -> ProjectTree {
     // Unified key -> (title, kind) over all five collections.
     let mut meta: HashMap<String, (String, TreeKind)> = HashMap::new();
     for n in &model.nodes {
@@ -84,7 +87,7 @@ pub fn build_tree(model: &Model) -> ProjectTree {
     }
 
     let root_title = if model.path.is_empty() {
-        "bundle".to_string()
+        root_fallback.to_string()
     } else {
         model.path.clone()
     };
@@ -225,7 +228,7 @@ mod tests {
     #[test]
     fn mini_fixture_has_single_labelled_root_with_the_diagram() {
         let model = mini();
-        let tree = build_tree(&model);
+        let tree = build_tree(&model, "bundle");
 
         // One synthesized root package, titled from `model.path` ("Mini").
         assert_eq!(tree.roots.len(), 1);
@@ -285,7 +288,7 @@ mod tests {
             )],
             ..Default::default()
         };
-        let tree = build_tree(&model);
+        let tree = build_tree(&model, "bundle");
 
         assert_eq!(tree.roots.len(), 1);
         let root = &tree.roots[0];
@@ -322,7 +325,7 @@ mod tests {
             )],
             ..Default::default()
         };
-        let tree = build_tree(&model);
+        let tree = build_tree(&model, "bundle");
         assert_eq!(tree.roots.len(), 1);
         assert!(tree.roots[0].children.is_empty());
     }
@@ -330,17 +333,17 @@ mod tests {
     #[test]
     fn empty_packages_falls_back_to_flat_diagram_list() {
         let model = Model {
-            path: String::new(), // exercises the "bundle" fallback title
+            path: String::new(), // no root name -> falls back to `root_fallback`
             diagrams: vec![diagram("d1", "D1"), diagram("d2", "D2")],
             ..Default::default()
         };
-        let tree = build_tree(&model);
+        let tree = build_tree(&model, "my-folder");
 
         assert_eq!(tree.roots.len(), 1);
         let root = &tree.roots[0];
         assert_eq!(
             (root.key.as_str(), root.title.as_str(), root.kind),
-            ("", "bundle", TreeKind::Package)
+            ("", "my-folder", TreeKind::Package)
         );
         assert_eq!(root.children.len(), 2);
         assert!(root
