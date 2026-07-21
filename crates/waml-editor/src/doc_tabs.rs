@@ -70,15 +70,15 @@ script_mod! {
                 line_spacing: 1.2
             }
         }
-        // Active preview tab: same regular-weight italic as the inactive
-        // preview, just full-strength color -- the raised card + accent strip
-        // carry the "active" read, so it stays italic without going bold.
+        // Active preview tab: semibold italic -- keeps the italic "provisional"
+        // read but carries enough weight to sit alongside the bold active
+        // persisted tab (plain regular italic read too light once shrunk to 10).
         draw_text_preview_active +: {
             color: atlas.text
             text_style: TextStyle{
                 font_size: 10
                 font_family: FontFamily{
-                    latin := FontMember{res: crate_resource("self:resources/fonts/IBM_Plex_Sans/IBMPlexSans-Italic.ttf") asc: -0.1 desc: 0.0}
+                    latin := FontMember{res: crate_resource("self:resources/fonts/IBM_Plex_Sans/IBMPlexSans-SemiBoldItalic.ttf") asc: -0.1 desc: 0.0}
                 }
                 line_spacing: 1.2
             }
