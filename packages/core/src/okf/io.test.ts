@@ -23,6 +23,17 @@ describe("bundleToDownloadFiles", () => {
     expect(files["demo/orders.md"]).not.toContain("Generated with"); // per-doc stays clean
   });
 
+  it("footers the root index, not a nested package index", () => {
+    const bundle: [string, string][] = [
+      ["demo/sales/index.md", "# Sales\n"],
+      ["demo/index.md", "# Demo\n"],
+      ["demo/sales/order.md", "# Order\n"],
+    ];
+    const files = bundleToDownloadFiles(bundle, "Demo");
+    expect(files["demo/index.md"]).toContain("Generated with"); // root gets the footer
+    expect(files["demo/sales/index.md"]).not.toContain("Generated with"); // nested stays clean
+  });
+
   it("synthesizes an index doc when the bundle has none", () => {
     const bundle: [string, string][] = [["orders-domain-uml/order.md", "# Order\n"]];
     const files = bundleToDownloadFiles(bundle, "Orders Domain");
