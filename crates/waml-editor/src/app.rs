@@ -116,9 +116,11 @@ script_mod! {
                     // Action buttons right after the nav, as direct caption-bar
                     // children: save then burger. Facing margins trimmed so the
                     // pair sits tight (2px gap instead of the button default's 6);
-                    // the outer margins hold the 292 edge (212 + 40 + 40).
-                    save_btn := CaptionButton{ shape: 1.0 margin: Inset{left: 3.0, right: 1.0} }
-                    menu_btn := CaptionButton{ shape: 0.0 margin: Inset{left: 1.0, right: 3.0} }
+                    // the outer margins hold the 292 edge (212 + 40 + 40). Both
+                    // start hidden -- `App` flips them visible only while a model
+                    // is open (see `show_editor` / `show_start_screen`).
+                    save_btn := CaptionButton{ shape: 1.0 margin: Inset{left: 3.0, right: 1.0} visible: false }
+                    menu_btn := CaptionButton{ shape: 0.0 margin: Inset{left: 1.0, right: 3.0} visible: false }
                     doc_tabs := DocTabs{
                         width: Fill
                         height: Fill
@@ -188,8 +190,10 @@ script_mod! {
                             width: Fill
                             height: Fill
                         }
-                        // Tool dock: left edge, vertically centered.
-                        View{
+                        // Tool dock: left edge, vertically centered. Wrapper is
+                        // toggled visible only on a diagram tab (hidden while a
+                        // classifier/package is previewed) -- see `sync_active_tab`.
+                        tool_dock_wrap := View{
                             width: Fill
                             height: Fill
                             align: Align{x: 0.0, y: 0.5}
@@ -360,6 +364,8 @@ impl App {
                 {
                     toolbar.set_selection(cx, None);
                 }
+                // Diagram tab: the tool dock is usable.
+                self.set_diagram_toolbars(cx, true);
             }
             TabKind::Classifier => {
                 let scene = build_focus_scene(&self.model, &active.key);
@@ -376,6 +382,9 @@ impl App {
                     .borrow_mut::<crate::inspector_panel::Inspector>()
                 {
                     inspector.set_subject(cx, &self.model, Subject::Classifier(active.key.clone()));
+                    // Previewing a classifier/package (not a diagram): no
+                    // diagram element-picker.
+                    inspector.set_picker_visible(cx, false);
                 }
                 if let Some(mut toolbar) =
                     self.ui
@@ -385,9 +394,19 @@ impl App {
                     // Single-classifier focus only in this mock -- always 1.
                     toolbar.set_selection(cx, Some(1));
                 }
+                // Previewing a classifier/package: no tool dock.
+                self.set_diagram_toolbars(cx, false);
             }
         }
         self.sync_statusbar(cx);
+    }
+
+    /// Show/hide the left tool dock. Hidden while a classifier/package is
+    /// previewed -- only a diagram tab exposes drawing tools.
+    fn set_diagram_toolbars(&mut self, cx: &mut Cx, show: bool) {
+        self.ui
+            .widget(cx, ids!(tool_dock_wrap))
+            .set_visible(cx, show);
     }
 
     fn refresh_doc_tabs(&mut self, cx: &mut Cx) {
@@ -606,6 +625,16 @@ impl App {
         }
         self.sync_statusbar(cx);
 
+        // Tool dock is diagram-only: show it when the base tab is a diagram,
+        // hide it for a diagram-less model. `open_dir` bypasses the tab-switch
+        // path (`sync_active_tab`), so set it explicitly here.
+        let has_diagram = self
+            .tabs
+            .active_tab()
+            .map(|t| t.kind == TabKind::Diagram)
+            .unwrap_or(false);
+        self.set_diagram_toolbars(cx, has_diagram);
+
         // Diagram switcher (U7): push the base tab's current diagram title into
         // the trigger chip (empty when the model carries no diagram).
         self.sync_diagram_switcher_current(cx);
@@ -619,6 +648,9 @@ impl App {
     fn show_editor(&mut self, cx: &mut Cx) {
         self.editor_shown = true;
         self.ui.widget(cx, ids!(main_column)).set_visible(cx, true);
+        // Caption save + burger belong to an open model.
+        self.ui.widget(cx, ids!(save_btn)).set_visible(cx, true);
+        self.ui.widget(cx, ids!(menu_btn)).set_visible(cx, true);
         if let Some(mut screen) = self
             .ui
             .widget(cx, ids!(start_screen))
@@ -681,6 +713,9 @@ impl App {
             screen.set_visible(cx, true);
         }
         self.ui.widget(cx, ids!(main_column)).set_visible(cx, false);
+        // No open model on the start screen: hide save + burger.
+        self.ui.widget(cx, ids!(save_btn)).set_visible(cx, false);
+        self.ui.widget(cx, ids!(menu_btn)).set_visible(cx, false);
         self.editor_shown = false;
     }
 }

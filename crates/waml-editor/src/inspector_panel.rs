@@ -301,6 +301,11 @@ pub struct Inspector {
     /// visual row maps back to a row here by its stored element index.
     #[rust]
     elements: Vec<ElementRow>,
+    /// Whether the element-picker top bar is shown. Diagrams show it (fed via
+    /// `set_diagram_elements`); a classifier/package preview hides it
+    /// (`set_picker_visible(false)`), floating the body up to the panel top.
+    #[rust]
+    show_picker: bool,
     /// Owned-popup state: whether the list is open, the hit rects of the visible
     /// rows (each paired with its index into `elements`), and the hovered row.
     #[rust]
@@ -500,93 +505,109 @@ impl Widget for Inspector {
 
         let cy = rect.pos.y + BAR_H * 0.5;
 
-        // Left type-badge, over the field's left inset (only when a subject is
-        // set). `draw_badge.color` was computed per-kind in `set_subject`.
-        if self.proj.is_some() {
-            let badge = Rect {
-                pos: dvec2(rect.pos.x + PAD + 4.0, cy - BADGE_SIZE * 0.5),
-                size: dvec2(BADGE_SIZE, BADGE_SIZE),
-            };
-            self.draw_badge.color = self.badge_color;
-            self.draw_badge.draw_abs(cx, badge);
-            if !self.badge_letter.is_empty() {
-                self.draw_badge_text
-                    .draw_abs(cx, dvec2(badge.pos.x + 7.0, badge.pos.y + 4.0), &self.badge_letter);
+        // The element-picker top bar (badge, glyph cluster, picker field, popup)
+        // is diagram-only. A classifier/package preview hides it and floats the
+        // body up to the panel top -- see `set_picker_visible`.
+        if self.show_picker {
+            // Left type-badge, over the field's left inset (only when a subject is
+            // set). `draw_badge.color` was computed per-kind in `set_subject`.
+            if self.proj.is_some() {
+                let badge = Rect {
+                    pos: dvec2(rect.pos.x + PAD + 4.0, cy - BADGE_SIZE * 0.5),
+                    size: dvec2(BADGE_SIZE, BADGE_SIZE),
+                };
+                self.draw_badge.color = self.badge_color;
+                self.draw_badge.draw_abs(cx, badge);
+                if !self.badge_letter.is_empty() {
+                    self.draw_badge_text.draw_abs(
+                        cx,
+                        dvec2(badge.pos.x + 7.0, badge.pos.y + 4.0),
+                        &self.badge_letter,
+                    );
+                }
             }
-        }
 
-        // Right glyph cluster, right -> left: pin, caret, pencil.
-        let pin = Rect {
-            pos: dvec2(
-                rect.pos.x + rect.size.x - PIN_MARGIN - PIN_SIZE,
-                cy - PIN_SIZE * 0.5,
-            ),
-            size: dvec2(PIN_SIZE, PIN_SIZE),
-        };
-        self.pin_rect = pin;
-        self.draw_pin_frame.draw_abs(cx, pin);
-        let inset = 1.5;
-        let inner = Rect {
-            pos: dvec2(pin.pos.x + inset, pin.pos.y + inset),
-            size: dvec2(pin.size.x - inset * 2.0, pin.size.y - inset * 2.0),
-        };
-        if self.pinned {
-            self.draw_pin_on.draw_abs(cx, inner);
+            // Right glyph cluster, right -> left: pin, caret, pencil.
+            let pin = Rect {
+                pos: dvec2(
+                    rect.pos.x + rect.size.x - PIN_MARGIN - PIN_SIZE,
+                    cy - PIN_SIZE * 0.5,
+                ),
+                size: dvec2(PIN_SIZE, PIN_SIZE),
+            };
+            self.pin_rect = pin;
+            self.draw_pin_frame.draw_abs(cx, pin);
+            let inset = 1.5;
+            let inner = Rect {
+                pos: dvec2(pin.pos.x + inset, pin.pos.y + inset),
+                size: dvec2(pin.size.x - inset * 2.0, pin.size.y - inset * 2.0),
+            };
+            if self.pinned {
+                self.draw_pin_on.draw_abs(cx, inner);
+            } else {
+                self.draw_pin_off.draw_abs(cx, inner);
+            }
+
+            // Collapse/unfold caret: up (fold) when the body is showing, down
+            // (unfold) when collapsed.
+            let caret = Rect {
+                pos: dvec2(pin.pos.x - ICON_GAP - ICON, cy - ICON * 0.5),
+                size: dvec2(ICON, ICON),
+            };
+            self.caret_rect = caret;
+            if collapsed {
+                self.draw_caret_down.draw_abs(cx, caret);
+            } else {
+                self.draw_caret_up.draw_abs(cx, caret);
+            }
+
+            // Pencil (edit affordance, visual-only this cut).
+            let pencil = Rect {
+                pos: dvec2(caret.pos.x - ICON_GAP - ICON, cy - ICON * 0.5),
+                size: dvec2(ICON, ICON),
+            };
+            self.pencil_rect = pencil;
+            self.draw_pencil.draw_abs(cx, pencil);
+
+            // Picker field label: the selected element's title (subdued,
+            // text_dim), or the placeholder when nothing is picked. Sits right of
+            // the badge; the whole left strip of the bar opens the list.
+            let sel = subject_to_index(&self.elements, &self.subject);
+            let field_label = self
+                .elements
+                .get(sel)
+                .map(|r| r.label.clone())
+                .unwrap_or_else(|| PICKER_PLACEHOLDER.to_string());
+            let label_x = if self.proj.is_some() {
+                rect.pos.x + PAD + 4.0 + BADGE_SIZE + 10.0
+            } else {
+                rect.pos.x + PAD + 4.0
+            };
+            self.draw_dim
+                .draw_abs(cx, dvec2(label_x, cy - 7.0), &field_label);
+            self.picker_field_rect = Rect {
+                pos: rect.pos,
+                size: dvec2((pencil.pos.x - ICON_GAP - rect.pos.x).max(0.0), BAR_H),
+            };
+
+            // Owned popup list, dropped below the bar. It replaces the body while
+            // open (the frame was sized to bar + list above), so return after.
+            if self.picker_open {
+                self.draw_picker_list(cx, rect, n_rows, sel);
+                return DrawStep::done();
+            }
         } else {
-            self.draw_pin_off.draw_abs(cx, inner);
+            // No picker bar: clear its hit rects so stale rects from a previous
+            // diagram tab don't catch clicks over the (now bar-less) body.
+            self.picker_field_rect = Rect::default();
+            self.pin_rect = Rect::default();
+            self.caret_rect = Rect::default();
+            self.pencil_rect = Rect::default();
         }
 
-        // Collapse/unfold caret: up (fold) when the body is showing, down
-        // (unfold) when collapsed.
-        let caret = Rect {
-            pos: dvec2(pin.pos.x - ICON_GAP - ICON, cy - ICON * 0.5),
-            size: dvec2(ICON, ICON),
-        };
-        self.caret_rect = caret;
-        if collapsed {
-            self.draw_caret_down.draw_abs(cx, caret);
-        } else {
-            self.draw_caret_up.draw_abs(cx, caret);
-        }
-
-        // Pencil (edit affordance, visual-only this cut).
-        let pencil = Rect {
-            pos: dvec2(caret.pos.x - ICON_GAP - ICON, cy - ICON * 0.5),
-            size: dvec2(ICON, ICON),
-        };
-        self.pencil_rect = pencil;
-        self.draw_pencil.draw_abs(cx, pencil);
-
-        // Picker field label: the selected element's title (subdued, text_dim),
-        // or the placeholder when nothing is picked. Sits right of the badge; the
-        // whole left strip of the bar is the click target that opens the list.
-        let sel = subject_to_index(&self.elements, &self.subject);
-        let field_label = self
-            .elements
-            .get(sel)
-            .map(|r| r.label.clone())
-            .unwrap_or_else(|| PICKER_PLACEHOLDER.to_string());
-        let label_x = if self.proj.is_some() {
-            rect.pos.x + PAD + 4.0 + BADGE_SIZE + 10.0
-        } else {
-            rect.pos.x + PAD + 4.0
-        };
-        self.draw_dim
-            .draw_abs(cx, dvec2(label_x, cy - 7.0), &field_label);
-        self.picker_field_rect = Rect {
-            pos: rect.pos,
-            size: dvec2((pencil.pos.x - ICON_GAP - rect.pos.x).max(0.0), BAR_H),
-        };
-
-        // Owned popup list, dropped below the bar. It replaces the body while
-        // open (the frame was sized to bar + list above), so return after.
-        if self.picker_open {
-            self.draw_picker_list(cx, rect, n_rows, sel);
-            return DrawStep::done();
-        }
-
-        // Body, below the bar. When collapsed the frame already hugs the bar --
-        // the placeholder lives in the field itself, so there's no body.
+        // Body, below the bar (or floated to the top when the bar is hidden).
+        // When collapsed the frame already hugs the bar -- the placeholder lives
+        // in the field itself, so there's no body.
         if collapsed {
             return DrawStep::done();
         }
@@ -595,8 +616,9 @@ impl Widget for Inspector {
         };
         let field_w = rect.size.x - PAD * 2.0;
 
+        let bar_h = if self.show_picker { BAR_H } else { 0.0 };
         let x = rect.pos.x + PAD;
-        let mut y = rect.pos.y + BAR_H + PAD;
+        let mut y = rect.pos.y + bar_h + PAD;
 
         // Title: click-to-edit.
         let title_rect = Rect {
@@ -731,6 +753,19 @@ impl Inspector {
     pub fn set_diagram_elements(&mut self, cx: &mut Cx, rows: Vec<ElementRow>) {
         self.elements = rows;
         self.picker_open = false;
+        // Feeding diagram rows implies a diagram tab: show the picker bar.
+        self.show_picker = true;
+        self.view.redraw(cx);
+    }
+
+    /// Show/hide the element-picker top bar. Hidden while previewing a
+    /// classifier/package (no diagram to pick elements from); the body then
+    /// floats up to the panel top. Also forces the popup closed.
+    pub fn set_picker_visible(&mut self, cx: &mut Cx, visible: bool) {
+        self.show_picker = visible;
+        if !visible {
+            self.picker_open = false;
+        }
         self.view.redraw(cx);
     }
 
