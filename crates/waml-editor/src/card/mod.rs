@@ -667,6 +667,7 @@ mod tests {
             },
             emphasized: true,
             collapsed: false,
+            expanded: false,
         }
     }
 

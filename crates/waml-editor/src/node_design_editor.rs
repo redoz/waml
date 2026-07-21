@@ -1209,6 +1209,7 @@ impl NodeDesignEditor {
             },
             emphasized: true,
             collapsed: false,
+            expanded: false,
         }
     }
 

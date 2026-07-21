@@ -53,6 +53,11 @@ pub struct SceneNode {
     pub rect: Rect,
     pub emphasized: bool,
     pub collapsed: bool,
+    /// Ephemeral view-state: whether the card shows all members (true) or is
+    /// capped at `card::MAX_BODY_ROWS` with a `▾ N more` footer (false). Set from
+    /// `App`'s expanded key-set in `build_scene`; never derived from the model.
+    /// Defaults `false` (collapsed) everywhere the model projects a node.
+    pub expanded: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -120,6 +125,7 @@ pub fn project_scene_node(model: &Model, node: &waml::model::Node) -> SceneNode 
         },
         emphasized: false,
         collapsed: false,
+        expanded: false,
     }
 }
 
@@ -222,6 +228,7 @@ pub fn build_scene(model: &Model, diagram: &Diagram) -> (Scene, Vec<Diagnostic>)
                 },
                 emphasized: false,
                 collapsed: false,
+                expanded: false,
             },
         };
         node.rect = *rect;
@@ -290,6 +297,7 @@ pub fn build_focus_scene(model: &Model, key: &str) -> Scene {
         },
         emphasized: true,
         collapsed: false,
+        expanded: false,
     };
     let (w, h) = crate::card::card_size(&scene_node, &crate::card::mono_sheet());
     scene_node.rect = Rect {
@@ -497,5 +505,13 @@ mod tests {
             edges: vec![],
         };
         assert!(bounding_box(&scene).is_none());
+    }
+
+    #[test]
+    fn projected_node_defaults_to_not_expanded() {
+        let model = mini();
+        let node = model.nodes.iter().find(|n| n.key == "order").unwrap();
+        let projected = project_scene_node(&model, node);
+        assert!(!projected.expanded);
     }
 }
