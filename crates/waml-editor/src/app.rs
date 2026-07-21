@@ -1132,30 +1132,55 @@ impl MatchEvent for App {
             return;
         }
 
-        // Node radial (Task 4): a right-press landed on a node -> open the
-        // radial disc at the press point with the four node commands.
+        // Canvas pointer actions. A right-press opens the node radial (Task 4);
+        // a primary click selects/deselects a node, repointing the inspector
+        // only (no tab, no camera move -- the same inspector-local path the
+        // element-picker takes above).
         let canvas_menu = self
             .ui
             .widget(cx, ids!(canvas))
             .borrow_mut::<crate::canvas::GraphCanvas>()
             .and_then(|c| c.canvas_action(actions));
-        if let Some(crate::canvas::GraphCanvasAction::NodeMenu { abs, node: _ }) = canvas_menu {
-            let items = node_radial_items();
-            // In-window radial: clip the fan to the main window's client rect so
-            // it collapses to a "C" near a window edge instead of clipping.
-            let sz = self.ui.window(cx, ids!(main_window)).get_inner_size(cx);
-            let bounds = Rect {
-                pos: dvec2(0.0, 0.0),
-                size: dvec2(sz.x, sz.y),
-            };
-            if let Some(mut radial) = self
-                .ui
-                .widget(cx, ids!(radial))
-                .borrow_mut::<crate::radial::Radial>()
-            {
-                radial.open(cx, abs, bounds, items, cx.seconds_since_app_start());
+        match canvas_menu {
+            Some(crate::canvas::GraphCanvasAction::NodeMenu { abs, node: _ }) => {
+                let items = node_radial_items();
+                // In-window radial: clip the fan to the main window's client rect
+                // so it collapses to a "C" near a window edge instead of clipping.
+                let sz = self.ui.window(cx, ids!(main_window)).get_inner_size(cx);
+                let bounds = Rect {
+                    pos: dvec2(0.0, 0.0),
+                    size: dvec2(sz.x, sz.y),
+                };
+                if let Some(mut radial) = self
+                    .ui
+                    .widget(cx, ids!(radial))
+                    .borrow_mut::<crate::radial::Radial>()
+                {
+                    radial.open(cx, abs, bounds, items, cx.seconds_since_app_start());
+                }
+                return;
             }
-            return;
+            Some(crate::canvas::GraphCanvasAction::NodeSelect { key }) => {
+                if let Some(mut inspector) = self
+                    .ui
+                    .widget(cx, ids!(inspector))
+                    .borrow_mut::<crate::inspector_panel::Inspector>()
+                {
+                    inspector.set_subject(cx, &self.model, Subject::Classifier(key));
+                }
+                return;
+            }
+            Some(crate::canvas::GraphCanvasAction::NodeDeselect) => {
+                if let Some(mut inspector) = self
+                    .ui
+                    .widget(cx, ids!(inspector))
+                    .borrow_mut::<crate::inspector_panel::Inspector>()
+                {
+                    inspector.set_subject(cx, &self.model, Subject::None);
+                }
+                return;
+            }
+            _ => {}
         }
 
         // Logo drop-down: a left-click on the top-bar wordmark opens a plain
