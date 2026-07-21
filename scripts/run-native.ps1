@@ -21,9 +21,14 @@ Set-Location $root
 
 # A still-running instance holds the target exe lock, so cargo would relink
 # against a stale binary (or fail) and the new window would show old code.
-# Kill any stragglers, then build explicitly so compile errors surface here
-# instead of as a window that never opens.
-Get-Process waml-editor -ErrorAction SilentlyContinue | Stop-Process -Force
+# Kill only OUR stragglers -- the instance built from THIS checkout's exe -- so
+# a run in one worktree leaves other worktrees' (and the main checkout's)
+# windows alone. Match on the exact exe path this script is about to relink.
+$profileDir = if ($Optimized) { 'release' } else { 'debug' }
+$exePath = [IO.Path]::GetFullPath((Join-Path $root "target/$profileDir/waml-editor.exe"))
+Get-Process waml-editor -ErrorAction SilentlyContinue |
+    Where-Object { $_.Path -and ([IO.Path]::GetFullPath($_.Path) -ieq $exePath) } |
+    Stop-Process -Force
 cargo build -p waml-editor --bin waml-editor @profileArgs
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
