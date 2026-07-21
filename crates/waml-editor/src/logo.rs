@@ -852,3 +852,72 @@ impl LogoMark {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::LogoMark;
+
+    const GREEN: [f32; 3] = [0.235, 0.745, 0.353];
+    const AMBER: [f32; 3] = [0.902, 0.588, 0.078];
+    const RED: [f32; 3] = [0.922, 0.275, 0.471];
+
+    fn approx_eq(a: [f32; 3], b: [f32; 3]) -> bool {
+        (a[0] - b[0]).abs() < 1e-4 && (a[1] - b[1]).abs() < 1e-4 && (a[2] - b[2]).abs() < 1e-4
+    }
+
+    // Anchors: `heat_color` clamps flat to GREEN at/above 60fps and flat to RED
+    // at/below 15fps (the `>= 60.0` / final `else` arms).
+    #[test]
+    fn anchors_green_at_and_above_60() {
+        assert!(approx_eq(LogoMark::heat_color(60.0), GREEN));
+        assert!(approx_eq(LogoMark::heat_color(120.0), GREEN));
+    }
+
+    #[test]
+    fn anchors_red_at_and_below_15() {
+        assert!(approx_eq(LogoMark::heat_color(15.0), RED));
+        assert!(approx_eq(LogoMark::heat_color(5.0), RED));
+        assert!(approx_eq(LogoMark::heat_color(0.0), RED));
+    }
+
+    // Amber anchor at the 30fps boundary. The branch order in `heat_color`
+    // checks `fps >= 30.0` before `fps >= 15.0`, so 30.0 itself is owned by
+    // the amber->green lerp: `lerp(AMBER, GREEN, (30-30)/30)` = AMBER exactly.
+    // The red->amber lerp's far end agrees with the same value --
+    // `lerp(RED, AMBER, (30-15)/15)` = AMBER -- so the ramp is continuous
+    // there even though only one branch is ever actually evaluated at 30.0.
+    #[test]
+    fn amber_at_30_boundary() {
+        assert!(approx_eq(LogoMark::heat_color(30.0), AMBER));
+        // Just below the boundary (still the red->amber branch): confirms the
+        // two pieces meet at the same colour instead of stepping.
+        assert!(approx_eq(LogoMark::heat_color(29.999), AMBER));
+    }
+
+    // Sweep the whole ramp: every channel must stay in [0,1] (guaranteed by
+    // `lerp`'s `t.clamp(0.0, 1.0)` plus endpoints that are themselves in
+    // range), and the green channel must never decrease as fps rises --
+    // RED.g=0.275 < AMBER.g=0.588 < GREEN.g=0.745, and each lerp interpolates
+    // straight between adjacent anchors, so this holds across the whole
+    // sweep. (The red and blue channels do NOT hold this property -- e.g.
+    // blue dips from RED.b=0.471 down to AMBER.b=0.078 then rises back to
+    // GREEN.b=0.353 -- so only the green channel's monotonicity is asserted.)
+    #[test]
+    fn ramp_is_in_range_and_green_channel_nondecreasing() {
+        let mut prev_green = f32::MIN;
+        let mut fps = 0.0f32;
+        while fps <= 90.0 {
+            let c = LogoMark::heat_color(fps);
+            for &ch in &c {
+                assert!((0.0..=1.0).contains(&ch), "channel out of [0,1] at fps={fps}: {c:?}");
+            }
+            assert!(
+                c[1] + 1e-6 >= prev_green,
+                "green channel decreased at fps={fps}: {} < {prev_green}",
+                c[1]
+            );
+            prev_green = c[1];
+            fps += 0.5;
+        }
+    }
+}
