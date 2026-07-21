@@ -511,13 +511,6 @@ const HOVER_SECS: f64 = 0.15;
 // the current colour variant to the next over this window.
 const FADE_SECS: f64 = 0.4;
 
-// FPS-heat meter ease-in/out duration (seconds): `meter` ramps 0->1 as metering
-// engages, 1->0 as it releases (or on hover, which always suppresses heat).
-const METER_SECS: f64 = 0.2;
-
-// FPS smoothing time constant (seconds) for the exponential moving average --
-// small enough to react to load, large enough to steady the per-frame jitter.
-const FPS_TAU: f64 = 0.15;
 
 /// `LogoMark` -> `App` action (same convention as `GraphCanvasAction`). Carries
 /// the wordmark's screen-space centre so `App` can open the radial there.
@@ -595,25 +588,17 @@ pub struct LogoMark {
     fade_t: f32,
     #[rust]
     fading: bool,
-    // FPS-heat meter state (top-bar wordmark only; splash never meters). App
-    // flips `metering` across a pointer interaction; the rest is owned here.
-    // `metering` -- App's interaction-span flag (pointer press..release).
+    // FPS-heat inputs (top-bar wordmark only; splash leaves them at defaults, so
+    // the shader tint is a no-op there). App owns the meter (`fps_meter.rs`) and
+    // pushes the latest values via `set_heat`; the logo just renders them. Hover
+    // suppresses heat -- that gate lives here (a logo concern), applied in draw as
+    // `meter = heat_strength * (1 - hover)`.
+    // `heat_color` -- target tint (green->amber->red), pushed as `fps_color`.
     #[rust]
-    metering: bool,
-    // Eased 0..1 heat strength fed to the shader `meter` uniform (ramps toward 1
-    // while metering & not hovered, toward 0 otherwise) -- smooths enable/disable.
+    heat_color: [f32; 3],
+    // `heat_strength` -- eased 0..1 heat amount before the hover gate.
     #[rust]
-    meter: f32,
-    // EMA-smoothed framerate (Hz), sampled from next-frame dt while metering.
-    #[rust]
-    fps: f32,
-    // Heat colour (green->amber->red) mapped from `fps`, pushed as `fps_color`.
-    #[rust]
-    fps_color: [f32; 3],
-    // Set on a metering rising edge: skips the first fps sample so a stale dt
-    // (idle gap before the press) can't flash red.
-    #[rust]
-    skip_fps_sample: bool,
+    heat_strength: f32,
     #[rust]
     next_frame: NextFrame,
 }
@@ -651,48 +636,14 @@ impl Widget for LogoMark {
                 }
                 self.time = (ne.time - self.anim_start) as f32;
 
-                // FPS-heat meter, layered over the hover easing above. Hover
-                // always suppresses heat, so target is 0 whenever hovered.
-                let meter_target = if self.hovered {
-                    0.0
-                } else if self.metering {
-                    1.0
-                } else {
-                    0.0
-                };
-                let mstep = (dt / METER_SECS) as f32;
-                if self.meter < meter_target {
-                    self.meter = (self.meter + mstep).min(meter_target);
-                } else if self.meter > meter_target {
-                    self.meter = (self.meter - mstep).max(meter_target);
-                }
-                // Sample framerate only while metering. Skip the first frame
-                // after enable (its dt is a stale idle gap -> false red flash).
-                if self.metering {
-                    if self.skip_fps_sample {
-                        self.skip_fps_sample = false;
-                    } else {
-                        let cdt = dt.clamp(0.001, 0.5);
-                        let inst_fps = 1.0 / cdt;
-                        let alpha = 1.0 - (-cdt / FPS_TAU).exp();
-                        if self.fps == 0.0 {
-                            // Seed on the first real sample instead of blending from
-                            // 0: an EMA blend here would compute ~= alpha*inst_fps
-                            // (~6fps), reading as a false-low red flash before it
-                            // climbs to steady-state over ~FPS_TAU. `fps` is always
-                            // >= 1/0.5 = 2 once sampling (cdt is clamped to <=0.5),
-                            // so 0.0 unambiguously means "unseeded".
-                            self.fps = inst_fps as f32;
-                        } else {
-                            self.fps = (self.fps as f64 + alpha * (inst_fps - self.fps as f64)) as f32;
-                        }
-                        self.fps_color = Self::heat_color(self.fps);
-                    }
-                }
+                // FPS-heat is owned by `App`'s `FpsMeter` and pushed via
+                // `set_heat`; the logo doesn't sample or ease it. Hover, however,
+                // suppresses heat -- so while hover is easing we keep redrawing so
+                // the draw-side gate (`heat_strength * (1 - hover)`) tracks it.
 
-                // Keep the loop armed while hover OR the meter is live, so both
-                // ease out; true idle (no hover, no meter) schedules no frames.
-                if self.hovered || self.hover > 0.0 || self.metering || self.meter > 0.0 {
+                // Keep the loop armed while hover is live so it eases out; true
+                // idle (no hover) schedules no frames. Heat re-arms via set_heat.
+                if self.hovered || self.hover > 0.0 {
                     self.next_frame = cx.new_next_frame();
                 }
                 self.draw_bg.redraw(cx);
@@ -766,10 +717,12 @@ impl Widget for LogoMark {
         }
         self.draw_bg.set_uniform(cx, live_id!(hover), &[self.hover]);
         self.draw_bg.set_uniform(cx, live_id!(time), &[self.time]);
-        // FPS-heat uniforms, every draw. Splash leaves `meter` at 0, so the tint
-        // is a no-op there regardless of `fps_color`.
-        self.draw_bg.set_uniform(cx, live_id!(fps_color), &self.fps_color);
-        self.draw_bg.set_uniform(cx, live_id!(meter), &[self.meter]);
+        // FPS-heat uniforms, every draw. `meter` gates the tint; hover suppresses
+        // heat, so fold `(1 - hover)` in here. Splash leaves `heat_strength` at 0,
+        // so the tint is a no-op there regardless of `heat_color`.
+        self.draw_bg.set_uniform(cx, live_id!(fps_color), &self.heat_color);
+        let meter = self.heat_strength * (1.0 - self.hover);
+        self.draw_bg.set_uniform(cx, live_id!(meter), &[meter]);
         if self.fading {
             // Two-pass crossfade: outgoing variant at full coverage, then the
             // incoming one over it at `fade_t`. The two share the identical W
@@ -809,115 +762,16 @@ impl LogoMark {
         }
     }
 
-    /// Toggle framerate metering (called by `App` on pointer press/release).
-    /// No-op on the splash (`auto`) -- it never meters. On a rising edge it
-    /// primes the sampler: `last_time` is reset to now and the first fps sample
-    /// is skipped (a stale idle-gap dt would flash red), then the frame loop is
-    /// armed so the meter eases in and (on release) back out.
-    pub fn set_frame_metering(&mut self, cx: &mut Cx, on: bool) {
+    /// Push the latest FPS-heat colour + strength from `App`'s `FpsMeter`. No-op
+    /// on the splash (`auto`), which never meters. The logo stores them and
+    /// redraws; the hover-suppression gate is applied at draw time. Passing
+    /// `strength == 0` (the meter's rest state) makes the tint a no-op.
+    pub fn set_heat(&mut self, cx: &mut Cx, color: [f32; 3], strength: f32) {
         if self.auto {
             return;
         }
-        if on && !self.metering {
-            self.last_time = cx.seconds_since_app_start();
-            self.skip_fps_sample = true;
-        }
-        self.metering = on;
-        self.next_frame = cx.new_next_frame();
+        self.heat_color = color;
+        self.heat_strength = strength;
         self.draw_bg.redraw(cx);
-    }
-
-    /// Map a smoothed framerate (Hz) to a heat colour: green at >=60, amber at
-    /// 30, red at <=15, lerped piecewise between. Playful, not calibrated.
-    fn heat_color(fps: f32) -> [f32; 3] {
-        const GREEN: [f32; 3] = [0.235, 0.745, 0.353];
-        const AMBER: [f32; 3] = [0.902, 0.588, 0.078];
-        const RED: [f32; 3] = [0.922, 0.275, 0.471];
-        fn lerp(a: [f32; 3], b: [f32; 3], t: f32) -> [f32; 3] {
-            let t = t.clamp(0.0, 1.0);
-            [
-                a[0] + (b[0] - a[0]) * t,
-                a[1] + (b[1] - a[1]) * t,
-                a[2] + (b[2] - a[2]) * t,
-            ]
-        }
-        if fps >= 60.0 {
-            GREEN
-        } else if fps >= 30.0 {
-            lerp(AMBER, GREEN, (fps - 30.0) / 30.0)
-        } else if fps >= 15.0 {
-            lerp(RED, AMBER, (fps - 15.0) / 15.0)
-        } else {
-            RED
-        }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::LogoMark;
-
-    const GREEN: [f32; 3] = [0.235, 0.745, 0.353];
-    const AMBER: [f32; 3] = [0.902, 0.588, 0.078];
-    const RED: [f32; 3] = [0.922, 0.275, 0.471];
-
-    fn approx_eq(a: [f32; 3], b: [f32; 3]) -> bool {
-        (a[0] - b[0]).abs() < 1e-4 && (a[1] - b[1]).abs() < 1e-4 && (a[2] - b[2]).abs() < 1e-4
-    }
-
-    // Anchors: `heat_color` clamps flat to GREEN at/above 60fps and flat to RED
-    // at/below 15fps (the `>= 60.0` / final `else` arms).
-    #[test]
-    fn anchors_green_at_and_above_60() {
-        assert!(approx_eq(LogoMark::heat_color(60.0), GREEN));
-        assert!(approx_eq(LogoMark::heat_color(120.0), GREEN));
-    }
-
-    #[test]
-    fn anchors_red_at_and_below_15() {
-        assert!(approx_eq(LogoMark::heat_color(15.0), RED));
-        assert!(approx_eq(LogoMark::heat_color(5.0), RED));
-        assert!(approx_eq(LogoMark::heat_color(0.0), RED));
-    }
-
-    // Amber anchor at the 30fps boundary. The branch order in `heat_color`
-    // checks `fps >= 30.0` before `fps >= 15.0`, so 30.0 itself is owned by
-    // the amber->green lerp: `lerp(AMBER, GREEN, (30-30)/30)` = AMBER exactly.
-    // The red->amber lerp's far end agrees with the same value --
-    // `lerp(RED, AMBER, (30-15)/15)` = AMBER -- so the ramp is continuous
-    // there even though only one branch is ever actually evaluated at 30.0.
-    #[test]
-    fn amber_at_30_boundary() {
-        assert!(approx_eq(LogoMark::heat_color(30.0), AMBER));
-        // Just below the boundary (still the red->amber branch): confirms the
-        // two pieces meet at the same colour instead of stepping.
-        assert!(approx_eq(LogoMark::heat_color(29.999), AMBER));
-    }
-
-    // Sweep the whole ramp: every channel must stay in [0,1] (guaranteed by
-    // `lerp`'s `t.clamp(0.0, 1.0)` plus endpoints that are themselves in
-    // range), and the green channel must never decrease as fps rises --
-    // RED.g=0.275 < AMBER.g=0.588 < GREEN.g=0.745, and each lerp interpolates
-    // straight between adjacent anchors, so this holds across the whole
-    // sweep. (The red and blue channels do NOT hold this property -- e.g.
-    // blue dips from RED.b=0.471 down to AMBER.b=0.078 then rises back to
-    // GREEN.b=0.353 -- so only the green channel's monotonicity is asserted.)
-    #[test]
-    fn ramp_is_in_range_and_green_channel_nondecreasing() {
-        let mut prev_green = f32::MIN;
-        let mut fps = 0.0f32;
-        while fps <= 90.0 {
-            let c = LogoMark::heat_color(fps);
-            for &ch in &c {
-                assert!((0.0..=1.0).contains(&ch), "channel out of [0,1] at fps={fps}: {c:?}");
-            }
-            assert!(
-                c[1] + 1e-6 >= prev_green,
-                "green channel decreased at fps={fps}: {} < {prev_green}",
-                c[1]
-            );
-            prev_green = c[1];
-            fps += 0.5;
-        }
     }
 }

@@ -1,5 +1,6 @@
 use crate::caption_button::CaptionButtonWidgetRefExt;
 use crate::doc_tabs::{OpenTabs, TabKind};
+use crate::fps_meter::FpsMeter;
 use crate::inspector::{diagram_elements, Subject};
 use crate::load;
 use crate::scene::{build_focus_scene, build_scene};
@@ -292,6 +293,10 @@ pub struct App {
     /// the glow drops), and any dismiss/commit resets it to `None`.
     #[rust]
     app_menu_owner: MenuOwner,
+    /// FPS-heat meter for the top-bar wordmark: samples framerate across a user
+    /// interaction and maps it to the tint the logo renders. See `fps_meter.rs`.
+    #[rust]
+    fps_meter: FpsMeter,
 }
 
 /// Who opened the shared `app_menu` (see `App::app_menu_owner`).
@@ -1308,31 +1313,20 @@ impl AppMain for App {
             self.rehydrate(cx);
         }
 
-        // Wordmark FPS-heat span: App owns only interaction-span detection
-        // (raw pointer press/release, app-wide -- not hit-tested, so it fires
-        // no matter which child widget ends up capturing the drag). The logo
-        // itself samples framerate and drives the tint/easing; this is a
-        // no-op on the splash instance.
-        match event {
-            Event::MouseDown(e) if e.button.is_primary() => {
-                if let Some(mut logo) = self
-                    .ui
-                    .widget(cx, ids!(logo))
-                    .borrow_mut::<crate::logo::LogoMark>()
-                {
-                    logo.set_frame_metering(cx, true);
-                }
+        // Wordmark FPS-heat meter: `App` forwards every raw event to the meter,
+        // which owns all interaction-span detection (primary press/release plus
+        // the mouse-wheel scroll tail) and framerate sampling. When it reports a
+        // change, push the fresh colour/strength to the top-bar wordmark. This is
+        // app-wide (not hit-tested), so it fires no matter which child widget
+        // captures the drag, and is a no-op on the splash instance.
+        if self.fps_meter.on_event(cx, event) {
+            if let Some(mut logo) = self
+                .ui
+                .widget(cx, ids!(logo))
+                .borrow_mut::<crate::logo::LogoMark>()
+            {
+                logo.set_heat(cx, self.fps_meter.color(), self.fps_meter.strength());
             }
-            Event::MouseUp(e) if e.button.is_primary() => {
-                if let Some(mut logo) = self
-                    .ui
-                    .widget(cx, ids!(logo))
-                    .borrow_mut::<crate::logo::LogoMark>()
-                {
-                    logo.set_frame_metering(cx, false);
-                }
-            }
-            _ => {}
         }
 
         // Tool-dock hotkeys (V/N/C): global, visual-only mode switch. Only

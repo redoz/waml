@@ -12,6 +12,7 @@ mod config;
 mod action_link;
 mod diagram_switcher;
 mod doc_tabs;
+mod fps_meter;
 mod frame;
 mod icons;
 mod inspector;
