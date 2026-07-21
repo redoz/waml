@@ -410,6 +410,115 @@ fn nudge(routes: &mut [Route]) {
     sweep(chan_v, routes, false);
 }
 
+/// A side of a box's border, used for hub-attachment grouping.
+#[derive(Clone, Copy, PartialEq)]
+enum Side {
+    Left,
+    Right,
+    Top,
+    Bottom,
+}
+
+fn side_of(bx: &Rect, p: P) -> Option<Side> {
+    let e = 1e-6;
+    if (p.0 - bx.x).abs() < e {
+        Some(Side::Left)
+    } else if (p.0 - (bx.x + bx.w)).abs() < e {
+        Some(Side::Right)
+    } else if (p.1 - bx.y).abs() < e {
+        Some(Side::Top)
+    } else if (p.1 - (bx.y + bx.h)).abs() < e {
+        Some(Side::Bottom)
+    } else {
+        None
+    }
+}
+
+/// A route endpoint (source or target attachment) landing on a box's border.
+struct End {
+    ri: usize,
+    ep: usize,
+    nb: usize,
+    along: f64,
+}
+
+/// Spread route endpoints that land on the same side of the same box into
+/// evenly-spaced, distinct attachment points along that side (no two edges
+/// share an attachment point). Rewrites the endpoint and the adjacent
+/// interior point that shares its coordinate so the first/last segment stays
+/// perpendicular to the border.
+fn hub_spread(routes: &mut [Route], rects: &BTreeMap<BoxId, Rect>) {
+    let mut groups: BTreeMap<(String, u8), Vec<End>> = BTreeMap::new();
+    let sd = |s: Side| match s {
+        Side::Left => 0u8,
+        Side::Right => 1,
+        Side::Top => 2,
+        Side::Bottom => 3,
+    };
+
+    for (ri, route) in routes.iter().enumerate() {
+        if route.points.len() < 2 {
+            continue;
+        }
+        let last = route.points.len() - 1;
+        for (key, ep, nb) in [
+            (route.source.clone(), 0usize, 1usize),
+            (route.target.clone(), last, last - 1),
+        ] {
+            let Some(bx) = rects.get(&BoxId::Node(key.clone())) else {
+                continue;
+            };
+            let p = route.points[ep];
+            let Some(side) = side_of(bx, p) else {
+                continue;
+            };
+            let neighbour = route.points[nb];
+            let along = match side {
+                Side::Left | Side::Right => neighbour.1,
+                Side::Top | Side::Bottom => neighbour.0,
+            };
+            groups
+                .entry((key, sd(side)))
+                .or_default()
+                .push(End { ri, ep, nb, along });
+        }
+    }
+
+    for ((key, sdisc), mut ends) in groups {
+        if ends.len() < 2 {
+            continue;
+        }
+        let bx = rects[&BoxId::Node(key)];
+        ends.sort_by(|a, b| a.along.total_cmp(&b.along).then(a.ri.cmp(&b.ri)));
+        let m = ends.len();
+        let horizontal_side = sdisc == 2 || sdisc == 3; // Top/Bottom spread along x
+        let (span_lo, span_hi, fixed) = if horizontal_side {
+            (
+                bx.x,
+                bx.x + bx.w,
+                if sdisc == 2 { bx.y } else { bx.y + bx.h },
+            )
+        } else {
+            (
+                bx.y,
+                bx.y + bx.h,
+                if sdisc == 0 { bx.x } else { bx.x + bx.w },
+            )
+        };
+        for (k, e) in ends.iter().enumerate() {
+            let t = (k as f64 + 1.0) / (m as f64 + 1.0); // interior fraction, no corners
+            let along = span_lo + t * (span_hi - span_lo);
+            if horizontal_side {
+                routes[e.ri].points[e.ep] = (along, fixed);
+                routes[e.ri].points[e.nb].0 = along; // keep first/last segment perpendicular
+            } else {
+                routes[e.ri].points[e.ep] = (fixed, along);
+                routes[e.ri].points[e.nb].1 = along;
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -569,5 +678,35 @@ mod tests {
         // Endpoints untouched.
         assert_eq!(routes[0].points[0], (0.0, 0.0));
         assert_eq!(routes[0].points[3], (100.0, 0.0));
+    }
+
+    #[test]
+    fn hub_spread_gives_distinct_attachment_points() {
+        // Hub `h`: three edges all attaching at the same right-side midpoint.
+        let mut rects: BTreeMap<BoxId, Rect> = BTreeMap::new();
+        rects.insert(BoxId::Node("h".into()), r(0.0, 0.0, 100.0, 90.0));
+        rects.insert(BoxId::Node("t1".into()), r(300.0, 0.0, 60.0, 30.0));
+        rects.insert(BoxId::Node("t2".into()), r(300.0, 40.0, 60.0, 30.0));
+        rects.insert(BoxId::Node("t3".into()), r(300.0, 80.0, 60.0, 30.0));
+        let mk = |t: &str, ty: f64| Route {
+            points: vec![(100.0, 45.0), (300.0, ty)],
+            source: "h".into(),
+            target: t.into(),
+        };
+        let mut routes = vec![mk("t1", 15.0), mk("t2", 55.0), mk("t3", 95.0)];
+        hub_spread(&mut routes, &rects);
+        let ys: Vec<f64> = routes.iter().map(|rt| rt.points[0].1).collect();
+        for rt in &routes {
+            assert!(
+                (rt.points[0].0 - 100.0).abs() < 1e-6,
+                "stay on right border"
+            );
+        }
+        assert!(
+            (ys[0] - ys[1]).abs() > 1e-6
+                && (ys[1] - ys[2]).abs() > 1e-6
+                && (ys[0] - ys[2]).abs() > 1e-6,
+            "attachments must be distinct: {ys:?}"
+        );
     }
 }
