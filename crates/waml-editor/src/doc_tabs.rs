@@ -42,14 +42,23 @@ script_mod! {
                 return sdf.result
             }
         }
+        // Sharpening spike (fork's analytic glyph renderer): 4-sample supersample
+        // + stem darkening so the 10px labels stop washing to grey. These are
+        // #[live] DrawText fields; defaults are aa off / stem_darken 0.2.
         // Active tab: heavier weight (fork theme bold sans) so the focused
         // document reads as selected even before the accent strip registers.
         draw_text_active +: {
             color: atlas.text
+            aa_2x2: 1.0
+            stem_darken: 0.7
+            stem_darken_max: 0.25
             text_style: theme.font_bold{font_size: 10}
         }
         draw_text_persisted +: {
             color: atlas.text_dim
+            aa_2x2: 1.0
+            stem_darken: 0.7
+            stem_darken_max: 0.25
             text_style: TextStyle{
                 font_size: 10
                 font_family: FontFamily{
@@ -62,6 +71,9 @@ script_mod! {
         // document reads as provisional at a glance.
         draw_text_preview +: {
             color: atlas.text_dim
+            aa_2x2: 1.0
+            stem_darken: 0.7
+            stem_darken_max: 0.25
             text_style: TextStyle{
                 font_size: 10
                 font_family: FontFamily{
@@ -70,16 +82,18 @@ script_mod! {
                 line_spacing: 1.2
             }
         }
-        // Active preview tab: regular-weight italic, full-strength color. The
-        // heavier semibold/bold italics render muddy at font-size 10, so keep
-        // the clean regular italic -- the raised card + accent strip carry the
-        // "active" read, the italic carries the "provisional" one.
+        // Active preview tab: bold italic (matches the bold active persisted
+        // tab's weight, keeps the italic "provisional" read). Renders clean at
+        // 10px now that the glyph sharpening (aa + stem_darken) is on.
         draw_text_preview_active +: {
             color: atlas.text
+            aa_2x2: 1.0
+            stem_darken: 0.7
+            stem_darken_max: 0.25
             text_style: TextStyle{
                 font_size: 10
                 font_family: FontFamily{
-                    latin := FontMember{res: crate_resource("self:resources/fonts/IBM_Plex_Sans/IBMPlexSans-Italic.ttf") asc: -0.1 desc: 0.0}
+                    latin := FontMember{res: crate_resource("self:resources/fonts/IBM_Plex_Sans/IBMPlexSans-BoldItalic.ttf") asc: -0.1 desc: 0.0}
                 }
                 line_spacing: 1.2
             }
