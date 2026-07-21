@@ -327,6 +327,89 @@ fn astar(ovg: &Ovg, sources: &[usize], targets: &[usize], goal: P) -> Option<Vec
     Some(simplify(rev))
 }
 
+/// Minimum channel gap between coincident parallel route segments.
+const NUDGE_GAP: f64 = 8.0;
+
+/// A single interior segment of a route, keyed by its channel coordinate.
+#[derive(Clone)]
+struct Seg {
+    ri: usize,
+    a: usize,
+    b: usize,
+    other_mid: f64,
+    src: String,
+    tgt: String,
+}
+
+/// Split parallel segments that share a routing channel (same axis + coincident
+/// coordinate) into distinct parallel lines via an order-then-push sweep.
+/// Endpoints (first/last point of each route) are never moved.
+fn nudge(routes: &mut [Route]) {
+    let mut chan_h: BTreeMap<i64, Vec<Seg>> = BTreeMap::new(); // key = quantized y
+    let mut chan_v: BTreeMap<i64, Vec<Seg>> = BTreeMap::new(); // key = quantized x
+    let q = |c: f64| (c * 1e6).round() as i64;
+
+    for (ri, route) in routes.iter().enumerate() {
+        let n = route.points.len();
+        for i in 0..n.saturating_sub(1) {
+            // Skip first/last segment: keep route endpoints anchored to their box.
+            if i == 0 || i + 1 == n - 1 {
+                continue;
+            }
+            let a = route.points[i];
+            let b = route.points[i + 1];
+            if (a.1 - b.1).abs() < 1e-9 {
+                chan_h.entry(q(a.1)).or_default().push(Seg {
+                    ri,
+                    a: i,
+                    b: i + 1,
+                    other_mid: (a.0 + b.0) / 2.0,
+                    src: route.source.clone(),
+                    tgt: route.target.clone(),
+                });
+            } else if (a.0 - b.0).abs() < 1e-9 {
+                chan_v.entry(q(a.0)).or_default().push(Seg {
+                    ri,
+                    a: i,
+                    b: i + 1,
+                    other_mid: (a.1 + b.1) / 2.0,
+                    src: route.source.clone(),
+                    tgt: route.target.clone(),
+                });
+            }
+        }
+    }
+
+    fn sweep(chan: BTreeMap<i64, Vec<Seg>>, routes: &mut [Route], horizontal: bool) {
+        for (key, mut segs) in chan {
+            if segs.len() < 2 {
+                continue;
+            }
+            segs.sort_by(|p, r| {
+                p.other_mid
+                    .total_cmp(&r.other_mid)
+                    .then(p.src.cmp(&r.src))
+                    .then(p.tgt.cmp(&r.tgt))
+            });
+            let base = key as f64 / 1e6;
+            let m = segs.len();
+            let start = base - (m as f64 - 1.0) * NUDGE_GAP / 2.0;
+            for (k, s) in segs.iter().enumerate() {
+                let coord = start + k as f64 * NUDGE_GAP;
+                if horizontal {
+                    routes[s.ri].points[s.a].1 = coord;
+                    routes[s.ri].points[s.b].1 = coord;
+                } else {
+                    routes[s.ri].points[s.a].0 = coord;
+                    routes[s.ri].points[s.b].0 = coord;
+                }
+            }
+        }
+    }
+    sweep(chan_h, routes, true);
+    sweep(chan_v, routes, false);
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -464,5 +547,27 @@ mod tests {
             (20.0, 10.0),
         ];
         assert_eq!(simplify(pts), vec![(0.0, 0.0), (20.0, 0.0), (20.0, 10.0)]);
+    }
+
+    #[test]
+    fn nudge_separates_coincident_parallel_segments() {
+        // Two routes both running horizontally along y = 50 via an INTERIOR
+        // segment (first/last segments are anchored and excluded from nudging).
+        let mk = |src: &str| Route {
+            points: vec![(0.0, 0.0), (0.0, 50.0), (100.0, 50.0), (100.0, 0.0)],
+            source: src.into(),
+            target: "t".into(),
+        };
+        let mut routes = vec![mk("a"), mk("b")];
+        nudge(&mut routes);
+        let y0 = routes[0].points[1].1;
+        let y1 = routes[1].points[1].1;
+        assert!(
+            (y0 - y1).abs() >= NUDGE_GAP - 1e-6,
+            "runs must separate: {y0} vs {y1}"
+        );
+        // Endpoints untouched.
+        assert_eq!(routes[0].points[0], (0.0, 0.0));
+        assert_eq!(routes[0].points[3], (100.0, 0.0));
     }
 }
