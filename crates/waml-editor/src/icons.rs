@@ -2962,6 +2962,61 @@ script_mod! {
         }
     }
 
+    // Folder: the Lucide folder -- single body outline with the raised tab.
+    // Faithful port of resources/icons/folder.svg via scripts/gen-icon.py.
+    mod.draw.IconFolder = mod.draw.DrawColor{
+        pixel: fn() {
+            let s = self.rect_size.x
+            let w = s * 0.068
+            let sdf = Sdf2d.viewport(self.pos * self.rect_size)
+            sdf.move_to(s * 0.8333, s * 0.8333)
+            sdf.arc_to(s * 0.8333, s * 0.7500, s * 0.0833, 1.5708, 0.0000)
+            sdf.line_to(s * 0.9167, s * 0.3333)
+            sdf.arc_to(s * 0.8333, s * 0.3333, s * 0.0833, 0.0000, -1.5708)
+            sdf.line_to(s * 0.5042, s * 0.2500)
+            sdf.arc_to(s * 0.5034, s * 0.1667, s * 0.0833, 1.5610, 2.5593)
+            sdf.line_to(s * 0.4000, s * 0.1625)
+            sdf.arc_to(s * 0.3304, s * 0.2083, s * 0.0833, -0.5824, -1.5706)
+            sdf.line_to(s * 0.1667, s * 0.1250)
+            sdf.arc_to(s * 0.1667, s * 0.2083, s * 0.0833, -1.5708, -3.1416)
+            sdf.line_to(s * 0.0833, s * 0.7500)
+            sdf.arc_to(s * 0.1667, s * 0.7500, s * 0.0833, 3.1416, 1.5708)
+            sdf.close_path()
+            sdf.stroke(self.color, w)
+            return sdf.result
+        }
+    }
+
+    // Folder (closed): the Lucide folder-closed -- the folder body plus the
+    // horizontal seam across the top. Kept in the catalog for future use even
+    // though packages currently map to the open `folder`. Faithful port of
+    // resources/icons/folder-closed.svg via scripts/gen-icon.py.
+    mod.draw.IconFolderClosed = mod.draw.DrawColor{
+        pixel: fn() {
+            let s = self.rect_size.x
+            let w = s * 0.068
+            let sdf = Sdf2d.viewport(self.pos * self.rect_size)
+            sdf.move_to(s * 0.8333, s * 0.8333)
+            sdf.arc_to(s * 0.8333, s * 0.7500, s * 0.0833, 1.5708, 0.0000)
+            sdf.line_to(s * 0.9167, s * 0.3333)
+            sdf.arc_to(s * 0.8333, s * 0.3333, s * 0.0833, 0.0000, -1.5708)
+            sdf.line_to(s * 0.5042, s * 0.2500)
+            sdf.arc_to(s * 0.5034, s * 0.1667, s * 0.0833, 1.5610, 2.5593)
+            sdf.line_to(s * 0.4000, s * 0.1625)
+            sdf.arc_to(s * 0.3304, s * 0.2083, s * 0.0833, -0.5824, -1.5706)
+            sdf.line_to(s * 0.1667, s * 0.1250)
+            sdf.arc_to(s * 0.1667, s * 0.2083, s * 0.0833, -1.5708, -3.1416)
+            sdf.line_to(s * 0.0833, s * 0.7500)
+            sdf.arc_to(s * 0.1667, s * 0.7500, s * 0.0833, 3.1416, 1.5708)
+            sdf.close_path()
+            sdf.stroke(self.color, w)
+            sdf.move_to(s * 0.0833, s * 0.4167)
+            sdf.line_to(s * 0.9167, s * 0.4167)
+            sdf.stroke(self.color, w)
+            return sdf.result
+        }
+    }
+
     mod.widgets.IconSetBase = #(IconSet::script_component(vm))
 
     // Each field is a `DrawColor` pointing at its icon shader; the accent tint
@@ -3053,6 +3108,8 @@ script_mod! {
         workflow: mod.draw.IconWorkflow{ color: atlas.accent }
         activity: mod.draw.IconActivity{ color: atlas.accent }
         arrow_left_right: mod.draw.IconArrowLeftRight{ color: atlas.accent }
+        folder: mod.draw.IconFolder{ color: atlas.accent }
+        folder_closed: mod.draw.IconFolderClosed{ color: atlas.accent }
     }
 }
 
@@ -3232,6 +3289,10 @@ pub struct IconSet {
     pub activity: DrawColor,
     #[live]
     pub arrow_left_right: DrawColor,
+    #[live]
+    pub folder: DrawColor,
+    #[live]
+    pub folder_closed: DrawColor,
 }
 
 // Not every bin that `#[path]`-includes this file exercises the whole catalog
@@ -3329,6 +3390,8 @@ impl IconSet {
             Icon::Workflow => &mut self.workflow,
             Icon::Activity => &mut self.activity,
             Icon::ArrowLeftRight => &mut self.arrow_left_right,
+            Icon::Folder => &mut self.folder,
+            Icon::FolderClosed => &mut self.folder_closed,
         }
     }
 
@@ -3433,13 +3496,15 @@ pub enum Icon {
     Workflow,
     Activity,
     ArrowLeftRight,
+    Folder,
+    FolderClosed,
 }
 
 #[allow(dead_code)] // ALL/label are unused in bins that don't iterate the catalog
 impl Icon {
     /// Every glyph, in field order. The single source of glyph identity; the
     /// `icon_harness` proof grid iterates this.
-    pub const ALL: [Icon; 86] = [
+    pub const ALL: [Icon; 88] = [
         Icon::Package,
         Icon::Message,
         Icon::PackagePlus,
@@ -3526,6 +3591,8 @@ impl Icon {
         Icon::Workflow,
         Icon::Activity,
         Icon::ArrowLeftRight,
+        Icon::Folder,
+        Icon::FolderClosed,
     ];
 
     /// The `icon_harness` display slug (the Lucide source name), preserved
@@ -3618,6 +3685,8 @@ impl Icon {
             Icon::Workflow => "workflow",
             Icon::Activity => "activity",
             Icon::ArrowLeftRight => "arrow-left-right",
+            Icon::Folder => "folder",
+            Icon::FolderClosed => "folder-closed",
         }
     }
 }
@@ -3627,8 +3696,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn icon_all_has_86_entries() {
-        assert_eq!(Icon::ALL.len(), 86);
+    fn icon_all_has_88_entries() {
+        assert_eq!(Icon::ALL.len(), 88);
     }
 
     #[test]
@@ -3636,6 +3705,8 @@ mod tests {
         assert_eq!(Icon::ALL[0], Icon::Package);
         assert_eq!(Icon::ALL[1], Icon::Message);
         assert_eq!(Icon::ALL[85], Icon::ArrowLeftRight);
+        assert_eq!(Icon::ALL[86], Icon::Folder);
+        assert_eq!(Icon::ALL[87], Icon::FolderClosed);
     }
 
     #[test]
@@ -3647,7 +3718,7 @@ mod tests {
             assert!(!l.is_empty(), "empty label for {icon:?}");
             assert!(seen.insert(l), "duplicate label {l:?}");
         }
-        assert_eq!(seen.len(), 86);
+        assert_eq!(seen.len(), 88);
     }
 
     #[test]
