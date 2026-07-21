@@ -318,7 +318,16 @@ fn draw_nodes(
             }
             draw_row_icon(cx, icons, node.kind, row_top, depth, color);
             if opened {
-                draw_nodes(cx, ft, &node.children, icons, draw_selection, depth + 1, color, selected);
+                draw_nodes(
+                    cx,
+                    ft,
+                    &node.children,
+                    icons,
+                    draw_selection,
+                    depth + 1,
+                    color,
+                    selected,
+                );
                 ft.end_folder();
             }
         } else {
@@ -486,13 +495,19 @@ mod icon_map_tests {
     #[test]
     fn tree_kind_maps_to_catalog_icon() {
         assert_eq!(IconSet::icon_for(TreeKind::Class), Some(Icon::PanelTop));
-        assert_eq!(IconSet::icon_for(TreeKind::Interface), Some(Icon::SquareDashedTopSolid));
+        assert_eq!(
+            IconSet::icon_for(TreeKind::Interface),
+            Some(Icon::SquareDashedTopSolid)
+        );
         assert_eq!(IconSet::icon_for(TreeKind::Enum), Some(Icon::List));
         assert_eq!(IconSet::icon_for(TreeKind::DataType), Some(Icon::Braces));
         assert_eq!(IconSet::icon_for(TreeKind::Package), Some(Icon::Folder));
         assert_eq!(IconSet::icon_for(TreeKind::Diagram), Some(Icon::Workflow));
         assert_eq!(IconSet::icon_for(TreeKind::Behavior), Some(Icon::Activity));
-        assert_eq!(IconSet::icon_for(TreeKind::Sequence), Some(Icon::ArrowLeftRight));
+        assert_eq!(
+            IconSet::icon_for(TreeKind::Sequence),
+            Some(Icon::ArrowLeftRight)
+        );
         assert_eq!(IconSet::icon_for(TreeKind::Note), Some(Icon::StickyNote));
         assert_eq!(IconSet::icon_for(TreeKind::Unknown), None);
     }

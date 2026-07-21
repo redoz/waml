@@ -3,7 +3,9 @@
 
 use waml::diagnostic::Diagnostic;
 use waml::model::{Diagram, ElementType, Model, RelationshipKind};
-use waml::solve::{solve_diagram, stress, BoxId, Rect, Size, SizeMap, SolveConfig, Solved, SolvedGroup};
+use waml::solve::{
+    solve_diagram, stress, BoxId, Rect, Size, SizeMap, SolveConfig, Solved, SolvedGroup,
+};
 
 /// How a node's header (eyebrow + title) is treated. Additive: `Plain` is the
 /// historical look (no wash) and is what every projected node uses, so real
@@ -149,8 +151,7 @@ fn stress_default(model: &Model, sizes: &SizeMap) -> Solved {
     let mut seen = BTreeSet::new();
     let mut pairs: Vec<(usize, usize)> = Vec::new();
     for e in &model.edges {
-        let (Some(&a), Some(&b)) =
-            (index.get(e.source.as_str()), index.get(e.target.as_str()))
+        let (Some(&a), Some(&b)) = (index.get(e.source.as_str()), index.get(e.target.as_str()))
         else {
             continue;
         };

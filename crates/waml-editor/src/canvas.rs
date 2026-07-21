@@ -442,8 +442,7 @@ impl Widget for GraphCanvas {
         // Edge pens: feed zoom so the stroke thickens with the box, and bake
         // each pen's diagonal direction (per-instance uniforms batch-collapse on
         // this fork, so the two pens carry the two constant `flip` values).
-        self.draw_edge_down
-            .set_uniform(cx, live_id!(flip), &[0.0]);
+        self.draw_edge_down.set_uniform(cx, live_id!(flip), &[0.0]);
         self.draw_edge_down
             .set_uniform(cx, live_id!(zoom), &[zoom as f32]);
         self.draw_edge_up.set_uniform(cx, live_id!(flip), &[1.0]);
@@ -505,7 +504,11 @@ impl Widget for GraphCanvas {
             // Push the per-node `selected` uniform (1.0 for the picked node,
             // 0.0 otherwise) so its frame widens; every other node draws exactly
             // as before. Same set_uniform-before-draw_abs cadence as `zoom`.
-            let selected = if self.selected == Some(i) { 1.0f32 } else { 0.0 };
+            let selected = if self.selected == Some(i) {
+                1.0f32
+            } else {
+                0.0
+            };
             self.draw_node
                 .set_uniform(cx, live_id!(selected), &[selected]);
             // Node card: rounded near-white glass fill + source-bright accent

@@ -424,7 +424,10 @@ mod tests {
 
     #[test]
     fn default_action_is_none() {
-        assert!(matches!(StartScreenAction::default(), StartScreenAction::None));
+        assert!(matches!(
+            StartScreenAction::default(),
+            StartScreenAction::None
+        ));
     }
 
     fn row(path: &str) -> RecentRow {

@@ -269,11 +269,7 @@ impl OpenTabs {
     /// Point the permanent Diagram base at `key`/`title`, re-seeding it at the
     /// front if it was closed. Identifies the base by kind, not position (it
     /// may sit behind classifier tabs). Returns its id; does not activate.
-    pub fn set_diagram_base(
-        &mut self,
-        key: impl Into<String>,
-        title: impl Into<String>,
-    ) -> LiveId {
+    pub fn set_diagram_base(&mut self, key: impl Into<String>, title: impl Into<String>) -> LiveId {
         let key = key.into();
         let title = title.into();
         if let Some(base) = self.tabs.iter_mut().find(|t| t.kind == TabKind::Diagram) {

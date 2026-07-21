@@ -90,7 +90,6 @@ impl Tool {
             Tool::Clear => "Clear Selection",
         }
     }
-
 }
 
 /// Map a hotkey letter to the mode it switches to. Pure so it's testable
@@ -356,7 +355,10 @@ mod icon_map_tests {
         assert_eq!(ToolDock::icon_for(Tool::Select), Icon::MousePointer2);
         assert_eq!(ToolDock::icon_for(Tool::Add), Icon::SquarePlus);
         assert_eq!(ToolDock::icon_for(Tool::Connect), Icon::Spline);
-        assert_eq!(ToolDock::icon_for(Tool::DiagramProps), Icon::SlidersHorizontal);
+        assert_eq!(
+            ToolDock::icon_for(Tool::DiagramProps),
+            Icon::SlidersHorizontal
+        );
         assert_eq!(ToolDock::icon_for(Tool::Clear), Icon::CircleX);
     }
 }

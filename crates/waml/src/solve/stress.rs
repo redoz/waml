@@ -547,7 +547,15 @@ mod tests {
     #[test]
     fn overlap_removal_leaves_no_overlaps() {
         // Five boxes clustered on nearly the same point.
-        let mut rects = vec![Rect { x: 0.0, y: 0.0, w: 100.0, h: 40.0 }; 5];
+        let mut rects = vec![
+            Rect {
+                x: 0.0,
+                y: 0.0,
+                w: 100.0,
+                h: 40.0
+            };
+            5
+        ];
         for (i, r) in rects.iter_mut().enumerate() {
             r.x = i as f64 * 5.0;
             r.y = i as f64 * 3.0;
@@ -593,9 +601,33 @@ mod tests {
         let via_grid = grid_pack(&g, &szs, &cfg);
         assert_eq!(via_layout, via_grid);
         // ceil(sqrt(4)) = 2 columns, 2 rows.
-        assert_eq!(via_grid[0], Rect { x: 0.0, y: 0.0, w: 100.0, h: 40.0 });
-        assert_eq!(via_grid[1], Rect { x: 124.0, y: 0.0, w: 100.0, h: 40.0 });
-        assert_eq!(via_grid[2], Rect { x: 0.0, y: 64.0, w: 100.0, h: 40.0 });
+        assert_eq!(
+            via_grid[0],
+            Rect {
+                x: 0.0,
+                y: 0.0,
+                w: 100.0,
+                h: 40.0
+            }
+        );
+        assert_eq!(
+            via_grid[1],
+            Rect {
+                x: 124.0,
+                y: 0.0,
+                w: 100.0,
+                h: 40.0
+            }
+        );
+        assert_eq!(
+            via_grid[2],
+            Rect {
+                x: 0.0,
+                y: 64.0,
+                w: 100.0,
+                h: 40.0
+            }
+        );
     }
 
     #[test]
@@ -651,18 +683,26 @@ mod tests {
         let r = layout(&g, &szs, &edges, &cfg);
         let bbox = |sl: &[Rect]| {
             sl.iter().fold(
-                (f64::INFINITY, f64::INFINITY, f64::NEG_INFINITY, f64::NEG_INFINITY),
+                (
+                    f64::INFINITY,
+                    f64::INFINITY,
+                    f64::NEG_INFINITY,
+                    f64::NEG_INFINITY,
+                ),
                 |(x0, y0, x1, y1), q| {
-                    (x0.min(q.x), y0.min(q.y), x1.max(q.x + q.w), y1.max(q.y + q.h))
+                    (
+                        x0.min(q.x),
+                        y0.min(q.y),
+                        x1.max(q.x + q.w),
+                        y1.max(q.y + q.h),
+                    )
                 },
             )
         };
         let (ax0, ay0, ax1, ay1) = bbox(&r[0..3]);
         let (bx0, by0, bx1, by1) = bbox(&r[3..6]);
-        let disjoint = bx0 >= ax1 - 1e-6
-            || ax0 >= bx1 - 1e-6
-            || by0 >= ay1 - 1e-6
-            || ay0 >= by1 - 1e-6;
+        let disjoint =
+            bx0 >= ax1 - 1e-6 || ax0 >= bx1 - 1e-6 || by0 >= ay1 - 1e-6 || ay0 >= by1 - 1e-6;
         assert!(
             disjoint,
             "component bounding boxes overlap: a=({ax0},{ay0},{ax1},{ay1}) b=({bx0},{by0},{bx1},{by1})"

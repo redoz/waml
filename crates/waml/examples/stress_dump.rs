@@ -30,32 +30,45 @@ fn synthetic() -> (Vec<BoxId>, Vec<Size>, Vec<(usize, usize)>) {
         ("invoice", 210.0, 130.0),
         ("address", 180.0, 90.0),
         ("shipment", 200.0, 110.0),
-        ("audit_log", 240.0, 70.0),   // disconnected pair with tag
-        ("tag", 120.0, 60.0),         // disconnected pair with audit_log
+        ("audit_log", 240.0, 70.0),    // disconnected pair with tag
+        ("tag", 120.0, 60.0),          // disconnected pair with audit_log
         ("feature_flag", 160.0, 60.0), // fully isolated
     ];
-    let ids: Vec<BoxId> = spec.iter().map(|(k, _, _)| BoxId::Node((*k).into())).collect();
+    let ids: Vec<BoxId> = spec
+        .iter()
+        .map(|(k, _, _)| BoxId::Node((*k).into()))
+        .collect();
     let sizes: Vec<Size> = spec.iter().map(|(_, w, h)| Size { w: *w, h: *h }).collect();
     let edges = vec![
-        (0, 1), // customer - account
-        (0, 8), // customer - address
-        (0, 2), // customer - order
-        (2, 3), // order - order_line
-        (3, 4), // order_line - product
-        (4, 5), // product - category
-        (2, 6), // order - payment
-        (6, 7), // payment - invoice
-        (2, 9), // order - shipment
-        (9, 8), // shipment - address
+        (0, 1),   // customer - account
+        (0, 8),   // customer - address
+        (0, 2),   // customer - order
+        (2, 3),   // order - order_line
+        (3, 4),   // order_line - product
+        (4, 5),   // product - category
+        (2, 6),   // order - payment
+        (6, 7),   // payment - invoice
+        (2, 9),   // order - shipment
+        (9, 8),   // shipment - address
         (10, 11), // audit_log - tag (own component)
     ];
     (ids, sizes, edges)
 }
 
-fn write_svg(path: &str, ids: &[BoxId], rects: &[Rect], edges: &[(usize, usize)]) -> std::io::Result<()> {
+fn write_svg(
+    path: &str,
+    ids: &[BoxId],
+    rects: &[Rect],
+    edges: &[(usize, usize)],
+) -> std::io::Result<()> {
     let pad = 40.0;
     let (min_x, min_y, max_x, max_y) = rects.iter().fold(
-        (f64::INFINITY, f64::INFINITY, f64::NEG_INFINITY, f64::NEG_INFINITY),
+        (
+            f64::INFINITY,
+            f64::INFINITY,
+            f64::NEG_INFINITY,
+            f64::NEG_INFINITY,
+        ),
         |(a, b, c, d), r| (a.min(r.x), b.min(r.y), c.max(r.x + r.w), d.max(r.y + r.h)),
     );
     let w = (max_x - min_x) + 2.0 * pad;
@@ -67,7 +80,9 @@ fn write_svg(path: &str, ids: &[BoxId], rects: &[Rect], edges: &[(usize, usize)]
         min_x - pad,
         min_y - pad
     ));
-    s.push_str("<rect x=\"-100000\" y=\"-100000\" width=\"200000\" height=\"200000\" fill=\"#0f1419\"/>\n");
+    s.push_str(
+        "<rect x=\"-100000\" y=\"-100000\" width=\"200000\" height=\"200000\" fill=\"#0f1419\"/>\n",
+    );
 
     // Edges (center to center) first, so rects sit on top.
     for &(a, b) in edges {
@@ -104,7 +119,11 @@ fn main() {
     let cfg = StressConfig::default();
     let rects = stress::layout(&ids, &sizes, &edges, &cfg);
 
-    println!("stress layout of {} synthetic nodes, {} edges:\n", ids.len(), edges.len());
+    println!(
+        "stress layout of {} synthetic nodes, {} edges:\n",
+        ids.len(),
+        edges.len()
+    );
     print!("{}", stress::pretty(&ids, &rects));
 
     match write_svg(SVG_PATH, &ids, &rects, &edges) {

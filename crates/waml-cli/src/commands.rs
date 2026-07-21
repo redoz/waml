@@ -227,7 +227,10 @@ mod tests {
         let ix = out.iter().find(|r| r.path == "alerts/index.md").unwrap();
         assert!(!ix.skipped, "index doc must not be skipped as errored");
         assert!(!ix.changed, "index nav must be preserved verbatim");
-        assert_eq!(ix.formatted, files[0].1, "index content must round-trip unchanged");
+        assert_eq!(
+            ix.formatted, files[0].1,
+            "index content must round-trip unchanged"
+        );
     }
 
     fn sample() -> Vec<Diagnostic> {

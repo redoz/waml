@@ -154,7 +154,9 @@ impl Widget for ActionLink {
         self.view
             .draw_bg
             .set_uniform(cx, live_id!(hover), &[if self.hovered { 1.0 } else { 0.0 }]);
-        self.view.draw_bg.set_uniform(cx, live_id!(kind), &[self.kind]);
+        self.view
+            .draw_bg
+            .set_uniform(cx, live_id!(kind), &[self.kind]);
         self.view.draw_walk(cx, scope, walk)
     }
 }

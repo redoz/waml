@@ -10,10 +10,10 @@
 
 use makepad_widgets::*;
 
-#[path = "../theme_atlas.rs"]
-mod theme_atlas;
 #[path = "../icons.rs"]
 mod icons;
+#[path = "../theme_atlas.rs"]
+mod theme_atlas;
 
 use icons::{Icon, IconSet};
 

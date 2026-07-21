@@ -680,9 +680,8 @@ mod tests {
         ];
         let d = validate(&b);
         assert!(
-            d.iter()
-                .all(|x| x.code != DiagCode::UnresolvedTarget
-                    && x.code != DiagCode::MalformedRelationship),
+            d.iter().all(|x| x.code != DiagCode::UnresolvedTarget
+                && x.code != DiagCode::MalformedRelationship),
             "expected `../execution/pipeline-step-run.md` to parse and resolve, got: {d:?}"
         );
     }

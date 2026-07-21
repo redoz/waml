@@ -17,12 +17,12 @@
 use makepad_widgets::*;
 
 // Pulled in by path (the editor crate has no lib target).
+#[path = "../icons.rs"]
+mod icons;
 #[path = "../logo.rs"]
 mod logo;
 #[path = "../theme_atlas.rs"]
 mod theme_atlas;
-#[path = "../icons.rs"]
-mod icons;
 
 use icons::IconSet;
 
@@ -89,12 +89,32 @@ const ROW_GAP: f64 = 16.0;
 const COL_GAP: f64 = 190.0;
 
 // Atlas accent (#1496dc) -- the SDF's normal tint in column B.
-const ACCENT: Vec4f = Vec4f { x: 0.078, y: 0.588, z: 0.863, w: 1.0 };
+const ACCENT: Vec4f = Vec4f {
+    x: 0.078,
+    y: 0.588,
+    z: 0.863,
+    w: 1.0,
+};
 // Overlay tints (column C). Semi-transparent so overlap blends toward purple.
-const OVL_SVG: Vec4f = Vec4f { x: 0.92, y: 0.20, z: 0.22, w: 0.62 };
-const OVL_SDF: Vec4f = Vec4f { x: 0.28, y: 0.48, z: 1.0, w: 0.62 };
+const OVL_SVG: Vec4f = Vec4f {
+    x: 0.92,
+    y: 0.20,
+    z: 0.22,
+    w: 0.62,
+};
+const OVL_SDF: Vec4f = Vec4f {
+    x: 0.28,
+    y: 0.48,
+    z: 1.0,
+    w: 0.62,
+};
 // Column A svg tint (near-black on the light checker).
-const INK: Vec4f = Vec4f { x: 0.12, y: 0.12, z: 0.12, w: 1.0 };
+const INK: Vec4f = Vec4f {
+    x: 0.12,
+    y: 0.12,
+    z: 0.12,
+    w: 1.0,
+};
 
 /// Draws `pin` three ways per size row: SVG (A), SDF (B), overlay diff (C).
 #[derive(Script, ScriptHook, Widget)]

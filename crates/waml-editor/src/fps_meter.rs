@@ -250,7 +250,10 @@ mod tests {
         while fps <= 90.0 {
             let c = FpsMeter::heat_color(fps);
             for &ch in &c {
-                assert!((0.0..=1.0).contains(&ch), "channel out of [0,1] at fps={fps}: {c:?}");
+                assert!(
+                    (0.0..=1.0).contains(&ch),
+                    "channel out of [0,1] at fps={fps}: {c:?}"
+                );
             }
             assert!(
                 c[1] + 1e-6 >= prev_green,

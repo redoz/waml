@@ -216,7 +216,9 @@ impl Widget for CaptionButton {
             live_id!(hover),
             &[if self.hovered || self.held { 1.0 } else { 0.0 }],
         );
-        self.view.draw_bg.set_uniform(cx, live_id!(shape), &[self.shape]);
+        self.view
+            .draw_bg
+            .set_uniform(cx, live_id!(shape), &[self.shape]);
         let step = self.view.draw_walk(cx, scope, walk);
         self.rect = self.view.area().rect(cx);
         step

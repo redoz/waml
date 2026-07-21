@@ -637,7 +637,11 @@ impl PreviewState {
     /// Allowed stereotypes still present, capped by Render (0 = All), in order.
     fn shown_stereotypes(&self) -> Vec<String> {
         let live: Vec<String> = self.stereotypes.iter().flatten().cloned().collect();
-        let cap = if self.render_cap == 0 { live.len() } else { self.render_cap };
+        let cap = if self.render_cap == 0 {
+            live.len()
+        } else {
+            self.render_cap
+        };
         live.into_iter().take(cap).collect()
     }
 }
@@ -712,7 +716,11 @@ impl NodeDesignEditor {
             Region::Render(n) => self.state.render_cap = n,
             Region::Column(ci, col) => {
                 let idx = col - 1;
-                let cols = if ci == 0 { &mut self.state.at_cols } else { &mut self.state.op_cols };
+                let cols = if ci == 0 {
+                    &mut self.state.at_cols
+                } else {
+                    &mut self.state.op_cols
+                };
                 cols[idx] = !cols[idx];
             }
             Region::ChipRemove(n) => self.state.stereotypes[n] = None,
@@ -801,24 +809,83 @@ impl NodeDesignEditor {
 
         // -- controls: swatch selection rings --
         for (i, path) in SWATCH_VIEWS.iter().enumerate() {
-            self.set_bg(cx, path, live_id!(sel), if i == self.accent_idx { 1.0 } else { 0.0 });
+            self.set_bg(
+                cx,
+                path,
+                live_id!(sel),
+                if i == self.accent_idx { 1.0 } else { 0.0 },
+            );
         }
 
         // -- controls: toggles --
-        self.set_bg(cx, ids!(pane.editor.controls.sect_hdr.hdr_show_field.tog_hdr_show),
-            live_id!(on), if st.header_show { 1.0 } else { 0.0 });
-        self.set_bg(cx, ids!(pane.editor.controls.sect_body.item_at.at_crow.tog_at),
-            live_id!(on), if st.comp_on[0] { 1.0 } else { 0.0 });
-        self.set_bg(cx, ids!(pane.editor.controls.sect_body.item_op.op_crow.tog_op),
-            live_id!(on), if st.comp_on[1] { 1.0 } else { 0.0 });
-        self.set_bg(cx, ids!(pane.editor.controls.sect_ports.ports_field.tog_ports),
-            live_id!(on), if st.ports_show { 1.0 } else { 0.0 });
+        self.set_bg(
+            cx,
+            ids!(pane.editor.controls.sect_hdr.hdr_show_field.tog_hdr_show),
+            live_id!(on),
+            if st.header_show { 1.0 } else { 0.0 },
+        );
+        self.set_bg(
+            cx,
+            ids!(pane.editor.controls.sect_body.item_at.at_crow.tog_at),
+            live_id!(on),
+            if st.comp_on[0] { 1.0 } else { 0.0 },
+        );
+        self.set_bg(
+            cx,
+            ids!(pane.editor.controls.sect_body.item_op.op_crow.tog_op),
+            live_id!(on),
+            if st.comp_on[1] { 1.0 } else { 0.0 },
+        );
+        self.set_bg(
+            cx,
+            ids!(pane.editor.controls.sect_ports.ports_field.tog_ports),
+            live_id!(on),
+            if st.ports_show { 1.0 } else { 0.0 },
+        );
 
         // -- controls: Style segmented --
-        self.sync_seg_cell(cx, ids!(pane.editor.controls.sect_hdr.hdr_style_field.seg_style.seg_band),
-            ids!(pane.editor.controls.sect_hdr.hdr_style_field.seg_style.seg_band.seg_band_lbl), !st.header_fill);
-        self.sync_seg_cell(cx, ids!(pane.editor.controls.sect_hdr.hdr_style_field.seg_style.seg_fill),
-            ids!(pane.editor.controls.sect_hdr.hdr_style_field.seg_style.seg_fill.seg_fill_lbl), st.header_fill);
+        self.sync_seg_cell(
+            cx,
+            ids!(
+                pane.editor
+                    .controls
+                    .sect_hdr
+                    .hdr_style_field
+                    .seg_style
+                    .seg_band
+            ),
+            ids!(
+                pane.editor
+                    .controls
+                    .sect_hdr
+                    .hdr_style_field
+                    .seg_style
+                    .seg_band
+                    .seg_band_lbl
+            ),
+            !st.header_fill,
+        );
+        self.sync_seg_cell(
+            cx,
+            ids!(
+                pane.editor
+                    .controls
+                    .sect_hdr
+                    .hdr_style_field
+                    .seg_style
+                    .seg_fill
+            ),
+            ids!(
+                pane.editor
+                    .controls
+                    .sect_hdr
+                    .hdr_style_field
+                    .seg_style
+                    .seg_fill
+                    .seg_fill_lbl
+            ),
+            st.header_fill,
+        );
 
         // -- controls: Render segmented --
         for (i, (cell, lbl)) in RENDER_CELLS.iter().enumerate() {
@@ -829,8 +896,16 @@ impl NodeDesignEditor {
         self.sync_body_controls(cx, &st);
 
         // -- controls: stereotype chips (hide removed) --
-        self.set_vis(cx, ids!(pane.editor.controls.sect_hdr.tagfield.chip0), st.stereotypes[0].is_some());
-        self.set_vis(cx, ids!(pane.editor.controls.sect_hdr.tagfield.chip1), st.stereotypes[1].is_some());
+        self.set_vis(
+            cx,
+            ids!(pane.editor.controls.sect_hdr.tagfield.chip0),
+            st.stereotypes[0].is_some(),
+        );
+        self.set_vis(
+            cx,
+            ids!(pane.editor.controls.sect_hdr.tagfield.chip1),
+            st.stereotypes[1].is_some(),
+        );
     }
 
     /// White text on the selected cell, dim on the rest.
@@ -844,21 +919,79 @@ impl NodeDesignEditor {
         let accent = self.ui_accent();
         let grip_at = if st.comp_on[0] { accent } else { rgb(0xb3bdca) };
         let grip_op = if st.comp_on[1] { accent } else { rgb(0xb3bdca) };
-        self.set_bg_col(cx, ids!(pane.editor.controls.sect_body.item_at.at_crow.grip_at), grip_at);
-        self.set_bg_col(cx, ids!(pane.editor.controls.sect_body.item_op.op_crow.grip_op), grip_op);
-        self.set_label(cx, ids!(pane.editor.controls.sect_body.item_at.at_crow.at_clbl),
-            if st.comp_on[0] { rgb(0x26313f) } else { rgb(0xaab4c1) });
-        self.set_label(cx, ids!(pane.editor.controls.sect_body.item_op.op_crow.op_clbl),
-            if st.comp_on[1] { rgb(0x26313f) } else { rgb(0xaab4c1) });
+        self.set_bg_col(
+            cx,
+            ids!(pane.editor.controls.sect_body.item_at.at_crow.grip_at),
+            grip_at,
+        );
+        self.set_bg_col(
+            cx,
+            ids!(pane.editor.controls.sect_body.item_op.op_crow.grip_op),
+            grip_op,
+        );
+        self.set_label(
+            cx,
+            ids!(pane.editor.controls.sect_body.item_at.at_crow.at_clbl),
+            if st.comp_on[0] {
+                rgb(0x26313f)
+            } else {
+                rgb(0xaab4c1)
+            },
+        );
+        self.set_label(
+            cx,
+            ids!(pane.editor.controls.sect_body.item_op.op_crow.op_clbl),
+            if st.comp_on[1] {
+                rgb(0x26313f)
+            } else {
+                rgb(0xaab4c1)
+            },
+        );
 
         // Attribute column chips (index 1..3 -> at_cols[0..2]).
-        self.sync_chip(cx, AT_CHIPS[0].0, AT_CHIPS[0].1, st.at_cols[0], st.comp_on[0]);
-        self.sync_chip(cx, AT_CHIPS[1].0, AT_CHIPS[1].1, st.at_cols[1], st.comp_on[0]);
-        self.sync_chip(cx, AT_CHIPS[2].0, AT_CHIPS[2].1, st.at_cols[2], st.comp_on[0]);
+        self.sync_chip(
+            cx,
+            AT_CHIPS[0].0,
+            AT_CHIPS[0].1,
+            st.at_cols[0],
+            st.comp_on[0],
+        );
+        self.sync_chip(
+            cx,
+            AT_CHIPS[1].0,
+            AT_CHIPS[1].1,
+            st.at_cols[1],
+            st.comp_on[0],
+        );
+        self.sync_chip(
+            cx,
+            AT_CHIPS[2].0,
+            AT_CHIPS[2].1,
+            st.at_cols[2],
+            st.comp_on[0],
+        );
         // Operation column chips.
-        self.sync_chip(cx, OP_CHIPS[0].0, OP_CHIPS[0].1, st.op_cols[0], st.comp_on[1]);
-        self.sync_chip(cx, OP_CHIPS[1].0, OP_CHIPS[1].1, st.op_cols[1], st.comp_on[1]);
-        self.sync_chip(cx, OP_CHIPS[2].0, OP_CHIPS[2].1, st.op_cols[2], st.comp_on[1]);
+        self.sync_chip(
+            cx,
+            OP_CHIPS[0].0,
+            OP_CHIPS[0].1,
+            st.op_cols[0],
+            st.comp_on[1],
+        );
+        self.sync_chip(
+            cx,
+            OP_CHIPS[1].0,
+            OP_CHIPS[1].1,
+            st.op_cols[1],
+            st.comp_on[1],
+        );
+        self.sync_chip(
+            cx,
+            OP_CHIPS[2].0,
+            OP_CHIPS[2].1,
+            st.op_cols[2],
+            st.comp_on[1],
+        );
     }
 
     /// A column chip's fill (`on`) / dim (`enabled`) uniforms + text colour.
@@ -878,7 +1011,8 @@ impl NodeDesignEditor {
     /// Push a colour into a glyph shader's `col` uniform (grip).
     fn set_bg_col(&self, cx: &mut Cx2d, path: &[LiveId], c: Vec4) {
         if let Some(mut v) = self.view.view(cx, path).borrow_mut() {
-            v.draw_bg.set_uniform(cx, live_id!(col), &[c.x, c.y, c.z, c.w]);
+            v.draw_bg
+                .set_uniform(cx, live_id!(col), &[c.x, c.y, c.z, c.w]);
         }
     }
 
@@ -890,27 +1024,73 @@ impl NodeDesignEditor {
             self.push_region(cx, Region::Swatch(i), path);
         }
         // Toggles.
-        self.push_region(cx, Region::HeaderShow, ids!(pane.editor.controls.sect_hdr.hdr_show_field.tog_hdr_show));
-        self.push_region(cx, Region::PortsShow, ids!(pane.editor.controls.sect_ports.ports_field.tog_ports));
+        self.push_region(
+            cx,
+            Region::HeaderShow,
+            ids!(pane.editor.controls.sect_hdr.hdr_show_field.tog_hdr_show),
+        );
+        self.push_region(
+            cx,
+            Region::PortsShow,
+            ids!(pane.editor.controls.sect_ports.ports_field.tog_ports),
+        );
         // Style segmented (withheld when the header is off, matching the mock's
         // inert faded row).
         if self.state.header_show {
-            self.push_region(cx, Region::HeaderStyle(false), ids!(pane.editor.controls.sect_hdr.hdr_style_field.seg_style.seg_band));
-            self.push_region(cx, Region::HeaderStyle(true), ids!(pane.editor.controls.sect_hdr.hdr_style_field.seg_style.seg_fill));
+            self.push_region(
+                cx,
+                Region::HeaderStyle(false),
+                ids!(
+                    pane.editor
+                        .controls
+                        .sect_hdr
+                        .hdr_style_field
+                        .seg_style
+                        .seg_band
+                ),
+            );
+            self.push_region(
+                cx,
+                Region::HeaderStyle(true),
+                ids!(
+                    pane.editor
+                        .controls
+                        .sect_hdr
+                        .hdr_style_field
+                        .seg_style
+                        .seg_fill
+                ),
+            );
             for (i, (cell, _)) in RENDER_CELLS.iter().enumerate() {
                 self.push_region(cx, Region::Render(i), cell);
             }
         }
         // Stereotype chips: clicking removes (the mock's hover-✕, simplified).
         if self.state.stereotypes[0].is_some() {
-            self.push_region(cx, Region::ChipRemove(0), ids!(pane.editor.controls.sect_hdr.tagfield.chip0));
+            self.push_region(
+                cx,
+                Region::ChipRemove(0),
+                ids!(pane.editor.controls.sect_hdr.tagfield.chip0),
+            );
         }
         if self.state.stereotypes[1].is_some() {
-            self.push_region(cx, Region::ChipRemove(1), ids!(pane.editor.controls.sect_hdr.tagfield.chip1));
+            self.push_region(
+                cx,
+                Region::ChipRemove(1),
+                ids!(pane.editor.controls.sect_hdr.tagfield.chip1),
+            );
         }
         // Body compartment toggles.
-        self.push_region(cx, Region::CompToggle(0), ids!(pane.editor.controls.sect_body.item_at.at_crow.tog_at));
-        self.push_region(cx, Region::CompToggle(1), ids!(pane.editor.controls.sect_body.item_op.op_crow.tog_op));
+        self.push_region(
+            cx,
+            Region::CompToggle(0),
+            ids!(pane.editor.controls.sect_body.item_at.at_crow.tog_at),
+        );
+        self.push_region(
+            cx,
+            Region::CompToggle(1),
+            ids!(pane.editor.controls.sect_body.item_op.op_crow.tog_op),
+        );
         // Column chips (locked Name chips are not interactive).
         if self.state.comp_on[0] {
             self.push_region(cx, Region::Column(0, 1), AT_CHIPS[0].0);
@@ -960,9 +1140,21 @@ impl NodeDesignEditor {
         let attributes = if st.comp_on[0] {
             let mk = |vis: &str, name: &str, ty: &str, card: &str| AttrRow {
                 name: name.to_string(),
-                ty: if st.at_cols[1] { ty.to_string() } else { String::new() },
-                multiplicity: if st.at_cols[2] { card.to_string() } else { String::new() },
-                visibility: if st.at_cols[0] { vis.to_string() } else { String::new() },
+                ty: if st.at_cols[1] {
+                    ty.to_string()
+                } else {
+                    String::new()
+                },
+                multiplicity: if st.at_cols[2] {
+                    card.to_string()
+                } else {
+                    String::new()
+                },
+                visibility: if st.at_cols[0] {
+                    vis.to_string()
+                } else {
+                    String::new()
+                },
             };
             vec![
                 mk("+", "id", "UUID", "1"),
@@ -981,8 +1173,16 @@ impl NodeDesignEditor {
                 } else {
                     None
                 },
-                ret: if st.op_cols[2] { ret.to_string() } else { String::new() },
-                visibility: if st.op_cols[0] { vis.to_string() } else { String::new() },
+                ret: if st.op_cols[2] {
+                    ret.to_string()
+                } else {
+                    String::new()
+                },
+                visibility: if st.op_cols[0] {
+                    vis.to_string()
+                } else {
+                    String::new()
+                },
             };
             vec![
                 mk("+", "place", "pay", "void"),
@@ -1121,7 +1321,13 @@ impl NodeDesignEditor {
                 dvec2(ox + cw - 4.0, oy + ch * 0.52),
             ];
             for p in nubs {
-                self.draw_nub.draw_abs(cx, Rect { pos: p, size: dvec2(sz, sz) });
+                self.draw_nub.draw_abs(
+                    cx,
+                    Rect {
+                        pos: p,
+                        size: dvec2(sz, sz),
+                    },
+                );
             }
         }
     }
@@ -1142,25 +1348,199 @@ const SWATCH_VIEWS: [&[LiveId]; 8] = [
 
 /// Render-cap segmented cells + their labels (index 0 = All, 1..5).
 const RENDER_CELLS: [(&[LiveId], &[LiveId]); 6] = [
-    (ids!(pane.editor.controls.sect_hdr.hdr_render_field.seg_render.seg_r0), ids!(pane.editor.controls.sect_hdr.hdr_render_field.seg_render.seg_r0.seg_r0_lbl)),
-    (ids!(pane.editor.controls.sect_hdr.hdr_render_field.seg_render.seg_r1), ids!(pane.editor.controls.sect_hdr.hdr_render_field.seg_render.seg_r1.seg_r1_lbl)),
-    (ids!(pane.editor.controls.sect_hdr.hdr_render_field.seg_render.seg_r2), ids!(pane.editor.controls.sect_hdr.hdr_render_field.seg_render.seg_r2.seg_r2_lbl)),
-    (ids!(pane.editor.controls.sect_hdr.hdr_render_field.seg_render.seg_r3), ids!(pane.editor.controls.sect_hdr.hdr_render_field.seg_render.seg_r3.seg_r3_lbl)),
-    (ids!(pane.editor.controls.sect_hdr.hdr_render_field.seg_render.seg_r4), ids!(pane.editor.controls.sect_hdr.hdr_render_field.seg_render.seg_r4.seg_r4_lbl)),
-    (ids!(pane.editor.controls.sect_hdr.hdr_render_field.seg_render.seg_r5), ids!(pane.editor.controls.sect_hdr.hdr_render_field.seg_render.seg_r5.seg_r5_lbl)),
+    (
+        ids!(
+            pane.editor
+                .controls
+                .sect_hdr
+                .hdr_render_field
+                .seg_render
+                .seg_r0
+        ),
+        ids!(
+            pane.editor
+                .controls
+                .sect_hdr
+                .hdr_render_field
+                .seg_render
+                .seg_r0
+                .seg_r0_lbl
+        ),
+    ),
+    (
+        ids!(
+            pane.editor
+                .controls
+                .sect_hdr
+                .hdr_render_field
+                .seg_render
+                .seg_r1
+        ),
+        ids!(
+            pane.editor
+                .controls
+                .sect_hdr
+                .hdr_render_field
+                .seg_render
+                .seg_r1
+                .seg_r1_lbl
+        ),
+    ),
+    (
+        ids!(
+            pane.editor
+                .controls
+                .sect_hdr
+                .hdr_render_field
+                .seg_render
+                .seg_r2
+        ),
+        ids!(
+            pane.editor
+                .controls
+                .sect_hdr
+                .hdr_render_field
+                .seg_render
+                .seg_r2
+                .seg_r2_lbl
+        ),
+    ),
+    (
+        ids!(
+            pane.editor
+                .controls
+                .sect_hdr
+                .hdr_render_field
+                .seg_render
+                .seg_r3
+        ),
+        ids!(
+            pane.editor
+                .controls
+                .sect_hdr
+                .hdr_render_field
+                .seg_render
+                .seg_r3
+                .seg_r3_lbl
+        ),
+    ),
+    (
+        ids!(
+            pane.editor
+                .controls
+                .sect_hdr
+                .hdr_render_field
+                .seg_render
+                .seg_r4
+        ),
+        ids!(
+            pane.editor
+                .controls
+                .sect_hdr
+                .hdr_render_field
+                .seg_render
+                .seg_r4
+                .seg_r4_lbl
+        ),
+    ),
+    (
+        ids!(
+            pane.editor
+                .controls
+                .sect_hdr
+                .hdr_render_field
+                .seg_render
+                .seg_r5
+        ),
+        ids!(
+            pane.editor
+                .controls
+                .sect_hdr
+                .hdr_render_field
+                .seg_render
+                .seg_r5
+                .seg_r5_lbl
+        ),
+    ),
 ];
 
 /// Attribute column chips (cell, label) for cols 1..3 (Visibility, Type, Cardinality).
 const AT_CHIPS: [(&[LiveId], &[LiveId]); 3] = [
-    (ids!(pane.editor.controls.sect_body.item_at.at_cols.col_at_vis), ids!(pane.editor.controls.sect_body.item_at.at_cols.col_at_vis.col_at_vis_lbl)),
-    (ids!(pane.editor.controls.sect_body.item_at.at_cols.col_at_ty), ids!(pane.editor.controls.sect_body.item_at.at_cols.col_at_ty.col_at_ty_lbl)),
-    (ids!(pane.editor.controls.sect_body.item_at.at_cols.col_at_card), ids!(pane.editor.controls.sect_body.item_at.at_cols.col_at_card.col_at_card_lbl)),
+    (
+        ids!(pane.editor.controls.sect_body.item_at.at_cols.col_at_vis),
+        ids!(
+            pane.editor
+                .controls
+                .sect_body
+                .item_at
+                .at_cols
+                .col_at_vis
+                .col_at_vis_lbl
+        ),
+    ),
+    (
+        ids!(pane.editor.controls.sect_body.item_at.at_cols.col_at_ty),
+        ids!(
+            pane.editor
+                .controls
+                .sect_body
+                .item_at
+                .at_cols
+                .col_at_ty
+                .col_at_ty_lbl
+        ),
+    ),
+    (
+        ids!(pane.editor.controls.sect_body.item_at.at_cols.col_at_card),
+        ids!(
+            pane.editor
+                .controls
+                .sect_body
+                .item_at
+                .at_cols
+                .col_at_card
+                .col_at_card_lbl
+        ),
+    ),
 ];
 /// Operation column chips (Visibility, Params, Return).
 const OP_CHIPS: [(&[LiveId], &[LiveId]); 3] = [
-    (ids!(pane.editor.controls.sect_body.item_op.op_cols.col_op_vis), ids!(pane.editor.controls.sect_body.item_op.op_cols.col_op_vis.col_op_vis_lbl)),
-    (ids!(pane.editor.controls.sect_body.item_op.op_cols.col_op_par), ids!(pane.editor.controls.sect_body.item_op.op_cols.col_op_par.col_op_par_lbl)),
-    (ids!(pane.editor.controls.sect_body.item_op.op_cols.col_op_ret), ids!(pane.editor.controls.sect_body.item_op.op_cols.col_op_ret.col_op_ret_lbl)),
+    (
+        ids!(pane.editor.controls.sect_body.item_op.op_cols.col_op_vis),
+        ids!(
+            pane.editor
+                .controls
+                .sect_body
+                .item_op
+                .op_cols
+                .col_op_vis
+                .col_op_vis_lbl
+        ),
+    ),
+    (
+        ids!(pane.editor.controls.sect_body.item_op.op_cols.col_op_par),
+        ids!(
+            pane.editor
+                .controls
+                .sect_body
+                .item_op
+                .op_cols
+                .col_op_par
+                .col_op_par_lbl
+        ),
+    ),
+    (
+        ids!(pane.editor.controls.sect_body.item_op.op_cols.col_op_ret),
+        ids!(
+            pane.editor
+                .controls
+                .sect_body
+                .item_op
+                .op_cols
+                .col_op_ret
+                .col_op_ret_lbl
+        ),
+    ),
 ];
 
 /// Every accent-material surface: the accent uniform is pushed to each per draw so
@@ -1181,18 +1561,74 @@ const ACCENT_VIEWS: [&[LiveId]; 43] = [
     ids!(pane.editor.controls.app_rule),
     ids!(pane.editor.controls.sect_hdr.hdr_show_field.tog_hdr_show),
     ids!(pane.editor.controls.sect_hdr.hdr_style_field.seg_style),
-    ids!(pane.editor.controls.sect_hdr.hdr_style_field.seg_style.seg_band),
-    ids!(pane.editor.controls.sect_hdr.hdr_style_field.seg_style.seg_fill),
+    ids!(
+        pane.editor
+            .controls
+            .sect_hdr
+            .hdr_style_field
+            .seg_style
+            .seg_band
+    ),
+    ids!(
+        pane.editor
+            .controls
+            .sect_hdr
+            .hdr_style_field
+            .seg_style
+            .seg_fill
+    ),
     ids!(pane.editor.controls.sect_hdr.tagfield),
     ids!(pane.editor.controls.sect_hdr.tagfield.chip0),
     ids!(pane.editor.controls.sect_hdr.tagfield.chip1),
     ids!(pane.editor.controls.sect_hdr.hdr_render_field.seg_render),
-    ids!(pane.editor.controls.sect_hdr.hdr_render_field.seg_render.seg_r0),
-    ids!(pane.editor.controls.sect_hdr.hdr_render_field.seg_render.seg_r1),
-    ids!(pane.editor.controls.sect_hdr.hdr_render_field.seg_render.seg_r2),
-    ids!(pane.editor.controls.sect_hdr.hdr_render_field.seg_render.seg_r3),
-    ids!(pane.editor.controls.sect_hdr.hdr_render_field.seg_render.seg_r4),
-    ids!(pane.editor.controls.sect_hdr.hdr_render_field.seg_render.seg_r5),
+    ids!(
+        pane.editor
+            .controls
+            .sect_hdr
+            .hdr_render_field
+            .seg_render
+            .seg_r0
+    ),
+    ids!(
+        pane.editor
+            .controls
+            .sect_hdr
+            .hdr_render_field
+            .seg_render
+            .seg_r1
+    ),
+    ids!(
+        pane.editor
+            .controls
+            .sect_hdr
+            .hdr_render_field
+            .seg_render
+            .seg_r2
+    ),
+    ids!(
+        pane.editor
+            .controls
+            .sect_hdr
+            .hdr_render_field
+            .seg_render
+            .seg_r3
+    ),
+    ids!(
+        pane.editor
+            .controls
+            .sect_hdr
+            .hdr_render_field
+            .seg_render
+            .seg_r4
+    ),
+    ids!(
+        pane.editor
+            .controls
+            .sect_hdr
+            .hdr_render_field
+            .seg_render
+            .seg_r5
+    ),
     ids!(pane.editor.controls.hdr_rule),
     ids!(pane.editor.controls.sect_body.item_at.item_at_top),
     ids!(pane.editor.controls.sect_body.item_at.at_crow.tog_at),

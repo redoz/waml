@@ -511,7 +511,6 @@ const HOVER_SECS: f64 = 0.15;
 // the current colour variant to the next over this window.
 const FADE_SECS: f64 = 0.4;
 
-
 /// `LogoMark` -> `App` action (same convention as `GraphCanvasAction`). Carries
 /// the wordmark's screen-space centre so `App` can open the radial there.
 ///
@@ -720,7 +719,8 @@ impl Widget for LogoMark {
         // FPS-heat uniforms, every draw. `meter` gates the tint; hover suppresses
         // heat, so fold `(1 - hover)` in here. Splash leaves `heat_strength` at 0,
         // so the tint is a no-op there regardless of `heat_color`.
-        self.draw_bg.set_uniform(cx, live_id!(fps_color), &self.heat_color);
+        self.draw_bg
+            .set_uniform(cx, live_id!(fps_color), &self.heat_color);
         let meter = self.heat_strength * (1.0 - self.hover);
         self.draw_bg.set_uniform(cx, live_id!(meter), &[meter]);
         if self.fading {
@@ -729,7 +729,8 @@ impl Widget for LogoMark {
             // silhouette, so this reads as a colour cross-dissolve with a solid,
             // hole-free hull. Differing `mode`/`fade` uniforms make makepad break
             // the batch into two draw calls (see draw_list.rs uniform compare).
-            self.draw_bg.set_uniform(cx, live_id!(mode), &[self.prev_mode]);
+            self.draw_bg
+                .set_uniform(cx, live_id!(mode), &[self.prev_mode]);
             self.draw_bg.set_uniform(cx, live_id!(fade), &[1.0]);
             self.draw_bg.draw_abs(cx, rect);
             self.draw_bg.set_uniform(cx, live_id!(mode), &[self.mode]);

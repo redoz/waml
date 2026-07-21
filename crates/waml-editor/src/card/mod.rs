@@ -808,10 +808,7 @@ mod tests {
         let mut n = scene_node("Order", vec![], vec![]);
         n.operations = vec![op("place", Some(""), "void", "+")];
         let placed = measure(&class_shape(&n, &mono_sheet()));
-        assert!(placed
-            .blocks
-            .iter()
-            .any(|b| b.block == Block::Operations));
+        assert!(placed.blocks.iter().any(|b| b.block == Block::Operations));
     }
 
     #[test]

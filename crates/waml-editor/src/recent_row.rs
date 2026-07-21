@@ -173,7 +173,9 @@ impl Widget for RecentRowView {
 impl RecentRowView {
     /// Set the bold project title (top line).
     pub fn set_title(&mut self, cx: &mut Cx, s: &str) {
-        self.view.label(cx, ids!(textcol.titlerow.title)).set_text(cx, s);
+        self.view
+            .label(cx, ids!(textcol.titlerow.title))
+            .set_text(cx, s);
     }
     /// Set the dim project path (second line).
     pub fn set_path(&mut self, cx: &mut Cx, s: &str) {
@@ -181,7 +183,9 @@ impl RecentRowView {
     }
     /// Set the right-anchored last-opened stamp.
     pub fn set_when(&mut self, cx: &mut Cx, s: &str) {
-        self.view.label(cx, ids!(textcol.titlerow.when)).set_text(cx, s);
+        self.view
+            .label(cx, ids!(textcol.titlerow.when))
+            .set_text(cx, s);
     }
     /// Toggle whether the row hovers/clicks (false for the empty-state row).
     pub fn set_clickable(&mut self, clickable: bool) {

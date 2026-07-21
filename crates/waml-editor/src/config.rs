@@ -137,7 +137,10 @@ impl Recent {
 
 /// Seconds since the Unix epoch (0 if the clock somehow predates it).
 fn now_unix() -> u64 {
-    SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
 }
 
 /// Dedup key for a recent: the canonicalized path, so the same directory reached
@@ -159,7 +162,11 @@ fn add_or_promote(
     recents.retain(|r| canonical_key(&r.path) != key);
     recents.insert(
         0,
-        Recent { path: path.to_path_buf(), title: title.to_string(), opened_at },
+        Recent {
+            path: path.to_path_buf(),
+            title: title.to_string(),
+            opened_at,
+        },
     );
     recents.truncate(RECENTS_CAP);
     recents
@@ -230,7 +237,11 @@ mod tests {
     use std::sync::atomic::{AtomicU32, Ordering};
 
     fn rec(path: &str, opened_at: u64) -> Recent {
-        Recent { path: PathBuf::from(path), title: format!("t:{path}"), opened_at }
+        Recent {
+            path: PathBuf::from(path),
+            title: format!("t:{path}"),
+            opened_at,
+        }
     }
 
     // ---- pure list functions (no filesystem) ----
@@ -267,7 +278,10 @@ mod tests {
         list = add_or_promote(list, Path::new("/p-new"), "t", 999);
         assert_eq!(list.len(), RECENTS_CAP);
         assert_eq!(list[0].path, PathBuf::from("/p-new"));
-        assert!(!list.iter().any(|r| r.path == Path::new("/p0")), "oldest dropped");
+        assert!(
+            !list.iter().any(|r| r.path == Path::new("/p0")),
+            "oldest dropped"
+        );
     }
 
     #[test]
@@ -287,8 +301,16 @@ mod tests {
         let tmp = TempDir::new();
         let here = tmp.path().to_path_buf();
         let list = vec![
-            Recent { path: here.clone(), title: "here".into(), opened_at: 1 },
-            Recent { path: tmp.path().join("gone"), title: "gone".into(), opened_at: 2 },
+            Recent {
+                path: here.clone(),
+                title: "here".into(),
+                opened_at: 1,
+            },
+            Recent {
+                path: tmp.path().join("gone"),
+                title: "gone".into(),
+                opened_at: 2,
+            },
         ];
         let out = prune_missing(list);
         assert_eq!(out.len(), 1);
@@ -297,7 +319,11 @@ mod tests {
 
     #[test]
     fn recent_getters_return_stored_fields() {
-        let r = Recent { path: PathBuf::from("/proj"), title: "Proj".into(), opened_at: 5 };
+        let r = Recent {
+            path: PathBuf::from("/proj"),
+            title: "Proj".into(),
+            opened_at: 5,
+        };
         assert_eq!(r.path(), Path::new("/proj"));
         assert_eq!(r.title(), "Proj");
     }
@@ -319,7 +345,10 @@ mod tests {
         let cfg: EditorConfig = load_from(tmp.path(), EDITOR_FILE);
         assert_eq!(cfg, EditorConfig::default());
         assert!(!path.exists(), "corrupt file moved aside");
-        assert!(tmp.path().join("editor.json.bak").exists(), "backup written");
+        assert!(
+            tmp.path().join("editor.json.bak").exists(),
+            "backup written"
+        );
     }
 
     #[test]
@@ -342,7 +371,11 @@ mod tests {
         let cfg: EditorConfig = load_from(tmp.path(), EDITOR_FILE);
         assert_eq!(cfg.theme, ThemeMode::Light);
         // Dark survives a store/load round-trip.
-        let cfg = EditorConfig { version: EDITOR_VERSION, recents: Vec::new(), theme: ThemeMode::Dark };
+        let cfg = EditorConfig {
+            version: EDITOR_VERSION,
+            recents: Vec::new(),
+            theme: ThemeMode::Dark,
+        };
         store_to(tmp.path(), EDITOR_FILE, &cfg).unwrap();
         let back: EditorConfig = load_from(tmp.path(), EDITOR_FILE);
         assert_eq!(back.theme, ThemeMode::Dark);
@@ -358,7 +391,11 @@ mod tests {
         )
         .unwrap();
         let cfg: EditorConfig = load_from(tmp.path(), EDITOR_FILE);
-        assert_eq!(cfg.theme, ThemeMode::Light, "absent theme field -> default Light");
+        assert_eq!(
+            cfg.theme,
+            ThemeMode::Light,
+            "absent theme field -> default Light"
+        );
     }
 
     /// Minimal temp dir: the repo has no temp-dir dev-dependency, so we make a
@@ -369,9 +406,16 @@ mod tests {
         fn new() -> Self {
             static N: AtomicU32 = AtomicU32::new(0);
             let n = N.fetch_add(1, Ordering::Relaxed);
-            let nanos = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
-            let dir = std::env::temp_dir()
-                .join(format!("waml-editor-cfg-{}-{}-{}", std::process::id(), nanos, n));
+            let nanos = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos();
+            let dir = std::env::temp_dir().join(format!(
+                "waml-editor-cfg-{}-{}-{}",
+                std::process::id(),
+                nanos,
+                n
+            ));
             std::fs::create_dir_all(&dir).unwrap();
             TempDir(dir)
         }

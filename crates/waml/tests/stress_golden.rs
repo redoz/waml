@@ -11,13 +11,7 @@ fn node(k: &str) -> BoxId {
 #[test]
 fn stress_layout_pins_to_expected_pixels() {
     // a-b-c-d path with a b-e branch; five varied node sizes.
-    let ids = [
-        node("a"),
-        node("b"),
-        node("c"),
-        node("d"),
-        node("e"),
-    ];
+    let ids = [node("a"), node("b"), node("c"), node("d"), node("e")];
     let sizes = [
         Size { w: 200.0, h: 90.0 },
         Size { w: 160.0, h: 60.0 },

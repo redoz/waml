@@ -412,7 +412,10 @@ mod tests {
         let model = mini();
         let keys = node_keys(&model);
         let rows = diagram_elements(&model, "d1", "Orders", &keys);
-        let node_rows: Vec<_> = rows.iter().filter(|r| r.kind == ElementKind::Node).collect();
+        let node_rows: Vec<_> = rows
+            .iter()
+            .filter(|r| r.kind == ElementKind::Node)
+            .collect();
         assert_eq!(node_rows.len(), keys.len());
     }
 
