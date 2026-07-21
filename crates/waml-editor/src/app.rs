@@ -1290,6 +1290,33 @@ impl AppMain for App {
             self.rehydrate(cx);
         }
 
+        // Wordmark FPS-heat span: App owns only interaction-span detection
+        // (raw pointer press/release, app-wide -- not hit-tested, so it fires
+        // no matter which child widget ends up capturing the drag). The logo
+        // itself samples framerate and drives the tint/easing; this is a
+        // no-op on the splash instance.
+        match event {
+            Event::MouseDown(e) if e.button.is_primary() => {
+                if let Some(mut logo) = self
+                    .ui
+                    .widget(cx, ids!(logo))
+                    .borrow_mut::<crate::logo::LogoMark>()
+                {
+                    logo.set_frame_metering(cx, true);
+                }
+            }
+            Event::MouseUp(e) if e.button.is_primary() => {
+                if let Some(mut logo) = self
+                    .ui
+                    .widget(cx, ids!(logo))
+                    .borrow_mut::<crate::logo::LogoMark>()
+                {
+                    logo.set_frame_metering(cx, false);
+                }
+            }
+            _ => {}
+        }
+
         // Tool-dock hotkeys (V/N/C): global, visual-only mode switch. Only
         // live while nothing holds key focus, so they don't fight with the
         // inspector's inline-edit text entry.
