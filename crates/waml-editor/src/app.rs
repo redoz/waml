@@ -325,8 +325,24 @@ impl App {
     /// 1.5x focus render and point the inspector at that classifier.
     fn sync_active_tab(&mut self, cx: &mut Cx) {
         let Some(active) = self.tabs.active_tab().cloned() else {
+            if let Some(mut panel) = self
+                .ui
+                .widget(cx, ids!(project_tree))
+                .borrow_mut::<crate::tree_panel::ProjectTree>()
+            {
+                panel.set_selected_key(cx, None);
+            }
             return;
         };
+        // Mirror the active tab onto the tree row highlight (single choke point
+        // for every activation source: tab click, tree click, switcher, keys).
+        if let Some(mut panel) = self
+            .ui
+            .widget(cx, ids!(project_tree))
+            .borrow_mut::<crate::tree_panel::ProjectTree>()
+        {
+            panel.set_selected_key(cx, Some(active.key.clone()));
+        }
         match active.kind {
             TabKind::Diagram => {
                 let built = self
@@ -590,6 +606,15 @@ impl App {
 
                 self.tabs = OpenTabs::diagram_base(diagram.key.clone(), diagram.title.clone());
                 self.refresh_doc_tabs(cx);
+                // open_dir bypasses sync_active_tab (it built the scene inline),
+                // so point the tree row highlight at the base tab by hand.
+                if let Some(mut panel) = self
+                    .ui
+                    .widget(cx, ids!(project_tree))
+                    .borrow_mut::<crate::tree_panel::ProjectTree>()
+                {
+                    panel.set_selected_key(cx, Some(diagram_key.clone()));
+                }
                 if let Some(mut inspector) = self
                     .ui
                     .widget(cx, ids!(inspector))
