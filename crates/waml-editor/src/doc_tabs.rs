@@ -16,6 +16,30 @@ script_mod! {
     use mod.widgets.*
     use mod.text.*
 
+    // The active tab's card border: the same Atlas "source-bright" gradient
+    // stroke as the reusable `AccentFrame` (see `frame.rs`), but open at the
+    // bottom so the tab reads as bleeding down into the document body. The box
+    // is a full `rect_size.y` tall (not inset from the bottom), so its bottom
+    // edge falls one inset below the viewport and never samples -- top + both
+    // sides stroke, the bottom stays open. Same 150deg diagonal (bright
+    // top-left `frame_hi` to dim bottom-right `frame_lo`) as every other frame,
+    // so the tab matches the panels/nodes instead of the old flat accent strip.
+    mod.draw.TabFrame = mod.draw.DrawColor{
+        border_hi: uniform(atlas.frame_hi)
+        border_lo: uniform(atlas.frame_lo)
+        pixel: fn() {
+            let inset = 1.5
+            let sdf = Sdf2d.viewport(self.pos * self.rect_size)
+            sdf.rect(inset, inset, self.rect_size.x - inset * 2.0, self.rect_size.y)
+            sdf.fill_keep(self.color)
+            let dir = vec2(0.5, 0.8660254)
+            let span = 1.3660254
+            let t = clamp((self.pos.x * dir.x + self.pos.y * dir.y) / span, 0.0, 1.0)
+            sdf.stroke(mix(self.border_hi, self.border_lo, t), inset)
+            return sdf.result
+        }
+    }
+
     mod.widgets.DocTabsBase = #(DocTabs::register_widget(vm))
 
     mod.widgets.DocTabs = set_type_default() do mod.widgets.DocTabsBase{
@@ -23,8 +47,7 @@ script_mod! {
         height: 34.0
         draw_bg +: { color: atlas.field_bg }
         draw_edge +: { color: atlas.frame_hi }
-        draw_tab +: { color: atlas.canvas_ground }
-        draw_accent +: { color: atlas.accent }
+        draw_tab: mod.draw.TabFrame{ color: atlas.canvas_ground }
         // Leading per-kind glyph tint. Dark text ink (not the icon set's default
         // accent) so the glyph reads against the blue-tinted bar / white card --
         // accent-on-blue was too low-contrast. Mirrors the tree's icon_color.
@@ -369,14 +392,11 @@ pub struct DocTabs {
     #[redraw]
     #[live]
     draw_edge: DrawColor,
-    /// The active tab's raised rounded-top card (near-white `field_bg`).
+    /// The active tab's card: the `AccentFrame`-style gradient border, open at
+    /// the bottom (`mod.draw.TabFrame`), filled near-white.
     #[redraw]
     #[live]
     draw_tab: DrawColor,
-    /// 2px accent strip along the active tab's top edge.
-    #[redraw]
-    #[live]
-    draw_accent: DrawColor,
     /// 1px hairline between adjacent inactive tabs.
     #[redraw]
     #[live]
@@ -538,28 +558,16 @@ impl Widget for DocTabs {
             let is_active = tab.id == self.active;
 
             if is_active {
-                // Raised sharp-cornered card + a 2px accent strip spanning its
-                // top edge (Atlas is a sharp-corner language -- no rounding).
-                self.draw_tab.draw_abs(cx, tab_rect);
-                self.draw_accent.draw_abs(
-                    cx,
-                    Rect {
-                        pos: tab_rect.pos,
-                        size: dvec2(w, 2.0),
-                    },
-                );
-                // Thick left + right edges frame the raised card against the
-                // surface, reading as a defined tab on both flanks.
-                const BORDER_W: f64 = 2.0;
-                for edge_x in [tab_rect.pos.x, tab_rect.pos.x + w - BORDER_W] {
-                    self.draw_divider.draw_abs(
-                        cx,
-                        Rect {
-                            pos: dvec2(edge_x, tab_rect.pos.y + 2.0),
-                            size: dvec2(BORDER_W, tab_rect.size.y - 2.0),
-                        },
-                    );
-                }
+                // Raised card carrying the shared Atlas HUD frame (gradient
+                // accent stroke on top + both sides, bottom left open so the
+                // tab bleeds into the body -- see `mod.draw.TabFrame`). Snap the
+                // rect to whole device pixels so the 1.5px stroke lands crisp on
+                // both flanks instead of smearing across a subpixel boundary.
+                let card = Rect {
+                    pos: dvec2(tab_rect.pos.x.round(), tab_rect.pos.y.round()),
+                    size: dvec2(tab_rect.size.x.round(), tab_rect.size.y),
+                };
+                self.draw_tab.draw_abs(cx, card);
             } else {
                 // Press preview reuses the active card fill; hover is a
                 // lighter wash. Drawn under the divider + label.
