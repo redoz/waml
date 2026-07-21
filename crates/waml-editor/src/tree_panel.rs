@@ -111,7 +111,7 @@ script_mod! {
                     // selected-row text the same dark ink instead of the
                     // FileTree default (white), which is unreadable on it.
                     color_active: atlas.text
-                    text_style: theme.font_regular{font_size: 12}
+                    text_style: theme.font_regular{font_size: 11}
                 }
                 draw_bg +: {
                     color_1: atlas.field_bg
@@ -134,7 +134,7 @@ script_mod! {
                 draw_text +: {
                     color: atlas.text
                     color_active: atlas.text
-                    text_style: theme.font_bold{font_size: 12}
+                    text_style: theme.font_bold{font_size: 11}
                 }
                 draw_bg +: {
                     color_1: atlas.field_bg
