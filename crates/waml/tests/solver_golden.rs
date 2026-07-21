@@ -51,7 +51,7 @@ fn orders_domain_diagram_solves_to_expected_layout() {
         sizes.insert(k.into(), Size { w: 200.0, h: 90.0 });
     }
 
-    let (solved, diags) = solve_diagram(&diagram, &sizes, &SolveConfig::default());
+    let (solved, diags) = solve_diagram(&diagram, &[], &sizes, &SolveConfig::default());
     assert!(diags.is_empty(), "no diagnostics: {diags:?}");
     assert_eq!(
         pretty(&solved),

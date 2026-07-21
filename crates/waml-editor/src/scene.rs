@@ -174,6 +174,7 @@ fn stress_default(model: &Model, sizes: &SizeMap) -> Solved {
         nodes: keys.into_iter().zip(rects).collect(),
         groups: Vec::new(),
         flags: BTreeMap::new(),
+        routes: Vec::new(),
     }
 }
 
@@ -182,10 +183,16 @@ pub fn build_scene(model: &Model, diagram: &Diagram) -> (Scene, Vec<Diagnostic>)
     use std::collections::BTreeMap;
 
     let sizes = crate::sizing::size_map(model, diagram);
+    let edges: Vec<(BoxId, BoxId)> = model
+        .edges
+        .iter()
+        .filter(|e| e.source != e.target)
+        .map(|e| (BoxId::Node(e.source.clone()), BoxId::Node(e.target.clone())))
+        .collect();
     let (solved, diags) = if use_stress_default(diagram) {
         (stress_default(model, &sizes), Vec::new())
     } else {
-        solve_diagram(diagram, &sizes, &SolveConfig::default())
+        solve_diagram(diagram, &edges, &sizes, &SolveConfig::default())
     };
 
     let node_of: BTreeMap<&str, &waml::model::Node> =

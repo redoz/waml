@@ -8,6 +8,7 @@ use std::collections::BTreeMap;
 pub mod geometry;
 pub mod potentials;
 pub mod resolve;
+mod route;
 pub mod sizing;
 pub mod stress;
 
@@ -74,6 +75,16 @@ mod wire {
     #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
     #[cfg_attr(feature = "wasm", derive(tsify_next::Tsify))]
     #[cfg_attr(feature = "wasm", tsify(into_wasm_abi, from_wasm_abi))]
+    pub struct Route {
+        pub points: Vec<(f64, f64)>,
+        pub source: String,
+        pub target: String,
+    }
+
+    #[derive(Debug, Clone, PartialEq)]
+    #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+    #[cfg_attr(feature = "wasm", derive(tsify_next::Tsify))]
+    #[cfg_attr(feature = "wasm", tsify(into_wasm_abi, from_wasm_abi))]
     pub struct Solved {
         #[cfg_attr(feature = "wasm", tsify(type = "Record<string, Rect>"))]
         #[cfg_attr(
@@ -88,9 +99,11 @@ mod wire {
             serde(serialize_with = "wasm_bindgen_utils::serialize_btreemap_as_object")
         )]
         pub flags: BTreeMap<String, FlagSet>,
+        #[cfg_attr(feature = "serde", serde(default))]
+        pub routes: Vec<Route>,
     }
 }
-pub use wire::{FlagSet, Rect, Size, SolveConfig, Solved, SolvedGroup};
+pub use wire::{FlagSet, Rect, Route, Size, SolveConfig, Solved, SolvedGroup};
 
 pub type SizeMap = BTreeMap<String, Size>;
 
@@ -193,12 +206,14 @@ pub fn pretty(solved: &Solved) -> String {
 /// Top-level entry: resolve the diagram to a `Scene`, then solve it.
 pub fn solve_diagram(
     diagram: &crate::model::Diagram,
+    edges: &[(BoxId, BoxId)],
     sizes: &SizeMap,
     cfg: &SolveConfig,
 ) -> (Solved, Vec<Diagnostic>) {
     let (scene, mut diags) = resolve::resolve(diagram);
-    let (solved, mut geo_diags) = geometry::solve(&scene, sizes, cfg);
+    let (mut solved, rects, mut geo_diags) = geometry::solve_with_rects(&scene, sizes, cfg);
     diags.append(&mut geo_diags);
+    solved.routes = route::route(&scene.boxes, &rects, edges, cfg);
     (solved, diags)
 }
 
@@ -231,6 +246,7 @@ mod tests {
             nodes,
             groups: vec![],
             flags: BTreeMap::new(),
+            routes: vec![],
         };
         // BTreeMap orders keys: a before b.
         assert_eq!(
@@ -272,6 +288,7 @@ mod tests {
             nodes,
             groups: vec![],
             flags: BTreeMap::new(),
+            routes: vec![],
         };
         let v: serde_json::Value = serde_json::to_value(&solved).unwrap();
         assert_eq!(v["nodes"]["a"]["x"], 1.0);

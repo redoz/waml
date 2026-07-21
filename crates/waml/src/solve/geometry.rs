@@ -403,7 +403,7 @@ fn solve_box(
         cons.extend(list.iter().cloned());
     }
     let inset = cfg.margin(b.margin);
-    assemble(
+    let mut laid = assemble(
         &b.children,
         &child_laid,
         &child_margins,
@@ -412,10 +412,32 @@ fn solve_box(
         Some((b.shape, b.title.clone(), b.depth)),
         cfg,
         diags,
-    )
+    );
+    // Key this group's own frame by its BoxId so the router can use group rects
+    // as containment-aware obstacles. Behavior-preserving: Solved.nodes only ever
+    // extracts BoxId::Node entries, so group keys are invisible to existing output.
+    laid.rects.insert(
+        id.clone(),
+        Rect {
+            x: 0.0,
+            y: 0.0,
+            w: laid.size.w,
+            h: laid.size.h,
+        },
+    );
+    laid
 }
 
 pub fn solve(scene: &Scene, sizes: &SizeMap, cfg: &SolveConfig) -> (Solved, Vec<Diagnostic>) {
+    let (solved, _rects, diags) = solve_with_rects(scene, sizes, cfg);
+    (solved, diags)
+}
+
+pub(super) fn solve_with_rects(
+    scene: &Scene,
+    sizes: &SizeMap,
+    cfg: &SolveConfig,
+) -> (Solved, BTreeMap<BoxId, Rect>, Vec<Diagnostic>) {
     let mut diags = vec![];
     let boxes: BTreeMap<BoxId, &Box> = scene.boxes.iter().map(|b| (b.id.clone(), b)).collect();
     // parent[child] = its group; roots have no parent.
@@ -475,9 +497,9 @@ pub fn solve(scene: &Scene, sizes: &SizeMap, cfg: &SolveConfig) -> (Solved, Vec<
     );
 
     let mut nodes = BTreeMap::new();
-    for (id, r) in laid.rects {
+    for (id, r) in &laid.rects {
         if let BoxId::Node(key) = id {
-            nodes.insert(key, r);
+            nodes.insert(key.clone(), *r);
         }
     }
     let mut groups = laid.groups;
@@ -502,7 +524,9 @@ pub fn solve(scene: &Scene, sizes: &SizeMap, cfg: &SolveConfig) -> (Solved, Vec<
             nodes,
             groups,
             flags,
+            routes: Vec::new(),
         },
+        laid.rects,
         diags,
     )
 }
@@ -703,5 +727,36 @@ mod tests {
              flags a emphasized=false collapsed=true\n\
              flags b emphasized=true collapsed=false\n"
         );
+    }
+
+    #[test]
+    fn solve_with_rects_keys_group_frames_by_boxid() {
+        use crate::syntax::Axis;
+        let scene = Scene {
+            boxes: vec![
+                leaf("a"),
+                leaf("b"),
+                group(
+                    0,
+                    vec![BoxId::Node("a".into()), BoxId::Node("b".into())],
+                    Some(Axis::Column),
+                    Shape::Frame,
+                    "Users",
+                ),
+            ],
+            constraints: vec![],
+        };
+        let (_solved, rects, diags) = solve_with_rects(
+            &scene,
+            &sizes(&["a", "b"], 200.0, 90.0),
+            &SolveConfig::default(),
+        );
+        assert!(diags.is_empty());
+        // Leaf rects present.
+        assert!(rects.contains_key(&BoxId::Node("a".into())));
+        assert!(rects.contains_key(&BoxId::Node("b".into())));
+        // The group frame is keyed by its BoxId and equals the "Users" frame @ 0,0 232x228.
+        let g = rects[&BoxId::Group(0)];
+        assert_eq!((g.x, g.y, g.w, g.h), (0.0, 0.0, 232.0, 228.0));
     }
 }

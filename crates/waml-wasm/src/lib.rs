@@ -81,7 +81,18 @@ pub fn solve_bundle(
         .iter()
         .find(|d| d.key == diagram_key)
         .ok_or_else(|| format!("no diagram with key '{diagram_key}'"))?;
-    let (solved, diagnostics) = waml::solve::solve_diagram(diagram, &sizes, &cfg);
+    let edges: Vec<(waml::solve::BoxId, waml::solve::BoxId)> = model
+        .edges
+        .iter()
+        .filter(|e| e.source != e.target) // self-edges out of scope
+        .map(|e| {
+            (
+                waml::solve::BoxId::Node(e.source.clone()),
+                waml::solve::BoxId::Node(e.target.clone()),
+            )
+        })
+        .collect();
+    let (solved, diagnostics) = waml::solve::solve_diagram(diagram, &edges, &sizes, &cfg);
     Ok(SolveResult {
         solved,
         diagnostics,
