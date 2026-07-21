@@ -3017,6 +3017,42 @@ script_mod! {
         }
     }
 
+    // Door (open): the Lucide door-open -- the swung-open door leaf with the
+    // frame post, floor line, and knob dot. Pairs with door-closed (Close
+    // model). Faithful port of resources/icons/door-open.svg via gen-icon.py.
+    mod.draw.IconDoorOpen = mod.draw.DrawColor{
+        pixel: fn() {
+            let s = self.rect_size.x
+            let w = s * 0.068
+            let sdf = Sdf2d.viewport(self.pos * self.rect_size)
+            sdf.move_to(s * 0.4583, s * 0.8333)
+            sdf.line_to(s * 0.0833, s * 0.8333)
+            sdf.stroke(self.color, w)
+            sdf.move_to(s * 0.4583, s * 0.1901)
+            sdf.line_to(s * 0.4583, s * 0.8633)
+            sdf.arc_to(s * 0.5000, s * 0.8633, s * 0.0417, 3.1413, 1.3264)
+            sdf.line_to(s * 0.7917, s * 0.8333)
+            sdf.line_to(s * 0.7917, s * 0.2318)
+            sdf.arc_to(s * 0.7083, s * 0.2318, s * 0.0833, -0.0002, -1.3259)
+            sdf.line_to(s * 0.5619, s * 0.1093)
+            sdf.arc_to(s * 0.5417, s * 0.1901, s * 0.0833, -1.3259, -3.1409)
+            sdf.close_path()
+            sdf.stroke(self.color, w)
+            sdf.move_to(s * 0.4583, s * 0.1667)
+            sdf.line_to(s * 0.3333, s * 0.1667)
+            sdf.arc_to(s * 0.3333, s * 0.2500, s * 0.0833, -1.5708, -3.1416)
+            sdf.line_to(s * 0.2500, s * 0.8333)
+            sdf.stroke(self.color, w)
+            sdf.move_to(s * 0.5833, s * 0.5000)
+            sdf.line_to(s * 0.5838, s * 0.5000)
+            sdf.stroke(self.color, w)
+            sdf.move_to(s * 0.9167, s * 0.8333)
+            sdf.line_to(s * 0.7917, s * 0.8333)
+            sdf.stroke(self.color, w)
+            return sdf.result
+        }
+    }
+
     mod.widgets.IconSetBase = #(IconSet::script_component(vm))
 
     // Each field is a `DrawColor` pointing at its icon shader; the accent tint
@@ -3110,6 +3146,7 @@ script_mod! {
         arrow_left_right: mod.draw.IconArrowLeftRight{ color: atlas.accent }
         folder: mod.draw.IconFolder{ color: atlas.accent }
         folder_closed: mod.draw.IconFolderClosed{ color: atlas.accent }
+        door_open: mod.draw.IconDoorOpen{ color: atlas.accent }
     }
 }
 
@@ -3293,6 +3330,8 @@ pub struct IconSet {
     pub folder: DrawColor,
     #[live]
     pub folder_closed: DrawColor,
+    #[live]
+    pub door_open: DrawColor,
 }
 
 // Not every bin that `#[path]`-includes this file exercises the whole catalog
@@ -3392,6 +3431,7 @@ impl IconSet {
             Icon::ArrowLeftRight => &mut self.arrow_left_right,
             Icon::Folder => &mut self.folder,
             Icon::FolderClosed => &mut self.folder_closed,
+            Icon::DoorOpen => &mut self.door_open,
         }
     }
 
@@ -3498,13 +3538,14 @@ pub enum Icon {
     ArrowLeftRight,
     Folder,
     FolderClosed,
+    DoorOpen,
 }
 
 #[allow(dead_code)] // ALL/label are unused in bins that don't iterate the catalog
 impl Icon {
     /// Every glyph, in field order. The single source of glyph identity; the
     /// `icon_harness` proof grid iterates this.
-    pub const ALL: [Icon; 88] = [
+    pub const ALL: [Icon; 89] = [
         Icon::Package,
         Icon::Message,
         Icon::PackagePlus,
@@ -3593,6 +3634,7 @@ impl Icon {
         Icon::ArrowLeftRight,
         Icon::Folder,
         Icon::FolderClosed,
+        Icon::DoorOpen,
     ];
 
     /// The `icon_harness` display slug (the Lucide source name), preserved
@@ -3687,6 +3729,7 @@ impl Icon {
             Icon::ArrowLeftRight => "arrow-left-right",
             Icon::Folder => "folder",
             Icon::FolderClosed => "folder-closed",
+            Icon::DoorOpen => "door-open",
         }
     }
 }
@@ -3696,8 +3739,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn icon_all_has_88_entries() {
-        assert_eq!(Icon::ALL.len(), 88);
+    fn icon_all_has_89_entries() {
+        assert_eq!(Icon::ALL.len(), 89);
     }
 
     #[test]
@@ -3707,6 +3750,7 @@ mod tests {
         assert_eq!(Icon::ALL[85], Icon::ArrowLeftRight);
         assert_eq!(Icon::ALL[86], Icon::Folder);
         assert_eq!(Icon::ALL[87], Icon::FolderClosed);
+        assert_eq!(Icon::ALL[88], Icon::DoorOpen);
     }
 
     #[test]
@@ -3718,7 +3762,7 @@ mod tests {
             assert!(!l.is_empty(), "empty label for {icon:?}");
             assert!(seen.insert(l), "duplicate label {l:?}");
         }
-        assert_eq!(seen.len(), 88);
+        assert_eq!(seen.len(), 89);
     }
 
     #[test]

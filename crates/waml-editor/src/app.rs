@@ -743,6 +743,22 @@ impl App {
         self.ui.widget(cx, ids!(menu_btn)).set_visible(cx, false);
         self.editor_shown = false;
     }
+
+    /// Prompt for a model directory via the native folder picker and open it.
+    /// Shared by the start screen's "Open a model" and the burger's "Open
+    /// model". Blocks the window while modal, as OS file dialogs do; Cancel
+    /// yields `None` (no-op); a non-model dir makes `open_dir` log + return
+    /// false, so we stay put.
+    fn open_model_via_picker(&mut self, cx: &mut Cx) {
+        if let Some(dir) = rfd::FileDialog::new()
+            .set_title("Open a model")
+            .pick_folder()
+        {
+            if self.open_dir(cx, &dir, None) {
+                self.show_editor(cx);
+            }
+        }
+    }
 }
 
 /// The four node-radial commands (Remove = danger). Ids are what `Radial`
@@ -813,20 +829,39 @@ pub fn logo_menu_items() -> Vec<crate::radial::RadialItem> {
     ]
 }
 
-/// The burger (caption `menu_btn`) drop-down rows. One entry for now: "Close
-/// model", which returns to the start screen. Uses the shared `app_menu`
-/// widget; the committed id is handled inline in `handle_event`.
+/// The burger (caption `menu_btn`) drop-down rows: Create, Open model, Close
+/// model. New/Open mirror the start screen's actions; Close returns to the
+/// start screen. Uses the shared `app_menu` widget; the committed ids are
+/// handled inline in `handle_event`.
 pub fn burger_menu_items() -> Vec<crate::radial::RadialItem> {
     use crate::icons::Icon;
     use crate::radial::RadialItem;
-    vec![RadialItem {
-        id: live_id!(close_model),
-        label: "Close model".into(),
-        // The door-closed glyph, drawn directly from the catalog.
-        icon: Icon::DoorClosed,
-        danger: false,
-        enabled: true,
-    }]
+    vec![
+        RadialItem {
+            id: live_id!(new_model),
+            // No model-specific glyph exists, so keep it a generic "Create".
+            label: "Create".into(),
+            icon: Icon::SquarePlus,
+            danger: false,
+            enabled: true,
+        },
+        RadialItem {
+            id: live_id!(open_model),
+            label: "Open model".into(),
+            // The open-door glyph, pairing with Close model's door-closed.
+            icon: Icon::DoorOpen,
+            danger: false,
+            enabled: true,
+        },
+        RadialItem {
+            id: live_id!(close_model),
+            label: "Close model".into(),
+            // The door-closed glyph, drawn directly from the catalog.
+            icon: Icon::DoorClosed,
+            danger: false,
+            enabled: true,
+        },
+    ]
 }
 
 /// The logo-radial commands `App` acts on. `Cancel` is intentionally absent:
@@ -1153,18 +1188,7 @@ impl MatchEvent for App {
                         log!("New project: not yet implemented (template picker is a later slice)");
                     }
                     crate::start_screen::StartScreenAction::OpenProject => {
-                        // Native folder picker (blocks the window while modal, as
-                        // OS file dialogs do). Cancel yields `None` (no-op); a
-                        // non-model dir makes `open_dir` log + return false, so we
-                        // stay on the start screen just like a broken recent row.
-                        if let Some(dir) = rfd::FileDialog::new()
-                            .set_title("Open a model")
-                            .pick_folder()
-                        {
-                            if self.open_dir(cx, &dir, None) {
-                                self.show_editor(cx);
-                            }
-                        }
+                        self.open_model_via_picker(cx);
                     }
                     crate::start_screen::StartScreenAction::None => {}
                 }
@@ -1360,7 +1384,15 @@ impl AppMain for App {
             .filter(|m| m.is_open())
             .map(|mut m| m.handle(cx, event));
         if let Some(crate::radial::RadialOutcome::Committed(id)) = menu_outcome {
-            if id == live_id!(close_model) {
+            if id == live_id!(new_model) {
+                // Burger "Create new model": same stub as the start screen's New
+                // project until the template picker lands in a later slice.
+                log!("New model: not yet implemented (template picker is a later slice)");
+            } else if id == live_id!(open_model) {
+                // Burger "Open model": native folder picker, same as the start
+                // screen's "Open a model".
+                self.open_model_via_picker(cx);
+            } else if id == live_id!(close_model) {
                 // Burger "Close model": drop the editor back to the start screen.
                 self.show_start_screen(cx);
             } else if let Some(cmd) = logo_command_for(id) {
