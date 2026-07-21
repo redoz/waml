@@ -5,4 +5,4 @@ set -euo pipefail
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 fixture="${1:-crates/waml-editor/tests/fixtures/mini}"
 cd "$root"
-cargo run -p waml-editor -- "$fixture"
+cargo run -p waml-editor --bin waml-editor -- "$fixture"
