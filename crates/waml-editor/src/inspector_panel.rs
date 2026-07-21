@@ -414,12 +414,10 @@ impl Widget for Inspector {
 
             // Right glyph cluster, right -> left: pin, fold caret. Both are the
             // shared Atlas SDF glyphs (`icons.rs`), tinted from the panel's own
-            // text colours -- dim grey by default, accent for the active pin --
-            // via the same tint-a-shared-DrawColor idiom the edge rows use below.
-            // (`draw_dim`/`draw_icon_edge` carry the theme colours; read them out
+            // dim text colour via the same tint-a-shared-DrawColor idiom the edge
+            // rows use below. (`draw_dim` carries the theme colour; read it out
             // before borrowing `self.icons`.)
             let dim = self.draw_dim.color;
-            let accent = self.draw_icon_edge.color;
 
             let pin = Rect {
                 pos: dvec2(
@@ -429,9 +427,11 @@ impl Widget for Inspector {
                 size: dvec2(PIN_SIZE, PIN_SIZE),
             };
             self.pin_rect = pin;
-            let pin_tint = if self.pinned { accent } else { dim };
-            let dc = self.icons.get(Icon::Pin);
-            dc.color = pin_tint;
+            // Glyph carries the state (pin vs. pin-off), not colour -- both draw
+            // in the neutral dim tint so the icon alone reads pinned/unpinned.
+            let pin_icon = if self.pinned { Icon::Pin } else { Icon::PinOff };
+            let dc = self.icons.get(pin_icon);
+            dc.color = dim;
             dc.draw_abs(cx, pin);
 
             // Fold caret: chevrons-collapse when the body is showing (click to
