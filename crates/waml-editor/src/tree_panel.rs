@@ -28,6 +28,28 @@ script_mod! {
         show_bg: true
         // Row-glyph tint; matches the label ink so icons read at full contrast.
         icon_color: atlas.text
+
+        // Active-row highlight, drawn in immediate mode over the selected row
+        // (see `draw_row_highlight`). We drive selection from the app's
+        // `sync_active_tab` -- the single choke point every activation flows
+        // through -- so the tree row tracks the active doc tab, not just tree
+        // clicks. `atlas.selection` is a translucent accent tint, so painting
+        // it over the drawn row keeps the label readable.
+        draw_selection: mod.draw.DrawColor{
+            color: atlas.selection
+            accent: uniform(atlas.accent)
+            pixel: fn() {
+                let sdf = Sdf2d.viewport(self.pos * self.rect_size)
+                sdf.box(0.5, 0.5, self.rect_size.x - 1.0, self.rect_size.y - 1.0, 4.0)
+                sdf.fill(self.color)
+                // Left accent bar -- the translucent fill alone reads too faint
+                // at the selection token's low alpha, so a solid 3px edge makes
+                // the active row unmistakable.
+                sdf.rect(0.0, 3.0, 3.0, self.rect_size.y - 6.0)
+                sdf.fill(self.accent)
+                return sdf.result
+            }
+        }
         // Panel carries the Atlas HUD frame. Unlike the inspector / tool_dock
         // panels -- which own a `draw_bg: DrawColor` field and can point it
         // straight at `mod.draw.AccentFrame` -- this widget derefs `View`, whose
@@ -94,7 +116,10 @@ script_mod! {
                 draw_bg +: {
                     color_1: atlas.field_bg
                     color_2: atlas.field_bg
-                    color_active: atlas.selection
+                    // Selection is now app-driven (draw_selection overlay), so the
+                    // built-in click-only highlight is disabled -- it can't track
+                    // tab clicks and would double-tint. Keep active == idle bg.
+                    color_active: atlas.field_bg
                 }
             }
 
@@ -114,7 +139,8 @@ script_mod! {
                 draw_bg +: {
                     color_1: atlas.field_bg
                     color_2: atlas.field_bg
-                    color_active: atlas.selection
+                    // See file_node: selection is app-driven now.
+                    color_active: atlas.field_bg
                 }
                 // The built-in folder box icon is redundant with our own
                 // package.svg overlay; make it fully transparent.
@@ -145,7 +171,7 @@ impl IconSet {
     /// strip; the draw site fetches the shader via `IconSet::get`.
     pub fn icon_for(kind: TreeKind) -> Option<Icon> {
         Some(match kind {
-            TreeKind::Class => Icon::Square,
+            TreeKind::Class => Icon::PanelTop,
             TreeKind::Interface => Icon::SquareDashedTopSolid,
             TreeKind::Enum => Icon::List,
             TreeKind::DataType => Icon::Braces,
@@ -183,6 +209,13 @@ pub struct ProjectTree {
     // tracks light/dark and live-reload.
     #[live]
     icon_color: Vec4,
+    // Translucent accent fill painted over the active row (see the DSL).
+    #[live]
+    draw_selection: DrawColor,
+    // Key of the row to highlight, mirroring the active doc tab. Set via
+    // `set_selected_key` from the app's `sync_active_tab`.
+    #[rust]
+    selected_key: Option<String>,
 }
 
 // Tree-row selection highlight is click-only, provided by `FileTree`'s own
@@ -241,30 +274,58 @@ fn draw_row_icon(
     );
 }
 
-/// Emit `begin_folder`/`end_folder` for packages and `file` for leaves, and
-/// overlay a HUD glyph icon at the left of every row. A collapsed folder
-/// returns `Err` from `begin_folder`; skip its children then (its own row is
-/// still drawn either way, so the icon is drawn unconditionally).
+/// Paint the active-row highlight over the row at `row_top`, spanning the full
+/// tree width. Translucent, so it drops over the already-drawn row (bg + label)
+/// without hiding the text. Drawn before the glyph so the icon stays on top.
+fn draw_row_highlight(cx: &mut Cx2d, draw_selection: &mut DrawColor, row_top: Vec2d) {
+    let width = cx.turtle().rect().size.x;
+    if !width.is_finite() {
+        return;
+    }
+    draw_selection.draw_abs(
+        cx,
+        Rect {
+            pos: dvec2(row_top.x, row_top.y),
+            size: dvec2(width, ROW_HEIGHT),
+        },
+    );
+}
+
+/// Emit `begin_folder`/`end_folder` for packages and `file` for leaves, overlay
+/// a HUD glyph icon at the left of every row, and paint the active-row highlight
+/// on the row whose key matches `selected`. A collapsed folder returns `Err`
+/// from `begin_folder`; skip its children then (its own row is still drawn
+/// either way, so the icon is drawn unconditionally).
+#[allow(clippy::too_many_arguments)]
 fn draw_nodes(
     cx: &mut Cx2d,
     ft: &mut FileTree,
     nodes: &[TreeNode],
     icons: &mut IconSet,
+    draw_selection: &mut DrawColor,
     depth: usize,
     color: Vec4,
+    selected: Option<&str>,
 ) {
     for node in nodes {
         let id = LiveId::from_str(&node.key);
         let row_top = cx.turtle().pos();
+        let is_selected = selected == Some(node.key.as_str());
         if matches!(node.kind, TreeKind::Package) {
             let opened = ft.begin_folder(cx, id, &node.title).is_ok();
+            if is_selected {
+                draw_row_highlight(cx, draw_selection, row_top);
+            }
             draw_row_icon(cx, icons, node.kind, row_top, depth, color);
             if opened {
-                draw_nodes(cx, ft, &node.children, icons, depth + 1, color);
+                draw_nodes(cx, ft, &node.children, icons, draw_selection, depth + 1, color, selected);
                 ft.end_folder();
             }
         } else {
             ft.file(cx, id, &node.title);
+            if is_selected {
+                draw_row_highlight(cx, draw_selection, row_top);
+            }
             draw_row_icon(cx, icons, node.kind, row_top, depth, color);
         }
     }
@@ -274,7 +335,16 @@ impl Widget for ProjectTree {
     fn draw_walk(&mut self, cx: &mut Cx2d, scope: &mut Scope, walk: Walk) -> DrawStep {
         while let Some(step) = self.view.draw_walk(cx, scope, walk).step() {
             if let Some(mut file_tree) = step.as_file_tree().borrow_mut() {
-                draw_nodes(cx, &mut file_tree, &self.tree.roots, &mut self.icons, 0, self.icon_color);
+                draw_nodes(
+                    cx,
+                    &mut file_tree,
+                    &self.tree.roots,
+                    &mut self.icons,
+                    &mut self.draw_selection,
+                    0,
+                    self.icon_color,
+                    self.selected_key.as_deref(),
+                );
             }
         }
         DrawStep::done()
@@ -326,6 +396,16 @@ impl ProjectTree {
         self.id_to_kind = id_to_kind;
         self.tree = tree;
         self.view.redraw(cx);
+    }
+
+    /// Highlight the row whose key matches `key` (or clear on `None`), mirroring
+    /// the active doc tab. Called from the app's `sync_active_tab`, so the tree
+    /// tracks the active document regardless of what triggered the switch.
+    pub fn set_selected_key(&mut self, cx: &mut Cx, key: Option<String>) {
+        if self.selected_key != key {
+            self.selected_key = key;
+            self.view.redraw(cx);
+        }
     }
 
     pub fn selected_diagram(&self, actions: &Actions) -> Option<String> {
@@ -405,7 +485,7 @@ mod icon_map_tests {
 
     #[test]
     fn tree_kind_maps_to_catalog_icon() {
-        assert_eq!(IconSet::icon_for(TreeKind::Class), Some(Icon::Square));
+        assert_eq!(IconSet::icon_for(TreeKind::Class), Some(Icon::PanelTop));
         assert_eq!(IconSet::icon_for(TreeKind::Interface), Some(Icon::SquareDashedTopSolid));
         assert_eq!(IconSet::icon_for(TreeKind::Enum), Some(Icon::List));
         assert_eq!(IconSet::icon_for(TreeKind::DataType), Some(Icon::Braces));
