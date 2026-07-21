@@ -1019,6 +1019,7 @@ impl MatchEvent for App {
             let logo_closed = pr.closed(actions, live_id!(logo));
             let burger_closed = pr.closed(actions, live_id!(burger));
             let node_closed = pr.closed(actions, live_id!(node_menu));
+            let picker_closed = pr.closed(actions, live_id!(element_picker));
             drop(pr);
 
             // Burger caller-local glow: any close of the burger tag drops it.
@@ -1055,6 +1056,18 @@ impl MatchEvent for App {
             if let Some(PopupResult::Invoked(id)) = node_closed {
                 if let Some(cmd) = crate::canvas::node_command_for(id) {
                     log!("node command: {cmd:?}");
+                }
+            }
+            // Element-picker: a node pick repoints the inspector only
+            // (inspector-local -- no tab open, no canvas move), the same path a
+            // canvas/tab selection takes.
+            if let Some(PopupResult::Invoked(id)) = picker_closed {
+                if let Some(mut inspector) = self
+                    .ui
+                    .widget(cx, ids!(inspector))
+                    .borrow_mut::<crate::inspector_panel::Inspector>()
+                {
+                    inspector.apply_pick(cx, &self.model, id);
                 }
             }
         }
@@ -1133,21 +1146,35 @@ impl MatchEvent for App {
             return;
         }
 
-        // Element-picker dropdown: a node pick repoints the inspector only
-        // (inspector-local -- no tab open, no canvas move), the same path a
-        // canvas/tab selection takes.
-        let picked = self
+        // Element-picker: the field asked to open its list. Only `App` may
+        // place a cross-tree popup, so relay through `popup_root` (routed
+        // through the single authority, same as burger/logo/node radial).
+        let open_request = self
             .ui
             .widget(cx, ids!(inspector))
             .borrow_mut::<crate::inspector_panel::Inspector>()
-            .and_then(|inspector| inspector.picked(actions));
-        if let Some(key) = picked {
-            if let Some(mut inspector) = self
+            .and_then(|inspector| inspector.open_picker_request(actions));
+        if let Some((anchor_rect, items)) = open_request {
+            let anchor = dvec2(
+                anchor_rect.pos.x,
+                anchor_rect.pos.y + anchor_rect.size.y + crate::popup::menu::MENU_GAP,
+            );
+            let bounds = self.window_bounds(cx);
+            if let Some(mut pr) = self
                 .ui
-                .widget(cx, ids!(inspector))
-                .borrow_mut::<crate::inspector_panel::Inspector>()
+                .widget(cx, ids!(popup_root))
+                .borrow_mut::<PopupRoot>()
             {
-                inspector.set_subject(cx, &self.model, Subject::Classifier(key));
+                pr.show_at(
+                    cx,
+                    PopupSpec::Menu {
+                        tag: live_id!(element_picker),
+                        anchor,
+                        bounds,
+                        items,
+                        open: MenuOpen::Popup,
+                    },
+                );
             }
             return;
         }

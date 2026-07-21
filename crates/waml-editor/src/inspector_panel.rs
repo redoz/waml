@@ -6,12 +6,14 @@
 //! same hybrid `ProjectTree` uses (derefs `View`, yet does manual draws in its
 //! `draw_walk`). See `inspector.rs` for the pure `InspectorView` projection.
 //!
-//! Top bar: an element-picker `DropDown` listing the current diagram's contents
-//! (diagram, nodes, source-anchored edges), plus a square pin toggle. Picking a
-//! node row repoints the inspector (inspector-local; emits
-//! `InspectorAction::ElementPicked`, which `App` resolves via `set_subject`).
-//! Diagram/edge rows are listed but selecting them is a no-op for now. The pin
-//! is visual-only this cut (its keep-opaque-on-blur purpose is deferred).
+//! Top bar: an element-picker field listing the current diagram's contents
+//! (diagram, nodes, source-anchored edges), plus a square pin toggle. Clicking
+//! the field emits `InspectorAction::OpenPicker`; `App` relays that to
+//! `PopupRoot::show_at` (a `MenuPopup` card), and a committed pick comes back
+//! through the tag-filtered `PopupRoot::closed` queue, resolved via
+//! `apply_pick` (which repoints the inspector, inspector-local). Diagram/edge
+//! rows are listed but picking them is a no-op for now. The pin is
+//! visual-only this cut (its keep-opaque-on-blur purpose is deferred).
 //!
 //! Step C (inline edit): `Title`/`Description` are click-to-edit. Edits are
 //! hand-rolled (no fork `TextInput`) — same convention as `doc_tabs.rs`: rects
@@ -24,8 +26,8 @@
 use crate::icons::Icon;
 use crate::icons::IconSet;
 use crate::inspector::{
-    build_view, effective_field, subject_to_index, ElementKind, ElementRow, FieldId,
-    InspectorView, Subject, PICKER_PLACEHOLDER,
+    build_view, effective_field, subject_to_index, ElementKind, ElementRow, FieldId, InspectorView,
+    Subject, PICKER_PLACEHOLDER,
 };
 use crate::node_style::{accent_bucket, AccentBucket};
 use makepad_widgets::*;
@@ -69,10 +71,10 @@ script_mod! {
         // The element-picker bar. `element_bar` is an empty spacer that just
         // reserves the panel's top strip (so the container's `Fit` height keeps
         // the bar when collapsed); everything in it -- the picker field (badge +
-        // selected label), the pencil/caret/pin glyphs, and the owned popup list
-        // -- is hand-drawn immediate-mode in `draw_walk`. The picker is no longer
-        // a fork `DropDown`: its popup is drawn here so each association row can
-        // carry the real `IconSpline` SDF (the fork `PopupMenu` is label-only).
+        // selected label) and the pencil/caret/pin glyphs -- is hand-drawn
+        // immediate-mode in `draw_walk`. The dropped list itself is the shared
+        // `MenuPopup` surface (routed through `PopupRoot`), so each association
+        // row still carries the real `IconSpline` SDF.
         element_bar := View {
             width: Fill
             height: 56.0
@@ -109,32 +111,10 @@ script_mod! {
             }
         }
         draw_field_bg +: { color: atlas.field_bg }
-        // Owned element-picker popup (replaces the fork DropDown so each edge row
-        // can draw the real `IconSpline` SDF). `draw_popup_bg` is the frosted
-        // Atlas HUD sheet; `draw_row_hi` is the hover/selected row wash;
-        // `draw_row_text`/`draw_row_sel` are the row label (dark / accent-when-
-        // selected); `draw_icon_edge` is a colour-only holder whose `color` is
-        // copied onto `icons.spline` per draw (no RGBA crosses Rust).
-        draw_popup_bg: mod.draw.AccentFrame{ color: atlas.field_bg }
-        draw_row_hi +: { color: atlas.selection }
-        draw_row_text +: {
-            color: atlas.text
-            text_style: TextStyle{
-                font_size: 13
-                font_family: FontFamily{
-                    latin := FontMember{res: crate_resource("self:resources/fonts/IBM_Plex_Sans/IBMPlexSans-Regular.ttf") asc: -0.1 desc: 0.0}
-                }
-            }
-        }
-        draw_row_sel +: {
-            color: atlas.accent
-            text_style: TextStyle{
-                font_size: 13
-                font_family: FontFamily{
-                    latin := FontMember{res: crate_resource("self:resources/fonts/IBM_Plex_Sans/IBMPlexSans-Regular.ttf") asc: -0.1 desc: 0.0}
-                }
-            }
-        }
+        // `draw_icon_edge` is a colour-only holder whose `color` is copied onto
+        // the pin/caret glyphs per draw (no RGBA crosses Rust). The element-picker
+        // list itself is now drawn by the shared `MenuPopup` surface (routed
+        // through `PopupRoot`), not this panel.
         draw_icon_edge +: { color: atlas.accent }
         // Type-badge: solid per-kind square (colour set at draw time) with the
         // kind initial (white) drawn on top.
@@ -152,15 +132,18 @@ script_mod! {
 }
 
 /// Emitted by the inspector. `Edited` is the tab-promotion signal (`App`
-/// promotes the active preview tab to persisted on receipt). `ElementPicked` is
-/// a node pick from the element-picker dropdown (`App` resolves it via
-/// `set_subject`, the same path a canvas/tab selection takes).
+/// promotes the active preview tab to persisted on receipt). `OpenPicker` is
+/// the element-picker field's open-request (the inspector can't compute
+/// cross-tree placement itself); `App` relays it to `PopupRoot::show_at`.
 #[derive(Clone, Debug, Default)]
 pub enum InspectorAction {
     #[default]
     None,
     Edited(String),
-    ElementPicked(String),
+    OpenPicker {
+        anchor: Rect,
+        items: Vec<crate::popup::base::PopupItem>,
+    },
 }
 
 #[derive(Script, ScriptHook, Widget)]
@@ -183,18 +166,9 @@ pub struct Inspector {
     #[live]
     draw_field_bg: DrawColor,
 
-    /// Owned element-picker popup. `draw_popup_bg` is the HUD sheet (AccentFrame);
-    /// `draw_row_hi` washes the hovered/selected row; `draw_row_text`/`draw_row_sel`
-    /// are the row label (dark / accent when selected). `icons` supplies the real
-    /// `IconSpline` SDF drawn on association rows, tinted from `draw_icon_edge`.
-    #[live]
-    draw_popup_bg: DrawColor,
-    #[live]
-    draw_row_hi: DrawColor,
-    #[live]
-    draw_row_text: DrawText,
-    #[live]
-    draw_row_sel: DrawText,
+    /// `draw_icon_edge` tints the pin/caret glyphs (via `icons`, the shared
+    /// Atlas SDF set). The dropped list's own icons (including `IconSpline` on
+    /// association rows) are drawn by `MenuPopup`, not here.
     #[live]
     draw_icon_edge: DrawColor,
     #[live]
@@ -238,16 +212,13 @@ pub struct Inspector {
     /// (`set_picker_visible(false)`), floating the body up to the panel top.
     #[rust]
     show_picker: bool,
-    /// Owned-popup state: whether the list is open, the hit rects of the visible
-    /// rows (each paired with its index into `elements`), and the hovered row.
-    #[rust]
-    picker_open: bool,
+    /// The picker field's hit rect (click target that opens the list).
     #[rust]
     picker_field_rect: Rect,
+    /// id -> index into `elements`, rebuilt by `picker_items` each time the
+    /// list is opened. Reverses a committed `PopupItem.id` back to its row.
     #[rust]
-    picker_rects: Vec<(usize, Rect)>,
-    #[rust]
-    picker_hover: Option<usize>,
+    picker_ids: Vec<(LiveId, usize)>,
     /// Pin toggle. Visual-only this cut (keep-opaque-on-blur is deferred).
     #[rust]
     pinned: bool,
@@ -281,10 +252,6 @@ const ICON: f64 = 16.0;
 const ICON_GAP: f64 = 10.0;
 // Left type-badge (drawn over the field's left inset).
 const BADGE_SIZE: f64 = 24.0;
-// Owned element-picker popup geometry (px).
-const POPUP_PAD: f64 = 8.0; // sheet inset from the panel edges + inner padding
-const ROW_H_PICK: f64 = 30.0; // per-row height in the popup list
-const ROW_ICON: f64 = 16.0; // spline-icon box on association rows
 
 /// An association row's display text in the picker popup: just the target end.
 /// The model label is `Source -> Target`, but each edge row is drawn beneath its
@@ -325,48 +292,33 @@ impl Widget for Inspector {
         self.view.handle_event(cx, event, scope);
 
         let uid = self.widget_uid();
-        // All hit rects (picker field, pin, caret, pencil, popup rows, inline-edit
-        // fields) are recorded in `draw_walk` off `self.view.area().rect(cx)`,
-        // which *during a draw* reports the pre-alignment turtle origin (x≈0).
-        // This panel lives in a right-aligned parent, so the finished draw list is
-        // shifted right by the panel's x — the glyphs render there, but the stored
-        // rects keep the unshifted origin. Pointer events arrive in that shifted
-        // (post-alignment) space, so translate the event point back into draw-time
-        // space by the offset between the two before any `contains` test.
+        // All hit rects (picker field, pin, caret, pencil, inline-edit fields)
+        // are recorded in `draw_walk` off `self.view.area().rect(cx)`, which
+        // *during a draw* reports the pre-alignment turtle origin (x≈0). This
+        // panel lives in a right-aligned parent, so the finished draw list is
+        // shifted right by the panel's x — the glyphs render there, but the
+        // stored rects keep the unshifted origin. Pointer events arrive in that
+        // shifted (post-alignment) space, so translate the event point back
+        // into draw-time space by the offset between the two before any
+        // `contains` test.
         let hit_off = self.view.area().rect(cx).pos - self.view_rect.pos;
         match event.hits_with_capture_overload(cx, self.view.area(), true) {
-            // Track the hovered popup row so it can wash under the pointer.
-            Hit::FingerHoverIn(fe) | Hit::FingerHoverOver(fe) if self.picker_open => {
-                let p = fe.abs - hit_off;
-                let hov = self
-                    .picker_rects
-                    .iter()
-                    .find(|(_, r)| r.contains(p))
-                    .map(|(i, _)| *i);
-                if hov != self.picker_hover {
-                    self.picker_hover = hov;
-                    self.view.redraw(cx);
-                }
-            }
             Hit::FingerUp(fe) if fe.is_primary_hit() => {
                 let p = fe.abs - hit_off;
-                // Owned picker popup: a row picks, anything else closes.
-                if self.picker_open {
-                    if let Some(idx) = self
-                        .picker_rects
-                        .iter()
-                        .find(|(_, r)| r.contains(p))
-                        .map(|(i, _)| *i)
-                    {
-                        self.choose_element(cx, idx);
-                    } else {
-                        self.close_picker(cx);
-                    }
-                    return;
-                }
                 // Closed: the picker field opens the list.
                 if self.picker_field_rect.contains(p) {
-                    self.open_picker(cx);
+                    let screen_field = Rect {
+                        pos: self.picker_field_rect.pos + hit_off,
+                        size: self.picker_field_rect.size,
+                    };
+                    let items = self.picker_items();
+                    cx.widget_action(
+                        uid,
+                        InspectorAction::OpenPicker {
+                            anchor: screen_field,
+                            items,
+                        },
+                    );
                     return;
                 }
                 if self.pin_rect.contains(p) {
@@ -423,15 +375,8 @@ impl Widget for Inspector {
         // caret. Collapse the frame to hug just the bar; the parent wrapper
         // aligns this panel top-right, so a `Fit` height floats it to the top.
         let collapsed = self.proj.is_none() || self.folded;
-        // Visible popup rows = every element except the index-0 placeholder.
-        let n_rows = self.elements.len().saturating_sub(1);
-        let sheet_h = POPUP_PAD * 2.0 + (n_rows as f64) * ROW_H_PICK;
         let mut walk = walk;
-        if self.picker_open {
-            // Grow the frame to contain the bar + the dropped list, so the list
-            // isn't clipped by the panel (the body is hidden while it's open).
-            walk.height = Size::Fixed(BAR_H + sheet_h);
-        } else if collapsed {
+        if collapsed {
             walk.height = Size::Fit {
                 min: None,
                 max: None,
@@ -442,7 +387,6 @@ impl Widget for Inspector {
         let rect = self.view.area().rect(cx);
         self.view_rect = rect;
         self.field_rects.clear();
-        self.picker_rects.clear();
 
         let cy = rect.pos.y + BAR_H * 0.5;
 
@@ -526,13 +470,6 @@ impl Widget for Inspector {
                 pos: rect.pos,
                 size: dvec2((caret.pos.x - ICON_GAP - rect.pos.x).max(0.0), BAR_H),
             };
-
-            // Owned popup list, dropped below the bar. It replaces the body while
-            // open (the frame was sized to bar + list above), so return after.
-            if self.picker_open {
-                self.draw_picker_list(cx, rect, n_rows, sel);
-                return DrawStep::done();
-            }
         } else {
             // No picker bar: clear its hit rects so stale rects from a previous
             // diagram tab don't catch clicks over the (now bar-less) body.
@@ -677,18 +614,41 @@ impl Inspector {
             .and_then(|v| v.kind_label.chars().next())
             .map(|c| c.to_uppercase().to_string())
             .unwrap_or_default();
-        // Repointing closes an open picker; the field re-reads its selection
-        // from `subject_to_index` at draw time.
-        self.picker_open = false;
         self.view.redraw(cx);
     }
 
-    /// Feed the element-picker the current diagram's rows. The owned popup reads
-    /// them straight from `self.elements`. Called by `App` whenever the current
-    /// diagram changes.
+    /// Build the picker rows as `PopupItem`s and record their id→index map.
+    /// Node rows are enabled (a pick repoints the inspector); edge/diagram rows
+    /// are disabled (they were no-ops in the inline list). Edge labels show only
+    /// the target end (as before); edges lead with the `Spline` glyph.
+    fn picker_items(&mut self) -> Vec<crate::popup::base::PopupItem> {
+        use crate::popup::base::PopupItem;
+        self.picker_ids.clear();
+        let mut items = Vec::new();
+        for idx in 1..self.elements.len() {
+            let row = &self.elements[idx];
+            let id = LiveId::from_str(&row.key);
+            self.picker_ids.push((id, idx));
+            let (label, icon) = match row.kind {
+                ElementKind::Edge => (edge_target(&row.label).to_string(), Icon::Spline),
+                ElementKind::Node => (row.label.clone(), Icon::PackageOpen),
+                _ => (row.label.clone(), Icon::SquareMenu),
+            };
+            items.push(PopupItem {
+                id,
+                label,
+                icon,
+                danger: false,
+                enabled: matches!(row.kind, ElementKind::Node),
+            });
+        }
+        items
+    }
+
+    /// Feed the element-picker the current diagram's rows. Called by `App`
+    /// whenever the current diagram changes.
     pub fn set_diagram_elements(&mut self, cx: &mut Cx, rows: Vec<ElementRow>) {
         self.elements = rows;
-        self.picker_open = false;
         // Feeding diagram rows implies a diagram tab: show the picker bar.
         self.show_picker = true;
         self.view.redraw(cx);
@@ -696,91 +656,28 @@ impl Inspector {
 
     /// Show/hide the element-picker top bar. Hidden while previewing a
     /// classifier/package (no diagram to pick elements from); the body then
-    /// floats up to the panel top. Also forces the popup closed.
+    /// floats up to the panel top.
     pub fn set_picker_visible(&mut self, cx: &mut Cx, visible: bool) {
         self.show_picker = visible;
-        if !visible {
-            self.picker_open = false;
-        }
         self.view.redraw(cx);
     }
 
-    fn open_picker(&mut self, cx: &mut Cx) {
-        self.picker_open = true;
-        self.picker_hover = None;
-        self.view.redraw(cx);
-    }
-
-    fn close_picker(&mut self, cx: &mut Cx) {
-        self.picker_open = false;
-        self.picker_hover = None;
-        self.view.redraw(cx);
-    }
-
-    /// Resolve a click on popup row `idx`. Node rows repoint the inspector (via
-    /// an `ElementPicked` action `App` resolves); diagram/edge/placeholder rows
-    /// are no-ops. Either way the list closes.
-    fn choose_element(&mut self, cx: &mut Cx, idx: usize) {
-        let picked = match self.elements.get(idx).map(|r| (r.kind, r.key.clone())) {
-            Some((ElementKind::Node, key)) => Some(key),
-            _ => None,
-        };
-        self.close_picker(cx);
-        if let Some(key) = picked {
-            cx.widget_action(self.widget_uid(), InspectorAction::ElementPicked(key));
+    /// Resolve a committed `PopupItem.id` (from `PopupRoot::closed`) back to its
+    /// element and repoint the inspector. Returns the new subject, or `None` if
+    /// the id wasn't a pickable (node) element in the current list.
+    pub fn apply_pick(&mut self, cx: &mut Cx, model: &Model, id: LiveId) -> Option<Subject> {
+        let idx = self
+            .picker_ids
+            .iter()
+            .find(|(i, _)| *i == id)
+            .map(|(_, x)| *x)?;
+        let row = self.elements.get(idx)?;
+        if !matches!(row.kind, ElementKind::Node) {
+            return None;
         }
-    }
-
-    /// Draw the owned popup list below the bar: a frosted HUD sheet, then one row
-    /// per element (skipping the index-0 placeholder). Association rows lead with
-    /// the real `IconSpline` SDF and show only the target end; node/diagram rows
-    /// align their labels to the same text column. Records each row's hit rect
-    /// (paired with its `elements` index) for `handle_event`.
-    fn draw_picker_list(&mut self, cx: &mut Cx2d, rect: Rect, n_rows: usize, sel: usize) {
-        let sheet = Rect {
-            pos: dvec2(rect.pos.x + POPUP_PAD, rect.pos.y + BAR_H),
-            size: dvec2(
-                (rect.size.x - POPUP_PAD * 2.0).max(0.0),
-                POPUP_PAD * 2.0 + (n_rows as f64) * ROW_H_PICK,
-            ),
-        };
-        self.draw_popup_bg.draw_abs(cx, sheet);
-
-        let gutter_x = sheet.pos.x + POPUP_PAD;
-        let text_x = gutter_x + ROW_ICON + 8.0;
-        let mut y = sheet.pos.y + POPUP_PAD;
-        for idx in 1..self.elements.len() {
-            let row = self.elements[idx].clone();
-            let row_rect = Rect {
-                pos: dvec2(sheet.pos.x + 3.0, y),
-                size: dvec2((sheet.size.x - 6.0).max(0.0), ROW_H_PICK),
-            };
-            if self.picker_hover == Some(idx) || idx == sel {
-                self.draw_row_hi.draw_abs(cx, row_rect);
-            }
-            let text_y = y + (ROW_H_PICK - 16.0) * 0.5;
-            let (label, selected): (&str, bool) = match row.kind {
-                ElementKind::Edge => {
-                    let icon = Rect {
-                        pos: dvec2(gutter_x, y + (ROW_H_PICK - ROW_ICON) * 0.5),
-                        size: dvec2(ROW_ICON, ROW_ICON),
-                    };
-                    let dc = self.icons.get(Icon::Spline);
-                    dc.color = self.draw_icon_edge.color;
-                    dc.draw_abs(cx, icon);
-                    (edge_target(&row.label), idx == sel)
-                }
-                _ => (row.label.as_str(), idx == sel),
-            };
-            if selected {
-                self.draw_row_sel.draw_abs(cx, dvec2(text_x, text_y), label);
-            } else {
-                self.draw_row_text
-                    .draw_abs(cx, dvec2(text_x, text_y), label);
-            }
-            self.picker_rects.push((idx, row_rect));
-            y += ROW_H_PICK;
-        }
+        let subject = Subject::Classifier(row.key.clone());
+        self.set_subject(cx, model, subject.clone());
+        Some(subject)
     }
 
     fn subject_key(&self) -> Option<String> {
@@ -856,12 +753,18 @@ impl Inspector {
         }
     }
 
-    /// Reader for a node pick from the element-picker dropdown.
-    pub fn picked(&self, actions: &Actions) -> Option<String> {
+    /// The element-picker asked to open. `App` relays this to `PopupRoot` (only
+    /// the composition root can place a cross-tree popup). Anchor is the field
+    /// rect in screen coords; drop the card just below it.
+    pub fn open_picker_request(
+        &self,
+        actions: &Actions,
+    ) -> Option<(Rect, Vec<crate::popup::base::PopupItem>)> {
         let item = actions.find_widget_action(self.widget_uid())?;
-        match item.cast() {
-            InspectorAction::ElementPicked(key) => Some(key),
-            _ => None,
+        if let InspectorAction::OpenPicker { anchor, items } = item.cast() {
+            Some((anchor, items))
+        } else {
+            None
         }
     }
 }

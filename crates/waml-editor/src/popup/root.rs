@@ -226,6 +226,14 @@ impl PopupRoot {
                 self.active = Some((ActiveKind::Radial, tag));
             }
         }
+        // A session-first open: `menu`/`radial`'s own draw components (`draw_frame`
+        // / `draw_wedge`) are `#[redraw]` but have never executed `draw_abs`
+        // (their `draw_walk` early-returns while closed), so their Area is not
+        // yet established and `.redraw(cx)` on them alone can be a no-op. `body`
+        // draws unconditionally every frame, so its Area IS always valid --
+        // redraw through it (which recurses into its children) to guarantee the
+        // newly-opened surface actually repaints, not just becomes logically open.
+        self.body.redraw(cx);
     }
 
     /// The single per-event seam. Light-dismiss closes; otherwise the active
