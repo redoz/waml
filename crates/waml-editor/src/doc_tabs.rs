@@ -25,6 +25,10 @@ script_mod! {
         draw_edge +: { color: atlas.frame_hi }
         draw_tab +: { color: atlas.canvas_ground }
         draw_accent +: { color: atlas.accent }
+        // Leading per-kind glyph tint. Dark text ink (not the icon set's default
+        // accent) so the glyph reads against the blue-tinted bar / white card --
+        // accent-on-blue was too low-contrast. Mirrors the tree's icon_color.
+        icon_color: atlas.text
         draw_divider +: { color: atlas.surface_border }
         // Inactive-tab hover wash: a translucent accent tint so the pointer
         // clearly reads as "clickable" against the white bar.
@@ -82,9 +86,9 @@ script_mod! {
                 line_spacing: 1.2
             }
         }
-        // Active preview tab: bold italic (matches the bold active persisted
-        // tab's weight, keeps the italic "provisional" read). Renders clean at
-        // 10px now that the glyph sharpening (aa + stem_darken) is on.
+        // Active preview tab: semibold italic -- a mid-weight between the bold
+        // active persisted tab and plain regular, keeping the italic
+        // "provisional" read. Renders clean at 10px with the glyph sharpening on.
         draw_text_preview_active +: {
             color: atlas.text
             aa_2x2: 1.0
@@ -93,7 +97,7 @@ script_mod! {
             text_style: TextStyle{
                 font_size: 10
                 font_family: FontFamily{
-                    latin := FontMember{res: crate_resource("self:resources/fonts/IBM_Plex_Sans/IBMPlexSans-BoldItalic.ttf") asc: -0.1 desc: 0.0}
+                    latin := FontMember{res: crate_resource("self:resources/fonts/IBM_Plex_Sans/IBMPlexSans-SemiBoldItalic.ttf") asc: -0.1 desc: 0.0}
                 }
                 line_spacing: 1.2
             }
@@ -406,6 +410,10 @@ pub struct DocTabs {
     /// tabs and tree read as one system.
     #[live]
     icons: IconSet,
+    /// Tint for the leading per-kind glyph (dark text ink, set from atlas.text
+    /// in the DSL) so it contrasts the bar/card instead of the icon set's accent.
+    #[live]
+    icon_color: Vec4,
 
     #[rust]
     tabs: Vec<DocTab>,
@@ -569,12 +577,14 @@ impl Widget for DocTabs {
             if let Some(icon) = IconSet::icon_for(tab.node_kind) {
                 let ix = (x + TEXT_PAD).round();
                 let iy = (tab_rect.pos.y + (tab_rect.size.y - ICON_SIZE) / 2.0).round();
-                self.icons.get(icon).draw_abs(
+                self.icons.draw(
                     cx,
+                    icon,
                     Rect {
                         pos: dvec2(ix, iy),
                         size: dvec2(ICON_SIZE, ICON_SIZE),
                     },
+                    self.icon_color,
                 );
             }
 
