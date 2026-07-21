@@ -433,10 +433,21 @@ pub struct DocTabs {
     /// Tab held down (press feedback); `default` = none.
     #[rust]
     pressed: LiveId,
+
+    /// Hidden on the start screen (no open model). This is a hand-rolled
+    /// caption-bar child, so the fork's `Widget::set_visible` is a no-op and an
+    /// empty tab list still paints the bar strip -- hiding is a `#[rust]` flag
+    /// gated in `draw_walk`/`handle_event`, mirroring `StartScreen`. Defaults
+    /// `false` -> shown; `App::show_start_screen` hides it, `show_editor` reveals.
+    #[rust]
+    hidden: bool,
 }
 
 impl Widget for DocTabs {
     fn handle_event(&mut self, cx: &mut Cx, event: &Event, _scope: &mut Scope) {
+        if self.hidden {
+            return;
+        }
         let uid = self.widget_uid();
         match event.hits_with_capture_overload(cx, self.draw_bg.area(), true) {
             Hit::FingerDown(fe) => {
@@ -487,6 +498,11 @@ impl Widget for DocTabs {
     }
 
     fn draw_walk(&mut self, cx: &mut Cx2d, _scope: &mut Scope, walk: Walk) -> DrawStep {
+        if self.hidden {
+            // Nothing drawn -- the caption band shows through. Stale tab/close
+            // rects are left as-is; `handle_event` early-returns while hidden.
+            return DrawStep::done();
+        }
         let rect = cx.walk_turtle(walk);
         self.draw_bg.draw_abs(cx, rect);
         self.draw_edge.draw_abs(
@@ -668,6 +684,16 @@ impl DocTabs {
         self.tabs = open.tabs.clone();
         self.active = open.active;
         self.draw_bg.redraw(cx);
+    }
+
+    /// Show/hide the strip. Mirrors `StartScreen::set_visible`: while hidden the
+    /// widget's `Area` is never assigned a draw-list id, so a scoped `redraw` is
+    /// a no-op -- force a full repaint to flip state on the first toggle.
+    pub fn set_visible(&mut self, cx: &mut Cx, visible: bool) {
+        if self.hidden != !visible {
+            self.hidden = !visible;
+            cx.redraw_all();
+        }
     }
 }
 

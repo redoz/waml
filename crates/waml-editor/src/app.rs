@@ -671,8 +671,15 @@ impl App {
     fn show_editor(&mut self, cx: &mut Cx) {
         self.editor_shown = true;
         self.ui.widget(cx, ids!(main_column)).set_visible(cx, true);
-        // Caption burger belongs to an open model.
+        // Caption burger + doc-tab strip belong to an open model.
         self.ui.widget(cx, ids!(menu_btn)).set_visible(cx, true);
+        if let Some(mut doc_tabs) = self
+            .ui
+            .widget(cx, ids!(doc_tabs))
+            .borrow_mut::<crate::doc_tabs::DocTabs>()
+        {
+            doc_tabs.set_visible(cx, true);
+        }
         if let Some(mut screen) = self
             .ui
             .widget(cx, ids!(start_screen))
@@ -735,8 +742,19 @@ impl App {
             screen.set_visible(cx, true);
         }
         self.ui.widget(cx, ids!(main_column)).set_visible(cx, false);
-        // No open model on the start screen: hide burger.
+        // No open model on the start screen: hide burger + doc-tab strip, and
+        // drop the editor's tab state so a re-open starts clean rather than
+        // inheriting the closed model's tabs (open_dir rebuilds from scratch).
         self.ui.widget(cx, ids!(menu_btn)).set_visible(cx, false);
+        self.tabs = OpenTabs::default();
+        self.refresh_doc_tabs(cx);
+        if let Some(mut doc_tabs) = self
+            .ui
+            .widget(cx, ids!(doc_tabs))
+            .borrow_mut::<crate::doc_tabs::DocTabs>()
+        {
+            doc_tabs.set_visible(cx, false);
+        }
         self.editor_shown = false;
     }
 
