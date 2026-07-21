@@ -12,7 +12,12 @@ const OKF_FOOTER =
 export function bundleToDownloadFiles(bundle: [string, string][], projectTitle: string): Record<string, string> {
   const files: Record<string, string> = {};
   for (const [path, md] of bundle) files[path] = md;
-  const indexKey = Object.keys(files).find(k => k.endsWith("index.md"));
+  // The ROOT index is the shallowest `index.md` -- a bare `endsWith("index.md")`
+  // also matches nested package indexes (`sales/index.md`), so the footer could
+  // land on a sub-package. Rank by path depth and take the top-most.
+  const indexKey = Object.keys(files)
+    .filter(k => k === "index.md" || k.endsWith("/index.md"))
+    .sort((a, b) => a.split("/").length - b.split("/").length)[0];
   if (indexKey) files[indexKey] = files[indexKey].replace(/\s*$/, "") + OKF_FOOTER;
   else files["index.md"] = `# ${projectTitle}\n${OKF_FOOTER}`;
   return files;
