@@ -14,9 +14,14 @@
 //! whatever draw rect the caller supplies. `mod.draw.LogoMark` is a `DrawQuad`
 //! subclass (so it can attach to a `View`/`SolidView` `draw_bg`, a `DrawQuad`),
 //! shared by `app.rs` (top-bar wordmark) and `start_screen.rs` (launcher card).
-//! Everything is inlined in `pixel` -- custom shader helper fns added on a DSL
-//! subclass don't get compiled into the shader (they silently no-op), so the
-//! per-edge math is spelled out. Recolor via the `k1..k6` constants.
+//! The per-edge math is inlined in `pixel` for readability, but note custom
+//! shader helper `fn`s DO work on a DSL subclass: add them as sibling fields of
+//! `pixel` and call them via `self.helper(...)` (the same way the base
+//! `DrawQuad.fragment` calls `self.pixel()`). The compiler is call-driven -- an
+//! uncalled helper simply emits no code, and a `self.`-call to a missing method
+//! errors loudly; neither silently no-ops. (A bare `helper()` without `self.`
+//! resolves against script scope, not the object's siblings.) Recolor via the
+//! `k1..k6` constants.
 
 use makepad_widgets::*;
 
