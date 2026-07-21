@@ -134,13 +134,38 @@ bent path — the "free perimeter" is self-optimizing.
 
 ### 3. Nudging / ordering
 
-Parallel segments that share a routing channel are ordered and separated with 1D
-separation constraints (VPSC-style solve), so coincident runs split into
-visually distinct parallel lines.
+Parallel segments that share a routing channel are ordered and separated with a
+hand-rolled 1D separation sweep (order the coincident segments, then push them
+apart to a minimum gap in a single pass), so coincident runs split into visually
+distinct parallel lines. This is the specialized case of VPSC separation, not a
+general constraint solve.
 
 Hub borders (a node with many edges) **spread their attachment points** along the
 border side, so edges fan out at the box instead of piling on one point. Nudging
 still separates the channel runs further out.
+
+## Dependencies: none (hand-rolled)
+
+No new crate dependencies. The whole pipeline is hand-rolled in the `waml`
+crate, which is deliberately dep-lean (`regex`, `pulldown-cmark`, `ttf-parser`
+only) and targets wasm.
+
+Rejected alternatives:
+
+- **libavoid / Adaptagrams (C++, FFI)** — the reference orthogonal router, but
+  C++. FFI pulls a C++ toolchain into an otherwise pure-Rust crate and is hostile
+  to the wasm target the web frontend requires. Out.
+- **`petgraph`** — pure Rust and wasm-clean, but a chunky dependency for what is
+  ~40 lines of A*. Cuts against the crate's minimalism. Hand-roll A* instead.
+- **`cassowary` / `casuarius`** — pure Rust Cassowary solvers, but general
+  *incremental* constraint solvers. Our stage-3 nudging is a specialized 1D
+  separation problem (order + push sweep, O(n log n)), not general constraint
+  solving. Overkill.
+
+Determinism is a hard requirement (see below), and third-party solvers can carry
+platform float variance or hash/iteration-order surprises. Hand-rolling keeps
+every tie-break under our control. Each piece — OVG construction, A*, the 1D
+separation sweep — is small and well understood.
 
 ## Determinism
 
