@@ -136,11 +136,6 @@ script_mod! {
             }
         }
         draw_icon_edge +: { color: atlas.accent }
-        // Pin box: a source-bright frame around a fill that reads accent when
-        // pinned, empty (field_bg) when not.
-        draw_pin_frame +: { color: atlas.frame_hi }
-        draw_pin_on +: { color: atlas.accent }
-        draw_pin_off +: { color: atlas.field_bg }
         // Type-badge: solid per-kind square (colour set at draw time) with the
         // kind initial (white) drawn on top.
         draw_badge +: { color: atlas.bucket_slate }
@@ -151,52 +146,6 @@ script_mod! {
                 font_family: FontFamily{
                     latin := FontMember{res: crate_resource("self:resources/fonts/IBM_Plex_Sans/IBMPlexSans-Regular.ttf") asc: -0.1 desc: 0.0}
                 }
-            }
-        }
-        // Pencil (edit affordance) + collapse/unfold caret. Both grey glyphs.
-        draw_pencil +: {
-            color: uniform(atlas.text_dim)
-            pixel: fn() {
-                let sdf = Sdf2d.viewport(self.pos * self.rect_size)
-                let s = self.rect_size
-                // Pencil body: one diagonal stroke, with a short tip mark.
-                sdf.move_to(s.x * 0.30, s.y * 0.70)
-                sdf.line_to(s.x * 0.70, s.y * 0.30)
-                sdf.stroke(self.color, 2.0)
-                sdf.move_to(s.x * 0.22, s.y * 0.78)
-                sdf.line_to(s.x * 0.32, s.y * 0.68)
-                sdf.stroke(self.color, 2.0)
-                return sdf.result
-            }
-        }
-        draw_caret_down +: {
-            color: uniform(atlas.text_dim)
-            pixel: fn() {
-                let sdf = Sdf2d.viewport(self.pos * self.rect_size)
-                let mx = self.rect_size.x * 0.5
-                let my = self.rect_size.y * 0.5
-                let w = 5.0
-                let h = 3.0
-                sdf.move_to(mx - w, my - h)
-                sdf.line_to(mx, my + h)
-                sdf.line_to(mx + w, my - h)
-                sdf.stroke(self.color, 1.5)
-                return sdf.result
-            }
-        }
-        draw_caret_up +: {
-            color: uniform(atlas.text_dim)
-            pixel: fn() {
-                let sdf = Sdf2d.viewport(self.pos * self.rect_size)
-                let mx = self.rect_size.x * 0.5
-                let my = self.rect_size.y * 0.5
-                let w = 5.0
-                let h = 3.0
-                sdf.move_to(mx - w, my + h)
-                sdf.line_to(mx, my - h)
-                sdf.line_to(mx + w, my + h)
-                sdf.stroke(self.color, 1.5)
-                return sdf.result
             }
         }
     }
@@ -250,29 +199,12 @@ pub struct Inspector {
     draw_icon_edge: DrawColor,
     #[live]
     icons: IconSet,
-    /// Pin box: frame + one of two fills (on/off), picked by `pinned`.
-    #[live]
-    draw_pin_frame: DrawColor,
-    #[live]
-    draw_pin_on: DrawColor,
-    #[live]
-    draw_pin_off: DrawColor,
     /// Left type-badge: a per-kind coloured square (`draw_badge.color` is set at
     /// draw time from the subject's `AccentBucket`) with the kind initial on top.
     #[live]
     draw_badge: DrawColor,
     #[live]
     draw_badge_text: DrawText,
-    /// Pencil (edit affordance, visual-only this cut) and the collapse/unfold
-    /// caret. Hand-drawn glyphs in the bar's right gap. The caret has two
-    /// shaders (up = fold when body shown, down = unfold when collapsed) since
-    /// this fork can't flip a `DrawQuad` instance at runtime.
-    #[live]
-    draw_pencil: DrawQuad,
-    #[live]
-    draw_caret_up: DrawQuad,
-    #[live]
-    draw_caret_down: DrawQuad,
 
     /// The flattened read model of the current subject (`None` = empty state).
     #[rust]
@@ -332,8 +264,6 @@ pub struct Inspector {
     #[rust]
     badge_letter: String,
     #[rust]
-    pencil_rect: Rect,
-    #[rust]
     caret_rect: Rect,
 }
 
@@ -345,10 +275,10 @@ const GAP: f64 = 12.0;
 // Bar strip height (matches `element_bar.height` in the DSL) and the icon glyphs
 // drawn in its reserved right gap (pencil, caret, pin -- right to left).
 const BAR_H: f64 = 56.0;
-const PIN_SIZE: f64 = 24.0;
-const PIN_MARGIN: f64 = 12.0;
-const ICON: f64 = 24.0;
-const ICON_GAP: f64 = 8.0;
+const PIN_SIZE: f64 = 16.0;
+const PIN_MARGIN: f64 = 14.0;
+const ICON: f64 = 16.0;
+const ICON_GAP: f64 = 10.0;
 // Left type-badge (drawn over the field's left inset).
 const BADGE_SIZE: f64 = 24.0;
 // Owned element-picker popup geometry (px).
@@ -395,13 +325,23 @@ impl Widget for Inspector {
         self.view.handle_event(cx, event, scope);
 
         let uid = self.widget_uid();
+        // All hit rects (picker field, pin, caret, pencil, popup rows, inline-edit
+        // fields) are recorded in `draw_walk` off `self.view.area().rect(cx)`,
+        // which *during a draw* reports the pre-alignment turtle origin (x≈0).
+        // This panel lives in a right-aligned parent, so the finished draw list is
+        // shifted right by the panel's x — the glyphs render there, but the stored
+        // rects keep the unshifted origin. Pointer events arrive in that shifted
+        // (post-alignment) space, so translate the event point back into draw-time
+        // space by the offset between the two before any `contains` test.
+        let hit_off = self.view.area().rect(cx).pos - self.view_rect.pos;
         match event.hits_with_capture_overload(cx, self.view.area(), true) {
             // Track the hovered popup row so it can wash under the pointer.
             Hit::FingerHoverIn(fe) | Hit::FingerHoverOver(fe) if self.picker_open => {
+                let p = fe.abs - hit_off;
                 let hov = self
                     .picker_rects
                     .iter()
-                    .find(|(_, r)| r.contains(fe.abs))
+                    .find(|(_, r)| r.contains(p))
                     .map(|(i, _)| *i);
                 if hov != self.picker_hover {
                     self.picker_hover = hov;
@@ -409,12 +349,13 @@ impl Widget for Inspector {
                 }
             }
             Hit::FingerUp(fe) if fe.is_primary_hit() => {
+                let p = fe.abs - hit_off;
                 // Owned picker popup: a row picks, anything else closes.
                 if self.picker_open {
                     if let Some(idx) = self
                         .picker_rects
                         .iter()
-                        .find(|(_, r)| r.contains(fe.abs))
+                        .find(|(_, r)| r.contains(p))
                         .map(|(i, _)| *i)
                     {
                         self.choose_element(cx, idx);
@@ -424,18 +365,18 @@ impl Widget for Inspector {
                     return;
                 }
                 // Closed: the picker field opens the list.
-                if self.picker_field_rect.contains(fe.abs) {
+                if self.picker_field_rect.contains(p) {
                     self.open_picker(cx);
                     return;
                 }
-                if self.pin_rect.contains(fe.abs) {
+                if self.pin_rect.contains(p) {
                     self.pinned = !self.pinned;
                     self.view.redraw(cx);
                     return;
                 }
                 // Caret folds/unfolds the body (only meaningful when a subject
                 // is set; with none the panel is already collapsed).
-                if self.caret_rect.contains(fe.abs) {
+                if self.caret_rect.contains(p) {
                     if self.proj.is_some() {
                         self.folded = !self.folded;
                         self.view.redraw(cx);
@@ -446,7 +387,7 @@ impl Widget for Inspector {
                     self.commit_edit(cx, uid);
                 }
                 for (field, rect) in self.field_rects.clone() {
-                    if rect.contains(fe.abs) {
+                    if rect.contains(p) {
                         self.begin_edit(cx, field);
                         break;
                     }
@@ -527,7 +468,15 @@ impl Widget for Inspector {
                 }
             }
 
-            // Right glyph cluster, right -> left: pin, caret, pencil.
+            // Right glyph cluster, right -> left: pin, fold caret. Both are the
+            // shared Atlas SDF glyphs (`icons.rs`), tinted from the panel's own
+            // text colours -- dim grey by default, accent for the active pin --
+            // via the same tint-a-shared-DrawColor idiom the edge rows use below.
+            // (`draw_dim`/`draw_icon_edge` carry the theme colours; read them out
+            // before borrowing `self.icons`.)
+            let dim = self.draw_dim.color;
+            let accent = self.draw_icon_edge.color;
+
             let pin = Rect {
                 pos: dvec2(
                     rect.pos.x + rect.size.x - PIN_MARGIN - PIN_SIZE,
@@ -536,38 +485,26 @@ impl Widget for Inspector {
                 size: dvec2(PIN_SIZE, PIN_SIZE),
             };
             self.pin_rect = pin;
-            self.draw_pin_frame.draw_abs(cx, pin);
-            let inset = 1.5;
-            let inner = Rect {
-                pos: dvec2(pin.pos.x + inset, pin.pos.y + inset),
-                size: dvec2(pin.size.x - inset * 2.0, pin.size.y - inset * 2.0),
-            };
-            if self.pinned {
-                self.draw_pin_on.draw_abs(cx, inner);
-            } else {
-                self.draw_pin_off.draw_abs(cx, inner);
-            }
+            let pin_tint = if self.pinned { accent } else { dim };
+            let dc = self.icons.get(Icon::Pin);
+            dc.color = pin_tint;
+            dc.draw_abs(cx, pin);
 
-            // Collapse/unfold caret: up (fold) when the body is showing, down
-            // (unfold) when collapsed.
+            // Fold caret: chevrons-collapse when the body is showing (click to
+            // fold), chevrons-expand when collapsed (click to unfold).
             let caret = Rect {
                 pos: dvec2(pin.pos.x - ICON_GAP - ICON, cy - ICON * 0.5),
                 size: dvec2(ICON, ICON),
             };
             self.caret_rect = caret;
-            if collapsed {
-                self.draw_caret_down.draw_abs(cx, caret);
+            let caret_icon = if collapsed {
+                Icon::ListExpand
             } else {
-                self.draw_caret_up.draw_abs(cx, caret);
-            }
-
-            // Pencil (edit affordance, visual-only this cut).
-            let pencil = Rect {
-                pos: dvec2(caret.pos.x - ICON_GAP - ICON, cy - ICON * 0.5),
-                size: dvec2(ICON, ICON),
+                Icon::ListCollapse
             };
-            self.pencil_rect = pencil;
-            self.draw_pencil.draw_abs(cx, pencil);
+            let dc = self.icons.get(caret_icon);
+            dc.color = dim;
+            dc.draw_abs(cx, caret);
 
             // Picker field label: the selected element's title (subdued,
             // text_dim), or the placeholder when nothing is picked. Sits right of
@@ -587,7 +524,7 @@ impl Widget for Inspector {
                 .draw_abs(cx, dvec2(label_x, cy - 7.0), &field_label);
             self.picker_field_rect = Rect {
                 pos: rect.pos,
-                size: dvec2((pencil.pos.x - ICON_GAP - rect.pos.x).max(0.0), BAR_H),
+                size: dvec2((caret.pos.x - ICON_GAP - rect.pos.x).max(0.0), BAR_H),
             };
 
             // Owned popup list, dropped below the bar. It replaces the body while
@@ -602,7 +539,6 @@ impl Widget for Inspector {
             self.picker_field_rect = Rect::default();
             self.pin_rect = Rect::default();
             self.caret_rect = Rect::default();
-            self.pencil_rect = Rect::default();
         }
 
         // Body, below the bar (or floated to the top when the bar is hidden).
