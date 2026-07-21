@@ -50,6 +50,7 @@ pub enum Block {
     Header,
     Attributes,
     Operations,
+    Footer,
 }
 
 /// An Atlas semantic color the card draws with, resolved to a live theme rgba by
@@ -353,6 +354,8 @@ pub struct StyleSheet {
     pub colon: TextStyle,
     pub ty: TextStyle,
     pub cardinality: TextStyle,
+    /// The `▾ N more` / `▴ show less` overflow footer row.
+    pub footer: TextStyle,
     /// Padding around the whole card.
     pub card_pad: Edges,
     /// Gap between the eyebrow and the title inside the header column.
@@ -397,6 +400,7 @@ pub fn mono_sheet() -> StyleSheet {
         colon: body(Token::TextDim, Weight::Regular),
         ty: body(Token::Accent, Weight::Regular),
         cardinality: body(Token::Amber, Weight::Regular),
+        footer: body(Token::Accent, Weight::Regular),
         card_pad: Edges {
             l: 16.0,
             t: 10.0,
@@ -417,6 +421,10 @@ pub fn mono_sheet() -> StyleSheet {
 /// Compartments are role-tagged `Box`es (pad-zero, so the hull is unchanged from
 /// the historical flat layout) whose laid-out rects the renderer reads to draw
 /// the header wash and inter-compartment dividers.
+/// Collapsed card body caps at this many member rows (attributes + operations
+/// combined), then a footer row. Fixed; not styleable.
+pub const MAX_BODY_ROWS: usize = 4;
+
 pub fn class_shape(node: &crate::scene::SceneNode, sheet: &StyleSheet) -> Shape {
     use crate::scene::HeaderStyle;
     let mut rows: Vec<Shape> = Vec::new();
@@ -446,10 +454,24 @@ pub fn class_shape(node: &crate::scene::SceneNode, sheet: &StyleSheet) -> Shape 
         });
     }
 
+    // Member overflow: attributes then operations form one ordered list. When
+    // collapsed and over the cap, keep only the first MAX_BODY_ROWS, regrouped
+    // back into their compartments; expanded keeps all. A footer row appears
+    // whenever the full list exceeds the cap.
+    let total = node.attributes.len() + node.operations.len();
+    let overflow = total > MAX_BODY_ROWS;
+    let keep = if node.expanded || !overflow {
+        total
+    } else {
+        MAX_BODY_ROWS
+    };
+    let attrs_shown = keep.min(node.attributes.len());
+    let ops_shown = keep - attrs_shown;
+
     // Attributes compartment.
-    if !node.attributes.is_empty() {
+    if attrs_shown > 0 {
         let mut at_rows = Vec::new();
-        for attr in &node.attributes {
+        for attr in &node.attributes[..attrs_shown] {
             let mut cells = Vec::new();
             if !attr.visibility.is_empty() {
                 cells.push(Shape::Text {
@@ -498,9 +520,9 @@ pub fn class_shape(node: &crate::scene::SceneNode, sheet: &StyleSheet) -> Shape 
 
     // Operations compartment: `<vis> <name>(<params>) : <ret>`. The name and its
     // parenthesized parameter list are a no-gap sub-box so they read as one token.
-    if !node.operations.is_empty() {
+    if ops_shown > 0 {
         let mut op_rows = Vec::new();
-        for op in &node.operations {
+        for op in &node.operations[..ops_shown] {
             let mut cells = Vec::new();
             if !op.visibility.is_empty() {
                 cells.push(Shape::Text {
@@ -552,6 +574,26 @@ pub fn class_shape(node: &crate::scene::SceneNode, sheet: &StyleSheet) -> Shape 
             hidden: false,
             block: Block::Operations,
             children: op_rows,
+        });
+    }
+
+    // Overflow footer row: its own accent-mono control line.
+    if overflow {
+        let label = if node.expanded {
+            "\u{25b4} show less".to_string()
+        } else {
+            format!("\u{25be} {} more", total - MAX_BODY_ROWS)
+        };
+        rows.push(Shape::Box {
+            dir: Dir::Row,
+            gap: 0.0,
+            pad: Edges::ZERO,
+            hidden: false,
+            block: Block::Footer,
+            children: vec![Shape::Text {
+                text: label,
+                style: sheet.footer,
+            }],
         });
     }
 
@@ -852,5 +894,88 @@ mod tests {
             .find(|b| b.block == Block::Operations)
             .unwrap();
         assert!(d[0] >= at.y + at.h - 0.01 && d[0] <= ops.y + 0.01);
+    }
+
+    fn attrs_named(prefix: &str, n: usize) -> Vec<AttrRow> {
+        (0..n)
+            .map(|i| attr(&format!("{prefix}{i}"), "Int", "+", ""))
+            .collect()
+    }
+
+    #[test]
+    fn four_or_fewer_members_have_no_footer() {
+        let n = scene_node("Big", vec![], attrs_named("f", 4));
+        let placed = measure(&class_shape(&n, &mono_sheet()));
+        assert!(!placed.blocks.iter().any(|b| b.block == Block::Footer));
+    }
+
+    #[test]
+    fn collapsed_over_cap_keeps_four_rows_and_a_more_footer() {
+        let n = scene_node("Big", vec![], attrs_named("f", 7));
+        let s = drawn(&n);
+        // First four kept, rest hidden.
+        for i in 0..4 {
+            assert!(s.contains(&format!("f{i}")), "f{i} should be kept");
+        }
+        for i in 4..7 {
+            assert!(!s.contains(&format!("f{i}")), "f{i} should be hidden");
+        }
+        // Footer counts the hidden members (7 - 4 = 3).
+        assert!(s.contains(&"\u{25be} 3 more".to_string()));
+        let placed = measure(&class_shape(&n, &mono_sheet()));
+        assert!(placed.blocks.iter().any(|b| b.block == Block::Footer));
+    }
+
+    #[test]
+    fn expanded_over_cap_shows_all_rows_and_a_show_less_footer() {
+        let mut n = scene_node("Big", vec![], attrs_named("f", 7));
+        n.expanded = true;
+        let s = drawn(&n);
+        for i in 0..7 {
+            assert!(s.contains(&format!("f{i}")), "f{i} should be shown");
+        }
+        assert!(s.contains(&"\u{25b4} show less".to_string()));
+    }
+
+    #[test]
+    fn footer_sits_below_the_last_compartment() {
+        let n = scene_node("Big", vec![], attrs_named("f", 7));
+        let placed = measure(&class_shape(&n, &mono_sheet()));
+        let attrs = placed
+            .blocks
+            .iter()
+            .find(|b| b.block == Block::Attributes)
+            .unwrap();
+        let footer = placed
+            .blocks
+            .iter()
+            .find(|b| b.block == Block::Footer)
+            .unwrap();
+        assert!(
+            footer.y >= attrs.y + attrs.h - 0.01,
+            "footer must sit below attributes"
+        );
+    }
+
+    #[test]
+    fn mid_list_truncation_regroups_kept_rows_into_compartments() {
+        // 3 attributes + 3 operations, cap 4 -> keep all 3 attrs + first 1 op.
+        let mut n = scene_node("Svc", vec![], attrs_named("a", 3));
+        n.operations = vec![
+            op("op0", Some(""), "void", "+"),
+            op("op1", Some(""), "void", "+"),
+            op("op2", Some(""), "void", "+"),
+        ];
+        let placed = measure(&class_shape(&n, &mono_sheet()));
+        let roles: Vec<Block> = placed.blocks.iter().map(|b| b.block).collect();
+        assert!(roles.contains(&Block::Attributes));
+        assert!(roles.contains(&Block::Operations));
+        assert!(roles.contains(&Block::Footer));
+        let s = drawn(&n);
+        assert!(s.contains(&"a0".to_string()) && s.contains(&"a2".to_string()));
+        assert!(s.contains(&"op0".to_string()));
+        assert!(!s.contains(&"op1".to_string()) && !s.contains(&"op2".to_string()));
+        // 6 members - 4 cap = 2 hidden.
+        assert!(s.contains(&"\u{25be} 2 more".to_string()));
     }
 }
