@@ -55,13 +55,32 @@ script_mod! {
         file_tree := FileTree {
             // Roomier rows + larger humanist type, and flat (no zebra striping)
             // so the panel reads as a calm modern sidebar, not a 90s list box.
-            // Left padding is widened to leave room for the 16px glyph icon
-            // drawn (in immediate mode) at the start of each row.
+            // Left padding leaves room for the 14px glyph icon drawn (in
+            // immediate mode) at the start of each row; the icon ends at
+            // ICON_LEFT_MARGIN + ICON_SIZE = 20px, so padding.left 24 sits the
+            // label 4px past it.
             node_height: 30.0
 
+            // Scrollbar handle is invisible in the shipped theme (color_outset
+            // ~= our field_bg). Tint it so an overflowing tree visibly says
+            // "there's more": dim ink idle, accent on hover/drag.
+            scroll_bars: ScrollBars {
+                scroll_bar_y: ScrollBar {
+                    draw_bg +: {
+                        color: atlas.text_dim
+                        color_hover: atlas.accent
+                        color_drag: atlas.accent
+                    }
+                }
+            }
+
             file_node +: {
-                padding: Inset{left: 26.0}
+                padding: Inset{left: 24.0}
                 indent_width: 18.0
+                // We render no git-status dots, but draw_file() still reserves
+                // the 6px dot slot (+3px margin) before every label -- a phantom
+                // gap between our glyph and the text. Zero it.
+                status_dot_walk: Walk{ width: 0.0, height: 6.0, margin: Inset{} }
                 draw_text +: {
                     color: atlas.text
                     // Selection is a translucent accent tint over white, so keep
@@ -78,8 +97,13 @@ script_mod! {
             }
 
             folder_node +: {
-                padding: Inset{left: 26.0}
+                padding: Inset{left: 24.0}
                 indent_width: 18.0
+                // Same phantom-gap zeroing as file_node; folders also reserve a
+                // ~16px slot for the (transparent) built-in folder box via
+                // icon_walk -- our Package glyph overlay replaces it, so zero it.
+                status_dot_walk: Walk{ width: 0.0, height: 6.0, margin: Inset{} }
+                icon_walk: Walk{ width: 0.0, height: 0.0, margin: Inset{} }
                 draw_text +: {
                     color: atlas.text
                     color_active: atlas.text
