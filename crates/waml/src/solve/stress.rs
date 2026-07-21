@@ -80,7 +80,40 @@ pub fn layout(
     let adj = adjacency(n, &clean);
     let comps = components(n, &adj);
 
-    // Solve each component independently, then pack left-to-right in a row.
+    // Solve each component independently, normalizing its min corner to the
+    // origin and recording its bounding box for packing.
+    struct Laid {
+        comp: Vec<usize>,
+        rects: Vec<Rect>, // local, min corner at (0,0)
+        w: f64,
+        h: f64,
+    }
+    let mut laid: Vec<Laid> = Vec::with_capacity(comps.len());
+    for comp in comps {
+        let mut rects = component_layout(&comp, sizes, &adj, cfg);
+        remove_overlaps(&mut rects, cfg.gap);
+        let (min_x, min_y) = rects
+            .iter()
+            .fold((f64::INFINITY, f64::INFINITY), |(mx, my), r| {
+                (mx.min(r.x), my.min(r.y))
+            });
+        let (mut w, mut h) = (0.0_f64, 0.0_f64);
+        for r in &mut rects {
+            r.x -= min_x;
+            r.y -= min_y;
+            w = w.max(r.x + r.w);
+            h = h.max(r.y + r.h);
+        }
+        laid.push(Laid { comp, rects, w, h });
+    }
+
+    // Shelf-pack the components toward a roughly landscape aspect rather than a
+    // single left-to-right row (which strings singletons into a long tail).
+    // Target row width = sqrt(total area) biased wide; deterministic order.
+    let total_area: f64 = laid.iter().map(|l| l.w * l.h).sum();
+    let widest = laid.iter().fold(0.0_f64, |m, l| m.max(l.w));
+    let target_w = (total_area.sqrt() * 1.4).max(widest);
+
     let zero = Rect {
         x: 0.0,
         y: 0.0,
@@ -88,28 +121,23 @@ pub fn layout(
         h: 0.0,
     };
     let mut out = vec![zero; n];
-    let mut cursor_x = 0.0;
-    for comp in &comps {
-        let mut rects = component_layout(comp, sizes, &adj, cfg);
-        remove_overlaps(&mut rects, cfg.gap);
-        // Normalize the component so its min corner sits at (cursor_x, 0).
-        let (min_x, min_y) = rects
-            .iter()
-            .fold((f64::INFINITY, f64::INFINITY), |(mx, my), r| {
-                (mx.min(r.x), my.min(r.y))
-            });
-        let (mut max_x, dx, dy) = (f64::NEG_INFINITY, cursor_x - min_x, -min_y);
-        for (local, r) in rects.iter().enumerate() {
-            let placed = Rect {
-                x: r.x + dx,
-                y: r.y + dy,
+    let (mut cursor_x, mut cursor_y, mut shelf_h) = (0.0_f64, 0.0_f64, 0.0_f64);
+    for l in &laid {
+        if cursor_x > 0.0 && cursor_x + l.w > target_w {
+            cursor_x = 0.0;
+            cursor_y += shelf_h + cfg.gap;
+            shelf_h = 0.0;
+        }
+        for (local, r) in l.rects.iter().enumerate() {
+            out[l.comp[local]] = Rect {
+                x: r.x + cursor_x,
+                y: r.y + cursor_y,
                 w: r.w,
                 h: r.h,
             };
-            max_x = max_x.max(placed.x + placed.w);
-            out[comp[local]] = placed;
         }
-        cursor_x = max_x + cfg.gap;
+        cursor_x += l.w + cfg.gap;
+        shelf_h = shelf_h.max(l.h);
     }
     out
 }
@@ -613,21 +641,31 @@ mod tests {
     }
 
     #[test]
-    fn disconnected_components_pack_left_to_right() {
-        // Two triangles; second component must sit entirely right of the first.
+    fn disconnected_components_occupy_disjoint_regions() {
+        // Two triangles; the shelf-packer must place the components in disjoint
+        // regions (side-by-side or stacked), never overlapping.
         let cfg = StressConfig::default();
         let g = ids(&["a", "b", "c", "d", "e", "f"]);
         let szs = sizes(6, 100.0, 40.0);
         let edges = [(0, 1), (1, 2), (2, 0), (3, 4), (4, 5), (5, 3)];
         let r = layout(&g, &szs, &edges, &cfg);
-        let comp1_max_x = r[0..3]
-            .iter()
-            .map(|q| q.x + q.w)
-            .fold(f64::NEG_INFINITY, f64::max);
-        let comp2_min_x = r[3..6].iter().map(|q| q.x).fold(f64::INFINITY, f64::min);
+        let bbox = |sl: &[Rect]| {
+            sl.iter().fold(
+                (f64::INFINITY, f64::INFINITY, f64::NEG_INFINITY, f64::NEG_INFINITY),
+                |(x0, y0, x1, y1), q| {
+                    (x0.min(q.x), y0.min(q.y), x1.max(q.x + q.w), y1.max(q.y + q.h))
+                },
+            )
+        };
+        let (ax0, ay0, ax1, ay1) = bbox(&r[0..3]);
+        let (bx0, by0, bx1, by1) = bbox(&r[3..6]);
+        let disjoint = bx0 >= ax1 - 1e-6
+            || ax0 >= bx1 - 1e-6
+            || by0 >= ay1 - 1e-6
+            || ay0 >= by1 - 1e-6;
         assert!(
-            comp2_min_x >= comp1_max_x - 1e-6,
-            "components overlap in x: {comp1_max_x} vs {comp2_min_x}"
+            disjoint,
+            "component bounding boxes overlap: a=({ax0},{ay0},{ax1},{ay1}) b=({bx0},{by0},{bx1},{by1})"
         );
     }
 }

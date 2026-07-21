@@ -3,7 +3,7 @@
 
 use waml::diagnostic::Diagnostic;
 use waml::model::{Diagram, ElementType, Model, RelationshipKind};
-use waml::solve::{solve_diagram, Rect, SolveConfig, SolvedGroup};
+use waml::solve::{solve_diagram, stress, BoxId, Rect, Size, SizeMap, SolveConfig, Solved, SolvedGroup};
 
 /// How a node's header (eyebrow + title) is treated. Additive: `Plain` is the
 /// historical look (no wash) and is what every projected node uses, so real
@@ -121,12 +121,71 @@ pub fn project_scene_node(model: &Model, node: &waml::model::Node) -> SceneNode 
     }
 }
 
+/// A diagram with no authored layout statements and only trivial (unnamed,
+/// childless) member groups gets the semi-smart stress-majorization default
+/// instead of the constraint solver's edge-blind left-to-right strip. Authored
+/// named/nested groups still route to `solve_diagram` — structure wins.
+fn use_stress_default(diagram: &Diagram) -> bool {
+    diagram.layout.is_empty()
+}
+
+/// Native-only stress/grid default layout. Kept at this call seam (not inside
+/// `solve_diagram`) so the wasm/web path stays unchanged — web keeps dagre.
+/// Node set is every sized member; undirected `model.edges` among them drive the
+/// stress solve, and an edgeless set falls back to `grid_pack`.
+fn stress_default(model: &Model, sizes: &SizeMap) -> Solved {
+    use std::collections::{BTreeMap, BTreeSet};
+
+    let keys: Vec<String> = sizes.keys().cloned().collect();
+    let ids: Vec<BoxId> = keys.iter().cloned().map(BoxId::Node).collect();
+    let dims: Vec<Size> = keys.iter().map(|k| sizes[k]).collect();
+    let index: BTreeMap<&str, usize> = keys
+        .iter()
+        .enumerate()
+        .map(|(i, k)| (k.as_str(), i))
+        .collect();
+
+    // Undirected edge index pairs among members; drop self-loops and duplicates.
+    let mut seen = BTreeSet::new();
+    let mut pairs: Vec<(usize, usize)> = Vec::new();
+    for e in &model.edges {
+        let (Some(&a), Some(&b)) =
+            (index.get(e.source.as_str()), index.get(e.target.as_str()))
+        else {
+            continue;
+        };
+        if a == b {
+            continue;
+        }
+        if seen.insert((a.min(b), a.max(b))) {
+            pairs.push((a, b));
+        }
+    }
+
+    let cfg = stress::StressConfig::default();
+    let rects = if pairs.is_empty() {
+        stress::grid_pack(&ids, &dims, &cfg)
+    } else {
+        stress::layout(&ids, &dims, &pairs, &cfg)
+    };
+
+    Solved {
+        nodes: keys.into_iter().zip(rects).collect(),
+        groups: Vec::new(),
+        flags: BTreeMap::new(),
+    }
+}
+
 /// Solve `diagram` against `model` and flatten the result into a `Scene`.
 pub fn build_scene(model: &Model, diagram: &Diagram) -> (Scene, Vec<Diagnostic>) {
     use std::collections::BTreeMap;
 
     let sizes = crate::sizing::size_map(model, diagram);
-    let (solved, diags) = solve_diagram(diagram, &sizes, &SolveConfig::default());
+    let (solved, diags) = if use_stress_default(diagram) {
+        (stress_default(model, &sizes), Vec::new())
+    } else {
+        solve_diagram(diagram, &sizes, &SolveConfig::default())
+    };
 
     let node_of: BTreeMap<&str, &waml::model::Node> =
         model.nodes.iter().map(|n| (n.key.as_str(), n)).collect();
