@@ -46,12 +46,12 @@ script_mod! {
         // document reads as selected even before the accent strip registers.
         draw_text_active +: {
             color: atlas.text
-            text_style: theme.font_bold{font_size: 11}
+            text_style: theme.font_bold{font_size: 10}
         }
         draw_text_persisted +: {
             color: atlas.text_dim
             text_style: TextStyle{
-                font_size: 11
+                font_size: 10
                 font_family: FontFamily{
                     latin := FontMember{res: crate_resource("self:resources/fonts/IBM_Plex_Sans/IBMPlexSans-Regular.ttf") asc: -0.1 desc: 0.0}
                 }
@@ -63,7 +63,7 @@ script_mod! {
         draw_text_preview +: {
             color: atlas.text_dim
             text_style: TextStyle{
-                font_size: 11
+                font_size: 10
                 font_family: FontFamily{
                     latin := FontMember{res: crate_resource("self:resources/fonts/IBM_Plex_Sans/IBMPlexSans-Italic.ttf") asc: -0.1 desc: 0.0}
                 }
@@ -76,7 +76,7 @@ script_mod! {
         draw_text_preview_active +: {
             color: atlas.text
             text_style: TextStyle{
-                font_size: 11
+                font_size: 10
                 font_family: FontFamily{
                     latin := FontMember{res: crate_resource("self:resources/fonts/IBM_Plex_Sans/IBMPlexSans-Italic.ttf") asc: -0.1 desc: 0.0}
                 }
