@@ -51,16 +51,35 @@ fn strictly_inside(r: &Rect, x: f64, y: f64) -> bool {
 }
 
 /// True if the axis-aligned segment (a..b) passes through any inflated obstacle interior.
+///
+/// Segments here are always axis-aligned (horizontal or vertical, never diagonal),
+/// so one axis is always degenerate (a single coordinate, not a range). A degenerate
+/// axis needs a "strictly between the rect's bounds" test, not an interval-overlap
+/// test — an interval-overlap of a single point against a range always has zero
+/// width, so it would never report a crossing even when the point sits deep inside
+/// the rect's interior on that axis.
 fn segment_blocked(inflated: &[Rect], a: P, b: P) -> bool {
     let (x0, x1) = (a.0.min(b.0), a.0.max(b.0));
     let (y0, y1) = (a.1.min(b.1), a.1.max(b.1));
+    let degenerate_x = (x1 - x0).abs() < 1e-9;
+    let degenerate_y = (y1 - y0).abs() < 1e-9;
     inflated.iter().any(|r| {
-        let ox0 = r.x.max(x0);
-        let ox1 = (r.x + r.w).min(x1);
-        let oy0 = r.y.max(y0);
-        let oy1 = (r.y + r.h).min(y1);
+        let x_overlap = if degenerate_x {
+            x0 > r.x + 1e-9 && x0 < r.x + r.w - 1e-9
+        } else {
+            let ox0 = r.x.max(x0);
+            let ox1 = (r.x + r.w).min(x1);
+            (ox1 - ox0) > 1e-9
+        };
+        let y_overlap = if degenerate_y {
+            y0 > r.y + 1e-9 && y0 < r.y + r.h - 1e-9
+        } else {
+            let oy0 = r.y.max(y0);
+            let oy1 = (r.y + r.h).min(y1);
+            (oy1 - oy0) > 1e-9
+        };
         // Positive overlap on BOTH axes => the segment cuts the interior.
-        (ox1 - ox0) > 1e-9 && (oy1 - oy0) > 1e-9
+        x_overlap && y_overlap
     })
 }
 
@@ -246,6 +265,30 @@ mod tests {
                 "vertex ({x},{y}) must not be strictly inside the inflated obstacle"
             );
         }
+    }
+
+    #[test]
+    fn segment_blocked_detects_degenerate_horizontal_crossing() {
+        // Regression: a horizontal segment (y0 == y1) passing straight through an
+        // obstacle's interior must be detected, even though the segment's y-range
+        // is a single point (zero width), not an interval.
+        let obstacle = r(150.0, -30.0, 80.0, 120.0); // y spans [-30, 90]
+        let inflated = [inflate(obstacle, ROUTE_MARGIN)]; // x:[138,242] y:[-42,102]
+        assert!(
+            segment_blocked(&inflated, (100.0, 30.0), (350.0, 30.0)),
+            "horizontal segment at y=30 crosses the obstacle's x-span [138,242]"
+        );
+        // Regression: same for a vertical segment (x0 == x1).
+        assert!(
+            segment_blocked(&inflated, (190.0, -60.0), (190.0, 120.0)),
+            "vertical segment at x=190 crosses the obstacle's y-span [-42,102]"
+        );
+        // Sanity: a horizontal segment entirely above the obstacle is NOT blocked.
+        assert!(!segment_blocked(
+            &inflated,
+            (100.0, -100.0),
+            (350.0, -100.0)
+        ));
     }
 
     #[test]
