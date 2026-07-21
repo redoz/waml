@@ -412,7 +412,7 @@ pub fn mono_sheet() -> StyleSheet {
 /// Build the classifier focus card's `Shape` tree from a `SceneNode` and a
 /// `StyleSheet`. A header column («eyebrow» + title, unless `HeaderStyle::
 /// Hidden`), then an attributes compartment (one row `<vis> <name> : <Type>
-/// [<mult>]` per attribute) and an operations compartment (one row `<vis>
+/// {<mult>}` per attribute) and an operations compartment (one row `<vis>
 /// <name>(<params>) : <ret>` per operation), each present only when non-empty.
 /// Compartments are role-tagged `Box`es (pad-zero, so the hull is unchanged from
 /// the historical flat layout) whose laid-out rects the renderer reads to draw
@@ -473,7 +473,7 @@ pub fn class_shape(node: &crate::scene::SceneNode, sheet: &StyleSheet) -> Shape 
             }
             if !attr.multiplicity.is_empty() {
                 cells.push(Shape::Text {
-                    text: format!("[{}]", attr.multiplicity),
+                    text: format!("{{{}}}", attr.multiplicity),
                     style: sheet.cardinality,
                 });
             }
@@ -711,9 +711,9 @@ mod tests {
     #[test]
     fn cardinality_present_only_when_multiplicity_set() {
         let without = scene_node("Order", vec![], vec![attr("id", "Int", "+", "")]);
-        assert!(!drawn(&without).iter().any(|s| s.starts_with('[')));
+        assert!(!drawn(&without).iter().any(|s| s.starts_with('{')));
         let with = scene_node("Order", vec![], vec![attr("id", "Int", "+", "1..*")]);
-        assert!(drawn(&with).contains(&"[1..*]".to_string()));
+        assert!(drawn(&with).contains(&"{1..*}".to_string()));
     }
 
     #[test]
