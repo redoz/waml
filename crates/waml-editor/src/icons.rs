@@ -3053,6 +3053,27 @@ script_mod! {
         }
     }
 
+    // Search: magnifier — lens circle (upper-left) + diagonal handle (lower-right).
+    // Hand-authored (no Lucide port); tuned live in the `icon_harness` bin.
+    mod.draw.IconSearch = mod.draw.DrawColor{
+        pixel: fn() {
+            let s = self.rect_size.x
+            let w = s * 0.068
+            let sdf = Sdf2d.viewport(self.pos * self.rect_size)
+            // Lens: full circle centered (0.4375,0.4375) r=0.2917, two half-arcs.
+            sdf.move_to(s * 0.7292, s * 0.4375)
+            sdf.arc_to(s * 0.4375, s * 0.4375, s * 0.2917, 0.0000, 3.1416)
+            sdf.arc_to(s * 0.4375, s * 0.4375, s * 0.2917, 3.1416, 6.2832)
+            sdf.close_path()
+            sdf.stroke(self.color, w)
+            // Handle: from the lens's lower-right edge (45deg) to the corner.
+            sdf.move_to(s * 0.6437, s * 0.6437)
+            sdf.line_to(s * 0.8750, s * 0.8750)
+            sdf.stroke(self.color, w)
+            return sdf.result
+        }
+    }
+
     mod.widgets.IconSetBase = #(IconSet::script_component(vm))
 
     // Each field is a `DrawColor` pointing at its icon shader; the accent tint
@@ -3147,6 +3168,7 @@ script_mod! {
         folder: mod.draw.IconFolder{ color: atlas.accent }
         folder_closed: mod.draw.IconFolderClosed{ color: atlas.accent }
         door_open: mod.draw.IconDoorOpen{ color: atlas.accent }
+        search: mod.draw.IconSearch{ color: atlas.accent }
     }
 }
 
@@ -3332,6 +3354,8 @@ pub struct IconSet {
     pub folder_closed: DrawColor,
     #[live]
     pub door_open: DrawColor,
+    #[live]
+    pub search: DrawColor,
 }
 
 // Not every bin that `#[path]`-includes this file exercises the whole catalog
@@ -3432,6 +3456,7 @@ impl IconSet {
             Icon::Folder => &mut self.folder,
             Icon::FolderClosed => &mut self.folder_closed,
             Icon::DoorOpen => &mut self.door_open,
+            Icon::Search => &mut self.search,
         }
     }
 
@@ -3539,13 +3564,14 @@ pub enum Icon {
     Folder,
     FolderClosed,
     DoorOpen,
+    Search,
 }
 
 #[allow(dead_code)] // ALL/label are unused in bins that don't iterate the catalog
 impl Icon {
     /// Every glyph, in field order. The single source of glyph identity; the
     /// `icon_harness` proof grid iterates this.
-    pub const ALL: [Icon; 89] = [
+    pub const ALL: [Icon; 90] = [
         Icon::Package,
         Icon::Message,
         Icon::PackagePlus,
@@ -3635,6 +3661,7 @@ impl Icon {
         Icon::Folder,
         Icon::FolderClosed,
         Icon::DoorOpen,
+        Icon::Search,
     ];
 
     /// The `icon_harness` display slug (the Lucide source name), preserved
@@ -3730,6 +3757,7 @@ impl Icon {
             Icon::Folder => "folder",
             Icon::FolderClosed => "folder-closed",
             Icon::DoorOpen => "door-open",
+            Icon::Search => "search",
         }
     }
 }
@@ -3739,8 +3767,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn icon_all_has_89_entries() {
-        assert_eq!(Icon::ALL.len(), 89);
+    fn icon_all_has_90_entries() {
+        assert_eq!(Icon::ALL.len(), 90);
     }
 
     #[test]
@@ -3762,7 +3790,7 @@ mod tests {
             assert!(!l.is_empty(), "empty label for {icon:?}");
             assert!(seen.insert(l), "duplicate label {l:?}");
         }
-        assert_eq!(seen.len(), 89);
+        assert_eq!(seen.len(), 90);
     }
 
     #[test]
