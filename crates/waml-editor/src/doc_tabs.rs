@@ -58,12 +58,27 @@ script_mod! {
                 line_spacing: 1.2
             }
         }
+        // Preview ("dynamic") tab: italic, Zed-style, so a not-yet-pinned
+        // document reads as provisional at a glance.
         draw_text_preview +: {
             color: atlas.text_dim
             text_style: TextStyle{
                 font_size: 11
                 font_family: FontFamily{
-                    latin := FontMember{res: crate_resource("self:resources/fonts/IBM_Plex_Sans/IBMPlexSans-Regular.ttf") asc: -0.1 desc: 0.0}
+                    latin := FontMember{res: crate_resource("self:resources/fonts/IBM_Plex_Sans/IBMPlexSans-Italic.ttf") asc: -0.1 desc: 0.0}
+                }
+                line_spacing: 1.2
+            }
+        }
+        // Active preview tab: same regular-weight italic as the inactive
+        // preview, just full-strength color -- the raised card + accent strip
+        // carry the "active" read, so it stays italic without going bold.
+        draw_text_preview_active +: {
+            color: atlas.text
+            text_style: TextStyle{
+                font_size: 11
+                font_family: FontFamily{
+                    latin := FontMember{res: crate_resource("self:resources/fonts/IBM_Plex_Sans/IBMPlexSans-Italic.ttf") asc: -0.1 desc: 0.0}
                 }
                 line_spacing: 1.2
             }
@@ -365,6 +380,10 @@ pub struct DocTabs {
     #[redraw]
     #[live]
     draw_text_preview: DrawText,
+    /// Active preview tab: bold italic (the preview italic at active weight).
+    #[redraw]
+    #[live]
+    draw_text_preview_active: DrawText,
     #[redraw]
     #[live]
     draw_close: DrawText,
@@ -545,12 +564,11 @@ impl Widget for DocTabs {
             }
 
             let text_y = tab_rect.pos.y + tab_rect.size.y * 0.5 - 7.0;
-            let draw_text = if is_active {
-                &mut self.draw_text_active
-            } else if tab.preview {
-                &mut self.draw_text_preview
-            } else {
-                &mut self.draw_text_persisted
+            let draw_text = match (is_active, tab.preview) {
+                (true, true) => &mut self.draw_text_preview_active,
+                (true, false) => &mut self.draw_text_active,
+                (false, true) => &mut self.draw_text_preview,
+                (false, false) => &mut self.draw_text_persisted,
             };
             draw_text.draw_abs(cx, dvec2(x + lead, text_y), &title);
 
