@@ -6,8 +6,8 @@
 
 pub mod base;
 pub mod marking;
+pub mod menu;
 pub mod radial;
 // Filled by later tasks:
-// pub mod menu;      // Task 4
 // pub mod presenter; // Task 5
 // pub mod root;      // Task 6
