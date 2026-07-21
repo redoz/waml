@@ -218,6 +218,115 @@ fn build_ovg(obstacles: &[Obstacle], src: Rect, tgt: Rect) -> (Ovg, Vec<usize>, 
     (Ovg { verts, adj }, srcv, tgtv)
 }
 
+const BEND_PENALTY: f64 = 20.0;
+
+#[derive(Clone, Copy, PartialEq)]
+struct Ord64(f64);
+impl Eq for Ord64 {}
+impl PartialOrd for Ord64 {
+    fn partial_cmp(&self, o: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(o))
+    }
+}
+impl Ord for Ord64 {
+    fn cmp(&self, o: &Self) -> std::cmp::Ordering {
+        self.0.total_cmp(&o.0)
+    }
+}
+
+fn dir_of(a: P, b: P) -> u8 {
+    if (a.1 - b.1).abs() < 1e-9 {
+        1
+    } else {
+        2
+    } // horizontal else vertical
+}
+
+fn simplify(pts: Vec<P>) -> Vec<P> {
+    let mut out: Vec<P> = Vec::new();
+    for p in pts {
+        if out
+            .last()
+            .is_some_and(|&l| (l.0 - p.0).abs() < 1e-9 && (l.1 - p.1).abs() < 1e-9)
+        {
+            continue; // duplicate
+        }
+        while out.len() >= 2 {
+            let a = out[out.len() - 2];
+            let b = out[out.len() - 1];
+            let colinear_x = (a.0 - b.0).abs() < 1e-9 && (b.0 - p.0).abs() < 1e-9;
+            let colinear_y = (a.1 - b.1).abs() < 1e-9 && (b.1 - p.1).abs() < 1e-9;
+            if colinear_x || colinear_y {
+                out.pop();
+            } else {
+                break;
+            }
+        }
+        out.push(p);
+    }
+    out
+}
+
+fn astar(ovg: &Ovg, sources: &[usize], targets: &[usize], goal: P) -> Option<Vec<P>> {
+    use std::cmp::Reverse;
+    use std::collections::BinaryHeap;
+
+    let n = ovg.verts.len();
+    let state = |v: usize, d: u8| v * 3 + d as usize;
+    let mut dist = vec![f64::INFINITY; n * 3];
+    let mut prev: Vec<Option<usize>> = vec![None; n * 3]; // predecessor STATE
+    let is_target = |v: usize| targets.contains(&v);
+    let h = |v: usize| {
+        let (x, y) = ovg.verts[v];
+        (x - goal.0).abs() + (y - goal.1).abs()
+    };
+
+    let mut srt = sources.to_vec();
+    srt.sort_unstable();
+    let mut heap: BinaryHeap<Reverse<(Ord64, usize)>> = BinaryHeap::new();
+    for &s in &srt {
+        let st = state(s, 0);
+        if dist[st] > 0.0 {
+            dist[st] = 0.0;
+            heap.push(Reverse((Ord64(h(s)), st)));
+        }
+    }
+
+    let mut goal_state: Option<usize> = None;
+    while let Some(Reverse((_f, st))) = heap.pop() {
+        let v = st / 3;
+        let d = (st % 3) as u8;
+        let g = dist[st];
+        if is_target(v) {
+            goal_state = Some(st);
+            break;
+        }
+        for &(w, len) in &ovg.adj[v] {
+            let nd = dir_of(ovg.verts[v], ovg.verts[w]);
+            let bend = if d != 0 && d != nd { BEND_PENALTY } else { 0.0 };
+            let ng = g + len + bend;
+            let ns = state(w, nd);
+            if ng + 1e-9 < dist[ns] {
+                dist[ns] = ng;
+                prev[ns] = Some(st);
+                heap.push(Reverse((Ord64(ng + h(w)), ns)));
+            }
+        }
+    }
+
+    let mut cur = goal_state?;
+    let mut rev: Vec<P> = Vec::new();
+    loop {
+        rev.push(ovg.verts[cur / 3]);
+        match prev[cur] {
+            Some(p) => cur = p,
+            None => break,
+        }
+    }
+    rev.reverse();
+    Some(simplify(rev))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -301,5 +410,59 @@ mod tests {
         let obs = leaf_obstacles(&rects, &[BoxId::Node("a".into())]);
         let ids: Vec<_> = obs.iter().map(|o| o.id.clone()).collect();
         assert_eq!(ids, vec![BoxId::Node("b".into()), BoxId::Node("c".into())]);
+    }
+
+    #[test]
+    fn astar_clear_line_of_sight_is_two_point_straight() {
+        // Boxes sharing a y-band with a clear horizontal gap.
+        let src = r(0.0, 0.0, 100.0, 60.0);
+        let tgt = r(300.0, 0.0, 100.0, 60.0);
+        let (ovg, srcv, tgtv) = build_ovg(&[], src, tgt);
+        let goal = (tgt.x + tgt.w / 2.0, tgt.y + tgt.h / 2.0);
+        let path = astar(&ovg, &srcv, &tgtv, goal).expect("path exists");
+        // Straight degenerate: a single horizontal segment => two points, equal y.
+        assert_eq!(path.len(), 2, "straight route is two points, got {path:?}");
+        assert!((path[0].1 - path[1].1).abs() < 1e-6, "same y => horizontal");
+    }
+
+    #[test]
+    fn astar_detours_around_blocking_obstacle_orthogonally() {
+        let src = r(0.0, 0.0, 100.0, 60.0);
+        let tgt = r(350.0, 0.0, 100.0, 60.0);
+        let mid = Obstacle {
+            id: BoxId::Node("m".into()),
+            rect: r(150.0, -30.0, 80.0, 120.0),
+        };
+        let (ovg, srcv, tgtv) = build_ovg(std::slice::from_ref(&mid), src, tgt);
+        let goal = (tgt.x + tgt.w / 2.0, tgt.y + tgt.h / 2.0);
+        let path = astar(&ovg, &srcv, &tgtv, goal).expect("path exists");
+        assert!(path.len() >= 4, "a detour has >= 4 points, got {path:?}");
+        for w in path.windows(2) {
+            assert!(
+                (w[0].0 - w[1].0).abs() < 1e-6 || (w[0].1 - w[1].1).abs() < 1e-6,
+                "segment {:?}->{:?} not orthogonal",
+                w[0],
+                w[1]
+            );
+        }
+        let inf = inflate(mid.rect, ROUTE_MARGIN);
+        for &(x, y) in &path {
+            assert!(
+                !strictly_inside(&inf, x, y),
+                "path pierces obstacle at ({x},{y})"
+            );
+        }
+    }
+
+    #[test]
+    fn simplify_collapses_collinear_and_duplicates() {
+        let pts = vec![
+            (0.0, 0.0),
+            (0.0, 0.0),
+            (10.0, 0.0),
+            (20.0, 0.0),
+            (20.0, 10.0),
+        ];
+        assert_eq!(simplify(pts), vec![(0.0, 0.0), (20.0, 0.0), (20.0, 10.0)]);
     }
 }
