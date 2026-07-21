@@ -175,7 +175,7 @@ impl IconSet {
             TreeKind::Interface => Icon::SquareDashedTopSolid,
             TreeKind::Enum => Icon::List,
             TreeKind::DataType => Icon::Braces,
-            TreeKind::Package => Icon::Package,
+            TreeKind::Package => Icon::Folder,
             TreeKind::Diagram => Icon::Workflow,
             TreeKind::Behavior => Icon::Activity,
             TreeKind::Sequence => Icon::ArrowLeftRight,
@@ -489,7 +489,7 @@ mod icon_map_tests {
         assert_eq!(IconSet::icon_for(TreeKind::Interface), Some(Icon::SquareDashedTopSolid));
         assert_eq!(IconSet::icon_for(TreeKind::Enum), Some(Icon::List));
         assert_eq!(IconSet::icon_for(TreeKind::DataType), Some(Icon::Braces));
-        assert_eq!(IconSet::icon_for(TreeKind::Package), Some(Icon::Package));
+        assert_eq!(IconSet::icon_for(TreeKind::Package), Some(Icon::Folder));
         assert_eq!(IconSet::icon_for(TreeKind::Diagram), Some(Icon::Workflow));
         assert_eq!(IconSet::icon_for(TreeKind::Behavior), Some(Icon::Activity));
         assert_eq!(IconSet::icon_for(TreeKind::Sequence), Some(Icon::ArrowLeftRight));
