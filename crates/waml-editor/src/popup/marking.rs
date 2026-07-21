@@ -93,7 +93,10 @@ impl MarkingCore {
 
     /// Button released over slot `hit`. A held press let up without dragging (and
     /// not already latched) becomes a tap → latch popup mode (no outcome).
-    /// Otherwise resolve: an enabled slot commits, anything else cancels.
+    /// Otherwise resolve: an enabled slot commits. A disabled slot is a no-op
+    /// (stays open, mirrors `click`'s disabled branch) only in latched popup
+    /// mode (menu press-hold) -- a marking-drag release over a disabled slot is
+    /// a gesture abandoned, so it still cancels like a miss.
     pub fn release(&mut self, hit: Option<usize>) -> MarkOutcome {
         if !self.pressed {
             return MarkOutcome::None;
@@ -103,6 +106,7 @@ impl MarkingCore {
             self.popup = true;
             return MarkOutcome::None;
         }
+        let was_popup = self.popup;
         self.pressed = false;
         match hit {
             Some(i) if self.items[i].enabled => {
@@ -110,6 +114,7 @@ impl MarkingCore {
                 self.close();
                 MarkOutcome::Committed(id)
             }
+            Some(_) if was_popup => MarkOutcome::None,
             _ => {
                 self.close();
                 MarkOutcome::Cancelled
@@ -267,12 +272,16 @@ mod tests {
     }
 
     #[test]
-    fn popup_press_hold_over_disabled_cancels() {
+    fn popup_press_hold_over_disabled_is_noop_stays_open() {
+        // A disabled row in latched popup mode (menu press-hold) is a no-op --
+        // the card stays open, same as `click`'s disabled branch. (Distinct from
+        // `drag_release_over_disabled_cancels`: a marking-drag release over a
+        // disabled slot is an abandoned gesture and still cancels.)
         let mut c = MarkingCore::default();
         c.begin_popup(menu(), T);
         c.press(dvec2(P.x, P.y), Some(1));
-        assert_eq!(c.release(Some(1)), MarkOutcome::Cancelled);
-        assert!(!c.is_open());
+        assert_eq!(c.release(Some(1)), MarkOutcome::None);
+        assert!(c.is_open());
     }
 
     // --- radial popup click (was RadialCore click) ---
