@@ -53,9 +53,12 @@ script_mod! {
         // FPS-heat meter (top-bar wordmark only, independent of `mode`): the Rust
         // side samples framerate during a pointer interaction and drives these.
         // `fps_color` is the heat target (green->amber->red); `meter` (0..1) is the
-        // eased strength every segment tints toward. Both default to rest (inert
-        // grey / 0) so non-metered instances -- splash, harness, card -- are
-        // pixel-identical to before.
+        // eased strength every segment tints toward. `meter` defaults to 0, which
+        // makes the mix below a no-op regardless of `fps_color`'s value, so non-
+        // metered instances -- splash, harness, card -- are pixel-identical to
+        // before. (This shader-side `fps_color` default is never actually observed
+        // at runtime: `draw_walk` unconditionally pushes the Rust-side value, which
+        // defaults to black, every draw.)
         fps_color: uniform(vec3(0.5, 0.5, 0.5))
         meter: uniform(0.0)
         pixel: fn() {
@@ -667,7 +670,17 @@ impl Widget for LogoMark {
                         let cdt = dt.clamp(0.001, 0.5);
                         let inst_fps = 1.0 / cdt;
                         let alpha = 1.0 - (-cdt / FPS_TAU).exp();
-                        self.fps = (self.fps as f64 + alpha * (inst_fps - self.fps as f64)) as f32;
+                        if self.fps == 0.0 {
+                            // Seed on the first real sample instead of blending from
+                            // 0: an EMA blend here would compute ~= alpha*inst_fps
+                            // (~6fps), reading as a false-low red flash before it
+                            // climbs to steady-state over ~FPS_TAU. `fps` is always
+                            // >= 1/0.5 = 2 once sampling (cdt is clamped to <=0.5),
+                            // so 0.0 unambiguously means "unseeded".
+                            self.fps = inst_fps as f32;
+                        } else {
+                            self.fps = (self.fps as f64 + alpha * (inst_fps - self.fps as f64)) as f32;
+                        }
                         self.fps_color = Self::heat_color(self.fps);
                     }
                 }
