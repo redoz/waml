@@ -83,7 +83,7 @@ script_mod! {
             // immediate mode) at the start of each row; the icon ends at
             // ICON_LEFT_MARGIN + ICON_SIZE = 20px, so padding.left 24 sits the
             // label 4px past it.
-            node_height: 24.0
+            node_height: 26.0
 
             // Scrollbar handle is invisible in the shipped theme (color_outset
             // ~= our field_bg). Tint it so an overflowing tree visibly says
@@ -185,9 +185,9 @@ impl IconSet {
     }
 }
 
-/// Row height in the `FileTree` DSL (`node_height: 24.0`); used to vertically
+/// Row height in the `FileTree` DSL (`node_height: 26.0`); used to vertically
 /// center the icon within each row.
-const ROW_HEIGHT: f64 = 24.0;
+const ROW_HEIGHT: f64 = 26.0;
 const ICON_SIZE: f64 = 14.0;
 const ICON_LEFT_MARGIN: f64 = 6.0;
 const ICON_DEPTH_INDENT: f64 = 18.0;
