@@ -224,13 +224,6 @@ impl Widget for CaptionButton {
 }
 
 impl CaptionButton {
-    /// True when this button emitted a click in `actions`.
-    pub fn clicked(&self, actions: &Actions) -> bool {
-        actions
-            .find_widget_action(self.widget_uid())
-            .is_some_and(|a| matches!(a.cast(), CaptionButtonAction::Clicked))
-    }
-
     /// The press position when this button emitted a primary press in
     /// `actions`, else `None`. Used to open a menu on the DOWN edge.
     pub fn pressed(&self, actions: &Actions) -> Option<DVec2> {
@@ -265,11 +258,6 @@ impl CaptionButton {
 }
 
 impl CaptionButtonRef {
-    /// See [`CaptionButton::clicked`].
-    pub fn clicked(&self, actions: &Actions) -> bool {
-        self.borrow().is_some_and(|inner| inner.clicked(actions))
-    }
-
     /// See [`CaptionButton::pressed`].
     pub fn pressed(&self, actions: &Actions) -> Option<DVec2> {
         self.borrow().and_then(|inner| inner.pressed(actions))
