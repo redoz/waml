@@ -149,6 +149,13 @@ pub struct GraphCanvas {
     drag_start_abs: Option<DVec2>,
     #[rust]
     drag_start_pan: (f64, f64),
+    /// Index (into the current scene's nodes) of the click-selected node, or
+    /// `None`. Drives the thicker `AccentFrame` highlight in `draw_walk`. It
+    /// indexes *this* scene, so it MUST be reset to `None` whenever the scene is
+    /// replaced (`set_scene` / `set_focus`), or a stale index would highlight
+    /// the wrong node.
+    #[rust]
+    selected: Option<usize>,
 }
 
 impl Default for Camera {
@@ -189,6 +196,19 @@ fn border_point(from: waml::solve::Rect, to: waml::solve::Rect) -> (f64, f64) {
     };
     let t = tx.min(ty);
     (fcx + dx * t, fcy + dy * t)
+}
+
+/// A primary press counts as a *click* (not a pan) only if the pointer stayed
+/// within this many screen pixels of the down point. Anything further is a
+/// drag, which pans and never selects.
+const SELECT_SLOP: f64 = 4.0;
+
+/// Whether a primary press that went down at `down` and lifted at `up` is a
+/// click rather than a pan: it moved less than `SELECT_SLOP` screen pixels.
+/// Pure (screen-space distance), so the click/drag threshold is unit-testable
+/// without a GPU.
+fn is_click(down: DVec2, up: DVec2) -> bool {
+    (up - down).length() < SELECT_SLOP
 }
 
 /// Index of the topmost node whose on-screen rect contains `abs`, or `None`.
@@ -251,6 +271,12 @@ pub enum GraphCanvasAction {
         #[allow(dead_code)]
         node: usize,
     },
+    /// A primary click landed on a node: repoint the inspector at its
+    /// classifier. Carries the `SceneNode::key` directly so `App` never re-maps
+    /// an index.
+    NodeSelect { key: String },
+    /// A primary click landed on empty canvas: clear the inspector.
+    NodeDeselect,
 }
 
 impl Widget for GraphCanvas {
@@ -276,6 +302,32 @@ impl Widget for GraphCanvas {
                     self.camera.pan_y = self.drag_start_pan.1 - delta.y / self.camera.zoom;
                     self.draw_bg.redraw(cx);
                 }
+            }
+            Hit::FingerUp(fe) if fe.is_primary_hit() => {
+                // A short press (< SELECT_SLOP px from the down point) is a
+                // click, not a pan: hit-test the release point and select the
+                // node under it, or deselect on empty canvas. A longer press was
+                // a pan -- the camera already moved via FingerMove; do nothing.
+                if let Some(down) = self.drag_start_abs.take() {
+                    if is_click(down, fe.abs) {
+                        let rects: Vec<waml::solve::Rect> =
+                            self.scene.nodes.iter().map(|n| n.rect).collect();
+                        let uid = self.widget_uid();
+                        match node_at(&rects, &self.camera, self.view_rect, fe.abs) {
+                            Some(i) => {
+                                self.selected = Some(i);
+                                let key = self.scene.nodes[i].key.clone();
+                                cx.widget_action(uid, GraphCanvasAction::NodeSelect { key });
+                            }
+                            None => {
+                                self.selected = None;
+                                cx.widget_action(uid, GraphCanvasAction::NodeDeselect);
+                            }
+                        }
+                        self.draw_bg.redraw(cx);
+                    }
+                }
+                cx.set_cursor(MouseCursor::Grab);
             }
             Hit::FingerUp(_) => {
                 self.drag_start_abs = None;
@@ -386,7 +438,7 @@ impl Widget for GraphCanvas {
         // of `self.scene` so the body render can take `&mut self`
         // (`draw_card`) without holding an immutable borrow of the scene.
         let nodes = self.scene.nodes.clone();
-        for node in &nodes {
+        for (i, node) in nodes.iter().enumerate() {
             let (lx, ly) = self.camera.world_to_local(node.rect.x, node.rect.y);
             let screen = Rect {
                 pos: dvec2(rect.pos.x + lx, rect.pos.y + ly),
@@ -395,6 +447,12 @@ impl Widget for GraphCanvas {
                     node.rect.h * self.camera.zoom,
                 ),
             };
+            // Push the per-node `selected` uniform (1.0 for the picked node,
+            // 0.0 otherwise) so its frame widens; every other node draws exactly
+            // as before. Same set_uniform-before-draw_abs cadence as `zoom`.
+            let selected = if self.selected == Some(i) { 1.0f32 } else { 0.0 };
+            self.draw_node
+                .set_uniform(cx, live_id!(selected), &[selected]);
             // Node card: rounded near-white glass fill + source-bright accent
             // frame, both in draw_node's SDF shader (see script_mod above).
             self.draw_node.draw_abs(cx, screen);
@@ -507,6 +565,7 @@ impl GraphCanvas {
         self.scene = scene;
         self.fitted = false;
         self.focus_mode = false;
+        self.selected = None; // stale index would highlight the wrong node
         self.draw_bg.redraw(cx);
     }
 
@@ -517,6 +576,7 @@ impl GraphCanvas {
         self.scene = scene;
         self.fitted = false;
         self.focus_mode = true;
+        self.selected = None; // stale index would highlight the wrong node
         self.draw_bg.redraw(cx);
     }
 
@@ -613,6 +673,61 @@ mod tests {
         assert_eq!(node_at(&rects, &camera, view, dvec2(50.0, 30.0)), Some(0));
         assert_eq!(node_at(&rects, &camera, view, dvec2(250.0, 30.0)), Some(1));
         assert_eq!(node_at(&rects, &camera, view, dvec2(150.0, 30.0)), None);
+    }
+
+    #[test]
+    fn is_click_splits_on_the_slop_threshold() {
+        let down = dvec2(100.0, 100.0);
+        // A near-stationary release (well under 4px) is a click.
+        assert!(is_click(down, dvec2(102.0, 101.0)));
+        // A release just inside the slop radius is still a click.
+        assert!(is_click(down, dvec2(100.0 + 3.9, 100.0)));
+        // A drag past the slop radius is a pan, not a click.
+        assert!(!is_click(down, dvec2(110.0, 100.0)));
+        assert!(!is_click(down, dvec2(100.0 + 4.0, 100.0)));
+    }
+
+    #[test]
+    fn a_sub_slop_click_selects_the_node_under_the_point() {
+        // Two nodes side by side, each carrying its classifier key. The release
+        // logic is is_click() gating node_at(), then indexing the key -- the
+        // exact composition the FingerUp handler runs.
+        let rects = vec![
+            WorldRect {
+                x: 0.0,
+                y: 0.0,
+                w: 100.0,
+                h: 60.0,
+            },
+            WorldRect {
+                x: 200.0,
+                y: 0.0,
+                w: 100.0,
+                h: 60.0,
+            },
+        ];
+        let keys = ["uml.A", "uml.B"];
+        let camera = Camera {
+            pan_x: 0.0,
+            pan_y: 0.0,
+            zoom: 1.0,
+        };
+        let view = Rect {
+            pos: dvec2(0.0, 0.0),
+            size: dvec2(800.0, 600.0),
+        };
+        let resolve = |down: DVec2, up: DVec2| -> Option<&'static str> {
+            if !is_click(down, up) {
+                return None; // a drag pans and never selects
+            }
+            node_at(&rects, &camera, view, up).map(|i| keys[i])
+        };
+
+        // Sub-slop up over node 1 selects it (emits its key).
+        let down = dvec2(250.0, 30.0);
+        assert_eq!(resolve(down, dvec2(251.0, 31.0)), Some("uml.B"));
+        // Over-slop up (a pan) selects nothing even though it ends over a node.
+        assert_eq!(resolve(down, dvec2(280.0, 30.0)), None);
     }
 
     #[test]

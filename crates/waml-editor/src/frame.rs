@@ -27,6 +27,9 @@ script_mod! {
     // stroke width so a canvas node's frame thickens with its zoomed box instead
     // of staying a fixed screen-pixel hairline; the canvas pushes it per frame
     // via set_uniform. Panels leave it at the default 1.0 (screen-space, no zoom).
+    // `selected` (0.0/1.0) widens the inset+stroke ~1.5x for the canvas's picked
+    // node; the canvas pushes it per node before draw_abs, same as `zoom`.
+    // Everyone else leaves it at 0.0 (the common, visually-unchanged path).
     //
     // Sharp corners use `sdf.rect`, NOT `sdf.box(..., 0.0)`: a zero corner radius
     // degenerates `box` and floods the fill (rounded variants get their own
@@ -37,8 +40,11 @@ script_mod! {
         border_hi: uniform(atlas.frame_hi)
         border_lo: uniform(atlas.frame_lo)
         zoom: uniform(1.0)
+        selected: uniform(0.0)
         pixel: fn() {
-            let inset = 1.5 * self.zoom
+            // Selection widens the border ~1.5x: mix() lifts the 1.5px base to
+            // 2.25px when selected == 1.0, leaving the unselected path untouched.
+            let inset = 1.5 * self.zoom * mix(1.0, 1.5, self.selected)
             let sdf = Sdf2d.viewport(self.pos * self.rect_size)
             sdf.rect(inset, inset, self.rect_size.x - inset * 2.0, self.rect_size.y - inset * 2.0)
             sdf.fill_keep(self.color)
