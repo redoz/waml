@@ -43,14 +43,14 @@ script_mod! {
                     height: Fill
                     align: Align{y: 0.5}
                     draw_bg.color: atlas.field_bg
-                    // Fixed-width nav cluster (212) holding the logo/sep/name. The
-                    // save + burger buttons follow it as direct caption-bar
-                    // children -- their hit/drag-query path only works there, not
-                    // nested -- adding 80px (2 * (36 + 4 margins)) so the burger's
-                    // right edge and the first doc tab both land on the tree's
-                    // right edge (12 margin + 280 tree = 292).
+                    // Fixed-width nav cluster (252) holding the logo/sep/name. The
+                    // burger button follows it as a direct caption-bar child --
+                    // its hit/drag-query path only works there, not nested --
+                    // adding 40px (36 + 4 margins) so the burger's right edge and
+                    // the first doc tab both land on the tree's right edge
+                    // (12 margin + 280 tree = 292).
                     nav := View{
-                        width: 212.0
+                        width: 252.0
                         height: Fill
                         flow: Right
                         align: Align{y: 0.5}
@@ -85,7 +85,7 @@ script_mod! {
                     }
                     // `Fill` + `clip_x` bound a long model path to the nav instead
                     // of letting a `Fit` box grow with the path and shove the
-                    // buttons past 292. Left-aligned; the nav's fixed width holds
+                    // burger past 292. Left-aligned; the nav's fixed width holds
                     // the layout regardless of name length.
                     model_name_view := View{
                         width: Fill
@@ -113,13 +113,11 @@ script_mod! {
                         }
                     }
                     }
-                    // Action buttons right after the nav, as direct caption-bar
-                    // children: save then burger. Facing margins trimmed so the
-                    // pair sits tight (2px gap instead of the button default's 6);
-                    // the outer margins hold the 292 edge (212 + 40 + 40). Both
-                    // start hidden -- `App` flips them visible only while a model
-                    // is open (see `show_editor` / `show_start_screen`).
-                    save_btn := CaptionButton{ shape: 1.0 margin: Inset{left: 3.0, right: 1.0} visible: false }
+                    // Burger button right after the nav, as a direct caption-bar
+                    // child. Outer margins hold the 292 edge (252 + 40). It
+                    // starts hidden -- `App` flips it visible only while a model
+                    // is open (see `show_editor` / `show_start_screen`). Save is
+                    // gone: the editor autosaves.
                     menu_btn := CaptionButton{ shape: 0.0 margin: Inset{left: 1.0, right: 3.0} visible: false }
                     doc_tabs := DocTabs{
                         width: Fill
@@ -673,8 +671,7 @@ impl App {
     fn show_editor(&mut self, cx: &mut Cx) {
         self.editor_shown = true;
         self.ui.widget(cx, ids!(main_column)).set_visible(cx, true);
-        // Caption save + burger belong to an open model.
-        self.ui.widget(cx, ids!(save_btn)).set_visible(cx, true);
+        // Caption burger belongs to an open model.
         self.ui.widget(cx, ids!(menu_btn)).set_visible(cx, true);
         if let Some(mut screen) = self
             .ui
@@ -738,8 +735,7 @@ impl App {
             screen.set_visible(cx, true);
         }
         self.ui.widget(cx, ids!(main_column)).set_visible(cx, false);
-        // No open model on the start screen: hide save + burger.
-        self.ui.widget(cx, ids!(save_btn)).set_visible(cx, false);
+        // No open model on the start screen: hide burger.
         self.ui.widget(cx, ids!(menu_btn)).set_visible(cx, false);
         self.editor_shown = false;
     }
@@ -953,16 +949,7 @@ impl MatchEvent for App {
     }
 
     fn handle_actions(&mut self, cx: &mut Cx, actions: &Actions) {
-        // Caption action buttons -- placeholders this pass (real save / menu
-        // land later).
-        if self
-            .ui
-            .widget(cx, ids!(save_btn))
-            .as_caption_button()
-            .clicked(actions)
-        {
-            log!("caption: save clicked");
-        }
+        // Caption burger -- placeholder menu wiring this pass.
         if let Some(press) = self
             .ui
             .widget(cx, ids!(menu_btn))
@@ -1440,18 +1427,13 @@ impl AppMain for App {
                 .borrow::<crate::logo::LogoMark>()
                 .map(|l| l.drawn_rect().contains(dq.abs))
                 .unwrap_or(false);
-            // The caption action buttons live in the drag region too; treat
-            // their rects as client area so clicks reach the widget.
+            // The caption burger lives in the drag region too; treat its
+            // rect as client area so clicks reach the widget.
             let over_btn = self
                 .ui
-                .widget(cx, ids!(save_btn))
+                .widget(cx, ids!(menu_btn))
                 .as_caption_button()
-                .hits(dq.abs)
-                || self
-                    .ui
-                    .widget(cx, ids!(menu_btn))
-                    .as_caption_button()
-                    .hits(dq.abs);
+                .hits(dq.abs);
             // While the drop-down is open, treat the WHOLE caption as client
             // area. The header is otherwise an OS window-drag region, so a press
             // there starts a drag and never reaches the app as a click -- the
