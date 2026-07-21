@@ -10,6 +10,15 @@ param(
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
 Set-Location $root
+
+# A still-running instance holds the target exe lock, so cargo would relink
+# against a stale binary (or fail) and the new window would show old code.
+# Kill any stragglers, then build explicitly so compile errors surface here
+# instead of as a window that never opens.
+Get-Process waml-editor -ErrorAction SilentlyContinue | Stop-Process -Force
+cargo build -p waml-editor --bin waml-editor
+if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
 if ($Empty) {
     cargo run -p waml-editor --bin waml-editor
 }
