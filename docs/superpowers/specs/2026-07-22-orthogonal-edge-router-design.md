@@ -58,12 +58,16 @@ top-level solve calls:
 
 ```
 pub(super) fn route(
-    nodes: &BTreeMap<String, Rect>,
-    groups: &[SolvedGroup],
-    edges: &[(BoxId, BoxId)],
+    boxes: &[Box],                  // IR forest — group membership via Box.children
+    rects: &BTreeMap<BoxId, Rect>,  // solved geometry for every box (nodes AND groups)
+    edges: &[(BoxId, BoxId)],       // leaf-to-leaf
     cfg: &SolveConfig,
 ) -> Vec<Route>
 ```
+
+The route pass runs *before* the wire projection flattens the layout, so it
+consumes the internal IR (`Box` forest + `BoxId`-keyed rects), not the wire
+`Solved`. This is what makes group membership exact — see the obstacle rule.
 
 Output:
 
@@ -93,19 +97,28 @@ out.
 
 ## Inputs
 
-- **Node rects** — every leaf node rect from the geometry solve. Obstacles,
-  hard, always.
-- **Group rects + containment** — each `SolvedGroup.rect`, plus which leaf nodes
-  fall inside it (derived from rect containment). Drives the containment-aware
-  obstacle rule below.
+- **`Box` forest** — the IR tree of nodes and groups. Group membership is the
+  child lists (`Box { kind: Group, children, .. }`), walked transitively, NOT
+  inferred from rect overlap.
+- **Rects** — the solved geometry keyed by `BoxId`, covering every box (leaf
+  nodes and group frames). Leaf rects are the obstacles; group rects are used by
+  the containment-aware rule.
 - **Edges** — `(source: BoxId, target: BoxId)` leaf pairs. Leaf-to-leaf only.
+
+Because the geometry solver clumps a group's members together and wraps them in a
+frame + margin (`geometry.rs::assemble`, proven by
+`column_group_with_frame_wraps_members_with_margin`), a group's rect tightly
+bounds its members — but membership itself comes from the child lists above, so
+the obstacle rule stays correct even when layouts overlap or nest.
 
 ## Obstacle rule (containment-aware)
 
 - Leaf node rects are hard obstacles for every edge, always.
-- A group rect is an obstacle for an edge **only when both endpoints lie outside
-  that group**. An edge with at least one endpoint inside the group routes
-  freely within and across that group's boundary.
+- A group is an obstacle for an edge **only when both endpoints are outside that
+  group's membership** (determined by the child lists, transitively). An edge
+  with at least one endpoint that is a member of the group routes freely within
+  and across that group's boundary. Membership is never inferred from whether an
+  endpoint's rect happens to fall inside the group rect.
 
 Rationale: a line leaving a node inside a group naturally crosses the group
 frame; unrelated lines detour around it. This matches how people read nested
@@ -182,10 +195,13 @@ Unit-tested in isolation against hand-built rect sets, mirroring the
 - Two boxes, clear line of sight → straight degenerate segment.
 - Two boxes with a third obstacle between them → detour, orthogonal, no overlap
   with the obstacle.
-- Endpoint inside a group, endpoint outside → route crosses the group frame
-  (group not treated as obstacle).
-- Both endpoints outside a group that lies between them → route detours around
-  the group.
+- One endpoint a member of a group, the other outside → route crosses the group
+  frame (group not treated as obstacle for this edge).
+- Both endpoints non-members of a group that lies between them → route detours
+  around the group.
+- Membership is by child list, not rect overlap: a non-member node whose rect
+  happens to sit inside a group rect does NOT make that group transparent to its
+  edges.
 - Hub node with several edges → attachment points spread along the border, no
   two edges share an attachment point.
 - Parallel edges between the same box pair → nudged into distinct parallel runs.
