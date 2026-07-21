@@ -1,15 +1,14 @@
 pub use makepad_widgets;
 use makepad_widgets::*;
 
+mod action_link;
 mod app;
-mod app_menu;
 mod camera;
 mod canvas;
-mod card;
 mod caption_button;
+mod card;
 mod cli;
 mod config;
-mod action_link;
 mod diagram_switcher;
 mod doc_tabs;
 mod fps_meter;
@@ -22,7 +21,6 @@ mod logo;
 mod node_design_editor;
 mod node_style;
 mod popup;
-mod radial;
 mod recent_row;
 mod scene;
 mod selection_toolbar;

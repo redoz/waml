@@ -31,15 +31,12 @@ pub const PAD_H: f64 = 4.0;
 /// card draws in the window overlay (see `AppMenu::draw_walk`), so it is not
 /// clipped at the caption/body boundary and a negative value genuinely lifts it.
 /// (The logo anchor still clamps to `CAPTION_H`; the burger does not.)
-#[allow(dead_code)]
 pub const MENU_GAP: f64 = -4.0;
 /// Horizontal inset of the card from the anchor button's left edge (lpx), so
 /// the drop-down sits a touch right of the glyph rather than flush under it.
-#[allow(dead_code)]
 pub const MENU_INDENT_X: f64 = 2.0;
 /// Caption-bar height (matches `window.caption_bar_height_override` in the App
 /// DSL). The card top is clamped to this so it clears the caption's clip band.
-#[allow(dead_code)]
 pub const CAPTION_H: f64 = 44.0;
 /// Cursor travel (lpx) from the press point before a held press is
 /// treated as a marking drag rather than a tap (mirrors `Radial`'s threshold).

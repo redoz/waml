@@ -64,7 +64,7 @@ pub enum PopupRootAction {
 
 /// Which surface is active. Pairs with the active tag in the slot. (The spec's
 /// `PopupKind`; an enum discriminant, not a `Box<dyn>` -- the surfaces are
-/// widget-hosted `#[live]` fields, so the slot only needs to know which one.)
+/// tree children reached by id-path, so the slot only needs to know which one.)
 #[derive(Clone, Copy, PartialEq)]
 enum ActiveKind {
     Menu,
@@ -98,10 +98,21 @@ script_mod! {
     mod.widgets.PopupRoot = set_type_default() do mod.widgets.PopupRootBase{
         width: Fill
         height: Fill
-        // The two surface kinds, hosted as children so their #[live] shader
-        // fields get configured from the DSL. Each paints nothing while closed.
-        menu: MenuPopup{ width: Fill height: Fill }
-        radial: RadialPopup{ width: Fill height: Fill }
+        // The two surface kinds, hosted as genuine DSL tree children (reached
+        // by id-path through `body`) rather than named `#[live]` struct
+        // fields -- this fork's Widget-derive instantiation overflows the
+        // stack when a struct carries two or more `#[live]` fields of full
+        // nested-Widget type. Every other multi-child composite in this
+        // codebase (App's own `ui`, and every panel it owns) goes through
+        // exactly this `WidgetRef` + id-path lookup, so this mirrors the
+        // codebase's one proven-working pattern. Each paints nothing while
+        // closed.
+        body: View{
+            width: Fill
+            height: Fill
+            menu := MenuPopup{ width: Fill height: Fill }
+            radial := RadialPopup{ width: Fill height: Fill }
+        }
     }
 }
 
@@ -116,16 +127,11 @@ pub struct PopupRoot {
     #[layout]
     layout: Layout,
 
-    /// The linear card surface (in-window overlay via its own draw_walk).
-    /// `#[redraw]` also gives the derive its required redraw/area source (no
-    /// own `Draw*` holder here -- both children own their own).
+    /// Hosts both surfaces as tree children (see `script_mod!` above for why
+    /// this is a single `WidgetRef`, not two `#[live]` widget fields).
     #[redraw]
     #[live]
-    menu: MenuPopup,
-    /// The wedge surface (Overlay-flow child, draws via draw_abs).
-    #[redraw]
-    #[live]
-    radial: RadialPopup,
+    body: WidgetRef,
 
     /// The single active surface + its opaque tag, or none.
     #[rust]
@@ -138,9 +144,7 @@ impl Widget for PopupRoot {
 
     fn draw_walk(&mut self, cx: &mut Cx2d, scope: &mut Scope, walk: Walk) -> DrawStep {
         // Draw both surfaces; each paints nothing while closed (self-guarded).
-        let _ = self.radial.draw_walk(cx, scope, walk);
-        let _ = self.menu.draw_walk(cx, scope, walk);
-        DrawStep::done()
+        self.body.draw_walk(cx, scope, walk)
     }
 }
 
@@ -156,8 +160,21 @@ impl PopupRoot {
         // Supersede: reset the prior surface and emit its Dismissed close.
         if let Some((kind, tag)) = self.active.take() {
             match kind {
-                ActiveKind::Menu => self.menu.reset(),
-                ActiveKind::Radial => self.radial.reset(),
+                ActiveKind::Menu => {
+                    if let Some(mut m) = self.body.widget(cx, ids!(menu)).borrow_mut::<MenuPopup>()
+                    {
+                        m.reset();
+                    }
+                }
+                ActiveKind::Radial => {
+                    if let Some(mut r) = self
+                        .body
+                        .widget(cx, ids!(radial))
+                        .borrow_mut::<RadialPopup>()
+                    {
+                        r.reset();
+                    }
+                }
             }
             cx.widget_action(
                 self.widget_uid(),
@@ -180,9 +197,11 @@ impl PopupRoot {
                 // width; height is exact from the row count.
                 let size = dvec2(MENU_MAX_W, PAD_V * 2.0 + items.len() as f64 * ROW_H);
                 let placed = Presenter::place(anchor, size, bounds);
-                match open {
-                    MenuOpen::Press(press) => self.menu.open_marking(cx, placed, press, items),
-                    MenuOpen::Popup => self.menu.open_popup(cx, placed, items),
+                if let Some(mut m) = self.body.widget(cx, ids!(menu)).borrow_mut::<MenuPopup>() {
+                    match open {
+                        MenuOpen::Press(press) => m.open_marking(cx, placed, press, items),
+                        MenuOpen::Popup => m.open_popup(cx, placed, items),
+                    }
                 }
                 self.active = Some((ActiveKind::Menu, tag));
             }
@@ -194,9 +213,15 @@ impl PopupRoot {
                 open,
             } => {
                 let t = cx.seconds_since_app_start();
-                match open {
-                    RadialOpen::Marking => self.radial.open_marking(cx, center, bounds, items, t),
-                    RadialOpen::Popup => self.radial.open_popup(cx, center, bounds, items, t),
+                if let Some(mut r) = self
+                    .body
+                    .widget(cx, ids!(radial))
+                    .borrow_mut::<RadialPopup>()
+                {
+                    match open {
+                        RadialOpen::Marking => r.open_marking(cx, center, bounds, items, t),
+                        RadialOpen::Popup => r.open_popup(cx, center, bounds, items, t),
+                    }
                 }
                 self.active = Some((ActiveKind::Radial, tag));
             }
@@ -216,15 +241,38 @@ impl PopupRoot {
             RouteStep::Close(PopupResult::Dismissed)
         } else {
             let verdict = match kind {
-                ActiveKind::Menu => self.menu.handle(cx, ev),
-                ActiveKind::Radial => self.radial.handle(cx, ev),
+                ActiveKind::Menu => self
+                    .body
+                    .widget(cx, ids!(menu))
+                    .borrow_mut::<MenuPopup>()
+                    .map(|mut m| m.handle(cx, ev))
+                    .unwrap_or(PopupVerdict::Ignored),
+                ActiveKind::Radial => self
+                    .body
+                    .widget(cx, ids!(radial))
+                    .borrow_mut::<RadialPopup>()
+                    .map(|mut r| r.handle(cx, ev))
+                    .unwrap_or(PopupVerdict::Ignored),
             };
             decide(verdict, is_primary_press(ev))
         };
         if let RouteStep::Close(result) = step {
             match kind {
-                ActiveKind::Menu => self.menu.reset(),
-                ActiveKind::Radial => self.radial.reset(),
+                ActiveKind::Menu => {
+                    if let Some(mut m) = self.body.widget(cx, ids!(menu)).borrow_mut::<MenuPopup>()
+                    {
+                        m.reset();
+                    }
+                }
+                ActiveKind::Radial => {
+                    if let Some(mut r) = self
+                        .body
+                        .widget(cx, ids!(radial))
+                        .borrow_mut::<RadialPopup>()
+                    {
+                        r.reset();
+                    }
+                }
             }
             cx.widget_action(self.widget_uid(), PopupRootAction::Closed { tag, result });
             self.active = None;

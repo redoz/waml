@@ -3,6 +3,8 @@ use crate::doc_tabs::{OpenTabs, TabKind};
 use crate::fps_meter::FpsMeter;
 use crate::inspector::{diagram_elements, Subject};
 use crate::load;
+use crate::popup::base::PopupResult;
+use crate::popup::root::{MenuOpen, PopupRoot, PopupSpec, RadialOpen};
 use crate::scene::{build_focus_scene, build_scene};
 use makepad_widgets::*;
 use std::path::Path;
@@ -24,8 +26,7 @@ script_mod! {
     use mod.widgets.DesktopButton
     use mod.widgets.DesktopButtonType
     use mod.widgets.StartScreen
-    use mod.widgets.Radial
-    use mod.widgets.AppMenu
+    use mod.widgets.PopupRoot
     use mod.widgets.LogoMark
     use mod.widgets.CaptionButton
 
@@ -249,21 +250,11 @@ script_mod! {
                         width: Fill
                         height: Fill
                     }
-                    // Node radial (Task 4): last overlay child so it paints
-                    // above the canvas + every other panel. Same Overlay-flow
-                    // idiom as `shortcuts_overlay` -- fills the window, draws
-                    // nothing (see `Radial::draw_walk`) while closed.
-                    radial := Radial{
-                        width: Fill
-                        height: Fill
-                    }
-                    // Logo drop-down: last overlay child so it paints above
-                    // `radial` + every panel. Fills the window, draws nothing
-                    // (see `AppMenu::draw_walk`) while closed.
-                    app_menu := AppMenu{
-                        width: Fill
-                        height: Fill
-                    }
+                    // Single-active popup authority: last overlay child so it paints above
+                    // the canvas + every panel. Hosts the wedge + linear-card surfaces; each
+                    // paints nothing while closed. Replaces the old `radial` + `app_menu`
+                    // children.
+                    popup_root := PopupRoot{ width: Fill height: Fill }
                     }
                 }
             }
@@ -294,42 +285,13 @@ pub struct App {
     /// re-hydrates the right one. See `rehydrate`.
     #[rust]
     editor_shown: bool,
-    /// Who the shared `app_menu` drop-down currently belongs to. Sole source of
-    /// truth for the caption burger's held-open glow: it stays lit exactly while
-    /// the burger owns the menu. Opening the logo menu reassigns the owner (so
-    /// the glow drops), and any dismiss/commit resets it to `None`.
-    #[rust]
-    app_menu_owner: MenuOwner,
     /// FPS-heat meter for the top-bar wordmark: samples framerate across a user
     /// interaction and maps it to the tint the logo renders. See `fps_meter.rs`.
     #[rust]
     fps_meter: FpsMeter,
 }
 
-/// Who opened the shared `app_menu` (see `App::app_menu_owner`).
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-enum MenuOwner {
-    #[default]
-    None,
-    Logo,
-    Burger,
-}
-
 impl App {
-    /// Point the canvas + inspector at the currently active doc tab. Diagram
-    /// Reassign the shared `app_menu`'s owner and reflect it in the caption
-    /// burger's held-open glow (lit only while the burger owns the menu). This
-    /// is the single seam that drives the glow -- opening the logo menu, or any
-    /// dismiss/commit, calls here rather than poking the button directly (the
-    /// Win32 "menu mode" model: one owner, look derived).
-    fn set_app_menu_owner(&mut self, cx: &mut Cx, owner: MenuOwner) {
-        self.app_menu_owner = owner;
-        self.ui
-            .widget(cx, ids!(menu_btn))
-            .as_caption_button()
-            .set_held(cx, owner == MenuOwner::Burger);
-    }
-
     /// tabs rebuild+fit the full diagram scene (inspector empty state, since
     /// diagram hit-test selection is out of scope); classifier tabs pin the
     /// 1.5x focus render and point the inspector at that classifier.
@@ -645,7 +607,10 @@ impl App {
                 self.sync_inspector_elements(cx, &diagram_key, &diagram_title, &node_keys);
             }
             None => {
-                log!("no diagrams in {:?}; opening model with an empty canvas", dir);
+                log!(
+                    "no diagrams in {:?}; opening model with an empty canvas",
+                    dir
+                );
                 // Empty scene draws nothing and `bounding_box` returns `None`, so
                 // the fit path leaves the camera untouched (no divide-by-zero). No
                 // diagram tab; the tree/inspector below still populate.
@@ -795,36 +760,45 @@ impl App {
             }
         }
     }
+
+    /// The main window's client rect in main-window coords (popup clip bounds).
+    fn window_bounds(&mut self, cx: &mut Cx) -> Rect {
+        let sz = self.ui.window(cx, ids!(main_window)).get_inner_size(cx);
+        Rect {
+            pos: dvec2(0.0, 0.0),
+            size: dvec2(sz.x, sz.y),
+        }
+    }
 }
 
-/// The four node-radial commands (Remove = danger). Ids are what `Radial`
+/// The four node-radial commands (Remove = danger). Ids are what `RadialPopup`
 /// reports on commit; `crate::canvas::node_command_for` maps them back.
-pub fn node_radial_items() -> Vec<crate::radial::RadialItem> {
+pub fn node_radial_items() -> Vec<crate::popup::base::PopupItem> {
     use crate::icons::Icon;
-    use crate::radial::RadialItem;
+    use crate::popup::base::PopupItem;
     vec![
-        RadialItem {
+        PopupItem {
             id: live_id!(open),
             label: "Open".into(),
             icon: Icon::PackageOpen,
             danger: false,
             enabled: true,
         },
-        RadialItem {
+        PopupItem {
             id: live_id!(style),
             label: "Style".into(),
             icon: Icon::Paintbrush,
             danger: false,
             enabled: true,
         },
-        RadialItem {
+        PopupItem {
             id: live_id!(markdown),
             label: "Markdown".into(),
             icon: Icon::SquareMenu,
             danger: false,
             enabled: true,
         },
-        RadialItem {
+        PopupItem {
             id: live_id!(remove),
             label: "Remove".into(),
             icon: Icon::Trash,
@@ -836,26 +810,26 @@ pub fn node_radial_items() -> Vec<crate::radial::RadialItem> {
 
 /// The logo (app) drop-down rows, top to bottom: Properties, About, Exit
 /// (danger). No Cancel row -- a drop-down dismisses via Esc / outside-click.
-/// Ids are what `AppMenu` reports on commit; `logo_command_for` maps them back.
-pub fn logo_menu_items() -> Vec<crate::radial::RadialItem> {
+/// Ids are what `MenuPopup` reports on commit; `logo_command_for` maps them back.
+pub fn logo_menu_items() -> Vec<crate::popup::base::PopupItem> {
     use crate::icons::Icon;
-    use crate::radial::RadialItem;
+    use crate::popup::base::PopupItem;
     vec![
-        RadialItem {
+        PopupItem {
             id: live_id!(properties),
             label: "Properties".into(),
             icon: Icon::SlidersHorizontal,
             danger: false,
             enabled: true,
         },
-        RadialItem {
+        PopupItem {
             id: live_id!(about),
             label: "About".into(),
             icon: Icon::Info,
             danger: false,
             enabled: true,
         },
-        RadialItem {
+        PopupItem {
             id: live_id!(exit),
             label: "Exit".into(),
             icon: Icon::CircleX,
@@ -867,13 +841,13 @@ pub fn logo_menu_items() -> Vec<crate::radial::RadialItem> {
 
 /// The burger (caption `menu_btn`) drop-down rows: Create, Open model, Close
 /// model. New/Open mirror the start screen's actions; Close returns to the
-/// start screen. Uses the shared `app_menu` widget; the committed ids are
-/// handled inline in `handle_event`.
-pub fn burger_menu_items() -> Vec<crate::radial::RadialItem> {
+/// start screen. Routed through `popup_root`; the committed ids are handled
+/// via the tag-filtered `closed` read in `handle_actions`.
+pub fn burger_menu_items() -> Vec<crate::popup::base::PopupItem> {
     use crate::icons::Icon;
-    use crate::radial::RadialItem;
+    use crate::popup::base::PopupItem;
     vec![
-        RadialItem {
+        PopupItem {
             id: live_id!(new_model),
             // No model-specific glyph exists, so keep it a generic "Create".
             label: "Create".into(),
@@ -881,7 +855,7 @@ pub fn burger_menu_items() -> Vec<crate::radial::RadialItem> {
             danger: false,
             enabled: true,
         },
-        RadialItem {
+        PopupItem {
             id: live_id!(open_model),
             label: "Open model".into(),
             // The open-door glyph, pairing with Close model's door-closed.
@@ -889,7 +863,7 @@ pub fn burger_menu_items() -> Vec<crate::radial::RadialItem> {
             danger: false,
             enabled: true,
         },
-        RadialItem {
+        PopupItem {
             id: live_id!(close_model),
             label: "Close model".into(),
             // The door-closed glyph, drawn directly from the catalog.
@@ -996,31 +970,93 @@ impl MatchEvent for App {
             .as_caption_button()
             .pressed(actions)
         {
-            // Burger drop-down: reuse the shared `app_menu` widget, dropped from
-            // the button. One item for now: "Close model". Opens on the PRESS so
-            // the same gesture can drag straight into a row and release to pick
-            // (marking menu); a plain tap latches it open instead.
+            // Burger drop-down: routed through the single `popup_root` authority.
+            // Opens on the PRESS so the same gesture can drag straight into a row
+            // and release to pick (marking menu); a plain tap latches it open
+            // instead.
             //
             // Anchored a touch right of the button's left edge and tucked up
             // under it (negative `MENU_GAP`) so the card hangs off the glyph.
-            // No caption clamp: `app_menu` now draws in the window overlay (see
-            // `AppMenu::draw_walk`), so the card renders over the caption band
-            // instead of being clipped at the body's top edge.
-            let btn = self.ui.widget(cx, ids!(menu_btn)).as_caption_button().rect();
-            let anchor = dvec2(
-                btn.pos.x + crate::app_menu::MENU_INDENT_X,
-                btn.pos.y + btn.size.y + crate::app_menu::MENU_GAP,
-            );
-            if let Some(mut menu) = self
+            // No caption clamp: `MenuPopup` draws in the window overlay, so the
+            // card renders over the caption band instead of being clipped at the
+            // body's top edge.
+            let btn = self
                 .ui
-                .widget(cx, ids!(app_menu))
-                .borrow_mut::<crate::app_menu::AppMenu>()
+                .widget(cx, ids!(menu_btn))
+                .as_caption_button()
+                .rect();
+            let anchor = dvec2(
+                btn.pos.x + crate::popup::menu::MENU_INDENT_X,
+                btn.pos.y + btn.size.y + crate::popup::menu::MENU_GAP,
+            );
+            let bounds = self.window_bounds(cx);
+            if let Some(mut pr) = self
+                .ui
+                .widget(cx, ids!(popup_root))
+                .borrow_mut::<PopupRoot>()
             {
-                menu.open(cx, anchor, press, burger_menu_items());
+                pr.show_at(
+                    cx,
+                    PopupSpec::Menu {
+                        tag: live_id!(burger),
+                        anchor,
+                        bounds,
+                        items: burger_menu_items(),
+                        open: MenuOpen::Press(press),
+                    },
+                );
             }
-            // Enter menu mode owned by the burger: it lights and stays lit until
-            // the menu dismisses/commits (reset in `handle_event`).
-            self.set_app_menu_owner(cx, MenuOwner::Burger);
+            // Caller-local glow: light the burger now; it drops when we see this
+            // tag's Closed (dismiss OR commit) in handle_actions (Step 7).
+            self.ui
+                .widget(cx, ids!(menu_btn))
+                .as_caption_button()
+                .set_held(cx, true);
+        }
+
+        // Popup outcomes (tag-filtered off the single action queue).
+        if let Some(pr) = self.ui.widget(cx, ids!(popup_root)).borrow::<PopupRoot>() {
+            let logo_closed = pr.closed(actions, live_id!(logo));
+            let burger_closed = pr.closed(actions, live_id!(burger));
+            let node_closed = pr.closed(actions, live_id!(node_menu));
+            drop(pr);
+
+            // Burger caller-local glow: any close of the burger tag drops it.
+            if burger_closed.is_some() {
+                self.ui
+                    .widget(cx, ids!(menu_btn))
+                    .as_caption_button()
+                    .set_held(cx, false);
+            }
+            if let Some(PopupResult::Invoked(id)) = burger_closed {
+                if id == live_id!(new_model) {
+                    // Burger "Create new model": same stub as the start screen's
+                    // New project until the template picker lands in a later slice.
+                    log!("New model: not yet implemented (template picker is a later slice)");
+                } else if id == live_id!(open_model) {
+                    // Burger "Open model": native folder picker, same as the
+                    // start screen's "Open a model".
+                    self.open_model_via_picker(cx);
+                } else if id == live_id!(close_model) {
+                    self.show_start_screen(cx);
+                }
+            }
+            if let Some(PopupResult::Invoked(id)) = logo_closed {
+                if let Some(cmd) = logo_command_for(id) {
+                    match cmd {
+                        LogoCommand::Properties => log!("logo command: Properties (stub)"),
+                        LogoCommand::About => {
+                            cx.open_url("https://github.com/redoz/waml", OpenUrlInPlace::No)
+                        }
+                        LogoCommand::Exit => cx.quit(),
+                    }
+                }
+            }
+            if let Some(PopupResult::Invoked(id)) = node_closed {
+                if let Some(cmd) = crate::canvas::node_command_for(id) {
+                    log!("node command: {cmd:?}");
+                }
+            }
         }
 
         // Classifier focus: single-click a class row -> open/replace the
@@ -1132,10 +1168,10 @@ impl MatchEvent for App {
             return;
         }
 
-        // Canvas pointer actions. A right-press opens the node radial (Task 4);
-        // a primary click selects/deselects a node, repointing the inspector
-        // only (no tab, no camera move -- the same inspector-local path the
-        // element-picker takes above).
+        // Canvas pointer actions. A right-press opens the node radial (Task 4)
+        // routed through the single `popup_root` authority; a primary click
+        // selects/deselects a node, repointing the inspector only (no tab, no
+        // camera move -- the same inspector-local path the element-picker takes).
         let canvas_menu = self
             .ui
             .widget(cx, ids!(canvas))
@@ -1143,20 +1179,22 @@ impl MatchEvent for App {
             .and_then(|c| c.canvas_action(actions));
         match canvas_menu {
             Some(crate::canvas::GraphCanvasAction::NodeMenu { abs, node: _ }) => {
-                let items = node_radial_items();
-                // In-window radial: clip the fan to the main window's client rect
-                // so it collapses to a "C" near a window edge instead of clipping.
-                let sz = self.ui.window(cx, ids!(main_window)).get_inner_size(cx);
-                let bounds = Rect {
-                    pos: dvec2(0.0, 0.0),
-                    size: dvec2(sz.x, sz.y),
-                };
-                if let Some(mut radial) = self
+                let bounds = self.window_bounds(cx);
+                if let Some(mut pr) = self
                     .ui
-                    .widget(cx, ids!(radial))
-                    .borrow_mut::<crate::radial::Radial>()
+                    .widget(cx, ids!(popup_root))
+                    .borrow_mut::<PopupRoot>()
                 {
-                    radial.open(cx, abs, bounds, items, cx.seconds_since_app_start());
+                    pr.show_at(
+                        cx,
+                        PopupSpec::Radial {
+                            tag: live_id!(node_menu),
+                            center: abs,
+                            bounds,
+                            items: node_radial_items(),
+                            open: RadialOpen::Marking,
+                        },
+                    );
                 }
                 return;
             }
@@ -1187,7 +1225,8 @@ impl MatchEvent for App {
         // vertical menu that drops DOWN-right from the mark (the wordmark sits
         // in the window's top-left corner, so a radial there is always
         // degenerate -- a drop-down stays fully on-screen). (Hover/click only
-        // reach the widget because of the drag-query override below.)
+        // reach the widget because of the drag-query override below.) Routed
+        // through the single `popup_root` authority.
         let logo_click = self
             .ui
             .widget(cx, ids!(logo))
@@ -1196,25 +1235,32 @@ impl MatchEvent for App {
         if let Some(logo_rect) = logo_click {
             // Anchor the card at the logo's bottom-left so it drops down-right.
             // The wordmark sits INSIDE the 44px caption bar (see
-            // `window.caption_bar_height_override`), but `app_menu` lives in the
-            // body, whose clip rect starts at the caption's bottom -- so clamp
-            // the top down to the caption bottom, else the card's top frame edge
-            // falls in the caption band and gets clipped away.
+            // `window.caption_bar_height_override`), but `MenuPopup` draws in the
+            // window overlay, whose clip rect starts at the caption's bottom --
+            // so clamp the top down to the caption bottom, else the card's top
+            // frame edge falls in the caption band and gets clipped away.
             let anchor = dvec2(
                 logo_rect.pos.x,
-                (logo_rect.pos.y + logo_rect.size.y + crate::app_menu::MENU_GAP)
-                    .max(crate::app_menu::CAPTION_H),
+                (logo_rect.pos.y + logo_rect.size.y + crate::popup::menu::MENU_GAP)
+                    .max(crate::popup::menu::CAPTION_H),
             );
-            if let Some(mut menu) = self
+            let bounds = self.window_bounds(cx);
+            if let Some(mut pr) = self
                 .ui
-                .widget(cx, ids!(app_menu))
-                .borrow_mut::<crate::app_menu::AppMenu>()
+                .widget(cx, ids!(popup_root))
+                .borrow_mut::<PopupRoot>()
             {
-                menu.open_popup(cx, anchor, logo_menu_items());
+                pr.show_at(
+                    cx,
+                    PopupSpec::Menu {
+                        tag: live_id!(logo),
+                        anchor,
+                        bounds,
+                        items: logo_menu_items(),
+                        open: MenuOpen::Popup,
+                    },
+                );
             }
-            // Menu mode now belongs to the logo (glow follows the owner off the
-            // burger), like switching to an adjacent menu-bar item on Windows.
-            self.set_app_menu_owner(cx, MenuOwner::Logo);
             return;
         }
 
@@ -1324,8 +1370,9 @@ impl AppMain for App {
         }
         crate::icons::script_mod(vm);
         crate::frame::script_mod(vm);
-        crate::radial::script_mod(vm);
-        crate::app_menu::script_mod(vm);
+        crate::popup::menu::script_mod(vm);
+        crate::popup::radial::script_mod(vm);
+        crate::popup::root::script_mod(vm);
         crate::canvas::script_mod(vm);
         crate::tree_panel::script_mod(vm);
         crate::inspector_panel::script_mod(vm);
@@ -1413,75 +1460,13 @@ impl AppMain for App {
         }
         self.match_event(cx, event);
 
-        // Radial: while open, it consumes pointer/keys; a commit maps to a
-        // node command (logging stub -- no node-edit path exists yet).
-        let outcome = self
+        // Single popup seam: light-dismiss + active-surface routing + emission.
+        if let Some(mut pr) = self
             .ui
-            .widget(cx, ids!(radial))
-            .borrow_mut::<crate::radial::Radial>()
-            .filter(|r| r.is_open())
-            .map(|mut r| r.handle(cx, event));
-        if let Some(outcome) = outcome {
-            match outcome {
-                crate::radial::RadialOutcome::Committed(id) => {
-                    if let Some(cmd) = crate::canvas::node_command_for(id) {
-                        log!("node command: {cmd:?}");
-                    } else if let Some(cmd) = logo_command_for(id) {
-                        match cmd {
-                            // Properties: no-op stub (no editor-settings surface yet).
-                            LogoCommand::Properties => log!("logo command: Properties (stub)"),
-                            LogoCommand::About => {
-                                cx.open_url("https://github.com/redoz/waml", OpenUrlInPlace::No)
-                            }
-                            LogoCommand::Exit => cx.quit(),
-                        }
-                    }
-                }
-                crate::radial::RadialOutcome::Cancelled => {}
-                crate::radial::RadialOutcome::None => {}
-            }
-        }
-
-        // Logo drop-down: the in-window vertical menu. Driven explicitly here
-        // (event-passive, like `radial`), so a commit/dismiss is handled once.
-        // A commit maps to a `LogoCommand`.
-        let menu_outcome = self
-            .ui
-            .widget(cx, ids!(app_menu))
-            .borrow_mut::<crate::app_menu::AppMenu>()
-            .filter(|m| m.is_open())
-            .map(|mut m| m.handle(cx, event));
-        if let Some(crate::radial::RadialOutcome::Committed(id)) = menu_outcome {
-            if id == live_id!(new_model) {
-                // Burger "Create new model": same stub as the start screen's New
-                // project until the template picker lands in a later slice.
-                log!("New model: not yet implemented (template picker is a later slice)");
-            } else if id == live_id!(open_model) {
-                // Burger "Open model": native folder picker, same as the start
-                // screen's "Open a model".
-                self.open_model_via_picker(cx);
-            } else if id == live_id!(close_model) {
-                // Burger "Close model": drop the editor back to the start screen.
-                self.show_start_screen(cx);
-            } else if let Some(cmd) = logo_command_for(id) {
-                match cmd {
-                    // Properties: no-op stub (no editor-settings surface yet).
-                    LogoCommand::Properties => log!("logo command: Properties (stub)"),
-                    LogoCommand::About => {
-                        cx.open_url("https://github.com/redoz/waml", OpenUrlInPlace::No)
-                    }
-                    LogoCommand::Exit => cx.quit(),
-                }
-            }
-        }
-        // Any close (commit or dismiss -- outside-click / Esc / lost-focus all
-        // surface as one of these) ends menu mode: the single reset point, like
-        // Win32 `WM_CANCELMODE`.
-        if matches!(
-            menu_outcome,
-            Some(crate::radial::RadialOutcome::Committed(_) | crate::radial::RadialOutcome::Cancelled)
-        ) {
-            self.set_app_menu_owner(cx, MenuOwner::None);
+            .widget(cx, ids!(popup_root))
+            .borrow_mut::<PopupRoot>()
+        {
+            pr.route(cx, event);
         }
 
         self.ui.handle_event(cx, event, &mut Scope::empty());
@@ -1523,9 +1508,9 @@ impl AppMain for App {
             // outside-click path dismisses on.
             let menu_open = self
                 .ui
-                .widget(cx, ids!(app_menu))
-                .borrow::<crate::app_menu::AppMenu>()
-                .map(|m| m.is_open())
+                .widget(cx, ids!(popup_root))
+                .borrow::<PopupRoot>()
+                .map(|pr| pr.is_open())
                 .unwrap_or(false);
             if over_tab || over_logo || over_btn || menu_open {
                 dq.response.set(WindowDragQueryResponse::Client);
