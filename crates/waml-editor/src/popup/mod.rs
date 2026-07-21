@@ -9,5 +9,4 @@ pub mod marking;
 pub mod menu;
 pub mod presenter;
 pub mod radial;
-// Filled by later tasks:
-// pub mod root;      // Task 6
+pub mod root;
