@@ -21,6 +21,7 @@ mod load;
 mod logo;
 mod node_design_editor;
 mod node_style;
+mod popup;
 mod radial;
 mod recent_row;
 mod scene;
