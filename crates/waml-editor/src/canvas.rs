@@ -17,6 +17,35 @@ script_mod! {
 
     mod.widgets.GraphCanvasBase = #(GraphCanvas::register_widget(vm))
 
+    // Edge pen: stroke the segment as an actual line, NOT a filled rect. The
+    // segment's axis-aligned bounding box has the two endpoints at opposite
+    // corners, so the edge is one of the AABB's two diagonals; `flip` selects
+    // which (0 = top-left->bottom-right, 1 = top-right->bottom-left). Filling
+    // the whole AABB (the old `draw_edge: DrawColor`) painted a solid grey
+    // rectangle for every diagonal edge -- fine for the orthogonal `## Layout`
+    // case (thin AABB) but a huge grey blob under the stress-default layout,
+    // whose edges run diagonally. Per-instance uniforms batch-collapse on this
+    // fork, so direction is baked per-pen and the canvas routes each edge to
+    // the pen matching its slope sign.
+    mod.draw.EdgeLine = mod.draw.DrawColor{
+        flip: uniform(0.0)
+        zoom: uniform(1.0)
+        pixel: fn() {
+            let sdf = Sdf2d.viewport(self.pos * self.rect_size)
+            let w = self.rect_size.x
+            let h = self.rect_size.y
+            let sx = mix(0.0, w, self.flip)
+            let ex = mix(w, 0.0, self.flip)
+            sdf.move_to(sx, 0.0)
+            sdf.line_to(ex, h)
+            // Thickness tracks zoom but never drops below a screen-space
+            // hairline, so relationships stay legible at fit-zoom on a large
+            // (stress-laid) model instead of thinning to nothing.
+            sdf.stroke(self.color, max(1.2, 2.0 * self.zoom))
+            return sdf.result
+        }
+    }
+
     mod.widgets.GraphCanvas = set_type_default() do mod.widgets.GraphCanvasBase{
         width: Fill
         height: Fill
@@ -28,7 +57,8 @@ script_mod! {
         // bright top-left (`frame_hi`) to dim bottom-right (`frame_lo`). Only
         // the fill differs from the frame defaults, so we override just `color`.
         draw_node: mod.draw.AccentFrame{ color: atlas.field_bg }
-        draw_edge +: { color: atlas.text_dim }
+        draw_edge_down: mod.draw.EdgeLine{ color: atlas.text_dim }
+        draw_edge_up: mod.draw.EdgeLine{ color: atlas.text_dim }
         // Flat fill pen for card compartment dividers, the header accent wash, and
         // port nubs. The renderer pushes `color` (accent/dim + alpha) per draw.
         draw_rule +: { color: atlas.text_dim }
@@ -112,7 +142,10 @@ pub struct GraphCanvas {
     draw_group: DrawColor,
     #[redraw]
     #[live]
-    draw_edge: DrawColor,
+    draw_edge_down: DrawColor,
+    #[redraw]
+    #[live]
+    draw_edge_up: DrawColor,
     #[redraw]
     #[live]
     draw_rule: DrawColor,
@@ -406,8 +439,20 @@ impl Widget for GraphCanvas {
             }
         }
 
-        // Edges: straight segment from source border to target border, drawn as a
-        // thin axis-aligned quad. Rotated-quad / arrow styling is a fast-follow.
+        // Edge pens: feed zoom so the stroke thickens with the box, and bake
+        // each pen's diagonal direction (per-instance uniforms batch-collapse on
+        // this fork, so the two pens carry the two constant `flip` values).
+        self.draw_edge_down
+            .set_uniform(cx, live_id!(flip), &[0.0]);
+        self.draw_edge_down
+            .set_uniform(cx, live_id!(zoom), &[zoom as f32]);
+        self.draw_edge_up.set_uniform(cx, live_id!(flip), &[1.0]);
+        self.draw_edge_up
+            .set_uniform(cx, live_id!(zoom), &[zoom as f32]);
+
+        // Edges: the segment from source border to target border, stroked along
+        // the diagonal of its bounding box (see EdgeLine). Arrow/adornment
+        // styling is a fast-follow.
         for edge in &self.scene.edges {
             let (sx, sy) = border_point(edge.source, edge.target);
             let (tx, ty) = border_point(edge.target, edge.source);
@@ -420,8 +465,9 @@ impl Widget for GraphCanvas {
                 continue;
             }
             let thickness = 2.0 * zoom;
-            // Axis-aligned bounding box of the segment: reads correctly for the
-            // orthogonal arrangements typical of `## Layout` diagrams.
+            // Bounding box of the segment: the two endpoints sit at opposite
+            // corners, so EdgeLine strokes the matching diagonal. Inflated to at
+            // least `thickness` per axis so axis-aligned edges keep a body.
             let min = dvec2(a.x.min(b.x), a.y.min(b.y));
             let max = dvec2(a.x.max(b.x), a.y.max(b.y));
             let seg = Rect {
@@ -431,7 +477,16 @@ impl Widget for GraphCanvas {
                     (max.y - min.y).max(thickness),
                 ),
             };
-            self.draw_edge.draw_abs(cx, seg);
+            // Route to the pen whose baked diagonal matches this segment's
+            // slope: same-sign deltas run top-left->bottom-right (down), opposite
+            // signs run top-right->bottom-left (up). Axis-aligned edges (one zero
+            // delta) fall to `down`; the thickness-inflated quad hides the slope.
+            let pen = if (b.x - a.x) * (b.y - a.y) >= 0.0 {
+                &mut self.draw_edge_down
+            } else {
+                &mut self.draw_edge_up
+            };
+            pen.draw_abs(cx, seg);
         }
 
         // Nodes: drawn last so they sit on top of groups and edges. Cloned out
