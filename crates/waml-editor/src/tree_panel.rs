@@ -26,6 +26,8 @@ script_mod! {
         width: Fill
         height: Fill
         show_bg: true
+        // Row-glyph tint; matches the label ink so icons read at full contrast.
+        icon_color: atlas.text
         // Panel carries the Atlas HUD frame. Unlike the inspector / tool_dock
         // panels -- which own a `draw_bg: DrawColor` field and can point it
         // straight at `mod.draw.AccentFrame` -- this widget derefs `View`, whose
@@ -176,6 +178,11 @@ pub struct ProjectTree {
     id_to_kind: HashMap<LiveId, TreeKind>,
     #[live]
     icons: IconSet,
+    // Tint for the row glyphs. Without this the glyphs render at DrawColor's dim
+    // default (low contrast on field_bg); set from the theme in the DSL so it
+    // tracks light/dark and live-reload.
+    #[live]
+    icon_color: Vec4,
 }
 
 // Tree-row selection highlight is click-only, provided by `FileTree`'s own
@@ -216,18 +223,21 @@ fn draw_row_icon(
     kind: TreeKind,
     row_top: Vec2d,
     depth: usize,
+    color: Vec4,
 ) {
     let Some(icon) = IconSet::icon_for(kind) else {
         return;
     };
     let x = (row_top.x + ICON_LEFT_MARGIN + depth as f64 * ICON_DEPTH_INDENT).round();
     let y = (row_top.y + (ROW_HEIGHT - ICON_SIZE) / 2.0).round();
-    icons.get(icon).draw_abs(
+    icons.draw(
         cx,
+        icon,
         Rect {
             pos: dvec2(x, y),
             size: dvec2(ICON_SIZE, ICON_SIZE),
         },
+        color,
     );
 }
 
@@ -241,20 +251,21 @@ fn draw_nodes(
     nodes: &[TreeNode],
     icons: &mut IconSet,
     depth: usize,
+    color: Vec4,
 ) {
     for node in nodes {
         let id = LiveId::from_str(&node.key);
         let row_top = cx.turtle().pos();
         if matches!(node.kind, TreeKind::Package) {
             let opened = ft.begin_folder(cx, id, &node.title).is_ok();
-            draw_row_icon(cx, icons, node.kind, row_top, depth);
+            draw_row_icon(cx, icons, node.kind, row_top, depth, color);
             if opened {
-                draw_nodes(cx, ft, &node.children, icons, depth + 1);
+                draw_nodes(cx, ft, &node.children, icons, depth + 1, color);
                 ft.end_folder();
             }
         } else {
             ft.file(cx, id, &node.title);
-            draw_row_icon(cx, icons, node.kind, row_top, depth);
+            draw_row_icon(cx, icons, node.kind, row_top, depth, color);
         }
     }
 }
@@ -263,7 +274,7 @@ impl Widget for ProjectTree {
     fn draw_walk(&mut self, cx: &mut Cx2d, scope: &mut Scope, walk: Walk) -> DrawStep {
         while let Some(step) = self.view.draw_walk(cx, scope, walk).step() {
             if let Some(mut file_tree) = step.as_file_tree().borrow_mut() {
-                draw_nodes(cx, &mut file_tree, &self.tree.roots, &mut self.icons, 0);
+                draw_nodes(cx, &mut file_tree, &self.tree.roots, &mut self.icons, 0, self.icon_color);
             }
         }
         DrawStep::done()
