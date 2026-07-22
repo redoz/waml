@@ -127,7 +127,7 @@ impl Widget for ShortcutsOverlay {
             return;
         }
         let uid = self.widget_uid();
-        match event.hits_with_capture_overload(cx, self.draw_scrim.area(), true) {
+        match event.hits_with_capture_overload(cx, self.draw_scrim.area(), false) {
             Hit::FingerUp(fe) if fe.is_primary_hit() && !self.panel_rect.contains(fe.abs) => {
                 cx.widget_action(uid, ShortcutsOverlayAction::Dismissed);
             }
