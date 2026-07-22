@@ -257,6 +257,27 @@ fn selection_index(nodes: &[crate::scene::SceneNode], key: Option<&str>) -> Opti
     nodes.iter().position(|n| n.key == key)
 }
 
+/// The axis-aligned quad that draws one routed segment as an `EdgeLine`.
+/// The shader strokes the quad corner-to-corner, so an axis-aligned segment's
+/// degenerate (zero-extent) axis must be inflated to `thickness`. That
+/// inflation is centered on the routed centerline (the min corner shifts back
+/// half the growth) so the stroke sits on the true coordinate instead of
+/// thickness/2 off it -- otherwise consecutive segments miss at every elbow of
+/// a routed polyline. Pure, for a GPU-free test.
+fn segment_quad(a: DVec2, b: DVec2, thickness: f64) -> Rect {
+    let mut min = dvec2(a.x.min(b.x), a.y.min(b.y));
+    let mut size = dvec2((a.x - b.x).abs(), (a.y - b.y).abs());
+    if size.x < thickness {
+        min.x -= (thickness - size.x) / 2.0;
+        size.x = thickness;
+    }
+    if size.y < thickness {
+        min.y -= (thickness - size.y) / 2.0;
+        size.y = thickness;
+    }
+    Rect { pos: min, size }
+}
+
 /// The four node commands a radial reports. Handlers are logging stubs for now
 /// (there is no node-editing command path yet -- mirrors the `tool_dock` mock).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -477,25 +498,20 @@ impl Widget for GraphCanvas {
         // Edges: stroke each consecutive point pair of the routed orthogonal
         // polyline as its own axis-aligned EdgeLine quad. Orthogonal segments
         // are axis-aligned, so a single down-diagonal pen renders them all; the
-        // thickness-inflated bounding-box quad hides the (zero) slope. Arrow/
+        // thickness-inflated quad hides the (zero) slope. `segment_quad` centers
+        // that inflation on the routed centerline (matching the shader's own
+        // `max(1.2, 2*zoom)` stroke width) so the stroke sits on the true
+        // coordinate and consecutive segments meet cleanly at elbows. Arrow/
         // adornment styling is a fast-follow.
-        let thickness = 2.0 * zoom;
+        let thickness = (2.0 * zoom).max(1.2);
         for edge in &self.scene.edges {
             for pair in edge.points.windows(2) {
                 let (a0, a1) = self.camera.world_to_local(pair[0].0, pair[0].1);
                 let (b0, b1) = self.camera.world_to_local(pair[1].0, pair[1].1);
                 let a = dvec2(rect.pos.x + a0, rect.pos.y + a1);
                 let b = dvec2(rect.pos.x + b0, rect.pos.y + b1);
-                let min = dvec2(a.x.min(b.x), a.y.min(b.y));
-                let max = dvec2(a.x.max(b.x), a.y.max(b.y));
-                let seg = Rect {
-                    pos: min,
-                    size: dvec2(
-                        (max.x - min.x).max(thickness),
-                        (max.y - min.y).max(thickness),
-                    ),
-                };
-                self.draw_edge_down.draw_abs(cx, seg);
+                self.draw_edge_down
+                    .draw_abs(cx, segment_quad(a, b, thickness));
             }
         }
 
@@ -772,6 +788,41 @@ mod tests {
         assert_eq!(resolve(down, dvec2(251.0, 31.0)), Some("uml.B"));
         // Over-slop up (a pan) selects nothing even though it ends over a node.
         assert_eq!(resolve(down, dvec2(280.0, 30.0)), None);
+    }
+
+    #[test]
+    fn segment_quad_centers_the_stroke_on_the_routed_line() {
+        let thickness = 2.0;
+        // Horizontal segment (degenerate on Y): the inflated quad must straddle
+        // the routed Y -- the routed line sits at the quad's vertical center, so
+        // the corner-to-corner stroke is centered on it, not thickness/2 below.
+        let q = segment_quad(dvec2(10.0, 50.0), dvec2(30.0, 50.0), thickness);
+        assert_eq!(q.pos.x, 10.0);
+        assert_eq!(q.size.x, 20.0);
+        assert_eq!(q.pos.y, 50.0 - thickness / 2.0);
+        assert_eq!(q.size.y, thickness);
+        assert_eq!(
+            q.pos.y + q.size.y / 2.0,
+            50.0,
+            "Y center on the routed line"
+        );
+
+        // Vertical segment (degenerate on X), endpoints given in reverse order.
+        let q = segment_quad(dvec2(70.0, 20.0), dvec2(70.0, 5.0), thickness);
+        assert_eq!(q.pos.y, 5.0);
+        assert_eq!(q.size.y, 15.0);
+        assert_eq!(q.pos.x, 70.0 - thickness / 2.0);
+        assert_eq!(q.size.x, thickness);
+        assert_eq!(
+            q.pos.x + q.size.x / 2.0,
+            70.0,
+            "X center on the routed line"
+        );
+
+        // A segment already wider than the stroke on both axes is untouched.
+        let q = segment_quad(dvec2(0.0, 0.0), dvec2(8.0, 6.0), thickness);
+        assert_eq!(q.pos, dvec2(0.0, 0.0));
+        assert_eq!(q.size, dvec2(8.0, 6.0));
     }
 
     #[test]
