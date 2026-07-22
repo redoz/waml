@@ -111,6 +111,11 @@ script_mod! {
             }
         }
         draw_field_bg +: { color: atlas.field_bg }
+        // Hover-translucency scrim: a window-bg quad painted over the whole panel
+        // at alpha (1 - opacity), so an unhovered/unpinned panel dims toward the
+        // backdrop. `atlas.ground` is the app window's background token (there is
+        // no separate `atlas.bg`; `ground` is the actual app/canvas background).
+        draw_scrim +: { color: atlas.ground }
         // `draw_icon_edge` is a colour-only holder whose `color` is copied onto
         // the pin/caret glyphs per draw (no RGBA crosses Rust). The element-picker
         // list itself is now drawn by the shared `MenuPopup` surface (routed
@@ -165,6 +170,11 @@ pub struct Inspector {
     #[redraw]
     #[live]
     draw_field_bg: DrawColor,
+    /// Hover-translucency scrim (see `draw_walk`'s `draw_hover_scrim`); painted
+    /// last, over everything else, at `1 - opacity` alpha.
+    #[redraw]
+    #[live]
+    draw_scrim: DrawColor,
 
     /// `draw_icon_edge` tints the pin/caret glyphs (via `icons`, the shared
     /// Atlas SDF set). The dropped list's own icons (including `IconSpline` on
@@ -219,11 +229,16 @@ pub struct Inspector {
     /// list is opened. Reverses a committed `PopupItem.id` back to its row.
     #[rust]
     picker_ids: Vec<(LiveId, usize)>,
-    /// Pin toggle. Visual-only this cut (keep-opaque-on-blur is deferred).
+    /// Pin toggle. Locks the hover-scrim opacity to fully opaque even when the
+    /// pointer isn't over the panel (see `draw_hover_scrim`).
     #[rust]
     pinned: bool,
     #[rust]
     pin_rect: Rect,
+    /// Whether the pointer is currently over the panel. Drives the hover-scrim
+    /// translucency (opaque when hovered or pinned, else dimmed to 0.55).
+    #[rust]
+    hovered: bool,
     /// Manual body fold. `true` hides the body even when a subject is selected;
     /// `Subject::None` collapses regardless. Toggled by the caret.
     #[rust]
@@ -303,6 +318,18 @@ impl Widget for Inspector {
         // `contains` test.
         let hit_off = self.view.area().rect(cx).pos - self.view_rect.pos;
         match event.hits_with_capture_overload(cx, self.view.area(), true) {
+            Hit::FingerHoverIn(_) => {
+                if !self.hovered {
+                    self.hovered = true;
+                    self.view.redraw(cx);
+                }
+            }
+            Hit::FingerHoverOut(_) => {
+                if self.hovered {
+                    self.hovered = false;
+                    self.view.redraw(cx);
+                }
+            }
             Hit::FingerUp(fe) if fe.is_primary_hit() => {
                 let p = fe.abs - hit_off;
                 // Closed: the picker field opens the list.
@@ -482,9 +509,11 @@ impl Widget for Inspector {
         // When collapsed the frame already hugs the bar -- the placeholder lives
         // in the field itself, so there's no body.
         if collapsed {
+            self.draw_hover_scrim(cx);
             return DrawStep::done();
         }
         let Some(view) = self.proj.clone() else {
+            self.draw_hover_scrim(cx);
             return DrawStep::done();
         };
         let field_w = rect.size.x - PAD * 2.0;
@@ -588,11 +617,28 @@ impl Widget for Inspector {
         }
         self.field_rects.push((FieldId::Description, desc_rect));
 
+        self.draw_hover_scrim(cx);
         DrawStep::done()
     }
 }
 
 impl Inspector {
+    /// Hover translucency (painted last, over everything): opaque panel when
+    /// hovered or pinned, else dim to 0.55 via a `(1 - opacity)` backdrop
+    /// scrim. Hoisted into a helper so every `draw_walk` early-return (the
+    /// collapsed / empty-subject cases) still paints it before bailing.
+    fn draw_hover_scrim(&mut self, cx: &mut Cx2d) {
+        let opacity = if self.hovered || self.pinned {
+            1.0
+        } else {
+            0.55
+        };
+        if opacity < 1.0 {
+            self.draw_scrim.color.w = (1.0 - opacity) as f32;
+            self.draw_scrim.draw_abs(cx, self.view_rect);
+        }
+    }
+
     /// Point the inspector at `subject`, rebuilding the projection and syncing
     /// the picker's selected row. Overrides persist across subject switches
     /// (keyed per subject); an in-progress edit is discarded uncommitted.
