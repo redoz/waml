@@ -6,6 +6,7 @@ use crate::load;
 use crate::nav::NavState;
 use crate::popup::base::PopupResult;
 use crate::popup::root::{MenuOpen, PopupRoot, PopupSpec, RadialOpen};
+use crate::popup::select::{SelectItem, SelectLead};
 use crate::scene::{build_focus_scene, build_scene};
 use makepad_widgets::*;
 use std::collections::HashSet;
@@ -307,7 +308,7 @@ pub struct App {
     #[rust]
     nav_state: NavState,
     /// Distinct `TreeKind`s present in the currently open model, in canonical
-    /// order; drives the type-filter chip's rotation cycle (`RotateFilter`).
+    /// order; the type-filter dropdown lists these (plus the "All" row).
     /// Recomputed once per model load (`open_dir`), not per keystroke.
     #[rust]
     nav_kinds: Vec<crate::tree::TreeKind>,
@@ -316,6 +317,11 @@ pub struct App {
     /// resolves to a scope to apply. Rebuilt every time the dropdown opens.
     #[rust]
     nav_scope_ids: Vec<(LiveId, String)>,
+    /// Maps each type-filter dropdown item id back to its filter (`None` = the
+    /// "All" row), so the `nav_filter` tag's committed `LiveId` resolves to a
+    /// `NavState::filter`. Rebuilt every time the dropdown opens.
+    #[rust]
+    nav_filter_ids: Vec<(LiveId, Option<crate::tree::TreeKind>)>,
 }
 
 impl App {
@@ -797,7 +803,7 @@ impl App {
     /// Rebuild the nav projection from the current `nav_state` and push it to
     /// the tree panel, along with the header's chip label. The single choke
     /// point for every scope/query/filter change (see
-    /// `ScopeRequest`/`Query`/`RotateFilter` handling in `handle_actions`).
+    /// `ScopeRequest`/`Query`/`FilterRequest` handling in `handle_actions`).
     ///
     /// `scope_changed` gates the two header bits that only move when the scope
     /// (or model) changes: the scope title -- whose lookup runs a full
@@ -822,7 +828,7 @@ impl App {
             .borrow_mut::<crate::tree_panel::ProjectTree>()
         {
             panel.set_view(cx, view);
-            panel.set_chip_label(cx, &chip);
+            panel.set_chip_filter(cx, self.nav_state.filter, &chip);
             if let Some(title) = title {
                 panel.set_scope_title(cx, title);
                 panel.set_query_text(cx, &self.nav_state.query);
@@ -1089,6 +1095,7 @@ impl MatchEvent for App {
             let node_closed = pr.closed(actions, live_id!(node_menu));
             let picker_closed = pr.closed(actions, live_id!(element_picker));
             let nav_scope_closed = pr.closed(actions, live_id!(nav_scope));
+            let nav_filter_closed = pr.closed(actions, live_id!(nav_filter));
             drop(pr);
 
             // Burger caller-local glow: any close of the burger tag drops it.
@@ -1146,6 +1153,14 @@ impl MatchEvent for App {
                 if let Some((_, key)) = self.nav_scope_ids.iter().find(|(i, _)| *i == id) {
                     self.nav_state.scope = key.clone();
                     self.refresh_nav(cx, true);
+                }
+            }
+            // Type-filter dropdown: a pick sets `NavState::filter` (`None` = the
+            // "All" row) and rebuilds the nav projection under the new filter.
+            if let Some(PopupResult::Invoked(id)) = nav_filter_closed {
+                if let Some((_, filter)) = self.nav_filter_ids.iter().find(|(i, _)| *i == id) {
+                    self.nav_state.filter = *filter;
+                    self.refresh_nav(cx, false);
                 }
             }
         }
@@ -1211,23 +1226,61 @@ impl MatchEvent for App {
             return;
         }
 
-        // Type-filter chip: cycle None -> kinds_in_model[0] -> ... -> last -> None.
-        let rotate = self
+        // Type-filter chip: open the type-filter dropdown, anchored under the
+        // chip. Rows are "All" (Funnel) plus every kind present in the model,
+        // each with its matching glyph; the active filter is pre-selected. The
+        // id map is rebuilt here so the `nav_filter` tag's `closed` result
+        // (above) can resolve a committed `LiveId` back to a filter.
+        let filter_anchor = self
             .ui
             .widget(cx, ids!(project_tree))
             .borrow_mut::<crate::tree_panel::ProjectTree>()
-            .map(|panel| panel.rotate_filter_clicked(actions))
-            .unwrap_or(false);
-        if rotate {
-            let cycle: Vec<Option<crate::tree::TreeKind>> = std::iter::once(None)
-                .chain(self.nav_kinds.iter().copied().map(Some))
-                .collect();
-            let cur = cycle
-                .iter()
-                .position(|f| *f == self.nav_state.filter)
-                .unwrap_or(0);
-            self.nav_state.filter = cycle[(cur + 1) % cycle.len()];
-            self.refresh_nav(cx, false);
+            .and_then(|panel| panel.filter_request(actions));
+        if let Some(anchor_rect) = filter_anchor {
+            self.nav_filter_ids.clear();
+            let mut items: Vec<SelectItem> = Vec::new();
+            for filter in std::iter::once(None).chain(self.nav_kinds.iter().copied().map(Some)) {
+                let id = match filter {
+                    None => live_id!(filter_all),
+                    Some(kind) => LiveId::from_str(&format!("filter:{kind:?}")),
+                };
+                self.nav_filter_ids.push((id, filter));
+                let lead = match filter {
+                    None => SelectLead::Icon(crate::icons::Icon::Funnel),
+                    Some(kind) => crate::icons::IconSet::icon_for(kind)
+                        .map(SelectLead::Icon)
+                        .unwrap_or(SelectLead::None),
+                };
+                items.push(SelectItem {
+                    id,
+                    lead,
+                    label: crate::nav::chip_label(filter).to_string(),
+                    selected: filter == self.nav_state.filter,
+                    enabled: true,
+                });
+            }
+            let anchor = dvec2(
+                anchor_rect.pos.x,
+                anchor_rect.pos.y + anchor_rect.size.y + crate::popup::select::SELECT_GAP,
+            );
+            let min_width = anchor_rect.size.x;
+            let bounds = self.window_bounds(cx);
+            if let Some(mut pr) = self
+                .ui
+                .widget(cx, ids!(popup_root))
+                .borrow_mut::<PopupRoot>()
+            {
+                pr.show_at(
+                    cx,
+                    PopupSpec::Select {
+                        tag: live_id!(nav_filter),
+                        anchor,
+                        min_width,
+                        bounds,
+                        items,
+                    },
+                );
+            }
             return;
         }
 
