@@ -9,7 +9,9 @@ use crate::popup::base::{
 use crate::popup::menu::{MenuPopup, MENU_MAX_W, PAD_V, ROW_H};
 use crate::popup::presenter::Presenter;
 use crate::popup::radial::RadialPopup;
-use crate::popup::select::{SelectFlyout, SelectItem, SELECT_MAX_W};
+use crate::popup::select::{
+    SelectFlyout, SelectItem, SELECT_BOTTOM_MARGIN, SELECT_MAX_H, SELECT_MAX_W,
+};
 use makepad_widgets::*;
 
 /// How to open the linear card.
@@ -255,14 +257,28 @@ impl PopupRoot {
                 // label, so clamp with the widest possible width — the cap, or
                 // the control if it is wider (matches `select_width`'s ceiling).
                 let cap = SELECT_MAX_W.max(min_width);
-                let size = dvec2(cap, PAD_V * 2.0 + items.len() as f64 * ROW_H);
+                // Clamp the card height to the space below the anchor (and the
+                // hard cap) BEFORE placing. A long list would otherwise hand
+                // `place` a taller-than-window size and get shoved up to the
+                // window top; instead it stays anchored under the control and
+                // scrolls (`SelectFlyout::draw` re-derives the same clamp for
+                // the actual panel height). Mirrors `select::draw`'s formula.
+                let full_h = PAD_V * 2.0 + items.len() as f64 * ROW_H;
+                let space_below = (bounds.pos.y + bounds.size.y - anchor.y - SELECT_BOTTOM_MARGIN)
+                    .max(ROW_H + PAD_V * 2.0);
+                let clamped_h = full_h.min(SELECT_MAX_H).min(space_below);
+                let size = dvec2(cap, clamped_h);
                 let placed = Presenter::place(anchor, size, bounds);
                 if let Some(mut s) = self
                     .body
                     .widget(cx, ids!(select))
                     .borrow_mut::<SelectFlyout>()
                 {
-                    s.open_select(cx, placed, min_width, items);
+                    // Keep the raw control-left x; the flyout centres itself on
+                    // the control in `draw` (width isn't known until the labels
+                    // are measured) and clamps into the window there. Only the
+                    // vertical placement is taken from `place`.
+                    s.open_select(cx, dvec2(anchor.x, placed.y), min_width, items);
                 }
                 self.active = Some((ActiveKind::Select, tag));
             }

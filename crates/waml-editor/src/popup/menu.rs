@@ -41,15 +41,28 @@ pub const CAPTION_H: f64 = 44.0;
 /// Cursor travel (lpx) from the press point before a held press is
 /// treated as a marking drag rather than a tap (mirrors `Radial`'s threshold).
 pub const DRAG_THRESHOLD: f64 = 6.0;
+/// Scrollbar thumb width (lpx). Only drawn when the list is taller than its
+/// clamped panel (`SelectFlyout`; the menu never sets a `max_height`).
+pub const SCROLLBAR_W: f64 = 4.0;
+/// Inset of the scrollbar thumb from the panel's right frame edge (lpx).
+pub const SCROLLBAR_INSET: f64 = 3.0;
+/// Shortest the thumb ever gets so it stays grabbable on a very long list (lpx).
+pub const SCROLLBAR_MIN_THUMB: f64 = 24.0;
 
 /// Pure card geometry (main-window coords). The surface sets `anchor` + `rows`
-/// at open, and `width` each draw from makepad's measured widest label.
+/// at open, and `width` each draw from makepad's measured widest label. When a
+/// `max_height` is set (the select flyout on a long list) the panel clamps to
+/// it and the rows scroll under a clip; `scroll` is the vertical offset (lpx),
+/// always kept in `[0, max_scroll]` by `set_scroll`. The menu leaves both unset
+/// (`max_height == None`, `scroll == 0`) so its geometry is unchanged.
 #[allow(dead_code)]
 #[derive(Default)]
 pub struct LinearGeom {
     anchor: DVec2,
     width: f64,
     rows: usize,
+    max_height: Option<f64>,
+    scroll: f64,
 }
 
 #[allow(dead_code)]
@@ -59,6 +72,8 @@ impl LinearGeom {
             anchor,
             width: 0.0,
             rows,
+            max_height: None,
+            scroll: 0.0,
         }
     }
     pub fn set_width(&mut self, width: f64) {
@@ -70,21 +85,62 @@ impl LinearGeom {
     pub fn anchor(&self) -> DVec2 {
         self.anchor
     }
-    /// The whole card rect.
+    /// Move the card's left edge (window x). Used by the select flyout to centre
+    /// itself on the control once the width is known.
+    pub fn set_anchor_x(&mut self, x: f64) {
+        self.anchor.x = x;
+    }
+    /// Clamp the panel to at most `h` (rows past it scroll). `None` = unbounded
+    /// (the menu's default; hug the whole list).
+    pub fn set_max_height(&mut self, h: Option<f64>) {
+        self.max_height = h;
+    }
+    /// Current scroll offset (lpx), already clamped.
+    pub fn scroll(&self) -> f64 {
+        self.scroll
+    }
+    /// Set the scroll offset, clamped into `[0, max_scroll]`.
+    pub fn set_scroll(&mut self, scroll: f64) {
+        self.scroll = scroll.clamp(0.0, self.max_scroll());
+    }
+    /// Full height the list would take if nothing were clipped.
+    pub fn content_height(&self) -> f64 {
+        PAD_V * 2.0 + self.rows as f64 * ROW_H
+    }
+    /// Visible panel height: the content, clamped to `max_height` when set.
+    pub fn panel_height(&self) -> f64 {
+        match self.max_height {
+            Some(m) => self.content_height().min(m),
+            None => self.content_height(),
+        }
+    }
+    /// Height of the rows viewport (panel minus the top/bottom pad).
+    pub fn viewport_height(&self) -> f64 {
+        (self.panel_height() - PAD_V * 2.0).max(0.0)
+    }
+    /// Largest valid scroll offset; `0` when the whole list fits.
+    pub fn max_scroll(&self) -> f64 {
+        (self.content_height() - self.panel_height()).max(0.0)
+    }
+    /// The whole card rect (clamped to `panel_height`).
     pub fn panel_rect(&self) -> Rect {
         Rect {
             pos: self.anchor,
-            size: dvec2(self.width, PAD_V * 2.0 + self.rows as f64 * ROW_H),
+            size: dvec2(self.width, self.panel_height()),
         }
     }
-    /// The rect of row `i`.
+    /// The rect of row `i`, shifted up by the current scroll offset.
     pub fn row_rect(&self, i: usize) -> Rect {
         Rect {
-            pos: dvec2(self.anchor.x, self.anchor.y + PAD_V + i as f64 * ROW_H),
+            pos: dvec2(
+                self.anchor.x,
+                self.anchor.y + PAD_V + i as f64 * ROW_H - self.scroll,
+            ),
             size: dvec2(self.width, ROW_H),
         }
     }
-    /// Row index under `cursor`, or `None` off the rows.
+    /// Row index under `cursor`, or `None` off the rows. A row scrolled out of
+    /// the clipped viewport isn't hittable even though its band still maps.
     pub fn row_at(&self, cursor: DVec2) -> Option<usize> {
         if self.rows == 0 {
             return None;
@@ -92,11 +148,45 @@ impl LinearGeom {
         if cursor.x < self.anchor.x || cursor.x > self.anchor.x + self.width {
             return None;
         }
-        let rel = cursor.y - (self.anchor.y + PAD_V);
+        let vis = cursor.y - (self.anchor.y + PAD_V);
+        // Reject the pointer above the first visible row or below the clipped
+        // viewport edge (unbounded panels have `viewport_height == rows*ROW_H`,
+        // so this stays identical to the pre-scroll behaviour for the menu).
+        if vis < 0.0 || vis >= self.viewport_height() {
+            return None;
+        }
+        let rel = vis + self.scroll;
         if rel < 0.0 || rel >= self.rows as f64 * ROW_H {
             return None;
         }
         Some((rel / ROW_H).floor() as usize)
+    }
+    /// The scrollbar thumb rect (window coords), or `None` when nothing scrolls.
+    pub fn thumb_rect(&self) -> Option<Rect> {
+        let max = self.max_scroll();
+        if max <= 0.0 {
+            return None;
+        }
+        let track_h = self.viewport_height();
+        let track_top = self.anchor.y + PAD_V;
+        let thumb_h = (track_h * track_h / self.content_height()).max(SCROLLBAR_MIN_THUMB);
+        let t = self.scroll / max;
+        let thumb_y = track_top + t * (track_h - thumb_h);
+        let x = self.anchor.x + self.width - SCROLLBAR_W - SCROLLBAR_INSET;
+        Some(Rect {
+            pos: dvec2(x, thumb_y),
+            size: dvec2(SCROLLBAR_W, thumb_h),
+        })
+    }
+    /// Invert `thumb_rect`: the scroll offset that puts the thumb top at `y`.
+    /// Drives thumb dragging (clamped by `set_scroll`).
+    pub fn scroll_for_thumb_y(&self, thumb_y: f64) -> f64 {
+        let track_h = self.viewport_height();
+        let track_top = self.anchor.y + PAD_V;
+        let thumb_h = (track_h * track_h / self.content_height()).max(SCROLLBAR_MIN_THUMB);
+        let span = (track_h - thumb_h).max(1.0);
+        let t = ((thumb_y - track_top) / span).clamp(0.0, 1.0);
+        t * self.max_scroll()
     }
 }
 
@@ -131,6 +221,68 @@ mod tests {
             g.row_at(dvec2(in_row(&g, 0).x, ANCHOR.y + PAD_V + 3.0 * ROW_H + 1.0)),
             None
         );
+    }
+
+    #[test]
+    fn unbounded_geom_has_no_scroll() {
+        // No max_height -> panel hugs the whole list, nothing scrolls (the menu).
+        let mut g = LinearGeom::new(ANCHOR, 20);
+        g.set_width(TEST_W);
+        assert_eq!(g.panel_height(), PAD_V * 2.0 + 20.0 * ROW_H);
+        assert_eq!(g.max_scroll(), 0.0);
+        assert!(g.thumb_rect().is_none());
+        // A far-down row still maps, exactly as before this feature.
+        assert_eq!(g.row_at(in_row(&g, 19)), Some(19));
+    }
+
+    #[test]
+    fn max_height_clamps_panel_and_enables_scroll() {
+        // 20 rows, clamped to a 5-row viewport -> the rest scrolls.
+        let mut g = LinearGeom::new(ANCHOR, 20);
+        g.set_width(TEST_W);
+        let cap = PAD_V * 2.0 + 5.0 * ROW_H;
+        g.set_max_height(Some(cap));
+        assert_eq!(g.panel_height(), cap);
+        assert_eq!(g.viewport_height(), 5.0 * ROW_H);
+        assert_eq!(g.max_scroll(), 15.0 * ROW_H);
+        assert!(g.thumb_rect().is_some());
+    }
+
+    #[test]
+    fn set_scroll_clamps_to_range() {
+        let mut g = LinearGeom::new(ANCHOR, 20);
+        g.set_width(TEST_W);
+        g.set_max_height(Some(PAD_V * 2.0 + 5.0 * ROW_H));
+        g.set_scroll(-100.0);
+        assert_eq!(g.scroll(), 0.0);
+        g.set_scroll(1_000_000.0);
+        assert_eq!(g.scroll(), 15.0 * ROW_H);
+    }
+
+    #[test]
+    fn scroll_shifts_rows_and_hit_test() {
+        // Scroll one row down: the pointer over the top visible band now hits
+        // the row that scrolled up into it, and rows above the viewport miss.
+        let mut g = LinearGeom::new(ANCHOR, 20);
+        g.set_width(TEST_W);
+        g.set_max_height(Some(PAD_V * 2.0 + 5.0 * ROW_H));
+        g.set_scroll(ROW_H);
+        // Row 1's rect has moved up to the first visible band.
+        assert_eq!(g.row_rect(1).pos.y, ANCHOR.y + PAD_V);
+        // The top of the viewport now hits row 1, not row 0.
+        let top = dvec2(ANCHOR.x + 10.0, ANCHOR.y + PAD_V + 1.0);
+        assert_eq!(g.row_at(top), Some(1));
+    }
+
+    #[test]
+    fn thumb_y_round_trips_through_scroll() {
+        let mut g = LinearGeom::new(ANCHOR, 20);
+        g.set_width(TEST_W);
+        g.set_max_height(Some(PAD_V * 2.0 + 5.0 * ROW_H));
+        g.set_scroll(4.0 * ROW_H);
+        let thumb = g.thumb_rect().unwrap();
+        // Feeding the thumb's own top back in reproduces the scroll offset.
+        assert!((g.scroll_for_thumb_y(thumb.pos.y) - 4.0 * ROW_H).abs() < 0.5);
     }
 
     #[test]

@@ -25,6 +25,12 @@ pub const PAD_R: f64 = 18.0;
 /// Gap between the control's bottom edge and the card top (lpx). Tight, flush
 /// left — the card sits just under the control, no horizontal indent.
 pub const SELECT_GAP: f64 = 2.0;
+/// Hard cap on flyout height (lpx). A very long list (a big diagram's node/edge
+/// menu) clamps here and scrolls rather than spanning the whole window.
+pub const SELECT_MAX_H: f64 = 420.0;
+/// Margin kept between the flyout's bottom and the window's bottom edge (lpx),
+/// so the card fits the window before the hard cap even applies.
+pub const SELECT_BOTTOM_MARGIN: f64 = 16.0;
 
 /// A leading visual for one row. Closed set; extend with a new arm when a new
 /// row shape appears (YAGNI over an open-ended draw callback).
@@ -104,6 +110,18 @@ script_mod! {
                 return sdf.result
             }
         }
+        // Scrollbar thumb: a slim rounded pill on the right edge, only drawn
+        // when the list is taller than the clamped card. `frame_lo` (~50%
+        // accent) so it reads as a quiet indicator, not a competing stroke.
+        draw_scrollbar: mod.draw.DrawColor{
+            color: atlas.frame_lo
+            pixel: fn() {
+                let sdf = Sdf2d.viewport(self.pos * self.rect_size)
+                sdf.box(0.0, 0.0, self.rect_size.x, self.rect_size.y, self.rect_size.x * 0.5)
+                sdf.fill(self.color)
+                return sdf.result
+            }
+        }
         draw_label +: {
             color: atlas.text
             text_style: theme.font_regular{ font_size: 10 line_spacing: 1.2 }
@@ -153,6 +171,9 @@ pub struct SelectFlyout {
     draw_check: DrawColor,
     #[redraw]
     #[live]
+    draw_scrollbar: DrawColor,
+    #[redraw]
+    #[live]
     draw_label: DrawText,
     /// Shared project-tree SDF glyph set (for `SelectLead::Icon`).
     #[live]
@@ -169,6 +190,16 @@ pub struct SelectFlyout {
     /// The control width passed at open, floored into `select_width`.
     #[rust]
     min_width: f64,
+    /// The control's horizontal centre (window x), captured at open. The card
+    /// centres on this each draw — kept separate from `geom.anchor.x`, which the
+    /// draw overwrites with the centred left edge (so re-reading it would drift).
+    #[rust]
+    control_center_x: f64,
+    /// While dragging the scrollbar thumb: the cursor's y-offset from the thumb
+    /// top at grab, so the thumb tracks the pointer without a jump. `None` when
+    /// not dragging.
+    #[rust]
+    thumb_drag: Option<f64>,
 }
 
 impl Widget for SelectFlyout {
@@ -218,12 +249,16 @@ impl SelectFlyout {
         self.geom = LinearGeom::new(anchor, items.len());
         self.items = items;
         self.min_width = min_width;
+        // Control centre = its left edge (the anchor) + half its width. The card
+        // centres on this in `draw`.
+        self.control_center_x = anchor.x + min_width * 0.5;
+        self.thumb_drag = None;
         self.mark.begin_popup(marks, DRAG_THRESHOLD);
         self.draw_frame.redraw(cx);
     }
 
     pub fn draw(&mut self, cx: &mut Cx2d) {
-        use crate::popup::menu::PAD_H;
+        use crate::popup::menu::{PAD_H, PAD_V, ROW_H};
         if !self.is_open() {
             return;
         }
@@ -241,6 +276,26 @@ impl SelectFlyout {
         self.geom
             .set_width(select_width(hug, self.min_width, SELECT_MAX_W));
 
+        // Centre the card horizontally on the control (`control_center_x`). A
+        // card wider than the control sticks out evenly both sides, clamped into
+        // the window so it never runs off an edge.
+        let win_w = cx.current_pass_size().x;
+        let card_w = self.geom.width();
+        let left = (self.control_center_x - card_w * 0.5).clamp(
+            SELECT_BOTTOM_MARGIN,
+            (win_w - card_w - SELECT_BOTTOM_MARGIN).max(SELECT_BOTTOM_MARGIN),
+        );
+        self.geom.set_anchor_x(left);
+
+        // Height: clamp the card to the window (leaving a bottom margin) and to
+        // the hard cap, so a long list scrolls rather than running off-screen.
+        // Then re-clamp the scroll offset against the freshly computed max.
+        let win_h = cx.current_pass_size().y;
+        let avail =
+            (win_h - self.geom.anchor().y - SELECT_BOTTOM_MARGIN).max(ROW_H + PAD_V * 2.0);
+        self.geom.set_max_height(Some(avail.min(SELECT_MAX_H)));
+        self.geom.set_scroll(self.geom.scroll());
+
         let panel = self.geom.panel_rect();
         self.draw_frame.set_uniform(cx, live_id!(zoom), &[0.6]);
         self.draw_frame.draw_abs(cx, panel);
@@ -249,6 +304,14 @@ impl SelectFlyout {
         let idle = self.draw_icon_idle.color;
         let accent = self.draw_icon_accent.color;
 
+        // Clip the rows to the card interior so a partially-scrolled row can't
+        // spill past the frame's rounded edge (the frame itself is drawn above,
+        // unclipped, at full panel height).
+        let clip = Rect {
+            pos: dvec2(panel.pos.x, panel.pos.y + PAD_V),
+            size: dvec2(panel.size.x, self.geom.viewport_height()),
+        };
+        cx.push_clip_rect(clip);
         for i in 0..self.items.len() {
             let it = self.items[i].clone();
             let row = self.geom.row_rect(i);
@@ -316,6 +379,12 @@ impl SelectFlyout {
                 self.draw_check.draw_abs(cx, check);
             }
         }
+        cx.pop_clip_rect();
+
+        // Scrollbar thumb over the rows (unclipped) when the list overflows.
+        if let Some(thumb) = self.geom.thumb_rect() {
+            self.draw_scrollbar.draw_abs(cx, thumb);
+        }
     }
 }
 
@@ -325,22 +394,67 @@ impl Popup for SelectFlyout {
             return PopupVerdict::Consumed;
         }
         let verdict = match event {
+            // Wheel over the card scrolls the list (icon_harness idiom); ignored
+            // off the card so it doesn't hijack scrolling elsewhere.
+            Event::Scroll(e) if self.geom.panel_rect().contains(e.abs) => {
+                let prev = self.geom.scroll();
+                self.geom.set_scroll(prev + e.scroll.y);
+                // Mark the wheel consumed so the canvas below doesn't also pan
+                // (the fork's `hits()` honors `ScrollEvent` handled_x/y — the
+                // scroll-occlusion fix). Set even at a scroll limit so the list
+                // never bleeds through.
+                e.handled_x.set(true);
+                e.handled_y.set(true);
+                if self.geom.scroll() != prev {
+                    self.draw_frame.redraw(cx);
+                }
+                PopupVerdict::Consumed
+            }
             Event::MouseMove(e) => {
-                self.mark.pointer_move(e.abs, self.geom.row_at(e.abs));
+                if let Some(grab) = self.thumb_drag {
+                    // Dragging the thumb: track the pointer, keeping the grab
+                    // offset so the thumb doesn't jump under the cursor.
+                    self.geom.set_scroll(self.geom.scroll_for_thumb_y(e.abs.y - grab));
+                } else {
+                    self.mark.pointer_move(e.abs, self.geom.row_at(e.abs));
+                }
                 self.draw_frame.redraw(cx);
                 PopupVerdict::Consumed
             }
             Event::MouseUp(e) if e.button.is_primary() => {
-                map_outcome(self.mark.release(self.geom.row_at(e.abs)))
+                // A thumb drag ends without committing a row.
+                if self.thumb_drag.take().is_some() {
+                    PopupVerdict::Consumed
+                } else {
+                    map_outcome(self.mark.release(self.geom.row_at(e.abs)))
+                }
             }
-            // Popup mode: a press ON the card arms; a press OFF is the outside
-            // click → Ignored (PopupRoot dismisses).
+            // Popup mode: a press on the thumb starts a drag; a press elsewhere
+            // ON the card arms; a press OFF is the outside click → Ignored
+            // (PopupRoot dismisses).
             Event::MouseDown(e) if e.button.is_primary() && self.mark.is_popup() => {
+                if let Some(thumb) = self.geom.thumb_rect() {
+                    if thumb.contains(e.abs) {
+                        self.thumb_drag = Some(e.abs.y - thumb.pos.y);
+                        // Claim the press so the canvas below can't capture the
+                        // digit and drag-pan (fork `hits()` bails MouseDown when
+                        // `handled` is non-empty — same occlusion path as Scroll's
+                        // `handled_x/y`). Without a capture there's no FingerMove,
+                        // so the drag-pan never starts.
+                        e.handled.set(self.draw_frame.area());
+                        return PopupVerdict::Consumed;
+                    }
+                }
                 if self.geom.panel_rect().contains(e.abs) {
                     self.mark.press(e.abs, self.geom.row_at(e.abs));
                     self.draw_frame.redraw(cx);
+                    // Claim the press (see thumb branch above) so a press-drag on
+                    // the card doesn't bleed through to the canvas as a pan.
+                    e.handled.set(self.draw_frame.area());
                     PopupVerdict::Consumed
                 } else {
+                    // Outside press: leave `handled` empty so PopupRoot still sees
+                    // the Ignored verdict and light-dismisses.
                     PopupVerdict::Ignored
                 }
             }
@@ -353,6 +467,7 @@ impl Popup for SelectFlyout {
     }
 
     fn reset(&mut self) {
+        self.thumb_drag = None;
         self.mark.close();
     }
 }
