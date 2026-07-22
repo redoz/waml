@@ -12,6 +12,7 @@
 use crate::icons::Icon;
 use crate::icons::IconSet;
 use crate::nav::NavView;
+use crate::panel_glass::PanelGlass;
 use crate::tree::{ProjectTree as ProjectTreeData, TreeKind, TreeNode};
 use makepad_widgets::*;
 use std::collections::HashMap;
@@ -64,11 +65,19 @@ script_mod! {
             color: atlas.field_bg
             border_hi: uniform(atlas.frame_hi)
             border_lo: uniform(atlas.frame_lo)
+            // Glass translucency: `opacity` scales only the interior fill's
+            // alpha, driven by hover/pin (translucent at rest so the canvas
+            // diagram shows through, opaque when focused). The frame stroke
+            // stays fully opaque so the panel edge always reads. Rows + filler
+            // are transparent (see file_node / filler below), so this single
+            // fill is the only interior surface over the canvas.
+            opacity: uniform(1.0)
             pixel: fn() {
                 let inset = 1.5
                 let sdf = Sdf2d.viewport(self.pos * self.rect_size)
                 sdf.rect(inset, inset, self.rect_size.x - inset * 2.0, self.rect_size.y - inset * 2.0)
-                sdf.fill_keep(self.color)
+                let fill = vec4(self.color.x, self.color.y, self.color.z, self.color.w * self.opacity)
+                sdf.fill_keep(fill)
                 let dir = vec2(0.5, 0.8660254)
                 let span = 1.3660254
                 let t = clamp((self.pos.x * dir.x + self.pos.y * dir.y) / span, 0.0, 1.0)
@@ -119,9 +128,6 @@ script_mod! {
                 line_spacing: 1.2
             }
         }
-        // Hover-translucency scrim, same idiom as the inspector: a window-bg
-        // quad painted over the whole panel at alpha (1 - opacity).
-        draw_scrim +: { color: atlas.ground }
         // Search-field / type-chip pill background (Task 9).
         draw_field_bg +: { color: atlas.field_bg }
 
@@ -163,12 +169,13 @@ script_mod! {
                     text_style: theme.font_regular{font_size: 10}
                 }
                 draw_bg +: {
-                    color_1: atlas.field_bg
-                    color_2: atlas.field_bg
-                    // Selection is now app-driven (draw_selection overlay), so the
-                    // built-in click-only highlight is disabled -- it can't track
-                    // tab clicks and would double-tint. Keep active == idle bg.
-                    color_active: atlas.field_bg
+                    // Transparent so the panel's translucent glass fill (and the
+                    // canvas beneath it) shows through the rows. Selection is
+                    // app-driven (draw_selection overlay), so the built-in
+                    // click-only highlight stays disabled.
+                    color_1: #x00000000
+                    color_2: #x00000000
+                    color_active: #x00000000
                 }
             }
 
@@ -186,10 +193,10 @@ script_mod! {
                     text_style: theme.font_regular{font_size: 10}
                 }
                 draw_bg +: {
-                    color_1: atlas.field_bg
-                    color_2: atlas.field_bg
-                    // See file_node: selection is app-driven now.
-                    color_active: atlas.field_bg
+                    // Transparent (see file_node): the glass fill shows through.
+                    color_1: #x00000000
+                    color_2: #x00000000
+                    color_active: #x00000000
                 }
                 // The built-in folder box icon is redundant with our own
                 // package.svg overlay; make it fully transparent.
@@ -200,7 +207,9 @@ script_mod! {
             }
 
             filler +: {
-                pixel: fn() { return atlas.field_bg }
+                // Transparent: the empty area below the last row shows the
+                // panel's glass fill (and canvas) rather than opaque field_bg.
+                pixel: fn() { return #x00000000 }
             }
         }
     }
@@ -308,18 +317,14 @@ pub struct ProjectTree {
     // Translucent accent fill painted over the active row (see the DSL).
     #[live]
     draw_selection: DrawColor,
-    // Header band ink + scrim (Task 8). `draw_title` is the scope-title label;
-    // `draw_dim` is everything subdued (the `⌄`, glyph tint source); `draw_scrim`
-    // is the hover-translucency backdrop, same idiom as the inspector.
+    // Header band ink (Task 8). `draw_title` is the scope-title label;
+    // `draw_dim` is everything subdued (the `⌄`, glyph tint source).
     #[redraw]
     #[live]
     draw_title: DrawText,
     #[redraw]
     #[live]
     draw_dim: DrawText,
-    #[redraw]
-    #[live]
-    draw_scrim: DrawColor,
     // Search-field / type-chip pill background (Task 9).
     #[redraw]
     #[live]
@@ -350,14 +355,11 @@ pub struct ProjectTree {
     /// Panel-local body fold: hides the `FileTree` body, header stays.
     #[rust]
     collapsed: bool,
-    /// Panel-local pin: locks the hover-scrim opacity to fully opaque even
-    /// when the pointer isn't over the panel.
+    /// Glass translucency + hover/pin state machine (shared with the inspector;
+    /// see `panel_glass`). Owns `hovered`/`pinned` and eases the `draw_bg`
+    /// `opacity` uniform between translucent-at-rest and fully-opaque-on-focus.
     #[rust]
-    pinned: bool,
-    /// Whether the pointer is currently over the panel. Drives the hover-scrim
-    /// translucency (opaque when hovered or pinned, else dimmed to 0.55).
-    #[rust]
-    hovered: bool,
+    panel: PanelGlass,
     #[rust]
     header_rect: Rect,
     /// The scope-title trigger's hit rect (label + `⌄`). A click emits
@@ -544,6 +546,13 @@ impl Widget for ProjectTree {
             };
         }
 
+        // Glass translucency: opaque when hovered/pinned, else translucent so
+        // the canvas diagram shows through (only the interior fill's alpha moves
+        // -- frame stroke, text, and icons stay opaque). Replaces the old
+        // ground-color dimming scrim, which washed content toward a flat color
+        // instead of revealing the canvas. See `panel_glass`.
+        self.panel.draw(cx, &mut self.view.draw_bg);
+
         while let Some(step) = self.view.draw_walk(cx, scope, walk).step() {
             if let Some(mut file_tree) = step.as_file_tree().borrow_mut() {
                 draw_nodes(
@@ -581,7 +590,7 @@ impl Widget for ProjectTree {
             size: dvec2(ICON, ICON),
         };
         self.pin_rect = pin;
-        let pin_icon = if self.pinned { Icon::Pin } else { Icon::PinOff };
+        let pin_icon = if self.panel.pinned { Icon::Pin } else { Icon::PinOff };
         let dc = self.icons.get(pin_icon);
         dc.color = dim;
         dc.draw_abs(cx, pin);
@@ -718,19 +727,6 @@ impl Widget for ProjectTree {
             }
         }
 
-        // Hover translucency (last, over everything): opaque panel when
-        // hovered or pinned, else dim to 0.55 via a (1 - opacity) backdrop
-        // scrim -- same idiom as the inspector.
-        let opacity = if self.hovered || self.pinned {
-            1.0
-        } else {
-            0.55
-        };
-        if opacity < 1.0 {
-            self.draw_scrim.color.w = (1.0 - opacity) as f32;
-            self.draw_scrim.draw_abs(cx, rect);
-        }
-
         DrawStep::done()
     }
 
@@ -743,27 +739,20 @@ impl Widget for ProjectTree {
         // the translate-by-offset pattern per `makepad-aligned-parent-hit-rect-
         // offset` -- rects captured in `draw_walk` are pre-alignment, events
         // arrive post-alignment.
-        let hit_off = self.view.area().rect(cx).pos - self.header_rect.pos;
+        let panel_rect = self.view.area().rect(cx);
+        let hit_off = panel_rect.pos - self.header_rect.pos;
 
-        // Scrim hover is tracked geometrically off raw `MouseMove`, not via
-        // `Hit::FingerHover*`. Makepad arbitrates hover to a single area per
-        // digit, and `self.view.handle_event` (above) lets inner FileTreeNodes
-        // and ScrollBars claim it first, so the panel's own `view.area()` never
-        // wins `FingerHoverIn` while the pointer is over tree content -- the
-        // panel would dim under the cursor. Containment sidesteps the arbiter.
-        if let Event::MouseMove(e) = event {
-            let inside = self.view.area().rect(cx).contains(e.abs);
-            if inside != self.hovered {
-                self.hovered = inside;
-                self.view.redraw(cx);
-            }
+        // Glass hover + opacity easing (geometric MouseMove containment, not
+        // `Hit::FingerHover*` -- see `panel_glass`).
+        if self.panel.handle_event(cx, event, panel_rect) {
+            self.view.redraw(cx);
         }
 
         match event.hits(cx, self.view.area()) {
             Hit::FingerUp(fe) if fe.is_primary_hit() => {
                 let p = fe.abs - hit_off;
                 if self.pin_rect.contains(p) {
-                    self.pinned = !self.pinned;
+                    self.panel.toggle_pin(cx);
                     self.view.redraw(cx);
                     return;
                 }

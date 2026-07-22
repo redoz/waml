@@ -21,6 +21,7 @@ mod logo;
 mod nav;
 mod node_design_editor;
 mod node_style;
+mod panel_glass;
 mod popup;
 mod recent_row;
 mod scene;

@@ -31,6 +31,7 @@ use crate::inspector::{
     Subject,
 };
 use crate::node_style::{accent_bucket, AccentBucket};
+use crate::panel_glass::PanelGlass;
 use crate::popup::base::PopupResult;
 use crate::popup::select::{SelectItem, SelectLead};
 use crate::select_box::SelectBox;
@@ -59,11 +60,16 @@ script_mod! {
             color: atlas.field_bg
             border_hi: uniform(atlas.frame_hi)
             border_lo: uniform(atlas.frame_lo)
+            // Glass translucency: `opacity` scales only the interior fill's
+            // alpha (frame stroke stays opaque), driven by hover/pin via
+            // `PanelGlass` -- see `panel_glass` / `tree_panel`.
+            opacity: uniform(1.0)
             pixel: fn() {
                 let inset = 1.5
                 let sdf = Sdf2d.viewport(self.pos * self.rect_size)
                 sdf.rect(inset, inset, self.rect_size.x - inset * 2.0, self.rect_size.y - inset * 2.0)
-                sdf.fill_keep(self.color)
+                let fill = vec4(self.color.x, self.color.y, self.color.z, self.color.w * self.opacity)
+                sdf.fill_keep(fill)
                 let dir = vec2(0.5, 0.8660254)
                 let span = 1.3660254
                 let t = clamp((self.pos.x * dir.x + self.pos.y * dir.y) / span, 0.0, 1.0)
@@ -117,11 +123,6 @@ script_mod! {
             }
         }
         draw_field_bg +: { color: atlas.field_bg }
-        // Hover-translucency scrim: a window-bg quad painted over the whole panel
-        // at alpha (1 - opacity), so an unhovered/unpinned panel dims toward the
-        // backdrop. `atlas.ground` is the app window's background token (there is
-        // no separate `atlas.bg`; `ground` is the actual app/canvas background).
-        draw_scrim +: { color: atlas.ground }
         // `draw_icon_edge` is a colour-only holder whose `color` is copied onto
         // the pin/caret glyphs per draw (no RGBA crosses Rust). The element
         // badge + label + dropped list are now the `SelectBox`/`SelectFlyout`
@@ -161,11 +162,6 @@ pub struct Inspector {
     #[redraw]
     #[live]
     draw_field_bg: DrawColor,
-    /// Hover-translucency scrim (see `draw_walk`'s `draw_hover_scrim`); painted
-    /// last, over everything else, at `1 - opacity` alpha.
-    #[redraw]
-    #[live]
-    draw_scrim: DrawColor,
 
     /// `draw_icon_edge` tints the pin/caret glyphs (via `icons`, the shared
     /// Atlas SDF set). The dropped list's own icons (including `IconSpline` on
@@ -211,16 +207,13 @@ pub struct Inspector {
     /// the list is fed. Reverses a committed `SelectItem.id` back to its row.
     #[rust]
     picker_ids: Vec<(LiveId, usize)>,
-    /// Pin toggle. Locks the hover-scrim opacity to fully opaque even when the
-    /// pointer isn't over the panel (see `draw_hover_scrim`).
+    /// Glass translucency + hover/pin state machine (shared with the tree
+    /// panel; see `panel_glass`). Owns `hovered`/`pinned` and eases the
+    /// `draw_bg` `opacity` uniform between translucent-at-rest and opaque.
     #[rust]
-    pinned: bool,
+    panel: PanelGlass,
     #[rust]
     pin_rect: Rect,
-    /// Whether the pointer is currently over the panel. Drives the hover-scrim
-    /// translucency (opaque when hovered or pinned, else dimmed to 0.55).
-    #[rust]
-    hovered: bool,
     /// Manual body fold. `true` hides the body even when a subject is selected;
     /// `Subject::None` collapses regardless. Toggled by the caret.
     #[rust]
@@ -291,24 +284,26 @@ impl Widget for Inspector {
         // into draw-time space by the offset between the two before any
         // `contains` test. (The picker field itself is now the child
         // `SelectBox`'s own hit rect, event-time-anchored — see `select_box.rs`.)
-        let hit_off = self.view.area().rect(cx).pos - self.view_rect.pos;
+        // `area().rect` at event time is the real (post-alignment) on-screen
+        // rect; `self.view_rect` is the pre-alignment draw-time rect (x≈0 in
+        // this right-aligned parent). `hit_off` is the shift between them.
+        let panel_rect = self.view.area().rect(cx);
+        let hit_off = panel_rect.pos - self.view_rect.pos;
+
+        // Glass hover + opacity easing off the real on-screen rect (geometric
+        // MouseMove containment, not `Hit::FingerHover*` -- the child
+        // `SelectBox` / picker claim the pointer's hover first, so a hit-based
+        // test leaves the panel stuck translucent under the cursor; see
+        // `panel_glass`).
+        if self.panel.handle_event(cx, event, panel_rect) {
+            self.view.redraw(cx);
+        }
+
         match event.hits_with_capture_overload(cx, self.view.area(), false) {
-            Hit::FingerHoverIn(_) => {
-                if !self.hovered {
-                    self.hovered = true;
-                    self.view.redraw(cx);
-                }
-            }
-            Hit::FingerHoverOut(_) => {
-                if self.hovered {
-                    self.hovered = false;
-                    self.view.redraw(cx);
-                }
-            }
             Hit::FingerUp(fe) if fe.is_primary_hit() => {
                 let p = fe.abs - hit_off;
                 if self.pin_rect.contains(p) {
-                    self.pinned = !self.pinned;
+                    self.panel.toggle_pin(cx);
                     self.view.redraw(cx);
                     return;
                 }
@@ -368,6 +363,11 @@ impl Widget for Inspector {
                 max: None,
             };
         }
+        // Glass translucency: seed + push the eased `opacity` uniform before the
+        // container draws its frame bg. Opaque when hovered/pinned, else
+        // translucent so the canvas shows through. Replaces the old dimming
+        // scrim (which painted last, over everything). See `panel_glass`.
+        self.panel.draw(cx, &mut self.view.draw_bg);
         while self.view.draw_walk(cx, scope, walk).step().is_some() {}
 
         let rect = self.view.area().rect(cx);
@@ -397,7 +397,7 @@ impl Widget for Inspector {
             self.pin_rect = pin;
             // Glyph carries the state (pin vs. pin-off), not colour -- both draw
             // in the neutral dim tint so the icon alone reads pinned/unpinned.
-            let pin_icon = if self.pinned { Icon::Pin } else { Icon::PinOff };
+            let pin_icon = if self.panel.pinned { Icon::Pin } else { Icon::PinOff };
             let dc = self.icons.get(pin_icon);
             dc.color = dim;
             dc.draw_abs(cx, pin);
@@ -428,11 +428,9 @@ impl Widget for Inspector {
         // When collapsed the frame already hugs the bar -- the placeholder lives
         // in the field itself, so there's no body.
         if collapsed {
-            self.draw_hover_scrim(cx);
             return DrawStep::done();
         }
         let Some(view) = self.proj.clone() else {
-            self.draw_hover_scrim(cx);
             return DrawStep::done();
         };
         let field_w = rect.size.x - PAD * 2.0;
@@ -536,28 +534,11 @@ impl Widget for Inspector {
         }
         self.field_rects.push((FieldId::Description, desc_rect));
 
-        self.draw_hover_scrim(cx);
         DrawStep::done()
     }
 }
 
 impl Inspector {
-    /// Hover translucency (painted last, over everything): opaque panel when
-    /// hovered or pinned, else dim to 0.55 via a `(1 - opacity)` backdrop
-    /// scrim. Hoisted into a helper so every `draw_walk` early-return (the
-    /// collapsed / empty-subject cases) still paints it before bailing.
-    fn draw_hover_scrim(&mut self, cx: &mut Cx2d) {
-        let opacity = if self.hovered || self.pinned {
-            1.0
-        } else {
-            0.55
-        };
-        if opacity < 1.0 {
-            self.draw_scrim.color.w = (1.0 - opacity) as f32;
-            self.draw_scrim.draw_abs(cx, self.view_rect);
-        }
-    }
-
     /// Point the inspector at `subject`, rebuilding the projection and syncing
     /// the picker's selected row. Overrides persist across subject switches
     /// (keyed per subject); an in-progress edit is discarded uncommitted.
