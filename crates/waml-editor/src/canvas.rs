@@ -641,7 +641,7 @@ impl Widget for GraphCanvas {
         // and centers that inflation on the routed centerline, so the bar sits
         // on the true coordinate and consecutive segments meet cleanly at
         // elbows. Arrow/adornment styling is a fast-follow.
-        let thickness = (2.0 * zoom).max(1.2);
+        let thickness = (3.0 * zoom).max(1.8);
         // Terminal adornment size: scales with zoom so glyphs track the elements
         // they sit on, with only a small floor (a legibility nub) so they don't
         // vanish when way zoomed out. A large floor makes them dwarf the shrinking
