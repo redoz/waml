@@ -8,6 +8,7 @@
 use crate::camera::Camera;
 use crate::scene::{bounding_box, Scene};
 use makepad_widgets::*;
+use waml::adornment::{end_marker, End, Marker};
 
 script_mod! {
     use mod.prelude.widgets_internal.*
@@ -44,6 +45,44 @@ script_mod! {
         }
     }
 
+    // Edge end adornment pen: a standard-UML terminal glyph (open arrow, hollow
+    // triangle, hollow/filled diamond) at a relationship endpoint, oriented along
+    // the route's terminal segment. The glyph shape lives in `waml::adornment`
+    // (frontend-shared selection); the polygon geometry is computed per-draw in
+    // `marker_geometry` and fed in as the four path vertices `v01`/`v23` (packed
+    // xy pairs, in this quad's local pixel space). The shader is branch-free: an
+    // `if` on a uniform silently no-ops in this fork's shader VM (see
+    // `action_link`), so fill vs hollow vs open is selected by the `hollow`/
+    // `filled` flags multiplying colors -- open (both 0) -> transparent interior +
+    // stroke, hollow -> `bg` interior + stroke, filled -> `color` interior + stroke.
+    mod.draw.EdgeMarker = mod.draw.DrawColor{
+        // Packed path vertices: v01 = (v0.xy, v1.xy), v23 = (v2.xy, v3.xy).
+        v01: uniform(vec4(0.0, 0.0, 0.0, 0.0))
+        v23: uniform(vec4(0.0, 0.0, 0.0, 0.0))
+        // 1.0 -> hollow (white interior); 0.0 otherwise. Mutually exclusive with `filled`.
+        hollow: uniform(0.0)
+        // 1.0 -> solid interior (composition diamond, generalization if ever filled).
+        filled: uniform(0.0)
+        stroke_w: uniform(1.2)
+        // Interior wash for a hollow glyph: the card field so the edge line behind
+        // it doesn't bleed through the triangle/diamond.
+        bg: uniform(atlas.field_bg)
+        pixel: fn() {
+            let sdf = Sdf2d.viewport(self.pos * self.rect_size)
+            sdf.move_to(self.v01.x, self.v01.y)
+            sdf.line_to(self.v01.z, self.v01.w)
+            sdf.line_to(self.v23.x, self.v23.y)
+            sdf.line_to(self.v23.z, self.v23.w)
+            sdf.close_path()
+            // Interior: bg for hollow, line color for filled, transparent for open
+            // (both flags 0). The flags are mutually exclusive so the sum is clean.
+            let fill = self.bg * self.hollow + self.color * self.filled
+            sdf.fill_keep(fill)
+            sdf.stroke(self.color, self.stroke_w)
+            return sdf.result
+        }
+    }
+
     mod.widgets.GraphCanvas = set_type_default() do mod.widgets.GraphCanvasBase{
         width: Fill
         height: Fill
@@ -56,6 +95,9 @@ script_mod! {
         // the fill differs from the frame defaults, so we override just `color`.
         draw_node: mod.draw.AccentFrame{ color: atlas.field_bg }
         draw_edge_down: mod.draw.EdgeLine{ color: atlas.text_dim }
+        // Terminal adornment pen; shares the edge line color so glyphs read as
+        // part of the same stroke.
+        draw_marker: mod.draw.EdgeMarker{ color: atlas.text_dim }
         // Flat fill pen for card compartment dividers, the header accent wash, and
         // port nubs. The renderer pushes `color` (accent/dim + alpha) per draw.
         draw_rule +: { color: atlas.text_dim }
@@ -140,6 +182,9 @@ pub struct GraphCanvas {
     #[redraw]
     #[live]
     draw_edge_down: DrawColor,
+    #[redraw]
+    #[live]
+    draw_marker: DrawColor,
     #[redraw]
     #[live]
     draw_rule: DrawColor,
@@ -295,6 +340,89 @@ fn snap_bar_to_device(rect: Rect, dpi: f64) -> Rect {
         pos: dvec2(snap(rect.pos.x), snap(rect.pos.y)),
         size: dvec2(size(rect.size.x), size(rect.size.y)),
     }
+}
+
+/// A resolved terminal glyph ready to draw: the axis-aligned quad to place it
+/// in, the four packed path vertices in that quad's local pixel space, and the
+/// branchless `hollow`/`filled` interior flags the `EdgeMarker` shader reads.
+struct MarkerDraw {
+    quad: Rect,
+    /// Packed (v0.xy, v1.xy) in local pixel space.
+    v01: [f32; 4],
+    /// Packed (v2.xy, v3.xy) in local pixel space.
+    v23: [f32; 4],
+    hollow: f32,
+    filled: f32,
+}
+
+/// Turn a [`Marker`] at an endpoint into drawable geometry, oriented so the glyph
+/// points along `dir_raw` (the terminal segment direction, toward the node). The
+/// tip sits ON `ep` (the routed endpoint, which lands on the node border); the
+/// body extends back along `-dir`. Vertices are emitted in the returned quad's
+/// local pixel space to match the shader's `self.pos * self.rect_size` frame.
+/// Returns `None` for `Marker::None` or a degenerate (zero-length) direction.
+/// Pure, for a GPU-free test.
+fn marker_geometry(marker: Marker, ep: DVec2, dir_raw: DVec2, size: f64) -> Option<MarkerDraw> {
+    if marker == Marker::None {
+        return None;
+    }
+    let len = (dir_raw.x * dir_raw.x + dir_raw.y * dir_raw.y).sqrt();
+    if len < 1e-6 {
+        return None;
+    }
+    let d = dvec2(dir_raw.x / len, dir_raw.y / len); // unit, pointing into the node
+    let n = dvec2(-d.y, d.x); // perpendicular
+    let l = size;
+    let w = size * 0.62; // half-width
+
+    // The quad is a square centered on the endpoint, sized to hold the deepest
+    // glyph: the diamond reaches back `2*l` along `-d`, plus `w` sideways.
+    let half = 2.0 * l + w + 2.0;
+    let quad = Rect {
+        pos: dvec2(ep.x - half, ep.y - half),
+        size: dvec2(half * 2.0, half * 2.0),
+    };
+    let o = quad.pos;
+    let lp = |p: DVec2| [(p.x - o.x) as f32, (p.y - o.y) as f32];
+
+    let base = dvec2(ep.x - d.x * l, ep.y - d.y * l);
+    let bl = dvec2(base.x + n.x * w, base.y + n.y * w);
+    let br = dvec2(base.x - n.x * w, base.y - n.y * w);
+
+    let (v0, v1, v2, v3, hollow, filled) = match marker {
+        // Apex on the endpoint, base back along -d. v3 == apex closes cleanly.
+        Marker::HollowTriangle => (ep, bl, br, ep, 1.0, 0.0),
+        // Near tip on the endpoint, far tip back at 2*l, sides at l ± w.
+        Marker::FilledDiamond | Marker::HollowDiamond => {
+            let far = dvec2(ep.x - d.x * 2.0 * l, ep.y - d.y * 2.0 * l);
+            let sa = dvec2(ep.x - d.x * l + n.x * w, ep.y - d.y * l + n.y * w);
+            let sb = dvec2(ep.x - d.x * l - n.x * w, ep.y - d.y * l - n.y * w);
+            let filled = if marker == Marker::FilledDiamond { 1.0 } else { 0.0 };
+            (ep, sa, far, sb, 1.0 - filled, filled)
+        }
+        // Open "V": base_left -> apex -> base_right -> apex. No closing base line;
+        // interior is transparent (both flags 0) so only the stroke shows.
+        Marker::OpenArrow => (bl, ep, br, ep, 0.0, 0.0),
+        Marker::None => return None,
+    };
+    let a = lp(v0);
+    let b = lp(v1);
+    let c = lp(v2);
+    let e = lp(v3);
+    Some(MarkerDraw {
+        quad,
+        v01: [a[0], a[1], b[0], b[1]],
+        v23: [c[0], c[1], e[0], e[1]],
+        hollow,
+        filled,
+    })
+}
+
+/// Screen position of a routed world point under `camera`, offset into the
+/// canvas `rect`. Mirrors the edge segment loop's world->local->rect math.
+fn edge_point_to_screen(camera: &Camera, rect_pos: DVec2, p: (f64, f64)) -> DVec2 {
+    let (lx, ly) = camera.world_to_local(p.0, p.1);
+    dvec2(rect_pos.x + lx, rect_pos.y + ly)
 }
 
 /// The four node commands a radial reports. Handlers are logging stubs for now
@@ -514,6 +642,9 @@ impl Widget for GraphCanvas {
         // on the true coordinate and consecutive segments meet cleanly at
         // elbows. Arrow/adornment styling is a fast-follow.
         let thickness = (2.0 * zoom).max(1.2);
+        // Terminal adornment size, floored so glyphs stay legible zoomed out (mind
+        // the same readability floor as `thickness`).
+        let marker_size = (11.0 * zoom).max(7.0);
         // Feed zoom in so the pen fades text_dim -> text as the view zooms out
         // (see EdgeLine), same uniform cadence as draw_node's frame.
         self.draw_edge_down
@@ -529,6 +660,42 @@ impl Widget for GraphCanvas {
                 let b = dvec2(rect.pos.x + b0, rect.pos.y + b1);
                 let quad = snap_bar_to_device(segment_quad(a, b, thickness), dpi);
                 self.draw_edge_down.draw_abs(cx, quad);
+            }
+            // Terminal adornments: pick the standard-UML glyph per end + kind
+            // (`waml::adornment::end_marker`) and orient it along the route's
+            // terminal segment -- last two points for `to_end` (apex into target),
+            // first two for `from_end` (apex into source). Drawn after the segments
+            // so the glyph sits on top; nodes draw later and cover any overhang
+            // past the border.
+            let pts = &edge.points;
+            if pts.len() >= 2 {
+                let ep_to = edge_point_to_screen(&self.camera, rect.pos, pts[pts.len() - 1]);
+                let prev = edge_point_to_screen(&self.camera, rect.pos, pts[pts.len() - 2]);
+                let ep_from = edge_point_to_screen(&self.camera, rect.pos, pts[0]);
+                let next = edge_point_to_screen(&self.camera, rect.pos, pts[1]);
+                let ends = [
+                    (
+                        end_marker(edge.kind, End::To, edge.to_end.navigable),
+                        ep_to,
+                        dvec2(ep_to.x - prev.x, ep_to.y - prev.y),
+                    ),
+                    (
+                        end_marker(edge.kind, End::From, edge.from_end.navigable),
+                        ep_from,
+                        dvec2(ep_from.x - next.x, ep_from.y - next.y),
+                    ),
+                ];
+                for (mk, ep, dir) in ends {
+                    if let Some(m) = marker_geometry(mk, ep, dir, marker_size) {
+                        self.draw_marker.set_uniform(cx, live_id!(v01), &m.v01);
+                        self.draw_marker.set_uniform(cx, live_id!(v23), &m.v23);
+                        self.draw_marker.set_uniform(cx, live_id!(hollow), &[m.hollow]);
+                        self.draw_marker.set_uniform(cx, live_id!(filled), &[m.filled]);
+                        self.draw_marker
+                            .set_uniform(cx, live_id!(stroke_w), &[thickness as f32]);
+                        self.draw_marker.draw_abs(cx, m.quad);
+                    }
+                }
             }
         }
 
@@ -840,6 +1007,52 @@ mod tests {
         let q = segment_quad(dvec2(0.0, 0.0), dvec2(8.0, 6.0), thickness);
         assert_eq!(q.pos, dvec2(0.0, 0.0));
         assert_eq!(q.size, dvec2(8.0, 6.0));
+    }
+
+    #[test]
+    fn marker_geometry_puts_the_tip_on_the_endpoint() {
+        // A rightward-pointing triangle: dir = +x, apex (v0) must land exactly on
+        // the endpoint in the quad's local space, and the base must sit back along
+        // -x by `size`. Local coord = world - quad.pos.
+        let ep = dvec2(100.0, 100.0);
+        let m = marker_geometry(Marker::HollowTriangle, ep, dvec2(1.0, 0.0), 10.0).unwrap();
+        let near = |a: f64, b: f64| (a - b).abs() < 1e-3;
+        let tip = dvec2(
+            m.quad.pos.x + m.v01[0] as f64,
+            m.quad.pos.y + m.v01[1] as f64,
+        );
+        assert!(near(tip.x, ep.x) && near(tip.y, ep.y), "apex on the endpoint");
+        // Base-left (v1) is `size` back along -x, `w` off in +y (n = (0,1)).
+        let bl = dvec2(
+            m.quad.pos.x + m.v01[2] as f64,
+            m.quad.pos.y + m.v01[3] as f64,
+        );
+        assert!(
+            near(bl.x, 90.0) && near(bl.y, 100.0 + 6.2),
+            "base back along -dir, offset by w"
+        );
+        assert_eq!((m.hollow, m.filled), (1.0, 0.0), "generalization triangle is hollow");
+    }
+
+    #[test]
+    fn marker_geometry_flags_match_the_glyph() {
+        let ep = dvec2(0.0, 0.0);
+        let d = dvec2(0.0, 1.0);
+        assert_eq!(
+            marker_geometry(Marker::FilledDiamond, ep, d, 8.0).map(|m| (m.hollow, m.filled)),
+            Some((0.0, 1.0)),
+        );
+        assert_eq!(
+            marker_geometry(Marker::HollowDiamond, ep, d, 8.0).map(|m| (m.hollow, m.filled)),
+            Some((1.0, 0.0)),
+        );
+        assert_eq!(
+            marker_geometry(Marker::OpenArrow, ep, d, 8.0).map(|m| (m.hollow, m.filled)),
+            Some((0.0, 0.0)),
+        );
+        // No glyph, or a degenerate (coincident-points) direction -> nothing to draw.
+        assert!(marker_geometry(Marker::None, ep, d, 8.0).is_none());
+        assert!(marker_geometry(Marker::OpenArrow, ep, dvec2(0.0, 0.0), 8.0).is_none());
     }
 
     #[test]
