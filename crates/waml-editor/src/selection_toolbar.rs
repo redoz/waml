@@ -111,7 +111,7 @@ pub struct SelectionToolbar {
 impl Widget for SelectionToolbar {
     fn handle_event(&mut self, cx: &mut Cx, event: &Event, _scope: &mut Scope) {
         let uid = self.widget_uid();
-        match event.hits_with_capture_overload(cx, self.draw_bg.area(), true) {
+        match event.hits_with_capture_overload(cx, self.draw_bg.area(), false) {
             Hit::FingerUp(fe) if fe.is_primary_hit() => {
                 // `item_rects` holds positions *relative* to the container's
                 // draw-time rect, because `cx.walk_turtle`'s returned rect is

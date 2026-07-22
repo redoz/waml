@@ -175,7 +175,7 @@ pub struct ToolDock {
 impl Widget for ToolDock {
     fn handle_event(&mut self, cx: &mut Cx, event: &Event, _scope: &mut Scope) {
         let uid = self.widget_uid();
-        match event.hits_with_capture_overload(cx, self.draw_bg.area(), true) {
+        match event.hits_with_capture_overload(cx, self.draw_bg.area(), false) {
             Hit::FingerUp(fe) if fe.is_primary_hit() => {
                 for (tool, rect) in self.item_rects.clone() {
                     if rect.contains(fe.abs) {

@@ -8,10 +8,11 @@ description = "Native, read-only GPU viewer for WAML/OKF diagrams."
 
 [dependencies]
 waml = { path = "../waml", features = ["serde"] }
-# Pinned to a fork of makepad/makepad@dev (redoz/makepad, branch waml-fxc-opt — stacked on
-# popup-transparent, adds the FXC-optimization fix for the trig-sdf "arc spike"). rev is the
-# reproducible pin; survives upstream force-push / branch renames.
-makepad-widgets = { git = "https://github.com/redoz/makepad.git", rev = "525aae6a" }
+# Pinned to a fork of makepad/makepad@dev (redoz/makepad, branch waml-scroll-occlusion —
+# stacked on waml-fxc-opt, adds handled_x/handled_y scroll occlusion to hits() so overlays
+# and popups stop bleeding scroll into the canvas). rev is the reproducible pin; survives
+# upstream force-push / branch renames.
+makepad-widgets = { git = "https://github.com/redoz/makepad.git", rev = "fcd850bf" }
 taffy = "0.12.2"
 serde = { workspace = true }
 serde_json = { workspace = true }

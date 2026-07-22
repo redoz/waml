@@ -292,7 +292,7 @@ impl Widget for Inspector {
         // `contains` test. (The picker field itself is now the child
         // `SelectBox`'s own hit rect, event-time-anchored — see `select_box.rs`.)
         let hit_off = self.view.area().rect(cx).pos - self.view_rect.pos;
-        match event.hits_with_capture_overload(cx, self.view.area(), true) {
+        match event.hits_with_capture_overload(cx, self.view.area(), false) {
             Hit::FingerHoverIn(_) => {
                 if !self.hovered {
                     self.hovered = true;

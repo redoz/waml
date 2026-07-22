@@ -345,7 +345,7 @@ pub enum GraphCanvasAction {
 
 impl Widget for GraphCanvas {
     fn handle_event(&mut self, cx: &mut Cx, event: &Event, _scope: &mut Scope) {
-        match event.hits_with_capture_overload(cx, self.draw_bg.area(), true) {
+        match event.hits_with_capture_overload(cx, self.draw_bg.area(), false) {
             Hit::FingerDown(fe) if fe.mouse_button() == Some(MouseButton::SECONDARY) => {
                 let rects: Vec<waml::solve::Rect> =
                     self.scene.nodes.iter().map(|n| n.rect).collect();
