@@ -1542,6 +1542,12 @@ impl MatchEvent for App {
                 self.refresh_doc_tabs(cx);
                 self.sync_active_tab(cx);
             }
+            Some(crate::doc_tabs::DocTabsAction::Promote(id)) => {
+                self.tabs.activate(id);
+                self.tabs.promote(id);
+                self.refresh_doc_tabs(cx);
+                self.sync_active_tab(cx);
+            }
             Some(crate::doc_tabs::DocTabsAction::Close(id)) => {
                 self.tabs.close(id);
                 self.refresh_doc_tabs(cx);
