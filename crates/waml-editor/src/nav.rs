@@ -136,6 +136,62 @@ pub fn packages(model: &Model) -> Vec<PackageRow> {
     out
 }
 
+/// Find the node with `key` anywhere in `nodes` (depth-first). The `build_tree`
+/// root has key `""`, so `find_node(roots, "")` returns the synthetic root.
+fn find_node<'a>(nodes: &'a [TreeNode], key: &str) -> Option<&'a TreeNode> {
+    for n in nodes {
+        if n.key == key {
+            return Some(n);
+        }
+        if let Some(found) = find_node(&n.children, key) {
+            return Some(found);
+        }
+    }
+    None
+}
+
+/// The rows shown for `scope`: the scope node's children (its members at depth
+/// 0). The scope package itself is never a row. Unknown scope -> empty.
+fn scoped_roots(full: &ProjectTree, scope: &str) -> Vec<TreeNode> {
+    find_node(&full.roots, scope)
+        .map(|n| n.children.clone())
+        .unwrap_or_default()
+}
+
+/// Keep rows whose kind == `kind`; retain ancestor packages of any kept row for
+/// structure; prune everything else. (Only packages carry children, so a pruned
+/// non-package never strands descendants.)
+fn filter_kind(nodes: &[TreeNode], kind: TreeKind) -> Vec<TreeNode> {
+    nodes
+        .iter()
+        .filter_map(|n| {
+            let kids = filter_kind(&n.children, kind);
+            if n.kind == kind || !kids.is_empty() {
+                Some(TreeNode {
+                    children: kids,
+                    ..n.clone()
+                })
+            } else {
+                None
+            }
+        })
+        .collect()
+}
+
+pub fn view(model: &Model, state: &NavState) -> NavView {
+    let full = build_tree(model, "Untitled");
+    let scoped = scoped_roots(&full, &state.scope);
+    let filtered = match state.filter {
+        Some(k) => filter_kind(&scoped, k),
+        None => scoped,
+    };
+    if state.query.trim().is_empty() {
+        return NavView::Browse(ProjectTree { roots: filtered });
+    }
+    // Query path lands in Task 5; a temporary Browse keeps the crate compiling.
+    NavView::Browse(ProjectTree { roots: filtered })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -277,5 +333,77 @@ mod tests {
         let rows = packages(&m);
         assert_eq!(rows[0].title, "Untitled");
         assert_eq!(rows[0].key, "");
+    }
+
+    fn browse_roots(v: &NavView) -> &ProjectTree {
+        match v {
+            NavView::Browse(t) => t,
+            other => panic!("expected Browse, got {other:?}"),
+        }
+    }
+
+    // Depth-first (key, kind) pairs for order-independent assertions.
+    fn flat(t: &ProjectTree) -> Vec<(String, TreeKind)> {
+        fn walk(nodes: &[TreeNode], out: &mut Vec<(String, TreeKind)>) {
+            for n in nodes {
+                out.push((n.key.clone(), n.kind));
+                walk(&n.children, out);
+            }
+        }
+        let mut out = Vec::new();
+        walk(&t.roots, &mut out);
+        out
+    }
+
+    #[test]
+    fn empty_scope_roots_at_whole_model_without_the_synthetic_root_row() {
+        let v = view(&built(), &NavState::default());
+        let t = browse_roots(&v);
+        // Whole-model members are at depth 0 — the "Root" package itself is NOT a
+        // row (it is the dropdown's scope, not tree content).
+        let keys: Vec<&str> = t.roots.iter().map(|r| r.key.as_str()).collect();
+        assert_eq!(keys, vec!["sub", "iface"]);
+    }
+
+    #[test]
+    fn scope_roots_at_the_packages_subtree() {
+        let state = NavState {
+            scope: "sub".to_string(),
+            ..Default::default()
+        };
+        let v = view(&built(), &state);
+        let t = browse_roots(&v);
+        // "sub"'s members at depth 0; "sub" itself is not shown.
+        assert_eq!(flat(t), vec![("cls".to_string(), TreeKind::Class)]);
+    }
+
+    #[test]
+    fn type_filter_keeps_matching_kinds_and_ancestor_packages_prunes_rest() {
+        let state = NavState {
+            filter: Some(TreeKind::Class),
+            ..Default::default()
+        };
+        let v = view(&built(), &state);
+        let t = browse_roots(&v);
+        // Only the Class survives, but its ancestor package "sub" is retained for
+        // structure; the sibling Interface "iface" is pruned.
+        assert_eq!(
+            flat(t),
+            vec![
+                ("sub".to_string(), TreeKind::Package),
+                ("cls".to_string(), TreeKind::Class)
+            ]
+        );
+    }
+
+    #[test]
+    fn type_filter_on_package_keeps_package_rows() {
+        let state = NavState {
+            filter: Some(TreeKind::Package),
+            ..Default::default()
+        };
+        let v = view(&built(), &state);
+        let t = browse_roots(&v);
+        assert_eq!(flat(t), vec![("sub".to_string(), TreeKind::Package)]);
     }
 }
