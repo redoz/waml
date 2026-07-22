@@ -1576,6 +1576,7 @@ impl AppMain for App {
         crate::diagram_switcher::script_mod(vm);
         crate::shortcuts_overlay::script_mod(vm);
         crate::tool_dock::script_mod(vm);
+        crate::select_box::script_mod(vm);
         crate::selection_toolbar::script_mod(vm);
         crate::statusbar::script_mod(vm);
         crate::logo::script_mod(vm);

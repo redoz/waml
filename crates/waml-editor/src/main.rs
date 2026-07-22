@@ -24,6 +24,7 @@ mod node_style;
 mod popup;
 mod recent_row;
 mod scene;
+mod select_box;
 mod selection_toolbar;
 mod shortcuts_overlay;
 mod sizing;
