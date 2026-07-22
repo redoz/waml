@@ -565,7 +565,8 @@ impl Inspector {
     /// `apply_pick`). Node rows lead with their catalog glyph (see `node_lead`,
     /// falling back to a per-type badge for `Unknown` types) and are enabled;
     /// edge rows lead with the spline glyph (target-end label) and are disabled;
-    /// diagram rows are disabled. Index 0 (placeholder) is skipped.
+    /// the root diagram row leads with the `Frame` glyph and is disabled. Index
+    /// 0 (placeholder) is skipped.
     fn build_select_items(&mut self, model: &Model) -> Vec<SelectItem> {
         self.picker_ids.clear();
         let mut items = Vec::new();
@@ -598,6 +599,11 @@ impl Inspector {
                     edge_target(&row.label).to_string(),
                     false,
                 ),
+                // The root diagram row leads with the `Frame` glyph -- distinct
+                // from any node's catalog icon, marking it as the container.
+                ElementKind::Diagram => {
+                    (SelectLead::Icon(Icon::Frame), row.label.clone(), false)
+                }
                 _ => (SelectLead::None, row.label.clone(), false),
             };
             items.push(SelectItem {
