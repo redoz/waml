@@ -20,8 +20,12 @@ use crate::makepad_widgets::*;
 
 /// Resting (unfocused) interior-fill alpha.
 const GLASS_REST: f32 = 0.72;
-/// Ease duration (seconds) between rest and fully opaque.
-const GLASS_SECS: f64 = 0.14;
+/// Ease-in duration (seconds): translucent -> opaque on hover/pin. Snappy so
+/// the panel solidifies promptly under the pointer.
+const GLASS_SECS_IN: f64 = 0.14;
+/// Ease-out duration (seconds): opaque -> translucent on leave. Longer than the
+/// ease-in so the panel lingers before fading back into the canvas.
+const GLASS_SECS_OUT: f64 = 0.32;
 
 #[derive(Default)]
 pub struct PanelGlass {
@@ -66,11 +70,13 @@ impl PanelGlass {
             if self.last_time == 0.0 {
                 self.last_time = ne.time;
             }
-            let step = ((ne.time - self.last_time).max(0.0) / GLASS_SECS) as f32;
+            let dt = (ne.time - self.last_time).max(0.0);
             self.last_time = ne.time;
             if self.glass < target {
+                let step = (dt / GLASS_SECS_IN) as f32;
                 self.glass = (self.glass + step).min(target);
             } else if self.glass > target {
+                let step = (dt / GLASS_SECS_OUT) as f32;
                 self.glass = (self.glass - step).max(target);
             }
             if (self.glass - target).abs() > 0.0005 {
