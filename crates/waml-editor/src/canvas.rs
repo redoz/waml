@@ -642,9 +642,11 @@ impl Widget for GraphCanvas {
         // on the true coordinate and consecutive segments meet cleanly at
         // elbows. Arrow/adornment styling is a fast-follow.
         let thickness = (2.0 * zoom).max(1.2);
-        // Terminal adornment size, floored so glyphs stay legible zoomed out (mind
-        // the same readability floor as `thickness`).
-        let marker_size = (11.0 * zoom).max(7.0);
+        // Terminal adornment size: scales with zoom so glyphs track the elements
+        // they sit on, with only a small floor (a legibility nub) so they don't
+        // vanish when way zoomed out. A large floor makes them dwarf the shrinking
+        // nodes, so keep it low relative to `marker_size` at 1:1.
+        let marker_size = (10.0 * zoom).max(4.0);
         // Feed zoom in so the pen fades text_dim -> text as the view zooms out
         // (see EdgeLine), same uniform cadence as draw_node's frame.
         self.draw_edge_down
@@ -691,8 +693,11 @@ impl Widget for GraphCanvas {
                         self.draw_marker.set_uniform(cx, live_id!(v23), &m.v23);
                         self.draw_marker.set_uniform(cx, live_id!(hollow), &[m.hollow]);
                         self.draw_marker.set_uniform(cx, live_id!(filled), &[m.filled]);
+                        // `EdgeMarker` strokes with `abs(shape) - w`, so `w` is a
+                        // HALF-width -- half of `thickness` matches the filled line
+                        // bar's full width instead of rendering at 2x.
                         self.draw_marker
-                            .set_uniform(cx, live_id!(stroke_w), &[thickness as f32]);
+                            .set_uniform(cx, live_id!(stroke_w), &[(thickness * 0.5) as f32]);
                         self.draw_marker.draw_abs(cx, m.quad);
                     }
                 }
