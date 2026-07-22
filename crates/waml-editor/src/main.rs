@@ -10,6 +10,7 @@ mod cli;
 mod config;
 mod diagram_switcher;
 mod doc_tabs;
+mod doc_view;
 mod fps_meter;
 mod frame;
 mod icon_button;

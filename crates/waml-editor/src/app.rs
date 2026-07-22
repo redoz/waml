@@ -1,6 +1,6 @@
-use crate::icon_button::IconButtonWidgetRefExt;
 use crate::doc_tabs::{OpenTabs, TabKind};
 use crate::fps_meter::FpsMeter;
+use crate::icon_button::IconButtonWidgetRefExt;
 use crate::inspector::{diagram_elements, Subject};
 use crate::load;
 use crate::nav::NavState;
@@ -348,6 +348,7 @@ impl App {
         {
             panel.set_selected_key(cx, Some(active.key.clone()));
         }
+        let body = crate::doc_view::BodyWidgets::new(cx, &self.ui);
         match active.kind {
             TabKind::Diagram => {
                 let built = self
@@ -362,25 +363,21 @@ impl App {
                     }
                     let node_keys: Vec<String> =
                         scene.nodes.iter().map(|n| n.key.clone()).collect();
-                    if let Some(mut canvas) = self
-                        .ui
-                        .widget(cx, ids!(canvas))
-                        .borrow_mut::<crate::canvas::GraphCanvas>()
+                    if let Some(mut canvas) =
+                        body.canvas(cx).borrow_mut::<crate::canvas::GraphCanvas>()
                     {
                         canvas.set_scene(cx, scene);
                     }
                     self.sync_inspector_elements(cx, &active.key, &active.title, &node_keys);
                 }
-                if let Some(mut inspector) = self
-                    .ui
-                    .widget(cx, ids!(inspector))
+                if let Some(mut inspector) = body
+                    .inspector(cx)
                     .borrow_mut::<crate::inspector_panel::Inspector>()
                 {
                     inspector.set_subject(cx, &self.model, Subject::None);
                 }
                 if let Some(mut toolbar) =
-                    self.ui
-                        .widget(cx, ids!(selection_toolbar))
+                    body.selection_toolbar(cx)
                         .borrow_mut::<crate::selection_toolbar::SelectionToolbar>()
                 {
                     toolbar.set_selection(cx, None);
@@ -390,16 +387,12 @@ impl App {
             }
             TabKind::Classifier => {
                 let scene = build_focus_scene(&self.model, &active.key);
-                if let Some(mut canvas) = self
-                    .ui
-                    .widget(cx, ids!(canvas))
-                    .borrow_mut::<crate::canvas::GraphCanvas>()
+                if let Some(mut canvas) = body.canvas(cx).borrow_mut::<crate::canvas::GraphCanvas>()
                 {
                     canvas.set_focus(cx, scene);
                 }
-                if let Some(mut inspector) = self
-                    .ui
-                    .widget(cx, ids!(inspector))
+                if let Some(mut inspector) = body
+                    .inspector(cx)
                     .borrow_mut::<crate::inspector_panel::Inspector>()
                 {
                     inspector.set_subject(cx, &self.model, Subject::Classifier(active.key.clone()));
@@ -408,8 +401,7 @@ impl App {
                     inspector.set_picker_visible(cx, false);
                 }
                 if let Some(mut toolbar) =
-                    self.ui
-                        .widget(cx, ids!(selection_toolbar))
+                    body.selection_toolbar(cx)
                         .borrow_mut::<crate::selection_toolbar::SelectionToolbar>()
                 {
                     // Single-classifier focus only in this mock -- always 1.
@@ -425,9 +417,7 @@ impl App {
     /// Show/hide the left tool dock. Hidden while a classifier/package is
     /// previewed -- only a diagram tab exposes drawing tools.
     fn set_diagram_toolbars(&mut self, cx: &mut Cx, show: bool) {
-        self.ui
-            .widget(cx, ids!(tool_dock_wrap))
-            .set_visible(cx, show);
+        crate::doc_view::BodyWidgets::new(cx, &self.ui).set_tool_dock_visible(cx, show);
     }
 
     fn refresh_doc_tabs(&mut self, cx: &mut Cx) {
@@ -1029,6 +1019,7 @@ impl MatchEvent for App {
     }
 
     fn handle_actions(&mut self, cx: &mut Cx, actions: &Actions) {
+        let body = crate::doc_view::BodyWidgets::new(cx, &self.ui);
         // Caption burger -- placeholder menu wiring this pass.
         if let Some(press) = self
             .ui
@@ -1053,14 +1044,12 @@ impl MatchEvent for App {
             // height), so the drop keeps the same gap regardless of the button's
             // height -- deriving it from `btn.size.y` alone let the shorter box
             // pull the card up into the caption (read as attaching too close).
-            let btn = self
-                .ui
-                .widget(cx, ids!(menu_btn))
-                .as_icon_button()
-                .rect();
+            let btn = self.ui.widget(cx, ids!(menu_btn)).as_icon_button().rect();
             let anchor = dvec2(
                 btn.pos.x + crate::popup::menu::MENU_INDENT_X,
-                btn.pos.y + btn.size.y * 0.5 + crate::popup::menu::CAPTION_H * 0.5
+                btn.pos.y
+                    + btn.size.y * 0.5
+                    + crate::popup::menu::CAPTION_H * 0.5
                     + crate::popup::menu::MENU_GAP,
             );
             let bounds = self.window_bounds(cx);
@@ -1139,9 +1128,8 @@ impl MatchEvent for App {
             // (inspector-local -- no tab open, no canvas move), the same path a
             // canvas/tab selection takes.
             if let Some(result) = picker_closed {
-                if let Some(mut inspector) = self
-                    .ui
-                    .widget(cx, ids!(inspector))
+                if let Some(mut inspector) = body
+                    .inspector(cx)
                     .borrow_mut::<crate::inspector_panel::Inspector>()
                 {
                     inspector.on_picker_closed(cx, &self.model, result);
@@ -1344,9 +1332,8 @@ impl MatchEvent for App {
         // Inline-edit commit: the inspector emits `Edited(subject_key)` when a
         // field's value actually changed. Promote the tab pointing at that
         // subject from preview to persisted (title de-dims).
-        let edited_key = self
-            .ui
-            .widget(cx, ids!(inspector))
+        let edited_key = body
+            .inspector(cx)
             .borrow_mut::<crate::inspector_panel::Inspector>()
             .and_then(|inspector| inspector.edited(actions));
         if let Some(key) = edited_key {
@@ -1361,9 +1348,8 @@ impl MatchEvent for App {
         // Element-picker: the SelectBox asked to open its flyout. Only `App`
         // may place a cross-tree popup, so relay through `popup_root` (routed
         // through the single authority, same as burger/logo/node radial).
-        let open_request = self
-            .ui
-            .widget(cx, ids!(inspector))
+        let open_request = body
+            .inspector(cx)
             .borrow_mut::<crate::inspector_panel::Inspector>()
             .and_then(|inspector| inspector.take_open_request(cx, actions));
         if let Some((anchor_rect, min_width, items)) = open_request {
@@ -1394,9 +1380,8 @@ impl MatchEvent for App {
         // Tool dock: mode clicks (Select/Add/Connect) update their own
         // highlight already; the one-shot action buttons stay mock no-ops. The
         // keybinding overlay (U8) is reached via the `?` hotkey below.
-        let dock_action = self
-            .ui
-            .widget(cx, ids!(tool_dock))
+        let dock_action = body
+            .tool_dock(cx)
             .borrow_mut::<crate::tool_dock::ToolDock>()
             .and_then(|dock| dock.dock_action(actions));
         if let Some(action) = dock_action {
@@ -1411,9 +1396,8 @@ impl MatchEvent for App {
         // routed through the single `popup_root` authority; a primary click
         // selects/deselects a node, repointing the inspector only (no tab, no
         // camera move -- the same inspector-local path the element-picker takes).
-        let canvas_menu = self
-            .ui
-            .widget(cx, ids!(canvas))
+        let canvas_menu = body
+            .canvas(cx)
             .borrow_mut::<crate::canvas::GraphCanvas>()
             .and_then(|c| c.canvas_action(actions));
         match canvas_menu {
@@ -1438,9 +1422,8 @@ impl MatchEvent for App {
                 return;
             }
             Some(crate::canvas::GraphCanvasAction::NodeSelect { key }) => {
-                if let Some(mut inspector) = self
-                    .ui
-                    .widget(cx, ids!(inspector))
+                if let Some(mut inspector) = body
+                    .inspector(cx)
                     .borrow_mut::<crate::inspector_panel::Inspector>()
                 {
                     inspector.set_subject(cx, &self.model, Subject::Classifier(key));
@@ -1448,9 +1431,8 @@ impl MatchEvent for App {
                 return;
             }
             Some(crate::canvas::GraphCanvasAction::NodeDeselect) => {
-                if let Some(mut inspector) = self
-                    .ui
-                    .widget(cx, ids!(inspector))
+                if let Some(mut inspector) = body
+                    .inspector(cx)
                     .borrow_mut::<crate::inspector_panel::Inspector>()
                 {
                     inspector.set_subject(cx, &self.model, Subject::None);
@@ -1472,10 +1454,8 @@ impl MatchEvent for App {
                             for d in &diags {
                                 log!("diagnostic: {d:?}");
                             }
-                            if let Some(mut canvas) = self
-                                .ui
-                                .widget(cx, ids!(canvas))
-                                .borrow_mut::<crate::canvas::GraphCanvas>()
+                            if let Some(mut canvas) =
+                                body.canvas(cx).borrow_mut::<crate::canvas::GraphCanvas>()
                             {
                                 canvas.update_scene(cx, scene);
                             }
@@ -1576,9 +1556,8 @@ impl MatchEvent for App {
         // Selection toolbar: `Delete` closes the focused classifier's doc
         // tab (in-memory only -- the Model is never touched); `New Diagram`
         // is a mock no-op (diagram creation is out of scope for this pass).
-        let toolbar_action = self
-            .ui
-            .widget(cx, ids!(selection_toolbar))
+        let toolbar_action = body
+            .selection_toolbar(cx)
             .borrow_mut::<crate::selection_toolbar::SelectionToolbar>()
             .and_then(|toolbar| toolbar.toolbar_action(actions));
         match toolbar_action {
