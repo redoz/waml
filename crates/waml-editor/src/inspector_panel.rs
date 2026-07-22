@@ -6,14 +6,15 @@
 //! same hybrid `ProjectTree` uses (derefs `View`, yet does manual draws in its
 //! `draw_walk`). See `inspector.rs` for the pure `InspectorView` projection.
 //!
-//! Top bar: an element-picker field listing the current diagram's contents
-//! (diagram, nodes, source-anchored edges), plus a square pin toggle. Clicking
-//! the field emits `InspectorAction::OpenPicker`; `App` relays that to
-//! `PopupRoot::show_at` (a `MenuPopup` card), and a committed pick comes back
-//! through the tag-filtered `PopupRoot::closed` queue, resolved via
-//! `apply_pick` (which repoints the inspector, inspector-local). Diagram/edge
-//! rows are listed but picking them is a no-op for now. The pin is
-//! visual-only this cut (its keep-opaque-on-blur purpose is deferred).
+//! Top bar: a real `SelectBox` child widget (badge + selected label + caret)
+//! listing the current diagram's contents (diagram, nodes, source-anchored
+//! edges), plus a square pin toggle. Clicking the box opens its `SelectFlyout`
+//! card (`App` relays `SelectBox`'s open request to `PopupRoot::show_at`), and
+//! a committed pick comes back through the tag-filtered `PopupRoot::closed`
+//! queue, resolved via `apply_pick` (which repoints the inspector,
+//! inspector-local). Diagram/edge rows are listed but picking them is a no-op
+//! for now. The pin is visual-only this cut (its keep-opaque-on-blur purpose
+//! is deferred).
 //!
 //! Step C (inline edit): `Title`/`Description` are click-to-edit. Edits are
 //! hand-rolled (no fork `TextInput`) — same convention as `doc_tabs.rs`: rects
@@ -27,9 +28,12 @@ use crate::icons::Icon;
 use crate::icons::IconSet;
 use crate::inspector::{
     build_view, effective_field, subject_to_index, ElementKind, ElementRow, FieldId, InspectorView,
-    Subject, PICKER_PLACEHOLDER,
+    Subject,
 };
 use crate::node_style::{accent_bucket, AccentBucket};
+use crate::popup::base::PopupResult;
+use crate::popup::select::{SelectItem, SelectLead};
+use crate::select_box::SelectBox;
 use makepad_widgets::*;
 use std::collections::HashMap;
 use waml::model::Model;
@@ -68,16 +72,18 @@ script_mod! {
             }
         }
 
-        // The element-picker bar. `element_bar` is an empty spacer that just
-        // reserves the panel's top strip (so the container's `Fit` height keeps
-        // the bar when collapsed); everything in it -- the picker field (badge +
-        // selected label) and the pencil/caret/pin glyphs -- is hand-drawn
-        // immediate-mode in `draw_walk`. The dropped list itself is the shared
-        // `MenuPopup` surface (routed through `PopupRoot`), so each association
-        // row still carries the real `IconSpline` SDF.
+        // The element-picker bar. Hosts the real `SelectBox` child widget
+        // (badge + selected label + caret, its own click handling and open
+        // request) -- the pin/fold-caret glyphs are still hand-drawn
+        // immediate-mode in `draw_walk`. The dropped list is the shared
+        // `SelectFlyout` surface (routed through `PopupRoot`), so each
+        // association row still carries the real `IconSpline` SDF.
         element_bar := View {
             width: Fill
             height: 56.0
+            align: Align{x: 0.0, y: 0.5}
+            padding: Inset{left: 16.0, right: 16.0}
+            select_box := SelectBox { width: Fill }
         }
 
         draw_title +: {
@@ -117,38 +123,23 @@ script_mod! {
         // no separate `atlas.bg`; `ground` is the actual app/canvas background).
         draw_scrim +: { color: atlas.ground }
         // `draw_icon_edge` is a colour-only holder whose `color` is copied onto
-        // the pin/caret glyphs per draw (no RGBA crosses Rust). The element-picker
-        // list itself is now drawn by the shared `MenuPopup` surface (routed
-        // through `PopupRoot`), not this panel.
+        // the pin/caret glyphs per draw (no RGBA crosses Rust). The element
+        // badge + label + dropped list are now the `SelectBox`/`SelectFlyout`
+        // widgets' job, not this panel.
         draw_icon_edge +: { color: atlas.accent }
-        // Type-badge: solid per-kind square (colour set at draw time) with the
-        // kind initial (white) drawn on top.
-        draw_badge +: { color: atlas.bucket_slate }
-        draw_badge_text +: {
-            color: #xffffff
-            text_style: TextStyle{
-                font_size: 12
-                font_family: FontFamily{
-                    latin := FontMember{res: crate_resource("self:resources/fonts/IBM_Plex_Sans/IBMPlexSans-Regular.ttf") asc: -0.1 desc: 0.0}
-                }
-            }
-        }
     }
 }
 
 /// Emitted by the inspector. `Edited` is the tab-promotion signal (`App`
-/// promotes the active preview tab to persisted on receipt). `OpenPicker` is
-/// the element-picker field's open-request (the inspector can't compute
-/// cross-tree placement itself); `App` relays it to `PopupRoot::show_at`.
+/// promotes the active preview tab to persisted on receipt). The
+/// element-picker's open-request is now the child `SelectBox`'s own action
+/// (`SelectBoxAction::OpenRequested`, forwarded via `take_open_request`), so
+/// the inspector no longer emits an open-picker variant here.
 #[derive(Clone, Debug, Default)]
 pub enum InspectorAction {
     #[default]
     None,
     Edited(String),
-    OpenPicker {
-        anchor: Rect,
-        items: Vec<crate::popup::base::PopupItem>,
-    },
 }
 
 #[derive(Script, ScriptHook, Widget)]
@@ -178,17 +169,11 @@ pub struct Inspector {
 
     /// `draw_icon_edge` tints the pin/caret glyphs (via `icons`, the shared
     /// Atlas SDF set). The dropped list's own icons (including `IconSpline` on
-    /// association rows) are drawn by `MenuPopup`, not here.
+    /// association rows) are drawn by `SelectFlyout`, not here.
     #[live]
     draw_icon_edge: DrawColor,
     #[live]
     icons: IconSet,
-    /// Left type-badge: a per-kind coloured square (`draw_badge.color` is set at
-    /// draw time from the subject's `AccentBucket`) with the kind initial on top.
-    #[live]
-    draw_badge: DrawColor,
-    #[live]
-    draw_badge_text: DrawText,
 
     /// The flattened read model of the current subject (`None` = empty state).
     #[rust]
@@ -222,11 +207,8 @@ pub struct Inspector {
     /// (`set_picker_visible(false)`), floating the body up to the panel top.
     #[rust]
     show_picker: bool,
-    /// The picker field's hit rect (click target that opens the list).
-    #[rust]
-    picker_field_rect: Rect,
-    /// id -> index into `elements`, rebuilt by `picker_items` each time the
-    /// list is opened. Reverses a committed `PopupItem.id` back to its row.
+    /// id -> index into `elements`, rebuilt by `build_select_items` each time
+    /// the list is fed. Reverses a committed `SelectItem.id` back to its row.
     #[rust]
     picker_ids: Vec<(LiveId, usize)>,
     /// Pin toggle. Locks the hover-scrim opacity to fully opaque even when the
@@ -243,12 +225,6 @@ pub struct Inspector {
     /// `Subject::None` collapses regardless. Toggled by the caret.
     #[rust]
     folded: bool,
-    /// Badge fill colour + kind initial for the current subject, computed in
-    /// `set_subject` from the node's `AccentBucket`.
-    #[rust]
-    badge_color: Vec4,
-    #[rust]
-    badge_letter: String,
     #[rust]
     caret_rect: Rect,
 }
@@ -265,8 +241,6 @@ const PIN_SIZE: f64 = 16.0;
 const PIN_MARGIN: f64 = 14.0;
 const ICON: f64 = 16.0;
 const ICON_GAP: f64 = 10.0;
-// Left type-badge (drawn over the field's left inset).
-const BADGE_SIZE: f64 = 24.0;
 
 /// An association row's display text in the picker popup: just the target end.
 /// The model label is `Source -> Target`, but each edge row is drawn beneath its
@@ -307,15 +281,16 @@ impl Widget for Inspector {
         self.view.handle_event(cx, event, scope);
 
         let uid = self.widget_uid();
-        // All hit rects (picker field, pin, caret, pencil, inline-edit fields)
-        // are recorded in `draw_walk` off `self.view.area().rect(cx)`, which
-        // *during a draw* reports the pre-alignment turtle origin (x≈0). This
-        // panel lives in a right-aligned parent, so the finished draw list is
+        // All hit rects (pin, caret, pencil, inline-edit fields) are recorded
+        // in `draw_walk` off `self.view.area().rect(cx)`, which *during a
+        // draw* reports the pre-alignment turtle origin (x≈0). This panel
+        // lives in a right-aligned parent, so the finished draw list is
         // shifted right by the panel's x — the glyphs render there, but the
         // stored rects keep the unshifted origin. Pointer events arrive in that
         // shifted (post-alignment) space, so translate the event point back
         // into draw-time space by the offset between the two before any
-        // `contains` test.
+        // `contains` test. (The picker field itself is now the child
+        // `SelectBox`'s own hit rect, event-time-anchored — see `select_box.rs`.)
         let hit_off = self.view.area().rect(cx).pos - self.view_rect.pos;
         match event.hits_with_capture_overload(cx, self.view.area(), true) {
             Hit::FingerHoverIn(_) => {
@@ -332,22 +307,6 @@ impl Widget for Inspector {
             }
             Hit::FingerUp(fe) if fe.is_primary_hit() => {
                 let p = fe.abs - hit_off;
-                // Closed: the picker field opens the list.
-                if self.picker_field_rect.contains(p) {
-                    let screen_field = Rect {
-                        pos: self.picker_field_rect.pos + hit_off,
-                        size: self.picker_field_rect.size,
-                    };
-                    let items = self.picker_items();
-                    cx.widget_action(
-                        uid,
-                        InspectorAction::OpenPicker {
-                            anchor: screen_field,
-                            items,
-                        },
-                    );
-                    return;
-                }
                 if self.pin_rect.contains(p) {
                     self.pinned = !self.pinned;
                     self.view.redraw(cx);
@@ -421,24 +380,6 @@ impl Widget for Inspector {
         // is diagram-only. A classifier/package preview hides it and floats the
         // body up to the panel top -- see `set_picker_visible`.
         if self.show_picker {
-            // Left type-badge, over the field's left inset (only when a subject is
-            // set). `draw_badge.color` was computed per-kind in `set_subject`.
-            if self.proj.is_some() {
-                let badge = Rect {
-                    pos: dvec2(rect.pos.x + PAD + 4.0, cy - BADGE_SIZE * 0.5),
-                    size: dvec2(BADGE_SIZE, BADGE_SIZE),
-                };
-                self.draw_badge.color = self.badge_color;
-                self.draw_badge.draw_abs(cx, badge);
-                if !self.badge_letter.is_empty() {
-                    self.draw_badge_text.draw_abs(
-                        cx,
-                        dvec2(badge.pos.x + 7.0, badge.pos.y + 4.0),
-                        &self.badge_letter,
-                    );
-                }
-            }
-
             // Right glyph cluster, right -> left: pin, fold caret. Both are the
             // shared Atlas SDF glyphs (`icons.rs`), tinted from the panel's own
             // dim text colour via the same tint-a-shared-DrawColor idiom the edge
@@ -476,31 +417,9 @@ impl Widget for Inspector {
             let dc = self.icons.get(caret_icon);
             dc.color = dim;
             dc.draw_abs(cx, caret);
-
-            // Picker field label: the selected element's title (subdued,
-            // text_dim), or the placeholder when nothing is picked. Sits right of
-            // the badge; the whole left strip of the bar opens the list.
-            let sel = subject_to_index(&self.elements, &self.subject);
-            let field_label = self
-                .elements
-                .get(sel)
-                .map(|r| r.label.clone())
-                .unwrap_or_else(|| PICKER_PLACEHOLDER.to_string());
-            let label_x = if self.proj.is_some() {
-                rect.pos.x + PAD + 4.0 + BADGE_SIZE + 10.0
-            } else {
-                rect.pos.x + PAD + 4.0
-            };
-            self.draw_dim
-                .draw_abs(cx, dvec2(label_x, cy - 7.0), &field_label);
-            self.picker_field_rect = Rect {
-                pos: rect.pos,
-                size: dvec2((caret.pos.x - ICON_GAP - rect.pos.x).max(0.0), BAR_H),
-            };
         } else {
             // No picker bar: clear its hit rects so stale rects from a previous
             // diagram tab don't catch clicks over the (now bar-less) body.
-            self.picker_field_rect = Rect::default();
             self.pin_rect = Rect::default();
             self.caret_rect = Rect::default();
         }
@@ -648,55 +567,84 @@ impl Inspector {
         self.editing = None;
         // Switching subject clears a manual fold; the new element shows expanded.
         self.folded = false;
-        // Type-badge colour + kind initial for the new subject.
-        if let Subject::Classifier(key) = &self.subject {
-            if let Some(node) = model.nodes.iter().find(|n| &n.key == key) {
-                self.badge_color = bucket_color(accent_bucket(&node.ty));
-            }
+        // Re-mark the box's selection so a pick made elsewhere (canvas/tree)
+        // shows up in the picker bar too.
+        let sel = subject_to_index(&self.elements, &self.subject);
+        let sel_in_items = if sel == 0 { None } else { Some(sel - 1) };
+        if let Some(mut b) = self
+            .view
+            .widget(cx, ids!(element_bar.select_box))
+            .borrow_mut::<SelectBox>()
+        {
+            b.set_selected(cx, sel_in_items);
         }
-        self.badge_letter = self
-            .proj
-            .as_ref()
-            .and_then(|v| v.kind_label.chars().next())
-            .map(|c| c.to_uppercase().to_string())
-            .unwrap_or_default();
         self.view.redraw(cx);
     }
 
-    /// Build the picker rows as `PopupItem`s and record their id→index map.
-    /// Node rows are enabled (a pick repoints the inspector); edge/diagram rows
-    /// are disabled (they were no-ops in the inline list). Edge labels show only
-    /// the target end (as before); edges lead with the `Spline` glyph.
-    fn picker_items(&mut self) -> Vec<crate::popup::base::PopupItem> {
-        use crate::popup::base::PopupItem;
+    /// Build the picker rows as `SelectItem`s and record their id→index map (for
+    /// `apply_pick`). Node rows lead with a per-type badge and are enabled; edge
+    /// rows lead with the spline glyph (target-end label) and are disabled;
+    /// diagram rows are disabled. Index 0 (placeholder) is skipped.
+    fn build_select_items(&mut self, model: &Model) -> Vec<SelectItem> {
         self.picker_ids.clear();
         let mut items = Vec::new();
         for idx in 1..self.elements.len() {
-            let row = &self.elements[idx];
+            let row = self.elements[idx].clone();
             let id = LiveId::from_str(&row.key);
             self.picker_ids.push((id, idx));
-            let (label, icon) = match row.kind {
-                ElementKind::Edge => (edge_target(&row.label).to_string(), Icon::Spline),
-                ElementKind::Node => (row.label.clone(), Icon::PackageOpen),
-                _ => (row.label.clone(), Icon::SquareMenu),
+            let selected = subject_to_index(&self.elements, &self.subject) == idx;
+            let (lead, label, enabled) = match row.kind {
+                ElementKind::Node => {
+                    let (color, letter) = model
+                        .nodes
+                        .iter()
+                        .find(|n| n.key == row.key)
+                        .map(|n| {
+                            let letter = build_view(model, &Subject::Classifier(row.key.clone()))
+                                .and_then(|v| v.kind_label.chars().next())
+                                .map(|c| c.to_uppercase().to_string())
+                                .unwrap_or_default();
+                            (bucket_color(accent_bucket(&n.ty)), letter)
+                        })
+                        .unwrap_or((bucket_color(AccentBucket::None), String::new()));
+                    (SelectLead::Badge { color, letter }, row.label.clone(), true)
+                }
+                ElementKind::Edge => (
+                    SelectLead::Icon(Icon::Spline),
+                    edge_target(&row.label).to_string(),
+                    false,
+                ),
+                _ => (SelectLead::None, row.label.clone(), false),
             };
-            items.push(PopupItem {
+            items.push(SelectItem {
                 id,
+                lead,
                 label,
-                icon,
-                danger: false,
-                enabled: matches!(row.kind, ElementKind::Node),
+                selected,
+                enabled,
             });
         }
         items
     }
 
     /// Feed the element-picker the current diagram's rows. Called by `App`
-    /// whenever the current diagram changes.
-    pub fn set_diagram_elements(&mut self, cx: &mut Cx, rows: Vec<ElementRow>) {
+    /// whenever the current diagram changes. `model` is needed to look up each
+    /// node's `AccentBucket` for the box/flyout badges.
+    pub fn set_diagram_elements(&mut self, cx: &mut Cx, model: &Model, rows: Vec<ElementRow>) {
         self.elements = rows;
         // Feeding diagram rows implies a diagram tab: show the picker bar.
         self.show_picker = true;
+        let items = self.build_select_items(model);
+        let sel = subject_to_index(&self.elements, &self.subject);
+        let sel_in_items = if sel == 0 { None } else { Some(sel - 1) };
+        if let Some(mut b) = self
+            .view
+            .widget(cx, ids!(element_bar.select_box))
+            .borrow_mut::<SelectBox>()
+        {
+            b.set_items(cx, items);
+            b.set_selected(cx, sel_in_items);
+        }
         self.view.redraw(cx);
     }
 
@@ -799,18 +747,29 @@ impl Inspector {
         }
     }
 
-    /// The element-picker asked to open. `App` relays this to `PopupRoot` (only
-    /// the composition root can place a cross-tree popup). Anchor is the field
-    /// rect in screen coords; drop the card just below it.
-    pub fn open_picker_request(
+    /// Forward the child `SelectBox`'s open request (App relays it to
+    /// `PopupRoot`). `None` unless the box asked to open this pass.
+    pub fn take_open_request(
         &self,
+        cx: &mut Cx,
         actions: &Actions,
-    ) -> Option<(Rect, Vec<crate::popup::base::PopupItem>)> {
-        let item = actions.find_widget_action(self.widget_uid())?;
-        if let InspectorAction::OpenPicker { anchor, items } = item.cast() {
-            Some((anchor, items))
-        } else {
-            None
+    ) -> Option<(Rect, f64, Vec<SelectItem>)> {
+        self.view
+            .widget(cx, ids!(element_bar.select_box))
+            .borrow::<SelectBox>()?
+            .open_request(actions)
+    }
+
+    /// The flyout closed. Clear the box's active state; on a committed node pick
+    /// repoint the inspector via `apply_pick`.
+    pub fn on_picker_closed(&mut self, cx: &mut Cx, model: &Model, result: PopupResult) {
+        let picked = self
+            .view
+            .widget(cx, ids!(element_bar.select_box))
+            .borrow_mut::<SelectBox>()
+            .and_then(|mut b| b.on_closed(cx, result));
+        if let Some(id) = picked {
+            self.apply_pick(cx, model, id);
         }
     }
 }

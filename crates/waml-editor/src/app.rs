@@ -484,7 +484,7 @@ impl App {
             .widget(cx, ids!(inspector))
             .borrow_mut::<crate::inspector_panel::Inspector>()
         {
-            inspector.set_diagram_elements(cx, rows);
+            inspector.set_diagram_elements(cx, &self.model, rows);
         }
     }
 
@@ -651,7 +651,7 @@ impl App {
                     .borrow_mut::<crate::inspector_panel::Inspector>()
                 {
                     inspector.set_subject(cx, &self.model, Subject::None);
-                    inspector.set_diagram_elements(cx, vec![]);
+                    inspector.set_diagram_elements(cx, &self.model, vec![]);
                 }
             }
         }
@@ -1110,16 +1110,17 @@ impl MatchEvent for App {
                     log!("node command: {cmd:?}");
                 }
             }
-            // Element-picker: a node pick repoints the inspector only
+            // Element-picker: any close (commit or dismiss) clears the box's
+            // active state; a node commit repoints the inspector only
             // (inspector-local -- no tab open, no canvas move), the same path a
             // canvas/tab selection takes.
-            if let Some(PopupResult::Invoked(id)) = picker_closed {
+            if let Some(result) = picker_closed {
                 if let Some(mut inspector) = self
                     .ui
                     .widget(cx, ids!(inspector))
                     .borrow_mut::<crate::inspector_panel::Inspector>()
                 {
-                    inspector.apply_pick(cx, &self.model, id);
+                    inspector.on_picker_closed(cx, &self.model, result);
                 }
             }
             // Scope dropdown: a pick sets `NavState::scope` and rebuilds the
@@ -1287,18 +1288,18 @@ impl MatchEvent for App {
             return;
         }
 
-        // Element-picker: the field asked to open its list. Only `App` may
-        // place a cross-tree popup, so relay through `popup_root` (routed
+        // Element-picker: the SelectBox asked to open its flyout. Only `App`
+        // may place a cross-tree popup, so relay through `popup_root` (routed
         // through the single authority, same as burger/logo/node radial).
         let open_request = self
             .ui
             .widget(cx, ids!(inspector))
             .borrow_mut::<crate::inspector_panel::Inspector>()
-            .and_then(|inspector| inspector.open_picker_request(actions));
-        if let Some((anchor_rect, items)) = open_request {
+            .and_then(|inspector| inspector.take_open_request(cx, actions));
+        if let Some((anchor_rect, min_width, items)) = open_request {
             let anchor = dvec2(
                 anchor_rect.pos.x,
-                anchor_rect.pos.y + anchor_rect.size.y + crate::popup::menu::MENU_GAP,
+                anchor_rect.pos.y + anchor_rect.size.y + crate::popup::select::SELECT_GAP,
             );
             let bounds = self.window_bounds(cx);
             if let Some(mut pr) = self
@@ -1308,12 +1309,12 @@ impl MatchEvent for App {
             {
                 pr.show_at(
                     cx,
-                    PopupSpec::Menu {
+                    PopupSpec::Select {
                         tag: live_id!(element_picker),
                         anchor,
+                        min_width,
                         bounds,
                         items,
-                        open: MenuOpen::Popup,
                     },
                 );
             }
@@ -1571,12 +1572,15 @@ impl AppMain for App {
         crate::popup::root::script_mod(vm);
         crate::canvas::script_mod(vm);
         crate::tree_panel::script_mod(vm);
+        // `select_box` must register before `inspector_panel`: the inspector's
+        // `element_bar` mounts `SelectBox` as a child, and the DSL resolves
+        // `mod.widgets.*` eagerly at `use`-time, not lazily.
+        crate::select_box::script_mod(vm);
         crate::inspector_panel::script_mod(vm);
         crate::doc_tabs::script_mod(vm);
         crate::diagram_switcher::script_mod(vm);
         crate::shortcuts_overlay::script_mod(vm);
         crate::tool_dock::script_mod(vm);
-        crate::select_box::script_mod(vm);
         crate::selection_toolbar::script_mod(vm);
         crate::statusbar::script_mod(vm);
         crate::logo::script_mod(vm);
