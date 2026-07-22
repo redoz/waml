@@ -189,6 +189,11 @@ pub struct GraphCanvas {
     /// the wrong node.
     #[rust]
     selected: Option<usize>,
+    /// Key of the click-selected node, tracked alongside `selected` so a
+    /// same-diagram re-solve (`update_scene`) can re-find the node by key after
+    /// its index shifts. Reset to `None` whenever the scene is replaced.
+    #[rust]
+    selected_key: Option<String>,
 }
 
 impl Default for Camera {
@@ -266,6 +271,29 @@ pub fn node_at(
     None
 }
 
+/// Screen-space rect of `node`'s overflow footer band, or `None` when the card
+/// has no footer (member count at or under `card::MAX_BODY_ROWS`). Measures the
+/// same box-tree `draw_card` draws, so the hit-band matches the drawn control.
+/// Pure (takes the node + its on-screen rect + zoom), so it is unit-testable
+/// without a GPU, mirroring `node_at` / `is_click`.
+pub fn footer_screen_rect(node: &crate::scene::SceneNode, screen: Rect, zoom: f64) -> Option<Rect> {
+    use crate::card::{self, Block};
+    let placed = card::measure(&card::class_shape(node, &card::mono_sheet()));
+    let f = placed.blocks.iter().find(|b| b.block == Block::Footer)?;
+    Some(Rect {
+        pos: dvec2(screen.pos.x + f.x * zoom, screen.pos.y + f.y * zoom),
+        size: dvec2(f.w * zoom, f.h * zoom),
+    })
+}
+
+/// Index of the node whose key equals `key`, or `None` (missing key / `None`).
+/// Used by `update_scene` to re-resolve the selection after a re-solve reorders
+/// the node vector. Pure, for a GPU-free test.
+fn selection_index(nodes: &[crate::scene::SceneNode], key: Option<&str>) -> Option<usize> {
+    let key = key?;
+    nodes.iter().position(|n| n.key == key)
+}
+
 /// The four node commands a radial reports. Handlers are logging stubs for now
 /// (there is no node-editing command path yet -- mirrors the `tool_dock` mock).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -310,6 +338,9 @@ pub enum GraphCanvasAction {
     NodeSelect { key: String },
     /// A primary click landed on empty canvas: clear the inspector.
     NodeDeselect,
+    /// A primary click landed on a node's overflow footer band: toggle its card
+    /// expansion. Consumed — no selection change. Carries the `SceneNode::key`.
+    ToggleExpand { key: String },
 }
 
 impl Widget for GraphCanvas {
@@ -348,12 +379,46 @@ impl Widget for GraphCanvas {
                         let uid = self.widget_uid();
                         match node_at(&rects, &self.camera, self.view_rect, fe.abs) {
                             Some(i) => {
-                                self.selected = Some(i);
-                                let key = self.scene.nodes[i].key.clone();
-                                cx.widget_action(uid, GraphCanvasAction::NodeSelect { key });
+                                // Clone the node so the footer measure + redraw
+                                // don't hold an immutable borrow of the scene.
+                                let node = self.scene.nodes[i].clone();
+                                let (lx, ly) = self.camera.world_to_local(node.rect.x, node.rect.y);
+                                let screen = Rect {
+                                    pos: dvec2(
+                                        self.view_rect.pos.x + lx,
+                                        self.view_rect.pos.y + ly,
+                                    ),
+                                    size: dvec2(
+                                        node.rect.w * self.camera.zoom,
+                                        node.rect.h * self.camera.zoom,
+                                    ),
+                                };
+                                let footer_hit =
+                                    footer_screen_rect(&node, screen, self.camera.zoom)
+                                        .map(|fr| fr.contains(fe.abs))
+                                        .unwrap_or(false);
+                                if footer_hit {
+                                    // Consumed: toggle expansion, no selection change.
+                                    cx.widget_action(
+                                        uid,
+                                        GraphCanvasAction::ToggleExpand {
+                                            key: node.key.clone(),
+                                        },
+                                    );
+                                } else {
+                                    self.selected = Some(i);
+                                    self.selected_key = Some(node.key.clone());
+                                    cx.widget_action(
+                                        uid,
+                                        GraphCanvasAction::NodeSelect {
+                                            key: node.key.clone(),
+                                        },
+                                    );
+                                }
                             }
                             None => {
                                 self.selected = None;
+                                self.selected_key = None;
                                 cx.widget_action(uid, GraphCanvasAction::NodeDeselect);
                             }
                         }
@@ -624,6 +689,7 @@ impl GraphCanvas {
         self.fitted = false;
         self.focus_mode = false;
         self.selected = None; // stale index would highlight the wrong node
+        self.selected_key = None;
         self.draw_bg.redraw(cx);
     }
 
@@ -635,6 +701,20 @@ impl GraphCanvas {
         self.fitted = false;
         self.focus_mode = true;
         self.selected = None; // stale index would highlight the wrong node
+        self.selected_key = None;
+        self.draw_bg.redraw(cx);
+    }
+
+    /// Swap the scene for a same-diagram re-solve (e.g. an expand toggle). Unlike
+    /// `set_scene`, this holds the camera (`fitted` and `focus_mode` untouched)
+    /// and re-resolves the selection by key, so the inspector highlight survives
+    /// even though the node's index may have shifted.
+    pub fn update_scene(&mut self, cx: &mut Cx, scene: Scene) {
+        self.scene = scene;
+        self.selected = selection_index(&self.scene.nodes, self.selected_key.as_deref());
+        if self.selected.is_none() {
+            self.selected_key = None;
+        }
         self.draw_bg.redraw(cx);
     }
 
@@ -801,5 +881,72 @@ mod tests {
             Some(NodeCommand::Remove)
         );
         assert_eq!(node_command_for(live_id!(bogus)), None);
+    }
+
+    fn many_attr_node(key: &str, n: usize) -> crate::scene::SceneNode {
+        use crate::inspector::AttrRow;
+        use waml::model::{ElementType, UmlMetaclass};
+        crate::scene::SceneNode {
+            key: key.to_string(),
+            title: "N".to_string(),
+            element_type: ElementType::Uml(UmlMetaclass::Class),
+            stereotypes: vec![],
+            attributes: (0..n)
+                .map(|i| AttrRow {
+                    name: format!("f{i}"),
+                    ty: "Int".to_string(),
+                    multiplicity: String::new(),
+                    visibility: "+".to_string(),
+                })
+                .collect(),
+            operations: vec![],
+            header: crate::scene::HeaderStyle::Plain,
+            ports: false,
+            rect: WorldRect {
+                x: 0.0,
+                y: 0.0,
+                w: 0.0,
+                h: 0.0,
+            },
+            emphasized: false,
+            collapsed: false,
+            expanded: false,
+        }
+    }
+
+    #[test]
+    fn footer_rect_present_for_an_over_cap_node_and_absent_otherwise() {
+        let screen = Rect {
+            pos: dvec2(0.0, 0.0),
+            size: dvec2(200.0, 200.0),
+        };
+        let over = many_attr_node("big", 7);
+        let under = many_attr_node("small", 2);
+        assert!(footer_screen_rect(&over, screen, 1.0).is_some());
+        assert!(footer_screen_rect(&under, screen, 1.0).is_none());
+    }
+
+    #[test]
+    fn a_point_in_the_footer_band_is_inside_the_footer_rect() {
+        let screen = Rect {
+            pos: dvec2(10.0, 20.0),
+            size: dvec2(200.0, 200.0),
+        };
+        let node = many_attr_node("big", 7);
+        let fr = footer_screen_rect(&node, screen, 1.0).unwrap();
+        let mid = dvec2(fr.pos.x + fr.size.x * 0.5, fr.pos.y + fr.size.y * 0.5);
+        assert!(fr.contains(mid));
+        // A point well above the footer (in the header) is not in the footer.
+        assert!(!fr.contains(dvec2(mid.x, screen.pos.y + 1.0)));
+    }
+
+    #[test]
+    fn selection_index_resolves_by_key_and_clears_on_miss() {
+        let a = many_attr_node("a", 1);
+        let b = many_attr_node("b", 1);
+        let nodes = vec![a, b];
+        assert_eq!(selection_index(&nodes, Some("b")), Some(1));
+        assert_eq!(selection_index(&nodes, Some("gone")), None);
+        assert_eq!(selection_index(&nodes, None), None);
     }
 }
