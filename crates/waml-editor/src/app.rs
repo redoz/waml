@@ -301,6 +301,16 @@ pub struct App {
     /// app owns it and rebuilds `NavView` on every change (see `nav.rs`).
     #[rust]
     nav_state: NavState,
+    /// Distinct `TreeKind`s present in the currently open model, in canonical
+    /// order; drives the type-filter chip's rotation cycle (`RotateFilter`).
+    /// Recomputed once per model load (`open_dir`), not per keystroke.
+    #[rust]
+    nav_kinds: Vec<crate::tree::TreeKind>,
+    /// Maps each scope-dropdown popup item id back to its `PackageRow.key`, so
+    /// the `nav_scope` tag's committed `LiveId` (from `PopupRoot::closed`)
+    /// resolves to a scope to apply. Rebuilt every time the dropdown opens.
+    #[rust]
+    nav_scope_ids: Vec<(LiveId, String)>,
 }
 
 impl App {
@@ -549,6 +559,10 @@ impl App {
         self.model = model;
         // Fresh model: no node keys carry over, so clear expansion state.
         self.expanded.clear();
+        // Fresh model: recompute the type-filter chip's cycle and reset scope /
+        // search / filter to the whole-model browse state.
+        self.nav_kinds = crate::nav::kinds_in_model(&self.model);
+        self.nav_state = NavState::default();
 
         // Folder basename backs the display name when the bundle has no root
         // name of its own. `..` / drive-root degenerate to an empty basename;
@@ -570,16 +584,7 @@ impl App {
         // Record this open in the recents store (best-effort; see config.rs).
         crate::config::push_recent(dir, root_name);
 
-        let view = crate::nav::view(&self.model, &self.nav_state);
-        if let Some(mut panel) = self
-            .ui
-            .widget(cx, ids!(project_tree))
-            .borrow_mut::<crate::tree_panel::ProjectTree>()
-        {
-            panel.set_view(cx, view);
-        } else {
-            log!("project_tree widget not found / wrong type");
-        }
+        self.refresh_nav(cx);
 
         // A model may carry zero diagrams (a pure classifier/behavior bundle). We
         // still open it -- the tree and inspector are useful on their own -- just
@@ -711,14 +716,7 @@ impl App {
         };
         self.ui.label(cx, ids!(model_name)).set_text(cx, root_name);
 
-        let view = crate::nav::view(&self.model, &self.nav_state);
-        if let Some(mut panel) = self
-            .ui
-            .widget(cx, ids!(project_tree))
-            .borrow_mut::<crate::tree_panel::ProjectTree>()
-        {
-            panel.set_view(cx, view);
-        }
+        self.refresh_nav(cx);
         self.refresh_doc_tabs(cx);
         self.sync_active_tab(cx);
         self.sync_diagram_switcher_current(cx);
@@ -784,6 +782,29 @@ impl App {
         Rect {
             pos: dvec2(0.0, 0.0),
             size: dvec2(sz.x, sz.y),
+        }
+    }
+
+    /// Rebuild the nav projection from the current `nav_state` and push it to
+    /// the tree panel, along with the header's scope-title + chip labels. The
+    /// single choke point for every scope/query/filter change (see
+    /// `ScopeRequest`/`Query`/`RotateFilter` handling in `handle_actions`).
+    fn refresh_nav(&mut self, cx: &mut Cx) {
+        let view = crate::nav::view(&self.model, &self.nav_state);
+        let title = crate::nav::packages(&self.model)
+            .into_iter()
+            .find(|r| r.key == self.nav_state.scope)
+            .map(|r| r.title)
+            .unwrap_or_else(|| "Untitled".to_string());
+        let chip = crate::nav::chip_label(self.nav_state.filter).to_string();
+        if let Some(mut panel) = self
+            .ui
+            .widget(cx, ids!(project_tree))
+            .borrow_mut::<crate::tree_panel::ProjectTree>()
+        {
+            panel.set_view(cx, view);
+            panel.set_scope_title(cx, title);
+            panel.set_chip_label(cx, &chip);
         }
     }
 }
@@ -1037,6 +1058,7 @@ impl MatchEvent for App {
             let burger_closed = pr.closed(actions, live_id!(burger));
             let node_closed = pr.closed(actions, live_id!(node_menu));
             let picker_closed = pr.closed(actions, live_id!(element_picker));
+            let nav_scope_closed = pr.closed(actions, live_id!(nav_scope));
             drop(pr);
 
             // Burger caller-local glow: any close of the burger tag drops it.
@@ -1087,6 +1109,95 @@ impl MatchEvent for App {
                     inspector.apply_pick(cx, &self.model, id);
                 }
             }
+            // Scope dropdown: a pick sets `NavState::scope` and rebuilds the
+            // nav projection under the new scope.
+            if let Some(PopupResult::Invoked(id)) = nav_scope_closed {
+                if let Some((_, key)) = self.nav_scope_ids.iter().find(|(i, _)| *i == id) {
+                    self.nav_state.scope = key.clone();
+                    self.refresh_nav(cx);
+                }
+            }
+        }
+
+        // Scope title trigger: open the dropdown listing every package (row 0
+        // is the synthetic whole-model root), anchored under the title. The id
+        // map is rebuilt here so the `nav_scope` tag's `closed` result (above)
+        // can resolve a committed `LiveId` back to a scope key.
+        let scope_anchor = self
+            .ui
+            .widget(cx, ids!(project_tree))
+            .borrow_mut::<crate::tree_panel::ProjectTree>()
+            .and_then(|panel| panel.scope_request(actions));
+        if let Some(anchor_rect) = scope_anchor {
+            self.nav_scope_ids.clear();
+            let items: Vec<crate::popup::base::PopupItem> = crate::nav::packages(&self.model)
+                .into_iter()
+                .map(|row| {
+                    let id = LiveId::from_str(&format!("scope:{}", row.key));
+                    self.nav_scope_ids.push((id, row.key.clone()));
+                    crate::popup::base::PopupItem {
+                        id,
+                        label: format!("{}{}", "  ".repeat(row.depth), row.title),
+                        icon: crate::icons::Icon::Folder,
+                        danger: false,
+                        enabled: true,
+                    }
+                })
+                .collect();
+            let anchor = dvec2(
+                anchor_rect.pos.x,
+                anchor_rect.pos.y + anchor_rect.size.y + crate::popup::menu::MENU_GAP,
+            );
+            let bounds = self.window_bounds(cx);
+            if let Some(mut pr) = self
+                .ui
+                .widget(cx, ids!(popup_root))
+                .borrow_mut::<PopupRoot>()
+            {
+                pr.show_at(
+                    cx,
+                    PopupSpec::Menu {
+                        tag: live_id!(nav_scope),
+                        anchor,
+                        bounds,
+                        items,
+                        open: MenuOpen::Popup,
+                    },
+                );
+            }
+            return;
+        }
+
+        // Search field: live-filter the tree on every keystroke.
+        let query = self
+            .ui
+            .widget(cx, ids!(project_tree))
+            .borrow_mut::<crate::tree_panel::ProjectTree>()
+            .and_then(|panel| panel.query_changed(actions));
+        if let Some(q) = query {
+            self.nav_state.query = q;
+            self.refresh_nav(cx);
+            return;
+        }
+
+        // Type-filter chip: cycle None -> kinds_in_model[0] -> ... -> last -> None.
+        let rotate = self
+            .ui
+            .widget(cx, ids!(project_tree))
+            .borrow_mut::<crate::tree_panel::ProjectTree>()
+            .map(|panel| panel.rotate_filter_clicked(actions))
+            .unwrap_or(false);
+        if rotate {
+            let cycle: Vec<Option<crate::tree::TreeKind>> = std::iter::once(None)
+                .chain(self.nav_kinds.iter().copied().map(Some))
+                .collect();
+            let cur = cycle
+                .iter()
+                .position(|f| *f == self.nav_state.filter)
+                .unwrap_or(0);
+            self.nav_state.filter = cycle[(cur + 1) % cycle.len()];
+            self.refresh_nav(cx);
+            return;
         }
 
         // Classifier focus: single-click a class row -> open/replace the

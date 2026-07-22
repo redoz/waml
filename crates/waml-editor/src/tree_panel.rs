@@ -201,17 +201,14 @@ pub enum ProjectTreeAction {
     SelectDiagram(String),
     FocusClassifier(String),
     /// The title trigger's open-request; `App` relays it to `PopupRoot` to
-    /// show the scope-picker dropdown (Task 10). `scope_request` (the reader)
-    /// is unused until then, which leaves this field's read transitively dead
-    /// too -- allowed deliberately, same as `Query`/`RotateFilter` below.
+    /// show the scope-picker dropdown.
     ScopeRequest {
-        #[allow(dead_code)]
         anchor: Rect,
     },
     /// Search-field edit. Emitted by `emit_query` on every keystroke; `App`
-    /// applies it to `NavState::query` (Task 10).
+    /// applies it to `NavState::query`.
     Query(String),
-    /// Type-filter chip click; cycles `NavState::filter` in `App` (Task 10).
+    /// Type-filter chip click; cycles `NavState::filter` in `App`.
     RotateFilter,
 }
 
@@ -836,9 +833,7 @@ impl ProjectTree {
     }
 
     /// The current scope label shown in the header title. `App` pushes this
-    /// from `nav::packages` (Task 10) whenever the scope changes. Unused
-    /// until then -- allowed deliberately (see `ScopeRequest` above).
-    #[allow(dead_code)]
+    /// from `nav::packages` whenever the scope changes (see `App::refresh_nav`).
     pub fn set_scope_title(&mut self, cx: &mut Cx, title: String) {
         if self.scope_title != title {
             self.scope_title = title;
@@ -847,9 +842,7 @@ impl ProjectTree {
     }
 
     /// The title trigger's open-request. `App` relays it to `PopupRoot` to
-    /// show the scope-picker dropdown (Task 10), mirroring
-    /// `Inspector::open_picker_request`. Unused until then.
-    #[allow(dead_code)]
+    /// show the scope-picker dropdown, mirroring `Inspector::open_picker_request`.
     pub fn scope_request(&self, actions: &Actions) -> Option<Rect> {
         let item = actions.find_widget_action(self.widget_uid())?;
         if let ProjectTreeAction::ScopeRequest { anchor } = item.cast() {
@@ -860,9 +853,7 @@ impl ProjectTree {
     }
 
     /// The type-filter chip's current label. `App` pushes this from
-    /// `nav::chip_label` (Task 10) whenever the filter changes. Unused until
-    /// then -- allowed deliberately (see `set_scope_title` above).
-    #[allow(dead_code)]
+    /// `nav::chip_label` whenever the filter changes (see `App::refresh_nav`).
     pub fn set_chip_label(&mut self, cx: &mut Cx, label: &str) {
         if self.chip_label != label {
             self.chip_label = label.to_string();
@@ -881,9 +872,7 @@ impl ProjectTree {
         }
     }
 
-    /// Reads a search-field edit (Task 10 applies it to `NavState::query`).
-    /// Unused until then.
-    #[allow(dead_code)]
+    /// Reads a search-field edit; `App` applies it to `NavState::query`.
     pub fn query_changed(&self, actions: &Actions) -> Option<String> {
         let item = actions.find_widget_action(self.widget_uid())?;
         if let ProjectTreeAction::Query(q) = item.cast() {
@@ -893,9 +882,7 @@ impl ProjectTree {
         }
     }
 
-    /// Reads a type-chip click (Task 10 cycles `NavState::filter`). Unused
-    /// until then.
-    #[allow(dead_code)]
+    /// Reads a type-chip click; `App` cycles `NavState::filter` in response.
     pub fn rotate_filter_clicked(&self, actions: &Actions) -> bool {
         actions
             .find_widget_action(self.widget_uid())
