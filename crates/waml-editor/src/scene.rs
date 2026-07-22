@@ -220,6 +220,32 @@ fn stress_default(model: &Model, sizes: &SizeMap) -> Solved {
     }
 }
 
+/// Straight-line fallback route between two node centers, emitted as an
+/// axis-aligned L (horizontal leg to the target's column, then vertical leg).
+/// Used when the ordered route stream desyncs from the drawable-edge list.
+///
+/// The canvas strokes every segment with a single top-left->bottom-right
+/// diagonal pen (`draw_edge_down`, flip = 0), which only renders axis-aligned
+/// segments correctly; a raw diagonal `[source-center, target-center]` on a
+/// negative-slope pair would stroke the AABB's *other* diagonal and render
+/// mirrored. Keeping the fallback axis-aligned preserves the single-pen
+/// invariant. The degenerate elbow (when the centers share a column or row) is
+/// dropped so a straight vertical/horizontal fallback stays two points.
+fn fallback_route(source: Rect, target: Rect) -> Vec<(f64, f64)> {
+    let sc = (source.x + source.w / 2.0, source.y + source.h / 2.0);
+    let tc = (target.x + target.w / 2.0, target.y + target.h / 2.0);
+    let elbow = (tc.0, sc.1);
+    // Drop the elbow when it coincides with an endpoint (centers aligned on an
+    // axis), avoiding a zero-length leading/trailing segment.
+    let dup_source = (elbow.0 - sc.0).abs() < f64::EPSILON;
+    let dup_target = (elbow.1 - tc.1).abs() < f64::EPSILON;
+    if dup_source || dup_target {
+        vec![sc, tc]
+    } else {
+        vec![sc, elbow, tc]
+    }
+}
+
 /// Solve `diagram` against `model` and flatten the result into a `Scene`.
 pub fn build_scene(
     model: &Model,
@@ -295,11 +321,7 @@ pub fn build_scene(
                     route_cursor += 1;
                     r.points.clone()
                 }
-                _ => {
-                    let sc = (source.x + source.w / 2.0, source.y + source.h / 2.0);
-                    let tc = (target.x + target.w / 2.0, target.y + target.h / 2.0);
-                    vec![sc, tc]
-                }
+                _ => fallback_route(source, target),
             };
             edges.push(SceneEdge {
                 source,
@@ -666,6 +688,45 @@ mod tests {
             "last point {last:?} not anchored to target {:?}",
             edge.target
         );
+    }
+
+    #[test]
+    fn fallback_route_stays_axis_aligned() {
+        // Every consecutive segment must be axis-aligned: the canvas strokes the
+        // fallback with a single top-left->bottom-right diagonal pen, which would
+        // render a raw diagonal on a negative-slope pair mirrored.
+        fn assert_axis_aligned(points: &[(f64, f64)]) {
+            assert!(points.len() >= 2, "fallback needs both endpoints");
+            for w in points.windows(2) {
+                let dx = (w[1].0 - w[0].0).abs();
+                let dy = (w[1].1 - w[0].1).abs();
+                assert!(
+                    dx < f64::EPSILON || dy < f64::EPSILON,
+                    "segment {:?}->{:?} is diagonal (dx={dx}, dy={dy})",
+                    w[0],
+                    w[1]
+                );
+            }
+        }
+        let rect = |x, y| Rect {
+            x,
+            y,
+            w: 100.0,
+            h: 100.0,
+        };
+
+        // Negative slope (target up-and-right of source): the regression case.
+        let up_right = fallback_route(rect(0.0, 400.0), rect(400.0, 0.0));
+        assert_axis_aligned(&up_right);
+        // Endpoints preserved (centers), elbow inserted for the diagonal pair.
+        assert_eq!(up_right.first().copied(), Some((50.0, 450.0)));
+        assert_eq!(up_right.last().copied(), Some((450.0, 50.0)));
+        assert_eq!(up_right.len(), 3);
+
+        // Positive slope, plus axis-aligned pairs collapse to two points.
+        assert_axis_aligned(&fallback_route(rect(0.0, 0.0), rect(400.0, 400.0)));
+        assert_eq!(fallback_route(rect(0.0, 0.0), rect(0.0, 400.0)).len(), 2);
+        assert_eq!(fallback_route(rect(0.0, 0.0), rect(400.0, 0.0)).len(), 2);
     }
 
     #[test]
