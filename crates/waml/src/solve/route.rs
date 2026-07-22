@@ -110,7 +110,19 @@ fn group_obstacles(
     out
 }
 
-const ROUTE_MARGIN: f64 = 12.0;
+/// Perpendicular exit distance a connector travels straight off a node border
+/// before it may bend, and (same value) the keep-out each node is inflated by
+/// for the A* grid -- the two are one constant because the stub tip lands on the
+/// inflated ring, which is where it joins the grid.
+///
+/// Sized to seat the largest terminal adornment on the straight stub: a
+/// composition/aggregation diamond reaches back `2 * marker_size` from the
+/// border (see `canvas.rs` `marker_geometry`; `marker_size` is ~10 world units
+/// at 1:1 zoom, so ~20), plus a little slack so the line still shows past the
+/// glyph. If the stub were shorter, the diamond's tail would overshoot the bend
+/// and stick out perpendicular to the routed line. Keep >= that reach; the
+/// connected-pair gutter (`MIN_ASSOC`) already clears two facing stubs.
+const ROUTE_MARGIN: f64 = 24.0;
 
 /// Keep border attachment points at least this far from a box corner: a
 /// connector meeting a node right on its corner reads as ambiguous/ugly, so
