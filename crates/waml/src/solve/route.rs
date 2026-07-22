@@ -965,7 +965,10 @@ mod tests {
         );
         let inf = inflate(nrect(180.0, -40.0, 120.0, 140.0), ROUTE_MARGIN);
         for &(px, py) in &out[0].points {
-            assert!(!strictly_inside(&inf, px, py), "pierces group at ({px},{py})");
+            assert!(
+                !strictly_inside(&inf, px, py),
+                "pierces group at ({px},{py})"
+            );
         }
     }
 
