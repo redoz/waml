@@ -534,9 +534,12 @@ struct End {
 
 /// Spread route endpoints that land on the same side of the same box into
 /// evenly-spaced, distinct attachment points along that side (no two edges
-/// share an attachment point). Rewrites the endpoint and the adjacent
-/// interior point that shares its coordinate so the first/last segment stays
-/// perpendicular to the border.
+/// share an attachment point). Moves the endpoint along the border; when the
+/// adjacent interior point sits OFF the border (the first/last segment leaves
+/// perpendicular) it is rewritten to keep that segment perpendicular. When the
+/// neighbour sits ON the border (astar hugged the border, so the first/last
+/// segment runs parallel to it), the neighbour is left untouched — rewriting it
+/// would collapse the segment and tilt the next one into a diagonal.
 fn hub_spread(routes: &mut [Route], rects: &BTreeMap<BoxId, Rect>) {
     let mut groups: BTreeMap<(String, u8), Vec<End>> = BTreeMap::new();
     let sd = |s: Side| match s {
@@ -598,12 +601,23 @@ fn hub_spread(routes: &mut [Route], rects: &BTreeMap<BoxId, Rect>) {
         for (k, e) in ends.iter().enumerate() {
             let t = (k as f64 + 1.0) / (m as f64 + 1.0); // interior fraction, no corners
             let along = span_lo + t * (span_hi - span_lo);
+            let nb = routes[e.ri].points[e.nb];
             if horizontal_side {
+                // Off-border neighbour => first segment leaves perpendicular
+                // (vertical); rewrite its x so it stays perpendicular. On-border
+                // neighbour => astar hugged the border first (segment parallel);
+                // moving the endpoint along the border keeps it orthogonal, so
+                // leave the neighbour alone — rewriting it would tilt the next
+                // segment into a diagonal.
                 routes[e.ri].points[e.ep] = (along, fixed);
-                routes[e.ri].points[e.nb].0 = along; // keep first/last segment perpendicular
+                if (nb.1 - fixed).abs() > 1e-6 {
+                    routes[e.ri].points[e.nb].0 = along;
+                }
             } else {
                 routes[e.ri].points[e.ep] = (fixed, along);
-                routes[e.ri].points[e.nb].1 = along;
+                if (nb.0 - fixed).abs() > 1e-6 {
+                    routes[e.ri].points[e.nb].1 = along;
+                }
             }
         }
     }
@@ -969,6 +983,48 @@ mod tests {
                 !strictly_inside(&inf, px, py),
                 "pierces group at ({px},{py})"
             );
+        }
+    }
+
+    #[test]
+    fn hub_spread_keeps_every_segment_orthogonal() {
+        // Regression: when astar's first segment runs PARALLEL to the hub border
+        // (the route leaves by hugging the border, then turns), hub_spread must
+        // not rewrite the neighbour's perpendicular coordinate — doing so
+        // collapses the first segment and tilts the second into a diagonal, which
+        // the corner-to-corner edge shader then draws as a broken connection.
+        let boxes = vec![
+            leafbox("h"),
+            leafbox("t1"),
+            leafbox("t2"),
+            leafbox("t3"),
+            leafbox("t4"),
+            leafbox("t5"),
+        ];
+        let mut rects: BTreeMap<BoxId, Rect> = BTreeMap::new();
+        rects.insert(BoxId::Node("h".into()), nrect(0.0, 200.0, 120.0, 120.0));
+        rects.insert(BoxId::Node("t1".into()), nrect(400.0, 0.0, 100.0, 60.0));
+        rects.insert(BoxId::Node("t2".into()), nrect(400.0, 120.0, 100.0, 60.0));
+        rects.insert(BoxId::Node("t3".into()), nrect(400.0, 240.0, 100.0, 60.0));
+        rects.insert(BoxId::Node("t4".into()), nrect(400.0, 360.0, 100.0, 60.0));
+        rects.insert(BoxId::Node("t5".into()), nrect(400.0, 480.0, 100.0, 60.0));
+        let edges: Vec<(BoxId, BoxId)> = ["t1", "t2", "t3", "t4", "t5"]
+            .iter()
+            .map(|t| (BoxId::Node("h".into()), BoxId::Node((*t).into())))
+            .collect();
+        let out = route(&boxes, &rects, &edges, &SolveConfig::default());
+        for r in &out {
+            for w in r.points.windows(2) {
+                assert!(
+                    (w[0].0 - w[1].0).abs() < 1e-6 || (w[0].1 - w[1].1).abs() < 1e-6,
+                    "non-orthogonal segment {:?} -> {:?} in {} -> {}: {:?}",
+                    w[0],
+                    w[1],
+                    r.source,
+                    r.target,
+                    r.points
+                );
+            }
         }
     }
 
