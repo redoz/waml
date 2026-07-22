@@ -744,19 +744,22 @@ impl Widget for ProjectTree {
         // offset` -- rects captured in `draw_walk` are pre-alignment, events
         // arrive post-alignment.
         let hit_off = self.view.area().rect(cx).pos - self.header_rect.pos;
+
+        // Scrim hover is tracked geometrically off raw `MouseMove`, not via
+        // `Hit::FingerHover*`. Makepad arbitrates hover to a single area per
+        // digit, and `self.view.handle_event` (above) lets inner FileTreeNodes
+        // and ScrollBars claim it first, so the panel's own `view.area()` never
+        // wins `FingerHoverIn` while the pointer is over tree content -- the
+        // panel would dim under the cursor. Containment sidesteps the arbiter.
+        if let Event::MouseMove(e) = event {
+            let inside = self.view.area().rect(cx).contains(e.abs);
+            if inside != self.hovered {
+                self.hovered = inside;
+                self.view.redraw(cx);
+            }
+        }
+
         match event.hits(cx, self.view.area()) {
-            Hit::FingerHoverIn(_) => {
-                if !self.hovered {
-                    self.hovered = true;
-                    self.view.redraw(cx);
-                }
-            }
-            Hit::FingerHoverOut(_) => {
-                if self.hovered {
-                    self.hovered = false;
-                    self.view.redraw(cx);
-                }
-            }
             Hit::FingerUp(fe) if fe.is_primary_hit() => {
                 let p = fe.abs - hit_off;
                 if self.pin_rect.contains(p) {
