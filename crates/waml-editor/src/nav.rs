@@ -178,6 +178,30 @@ fn filter_kind(nodes: &[TreeNode], kind: TreeKind) -> Vec<TreeNode> {
         .collect()
 }
 
+/// Case-insensitive substring on `title`.
+fn title_matches(title: &str, q: &str) -> bool {
+    title.to_lowercase().contains(&q.to_lowercase())
+}
+
+/// Prune non-matching leaves; keep a node if its own title matches OR any
+/// descendant is kept (packages thus survive on a matching member).
+fn query_prune(nodes: &[TreeNode], q: &str) -> Vec<TreeNode> {
+    nodes
+        .iter()
+        .filter_map(|n| {
+            let kids = query_prune(&n.children, q);
+            if title_matches(&n.title, q) || !kids.is_empty() {
+                Some(TreeNode {
+                    children: kids,
+                    ..n.clone()
+                })
+            } else {
+                None
+            }
+        })
+        .collect()
+}
+
 pub fn view(model: &Model, state: &NavState) -> NavView {
     let full = build_tree(model, "Untitled");
     let scoped = scoped_roots(&full, &state.scope);
@@ -188,8 +212,22 @@ pub fn view(model: &Model, state: &NavState) -> NavView {
     if state.query.trim().is_empty() {
         return NavView::Browse(ProjectTree { roots: filtered });
     }
-    // Query path lands in Task 5; a temporary Browse keeps the crate compiling.
-    NavView::Browse(ProjectTree { roots: filtered })
+    let in_scope = query_prune(&filtered, &state.query);
+    if !in_scope.is_empty() {
+        return NavView::Results(ProjectTree { roots: in_scope });
+    }
+    // Nothing in scope: search the whole model (same depth-0 base as scope "").
+    let whole = scoped_roots(&full, "");
+    let whole_filtered = match state.filter {
+        Some(k) => filter_kind(&whole, k),
+        None => whole,
+    };
+    let elsewhere = query_prune(&whole_filtered, &state.query);
+    if elsewhere.is_empty() {
+        NavView::Empty
+    } else {
+        NavView::Elsewhere(ProjectTree { roots: elsewhere })
+    }
 }
 
 #[cfg(test)]
@@ -405,5 +443,66 @@ mod tests {
         let v = view(&built(), &state);
         let t = browse_roots(&v);
         assert_eq!(flat(t), vec![("sub".to_string(), TreeKind::Package)]);
+    }
+
+    #[test]
+    fn query_prunes_non_matching_leaves_and_keeps_matching_branches() {
+        let state = NavState {
+            query: "custom".to_string(),
+            ..Default::default()
+        };
+        let v = view(&built(), &state);
+        let t = match &v {
+            NavView::Results(t) => t,
+            other => panic!("expected Results, got {other:?}"),
+        };
+        // "Customer" matches; its ancestor "sub" is kept; "Payments" is pruned.
+        assert_eq!(
+            flat(t),
+            vec![
+                ("sub".to_string(), TreeKind::Package),
+                ("cls".to_string(), TreeKind::Class)
+            ]
+        );
+    }
+
+    #[test]
+    fn query_is_case_insensitive() {
+        let state = NavState {
+            query: "PAYMENTS".to_string(),
+            ..Default::default()
+        };
+        match view(&built(), &state) {
+            NavView::Results(t) => {
+                assert!(flat(&t).iter().any(|(k, _)| k == "iface"));
+            }
+            other => panic!("expected Results, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn no_scope_match_but_whole_model_match_is_elsewhere() {
+        // Scope into "sub" (holds only "Customer"), search for the interface that
+        // lives outside the scope.
+        let state = NavState {
+            scope: "sub".to_string(),
+            query: "payments".to_string(),
+            ..Default::default()
+        };
+        let v = view(&built(), &state);
+        let t = match &v {
+            NavView::Elsewhere(t) => t,
+            other => panic!("expected Elsewhere, got {other:?}"),
+        };
+        assert!(flat(t).iter().any(|(k, _)| k == "iface"));
+    }
+
+    #[test]
+    fn no_match_anywhere_is_empty() {
+        let state = NavState {
+            query: "zzzznope".to_string(),
+            ..Default::default()
+        };
+        assert_eq!(view(&built(), &state), NavView::Empty);
     }
 }
