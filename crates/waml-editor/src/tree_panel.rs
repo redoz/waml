@@ -8,6 +8,12 @@
 //!
 //! Structure mirrors studio's `DesktopFileTree` / `FlatFileTree`, minus the
 //! filter page and git-status dots.
+//!
+//! The header is a real `flow: Down` `View`: its collapse + pin controls are
+//! shared `IconButton` children (they own their own hover/click/`view.area()`
+//! hit-test), while the scope-title trigger, search field, and type chip stay
+//! immediate-mode hand-drawn over the header band -- the same hybrid the
+//! inspector's `element_bar` uses.
 
 use crate::icon_button::IconButtonWidgetRefExt;
 use crate::icons::Icon;
@@ -353,8 +359,9 @@ pub struct ProjectTree {
     // Translucent accent fill painted over the active row (see the DSL).
     #[live]
     draw_selection: DrawColor,
-    // Header band ink (Task 8). `draw_title` is the scope-title label;
-    // `draw_dim` is everything subdued (the `⌄`, glyph tint source).
+    // Header band ink. `draw_title` is the scope-title label; `draw_dim` is
+    // everything subdued (the `⌄`, plus the search/chip/note tint source). The
+    // collapse/pin glyph tint now lives in the `IconButton` children, not here.
     #[redraw]
     #[live]
     draw_title: DrawText,
