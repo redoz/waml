@@ -45,13 +45,18 @@ script_mod! {
             // Selection widens the border ~1.5x: mix() lifts the 1.5px base to
             // 2.25px when selected == 1.0, leaving the unselected path untouched.
             let inset = 1.5 * self.zoom * mix(1.0, 1.5, self.selected)
+            // Stroke width floors to a 1px screen-space hairline so the frame
+            // never smears sub-pixel (and fades) when zoomed out, mirroring the
+            // canvas EdgeLine pen. The rect inset stays proportional; only the
+            // stroke is floored, so it centers on the box edge at low zoom.
+            let sw = max(1.0, inset)
             let sdf = Sdf2d.viewport(self.pos * self.rect_size)
             sdf.rect(inset, inset, self.rect_size.x - inset * 2.0, self.rect_size.y - inset * 2.0)
             sdf.fill_keep(self.color)
             let dir = vec2(0.5, 0.8660254)
             let span = 1.3660254
             let t = clamp((self.pos.x * dir.x + self.pos.y * dir.y) / span, 0.0, 1.0)
-            sdf.stroke(mix(self.border_hi, self.border_lo, t), inset)
+            sdf.stroke(mix(self.border_hi, self.border_lo, t), sw)
             return sdf.result
         }
     }
