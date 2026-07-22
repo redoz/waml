@@ -24,8 +24,8 @@
 //! touched (UX mock only). A changed commit emits `InspectorAction::Edited`,
 //! which `App` uses to promote the active preview tab to persisted.
 
+use crate::icon_button::IconButtonWidgetRefExt;
 use crate::icons::Icon;
-use crate::icons::IconSet;
 use crate::inspector::{
     build_view, effective_field, subject_to_index, ElementKind, ElementRow, FieldId, InspectorView,
     Subject,
@@ -80,16 +80,22 @@ script_mod! {
 
         // The element-picker bar. Hosts the real `SelectBox` child widget
         // (badge + selected label + caret, its own click handling and open
-        // request) -- the pin/fold-caret glyphs are still hand-drawn
-        // immediate-mode in `draw_walk`. The dropped list is the shared
-        // `SelectFlyout` surface (routed through `PopupRoot`), so each
-        // association row still carries the real `IconSpline` SDF.
+        // request), then the fold-caret + pin `IconButton`s as laid-out
+        // siblings: reserving their width shrinks the `Fill` box so its own
+        // caret no longer sits under them (the overlap this replaces). Hidden
+        // (`visible: false`) until a diagram feeds the picker -- see
+        // `sync_bar_buttons`. The dropped list is the shared `SelectFlyout`
+        // surface (routed through `PopupRoot`), so each association row still
+        // carries the real `IconSpline` SDF.
         element_bar := View {
             width: Fill
             height: 56.0
             align: Align{x: 0.0, y: 0.5}
             padding: Inset{left: 16.0, right: 16.0}
+            spacing: 10.0
             select_box := SelectBox { width: Fill }
+            fold_btn := IconButton { visible: false }
+            pin_btn := IconButton { visible: false }
         }
 
         draw_title +: {
@@ -123,11 +129,6 @@ script_mod! {
             }
         }
         draw_field_bg +: { color: atlas.field_bg }
-        // `draw_icon_edge` is a colour-only holder whose `color` is copied onto
-        // the pin/caret glyphs per draw (no RGBA crosses Rust). The element
-        // badge + label + dropped list are now the `SelectBox`/`SelectFlyout`
-        // widgets' job, not this panel.
-        draw_icon_edge +: { color: atlas.accent }
     }
 }
 
@@ -162,14 +163,6 @@ pub struct Inspector {
     #[redraw]
     #[live]
     draw_field_bg: DrawColor,
-
-    /// `draw_icon_edge` tints the pin/caret glyphs (via `icons`, the shared
-    /// Atlas SDF set). The dropped list's own icons (including `IconSpline` on
-    /// association rows) are drawn by `SelectFlyout`, not here.
-    #[live]
-    draw_icon_edge: DrawColor,
-    #[live]
-    icons: IconSet,
 
     /// The flattened read model of the current subject (`None` = empty state).
     #[rust]
@@ -212,14 +205,10 @@ pub struct Inspector {
     /// `draw_bg` `opacity` uniform between translucent-at-rest and opaque.
     #[rust]
     panel: PanelGlass,
-    #[rust]
-    pin_rect: Rect,
     /// Manual body fold. `true` hides the body even when a subject is selected;
-    /// `Subject::None` collapses regardless. Toggled by the caret.
+    /// `Subject::None` collapses regardless. Toggled by the fold-caret button.
     #[rust]
     folded: bool,
-    #[rust]
-    caret_rect: Rect,
 }
 
 // Panel geometry (px). Fixed line advances — no text measuring in this cut.
@@ -227,13 +216,9 @@ const PAD: f64 = 16.0;
 const TITLE_H: f64 = 26.0;
 const ROW_H: f64 = 20.0;
 const GAP: f64 = 12.0;
-// Bar strip height (matches `element_bar.height` in the DSL) and the icon glyphs
-// drawn in its reserved right gap (pencil, caret, pin -- right to left).
+// Bar strip height (matches `element_bar.height` in the DSL). The fold-caret +
+// pin affordances in it are now laid-out `IconButton` children, not hand-drawn.
 const BAR_H: f64 = 56.0;
-const PIN_SIZE: f64 = 16.0;
-const PIN_MARGIN: f64 = 14.0;
-const ICON: f64 = 16.0;
-const ICON_GAP: f64 = 10.0;
 
 /// An association row's display text in the picker popup: just the target end.
 /// The model label is `Source -> Target`, but each edge row is drawn beneath its
@@ -299,23 +284,37 @@ impl Widget for Inspector {
             self.view.redraw(cx);
         }
 
+        // Fold-caret + pin `IconButton` children emit their clicks as widget
+        // actions; read them here. The pin toggles the panel's keep-opaque lock;
+        // the caret folds/unfolds the body (only meaningful with a subject --
+        // with none the panel is already collapsed).
+        if let Event::Actions(actions) = event {
+            if self
+                .view
+                .widget(cx, ids!(element_bar.pin_btn))
+                .as_icon_button()
+                .clicked(actions)
+            {
+                self.panel.toggle_pin(cx);
+                self.sync_bar_buttons(cx);
+                self.view.redraw(cx);
+            }
+            if self
+                .view
+                .widget(cx, ids!(element_bar.fold_btn))
+                .as_icon_button()
+                .clicked(actions)
+                && self.proj.is_some()
+            {
+                self.folded = !self.folded;
+                self.sync_bar_buttons(cx);
+                self.view.redraw(cx);
+            }
+        }
+
         match event.hits_with_capture_overload(cx, self.view.area(), false) {
             Hit::FingerUp(fe) if fe.is_primary_hit() => {
                 let p = fe.abs - hit_off;
-                if self.pin_rect.contains(p) {
-                    self.panel.toggle_pin(cx);
-                    self.view.redraw(cx);
-                    return;
-                }
-                // Caret folds/unfolds the body (only meaningful when a subject
-                // is set; with none the panel is already collapsed).
-                if self.caret_rect.contains(p) {
-                    if self.proj.is_some() {
-                        self.folded = !self.folded;
-                        self.view.redraw(cx);
-                    }
-                    return;
-                }
                 if self.editing.is_some() {
                     self.commit_edit(cx, uid);
                 }
@@ -374,55 +373,10 @@ impl Widget for Inspector {
         self.view_rect = rect;
         self.field_rects.clear();
 
-        let cy = rect.pos.y + BAR_H * 0.5;
-
-        // The element-picker top bar (badge, glyph cluster, picker field, popup)
-        // is diagram-only. A classifier/package preview hides it and floats the
-        // body up to the panel top -- see `set_picker_visible`.
-        if self.show_picker {
-            // Right glyph cluster, right -> left: pin, fold caret. Both are the
-            // shared Atlas SDF glyphs (`icons.rs`), tinted from the panel's own
-            // dim text colour via the same tint-a-shared-DrawColor idiom the edge
-            // rows use below. (`draw_dim` carries the theme colour; read it out
-            // before borrowing `self.icons`.)
-            let dim = self.draw_dim.color;
-
-            let pin = Rect {
-                pos: dvec2(
-                    rect.pos.x + rect.size.x - PIN_MARGIN - PIN_SIZE,
-                    cy - PIN_SIZE * 0.5,
-                ),
-                size: dvec2(PIN_SIZE, PIN_SIZE),
-            };
-            self.pin_rect = pin;
-            // Glyph carries the state (pin vs. pin-off), not colour -- both draw
-            // in the neutral dim tint so the icon alone reads pinned/unpinned.
-            let pin_icon = if self.panel.pinned { Icon::Pin } else { Icon::PinOff };
-            let dc = self.icons.get(pin_icon);
-            dc.color = dim;
-            dc.draw_abs(cx, pin);
-
-            // Fold caret: chevrons-collapse when the body is showing (click to
-            // fold), chevrons-expand when collapsed (click to unfold).
-            let caret = Rect {
-                pos: dvec2(pin.pos.x - ICON_GAP - ICON, cy - ICON * 0.5),
-                size: dvec2(ICON, ICON),
-            };
-            self.caret_rect = caret;
-            let caret_icon = if collapsed {
-                Icon::ListExpand
-            } else {
-                Icon::ListCollapse
-            };
-            let dc = self.icons.get(caret_icon);
-            dc.color = dim;
-            dc.draw_abs(cx, caret);
-        } else {
-            // No picker bar: clear its hit rects so stale rects from a previous
-            // diagram tab don't catch clicks over the (now bar-less) body.
-            self.pin_rect = Rect::default();
-            self.caret_rect = Rect::default();
-        }
+        // The fold-caret + pin affordances are laid-out `IconButton` children of
+        // `element_bar` (drawn above by `self.view.draw_walk`); their glyph +
+        // visibility track `folded`/`pinned`/`show_picker` via `sync_bar_buttons`
+        // on each state change, so there's nothing to hand-draw here.
 
         // Body, below the bar (or floated to the top when the bar is hidden).
         // When collapsed the frame already hugs the bar -- the placeholder lives
@@ -559,7 +513,36 @@ impl Inspector {
         {
             b.set_selected(cx, sel_in_items);
         }
+        self.sync_bar_buttons(cx);
         self.view.redraw(cx);
+    }
+
+    /// Sync the fold-caret + pin `IconButton` children to the current state:
+    /// glyph (collapse/expand, pin/pin-off), the pin's lit state (`pinned`), and
+    /// visibility (only shown while the picker bar is). Called on every state
+    /// change that affects them; the buttons draw themselves as `element_bar`
+    /// children.
+    fn sync_bar_buttons(&mut self, cx: &mut Cx) {
+        let collapsed = self.proj.is_none() || self.folded;
+        let pinned = self.panel.pinned;
+        let vis = self.show_picker;
+
+        let fold = self.view.widget(cx, ids!(element_bar.fold_btn));
+        fold.set_visible(cx, vis);
+        fold.as_icon_button().set_icon(
+            cx,
+            if collapsed {
+                Icon::ListExpand
+            } else {
+                Icon::ListCollapse
+            },
+        );
+
+        let pin = self.view.widget(cx, ids!(element_bar.pin_btn));
+        pin.set_visible(cx, vis);
+        pin.as_icon_button()
+            .set_icon(cx, if pinned { Icon::Pin } else { Icon::PinOff });
+        pin.as_icon_button().set_active(cx, pinned);
     }
 
     /// Build the picker rows as `SelectItem`s and record their id→index map (for
@@ -626,6 +609,7 @@ impl Inspector {
             b.set_items(cx, items);
             b.set_selected(cx, sel_in_items);
         }
+        self.sync_bar_buttons(cx);
         self.view.redraw(cx);
     }
 
@@ -634,6 +618,7 @@ impl Inspector {
     /// floats up to the panel top.
     pub fn set_picker_visible(&mut self, cx: &mut Cx, visible: bool) {
         self.show_picker = visible;
+        self.sync_bar_buttons(cx);
         self.view.redraw(cx);
     }
 
