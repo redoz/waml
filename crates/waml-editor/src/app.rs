@@ -1647,14 +1647,18 @@ impl AppMain for App {
         crate::popup::select::script_mod(vm);
         crate::popup::root::script_mod(vm);
         crate::canvas::script_mod(vm);
+        // `IconButton` must register before EVERY consumer that mounts it as a
+        // child -- `tree_panel`, `inspector_panel`, `tool_dock` -- because a
+        // module's DSL resolves `mod.widgets.*` eagerly at `use`-time, not
+        // lazily: an unregistered `IconButton {}` silently instantiates a dead,
+        // unqueryable node (invisible glyph, `set_icon`/`clicked` no-op). Its own
+        // deps (`icons`, `atlas`) are already registered above.
+        crate::icon_button::script_mod(vm);
         crate::tree_panel::script_mod(vm);
         // `select_box` must register before `inspector_panel`: the inspector's
         // `element_bar` mounts `SelectBox` as a child, and the DSL resolves
         // `mod.widgets.*` eagerly at `use`-time, not lazily.
         crate::select_box::script_mod(vm);
-        // `IconButton` must register before `inspector_panel` (the inspector
-        // mounts `IconButton` children) and before app's own DSL loads.
-        crate::icon_button::script_mod(vm);
         crate::inspector_panel::script_mod(vm);
         crate::doc_tabs::script_mod(vm);
         crate::diagram_switcher::script_mod(vm);
