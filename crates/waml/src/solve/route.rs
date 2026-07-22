@@ -259,52 +259,91 @@ fn build_ovg(obstacles: &[Obstacle], src: Rect, tgt: Rect) -> (Ovg, Vec<usize>, 
         }
     }
 
-    // Free-perimeter attachment candidates for one endpoint box: a vertex at
-    // every interesting coordinate on its four sides (plus side midpoints),
-    // joined perpendicular into any aligned, unblocked grid vertex.
-    let attach = |verts: &mut Vec<P>, adj: &mut Vec<Vec<(usize, f64)>>, bx: Rect| -> Vec<usize> {
-        let mut points: Vec<P> = Vec::new();
+    // Free-perimeter attachment candidates for one endpoint box. Each candidate
+    // is an on-border point `p` on side S paired with a mandatory perpendicular
+    // STUB vertex `p' = p + ROUTE_MARGIN * outward_normal(S)`. The stub segment
+    // `p <-> p'` is the ONLY edge on the on-border vertex, so every A* path is
+    // forced to leave (or enter) perpendicular to the border for at least
+    // ROUTE_MARGIN before any grid movement -- parallel/hugging exits cannot
+    // exist in the adjacency. Only the stub `p'` joins the grid (aligned,
+    // unblocked). A stub that reaches no grid vertex (e.g. it pokes into a
+    // neighbour's inflated zone) simply contributes an unusable candidate; if
+    // every stub is blocked A* finds no path and `route()` falls back to
+    // `fallback_l`. `on_border` never receives a second edge, keeping the
+    // one-neighbour invariant across BOTH attach calls (src stub may still wire
+    // into tgt stubs and vice versa).
+    let attach = |verts: &mut Vec<P>,
+                  adj: &mut Vec<Vec<(usize, f64)>>,
+                  on_border: &mut BTreeSet<usize>,
+                  bx: Rect|
+     -> Vec<usize> {
+        let mut cands: Vec<(P, Side)> = Vec::new();
         for &y in &ys {
             if y >= bx.y - 1e-9 && y <= bx.y + bx.h + 1e-9 {
-                points.push((bx.x, y));
-                points.push((bx.x + bx.w, y));
+                cands.push(((bx.x, y), Side::Left));
+                cands.push(((bx.x + bx.w, y), Side::Right));
             }
         }
         for &x in &xs {
             if x >= bx.x - 1e-9 && x <= bx.x + bx.w + 1e-9 {
-                points.push((x, bx.y));
-                points.push((x, bx.y + bx.h));
+                cands.push(((x, bx.y), Side::Top));
+                cands.push(((x, bx.y + bx.h), Side::Bottom));
             }
         }
         // Side midpoints guarantee at least one candidate per side.
-        points.push((bx.x, bx.y + bx.h / 2.0));
-        points.push((bx.x + bx.w, bx.y + bx.h / 2.0));
-        points.push((bx.x + bx.w / 2.0, bx.y));
-        points.push((bx.x + bx.w / 2.0, bx.y + bx.h));
-        points.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.total_cmp(&b.1)));
-        points.dedup_by(|a, b| (a.0 - b.0).abs() < 1e-9 && (a.1 - b.1).abs() < 1e-9);
+        cands.push(((bx.x, bx.y + bx.h / 2.0), Side::Left));
+        cands.push(((bx.x + bx.w, bx.y + bx.h / 2.0), Side::Right));
+        cands.push(((bx.x + bx.w / 2.0, bx.y), Side::Top));
+        cands.push(((bx.x + bx.w / 2.0, bx.y + bx.h), Side::Bottom));
+        cands.sort_by(|(pa, sa), (pb, sb)| {
+            pa.0
+                .total_cmp(&pb.0)
+                .then(pa.1.total_cmp(&pb.1))
+                .then(side_disc(*sa).cmp(&side_disc(*sb)))
+        });
+        // Dedup by point AND side: a corner keeps both of its sides (each with
+        // its own perpendicular stub direction).
+        cands.dedup_by(|(pa, sa), (pb, sb)| {
+            (pa.0 - pb.0).abs() < 1e-9 && (pa.1 - pb.1).abs() < 1e-9 && sa == sb
+        });
 
         let mut idxs = Vec::new();
-        for pt in points {
-            let ai = verts.len();
+        for (pt, side) in cands {
+            // On-border vertex: its sole neighbour is the stub below.
+            let bi = verts.len();
             verts.push(pt);
             adj.push(Vec::new());
-            idxs.push(ai);
-            for gi in 0..ai {
+            on_border.insert(bi);
+            // Stub vertex, ROUTE_MARGIN out along the side's outward normal.
+            let nrm = outward_normal(side);
+            let stub = (pt.0 + ROUTE_MARGIN * nrm.0, pt.1 + ROUTE_MARGIN * nrm.1);
+            let si = verts.len();
+            verts.push(stub);
+            adj.push(Vec::new());
+            // Mandatory perpendicular stub segment p <-> p'.
+            adj[bi].push((si, ROUTE_MARGIN));
+            adj[si].push((bi, ROUTE_MARGIN));
+            // Only the stub joins the grid; never wire into an on-border vertex.
+            for gi in 0..si {
+                if on_border.contains(&gi) {
+                    continue;
+                }
                 let g = verts[gi];
-                let aligned = (g.0 - pt.0).abs() < 1e-9 || (g.1 - pt.1).abs() < 1e-9;
-                if aligned && !segment_blocked(&inflated, pt, g) {
-                    let len = (g.0 - pt.0).abs() + (g.1 - pt.1).abs();
-                    adj[ai].push((gi, len));
-                    adj[gi].push((ai, len));
+                let aligned = (g.0 - stub.0).abs() < 1e-9 || (g.1 - stub.1).abs() < 1e-9;
+                if aligned && !segment_blocked(&inflated, stub, g) {
+                    let len = (g.0 - stub.0).abs() + (g.1 - stub.1).abs();
+                    adj[si].push((gi, len));
+                    adj[gi].push((si, len));
                 }
             }
+            idxs.push(bi);
         }
         idxs
     };
 
-    let srcv = attach(&mut verts, &mut adj, src);
-    let tgtv = attach(&mut verts, &mut adj, tgt);
+    let mut on_border: BTreeSet<usize> = BTreeSet::new();
+    let srcv = attach(&mut verts, &mut adj, &mut on_border, src);
+    let tgtv = attach(&mut verts, &mut adj, &mut on_border, tgt);
     (Ovg { verts, adj }, srcv, tgtv)
 }
 
@@ -524,6 +563,35 @@ fn side_of(bx: &Rect, p: P) -> Option<Side> {
     }
 }
 
+/// Which side of `bx` a route endpoint attaches to, disambiguated by the
+/// direction of its perpendicular stub (the `ep -> nb` first/last segment).
+/// `side_of` alone is ambiguous at a corner (a corner lies on two sides and
+/// picks the first by fixed priority), but the stub direction reveals the real
+/// side: a horizontal stub means a vertical (Left/Right) border, a vertical stub
+/// a horizontal (Top/Bottom) border. Falls back to `side_of` only when the stub
+/// is degenerate (coincident points).
+fn attach_side(bx: &Rect, ep: P, nb: P) -> Option<Side> {
+    let e = 1e-6;
+    let horizontal = (ep.1 - nb.1).abs() < e && (ep.0 - nb.0).abs() > e;
+    let vertical = (ep.0 - nb.0).abs() < e && (ep.1 - nb.1).abs() > e;
+    if horizontal {
+        if (ep.0 - bx.x).abs() < e {
+            return Some(Side::Left);
+        }
+        if (ep.0 - (bx.x + bx.w)).abs() < e {
+            return Some(Side::Right);
+        }
+    } else if vertical {
+        if (ep.1 - bx.y).abs() < e {
+            return Some(Side::Top);
+        }
+        if (ep.1 - (bx.y + bx.h)).abs() < e {
+            return Some(Side::Bottom);
+        }
+    }
+    side_of(bx, ep)
+}
+
 /// A route endpoint (source or target attachment) landing on a box's border.
 struct End {
     ri: usize,
@@ -541,6 +609,25 @@ fn disc_to_side(d: u8) -> Side {
     }
 }
 
+fn side_disc(s: Side) -> u8 {
+    match s {
+        Side::Left => 0,
+        Side::Right => 1,
+        Side::Top => 2,
+        Side::Bottom => 3,
+    }
+}
+
+/// Unit outward normal of a border side (points away from the box interior).
+fn outward_normal(side: Side) -> P {
+    match side {
+        Side::Left => (-1.0, 0.0),
+        Side::Right => (1.0, 0.0),
+        Side::Top => (0.0, -1.0),
+        Side::Bottom => (0.0, 1.0),
+    }
+}
+
 /// True when leaving `side` perpendicularly means moving along the x-axis
 /// (i.e. the border is vertical — Left/Right).
 fn perp_is_horizontal(side: Side) -> bool {
@@ -548,18 +635,18 @@ fn perp_is_horizontal(side: Side) -> bool {
 }
 
 /// Keep the first/last segment perpendicular to the border after moving an
-/// endpoint along it: if the adjacent INTERIOR bend sits off the border axis,
-/// pull it onto the endpoint's along-coordinate. Only valid when `nb` is a true
-/// interior bend, never the opposite (border-attached) endpoint of a 2-point
-/// route -- dragging that would slide it off its own box's border.
+/// endpoint along it: pull the adjacent INTERIOR bend onto the endpoint's
+/// along-coordinate so the stub stays perpendicular. Perpendicular stubs are now
+/// structural (see `attach`), so the first hop is always perpendicular and the
+/// old parallel-hug guard (only realign when the bend was off-axis) is gone --
+/// the rewrite always applies. Only valid when `nb` is a true interior bend,
+/// never the opposite (border-attached) endpoint of a 2-point route -- dragging
+/// that would slide it off its own box's border (handled by `connect_ends`).
 fn realign_interior(points: &mut [P], ep: usize, nb: usize, side: Side) {
     let e = points[ep];
-    let n = points[nb];
     if perp_is_horizontal(side) {
-        if (n.0 - e.0).abs() > 1e-6 {
-            points[nb].1 = e.1;
-        }
-    } else if (n.1 - e.1).abs() > 1e-6 {
+        points[nb].1 = e.1;
+    } else {
         points[nb].0 = e.0;
     }
 }
@@ -601,12 +688,6 @@ fn connect_ends(s: P, s_side: Option<Side>, t: P, t_side: Option<Side>) -> Vec<P
 /// off the target, deleting the connecting segment.
 fn hub_spread(routes: &mut [Route], rects: &BTreeMap<BoxId, Rect>) {
     let mut groups: BTreeMap<(String, u8), Vec<End>> = BTreeMap::new();
-    let sd = |s: Side| match s {
-        Side::Left => 0u8,
-        Side::Right => 1,
-        Side::Top => 2,
-        Side::Bottom => 3,
-    };
 
     for (ri, route) in routes.iter().enumerate() {
         if route.points.len() < 2 {
@@ -621,16 +702,16 @@ fn hub_spread(routes: &mut [Route], rects: &BTreeMap<BoxId, Rect>) {
                 continue;
             };
             let p = route.points[ep];
-            let Some(side) = side_of(bx, p) else {
+            let neighbour = route.points[nb];
+            let Some(side) = attach_side(bx, p, neighbour) else {
                 continue;
             };
-            let neighbour = route.points[nb];
             let along = match side {
                 Side::Left | Side::Right => neighbour.1,
                 Side::Top | Side::Bottom => neighbour.0,
             };
             groups
-                .entry((key, sd(side)))
+                .entry((key, side_disc(side)))
                 .or_default()
                 .push(End { ri, ep, nb, along });
         }
@@ -691,12 +772,12 @@ fn hub_spread(routes: &mut [Route], rects: &BTreeMap<BoxId, Rect>) {
         let s_side = moved.get(&(ri, 0)).map(|(_, sd)| *sd).or_else(|| {
             rects
                 .get(&BoxId::Node(routes[ri].source.clone()))
-                .and_then(|bx| side_of(bx, s))
+                .and_then(|bx| attach_side(bx, routes[ri].points[0], routes[ri].points[1]))
         });
         let t_side = moved.get(&(ri, last)).map(|(_, sd)| *sd).or_else(|| {
             rects
                 .get(&BoxId::Node(routes[ri].target.clone()))
-                .and_then(|bx| side_of(bx, t))
+                .and_then(|bx| attach_side(bx, routes[ri].points[last], routes[ri].points[last - 1]))
         });
         routes[ri].points = connect_ends(s, s_side, t, t_side);
     }
@@ -789,15 +870,40 @@ mod tests {
 
     #[test]
     fn astar_clear_line_of_sight_is_two_point_straight() {
-        // Boxes sharing a y-band with a clear horizontal gap.
+        // Boxes sharing a y-band with a clear horizontal gap. With perpendicular
+        // stubs the path is stub-out + straight run + stub-in; when all three are
+        // collinear `simplify` collapses them, but the invariants that matter hold
+        // regardless of the exact point count, so assert THOSE rather than a
+        // brittle length: the ends are perpendicular to their borders and every
+        // segment is orthogonal.
         let src = r(0.0, 0.0, 100.0, 60.0);
         let tgt = r(300.0, 0.0, 100.0, 60.0);
         let (ovg, srcv, tgtv) = build_ovg(&[], src, tgt);
         let goal = (tgt.x + tgt.w / 2.0, tgt.y + tgt.h / 2.0);
         let path = astar(&ovg, &srcv, &tgtv, goal).expect("path exists");
-        // Straight degenerate: a single horizontal segment => two points, equal y.
-        assert_eq!(path.len(), 2, "straight route is two points, got {path:?}");
-        assert!((path[0].1 - path[1].1).abs() < 1e-6, "same y => horizontal");
+        assert!(path.len() >= 2, "path has at least two points, got {path:?}");
+        // Source leaves perpendicular to its border for >= ROUTE_MARGIN.
+        assert!(
+            perp_to_border(&src, path[0], path[1]),
+            "source exit not perpendicular: {path:?}"
+        );
+        assert!(seg_len(path[0], path[1]) >= ROUTE_MARGIN - 1e-6);
+        // Target enters perpendicular to its border for >= ROUTE_MARGIN.
+        let n = path.len();
+        assert!(
+            perp_to_border(&tgt, path[n - 1], path[n - 2]),
+            "target entry not perpendicular: {path:?}"
+        );
+        assert!(seg_len(path[n - 1], path[n - 2]) >= ROUTE_MARGIN - 1e-6);
+        // Every segment is orthogonal.
+        for w in path.windows(2) {
+            assert!(
+                (w[0].0 - w[1].0).abs() < 1e-6 || (w[0].1 - w[1].1).abs() < 1e-6,
+                "diagonal segment {:?}->{:?}",
+                w[0],
+                w[1]
+            );
+        }
     }
 
     #[test]
@@ -1158,6 +1264,199 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// Manhattan length of an axis-aligned segment.
+    fn seg_len(a: P, b: P) -> f64 {
+        (a.0 - b.0).abs() + (a.1 - b.1).abs()
+    }
+
+    /// Every border side of `bx` that point `p` lies on (two at a corner).
+    fn sides_on(bx: &Rect, p: P) -> Vec<Side> {
+        let e = 1e-6;
+        let mut v = Vec::new();
+        let in_y = p.1 >= bx.y - e && p.1 <= bx.y + bx.h + e;
+        let in_x = p.0 >= bx.x - e && p.0 <= bx.x + bx.w + e;
+        if (p.0 - bx.x).abs() < e && in_y {
+            v.push(Side::Left);
+        }
+        if (p.0 - (bx.x + bx.w)).abs() < e && in_y {
+            v.push(Side::Right);
+        }
+        if (p.1 - bx.y).abs() < e && in_x {
+            v.push(Side::Top);
+        }
+        if (p.1 - (bx.y + bx.h)).abs() < e && in_x {
+            v.push(Side::Bottom);
+        }
+        v
+    }
+
+    /// The segment `on_pt -> other` is perpendicular to at least one border side
+    /// that `on_pt` lies on (a parallel/hugging exit fails this).
+    fn perp_to_border(bx: &Rect, on_pt: P, other: P) -> bool {
+        let dx = (other.0 - on_pt.0).abs();
+        let dy = (other.1 - on_pt.1).abs();
+        let horizontal = dy < 1e-6 && dx > 1e-6;
+        let vertical = dx < 1e-6 && dy > 1e-6;
+        sides_on(bx, on_pt).iter().any(|s| match s {
+            Side::Left | Side::Right => horizontal,
+            Side::Top | Side::Bottom => vertical,
+        })
+    }
+
+    /// Assert the perpendicular-stub invariants for every route in `out`.
+    fn assert_perp_ends(out: &[Route], rects: &BTreeMap<BoxId, Rect>) {
+        for rt in out {
+            assert!(
+                rt.points.len() >= 2,
+                "{}->{} route degenerate: {:?}",
+                rt.source,
+                rt.target,
+                rt.points
+            );
+            let src_bx = rects[&BoxId::Node(rt.source.clone())];
+            let tgt_bx = rects[&BoxId::Node(rt.target.clone())];
+            let n = rt.points.len();
+            let (p0, p1) = (rt.points[0], rt.points[1]);
+            let (plast, pprev) = (rt.points[n - 1], rt.points[n - 2]);
+            assert!(
+                perp_to_border(&src_bx, p0, p1),
+                "{}->{} source exit not perpendicular: {:?}",
+                rt.source,
+                rt.target,
+                rt.points
+            );
+            assert!(
+                seg_len(p0, p1) >= ROUTE_MARGIN - 1e-6,
+                "{}->{} source stub shorter than ROUTE_MARGIN: {:?}",
+                rt.source,
+                rt.target,
+                rt.points
+            );
+            assert!(
+                perp_to_border(&tgt_bx, plast, pprev),
+                "{}->{} target entry not perpendicular: {:?}",
+                rt.source,
+                rt.target,
+                rt.points
+            );
+            assert!(
+                seg_len(plast, pprev) >= ROUTE_MARGIN - 1e-6,
+                "{}->{} target stub shorter than ROUTE_MARGIN: {:?}",
+                rt.source,
+                rt.target,
+                rt.points
+            );
+            for w in rt.points.windows(2) {
+                assert!(
+                    (w[0].0 - w[1].0).abs() < 1e-6 || (w[0].1 - w[1].1).abs() < 1e-6,
+                    "{}->{} diagonal segment {:?}->{:?}",
+                    rt.source,
+                    rt.target,
+                    w[0],
+                    w[1]
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn every_route_leaves_and_enters_perpendicular() {
+        let cfg = SolveConfig::default();
+
+        // 1. Clear line of sight.
+        {
+            let boxes = vec![leafbox("a"), leafbox("b")];
+            let mut rects: BTreeMap<BoxId, Rect> = BTreeMap::new();
+            rects.insert(BoxId::Node("a".into()), nrect(0.0, 0.0, 100.0, 60.0));
+            rects.insert(BoxId::Node("b".into()), nrect(300.0, 0.0, 100.0, 60.0));
+            let edges = vec![(BoxId::Node("a".into()), BoxId::Node("b".into()))];
+            let out = route(&boxes, &rects, &edges, &cfg);
+            assert_perp_ends(&out, &rects);
+        }
+
+        // 2. Detour around a blocking obstacle.
+        {
+            let boxes = vec![leafbox("a"), leafbox("b"), leafbox("m")];
+            let mut rects: BTreeMap<BoxId, Rect> = BTreeMap::new();
+            rects.insert(BoxId::Node("a".into()), nrect(0.0, 0.0, 100.0, 60.0));
+            rects.insert(BoxId::Node("b".into()), nrect(350.0, 0.0, 100.0, 60.0));
+            rects.insert(BoxId::Node("m".into()), nrect(150.0, -30.0, 80.0, 120.0));
+            let edges = vec![(BoxId::Node("a".into()), BoxId::Node("b".into()))];
+            let out = route(&boxes, &rects, &edges, &cfg);
+            assert_perp_ends(&out, &rects);
+        }
+
+        // 3. Hub fan-out: five edges leaving the same side of a hub.
+        {
+            let boxes = vec![
+                leafbox("h"),
+                leafbox("t1"),
+                leafbox("t2"),
+                leafbox("t3"),
+                leafbox("t4"),
+                leafbox("t5"),
+            ];
+            let mut rects: BTreeMap<BoxId, Rect> = BTreeMap::new();
+            rects.insert(BoxId::Node("h".into()), nrect(0.0, 200.0, 120.0, 120.0));
+            rects.insert(BoxId::Node("t1".into()), nrect(400.0, 0.0, 100.0, 60.0));
+            rects.insert(BoxId::Node("t2".into()), nrect(400.0, 120.0, 100.0, 60.0));
+            rects.insert(BoxId::Node("t3".into()), nrect(400.0, 240.0, 100.0, 60.0));
+            rects.insert(BoxId::Node("t4".into()), nrect(400.0, 360.0, 100.0, 60.0));
+            rects.insert(BoxId::Node("t5".into()), nrect(400.0, 480.0, 100.0, 60.0));
+            let edges: Vec<(BoxId, BoxId)> = ["t1", "t2", "t3", "t4", "t5"]
+                .iter()
+                .map(|t| (BoxId::Node("h".into()), BoxId::Node((*t).into())))
+                .collect();
+            let out = route(&boxes, &rects, &edges, &cfg);
+            assert_perp_ends(&out, &rects);
+        }
+    }
+
+    #[test]
+    fn stub_blocked_side_falls_back_to_open_side() {
+        // `a` is flanked tightly on its right by blocker `k` (within ROUTE_MARGIN),
+        // so every right-side stub is blocked. The target `b` sits below, reachable
+        // out the open bottom side. The route must exist, stay orthogonal, and leave
+        // `a` perpendicular out an open side — no panic, no right-side exit.
+        let boxes = vec![leafbox("a"), leafbox("b"), leafbox("k")];
+        let mut rects: BTreeMap<BoxId, Rect> = BTreeMap::new();
+        rects.insert(BoxId::Node("a".into()), nrect(0.0, 0.0, 100.0, 60.0));
+        rects.insert(BoxId::Node("k".into()), nrect(105.0, -40.0, 40.0, 140.0));
+        rects.insert(BoxId::Node("b".into()), nrect(0.0, 220.0, 100.0, 60.0));
+        let edges = vec![(BoxId::Node("a".into()), BoxId::Node("b".into()))];
+        let out = route(&boxes, &rects, &edges, &SolveConfig::default());
+        assert_eq!(out.len(), 1);
+        let rt = &out[0];
+        assert!(rt.points.len() >= 2, "no route: {:?}", rt.points);
+        for w in rt.points.windows(2) {
+            assert!(
+                (w[0].0 - w[1].0).abs() < 1e-6 || (w[0].1 - w[1].1).abs() < 1e-6,
+                "diagonal segment {:?}->{:?}",
+                w[0],
+                w[1]
+            );
+        }
+        let a = rects[&BoxId::Node("a".into())];
+        assert!(
+            perp_to_border(&a, rt.points[0], rt.points[1]),
+            "source exit not perpendicular: {:?}",
+            rt.points
+        );
+        // The exit must NOT be the blocked right side.
+        assert!(
+            !sides_on(&a, rt.points[0]).contains(&Side::Right),
+            "route left via the blocked right side: {:?}",
+            rt.points
+        );
+        // The far end lands on the target border.
+        let b = rects[&BoxId::Node("b".into())];
+        let last = *rt.points.last().unwrap();
+        assert!(
+            !sides_on(&b, last).is_empty(),
+            "endpoint not on target border: {last:?}"
+        );
     }
 
     #[test]
