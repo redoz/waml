@@ -785,7 +785,10 @@ mod tests {
         let reopened = open.open_preview("customer", "Customer", TreeKind::Class);
         assert_eq!(reopened, id);
         assert_eq!(open.tabs.len(), 2);
-        assert!(!open.tabs[1].preview, "stays persisted, not reverted to preview");
+        assert!(
+            !open.tabs[1].preview,
+            "stays persisted, not reverted to preview"
+        );
         assert_eq!(open.active, id);
     }
 

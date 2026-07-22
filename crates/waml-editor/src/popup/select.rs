@@ -291,8 +291,7 @@ impl SelectFlyout {
         // the hard cap, so a long list scrolls rather than running off-screen.
         // Then re-clamp the scroll offset against the freshly computed max.
         let win_h = cx.current_pass_size().y;
-        let avail =
-            (win_h - self.geom.anchor().y - SELECT_BOTTOM_MARGIN).max(ROW_H + PAD_V * 2.0);
+        let avail = (win_h - self.geom.anchor().y - SELECT_BOTTOM_MARGIN).max(ROW_H + PAD_V * 2.0);
         self.geom.set_max_height(Some(avail.min(SELECT_MAX_H)));
         self.geom.set_scroll(self.geom.scroll());
 
@@ -414,7 +413,8 @@ impl Popup for SelectFlyout {
                 if let Some(grab) = self.thumb_drag {
                     // Dragging the thumb: track the pointer, keeping the grab
                     // offset so the thumb doesn't jump under the cursor.
-                    self.geom.set_scroll(self.geom.scroll_for_thumb_y(e.abs.y - grab));
+                    self.geom
+                        .set_scroll(self.geom.scroll_for_thumb_y(e.abs.y - grab));
                 } else {
                     self.mark.pointer_move(e.abs, self.geom.row_at(e.abs));
                 }

@@ -336,8 +336,7 @@ fn build_ovg(obstacles: &[Obstacle], src: Rect, tgt: Rect) -> (Ovg, Vec<usize>, 
         cands.push(((bx.x + bx.w / 2.0, bx.y), Side::Top));
         cands.push(((bx.x + bx.w / 2.0, bx.y + bx.h), Side::Bottom));
         cands.sort_by(|(pa, sa), (pb, sb)| {
-            pa.0
-                .total_cmp(&pb.0)
+            pa.0.total_cmp(&pb.0)
                 .then(pa.1.total_cmp(&pb.1))
                 .then(side_disc(*sa).cmp(&side_disc(*sb)))
         });
@@ -805,7 +804,9 @@ fn hub_spread(routes: &mut [Route], rects: &BTreeMap<BoxId, Rect>) {
     let touched: BTreeSet<usize> = moved.keys().map(|(ri, _)| *ri).collect();
     for ri in touched {
         let last = routes[ri].points.len() - 1;
-        let s = moved.get(&(ri, 0)).map_or(routes[ri].points[0], |(p, _)| *p);
+        let s = moved
+            .get(&(ri, 0))
+            .map_or(routes[ri].points[0], |(p, _)| *p);
         let t = moved
             .get(&(ri, last))
             .map_or(routes[ri].points[last], |(p, _)| *p);
@@ -817,7 +818,9 @@ fn hub_spread(routes: &mut [Route], rects: &BTreeMap<BoxId, Rect>) {
         let t_side = moved.get(&(ri, last)).map(|(_, sd)| *sd).or_else(|| {
             rects
                 .get(&BoxId::Node(routes[ri].target.clone()))
-                .and_then(|bx| attach_side(bx, routes[ri].points[last], routes[ri].points[last - 1]))
+                .and_then(|bx| {
+                    attach_side(bx, routes[ri].points[last], routes[ri].points[last - 1])
+                })
         });
         routes[ri].points = connect_ends(s, s_side, t, t_side);
     }
@@ -921,7 +924,10 @@ mod tests {
         let (ovg, srcv, tgtv) = build_ovg(&[], src, tgt);
         let goal = (tgt.x + tgt.w / 2.0, tgt.y + tgt.h / 2.0);
         let path = astar(&ovg, &srcv, &tgtv, goal).expect("path exists");
-        assert!(path.len() >= 2, "path has at least two points, got {path:?}");
+        assert!(
+            path.len() >= 2,
+            "path has at least two points, got {path:?}"
+        );
         // Source leaves perpendicular to its border for >= ROUTE_MARGIN.
         assert!(
             perp_to_border(&src, path[0], path[1]),

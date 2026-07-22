@@ -397,7 +397,11 @@ fn marker_geometry(marker: Marker, ep: DVec2, dir_raw: DVec2, size: f64) -> Opti
             let far = dvec2(ep.x - d.x * 2.0 * l, ep.y - d.y * 2.0 * l);
             let sa = dvec2(ep.x - d.x * l + n.x * w, ep.y - d.y * l + n.y * w);
             let sb = dvec2(ep.x - d.x * l - n.x * w, ep.y - d.y * l - n.y * w);
-            let filled = if marker == Marker::FilledDiamond { 1.0 } else { 0.0 };
+            let filled = if marker == Marker::FilledDiamond {
+                1.0
+            } else {
+                0.0
+            };
             (ep, sa, far, sb, 1.0 - filled, filled)
         }
         // Open "V": base_left -> apex -> base_right -> apex. No closing base line;
@@ -696,13 +700,18 @@ impl Widget for GraphCanvas {
                     if let Some(m) = marker_geometry(mk, ep, dir, marker_size) {
                         self.draw_marker.set_uniform(cx, live_id!(v01), &m.v01);
                         self.draw_marker.set_uniform(cx, live_id!(v23), &m.v23);
-                        self.draw_marker.set_uniform(cx, live_id!(hollow), &[m.hollow]);
-                        self.draw_marker.set_uniform(cx, live_id!(filled), &[m.filled]);
+                        self.draw_marker
+                            .set_uniform(cx, live_id!(hollow), &[m.hollow]);
+                        self.draw_marker
+                            .set_uniform(cx, live_id!(filled), &[m.filled]);
                         // `EdgeMarker` strokes with `abs(shape) - w`, so `w` is a
                         // HALF-width -- half of `thickness` matches the filled line
                         // bar's full width instead of rendering at 2x.
-                        self.draw_marker
-                            .set_uniform(cx, live_id!(stroke_w), &[(thickness * 0.5) as f32]);
+                        self.draw_marker.set_uniform(
+                            cx,
+                            live_id!(stroke_w),
+                            &[(thickness * 0.5) as f32],
+                        );
                         self.draw_marker.draw_abs(cx, m.quad);
                     }
                 }
@@ -1031,7 +1040,10 @@ mod tests {
             m.quad.pos.x + m.v01[0] as f64,
             m.quad.pos.y + m.v01[1] as f64,
         );
-        assert!(near(tip.x, ep.x) && near(tip.y, ep.y), "apex on the endpoint");
+        assert!(
+            near(tip.x, ep.x) && near(tip.y, ep.y),
+            "apex on the endpoint"
+        );
         // Base-left (v1) is `size` back along -x, `w` off in +y (n = (0,1)).
         let bl = dvec2(
             m.quad.pos.x + m.v01[2] as f64,
@@ -1041,7 +1053,11 @@ mod tests {
             near(bl.x, 90.0) && near(bl.y, 100.0 + 6.2),
             "base back along -dir, offset by w"
         );
-        assert_eq!((m.hollow, m.filled), (1.0, 0.0), "generalization triangle is hollow");
+        assert_eq!(
+            (m.hollow, m.filled),
+            (1.0, 0.0),
+            "generalization triangle is hollow"
+        );
     }
 
     #[test]

@@ -598,9 +598,14 @@ impl Widget for ProjectTree {
             },
         );
         let pin_btn = self.view.widget(cx, ids!(header.title_row.pin_btn));
-        pin_btn
-            .as_icon_button()
-            .set_icon(cx, if self.panel.pinned { Icon::Pin } else { Icon::PinOff });
+        pin_btn.as_icon_button().set_icon(
+            cx,
+            if self.panel.pinned {
+                Icon::Pin
+            } else {
+                Icon::PinOff
+            },
+        );
         pin_btn.as_icon_button().set_active(cx, self.panel.pinned);
 
         let mut walk = walk;
@@ -646,7 +651,6 @@ impl Widget for ProjectTree {
         // before borrowing `self.icons` (same tint-copy idiom as the
         // inspector's pin/caret glyphs).
         let dim = self.draw_dim.color;
-
 
         // Scope-title trigger: label + a small down-chevron, left-aligned.
         let title = if self.scope_title.is_empty() {

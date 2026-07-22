@@ -601,9 +601,7 @@ impl Inspector {
                 ),
                 // The root diagram row leads with the `Frame` glyph -- distinct
                 // from any node's catalog icon, marking it as the container.
-                ElementKind::Diagram => {
-                    (SelectLead::Icon(Icon::Frame), row.label.clone(), false)
-                }
+                ElementKind::Diagram => (SelectLead::Icon(Icon::Frame), row.label.clone(), false),
                 _ => (SelectLead::None, row.label.clone(), false),
             };
             items.push(SelectItem {

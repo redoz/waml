@@ -67,13 +67,19 @@ mod tests {
     fn generalization_triangle_at_general_end() {
         // Subtype `from` is bare; the supertype `to` end carries the triangle.
         assert_eq!(end_marker(Specializes, End::From, None), Marker::None);
-        assert_eq!(end_marker(Specializes, End::To, None), Marker::HollowTriangle);
+        assert_eq!(
+            end_marker(Specializes, End::To, None),
+            Marker::HollowTriangle
+        );
     }
 
     #[test]
     fn realization_triangle_at_interface_end() {
         assert_eq!(end_marker(Implements, End::From, None), Marker::None);
-        assert_eq!(end_marker(Implements, End::To, None), Marker::HollowTriangle);
+        assert_eq!(
+            end_marker(Implements, End::To, None),
+            Marker::HollowTriangle
+        );
     }
 
     #[test]
@@ -85,7 +91,10 @@ mod tests {
 
     #[test]
     fn aggregation_hollow_diamond_at_whole_end() {
-        assert_eq!(end_marker(Aggregates, End::From, None), Marker::HollowDiamond);
+        assert_eq!(
+            end_marker(Aggregates, End::From, None),
+            Marker::HollowDiamond
+        );
         assert_eq!(end_marker(Aggregates, End::To, None), Marker::None);
     }
 
@@ -100,8 +109,14 @@ mod tests {
         // Unspecified or non-navigable ends stay bare; a navigable end gets an arrow.
         assert_eq!(end_marker(Associates, End::To, None), Marker::None);
         assert_eq!(end_marker(Associates, End::To, Some(false)), Marker::None);
-        assert_eq!(end_marker(Associates, End::To, Some(true)), Marker::OpenArrow);
-        assert_eq!(end_marker(Associates, End::From, Some(true)), Marker::OpenArrow);
+        assert_eq!(
+            end_marker(Associates, End::To, Some(true)),
+            Marker::OpenArrow
+        );
+        assert_eq!(
+            end_marker(Associates, End::From, Some(true)),
+            Marker::OpenArrow
+        );
     }
 
     #[test]
