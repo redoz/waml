@@ -9,6 +9,7 @@
 //! Structure mirrors studio's `DesktopFileTree` / `FlatFileTree`, minus the
 //! filter page and git-status dots.
 
+use crate::icon_button::IconButtonWidgetRefExt;
 use crate::icons::Icon;
 use crate::icons::IconSet;
 use crate::nav::NavView;
@@ -87,13 +88,34 @@ script_mod! {
         }
         padding: 6.0
 
-        // Header band: an empty spacer reserving the top strip; the title
-        // trigger, collapse/pin glyphs, and (Task 9) the search row + type chip
-        // are all hand-drawn immediate-mode in `draw_walk`, same hybrid as the
-        // inspector.
+        // Header band: a real `flow: Down` container. `title_row` hosts the two
+        // interactive glyph controls as shared `IconButton` children (packed
+        // right behind a Fill spacer); the scope-title trigger is still drawn
+        // immediate-mode over the row's left. `search_row` is an empty spacer
+        // reserving the lower band, over which the search field + type chip are
+        // drawn immediate-mode -- the same hybrid `inspector::element_bar` uses.
+        // 34 + 30 = 64 keeps the body's top position and `note_band` unchanged.
         header := View {
             width: Fill
             height: 64.0
+            flow: Down
+            title_row := View {
+                width: Fill
+                height: 34.0
+                flow: Right
+                align: Align{y: 0.5}
+                padding: Inset{left: 10.0, right: 10.0}
+                spacing: 6.0
+                // Fill spacer pushes the glyph cluster to the right edge; the
+                // scope-title trigger is drawn abs into the leading space.
+                title_spacer := View { width: Fill, height: Fill }
+                collapse_btn := IconButton {}
+                pin_btn := IconButton {}
+            }
+            search_row := View {
+                width: Fill
+                height: 30.0
+            }
         }
 
         // Note band: an empty spacer reserving vertical room above the body for
