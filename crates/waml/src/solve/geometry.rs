@@ -6,7 +6,21 @@ use super::{
 };
 use crate::diagnostic::{DiagCode, Diagnostic};
 use crate::syntax::{Axis, Direction, Edge, Margin, Shape};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
+
+/// Minimum facing-border gap between two edge-connected boxes, so the connector
+/// between them can carry arrowheads and a short label. Floors the `Place` gap
+/// for connected pairs; unconnected neighbours keep the plain margin gap.
+const MIN_ASSOC: f64 = 72.0;
+
+/// Order-independent key for an unordered box pair.
+fn pair(a: &BoxId, b: &BoxId) -> (BoxId, BoxId) {
+    if a <= b {
+        (a.clone(), b.clone())
+    } else {
+        (b.clone(), a.clone())
+    }
+}
 
 fn margin_rank(m: Margin) -> u8 {
     match m {
@@ -66,6 +80,7 @@ pub(super) fn solve_cluster(
     ids: &[BoxId],
     dims: &BTreeMap<BoxId, (Size, Margin)>,
     constraints: &[Constraint],
+    connected: &BTreeSet<(BoxId, BoxId)>,
     cfg: &SolveConfig,
     diags: &mut Vec<Diagnostic>,
 ) -> BTreeMap<BoxId, Rect> {
@@ -87,6 +102,11 @@ pub(super) fn solve_cluster(
                 let (sa, ma) = dims[a];
                 let (sb, mb) = dims[b];
                 let gap = cfg.margin(max_margin(ma, mb));
+                let gap = if connected.contains(&pair(a, b)) {
+                    gap.max(MIN_ASSOC)
+                } else {
+                    gap
+                };
                 match dir {
                     Direction::LeftOf => {
                         eq(&mut px, ia, ib, sa.w + gap, diags);
@@ -282,6 +302,7 @@ fn assemble(
     child_laid: &BTreeMap<BoxId, Laid>,
     child_margins: &BTreeMap<BoxId, Margin>,
     cons: &[Constraint],
+    connected: &BTreeSet<(BoxId, BoxId)>,
     inset: f64,
     hull: Option<(Shape, Option<String>, u8)>,
     cfg: &SolveConfig,
@@ -291,7 +312,7 @@ fn assemble(
     for c in children {
         dims.insert(c.clone(), (child_laid[c].size, child_margins[c]));
     }
-    let placed = solve_cluster(children, &dims, cons, cfg, diags);
+    let placed = solve_cluster(children, &dims, cons, connected, cfg, diags);
     let (min_x, min_y, max_x, max_y) = bounds(&placed, children);
     let dx = inset - min_x;
     let dy = inset - min_y;
@@ -353,12 +374,14 @@ fn assemble(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn solve_box(
     id: &BoxId,
     boxes: &BTreeMap<BoxId, &Box>,
     sizes: &SizeMap,
     cfg: &SolveConfig,
     cfor: &BTreeMap<Option<BoxId>, Vec<Constraint>>,
+    connected: &BTreeSet<(BoxId, BoxId)>,
     diags: &mut Vec<Diagnostic>,
 ) -> Laid {
     let b = boxes[id];
@@ -395,7 +418,10 @@ fn solve_box(
     let mut child_laid = BTreeMap::new();
     let mut child_margins = BTreeMap::new();
     for c in &b.children {
-        child_laid.insert(c.clone(), solve_box(c, boxes, sizes, cfg, cfor, diags));
+        child_laid.insert(
+            c.clone(),
+            solve_box(c, boxes, sizes, cfg, cfor, connected, diags),
+        );
         child_margins.insert(c.clone(), boxes[c].margin);
     }
     let mut cons = axis_constraints(b);
@@ -408,6 +434,7 @@ fn solve_box(
         &child_laid,
         &child_margins,
         &cons,
+        connected,
         inset,
         Some((b.shape, b.title.clone(), b.depth)),
         cfg,
@@ -429,17 +456,26 @@ fn solve_box(
 }
 
 pub fn solve(scene: &Scene, sizes: &SizeMap, cfg: &SolveConfig) -> (Solved, Vec<Diagnostic>) {
-    let (solved, _rects, diags) = solve_with_rects(scene, sizes, cfg);
+    let (solved, _rects, diags) = solve_with_rects(scene, &[], sizes, cfg);
     (solved, diags)
 }
 
 pub(super) fn solve_with_rects(
     scene: &Scene,
+    edges: &[(BoxId, BoxId)],
     sizes: &SizeMap,
     cfg: &SolveConfig,
 ) -> (Solved, BTreeMap<BoxId, Rect>, Vec<Diagnostic>) {
     let mut diags = vec![];
     let boxes: BTreeMap<BoxId, &Box> = scene.boxes.iter().map(|b| (b.id.clone(), b)).collect();
+    // Unordered node<->node edge-connected pairs, so the layout can floor the
+    // `Place` gap between associated boxes. Group-as-endpoint edges are ignored.
+    let mut connected: BTreeSet<(BoxId, BoxId)> = BTreeSet::new();
+    for (a, b) in edges {
+        if matches!(a, BoxId::Node(_)) && matches!(b, BoxId::Node(_)) {
+            connected.insert(pair(a, b));
+        }
+    }
     // parent[child] = its group; roots have no parent.
     let mut parent: BTreeMap<BoxId, BoxId> = BTreeMap::new();
     for b in &scene.boxes {
@@ -480,7 +516,7 @@ pub(super) fn solve_with_rects(
     for r in &roots {
         child_laid.insert(
             r.clone(),
-            solve_box(r, &boxes, sizes, cfg, &cfor, &mut diags),
+            solve_box(r, &boxes, sizes, cfg, &cfor, &connected, &mut diags),
         );
         child_margins.insert(r.clone(), boxes[r].margin);
     }
@@ -490,6 +526,7 @@ pub(super) fn solve_with_rects(
         &child_laid,
         &child_margins,
         &root_cons,
+        &connected,
         0.0,
         None,
         cfg,
@@ -748,6 +785,7 @@ mod tests {
         };
         let (_solved, rects, diags) = solve_with_rects(
             &scene,
+            &[],
             &sizes(&["a", "b"], 200.0, 90.0),
             &SolveConfig::default(),
         );
@@ -758,5 +796,119 @@ mod tests {
         // The group frame is keyed by its BoxId and equals the "Users" frame @ 0,0 232x228.
         let g = rects[&BoxId::Group(0)];
         assert_eq!((g.x, g.y, g.w, g.h), (0.0, 0.0, 232.0, 228.0));
+    }
+
+    #[test]
+    fn connected_adjacent_pair_gets_min_assoc_gap() {
+        let scene = Scene {
+            boxes: vec![leaf("a"), leaf("b")],
+            constraints: vec![Constraint::Place {
+                a: BoxId::Node("a".into()),
+                b: BoxId::Node("b".into()),
+                dir: Direction::LeftOf,
+            }],
+        };
+        let edges = vec![(BoxId::Node("a".into()), BoxId::Node("b".into()))];
+        let (_solved, rects, diags) = solve_with_rects(
+            &scene,
+            &edges,
+            &sizes(&["a", "b"], 200.0, 90.0),
+            &SolveConfig::default(),
+        );
+        assert!(diags.is_empty());
+        // `a left of b` with an a<->b edge: facing-border gap is floored at MIN_ASSOC (72),
+        // so b.x = a.w + 72 = 272 rather than the 216 (16px margin) of the unconnected case.
+        let a = rects[&BoxId::Node("a".into())];
+        let b = rects[&BoxId::Node("b".into())];
+        let gap = b.x - (a.x + a.w);
+        assert!(gap >= MIN_ASSOC, "gap {gap} should be >= {MIN_ASSOC}");
+        assert_eq!(gap, MIN_ASSOC);
+    }
+
+    #[test]
+    fn unconnected_adjacent_pair_keeps_margin_gap() {
+        let scene = Scene {
+            boxes: vec![leaf("a"), leaf("b")],
+            constraints: vec![Constraint::Place {
+                a: BoxId::Node("a".into()),
+                b: BoxId::Node("b".into()),
+                dir: Direction::LeftOf,
+            }],
+        };
+        let (_solved, rects, diags) = solve_with_rects(
+            &scene,
+            &[],
+            &sizes(&["a", "b"], 200.0, 90.0),
+            &SolveConfig::default(),
+        );
+        assert!(diags.is_empty());
+        // No edge: the gap stays at the Medium margin value (16).
+        let a = rects[&BoxId::Node("a".into())];
+        let b = rects[&BoxId::Node("b".into())];
+        let gap = b.x - (a.x + a.w);
+        assert_eq!(gap, SolveConfig::default().margin(Margin::Medium));
+    }
+
+    #[test]
+    fn group_flow_connected_siblings_spread() {
+        use crate::syntax::Axis;
+        // Two column-flow siblings inside a frame, connected by an edge. The
+        // group-axis-flow Place chain floors the vertical gap at MIN_ASSOC.
+        let scene = Scene {
+            boxes: vec![
+                leaf("a"),
+                leaf("b"),
+                group(
+                    0,
+                    vec![BoxId::Node("a".into()), BoxId::Node("b".into())],
+                    Some(Axis::Column),
+                    Shape::Frame,
+                    "Users",
+                ),
+            ],
+            constraints: vec![],
+        };
+        let edges = vec![(BoxId::Node("a".into()), BoxId::Node("b".into()))];
+        let (_solved, rects, diags) = solve_with_rects(
+            &scene,
+            &edges,
+            &sizes(&["a", "b"], 200.0, 90.0),
+            &SolveConfig::default(),
+        );
+        assert!(diags.is_empty());
+        let a = rects[&BoxId::Node("a".into())];
+        let b = rects[&BoxId::Node("b".into())];
+        let gap = b.y - (a.y + a.h);
+        assert_eq!(gap, MIN_ASSOC);
+    }
+
+    #[test]
+    fn min_assoc_layout_is_deterministic() {
+        use crate::syntax::Axis;
+        let scene = Scene {
+            boxes: vec![
+                leaf("a"),
+                leaf("b"),
+                group(
+                    0,
+                    vec![BoxId::Node("a".into()), BoxId::Node("b".into())],
+                    Some(Axis::Column),
+                    Shape::Frame,
+                    "Users",
+                ),
+            ],
+            constraints: vec![],
+        };
+        let edges = vec![(BoxId::Node("a".into()), BoxId::Node("b".into()))];
+        let run = || {
+            solve_with_rects(
+                &scene,
+                &edges,
+                &sizes(&["a", "b"], 200.0, 90.0),
+                &SolveConfig::default(),
+            )
+            .1
+        };
+        assert_eq!(run(), run());
     }
 }

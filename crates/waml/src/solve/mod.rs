@@ -211,7 +211,7 @@ pub fn solve_diagram(
     cfg: &SolveConfig,
 ) -> (Solved, Vec<Diagnostic>) {
     let (scene, mut diags) = resolve::resolve(diagram);
-    let (mut solved, rects, mut geo_diags) = geometry::solve_with_rects(&scene, sizes, cfg);
+    let (mut solved, rects, mut geo_diags) = geometry::solve_with_rects(&scene, edges, sizes, cfg);
     diags.append(&mut geo_diags);
     solved.routes = route::route(&scene.boxes, &rects, edges, cfg);
     (solved, diags)
