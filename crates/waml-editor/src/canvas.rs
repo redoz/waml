@@ -20,13 +20,10 @@ script_mod! {
     // Edge pen: stroke the segment as an actual line, NOT a filled rect. The
     // segment's axis-aligned bounding box has the two endpoints at opposite
     // corners, so the edge is one of the AABB's two diagonals; `flip` selects
-    // which (0 = top-left->bottom-right, 1 = top-right->bottom-left). Filling
-    // the whole AABB (the old `draw_edge: DrawColor`) painted a solid grey
-    // rectangle for every diagonal edge -- fine for the orthogonal `## Layout`
-    // case (thin AABB) but a huge grey blob under the stress-default layout,
-    // whose edges run diagonally. Per-instance uniforms batch-collapse on this
-    // fork, so direction is baked per-pen and the canvas routes each edge to
-    // the pen matching its slope sign.
+    // which (0 = top-left->bottom-right). Routed segments are axis-aligned, so
+    // the single `draw_edge_down` pen (flip = 0) draws them all; the
+    // thickness-inflated quad hides the zero slope. Filling the whole AABB (the
+    // old `draw_edge: DrawColor`) painted a solid grey blob for diagonal edges.
     mod.draw.EdgeLine = mod.draw.DrawColor{
         flip: uniform(0.0)
         zoom: uniform(1.0)
@@ -58,7 +55,6 @@ script_mod! {
         // the fill differs from the frame defaults, so we override just `color`.
         draw_node: mod.draw.AccentFrame{ color: atlas.field_bg }
         draw_edge_down: mod.draw.EdgeLine{ color: atlas.text_dim }
-        draw_edge_up: mod.draw.EdgeLine{ color: atlas.text_dim }
         // Flat fill pen for card compartment dividers, the header accent wash, and
         // port nubs. The renderer pushes `color` (accent/dim + alpha) per draw.
         draw_rule +: { color: atlas.text_dim }
@@ -145,9 +141,6 @@ pub struct GraphCanvas {
     draw_edge_down: DrawColor,
     #[redraw]
     #[live]
-    draw_edge_up: DrawColor,
-    #[redraw]
-    #[live]
     draw_rule: DrawColor,
     #[redraw]
     #[live]
@@ -204,36 +197,6 @@ impl Default for Camera {
             zoom: 1.0,
         }
     }
-}
-
-/// Intersection of the center-to-center line from `from` to `to` with `from`'s
-/// border, in world coordinates. Operates on `waml::solve::Rect` (`x`/`y`/`w`/`h`),
-/// the type `SceneEdge` carries. Used to clip edge endpoints to node borders.
-fn border_point(from: waml::solve::Rect, to: waml::solve::Rect) -> (f64, f64) {
-    let fcx = from.x + from.w * 0.5;
-    let fcy = from.y + from.h * 0.5;
-    let tcx = to.x + to.w * 0.5;
-    let tcy = to.y + to.h * 0.5;
-    let dx = tcx - fcx;
-    let dy = tcy - fcy;
-    if dx == 0.0 && dy == 0.0 {
-        return (fcx, fcy);
-    }
-    let hw = from.w * 0.5;
-    let hh = from.h * 0.5;
-    // Scale the direction vector to the nearest border along x and y, take the closer.
-    let tx = if dx != 0.0 {
-        (hw / dx).abs()
-    } else {
-        f64::INFINITY
-    };
-    let ty = if dy != 0.0 {
-        (hh / dy).abs()
-    } else {
-        f64::INFINITY
-    };
-    let t = tx.min(ty);
-    (fcx + dx * t, fcy + dy * t)
 }
 
 /// A primary press counts as a *click* (not a pan) only if the pointer stayed
@@ -504,53 +467,36 @@ impl Widget for GraphCanvas {
             }
         }
 
-        // Edge pens: feed zoom so the stroke thickens with the box, and bake
-        // each pen's diagonal direction (per-instance uniforms batch-collapse on
-        // this fork, so the two pens carry the two constant `flip` values).
+        // Edge pen: feed zoom so the stroke thickens with the box, and bake the
+        // down-diagonal direction (per-instance uniforms batch-collapse on this
+        // fork). Every routed segment is axis-aligned, so one pen suffices.
         self.draw_edge_down.set_uniform(cx, live_id!(flip), &[0.0]);
         self.draw_edge_down
             .set_uniform(cx, live_id!(zoom), &[zoom as f32]);
-        self.draw_edge_up.set_uniform(cx, live_id!(flip), &[1.0]);
-        self.draw_edge_up
-            .set_uniform(cx, live_id!(zoom), &[zoom as f32]);
 
-        // Edges: the segment from source border to target border, stroked along
-        // the diagonal of its bounding box (see EdgeLine). Arrow/adornment
-        // styling is a fast-follow.
+        // Edges: stroke each consecutive point pair of the routed orthogonal
+        // polyline as its own axis-aligned EdgeLine quad. Orthogonal segments
+        // are axis-aligned, so a single down-diagonal pen renders them all; the
+        // thickness-inflated bounding-box quad hides the (zero) slope. Arrow/
+        // adornment styling is a fast-follow.
+        let thickness = 2.0 * zoom;
         for edge in &self.scene.edges {
-            let (sx, sy) = border_point(edge.source, edge.target);
-            let (tx, ty) = border_point(edge.target, edge.source);
-            let (a0, a1) = self.camera.world_to_local(sx, sy);
-            let (b0, b1) = self.camera.world_to_local(tx, ty);
-            let a = dvec2(rect.pos.x + a0, rect.pos.y + a1);
-            let b = dvec2(rect.pos.x + b0, rect.pos.y + b1);
-            let len = ((b.x - a.x).powi(2) + (b.y - a.y).powi(2)).sqrt();
-            if len < 1e-3 {
-                continue;
+            for pair in edge.points.windows(2) {
+                let (a0, a1) = self.camera.world_to_local(pair[0].0, pair[0].1);
+                let (b0, b1) = self.camera.world_to_local(pair[1].0, pair[1].1);
+                let a = dvec2(rect.pos.x + a0, rect.pos.y + a1);
+                let b = dvec2(rect.pos.x + b0, rect.pos.y + b1);
+                let min = dvec2(a.x.min(b.x), a.y.min(b.y));
+                let max = dvec2(a.x.max(b.x), a.y.max(b.y));
+                let seg = Rect {
+                    pos: min,
+                    size: dvec2(
+                        (max.x - min.x).max(thickness),
+                        (max.y - min.y).max(thickness),
+                    ),
+                };
+                self.draw_edge_down.draw_abs(cx, seg);
             }
-            let thickness = 2.0 * zoom;
-            // Bounding box of the segment: the two endpoints sit at opposite
-            // corners, so EdgeLine strokes the matching diagonal. Inflated to at
-            // least `thickness` per axis so axis-aligned edges keep a body.
-            let min = dvec2(a.x.min(b.x), a.y.min(b.y));
-            let max = dvec2(a.x.max(b.x), a.y.max(b.y));
-            let seg = Rect {
-                pos: min,
-                size: dvec2(
-                    (max.x - min.x).max(thickness),
-                    (max.y - min.y).max(thickness),
-                ),
-            };
-            // Route to the pen whose baked diagonal matches this segment's
-            // slope: same-sign deltas run top-left->bottom-right (down), opposite
-            // signs run top-right->bottom-left (up). Axis-aligned edges (one zero
-            // delta) fall to `down`; the thickness-inflated quad hides the slope.
-            let pen = if (b.x - a.x) * (b.y - a.y) >= 0.0 {
-                &mut self.draw_edge_down
-            } else {
-                &mut self.draw_edge_up
-            };
-            pen.draw_abs(cx, seg);
         }
 
         // Nodes: drawn last so they sit on top of groups and edges. Cloned out
@@ -742,46 +688,6 @@ impl GraphCanvas {
 mod tests {
     use super::*;
     use waml::solve::Rect as WorldRect;
-
-    #[test]
-    fn border_point_exits_on_the_side_facing_the_target() {
-        // 100x100 box at origin; target far to the right -> exit on right edge x=100.
-        let from = WorldRect {
-            x: 0.0,
-            y: 0.0,
-            w: 100.0,
-            h: 100.0,
-        };
-        let to = WorldRect {
-            x: 500.0,
-            y: 0.0,
-            w: 100.0,
-            h: 100.0,
-        };
-        let (x, y) = border_point(from, to);
-        assert!((x - 100.0).abs() < 1e-6, "x = {x}");
-        assert!((y - 50.0).abs() < 1e-6, "y = {y}");
-    }
-
-    #[test]
-    fn border_point_handles_vertical_stack() {
-        // Target directly below -> exit on bottom edge y=100, centered x=50.
-        let from = WorldRect {
-            x: 0.0,
-            y: 0.0,
-            w: 100.0,
-            h: 100.0,
-        };
-        let to = WorldRect {
-            x: 0.0,
-            y: 400.0,
-            w: 100.0,
-            h: 100.0,
-        };
-        let (x, y) = border_point(from, to);
-        assert!((x - 50.0).abs() < 1e-6, "x = {x}");
-        assert!((y - 100.0).abs() < 1e-6, "y = {y}");
-    }
 
     #[test]
     fn node_at_hits_the_topmost_node_under_the_point() {
