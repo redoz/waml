@@ -2,7 +2,7 @@
 //! See docs/superpowers/specs/2026-07-22-orthogonal-edge-router-design.md.
 
 use super::{Box, BoxId, Rect, Route, SolveConfig};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 fn key_of(id: &BoxId) -> Option<String> {
     match id {
@@ -19,11 +19,12 @@ fn fallback_l(src: Rect, tgt: Rect) -> Vec<P> {
 
 /// Route every leaf-to-leaf edge as an orthogonal polyline avoiding obstacles.
 pub(super) fn route(
-    _boxes: &[Box],
+    boxes: &[Box],
     rects: &BTreeMap<BoxId, Rect>,
     edges: &[(BoxId, BoxId)],
     _cfg: &SolveConfig,
 ) -> Vec<Route> {
+    let membership = build_membership(boxes);
     let mut routes: Vec<Route> = Vec::new();
     for (s, t) in edges {
         if s == t {
@@ -35,7 +36,11 @@ pub(super) fn route(
         let (Some(&src), Some(&tgt)) = (rects.get(s), rects.get(t)) else {
             continue; // endpoint not in this diagram
         };
-        let obstacles = leaf_obstacles(rects, &[s.clone(), t.clone()]);
+        // Leaf rects are always obstacles; a group is an obstacle for THIS edge
+        // only when neither endpoint is one of its (transitive) members.
+        let mut obstacles = leaf_obstacles(rects, &[s.clone(), t.clone()]);
+        obstacles.extend(group_obstacles(rects, &membership, s, t));
+        obstacles.sort_by(|a, b| a.id.cmp(&b.id)); // deterministic order
         let (ovg, srcv, tgtv) = build_ovg(&obstacles, src, tgt);
         let goal = (tgt.x + tgt.w / 2.0, tgt.y + tgt.h / 2.0);
         let points = astar(&ovg, &srcv, &tgtv, goal).unwrap_or_else(|| fallback_l(src, tgt));
@@ -48,6 +53,61 @@ pub(super) fn route(
     hub_spread(&mut routes, rects);
     nudge(&mut routes);
     routes
+}
+
+/// Transitive leaf membership per group, taken from the `Box` forest child
+/// lists — NEVER inferred from rect overlap.
+struct Membership {
+    members: BTreeMap<BoxId, BTreeSet<BoxId>>,
+}
+
+impl Membership {
+    fn is_member(&self, group: &BoxId, leaf: &BoxId) -> bool {
+        self.members.get(group).is_some_and(|s| s.contains(leaf))
+    }
+}
+
+fn build_membership(boxes: &[Box]) -> Membership {
+    let by_id: BTreeMap<BoxId, &Box> = boxes.iter().map(|b| (b.id.clone(), b)).collect();
+    fn leaves(id: &BoxId, by_id: &BTreeMap<BoxId, &Box>, out: &mut BTreeSet<BoxId>) {
+        let Some(b) = by_id.get(id) else { return };
+        for c in &b.children {
+            if matches!(c, BoxId::Node(_)) {
+                out.insert(c.clone());
+            }
+            leaves(c, by_id, out);
+        }
+    }
+    let mut members = BTreeMap::new();
+    for b in boxes {
+        if matches!(b.id, BoxId::Group(_)) {
+            let mut set = BTreeSet::new();
+            leaves(&b.id, &by_id, &mut set);
+            members.insert(b.id.clone(), set);
+        }
+    }
+    Membership { members }
+}
+
+/// Group rects that block THIS edge: a group is an obstacle only when neither
+/// endpoint is one of its (transitive) members.
+fn group_obstacles(
+    rects: &BTreeMap<BoxId, Rect>,
+    membership: &Membership,
+    s: &BoxId,
+    t: &BoxId,
+) -> Vec<Obstacle> {
+    let mut out: Vec<Obstacle> = rects
+        .iter()
+        .filter(|(id, _)| matches!(id, BoxId::Group(_)))
+        .filter(|(id, _)| !membership.is_member(id, s) && !membership.is_member(id, t))
+        .map(|(id, r)| Obstacle {
+            id: id.clone(),
+            rect: *r,
+        })
+        .collect();
+    out.sort_by(|a, b| a.id.cmp(&b.id));
+    out
 }
 
 const ROUTE_MARGIN: f64 = 12.0;
@@ -830,5 +890,118 @@ mod tests {
         assert_ne!(a[0].points, a[1].points, "parallels separated");
         // silence unused import warning in this fixture-heavy module:
         let _ = Axis::Row;
+    }
+
+    fn groupbox(id: u32, children: Vec<BoxId>) -> Box {
+        Box {
+            id: BoxId::Group(id),
+            kind: BoxKind::Group,
+            children,
+            axis: Some(Axis::Column),
+            shape: Shape::Frame,
+            margin: Margin::Medium,
+            flags: FlagSet::default(),
+            title: Some("G".into()),
+            depth: 0,
+        }
+    }
+
+    #[test]
+    fn membership_is_transitive_via_child_lists() {
+        let boxes = vec![
+            leafbox("a"),
+            groupbox(1, vec![BoxId::Node("a".into())]),
+            groupbox(0, vec![BoxId::Group(1)]),
+        ];
+        let m = build_membership(&boxes);
+        assert!(m.is_member(&BoxId::Group(0), &BoxId::Node("a".into())));
+        assert!(m.is_member(&BoxId::Group(1), &BoxId::Node("a".into())));
+        assert!(!m.is_member(&BoxId::Group(0), &BoxId::Node("b".into())));
+    }
+
+    #[test]
+    fn member_edge_crosses_group_frame_freely() {
+        // "a" inside g0, "b" outside; the group is transparent to a->b.
+        let boxes = vec![
+            leafbox("a"),
+            leafbox("b"),
+            groupbox(0, vec![BoxId::Node("a".into())]),
+        ];
+        let mut rects: BTreeMap<BoxId, Rect> = BTreeMap::new();
+        rects.insert(BoxId::Node("a".into()), nrect(20.0, 20.0, 100.0, 60.0));
+        rects.insert(BoxId::Group(0), nrect(0.0, 0.0, 140.0, 100.0));
+        rects.insert(BoxId::Node("b".into()), nrect(300.0, 20.0, 100.0, 60.0));
+        let edges = vec![(BoxId::Node("a".into()), BoxId::Node("b".into()))];
+        let out = route(&boxes, &rects, &edges, &SolveConfig::default());
+        assert_eq!(out.len(), 1);
+        assert_eq!(
+            out[0].points.len(),
+            2,
+            "member edge is straight: {:?}",
+            out[0].points
+        );
+    }
+
+    #[test]
+    fn non_member_edge_detours_around_group() {
+        let boxes = vec![
+            leafbox("a"),
+            leafbox("b"),
+            leafbox("x"),
+            groupbox(0, vec![BoxId::Node("x".into())]),
+        ];
+        let mut rects: BTreeMap<BoxId, Rect> = BTreeMap::new();
+        rects.insert(BoxId::Node("a".into()), nrect(0.0, 0.0, 100.0, 60.0));
+        rects.insert(BoxId::Node("b".into()), nrect(400.0, 0.0, 100.0, 60.0));
+        rects.insert(BoxId::Node("x".into()), nrect(200.0, -10.0, 80.0, 40.0));
+        rects.insert(BoxId::Group(0), nrect(180.0, -40.0, 120.0, 140.0));
+        let edges = vec![(BoxId::Node("a".into()), BoxId::Node("b".into()))];
+        let out = route(&boxes, &rects, &edges, &SolveConfig::default());
+        assert_eq!(out.len(), 1);
+        assert!(
+            out[0].points.len() >= 4,
+            "non-member edge detours: {:?}",
+            out[0].points
+        );
+        let inf = inflate(nrect(180.0, -40.0, 120.0, 140.0), ROUTE_MARGIN);
+        for &(px, py) in &out[0].points {
+            assert!(!strictly_inside(&inf, px, py), "pierces group at ({px},{py})");
+        }
+    }
+
+    #[test]
+    fn membership_by_child_list_not_rect_overlap() {
+        // "a"'s rect sits INSIDE g0's rect but "a" is NOT a child of g0, so
+        // membership-by-child-list must keep g0 a solid obstacle for the a->b
+        // edge. Asserted directly on membership + group_obstacles (NOT on a
+        // route point count): a non-member endpoint whose rect is deep inside a
+        // group's rect is geometrically landlocked, so route() correctly falls
+        // back to a straight segment — the invariant under test is *containment
+        // decided by child list, never rect overlap*, which is what we check.
+        let boxes = vec![
+            leafbox("a"),
+            leafbox("b"),
+            leafbox("x"),
+            groupbox(0, vec![BoxId::Node("x".into())]),
+        ];
+        let mut rects: BTreeMap<BoxId, Rect> = BTreeMap::new();
+        rects.insert(BoxId::Group(0), nrect(0.0, 0.0, 260.0, 200.0));
+        rects.insert(BoxId::Node("x".into()), nrect(10.0, 10.0, 60.0, 40.0));
+        rects.insert(BoxId::Node("a".into()), nrect(90.0, 80.0, 60.0, 40.0)); // rect inside g0
+        rects.insert(BoxId::Node("b".into()), nrect(500.0, 80.0, 60.0, 40.0));
+        let membership = build_membership(&boxes);
+        // Rect overlap does NOT make "a" a member of g0.
+        assert!(!membership.is_member(&BoxId::Group(0), &BoxId::Node("a".into())));
+        // Therefore g0 stays an obstacle for the a->b edge (child list decides).
+        let obs = group_obstacles(
+            &rects,
+            &membership,
+            &BoxId::Node("a".into()),
+            &BoxId::Node("b".into()),
+        );
+        assert!(
+            obs.iter().any(|o| o.id == BoxId::Group(0)),
+            "g0 must remain an obstacle: membership is by child list, not rect overlap"
+        );
     }
 }
