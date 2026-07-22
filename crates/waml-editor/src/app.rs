@@ -1,4 +1,4 @@
-use crate::caption_button::CaptionButtonWidgetRefExt;
+use crate::icon_button::IconButtonWidgetRefExt;
 use crate::doc_tabs::{OpenTabs, TabKind};
 use crate::fps_meter::FpsMeter;
 use crate::inspector::{diagram_elements, Subject};
@@ -30,7 +30,7 @@ script_mod! {
     use mod.widgets.StartScreen
     use mod.widgets.PopupRoot
     use mod.widgets.LogoMark
-    use mod.widgets.CaptionButton
+    use mod.widgets.IconButton
 
     startup() do #(App::script_component(vm)){
         ui: Root{
@@ -122,7 +122,12 @@ script_mod! {
                     // starts hidden -- `App` flips it visible only while a model
                     // is open (see `show_editor` / `show_start_screen`). Save is
                     // gone: the editor autosaves.
-                    menu_btn := CaptionButton{ shape: 0.0 margin: Inset{left: 1.0, right: 3.0} visible: false }
+                    // The 32px button is seated by the bar's `align: y:0.5`; the
+                    // asymmetric `top: 2` margin (vs `bottom: 0`) biases it 1px
+                    // BELOW the geometric centre -- at a true centre the burger
+                    // reads optically high, so the layout, not the button, carries
+                    // the 1px down-nudge. Left/right hold the 292 edge (252 + 40).
+                    menu_btn := IconButton{ margin: Inset{left: 1.0, right: 3.0, top: 2.0} visible: false }
                     doc_tabs := DocTabs{
                         width: Fill
                         height: Fill
@@ -682,6 +687,10 @@ impl App {
         self.ui.widget(cx, ids!(main_column)).set_visible(cx, true);
         // Caption burger + doc-tab strip belong to an open model.
         self.ui.widget(cx, ids!(menu_btn)).set_visible(cx, true);
+        self.ui
+            .widget(cx, ids!(menu_btn))
+            .as_icon_button()
+            .set_icon(cx, crate::icons::Icon::Menu);
         if let Some(mut doc_tabs) = self
             .ui
             .widget(cx, ids!(doc_tabs))
@@ -1018,7 +1027,7 @@ impl MatchEvent for App {
         if let Some(press) = self
             .ui
             .widget(cx, ids!(menu_btn))
-            .as_caption_button()
+            .as_icon_button()
             .pressed(actions)
         {
             // Burger drop-down: routed through the single `popup_root` authority.
@@ -1031,14 +1040,22 @@ impl MatchEvent for App {
             // No caption clamp: `MenuPopup` draws in the window overlay, so the
             // card renders over the caption band instead of being clipped at the
             // body's top edge.
+            //
+            // The burger is a 32px `IconButton` centred in the 44px caption bar,
+            // so its own bottom edge sits well inside the band. Anchor the card
+            // off the CAPTION-BAR bottom instead (button centre + half the bar
+            // height), so the drop keeps the same gap regardless of the button's
+            // height -- deriving it from `btn.size.y` alone let the shorter box
+            // pull the card up into the caption (read as attaching too close).
             let btn = self
                 .ui
                 .widget(cx, ids!(menu_btn))
-                .as_caption_button()
+                .as_icon_button()
                 .rect();
             let anchor = dvec2(
                 btn.pos.x + crate::popup::menu::MENU_INDENT_X,
-                btn.pos.y + btn.size.y + crate::popup::menu::MENU_GAP,
+                btn.pos.y + btn.size.y * 0.5 + crate::popup::menu::CAPTION_H * 0.5
+                    + crate::popup::menu::MENU_GAP,
             );
             let bounds = self.window_bounds(cx);
             if let Some(mut pr) = self
@@ -1061,8 +1078,8 @@ impl MatchEvent for App {
             // tag's Closed (dismiss OR commit) in handle_actions (Step 7).
             self.ui
                 .widget(cx, ids!(menu_btn))
-                .as_caption_button()
-                .set_held(cx, true);
+                .as_icon_button()
+                .set_active(cx, true);
         }
 
         // Popup outcomes (tag-filtered off the single action queue).
@@ -1078,8 +1095,8 @@ impl MatchEvent for App {
             if burger_closed.is_some() {
                 self.ui
                     .widget(cx, ids!(menu_btn))
-                    .as_caption_button()
-                    .set_held(cx, false);
+                    .as_icon_button()
+                    .set_active(cx, false);
             }
             if let Some(PopupResult::Invoked(id)) = burger_closed {
                 if id == live_id!(new_model) {
@@ -1582,6 +1599,9 @@ impl AppMain for App {
         // `element_bar` mounts `SelectBox` as a child, and the DSL resolves
         // `mod.widgets.*` eagerly at `use`-time, not lazily.
         crate::select_box::script_mod(vm);
+        // `IconButton` must register before `inspector_panel` (the inspector
+        // mounts `IconButton` children) and before app's own DSL loads.
+        crate::icon_button::script_mod(vm);
         crate::inspector_panel::script_mod(vm);
         crate::doc_tabs::script_mod(vm);
         crate::diagram_switcher::script_mod(vm);
@@ -1591,7 +1611,6 @@ impl AppMain for App {
         crate::statusbar::script_mod(vm);
         crate::logo::script_mod(vm);
         crate::action_link::script_mod(vm);
-        crate::caption_button::script_mod(vm);
         crate::recent_row::script_mod(vm);
         crate::start_screen::script_mod(vm);
         // Registered so the design surface compiles into the crate, but never
@@ -1705,8 +1724,9 @@ impl AppMain for App {
             let over_btn = self
                 .ui
                 .widget(cx, ids!(menu_btn))
-                .as_caption_button()
-                .hits(dq.abs);
+                .as_icon_button()
+                .rect()
+                .contains(dq.abs);
             // While the drop-down is open, treat the WHOLE caption as client
             // area. The header is otherwise an OS window-drag region, so a press
             // there starts a drag and never reaches the app as a click -- the
