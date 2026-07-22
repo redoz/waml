@@ -7,6 +7,7 @@ use crate::popup::base::PopupResult;
 use crate::popup::root::{MenuOpen, PopupRoot, PopupSpec, RadialOpen};
 use crate::scene::{build_focus_scene, build_scene};
 use makepad_widgets::*;
+use std::collections::HashSet;
 use std::path::Path;
 use waml::model::Model;
 
@@ -289,6 +290,12 @@ pub struct App {
     /// interaction and maps it to the tint the logo renders. See `fps_meter.rs`.
     #[rust]
     fps_meter: FpsMeter,
+    /// Ephemeral set of node keys whose card body is expanded (all members
+    /// shown) rather than capped at `card::MAX_BODY_ROWS`. Never persisted to the
+    /// model; cleared when the open diagram changes, held across same-diagram
+    /// rebuilds. See `GraphCanvasAction::ToggleExpand` handling.
+    #[rust]
+    expanded: HashSet<String>,
 }
 
 impl App {
@@ -322,7 +329,7 @@ impl App {
                     .diagrams
                     .iter()
                     .find(|d| d.key == active.key)
-                    .map(|d| build_scene(&self.model, d));
+                    .map(|d| build_scene(&self.model, d, &self.expanded));
                 if let Some((scene, diags)) = built {
                     for d in &diags {
                         log!("diagnostic: {d:?}");
@@ -569,7 +576,7 @@ impl App {
         // with an empty canvas and no active diagram tab.
         match crate::cli::select_diagram(&self.model, wanted_diagram) {
             Some(diagram) => {
-                let (scene, diags) = build_scene(&self.model, diagram);
+                let (scene, diags) = build_scene(&self.model, diagram, &self.expanded);
                 for d in &diags {
                     log!("diagnostic: {d:?}");
                 }

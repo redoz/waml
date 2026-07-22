@@ -185,10 +185,14 @@ fn stress_default(model: &Model, sizes: &SizeMap) -> Solved {
 }
 
 /// Solve `diagram` against `model` and flatten the result into a `Scene`.
-pub fn build_scene(model: &Model, diagram: &Diagram) -> (Scene, Vec<Diagnostic>) {
+pub fn build_scene(
+    model: &Model,
+    diagram: &Diagram,
+    expanded: &std::collections::HashSet<String>,
+) -> (Scene, Vec<Diagnostic>) {
     use std::collections::BTreeMap;
 
-    let sizes = crate::sizing::size_map(model, diagram);
+    let sizes = crate::sizing::size_map(model, diagram, expanded);
     let edges: Vec<(BoxId, BoxId)> = model
         .edges
         .iter()
@@ -234,6 +238,7 @@ pub fn build_scene(model: &Model, diagram: &Diagram) -> (Scene, Vec<Diagnostic>)
         node.rect = *rect;
         node.emphasized = flags.emphasized;
         node.collapsed = flags.collapsed;
+        node.expanded = expanded.contains(key);
         nodes.push(node);
     }
 
@@ -351,7 +356,11 @@ mod tests {
     #[test]
     fn scene_has_both_nodes_with_titles() {
         let model = mini();
-        let (scene, diags) = build_scene(&model, &model.diagrams[0]);
+        let (scene, diags) = build_scene(
+            &model,
+            &model.diagrams[0],
+            &std::collections::HashSet::new(),
+        );
         assert!(diags.is_empty(), "unexpected diagnostics: {diags:?}");
 
         let mut titles: Vec<(&str, &str)> = scene
@@ -432,7 +441,11 @@ mod tests {
     #[test]
     fn build_scene_nodes_carry_attribute_rows() {
         let model = mini();
-        let (scene, _) = build_scene(&model, &model.diagrams[0]);
+        let (scene, _) = build_scene(
+            &model,
+            &model.diagrams[0],
+            &std::collections::HashSet::new(),
+        );
         let order = scene.nodes.iter().find(|n| n.key == "order").unwrap();
         assert_eq!(order.attributes.len(), 2);
         assert_eq!(order.attributes[0].name, "id");
@@ -441,7 +454,11 @@ mod tests {
     #[test]
     fn scene_nodes_carry_their_model_element_type() {
         let model = mini();
-        let (scene, _) = build_scene(&model, &model.diagrams[0]);
+        let (scene, _) = build_scene(
+            &model,
+            &model.diagrams[0],
+            &std::collections::HashSet::new(),
+        );
         let order = scene.nodes.iter().find(|n| n.key == "order").unwrap();
         let gateway = scene
             .nodes
@@ -461,7 +478,11 @@ mod tests {
     #[test]
     fn scene_edge_endpoints_match_node_rects() {
         let model = mini();
-        let (scene, _) = build_scene(&model, &model.diagrams[0]);
+        let (scene, _) = build_scene(
+            &model,
+            &model.diagrams[0],
+            &std::collections::HashSet::new(),
+        );
         assert_eq!(scene.edges.len(), 1);
         let edge = &scene.edges[0];
         assert_eq!(edge.kind, RelationshipKind::Associates);
@@ -476,7 +497,11 @@ mod tests {
     #[test]
     fn layout_places_order_left_of_customer() {
         let model = mini();
-        let (scene, _) = build_scene(&model, &model.diagrams[0]);
+        let (scene, _) = build_scene(
+            &model,
+            &model.diagrams[0],
+            &std::collections::HashSet::new(),
+        );
         let order = scene.nodes.iter().find(|n| n.key == "order").unwrap();
         let customer = scene.nodes.iter().find(|n| n.key == "customer").unwrap();
         // "- [Order] left of [Customer]" => order's right edge is left of customer's left edge.
@@ -486,7 +511,11 @@ mod tests {
     #[test]
     fn bounding_box_covers_all_nodes() {
         let model = mini();
-        let (scene, _) = build_scene(&model, &model.diagrams[0]);
+        let (scene, _) = build_scene(
+            &model,
+            &model.diagrams[0],
+            &std::collections::HashSet::new(),
+        );
         let bbox = bounding_box(&scene).unwrap();
         for node in &scene.nodes {
             assert!(node.rect.x >= bbox.x);
@@ -513,5 +542,17 @@ mod tests {
         let node = model.nodes.iter().find(|n| n.key == "order").unwrap();
         let projected = project_scene_node(&model, node);
         assert!(!projected.expanded);
+    }
+
+    #[test]
+    fn build_scene_mirrors_the_expanded_flag_onto_its_node() {
+        let model = mini();
+        let mut expanded = std::collections::HashSet::new();
+        expanded.insert("order".to_string());
+        let (scene, _) = build_scene(&model, &model.diagrams[0], &expanded);
+        let order = scene.nodes.iter().find(|n| n.key == "order").unwrap();
+        let customer = scene.nodes.iter().find(|n| n.key == "customer").unwrap();
+        assert!(order.expanded, "order was in the expanded set");
+        assert!(!customer.expanded, "customer was not");
     }
 }
