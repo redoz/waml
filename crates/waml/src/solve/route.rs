@@ -112,6 +112,13 @@ fn group_obstacles(
 
 const ROUTE_MARGIN: f64 = 12.0;
 
+/// Keep border attachment points at least this far from a box corner: a
+/// connector meeting a node right on its corner reads as ambiguous/ugly, so
+/// grid-derived attach candidates in the corner band are dropped. Side
+/// midpoints are always kept, so every side still offers a candidate even when
+/// the box is shorter than `2 * CORNER_INSET`.
+const CORNER_INSET: f64 = 12.0;
+
 type P = (f64, f64);
 
 #[derive(Debug, Clone, PartialEq)]
@@ -199,9 +206,28 @@ fn build_ovg(obstacles: &[Obstacle], src: Rect, tgt: Rect) -> (Ovg, Vec<usize>, 
         .map(|o| inflate(o.rect, ROUTE_MARGIN))
         .collect();
 
-    // Interesting coordinates: inflated obstacle borders + endpoint box borders.
-    let mut xs = vec![src.x, src.x + src.w, tgt.x, tgt.x + tgt.w];
-    let mut ys = vec![src.y, src.y + src.h, tgt.y, tgt.y + tgt.h];
+    // Interesting coordinates: inflated obstacle borders + endpoint box borders
+    // + endpoint box centre lines. The centre lines give the side-midpoint
+    // attach points a grid line to join, so the router can leave a border away
+    // from its corners (attach candidates in the corner band are dropped -- see
+    // CORNER_INSET); without them the only grid-aligned attach on an axis-aligned
+    // box would be its corners.
+    let mut xs = vec![
+        src.x,
+        src.x + src.w,
+        src.x + src.w / 2.0,
+        tgt.x,
+        tgt.x + tgt.w,
+        tgt.x + tgt.w / 2.0,
+    ];
+    let mut ys = vec![
+        src.y,
+        src.y + src.h,
+        src.y + src.h / 2.0,
+        tgt.y,
+        tgt.y + tgt.h,
+        tgt.y + tgt.h / 2.0,
+    ];
     for r in &inflated {
         xs.push(r.x);
         xs.push(r.x + r.w);
@@ -278,14 +304,16 @@ fn build_ovg(obstacles: &[Obstacle], src: Rect, tgt: Rect) -> (Ovg, Vec<usize>, 
                   bx: Rect|
      -> Vec<usize> {
         let mut cands: Vec<(P, Side)> = Vec::new();
+        // Corner band is excluded (see CORNER_INSET): a grid line that only
+        // meets the side within CORNER_INSET of a corner yields no candidate.
         for &y in &ys {
-            if y >= bx.y - 1e-9 && y <= bx.y + bx.h + 1e-9 {
+            if y >= bx.y + CORNER_INSET - 1e-9 && y <= bx.y + bx.h - CORNER_INSET + 1e-9 {
                 cands.push(((bx.x, y), Side::Left));
                 cands.push(((bx.x + bx.w, y), Side::Right));
             }
         }
         for &x in &xs {
-            if x >= bx.x - 1e-9 && x <= bx.x + bx.w + 1e-9 {
+            if x >= bx.x + CORNER_INSET - 1e-9 && x <= bx.x + bx.w - CORNER_INSET + 1e-9 {
                 cands.push(((x, bx.y), Side::Top));
                 cands.push(((x, bx.y + bx.h), Side::Bottom));
             }
@@ -1411,6 +1439,40 @@ mod tests {
                 .collect();
             let out = route(&boxes, &rects, &edges, &cfg);
             assert_perp_ends(&out, &rects);
+        }
+    }
+
+    #[test]
+    fn endpoints_never_land_on_a_node_corner() {
+        // Diagonally offset nodes tempt the router to attach at the corner
+        // nearest the other box. Corner attachments look wrong, so every
+        // endpoint must sit a clear margin in from both corners of its side.
+        let cfg = SolveConfig::default();
+        let boxes = vec![leafbox("a"), leafbox("b")];
+        let mut rects: BTreeMap<BoxId, Rect> = BTreeMap::new();
+        rects.insert(BoxId::Node("a".into()), nrect(0.0, 0.0, 100.0, 60.0));
+        rects.insert(BoxId::Node("b".into()), nrect(260.0, 220.0, 100.0, 60.0));
+        let edges = vec![(BoxId::Node("a".into()), BoxId::Node("b".into()))];
+        let out = route(&boxes, &rects, &edges, &cfg);
+        assert_eq!(out.len(), 1);
+        let rt = &out[0];
+        let n = rt.points.len();
+        for (key, ep) in [(&rt.source, rt.points[0]), (&rt.target, rt.points[n - 1])] {
+            let bx = rects[&BoxId::Node(key.clone())];
+            let corners = [
+                (bx.x, bx.y),
+                (bx.x + bx.w, bx.y),
+                (bx.x, bx.y + bx.h),
+                (bx.x + bx.w, bx.y + bx.h),
+            ];
+            let nearest = corners
+                .iter()
+                .map(|c| seg_len(*c, ep))
+                .fold(f64::INFINITY, f64::min);
+            assert!(
+                nearest >= 8.0,
+                "{key} endpoint {ep:?} sits on/near a corner (nearest {nearest})"
+            );
         }
     }
 
