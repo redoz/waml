@@ -65,6 +65,11 @@ pub struct SceneEdge {
     pub source: Rect,
     pub target: Rect,
     pub kind: RelationshipKind,
+    /// Routed orthogonal polyline in world coordinates; the renderer strokes it
+    /// segment-by-segment. Always non-empty (router emits ≥2 points; a defensive
+    /// straight [source-center, target-center] fallback is used on route
+    /// mismatch).
+    pub points: Vec<(f64, f64)>,
 }
 
 // An empty scene (derived Default) is the sensible startup default (fed a real one via set_scene).
@@ -260,15 +265,34 @@ pub fn build_scene(
     }
 
     // Only edges whose endpoints both appear in the solved layout are drawable.
+    // Match each to its Route by consuming solved.routes IN ORDER — route::route
+    // emits one Route per drawable edge in the same order build_scene filters
+    // model.edges, and key-only lookup is ambiguous for parallel edges. On a key
+    // mismatch (e.g. a drawable self-edge the router skipped, desyncing the
+    // stream) fall back to a straight center-to-center polyline WITHOUT advancing
+    // the cursor, so later edges stay aligned.
     let mut edges = Vec::new();
+    let mut route_cursor = 0usize;
     for e in &model.edges {
         if let (Some(&source), Some(&target)) =
             (solved.nodes.get(&e.source), solved.nodes.get(&e.target))
         {
+            let points = match solved.routes.get(route_cursor) {
+                Some(r) if r.source == e.source && r.target == e.target => {
+                    route_cursor += 1;
+                    r.points.clone()
+                }
+                _ => {
+                    let sc = (source.x + source.w / 2.0, source.y + source.h / 2.0);
+                    let tc = (target.x + target.w / 2.0, target.y + target.h / 2.0);
+                    vec![sc, tc]
+                }
+            };
             edges.push(SceneEdge {
                 source,
                 target,
                 kind: e.kind,
+                points,
             });
         }
     }
@@ -503,6 +527,7 @@ mod tests {
         assert_eq!(scene.edges.len(), 1);
         let edge = &scene.edges[0];
         assert_eq!(edge.kind, RelationshipKind::Associates);
+        assert!(!edge.points.is_empty(), "routed edge must carry a polyline");
 
         let order = scene.nodes.iter().find(|n| n.key == "order").unwrap();
         let customer = scene.nodes.iter().find(|n| n.key == "customer").unwrap();
@@ -594,6 +619,56 @@ mod tests {
             "unexpected route endpoints: {} -> {}",
             r.source,
             r.target
+        );
+    }
+
+    #[test]
+    fn routed_edge_points_anchor_near_node_borders() {
+        // A point is "at" a rect when it lies within `tol` of the rect's bounds;
+        // router endpoints attach to box-perimeter ports, so both ends land on
+        // (or within a route-margin of) their node.
+        fn near_rect(p: (f64, f64), r: Rect, tol: f64) -> bool {
+            p.0 >= r.x - tol && p.0 <= r.x + r.w + tol && p.1 >= r.y - tol && p.1 <= r.y + r.h + tol
+        }
+
+        let model = mini();
+        let (scene, _) = build_scene(
+            &model,
+            &model.diagrams[0],
+            &std::collections::HashSet::new(),
+        );
+        let edge = &scene.edges[0];
+        assert!(edge.points.len() >= 2, "polyline needs both endpoints");
+
+        // edge.source is order's rect, edge.target is customer's rect.
+        let first = *edge.points.first().unwrap();
+        let last = *edge.points.last().unwrap();
+        assert!(
+            near_rect(first, edge.source, 12.0),
+            "first point {first:?} not anchored to source {:?}",
+            edge.source
+        );
+        assert!(
+            near_rect(last, edge.target, 12.0),
+            "last point {last:?} not anchored to target {:?}",
+            edge.target
+        );
+    }
+
+    #[test]
+    fn stress_default_scene_edges_carry_points() {
+        let model = mini();
+        // Clearing `layout` routes build_scene through stress_default (see
+        // use_stress_default: layout.is_empty()).
+        let mut diagram = model.diagrams[0].clone();
+        diagram.layout = Vec::new();
+        assert!(super::use_stress_default(&diagram), "expected stress path");
+
+        let (scene, _) = build_scene(&model, &diagram, &std::collections::HashSet::new());
+        assert_eq!(scene.edges.len(), 1, "mini has one drawable edge");
+        assert!(
+            !scene.edges[0].points.is_empty(),
+            "stress-default edges must carry a routed polyline"
         );
     }
 }
