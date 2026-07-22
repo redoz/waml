@@ -1244,7 +1244,13 @@ A group rect becomes an obstacle for an edge **only when both endpoints are non-
 
     #[test]
     fn membership_by_child_list_not_rect_overlap() {
-        // "a"'s rect sits INSIDE g0's rect but is NOT a child of g0 => g0 stays an obstacle.
+        // "a"'s rect sits INSIDE g0's rect but "a" is NOT a child of g0, so
+        // membership-by-child-list must keep g0 a solid obstacle for the a->b
+        // edge. Asserted directly on membership + group_obstacles (NOT on a
+        // route point count): a non-member endpoint whose rect is deep inside a
+        // group's rect is geometrically landlocked, so route() correctly falls
+        // back to a straight segment — the invariant under test is *containment
+        // decided by child list, never rect overlap*, which is what we check.
         let boxes = vec![
             leafbox("a"),
             leafbox("b"),
@@ -1254,12 +1260,22 @@ A group rect becomes an obstacle for an edge **only when both endpoints are non-
         let mut rects: BTreeMap<BoxId, Rect> = BTreeMap::new();
         rects.insert(BoxId::Group(0), nrect(0.0, 0.0, 260.0, 200.0));
         rects.insert(BoxId::Node("x".into()), nrect(10.0, 10.0, 60.0, 40.0));
-        rects.insert(BoxId::Node("a".into()), nrect(90.0, 80.0, 60.0, 40.0)); // inside g0 rect
+        rects.insert(BoxId::Node("a".into()), nrect(90.0, 80.0, 60.0, 40.0)); // rect inside g0
         rects.insert(BoxId::Node("b".into()), nrect(500.0, 80.0, 60.0, 40.0));
-        let edges = vec![(BoxId::Node("a".into()), BoxId::Node("b".into()))];
-        let out = route(&boxes, &rects, &edges, &SolveConfig::default());
-        assert_eq!(out.len(), 1);
-        assert!(out[0].points.len() >= 4, "detour around non-transparent group: {:?}", out[0].points);
+        let membership = build_membership(&boxes);
+        // Rect overlap does NOT make "a" a member of g0.
+        assert!(!membership.is_member(&BoxId::Group(0), &BoxId::Node("a".into())));
+        // Therefore g0 stays an obstacle for the a->b edge (child list decides).
+        let obs = group_obstacles(
+            &rects,
+            &membership,
+            &BoxId::Node("a".into()),
+            &BoxId::Node("b".into()),
+        );
+        assert!(
+            obs.iter().any(|o| o.id == BoxId::Group(0)),
+            "g0 must remain an obstacle: membership is by child list, not rect overlap"
+        );
     }
 ```
 
