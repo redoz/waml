@@ -11,6 +11,7 @@
 
 use crate::icons::Icon;
 use crate::icons::IconSet;
+use crate::nav::NavView;
 use crate::tree::{ProjectTree as ProjectTreeData, TreeKind, TreeNode};
 use makepad_widgets::*;
 use std::collections::HashMap;
@@ -165,6 +166,17 @@ pub enum ProjectTreeAction {
     FocusClassifier(String),
 }
 
+/// Which projection the panel is showing, for the header note + empty state
+/// (Task 8). The rendered rows live in `self.tree`; this only records intent.
+#[derive(Clone, Copy, PartialEq, Default)]
+enum NavStateTag {
+    #[default]
+    Browse,
+    Results,
+    Elsewhere,
+    Empty,
+}
+
 impl IconSet {
     /// The catalog glyph for `kind`, or `None` for `Unknown` (no matching HUD
     /// glyph). Pure meaning->glyph map, shared by the tree rows and the doc-tab
@@ -198,6 +210,8 @@ pub struct ProjectTree {
     view: View,
     #[rust]
     tree: ProjectTreeData,
+    #[rust]
+    nav_tag: NavStateTag,
     #[rust]
     id_to_key: HashMap<LiveId, String>,
     #[rust]
@@ -392,10 +406,17 @@ impl Widget for ProjectTree {
 }
 
 impl ProjectTree {
-    pub fn set_tree(&mut self, cx: &mut Cx, tree: ProjectTreeData) {
+    pub fn set_view(&mut self, cx: &mut Cx, view: NavView) {
+        let (tree, tag) = match view {
+            NavView::Browse(t) => (t, NavStateTag::Browse),
+            NavView::Results(t) => (t, NavStateTag::Results),
+            NavView::Elsewhere(t) => (t, NavStateTag::Elsewhere),
+            NavView::Empty => (ProjectTreeData::default(), NavStateTag::Empty),
+        };
         let (id_to_key, id_to_kind) = build_id_maps(&tree);
         let file_tree = self.view.file_tree(cx, ids!(file_tree));
-        // Open the root package folder(s) by default so the panel isn't collapsed.
+        // Open every top-level package by default so the panel isn't collapsed.
+        // (Under scope the roots are the scope's members, not one wrapper.)
         for root in &tree.roots {
             if matches!(root.kind, TreeKind::Package) {
                 file_tree.set_folder_is_open(cx, LiveId::from_str(&root.key), true, Animate::No);
@@ -404,6 +425,7 @@ impl ProjectTree {
         self.id_to_key = id_to_key;
         self.id_to_kind = id_to_kind;
         self.tree = tree;
+        self.nav_tag = tag;
         self.view.redraw(cx);
     }
 

@@ -3,6 +3,7 @@ use crate::doc_tabs::{OpenTabs, TabKind};
 use crate::fps_meter::FpsMeter;
 use crate::inspector::{diagram_elements, Subject};
 use crate::load;
+use crate::nav::NavState;
 use crate::popup::base::PopupResult;
 use crate::popup::root::{MenuOpen, PopupRoot, PopupSpec, RadialOpen};
 use crate::scene::{build_focus_scene, build_scene};
@@ -296,6 +297,10 @@ pub struct App {
     /// rebuilds. See `GraphCanvasAction::ToggleExpand` handling.
     #[rust]
     expanded: HashSet<String>,
+    /// Scope / search / type-filter state for the tree panel's header band; the
+    /// app owns it and rebuilds `NavView` on every change (see `nav.rs`).
+    #[rust]
+    nav_state: NavState,
 }
 
 impl App {
@@ -565,13 +570,13 @@ impl App {
         // Record this open in the recents store (best-effort; see config.rs).
         crate::config::push_recent(dir, root_name);
 
-        let tree = crate::tree::build_tree(&self.model, &self.open_name);
+        let view = crate::nav::view(&self.model, &self.nav_state);
         if let Some(mut panel) = self
             .ui
             .widget(cx, ids!(project_tree))
             .borrow_mut::<crate::tree_panel::ProjectTree>()
         {
-            panel.set_tree(cx, tree);
+            panel.set_view(cx, view);
         } else {
             log!("project_tree widget not found / wrong type");
         }
@@ -706,13 +711,13 @@ impl App {
         };
         self.ui.label(cx, ids!(model_name)).set_text(cx, root_name);
 
-        let tree = crate::tree::build_tree(&self.model, &self.open_name);
+        let view = crate::nav::view(&self.model, &self.nav_state);
         if let Some(mut panel) = self
             .ui
             .widget(cx, ids!(project_tree))
             .borrow_mut::<crate::tree_panel::ProjectTree>()
         {
-            panel.set_tree(cx, tree);
+            panel.set_view(cx, view);
         }
         self.refresh_doc_tabs(cx);
         self.sync_active_tab(cx);
