@@ -69,4 +69,27 @@ mod tests {
         assert_eq!(model.diagrams.len(), 1);
         assert_eq!(model.edges.len(), 1);
     }
+
+    /// The `sixkind` fixture is the visual-regression bench for terminal
+    /// adornments: one `Car` node wired to six targets, one edge per standard
+    /// UML relationship kind, so every `end_marker` glyph is exercised in a
+    /// single diagram. Guard that all six kinds resolve.
+    #[test]
+    fn sixkind_fixture_resolves_all_relationship_kinds() {
+        use waml::model::RelationshipKind as RK;
+        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/sixkind");
+        let model = load_model(&dir).unwrap();
+        assert_eq!(model.edges.len(), 6);
+        let kinds: Vec<RK> = model.edges.iter().map(|e| e.kind).collect();
+        for k in [
+            RK::Specializes,
+            RK::Implements,
+            RK::Depends,
+            RK::Associates,
+            RK::Aggregates,
+            RK::Composes,
+        ] {
+            assert!(kinds.contains(&k), "sixkind fixture missing {k:?}");
+        }
+    }
 }
