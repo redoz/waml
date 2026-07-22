@@ -10,9 +10,9 @@ harness. There is no `--lib` target.
 cargo test -p waml-editor
 ```
 
-Covers the engine-agnostic modules: `load`, `sizing`, `scene`, `camera`, `cli`,
-the `canvas::border_point` geometry helper, `tree::build_tree`, and
-`tree_panel`'s id-map round-trip. 32 tests, no GPU required.
+Covers the engine-agnostic modules: `load`, `sizing`, `scene` (including routed
+edge polylines), `camera`, `cli`, `tree::build_tree`, and `tree_panel`'s id-map
+round-trip. No GPU required.
 
 ## Visual verification (verification of record)
 
