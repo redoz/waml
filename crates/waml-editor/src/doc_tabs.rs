@@ -216,6 +216,12 @@ impl OpenTabs {
         let key = key.into();
         let title = title.into();
         let id = classifier_tab_id(&key);
+        // Already open (preview or persisted): just focus it. Never duplicate --
+        // the classifier id derives from the key, so a second tab would collide.
+        if self.tabs.iter().any(|t| t.id == id) {
+            self.active = id;
+            return id;
+        }
         if let Some(idx) = self.preview_index() {
             self.tabs[idx] = DocTab {
                 id,
@@ -367,6 +373,10 @@ pub enum DocTabsAction {
     #[default]
     None,
     Activate(LiveId),
+    /// Clicking a preview tab pins it: activate + flip to persisted, so it
+    /// stops rendering italic/provisional and is no longer replaced in place by
+    /// the next classifier click (same "promote" the inline-edit commit does).
+    Promote(LiveId),
     Close(LiveId),
 }
 
@@ -484,7 +494,14 @@ impl Widget for DocTabs {
                 }
                 for (id, rect) in self.tab_rects.iter().rev() {
                     if rect.contains(fe.abs) {
-                        cx.widget_action(uid, DocTabsAction::Activate(*id));
+                        // Clicking a preview tab pins it (Zed-style); any other
+                        // tab just activates.
+                        let is_preview = self.tabs.iter().any(|t| t.id == *id && t.preview);
+                        if is_preview {
+                            cx.widget_action(uid, DocTabsAction::Promote(*id));
+                        } else {
+                            cx.widget_action(uid, DocTabsAction::Activate(*id));
+                        }
                         return;
                     }
                 }
@@ -753,6 +770,23 @@ mod tests {
         assert!(!open.tabs[1].preview, "promoted tab stays persisted");
         assert_eq!(open.tabs[2].key, "order");
         assert!(open.tabs[2].preview);
+    }
+
+    #[test]
+    fn reopening_a_promoted_tab_focuses_it_instead_of_duplicating() {
+        let mut open = OpenTabs::diagram_base("d", "Diagram");
+        let id = open.open_preview("customer", "Customer", TreeKind::Class);
+        open.promote(id);
+        // Base + one persisted classifier; nothing active on it now.
+        open.activate(open.tabs[0].id);
+
+        // Clicking the same node again must re-focus the existing tab, not
+        // append a colliding second tab (same key -> same id).
+        let reopened = open.open_preview("customer", "Customer", TreeKind::Class);
+        assert_eq!(reopened, id);
+        assert_eq!(open.tabs.len(), 2);
+        assert!(!open.tabs[1].preview, "stays persisted, not reverted to preview");
+        assert_eq!(open.active, id);
     }
 
     #[test]
