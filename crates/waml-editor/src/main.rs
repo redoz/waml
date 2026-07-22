@@ -18,6 +18,7 @@ mod inspector;
 mod inspector_panel;
 mod load;
 mod logo;
+mod nav;
 mod node_design_editor;
 mod node_style;
 mod popup;
