@@ -2,7 +2,7 @@
 //! Nothing below this module touches makepad; nothing here touches a GPU.
 
 use waml::diagnostic::Diagnostic;
-use waml::model::{Diagram, ElementType, Model, RelationshipKind};
+use waml::model::{Diagram, ElementType, Model, RelEnd, RelationshipKind};
 use waml::solve::{
     route, solve_diagram, stress, BoxId, Rect, Size, SizeMap, SolveConfig, Solved, SolvedGroup,
 };
@@ -65,6 +65,12 @@ pub struct SceneEdge {
     pub source: Rect,
     pub target: Rect,
     pub kind: RelationshipKind,
+    /// Relationship ends (multiplicity, role, navigability), carried verbatim
+    /// from `model::Edge`. The router is geometry-only; end adornments
+    /// (arrowheads, crowsfoot, multiplicity labels) are chosen downstream from
+    /// these + a notation policy, so they must ride along the drawable edge.
+    pub from_end: RelEnd,
+    pub to_end: RelEnd,
     /// Routed orthogonal polyline in world coordinates; the renderer strokes it
     /// segment-by-segment. Always non-empty (router emits ≥2 points; a defensive
     /// straight [source-center, target-center] fallback is used on route
@@ -327,6 +333,8 @@ pub fn build_scene(
                 source,
                 target,
                 kind: e.kind,
+                from_end: e.from_end.clone(),
+                to_end: e.to_end.clone(),
                 points,
             });
         }
