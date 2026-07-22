@@ -279,6 +279,24 @@ fn segment_quad(a: DVec2, b: DVec2, thickness: f64) -> Rect {
     Rect { pos: min, size }
 }
 
+/// Snap an edge bar to the device pixel grid so every bar renders with identical
+/// coverage regardless of where its centerline lands in world space. Without
+/// this, `thickness * zoom` puts a bar's thin axis on an arbitrary sub-pixel
+/// boundary when zoomed out; the rasterizer then splits that coverage unevenly
+/// across two device rows, so some bars look thinner/dimmer than their
+/// neighbours. Rounding the edges to whole device pixels (and flooring the size
+/// to a 1px minimum) gives each bar the same crisp footprint. `dpi` is
+/// `cx.current_dpi_factor()`; the geometry is logical, so we round in device
+/// space and convert back. Pure, for a GPU-free test.
+fn snap_bar_to_device(rect: Rect, dpi: f64) -> Rect {
+    let snap = |v: f64| (v * dpi).round() / dpi;
+    let size = |v: f64| ((v * dpi).round().max(1.0)) / dpi;
+    Rect {
+        pos: dvec2(snap(rect.pos.x), snap(rect.pos.y)),
+        size: dvec2(size(rect.size.x), size(rect.size.y)),
+    }
+}
+
 /// The four node commands a radial reports. Handlers are logging stubs for now
 /// (there is no node-editing command path yet -- mirrors the `tool_dock` mock).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -500,14 +518,17 @@ impl Widget for GraphCanvas {
         // (see EdgeLine), same uniform cadence as draw_node's frame.
         self.draw_edge_down
             .set_uniform(cx, live_id!(zoom), &[zoom as f32]);
+        // Snap each bar to whole device pixels (see `snap_bar_to_device`) so the
+        // thin axis lands crisp instead of straddling two rows and thinning.
+        let dpi = cx.current_dpi_factor();
         for edge in &self.scene.edges {
             for pair in edge.points.windows(2) {
                 let (a0, a1) = self.camera.world_to_local(pair[0].0, pair[0].1);
                 let (b0, b1) = self.camera.world_to_local(pair[1].0, pair[1].1);
                 let a = dvec2(rect.pos.x + a0, rect.pos.y + a1);
                 let b = dvec2(rect.pos.x + b0, rect.pos.y + b1);
-                self.draw_edge_down
-                    .draw_abs(cx, segment_quad(a, b, thickness));
+                let quad = snap_bar_to_device(segment_quad(a, b, thickness), dpi);
+                self.draw_edge_down.draw_abs(cx, quad);
             }
         }
 
@@ -819,6 +840,55 @@ mod tests {
         let q = segment_quad(dvec2(0.0, 0.0), dvec2(8.0, 6.0), thickness);
         assert_eq!(q.pos, dvec2(0.0, 0.0));
         assert_eq!(q.size, dvec2(8.0, 6.0));
+    }
+
+    #[test]
+    fn snap_bar_lands_on_the_device_grid() {
+        // dpi 1.0: a sub-pixel bar snaps its edges to whole pixels. The thin
+        // axis (0.6px) floors up to a 1px minimum so it can never vanish; every
+        // bar therefore gets the same crisp footprint regardless of position.
+        let q = snap_bar_to_device(
+            Rect {
+                pos: dvec2(10.3, 49.7),
+                size: dvec2(20.4, 0.6),
+            },
+            1.0,
+        );
+        assert_eq!(q.pos, dvec2(10.0, 50.0));
+        assert_eq!(q.size, dvec2(20.0, 1.0));
+
+        // Two bars whose thin axis straddles the grid differently pre-snap land
+        // identically after -- the source of the uneven-thinning artifact.
+        let a = snap_bar_to_device(
+            Rect {
+                pos: dvec2(0.0, 12.2),
+                size: dvec2(30.0, 1.0),
+            },
+            1.0,
+        );
+        let b = snap_bar_to_device(
+            Rect {
+                pos: dvec2(0.0, 12.7),
+                size: dvec2(30.0, 1.0),
+            },
+            1.0,
+        );
+        assert_eq!(a.size, b.size);
+        assert_eq!(a.pos.y.fract(), 0.0);
+        assert_eq!(b.pos.y.fract(), 0.0);
+
+        // dpi 2.0: rounding happens in device space, so half-logical-pixel
+        // positions are valid grid lines and a 0.5px bar survives as one device
+        // pixel (0.5 logical).
+        let q = snap_bar_to_device(
+            Rect {
+                pos: dvec2(4.1, 4.1),
+                size: dvec2(10.0, 0.5),
+            },
+            2.0,
+        );
+        assert_eq!(q.pos, dvec2(4.0, 4.0));
+        assert_eq!(q.size, dvec2(10.0, 0.5));
     }
 
     #[test]
