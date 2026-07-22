@@ -27,6 +27,7 @@ script_mod! {
         width: Fill
         height: Fill
         show_bg: true
+        flow: Down
         // Row-glyph tint; matches the label ink so icons read at full contrast.
         icon_color: atlas.text
 
@@ -76,6 +77,39 @@ script_mod! {
             }
         }
         padding: 6.0
+
+        // Header band: an empty spacer reserving the top strip; the title
+        // trigger, collapse/pin glyphs, and (Task 9) the search row + type chip
+        // are all hand-drawn immediate-mode in `draw_walk`, same hybrid as the
+        // inspector.
+        header := View {
+            width: Fill
+            height: 64.0
+        }
+
+        draw_title +: {
+            color: atlas.text
+            text_style: TextStyle{
+                font_size: 16
+                font_family: FontFamily{
+                    latin := FontMember{res: crate_resource("self:resources/fonts/IBM_Plex_Sans/IBMPlexSans-Regular.ttf") asc: -0.1 desc: 0.0}
+                }
+                line_spacing: 1.2
+            }
+        }
+        draw_dim +: {
+            color: atlas.text_dim
+            text_style: TextStyle{
+                font_size: 12
+                font_family: FontFamily{
+                    latin := FontMember{res: crate_resource("self:resources/fonts/IBM_Plex_Sans/IBMPlexSans-Regular.ttf") asc: -0.1 desc: 0.0}
+                }
+                line_spacing: 1.2
+            }
+        }
+        // Hover-translucency scrim, same idiom as the inspector: a window-bg
+        // quad painted over the whole panel at alpha (1 - opacity).
+        draw_scrim +: { color: atlas.ground }
 
         file_tree := FileTree {
             // Roomier rows + larger humanist type, and flat (no zebra striping)
@@ -164,6 +198,21 @@ pub enum ProjectTreeAction {
     None,
     SelectDiagram(String),
     FocusClassifier(String),
+    /// The title trigger's open-request; `App` relays it to `PopupRoot` to
+    /// show the scope-picker dropdown (Task 10). `scope_request` (the reader)
+    /// is unused until then, which leaves this field's read transitively dead
+    /// too -- allowed deliberately, same as `Query`/`RotateFilter` below.
+    ScopeRequest {
+        #[allow(dead_code)]
+        anchor: Rect,
+    },
+    /// Search-field edit (Task 9). Not yet constructed until the search row
+    /// lands; kept here so the action enum's shape is settled up front.
+    #[allow(dead_code)]
+    Query(String),
+    /// Type-filter chip click (Task 9). See `Query`.
+    #[allow(dead_code)]
+    RotateFilter,
 }
 
 /// Which projection the panel is showing, for the header note + empty state
@@ -204,6 +253,13 @@ const ICON_SIZE: f64 = 14.0;
 const ICON_LEFT_MARGIN: f64 = 6.0;
 const ICON_DEPTH_INDENT: f64 = 18.0;
 
+// Header band geometry (px), matching the inspector's own bar-strip constants.
+const HEADER_H: f64 = 64.0;
+const TITLE_ROW_H: f64 = 34.0;
+const PAD: f64 = 10.0;
+const ICON: f64 = 16.0;
+const ICON_GAP: f64 = 10.0;
+
 #[derive(Script, ScriptHook, Widget)]
 pub struct ProjectTree {
     #[deref]
@@ -226,6 +282,44 @@ pub struct ProjectTree {
     // Translucent accent fill painted over the active row (see the DSL).
     #[live]
     draw_selection: DrawColor,
+    // Header band ink + scrim (Task 8). `draw_title` is the scope-title label;
+    // `draw_dim` is everything subdued (the `⌄`, glyph tint source); `draw_scrim`
+    // is the hover-translucency backdrop, same idiom as the inspector.
+    #[redraw]
+    #[live]
+    draw_title: DrawText,
+    #[redraw]
+    #[live]
+    draw_dim: DrawText,
+    #[redraw]
+    #[live]
+    draw_scrim: DrawColor,
+    /// The current scope's display title, shown in the header (Task 10 pushes
+    /// this from `nav::packages`). Empty until then -- falls back to
+    /// `"Untitled"`.
+    #[rust]
+    scope_title: String,
+    /// Panel-local body fold: hides the `FileTree` body, header stays.
+    #[rust]
+    collapsed: bool,
+    /// Panel-local pin: locks the hover-scrim opacity to fully opaque even
+    /// when the pointer isn't over the panel.
+    #[rust]
+    pinned: bool,
+    /// Whether the pointer is currently over the panel. Drives the hover-scrim
+    /// translucency (opaque when hovered or pinned, else dimmed to 0.55).
+    #[rust]
+    hovered: bool,
+    #[rust]
+    header_rect: Rect,
+    /// The scope-title trigger's hit rect (label + `⌄`). A click emits
+    /// `ProjectTreeAction::ScopeRequest`.
+    #[rust]
+    title_rect: Rect,
+    #[rust]
+    collapse_rect: Rect,
+    #[rust]
+    pin_rect: Rect,
     // Key of the row to highlight, mirroring the active doc tab. Set via
     // `set_selected_key` from the app's `sync_active_tab`.
     #[rust]
@@ -356,6 +450,19 @@ fn draw_nodes(
 
 impl Widget for ProjectTree {
     fn draw_walk(&mut self, cx: &mut Cx2d, scope: &mut Scope, walk: Walk) -> DrawStep {
+        // Panel-local collapse: hide the FileTree body and shrink the frame to
+        // hug just the header band.
+        let ft_widget = self.view.file_tree(cx, ids!(file_tree));
+        ft_widget.set_visible(cx, !self.collapsed);
+
+        let mut walk = walk;
+        if self.collapsed {
+            walk.height = Size::Fit {
+                min: None,
+                max: None,
+            };
+        }
+
         while let Some(step) = self.view.draw_walk(cx, scope, walk).step() {
             if let Some(mut file_tree) = step.as_file_tree().borrow_mut() {
                 draw_nodes(
@@ -370,6 +477,80 @@ impl Widget for ProjectTree {
                 );
             }
         }
+
+        // Header band: scope-title trigger (left) + pin/collapse cluster
+        // (right). Drawn unconditionally -- the header stays even when the
+        // body is collapsed.
+        let rect = self.view.area().rect(cx);
+        self.header_rect = Rect {
+            pos: rect.pos,
+            size: dvec2(rect.size.x, HEADER_H),
+        };
+        let cy = rect.pos.y + TITLE_ROW_H * 0.5;
+        // `draw_dim` carries the neutral tint for the glyphs; read it out
+        // before borrowing `self.icons` (same tint-copy idiom as the
+        // inspector's pin/caret glyphs).
+        let dim = self.draw_dim.color;
+
+        // Right cluster, right -> left: pin, then the fold chevron (reusing
+        // the inspector's `ListCollapse`/`ListExpand` glyphs -- no redundant
+        // chevron icon).
+        let pin = Rect {
+            pos: dvec2(rect.pos.x + rect.size.x - PAD - ICON, cy - ICON * 0.5),
+            size: dvec2(ICON, ICON),
+        };
+        self.pin_rect = pin;
+        let pin_icon = if self.pinned { Icon::Pin } else { Icon::PinOff };
+        let dc = self.icons.get(pin_icon);
+        dc.color = dim;
+        dc.draw_abs(cx, pin);
+
+        let collapse = Rect {
+            pos: dvec2(pin.pos.x - ICON_GAP - ICON, cy - ICON * 0.5),
+            size: dvec2(ICON, ICON),
+        };
+        self.collapse_rect = collapse;
+        let collapse_icon = if self.collapsed {
+            Icon::ListExpand
+        } else {
+            Icon::ListCollapse
+        };
+        let dc = self.icons.get(collapse_icon);
+        dc.color = dim;
+        dc.draw_abs(cx, collapse);
+
+        // Scope-title trigger: label + a small down-chevron, left-aligned.
+        let title = if self.scope_title.is_empty() {
+            "Untitled"
+        } else {
+            self.scope_title.as_str()
+        };
+        let label = format!("{title} \u{2304}");
+        let text_w = self
+            .draw_title
+            .layout(cx, 0.0, 0.0, None, false, Align::default(), &label)
+            .size_in_lpxs
+            .width as f64;
+        let title_pos = dvec2(rect.pos.x + PAD, cy - 8.0);
+        self.draw_title.draw_abs(cx, title_pos, &label);
+        self.title_rect = Rect {
+            pos: rect.pos,
+            size: dvec2((PAD + text_w).max(0.0), TITLE_ROW_H),
+        };
+
+        // Hover translucency (last, over everything): opaque panel when
+        // hovered or pinned, else dim to 0.55 via a (1 - opacity) backdrop
+        // scrim -- same idiom as the inspector.
+        let opacity = if self.hovered || self.pinned {
+            1.0
+        } else {
+            0.55
+        };
+        if opacity < 1.0 {
+            self.draw_scrim.color.w = (1.0 - opacity) as f32;
+            self.draw_scrim.draw_abs(cx, rect);
+        }
+
         DrawStep::done()
     }
 
@@ -377,6 +558,49 @@ impl Widget for ProjectTree {
         let uid = self.widget_uid();
         let file_tree = self.view.file_tree(cx, ids!(file_tree));
         self.view.handle_event(cx, event, scope);
+
+        // Header hit-test: the panel is left-aligned (`hit_off ≈ 0`), but keep
+        // the translate-by-offset pattern per `makepad-aligned-parent-hit-rect-
+        // offset` -- rects captured in `draw_walk` are pre-alignment, events
+        // arrive post-alignment.
+        let hit_off = self.view.area().rect(cx).pos - self.header_rect.pos;
+        match event.hits(cx, self.view.area()) {
+            Hit::FingerHoverIn(_) => {
+                if !self.hovered {
+                    self.hovered = true;
+                    self.view.redraw(cx);
+                }
+            }
+            Hit::FingerHoverOut(_) => {
+                if self.hovered {
+                    self.hovered = false;
+                    self.view.redraw(cx);
+                }
+            }
+            Hit::FingerUp(fe) if fe.is_primary_hit() => {
+                let p = fe.abs - hit_off;
+                if self.pin_rect.contains(p) {
+                    self.pinned = !self.pinned;
+                    self.view.redraw(cx);
+                    return;
+                }
+                if self.collapse_rect.contains(p) {
+                    self.collapsed = !self.collapsed;
+                    self.view.redraw(cx);
+                    return;
+                }
+                if self.title_rect.contains(p) {
+                    let anchor = Rect {
+                        pos: self.title_rect.pos + hit_off,
+                        size: self.title_rect.size,
+                    };
+                    cx.widget_action(uid, ProjectTreeAction::ScopeRequest { anchor });
+                    return;
+                }
+            }
+            _ => {}
+        }
+
         if let Event::Actions(actions) = event {
             if let Some(id) = file_tree.file_clicked(actions) {
                 let kind = self.id_to_kind.get(&id).copied();
@@ -453,6 +677,30 @@ impl ProjectTree {
             return Some(key);
         }
         None
+    }
+
+    /// The current scope label shown in the header title. `App` pushes this
+    /// from `nav::packages` (Task 10) whenever the scope changes. Unused
+    /// until then -- allowed deliberately (see `ScopeRequest` above).
+    #[allow(dead_code)]
+    pub fn set_scope_title(&mut self, cx: &mut Cx, title: String) {
+        if self.scope_title != title {
+            self.scope_title = title;
+            self.view.redraw(cx);
+        }
+    }
+
+    /// The title trigger's open-request. `App` relays it to `PopupRoot` to
+    /// show the scope-picker dropdown (Task 10), mirroring
+    /// `Inspector::open_picker_request`. Unused until then.
+    #[allow(dead_code)]
+    pub fn scope_request(&self, actions: &Actions) -> Option<Rect> {
+        let item = actions.find_widget_action(self.widget_uid())?;
+        if let ProjectTreeAction::ScopeRequest { anchor } = item.cast() {
+            Some(anchor)
+        } else {
+            None
+        }
     }
 }
 
