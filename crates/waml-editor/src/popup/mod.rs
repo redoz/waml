@@ -10,3 +10,4 @@ pub mod menu;
 pub mod presenter;
 pub mod radial;
 pub mod root;
+pub mod select;
