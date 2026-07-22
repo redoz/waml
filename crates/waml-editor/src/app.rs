@@ -1567,6 +1567,7 @@ impl AppMain for App {
         crate::frame::script_mod(vm);
         crate::popup::menu::script_mod(vm);
         crate::popup::radial::script_mod(vm);
+        crate::popup::select::script_mod(vm);
         crate::popup::root::script_mod(vm);
         crate::canvas::script_mod(vm);
         crate::tree_panel::script_mod(vm);

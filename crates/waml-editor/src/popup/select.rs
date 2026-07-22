@@ -8,7 +8,10 @@
 //! `docs/superpowers/specs/2026-07-22-select-box-flyout-design.md`.
 #![allow(dead_code)]
 
-use crate::icons::Icon;
+use crate::icons::{Icon, IconSet};
+use crate::popup::base::{Popup, PopupItem, PopupResult, PopupVerdict};
+use crate::popup::marking::{MarkOutcome, MarkingCore};
+use crate::popup::menu::LinearGeom;
 use makepad_widgets::*;
 
 /// Safety cap on flyout width (lpx). The card hugs its widest label but never
@@ -55,6 +58,311 @@ pub struct SelectItem {
 /// cap is never clipped (`cap` floors to `min_width`).
 pub fn select_width(label_hug: f64, min_width: f64, cap: f64) -> f64 {
     label_hug.max(min_width).min(cap.max(min_width))
+}
+
+script_mod! {
+    use mod.prelude.widgets_internal.*
+    use mod.atlas
+    use mod.widgets.*
+    use mod.text.*
+
+    mod.widgets.SelectFlyoutBase = #(SelectFlyout::register_widget(vm))
+
+    mod.widgets.SelectFlyout = set_type_default() do mod.widgets.SelectFlyoutBase{
+        width: Fill
+        height: Fill
+        // Same source-bright Atlas frame + field-bg fill as MenuPopup, so the
+        // flyout reads as one HUD material with the control it drops from.
+        draw_frame: mod.draw.AccentFrame{ color: atlas.field_bg }
+        // Transient hover wash (matches MenuPopup) and the subtle *persistent*
+        // fill on the currently-selected row (a fainter accent so it reads as a
+        // marked value, not a hover).
+        draw_hover: mod.draw.DrawColor{ color: atlas.selection }
+        draw_selected: mod.draw.DrawColor{ color: atlas.accent_soft }
+        // Row glyph tints (copied per row; no RGBA crosses Rust for icons).
+        draw_icon_idle +: { color: atlas.text }
+        draw_icon_accent +: { color: atlas.accent }
+        // Per-type badge: solid coloured square (colour set at draw time from
+        // the row's SelectLead::Badge) with the kind initial (white) on top.
+        draw_badge: mod.draw.DrawColor{ color: atlas.bucket_slate }
+        draw_badge_text +: {
+            color: #xffffff
+            text_style: theme.font_regular{ font_size: 10 }
+        }
+        // Trailing check mark on the selected row — a small inline SDF stroke,
+        // NOT a catalog glyph (keeps the Icon order invariant untouched).
+        draw_check: mod.draw.DrawColor{
+            color: atlas.accent
+            pixel: fn() {
+                let s = self.rect_size.x
+                let w = s * 0.10
+                let sdf = Sdf2d.viewport(self.pos * self.rect_size)
+                sdf.move_to(s * 0.20, s * 0.52)
+                sdf.line_to(s * 0.42, s * 0.74)
+                sdf.line_to(s * 0.80, s * 0.28)
+                sdf.stroke(self.color, w)
+                return sdf.result
+            }
+        }
+        draw_label +: {
+            color: atlas.text
+            text_style: theme.font_regular{ font_size: 10 line_spacing: 1.2 }
+        }
+    }
+}
+
+#[derive(Script, ScriptHook, Widget)]
+pub struct SelectFlyout {
+    #[uid]
+    uid: WidgetUid,
+    #[source]
+    source: ScriptObjectRef,
+    #[walk]
+    walk: Walk,
+    #[layout]
+    layout: Layout,
+
+    /// Own draw list into the WINDOW OVERLAY (`begin_overlay_reuse`), so the
+    /// card escapes the body clip — identical idiom to `MenuPopup`.
+    #[live]
+    draw_list: DrawList2d,
+
+    #[redraw]
+    #[live]
+    draw_frame: DrawColor,
+    #[redraw]
+    #[live]
+    draw_hover: DrawColor,
+    #[redraw]
+    #[live]
+    draw_selected: DrawColor,
+    #[redraw]
+    #[live]
+    draw_icon_idle: DrawColor,
+    #[redraw]
+    #[live]
+    draw_icon_accent: DrawColor,
+    #[redraw]
+    #[live]
+    draw_badge: DrawColor,
+    #[redraw]
+    #[live]
+    draw_badge_text: DrawText,
+    #[redraw]
+    #[live]
+    draw_check: DrawColor,
+    #[redraw]
+    #[live]
+    draw_label: DrawText,
+    /// Shared project-tree SDF glyph set (for `SelectLead::Icon`).
+    #[live]
+    icons: IconSet,
+
+    #[rust]
+    mark: MarkingCore,
+    #[rust]
+    geom: LinearGeom,
+    /// Render rows, parallel to `mark`'s `{id,enabled}` PopupItems (see the
+    /// design note): the flyout draws from these by index.
+    #[rust]
+    items: Vec<SelectItem>,
+    /// The control width passed at open, floored into `select_width`.
+    #[rust]
+    min_width: f64,
+}
+
+impl Widget for SelectFlyout {
+    // Event-passive: `PopupRoot` drives this through the inherent methods.
+    fn handle_event(&mut self, _cx: &mut Cx, _event: &Event, _scope: &mut Scope) {}
+
+    fn draw_walk(&mut self, cx: &mut Cx2d, _scope: &mut Scope, _walk: Walk) -> DrawStep {
+        if !self.is_open() {
+            return DrawStep::done();
+        }
+        self.draw_list.begin_overlay_reuse(cx);
+        let size = cx.current_pass_size();
+        cx.begin_root_turtle(size, Layout::flow_overlay());
+        self.draw(cx);
+        cx.end_pass_sized_turtle();
+        self.draw_list.end(cx);
+        DrawStep::done()
+    }
+}
+
+impl SelectFlyout {
+    pub fn is_open(&self) -> bool {
+        self.mark.is_open()
+    }
+
+    /// Latched popup open dropping from `anchor`; `min_width` is the control's
+    /// width (the card is never narrower than it).
+    pub fn open_select(
+        &mut self,
+        cx: &mut Cx,
+        anchor: DVec2,
+        min_width: f64,
+        items: Vec<SelectItem>,
+    ) {
+        use crate::popup::menu::DRAG_THRESHOLD;
+        // Parallel commit vector: MarkingCore only needs {id, enabled}.
+        let marks: Vec<PopupItem> = items
+            .iter()
+            .map(|it| PopupItem {
+                id: it.id,
+                label: String::new(),
+                icon: Icon::Spline,
+                danger: false,
+                enabled: it.enabled,
+            })
+            .collect();
+        self.geom = LinearGeom::new(anchor, items.len());
+        self.items = items;
+        self.min_width = min_width;
+        self.mark.begin_popup(marks, DRAG_THRESHOLD);
+        self.draw_frame.redraw(cx);
+    }
+
+    pub fn draw(&mut self, cx: &mut Cx2d) {
+        use crate::popup::menu::PAD_H;
+        if !self.is_open() {
+            return;
+        }
+        let hovered = self.mark.armed();
+
+        // Width: hug the widest measured label (makepad's own text engine, same
+        // as MenuPopup), floored by min_width, capped by SELECT_MAX_W.
+        let mut widest = 0.0_f64;
+        for it in &self.items {
+            if let Some(run) = self.draw_label.prepare_single_line_run(cx, &it.label) {
+                widest = widest.max(run.width_in_lpxs as f64);
+            }
+        }
+        let hug = LEAD_GUTTER + widest + PAD_R;
+        self.geom
+            .set_width(select_width(hug, self.min_width, SELECT_MAX_W));
+
+        let panel = self.geom.panel_rect();
+        self.draw_frame.set_uniform(cx, live_id!(zoom), &[0.6]);
+        self.draw_frame.draw_abs(cx, panel);
+
+        // Read tint holders before borrowing `self.icons`.
+        let idle = self.draw_icon_idle.color;
+        let accent = self.draw_icon_accent.color;
+
+        for i in 0..self.items.len() {
+            let it = self.items[i].clone();
+            let row = self.geom.row_rect(i);
+            let cy = row.pos.y + row.size.y * 0.5;
+
+            // Persistent selected fill first (under any hover wash), inset off
+            // both frame edges like the hover highlight.
+            if it.selected {
+                let fill = Rect {
+                    pos: dvec2(panel.pos.x + PAD_H, row.pos.y),
+                    size: dvec2(panel.size.x - PAD_H * 2.0, row.size.y),
+                };
+                self.draw_selected.draw_abs(cx, fill);
+            }
+            if hovered == Some(i) && it.enabled {
+                let hi = Rect {
+                    pos: dvec2(panel.pos.x + PAD_H, row.pos.y),
+                    size: dvec2(panel.size.x - PAD_H * 2.0, row.size.y),
+                };
+                self.draw_hover.draw_abs(cx, hi);
+            }
+
+            // Leading visual.
+            match &it.lead {
+                SelectLead::None => {}
+                SelectLead::Icon(icon) => {
+                    let icon_rect = Rect {
+                        pos: dvec2(row.pos.x + 14.0, cy - 8.0),
+                        size: dvec2(16.0, 16.0),
+                    };
+                    let tint = if hovered == Some(i) && it.enabled {
+                        accent
+                    } else {
+                        idle
+                    };
+                    self.icons.draw(cx, *icon, icon_rect, tint);
+                }
+                SelectLead::Badge { color, letter } => {
+                    let badge = Rect {
+                        pos: dvec2(row.pos.x + 12.0, cy - 10.0),
+                        size: dvec2(20.0, 20.0),
+                    };
+                    self.draw_badge.color = *color;
+                    self.draw_badge.draw_abs(cx, badge);
+                    if !letter.is_empty() {
+                        self.draw_badge_text.draw_abs(
+                            cx,
+                            dvec2(badge.pos.x + 6.0, badge.pos.y + 3.0),
+                            letter,
+                        );
+                    }
+                }
+            }
+
+            // Label.
+            self.draw_label
+                .draw_abs(cx, dvec2(row.pos.x + LEAD_GUTTER, cy - 6.0), &it.label);
+
+            // Trailing check mark on the selected row.
+            if it.selected {
+                let check = Rect {
+                    pos: dvec2(panel.pos.x + panel.size.x - PAD_R - 14.0, cy - 7.0),
+                    size: dvec2(14.0, 14.0),
+                };
+                self.draw_check.draw_abs(cx, check);
+            }
+        }
+    }
+}
+
+impl Popup for SelectFlyout {
+    fn handle(&mut self, cx: &mut Cx, event: &Event) -> PopupVerdict {
+        if !self.mark.is_open() {
+            return PopupVerdict::Consumed;
+        }
+        let verdict = match event {
+            Event::MouseMove(e) => {
+                self.mark.pointer_move(e.abs, self.geom.row_at(e.abs));
+                self.draw_frame.redraw(cx);
+                PopupVerdict::Consumed
+            }
+            Event::MouseUp(e) if e.button.is_primary() => {
+                map_outcome(self.mark.release(self.geom.row_at(e.abs)))
+            }
+            // Popup mode: a press ON the card arms; a press OFF is the outside
+            // click → Ignored (PopupRoot dismisses).
+            Event::MouseDown(e) if e.button.is_primary() && self.mark.is_popup() => {
+                if self.geom.panel_rect().contains(e.abs) {
+                    self.mark.press(e.abs, self.geom.row_at(e.abs));
+                    self.draw_frame.redraw(cx);
+                    PopupVerdict::Consumed
+                } else {
+                    PopupVerdict::Ignored
+                }
+            }
+            _ => PopupVerdict::Consumed,
+        };
+        if let PopupVerdict::Closed(_) = verdict {
+            self.draw_frame.redraw(cx);
+        }
+        verdict
+    }
+
+    fn reset(&mut self) {
+        self.mark.close();
+    }
+}
+
+fn map_outcome(o: MarkOutcome) -> PopupVerdict {
+    match o {
+        MarkOutcome::Committed(id) => PopupVerdict::Closed(PopupResult::Invoked(id)),
+        MarkOutcome::Cancelled => PopupVerdict::Closed(PopupResult::Dismissed),
+        MarkOutcome::None => PopupVerdict::Consumed,
+    }
 }
 
 #[cfg(test)]
