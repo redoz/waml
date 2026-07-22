@@ -18,7 +18,7 @@ fn fallback_l(src: Rect, tgt: Rect) -> Vec<P> {
 }
 
 /// Route every leaf-to-leaf edge as an orthogonal polyline avoiding obstacles.
-pub(super) fn route(
+pub fn route(
     boxes: &[Box],
     rects: &BTreeMap<BoxId, Rect>,
     edges: &[(BoxId, BoxId)],

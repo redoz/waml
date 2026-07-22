@@ -4,7 +4,7 @@
 use waml::diagnostic::Diagnostic;
 use waml::model::{Diagram, ElementType, Model, RelationshipKind};
 use waml::solve::{
-    solve_diagram, stress, BoxId, Rect, Size, SizeMap, SolveConfig, Solved, SolvedGroup,
+    route, solve_diagram, stress, BoxId, Rect, Size, SizeMap, SolveConfig, Solved, SolvedGroup,
 };
 
 /// How a node's header (eyebrow + title) is treated. Additive: `Plain` is the
@@ -176,11 +176,28 @@ fn stress_default(model: &Model, sizes: &SizeMap) -> Solved {
         stress::layout(&ids, &dims, &pairs, &cfg)
     };
 
+    // Rects keyed by BoxId for the router (obstacles derive from these rects).
+    let rect_map: BTreeMap<BoxId, Rect> = ids.iter().cloned().zip(rects.iter().copied()).collect();
+
+    // Directed (BoxId, BoxId) edge list in model.edges order, self-edges dropped
+    // — same construction build_scene uses, so routes come out in the order
+    // build_scene consumes them. route::route presence-filters internally.
+    let route_edges: Vec<(BoxId, BoxId)> = model
+        .edges
+        .iter()
+        .filter(|e| e.source != e.target)
+        .map(|e| (BoxId::Node(e.source.clone()), BoxId::Node(e.target.clone())))
+        .collect();
+
+    // Empty boxes slice: the stress layout is group-less, so build_membership(&[])
+    // yields no groups and routing degrades to pure leaf-obstacle avoidance.
+    let routes = route::route(&[], &rect_map, &route_edges, &SolveConfig::default());
+
     Solved {
         nodes: keys.into_iter().zip(rects).collect(),
         groups: Vec::new(),
         flags: BTreeMap::new(),
-        routes: Vec::new(),
+        routes,
     }
 }
 
@@ -554,5 +571,29 @@ mod tests {
         let customer = scene.nodes.iter().find(|n| n.key == "customer").unwrap();
         assert!(order.expanded, "order was in the expanded set");
         assert!(!customer.expanded, "customer was not");
+    }
+
+    #[test]
+    fn stress_default_populates_routes() {
+        let model = mini();
+        // stress_default is layout-agnostic (it reads model + sizes, not the
+        // diagram's layout block), so any sized diagram exercises it.
+        let sizes = crate::sizing::size_map(
+            &model,
+            &model.diagrams[0],
+            &std::collections::HashSet::new(),
+        );
+        let solved = stress_default(&model, &sizes);
+        // mini declares one associates edge order -> customer.
+        assert_eq!(solved.routes.len(), 1);
+        assert!(!solved.routes[0].points.is_empty());
+        let r = &solved.routes[0];
+        assert!(
+            (r.source == "order" && r.target == "customer")
+                || (r.source == "customer" && r.target == "order"),
+            "unexpected route endpoints: {} -> {}",
+            r.source,
+            r.target
+        );
     }
 }
