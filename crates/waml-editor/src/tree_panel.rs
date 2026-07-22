@@ -9,7 +9,6 @@
 //! Structure mirrors studio's `DesktopFileTree` / `FlatFileTree`, minus the
 //! filter page and git-status dots.
 
-use crate::icon_button::IconButtonWidgetRefExt;
 use crate::icons::Icon;
 use crate::icons::IconSet;
 use crate::nav::NavView;
