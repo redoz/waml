@@ -25,7 +25,7 @@
 //! which `App` uses to promote the active preview tab to persisted.
 
 use crate::icon_button::IconButtonWidgetRefExt;
-use crate::icons::Icon;
+use crate::icons::{Icon, IconSet};
 use crate::inspector::{
     build_view, effective_field, subject_to_index, ElementKind, ElementRow, FieldId, InspectorView,
     Subject,
@@ -35,9 +35,10 @@ use crate::panel_glass::PanelGlass;
 use crate::popup::base::PopupResult;
 use crate::popup::select::{SelectItem, SelectLead};
 use crate::select_box::SelectBox;
+use crate::tree::kind_of;
 use makepad_widgets::*;
 use std::collections::HashMap;
-use waml::model::Model;
+use waml::model::{ElementType, Model};
 
 script_mod! {
     use mod.prelude.widgets_internal.*
@@ -250,6 +251,21 @@ fn bucket_color(b: AccentBucket) -> Vec4 {
         AccentBucket::Package => rgb(0x3cbe5a),
         AccentBucket::Behavior => rgb(0xeb4678),
         AccentBucket::None | AccentBucket::Unknown => rgb(0x64748b),
+    }
+}
+
+/// Leading visual for a node picker row: the shared catalog glyph for the
+/// element's type when one exists, else a coloured monogram badge. Every
+/// modelled UML kind resolves to an icon (`Customer`, a `Class`, leads with
+/// `PanelTop` -- the same glyph the tree and doc-tab strip already draw for
+/// it); only `Unknown` types, which have no HUD glyph, fall back to the badge.
+fn node_lead(ty: &ElementType, letter: String) -> SelectLead {
+    match IconSet::icon_for(kind_of(ty)) {
+        Some(icon) => SelectLead::Icon(icon),
+        None => SelectLead::Badge {
+            color: bucket_color(accent_bucket(ty)),
+            letter,
+        },
     }
 }
 
@@ -546,8 +562,9 @@ impl Inspector {
     }
 
     /// Build the picker rows as `SelectItem`s and record their id→index map (for
-    /// `apply_pick`). Node rows lead with a per-type badge and are enabled; edge
-    /// rows lead with the spline glyph (target-end label) and are disabled;
+    /// `apply_pick`). Node rows lead with their catalog glyph (see `node_lead`,
+    /// falling back to a per-type badge for `Unknown` types) and are enabled;
+    /// edge rows lead with the spline glyph (target-end label) and are disabled;
     /// diagram rows are disabled. Index 0 (placeholder) is skipped.
     fn build_select_items(&mut self, model: &Model) -> Vec<SelectItem> {
         self.picker_ids.clear();
@@ -559,7 +576,7 @@ impl Inspector {
             let selected = subject_to_index(&self.elements, &self.subject) == idx;
             let (lead, label, enabled) = match row.kind {
                 ElementKind::Node => {
-                    let (color, letter) = model
+                    let lead = model
                         .nodes
                         .iter()
                         .find(|n| n.key == row.key)
@@ -568,10 +585,13 @@ impl Inspector {
                                 .and_then(|v| v.kind_label.chars().next())
                                 .map(|c| c.to_uppercase().to_string())
                                 .unwrap_or_default();
-                            (bucket_color(accent_bucket(&n.ty)), letter)
+                            node_lead(&n.ty, letter)
                         })
-                        .unwrap_or((bucket_color(AccentBucket::None), String::new()));
-                    (SelectLead::Badge { color, letter }, row.label.clone(), true)
+                        .unwrap_or(SelectLead::Badge {
+                            color: bucket_color(AccentBucket::None),
+                            letter: String::new(),
+                        });
+                    (lead, row.label.clone(), true)
                 }
                 ElementKind::Edge => (
                     SelectLead::Icon(Icon::Spline),
@@ -754,5 +774,31 @@ mod tests {
     #[test]
     fn edge_target_falls_back_to_whole_label() {
         assert_eq!(edge_target("Standalone"), "Standalone");
+    }
+
+    // A `Customer` node is a UML `Class`; the picker must lead it with the
+    // shared catalog glyph (the same one the tree draws), never the grey
+    // monogram badge that regressed it to a "C in a box".
+    #[test]
+    fn node_lead_uses_catalog_icon_for_known_type() {
+        let lead = node_lead(
+            &ElementType::Uml(waml::model::UmlMetaclass::Class),
+            "C".into(),
+        );
+        assert!(
+            matches!(lead, SelectLead::Icon(Icon::PanelTop)),
+            "Class node should lead with its catalog icon, got {lead:?}"
+        );
+    }
+
+    // Unknown types have no HUD glyph, so the monogram badge is the correct
+    // fallback -- the letter survives for them.
+    #[test]
+    fn node_lead_falls_back_to_badge_for_unknown_type() {
+        let lead = node_lead(&ElementType::Unknown("Widget".into()), "W".into());
+        assert!(
+            matches!(lead, SelectLead::Badge { ref letter, .. } if letter == "W"),
+            "Unknown node should fall back to the monogram badge, got {lead:?}"
+        );
     }
 }
