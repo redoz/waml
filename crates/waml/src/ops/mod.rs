@@ -4,7 +4,10 @@ use crate::multiplicity::Multiplicity;
 use crate::okf;
 use crate::parse::parse_document;
 use crate::serialize::serialize_document;
-use crate::syntax::{Document, Line, ParsedName, ParsedRel, Section};
+use crate::syntax::{
+    Direction, Document, LayoutItem, LayoutStatement, Line, NameRef, Operand, OperandRef,
+    ParsedName, ParsedRel, Section,
+};
 
 pub type Bundle = Vec<(String, String)>;
 
@@ -162,6 +165,14 @@ pub enum Op {
         description: Option<String>,        // None = leave unchanged
         display: Option<DiagramDisplaySet>, // None = leave display untouched
     },
+    PlaceSet {
+        diagram: String,
+        subject_title: String,
+        subject_slug: String,
+        reference_title: String,
+        reference_slug: String,
+        directions: Vec<Direction>,
+    },
 }
 
 pub fn apply(bundle: &[(String, String)], ops: &[Op]) -> Result<Bundle, OpError> {
@@ -261,6 +272,22 @@ fn apply_one(work: &mut Bundle, op: &Op) -> Result<(), OpError> {
             description,
             display,
         } => op_diagram_set(work, key, title, description, display),
+        Op::PlaceSet {
+            diagram,
+            subject_title,
+            subject_slug,
+            reference_title,
+            reference_slug,
+            directions,
+        } => op_place_set(
+            work,
+            diagram,
+            subject_title,
+            subject_slug,
+            reference_title,
+            reference_slug,
+            directions,
+        ),
     }
 }
 
@@ -333,6 +360,21 @@ pub(crate) fn attrs_mut(doc: &mut Document) -> &mut Vec<Line<Attribute>> {
             _ => None,
         })
         .expect("attributes section just ensured")
+}
+
+/// Get the `## Layout` list, creating an empty section if absent
+/// (canonical serialize re-orders sections, so append position is irrelevant).
+pub(crate) fn layout_mut(doc: &mut Document) -> &mut Vec<Line<LayoutItem>> {
+    if !doc.sections.iter().any(|s| matches!(s, Section::Layout(_))) {
+        doc.sections.push(Section::Layout(Vec::new()));
+    }
+    doc.sections
+        .iter_mut()
+        .find_map(|s| match s {
+            Section::Layout(l) => Some(l),
+            _ => None,
+        })
+        .expect("layout section just ensured")
 }
 
 /// Get the `## Values` list, creating an empty section if absent
@@ -937,6 +979,90 @@ fn op_diagram_set(
                     str_list(&ds.stereotype_colors),
                 );
             }
+        }
+        Ok(())
+    })
+}
+
+/// A `[title](./slug.md)` operand with no axis/hints.
+fn link_operand(title: &str, slug: &str) -> Operand {
+    Operand {
+        ref_: OperandRef::Name(NameRef::Link {
+            title: title.to_string(),
+            slug: slug.to_string(),
+        }),
+        axis: None,
+        hints: vec![],
+    }
+}
+
+/// The bare slug an operand references (Link href stem or bare name), if any.
+fn operand_slug(op: &Operand) -> Option<&str> {
+    match &op.ref_ {
+        OperandRef::Name(NameRef::Link { slug, .. }) => Some(slug.as_str()),
+        OperandRef::Name(NameRef::Bare(s)) => Some(s.as_str()),
+        _ => None,
+    }
+}
+
+/// Horizontal axis = Left/Right; Vertical = Above/Below.
+fn dir_is_horizontal(d: Direction) -> bool {
+    matches!(d, Direction::LeftOf | Direction::RightOf)
+}
+
+/// A 2-operand `[subject] <dir> [reference]` placement on the given axis.
+fn placement_matches(
+    stmt: &LayoutStatement,
+    subject: &str,
+    reference: &str,
+    horizontal: bool,
+) -> bool {
+    let LayoutStatement::Placement {
+        operands,
+        directions,
+    } = stmt
+    else {
+        return false;
+    };
+    operands.len() == 2
+        && directions.len() == 1
+        && dir_is_horizontal(directions[0]) == horizontal
+        && operand_slug(&operands[0]) == Some(subject)
+        && operand_slug(&operands[1]) == Some(reference)
+}
+
+fn op_place_set(
+    work: &mut Bundle,
+    diagram: &str,
+    subject_title: &str,
+    subject_slug: &str,
+    reference_title: &str,
+    reference_slug: &str,
+    directions: &[Direction],
+) -> Result<(), OpError> {
+    let subject_title = subject_title.to_string();
+    let subject_slug = subject_slug.to_string();
+    let reference_title = reference_title.to_string();
+    let reference_slug = reference_slug.to_string();
+    let directions = directions.to_vec();
+    edit_doc(work, diagram, "place.set", |doc| {
+        let layout = layout_mut(doc);
+        for dir in &directions {
+            let horizontal = dir_is_horizontal(*dir);
+            layout.retain(|line| match line.parsed() {
+                Some(item) => {
+                    !placement_matches(&item.stmt, &subject_slug, &reference_slug, horizontal)
+                }
+                None => true,
+            });
+            let stmt = LayoutStatement::Placement {
+                operands: vec![
+                    link_operand(&subject_title, &subject_slug),
+                    link_operand(&reference_title, &reference_slug),
+                ],
+                directions: vec![*dir],
+            };
+            layout.push(Line::Parsed(LayoutItem { line: 0, stmt }));
         }
         Ok(())
     })
@@ -1893,5 +2019,173 @@ mod tests {
         .unwrap();
         assert_eq!(out[0].0, "shop/dia.md");
         assert!(out[0].1.contains("title: D2"));
+    }
+
+    // ---- Op::PlaceSet (## Layout write-back, Phase A) ----
+
+    /// A `## Layout` diagram doc whose Layout body is `layout_body` (may be "").
+    fn layout_diagram(layout_body: &str) -> Bundle {
+        vec![(
+            "shop/dia.md".to_string(),
+            format!(
+                "---\ntype: Diagram\ntitle: D\nprofile: uml-domain\n---\n# D\n\n## Layout\n{layout_body}"
+            ),
+        )]
+    }
+
+    /// A diagram doc with NO `## Layout` section.
+    fn diagram_no_layout() -> Bundle {
+        vec![(
+            "shop/dia.md".to_string(),
+            "---\ntype: Diagram\ntitle: D\nprofile: uml-domain\n---\n# D\n".to_string(),
+        )]
+    }
+
+    fn placeset(subject: (&str, &str), reference: (&str, &str), directions: Vec<Direction>) -> Op {
+        Op::PlaceSet {
+            diagram: "dia".into(),
+            subject_title: subject.0.into(),
+            subject_slug: subject.1.into(),
+            reference_title: reference.0.into(),
+            reference_slug: reference.1.into(),
+            directions,
+        }
+    }
+
+    #[test]
+    fn place_set_adds_a_left_of_placement() {
+        let b = layout_diagram("- [Customer](./customer.md) below [Order](./order.md)\n");
+        let out = apply(
+            &b,
+            &[placeset(
+                ("Order", "order"),
+                ("PaymentGateway", "payment-gateway"),
+                vec![Direction::LeftOf],
+            )],
+        )
+        .unwrap();
+        assert!(
+            out[0]
+                .1
+                .contains("- [Order](./order.md) left of [PaymentGateway](./payment-gateway.md)"),
+            "authored placement present: {}",
+            out[0].1
+        );
+        assert!(
+            out[0]
+                .1
+                .contains("- [Customer](./customer.md) below [Order](./order.md)"),
+            "existing layout line kept: {}",
+            out[0].1
+        );
+    }
+
+    #[test]
+    fn place_set_creates_layout_section_when_absent() {
+        let out = apply(
+            &diagram_no_layout(),
+            &[placeset(
+                ("Order", "order"),
+                ("PaymentGateway", "payment-gateway"),
+                vec![Direction::LeftOf],
+            )],
+        )
+        .unwrap();
+        assert!(
+            out[0].1.contains("## Layout"),
+            "Layout section created when absent: {}",
+            out[0].1
+        );
+        assert!(out[0]
+            .1
+            .contains("- [Order](./order.md) left of [PaymentGateway](./payment-gateway.md)"));
+    }
+
+    #[test]
+    fn place_set_replaces_same_axis_placement() {
+        let b = layout_diagram(
+            "- [Order](./order.md) left of [PaymentGateway](./payment-gateway.md)\n",
+        );
+        let out = apply(
+            &b,
+            &[placeset(
+                ("Order", "order"),
+                ("PaymentGateway", "payment-gateway"),
+                vec![Direction::RightOf],
+            )],
+        )
+        .unwrap();
+        assert!(
+            out[0]
+                .1
+                .contains("- [Order](./order.md) right of [PaymentGateway](./payment-gateway.md)"),
+            "new horizontal placement present: {}",
+            out[0].1
+        );
+        assert!(
+            !out[0].1.contains("left of"),
+            "prior same-pair placement replaced, not duplicated: {}",
+            out[0].1
+        );
+    }
+
+    #[test]
+    fn place_set_keeps_placement_on_a_different_axis() {
+        let b =
+            layout_diagram("- [Order](./order.md) above [PaymentGateway](./payment-gateway.md)\n");
+        let out = apply(
+            &b,
+            &[placeset(
+                ("Order", "order"),
+                ("PaymentGateway", "payment-gateway"),
+                vec![Direction::LeftOf],
+            )],
+        )
+        .unwrap();
+        assert!(
+            out[0].1.contains("left of"),
+            "new horizontal placement added: {}",
+            out[0].1
+        );
+        assert!(
+            out[0].1.contains("above"),
+            "vertical placement on the other axis is untouched: {}",
+            out[0].1
+        );
+    }
+
+    #[test]
+    fn place_set_corner_authors_two_statements() {
+        let out = apply(
+            &diagram_no_layout(),
+            &[placeset(
+                ("Order", "order"),
+                ("PaymentGateway", "payment-gateway"),
+                vec![Direction::LeftOf, Direction::Above],
+            )],
+        )
+        .unwrap();
+        assert!(
+            out[0].1.contains("left of"),
+            "horizontal statement: {}",
+            out[0].1
+        );
+        assert!(
+            out[0].1.contains("above"),
+            "vertical statement: {}",
+            out[0].1
+        );
+        // Two separate 2-operand placement bullets
+        // (invariant: directions.len() == operands.len() - 1).
+        let doc = parse_document(&out[0].1);
+        let layout = doc
+            .sections
+            .iter()
+            .find_map(|s| match s {
+                Section::Layout(l) => Some(l),
+                _ => None,
+            })
+            .expect("layout section present");
+        assert_eq!(layout.len(), 2, "corner drop authored two statements");
     }
 }

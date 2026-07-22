@@ -762,6 +762,9 @@ impl OpDto {
                 desc: description.clone(),
                 display: display.as_ref().map(display_set_to_dto),
             },
+            Op::PlaceSet { .. } => {
+                unreachable!("place.set no web DTO yet (native-only)")
+            }
         }
     }
 }
