@@ -9,6 +9,7 @@
 //! Structure mirrors studio's `DesktopFileTree` / `FlatFileTree`, minus the
 //! filter page and git-status dots.
 
+use crate::icon_button::IconButtonWidgetRefExt;
 use crate::icons::Icon;
 use crate::icons::IconSet;
 use crate::nav::NavView;
@@ -406,10 +407,6 @@ pub struct ProjectTree {
     /// `ProjectTreeAction::ScopeRequest`.
     #[rust]
     title_rect: Rect,
-    #[rust]
-    collapse_rect: Rect,
-    #[rust]
-    pin_rect: Rect,
     // Key of the row to highlight, mirroring the active doc tab. Set via
     // `set_selected_key` from the app's `sync_active_tab`.
     #[rust]
@@ -578,6 +575,27 @@ impl Widget for ProjectTree {
             .view(cx, ids!(note_band))
             .set_visible(cx, note_visible);
 
+        // Sync the two interactive glyph controls onto their shared `IconButton`
+        // children before the header View lays them out: collapse shows the fold
+        // chevron (reusing the inspector's `ListCollapse`/`ListExpand`), pin
+        // shows Pin/PinOff and reads lit while the panel is pinned (matches the
+        // inspector). Their clicks are read in `handle_event` from `Event::Actions`
+        // -- they own their own `view.area()` hit-test, so no `hit_off`.
+        let collapse_btn = self.view.widget(cx, ids!(header.title_row.collapse_btn));
+        collapse_btn.as_icon_button().set_icon(
+            cx,
+            if self.collapsed {
+                Icon::ListExpand
+            } else {
+                Icon::ListCollapse
+            },
+        );
+        let pin_btn = self.view.widget(cx, ids!(header.title_row.pin_btn));
+        pin_btn
+            .as_icon_button()
+            .set_icon(cx, if self.panel.pinned { Icon::Pin } else { Icon::PinOff });
+        pin_btn.as_icon_button().set_active(cx, self.panel.pinned);
+
         let mut walk = walk;
         if self.collapsed {
             walk.height = Size::Fit {
@@ -622,32 +640,6 @@ impl Widget for ProjectTree {
         // inspector's pin/caret glyphs).
         let dim = self.draw_dim.color;
 
-        // Right cluster, right -> left: pin, then the fold chevron (reusing
-        // the inspector's `ListCollapse`/`ListExpand` glyphs -- no redundant
-        // chevron icon).
-        let pin = Rect {
-            pos: dvec2(rect.pos.x + rect.size.x - PAD - ICON, cy - ICON * 0.5),
-            size: dvec2(ICON, ICON),
-        };
-        self.pin_rect = pin;
-        let pin_icon = if self.panel.pinned { Icon::Pin } else { Icon::PinOff };
-        let dc = self.icons.get(pin_icon);
-        dc.color = dim;
-        dc.draw_abs(cx, pin);
-
-        let collapse = Rect {
-            pos: dvec2(pin.pos.x - ICON_GAP - ICON, cy - ICON * 0.5),
-            size: dvec2(ICON, ICON),
-        };
-        self.collapse_rect = collapse;
-        let collapse_icon = if self.collapsed {
-            Icon::ListExpand
-        } else {
-            Icon::ListCollapse
-        };
-        let dc = self.icons.get(collapse_icon);
-        dc.color = dim;
-        dc.draw_abs(cx, collapse);
 
         // Scope-title trigger: label + a small down-chevron, left-aligned.
         let title = if self.scope_title.is_empty() {
@@ -821,16 +813,6 @@ impl Widget for ProjectTree {
         match event.hits(cx, self.view.area()) {
             Hit::FingerUp(fe) if fe.is_primary_hit() => {
                 let p = fe.abs - hit_off;
-                if self.pin_rect.contains(p) {
-                    self.panel.toggle_pin(cx);
-                    self.view.redraw(cx);
-                    return;
-                }
-                if self.collapse_rect.contains(p) {
-                    self.collapsed = !self.collapsed;
-                    self.view.redraw(cx);
-                    return;
-                }
                 if self.title_rect.contains(p) {
                     let anchor = Rect {
                         pos: self.title_rect.pos + hit_off,
@@ -883,6 +865,28 @@ impl Widget for ProjectTree {
         }
 
         if let Event::Actions(actions) = event {
+            // The two glyph controls are `IconButton` children now; read their
+            // clicks here instead of hit-testing cached rects. `self.view.
+            // handle_event` above already drove the children so these actions
+            // are present.
+            if self
+                .view
+                .widget(cx, ids!(header.title_row.collapse_btn))
+                .as_icon_button()
+                .clicked(actions)
+            {
+                self.collapsed = !self.collapsed;
+                self.view.redraw(cx);
+            }
+            if self
+                .view
+                .widget(cx, ids!(header.title_row.pin_btn))
+                .as_icon_button()
+                .clicked(actions)
+            {
+                self.panel.toggle_pin(cx);
+                self.view.redraw(cx);
+            }
             if let Some(id) = file_tree.file_clicked(actions) {
                 let kind = self.id_to_kind.get(&id).copied();
                 if let Some(key) = self.id_to_key.get(&id) {
