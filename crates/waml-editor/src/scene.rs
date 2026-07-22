@@ -142,6 +142,22 @@ fn use_stress_default(diagram: &Diagram) -> bool {
     diagram.layout.is_empty()
 }
 
+/// The model's drawable edges, in `model.edges` order, with self-loops dropped
+/// (`source != target`, Node endpoints only). This is the single load-bearing
+/// definition tying the router's ordered `Solved.routes` stream to the scene:
+/// both layout paths feed `route::route` the pairs derived from here, so it
+/// emits one `Route` per surviving edge IN THIS ORDER, and `build_scene`
+/// consumes that stream by walking this same list. Every site that touches the
+/// drawable-edge order MUST route through this helper or the route-to-edge match
+/// silently desyncs and degrades every subsequent edge to the straight fallback.
+fn drawable_edges(model: &Model) -> Vec<&waml::model::Edge> {
+    model
+        .edges
+        .iter()
+        .filter(|e| e.source != e.target)
+        .collect()
+}
+
 /// Native-only stress/grid default layout. Kept at this call seam (not inside
 /// `solve_diagram`) so the wasm/web path stays unchanged — web keeps dagre.
 /// Node set is every sized member; undirected `model.edges` among them drive the
@@ -184,13 +200,11 @@ fn stress_default(model: &Model, sizes: &SizeMap) -> Solved {
     // Rects keyed by BoxId for the router (obstacles derive from these rects).
     let rect_map: BTreeMap<BoxId, Rect> = ids.iter().cloned().zip(rects.iter().copied()).collect();
 
-    // Directed (BoxId, BoxId) edge list in model.edges order, self-edges dropped
-    // — same construction build_scene uses, so routes come out in the order
-    // build_scene consumes them. route::route presence-filters internally.
-    let route_edges: Vec<(BoxId, BoxId)> = model
-        .edges
-        .iter()
-        .filter(|e| e.source != e.target)
+    // Directed (BoxId, BoxId) edge list from the shared `drawable_edges` filter,
+    // so routes come out in the exact order build_scene consumes them.
+    // route::route presence-filters internally.
+    let route_edges: Vec<(BoxId, BoxId)> = drawable_edges(model)
+        .into_iter()
         .map(|e| (BoxId::Node(e.source.clone()), BoxId::Node(e.target.clone())))
         .collect();
 
@@ -215,10 +229,8 @@ pub fn build_scene(
     use std::collections::BTreeMap;
 
     let sizes = crate::sizing::size_map(model, diagram, expanded);
-    let edges: Vec<(BoxId, BoxId)> = model
-        .edges
-        .iter()
-        .filter(|e| e.source != e.target)
+    let edges: Vec<(BoxId, BoxId)> = drawable_edges(model)
+        .into_iter()
         .map(|e| (BoxId::Node(e.source.clone()), BoxId::Node(e.target.clone())))
         .collect();
     let (solved, diags) = if use_stress_default(diagram) {
@@ -264,16 +276,17 @@ pub fn build_scene(
         nodes.push(node);
     }
 
-    // Only edges whose endpoints both appear in the solved layout are drawable.
-    // Match each to its Route by consuming solved.routes IN ORDER — route::route
-    // emits one Route per drawable edge in the same order build_scene filters
-    // model.edges, and key-only lookup is ambiguous for parallel edges. On a key
-    // mismatch (e.g. a drawable self-edge the router skipped, desyncing the
-    // stream) fall back to a straight center-to-center polyline WITHOUT advancing
-    // the cursor, so later edges stay aligned.
+    // Walk the same `drawable_edges` list route::route was fed, so the ordered
+    // route stream and this consumption stay locked together by construction.
+    // Only edges whose endpoints both appear in the solved layout are drawable;
+    // match each to its Route by consuming solved.routes IN ORDER (key-only
+    // lookup is ambiguous for parallel edges). On a key mismatch (e.g. an edge
+    // route::route presence-filtered out, desyncing the stream) fall back to a
+    // straight center-to-center polyline WITHOUT advancing the cursor, so later
+    // edges stay aligned.
     let mut edges = Vec::new();
     let mut route_cursor = 0usize;
-    for e in &model.edges {
+    for e in drawable_edges(model) {
         if let (Some(&source), Some(&target)) =
             (solved.nodes.get(&e.source), solved.nodes.get(&e.target))
         {
@@ -652,6 +665,30 @@ mod tests {
             near_rect(last, edge.target, 12.0),
             "last point {last:?} not anchored to target {:?}",
             edge.target
+        );
+    }
+
+    #[test]
+    fn drawable_edges_drops_self_loops_from_the_scene() {
+        // A self-loop (source == target) is not drawable: `drawable_edges` filters
+        // it out, so it never reaches the router's route stream nor the scene's
+        // consumption loop. Both must agree, or the ordered route-to-edge match
+        // desyncs. mini has exactly one real edge (order -> customer); injecting a
+        // self-loop must leave scene.edges unchanged.
+        let mut model = mini();
+        let mut self_loop = model.edges[0].clone();
+        self_loop.target = self_loop.source.clone();
+        model.edges.push(self_loop);
+
+        let (scene, _) = build_scene(
+            &model,
+            &model.diagrams[0],
+            &std::collections::HashSet::new(),
+        );
+        assert_eq!(
+            scene.edges.len(),
+            1,
+            "self-loop must not produce a drawable scene edge"
         );
     }
 
