@@ -87,6 +87,18 @@ script_mod! {
             height: 64.0
         }
 
+        // Note band: an empty spacer reserving vertical room above the body for
+        // the two-line `Elsewhere` note ("No matches in <scope>" / "Elsewhere in
+        // model"), which is hand-drawn (immediate-mode) into this gap. Hidden by
+        // default; `draw_walk` shows it only in the `Elsewhere` state so the note
+        // sits above the whole-model rows instead of over them. Height must match
+        // `NOTE_H`.
+        note_band := View {
+            width: Fill
+            height: 40.0
+            visible: false
+        }
+
         draw_title +: {
             color: atlas.text
             text_style: TextStyle{
@@ -256,6 +268,23 @@ const TITLE_ROW_H: f64 = 34.0;
 const PAD: f64 = 10.0;
 const ICON: f64 = 16.0;
 const ICON_GAP: f64 = 10.0;
+// Vertical room (px) reserved above the FileTree body for the two-line
+// `Elsewhere` note. Must match the `note_band` View's height in the DSL.
+const NOTE_H: f64 = 40.0;
+
+/// Height (px) of the `note_band` spacer inserted between the header and the
+/// FileTree body for `tag`. Non-zero only in the reachable `Elsewhere` state
+/// while the body is shown -- that state draws a two-line note above the
+/// whole-model rows, so the body must be pushed down by this much or the note
+/// renders over the first rows. Every other state (and the collapsed body)
+/// draws no note and reserves nothing.
+fn note_band_height(tag: NavStateTag, collapsed: bool) -> f64 {
+    if !collapsed && matches!(tag, NavStateTag::Elsewhere) {
+        NOTE_H
+    } else {
+        0.0
+    }
+}
 
 #[derive(Script, ScriptHook, Widget)]
 pub struct ProjectTree {
@@ -473,6 +502,15 @@ impl Widget for ProjectTree {
         // hug just the header band.
         let ft_widget = self.view.file_tree(cx, ids!(file_tree));
         ft_widget.set_visible(cx, !self.collapsed);
+
+        // Reserve room above the body for the `Elsewhere` note so its two lines
+        // don't overlap the whole-model rows. The band is a laid-out spacer, so
+        // showing it (Down flow) pushes the FileTree body down by `NOTE_H`; every
+        // other state hides it and the rows fill from the top.
+        let note_visible = note_band_height(self.nav_tag, self.collapsed) > 0.0;
+        self.view
+            .view(cx, ids!(note_band))
+            .set_visible(cx, note_visible);
 
         let mut walk = walk;
         if self.collapsed {
@@ -948,6 +986,20 @@ mod tests {
             Some(TreeKind::Package)
         );
         assert_eq!(id_to_key.len(), 3);
+    }
+
+    #[test]
+    fn elsewhere_reserves_note_band_above_rows() {
+        // The `Elsewhere` state draws a two-line note above the whole-model rows,
+        // so the body must be pushed down by a positive amount or the note lands
+        // on the first rows.
+        assert!(note_band_height(NavStateTag::Elsewhere, false) > 0.0);
+        // Collapsed: the body is hidden and no note draws -> reserve nothing.
+        assert_eq!(note_band_height(NavStateTag::Elsewhere, true), 0.0);
+        // Noteless states let the rows fill the body from the top.
+        assert_eq!(note_band_height(NavStateTag::Browse, false), 0.0);
+        assert_eq!(note_band_height(NavStateTag::Results, false), 0.0);
+        assert_eq!(note_band_height(NavStateTag::Empty, false), 0.0);
     }
 }
 
