@@ -128,8 +128,18 @@ script_mod! {
                 line_spacing: 1.2
             }
         }
-        // Search-field / type-chip pill background (Task 9).
-        draw_field_bg +: { color: atlas.field_bg }
+        // Search-field / type-chip pill background (Task 9). Glass like the
+        // panel body: `opacity` scales the fill alpha so the pills read as
+        // translucent at rest (canvas shows through) and solidify with the
+        // panel on hover/pin. Driven by `PanelGlass::opacity` in `draw_walk`.
+        draw_field_bg: mod.draw.DrawColor{
+            color: atlas.field_bg
+            opacity: uniform(1.0)
+            pixel: fn() {
+                let a = self.color.w * self.opacity
+                return vec4(self.color.x * a, self.color.y * a, self.color.z * a, a)
+            }
+        }
 
         file_tree := FileTree {
             // Roomier rows + larger humanist type, and flat (no zebra striping)
@@ -655,6 +665,9 @@ impl Widget for ProjectTree {
             };
             self.search_rect = search_rect;
 
+            // Track the panel body's eased glass so the pills fade in/out with it.
+            self.draw_field_bg
+                .set_uniform(cx, live_id!(opacity), &[self.panel.opacity()]);
             self.draw_field_bg.draw_abs(cx, search_rect);
             let magnifier = Rect {
                 pos: dvec2(

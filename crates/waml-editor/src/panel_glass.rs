@@ -90,6 +90,14 @@ impl PanelGlass {
         false
     }
 
+    /// The current eased interior-fill opacity. Panels that paint additional
+    /// glass surfaces on top of `draw_bg` (e.g. the tree panel's search field /
+    /// type-chip pills) push this onto those surfaces' own `opacity` uniform so
+    /// they track the same translucency as the panel body.
+    pub fn opacity(&self) -> f32 {
+        self.glass
+    }
+
     /// Toggle the pin (locks the fill fully opaque) and kick the ease.
     pub fn toggle_pin(&mut self, cx: &mut Cx) {
         self.pinned = !self.pinned;
