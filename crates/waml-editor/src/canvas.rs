@@ -17,28 +17,20 @@ script_mod! {
 
     mod.widgets.GraphCanvasBase = #(GraphCanvas::register_widget(vm))
 
-    // Edge pen: stroke the segment as an actual line, NOT a filled rect. The
-    // segment's axis-aligned bounding box has the two endpoints at opposite
-    // corners, so the edge is one of the AABB's two diagonals; `flip` selects
-    // which (0 = top-left->bottom-right). Routed segments are axis-aligned, so
-    // the single `draw_edge_down` pen (flip = 0) draws them all; the
-    // thickness-inflated quad hides the zero slope. Filling the whole AABB (the
-    // old `draw_edge: DrawColor`) painted a solid grey blob for diagonal edges.
+    // Edge pen: fill the segment quad. Each routed segment is drawn as its own
+    // axis-aligned quad (`segment_quad`), already inflated to the stroke
+    // thickness on its degenerate axis and centered on the routed centerline.
+    // Filling that quad IS the orthogonal bar -- no diagonal. The old pen
+    // stroked the quad corner-to-corner (`move_to(0,0) line_to(w,h)`), which
+    // tilted every segment by up to `thickness` end-to-end and jogged elbows by
+    // `thickness/2`; both scale with zoom and detonate when zoomed in. Fill is
+    // exact because a per-segment AABB collapses to the bar itself (`sdf.rect`,
+    // not `sdf.box`, for a sharp edge).
     mod.draw.EdgeLine = mod.draw.DrawColor{
-        flip: uniform(0.0)
-        zoom: uniform(1.0)
         pixel: fn() {
             let sdf = Sdf2d.viewport(self.pos * self.rect_size)
-            let w = self.rect_size.x
-            let h = self.rect_size.y
-            let sx = mix(0.0, w, self.flip)
-            let ex = mix(w, 0.0, self.flip)
-            sdf.move_to(sx, 0.0)
-            sdf.line_to(ex, h)
-            // Thickness tracks zoom but never drops below a screen-space
-            // hairline, so relationships stay legible at fit-zoom on a large
-            // (stress-laid) model instead of thinning to nothing.
-            sdf.stroke(self.color, max(1.2, 2.0 * self.zoom))
+            sdf.rect(0.0, 0.0, self.rect_size.x, self.rect_size.y)
+            sdf.fill(self.color)
             return sdf.result
         }
     }
@@ -258,12 +250,12 @@ fn selection_index(nodes: &[crate::scene::SceneNode], key: Option<&str>) -> Opti
 }
 
 /// The axis-aligned quad that draws one routed segment as an `EdgeLine`.
-/// The shader strokes the quad corner-to-corner, so an axis-aligned segment's
-/// degenerate (zero-extent) axis must be inflated to `thickness`. That
-/// inflation is centered on the routed centerline (the min corner shifts back
-/// half the growth) so the stroke sits on the true coordinate instead of
-/// thickness/2 off it -- otherwise consecutive segments miss at every elbow of
-/// a routed polyline. Pure, for a GPU-free test.
+/// `EdgeLine` fills the quad, so an axis-aligned segment's degenerate
+/// (zero-extent) axis must be inflated to `thickness`. That inflation is
+/// centered on the routed centerline (the min corner shifts back half the
+/// growth) so the bar sits on the true coordinate instead of thickness/2 off
+/// it -- otherwise consecutive segments miss at every elbow of a routed
+/// polyline. Pure, for a GPU-free test.
 fn segment_quad(a: DVec2, b: DVec2, thickness: f64) -> Rect {
     let mut min = dvec2(a.x.min(b.x), a.y.min(b.y));
     let mut size = dvec2((a.x - b.x).abs(), (a.y - b.y).abs());
@@ -488,21 +480,12 @@ impl Widget for GraphCanvas {
             }
         }
 
-        // Edge pen: feed zoom so the stroke thickens with the box, and bake the
-        // down-diagonal direction (per-instance uniforms batch-collapse on this
-        // fork). Every routed segment is axis-aligned, so one pen suffices.
-        self.draw_edge_down.set_uniform(cx, live_id!(flip), &[0.0]);
-        self.draw_edge_down
-            .set_uniform(cx, live_id!(zoom), &[zoom as f32]);
-
-        // Edges: stroke each consecutive point pair of the routed orthogonal
-        // polyline as its own axis-aligned EdgeLine quad. Orthogonal segments
-        // are axis-aligned, so a single down-diagonal pen renders them all; the
-        // thickness-inflated quad hides the (zero) slope. `segment_quad` centers
-        // that inflation on the routed centerline (matching the shader's own
-        // `max(1.2, 2*zoom)` stroke width) so the stroke sits on the true
-        // coordinate and consecutive segments meet cleanly at elbows. Arrow/
-        // adornment styling is a fast-follow.
+        // Edges: draw each consecutive point pair of the routed orthogonal
+        // polyline as its own axis-aligned EdgeLine quad, filled by the pen.
+        // `segment_quad` inflates the segment's degenerate axis to `thickness`
+        // and centers that inflation on the routed centerline, so the bar sits
+        // on the true coordinate and consecutive segments meet cleanly at
+        // elbows. Arrow/adornment styling is a fast-follow.
         let thickness = (2.0 * zoom).max(1.2);
         for edge in &self.scene.edges {
             for pair in edge.points.windows(2) {
