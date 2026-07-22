@@ -924,12 +924,16 @@ impl ProjectTree {
     }
 
     /// The authoritative search text. `App` pushes this from `NavState::query`
-    /// (Task 10) so the field reflects state even when set programmatically
-    /// (e.g. cleared on scope change). Unused until then.
-    #[allow(dead_code)]
+    /// so the field reflects state even when set programmatically (e.g. cleared
+    /// when `open_dir` opens a different model, or restored on a theme reload).
+    /// A programmatic set is never an in-progress edit, so it also drops the
+    /// caret (`editing_search`) -- otherwise a cleared field would keep blinking
+    /// over stale, now-empty text.
     pub fn set_query_text(&mut self, cx: &mut Cx, text: &str) {
-        if self.query_text != text {
-            self.query_text = text.to_string();
+        let changed = self.query_text != text || self.editing_search;
+        self.query_text = text.to_string();
+        self.editing_search = false;
+        if changed {
             self.view.redraw(cx);
         }
     }

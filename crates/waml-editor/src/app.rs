@@ -584,7 +584,7 @@ impl App {
         // Record this open in the recents store (best-effort; see config.rs).
         crate::config::push_recent(dir, root_name);
 
-        self.refresh_nav(cx);
+        self.refresh_nav(cx, true);
 
         // A model may carry zero diagrams (a pure classifier/behavior bundle). We
         // still open it -- the tree and inspector are useful on their own -- just
@@ -716,7 +716,7 @@ impl App {
         };
         self.ui.label(cx, ids!(model_name)).set_text(cx, root_name);
 
-        self.refresh_nav(cx);
+        self.refresh_nav(cx, true);
         self.refresh_doc_tabs(cx);
         self.sync_active_tab(cx);
         self.sync_diagram_switcher_current(cx);
@@ -786,25 +786,38 @@ impl App {
     }
 
     /// Rebuild the nav projection from the current `nav_state` and push it to
-    /// the tree panel, along with the header's scope-title + chip labels. The
-    /// single choke point for every scope/query/filter change (see
+    /// the tree panel, along with the header's chip label. The single choke
+    /// point for every scope/query/filter change (see
     /// `ScopeRequest`/`Query`/`RotateFilter` handling in `handle_actions`).
-    fn refresh_nav(&mut self, cx: &mut Cx) {
+    ///
+    /// `scope_changed` gates the two header bits that only move when the scope
+    /// (or model) changes: the scope title -- whose lookup runs a full
+    /// `nav::packages` tree build -- and the authoritative search text. Keeping
+    /// them off the per-keystroke `Query` path holds a query edit to a single
+    /// tree build (the `view` below, not two), and lets `open_dir`/scope-pick
+    /// clear the search field when they reset `nav_state.query` (otherwise the
+    /// field keeps showing the previous model's text over an unfiltered tree).
+    fn refresh_nav(&mut self, cx: &mut Cx, scope_changed: bool) {
         let view = crate::nav::view(&self.model, &self.nav_state);
-        let title = crate::nav::packages(&self.model)
-            .into_iter()
-            .find(|r| r.key == self.nav_state.scope)
-            .map(|r| r.title)
-            .unwrap_or_else(|| "Untitled".to_string());
         let chip = crate::nav::chip_label(self.nav_state.filter).to_string();
+        let title = scope_changed.then(|| {
+            crate::nav::packages(&self.model)
+                .into_iter()
+                .find(|r| r.key == self.nav_state.scope)
+                .map(|r| r.title)
+                .unwrap_or_else(|| "Untitled".to_string())
+        });
         if let Some(mut panel) = self
             .ui
             .widget(cx, ids!(project_tree))
             .borrow_mut::<crate::tree_panel::ProjectTree>()
         {
             panel.set_view(cx, view);
-            panel.set_scope_title(cx, title);
             panel.set_chip_label(cx, &chip);
+            if let Some(title) = title {
+                panel.set_scope_title(cx, title);
+                panel.set_query_text(cx, &self.nav_state.query);
+            }
         }
     }
 }
@@ -1114,7 +1127,7 @@ impl MatchEvent for App {
             if let Some(PopupResult::Invoked(id)) = nav_scope_closed {
                 if let Some((_, key)) = self.nav_scope_ids.iter().find(|(i, _)| *i == id) {
                     self.nav_state.scope = key.clone();
-                    self.refresh_nav(cx);
+                    self.refresh_nav(cx, true);
                 }
             }
         }
@@ -1176,7 +1189,7 @@ impl MatchEvent for App {
             .and_then(|panel| panel.query_changed(actions));
         if let Some(q) = query {
             self.nav_state.query = q;
-            self.refresh_nav(cx);
+            self.refresh_nav(cx, false);
             return;
         }
 
@@ -1196,7 +1209,7 @@ impl MatchEvent for App {
                 .position(|f| *f == self.nav_state.filter)
                 .unwrap_or(0);
             self.nav_state.filter = cycle[(cur + 1) % cycle.len()];
-            self.refresh_nav(cx);
+            self.refresh_nav(cx, false);
             return;
         }
 
