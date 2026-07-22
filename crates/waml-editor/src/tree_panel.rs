@@ -110,6 +110,8 @@ script_mod! {
         // Hover-translucency scrim, same idiom as the inspector: a window-bg
         // quad painted over the whole panel at alpha (1 - opacity).
         draw_scrim +: { color: atlas.ground }
+        // Search-field / type-chip pill background (Task 9).
+        draw_field_bg +: { color: atlas.field_bg }
 
         file_tree := FileTree {
             // Roomier rows + larger humanist type, and flat (no zebra striping)
@@ -206,12 +208,10 @@ pub enum ProjectTreeAction {
         #[allow(dead_code)]
         anchor: Rect,
     },
-    /// Search-field edit (Task 9). Not yet constructed until the search row
-    /// lands; kept here so the action enum's shape is settled up front.
-    #[allow(dead_code)]
+    /// Search-field edit. Emitted by `emit_query` on every keystroke; `App`
+    /// applies it to `NavState::query` (Task 10).
     Query(String),
-    /// Type-filter chip click (Task 9). See `Query`.
-    #[allow(dead_code)]
+    /// Type-filter chip click; cycles `NavState::filter` in `App` (Task 10).
     RotateFilter,
 }
 
@@ -294,11 +294,33 @@ pub struct ProjectTree {
     #[redraw]
     #[live]
     draw_scrim: DrawColor,
+    // Search-field / type-chip pill background (Task 9).
+    #[redraw]
+    #[live]
+    draw_field_bg: DrawColor,
     /// The current scope's display title, shown in the header (Task 10 pushes
     /// this from `nav::packages`). Empty until then -- falls back to
     /// `"Untitled"`.
     #[rust]
     scope_title: String,
+    /// Live search text, edited in place (hand-rolled, no fork `TextInput`).
+    /// Emits `ProjectTreeAction::Query` on every keystroke.
+    #[rust]
+    query_text: String,
+    /// Whether the search field currently has key focus / shows the caret.
+    #[rust]
+    editing_search: bool,
+    /// The type-filter chip's current label (`App` pushes this from
+    /// `nav::chip_label`, Task 10). Empty falls back to `"All"`.
+    #[rust]
+    chip_label: String,
+    /// The search field's hit rect. A click begins editing + takes key focus.
+    #[rust]
+    search_rect: Rect,
+    /// The type-filter chip's hit rect. A click emits
+    /// `ProjectTreeAction::RotateFilter`.
+    #[rust]
+    chip_rect: Rect,
     /// Panel-local body fold: hides the `FileTree` body, header stays.
     #[rust]
     collapsed: bool,
@@ -538,6 +560,105 @@ impl Widget for ProjectTree {
             size: dvec2((PAD + text_w).max(0.0), TITLE_ROW_H),
         };
 
+        // Search row: field + leading magnifier (left), rotating type chip
+        // (right). Sits in the header band below the title row; hidden along
+        // with the rest of the body when collapsed.
+        if self.collapsed {
+            self.search_rect = Rect::default();
+            self.chip_rect = Rect::default();
+        } else {
+            let row_h = HEADER_H - TITLE_ROW_H;
+            let field_h = row_h - 6.0;
+            let field_y = rect.pos.y + TITLE_ROW_H + 3.0;
+            let chip_w = 74.0;
+
+            let chip_rect = Rect {
+                pos: dvec2(rect.pos.x + rect.size.x - PAD - chip_w, field_y),
+                size: dvec2(chip_w, field_h),
+            };
+            self.chip_rect = chip_rect;
+
+            let search_rect = Rect {
+                pos: dvec2(rect.pos.x + PAD, field_y),
+                size: dvec2(
+                    (chip_rect.pos.x - ICON_GAP - (rect.pos.x + PAD)).max(0.0),
+                    field_h,
+                ),
+            };
+            self.search_rect = search_rect;
+
+            self.draw_field_bg.draw_abs(cx, search_rect);
+            let magnifier = Rect {
+                pos: dvec2(
+                    search_rect.pos.x + 6.0,
+                    search_rect.pos.y + (field_h - ICON) * 0.5,
+                ),
+                size: dvec2(ICON, ICON),
+            };
+            self.icons.draw(cx, Icon::Search, magnifier, dim);
+            let text_pos = dvec2(
+                magnifier.pos.x + ICON + 6.0,
+                search_rect.pos.y + field_h * 0.5 - 7.0,
+            );
+            if self.editing_search {
+                self.draw_dim
+                    .draw_abs(cx, text_pos, &format!("{}\u{2502}", self.query_text));
+            } else if self.query_text.is_empty() {
+                self.draw_dim.draw_abs(cx, text_pos, "Search model");
+            } else {
+                self.draw_dim.draw_abs(cx, text_pos, &self.query_text);
+            }
+
+            self.draw_field_bg.draw_abs(cx, chip_rect);
+            let chip_label = if self.chip_label.is_empty() {
+                "All"
+            } else {
+                self.chip_label.as_str()
+            };
+            self.draw_dim.draw_abs(
+                cx,
+                dvec2(chip_rect.pos.x + 6.0, chip_rect.pos.y + field_h * 0.5 - 7.0),
+                &format!("{chip_label} \u{2304}"),
+            );
+        }
+
+        // Empty-state / elsewhere note, over the body area, below the header.
+        // `Browse`/`Results` draw no note -- the rows speak for themselves.
+        if !self.collapsed {
+            let body_top = rect.pos.y + HEADER_H;
+            match self.nav_tag {
+                NavStateTag::Elsewhere => {
+                    let scope_label = if self.scope_title.is_empty() {
+                        "Untitled"
+                    } else {
+                        self.scope_title.as_str()
+                    };
+                    self.draw_dim.draw_abs(
+                        cx,
+                        dvec2(rect.pos.x + PAD, body_top + 6.0),
+                        &format!("No matches in {scope_label}"),
+                    );
+                    self.draw_dim.draw_abs(
+                        cx,
+                        dvec2(rect.pos.x + PAD, body_top + 6.0 + 16.0),
+                        "Elsewhere in model",
+                    );
+                }
+                NavStateTag::Empty => {
+                    let msg = "No matches found";
+                    let w = self
+                        .draw_dim
+                        .layout(cx, 0.0, 0.0, None, false, Align::default(), msg)
+                        .size_in_lpxs
+                        .width as f64;
+                    let x = rect.pos.x + (rect.size.x - w) * 0.5;
+                    let y = body_top + (rect.size.y - HEADER_H) * 0.5;
+                    self.draw_dim.draw_abs(cx, dvec2(x.max(rect.pos.x), y), msg);
+                }
+                NavStateTag::Browse | NavStateTag::Results => {}
+            }
+        }
+
         // Hover translucency (last, over everything): opaque panel when
         // hovered or pinned, else dim to 0.55 via a (1 - opacity) backdrop
         // scrim -- same idiom as the inspector.
@@ -597,6 +718,41 @@ impl Widget for ProjectTree {
                     cx.widget_action(uid, ProjectTreeAction::ScopeRequest { anchor });
                     return;
                 }
+                if self.search_rect.contains(p) {
+                    self.editing_search = true;
+                    cx.set_key_focus(self.view.area());
+                    self.view.redraw(cx);
+                    return;
+                }
+                if self.chip_rect.contains(p) {
+                    cx.widget_action(uid, ProjectTreeAction::RotateFilter);
+                    return;
+                }
+            }
+            Hit::KeyFocusLost(_) => {
+                if self.editing_search {
+                    self.editing_search = false;
+                    self.view.redraw(cx);
+                }
+            }
+            Hit::KeyDown(ke) if self.editing_search => match ke.key_code {
+                KeyCode::Backspace => {
+                    self.query_text.pop();
+                    self.emit_query(cx, uid);
+                }
+                KeyCode::Escape => {
+                    self.editing_search = false;
+                    self.view.redraw(cx);
+                }
+                _ => {}
+            },
+            Hit::TextInput(ti) if self.editing_search => {
+                for ch in ti.input.chars() {
+                    if !ch.is_control() {
+                        self.query_text.push(ch);
+                    }
+                }
+                self.emit_query(cx, uid);
             }
             _ => {}
         }
@@ -701,6 +857,57 @@ impl ProjectTree {
         } else {
             None
         }
+    }
+
+    /// The type-filter chip's current label. `App` pushes this from
+    /// `nav::chip_label` (Task 10) whenever the filter changes. Unused until
+    /// then -- allowed deliberately (see `set_scope_title` above).
+    #[allow(dead_code)]
+    pub fn set_chip_label(&mut self, cx: &mut Cx, label: &str) {
+        if self.chip_label != label {
+            self.chip_label = label.to_string();
+            self.view.redraw(cx);
+        }
+    }
+
+    /// The authoritative search text. `App` pushes this from `NavState::query`
+    /// (Task 10) so the field reflects state even when set programmatically
+    /// (e.g. cleared on scope change). Unused until then.
+    #[allow(dead_code)]
+    pub fn set_query_text(&mut self, cx: &mut Cx, text: &str) {
+        if self.query_text != text {
+            self.query_text = text.to_string();
+            self.view.redraw(cx);
+        }
+    }
+
+    /// Reads a search-field edit (Task 10 applies it to `NavState::query`).
+    /// Unused until then.
+    #[allow(dead_code)]
+    pub fn query_changed(&self, actions: &Actions) -> Option<String> {
+        let item = actions.find_widget_action(self.widget_uid())?;
+        if let ProjectTreeAction::Query(q) = item.cast() {
+            Some(q)
+        } else {
+            None
+        }
+    }
+
+    /// Reads a type-chip click (Task 10 cycles `NavState::filter`). Unused
+    /// until then.
+    #[allow(dead_code)]
+    pub fn rotate_filter_clicked(&self, actions: &Actions) -> bool {
+        actions
+            .find_widget_action(self.widget_uid())
+            .map(|i| matches!(i.cast(), ProjectTreeAction::RotateFilter))
+            .unwrap_or(false)
+    }
+
+    /// Redraws and fires `ProjectTreeAction::Query` with the current buffer.
+    /// Shared by the backspace and text-input edit paths.
+    fn emit_query(&mut self, cx: &mut Cx, uid: WidgetUid) {
+        self.view.redraw(cx);
+        cx.widget_action(uid, ProjectTreeAction::Query(self.query_text.clone()));
     }
 }
 
