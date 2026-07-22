@@ -49,14 +49,21 @@ script_mod! {
             // never smears sub-pixel (and fades) when zoomed out, mirroring the
             // canvas EdgeLine pen. The rect inset stays proportional; only the
             // stroke is floored, so it centers on the box edge at low zoom.
-            let sw = max(1.0, inset)
+            let sw = max(1.25, inset)
             let sdf = Sdf2d.viewport(self.pos * self.rect_size)
             sdf.rect(inset, inset, self.rect_size.x - inset * 2.0, self.rect_size.y - inset * 2.0)
             sdf.fill_keep(self.color)
             let dir = vec2(0.5, 0.8660254)
             let span = 1.3660254
             let t = clamp((self.pos.x * dir.x + self.pos.y * dir.y) / span, 0.0, 1.0)
-            sdf.stroke(mix(self.border_hi, self.border_lo, t), sw)
+            // Zoomed out the 1px hairline of pale accent (frame_lo fades to 50%
+            // alpha) washes into the near-white field. Lift the stroke alpha
+            // toward opaque as zoom drops -- non-linearly, so the border stays
+            // legible at fit-zoom. At zoom >= 1 (panels, near cards) k = 0, so
+            // the common path is unchanged.
+            let col = mix(self.border_hi, self.border_lo, t)
+            let k = clamp((1.0 - self.zoom) * 2.0, 0.0, 0.85)
+            sdf.stroke(vec4(col.rgb, mix(col.a, 1.0, k)), sw)
             return sdf.result
         }
     }

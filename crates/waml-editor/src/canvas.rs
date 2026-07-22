@@ -27,10 +27,19 @@ script_mod! {
     // exact because a per-segment AABB collapses to the bar itself (`sdf.rect`,
     // not `sdf.box`, for a sharp edge).
     mod.draw.EdgeLine = mod.draw.DrawColor{
+        zoom: uniform(1.0)
+        // Zoomed-out target color: at 1:1 the line rides `color` (text_dim), but
+        // a hairline of muted grey washes into the near-white field when zoomed
+        // out, so fade toward this deeper `text` stop as zoom drops.
+        color_deep: uniform(atlas.text)
         pixel: fn() {
             let sdf = Sdf2d.viewport(self.pos * self.rect_size)
             sdf.rect(0.0, 0.0, self.rect_size.x, self.rect_size.y)
-            sdf.fill(self.color)
+            // Color deepens non-linearly as zoom drops: k = 0 at zoom >= 1 (the
+            // line stays text_dim), fading toward the darker `text` stop zoomed
+            // out so the thinning bar keeps its contrast on the field.
+            let k = clamp((1.0 - self.zoom) * 2.0, 0.0, 0.85)
+            sdf.fill(mix(self.color, self.color_deep, k))
             return sdf.result
         }
     }
@@ -487,6 +496,10 @@ impl Widget for GraphCanvas {
         // on the true coordinate and consecutive segments meet cleanly at
         // elbows. Arrow/adornment styling is a fast-follow.
         let thickness = (2.0 * zoom).max(1.2);
+        // Feed zoom in so the pen fades text_dim -> text as the view zooms out
+        // (see EdgeLine), same uniform cadence as draw_node's frame.
+        self.draw_edge_down
+            .set_uniform(cx, live_id!(zoom), &[zoom as f32]);
         for edge in &self.scene.edges {
             for pair in edge.points.windows(2) {
                 let (a0, a1) = self.camera.world_to_local(pair[0].0, pair[0].1);
