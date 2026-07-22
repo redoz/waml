@@ -400,6 +400,30 @@ fn build_id_maps(tree: &ProjectTreeData) -> (HashMap<LiveId, String>, HashMap<Li
     (keys, kinds)
 }
 
+/// The package-folder keys `set_view` expands for `tag`, in depth-first order.
+///
+/// `Browse` opens only the top-level packages — the user drills down manually.
+/// The search states (`Results`/`Elsewhere`) open EVERY package: the nav pass
+/// already pruned the tree to the matches plus their ancestor packages, so a
+/// match nested two+ package levels deep stays hidden behind a collapsed
+/// sub-package unless those ancestor packages are expanded too.
+fn folders_to_open(tag: NavStateTag, tree: &ProjectTreeData) -> Vec<String> {
+    let deep = matches!(tag, NavStateTag::Results | NavStateTag::Elsewhere);
+    fn collect(nodes: &[TreeNode], deep: bool, out: &mut Vec<String>) {
+        for n in nodes {
+            if matches!(n.kind, TreeKind::Package) {
+                out.push(n.key.clone());
+                if deep {
+                    collect(&n.children, deep, out);
+                }
+            }
+        }
+    }
+    let mut out = Vec::new();
+    collect(&tree.roots, deep, &mut out);
+    out
+}
+
 /// Draw the row-leading glyph for `kind` at `row_top`, indented by `depth`.
 /// `Unknown` has no matching HUD glyph and is skipped, leaving a bare row.
 ///
@@ -830,12 +854,12 @@ impl ProjectTree {
         };
         let (id_to_key, id_to_kind) = build_id_maps(&tree);
         let file_tree = self.view.file_tree(cx, ids!(file_tree));
-        // Open every top-level package by default so the panel isn't collapsed.
-        // (Under scope the roots are the scope's members, not one wrapper.)
-        for root in &tree.roots {
-            if matches!(root.kind, TreeKind::Package) {
-                file_tree.set_folder_is_open(cx, LiveId::from_str(&root.key), true, Animate::No);
-            }
+        // Open package folders so the panel isn't collapsed. Browse expands only
+        // the top-level packages (under scope the roots are the scope's members,
+        // not one wrapper); the search states expand every ancestor package so a
+        // deeply nested match isn't hidden behind a collapsed sub-package.
+        for key in folders_to_open(tag, &tree) {
+            file_tree.set_folder_is_open(cx, LiveId::from_str(&key), true, Animate::No);
         }
         self.id_to_key = id_to_key;
         self.id_to_kind = id_to_kind;
@@ -986,6 +1010,49 @@ mod tests {
             Some(TreeKind::Package)
         );
         assert_eq!(id_to_key.len(), 3);
+    }
+
+    // A root package holding a sub-package that in turn holds a class, i.e. a
+    // match ("deep") that lives two package levels below the roots.
+    fn nested_two_deep() -> ProjectTreeData {
+        ProjectTreeData {
+            roots: vec![TreeNode {
+                key: "outer".to_string(),
+                title: "Outer".to_string(),
+                kind: TreeKind::Package,
+                children: vec![TreeNode {
+                    key: "inner".to_string(),
+                    title: "Inner".to_string(),
+                    kind: TreeKind::Package,
+                    children: vec![TreeNode {
+                        key: "deep".to_string(),
+                        title: "Deep".to_string(),
+                        kind: TreeKind::Class,
+                        children: vec![],
+                    }],
+                }],
+            }],
+        }
+    }
+
+    #[test]
+    fn search_states_expand_ancestor_packages_of_nested_matches() {
+        let tree = nested_two_deep();
+        // Browse opens only the top-level package; the user drills in from there.
+        assert_eq!(
+            folders_to_open(NavStateTag::Browse, &tree),
+            vec!["outer".to_string()]
+        );
+        // Results/Elsewhere must open EVERY ancestor package (outer AND inner) or
+        // the nested "deep" match stays hidden behind a collapsed sub-package.
+        assert_eq!(
+            folders_to_open(NavStateTag::Results, &tree),
+            vec!["outer".to_string(), "inner".to_string()]
+        );
+        assert_eq!(
+            folders_to_open(NavStateTag::Elsewhere, &tree),
+            vec!["outer".to_string(), "inner".to_string()]
+        );
     }
 
     #[test]
