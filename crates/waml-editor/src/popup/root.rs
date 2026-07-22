@@ -9,6 +9,7 @@ use crate::popup::base::{
 use crate::popup::menu::{MenuPopup, MENU_MAX_W, PAD_V, ROW_H};
 use crate::popup::presenter::Presenter;
 use crate::popup::radial::RadialPopup;
+use crate::popup::select::{SelectFlyout, SelectItem, SELECT_MAX_W};
 use makepad_widgets::*;
 
 /// How to open the linear card.
@@ -48,6 +49,13 @@ pub enum PopupSpec {
         items: Vec<PopupItem>,
         open: RadialOpen,
     },
+    Select {
+        tag: LiveId,
+        anchor: DVec2,
+        min_width: f64,
+        bounds: Rect,
+        items: Vec<SelectItem>,
+    },
 }
 
 /// Emitted on every close. Openers filter for their own `tag`; `PopupRoot` never
@@ -69,6 +77,7 @@ pub enum PopupRootAction {
 enum ActiveKind {
     Menu,
     Radial,
+    Select,
 }
 
 /// The routing decision for one already-handled event.
@@ -112,6 +121,7 @@ script_mod! {
             height: Fill
             menu := MenuPopup{ width: Fill height: Fill }
             radial := RadialPopup{ width: Fill height: Fill }
+            select := SelectFlyout{ width: Fill height: Fill }
         }
     }
 }
@@ -175,6 +185,15 @@ impl PopupRoot {
                         r.reset();
                     }
                 }
+                ActiveKind::Select => {
+                    if let Some(mut s) = self
+                        .body
+                        .widget(cx, ids!(select))
+                        .borrow_mut::<SelectFlyout>()
+                    {
+                        s.reset();
+                    }
+                }
             }
             cx.widget_action(
                 self.widget_uid(),
@@ -225,6 +244,28 @@ impl PopupRoot {
                 }
                 self.active = Some((ActiveKind::Radial, tag));
             }
+            PopupSpec::Select {
+                tag,
+                anchor,
+                min_width,
+                bounds,
+                items,
+            } => {
+                // Clamp on-screen. Width is unknown until draw measures the
+                // label, so clamp with the widest possible width — the cap, or
+                // the control if it is wider (matches `select_width`'s ceiling).
+                let cap = SELECT_MAX_W.max(min_width);
+                let size = dvec2(cap, PAD_V * 2.0 + items.len() as f64 * ROW_H);
+                let placed = Presenter::place(anchor, size, bounds);
+                if let Some(mut s) = self
+                    .body
+                    .widget(cx, ids!(select))
+                    .borrow_mut::<SelectFlyout>()
+                {
+                    s.open_select(cx, placed, min_width, items);
+                }
+                self.active = Some((ActiveKind::Select, tag));
+            }
         }
         // A session-first open: `menu`/`radial`'s own draw components (`draw_frame`
         // / `draw_wedge`) are `#[redraw]` but have never executed `draw_abs`
@@ -261,6 +302,12 @@ impl PopupRoot {
                     .borrow_mut::<RadialPopup>()
                     .map(|mut r| r.handle(cx, ev))
                     .unwrap_or(PopupVerdict::Ignored),
+                ActiveKind::Select => self
+                    .body
+                    .widget(cx, ids!(select))
+                    .borrow_mut::<SelectFlyout>()
+                    .map(|mut s| s.handle(cx, ev))
+                    .unwrap_or(PopupVerdict::Ignored),
             };
             decide(verdict, is_primary_press(ev))
         };
@@ -279,6 +326,15 @@ impl PopupRoot {
                         .borrow_mut::<RadialPopup>()
                     {
                         r.reset();
+                    }
+                }
+                ActiveKind::Select => {
+                    if let Some(mut s) = self
+                        .body
+                        .widget(cx, ids!(select))
+                        .borrow_mut::<SelectFlyout>()
+                    {
+                        s.reset();
                     }
                 }
             }
