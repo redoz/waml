@@ -422,6 +422,9 @@ impl App {
             log!("switch_diagram: no diagram with key {key:?}");
             return;
         };
+        // A new diagram is being shown in the base tab: drop stale expansion
+        // (keyed by node key, which may not exist in the new diagram).
+        self.expanded.clear();
         let base_id = self
             .tabs
             .set_diagram_base(diagram.key.clone(), diagram.title.clone());
@@ -539,6 +542,8 @@ impl App {
             }
         };
         self.model = model;
+        // Fresh model: no node keys carry over, so clear expansion state.
+        self.expanded.clear();
 
         // Folder basename backs the display name when the bundle has no root
         // name of its own. `..` / drive-root degenerate to an empty basename;
@@ -1249,6 +1254,33 @@ impl MatchEvent for App {
                     .borrow_mut::<crate::inspector_panel::Inspector>()
                 {
                     inspector.set_subject(cx, &self.model, Subject::None);
+                }
+                return;
+            }
+            Some(crate::canvas::GraphCanvasAction::ToggleExpand { key }) => {
+                if !self.expanded.remove(&key) {
+                    self.expanded.insert(key);
+                }
+                // Re-solve the current diagram with the updated set; update_scene
+                // holds the camera and re-resolves the selection by key.
+                if let Some(active) = self.tabs.active_tab().cloned() {
+                    if active.kind == TabKind::Diagram {
+                        if let Some(diagram) =
+                            self.model.diagrams.iter().find(|d| d.key == active.key)
+                        {
+                            let (scene, diags) = build_scene(&self.model, diagram, &self.expanded);
+                            for d in &diags {
+                                log!("diagnostic: {d:?}");
+                            }
+                            if let Some(mut canvas) = self
+                                .ui
+                                .widget(cx, ids!(canvas))
+                                .borrow_mut::<crate::canvas::GraphCanvas>()
+                            {
+                                canvas.update_scene(cx, scene);
+                            }
+                        }
+                    }
                 }
                 return;
             }
