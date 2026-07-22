@@ -646,6 +646,11 @@ impl Widget for GraphCanvas {
         // they sit on, with only a small floor (a legibility nub) so they don't
         // vanish when way zoomed out. A large floor makes them dwarf the shrinking
         // nodes, so keep it low relative to `marker_size` at 1:1.
+        //
+        // The base (10) is coupled to the router's `ROUTE_MARGIN`: the diamond
+        // reaches back `2 * marker_size` (~20 world units at 1:1), and the stub
+        // has to be long enough to seat it, so `ROUTE_MARGIN` must stay >= that
+        // reach. Growing this base means growing `ROUTE_MARGIN` too.
         let marker_size = (10.0 * zoom).max(4.0);
         // Feed zoom in so the pen fades text_dim -> text as the view zooms out
         // (see EdgeLine), same uniform cadence as draw_node's frame.
