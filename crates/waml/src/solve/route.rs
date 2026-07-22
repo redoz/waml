@@ -532,14 +532,73 @@ struct End {
     along: f64,
 }
 
+fn disc_to_side(d: u8) -> Side {
+    match d {
+        0 => Side::Left,
+        1 => Side::Right,
+        2 => Side::Top,
+        _ => Side::Bottom,
+    }
+}
+
+/// True when leaving `side` perpendicularly means moving along the x-axis
+/// (i.e. the border is vertical — Left/Right).
+fn perp_is_horizontal(side: Side) -> bool {
+    matches!(side, Side::Left | Side::Right)
+}
+
+/// Keep the first/last segment perpendicular to the border after moving an
+/// endpoint along it: if the adjacent INTERIOR bend sits off the border axis,
+/// pull it onto the endpoint's along-coordinate. Only valid when `nb` is a true
+/// interior bend, never the opposite (border-attached) endpoint of a 2-point
+/// route -- dragging that would slide it off its own box's border.
+fn realign_interior(points: &mut [P], ep: usize, nb: usize, side: Side) {
+    let e = points[ep];
+    let n = points[nb];
+    if perp_is_horizontal(side) {
+        if (n.0 - e.0).abs() > 1e-6 {
+            points[nb].1 = e.1;
+        }
+    } else if (n.1 - e.1).abs() > 1e-6 {
+        points[nb].0 = e.0;
+    }
+}
+
+/// Orthogonally connect two border attachment points, each leaving its border
+/// perpendicular. A single segment (2-point route) whose endpoints were BOTH
+/// spread cannot stay straight without dragging one endpoint off its border, so
+/// insert bends: an S when both exits are parallel, an L when perpendicular.
+/// `simplify` collapses the polyline back to a straight segment when the two
+/// endpoints happen to already line up.
+fn connect_ends(s: P, s_side: Option<Side>, t: P, t_side: Option<Side>) -> Vec<P> {
+    let s_horiz = s_side.map(perp_is_horizontal);
+    let t_horiz = t_side.map(perp_is_horizontal);
+    let raw = match (s_horiz, t_horiz) {
+        (Some(true), Some(true)) => {
+            let mx = (s.0 + t.0) / 2.0;
+            vec![s, (mx, s.1), (mx, t.1), t]
+        }
+        (Some(false), Some(false)) => {
+            let my = (s.1 + t.1) / 2.0;
+            vec![s, (s.0, my), (t.0, my), t]
+        }
+        (Some(false), _) => vec![s, (s.0, t.1), t],
+        // Source exits horizontally (or its side is unknown -> assume so):
+        // bend to the target's x, then run into it.
+        _ => vec![s, (t.0, s.1), t],
+    };
+    simplify(raw)
+}
+
 /// Spread route endpoints that land on the same side of the same box into
 /// evenly-spaced, distinct attachment points along that side (no two edges
-/// share an attachment point). Moves the endpoint along the border; when the
-/// adjacent interior point sits OFF the border (the first/last segment leaves
-/// perpendicular) it is rewritten to keep that segment perpendicular. When the
-/// neighbour sits ON the border (astar hugged the border, so the first/last
-/// segment runs parallel to it), the neighbour is left untouched — rewriting it
-/// would collapse the segment and tilt the next one into a diagonal.
+/// share an attachment point). Runs in two passes: first compute every
+/// endpoint's spread coordinate, then apply. A multi-point route's endpoint is
+/// moved in place and its adjacent interior bend realigned to keep the exit
+/// perpendicular. A 2-point route is rebuilt whole via `connect_ends`, because
+/// BOTH of its endpoints may be spread (on different boxes) and each must stay
+/// on its own border -- the old single-pass code dragged the opposite endpoint
+/// off the target, deleting the connecting segment.
 fn hub_spread(routes: &mut [Route], rects: &BTreeMap<BoxId, Rect>) {
     let mut groups: BTreeMap<(String, u8), Vec<End>> = BTreeMap::new();
     let sd = |s: Side| match s {
@@ -577,6 +636,10 @@ fn hub_spread(routes: &mut [Route], rects: &BTreeMap<BoxId, Rect>) {
         }
     }
 
+    // Pass 1: spread. Multi-point routes move in place; 2-point routes only
+    // record their new endpoint (both ends may still be spread by another group,
+    // and each must stay on its own border) for the rebuild pass.
+    let mut moved: BTreeMap<(usize, usize), (P, Side)> = BTreeMap::new();
     for ((key, sdisc), mut ends) in groups {
         if ends.len() < 2 {
             continue;
@@ -584,6 +647,7 @@ fn hub_spread(routes: &mut [Route], rects: &BTreeMap<BoxId, Rect>) {
         let bx = rects[&BoxId::Node(key)];
         ends.sort_by(|a, b| a.along.total_cmp(&b.along).then(a.ri.cmp(&b.ri)));
         let m = ends.len();
+        let side = disc_to_side(sdisc);
         let horizontal_side = sdisc == 2 || sdisc == 3; // Top/Bottom spread along x
         let (span_lo, span_hi, fixed) = if horizontal_side {
             (
@@ -601,25 +665,40 @@ fn hub_spread(routes: &mut [Route], rects: &BTreeMap<BoxId, Rect>) {
         for (k, e) in ends.iter().enumerate() {
             let t = (k as f64 + 1.0) / (m as f64 + 1.0); // interior fraction, no corners
             let along = span_lo + t * (span_hi - span_lo);
-            let nb = routes[e.ri].points[e.nb];
-            if horizontal_side {
-                // Off-border neighbour => first segment leaves perpendicular
-                // (vertical); rewrite its x so it stays perpendicular. On-border
-                // neighbour => astar hugged the border first (segment parallel);
-                // moving the endpoint along the border keeps it orthogonal, so
-                // leave the neighbour alone — rewriting it would tilt the next
-                // segment into a diagonal.
-                routes[e.ri].points[e.ep] = (along, fixed);
-                if (nb.1 - fixed).abs() > 1e-6 {
-                    routes[e.ri].points[e.nb].0 = along;
-                }
+            let new = if horizontal_side {
+                (along, fixed)
             } else {
-                routes[e.ri].points[e.ep] = (fixed, along);
-                if (nb.0 - fixed).abs() > 1e-6 {
-                    routes[e.ri].points[e.nb].1 = along;
-                }
+                (fixed, along)
+            };
+            if routes[e.ri].points.len() == 2 {
+                moved.insert((e.ri, e.ep), (new, side));
+            } else {
+                routes[e.ri].points[e.ep] = new;
+                realign_interior(&mut routes[e.ri].points, e.ep, e.nb, side);
             }
         }
+    }
+
+    // Pass 2: rebuild each 2-point route whose endpoint(s) were spread, so both
+    // endpoints stay on their borders and the connecting segment is preserved.
+    let touched: BTreeSet<usize> = moved.keys().map(|(ri, _)| *ri).collect();
+    for ri in touched {
+        let last = routes[ri].points.len() - 1;
+        let s = moved.get(&(ri, 0)).map_or(routes[ri].points[0], |(p, _)| *p);
+        let t = moved
+            .get(&(ri, last))
+            .map_or(routes[ri].points[last], |(p, _)| *p);
+        let s_side = moved.get(&(ri, 0)).map(|(_, sd)| *sd).or_else(|| {
+            rects
+                .get(&BoxId::Node(routes[ri].source.clone()))
+                .and_then(|bx| side_of(bx, s))
+        });
+        let t_side = moved.get(&(ri, last)).map(|(_, sd)| *sd).or_else(|| {
+            rects
+                .get(&BoxId::Node(routes[ri].target.clone()))
+                .and_then(|bx| side_of(bx, t))
+        });
+        routes[ri].points = connect_ends(s, s_side, t, t_side);
     }
 }
 
@@ -812,6 +891,59 @@ mod tests {
                 && (ys[0] - ys[2]).abs() > 1e-6,
             "attachments must be distinct: {ys:?}"
         );
+    }
+
+    /// Every route endpoint must stay ON the border of its own box after a
+    /// spread. Regression: spreading the hub side dragged the OTHER (opposite)
+    /// endpoint off its target's border, so the last segment no longer reached
+    /// the target -- the on-screen "vertical part is just gone" bug.
+    #[test]
+    fn hub_spread_keeps_opposite_endpoint_on_its_target_border() {
+        let mut rects: BTreeMap<BoxId, Rect> = BTreeMap::new();
+        rects.insert(BoxId::Node("h".into()), r(0.0, 0.0, 100.0, 90.0));
+        rects.insert(BoxId::Node("t1".into()), r(300.0, 0.0, 60.0, 30.0));
+        rects.insert(BoxId::Node("t2".into()), r(300.0, 40.0, 60.0, 30.0));
+        rects.insert(BoxId::Node("t3".into()), r(300.0, 80.0, 60.0, 30.0));
+        let mk = |t: &str, ty: f64| Route {
+            points: vec![(100.0, 45.0), (300.0, ty)],
+            source: "h".into(),
+            target: t.into(),
+        };
+        let mut routes = vec![mk("t1", 15.0), mk("t2", 55.0), mk("t3", 95.0)];
+        hub_spread(&mut routes, &rects);
+        for rt in &routes {
+            let tgt = rects[&BoxId::Node(rt.target.clone())];
+            let last = *rt.points.last().unwrap();
+            // Endpoint lands on the target's LEFT border, within its y-extent.
+            assert!(
+                (last.0 - tgt.x).abs() < 1e-6,
+                "{} target endpoint off left border: {last:?}",
+                rt.target
+            );
+            assert!(
+                last.1 >= tgt.y - 1e-6 && last.1 <= tgt.y + tgt.h + 1e-6,
+                "{} target endpoint {last:?} outside border y-extent [{}, {}]",
+                rt.target,
+                tgt.y,
+                tgt.y + tgt.h
+            );
+            // Source endpoint stays on the hub's right border.
+            assert!(
+                (rt.points[0].0 - 100.0).abs() < 1e-6,
+                "{} source off hub border: {:?}",
+                rt.target,
+                rt.points[0]
+            );
+            // Whole polyline is orthogonal (no diagonal segments).
+            for pair in rt.points.windows(2) {
+                let (a, b) = (pair[0], pair[1]);
+                assert!(
+                    (a.0 - b.0).abs() < 1e-6 || (a.1 - b.1).abs() < 1e-6,
+                    "{} has a diagonal segment: {a:?}->{b:?}",
+                    rt.target
+                );
+            }
+        }
     }
 
     use crate::solve::{BoxKind, FlagSet, SolveConfig};
