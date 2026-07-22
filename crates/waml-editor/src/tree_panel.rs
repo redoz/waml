@@ -239,8 +239,12 @@ pub enum ProjectTreeAction {
     /// Search-field edit. Emitted by `emit_query` on every keystroke; `App`
     /// applies it to `NavState::query`.
     Query(String),
-    /// Type-filter chip click; cycles `NavState::filter` in `App`.
-    RotateFilter,
+    /// Type-filter chip click; `App` relays it to `PopupRoot` to show the
+    /// type-filter `SelectFlyout` (mirrors `ScopeRequest`). `anchor` is the
+    /// chip's window rect so the flyout drops under it, sized to its width.
+    FilterRequest {
+        anchor: Rect,
+    },
 }
 
 /// Which projection the panel is showing, for the header note + empty state
@@ -355,11 +359,16 @@ pub struct ProjectTree {
     /// `nav::chip_label`, Task 10). Empty falls back to `"All"`.
     #[rust]
     chip_label: String,
+    /// The active filter kind, so the chip can draw the matching leading icon.
+    /// `None` is the "All" state (drawn with `Icon::Funnel`). Pushed alongside
+    /// `chip_label` via `set_chip_filter`.
+    #[rust]
+    chip_kind: Option<TreeKind>,
     /// The search field's hit rect. A click begins editing + takes key focus.
     #[rust]
     search_rect: Rect,
     /// The type-filter chip's hit rect. A click emits
-    /// `ProjectTreeAction::RotateFilter`.
+    /// `ProjectTreeAction::FilterRequest`, opening the type-filter dropdown.
     #[rust]
     chip_rect: Rect,
     /// Panel-local body fold: hides the `FileTree` body, header stays.
@@ -648,7 +657,7 @@ impl Widget for ProjectTree {
             let row_h = HEADER_H - TITLE_ROW_H;
             let field_h = row_h - 6.0;
             let field_y = rect.pos.y + TITLE_ROW_H + 3.0;
-            let chip_w = 74.0;
+            let chip_w = 104.0;
 
             let chip_rect = Rect {
                 pos: dvec2(rect.pos.x + rect.size.x - PAD - chip_w, field_y),
@@ -696,11 +705,38 @@ impl Widget for ProjectTree {
             } else {
                 self.chip_label.as_str()
             };
+            // Leading icon: the active kind's glyph, or `Funnel` for "All".
+            let lead_rect = Rect {
+                pos: dvec2(
+                    chip_rect.pos.x + 6.0,
+                    chip_rect.pos.y + (field_h - ICON) * 0.5,
+                ),
+                size: dvec2(ICON, ICON),
+            };
+            let lead_icon = self
+                .chip_kind
+                .and_then(IconSet::icon_for)
+                .unwrap_or(Icon::Funnel);
+            self.icons.draw(cx, lead_icon, lead_rect, dim);
+            // Label, between the leading icon and the trailing chevron.
             self.draw_dim.draw_abs(
                 cx,
-                dvec2(chip_rect.pos.x + 6.0, chip_rect.pos.y + field_h * 0.5 - 7.0),
-                &format!("{chip_label} \u{2304}"),
+                dvec2(
+                    lead_rect.pos.x + ICON + 4.0,
+                    chip_rect.pos.y + field_h * 0.5 - 7.0,
+                ),
+                chip_label,
             );
+            // Trailing chevron: the real up/down SDF glyph (a proper Select
+            // affordance), replacing the old U+2304 text character.
+            let chev_rect = Rect {
+                pos: dvec2(
+                    chip_rect.pos.x + chip_rect.size.x - 6.0 - ICON,
+                    chip_rect.pos.y + (field_h - ICON) * 0.5,
+                ),
+                size: dvec2(ICON, ICON),
+            };
+            self.icons.draw(cx, Icon::ChevronsUpDown, chev_rect, dim);
         }
 
         // Empty-state / elsewhere note, over the body area, below the header.
@@ -789,7 +825,11 @@ impl Widget for ProjectTree {
                     return;
                 }
                 if self.chip_rect.contains(p) {
-                    cx.widget_action(uid, ProjectTreeAction::RotateFilter);
+                    let anchor = Rect {
+                        pos: self.chip_rect.pos + hit_off,
+                        size: self.chip_rect.size,
+                    };
+                    cx.widget_action(uid, ProjectTreeAction::FilterRequest { anchor });
                     return;
                 }
             }
@@ -919,11 +959,13 @@ impl ProjectTree {
         }
     }
 
-    /// The type-filter chip's current label. `App` pushes this from
-    /// `nav::chip_label` whenever the filter changes (see `App::refresh_nav`).
-    pub fn set_chip_label(&mut self, cx: &mut Cx, label: &str) {
-        if self.chip_label != label {
+    /// The type-filter chip's current filter. `App` pushes this whenever the
+    /// filter changes (see `App::refresh_nav`): `label` from `nav::chip_label`
+    /// for the chip text, `kind` for the matching leading icon (`None` = "All").
+    pub fn set_chip_filter(&mut self, cx: &mut Cx, kind: Option<TreeKind>, label: &str) {
+        if self.chip_label != label || self.chip_kind != kind {
             self.chip_label = label.to_string();
+            self.chip_kind = kind;
             self.view.redraw(cx);
         }
     }
@@ -953,12 +995,15 @@ impl ProjectTree {
         }
     }
 
-    /// Reads a type-chip click; `App` cycles `NavState::filter` in response.
-    pub fn rotate_filter_clicked(&self, actions: &Actions) -> bool {
-        actions
-            .find_widget_action(self.widget_uid())
-            .map(|i| matches!(i.cast(), ProjectTreeAction::RotateFilter))
-            .unwrap_or(false)
+    /// The type-chip's open-request. `App` relays it to `PopupRoot` to show
+    /// the type-filter `SelectFlyout`, mirroring `scope_request`.
+    pub fn filter_request(&self, actions: &Actions) -> Option<Rect> {
+        let item = actions.find_widget_action(self.widget_uid())?;
+        if let ProjectTreeAction::FilterRequest { anchor } = item.cast() {
+            Some(anchor)
+        } else {
+            None
+        }
     }
 
     /// Redraws and fires `ProjectTreeAction::Query` with the current buffer.
