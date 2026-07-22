@@ -102,6 +102,40 @@ pub fn kinds_in_model(model: &Model) -> Vec<TreeKind> {
         .collect()
 }
 
+/// Nested package-only rows for the title dropdown, depth-indented. Row 0 is the
+/// synthetic root (whole-model scope, key `""`); real sub-packages follow. The
+/// `build_tree` root (key `""`) IS a package, so it is skipped here and replaced
+/// by the synthetic row, then its children are recursed for real packages.
+pub fn packages(model: &Model) -> Vec<PackageRow> {
+    let full = build_tree(model, "Untitled");
+    let root_title = if model.path.is_empty() {
+        "Untitled".to_string()
+    } else {
+        model.path.clone()
+    };
+    let mut out = vec![PackageRow {
+        key: String::new(),
+        title: root_title,
+        depth: 0,
+    }];
+    fn walk(nodes: &[TreeNode], depth: usize, out: &mut Vec<PackageRow>) {
+        for n in nodes {
+            if n.kind == TreeKind::Package {
+                out.push(PackageRow {
+                    key: n.key.clone(),
+                    title: n.title.clone(),
+                    depth,
+                });
+                walk(&n.children, depth + 1, out);
+            }
+        }
+    }
+    if let Some(root) = full.roots.first() {
+        walk(&root.children, 1, &mut out);
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -212,5 +246,36 @@ mod tests {
         // Canonical order: every entry's index in KIND_ORDER strictly increases.
         let idx = |k: &TreeKind| KIND_ORDER.iter().position(|x| x == k).unwrap();
         assert!(kinds.windows(2).all(|w| idx(&w[0]) < idx(&w[1])));
+    }
+
+    #[test]
+    fn packages_lead_with_synthetic_root_then_nest_real_packages() {
+        let rows = packages(&built());
+        // Row 0: synthetic whole-model root, key "", titled from model.path.
+        assert_eq!(
+            rows[0],
+            PackageRow {
+                key: String::new(),
+                title: "Root".to_string(),
+                depth: 0
+            }
+        );
+        // The one real sub-package, indented to depth 1. (Only packages appear;
+        // `cls`/`iface` classifiers are excluded.)
+        assert_eq!(
+            rows.iter()
+                .map(|r| (r.key.as_str(), r.depth))
+                .collect::<Vec<_>>(),
+            vec![("", 0usize), ("sub", 1usize)]
+        );
+    }
+
+    #[test]
+    fn packages_synthetic_root_falls_back_to_untitled_when_path_empty() {
+        let mut m = built();
+        m.path = String::new();
+        let rows = packages(&m);
+        assert_eq!(rows[0].title, "Untitled");
+        assert_eq!(rows[0].key, "");
     }
 }
