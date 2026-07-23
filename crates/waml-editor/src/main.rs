@@ -11,6 +11,7 @@ mod class_diagram_view;
 mod classifier_preview_view;
 mod cli;
 mod config;
+mod constraint_toggle;
 mod diagram_switcher;
 mod doc_tabs;
 mod doc_view;

@@ -23,6 +23,7 @@ script_mod! {
     use mod.widgets.DiagramSwitcher
     use mod.widgets.ShortcutsOverlay
     use mod.widgets.ToolDock
+    use mod.widgets.ConstraintToggle
     use mod.widgets.SelectionToolbar
     use mod.widgets.Statusbar
     use mod.widgets.SolidView
@@ -224,6 +225,18 @@ script_mod! {
                                 // centered, right of the project tree (12+280+12).
                                 height: 308.0
                                 margin: Inset{left: 304.0}
+                            }
+                        }
+                        // Constraint-veil visibility toggle: top-left, right of
+                        // the tree, aligned with the tool dock's left edge.
+                        constraint_toggle_wrap := View{
+                            width: Fill
+                            height: Fill
+                            align: Align{x: 0.0, y: 0.0}
+                            constraint_toggle := ConstraintToggle{
+                                width: 110.0
+                                height: 36.0
+                                margin: Inset{left: 304.0, top: 12.0}
                             }
                         }
                         // Project tree: far left edge.
@@ -1297,6 +1310,23 @@ impl MatchEvent for App {
             return;
         }
 
+        // Constraint-veil visibility toggle -> canvas.
+        let vis = self
+            .ui
+            .widget(cx, ids!(constraint_toggle))
+            .borrow::<crate::constraint_toggle::ConstraintToggle>()
+            .and_then(|t| t.toggle_action(actions));
+        if let Some(mode) = vis {
+            if let Some(mut canvas) = self
+                .ui
+                .widget(cx, ids!(canvas))
+                .borrow_mut::<crate::canvas::GraphCanvas>()
+            {
+                canvas.set_constraint_vis(cx, mode);
+            }
+            return;
+        }
+
         // Doc tab: the active view (`ClassDiagramView`/`ClassifierPreviewView`)
         // fully owns its actions (inline-edit commit, element-picker open,
         // tool dock, canvas pointer actions, selection toolbar) via
@@ -1608,6 +1638,7 @@ impl AppMain for App {
         crate::diagram_switcher::script_mod(vm);
         crate::shortcuts_overlay::script_mod(vm);
         crate::tool_dock::script_mod(vm);
+        crate::constraint_toggle::script_mod(vm);
         crate::selection_toolbar::script_mod(vm);
         crate::statusbar::script_mod(vm);
         crate::logo::script_mod(vm);
