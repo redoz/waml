@@ -343,6 +343,9 @@ pub struct GraphCanvas {
     /// its index shifts. Reset to `None` whenever the scene is replaced.
     #[rust]
     selected_key: Option<String>,
+    /// Which constraint veils to draw (spec §1). Default `Selected`.
+    #[rust]
+    constraint_vis: ConstraintVisibility,
 }
 
 impl Default for Camera {
@@ -426,6 +429,51 @@ pub const COMPASS_ZONES: [Zone; 8] = [
     Zone::BottomLeft,
     Zone::BottomRight,
 ];
+
+/// What constraint veils the canvas draws (spec §1). Persisted in view state and
+/// driven by the toolbar segmented control.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub enum ConstraintVisibility {
+    /// No constraint marks — pure diagram.
+    None,
+    /// Selecting a node lights every constraint touching it (sticky). Default.
+    #[default]
+    Selected,
+    /// Every constraint, viewed through the layer scrubber (Task 6).
+    All,
+}
+
+impl ConstraintVisibility {
+    pub const ALL: [ConstraintVisibility; 3] = [
+        ConstraintVisibility::None,
+        ConstraintVisibility::Selected,
+        ConstraintVisibility::All,
+    ];
+}
+
+/// The relations that should be drawn under a visibility mode + sticky selection
+/// (spec §1). `None` ⇒ empty; `Selected` ⇒ relations touching `selected_key` as
+/// subject OR reference (empty if nothing selected); `All` ⇒ every relation. Pure,
+/// GPU-free (mirrors `node_at` selection logic).
+fn relations_for_visibility<'a>(
+    relations: &'a [crate::scene::SceneRelation],
+    mode: ConstraintVisibility,
+    selected_key: Option<&str>,
+) -> Vec<&'a crate::scene::SceneRelation> {
+    match mode {
+        ConstraintVisibility::None => Vec::new(),
+        ConstraintVisibility::All => relations.iter().collect(),
+        ConstraintVisibility::Selected => {
+            let Some(key) = selected_key else {
+                return Vec::new();
+            };
+            relations
+                .iter()
+                .filter(|r| r.subject == key || r.reference == key)
+                .collect()
+        }
+    }
+}
 
 /// Fixed screen-px geometry of the dock compass. Deliberately camera-*independent*
 /// so the handles stay a constant size (and a constant, comfortable hit target)
@@ -1443,25 +1491,28 @@ impl GraphCanvas {
         }
     }
 
-    /// Persistent constraint overlay: each projected placement drawn as a
-    /// distance-faded grey keep-out veil (spec §2). Visibility gating lands in
-    /// Task 5; for now every relation is drawn.
+    /// Persistent constraint overlay, gated by the visibility mode + sticky
+    /// selection (spec §1): None draws nothing, Selected draws only relations
+    /// touching the selected node, All draws every relation.
     fn draw_relations_overlay(&mut self, cx: &mut Cx2d) {
-        let legs: Vec<(usize, usize, waml::syntax::Direction)> = self
-            .scene
-            .relations
-            .iter()
-            .filter_map(|rel| {
-                let si = self.scene.nodes.iter().position(|n| n.key == rel.subject)?;
-                let ri = self
-                    .scene
-                    .nodes
-                    .iter()
-                    .position(|n| n.key == rel.reference)?;
-                Some((si, ri, rel.dir))
-            })
-            .collect();
-        for (si, ri, dir) in legs {
+        let selected_key = self.selected_key.clone();
+        let chosen: Vec<(usize, usize, waml::syntax::Direction)> = relations_for_visibility(
+            &self.scene.relations,
+            self.constraint_vis,
+            selected_key.as_deref(),
+        )
+        .into_iter()
+        .filter_map(|rel| {
+            let si = self.scene.nodes.iter().position(|n| n.key == rel.subject)?;
+            let ri = self
+                .scene
+                .nodes
+                .iter()
+                .position(|n| n.key == rel.reference)?;
+            Some((si, ri, rel.dir))
+        })
+        .collect();
+        for (si, ri, dir) in chosen {
             self.draw_veil_for(cx, si, ri, dir);
         }
     }
@@ -1798,6 +1849,12 @@ impl GraphCanvas {
     /// compass reddens the flagged zones on the next frame.
     pub fn set_conflict_zones(&mut self, cx: &mut Cx, zones: Vec<Zone>) {
         self.conflict_zones = zones;
+        self.draw_bg.redraw(cx);
+    }
+
+    /// Set the constraint-veil visibility mode and repaint.
+    pub fn set_constraint_vis(&mut self, cx: &mut Cx, mode: ConstraintVisibility) {
+        self.constraint_vis = mode;
         self.draw_bg.redraw(cx);
     }
 
@@ -2223,5 +2280,46 @@ mod tests {
         assert_eq!(selection_index(&nodes, Some("b")), Some(1));
         assert_eq!(selection_index(&nodes, Some("gone")), None);
         assert_eq!(selection_index(&nodes, None), None);
+    }
+
+    #[test]
+    fn visibility_gates_which_relations_draw() {
+        use crate::scene::SceneRelation;
+        use waml::syntax::Direction;
+        let rels = vec![
+            SceneRelation {
+                subject: "order".into(),
+                reference: "customer".into(),
+                dir: Direction::LeftOf,
+            },
+            SceneRelation {
+                subject: "payment-gateway".into(),
+                reference: "order".into(),
+                dir: Direction::Below,
+            },
+            SceneRelation {
+                subject: "a".into(),
+                reference: "b".into(),
+                dir: Direction::LeftOf,
+            },
+        ];
+        // None: nothing, regardless of selection.
+        assert!(
+            relations_for_visibility(&rels, ConstraintVisibility::None, Some("order")).is_empty()
+        );
+        // Selected with nothing selected: nothing.
+        assert!(relations_for_visibility(&rels, ConstraintVisibility::Selected, None).is_empty());
+        // Selected on `order`: the two relations touching it (as subject OR reference),
+        // not the unrelated a-b relation.
+        let sel = relations_for_visibility(&rels, ConstraintVisibility::Selected, Some("order"));
+        assert_eq!(sel.len(), 2);
+        assert!(sel
+            .iter()
+            .all(|r| r.subject == "order" || r.reference == "order"));
+        // All: every relation.
+        assert_eq!(
+            relations_for_visibility(&rels, ConstraintVisibility::All, None).len(),
+            3
+        );
     }
 }
