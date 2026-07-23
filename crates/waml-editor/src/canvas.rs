@@ -1078,19 +1078,48 @@ impl Widget for GraphCanvas {
         self.draw_node
             .set_uniform(cx, live_id!(zoom), &[zoom as f32]);
 
-        // Groups: framed rects behind everything else. Deeper nesting is drawn
-        // with the same fill; draw-order (shallow first) leaves inner groups on top.
-        for group in &self.scene.groups {
-            let (lx, ly) = self.camera.world_to_local(group.rect.x, group.rect.y);
-            let screen = Rect {
-                pos: dvec2(rect.pos.x + lx, rect.pos.y + ly),
-                size: dvec2(
-                    group.rect.w * self.camera.zoom,
-                    group.rect.h * self.camera.zoom,
-                ),
-            };
+        // Groups: framed rects behind everything else, now with a debug-grade
+        // outline so group extents are legible while organizing. Deeper nesting
+        // keeps the same fill; draw-order (shallow first) leaves inner groups on
+        // top. Collect screen rects first so `fill_rect` (&mut self) can stroke
+        // the outline without holding the `self.scene.groups` borrow.
+        let group_draws: Vec<(Rect, Option<String>)> = self
+            .scene
+            .groups
+            .iter()
+            .map(|g| {
+                let (lx, ly) = self.camera.world_to_local(g.rect.x, g.rect.y);
+                let screen = Rect {
+                    pos: dvec2(rect.pos.x + lx, rect.pos.y + ly),
+                    size: dvec2(g.rect.w * self.camera.zoom, g.rect.h * self.camera.zoom),
+                };
+                (screen, g.title.clone())
+            })
+            .collect();
+        for (screen, title) in group_draws {
             self.draw_group.draw_abs(cx, screen);
-            if let Some(title) = &group.title {
+            // Debug outline: four thin slate bars hugging the rect border.
+            let ol = vec4(0.45, 0.52, 0.60, 0.85);
+            let t = 1.5;
+            self.fill_rect(cx, screen.pos.x, screen.pos.y, screen.size.x, t, ol);
+            self.fill_rect(
+                cx,
+                screen.pos.x,
+                screen.pos.y + screen.size.y - t,
+                screen.size.x,
+                t,
+                ol,
+            );
+            self.fill_rect(cx, screen.pos.x, screen.pos.y, t, screen.size.y, ol);
+            self.fill_rect(
+                cx,
+                screen.pos.x + screen.size.x - t,
+                screen.pos.y,
+                t,
+                screen.size.y,
+                ol,
+            );
+            if let Some(title) = &title {
                 self.draw_text.text_style.font_size = (12.0 * zoom) as f32;
                 self.draw_text.draw_abs(
                     cx,
