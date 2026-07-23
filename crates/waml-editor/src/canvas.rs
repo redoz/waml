@@ -562,6 +562,13 @@ fn snap_bar_to_device(rect: Rect, dpi: f64) -> Rect {
     }
 }
 
+/// Minimum fillet radius, in DEVICE pixels, below which an edge bend keeps its
+/// hard corner instead of rounding. A curved AA stroke can't be device-pixel
+/// snapped like the straight bars, so a sub-few-pixel arc reads thin and offset
+/// against them; this floor confines fillets to radii where that error is
+/// invisible (see the draw loop).
+const ELBOW_MIN_DEVICE_PX: f64 = 6.0;
+
 /// A rounded corner (fillet) for one interior bend of a routed edge: the
 /// quarter-arc that replaces the hard 90-degree turn where two orthogonal bars
 /// meet. Screen-space; `center`/`radius`/`a0`/`a1` are in the returned `quad`'s
@@ -1123,6 +1130,14 @@ impl Widget for GraphCanvas {
         // Snap each bar to whole device pixels (see `snap_bar_to_device`) so the
         // thin axis lands crisp instead of straddling two rows and thinning.
         let dpi = cx.current_dpi_factor();
+        // Fillet floor: the straight bars are device-pixel snapped (crisp, full
+        // coverage) but a curved AA stroke can't be snapped the same way, and its
+        // un-snapped endpoints sit up to half a device pixel off the snapped bars.
+        // At a large radius that error is invisible; below a few device pixels it
+        // reads as a thin, offset corner. So keep the hard corner until the radius
+        // clears this floor -- exactly the zoomed-out regime where the corner was
+        // fine square anyway.
+        let elbow_min = ELBOW_MIN_DEVICE_PX / dpi;
         for edge in &self.scene.edges {
             // Map every routed point into screen space once, then draw straight
             // bars trimmed back at each interior bend and a fillet arc filling the
@@ -1140,7 +1155,11 @@ impl Widget for GraphCanvas {
             // non-orthogonal bend -- those keep the hard corner).
             let mut radius = vec![0.0f64; n];
             for i in 1..n.saturating_sub(1) {
-                radius[i] = elbow_radius(screen[i - 1], screen[i], screen[i + 1], r_base);
+                let r = elbow_radius(screen[i - 1], screen[i], screen[i + 1], r_base);
+                // Below the device-pixel floor a fillet renders thin/offset next to
+                // the snapped bars, so drop back to a hard corner (r = 0 => no trim,
+                // no arc).
+                radius[i] = if r >= elbow_min { r } else { 0.0 };
             }
             for i in 0..n.saturating_sub(1) {
                 let a = screen[i];
