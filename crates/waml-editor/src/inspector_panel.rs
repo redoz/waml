@@ -151,13 +151,26 @@ script_mod! {
             }
 
             attr_heading := SectionHeading { }
-            attr_list := FlatList {
+            // `FlatList` has neither a `#[deref]` nor a `#[visible]` field, so
+            // its own `WidgetNode::set_visible` is the trait-default no-op: an
+            // empty list would still walk (at 0 rows) and consume one body
+            // `spacing:16` gap in the flow:Down column. Wrap it in a `View`
+            // (whose `#[deref]`ed visibility does gate) so hiding the empty
+            // section actually removes it -- gap and all. The id path is
+            // unaffected: the draw loop finds the inner `FlatList` by id/uid
+            // regardless of nesting (same idiom as `start_screen`).
+            attr_list_wrap := View {
                 width: Fill
                 height: Fit
                 flow: Down
-                spacing: 6.0
+                attr_list := FlatList {
+                    width: Fill
+                    height: Fit
+                    flow: Down
+                    spacing: 6.0
 
-                Row := mod.widgets.AttrRowView { }
+                    Row := mod.widgets.AttrRowView { }
+                }
             }
 
             members_heading := SectionHeading { }
@@ -178,13 +191,18 @@ script_mod! {
             }
 
             rel_heading := SectionHeading { }
-            rel_list := FlatList {
+            rel_list_wrap := View {
                 width: Fill
                 height: Fit
                 flow: Down
-                spacing: 8.0
+                rel_list := FlatList {
+                    width: Fill
+                    height: Fit
+                    flow: Down
+                    spacing: 8.0
 
-                Row := mod.widgets.RelationshipCardView { }
+                    Row := mod.widgets.RelationshipCardView { }
+                }
             }
 
             desc_heading := SectionHeading { }
@@ -872,8 +890,11 @@ impl Inspector {
         self.view
             .widget(cx, ids!(body.attr_heading))
             .set_visible(cx, has_attrs);
+        // Gate the wrapper `View` (not the `FlatList`, whose `set_visible` is a
+        // no-op) so an empty section leaves no present-but-0-row list and no
+        // stray body gap.
         self.view
-            .widget(cx, ids!(body.attr_list))
+            .widget(cx, ids!(body.attr_list_wrap))
             .set_visible(cx, has_attrs);
         if has_attrs {
             self.view
@@ -904,8 +925,9 @@ impl Inspector {
         self.view
             .widget(cx, ids!(body.rel_heading))
             .set_visible(cx, has_rels);
+        // Gate the wrapper `View`, not the `FlatList` (see `attr_list_wrap`).
         self.view
-            .widget(cx, ids!(body.rel_list))
+            .widget(cx, ids!(body.rel_list_wrap))
             .set_visible(cx, has_rels);
         if has_rels {
             self.view
