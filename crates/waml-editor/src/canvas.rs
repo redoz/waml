@@ -47,6 +47,34 @@ script_mod! {
         }
     }
 
+    // Edge corner pen: the rounded fillet that replaces a hard 90-degree turn
+    // where two orthogonal `EdgeLine` bars meet. The bars are trimmed back by the
+    // fillet radius at the vertex and this pen strokes the bare quarter-arc
+    // centerline (`arc_to`) to the bar thickness, tangent to both -- so the turn
+    // stays orthogonal-legal (a corner fillet, NOT a spline). Geometry per bend is
+    // computed in `elbow_geometry` and fed in as `center`/`radius`/`a0`/`a1` in
+    // this quad's local pixel space. Fades text_dim -> text zoomed out just like
+    // `EdgeLine` so a corner never reads brighter than the bars it joins.
+    mod.draw.EdgeElbow = mod.draw.DrawColor{
+        zoom: uniform(1.0)
+        color_deep: uniform(atlas.text)
+        center: uniform(vec2(0.0, 0.0))
+        radius: uniform(0.0)
+        a0: uniform(0.0)
+        a1: uniform(0.0)
+        // HALF the stroke width: `stroke` renders `abs(shape) - hw` either side, so
+        // hw = thickness/2 gives a full-thickness band matching the bar (same
+        // convention as EdgeMarker's stroke_w).
+        hw: uniform(1.0)
+        pixel: fn() {
+            let sdf = Sdf2d.viewport(self.pos * self.rect_size)
+            sdf.arc_to(self.center.x, self.center.y, self.radius, self.a0, self.a1)
+            let k = clamp((1.0 - self.zoom) * 2.0, 0.0, 0.85)
+            sdf.stroke(mix(self.color, self.color_deep, k), self.hw)
+            return sdf.result
+        }
+    }
+
     // Edge end adornment pen: a standard-UML terminal glyph (open arrow, hollow
     // triangle, hollow/filled diamond) at a relationship endpoint, oriented along
     // the route's terminal segment. The glyph shape lives in `waml::adornment`
@@ -97,6 +125,9 @@ script_mod! {
         // the fill differs from the frame defaults, so we override just `color`.
         draw_node: mod.draw.AccentFrame{ color: atlas.field_bg }
         draw_edge_down: mod.draw.EdgeLine{ color: atlas.text_dim }
+        // Rounded-corner pen; shares the edge line color so a fillet reads as part
+        // of the same stroke.
+        draw_elbow: mod.draw.EdgeElbow{ color: atlas.text_dim }
         // Terminal adornment pen; shares the edge line color so glyphs read as
         // part of the same stroke.
         draw_marker: mod.draw.EdgeMarker{ color: atlas.text_dim }
@@ -184,6 +215,9 @@ pub struct GraphCanvas {
     #[redraw]
     #[live]
     draw_edge_down: DrawColor,
+    #[redraw]
+    #[live]
+    draw_elbow: DrawColor,
     #[redraw]
     #[live]
     draw_marker: DrawColor,
@@ -526,6 +560,94 @@ fn snap_bar_to_device(rect: Rect, dpi: f64) -> Rect {
         pos: dvec2(snap(rect.pos.x), snap(rect.pos.y)),
         size: dvec2(size(rect.size.x), size(rect.size.y)),
     }
+}
+
+/// A rounded corner (fillet) for one interior bend of a routed edge: the
+/// quarter-arc that replaces the hard 90-degree turn where two orthogonal bars
+/// meet. Screen-space; `center`/`radius`/`a0`/`a1` are in the returned `quad`'s
+/// LOCAL pixel frame (matching the shader's `self.pos * self.rect_size`), so the
+/// pen strokes the bare arc centerline (`arc_to`) to the bar thickness.
+struct EdgeElbow {
+    quad: Rect,
+    /// Arc center in `quad`-local pixel space.
+    center: DVec2,
+    radius: f64,
+    /// Sweep endpoints, radians, 0 = +x (screen y-down, same frame as the pen).
+    a0: f32,
+    a1: f32,
+}
+
+/// The fillet radius for the bend at vertex `v` (incoming from `a`, outgoing to
+/// `b`), all in screen space. Returns 0 unless this is a genuine orthogonal
+/// (90-degree) bend with room to round: a straight run, a reversal, a
+/// non-orthogonal bend, or a segment shorter than the radius all yield 0 (a hard
+/// corner, unchanged). Capped at half each incident segment so the trimmed bars
+/// never invert. Pure, for a GPU-free test.
+fn elbow_radius(a: DVec2, v: DVec2, b: DVec2, r_base: f64) -> f64 {
+    let din = dvec2(v.x - a.x, v.y - a.y);
+    let dout = dvec2(b.x - v.x, b.y - v.y);
+    let lin = (din.x * din.x + din.y * din.y).sqrt();
+    let lout = (dout.x * dout.x + dout.y * dout.y).sqrt();
+    if lin < 1e-6 || lout < 1e-6 {
+        return 0.0;
+    }
+    // Perpendicular only: unit dot ~ 0. Collinear (straight, dot ~ 1) or a
+    // reversal (dot ~ -1) or any other angle keeps the hard corner.
+    let dot = (din.x * dout.x + din.y * dout.y) / (lin * lout);
+    if dot.abs() > 1e-3 {
+        return 0.0;
+    }
+    r_base.min(lin * 0.5).min(lout * 0.5)
+}
+
+/// Build the fillet arc for the orthogonal bend `a -> v -> b` (screen space), or
+/// `None` if this bend isn't rounded (see [`elbow_radius`]). The arc is tangent
+/// to both centerlines: it starts where the incoming bar is trimmed
+/// (`P1 = v - din*r`) and ends where the outgoing bar resumes (`P2 = v + dout*r`),
+/// centered at `C = v - din*r + dout*r`. The bounding quad spans `C..v` (the arc
+/// centerline's extent, since din/dout are axis-aligned) inflated by the stroke
+/// half-width. Pure, for a GPU-free test.
+fn elbow_geometry(a: DVec2, v: DVec2, b: DVec2, thickness: f64, r_base: f64) -> Option<EdgeElbow> {
+    let r = elbow_radius(a, v, b, r_base);
+    if r <= 0.0 {
+        return None;
+    }
+    let din = dvec2(v.x - a.x, v.y - a.y);
+    let dout = dvec2(b.x - v.x, b.y - v.y);
+    let lin = (din.x * din.x + din.y * din.y).sqrt();
+    let lout = (dout.x * dout.x + dout.y * dout.y).sqrt();
+    let din = dvec2(din.x / lin, din.y / lin);
+    let dout = dvec2(dout.x / lout, dout.y / lout);
+    // Center tangent to both centerlines; the arc endpoints relative to it are
+    // P1-C = -dout*r (start) and P2-C = din*r (end).
+    let c = dvec2(v.x - din.x * r + dout.x * r, v.y - din.y * r + dout.y * r);
+    // Short 90-degree sweep from -dout to din; wrap the raw atan2 delta into
+    // (-pi, pi] so we never take the long 270-degree way around.
+    let a0 = (-dout.y).atan2(-dout.x);
+    let a1 = din.y.atan2(din.x);
+    let pi = std::f64::consts::PI;
+    let tau = 2.0 * pi;
+    let mut d = a1 - a0;
+    while d > pi {
+        d -= tau;
+    }
+    while d < -pi {
+        d += tau;
+    }
+    let a1 = a0 + d;
+    let hw = thickness * 0.5;
+    let lo = dvec2(c.x.min(v.x) - hw, c.y.min(v.y) - hw);
+    let hi = dvec2(c.x.max(v.x) + hw, c.y.max(v.y) + hw);
+    Some(EdgeElbow {
+        quad: Rect {
+            pos: lo,
+            size: dvec2(hi.x - lo.x, hi.y - lo.y),
+        },
+        center: dvec2(c.x - lo.x, c.y - lo.y),
+        radius: r,
+        a0: a0 as f32,
+        a1: a1 as f32,
+    })
 }
 
 /// A resolved terminal glyph ready to draw: the axis-aligned quad to place it
@@ -992,17 +1114,72 @@ impl Widget for GraphCanvas {
         // (see EdgeLine), same uniform cadence as draw_node's frame.
         self.draw_edge_down
             .set_uniform(cx, live_id!(zoom), &[zoom as f32]);
+        self.draw_elbow
+            .set_uniform(cx, live_id!(zoom), &[zoom as f32]);
+        // Fillet radius for interior bends: a corner reads well at ~2x the bar
+        // thickness, clamped per-vertex to half each incident segment so a short
+        // stub still rounds cleanly (see `elbow_radius`).
+        let r_base = thickness * 2.0;
         // Snap each bar to whole device pixels (see `snap_bar_to_device`) so the
         // thin axis lands crisp instead of straddling two rows and thinning.
         let dpi = cx.current_dpi_factor();
         for edge in &self.scene.edges {
-            for pair in edge.points.windows(2) {
-                let (a0, a1) = self.camera.world_to_local(pair[0].0, pair[0].1);
-                let (b0, b1) = self.camera.world_to_local(pair[1].0, pair[1].1);
-                let a = dvec2(rect.pos.x + a0, rect.pos.y + a1);
-                let b = dvec2(rect.pos.x + b0, rect.pos.y + b1);
+            // Map every routed point into screen space once, then draw straight
+            // bars trimmed back at each interior bend and a fillet arc filling the
+            // gap -- so a 90-degree turn rounds instead of cornering hard.
+            let n = edge.points.len();
+            let screen: Vec<DVec2> = edge
+                .points
+                .iter()
+                .map(|p| {
+                    let (x, y) = self.camera.world_to_local(p.0, p.1);
+                    dvec2(rect.pos.x + x, rect.pos.y + y)
+                })
+                .collect();
+            // Per-vertex fillet radius (0 at endpoints, straight runs, and any
+            // non-orthogonal bend -- those keep the hard corner).
+            let mut radius = vec![0.0f64; n];
+            for i in 1..n.saturating_sub(1) {
+                radius[i] = elbow_radius(screen[i - 1], screen[i], screen[i + 1], r_base);
+            }
+            for i in 0..n.saturating_sub(1) {
+                let a = screen[i];
+                let b = screen[i + 1];
+                let seg = dvec2(b.x - a.x, b.y - a.y);
+                let len = (seg.x * seg.x + seg.y * seg.y).sqrt();
+                let (mut a, mut b) = (a, b);
+                if len > 1e-6 {
+                    // Pull each end in by that vertex's fillet radius; the arc
+                    // covers the freed corner. Both trims are <= half this segment,
+                    // so the bar never inverts.
+                    let u = dvec2(seg.x / len, seg.y / len);
+                    let (ts, te) = (radius[i], radius[i + 1]);
+                    a = dvec2(a.x + u.x * ts, a.y + u.y * ts);
+                    b = dvec2(b.x - u.x * te, b.y - u.y * te);
+                }
                 let quad = snap_bar_to_device(segment_quad(a, b, thickness), dpi);
                 self.draw_edge_down.draw_abs(cx, quad);
+            }
+            for i in 1..n.saturating_sub(1) {
+                if radius[i] <= 0.0 {
+                    continue;
+                }
+                if let Some(e) =
+                    elbow_geometry(screen[i - 1], screen[i], screen[i + 1], thickness, r_base)
+                {
+                    self.draw_elbow.set_uniform(
+                        cx,
+                        live_id!(center),
+                        &[e.center.x as f32, e.center.y as f32],
+                    );
+                    self.draw_elbow
+                        .set_uniform(cx, live_id!(radius), &[e.radius as f32]);
+                    self.draw_elbow.set_uniform(cx, live_id!(a0), &[e.a0]);
+                    self.draw_elbow.set_uniform(cx, live_id!(a1), &[e.a1]);
+                    self.draw_elbow
+                        .set_uniform(cx, live_id!(hw), &[(thickness * 0.5) as f32]);
+                    self.draw_elbow.draw_abs(cx, e.quad);
+                }
             }
             // Terminal adornments: pick the standard-UML glyph per end + kind
             // (`waml::adornment::end_marker`) and orient it along the route's
@@ -1662,6 +1839,56 @@ mod tests {
         let q = segment_quad(dvec2(0.0, 0.0), dvec2(8.0, 6.0), thickness);
         assert_eq!(q.pos, dvec2(0.0, 0.0));
         assert_eq!(q.size, dvec2(8.0, 6.0));
+    }
+
+    #[test]
+    fn elbow_radius_rounds_only_orthogonal_bends() {
+        let a = dvec2(0.0, 0.0);
+        let v = dvec2(10.0, 0.0);
+        // Horizontal-then-up (screen y-down): a genuine 90-degree bend, both
+        // segments long, so the radius rides `r_base`.
+        assert_eq!(elbow_radius(a, v, dvec2(10.0, -10.0), 4.0), 4.0);
+        // A short outgoing stub clamps the radius to half that segment.
+        assert_eq!(elbow_radius(a, v, dvec2(10.0, -3.0), 4.0), 1.5);
+        // Straight run (collinear) -> hard corner, no fillet.
+        assert_eq!(elbow_radius(a, v, dvec2(20.0, 0.0), 4.0), 0.0);
+        // A 45-degree (non-orthogonal) bend keeps the hard corner too.
+        assert_eq!(elbow_radius(a, v, dvec2(20.0, -10.0), 4.0), 0.0);
+        // A reversal (180) can't be rounded.
+        assert_eq!(elbow_radius(a, v, dvec2(0.0, 0.0), 4.0), 0.0);
+    }
+
+    #[test]
+    fn elbow_geometry_is_tangent_to_both_bars() {
+        let thickness = 2.0;
+        // Horizontal-in from the left, turning up; r clamps to 4.
+        let e = elbow_geometry(
+            dvec2(0.0, 0.0),
+            dvec2(10.0, 0.0),
+            dvec2(10.0, -10.0),
+            thickness,
+            4.0,
+        )
+        .unwrap();
+        assert_eq!(e.radius, 4.0);
+        // Center C = v - din*r + dout*r = (6, -4); the quad spans C..v inflated by
+        // the stroke half-width (1), so pos = (5, -5), size = (6, 6).
+        assert_eq!(e.quad.pos, dvec2(5.0, -5.0));
+        assert_eq!(e.quad.size, dvec2(6.0, 6.0));
+        // Center in quad-local space: C - pos = (1, 1).
+        assert_eq!(e.center, dvec2(1.0, 1.0));
+        let near = |a: f32, b: f32| (a - b).abs() < 1e-4;
+        // Sweep from -dout (straight down, +pi/2 in y-down) to din (+x, 0).
+        assert!(near(e.a0, std::f32::consts::FRAC_PI_2), "a0 = {}", e.a0);
+        assert!(near(e.a1, 0.0), "a1 = {}", e.a1);
+        // The trimmed bar ends (P1 = v - din*r, P2 = v + dout*r) sit exactly `r`
+        // from C along each axis, i.e. on the arc.
+        let p1_local = dvec2(6.0 - e.quad.pos.x, 0.0 - e.quad.pos.y); // (1, 5)
+        let p2_local = dvec2(10.0 - e.quad.pos.x, -4.0 - e.quad.pos.y); // (5, 1)
+        for p in [p1_local, p2_local] {
+            let d = ((p.x - e.center.x).powi(2) + (p.y - e.center.y).powi(2)).sqrt();
+            assert!((d - e.radius).abs() < 1e-9, "endpoint off the arc: {}", d);
+        }
     }
 
     #[test]
