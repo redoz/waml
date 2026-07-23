@@ -34,6 +34,7 @@ use crate::node_style::{accent_bucket, AccentBucket};
 use crate::panel_glass::PanelGlass;
 use crate::popup::base::PopupResult;
 use crate::popup::select::{SelectItem, SelectLead};
+use crate::section_heading::SectionHeadingWidgetRefExt;
 use crate::select_box::SelectBox;
 use crate::tree::kind_of;
 use makepad_widgets::*;
@@ -97,6 +98,106 @@ script_mod! {
             select_box := SelectBox { width: Fill }
             fold_btn := IconButton { visible: false }
             pin_btn := IconButton { visible: false }
+        }
+
+        // The diagram/picker body: a declared Turtle column drawn by
+        // `self.view.draw_walk`, revealed only when `show_picker` (the
+        // classifier-preview path keeps its own immediate-mode body). Rows
+        // self-size (Fit) -- no y-offsets, no text measuring.
+        body := View {
+            width: Fill
+            height: Fit
+            flow: Down
+            visible: false
+            padding: Inset{left: 16.0, right: 16.0, top: 0.0, bottom: 16.0}
+            spacing: 16.0
+
+            // Full-width hairline under the picker bar (web-header rule).
+            divider := View {
+                width: Fill
+                height: 1.0
+                show_bg: true
+                draw_bg +: { color: atlas.surface_border }
+            }
+            // Kind line ("Class"): accent, Medium 11.
+            kind := Label {
+                text: ""
+                draw_text +: {
+                    color: atlas.accent
+                    text_style: TextStyle{
+                        font_size: 11
+                        font_family: FontFamily{
+                            latin := FontMember{res: crate_resource("self:resources/fonts/IBM_Plex_Sans/IBMPlexSans-Medium.ttf") asc: -0.1 desc: 0.0}
+                        }
+                        line_spacing: 1.2
+                    }
+                }
+            }
+            // Stereotype chips ("<<entity>>"): dim, Regular 11.
+            stereo := Label {
+                text: ""
+                draw_text +: {
+                    color: atlas.text_dim
+                    text_style: TextStyle{
+                        font_size: 11
+                        font_family: FontFamily{
+                            latin := FontMember{res: crate_resource("self:resources/fonts/IBM_Plex_Sans/IBMPlexSans-Regular.ttf") asc: -0.1 desc: 0.0}
+                        }
+                        line_spacing: 1.2
+                    }
+                }
+            }
+
+            attr_heading := SectionHeading { }
+            // INTERIM (Task 3 replaces with a FlatList<AttrRowView>): the
+            // attribute rows joined as one Mono multi-line label.
+            attr_lines := Label {
+                text: ""
+                draw_text +: {
+                    color: atlas.text
+                    text_style: TextStyle{
+                        font_size: 11
+                        font_family: FontFamily{
+                            latin := FontMember{res: crate_resource("self:resources/fonts/IBM_Plex_Mono/IBMPlexMono-Regular.ttf") asc: -0.1 desc: 0.0}
+                        }
+                        line_spacing: 1.4
+                    }
+                }
+            }
+
+            rel_heading := SectionHeading { }
+            // INTERIM (Task 4 replaces with a FlatList<RelationshipCardView>):
+            // the relationship rows joined as one dim multi-line label.
+            rel_lines := Label {
+                text: ""
+                draw_text +: {
+                    color: atlas.text_dim
+                    text_style: TextStyle{
+                        font_size: 11
+                        font_family: FontFamily{
+                            latin := FontMember{res: crate_resource("self:resources/fonts/IBM_Plex_Sans/IBMPlexSans-Regular.ttf") asc: -0.1 desc: 0.0}
+                        }
+                        line_spacing: 1.5
+                    }
+                }
+            }
+
+            desc_heading := SectionHeading { }
+            // Editable description body (click-to-edit rect captured in draw_walk).
+            desc := Label {
+                width: Fill
+                text: ""
+                draw_text +: {
+                    color: atlas.text
+                    text_style: TextStyle{
+                        font_size: 12
+                        font_family: FontFamily{
+                            latin := FontMember{res: crate_resource("self:resources/fonts/IBM_Plex_Sans/IBMPlexSans-Medium.ttf") asc: -0.1 desc: 0.0}
+                        }
+                        line_spacing: 1.2
+                    }
+                }
+            }
         }
 
         draw_title +: {
@@ -308,6 +409,24 @@ fn meta_line(assoc: &AssocRow) -> String {
     parts.join(" \u{b7} ")
 }
 
+/// Display parts for one attribute row: `(visibility, name, ty, mult)`. Empty
+/// visibility and the trivial `"1"` multiplicity are elided. Kept pure so the
+/// formatting is unit-tested without a `Cx`; consumed by the attribute row
+/// widget (Task 3) and the interim joined line (this task).
+fn attr_line_parts(attr: &crate::inspector::AttrRow) -> (String, String, String, String) {
+    let vis = if attr.visibility.is_empty() {
+        String::new()
+    } else {
+        format!("{} ", attr.visibility)
+    };
+    let mult = if attr.multiplicity.is_empty() || attr.multiplicity == "1" {
+        String::new()
+    } else {
+        format!("  [{}]", attr.multiplicity)
+    };
+    (vis, attr.name.clone(), attr.ty.clone(), mult)
+}
+
 /// RGB hex (no alpha) -> opaque `Vec4`, matching how the DSL decodes `#xrrggbb`.
 fn rgb(hex: u32) -> Vec4 {
     Vec4 {
@@ -457,6 +576,19 @@ impl Widget for Inspector {
                 max: None,
             };
         }
+        // The diagram/picker body column is a real child; reveal it only when
+        // the picker bar is shown and we are not collapsed. The classifier
+        // preview (`!show_picker`) keeps its immediate-mode body below.
+        let show_body = self.show_picker && !collapsed;
+        self.view.widget(cx, ids!(body)).set_visible(cx, show_body);
+
+        // Push the picker-body content BEFORE draw so the column draws it.
+        if show_body {
+            if let Some(view) = self.proj.clone() {
+                self.fill_body_column(cx, &view);
+            }
+        }
+
         // Glass translucency: seed + push the eased `opacity` uniform before the
         // container draws its frame bg. Opaque when hovered/pinned, else
         // translucent so the canvas shows through. Replaces the old dimming
@@ -479,6 +611,20 @@ impl Widget for Inspector {
         if collapsed {
             return DrawStep::done();
         }
+
+        if self.show_picker {
+            // Capture the description Label's drawn rect as the click-to-edit
+            // target, and paint the edit field-bg over it while editing.
+            let desc_rect = self.view.label(cx, ids!(body.desc)).area().rect(cx);
+            if self.editing == Some(FieldId::Description) {
+                self.draw_field_bg.draw_abs(cx, desc_rect);
+            }
+            self.field_rects.push((FieldId::Description, desc_rect));
+            return DrawStep::done();
+        }
+
+        // ---- `show_picker == false`: baseline immediate-mode body (out of
+        // scope, unchanged). ----
         let Some(view) = self.proj.clone() else {
             return DrawStep::done();
         };
@@ -601,6 +747,112 @@ impl Widget for Inspector {
 }
 
 impl Inspector {
+    /// Push the current projection into the declared `body` column widgets
+    /// (kind, stereotypes, the three headings, the interim attribute/relationship
+    /// text, and the description). Hides a heading + its rows when that section
+    /// is empty. Called each `draw_walk` for the `show_picker` path.
+    fn fill_body_column(&mut self, cx: &mut Cx, view: &InspectorView) {
+        let kind_line = if view.abstract_flag {
+            format!("{}  (abstract)", view.kind_label)
+        } else {
+            view.kind_label.clone()
+        };
+        self.view
+            .label(cx, ids!(body.kind))
+            .set_text(cx, &kind_line);
+
+        let stereo = if view.stereotypes.is_empty() {
+            String::new()
+        } else {
+            view.stereotypes
+                .iter()
+                .map(|s| format!("<<{s}>>"))
+                .collect::<Vec<_>>()
+                .join(" ")
+        };
+        self.view
+            .widget(cx, ids!(body.stereo))
+            .set_visible(cx, !stereo.is_empty());
+        self.view.label(cx, ids!(body.stereo)).set_text(cx, &stereo);
+
+        // ATTRIBUTES (interim joined Mono lines; Task 3 swaps for a FlatList).
+        let has_attrs = !view.attributes.is_empty();
+        self.view
+            .widget(cx, ids!(body.attr_heading))
+            .set_visible(cx, has_attrs);
+        self.view
+            .widget(cx, ids!(body.attr_lines))
+            .set_visible(cx, has_attrs);
+        if has_attrs {
+            self.view
+                .widget(cx, ids!(body.attr_heading))
+                .as_section_heading()
+                .set_text(cx, "ATTRIBUTES");
+            let joined = view
+                .attributes
+                .iter()
+                .map(|a| {
+                    let (vis, name, ty, mult) = attr_line_parts(a);
+                    format!("{vis}{name}: {ty}{mult}")
+                })
+                .collect::<Vec<_>>()
+                .join("\n");
+            self.view
+                .label(cx, ids!(body.attr_lines))
+                .set_text(cx, &joined);
+        }
+
+        // RELATIONSHIPS (interim joined lines; Task 4 swaps for a FlatList).
+        let has_rels = !view.associations.is_empty();
+        self.view
+            .widget(cx, ids!(body.rel_heading))
+            .set_visible(cx, has_rels);
+        self.view
+            .widget(cx, ids!(body.rel_lines))
+            .set_visible(cx, has_rels);
+        if has_rels {
+            self.view
+                .widget(cx, ids!(body.rel_heading))
+                .as_section_heading()
+                .set_text(cx, "RELATIONSHIPS");
+            let joined = view
+                .associations
+                .iter()
+                .map(|r| {
+                    format!(
+                        "{} {}  \u{b7}  {}",
+                        dir_glyph(r.dir),
+                        r.other_label,
+                        meta_line(r)
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join("\n");
+            self.view
+                .label(cx, ids!(body.rel_lines))
+                .set_text(cx, &joined);
+        }
+
+        // DESCRIPTION (always shown so there is an affordance to add one).
+        self.view
+            .widget(cx, ids!(body.desc_heading))
+            .as_section_heading()
+            .set_text(cx, "DESCRIPTION");
+        let desc_text = if self.editing == Some(FieldId::Description) {
+            format!("{}\u{2502}", self.edit_buffer)
+        } else {
+            let t = self.effective_description(view);
+            if t.is_empty() {
+                "(click to add)".to_string()
+            } else {
+                t
+            }
+        };
+        self.view
+            .label(cx, ids!(body.desc))
+            .set_text(cx, &desc_text);
+    }
+
     /// Point the inspector at `subject`, rebuilding the projection and syncing
     /// the picker's selected row. Overrides persist across subject switches
     /// (keyed per subject); an in-progress edit is discarded uncommitted.
@@ -927,5 +1179,38 @@ mod tests {
             multiplicity: String::new(),
         };
         assert_eq!(meta_line(&assoc), "associates");
+    }
+
+    #[test]
+    fn attr_line_parts_formats_visibility_and_multiplicity() {
+        let a = crate::inspector::AttrRow {
+            name: "items".into(),
+            ty: "Product".into(),
+            multiplicity: "0..*".into(),
+            visibility: "+".into(),
+        };
+        assert_eq!(
+            attr_line_parts(&a),
+            (
+                "+ ".into(),
+                "items".into(),
+                "Product".into(),
+                "  [0..*]".into()
+            )
+        );
+    }
+
+    #[test]
+    fn attr_line_parts_elides_empty_visibility_and_trivial_multiplicity() {
+        let a = crate::inspector::AttrRow {
+            name: "id".into(),
+            ty: "Uuid".into(),
+            multiplicity: "1".into(),
+            visibility: String::new(),
+        };
+        assert_eq!(
+            attr_line_parts(&a),
+            (String::new(), "id".into(), "Uuid".into(), String::new())
+        );
     }
 }

@@ -28,6 +28,7 @@ mod panel_glass;
 mod popup;
 mod recent_row;
 mod scene;
+mod section_heading;
 mod select_box;
 mod selection_toolbar;
 mod shortcuts_overlay;

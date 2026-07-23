@@ -1596,6 +1596,11 @@ impl AppMain for App {
         // `element_bar` mounts `SelectBox` as a child, and the DSL resolves
         // `mod.widgets.*` eagerly at `use`-time, not lazily.
         crate::select_box::script_mod(vm);
+        // The inspector body's declared child widgets must register before
+        // `inspector_panel`: it mounts `SectionHeading` (and, in later tasks,
+        // `AttrRowView` / `RelationshipCardView`) as DSL children, and the DSL
+        // resolves `mod.widgets.*` eagerly at `use`-time, not lazily.
+        crate::section_heading::script_mod(vm);
         crate::inspector_panel::script_mod(vm);
         crate::doc_tabs::script_mod(vm);
         crate::diagram_switcher::script_mod(vm);
