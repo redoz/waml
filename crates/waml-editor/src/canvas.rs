@@ -1200,8 +1200,14 @@ impl GraphCanvas {
             let hc = dvec2(h.pos.x + h.size.x * 0.5, h.pos.y + h.size.y * 0.5);
             let r = 6.5;
             let apex = dvec2(hc.x + dx * r, hc.y + dy * r);
-            let b1 = dvec2(hc.x - dx * r * 0.35 + px * r * 0.8, hc.y - dy * r * 0.35 + py * r * 0.8);
-            let b2 = dvec2(hc.x - dx * r * 0.35 - px * r * 0.8, hc.y - dy * r * 0.35 - py * r * 0.8);
+            let b1 = dvec2(
+                hc.x - dx * r * 0.35 + px * r * 0.8,
+                hc.y - dy * r * 0.35 + py * r * 0.8,
+            );
+            let b2 = dvec2(
+                hc.x - dx * r * 0.35 - px * r * 0.8,
+                hc.y - dy * r * 0.35 - py * r * 0.8,
+            );
             self.fill_tri(cx, apex, b1, b2, arrow);
         }
     }
@@ -1224,8 +1230,10 @@ impl GraphCanvas {
         let lb = ((b.x - minx) as f32, (b.y - miny) as f32);
         let lc = ((c.x - minx) as f32, (c.y - miny) as f32);
         let saved = self.draw_marker.color;
-        self.draw_marker.set_uniform(cx, live_id!(v01), &[la.0, la.1, lb.0, lb.1]);
-        self.draw_marker.set_uniform(cx, live_id!(v23), &[lc.0, lc.1, lc.0, lc.1]);
+        self.draw_marker
+            .set_uniform(cx, live_id!(v01), &[la.0, la.1, lb.0, lb.1]);
+        self.draw_marker
+            .set_uniform(cx, live_id!(v23), &[lc.0, lc.1, lc.0, lc.1]);
         self.draw_marker.set_uniform(cx, live_id!(hollow), &[0.0]);
         self.draw_marker.set_uniform(cx, live_id!(filled), &[1.0]);
         self.draw_marker.set_uniform(cx, live_id!(stroke_w), &[0.7]);
