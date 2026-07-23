@@ -1277,6 +1277,11 @@ impl Widget for GraphCanvas {
             self.draw_card(cx, screen, node, zoom);
         }
 
+        // Persistent relation overlay: the full projected relation set, always-on
+        // at a calm weight (red where `conflicting`), so authored placement is
+        // visible at rest. Drawn under the armed-drag overlay's scoped emphasis.
+        self.draw_relations_overlay(cx);
+
         // SPIKE (drag-place): live placement overlay on top of everything.
         if self.drag_moved {
             self.draw_drag_overlay(cx, rect);
@@ -1328,6 +1333,39 @@ impl GraphCanvas {
         self.draw_mono_dim.text_style.font_size = 11.0;
         self.draw_mono_dim
             .draw_abs(cx, dvec2(a.x + 4.0, b.y - 6.0), dir_word(dir));
+    }
+
+    /// Always-on relation overlay: every projected placement relation drawn at a
+    /// calm weight so the diagram's authored structure is legible at rest (not
+    /// only mid-drag). A relation the attribution pass flagged `conflicting`
+    /// paints red — the bug-vs-contradiction signal. Independent of drag state;
+    /// the armed-drag overlay (`draw_drag_overlay`) still layers its scoped,
+    /// brighter emphasis on top.
+    fn draw_relations_overlay(&mut self, cx: &mut Cx2d) {
+        // Own the tuples before drawing: `fill_rect`/`draw_relation_connector`
+        // are `&mut self`, so the immutable borrow of `relations` must end first.
+        let legs: Vec<(usize, usize, waml::syntax::Direction, bool)> = self
+            .scene
+            .relations
+            .iter()
+            .filter_map(|rel| {
+                let si = self.scene.nodes.iter().position(|n| n.key == rel.subject)?;
+                let ri = self
+                    .scene
+                    .nodes
+                    .iter()
+                    .position(|n| n.key == rel.reference)?;
+                Some((si, ri, rel.dir, rel.conflicting))
+            })
+            .collect();
+        for (si, ri, dir, conflicting) in legs {
+            let color = if conflicting {
+                vec4(0.80, 0.22, 0.22, 0.85) // red culprit
+            } else {
+                vec4(0.55, 0.62, 0.72, 0.45) // calm slate
+            };
+            self.draw_relation_connector(cx, si, ri, dir, color);
+        }
     }
 
     /// SPIKE (drag-place, throwaway): draw the live placement overlay -- the
