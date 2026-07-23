@@ -1307,8 +1307,8 @@ impl Widget for GraphCanvas {
         }
 
         // Persistent relation overlay: the full projected relation set, always-on
-        // at a calm weight (red where `conflicting`), so authored placement is
-        // visible at rest. Drawn under the armed-drag overlay's scoped emphasis.
+        // at a calm weight, so authored placement is visible at rest. Drawn under
+        // the armed-drag overlay's scoped emphasis.
         self.draw_relations_overlay(cx);
 
         // SPIKE (drag-place): live placement overlay on top of everything.
@@ -1341,11 +1341,11 @@ impl GraphCanvas {
     /// Draw one placement relation as an orthogonal L connector between the
     /// reference node (b) and the subject node (a) centers — horizontal leg then
     /// vertical leg — plus a PLACEHOLDER direction glyph at the elbow. `color`
-    /// carries the weight/tint: calm slate for the persistent overlay, red for a
-    /// `conflicting` relation, brighter slate for the armed-drag emphasis. The
-    /// glyph is `dir_word` text standing in for final art (out of scope for v1).
-    /// Shared by the always-on overlay (`draw_relations_overlay`) and the
-    /// armed-drag overlay (`draw_drag_overlay`) so they never diverge.
+    /// carries the weight/tint: calm slate for the persistent overlay, brighter
+    /// slate for the armed-drag emphasis. The glyph is `dir_word` text standing
+    /// in for final art (out of scope for v1). Shared by the always-on overlay
+    /// (`draw_relations_overlay`) and the armed-drag overlay (`draw_drag_overlay`)
+    /// so they never diverge.
     fn draw_relation_connector(
         &mut self,
         cx: &mut Cx2d,
@@ -1366,14 +1366,14 @@ impl GraphCanvas {
 
     /// Always-on relation overlay: every projected placement relation drawn at a
     /// calm weight so the diagram's authored structure is legible at rest (not
-    /// only mid-drag). A relation the attribution pass flagged `conflicting`
-    /// paints red — the bug-vs-contradiction signal. Independent of drag state;
-    /// the armed-drag overlay (`draw_drag_overlay`) still layers its scoped,
-    /// brighter emphasis on top.
+    /// only mid-drag). Independent of drag state; the armed-drag overlay
+    /// (`draw_drag_overlay`) still layers its scoped, brighter emphasis on top.
+    /// NOTE: this connector-line notation is superseded by the Task 4 veil
+    /// renderer; kept here only as a minimal compile-keeping stand-in.
     fn draw_relations_overlay(&mut self, cx: &mut Cx2d) {
         // Own the tuples before drawing: `fill_rect`/`draw_relation_connector`
         // are `&mut self`, so the immutable borrow of `relations` must end first.
-        let legs: Vec<(usize, usize, waml::syntax::Direction, bool)> = self
+        let legs: Vec<(usize, usize, waml::syntax::Direction)> = self
             .scene
             .relations
             .iter()
@@ -1384,15 +1384,11 @@ impl GraphCanvas {
                     .nodes
                     .iter()
                     .position(|n| n.key == rel.reference)?;
-                Some((si, ri, rel.dir, rel.conflicting))
+                Some((si, ri, rel.dir))
             })
             .collect();
-        for (si, ri, dir, conflicting) in legs {
-            let color = if conflicting {
-                vec4(0.80, 0.22, 0.22, 0.85) // red culprit
-            } else {
-                vec4(0.55, 0.62, 0.72, 0.45) // calm slate
-            };
+        for (si, ri, dir) in legs {
+            let color = vec4(0.55, 0.62, 0.72, 0.45); // calm slate
             self.draw_relation_connector(cx, si, ri, dir, color);
         }
     }
@@ -1809,19 +1805,16 @@ mod tests {
                 subject: "order".into(),
                 reference: "customer".into(),
                 dir: Direction::LeftOf,
-                conflicting: false,
             },
             SceneRelation {
                 subject: "payment-gateway".into(),
                 reference: "order".into(),
                 dir: Direction::Below,
-                conflicting: false,
             },
             SceneRelation {
                 subject: "invoice".into(),
                 reference: "shipment".into(),
                 dir: Direction::Above,
-                conflicting: false,
             },
         ];
         // Dragging `payment-gateway` over target `customer`.

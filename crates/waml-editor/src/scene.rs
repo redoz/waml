@@ -88,11 +88,14 @@ pub struct SceneRelation {
     pub subject: String,
     pub reference: String,
     pub dir: waml::syntax::Direction,
-    /// Best-effort leave-one-out conflict attribution, set by `build_scene`:
-    /// `true` iff removing just this relation reduces the solver's
-    /// `LayoutConflict` count (i.e. it participates in a contradiction).
-    /// Defaults `false`; only ever `true` on an already-conflicted diagram.
-    pub conflicting: bool,
+}
+
+/// A placement the solver could not honor, projected from `DroppedPlacement`
+/// into slug-level relations for the editor's conflict error list.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SceneConflict {
+    pub dropped: SceneRelation,
+    pub conflicts_with: Vec<SceneRelation>,
 }
 
 // An empty scene (derived Default) is the sensible startup default (fed a real one via set_scene).
@@ -102,6 +105,7 @@ pub struct Scene {
     pub groups: Vec<SolvedGroup>,
     pub edges: Vec<SceneEdge>,
     pub relations: Vec<SceneRelation>,
+    pub conflicts: Vec<SceneConflict>,
 }
 
 /// Project classifier `key`'s attribute compartment rows via the shared
@@ -214,13 +218,54 @@ fn project_relations(diagram: &Diagram) -> Vec<SceneRelation> {
                         subject: subject.to_string(),
                         reference: reference.to_string(),
                         dir: directions[0],
-                        conflicting: false,
                     });
                 }
             }
         }
     }
     out
+}
+
+/// Project a single solver `Constraint::Place` into a slug-level `SceneRelation`.
+/// Non-`Place` or non-`Node` operands (group/inline endpoints) yield `None`, so
+/// only 2-node placements — the ones the conflict list can name — survive.
+fn relation_of_constraint(c: &waml::solve::Constraint) -> Option<SceneRelation> {
+    use waml::solve::Constraint;
+    if let Constraint::Place {
+        a: BoxId::Node(subject),
+        b: BoxId::Node(reference),
+        dir,
+    } = c
+    {
+        Some(SceneRelation {
+            subject: subject.clone(),
+            reference: reference.clone(),
+            dir: *dir,
+        })
+    } else {
+        None
+    }
+}
+
+/// Project the solver's dropped-placement report into `SceneConflict`s. A dropped
+/// placement whose subject/reference don't both resolve to node slugs is skipped
+/// (it can't be named in the DSL error list).
+fn project_conflicts(dropped: &[waml::solve::DroppedPlacement]) -> Vec<SceneConflict> {
+    dropped
+        .iter()
+        .filter_map(|d| {
+            let dropped = relation_of_constraint(&d.relation)?;
+            let conflicts_with = d
+                .conflicts_with
+                .iter()
+                .filter_map(relation_of_constraint)
+                .collect();
+            Some(SceneConflict {
+                dropped,
+                conflicts_with,
+            })
+        })
+        .collect()
 }
 
 /// Native-only stress/grid default layout. Kept at this call seam (not inside
@@ -324,10 +369,10 @@ pub fn build_scene(
         .into_iter()
         .map(|e| (BoxId::Node(e.source.clone()), BoxId::Node(e.target.clone())))
         .collect();
-    let (solved, diags) = if use_stress_default(diagram) {
-        (stress_default(model, &sizes), Vec::new())
+    let (solved, diags, dropped) = if use_stress_default(diagram) {
+        (stress_default(model, &sizes), Vec::new(), Vec::new())
     } else {
-        solve_diagram(diagram, &edges, &sizes, &SolveConfig::default())
+        waml::solve::solve_diagram_reported(diagram, &edges, &sizes, &SolveConfig::default())
     };
 
     let node_of: BTreeMap<&str, &waml::model::Node> =
@@ -399,8 +444,8 @@ pub fn build_scene(
         }
     }
 
-    let mut relations = project_relations(diagram);
-    attribute_conflicts(model, diagram, expanded, &diags, &mut relations);
+    let relations = project_relations(diagram);
+    let conflicts = project_conflicts(&dropped);
 
     (
         Scene {
@@ -408,6 +453,7 @@ pub fn build_scene(
             groups: solved.groups.clone(),
             edges,
             relations,
+            conflicts,
         },
         diags,
     )
@@ -423,6 +469,7 @@ pub fn build_focus_scene(model: &Model, key: &str) -> Scene {
             groups: vec![],
             edges: vec![],
             relations: Vec::new(),
+            conflicts: Vec::new(),
         };
     };
     let title = node
@@ -464,6 +511,7 @@ pub fn build_focus_scene(model: &Model, key: &str) -> Scene {
         groups: vec![],
         edges: vec![],
         relations: Vec::new(),
+        conflicts: Vec::new(),
     }
 }
 
@@ -556,42 +604,6 @@ fn solve_diags(
     }
 }
 
-/// Best-effort leave-one-out conflict attribution. Runs ONLY when the solve
-/// already emitted a `LayoutConflict`; the clean path (the common case) returns
-/// immediately with every relation left `false`. When conflicted, for each
-/// projected relation it drops just that ordered placement from a scratch clone,
-/// re-solves via `solve_diags`, and marks `conflicting` iff the `LayoutConflict`
-/// count drops (the relation participates in a contradiction). O(relations)
-/// re-solves, fired at scene-build time only, and only on an already-conflicted
-/// diagram — never per frame.
-fn attribute_conflicts(
-    model: &Model,
-    diagram: &Diagram,
-    expanded: &std::collections::HashSet<String>,
-    diags: &[Diagnostic],
-    relations: &mut [SceneRelation],
-) {
-    use waml::diagnostic::DiagCode;
-    let base = diags
-        .iter()
-        .filter(|d| d.code == DiagCode::LayoutConflict)
-        .count();
-    if base == 0 {
-        return; // common path: satisfiable, everything stays false
-    }
-    for rel in relations.iter_mut() {
-        let mut scratch = diagram.clone();
-        scratch
-            .layout
-            .retain(|s| !placement_is_pair(s, &rel.subject, &rel.reference));
-        let after = solve_diags(model, &scratch, expanded)
-            .iter()
-            .filter(|d| d.code == DiagCode::LayoutConflict)
-            .count();
-        rel.conflicting = after < base;
-    }
-}
-
 /// Axis-aligned bounding box over all node and group rects, or `None` if empty.
 pub fn bounding_box(scene: &Scene) -> Option<Rect> {
     let mut rects = scene
@@ -657,14 +669,34 @@ mod tests {
     }
 
     #[test]
-    fn attribution_marks_the_culprits_of_a_contradiction() {
+    fn clean_diagram_has_no_conflicts() {
+        // mini's default layout is satisfiable, so the solver drops nothing and the
+        // scene carries an empty conflict report.
+        let model = mini();
+        let (scene, diags) = build_scene(
+            &model,
+            &model.diagrams[0],
+            &std::collections::HashSet::new(),
+        );
+        use waml::diagnostic::DiagCode;
+        assert!(
+            !diags.iter().any(|d| d.code == DiagCode::LayoutConflict),
+            "mini must be conflict-free: {diags:?}"
+        );
+        assert!(
+            scene.conflicts.is_empty(),
+            "clean diagram must report no conflicts: {:?}",
+            scene.conflicts
+        );
+    }
+
+    #[test]
+    fn contradiction_surfaces_in_scene_conflicts() {
         use waml::syntax::{Direction, LayoutStatement, NameRef, Operand, OperandRef};
-        // mini already authors `Order left of Customer`. Add the reversed pair
-        // `Customer left of Order` (a DIFFERENT ordered pair, so neither replaces
-        // the other) — both coexist, the solver cannot satisfy them and emits a
-        // LayoutConflict. Leave-one-out: removing EITHER culprit resolves it, so
-        // both are marked conflicting; `payment-gateway below order` is independent
-        // and stays false.
+        // mini authors `Order left of Customer`. Add the reversed pair
+        // `Customer left of Order`: a different ordered pair, so both coexist and the
+        // solver cannot satisfy them. The dropped placement + its contradiction set
+        // surface in scene.conflicts (NO canvas red, NO leave-one-out).
         let model = mini();
         let mut diagram = model.diagrams[0].clone();
         let link = |slug: &str| Operand {
@@ -684,53 +716,37 @@ mod tests {
         use waml::diagnostic::DiagCode;
         assert!(
             diags.iter().any(|d| d.code == DiagCode::LayoutConflict),
-            "fixture must be genuinely contradictory: {diags:?}"
-        );
-
-        let conflicting = |subj: &str, refr: &str| {
-            scene
-                .relations
-                .iter()
-                .find(|r| r.subject == subj && r.reference == refr)
-                .unwrap_or_else(|| {
-                    panic!("relation {subj} -> {refr} missing: {:?}", scene.relations)
-                })
-                .conflicting
-        };
-        assert!(
-            conflicting("order", "customer"),
-            "order->customer is a culprit"
+            "must be genuinely contradictory: {diags:?}"
         );
         assert!(
-            conflicting("customer", "order"),
-            "customer->order is a culprit"
+            !scene.conflicts.is_empty(),
+            "contradiction must surface in scene.conflicts"
         );
-        assert!(
-            !conflicting("payment-gateway", "order"),
-            "independent relation must NOT be marked conflicting"
-        );
-    }
-
-    #[test]
-    fn attribution_marks_nothing_on_a_clean_diagram() {
-        // mini's default layout is satisfiable (no LayoutConflict), so the common
-        // path must leave every relation conflicting == false and do no extra work.
-        let model = mini();
-        let (scene, diags) = build_scene(
-            &model,
-            &model.diagrams[0],
-            &std::collections::HashSet::new(),
-        );
-        use waml::diagnostic::DiagCode;
-        assert!(
-            !diags.iter().any(|d| d.code == DiagCode::LayoutConflict),
-            "mini must be conflict-free: {diags:?}"
-        );
-        assert!(
-            scene.relations.iter().all(|r| !r.conflicting),
-            "clean diagram must mark no relation conflicting: {:?}",
-            scene.relations
-        );
+        // Every reported conflict names a real projected relation and a non-empty
+        // contradiction set; the independent `payment-gateway below order` never appears.
+        for c in &scene.conflicts {
+            assert!(
+                !c.conflicts_with.is_empty(),
+                "a dropped relation must list what it conflicts with"
+            );
+            let touches = |r: &SceneRelation| {
+                (r.subject == "order" && r.reference == "customer")
+                    || (r.subject == "customer" && r.reference == "order")
+            };
+            assert!(
+                touches(&c.dropped),
+                "dropped relation should be one of the reversed pair: {:?}",
+                c.dropped
+            );
+            assert!(
+                c.conflicts_with.iter().any(touches),
+                "conflict set should include the opposing placement"
+            );
+            assert!(
+                !(c.dropped.subject == "payment-gateway"),
+                "the independent placement must not be reported as dropped"
+            );
+        }
     }
 
     #[test]
@@ -958,6 +974,7 @@ mod tests {
             groups: vec![],
             edges: vec![],
             relations: vec![],
+            conflicts: vec![],
         };
         assert!(bounding_box(&scene).is_none());
     }
