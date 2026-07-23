@@ -3,7 +3,7 @@
 //! `inspector_panel.rs`. Mirrors the `tree.rs` (pure) / `tree_panel.rs` (widget)
 //! split.
 
-use waml::model::{ElementType, Model, RelationshipKind};
+use waml::model::{DiagramGroup, ElementType, Model, RelationshipKind};
 
 /// What the inspector is currently pointed at. `None` renders the empty state.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -42,6 +42,7 @@ pub enum ElementKind {
     /// Index-0 sentinel shown when nothing is selected.
     Placeholder,
     Diagram,
+    Group,
     Node,
     Edge,
 }
@@ -124,6 +125,22 @@ pub fn effective_field(view: &InspectorView, field: FieldId, over: Option<&Strin
     }
 }
 
+/// Depth-first (parent, then children) flatten of a group tree into flat picker
+/// rows. The implicit top-level group (`name == ""`) is skipped; every named
+/// group emits one row keyed/labelled by its name, no indent.
+fn push_group_rows(groups: &[DiagramGroup], rows: &mut Vec<ElementRow>) {
+    for g in groups {
+        if !g.name.is_empty() {
+            rows.push(ElementRow {
+                key: g.name.clone(),
+                label: g.name.clone(),
+                kind: ElementKind::Group,
+            });
+        }
+        push_group_rows(&g.children, rows);
+    }
+}
+
 /// Build the ordered picker rows for a diagram whose drawable node set is
 /// `node_keys` (in display order). Row 0 is always the placeholder sentinel;
 /// then the diagram title; then each node followed immediately by the edges it
@@ -160,6 +177,10 @@ pub fn diagram_elements(
         label: diagram_title.to_string(),
         kind: ElementKind::Diagram,
     });
+    // Group rows, flat and depth-first, after the diagram and before the nodes.
+    if let Some(diagram) = model.diagrams.iter().find(|d| d.key == diagram_key) {
+        push_group_rows(&diagram.groups, &mut rows);
+    }
     for nk in node_keys {
         rows.push(ElementRow {
             key: nk.clone(),
@@ -624,6 +645,41 @@ mod tests {
         assert_eq!(
             subject_to_index(&rows, &Subject::Classifier("nope".into())),
             0
+        );
+    }
+
+    #[test]
+    fn picker_lists_named_groups_after_diagram_before_nodes() {
+        let model = mini_with_group();
+        // Pass the REAL diagram key so groups resolve off the model.
+        let rows = diagram_elements(&model, "orders-diagram", "Orders", &node_keys(&model));
+
+        // Row 0 = placeholder, row 1 = diagram, row 2 = first (only) named group.
+        assert_eq!(rows[1].kind, ElementKind::Diagram);
+        assert_eq!(rows[2].kind, ElementKind::Group);
+        assert_eq!(rows[2].key, "Sales");
+        assert_eq!(rows[2].label, "Sales");
+
+        // Groups precede nodes.
+        let first_group = rows
+            .iter()
+            .position(|r| r.kind == ElementKind::Group)
+            .expect("a group row");
+        let first_node = rows
+            .iter()
+            .position(|r| r.kind == ElementKind::Node)
+            .expect("a node row");
+        assert!(first_group < first_node, "group rows come before node rows");
+
+        // Exactly one named group; the implicit "" group is skipped.
+        let group_rows: Vec<_> = rows
+            .iter()
+            .filter(|r| r.kind == ElementKind::Group)
+            .collect();
+        assert_eq!(group_rows.len(), 1);
+        assert!(
+            group_rows.iter().all(|r| !r.key.is_empty()),
+            "the implicit unnamed group must be skipped"
         );
     }
 }
