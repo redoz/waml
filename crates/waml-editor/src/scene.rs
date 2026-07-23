@@ -78,12 +78,25 @@ pub struct SceneEdge {
     pub points: Vec<(f64, f64)>,
 }
 
+/// A placement relation projected from the diagram's `## Layout` for drag-time
+/// overlay + conflict prediction: a 2-operand single-direction placement, its
+/// operands resolved to `SceneNode.key` slugs. Multi-operand / alignment
+/// statements are not projected (the drag overlay + one-relation-per-pair
+/// oracle only reason about 2-node placements).
+#[derive(Debug, Clone, PartialEq)]
+pub struct SceneRelation {
+    pub subject: String,
+    pub reference: String,
+    pub dir: waml::syntax::Direction,
+}
+
 // An empty scene (derived Default) is the sensible startup default (fed a real one via set_scene).
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct Scene {
     pub nodes: Vec<SceneNode>,
     pub groups: Vec<SolvedGroup>,
     pub edges: Vec<SceneEdge>,
+    pub relations: Vec<SceneRelation>,
 }
 
 /// Project classifier `key`'s attribute compartment rows via the shared
@@ -162,6 +175,46 @@ fn drawable_edges(model: &Model) -> Vec<&waml::model::Edge> {
         .iter()
         .filter(|e| e.source != e.target)
         .collect()
+}
+
+/// The slug a placement operand refers to (`[Title](./slug.md)` or a bare
+/// name). `None` for inline-group / paren operands, which the relation
+/// projection skips.
+fn operand_slug(op: &waml::syntax::Operand) -> Option<&str> {
+    use waml::syntax::{NameRef, OperandRef};
+    match &op.ref_ {
+        OperandRef::Name(NameRef::Link { slug, .. }) => Some(slug.as_str()),
+        OperandRef::Name(NameRef::Bare(s)) => Some(s.as_str()),
+        _ => None,
+    }
+}
+
+/// Project the diagram's `## Layout` into 2-operand single-direction relation
+/// triples (subject_slug, reference_slug, dir). Mirrors `ops::placement_matches`'
+/// shape: only 2-operand, 1-direction placements qualify.
+fn project_relations(diagram: &Diagram) -> Vec<SceneRelation> {
+    use waml::syntax::LayoutStatement;
+    let mut out = Vec::new();
+    for stmt in &diagram.layout {
+        if let LayoutStatement::Placement {
+            operands,
+            directions,
+        } = stmt
+        {
+            if operands.len() == 2 && directions.len() == 1 {
+                if let (Some(subject), Some(reference)) =
+                    (operand_slug(&operands[0]), operand_slug(&operands[1]))
+                {
+                    out.push(SceneRelation {
+                        subject: subject.to_string(),
+                        reference: reference.to_string(),
+                        dir: directions[0],
+                    });
+                }
+            }
+        }
+    }
+    out
 }
 
 /// Native-only stress/grid default layout. Kept at this call seam (not inside
@@ -345,6 +398,7 @@ pub fn build_scene(
             nodes,
             groups: solved.groups.clone(),
             edges,
+            relations: project_relations(diagram),
         },
         diags,
     )
@@ -359,6 +413,7 @@ pub fn build_focus_scene(model: &Model, key: &str) -> Scene {
             nodes: vec![],
             groups: vec![],
             edges: vec![],
+            relations: Vec::new(),
         };
     };
     let title = node
@@ -399,6 +454,7 @@ pub fn build_focus_scene(model: &Model, key: &str) -> Scene {
         nodes: vec![scene_node],
         groups: vec![],
         edges: vec![],
+        relations: Vec::new(),
     }
 }
 
@@ -435,6 +491,35 @@ mod tests {
     fn mini() -> Model {
         let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/mini");
         load::load_model(&dir).unwrap()
+    }
+
+    #[test]
+    fn scene_projects_existing_placement_relations() {
+        let model = mini();
+        let (scene, _) = build_scene(
+            &model,
+            &model.diagrams[0],
+            &std::collections::HashSet::new(),
+        );
+        use waml::syntax::Direction;
+        // orders-diagram.md's ## Layout: `Order left of Customer` +
+        // `PaymentGateway below Order`.
+        let has = |subj: &str, refr: &str, dir: Direction| {
+            scene
+                .relations
+                .iter()
+                .any(|r| r.subject == subj && r.reference == refr && r.dir == dir)
+        };
+        assert!(
+            has("order", "customer", Direction::LeftOf),
+            "missing order left-of customer: {:?}",
+            scene.relations
+        );
+        assert!(
+            has("payment-gateway", "order", Direction::Below),
+            "missing payment-gateway below order: {:?}",
+            scene.relations
+        );
     }
 
     #[test]
@@ -617,6 +702,7 @@ mod tests {
             nodes: vec![],
             groups: vec![],
             edges: vec![],
+            relations: vec![],
         };
         assert!(bounding_box(&scene).is_none());
     }
