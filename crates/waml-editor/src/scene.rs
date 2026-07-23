@@ -458,6 +458,78 @@ pub fn build_focus_scene(model: &Model, key: &str) -> Scene {
     }
 }
 
+/// The classifier title for a slug (for a `[Title](./slug.md)` operand), or the
+/// slug itself when unknown.
+// Wired into production code by Task 6 (class_diagram_view's CompassArmed
+// handler); unused outside tests until then.
+#[allow(dead_code)]
+fn title_for(model: &Model, slug: &str) -> String {
+    model
+        .nodes
+        .iter()
+        .find(|n| n.key == slug)
+        .and_then(|n| n.concept.title.clone())
+        .unwrap_or_else(|| slug.to_string())
+}
+
+/// True iff a placement matches the given ordered `(subject, reference)` pair
+/// as a 2-operand single-direction relation (mirrors `ops::placement_matches`).
+#[allow(dead_code)]
+fn placement_is_pair(stmt: &waml::syntax::LayoutStatement, subject: &str, reference: &str) -> bool {
+    use waml::syntax::LayoutStatement;
+    if let LayoutStatement::Placement {
+        operands,
+        directions,
+    } = stmt
+    {
+        operands.len() == 2
+            && directions.len() == 1
+            && operand_slug(&operands[0]) == Some(subject)
+            && operand_slug(&operands[1]) == Some(reference)
+    } else {
+        false
+    }
+}
+
+/// Speculatively author `subject <dir> reference` into a scratch clone of the
+/// diagram (one-relation-per-pair replace: drop any existing placement for this
+/// ordered pair, then push the hypothetical one), re-solve, and report whether
+/// the solver emits a `LayoutConflict`. The solver is the ground truth — it
+/// catches transitive / cycle contradictions a hand-rolled rule would miss.
+#[allow(dead_code)]
+pub fn placement_would_conflict(
+    model: &Model,
+    diagram: &Diagram,
+    subject_slug: &str,
+    reference_slug: &str,
+    dir: waml::syntax::Direction,
+    expanded: &std::collections::HashSet<String>,
+) -> bool {
+    use waml::diagnostic::DiagCode;
+    use waml::syntax::{LayoutStatement, NameRef, Operand, OperandRef};
+
+    let link = |slug: &str| Operand {
+        ref_: OperandRef::Name(NameRef::Link {
+            title: title_for(model, slug),
+            slug: slug.to_string(),
+        }),
+        axis: None,
+        hints: Vec::new(),
+    };
+
+    let mut scratch = diagram.clone();
+    scratch
+        .layout
+        .retain(|s| !placement_is_pair(s, subject_slug, reference_slug));
+    scratch.layout.push(LayoutStatement::Placement {
+        operands: vec![link(subject_slug), link(reference_slug)],
+        directions: vec![dir],
+    });
+
+    let (_scene, diags) = build_scene(model, &scratch, expanded);
+    diags.iter().any(|d| d.code == DiagCode::LayoutConflict)
+}
+
 /// Axis-aligned bounding box over all node and group rects, or `None` if empty.
 pub fn bounding_box(scene: &Scene) -> Option<Rect> {
     let mut rects = scene
@@ -519,6 +591,50 @@ mod tests {
             has("payment-gateway", "order", Direction::Below),
             "missing payment-gateway below order: {:?}",
             scene.relations
+        );
+    }
+
+    #[test]
+    fn oracle_flags_a_contradictory_placement() {
+        // mini has `Order left of Customer`. Authoring the REVERSED ordered pair
+        // `Customer left of Order` is a different pair (so the existing relation is
+        // NOT replaced) — both coexist, the solver cannot satisfy them, and emits a
+        // LayoutConflict.
+        let model = mini();
+        let diagram = &model.diagrams[0];
+        assert!(
+            placement_would_conflict(
+                &model,
+                diagram,
+                "customer",
+                "order",
+                waml::syntax::Direction::LeftOf,
+                &std::collections::HashSet::new(),
+            ),
+            "reversed cardinal on an existing pair must be predicted conflicting"
+        );
+    }
+
+    #[test]
+    fn oracle_accepts_a_clean_diagonal_placement() {
+        // One-relation-per-pair replace: authoring a diagonal for the ORDER ->
+        // CUSTOMER pair drops mini's existing `order left of customer` (same
+        // ordered pair) before re-solving, so the diagonal is the only relation
+        // on that pair -- and `payment-gateway below order` never touches
+        // customer, so nothing else contradicts it. Satisfiable, no
+        // LayoutConflict.
+        let model = mini();
+        let diagram = &model.diagrams[0];
+        assert!(
+            !placement_would_conflict(
+                &model,
+                diagram,
+                "order",
+                "customer",
+                waml::syntax::Direction::AboveLeft,
+                &std::collections::HashSet::new(),
+            ),
+            "a non-contradictory diagonal must NOT be predicted conflicting"
         );
     }
 
