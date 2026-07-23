@@ -143,6 +143,7 @@ script_mod! {
 pub enum TabKind {
     Diagram,
     Classifier,
+    Source,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -247,6 +248,36 @@ impl OpenTabs {
         id
     }
 
+    /// View Source: open (or focus) the single preview slot as a `Source` tab
+    /// for `key`. Mirrors `open_preview` -- never duplicates (id derives from
+    /// key), reuses the preview slot in place, always activates.
+    #[allow(dead_code)]
+    pub fn open_source(&mut self, key: impl Into<String>, title: impl Into<String>) -> LiveId {
+        let key = key.into();
+        let title = title.into();
+        let id = source_tab_id(&key);
+        if self.tabs.iter().any(|t| t.id == id) {
+            self.active = id;
+            return id;
+        }
+        let tab = DocTab {
+            id,
+            key,
+            title,
+            kind: TabKind::Source,
+            // No dedicated Source glyph; reuse the classifier glyph for the tab.
+            node_kind: TreeKind::Class,
+            preview: true,
+        };
+        if let Some(idx) = self.preview_index() {
+            self.tabs[idx] = tab;
+        } else {
+            self.tabs.push(tab);
+        }
+        self.active = id;
+        id
+    }
+
     /// Flip a preview tab to persisted. Idempotent; a no-op for unknown ids.
     pub fn promote(&mut self, id: LiveId) {
         if let Some(tab) = self.tabs.iter_mut().find(|t| t.id == id) {
@@ -320,6 +351,13 @@ pub fn diagram_tab_id() -> LiveId {
 /// classifier reuses the same id.
 pub fn classifier_tab_id(key: &str) -> LiveId {
     LiveId::from_str(&format!("__doc_tab_classifier__{key}"))
+}
+
+/// A source tab's id is derived from its key so re-opening the same element's
+/// source reuses the same tab (mirrors `classifier_tab_id`).
+#[allow(dead_code)]
+pub fn source_tab_id(key: &str) -> LiveId {
+    LiveId::from_str(&format!("__doc_tab_source__{key}"))
 }
 
 // ---------------------------------------------------------------------------
@@ -883,5 +921,36 @@ mod tests {
         let before = open.active;
         open.activate(LiveId::from_str("nope"));
         assert_eq!(open.active, before);
+    }
+
+    #[test]
+    fn open_source_uses_the_preview_slot_and_is_a_source_tab() {
+        let mut open = OpenTabs::diagram_base("d", "Diagram");
+        let id = open.open_source("customer", "Customer");
+        assert_eq!(open.tabs.len(), 2);
+        assert_eq!(open.tabs[1].kind, TabKind::Source);
+        assert!(open.tabs[1].preview);
+        assert_eq!(open.tabs[1].title, "Customer");
+        assert_eq!(open.active, id);
+    }
+
+    #[test]
+    fn open_source_twice_reuses_the_same_slot_and_focuses() {
+        let mut open = OpenTabs::diagram_base("d", "Diagram");
+        let a = open.open_source("a", "A");
+        let b = open.open_source("a", "A");
+        assert_eq!(a, b);
+        assert_eq!(open.tabs.len(), 2);
+        assert_eq!(open.active, a);
+    }
+
+    #[test]
+    fn open_source_replaces_an_existing_preview_in_place() {
+        let mut open = OpenTabs::diagram_base("d", "Diagram");
+        open.open_preview("customer", "Customer", TreeKind::Class);
+        let src = open.open_source("order", "Order");
+        assert_eq!(open.tabs.len(), 2);
+        assert_eq!(open.tabs[1].id, src);
+        assert_eq!(open.tabs[1].kind, TabKind::Source);
     }
 }

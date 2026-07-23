@@ -32,6 +32,7 @@ mod select_box;
 mod selection_toolbar;
 mod shortcuts_overlay;
 mod sizing;
+mod source_view;
 mod start_screen;
 mod statusbar;
 mod theme_atlas;
