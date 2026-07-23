@@ -1196,6 +1196,50 @@ impl MatchEvent for App {
             return;
         }
 
+        // Tree right-click: select the classifier (open/replace its preview
+        // tab, same as a left-click focus) and open the base-only node menu at
+        // the row.
+        let tree_context = self
+            .ui
+            .widget(cx, ids!(project_tree))
+            .borrow_mut::<crate::tree_panel::ProjectTree>()
+            .and_then(|panel| panel.context_menu_request(actions));
+        if let Some((key, anchor)) = tree_context {
+            if let Some(node) = self.model.nodes.iter().find(|n| n.key == key) {
+                let title = node
+                    .concept
+                    .title
+                    .clone()
+                    .unwrap_or_else(|| node.key.clone());
+                self.tabs
+                    .open_preview(key.clone(), title, crate::tree::kind_of(&node.ty));
+                self.refresh_doc_tabs(cx);
+                self.sync_active_tab(cx);
+            }
+            self.node_menu_key = Some(key);
+            let bounds = self.window_bounds(cx);
+            if let Some(mut pr) = self
+                .ui
+                .widget(cx, ids!(popup_root))
+                .borrow_mut::<PopupRoot>()
+            {
+                pr.show_at(
+                    cx,
+                    PopupSpec::Menu {
+                        tag: live_id!(node_menu),
+                        anchor,
+                        bounds,
+                        items: crate::popup::node_menu::compose(
+                            vec![],
+                            crate::popup::node_menu::base_items(),
+                        ),
+                        open: MenuOpen::Popup,
+                    },
+                );
+            }
+            return;
+        }
+
         // Classifier focus: single-click a class row -> open/replace the
         // single preview tab, focus-render that node in the canvas, and
         // point the inspector at it.
