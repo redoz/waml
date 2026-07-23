@@ -319,14 +319,13 @@ pub fn node_at(
     None
 }
 
-/// SPIKE (drag-place, throwaway): the placement a ghost implies relative to a
-/// reference node. Each axis is independent -- a corner drop carries both, a
-/// pure side drop carries one. `Direction` reuses the DSL's own vocabulary so
-/// the readout maps 1:1 onto `A left of B` / `A above B`.
+/// SPIKE (drag-place): the single placement a compass zone authors relative to
+/// its target. An edge zone maps to a cardinal `Direction`, a corner zone to a
+/// diagonal. `None` = no zone hovered (drop = cancel). `Direction` reuses the
+/// DSL's own vocabulary so the readout maps 1:1 onto `A above left of B`.
 #[derive(Clone, Copy, Default, PartialEq)]
 pub struct Placed {
-    pub h: Option<waml::syntax::Direction>,
-    pub v: Option<waml::syntax::Direction>,
+    pub dir: Option<waml::syntax::Direction>,
 }
 
 /// SPIKE (drag-place): the eight compass drop zones ringing a target node --
@@ -410,22 +409,21 @@ pub fn compass_zone_of(center: DVec2, p: DVec2) -> Option<Zone> {
 }
 
 /// The placement a compass `Zone` authors relative to the target: an edge zone
-/// is single-axis, a corner zone carries both axes (a diagonal drop = two
-/// statements, same reference). Dropping A on B's *left* zone reads `A left of
-/// B`. Pure.
+/// is a cardinal, a corner zone a single diagonal. Dropping A on B's *top-left*
+/// zone reads `A above left of B`. Pure.
 pub fn zone_placed(z: Zone) -> Placed {
     use waml::syntax::Direction::*;
-    let (h, v) = match z {
-        Zone::Left => (Some(LeftOf), None),
-        Zone::Right => (Some(RightOf), None),
-        Zone::Top => (None, Some(Above)),
-        Zone::Bottom => (None, Some(Below)),
-        Zone::TopLeft => (Some(LeftOf), Some(Above)),
-        Zone::TopRight => (Some(RightOf), Some(Above)),
-        Zone::BottomLeft => (Some(LeftOf), Some(Below)),
-        Zone::BottomRight => (Some(RightOf), Some(Below)),
+    let dir = match z {
+        Zone::Left => LeftOf,
+        Zone::Right => RightOf,
+        Zone::Top => Above,
+        Zone::Bottom => Below,
+        Zone::TopLeft => AboveLeft,
+        Zone::TopRight => AboveRight,
+        Zone::BottomLeft => BelowLeft,
+        Zone::BottomRight => BelowRight,
     };
-    Placed { h, v }
+    Placed { dir: Some(dir) }
 }
 
 /// The DSL keyword for a `Direction`, for the live readout.
@@ -811,10 +809,7 @@ impl Widget for GraphCanvas {
                         if let (Some(ni), Some(ri), Some(_z)) =
                             (self.drag_node, self.drag_target, self.compass_zone)
                         {
-                            let directions: Vec<_> = [self.drag_place.h, self.drag_place.v]
-                                .into_iter()
-                                .flatten()
-                                .collect();
+                            let directions: Vec<_> = self.drag_place.dir.into_iter().collect();
                             if !directions.is_empty() {
                                 let uid = self.widget_uid();
                                 let subject = &self.scene.nodes[ni];
@@ -1124,11 +1119,10 @@ impl GraphCanvas {
         if let Some(ti) = self.drag_target {
             let b_key = self.scene.nodes[ti].key.clone();
             self.draw_mono_dim.text_style.font_size = 12.0;
-            let mut y = vy + 10.0;
-            for d in [place.h, place.v].into_iter().flatten() {
+            if let Some(d) = place.dir {
                 let line = format!("{a_key} {} {b_key}", dir_word(d));
-                self.draw_mono_dim.draw_abs(cx, dvec2(vx + 12.0, y), &line);
-                y += 18.0;
+                self.draw_mono_dim
+                    .draw_abs(cx, dvec2(vx + 12.0, vy + 10.0), &line);
             }
         }
     }
@@ -1411,6 +1405,24 @@ impl GraphCanvas {
 mod tests {
     use super::*;
     use waml::solve::Rect as WorldRect;
+
+    #[test]
+    fn corner_zones_author_a_single_diagonal_direction() {
+        use waml::syntax::Direction::*;
+        assert_eq!(zone_placed(Zone::TopLeft).dir, Some(AboveLeft));
+        assert_eq!(zone_placed(Zone::TopRight).dir, Some(AboveRight));
+        assert_eq!(zone_placed(Zone::BottomLeft).dir, Some(BelowLeft));
+        assert_eq!(zone_placed(Zone::BottomRight).dir, Some(BelowRight));
+    }
+
+    #[test]
+    fn edge_zones_author_a_single_cardinal_direction() {
+        use waml::syntax::Direction::*;
+        assert_eq!(zone_placed(Zone::Left).dir, Some(LeftOf));
+        assert_eq!(zone_placed(Zone::Right).dir, Some(RightOf));
+        assert_eq!(zone_placed(Zone::Top).dir, Some(Above));
+        assert_eq!(zone_placed(Zone::Bottom).dir, Some(Below));
+    }
 
     #[test]
     fn node_at_hits_the_topmost_node_under_the_point() {
