@@ -147,6 +147,24 @@ fn push_group_rows(groups: &[DiagramGroup], rows: &mut Vec<ElementRow>) {
     }
 }
 
+/// The synthetic picker key for the edge at `edges[idx]`: `"src->tgt"` for the
+/// first edge of that ordered pair, `"src->tgt#N"` (N = its 0-based occurrence
+/// among same-pair edges) for each later parallel edge. Keeping the first bare
+/// preserves the common single-edge case and its readable key. `build_edge_view`
+/// reverses it.
+fn edge_key(edges: &[waml::model::Edge], idx: usize) -> String {
+    let edge = &edges[idx];
+    let occ = edges[..idx]
+        .iter()
+        .filter(|e| e.source == edge.source && e.target == edge.target)
+        .count();
+    if occ == 0 {
+        format!("{}->{}", edge.source, edge.target)
+    } else {
+        format!("{}->{}#{}", edge.source, edge.target, occ)
+    }
+}
+
 /// Build the ordered picker rows for a diagram whose drawable node set is
 /// `node_keys` (in display order). Row 0 is always the placeholder sentinel;
 /// then the diagram title; then each node followed immediately by the edges it
@@ -193,11 +211,16 @@ pub fn diagram_elements(
             label: title_of(nk),
             kind: ElementKind::Node,
         });
-        // Edges anchored at this node's source end, nested right after it.
-        for edge in &model.edges {
+        // Edges anchored at this node's source end, nested right after it. A
+        // diagram can hold parallel edges between the same pair (association +
+        // dependency etc.), so the synthetic key carries an occurrence ordinal
+        // (`src->tgt#N`, N omitted for the first) — keyed on `src->tgt` alone,
+        // every parallel row would collapse onto the first edge. `build_edge_view`
+        // resolves the ordinal back to the matching edge.
+        for (ei, edge) in model.edges.iter().enumerate() {
             if &edge.source == nk && present.contains(edge.target.as_str()) {
                 rows.push(ElementRow {
-                    key: format!("{}->{}", edge.source, edge.target),
+                    key: edge_key(&model.edges, ei),
                     label: format!("{} -> {}", title_of(&edge.source), title_of(&edge.target)),
                     kind: ElementKind::Edge,
                 });
@@ -345,11 +368,18 @@ fn build_group_view(model: &Model, name: &str) -> Option<InspectorView> {
 }
 
 fn build_edge_view(model: &Model, id: &str) -> Option<InspectorView> {
-    let (src, tgt) = id.split_once("->")?;
+    // Split an optional `#N` occurrence ordinal off the tail (see `edge_key`);
+    // its absence means the first (occurrence 0) edge of the pair.
+    let (pair, occ) = match id.rsplit_once('#') {
+        Some((pair, n)) => (pair, n.parse::<usize>().ok()?),
+        None => (id, 0),
+    };
+    let (src, tgt) = pair.split_once("->")?;
     let edge = model
         .edges
         .iter()
-        .find(|e| e.source == src && e.target == tgt)?;
+        .filter(|e| e.source == src && e.target == tgt)
+        .nth(occ)?;
     Some(InspectorView {
         title: format!(
             "{} \u{2192} {}",
@@ -838,5 +868,72 @@ mod tests {
         let rows = diagram_elements(&model, "orders-diagram", "Orders", &node_keys(&model));
         assert_eq!(subject_to_index(&rows, &Subject::Group("Nope".into())), 0);
         assert_eq!(subject_to_index(&rows, &Subject::Edge("x->y".into())), 0);
+    }
+
+    /// `mini()` with two *parallel* Order->PaymentGateway edges of different
+    /// relationship kinds. The synthetic edge key must disambiguate them so each
+    /// picker row resolves to (and projects) its own edge — not the first match.
+    fn mini_with_parallel_edges() -> Model {
+        use waml::model::{Edge, RelEnd, RelationshipKind};
+        let mut model = mini();
+        let order = key_for(&model, "Order");
+        let gateway = key_for(&model, "PaymentGateway");
+        model.edges.push(Edge {
+            source: order.clone(),
+            target: gateway.clone(),
+            kind: RelationshipKind::Associates,
+            name: None,
+            from_end: RelEnd::default(),
+            to_end: RelEnd::default(),
+            bidirectional: false,
+        });
+        model.edges.push(Edge {
+            source: order,
+            target: gateway,
+            kind: RelationshipKind::Depends,
+            name: None,
+            from_end: RelEnd::default(),
+            to_end: RelEnd::default(),
+            bidirectional: false,
+        });
+        model
+    }
+
+    #[test]
+    fn parallel_edges_get_distinct_keys_and_project_each_kind() {
+        let model = mini_with_parallel_edges();
+        let order = key_for(&model, "Order");
+        let gateway = key_for(&model, "PaymentGateway");
+        let rows = diagram_elements(&model, "orders-diagram", "Orders", &node_keys(&model));
+
+        let pair_prefix = format!("{order}->{gateway}");
+        let parallel: Vec<&ElementRow> = rows
+            .iter()
+            .filter(|r| r.kind == ElementKind::Edge && r.key.starts_with(&pair_prefix))
+            .collect();
+        assert_eq!(parallel.len(), 2, "two parallel Order->PaymentGateway rows");
+
+        // Distinct picker keys — else both rows collapse onto the first edge.
+        assert_ne!(
+            parallel[0].key, parallel[1].key,
+            "parallel edges must have distinct picker keys"
+        );
+
+        // Each key resolves back to its own row and projects its own edge kind.
+        let mut kinds = Vec::new();
+        for r in &parallel {
+            let idx = subject_to_index(&rows, &Subject::Edge(r.key.clone()));
+            assert_eq!(rows[idx].key, r.key, "each key resolves to its own row");
+            let view = build_view(&model, &Subject::Edge(r.key.clone())).unwrap();
+            kinds.push(view.kind_label);
+        }
+        assert!(
+            kinds.contains(&"associates".to_string()),
+            "one parallel edge projects `associates`, got {kinds:?}"
+        );
+        assert!(
+            kinds.contains(&"depends".to_string()),
+            "one parallel edge projects `depends`, got {kinds:?}"
+        );
     }
 }
