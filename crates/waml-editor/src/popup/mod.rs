@@ -7,6 +7,7 @@
 pub mod base;
 pub mod marking;
 pub mod menu;
+pub mod node_menu;
 pub mod presenter;
 pub mod radial;
 pub mod root;
