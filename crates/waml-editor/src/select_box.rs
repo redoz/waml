@@ -35,8 +35,6 @@ script_mod! {
     mod.widgets.SelectBox = set_type_default() do mod.widgets.SelectBoxBase{
         width: Fill
         height: 32.0
-        // Field material: the shared Atlas frame + field-bg fill.
-        draw_frame: mod.draw.AccentFrame{ color: atlas.field_bg }
         // Active overlay RING drawn over the box while the list is open — a
         // source-bright accent border, the visual link to the open flyout.
         // Stroke-ONLY (no fill): a second `AccentFrame` would re-run
@@ -61,9 +59,11 @@ script_mod! {
         }
         draw_icon_idle +: { color: atlas.text }
         draw_caret +: { color: atlas.text_dim }
+        // Web-header style: the selected subject's name reads as a bold title,
+        // not a small combo-field label (mirrors the web inspector header).
         draw_label +: {
             color: atlas.text
-            text_style: theme.font_regular{ font_size: 10 line_spacing: 1.2 }
+            text_style: theme.font_bold{ font_size: 14 line_spacing: 1.2 }
         }
     }
 }
@@ -73,9 +73,6 @@ pub struct SelectBox {
     #[deref]
     view: View,
 
-    #[redraw]
-    #[live]
-    draw_frame: DrawColor,
     #[redraw]
     #[live]
     draw_active: DrawColor,
@@ -139,9 +136,9 @@ impl Widget for SelectBox {
         let rect = self.view.area().rect(cx);
         let cy = rect.pos.y + rect.size.y * 0.5;
 
-        // Card.
-        self.draw_frame.set_uniform(cx, live_id!(zoom), &[0.6]);
-        self.draw_frame.draw_abs(cx, rect);
+        // Flat web-header look: no boxed field frame -- the leading kind icon,
+        // bold name, and trailing caret carry the affordance over the bare panel.
+        // (The open-state accent ring below still draws when the list is open.)
 
         // Selected row's lead + label (or nothing selected → placeholder blank).
         let idle = self.draw_icon_idle.color;
@@ -151,8 +148,8 @@ impl Widget for SelectBox {
                 SelectLead::None => {}
                 SelectLead::Icon(icon) => {
                     let r = Rect {
-                        pos: dvec2(rect.pos.x + 10.0, cy - 8.0),
-                        size: dvec2(16.0, 16.0),
+                        pos: dvec2(rect.pos.x + 8.0, cy - 9.0),
+                        size: dvec2(18.0, 18.0),
                     };
                     self.icons.draw(cx, *icon, r, idle);
                     label_x = rect.pos.x + 34.0;
@@ -175,7 +172,7 @@ impl Widget for SelectBox {
                 }
             }
             self.draw_label
-                .draw_abs(cx, dvec2(label_x, cy - 6.0), &sel.label);
+                .draw_abs(cx, dvec2(label_x, cy - 8.0), &sel.label);
         }
 
         // Trailing caret (chevrons-up-down = the standard combo affordance).
