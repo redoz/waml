@@ -1,13 +1,12 @@
 use crate::doc_tabs::{OpenTabs, TabKind};
 use crate::fps_meter::FpsMeter;
 use crate::icon_button::IconButtonWidgetRefExt;
-use crate::inspector::{diagram_elements, Subject};
+use crate::inspector::Subject;
 use crate::load;
 use crate::nav::NavState;
 use crate::popup::base::PopupResult;
 use crate::popup::root::{MenuOpen, PopupRoot, PopupSpec, RadialOpen};
 use crate::popup::select::{SelectItem, SelectLead};
-use crate::scene::build_scene;
 use makepad_widgets::*;
 use std::collections::HashMap;
 use std::collections::HashSet;
@@ -326,10 +325,20 @@ pub struct App {
 }
 
 impl App {
-    /// tabs rebuild+fit the full diagram scene (inspector empty state, since
-    /// diagram hit-test selection is out of scope); classifier tabs pin the
-    /// 1.5x focus render and point the inspector at that classifier.
+    /// Drop view objects for tabs that are no longer open. Keeps per-tab live
+    /// state (a diagram's `expanded`, a preview's key) alive across tab
+    /// switches but reclaims it when the tab closes.
+    fn reconcile_views(&mut self) {
+        let open: HashSet<LiveId> = self.tabs.tabs.iter().map(|t| t.id).collect();
+        self.views.retain(|id, _| open.contains(id));
+    }
+
+    /// Registry-driven: look up (or create) the active tab's view, delegate
+    /// `sync`, and let it drive the shared body surface + tool dock
+    /// visibility. Both `TabKind`s go through the identical path now --
+    /// their differing behavior lives entirely in the view objects.
     fn sync_active_tab(&mut self, cx: &mut Cx) {
+        self.reconcile_views();
         let Some(active) = self.tabs.active_tab().cloned() else {
             if let Some(mut panel) = self
                 .ui
@@ -349,35 +358,19 @@ impl App {
         {
             panel.set_selected_key(cx, Some(active.key.clone()));
         }
-        let body = crate::doc_view::BodyWidgets::new(cx, &self.ui);
-        match active.kind {
-            TabKind::Diagram => {
-                let view = self
-                    .views
-                    .entry(active.id)
-                    .or_insert_with(|| crate::doc_view::make_view(&active));
-                if let Some(v) = view.downcast_diagram() {
-                    v.set_active(active.key.clone(), active.title.clone());
-                }
-                view.sync(cx, &body, &self.model);
-                body.set_tool_dock_visible(cx, view.wants_tooldock());
-            }
-            TabKind::Classifier => {
-                let view = self
-                    .views
-                    .entry(active.id)
-                    .or_insert_with(|| crate::doc_view::make_view(&active));
-                view.sync(cx, &body, &self.model);
-                body.set_tool_dock_visible(cx, view.wants_tooldock());
-            }
-        }
-        self.sync_statusbar(cx);
-    }
 
-    /// Show/hide the left tool dock. Hidden while a classifier/package is
-    /// previewed -- only a diagram tab exposes drawing tools.
-    fn set_diagram_toolbars(&mut self, cx: &mut Cx, show: bool) {
-        crate::doc_view::BodyWidgets::new(cx, &self.ui).set_tool_dock_visible(cx, show);
+        let body = crate::doc_view::BodyWidgets::new(cx, &self.ui);
+        let view = self
+            .views
+            .entry(active.id)
+            .or_insert_with(|| crate::doc_view::make_view(&active));
+        if let Some(v) = view.downcast_diagram() {
+            v.set_active(active.key.clone(), active.title.clone());
+        }
+        view.sync(cx, &body, &self.model);
+        body.set_tool_dock_visible(cx, view.wants_tooldock());
+
+        self.sync_statusbar(cx);
     }
 
     fn refresh_doc_tabs(&mut self, cx: &mut Cx) {
@@ -428,26 +421,6 @@ impl App {
             .borrow_mut::<crate::diagram_switcher::DiagramSwitcher>()
         {
             switcher.set_current(cx, &title);
-        }
-    }
-
-    /// Feed the inspector's element-picker the current diagram's contents
-    /// (diagram, nodes, source-anchored edges). `node_keys` are the diagram's
-    /// drawable nodes, in display order (from the built `Scene`).
-    fn sync_inspector_elements(
-        &mut self,
-        cx: &mut Cx,
-        diagram_key: &str,
-        diagram_title: &str,
-        node_keys: &[String],
-    ) {
-        let rows = diagram_elements(&self.model, diagram_key, diagram_title, node_keys);
-        if let Some(mut inspector) = self
-            .ui
-            .widget(cx, ids!(inspector))
-            .borrow_mut::<crate::inspector_panel::Inspector>()
-        {
-            inspector.set_diagram_elements(cx, &self.model, rows);
         }
     }
 
@@ -555,45 +528,14 @@ impl App {
         // with an empty canvas and no active diagram tab.
         match crate::cli::select_diagram(&self.model, wanted_diagram) {
             Some(diagram) => {
-                // `open_dir` bypasses the view registry (it builds the scene
-                // inline, ahead of any tab existing to key a view by); a fresh
-                // model always starts with no card expansion.
-                let (scene, diags) = build_scene(&self.model, diagram, &HashSet::new());
-                for d in &diags {
-                    log!("diagnostic: {d:?}");
-                }
-                let diagram_key = diagram.key.clone();
-                let diagram_title = diagram.title.clone();
-                let node_keys: Vec<String> = scene.nodes.iter().map(|n| n.key.clone()).collect();
-                if let Some(mut canvas) = self
-                    .ui
-                    .widget(cx, ids!(canvas))
-                    .borrow_mut::<crate::canvas::GraphCanvas>()
-                {
-                    canvas.set_scene(cx, scene);
-                } else {
-                    log!("canvas widget not found / wrong type");
-                }
-
+                // Seed the base tab; `self.views` was just cleared above, so
+                // `sync_active_tab` lazily creates a fresh `ClassDiagramView`
+                // (no card expansion carried over) and drives the canvas,
+                // inspector, tree-row highlight, and tool dock through the
+                // normal registry-driven path.
                 self.tabs = OpenTabs::diagram_base(diagram.key.clone(), diagram.title.clone());
                 self.refresh_doc_tabs(cx);
-                // open_dir bypasses sync_active_tab (it built the scene inline),
-                // so point the tree row highlight at the base tab by hand.
-                if let Some(mut panel) = self
-                    .ui
-                    .widget(cx, ids!(project_tree))
-                    .borrow_mut::<crate::tree_panel::ProjectTree>()
-                {
-                    panel.set_selected_key(cx, Some(diagram_key.clone()));
-                }
-                if let Some(mut inspector) = self
-                    .ui
-                    .widget(cx, ids!(inspector))
-                    .borrow_mut::<crate::inspector_panel::Inspector>()
-                {
-                    inspector.set_subject(cx, &self.model, Subject::None);
-                }
-                self.sync_inspector_elements(cx, &diagram_key, &diagram_title, &node_keys);
+                self.sync_active_tab(cx);
             }
             None => {
                 log!(
@@ -632,7 +574,7 @@ impl App {
             .active_tab()
             .map(|t| t.kind == TabKind::Diagram)
             .unwrap_or(false);
-        self.set_diagram_toolbars(cx, has_diagram);
+        crate::doc_view::BodyWidgets::new(cx, &self.ui).set_tool_dock_visible(cx, has_diagram);
 
         // Diagram switcher (U7): push the base tab's current diagram title into
         // the trigger chip (empty when the model carries no diagram).
@@ -1307,10 +1249,8 @@ impl MatchEvent for App {
         // fully owns its actions (inline-edit commit, element-picker open,
         // tool dock, canvas pointer actions, selection toolbar) via
         // `DocView::handle`; the shell only relays the returned `ViewOutcome`.
-        // No active tab falls through to the legacy blocks below, unchanged.
-        let mut diagram_delegated = false;
+        // No active tab (start screen / diagram-less model) simply skips this.
         if let Some(active) = self.tabs.active_tab().cloned() {
-            diagram_delegated = true;
             let view = self
                 .views
                 .entry(active.id)
@@ -1321,125 +1261,6 @@ impl MatchEvent for App {
             let outcome = view.handle(cx, &body, actions, &self.model);
             if self.relay_outcome(cx, &active, outcome) {
                 return;
-            }
-        }
-
-        if !diagram_delegated {
-            // Inline-edit commit: the inspector emits `Edited(subject_key)` when a
-            // field's value actually changed. Promote the tab pointing at that
-            // subject from preview to persisted (title de-dims).
-            let edited_key = body
-                .inspector(cx)
-                .borrow_mut::<crate::inspector_panel::Inspector>()
-                .and_then(|inspector| inspector.edited(actions));
-            if let Some(key) = edited_key {
-                if let Some(tab) = self.tabs.tabs.iter().find(|t| t.key == key) {
-                    let id = tab.id;
-                    self.tabs.promote(id);
-                    self.refresh_doc_tabs(cx);
-                }
-                return;
-            }
-
-            // Element-picker: the SelectBox asked to open its flyout. Only `App`
-            // may place a cross-tree popup, so relay through `popup_root` (routed
-            // through the single authority, same as burger/logo/node radial).
-            let open_request = body
-                .inspector(cx)
-                .borrow_mut::<crate::inspector_panel::Inspector>()
-                .and_then(|inspector| inspector.take_open_request(cx, actions));
-            if let Some((anchor_rect, min_width, items)) = open_request {
-                let anchor = dvec2(
-                    anchor_rect.pos.x,
-                    anchor_rect.pos.y + anchor_rect.size.y + crate::popup::select::SELECT_GAP,
-                );
-                let bounds = self.window_bounds(cx);
-                if let Some(mut pr) = self
-                    .ui
-                    .widget(cx, ids!(popup_root))
-                    .borrow_mut::<PopupRoot>()
-                {
-                    pr.show_at(
-                        cx,
-                        PopupSpec::Select {
-                            tag: live_id!(element_picker),
-                            anchor,
-                            min_width,
-                            bounds,
-                            items,
-                        },
-                    );
-                }
-                return;
-            }
-
-            // Tool dock: mode clicks (Select/Add/Connect) update their own
-            // highlight already; the one-shot action buttons stay mock no-ops. The
-            // keybinding overlay (U8) is reached via the `?` hotkey below.
-            let dock_action = body
-                .tool_dock(cx)
-                .borrow_mut::<crate::tool_dock::ToolDock>()
-                .and_then(|dock| dock.dock_action(actions));
-            if let Some(action) = dock_action {
-                match action {
-                    crate::tool_dock::ToolDockAction::ModeChanged(_) => self.sync_statusbar(cx),
-                    other => log!("tool dock: {other:?}"),
-                }
-                return;
-            }
-
-            // Canvas pointer actions. A right-press opens the node radial
-            // routed through the single `popup_root` authority; a primary click
-            // selects/deselects a node, repointing the inspector only (no tab, no
-            // camera move -- the same inspector-local path the element-picker takes).
-            let canvas_menu = body
-                .canvas(cx)
-                .borrow_mut::<crate::canvas::GraphCanvas>()
-                .and_then(|c| c.canvas_action(actions));
-            match canvas_menu {
-                Some(crate::canvas::GraphCanvasAction::NodeMenu { abs, node: _ }) => {
-                    let bounds = self.window_bounds(cx);
-                    if let Some(mut pr) = self
-                        .ui
-                        .widget(cx, ids!(popup_root))
-                        .borrow_mut::<PopupRoot>()
-                    {
-                        pr.show_at(
-                            cx,
-                            PopupSpec::Radial {
-                                tag: live_id!(node_menu),
-                                center: abs,
-                                bounds,
-                                items: node_radial_items(),
-                                open: RadialOpen::Marking,
-                            },
-                        );
-                    }
-                    return;
-                }
-                Some(crate::canvas::GraphCanvasAction::NodeSelect { key }) => {
-                    if let Some(mut inspector) = body
-                        .inspector(cx)
-                        .borrow_mut::<crate::inspector_panel::Inspector>()
-                    {
-                        inspector.set_subject(cx, &self.model, Subject::Classifier(key));
-                    }
-                    return;
-                }
-                Some(crate::canvas::GraphCanvasAction::NodeDeselect) => {
-                    if let Some(mut inspector) = body
-                        .inspector(cx)
-                        .borrow_mut::<crate::inspector_panel::Inspector>()
-                    {
-                        inspector.set_subject(cx, &self.model, Subject::None);
-                    }
-                    return;
-                }
-                // `ToggleExpand` (card-body expand/collapse) is a diagram-only
-                // affordance, fully owned by `ClassDiagramView` above (via the
-                // `diagram_delegated` branch) -- no legacy analog for a
-                // classifier-focus canvas.
-                _ => {}
             }
         }
 
@@ -1527,25 +1348,6 @@ impl MatchEvent for App {
         {
             self.toggle_shortcuts_overlay(cx);
             return;
-        }
-
-        if !diagram_delegated {
-            // Selection toolbar: `New Diagram` is a mock no-op (diagram
-            // creation is out of scope for this pass). `Delete` now flows
-            // entirely through the active view's `ViewOutcome::close_active`
-            // (relayed above) -- no active tab means no selection toolbar
-            // content to act on anyway, but the `NewDiagram` no-op stays
-            // reachable for the no-tab edge case.
-            let toolbar_action = body
-                .selection_toolbar(cx)
-                .borrow_mut::<crate::selection_toolbar::SelectionToolbar>()
-                .and_then(|toolbar| toolbar.toolbar_action(actions));
-            if let Some(crate::selection_toolbar::SelectionToolbarAction::NewDiagram) =
-                toolbar_action
-            {
-                log!("selection toolbar: New Diagram (mock no-op)");
-                return;
-            }
         }
 
         // Doc tab strip: click a tab to activate it, or its close button.
