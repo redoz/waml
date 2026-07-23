@@ -1,7 +1,6 @@
 node_modules/
 dist/
 .superpowers/
-.claude/
 .env
 .env.local
 *.log
@@ -11,3 +10,9 @@ dist/
 .worktrees/
 .tokensave/
 __pycache__/
+
+# .claude: track skills/workflows/scripts, ignore local runtime state
+.claude/worktrees/
+.claude/settings.local.json
+.claude/scheduled_tasks.lock
+.claude/.headroom_wrap_marker.json
