@@ -88,6 +88,11 @@ pub struct SceneRelation {
     pub subject: String,
     pub reference: String,
     pub dir: waml::syntax::Direction,
+    /// Best-effort leave-one-out conflict attribution, set by `build_scene`:
+    /// `true` iff removing just this relation reduces the solver's
+    /// `LayoutConflict` count (i.e. it participates in a contradiction).
+    /// Defaults `false`; only ever `true` on an already-conflicted diagram.
+    pub conflicting: bool,
 }
 
 // An empty scene (derived Default) is the sensible startup default (fed a real one via set_scene).
@@ -209,6 +214,7 @@ fn project_relations(diagram: &Diagram) -> Vec<SceneRelation> {
                         subject: subject.to_string(),
                         reference: reference.to_string(),
                         dir: directions[0],
+                        conflicting: false,
                     });
                 }
             }
@@ -393,12 +399,15 @@ pub fn build_scene(
         }
     }
 
+    let mut relations = project_relations(diagram);
+    attribute_conflicts(model, diagram, expanded, &diags, &mut relations);
+
     (
         Scene {
             nodes,
             groups: solved.groups.clone(),
             edges,
-            relations: project_relations(diagram),
+            relations,
         },
         diags,
     )
@@ -525,6 +534,64 @@ pub fn placement_would_conflict(
     diags.iter().any(|d| d.code == DiagCode::LayoutConflict)
 }
 
+/// Run the solver for `diagram` and return only its diagnostics — no scene
+/// projection, no conflict attribution. `attribute_conflicts` re-solves scratch
+/// clones through this so it never re-enters `build_scene` (which would recurse
+/// through attribution). The `LayoutConflict` count here is directly comparable
+/// to `build_scene`'s own `diags` (same `solve_diagram` source).
+fn solve_diags(
+    model: &Model,
+    diagram: &Diagram,
+    expanded: &std::collections::HashSet<String>,
+) -> Vec<Diagnostic> {
+    let sizes = crate::sizing::size_map(model, diagram, expanded);
+    let edges: Vec<(BoxId, BoxId)> = drawable_edges(model)
+        .into_iter()
+        .map(|e| (BoxId::Node(e.source.clone()), BoxId::Node(e.target.clone())))
+        .collect();
+    if use_stress_default(diagram) {
+        Vec::new()
+    } else {
+        solve_diagram(diagram, &edges, &sizes, &SolveConfig::default()).1
+    }
+}
+
+/// Best-effort leave-one-out conflict attribution. Runs ONLY when the solve
+/// already emitted a `LayoutConflict`; the clean path (the common case) returns
+/// immediately with every relation left `false`. When conflicted, for each
+/// projected relation it drops just that ordered placement from a scratch clone,
+/// re-solves via `solve_diags`, and marks `conflicting` iff the `LayoutConflict`
+/// count drops (the relation participates in a contradiction). O(relations)
+/// re-solves, fired at scene-build time only, and only on an already-conflicted
+/// diagram — never per frame.
+fn attribute_conflicts(
+    model: &Model,
+    diagram: &Diagram,
+    expanded: &std::collections::HashSet<String>,
+    diags: &[Diagnostic],
+    relations: &mut [SceneRelation],
+) {
+    use waml::diagnostic::DiagCode;
+    let base = diags
+        .iter()
+        .filter(|d| d.code == DiagCode::LayoutConflict)
+        .count();
+    if base == 0 {
+        return; // common path: satisfiable, everything stays false
+    }
+    for rel in relations.iter_mut() {
+        let mut scratch = diagram.clone();
+        scratch
+            .layout
+            .retain(|s| !placement_is_pair(s, &rel.subject, &rel.reference));
+        let after = solve_diags(model, &scratch, expanded)
+            .iter()
+            .filter(|d| d.code == DiagCode::LayoutConflict)
+            .count();
+        rel.conflicting = after < base;
+    }
+}
+
 /// Axis-aligned bounding box over all node and group rects, or `None` if empty.
 pub fn bounding_box(scene: &Scene) -> Option<Rect> {
     let mut rects = scene
@@ -585,6 +652,83 @@ mod tests {
         assert!(
             has("payment-gateway", "order", Direction::Below),
             "missing payment-gateway below order: {:?}",
+            scene.relations
+        );
+    }
+
+    #[test]
+    fn attribution_marks_the_culprits_of_a_contradiction() {
+        use waml::syntax::{Direction, LayoutStatement, NameRef, Operand, OperandRef};
+        // mini already authors `Order left of Customer`. Add the reversed pair
+        // `Customer left of Order` (a DIFFERENT ordered pair, so neither replaces
+        // the other) — both coexist, the solver cannot satisfy them and emits a
+        // LayoutConflict. Leave-one-out: removing EITHER culprit resolves it, so
+        // both are marked conflicting; `payment-gateway below order` is independent
+        // and stays false.
+        let model = mini();
+        let mut diagram = model.diagrams[0].clone();
+        let link = |slug: &str| Operand {
+            ref_: OperandRef::Name(NameRef::Link {
+                title: title_for(&model, slug),
+                slug: slug.to_string(),
+            }),
+            axis: None,
+            hints: Vec::new(),
+        };
+        diagram.layout.push(LayoutStatement::Placement {
+            operands: vec![link("customer"), link("order")],
+            directions: vec![Direction::LeftOf],
+        });
+
+        let (scene, diags) = build_scene(&model, &diagram, &std::collections::HashSet::new());
+        use waml::diagnostic::DiagCode;
+        assert!(
+            diags.iter().any(|d| d.code == DiagCode::LayoutConflict),
+            "fixture must be genuinely contradictory: {diags:?}"
+        );
+
+        let conflicting = |subj: &str, refr: &str| {
+            scene
+                .relations
+                .iter()
+                .find(|r| r.subject == subj && r.reference == refr)
+                .unwrap_or_else(|| {
+                    panic!("relation {subj} -> {refr} missing: {:?}", scene.relations)
+                })
+                .conflicting
+        };
+        assert!(
+            conflicting("order", "customer"),
+            "order->customer is a culprit"
+        );
+        assert!(
+            conflicting("customer", "order"),
+            "customer->order is a culprit"
+        );
+        assert!(
+            !conflicting("payment-gateway", "order"),
+            "independent relation must NOT be marked conflicting"
+        );
+    }
+
+    #[test]
+    fn attribution_marks_nothing_on_a_clean_diagram() {
+        // mini's default layout is satisfiable (no LayoutConflict), so the common
+        // path must leave every relation conflicting == false and do no extra work.
+        let model = mini();
+        let (scene, diags) = build_scene(
+            &model,
+            &model.diagrams[0],
+            &std::collections::HashSet::new(),
+        );
+        use waml::diagnostic::DiagCode;
+        assert!(
+            !diags.iter().any(|d| d.code == DiagCode::LayoutConflict),
+            "mini must be conflict-free: {diags:?}"
+        );
+        assert!(
+            scene.relations.iter().all(|r| !r.conflicting),
+            "clean diagram must mark no relation conflicting: {:?}",
             scene.relations
         );
     }

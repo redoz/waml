@@ -1720,16 +1720,19 @@ mod tests {
                 subject: "order".into(),
                 reference: "customer".into(),
                 dir: Direction::LeftOf,
+                conflicting: false,
             },
             SceneRelation {
                 subject: "payment-gateway".into(),
                 reference: "order".into(),
                 dir: Direction::Below,
+                conflicting: false,
             },
             SceneRelation {
                 subject: "invoice".into(),
                 reference: "shipment".into(),
                 dir: Direction::Above,
+                conflicting: false,
             },
         ];
         // Dragging `payment-gateway` over target `customer`.
