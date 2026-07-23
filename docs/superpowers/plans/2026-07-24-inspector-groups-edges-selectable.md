@@ -19,52 +19,56 @@
 
 ## Tasks
 
-Three tasks. Task 1 adds a named group to the shared `mini` fixture (needed for the group tests) and guards it. Task 2 adds the `ElementKind::Group` picker row (variant constructed in non-test `diagram_elements`). Task 3 lands the two `Subject` variants, the `members` field, `build_view`/`subject_to_index`, AND the panel wiring in one unit — the variants and field are only dead_code-clean when their non-test constructor (`apply_pick`) and reader (MEMBERS draw) land alongside them.
+Three tasks. Task 1 adds an in-code `mini_with_group()` test helper (needed for the group tests) — the shared `mini` fixture is deliberately NOT edited on disk, because splitting its members into a group would cross a `Layout` boundary and break four pre-existing conflict-free `scene.rs` tests (see Task 1's rationale). Task 2 adds the `ElementKind::Group` picker row (variant constructed in non-test `diagram_elements`). Task 3 lands the two `Subject` variants, the `members` field, `build_view`/`subject_to_index`, AND the panel wiring in one unit — the variants and field are only dead_code-clean when their non-test constructor (`apply_pick`) and reader (MEMBERS draw) land alongside them.
 
 ---
 
-### Task 1: Add a named group to the `mini` fixture
+### Task 1: Add a `mini_with_group()` test helper (in-code, no fixture edits)
 
 **Files:**
-- Modify: `crates/waml-editor/tests/fixtures/mini/orders-diagram.md`
-- Test: `crates/waml-editor/src/inspector.rs` (append one test to the existing `#[cfg(test)] mod tests`)
+- Modify: `crates/waml-editor/src/inspector.rs` (append a test helper + one guard test to the existing `#[cfg(test)] mod tests`)
 
 **Interfaces:**
-- Consumes: nothing new.
-- Produces: the `mini` fixture's `Orders` diagram (key `"orders-diagram"`) now has a named group `"Sales"` with members `Order` + `Customer`, and an implicit (`""`) group holding `PaymentGateway`. All three nodes remain diagram members (so `size_map` / scene tests keeping their counts stay green). Later tasks rely on `"Sales"` being a resolvable group name and on all three nodes staying present.
+- Consumes: `waml::model::DiagramGroup { name, members, children }`, `Model::diagrams` / `Diagram { key, groups, .. }` (both already public).
+- Produces: a `mini_with_group()` test helper that loads the untouched `mini` fixture and pushes one named group `"Sales"` (members `Order` + `Customer`) onto the `"orders-diagram"` diagram's `groups`, alongside the parser-produced implicit (`""`) group. Later tasks call this helper for every group/edge assertion that needs a resolvable named group.
 
-**Why this shape:** The parser (`crates/waml/src/grammar.rs:parse_members_block`) routes flat bullets under `## Members` into an implicit group (`name == ""`, inserted at `groups[0]`) and each `### Heading` into a named sibling group. Keeping `PaymentGateway` flat and wrapping `Order`+`Customer` under `### Sales` yields `groups == [implicit(""), Sales]` while all three stay members — this is what lets Task 2 test that the implicit group is skipped and Task 3 project the named group.
+**Why this shape (CRITICAL — supersedes the original fixture-edit approach):** The `mini` fixture must NOT be edited on disk. Every top-level `DiagramGroup` — including the implicit `""` group — is wrapped in its own solver box (`crates/waml/src/solve/resolve.rs` `Builder::add_group`), and a `Layout` constraint is honored only between operands sharing the same parent box; non-siblings are dropped with a `DiagCode::LayoutConflict` warning (`crates/waml/src/solve/geometry.rs:517-526`). mini's `## Layout` line `PaymentGateway below Order` crosses any split that puts `Order` in a `Sales` group while `PaymentGateway` stays flat, so editing the fixture that way silently breaks four pre-existing, previously-green `scene.rs` tests that assert mini's default layout is conflict-free (`scene_has_both_nodes_with_titles`, `attribution_marks_nothing_on_a_clean_diagram`, `attribution_marks_the_culprits_of_a_contradiction`, `oracle_accepts_a_clean_diagonal_placement`). Building the group in-code instead leaves the on-disk fixture — and therefore every scene test — untouched. This mirrors the existing test style in this very module (`classifier_projects_bidirectional_association` etc. push `Edge` structs onto `mini()` directly). The inspector logic under test (`diagram_elements` / `build_view` / `subject_to_index`) is exercised identically; the parser's group handling is already covered elsewhere (`crates/waml/src/parse.rs:2018`).
 
-- [ ] **Step 1: Rewrite the `## Members` section of the fixture**
+- [ ] **Step 1: Add the `mini_with_group()` helper**
 
-Edit `crates/waml-editor/tests/fixtures/mini/orders-diagram.md`. Replace the current `## Members` block:
+Append to the `tests` module in `crates/waml-editor/src/inspector.rs` (after the existing `node_keys` helper, before the tests). It uses a fully-qualified `waml::model::DiagramGroup` path — no `use` import — so it stays clean before Task 2 adds the crate-level `DiagramGroup` import:
 
-```markdown
-## Members
-- [Order](./order.md)
-- [Customer](./customer.md)
-- [PaymentGateway](./payment-gateway.md)
+```rust
+    /// `mini()` with one named group (`Sales` = Order + Customer) pushed onto the
+    /// `orders-diagram` diagram, alongside the parser-produced implicit (`""`)
+    /// group. The on-disk fixture is untouched, so scene/layout tests are
+    /// unaffected. Used by the group/edge tests below.
+    fn mini_with_group() -> Model {
+        let mut model = mini();
+        let order = key_for(&model, "Order");
+        let customer = key_for(&model, "Customer");
+        let diagram = model
+            .diagrams
+            .iter_mut()
+            .find(|d| d.key == "orders-diagram")
+            .expect("mini has the orders-diagram");
+        diagram.groups.push(waml::model::DiagramGroup {
+            name: "Sales".to_string(),
+            members: vec![order, customer],
+            children: Vec::new(),
+        });
+        model
+    }
 ```
 
-with (leave the frontmatter, `# Orders` heading, and the whole `## Layout` section exactly as they are):
+- [ ] **Step 2: Write the guard test**
 
-```markdown
-## Members
-- [PaymentGateway](./payment-gateway.md)
-
-### Sales
-- [Order](./order.md)
-- [Customer](./customer.md)
-```
-
-- [ ] **Step 2: Write the fixture-guard test**
-
-Append to the `tests` module in `crates/waml-editor/src/inspector.rs` (after the last test, before the closing `}` of `mod tests`):
+Append to the `tests` module (after the helper):
 
 ```rust
     #[test]
-    fn mini_fixture_exposes_a_named_group_and_keeps_all_members() {
-        let model = mini();
+    fn mini_with_group_shapes_the_diagram() {
+        let model = mini_with_group();
         let diagram = model
             .diagrams
             .iter()
@@ -77,36 +81,31 @@ Append to the `tests` module in `crates/waml-editor/src/inspector.rs` (after the
             .find(|g| g.name == "Sales")
             .expect("Sales group present");
         assert_eq!(sales.members.len(), 2, "Sales holds Order + Customer");
-        // The implicit ("") group is still present (holds PaymentGateway).
+        // The parser's implicit ("") group is still present (holds the flat members).
         assert!(
             diagram.groups.iter().any(|g| g.name.is_empty()),
             "implicit unnamed group present"
         );
-        // All three classifiers remain diagram members: three nodes total.
+        // The on-disk fixture is untouched: still exactly three classifiers.
         assert_eq!(model.nodes.len(), 3);
     }
 ```
 
 - [ ] **Step 3: Run the new test to verify it passes**
 
-Run: `cargo test -p waml-editor --lib mini_fixture_exposes_a_named_group -- --nocapture`
-Expected: PASS (the fixture parses into the intended group shape).
+Run: `cargo test -p waml-editor --lib mini_with_group_shapes_the_diagram -- --nocapture`
+Expected: PASS.
 
-- [ ] **Step 4: Run the full workspace suite to confirm nothing regressed**
+- [ ] **Step 4: Run the full gate**
 
-Run: `cargo test --workspace`
-Expected: PASS. In particular `size_map_covers_every_resolved_member_with_positive_sizes` (`crates/waml-editor/src/sizing.rs`) still sees 3 members, and the scene layout tests (`crates/waml-editor/src/scene.rs`) still resolve `order`/`customer`/`payment-gateway`.
+Run: `cargo test --workspace && pnpm -r test && pnpm lint && pnpm build`
+Expected: PASS. The `mini` fixture is unchanged on disk, so every existing `scene.rs` / `sizing.rs` test is unaffected. Clippy is clean: the helper is `#[cfg(test)]` and uses no unused imports (the `DiagramGroup` path is fully qualified).
 
-- [ ] **Step 5: Run the rest of the gate**
-
-Run: `pnpm -r test && pnpm lint && pnpm build`
-Expected: PASS (no Rust involvement in these; they must stay green).
-
-- [ ] **Step 6: Commit**
+- [ ] **Step 5: Commit**
 
 ```bash
-git add crates/waml-editor/tests/fixtures/mini/orders-diagram.md crates/waml-editor/src/inspector.rs
-git commit -m "test(inspector): add named group to mini fixture with guard"
+git add crates/waml-editor/src/inspector.rs
+git commit -m "test(inspector): add mini_with_group helper for group/edge tests"
 ```
 
 ---
@@ -130,7 +129,7 @@ Append to the `tests` module in `crates/waml-editor/src/inspector.rs`:
 ```rust
     #[test]
     fn picker_lists_named_groups_after_diagram_before_nodes() {
-        let model = mini();
+        let model = mini_with_group();
         // Pass the REAL diagram key so groups resolve off the model.
         let rows = diagram_elements(&model, "orders-diagram", "Orders", &node_keys(&model));
 
@@ -272,7 +271,7 @@ Append to the `tests` module in `crates/waml-editor/src/inspector.rs`:
 ```rust
     #[test]
     fn group_projects_name_kind_and_members() {
-        let model = mini();
+        let model = mini_with_group();
         let view = build_view(&model, &Subject::Group("Sales".into())).unwrap();
         assert_eq!(view.title, "Sales");
         assert_eq!(view.kind_label, "Group");
@@ -324,7 +323,7 @@ Append to the `tests` module in `crates/waml-editor/src/inspector.rs`:
 
     #[test]
     fn subject_to_index_resolves_group_row() {
-        let model = mini();
+        let model = mini_with_group();
         let rows = diagram_elements(&model, "orders-diagram", "Orders", &node_keys(&model));
         let idx = subject_to_index(&rows, &Subject::Group("Sales".into()));
         assert_eq!(rows[idx].kind, ElementKind::Group);
@@ -672,7 +671,7 @@ git commit -m "feat(inspector): make groups and edges selectable with MEMBERS co
 - §5 `subject_to_index` resolves all variants — Task 3 Step 5.
 - §6 panel `build_select_items` (Group enabled + Edge enabled), `apply_pick` (drop Node guard, map all kinds), `subject_key` (inner key for Group/Edge) — Task 3 Steps 7–9.
 - §7 MEMBERS compartment in `draw_walk` after ATTRIBUTES, before RELATIONSHIPS, gated on `!members.is_empty()` — Task 3 Step 10.
-- Tests section (group rows / `""` skip / group projection / edge projection / index resolution) — Task 2 Step 1, Task 3 Step 1. Fixture-with-group need — Task 1.
+- Tests section (group rows / `""` skip / group projection / edge projection / index resolution) — Task 2 Step 1, Task 3 Step 1. The "fixture with a named group" need is met by the in-code `mini_with_group()` helper (Task 1) rather than an on-disk fixture edit, because editing `mini` to split a group crosses a `Layout` boundary and drops it with a `LayoutConflict`, breaking four pre-existing `scene.rs` tests (`crates/waml/src/solve/geometry.rs:517-526`, `resolve.rs` `Builder::add_group`).
 - Non-goals (no web, no new icon, no `card/mod.rs`) — honored; both icons already exist.
 
 **Icon verification:** `Icon::SquareDashedTopSolid` (`crates/waml-editor/src/icons.rs:3547`) and `Icon::Spline` (`:3485`) both exist — no substitution needed, no new catalog glyph. Spec's assumption confirmed.
