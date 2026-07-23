@@ -1,6 +1,6 @@
 ---
 name: ship-overnight
-description: Use when the user hands off a spec to be planned and fully implemented while they are away ("land it tonight", "I won't be around", AFK autopilot) and expects it landed on main by morning. Takes a spec all the way to landed-on-origin/main unattended.
+description: Use when the user wants a spec planned and fully implemented while they are away ("land it tonight", "I won't be around", AFK autopilot) and expects it landed on main by morning. Takes a spec all the way to landed-on-origin/main unattended.
 user_invocable: true
 ---
 
