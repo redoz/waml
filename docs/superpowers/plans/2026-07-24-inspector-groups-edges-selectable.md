@@ -253,11 +253,11 @@ git commit -m "feat(inspector): list diagram groups as picker rows"
 - Modify: `crates/waml-editor/src/inspector_panel.rs` (`build_select_items`, `apply_pick`, `subject_key`; the declared `body` DSL block; `fill_body_column`; and the hand-drawn `draw_walk` body)
 - Test: `crates/waml-editor/src/inspector.rs` (`tests` module)
 
-**IMPORTANT — panel has TWO body-render paths (verify before editing):** A concurrent change (origin/main `f676c1c`, "AttrRowView widget + ATTRIBUTES section via FlatList") split the inspector body into two paths that BOTH must render MEMBERS:
-1. **Picker path** (`show_picker == true`, the mode a group is selected from): renders via the declared `body` DSL block (a `View` holding `kind`/`stereo`/`attr_heading`+`attr_list` FlatList/`rel_heading`+`rel_lines`/`desc_heading`+`desc`), populated by `fill_body_column`. RELATIONSHIPS here is an INTERIM pattern — a `SectionHeading` (`rel_heading`) plus a single joined multi-line `Label` (`rel_lines`). **MEMBERS mirrors this exact pattern.**
-2. **Hand-drawn path** (`show_picker == false`, classifier/package preview): the immediate-mode body in `draw_walk` that hand-draws `ATTRIBUTES`/`RELATIONSHIPS`/`DESCRIPTION` via `draw_abs` at an incrementing `y`. This is what the spec §7 block targets; it still exists.
+**IMPORTANT — panel has TWO body-render paths (verify before editing):** Concurrent changes (origin/main `f676c1c` "AttrRowView + ATTRIBUTES via FlatList", `741158b` "RelationshipCardView + RELATIONSHIPS via FlatList") split the inspector body into two paths that BOTH must render MEMBERS:
+1. **Picker path** (`show_picker == true`, the mode a group is selected from): renders via the declared `body` DSL block (a `View` holding `kind`/`stereo`/`attr_heading`+`attr_list` FlatList/`rel_heading`+`rel_list` FlatList/`desc_heading`+`desc`), populated by `fill_body_column` (headings/visibility) plus a per-`FlatList` item-draw loop inside `draw_walk`. **MEMBERS does NOT need a FlatList** — members are plain strings, so a single joined multi-line `Label` (`members_lines`) populated by `set_text` in `fill_body_column` is sufficient and simplest; no per-item draw loop, no custom Row widget.
+2. **Hand-drawn path** (`show_picker == false`, classifier/package preview): the immediate-mode body in `draw_walk` that hand-draws `ATTRIBUTES`/`RELATIONSHIPS`/`DESCRIPTION` via `draw_abs` at an incrementing `y`. This is what the spec §7 block targets; it still exists unchanged.
 
-Locate everything by name (the earlier `:NNN` line numbers are stale after `f676c1c`).
+Locate everything by name (the earlier `:NNN` line numbers are stale after `f676c1c`/`741158b`); re-read `fill_body_column`, the `body` DSL block, and the hand-drawn `draw_walk` body before editing, since the inspector panel is under active concurrent refactoring.
 
 **Interfaces:**
 - Consumes: `ElementKind::Group` (Task 2); `Diagram.groups`; `Model::edges` (`Edge { source: String, target: String, kind: RelationshipKind, .. }`, with `edge.kind.as_str()`); `Icon::SquareDashedTopSolid`, `Icon::Spline` (`crate::icons`).
@@ -632,12 +632,12 @@ In `crates/waml-editor/src/inspector_panel.rs`, in the `match row.kind` inside `
 
 - [ ] **Step 10: Declare the MEMBERS widgets in the `body` DSL block (picker path)**
 
-In `crates/waml-editor/src/inspector_panel.rs`, in the `body := View { ... }` live-design block, add a `members_heading` + `members_lines` pair immediately AFTER the `attr_list := FlatList { ... }` block and BEFORE `rel_heading := SectionHeading { }`. Mirror the interim RELATIONSHIPS pair (`rel_heading`/`rel_lines`) exactly — same `SectionHeading` + dim multi-line `Label`:
+In `crates/waml-editor/src/inspector_panel.rs`, in the `body := View { ... }` live-design block, add a `members_heading` + `members_lines` pair immediately AFTER the `attr_list := FlatList { ... }` block and BEFORE `rel_heading := SectionHeading { }`. A `SectionHeading` plus a dim multi-line `Label` (the `attr_heading`/`desc_heading` `SectionHeading` widget is reused; the `Label` style copies the existing `desc`/`kind` dim-text idiom):
 
 ```rust
             members_heading := SectionHeading { }
-            // A group's member labels joined as one dim multi-line label
-            // (mirrors the interim `rel_lines` treatment).
+            // A group's member labels, one per line, as a single dim Label.
+            // Members are plain strings, so no FlatList/Row widget is needed.
             members_lines := Label {
                 text: ""
                 draw_text +: {
@@ -655,10 +655,10 @@ In `crates/waml-editor/src/inspector_panel.rs`, in the `body := View { ... }` li
 
 - [ ] **Step 11: Populate MEMBERS in `fill_body_column` (picker-path reader for `members`)**
 
-In `fill_body_column`, insert this block AFTER the `has_attrs` ATTRIBUTES block (ends at `.set_text(cx, "ATTRIBUTES");`) and BEFORE the `// RELATIONSHIPS (interim joined lines...` block. Mirror the RELATIONSHIPS populate exactly:
+In `fill_body_column`, insert this block AFTER the `has_attrs` ATTRIBUTES block (ends at `.set_text(cx, "ATTRIBUTES");`) and BEFORE the `has_rels` RELATIONSHIPS block. Unlike the FlatList sections, MEMBERS sets its heading AND its full content here (a joined `Label`), so there is no per-item draw loop to add in `draw_walk`:
 
 ```rust
-        // MEMBERS (a group's members, joined dim lines — mirrors RELATIONSHIPS).
+        // MEMBERS: a group's member labels, one per line (a single dim Label).
         let has_members = !view.members.is_empty();
         self.view
             .widget(cx, ids!(body.members_heading))
