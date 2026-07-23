@@ -1006,7 +1006,7 @@ fn operand_slug(op: &Operand) -> Option<&str> {
 }
 
 /// Horizontal axis = Left/Right; Vertical = Above/Below.
-
+///
 /// A 2-operand `[subject] <dir> [reference]` placement on the given axis.
 /// True when `stmt` is a 2-operand placement for the `subject -> reference`
 /// pair, on ANY axis. Placement is one-relation-per-pair: authoring a new
