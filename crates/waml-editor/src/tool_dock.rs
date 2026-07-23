@@ -33,9 +33,9 @@ script_mod! {
         // Centre the 32px buttons in the 48-wide strip; pack from the top.
         align: Align{x: 0.5, y: 0.0}
         padding: Inset{top: 8.0}
-        // ~12px between buttons re-creates the old 44px vertical pitch (32px
-        // button + 12px gap); `props_btn`'s extra top margin is the group gap.
-        spacing: 12.0
+        // Snug 2px between the 32px buttons; `props_btn`'s extra top margin is
+        // the group gap that separates the action pair from the mode trio.
+        spacing: 2.0
         show_bg: true
         // The strip carries the Atlas HUD frame -- the AccentFrame material
         // inlined onto the View's `draw_bg` (keep in sync with `frame.rs` /

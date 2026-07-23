@@ -93,7 +93,7 @@ script_mod! {
             height: 56.0
             align: Align{x: 0.0, y: 0.5}
             padding: Inset{left: 16.0, right: 16.0}
-            spacing: 10.0
+            spacing: 2.0
             select_box := SelectBox { width: Fill }
             fold_btn := IconButton { visible: false }
             pin_btn := IconButton { visible: false }

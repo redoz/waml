@@ -111,7 +111,7 @@ script_mod! {
                 flow: Right
                 align: Align{y: 0.5}
                 padding: Inset{left: 10.0, right: 10.0}
-                spacing: 6.0
+                spacing: 2.0
                 // Fill spacer pushes the glyph cluster to the right edge; the
                 // scope-title trigger is drawn abs into the leading space.
                 title_spacer := View { width: Fill, height: Fill }
