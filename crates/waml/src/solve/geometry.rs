@@ -13,6 +13,87 @@ use std::collections::{BTreeMap, BTreeSet};
 /// for connected pairs; unconnected neighbours keep the plain margin gap.
 const MIN_ASSOC: f64 = 72.0;
 
+/// A placement the solver could not honor, plus the constraints it contradicts.
+/// Native-only instrumentation (no wasm ABI); surfaced through
+/// `solve_diagram_reported` to the editor's conflict error list. `relation` is
+/// the dropped `Constraint::Place`; `conflicts_with` is the set of already-applied
+/// constraints in the same-axis rigid component it could not join.
+#[derive(Debug, Clone, PartialEq)]
+pub struct DroppedPlacement {
+    pub relation: Constraint,
+    pub conflicts_with: Vec<Constraint>,
+}
+
+/// The (px, py) coordinate deltas a `Place` direction imposes: `coord[a] - coord[b]`
+/// on each axis. Extracted from the per-direction match so the union path and the
+/// dropped-report path agree on exactly what was attempted. Pure.
+fn place_deltas(dir: Direction, sa: Size, sb: Size, gap: f64) -> (f64, f64) {
+    use Direction::*;
+    match dir {
+        LeftOf => (sa.w + gap, (sa.h - sb.h) / 2.0),
+        RightOf => (-(sb.w + gap), (sa.h - sb.h) / 2.0),
+        Above => ((sa.w - sb.w) / 2.0, sa.h + gap),
+        Below => ((sa.w - sb.w) / 2.0, -(sb.h + gap)),
+        AboveLeft => (sa.w + gap, sa.h + gap),
+        AboveRight => (-(sb.w + gap), sa.h + gap),
+        BelowLeft => (sa.w + gap, -(sb.h + gap)),
+        BelowRight => (-(sb.w + gap), -(sb.h + gap)),
+    }
+}
+
+/// Constraint indices whose recorded same-axis edges form the rigid component
+/// containing node `a` (fixpoint expansion over the undirected edge list). Called
+/// only after a fresh union between `a` and some `b` FAILED — so `a`'s component
+/// already pins `b`, and every edge in it participates in the contradiction.
+fn component_constraints(edges: &[(usize, usize, usize)], a: usize) -> Vec<usize> {
+    use std::collections::BTreeSet;
+    let mut comp: BTreeSet<usize> = BTreeSet::new();
+    comp.insert(a);
+    let mut changed = true;
+    while changed {
+        changed = false;
+        for &(_ci, u, v) in edges {
+            if comp.contains(&u) != comp.contains(&v) {
+                comp.insert(u);
+                comp.insert(v);
+                changed = true;
+            }
+        }
+    }
+    edges
+        .iter()
+        .filter(|&&(_ci, u, v)| comp.contains(&u) && comp.contains(&v))
+        .map(|&(ci, _, _)| ci)
+        .collect()
+}
+
+/// Union `coord[b] - coord[a] = delta` on one axis, recording the successful edge
+/// (tagged with its constraint index `ci`) or pushing a `LayoutConflict` diag on a
+/// contradiction. Returns whether it unioned. Preserves the exact diagnostic the
+/// old `eq` emitted for `Place`.
+fn apply_axis(
+    p: &mut Potentials,
+    edges: &mut Vec<(usize, usize, usize)>,
+    ci: usize,
+    ia: usize,
+    ib: usize,
+    delta: f64,
+    diags: &mut Vec<Diagnostic>,
+) -> bool {
+    if p.union(ia, ib, delta).is_ok() {
+        edges.push((ci, ia, ib));
+        true
+    } else {
+        diags.push(Diagnostic::warn(
+            DiagCode::LayoutConflict,
+            "conflicting layout constraint dropped",
+            "",
+            0,
+        ));
+        false
+    }
+}
+
 /// Order-independent key for an unordered box pair.
 fn pair(a: &BoxId, b: &BoxId) -> (BoxId, BoxId) {
     if a <= b {
@@ -83,6 +164,7 @@ pub(super) fn solve_cluster(
     connected: &BTreeSet<(BoxId, BoxId)>,
     cfg: &SolveConfig,
     diags: &mut Vec<Diagnostic>,
+    dropped: &mut Vec<DroppedPlacement>,
 ) -> BTreeMap<BoxId, Rect> {
     let n = ids.len();
     let index: BTreeMap<BoxId, usize> = ids
@@ -92,8 +174,12 @@ pub(super) fn solve_cluster(
         .collect();
     let mut px = Potentials::new(n);
     let mut py = Potentials::new(n);
+    // Per-axis successfully-applied equalities, tagged with their constraint
+    // index, so a failed union can name the rigid component it collided with.
+    let mut xedges: Vec<(usize, usize, usize)> = Vec::new();
+    let mut yedges: Vec<(usize, usize, usize)> = Vec::new();
 
-    for c in constraints {
+    for (ci, c) in constraints.iter().enumerate() {
         match c {
             Constraint::Place { a, b, dir } => {
                 let (Some(&ia), Some(&ib)) = (index.get(a), index.get(b)) else {
@@ -107,40 +193,22 @@ pub(super) fn solve_cluster(
                 } else {
                     gap
                 };
-                match dir {
-                    Direction::LeftOf => {
-                        eq(&mut px, ia, ib, sa.w + gap, diags);
-                        eq(&mut py, ia, ib, (sa.h - sb.h) / 2.0, diags);
-                    }
-                    Direction::RightOf => {
-                        eq(&mut px, ia, ib, -(sb.w + gap), diags);
-                        eq(&mut py, ia, ib, (sa.h - sb.h) / 2.0, diags);
-                    }
-                    Direction::Above => {
-                        eq(&mut py, ia, ib, sa.h + gap, diags);
-                        eq(&mut px, ia, ib, (sa.w - sb.w) / 2.0, diags);
-                    }
-                    Direction::Below => {
-                        eq(&mut py, ia, ib, -(sb.h + gap), diags);
-                        eq(&mut px, ia, ib, (sa.w - sb.w) / 2.0, diags);
-                    }
-                    Direction::AboveLeft => {
-                        // a is above-and-left of b: separate on both axes, center-align neither.
-                        eq(&mut py, ia, ib, sa.h + gap, diags);
-                        eq(&mut px, ia, ib, sa.w + gap, diags);
-                    }
-                    Direction::AboveRight => {
-                        eq(&mut py, ia, ib, sa.h + gap, diags);
-                        eq(&mut px, ia, ib, -(sb.w + gap), diags);
-                    }
-                    Direction::BelowLeft => {
-                        eq(&mut py, ia, ib, -(sb.h + gap), diags);
-                        eq(&mut px, ia, ib, sa.w + gap, diags);
-                    }
-                    Direction::BelowRight => {
-                        eq(&mut py, ia, ib, -(sb.h + gap), diags);
-                        eq(&mut px, ia, ib, -(sb.w + gap), diags);
-                    }
+                let (dx, dy) = place_deltas(*dir, sa, sb, gap);
+                let okx = apply_axis(&mut px, &mut xedges, ci, ia, ib, dx, diags);
+                let oky = apply_axis(&mut py, &mut yedges, ci, ia, ib, dy, diags);
+                if !okx || !oky {
+                    // The dropped placement's contradiction set = the rigid
+                    // component on the failing axis it could not join (prefer x).
+                    let edges_axis: &[(usize, usize, usize)] = if !okx { &xedges } else { &yedges };
+                    let conflicts_with: Vec<Constraint> = component_constraints(edges_axis, ia)
+                        .into_iter()
+                        .filter(|&k| k != ci)
+                        .map(|k| constraints[k].clone())
+                        .collect();
+                    dropped.push(DroppedPlacement {
+                        relation: c.clone(),
+                        conflicts_with,
+                    });
                 }
             }
             Constraint::Align {
@@ -324,12 +392,13 @@ fn assemble(
     hull: Option<(Shape, Option<String>, u8)>,
     cfg: &SolveConfig,
     diags: &mut Vec<Diagnostic>,
+    dropped: &mut Vec<DroppedPlacement>,
 ) -> Laid {
     let mut dims: BTreeMap<BoxId, (Size, Margin)> = BTreeMap::new();
     for c in children {
         dims.insert(c.clone(), (child_laid[c].size, child_margins[c]));
     }
-    let placed = solve_cluster(children, &dims, cons, connected, cfg, diags);
+    let placed = solve_cluster(children, &dims, cons, connected, cfg, diags, dropped);
     let (min_x, min_y, max_x, max_y) = bounds(&placed, children);
     let dx = inset - min_x;
     let dy = inset - min_y;
@@ -400,6 +469,7 @@ fn solve_box(
     cfor: &BTreeMap<Option<BoxId>, Vec<Constraint>>,
     connected: &BTreeSet<(BoxId, BoxId)>,
     diags: &mut Vec<Diagnostic>,
+    dropped: &mut Vec<DroppedPlacement>,
 ) -> Laid {
     let b = boxes[id];
     if b.kind == BoxKind::Leaf {
@@ -437,7 +507,7 @@ fn solve_box(
     for c in &b.children {
         child_laid.insert(
             c.clone(),
-            solve_box(c, boxes, sizes, cfg, cfor, connected, diags),
+            solve_box(c, boxes, sizes, cfg, cfor, connected, diags, dropped),
         );
         child_margins.insert(c.clone(), boxes[c].margin);
     }
@@ -456,6 +526,7 @@ fn solve_box(
         Some((b.shape, b.title.clone(), b.depth)),
         cfg,
         diags,
+        dropped,
     );
     // Key this group's own frame by its BoxId so the router can use group rects
     // as containment-aware obstacles. Behavior-preserving: Solved.nodes only ever
@@ -473,7 +544,7 @@ fn solve_box(
 }
 
 pub fn solve(scene: &Scene, sizes: &SizeMap, cfg: &SolveConfig) -> (Solved, Vec<Diagnostic>) {
-    let (solved, _rects, diags) = solve_with_rects(scene, &[], sizes, cfg);
+    let (solved, _rects, diags, _dropped) = solve_with_rects(scene, &[], sizes, cfg);
     (solved, diags)
 }
 
@@ -482,8 +553,14 @@ pub(super) fn solve_with_rects(
     edges: &[(BoxId, BoxId)],
     sizes: &SizeMap,
     cfg: &SolveConfig,
-) -> (Solved, BTreeMap<BoxId, Rect>, Vec<Diagnostic>) {
+) -> (
+    Solved,
+    BTreeMap<BoxId, Rect>,
+    Vec<Diagnostic>,
+    Vec<DroppedPlacement>,
+) {
     let mut diags = vec![];
+    let mut dropped = vec![];
     let boxes: BTreeMap<BoxId, &Box> = scene.boxes.iter().map(|b| (b.id.clone(), b)).collect();
     // Unordered node<->node edge-connected pairs, so the layout can floor the
     // `Place` gap between associated boxes. Group-as-endpoint edges are ignored.
@@ -533,7 +610,16 @@ pub(super) fn solve_with_rects(
     for r in &roots {
         child_laid.insert(
             r.clone(),
-            solve_box(r, &boxes, sizes, cfg, &cfor, &connected, &mut diags),
+            solve_box(
+                r,
+                &boxes,
+                sizes,
+                cfg,
+                &cfor,
+                &connected,
+                &mut diags,
+                &mut dropped,
+            ),
         );
         child_margins.insert(r.clone(), boxes[r].margin);
     }
@@ -548,6 +634,7 @@ pub(super) fn solve_with_rects(
         None,
         cfg,
         &mut diags,
+        &mut dropped,
     );
 
     let mut nodes = BTreeMap::new();
@@ -582,6 +669,7 @@ pub(super) fn solve_with_rects(
         },
         laid.rects,
         diags,
+        dropped,
     )
 }
 
@@ -611,6 +699,115 @@ mod tests {
             m.insert((*k).into(), Size { w, h });
         }
         m
+    }
+
+    // Test-only shim: solve a bare `Scene` through the reported geometry path with
+    // default equal sizes, so the tests read like the existing `solve(...)` ones.
+    fn solve_diagram_reported_from_scene(
+        scene: &Scene,
+    ) -> (Solved, Vec<Diagnostic>, Vec<DroppedPlacement>) {
+        let keys: Vec<&str> = scene
+            .boxes
+            .iter()
+            .filter_map(|b| match &b.id {
+                BoxId::Node(k) => Some(k.as_str()),
+                _ => None,
+            })
+            .collect();
+        let (solved, _rects, diags, dropped) = solve_with_rects(
+            scene,
+            &[],
+            &sizes(&keys, 200.0, 90.0),
+            &SolveConfig::default(),
+        );
+        (solved, diags, dropped)
+    }
+
+    #[test]
+    fn satisfiable_set_drops_nothing() {
+        // A clean row of three: no contradiction, so the dropped report is empty.
+        let scene = Scene {
+            boxes: vec![leaf("a"), leaf("b"), leaf("c")],
+            constraints: vec![
+                Constraint::Place {
+                    a: BoxId::Node("a".into()),
+                    b: BoxId::Node("b".into()),
+                    dir: Direction::LeftOf,
+                },
+                Constraint::Place {
+                    a: BoxId::Node("b".into()),
+                    b: BoxId::Node("c".into()),
+                    dir: Direction::LeftOf,
+                },
+            ],
+        };
+        let (_solved, diags, dropped) = solve_diagram_reported_from_scene(&scene);
+        assert!(diags.is_empty());
+        assert!(
+            dropped.is_empty(),
+            "satisfiable set must drop nothing: {dropped:?}"
+        );
+    }
+
+    #[test]
+    fn three_node_cycle_names_dropped_and_conflict_set() {
+        // a left of b, b left of c, c left of a: the third placement cannot join the
+        // rigid a-b-c x-component. It is dropped; its conflict set is the two prior
+        // placements that formed the component.
+        let scene = Scene {
+            boxes: vec![leaf("a"), leaf("b"), leaf("c")],
+            constraints: vec![
+                Constraint::Place {
+                    a: BoxId::Node("a".into()),
+                    b: BoxId::Node("b".into()),
+                    dir: Direction::LeftOf,
+                },
+                Constraint::Place {
+                    a: BoxId::Node("b".into()),
+                    b: BoxId::Node("c".into()),
+                    dir: Direction::LeftOf,
+                },
+                Constraint::Place {
+                    a: BoxId::Node("c".into()),
+                    b: BoxId::Node("a".into()),
+                    dir: Direction::LeftOf,
+                },
+            ],
+        };
+        let (_solved, _diags, dropped) = solve_diagram_reported_from_scene(&scene);
+        assert_eq!(
+            dropped.len(),
+            1,
+            "exactly one placement is unsatisfiable: {dropped:?}"
+        );
+        let d = &dropped[0];
+        assert_eq!(
+            d.relation,
+            Constraint::Place {
+                a: BoxId::Node("c".into()),
+                b: BoxId::Node("a".into()),
+                dir: Direction::LeftOf
+            },
+            "the third (cycle-closing) placement is the dropped one"
+        );
+        assert_eq!(
+            d.conflicts_with.len(),
+            2,
+            "conflict set is the two prior placements: {:?}",
+            d.conflicts_with
+        );
+        assert!(d.conflicts_with.contains(&Constraint::Place {
+            a: BoxId::Node("a".into()),
+            b: BoxId::Node("b".into()),
+            dir: Direction::LeftOf
+        }));
+        assert!(d.conflicts_with.contains(&Constraint::Place {
+            a: BoxId::Node("b".into()),
+            b: BoxId::Node("c".into()),
+            dir: Direction::LeftOf
+        }));
+        // The dropped relation must NOT list itself.
+        assert!(!d.conflicts_with.contains(&d.relation));
     }
 
     #[test]
@@ -850,7 +1047,7 @@ mod tests {
             ],
             constraints: vec![],
         };
-        let (_solved, rects, diags) = solve_with_rects(
+        let (_solved, rects, diags, _dropped) = solve_with_rects(
             &scene,
             &[],
             &sizes(&["a", "b"], 200.0, 90.0),
@@ -876,7 +1073,7 @@ mod tests {
             }],
         };
         let edges = vec![(BoxId::Node("a".into()), BoxId::Node("b".into()))];
-        let (_solved, rects, diags) = solve_with_rects(
+        let (_solved, rects, diags, _dropped) = solve_with_rects(
             &scene,
             &edges,
             &sizes(&["a", "b"], 200.0, 90.0),
@@ -902,7 +1099,7 @@ mod tests {
                 dir: Direction::LeftOf,
             }],
         };
-        let (_solved, rects, diags) = solve_with_rects(
+        let (_solved, rects, diags, _dropped) = solve_with_rects(
             &scene,
             &[],
             &sizes(&["a", "b"], 200.0, 90.0),
@@ -936,7 +1133,7 @@ mod tests {
             constraints: vec![],
         };
         let edges = vec![(BoxId::Node("a".into()), BoxId::Node("b".into()))];
-        let (_solved, rects, diags) = solve_with_rects(
+        let (_solved, rects, diags, _dropped) = solve_with_rects(
             &scene,
             &edges,
             &sizes(&["a", "b"], 200.0, 90.0),

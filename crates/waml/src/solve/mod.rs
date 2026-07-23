@@ -103,6 +103,7 @@ mod wire {
         pub routes: Vec<Route>,
     }
 }
+pub use geometry::DroppedPlacement;
 pub use wire::{FlagSet, Rect, Route, Size, SolveConfig, Solved, SolvedGroup};
 
 pub type SizeMap = BTreeMap<String, Size>;
@@ -203,18 +204,34 @@ pub fn pretty(solved: &Solved) -> String {
     out
 }
 
-/// Top-level entry: resolve the diagram to a `Scene`, then solve it.
+/// Top-level entry: resolve the diagram to a `Scene`, then solve it. Keeps the
+/// 2-tuple shape the wasm crate depends on; drops the placement report.
 pub fn solve_diagram(
     diagram: &crate::model::Diagram,
     edges: &[(BoxId, BoxId)],
     sizes: &SizeMap,
     cfg: &SolveConfig,
 ) -> (Solved, Vec<Diagnostic>) {
+    let (solved, diags, _dropped) = solve_diagram_reported(diagram, edges, sizes, cfg);
+    (solved, diags)
+}
+
+/// Native-only entry: like `solve_diagram` but also returns the solver's
+/// dropped-placement report (unsatisfiable placements + their contradiction sets).
+/// The editor's conflict error list consumes this; the wasm path uses
+/// `solve_diagram` and never sees it.
+pub fn solve_diagram_reported(
+    diagram: &crate::model::Diagram,
+    edges: &[(BoxId, BoxId)],
+    sizes: &SizeMap,
+    cfg: &SolveConfig,
+) -> (Solved, Vec<Diagnostic>, Vec<DroppedPlacement>) {
     let (scene, mut diags) = resolve::resolve(diagram);
-    let (mut solved, rects, mut geo_diags) = geometry::solve_with_rects(&scene, edges, sizes, cfg);
+    let (mut solved, rects, mut geo_diags, dropped) =
+        geometry::solve_with_rects(&scene, edges, sizes, cfg);
     diags.append(&mut geo_diags);
     solved.routes = route::route(&scene.boxes, &rects, edges, cfg);
-    (solved, diags)
+    (solved, diags, dropped)
 }
 
 #[cfg(test)]
