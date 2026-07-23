@@ -276,6 +276,12 @@ pub struct App {
     ui: WidgetRef,
     #[rust]
     model: Model,
+    /// SPIKE (drag-place, Stage 2): the raw `(rel_path, contents)` bundle the
+    /// model was built from, retained so drag-to-place can author `## Layout`
+    /// placement statements in-memory via `waml::ops::apply` and rebuild the
+    /// model. In-memory only — never written back to disk in the spike.
+    #[rust]
+    bundle: Vec<(String, String)>,
     /// Basename of the currently-open bundle directory. The bundle's display
     /// name falls back to this when the model carries no root name (`model.path`
     /// is empty -- no root `index.md` H1 / frontmatter title), so an unnamed
@@ -485,8 +491,8 @@ impl App {
     /// empty canvas, no diagram tab. Returns `false` (having `log!`d) only when
     /// the model fails to load, so the caller keeps the start screen up.
     fn open_dir(&mut self, cx: &mut Cx, dir: &Path, wanted_diagram: Option<&str>) -> bool {
-        let model = match load::load_model(dir) {
-            Ok(m) => m,
+        let (bundle, model) = match load::load_bundle_and_model(dir) {
+            Ok(pair) => pair,
             Err(e) => {
                 log!("failed to load OKF dir {:?}: {e}", dir);
                 return false;
@@ -496,6 +502,10 @@ impl App {
         // Fresh model: no tab ids (and so no view state, e.g. expansion) carry
         // over -- `open_dir` always rebuilds `self.tabs` from scratch below.
         self.views.clear();
+        // Retain the raw bundle so drag-to-place ops can re-author `## Layout`
+        // in-memory: the diagram view emits `Op::PlaceSet`, the shell applies it
+        // against this bundle and rebuilds the model (see `handle_actions`).
+        self.bundle = bundle;
         // Fresh model: recompute the type-filter chip's cycle and reset scope /
         // search / filter to the whole-model browse state.
         self.nav_kinds = crate::nav::kinds_in_model(&self.model);
@@ -1259,6 +1269,26 @@ impl MatchEvent for App {
                 v.set_active(active.key.clone(), active.title.clone());
             }
             let outcome = view.handle(cx, &body, actions, &self.model);
+            // A view emits `Op`s (drag-to-place authors a `## Layout` placement);
+            // the shell owns the Model, so it applies them against the retained
+            // bundle, rebuilds the model, and re-solves the active diagram view in
+            // place (camera held). Empty for every non-authoring action.
+            if !outcome.ops.is_empty() {
+                match waml::ops::apply(&self.bundle, &outcome.ops) {
+                    Ok(new_bundle) => {
+                        self.bundle = new_bundle;
+                        self.model = waml::parse::build_model(&self.bundle);
+                        if let Some(v) = self
+                            .views
+                            .get_mut(&active.id)
+                            .and_then(|v| v.downcast_diagram())
+                        {
+                            v.resolve_active(cx, &body, &self.model);
+                        }
+                    }
+                    Err(e) => log!("place.set failed: {e:?}"),
+                }
+            }
             if self.relay_outcome(cx, &active, outcome) {
                 return;
             }
@@ -1390,9 +1420,9 @@ impl App {
     ) -> bool {
         let mut consumed = false;
 
-        // `ops`: forward-looking, empty this migration (spec §2 -- no shell
-        // `Op` application exists yet). Applied here when it lands.
-        for _op in &outcome.ops {}
+        // `ops` are applied upstream in `handle_actions` (the shell owns the
+        // Model + bundle and re-solves the active view there); by the time an
+        // outcome reaches `relay_outcome` its ops are already consumed.
 
         if let Some(req) = outcome.popup {
             let bounds = self.window_bounds(cx);

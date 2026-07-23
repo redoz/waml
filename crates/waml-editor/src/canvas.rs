@@ -221,6 +221,43 @@ pub struct GraphCanvas {
     drag_start_abs: Option<DVec2>,
     #[rust]
     drag_start_pan: (f64, f64),
+    /// SPIKE (drag-place, throwaway): index of the node being dragged to author
+    /// a placement, or `None` when the press is a pan/click. Set on FingerDown
+    /// over a node, cleared on FingerUp.
+    #[rust]
+    drag_node: Option<usize>,
+    /// World-space offset from the dragged node's origin to the grab point, so
+    /// the ghost tracks the cursor without jumping.
+    #[rust]
+    drag_grab: (f64, f64),
+    /// Whether the node-drag moved past the click slop (a real placement drag,
+    /// not a click-select).
+    #[rust]
+    drag_moved: bool,
+    /// Live drag readout, recomputed each FingerMove: ghost world rect, the
+    /// compass target node, the hovered zone, and the inferred placement.
+    #[rust]
+    drag_ghost: Option<waml::solve::Rect>,
+    /// Index of the node the cursor is currently over (its compass target),
+    /// picked by body containment with a light ring-hysteresis so crossing into
+    /// a zone doesn't drop the target. `None` when the cursor is over empty
+    /// canvas.
+    #[rust]
+    drag_target: Option<usize>,
+    /// Which of the target's eight compass zones the cursor is in, or `None`
+    /// (dead center / outside the ring / no target).
+    #[rust]
+    compass_zone: Option<Zone>,
+    /// Node the cursor is dwelling over, waiting for `dwell_timer` to arm its
+    /// compass. Distinct from `drag_target` (the *armed* one) so the compass
+    /// doesn't flip to a sibling the cursor only grazed.
+    #[rust]
+    dwell_cand: Option<usize>,
+    /// The pending dwell timeout; fires to promote `dwell_cand` -> `drag_target`.
+    #[rust]
+    dwell_timer: Timer,
+    #[rust]
+    drag_place: Placed,
     /// Index (into the current scene's nodes) of the click-selected node, or
     /// `None`. Drives the thicker `AccentFrame` highlight in `draw_walk`. It
     /// indexes *this* scene, so it MUST be reset to `None` whenever the scene is
@@ -278,6 +315,126 @@ pub fn node_at(
         }
     }
     None
+}
+
+/// SPIKE (drag-place, throwaway): the placement a ghost implies relative to a
+/// reference node. Each axis is independent -- a corner drop carries both, a
+/// pure side drop carries one. `Direction` reuses the DSL's own vocabulary so
+/// the readout maps 1:1 onto `A left of B` / `A above B`.
+#[derive(Clone, Copy, Default, PartialEq)]
+pub struct Placed {
+    pub h: Option<waml::syntax::Direction>,
+    pub v: Option<waml::syntax::Direction>,
+}
+
+/// SPIKE (drag-place): the eight compass drop zones ringing a target node --
+/// the ring cells of a 3x3 grid (the center cell is the node body itself, dead,
+/// so it has no variant). A VS-style dock diamond: edge zones author one axis,
+/// corner zones author both. Maps to a `Placed` via `zone_placed`.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Zone {
+    Left,
+    Right,
+    Top,
+    Bottom,
+    TopLeft,
+    TopRight,
+    BottomLeft,
+    BottomRight,
+}
+
+/// All eight zones, in render/scan order.
+const COMPASS_ZONES: [Zone; 8] = [
+    Zone::Left,
+    Zone::Right,
+    Zone::Top,
+    Zone::Bottom,
+    Zone::TopLeft,
+    Zone::TopRight,
+    Zone::BottomLeft,
+    Zone::BottomRight,
+];
+
+/// Fixed screen-px geometry of the dock compass. Deliberately camera-*independent*
+/// so the handles stay a constant size (and a constant, comfortable hit target)
+/// when the canvas is zoomed way out and the node itself is tiny.
+const HANDLE: f64 = 26.0; // handle square side
+const HANDLE_PITCH: f64 = 32.0; // handle center-to-center spacing (side + gap)
+/// Once armed, the compass stays stuck to its target while the cursor is within
+/// this radius of the target's screen center -- past the handle cluster, so
+/// grazing a zone never disarms it.
+const COMPASS_REACH: f64 = HANDLE_PITCH * 1.5 + 18.0;
+/// Dwell (seconds) the cursor must rest over a node before its compass arms.
+/// Stops the target flipping to a sibling when the cursor merely grazes a
+/// border on the way past.
+const DWELL_SECS: f64 = 0.18;
+
+/// The `(col, row)` grid offset of a `Zone` in {-1, 0, 1}^2. The center cell
+/// (0, 0) is the dead node body and has no zone.
+fn zone_offset(z: Zone) -> (f64, f64) {
+    match z {
+        Zone::Left => (-1.0, 0.0),
+        Zone::Right => (1.0, 0.0),
+        Zone::Top => (0.0, -1.0),
+        Zone::Bottom => (0.0, 1.0),
+        Zone::TopLeft => (-1.0, -1.0),
+        Zone::TopRight => (1.0, -1.0),
+        Zone::BottomLeft => (-1.0, 1.0),
+        Zone::BottomRight => (1.0, 1.0),
+    }
+}
+
+/// Screen rect of a `Zone`'s handle, a fixed-size square offset from `center`
+/// (the target node's screen center) by the zone's grid step. Zoom-independent.
+/// Pure, GPU-free (unit-testable like `node_at`).
+pub fn handle_rect(center: DVec2, z: Zone) -> Rect {
+    let (ox, oy) = zone_offset(z);
+    Rect {
+        pos: dvec2(
+            center.x + ox * HANDLE_PITCH - HANDLE * 0.5,
+            center.y + oy * HANDLE_PITCH - HANDLE * 0.5,
+        ),
+        size: dvec2(HANDLE, HANDLE),
+    }
+}
+
+/// Which compass zone the cursor `p` is in: the first handle (offset from the
+/// target's screen `center`) that contains it, or `None` (dead center / gaps /
+/// outside the cluster). Pure.
+pub fn compass_zone_of(center: DVec2, p: DVec2) -> Option<Zone> {
+    COMPASS_ZONES
+        .into_iter()
+        .find(|&z| handle_rect(center, z).contains(p))
+}
+
+/// The placement a compass `Zone` authors relative to the target: an edge zone
+/// is single-axis, a corner zone carries both axes (a diagonal drop = two
+/// statements, same reference). Dropping A on B's *left* zone reads `A left of
+/// B`. Pure.
+pub fn zone_placed(z: Zone) -> Placed {
+    use waml::syntax::Direction::*;
+    let (h, v) = match z {
+        Zone::Left => (Some(LeftOf), None),
+        Zone::Right => (Some(RightOf), None),
+        Zone::Top => (None, Some(Above)),
+        Zone::Bottom => (None, Some(Below)),
+        Zone::TopLeft => (Some(LeftOf), Some(Above)),
+        Zone::TopRight => (Some(RightOf), Some(Above)),
+        Zone::BottomLeft => (Some(LeftOf), Some(Below)),
+        Zone::BottomRight => (Some(RightOf), Some(Below)),
+    };
+    Placed { h, v }
+}
+
+/// The DSL keyword for a `Direction`, for the live readout.
+fn dir_word(d: waml::syntax::Direction) -> &'static str {
+    use waml::syntax::Direction::*;
+    match d {
+        LeftOf => "left of",
+        RightOf => "right of",
+        Above => "above",
+        Below => "below",
+    }
 }
 
 /// Screen-space rect of `node`'s overflow footer band, or `None` when the card
@@ -476,10 +633,40 @@ pub enum GraphCanvasAction {
     /// A primary click landed on a node's overflow footer band: toggle its card
     /// expansion. Consumed — no selection change. Carries the `SceneNode::key`.
     ToggleExpand { key: String },
+    /// A node-drag dropped on a compass zone: author a `## Layout` placement.
+    /// `subject` = dragged node, `reference` = drop target (both by SceneNode
+    /// key + title); `directions` is 1 (edge) or 2 (corner). `App` supplies the
+    /// active diagram id and performs the in-memory write-back + re-solve.
+    AuthorPlacement {
+        subject_key: String,
+        subject_title: String,
+        reference_key: String,
+        reference_title: String,
+        directions: Vec<waml::syntax::Direction>,
+    },
 }
 
 impl Widget for GraphCanvas {
     fn handle_event(&mut self, cx: &mut Cx, event: &Event, _scope: &mut Scope) {
+        // SPIKE: Escape cancels an in-progress placement drag (snap back, no log).
+        if let Event::KeyDown(ke) = event {
+            if ke.key_code == KeyCode::Escape && self.drag_node.is_some() {
+                self.cancel_drag(cx);
+                return;
+            }
+        }
+        // SPIKE: dwell fired -> arm the compass on the node the cursor rested on.
+        // The hovered zone stays whatever the last FingerMove computed (likely
+        // `None`, cursor over the dead body center); the next move lights a handle.
+        if self.dwell_timer.is_event(event).is_some() {
+            if self.drag_node.is_some() {
+                if let Some(c) = self.dwell_cand.take() {
+                    self.drag_target = Some(c);
+                    self.draw_bg.redraw(cx);
+                }
+            }
+            return;
+        }
         match event.hits_with_capture_overload(cx, self.draw_bg.area(), false) {
             Hit::FingerDown(fe) if fe.mouse_button() == Some(MouseButton::SECONDARY) => {
                 let rects: Vec<waml::solve::Rect> =
@@ -492,10 +679,89 @@ impl Widget for GraphCanvas {
             Hit::FingerDown(fe) if fe.is_primary_hit() => {
                 self.drag_start_abs = Some(fe.abs);
                 self.drag_start_pan = (self.camera.pan_x, self.camera.pan_y);
+                // SPIKE: a press that lands on a node starts a *potential* placement
+                // drag (a click still selects on FingerUp; only movement drags).
+                let rects: Vec<waml::solve::Rect> =
+                    self.scene.nodes.iter().map(|n| n.rect).collect();
+                if let Some(i) = node_at(&rects, &self.camera, self.view_rect, fe.abs) {
+                    let (wx, wy) = self.camera.local_to_world(
+                        fe.abs.x - self.view_rect.pos.x,
+                        fe.abs.y - self.view_rect.pos.y,
+                    );
+                    self.drag_node = Some(i);
+                    self.drag_grab = (wx - rects[i].x, wy - rects[i].y);
+                    self.drag_moved = false;
+                }
                 cx.set_cursor(MouseCursor::Grabbing);
             }
             Hit::FingerMove(fe) => {
-                if let Some(start) = self.drag_start_abs {
+                if let Some(ni) = self.drag_node {
+                    // SPIKE: node-drag -> author a placement via a dock compass.
+                    // Ghost tracks the cursor; the node whose body the cursor is
+                    // over is the target; the compass zone (edge/corner) picks
+                    // the placement axes.
+                    if let Some(start) = self.drag_start_abs {
+                        if !is_click(start, fe.abs) {
+                            self.drag_moved = true;
+                        }
+                    }
+                    let (wx, wy) = self.camera.local_to_world(
+                        fe.abs.x - self.view_rect.pos.x,
+                        fe.abs.y - self.view_rect.pos.y,
+                    );
+                    let base = self.scene.nodes[ni].rect;
+                    let ghost = waml::solve::Rect {
+                        x: wx - self.drag_grab.0,
+                        y: wy - self.drag_grab.1,
+                        w: base.w,
+                        h: base.h,
+                    };
+                    let rects: Vec<waml::solve::Rect> =
+                        self.scene.nodes.iter().map(|n| n.rect).collect();
+                    let cursor = fe.abs;
+                    // Target selection with a dwell so the compass doesn't flip
+                    // to a sibling the cursor merely grazes. `hovered` = the node
+                    // body under the cursor (never the dragged node itself).
+                    let hovered =
+                        node_at(&rects, &self.camera, self.view_rect, cursor).filter(|&t| t != ni);
+                    match hovered {
+                        Some(h) if self.drag_target == Some(h) => {
+                            // Back over the already-armed target: drop any pending
+                            // dwell (e.g. we were dwelling a sibling, then returned).
+                            if self.dwell_cand.take().is_some() {
+                                cx.stop_timer(self.dwell_timer);
+                            }
+                        }
+                        Some(h) => {
+                            // Over a different node: (re)start its dwell. It arms
+                            // only if the cursor stays put for `DWELL_SECS`.
+                            if self.dwell_cand != Some(h) {
+                                cx.stop_timer(self.dwell_timer);
+                                self.dwell_cand = Some(h);
+                                self.dwell_timer = cx.start_timeout(DWELL_SECS);
+                            }
+                        }
+                        None => {
+                            // Over empty canvas: cancel any pending dwell, and keep
+                            // the armed target stuck until the cursor leaves its
+                            // compass reach (so crossing a handle gap is fine).
+                            if self.dwell_cand.take().is_some() {
+                                cx.stop_timer(self.dwell_timer);
+                            }
+                            if let Some(t) = self.drag_target {
+                                if (cursor - self.node_screen_center(t)).length() > COMPASS_REACH {
+                                    self.drag_target = None;
+                                }
+                            }
+                        }
+                    }
+                    self.compass_zone = self
+                        .drag_target
+                        .and_then(|t| compass_zone_of(self.node_screen_center(t), cursor));
+                    self.drag_place = self.compass_zone.map(zone_placed).unwrap_or_default();
+                    self.drag_ghost = Some(ghost);
+                    self.draw_bg.redraw(cx);
+                } else if let Some(start) = self.drag_start_abs {
                     let delta = fe.abs - start;
                     self.camera.pan_x = self.drag_start_pan.0 - delta.x / self.camera.zoom;
                     self.camera.pan_y = self.drag_start_pan.1 - delta.y / self.camera.zoom;
@@ -558,12 +824,58 @@ impl Widget for GraphCanvas {
                             }
                         }
                         self.draw_bg.redraw(cx);
+                    } else if self.drag_moved {
+                        // SPIKE (Stage 2): a node-drag dropped on a compass zone
+                        // -> emit an `AuthorPlacement` so `App` writes the `##
+                        // Layout` statement(s) in-memory and re-solves. A drop
+                        // with no zone (empty canvas / dead center / outside the
+                        // ring) or no direction just cancels (snap back).
+                        if let (Some(ni), Some(ri), Some(_z)) =
+                            (self.drag_node, self.drag_target, self.compass_zone)
+                        {
+                            let directions: Vec<_> = [self.drag_place.h, self.drag_place.v]
+                                .into_iter()
+                                .flatten()
+                                .collect();
+                            if !directions.is_empty() {
+                                let uid = self.widget_uid();
+                                let subject = &self.scene.nodes[ni];
+                                let reference = &self.scene.nodes[ri];
+                                cx.widget_action(
+                                    uid,
+                                    GraphCanvasAction::AuthorPlacement {
+                                        subject_key: subject.key.clone(),
+                                        subject_title: subject.title.clone(),
+                                        reference_key: reference.key.clone(),
+                                        reference_title: reference.title.clone(),
+                                        directions,
+                                    },
+                                );
+                            }
+                        }
                     }
                 }
+                self.drag_node = None;
+                self.drag_moved = false;
+                self.drag_ghost = None;
+                self.drag_target = None;
+                self.compass_zone = None;
+                self.dwell_cand = None;
+                cx.stop_timer(self.dwell_timer);
+                self.drag_place = Placed::default();
+                self.draw_bg.redraw(cx);
                 cx.set_cursor(MouseCursor::Grab);
             }
             Hit::FingerUp(_) => {
                 self.drag_start_abs = None;
+                self.drag_node = None;
+                self.drag_moved = false;
+                self.drag_ghost = None;
+                self.drag_target = None;
+                self.compass_zone = None;
+                self.dwell_cand = None;
+                cx.stop_timer(self.dwell_timer);
+                self.drag_place = Placed::default();
                 cx.set_cursor(MouseCursor::Grab);
             }
             Hit::FingerHoverIn(_) => cx.set_cursor(MouseCursor::Grab),
@@ -749,11 +1061,209 @@ impl Widget for GraphCanvas {
             self.draw_card(cx, screen, node, zoom);
         }
 
+        // SPIKE (drag-place): live placement overlay on top of everything.
+        if self.drag_moved {
+            self.draw_drag_overlay(cx, rect);
+        }
+
         DrawStep::done()
     }
 }
 
 impl GraphCanvas {
+    /// On-screen rect of scene node `i` under the current camera. Mirrors the
+    /// draw-time transform in `draw_walk` / `node_at`.
+    fn node_screen_rect(&self, i: usize) -> Rect {
+        let r = self.scene.nodes[i].rect;
+        let (lx, ly) = self.camera.world_to_local(r.x, r.y);
+        Rect {
+            pos: dvec2(self.view_rect.pos.x + lx, self.view_rect.pos.y + ly),
+            size: dvec2(r.w * self.camera.zoom, r.h * self.camera.zoom),
+        }
+    }
+
+    /// Screen-space center of scene node `i` -- where its compass anchors.
+    fn node_screen_center(&self, i: usize) -> DVec2 {
+        let s = self.node_screen_rect(i);
+        dvec2(s.pos.x + s.size.x * 0.5, s.pos.y + s.size.y * 0.5)
+    }
+
+    /// SPIKE (drag-place, throwaway): draw the live placement overlay -- the
+    /// grey origin slot the node left behind, the dock compass over the target
+    /// node (eight zones, the hovered one lit), the dragged ghost, and a DSL
+    /// readout. All screen-space.
+    fn draw_drag_overlay(&mut self, cx: &mut Cx2d, view: Rect) {
+        let (Some(ni), Some(ghost)) = (self.drag_node, self.drag_ghost) else {
+            return;
+        };
+        let a_key = self.scene.nodes[ni].key.clone();
+        let place = self.drag_place;
+        let (vx, vy) = (view.pos.x, view.pos.y);
+
+        let to_screen = |r: waml::solve::Rect| -> Rect {
+            let (lx, ly) = self.camera.world_to_local(r.x, r.y);
+            Rect {
+                pos: dvec2(view.pos.x + lx, view.pos.y + ly),
+                size: dvec2(r.w * self.camera.zoom, r.h * self.camera.zoom),
+            }
+        };
+        let gs = to_screen(ghost);
+        let os = to_screen(self.scene.nodes[ni].rect); // origin (source) slot
+
+        // Origin marker: grey-wash the source slot + outline so it reads as
+        // "left behind" -- you can see which node is in flight.
+        let grey_wash = vec4(0.52, 0.57, 0.64, 0.40);
+        self.fill_rect(cx, os.pos.x, os.pos.y, os.size.x, os.size.y, grey_wash);
+        let grey = vec4(0.62, 0.67, 0.74, 0.85);
+        let gt = 1.5;
+        self.fill_rect(cx, os.pos.x, os.pos.y, os.size.x, gt, grey);
+        self.fill_rect(cx, os.pos.x, os.pos.y + os.size.y - gt, os.size.x, gt, grey);
+        self.fill_rect(cx, os.pos.x, os.pos.y, gt, os.size.y, grey);
+        self.fill_rect(cx, os.pos.x + os.size.x - gt, os.pos.y, gt, os.size.y, grey);
+
+        // Dock compass, centered on the target node (only while one is armed).
+        if let Some(ti) = self.drag_target {
+            let center = self.node_screen_center(ti);
+            self.draw_compass(cx, center, self.compass_zone);
+        }
+
+        // Ghost: translucent accent rect tracking the cursor, carrying the
+        // dragged node's identity so you can tell *what* is in flight.
+        self.fill_rect(
+            cx,
+            gs.pos.x,
+            gs.pos.y,
+            gs.size.x,
+            gs.size.y,
+            vec4(0.37, 0.63, 1.0, 0.22),
+        );
+        self.draw_mono_bold.text_style.font_size = 12.0;
+        self.draw_mono_bold
+            .draw_abs(cx, dvec2(gs.pos.x + 6.0, gs.pos.y + 6.0), &a_key);
+
+        // DSL readout, top-left of the view: the statement(s) the current zone
+        // would author. Empty when no zone is hovered (drop = cancel).
+        if let Some(ti) = self.drag_target {
+            let b_key = self.scene.nodes[ti].key.clone();
+            self.draw_mono_dim.text_style.font_size = 12.0;
+            let mut y = vy + 10.0;
+            for d in [place.h, place.v].into_iter().flatten() {
+                let line = format!("{a_key} {} {b_key}", dir_word(d));
+                self.draw_mono_dim.draw_abs(cx, dvec2(vx + 12.0, y), &line);
+                y += 18.0;
+            }
+        }
+    }
+
+    /// SPIKE (drag-place): draw the dock compass -- eight VS-style handle buttons
+    /// clustered around `center` (the target's screen center), each a fixed-size
+    /// rounded-square blip carrying an outward-pointing arrow (diagonal on the
+    /// corners). The `active` handle lights blue with a white arrow; the rest are
+    /// a dim slate. Fixed screen px, so the compass keeps its size when the
+    /// canvas is zoomed out. Hit-testing lives in `compass_zone_of`.
+    ///
+    /// TODO(replace-hint): once the document's `LayoutStatement`s reach the
+    /// canvas, tint a handle whose `A <dir> B` already exists amber (a rewrite)
+    /// instead of the additive blue.
+    fn draw_compass(&mut self, cx: &mut Cx2d, center: DVec2, active: Option<Zone>) {
+        for z in COMPASS_ZONES {
+            let h = handle_rect(center, z);
+            let on = active == Some(z);
+            let (fill, line, arrow) = if on {
+                (
+                    vec4(0.37, 0.63, 1.0, 0.94),
+                    vec4(0.75, 0.86, 1.0, 1.0),
+                    vec4(1.0, 1.0, 1.0, 1.0),
+                )
+            } else {
+                (
+                    vec4(0.13, 0.17, 0.24, 0.86),
+                    vec4(0.37, 0.63, 1.0, 0.60),
+                    vec4(0.66, 0.79, 1.0, 0.95),
+                )
+            };
+            // Handle body + 1px border (sharp square; rounded SDF is a polish
+            // fast-follow).
+            self.fill_rect(cx, h.pos.x, h.pos.y, h.size.x, h.size.y, fill);
+            let t = 1.0;
+            self.fill_rect(cx, h.pos.x, h.pos.y, h.size.x, t, line); // top
+            self.fill_rect(cx, h.pos.x, h.pos.y + h.size.y - t, h.size.x, t, line); // bottom
+            self.fill_rect(cx, h.pos.x, h.pos.y, t, h.size.y, line); // left
+            self.fill_rect(cx, h.pos.x + h.size.x - t, h.pos.y, t, h.size.y, line); // right
+
+            // Outward arrow: apex `r` px from the handle center along the zone's
+            // (normalized) direction, base two points behind it.
+            let (ox, oy) = zone_offset(z);
+            let len = (ox * ox + oy * oy).sqrt();
+            let (dx, dy) = (ox / len, oy / len);
+            let (px, py) = (-dy, dx); // perpendicular
+            let hc = dvec2(h.pos.x + h.size.x * 0.5, h.pos.y + h.size.y * 0.5);
+            let r = 6.5;
+            let apex = dvec2(hc.x + dx * r, hc.y + dy * r);
+            let b1 = dvec2(hc.x - dx * r * 0.35 + px * r * 0.8, hc.y - dy * r * 0.35 + py * r * 0.8);
+            let b2 = dvec2(hc.x - dx * r * 0.35 - px * r * 0.8, hc.y - dy * r * 0.35 - py * r * 0.8);
+            self.fill_tri(cx, apex, b1, b2, arrow);
+        }
+    }
+
+    /// SPIKE: fill a screen-space triangle `a`-`b`-`c` with `color`, via the
+    /// `EdgeMarker` polygon pen (a degenerate 4th vertex closes the tri). The pen
+    /// is shared with edge adornments, which re-push their own uniforms every
+    /// frame -- but they do *not* reset `color`, so save/restore it here.
+    fn fill_tri(&mut self, cx: &mut Cx2d, a: DVec2, b: DVec2, c: DVec2, color: Vec4) {
+        let minx = a.x.min(b.x).min(c.x);
+        let miny = a.y.min(b.y).min(c.y);
+        let maxx = a.x.max(b.x).max(c.x);
+        let maxy = a.y.max(b.y).max(c.y);
+        let quad = Rect {
+            pos: dvec2(minx, miny),
+            size: dvec2((maxx - minx).max(1.0), (maxy - miny).max(1.0)),
+        };
+        // Vertices in the quad's local pixel space (see the EdgeMarker shader).
+        let la = ((a.x - minx) as f32, (a.y - miny) as f32);
+        let lb = ((b.x - minx) as f32, (b.y - miny) as f32);
+        let lc = ((c.x - minx) as f32, (c.y - miny) as f32);
+        let saved = self.draw_marker.color;
+        self.draw_marker.set_uniform(cx, live_id!(v01), &[la.0, la.1, lb.0, lb.1]);
+        self.draw_marker.set_uniform(cx, live_id!(v23), &[lc.0, lc.1, lc.0, lc.1]);
+        self.draw_marker.set_uniform(cx, live_id!(hollow), &[0.0]);
+        self.draw_marker.set_uniform(cx, live_id!(filled), &[1.0]);
+        self.draw_marker.set_uniform(cx, live_id!(stroke_w), &[0.7]);
+        self.draw_marker.color = color;
+        self.draw_marker.draw_abs(cx, quad);
+        self.draw_marker.color = saved;
+    }
+
+    /// SPIKE: clear all placement-drag state and repaint (Escape / abort).
+    fn cancel_drag(&mut self, cx: &mut Cx) {
+        self.drag_node = None;
+        self.drag_moved = false;
+        self.drag_ghost = None;
+        self.drag_target = None;
+        self.compass_zone = None;
+        self.dwell_cand = None;
+        cx.stop_timer(self.dwell_timer);
+        self.drag_place = Placed::default();
+        self.drag_start_abs = None;
+        self.draw_bg.redraw(cx);
+    }
+
+    /// SPIKE helper: fill a screen-space rect with `color` (skips degenerate
+    /// rects). Reuses the flat `draw_rule` pen.
+    fn fill_rect(&mut self, cx: &mut Cx2d, x: f64, y: f64, w: f64, h: f64, color: Vec4) {
+        if w <= 0.5 || h <= 0.5 {
+            return;
+        }
+        self.draw_rule.color = color;
+        self.draw_rule.draw_abs(
+            cx,
+            Rect {
+                pos: dvec2(x, y),
+                size: dvec2(w, h),
+            },
+        );
+    }
+
     /// Draw a node's card by laying out its `Shape` box-tree
     /// (`card::class_shape` under `card::mono_sheet`) with taffy and walking the
     /// placed text leaves, each drawn with the mono pen selected by its

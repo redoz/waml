@@ -34,6 +34,22 @@ impl ClassDiagramView {
         self.active_title = title;
     }
 
+    /// Re-solve the active diagram into the canvas, holding the camera. The
+    /// shell calls this after applying an authored layout op (drag-to-place) so
+    /// the placed node moves without the view re-framing. Mirrors the
+    /// `ToggleExpand` re-solve tail (`update_scene`, not `set_scene`).
+    pub fn resolve_active(&self, cx: &mut Cx, body: &BodyWidgets, model: &Model) {
+        if let Some(diagram) = model.diagrams.iter().find(|d| d.key == self.active_key) {
+            let (scene, diags) = build_scene(model, diagram, &self.expanded);
+            for d in &diags {
+                log!("diagnostic: {d:?}");
+            }
+            if let Some(mut canvas) = body.canvas(cx).borrow_mut::<crate::canvas::GraphCanvas>() {
+                canvas.update_scene(cx, scene);
+            }
+        }
+    }
+
     /// Feed the inspector's element-picker the current diagram's contents.
     fn sync_inspector_elements(
         &self,
@@ -179,6 +195,29 @@ impl DocView for ClassDiagramView {
                         canvas.update_scene(cx, scene);
                     }
                 }
+                return out;
+            }
+            Some(crate::canvas::GraphCanvasAction::AuthorPlacement {
+                subject_key,
+                subject_title,
+                reference_key,
+                reference_title,
+                directions,
+            }) => {
+                // Drag-to-place: author a `## Layout` placement for the dragged
+                // (subject) node relative to the drop-target (reference). The
+                // shell owns the Model, so the view only emits the Op; the shell
+                // applies it against the bundle and re-solves (see App). Slugs and
+                // the diagram id are bare -- strip a `.md` tail defensively.
+                let strip_md = |s: &str| s.strip_suffix(".md").unwrap_or(s).to_string();
+                out.ops.push(waml::ops::Op::PlaceSet {
+                    diagram: strip_md(&self.active_key),
+                    subject_title,
+                    subject_slug: strip_md(&subject_key),
+                    reference_title,
+                    reference_slug: strip_md(&reference_key),
+                    directions,
+                });
                 return out;
             }
             _ => {}

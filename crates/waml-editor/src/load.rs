@@ -28,10 +28,24 @@ fn collect(root: &Path, dir: &Path, out: &mut Vec<(String, String)>) -> std::io:
     Ok(())
 }
 
-/// Load an OKF directory into a resolved `Model`.
+/// Load an OKF directory into a resolved `Model`. Test-only convenience: the
+/// app path now uses `load_bundle_and_model` (it retains the bundle for
+/// drag-to-place write-back); tests that only need a `Model` still use this.
+#[cfg(test)]
 pub fn load_model(dir: &Path) -> std::io::Result<waml::model::Model> {
     let bundle = read_bundle(dir)?;
     Ok(waml::parse::build_model(&bundle))
+}
+
+/// Load an OKF directory, retaining the raw bundle alongside the resolved
+/// `Model`. The App keeps the bundle so drag-to-place can author `## Layout`
+/// statements in-memory via `waml::ops::apply` and rebuild the model.
+pub fn load_bundle_and_model(
+    dir: &Path,
+) -> std::io::Result<(Vec<(String, String)>, waml::model::Model)> {
+    let bundle = read_bundle(dir)?;
+    let model = waml::parse::build_model(&bundle);
+    Ok((bundle, model))
 }
 
 #[cfg(test)]
