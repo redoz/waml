@@ -10,6 +10,11 @@ use crate::inspector::{diagram_elements, Subject};
 use crate::popup::base::PopupResult;
 use crate::scene::build_scene;
 
+/// Strip a defensive `.md` tail from a node/diagram key.
+fn strip_md_key(s: &str) -> String {
+    s.strip_suffix(".md").unwrap_or(s).to_string()
+}
+
 #[derive(Default)]
 pub struct ClassDiagramView {
     /// The base tab's current diagram identity, pushed by the shell before
@@ -236,6 +241,40 @@ impl DocView for ClassDiagramView {
                     reference_slug: strip_md(&reference_key),
                     directions,
                 });
+                return out;
+            }
+            Some(crate::canvas::GraphCanvasAction::CompassArmed {
+                subject_key,
+                reference_key,
+            }) => {
+                // The compass just armed on a (new) target: speculatively solve
+                // each zone's placement against the active diagram and push the
+                // per-zone conflict verdict back to the canvas so it can redden
+                // the zones the solver would reject.
+                if let Some(diagram) = model.diagrams.iter().find(|d| d.key == self.active_key) {
+                    let subject = strip_md_key(&subject_key);
+                    let reference = strip_md_key(&reference_key);
+                    let mut red = Vec::new();
+                    for z in crate::canvas::COMPASS_ZONES {
+                        if let Some(dir) = crate::canvas::zone_placed(z).dir {
+                            if crate::scene::placement_would_conflict(
+                                model,
+                                diagram,
+                                &subject,
+                                &reference,
+                                dir,
+                                &self.expanded,
+                            ) {
+                                red.push(z);
+                            }
+                        }
+                    }
+                    if let Some(mut canvas) =
+                        body.canvas(cx).borrow_mut::<crate::canvas::GraphCanvas>()
+                    {
+                        canvas.set_conflict_zones(cx, red);
+                    }
+                }
                 return out;
             }
             _ => {}

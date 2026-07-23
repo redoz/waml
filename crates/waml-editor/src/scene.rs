@@ -460,9 +460,6 @@ pub fn build_focus_scene(model: &Model, key: &str) -> Scene {
 
 /// The classifier title for a slug (for a `[Title](./slug.md)` operand), or the
 /// slug itself when unknown.
-// Wired into production code by Task 6 (class_diagram_view's CompassArmed
-// handler); unused outside tests until then.
-#[allow(dead_code)]
 fn title_for(model: &Model, slug: &str) -> String {
     model
         .nodes
@@ -474,7 +471,6 @@ fn title_for(model: &Model, slug: &str) -> String {
 
 /// True iff a placement matches the given ordered `(subject, reference)` pair
 /// as a 2-operand single-direction relation (mirrors `ops::placement_matches`).
-#[allow(dead_code)]
 fn placement_is_pair(stmt: &waml::syntax::LayoutStatement, subject: &str, reference: &str) -> bool {
     use waml::syntax::LayoutStatement;
     if let LayoutStatement::Placement {
@@ -496,7 +492,6 @@ fn placement_is_pair(stmt: &waml::syntax::LayoutStatement, subject: &str, refere
 /// ordered pair, then push the hypothetical one), re-solve, and report whether
 /// the solver emits a `LayoutConflict`. The solver is the ground truth — it
 /// catches transitive / cycle contradictions a hand-rolled rule would miss.
-#[allow(dead_code)]
 pub fn placement_would_conflict(
     model: &Model,
     diagram: &Diagram,

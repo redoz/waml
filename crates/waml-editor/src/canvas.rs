@@ -260,6 +260,12 @@ pub struct GraphCanvas {
     dwell_timer: Timer,
     #[rust]
     drag_place: Placed,
+    /// Per-zone conflict verdict pushed by the view (`set_conflict_zones`) after
+    /// a speculative solve: zones the solver would reject if dropped now.
+    /// Cleared whenever the armed target changes or the drag ends, so a stale
+    /// verdict never paints.
+    #[rust]
+    conflict_zones: Vec<Zone>,
     /// Index (into the current scene's nodes) of the click-selected node, or
     /// `None`. Drives the thicker `AccentFrame` highlight in `draw_walk`. It
     /// indexes *this* scene, so it MUST be reset to `None` whenever the scene is
@@ -345,7 +351,7 @@ pub enum Zone {
 }
 
 /// All eight zones, in render/scan order.
-const COMPASS_ZONES: [Zone; 8] = [
+pub const COMPASS_ZONES: [Zone; 8] = [
     Zone::Left,
     Zone::Right,
     Zone::Top,
@@ -638,6 +644,13 @@ pub enum GraphCanvasAction {
         reference_title: String,
         directions: Vec<waml::syntax::Direction>,
     },
+    /// A node-drag armed the compass on a (new) target: the view computes the
+    /// per-zone conflict verdicts (speculative solve) and pushes them back via
+    /// `set_conflict_zones`. `subject` = dragged node, `reference` = target.
+    CompassArmed {
+        subject_key: String,
+        reference_key: String,
+    },
 }
 
 impl Widget for GraphCanvas {
@@ -656,6 +669,19 @@ impl Widget for GraphCanvas {
             if self.drag_node.is_some() {
                 if let Some(c) = self.dwell_cand.take() {
                     self.drag_target = Some(c);
+                    if let (Some(ni), Some(ri)) = (self.drag_node, self.drag_target) {
+                        let uid = self.widget_uid();
+                        let subject_key = self.scene.nodes[ni].key.clone();
+                        let reference_key = self.scene.nodes[ri].key.clone();
+                        self.conflict_zones.clear();
+                        cx.widget_action(
+                            uid,
+                            GraphCanvasAction::CompassArmed {
+                                subject_key,
+                                reference_key,
+                            },
+                        );
+                    }
                     self.draw_bg.redraw(cx);
                 }
             }
@@ -855,6 +881,7 @@ impl Widget for GraphCanvas {
                 self.dwell_cand = None;
                 cx.stop_timer(self.dwell_timer);
                 self.drag_place = Placed::default();
+                self.conflict_zones.clear();
                 self.draw_bg.redraw(cx);
                 cx.set_cursor(MouseCursor::Grab);
             }
@@ -868,6 +895,7 @@ impl Widget for GraphCanvas {
                 self.dwell_cand = None;
                 cx.stop_timer(self.dwell_timer);
                 self.drag_place = Placed::default();
+                self.conflict_zones.clear();
                 cx.set_cursor(MouseCursor::Grab);
             }
             Hit::FingerHoverIn(_) => cx.set_cursor(MouseCursor::Grab),
@@ -1189,7 +1217,14 @@ impl GraphCanvas {
         for z in COMPASS_ZONES {
             let h = handle_rect(center, z);
             let on = active == Some(z);
-            let (fill, line, arrow) = if on {
+            let conflict = self.conflict_zones.contains(&z);
+            let (fill, line, arrow) = if conflict {
+                (
+                    vec4(0.80, 0.22, 0.22, 0.94),
+                    vec4(1.0, 0.72, 0.72, 1.0),
+                    vec4(1.0, 0.90, 0.90, 1.0),
+                )
+            } else if on {
                 (
                     vec4(0.37, 0.63, 1.0, 0.94),
                     vec4(0.75, 0.86, 1.0, 1.0),
@@ -1273,6 +1308,7 @@ impl GraphCanvas {
         cx.stop_timer(self.dwell_timer);
         self.drag_place = Placed::default();
         self.drag_start_abs = None;
+        self.conflict_zones.clear();
         self.draw_bg.redraw(cx);
     }
 
@@ -1426,6 +1462,13 @@ impl GraphCanvas {
         if self.selected.is_none() {
             self.selected_key = None;
         }
+        self.draw_bg.redraw(cx);
+    }
+
+    /// Store the per-zone conflict verdict pushed by the view; repaint so the
+    /// compass reddens the flagged zones on the next frame.
+    pub fn set_conflict_zones(&mut self, cx: &mut Cx, zones: Vec<Zone>) {
+        self.conflict_zones = zones;
         self.draw_bg.redraw(cx);
     }
 
