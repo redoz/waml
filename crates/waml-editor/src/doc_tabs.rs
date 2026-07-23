@@ -251,7 +251,6 @@ impl OpenTabs {
     /// View Source: open (or focus) the single preview slot as a `Source` tab
     /// for `key`. Mirrors `open_preview` -- never duplicates (id derives from
     /// key), reuses the preview slot in place, always activates.
-    #[allow(dead_code)]
     pub fn open_source(&mut self, key: impl Into<String>, title: impl Into<String>) -> LiveId {
         let key = key.into();
         let title = title.into();
@@ -355,7 +354,6 @@ pub fn classifier_tab_id(key: &str) -> LiveId {
 
 /// A source tab's id is derived from its key so re-opening the same element's
 /// source reuses the same tab (mirrors `classifier_tab_id`).
-#[allow(dead_code)]
 pub fn source_tab_id(key: &str) -> LiveId {
     LiveId::from_str(&format!("__doc_tab_source__{key}"))
 }
