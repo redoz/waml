@@ -1006,17 +1006,14 @@ fn operand_slug(op: &Operand) -> Option<&str> {
 }
 
 /// Horizontal axis = Left/Right; Vertical = Above/Below.
-fn dir_is_horizontal(d: Direction) -> bool {
-    matches!(d, Direction::LeftOf | Direction::RightOf)
-}
 
 /// A 2-operand `[subject] <dir> [reference]` placement on the given axis.
-fn placement_matches(
-    stmt: &LayoutStatement,
-    subject: &str,
-    reference: &str,
-    horizontal: bool,
-) -> bool {
+/// True when `stmt` is a 2-operand placement for the `subject -> reference`
+/// pair, on ANY axis. Placement is one-relation-per-pair: authoring a new
+/// direction rewrites whatever relation the pair already had (a pair can't hold
+/// both `left of` and `below` -- the solver center-aligns the cross axis, so two
+/// relations on one pair mutually conflict).
+fn placement_matches(stmt: &LayoutStatement, subject: &str, reference: &str) -> bool {
     let LayoutStatement::Placement {
         operands,
         directions,
@@ -1026,7 +1023,6 @@ fn placement_matches(
     };
     operands.len() == 2
         && directions.len() == 1
-        && dir_is_horizontal(directions[0]) == horizontal
         && operand_slug(&operands[0]) == Some(subject)
         && operand_slug(&operands[1]) == Some(reference)
 }
@@ -1047,14 +1043,15 @@ fn op_place_set(
     let directions = directions.to_vec();
     edit_doc(work, diagram, "place.set", |doc| {
         let layout = layout_mut(doc);
+        // One relation per pair: drop ANY existing placement for this
+        // (subject, reference) pair on either axis, then author the new one(s).
+        // Re-dragging a node onto a target it already relates to REWRITES the
+        // relation rather than stacking a conflicting cross-axis one.
+        layout.retain(|line| match line.parsed() {
+            Some(item) => !placement_matches(&item.stmt, &subject_slug, &reference_slug),
+            None => true,
+        });
         for dir in &directions {
-            let horizontal = dir_is_horizontal(*dir);
-            layout.retain(|line| match line.parsed() {
-                Some(item) => {
-                    !placement_matches(&item.stmt, &subject_slug, &reference_slug, horizontal)
-                }
-                None => true,
-            });
             let stmt = LayoutStatement::Placement {
                 operands: vec![
                     link_operand(&subject_title, &subject_slug),
@@ -2130,7 +2127,12 @@ mod tests {
     }
 
     #[test]
-    fn place_set_keeps_placement_on_a_different_axis() {
+    fn place_set_rewrites_a_different_axis_placement() {
+        // One relation per pair: authoring a horizontal placement REWRITES an
+        // existing vertical one for the same pair. The solver can't hold both --
+        // each direction center-aligns the cross axis, so `left of` + `above` on
+        // one pair mutually conflict and both get dropped. So a re-drag onto a
+        // target already related replaces the relation wholesale.
         let b =
             layout_diagram("- [Order](./order.md) above [PaymentGateway](./payment-gateway.md)\n");
         let out = apply(
@@ -2144,12 +2146,12 @@ mod tests {
         .unwrap();
         assert!(
             out[0].1.contains("left of"),
-            "new horizontal placement added: {}",
+            "new horizontal placement present: {}",
             out[0].1
         );
         assert!(
-            out[0].1.contains("above"),
-            "vertical placement on the other axis is untouched: {}",
+            !out[0].1.contains("above"),
+            "prior placement on the other axis rewritten, not kept: {}",
             out[0].1
         );
     }
