@@ -5,7 +5,7 @@ use crate::inspector::Subject;
 use crate::load;
 use crate::nav::NavState;
 use crate::popup::base::PopupResult;
-use crate::popup::root::{MenuOpen, PopupRoot, PopupSpec, RadialOpen};
+use crate::popup::root::{MenuOpen, PopupRoot, PopupSpec};
 use crate::popup::select::{SelectItem, SelectLead};
 use makepad_widgets::*;
 use std::collections::HashMap;
@@ -339,6 +339,12 @@ pub struct App {
     /// (`switch_diagram`).
     #[rust]
     views: HashMap<LiveId, Box<dyn crate::doc_view::DocView>>,
+    /// The key of the node whose context menu is currently open, stashed when
+    /// the menu opens so the committed id (which carries no subject) can be
+    /// dispatched against it. Read in the `node_closed` branch (Task 4).
+    #[rust]
+    #[allow(dead_code)]
+    node_menu_key: Option<String>,
 }
 
 impl App {
@@ -756,43 +762,6 @@ impl App {
             }
         }
     }
-}
-
-/// The four node-radial commands (Remove = danger). Ids are what `RadialPopup`
-/// reports on commit; `crate::canvas::node_command_for` maps them back.
-pub fn node_radial_items() -> Vec<crate::popup::base::PopupItem> {
-    use crate::icons::Icon;
-    use crate::popup::base::PopupItem;
-    vec![
-        PopupItem {
-            id: live_id!(open),
-            label: "Open".into(),
-            icon: Icon::PackageOpen,
-            danger: false,
-            enabled: true,
-        },
-        PopupItem {
-            id: live_id!(style),
-            label: "Style".into(),
-            icon: Icon::Paintbrush,
-            danger: false,
-            enabled: true,
-        },
-        PopupItem {
-            id: live_id!(markdown),
-            label: "Markdown".into(),
-            icon: Icon::SquareMenu,
-            danger: false,
-            enabled: true,
-        },
-        PopupItem {
-            id: live_id!(remove),
-            label: "Remove".into(),
-            icon: Icon::Trash,
-            danger: true,
-            enabled: true,
-        },
-    ]
 }
 
 /// The logo (app) drop-down rows, top to bottom: Properties, About, Exit
@@ -1445,15 +1414,23 @@ impl App {
                 .borrow_mut::<PopupRoot>()
             {
                 match req {
-                    crate::doc_view::PopupRequest::NodeRadial { center } => {
+                    crate::doc_view::PopupRequest::NodeContextMenu {
+                        anchor,
+                        key,
+                        context,
+                    } => {
+                        self.node_menu_key = Some(key);
                         pr.show_at(
                             cx,
-                            PopupSpec::Radial {
+                            PopupSpec::Menu {
                                 tag: live_id!(node_menu),
-                                center,
+                                anchor,
                                 bounds,
-                                items: node_radial_items(),
-                                open: RadialOpen::Marking,
+                                items: crate::popup::node_menu::compose(
+                                    context,
+                                    crate::popup::node_menu::base_items(),
+                                ),
+                                open: MenuOpen::Popup,
                             },
                         );
                     }

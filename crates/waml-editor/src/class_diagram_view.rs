@@ -156,8 +156,26 @@ impl DocView for ClassDiagramView {
             .borrow_mut::<crate::canvas::GraphCanvas>()
             .and_then(|c| c.canvas_action(actions));
         match canvas_action {
-            Some(crate::canvas::GraphCanvasAction::NodeMenu { abs, node: _ }) => {
-                out.popup = Some(PopupRequest::NodeRadial { center: abs });
+            Some(crate::canvas::GraphCanvasAction::NodeMenu { abs, key }) => {
+                // Select-on-right-click: point the inspector at the node (the
+                // same call `NodeSelect` makes).
+                if let Some(mut inspector) = body
+                    .inspector(cx)
+                    .borrow_mut::<crate::inspector_panel::Inspector>()
+                {
+                    inspector.set_subject(cx, model, Subject::Classifier(key.clone()));
+                }
+                // Gather the diagram's per-node context items (empty for now).
+                let context = body
+                    .canvas(cx)
+                    .borrow::<crate::canvas::GraphCanvas>()
+                    .map(|c| c.context_items(&Subject::Classifier(key.clone())))
+                    .unwrap_or_default();
+                out.popup = Some(PopupRequest::NodeContextMenu {
+                    anchor: abs,
+                    key,
+                    context,
+                });
                 return out;
             }
             Some(crate::canvas::GraphCanvasAction::NodeSelect { key }) => {

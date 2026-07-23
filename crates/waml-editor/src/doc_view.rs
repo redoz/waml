@@ -55,6 +55,7 @@ use waml::model::Model;
 use waml::ops::Op;
 
 use crate::doc_tabs::{DocTab, TabKind};
+use crate::popup::base::PopupItem;
 use crate::popup::base::PopupResult;
 use crate::popup::select::SelectItem;
 
@@ -81,8 +82,13 @@ pub struct ViewOutcome {
 /// A popup a view wants placed. The view describes it; the shell computes window
 /// bounds + anchor offset and calls `popup_root.show_at` (spec §3 rule 2).
 pub enum PopupRequest {
-    /// Node command wheel -- items are always `node_radial_items()`.
-    NodeRadial { center: DVec2 },
+    /// The uniform node context menu -- `context` items (surface-contributed)
+    /// followed by the base items, placed by the shell at `anchor`.
+    NodeContextMenu {
+        anchor: DVec2,
+        key: String,
+        context: Vec<PopupItem>,
+    },
     /// Inspector element-picker flyout.
     ElementPicker {
         anchor_rect: Rect,

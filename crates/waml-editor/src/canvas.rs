@@ -6,6 +6,8 @@
 //! Structure/hit-handling mirror the fork's `widgets/src/map/view.rs`.
 
 use crate::camera::Camera;
+use crate::inspector::Subject;
+use crate::popup::base::PopupItem;
 use crate::scene::{bounding_box, Scene};
 use makepad_widgets::*;
 use waml::adornment::{end_marker, End, Marker};
@@ -616,14 +618,10 @@ pub fn node_command_for(id: LiveId) -> Option<NodeCommand> {
 pub enum GraphCanvasAction {
     #[default]
     None,
-    /// A right-press landed on a node: open the radial at `abs` for `node`.
-    /// `node` is carried for a later task's node-scoped command dispatch --
-    /// unread until then, same convention as `radial::HUB_RADIUS`.
-    NodeMenu {
-        abs: DVec2,
-        #[allow(dead_code)]
-        node: usize,
-    },
+    /// A right-press landed on a node: open the node menu at `abs` for the
+    /// node's `SceneNode::key`. Carries the key directly so `App` never re-maps
+    /// an index (mirrors `NodeSelect`).
+    NodeMenu { abs: DVec2, key: String },
     /// A primary click landed on a node: repoint the inspector at its
     /// classifier. Carries the `SceneNode::key` directly so `App` never re-maps
     /// an index.
@@ -672,8 +670,9 @@ impl Widget for GraphCanvas {
                 let rects: Vec<waml::solve::Rect> =
                     self.scene.nodes.iter().map(|n| n.rect).collect();
                 if let Some(node) = node_at(&rects, &self.camera, self.view_rect, fe.abs) {
+                    let key = self.scene.nodes[node].key.clone();
                     let uid = self.widget_uid();
-                    cx.widget_action(uid, GraphCanvasAction::NodeMenu { abs: fe.abs, node });
+                    cx.widget_action(uid, GraphCanvasAction::NodeMenu { abs: fe.abs, key });
                 }
             }
             Hit::FingerDown(fe) if fe.is_primary_hit() => {
@@ -1374,6 +1373,14 @@ impl GraphCanvas {
         self.selected = None; // stale index would highlight the wrong node
         self.selected_key = None;
         self.draw_bg.redraw(cx);
+    }
+
+    /// Diagram-contributed context menu items for a right-clicked subject.
+    /// Empty now -- this is the seam where per-node-type items land later
+    /// (spec: "the canvas contributes an empty context list").
+    pub fn context_items(&self, subject: &Subject) -> Vec<PopupItem> {
+        let _ = subject;
+        vec![]
     }
 
     /// Like `set_scene`, but pins the camera at 1.5x zoom centered on the
