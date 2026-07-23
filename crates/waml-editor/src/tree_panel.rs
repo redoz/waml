@@ -273,6 +273,12 @@ pub enum ProjectTreeAction {
     FilterRequest {
         anchor: Rect,
     },
+    /// A secondary-button press over a classifier row. `App` selects the row
+    /// (via `open_preview`) and opens the base node menu at `anchor`.
+    ContextMenu {
+        key: String,
+        anchor: DVec2,
+    },
 }
 
 /// Which projection the panel is showing, for the header note + empty state
@@ -335,6 +341,16 @@ fn note_band_height(tag: NavStateTag, collapsed: bool) -> f64 {
     } else {
         0.0
     }
+}
+
+/// The four `TreeKind`s that previews treat as classifiers (they used to share
+/// `TreeKind::Class` before per-glyph rows split them out). Shared by the
+/// left-click focus path and the right-click context-menu path.
+fn is_classifier_kind(kind: TreeKind) -> bool {
+    matches!(
+        kind,
+        TreeKind::Class | TreeKind::Interface | TreeKind::Enum | TreeKind::DataType
+    )
 }
 
 #[derive(Script, ScriptHook, Widget)]
@@ -905,19 +921,25 @@ impl Widget for ProjectTree {
                         Some(TreeKind::Diagram) => {
                             cx.widget_action(uid, ProjectTreeAction::SelectDiagram(key.clone()));
                         }
-                        // Interface/Enum/DataType are classifiers too (they
-                        // used to share `TreeKind::Class` before per-glyph
-                        // rows split them out); keep them clickable the same
-                        // way Class rows are.
-                        Some(
-                            TreeKind::Class
-                            | TreeKind::Interface
-                            | TreeKind::Enum
-                            | TreeKind::DataType,
-                        ) => {
+                        Some(k) if is_classifier_kind(k) => {
                             cx.widget_action(uid, ProjectTreeAction::FocusClassifier(key.clone()));
                         }
                         _ => {}
+                    }
+                }
+            }
+            if let Some((id, abs)) = file_tree.file_right_clicked(actions) {
+                if let (Some(kind), Some(key)) =
+                    (self.id_to_kind.get(&id).copied(), self.id_to_key.get(&id))
+                {
+                    if is_classifier_kind(kind) {
+                        cx.widget_action(
+                            uid,
+                            ProjectTreeAction::ContextMenu {
+                                key: key.clone(),
+                                anchor: abs,
+                            },
+                        );
                     }
                 }
             }
@@ -1042,6 +1064,17 @@ impl ProjectTree {
         }
     }
 
+    /// A right-click over a classifier row. `App` selects the row and relays
+    /// the base node menu to `PopupRoot` (mirrors `scope_request`/`filter_request`).
+    pub fn context_menu_request(&self, actions: &Actions) -> Option<(String, DVec2)> {
+        let item = actions.find_widget_action(self.widget_uid())?;
+        if let ProjectTreeAction::ContextMenu { key, anchor } = item.cast() {
+            Some((key, anchor))
+        } else {
+            None
+        }
+    }
+
     /// Redraws and fires `ProjectTreeAction::Query` with the current buffer.
     /// Shared by the backspace and text-input edit paths.
     fn emit_query(&mut self, cx: &mut Cx, uid: WidgetUid) {
@@ -1100,6 +1133,15 @@ mod tests {
             Some(TreeKind::Package)
         );
         assert_eq!(id_to_key.len(), 3);
+    }
+
+    #[test]
+    fn is_classifier_kind_covers_the_four_classifier_kinds_only() {
+        assert!(is_classifier_kind(TreeKind::Class));
+        assert!(is_classifier_kind(TreeKind::Interface));
+        assert!(is_classifier_kind(TreeKind::Enum));
+        assert!(is_classifier_kind(TreeKind::DataType));
+        assert!(!is_classifier_kind(TreeKind::Diagram));
     }
 
     // A root package holding a sub-package that in turn holds a class, i.e. a
