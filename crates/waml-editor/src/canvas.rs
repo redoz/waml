@@ -588,31 +588,6 @@ fn edge_point_to_screen(camera: &Camera, rect_pos: DVec2, p: (f64, f64)) -> DVec
     dvec2(rect_pos.x + lx, rect_pos.y + ly)
 }
 
-/// The four node commands a radial reports. Handlers are logging stubs for now
-/// (there is no node-editing command path yet -- mirrors the `tool_dock` mock).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum NodeCommand {
-    Open,
-    Style,
-    Markdown,
-    Remove,
-}
-
-/// Map a radial-committed `LiveId` to a node command. `None` = not one of ours.
-pub fn node_command_for(id: LiveId) -> Option<NodeCommand> {
-    if id == live_id!(open) {
-        Some(NodeCommand::Open)
-    } else if id == live_id!(style) {
-        Some(NodeCommand::Style)
-    } else if id == live_id!(markdown) {
-        Some(NodeCommand::Markdown)
-    } else if id == live_id!(remove) {
-        Some(NodeCommand::Remove)
-    } else {
-        None
-    }
-}
-
 /// Canvas -> App action (same convention as `ToolDockAction`).
 #[derive(Clone, Debug, Default)]
 pub enum GraphCanvasAction {
@@ -1653,21 +1628,6 @@ mod tests {
         );
         assert_eq!(q.pos, dvec2(4.0, 4.0));
         assert_eq!(q.size, dvec2(10.0, 0.5));
-    }
-
-    #[test]
-    fn node_command_maps_the_four_committed_ids() {
-        assert_eq!(node_command_for(live_id!(open)), Some(NodeCommand::Open));
-        assert_eq!(node_command_for(live_id!(style)), Some(NodeCommand::Style));
-        assert_eq!(
-            node_command_for(live_id!(markdown)),
-            Some(NodeCommand::Markdown)
-        );
-        assert_eq!(
-            node_command_for(live_id!(remove)),
-            Some(NodeCommand::Remove)
-        );
-        assert_eq!(node_command_for(live_id!(bogus)), None);
     }
 
     fn many_attr_node(key: &str, n: usize) -> crate::scene::SceneNode {

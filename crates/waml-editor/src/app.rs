@@ -343,7 +343,6 @@ pub struct App {
     /// the menu opens so the committed id (which carries no subject) can be
     /// dispatched against it. Read in the `node_closed` branch (Task 4).
     #[rust]
-    #[allow(dead_code)]
     node_menu_key: Option<String>,
 }
 
@@ -1019,8 +1018,25 @@ impl MatchEvent for App {
                 }
             }
             if let Some(PopupResult::Invoked(id)) = node_closed {
-                if let Some(cmd) = crate::canvas::node_command_for(id) {
-                    log!("node command: {cmd:?}");
+                if let Some(cmd) = crate::popup::node_menu::command_for(id) {
+                    let key = self.node_menu_key.clone().unwrap_or_default();
+                    match cmd {
+                        crate::popup::node_menu::NodeMenuCommand::ViewSource => {
+                            if let Some(node) = self.model.nodes.iter().find(|n| n.key == key) {
+                                let title = node
+                                    .concept
+                                    .title
+                                    .clone()
+                                    .unwrap_or_else(|| node.key.clone());
+                                self.tabs.open_source(key.clone(), title);
+                                self.refresh_doc_tabs(cx);
+                                self.sync_active_tab(cx);
+                            }
+                        }
+                        crate::popup::node_menu::NodeMenuCommand::FindInDiagrams => {
+                            log!("find in diagrams: {key}");
+                        }
+                    }
                 }
             }
             // Element-picker: any close (commit or dismiss) clears the box's
