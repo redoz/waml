@@ -250,8 +250,14 @@ git commit -m "feat(inspector): list diagram groups as picker rows"
 
 **Files:**
 - Modify: `crates/waml-editor/src/inspector.rs` (`Subject`, `InspectorView`, `subject_to_index`, `build_view`)
-- Modify: `crates/waml-editor/src/inspector_panel.rs` (`build_select_items`, `apply_pick`, `subject_key`, `draw_walk`)
+- Modify: `crates/waml-editor/src/inspector_panel.rs` (`build_select_items`, `apply_pick`, `subject_key`; the declared `body` DSL block; `fill_body_column`; and the hand-drawn `draw_walk` body)
 - Test: `crates/waml-editor/src/inspector.rs` (`tests` module)
+
+**IMPORTANT — panel has TWO body-render paths (verify before editing):** A concurrent change (origin/main `f676c1c`, "AttrRowView widget + ATTRIBUTES section via FlatList") split the inspector body into two paths that BOTH must render MEMBERS:
+1. **Picker path** (`show_picker == true`, the mode a group is selected from): renders via the declared `body` DSL block (a `View` holding `kind`/`stereo`/`attr_heading`+`attr_list` FlatList/`rel_heading`+`rel_lines`/`desc_heading`+`desc`), populated by `fill_body_column`. RELATIONSHIPS here is an INTERIM pattern — a `SectionHeading` (`rel_heading`) plus a single joined multi-line `Label` (`rel_lines`). **MEMBERS mirrors this exact pattern.**
+2. **Hand-drawn path** (`show_picker == false`, classifier/package preview): the immediate-mode body in `draw_walk` that hand-draws `ATTRIBUTES`/`RELATIONSHIPS`/`DESCRIPTION` via `draw_abs` at an incrementing `y`. This is what the spec §7 block targets; it still exists.
+
+Locate everything by name (the earlier `:NNN` line numbers are stale after `f676c1c`).
 
 **Interfaces:**
 - Consumes: `ElementKind::Group` (Task 2); `Diagram.groups`; `Model::edges` (`Edge { source: String, target: String, kind: RelationshipKind, .. }`, with `edge.kind.as_str()`); `Icon::SquareDashedTopSolid`, `Icon::Spline` (`crate::icons`).
@@ -262,7 +268,7 @@ git commit -m "feat(inspector): list diagram groups as picker rows"
   - `subject_to_index` resolves Group and Edge rows by key.
   - Panel: `apply_pick` maps `Node→Classifier`, `Group→Group`, `Edge→Edge`, `Diagram`/`Placeholder→None`; `build_select_items` renders Group (enabled, `Icon::SquareDashedTopSolid`) and Edge (enabled, `Icon::Spline`) rows; `subject_key` returns the inner key for all three keyed variants; `draw_walk` paints a MEMBERS compartment.
 
-**Dead_code note (why this is one unit):** `Subject::Group`/`Subject::Edge` get their only non-test constructor from `apply_pick`; `InspectorView.members` gets its only non-test reader from the MEMBERS draw. `subject_key` in `inspector_panel.rs` is the only **exhaustive** `match &self.subject` in the codebase (`context_items` ignores its `subject` arg), so adding the variants without updating it is a compile error. Therefore the pure changes and the panel changes must land together.
+**Dead_code note (why this is one unit):** `Subject::Group`/`Subject::Edge` get their only non-test constructor from `apply_pick`; `InspectorView.members` gets its non-test readers from `fill_body_column` (picker path) and the hand-drawn `draw_walk` body. `subject_key` in `inspector_panel.rs` is the only **exhaustive** `match &self.subject` in the codebase (`context_items` ignores its `subject` arg), so adding the variants without updating it is a compile error. Therefore the pure changes and the panel changes must land together.
 
 - [ ] **Step 1: Write the failing pure tests**
 
@@ -624,9 +630,56 @@ In `crates/waml-editor/src/inspector_panel.rs`, in the `match row.kind` inside `
 
 (The `ElementKind::Node` arm above it is unchanged.)
 
-- [ ] **Step 10: Add the MEMBERS compartment to `draw_walk` (non-test reader for `members`)**
+- [ ] **Step 10: Declare the MEMBERS widgets in the `body` DSL block (picker path)**
 
-In `crates/waml-editor/src/inspector_panel.rs`, in `draw_walk`, insert this block AFTER the `ATTRIBUTES` block (the one ending `y += GAP;` just before the `// Relationships:` comment) and BEFORE the `if !view.associations.is_empty() {` block:
+In `crates/waml-editor/src/inspector_panel.rs`, in the `body := View { ... }` live-design block, add a `members_heading` + `members_lines` pair immediately AFTER the `attr_list := FlatList { ... }` block and BEFORE `rel_heading := SectionHeading { }`. Mirror the interim RELATIONSHIPS pair (`rel_heading`/`rel_lines`) exactly — same `SectionHeading` + dim multi-line `Label`:
+
+```rust
+            members_heading := SectionHeading { }
+            // A group's member labels joined as one dim multi-line label
+            // (mirrors the interim `rel_lines` treatment).
+            members_lines := Label {
+                text: ""
+                draw_text +: {
+                    color: atlas.text_dim
+                    text_style: TextStyle{
+                        font_size: 11
+                        font_family: FontFamily{
+                            latin := FontMember{res: crate_resource("self:resources/fonts/IBM_Plex_Sans/IBMPlexSans-Regular.ttf") asc: -0.1 desc: 0.0}
+                        }
+                        line_spacing: 1.5
+                    }
+                }
+            }
+```
+
+- [ ] **Step 11: Populate MEMBERS in `fill_body_column` (picker-path reader for `members`)**
+
+In `fill_body_column`, insert this block AFTER the `has_attrs` ATTRIBUTES block (ends at `.set_text(cx, "ATTRIBUTES");`) and BEFORE the `// RELATIONSHIPS (interim joined lines...` block. Mirror the RELATIONSHIPS populate exactly:
+
+```rust
+        // MEMBERS (a group's members, joined dim lines — mirrors RELATIONSHIPS).
+        let has_members = !view.members.is_empty();
+        self.view
+            .widget(cx, ids!(body.members_heading))
+            .set_visible(cx, has_members);
+        self.view
+            .widget(cx, ids!(body.members_lines))
+            .set_visible(cx, has_members);
+        if has_members {
+            self.view
+                .widget(cx, ids!(body.members_heading))
+                .as_section_heading()
+                .set_text(cx, "MEMBERS");
+            self.view
+                .label(cx, ids!(body.members_lines))
+                .set_text(cx, &view.members.join("\n"));
+        }
+```
+
+- [ ] **Step 12: Add the MEMBERS block to the hand-drawn `draw_walk` body (spec §7)**
+
+In `draw_walk`, in the `show_picker == false` immediate-mode body, insert this block AFTER the `if !view.attributes.is_empty() { ... }` block (the one ending `y += GAP;` just before the `// Relationships:` comment) and BEFORE the `if !view.associations.is_empty() {` block:
 
 ```rust
         // Members: a group's direct members, one dim row each. Mirrors the
@@ -642,17 +695,17 @@ In `crates/waml-editor/src/inspector_panel.rs`, in `draw_walk`, insert this bloc
         }
 ```
 
-- [ ] **Step 11: Run the pure tests to verify they pass**
+- [ ] **Step 13: Run the pure tests to verify they pass**
 
 Run: `cargo test -p waml-editor --lib -- group_projects unknown_group edge_projects unknown_edge classifier_has_empty_members subject_to_index_resolves_group subject_to_index_resolves_edge subject_to_index_unknown_group`
 Expected: PASS (all Task 3 tests green).
 
-- [ ] **Step 12: Run the full gate**
+- [ ] **Step 14: Run the full gate**
 
 Run: `cargo test --workspace && pnpm -r test && pnpm lint && pnpm build`
-Expected: PASS. Confirm no clippy dead_code warnings: `Subject::Group`/`Subject::Edge` are constructed in `apply_pick`, matched in `build_view`/`subject_to_index`/`subject_key`; `InspectorView.members` is written in `build_view` and read in `draw_walk`.
+Expected: PASS. Confirm no clippy dead_code warnings: `Subject::Group`/`Subject::Edge` are constructed in `apply_pick`, matched in `build_view`/`subject_to_index`/`subject_key`; `InspectorView.members` is written in `build_view` and read in both `fill_body_column` and the hand-drawn `draw_walk` body.
 
-- [ ] **Step 13: Commit**
+- [ ] **Step 15: Commit**
 
 ```bash
 git add crates/waml-editor/src/inspector.rs crates/waml-editor/src/inspector_panel.rs
@@ -670,7 +723,7 @@ git commit -m "feat(inspector): make groups and edges selectable with MEMBERS co
 - §4 `build_view` projects Classifier/Group/Edge — Task 3 Step 6.
 - §5 `subject_to_index` resolves all variants — Task 3 Step 5.
 - §6 panel `build_select_items` (Group enabled + Edge enabled), `apply_pick` (drop Node guard, map all kinds), `subject_key` (inner key for Group/Edge) — Task 3 Steps 7–9.
-- §7 MEMBERS compartment in `draw_walk` after ATTRIBUTES, before RELATIONSHIPS, gated on `!members.is_empty()` — Task 3 Step 10.
+- §7 MEMBERS compartment after ATTRIBUTES, before RELATIONSHIPS, gated on `!members.is_empty()` — rendered in BOTH the picker path (`fill_body_column` + `body` DSL widgets, Task 3 Steps 10–11) and the hand-drawn `draw_walk` body (Task 3 Step 12), because the concurrent `f676c1c` refactor split the panel body into two paths.
 - Tests section (group rows / `""` skip / group projection / edge projection / index resolution) — Task 2 Step 1, Task 3 Step 1. The "fixture with a named group" need is met by the in-code `mini_with_group()` helper (Task 1) rather than an on-disk fixture edit, because editing `mini` to split a group crosses a `Layout` boundary and drops it with a `LayoutConflict`, breaking four pre-existing `scene.rs` tests (`crates/waml/src/solve/geometry.rs:517-526`, `resolve.rs` `Builder::add_group`).
 - Non-goals (no web, no new icon, no `card/mod.rs`) — honored; both icons already exist.
 
