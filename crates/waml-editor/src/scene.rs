@@ -530,7 +530,7 @@ pub fn placement_would_conflict(
         directions: vec![dir],
     });
 
-    let (_scene, diags) = build_scene(model, &scratch, expanded);
+    let diags = solve_diags(model, &scratch, expanded);
     diags.iter().any(|d| d.code == DiagCode::LayoutConflict)
 }
 
