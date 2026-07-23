@@ -198,6 +198,17 @@ script_mod! {
                             width: Fill
                             height: Fill
                         }
+                        // View Source tab body: an opaque, empty placeholder
+                        // document surface. Toggled visible only on a Source tab
+                        // (see `sync_active_tab`); when visible it occludes the
+                        // canvas (whose `set_visible` is a no-op). Real Markdown
+                        // rendering is a deferred follow-up.
+                        source_view := SolidView{
+                            width: Fill
+                            height: Fill
+                            visible: false
+                            draw_bg.color: atlas.canvas_ground
+                        }
                         // Tool dock: left edge, vertically centered. Wrapper is
                         // toggled visible only on a diagram tab (hidden while a
                         // classifier/package is previewed) -- see `sync_active_tab`.
@@ -366,6 +377,8 @@ impl App {
         }
 
         let body = crate::doc_view::BodyWidgets::new(cx, &self.ui);
+        body.source_view(cx)
+            .set_visible(cx, active.kind == TabKind::Source);
         let view = self
             .views
             .entry(active.id)

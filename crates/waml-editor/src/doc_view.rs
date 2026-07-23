@@ -38,6 +38,9 @@ impl BodyWidgets {
     pub fn selection_toolbar(&self, cx: &mut Cx) -> WidgetRef {
         self.ui.widget(cx, ids!(selection_toolbar))
     }
+    pub fn source_view(&self, cx: &mut Cx) -> WidgetRef {
+        self.ui.widget(cx, ids!(source_view))
+    }
 
     /// Show/hide the left tool dock wrapper (`tool_dock_wrap`). Body of the
     /// shell's old `set_diagram_toolbars`.
@@ -149,6 +152,7 @@ pub fn make_view(tab: &DocTab) -> Box<dyn DocView> {
         TabKind::Classifier => Box::new(
             crate::classifier_preview_view::ClassifierPreviewView::new(tab.key.clone()),
         ),
+        TabKind::Source => Box::new(crate::source_view::SourceView::new(tab.key.clone())),
     }
 }
 
@@ -186,5 +190,11 @@ mod tests {
         assert!(dv.wants_tooldock(), "diagram view drives the tool dock");
         let cv = make_view(&tab(TabKind::Classifier, TreeKind::Class));
         assert!(!cv.wants_tooldock(), "preview view has no tool dock");
+    }
+
+    #[test]
+    fn make_view_handles_source_kind() {
+        let sv = make_view(&tab(TabKind::Source, TreeKind::Class));
+        assert!(!sv.wants_tooldock(), "source view has no tool dock");
     }
 }
