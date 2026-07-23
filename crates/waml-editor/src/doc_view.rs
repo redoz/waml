@@ -126,6 +126,20 @@ pub trait DocView {
     fn on_deactivate(&mut self, cx: &mut Cx, body: &BodyWidgets) {
         let _ = (cx, body);
     }
+
+    /// Downcast seam so the shell can reach `ClassDiagramView::set_active`
+    /// before `sync`/`handle` without widening the trait with a diagram-only
+    /// method. `{ self }` on every concrete view.
+    fn as_any_mut(&mut self) -> &mut dyn std::any::Any;
+}
+
+impl dyn DocView {
+    /// Downcast helper so the shell can push the active diagram key/title
+    /// before sync. Returns `None` for a preview view.
+    pub fn downcast_diagram(&mut self) -> Option<&mut crate::class_diagram_view::ClassDiagramView> {
+        self.as_any_mut()
+            .downcast_mut::<crate::class_diagram_view::ClassDiagramView>()
+    }
 }
 
 /// Create the view object for a tab, discriminating on `TabKind` (spec §5).

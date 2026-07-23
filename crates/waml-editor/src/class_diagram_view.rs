@@ -1,20 +1,23 @@
 //! `ClassDiagramView` — the full class-diagram surface (canvas + inspector-with-
-//! picker + tool dock + selection toolbar). Stub in Task 2; filled in Task 3.
-
-// Dead until Task 3 wires this view into the shell's registry. Same
-// convention as `doc_view.rs`.
-#![allow(dead_code)]
+//! picker + tool dock + selection toolbar). Real behavior lands in Task 3.
 
 use makepad_widgets::*;
 use std::collections::HashSet;
 use waml::model::Model;
 
-use crate::doc_view::{BodyWidgets, DocView, ViewOutcome};
+use crate::doc_view::{BodyWidgets, DocView, PopupRequest, ViewOutcome};
+use crate::inspector::{diagram_elements, Subject};
+use crate::popup::base::PopupResult;
+use crate::scene::build_scene;
 
 #[derive(Default)]
 pub struct ClassDiagramView {
-    /// Node keys whose card body is expanded. Per-tab live state; moved off the
-    /// shell in Task 3. Cleared when the diagram changes.
+    /// The base tab's current diagram identity, pushed by the shell before
+    /// every `sync`/`handle` (see `App::sync_active_tab`'s `set_active` call).
+    active_key: String,
+    active_title: String,
+    /// Node keys whose card body is expanded. Per-tab live state, moved off
+    /// the shell in Task 3. Cleared when the diagram changes.
     expanded: HashSet<String>,
 }
 
@@ -22,20 +25,214 @@ impl ClassDiagramView {
     pub fn new() -> ClassDiagramView {
         ClassDiagramView::default()
     }
+
+    /// The shell resolves the base tab's key/title and pushes them here before
+    /// `sync`/`handle` run -- the view has no other way to know which diagram
+    /// it is currently showing.
+    pub fn set_active(&mut self, key: String, title: String) {
+        self.active_key = key;
+        self.active_title = title;
+    }
+
+    /// Feed the inspector's element-picker the current diagram's contents.
+    fn sync_inspector_elements(
+        &self,
+        cx: &mut Cx,
+        body: &BodyWidgets,
+        model: &Model,
+        diagram_key: &str,
+        diagram_title: &str,
+        node_keys: &[String],
+    ) {
+        let rows = diagram_elements(model, diagram_key, diagram_title, node_keys);
+        if let Some(mut inspector) = body
+            .inspector(cx)
+            .borrow_mut::<crate::inspector_panel::Inspector>()
+        {
+            inspector.set_diagram_elements(cx, model, rows);
+        }
+    }
 }
 
 impl DocView for ClassDiagramView {
-    fn sync(&mut self, _cx: &mut Cx, _body: &BodyWidgets, _model: &Model) {}
+    fn sync(&mut self, cx: &mut Cx, body: &BodyWidgets, model: &Model) {
+        let built = model
+            .diagrams
+            .iter()
+            .find(|d| d.key == self.active_key)
+            .map(|d| build_scene(model, d, &self.expanded));
+        if let Some((scene, diags)) = built {
+            for d in &diags {
+                log!("diagnostic: {d:?}");
+            }
+            let node_keys: Vec<String> = scene.nodes.iter().map(|n| n.key.clone()).collect();
+            if let Some(mut canvas) = body.canvas(cx).borrow_mut::<crate::canvas::GraphCanvas>() {
+                canvas.set_scene(cx, scene);
+            }
+            let active_key = self.active_key.clone();
+            let active_title = self.active_title.clone();
+            self.sync_inspector_elements(cx, body, model, &active_key, &active_title, &node_keys);
+        }
+        if let Some(mut inspector) = body
+            .inspector(cx)
+            .borrow_mut::<crate::inspector_panel::Inspector>()
+        {
+            inspector.set_subject(cx, model, Subject::None);
+        }
+        if let Some(mut toolbar) = body
+            .selection_toolbar(cx)
+            .borrow_mut::<crate::selection_toolbar::SelectionToolbar>()
+        {
+            toolbar.set_selection(cx, None);
+        }
+    }
+
     fn handle(
         &mut self,
-        _cx: &mut Cx,
-        _body: &BodyWidgets,
-        _actions: &Actions,
-        _model: &Model,
+        cx: &mut Cx,
+        body: &BodyWidgets,
+        actions: &Actions,
+        model: &Model,
     ) -> ViewOutcome {
+        let mut out = ViewOutcome::default();
+
+        // Inline-edit commit: inspector emits `Edited(subject_key)`.
+        if let Some(key) = body
+            .inspector(cx)
+            .borrow_mut::<crate::inspector_panel::Inspector>()
+            .and_then(|inspector| inspector.edited(actions))
+        {
+            out.promote_subject = Some(key);
+            return out;
+        }
+
+        // Element-picker: the SelectBox asked to open its flyout.
+        if let Some((anchor_rect, min_width, items)) = body
+            .inspector(cx)
+            .borrow_mut::<crate::inspector_panel::Inspector>()
+            .and_then(|inspector| inspector.take_open_request(cx, actions))
+        {
+            out.popup = Some(PopupRequest::ElementPicker {
+                anchor_rect,
+                min_width,
+                items,
+            });
+            return out;
+        }
+
+        // Tool dock: mode clicks update their own highlight; ModeChanged
+        // re-snaps the statusbar. Other actions stay mock `log!` no-ops.
+        if let Some(action) = body
+            .tool_dock(cx)
+            .borrow_mut::<crate::tool_dock::ToolDock>()
+            .and_then(|dock| dock.dock_action(actions))
+        {
+            match action {
+                crate::tool_dock::ToolDockAction::ModeChanged(_) => out.statusbar_dirty = true,
+                other => log!("tool dock: {other:?}"),
+            }
+            return out;
+        }
+
+        // Canvas pointer actions.
+        let canvas_action = body
+            .canvas(cx)
+            .borrow_mut::<crate::canvas::GraphCanvas>()
+            .and_then(|c| c.canvas_action(actions));
+        match canvas_action {
+            Some(crate::canvas::GraphCanvasAction::NodeMenu { abs, node: _ }) => {
+                out.popup = Some(PopupRequest::NodeRadial { center: abs });
+                return out;
+            }
+            Some(crate::canvas::GraphCanvasAction::NodeSelect { key }) => {
+                if let Some(mut inspector) = body
+                    .inspector(cx)
+                    .borrow_mut::<crate::inspector_panel::Inspector>()
+                {
+                    inspector.set_subject(cx, model, Subject::Classifier(key));
+                }
+                return out;
+            }
+            Some(crate::canvas::GraphCanvasAction::NodeDeselect) => {
+                if let Some(mut inspector) = body
+                    .inspector(cx)
+                    .borrow_mut::<crate::inspector_panel::Inspector>()
+                {
+                    inspector.set_subject(cx, model, Subject::None);
+                }
+                return out;
+            }
+            Some(crate::canvas::GraphCanvasAction::ToggleExpand { key }) => {
+                if !self.expanded.remove(&key) {
+                    self.expanded.insert(key);
+                }
+                // Re-solve the current diagram with the updated set; update_scene
+                // holds the camera and re-resolves the selection by key.
+                if let Some(diagram) = model.diagrams.iter().find(|d| d.key == self.active_key) {
+                    let (scene, diags) = build_scene(model, diagram, &self.expanded);
+                    for d in &diags {
+                        log!("diagnostic: {d:?}");
+                    }
+                    if let Some(mut canvas) =
+                        body.canvas(cx).borrow_mut::<crate::canvas::GraphCanvas>()
+                    {
+                        canvas.update_scene(cx, scene);
+                    }
+                }
+                return out;
+            }
+            _ => {}
+        }
+
+        // Selection toolbar: Delete only acts on a classifier preview (no-op
+        // here); New Diagram is a mock no-op.
+        if let Some(action) = body
+            .selection_toolbar(cx)
+            .borrow_mut::<crate::selection_toolbar::SelectionToolbar>()
+            .and_then(|toolbar| toolbar.toolbar_action(actions))
+        {
+            match action {
+                crate::selection_toolbar::SelectionToolbarAction::Delete => {}
+                crate::selection_toolbar::SelectionToolbarAction::NewDiagram => {
+                    log!("selection toolbar: New Diagram (mock no-op)");
+                }
+                _ => {}
+            }
+            return out;
+        }
+
+        out
+    }
+
+    fn on_popup_result(
+        &mut self,
+        cx: &mut Cx,
+        body: &BodyWidgets,
+        model: &Model,
+        tag: LiveId,
+        result: PopupResult,
+    ) -> ViewOutcome {
+        // Element-picker: any close clears the box's active state; a node
+        // commit repoints the inspector (inspector-local -- no tab, no canvas
+        // move).
+        if tag == live_id!(element_picker) {
+            if let Some(mut inspector) = body
+                .inspector(cx)
+                .borrow_mut::<crate::inspector_panel::Inspector>()
+            {
+                inspector.on_picker_closed(cx, model, result);
+            }
+        }
+        // node_menu currently only `log!`s on commit -- kept in the shell for
+        // now.
         ViewOutcome::default()
     }
+
     fn wants_tooldock(&self) -> bool {
         true
+    }
+
+    fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
+        self
     }
 }
