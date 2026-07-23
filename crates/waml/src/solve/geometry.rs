@@ -124,6 +124,23 @@ pub(super) fn solve_cluster(
                         eq(&mut py, ia, ib, -(sb.h + gap), diags);
                         eq(&mut px, ia, ib, (sa.w - sb.w) / 2.0, diags);
                     }
+                    Direction::AboveLeft => {
+                        // a is above-and-left of b: separate on both axes, center-align neither.
+                        eq(&mut py, ia, ib, sa.h + gap, diags);
+                        eq(&mut px, ia, ib, sa.w + gap, diags);
+                    }
+                    Direction::AboveRight => {
+                        eq(&mut py, ia, ib, sa.h + gap, diags);
+                        eq(&mut px, ia, ib, -(sb.w + gap), diags);
+                    }
+                    Direction::BelowLeft => {
+                        eq(&mut py, ia, ib, -(sb.h + gap), diags);
+                        eq(&mut px, ia, ib, sa.w + gap, diags);
+                    }
+                    Direction::BelowRight => {
+                        eq(&mut py, ia, ib, -(sb.h + gap), diags);
+                        eq(&mut px, ia, ib, -(sb.w + gap), diags);
+                    }
                 }
             }
             Constraint::Align {
@@ -650,6 +667,56 @@ mod tests {
         assert_eq!(diags.len(), 1);
         assert_eq!(diags[0].code, DiagCode::LayoutConflict);
         assert_eq!(solved.nodes.len(), 2, "always renders every node");
+    }
+
+    #[test]
+    fn diagonal_above_left_separates_both_axes_without_conflict() {
+        // a AboveLeft b: a's bottom-right corner sits above-and-left of b's
+        // top-left. Both axes are separated; NEITHER is center-aligned (that is
+        // the whole point of the diagonal primitive).
+        let scene = Scene {
+            boxes: vec![leaf("a"), leaf("b")],
+            constraints: vec![Constraint::Place {
+                a: BoxId::Node("a".into()),
+                b: BoxId::Node("b".into()),
+                dir: Direction::AboveLeft,
+            }],
+        };
+        let (solved, diags) = solve(
+            &scene,
+            &sizes(&["a", "b"], 200.0, 90.0),
+            &SolveConfig::default(),
+        );
+        assert!(diags.is_empty(), "diagonal must not conflict: {diags:?}");
+        let a = &solved.nodes["a"];
+        let b = &solved.nodes["b"];
+        // a is left of b (a right edge <= b left edge)...
+        assert!(a.x + a.w <= b.x + 1e-6, "a not left of b: {a:?} {b:?}");
+        // ...and a is above b (a bottom edge <= b top edge).
+        assert!(a.y + a.h <= b.y + 1e-6, "a not above b: {a:?} {b:?}");
+    }
+
+    #[test]
+    fn diagonal_below_right_separates_both_axes_without_conflict() {
+        let scene = Scene {
+            boxes: vec![leaf("a"), leaf("b")],
+            constraints: vec![Constraint::Place {
+                a: BoxId::Node("a".into()),
+                b: BoxId::Node("b".into()),
+                dir: Direction::BelowRight,
+            }],
+        };
+        let (solved, diags) = solve(
+            &scene,
+            &sizes(&["a", "b"], 200.0, 90.0),
+            &SolveConfig::default(),
+        );
+        assert!(diags.is_empty(), "diagonal must not conflict: {diags:?}");
+        let a = &solved.nodes["a"];
+        let b = &solved.nodes["b"];
+        // a is right of b and below b.
+        assert!(b.x + b.w <= a.x + 1e-6, "a not right of b: {a:?} {b:?}");
+        assert!(b.y + b.h <= a.y + 1e-6, "a not below b: {a:?} {b:?}");
     }
 
     fn group(

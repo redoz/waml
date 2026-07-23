@@ -111,6 +111,10 @@ fn dir_str(d: Direction) -> &'static str {
         Direction::RightOf => "right of",
         Direction::Above => "above",
         Direction::Below => "below",
+        Direction::AboveLeft => "above left of",
+        Direction::AboveRight => "above right of",
+        Direction::BelowLeft => "below left of",
+        Direction::BelowRight => "below right of",
     }
 }
 
@@ -257,12 +261,54 @@ impl<'a> Cur<'a> {
 fn eat_direction(cur: &mut Cur) -> Option<Direction> {
     match cur.peek_word()?.to_ascii_lowercase().as_str() {
         "above" => {
-            cur.bump();
-            Some(Direction::Above)
+            cur.bump(); // consume "above"
+            let save = cur.pos;
+            match cur.peek_word().map(|w| w.to_ascii_lowercase()).as_deref() {
+                Some("left") => {
+                    cur.bump();
+                    if cur.eat_word("of") {
+                        Some(Direction::AboveLeft)
+                    } else {
+                        cur.pos = save;
+                        Some(Direction::Above)
+                    }
+                }
+                Some("right") => {
+                    cur.bump();
+                    if cur.eat_word("of") {
+                        Some(Direction::AboveRight)
+                    } else {
+                        cur.pos = save;
+                        Some(Direction::Above)
+                    }
+                }
+                _ => Some(Direction::Above),
+            }
         }
         "below" => {
-            cur.bump();
-            Some(Direction::Below)
+            cur.bump(); // consume "below"
+            let save = cur.pos;
+            match cur.peek_word().map(|w| w.to_ascii_lowercase()).as_deref() {
+                Some("left") => {
+                    cur.bump();
+                    if cur.eat_word("of") {
+                        Some(Direction::BelowLeft)
+                    } else {
+                        cur.pos = save;
+                        Some(Direction::Below)
+                    }
+                }
+                Some("right") => {
+                    cur.bump();
+                    if cur.eat_word("of") {
+                        Some(Direction::BelowRight)
+                    } else {
+                        cur.pos = save;
+                        Some(Direction::Below)
+                    }
+                }
+                _ => Some(Direction::Below),
+            }
         }
         "left" => {
             let save = cur.pos;
@@ -762,6 +808,55 @@ mod tests {
                 panic!()
             };
             assert_eq!(directions, vec![dir]);
+        }
+    }
+
+    #[test]
+    fn diagonals_parse_and_serialize_round_trip() {
+        use crate::syntax::{Direction, LayoutStatement};
+        for (text, dir) in [
+            ("- A above left of B", Direction::AboveLeft),
+            ("- A above right of B", Direction::AboveRight),
+            ("- A below left of B", Direction::BelowLeft),
+            ("- A below right of B", Direction::BelowRight),
+        ] {
+            let stmt = parse_layout_line(text).unwrap();
+            let LayoutStatement::Placement {
+                operands,
+                directions,
+            } = &stmt
+            else {
+                panic!("expected a placement for {text}");
+            };
+            assert_eq!(operands.len(), 2, "{text}");
+            assert_eq!(directions.as_slice(), &[dir], "{text}");
+            let rendered = render_layout_line(&stmt);
+            let phrase = match dir {
+                Direction::AboveLeft => "above left of",
+                Direction::AboveRight => "above right of",
+                Direction::BelowLeft => "below left of",
+                Direction::BelowRight => "below right of",
+                _ => unreachable!(),
+            };
+            assert!(
+                rendered.contains(phrase),
+                "serialize lost the diagonal: {rendered}"
+            );
+        }
+    }
+
+    #[test]
+    fn bare_above_below_still_parse_as_cardinals() {
+        use crate::syntax::{Direction, LayoutStatement};
+        for (text, dir) in [
+            ("- A above B", Direction::Above),
+            ("- A below B", Direction::Below),
+        ] {
+            let LayoutStatement::Placement { directions, .. } = parse_layout_line(text).unwrap()
+            else {
+                panic!()
+            };
+            assert_eq!(directions.as_slice(), &[dir], "{text}");
         }
     }
 

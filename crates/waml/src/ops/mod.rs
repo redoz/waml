@@ -2157,6 +2157,40 @@ mod tests {
     }
 
     #[test]
+    fn place_set_diagonal_replaces_a_cardinal_for_the_same_pair() {
+        // A single diagonal Direction is ONE placement. Re-dragging Order onto a
+        // corner of PaymentGateway rewrites the prior cardinal for that ordered
+        // pair, not stacking a conflicting second relation.
+        let b = layout_diagram(
+            "- [Order](./order.md) left of [PaymentGateway](./payment-gateway.md)
+",
+        );
+        let out = apply(
+            &b,
+            &[placeset(
+                ("Order", "order"),
+                ("PaymentGateway", "payment-gateway"),
+                vec![Direction::AboveLeft],
+            )],
+        )
+        .unwrap();
+        assert!(
+            out[0].1.contains(
+                "- [Order](./order.md) above left of [PaymentGateway](./payment-gateway.md)"
+            ),
+            "authored diagonal present: {}",
+            out[0].1
+        );
+        // The prior bare `... .md) left of ...` line is gone. (The diagonal line
+        // reads `... .md) above left of ...`, so `.md) left of` distinguishes it.)
+        assert!(
+            !out[0].1.contains("md) left of"),
+            "prior cardinal replaced, not kept: {}",
+            out[0].1
+        );
+    }
+
+    #[test]
     fn place_set_corner_authors_two_statements() {
         let out = apply(
             &diagram_no_layout(),

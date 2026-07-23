@@ -436,6 +436,10 @@ fn dir_word(d: waml::syntax::Direction) -> &'static str {
         RightOf => "right of",
         Above => "above",
         Below => "below",
+        AboveLeft => "above left of",
+        AboveRight => "above right of",
+        BelowLeft => "below left of",
+        BelowRight => "below right of",
     }
 }
 

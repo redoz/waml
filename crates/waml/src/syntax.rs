@@ -189,6 +189,10 @@ pub enum Direction {
     RightOf,
     Above,
     Below,
+    AboveLeft,
+    AboveRight,
+    BelowLeft,
+    BelowRight,
 }
 
 #[derive(Debug, Clone, PartialEq)]

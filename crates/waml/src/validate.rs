@@ -355,13 +355,38 @@ pub fn link(docs: &[(String, ElementType, Document)]) -> Vec<Diagnostic> {
                             let (a, b) = (operand_key(&operands[i]), operand_key(&operands[i + 1]));
                             let (Some(a), Some(b)) = (a, b) else { continue };
                             // Edge points from the operand that must come first to the one after it.
-                            let (graph, from, to) = match dir {
-                                Direction::LeftOf => (&mut horizontal, a, b),
-                                Direction::RightOf => (&mut horizontal, b, a),
-                                Direction::Above => (&mut vertical, a, b),
-                                Direction::Below => (&mut vertical, b, a),
-                            };
-                            graph.entry(from).or_default().push(to);
+                            // A diagonal constrains both axes, so it contributes an
+                            // edge to BOTH graphs.
+                            match dir {
+                                Direction::LeftOf => {
+                                    horizontal.entry(a).or_default().push(b);
+                                }
+                                Direction::RightOf => {
+                                    horizontal.entry(b).or_default().push(a);
+                                }
+                                Direction::Above => {
+                                    vertical.entry(a).or_default().push(b);
+                                }
+                                Direction::Below => {
+                                    vertical.entry(b).or_default().push(a);
+                                }
+                                Direction::AboveLeft => {
+                                    vertical.entry(a.clone()).or_default().push(b.clone());
+                                    horizontal.entry(a).or_default().push(b);
+                                }
+                                Direction::AboveRight => {
+                                    vertical.entry(a.clone()).or_default().push(b.clone());
+                                    horizontal.entry(b).or_default().push(a);
+                                }
+                                Direction::BelowLeft => {
+                                    vertical.entry(b.clone()).or_default().push(a.clone());
+                                    horizontal.entry(a).or_default().push(b);
+                                }
+                                Direction::BelowRight => {
+                                    vertical.entry(b.clone()).or_default().push(a.clone());
+                                    horizontal.entry(b).or_default().push(a);
+                                }
+                            }
                         }
                     }
                     if has_cycle(&horizontal) || has_cycle(&vertical) {
