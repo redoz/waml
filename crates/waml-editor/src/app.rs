@@ -9,6 +9,7 @@ use crate::popup::root::{MenuOpen, PopupRoot, PopupSpec, RadialOpen};
 use crate::popup::select::{SelectItem, SelectLead};
 use crate::scene::{build_focus_scene, build_scene};
 use makepad_widgets::*;
+use std::collections::HashMap;
 use std::collections::HashSet;
 use std::path::Path;
 use waml::model::Model;
@@ -322,6 +323,13 @@ pub struct App {
     /// `NavState::filter`. Rebuilt every time the dropdown opens.
     #[rust]
     nav_filter_ids: Vec<(LiveId, Option<crate::tree::TreeKind>)>,
+    /// One live view object per open tab, keyed by `DocTab::id`. Populated /
+    /// pruned by the shell as tabs open and close (Task 5). Empty until then --
+    /// `#[allow(dead_code)]` until that wiring lands (same convention as
+    /// `doc_view.rs`).
+    #[allow(dead_code)]
+    #[rust]
+    views: HashMap<LiveId, Box<dyn crate::doc_view::DocView>>,
 }
 
 impl App {
@@ -339,6 +347,10 @@ impl App {
             }
             return;
         };
+        // Seam scaffolding (Task 2): keep the factory reachable until Task 5
+        // wires the registry for real. Builds a throwaway view and drops it --
+        // no surface touched, no state kept.
+        let _ = crate::doc_view::make_view(&active);
         // Mirror the active tab onto the tree row highlight (single choke point
         // for every activation source: tab click, tree click, switcher, keys).
         if let Some(mut panel) = self

@@ -6,6 +6,8 @@ mod app;
 mod camera;
 mod canvas;
 mod card;
+mod class_diagram_view;
+mod classifier_preview_view;
 mod cli;
 mod config;
 mod diagram_switcher;
