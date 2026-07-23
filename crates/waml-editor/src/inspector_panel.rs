@@ -172,17 +172,34 @@ script_mod! {
 
             desc_heading := SectionHeading { }
             // Editable description body (click-to-edit rect captured in draw_walk).
-            desc := Label {
+            // A wrapper View carries the edit field-bg *behind* the label so the
+            // opaque fill draws under the text + cursor in a single draw_walk
+            // pass (correct z-order) -- unlike the old draw_field_bg.draw_abs that
+            // painted over the label afterward. The `edit` uniform (0/1) gates the
+            // fill; it is pushed each frame in draw_walk.
+            desc_field := View {
                 width: Fill
-                text: ""
-                draw_text +: {
-                    color: atlas.text
-                    text_style: TextStyle{
-                        font_size: 12
-                        font_family: FontFamily{
-                            latin := FontMember{res: crate_resource("self:resources/fonts/IBM_Plex_Sans/IBMPlexSans-Medium.ttf") asc: -0.1 desc: 0.0}
+                height: Fit
+                show_bg: true
+                draw_bg +: {
+                    color: atlas.field_bg
+                    edit: uniform(0.0)
+                    pixel: fn() {
+                        return vec4(self.color.x, self.color.y, self.color.z, self.color.w * self.edit)
+                    }
+                }
+                desc := Label {
+                    width: Fill
+                    text: ""
+                    draw_text +: {
+                        color: atlas.text
+                        text_style: TextStyle{
+                            font_size: 12
+                            font_family: FontFamily{
+                                latin := FontMember{res: crate_resource("self:resources/fonts/IBM_Plex_Sans/IBMPlexSans-Medium.ttf") asc: -0.1 desc: 0.0}
+                            }
+                            line_spacing: 1.2
                         }
-                        line_spacing: 1.2
                     }
                 }
             }
@@ -415,6 +432,14 @@ fn attr_line_parts(attr: &crate::inspector::AttrRow) -> (String, String, String,
     (vis, attr.name.clone(), attr.ty.clone(), mult)
 }
 
+/// `FlatList` item id for attribute row `i` (named `name`). Index-prefixed so
+/// two attributes sharing a name (duplicate/inherited) still key to distinct
+/// list items -- keying by name alone collapses them to one row
+/// (last-write-wins). Mirrors the index-prefixed relationship-row keying.
+fn attr_item_id(i: usize, name: &str) -> LiveId {
+    LiveId::from_str(&format!("{i}-{name}"))
+}
+
 /// RGB hex (no alpha) -> opaque `Vec4`, matching how the DSL decodes `#xrrggbb`.
 fn rgb(hex: u32) -> Vec4 {
     Vec4 {
@@ -575,6 +600,14 @@ impl Widget for Inspector {
             if let Some(view) = self.proj.clone() {
                 self.fill_body_column(cx, &view);
             }
+            // Gate the description edit field-bg: `1.0` fills the wrapper behind
+            // the label while editing (drawn under the text/cursor), `0.0` leaves
+            // it transparent. Must be set before the wrapper draws below.
+            let editing_desc = self.editing == Some(FieldId::Description);
+            if let Some(mut v) = self.view.view(cx, ids!(body.desc_field)).borrow_mut() {
+                v.draw_bg
+                    .set_uniform(cx, live_id!(edit), &[if editing_desc { 1.0 } else { 0.0 }]);
+            }
         }
 
         // Glass translucency: seed + push the eased `opacity` uniform before the
@@ -591,8 +624,8 @@ impl Widget for Inspector {
             if item.widget_uid() == attr_list_uid {
                 if let Some(view) = self.proj.clone() {
                     if let Some(mut list) = item.as_flat_list().borrow_mut() {
-                        for attr in &view.attributes {
-                            let item_id = LiveId::from_str(&attr.name);
+                        for (i, attr) in view.attributes.iter().enumerate() {
+                            let item_id = attr_item_id(i, &attr.name);
                             let row = list.item(cx, item_id, id!(Row)).unwrap();
                             let rv = row.as_attr_row_view();
                             let (vis, name, ty, mult) = attr_line_parts(attr);
@@ -643,11 +676,13 @@ impl Widget for Inspector {
 
         if self.show_picker {
             // Capture the description Label's drawn rect as the click-to-edit
-            // target, and paint the edit field-bg over it while editing.
-            let desc_rect = self.view.label(cx, ids!(body.desc)).area().rect(cx);
-            if self.editing == Some(FieldId::Description) {
-                self.draw_field_bg.draw_abs(cx, desc_rect);
-            }
+            // target. The edit field-bg is drawn declaratively by the `desc_field`
+            // wrapper (behind the label), so nothing is painted over it here.
+            let desc_rect = self
+                .view
+                .label(cx, ids!(body.desc_field.desc))
+                .area()
+                .rect(cx);
             self.field_rects.push((FieldId::Description, desc_rect));
             return DrawStep::done();
         }
@@ -848,7 +883,7 @@ impl Inspector {
             }
         };
         self.view
-            .label(cx, ids!(body.desc))
+            .label(cx, ids!(body.desc_field.desc))
             .set_text(cx, &desc_text);
     }
 
@@ -1178,6 +1213,20 @@ mod tests {
             multiplicity: String::new(),
         };
         assert_eq!(meta_line(&assoc), "associates");
+    }
+
+    // Two attributes sharing a name must key to *distinct* FlatList items
+    // (index-prefixed), else the list collapses them to one row and a class with
+    // duplicate/inherited attribute names renders fewer/overlapping rows.
+    #[test]
+    fn attr_item_id_distinguishes_duplicate_names() {
+        assert_ne!(attr_item_id(0, "id"), attr_item_id(1, "id"));
+    }
+
+    // Same index + same name is stable (the row keeps its identity across draws).
+    #[test]
+    fn attr_item_id_is_stable_for_same_index_and_name() {
+        assert_eq!(attr_item_id(2, "name"), attr_item_id(2, "name"));
     }
 
     #[test]
