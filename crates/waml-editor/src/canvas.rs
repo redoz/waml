@@ -113,6 +113,30 @@ script_mod! {
         }
     }
 
+    // Constraint veil pen: a faint grey wash + 45deg hatch over a keep-out
+    // region, distance-faded from the anchor edge (spec §2). `ramp`/`bias`
+    // orient the fade; `hatch_px` sets stripe spacing. Alpha rides self.color.w.
+    mod.draw.ConstraintVeil = mod.draw.DrawColor{
+        ramp: uniform(vec2(1.0, 0.0))
+        bias: uniform(vec2(0.0, 0.0))
+        hatch_px: uniform(9.0)
+        pixel: fn() {
+            let sdf = Sdf2d.viewport(self.pos * self.rect_size)
+            let p = self.pos * self.rect_size
+            let s = self.hatch_px
+            let d = abs(fract((p.x + p.y) / s) - 0.5) * s
+            let line = 1.0 - clamp(d - 1.0, 0.0, 1.0)
+            let ax = self.pos.x * self.ramp.x + self.bias.x
+            let ay = self.pos.y * self.ramp.y + self.bias.y
+            let t = clamp(max(ax, ay), 0.0, 1.0)
+            let fade = 1.0 - t
+            let a = self.color.w * (0.22 + 0.55 * line) * fade
+            sdf.rect(0.0, 0.0, self.rect_size.x, self.rect_size.y)
+            sdf.fill(vec4(self.color.x, self.color.y, self.color.z, a))
+            return sdf.result
+        }
+    }
+
     mod.widgets.GraphCanvas = set_type_default() do mod.widgets.GraphCanvasBase{
         width: Fill
         height: Fill
@@ -134,6 +158,10 @@ script_mod! {
         // Flat fill pen for card compartment dividers, the header accent wash, and
         // port nubs. The renderer pushes `color` (accent/dim + alpha) per draw.
         draw_rule +: { color: atlas.text_dim }
+        // Constraint veil pen instance: a hatched grey keep-out over placement
+        // relations (Task 4). Default color is overridden per-draw in
+        // `draw_veil_for`; this seed just gets the pen registered.
+        draw_veil: mod.draw.ConstraintVeil{ color: vec4(0.42, 0.47, 0.54, 1.0) }
         // Sans body pen: overview node titles + group titles (the non-card text).
         draw_text +: {
             color: atlas.text
@@ -224,6 +252,9 @@ pub struct GraphCanvas {
     #[redraw]
     #[live]
     draw_rule: DrawColor,
+    #[redraw]
+    #[live]
+    draw_veil: DrawColor,
     #[redraw]
     #[live]
     draw_text: DrawText,
@@ -409,6 +440,9 @@ const COMPASS_REACH: f64 = HANDLE_PITCH * 1.5 + 18.0;
 /// Stops the target flipping to a sibling when the cursor merely grazes a
 /// border on the way past.
 const DWELL_SECS: f64 = 0.18;
+/// How far (screen px) a veil hatch reaches from its anchor edge before fully
+/// fading. Keeps a half-plane veil from flooding the canvas (spec §2).
+const VEIL_REACH: f64 = 420.0;
 
 /// The `(col, row)` grid offset of a `Zone` in {-1, 0, 1}^2. The center cell
 /// (0, 0) is the dead node body and has no zone.
@@ -466,25 +500,6 @@ pub fn zone_placed(z: Zone) -> Placed {
     Placed { dir: Some(dir) }
 }
 
-/// The placement relations in scope for the drag overlay: those touching either
-/// the dragged node or the hovered target (Feature 2 scope — dragged-node +
-/// hover-target only, not the whole diagram). Pure.
-fn relations_in_scope<'a>(
-    relations: &'a [crate::scene::SceneRelation],
-    dragged_key: &str,
-    target_key: &str,
-) -> Vec<&'a crate::scene::SceneRelation> {
-    relations
-        .iter()
-        .filter(|r| {
-            r.subject == dragged_key
-                || r.reference == dragged_key
-                || r.subject == target_key
-                || r.reference == target_key
-        })
-        .collect()
-}
-
 /// The DSL keyword for a `Direction`, for the live readout.
 fn dir_word(d: waml::syntax::Direction) -> &'static str {
     use waml::syntax::Direction::*;
@@ -521,6 +536,58 @@ pub fn footer_screen_rect(node: &crate::scene::SceneNode, screen: Rect, zoom: f6
 fn selection_index(nodes: &[crate::scene::SceneNode], key: Option<&str>) -> Option<usize> {
     let key = key?;
     nodes.iter().position(|n| n.key == key)
+}
+
+/// Screen-space fill rect for a veil: the keep-out region anchored to the
+/// reference's screen rect (spec §2 mapping), clamped to `reach` px on each locked
+/// axis and to the `view` bounds on the unlocked axis. Cardinal ⇒ one locked axis;
+/// diagonal ⇒ both. Pure, GPU-free (unit-testable like `segment_quad`).
+fn veil_band(reference: Rect, view: Rect, dir: waml::syntax::Direction, reach: f64) -> Rect {
+    use waml::syntax::Direction::*;
+    let (x0, xw) = match dir {
+        LeftOf | AboveLeft | BelowLeft => (reference.pos.x, reach),
+        RightOf | AboveRight | BelowRight => (reference.pos.x + reference.size.x - reach, reach),
+        Above | Below => (view.pos.x, view.size.x),
+    };
+    let (y0, yh) = match dir {
+        Above | AboveLeft | AboveRight => (reference.pos.y, reach),
+        Below | BelowLeft | BelowRight => (reference.pos.y + reference.size.y - reach, reach),
+        LeftOf | RightOf => (view.pos.y, view.size.y),
+    };
+    Rect {
+        pos: dvec2(x0, y0),
+        size: dvec2(xw, yh),
+    }
+}
+
+/// Per-direction alpha-ramp uniforms for `ConstraintVeil`: `(ramp, bias)` so the
+/// shader's `t = clamp(max(pos·ramp.axis + bias.axis), 0, 1)` runs 0 at the anchor
+/// edge/corner to 1 at the far side (the distance fade). The unlocked axis is
+/// biased far negative so `max` ignores it. Pure.
+fn veil_ramp(dir: waml::syntax::Direction) -> ([f32; 2], [f32; 2]) {
+    use waml::syntax::Direction::*;
+    match dir {
+        LeftOf => ([1.0, 0.0], [0.0, -9.0]),
+        RightOf => ([-1.0, 0.0], [1.0, -9.0]),
+        Above => ([0.0, 1.0], [-9.0, 0.0]),
+        Below => ([0.0, -1.0], [-9.0, 1.0]),
+        AboveLeft => ([1.0, 1.0], [0.0, 0.0]),
+        AboveRight => ([-1.0, 1.0], [1.0, 0.0]),
+        BelowLeft => ([1.0, -1.0], [0.0, 1.0]),
+        BelowRight => ([-1.0, -1.0], [1.0, 1.0]),
+    }
+}
+
+/// Axis-aligned intersection of two screen rects (empty size if disjoint). Pure.
+fn intersect_rect(a: Rect, b: Rect) -> Rect {
+    let x0 = a.pos.x.max(b.pos.x);
+    let y0 = a.pos.y.max(b.pos.y);
+    let x1 = (a.pos.x + a.size.x).min(b.pos.x + b.size.x);
+    let y1 = (a.pos.y + a.size.y).min(b.pos.y + b.size.y);
+    Rect {
+        pos: dvec2(x0, y0),
+        size: dvec2((x1 - x0).max(0.0), (y1 - y0).max(0.0)),
+    }
 }
 
 /// The axis-aligned quad that draws one routed segment as an `EdgeLine`.
@@ -1098,27 +1165,6 @@ impl Widget for GraphCanvas {
             .collect();
         for (screen, title) in group_draws {
             self.draw_group.draw_abs(cx, screen);
-            // Debug outline: four thin slate bars hugging the rect border.
-            let ol = vec4(0.45, 0.52, 0.60, 0.85);
-            let t = 1.5;
-            self.fill_rect(cx, screen.pos.x, screen.pos.y, screen.size.x, t, ol);
-            self.fill_rect(
-                cx,
-                screen.pos.x,
-                screen.pos.y + screen.size.y - t,
-                screen.size.x,
-                t,
-                ol,
-            );
-            self.fill_rect(cx, screen.pos.x, screen.pos.y, t, screen.size.y, ol);
-            self.fill_rect(
-                cx,
-                screen.pos.x + screen.size.x - t,
-                screen.pos.y,
-                t,
-                screen.size.y,
-                ol,
-            );
             if let Some(title) = &title {
                 self.draw_text.text_style.font_size = (12.0 * zoom) as f32;
                 self.draw_text.draw_abs(
@@ -1338,41 +1384,69 @@ impl GraphCanvas {
         dvec2(s.pos.x + s.size.x * 0.5, s.pos.y + s.size.y * 0.5)
     }
 
-    /// Draw one placement relation as an orthogonal L connector between the
-    /// reference node (b) and the subject node (a) centers — horizontal leg then
-    /// vertical leg — plus a PLACEHOLDER direction glyph at the elbow. `color`
-    /// carries the weight/tint: calm slate for the persistent overlay, brighter
-    /// slate for the armed-drag emphasis. The glyph is `dir_word` text standing
-    /// in for final art (out of scope for v1). Shared by the always-on overlay
-    /// (`draw_relations_overlay`) and the armed-drag overlay (`draw_drag_overlay`)
-    /// so they never diverge.
-    fn draw_relation_connector(
+    /// Draw one placement relation's veil: a hatched grey keep-out anchored to the
+    /// reference node's near edge, distance-faded, plus a desaturating scrim over
+    /// every non-participant card inside it (spec §2). The two participants keep
+    /// full colour. No connector line.
+    fn draw_veil_for(
         &mut self,
         cx: &mut Cx2d,
         subject_idx: usize,
         reference_idx: usize,
         dir: waml::syntax::Direction,
-        color: Vec4,
     ) {
-        let a = self.node_screen_center(subject_idx);
-        let b = self.node_screen_center(reference_idx);
-        self.fill_rect(cx, a.x.min(b.x), b.y, (a.x - b.x).abs(), 2.0, color);
-        self.fill_rect(cx, a.x, a.y.min(b.y), 2.0, (a.y - b.y).abs(), color);
-        // Placeholder direction glyph at the elbow corner (a.x, b.y).
-        self.draw_mono_dim.text_style.font_size = 11.0;
-        self.draw_mono_dim
-            .draw_abs(cx, dvec2(a.x + 4.0, b.y - 6.0), dir_word(dir));
+        let reference_screen = self.node_screen_rect(reference_idx);
+        let band = veil_band(reference_screen, self.view_rect, dir, VEIL_REACH);
+        // Clip the band to the view so we don't overdraw the whole window.
+        let band = intersect_rect(band, self.view_rect);
+        if band.size.x <= 0.5 || band.size.y <= 0.5 {
+            return;
+        }
+        let (ramp, bias) = veil_ramp(dir);
+        self.draw_veil.set_uniform(cx, live_id!(ramp), &ramp);
+        self.draw_veil.set_uniform(cx, live_id!(bias), &bias);
+        self.draw_veil.color = vec4(0.42, 0.47, 0.54, 1.0);
+        self.draw_veil.draw_abs(cx, band);
+
+        // Desaturation scrim over non-participant cards inside the keep-out.
+        let subject_key = self.scene.nodes[subject_idx].key.clone();
+        let reference_key = self.scene.nodes[reference_idx].key.clone();
+        let reference_world = self.scene.nodes[reference_idx].rect;
+        let cards: Vec<(String, waml::solve::Rect)> = self
+            .scene
+            .nodes
+            .iter()
+            .map(|n| (n.key.clone(), n.rect))
+            .collect();
+        let desats: Vec<String> = crate::veil::desaturated_cards(
+            reference_world,
+            dir,
+            &cards,
+            &subject_key,
+            &reference_key,
+        )
+        .into_iter()
+        .map(str::to_string)
+        .collect();
+        for key in desats {
+            if let Some(i) = self.scene.nodes.iter().position(|n| n.key == key) {
+                let s = self.node_screen_rect(i);
+                self.fill_rect(
+                    cx,
+                    s.pos.x,
+                    s.pos.y,
+                    s.size.x,
+                    s.size.y,
+                    vec4(0.62, 0.65, 0.70, 0.45),
+                );
+            }
+        }
     }
 
-    /// Always-on relation overlay: every projected placement relation drawn at a
-    /// calm weight so the diagram's authored structure is legible at rest (not
-    /// only mid-drag). Independent of drag state; the armed-drag overlay
-    /// (`draw_drag_overlay`) still layers its scoped, brighter emphasis on top.
-    /// NOTE: this connector-line notation is superseded by the Task 4 veil
-    /// renderer; kept here only as a minimal compile-keeping stand-in.
+    /// Persistent constraint overlay: each projected placement drawn as a
+    /// distance-faded grey keep-out veil (spec §2). Visibility gating lands in
+    /// Task 5; for now every relation is drawn.
     fn draw_relations_overlay(&mut self, cx: &mut Cx2d) {
-        // Own the tuples before drawing: `fill_rect`/`draw_relation_connector`
-        // are `&mut self`, so the immutable borrow of `relations` must end first.
         let legs: Vec<(usize, usize, waml::syntax::Direction)> = self
             .scene
             .relations
@@ -1388,8 +1462,7 @@ impl GraphCanvas {
             })
             .collect();
         for (si, ri, dir) in legs {
-            let color = vec4(0.55, 0.62, 0.72, 0.45); // calm slate
-            self.draw_relation_connector(cx, si, ri, dir, color);
+            self.draw_veil_for(cx, si, ri, dir);
         }
     }
 
@@ -1426,33 +1499,8 @@ impl GraphCanvas {
         self.fill_rect(cx, os.pos.x, os.pos.y, gt, os.size.y, grey);
         self.fill_rect(cx, os.pos.x + os.size.x - gt, os.pos.y, gt, os.size.y, grey);
 
-        // Relation overlay + dock compass, centered on the target node (only
-        // while one is armed). The overlay draws the placement relations
-        // touching the dragged node or the hovered target, so a drag makes the
-        // diagram's existing structure legible before it commits.
+        // Dock compass, centered on the target node (only while one is armed).
         if let Some(ti) = self.drag_target {
-            let target_key = self.scene.nodes[ti].key.clone();
-            // Resolve to owned node-index pairs first: `relations_in_scope`
-            // borrows `self.scene.relations` immutably, which must end before
-            // `fill_rect` (a `&mut self` method) draws each leg.
-            let legs: Vec<(usize, usize, waml::syntax::Direction)> =
-                relations_in_scope(&self.scene.relations, &a_key, &target_key)
-                    .into_iter()
-                    .filter_map(|rel| {
-                        let si = self.scene.nodes.iter().position(|n| n.key == rel.subject)?;
-                        let ri = self
-                            .scene
-                            .nodes
-                            .iter()
-                            .position(|n| n.key == rel.reference)?;
-                        Some((si, ri, rel.dir))
-                    })
-                    .collect();
-            for (si, ri, dir) in legs {
-                // Armed-drag emphasis: brighter slate than the persistent overlay.
-                let ind = vec4(0.55, 0.62, 0.72, 0.7);
-                self.draw_relation_connector(cx, si, ri, dir, ind);
-            }
             let center = self.node_screen_center(ti);
             self.draw_compass(cx, center, self.compass_zone);
         }
@@ -1797,32 +1845,45 @@ mod tests {
     }
 
     #[test]
-    fn relations_in_scope_keeps_only_relations_touching_dragged_or_target() {
-        use crate::scene::SceneRelation;
-        use waml::syntax::Direction;
-        let rels = vec![
-            SceneRelation {
-                subject: "order".into(),
-                reference: "customer".into(),
-                dir: Direction::LeftOf,
-            },
-            SceneRelation {
-                subject: "payment-gateway".into(),
-                reference: "order".into(),
-                dir: Direction::Below,
-            },
-            SceneRelation {
-                subject: "invoice".into(),
-                reference: "shipment".into(),
-                dir: Direction::Above,
-            },
-        ];
-        // Dragging `payment-gateway` over target `customer`.
-        let got = relations_in_scope(&rels, "payment-gateway", "customer");
-        // order<->customer touches the target; payment-gateway<->order touches the
-        // dragged node; invoice<->shipment touches neither.
-        assert_eq!(got.len(), 2);
-        assert!(got.iter().all(|r| r.subject != "invoice"));
+    fn veil_band_anchors_and_clamps_per_direction() {
+        // reference screen rect, view rect, reach.
+        let reference = Rect {
+            pos: dvec2(200.0, 100.0),
+            size: dvec2(180.0, 80.0),
+        };
+        let view = Rect {
+            pos: dvec2(0.0, 0.0),
+            size: dvec2(1000.0, 700.0),
+        };
+        let reach = 300.0;
+        use waml::syntax::Direction::*;
+
+        // left of: band starts at the reference LEFT edge, extends right `reach`,
+        // spans the full view height (y unlocked).
+        let b = veil_band(reference, view, LeftOf, reach);
+        assert_eq!(b.pos.x, 200.0);
+        assert_eq!(b.size.x, 300.0);
+        assert_eq!(b.pos.y, 0.0);
+        assert_eq!(b.size.y, 700.0);
+
+        // right of: band ends at the reference RIGHT edge (380), extends left `reach`.
+        let b = veil_band(reference, view, RightOf, reach);
+        assert_eq!(b.pos.x + b.size.x, 380.0);
+        assert_eq!(b.size.x, 300.0);
+
+        // above: band starts at the reference TOP edge, extends down `reach`, x unlocked.
+        let b = veil_band(reference, view, Above, reach);
+        assert_eq!(b.pos.y, 100.0);
+        assert_eq!(b.size.y, 300.0);
+        assert_eq!(b.pos.x, 0.0);
+        assert_eq!(b.size.x, 1000.0);
+
+        // above left of: BOTH axes locked to reach off the top-left corner.
+        let b = veil_band(reference, view, AboveLeft, reach);
+        assert_eq!(
+            (b.pos.x, b.pos.y, b.size.x, b.size.y),
+            (200.0, 100.0, 300.0, 300.0)
+        );
     }
 
     #[test]

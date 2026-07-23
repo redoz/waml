@@ -3,11 +3,6 @@
 //! reference; the renderer (canvas.rs) hatches + scrims that region and
 //! desaturates the non-participant cards inside it. All functions here are pure
 //! (world rects + `Direction`), unit-tested without a GPU like `node_at`.
-//!
-//! Not yet wired into canvas.rs (Task 4 consumes this module to replace the
-//! Stage-4 connector overlay) — `waml-editor` is a bin-only crate, so these
-//! pub items are otherwise flagged dead_code under `-D warnings` until then.
-#![allow(dead_code)]
 
 use waml::solve::Rect;
 use waml::syntax::Direction;
@@ -108,6 +103,12 @@ pub fn desaturated_cards<'a>(
 /// Monotonic distance fade for the hatch: opaque (`1.0`) at the anchor edge,
 /// linearly decaying to `0.0` at `reach`, clamped outside `[0, reach]`. Keeps a
 /// half-plane veil from flooding the whole canvas (spec §2 — distance fade). Pure.
+///
+/// Not yet wired into canvas.rs's shader path (the `ConstraintVeil` pen's
+/// `ramp`/`bias` uniforms currently do the fade in-shader); reserved for the
+/// desaturation-scrim fade a later task adds. `waml-editor` is bin-only, so an
+/// unconsumed pub fn is a hard dead_code error under `-D warnings` until then.
+#[allow(dead_code)]
 pub fn distance_fade(dist_from_anchor: f64, reach: f64) -> f64 {
     if reach <= 0.0 || dist_from_anchor <= 0.0 {
         return if dist_from_anchor <= 0.0 { 1.0 } else { 0.0 };

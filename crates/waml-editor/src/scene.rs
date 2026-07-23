@@ -583,10 +583,10 @@ pub fn placement_would_conflict(
 }
 
 /// Run the solver for `diagram` and return only its diagnostics — no scene
-/// projection, no conflict attribution. `attribute_conflicts` re-solves scratch
-/// clones through this so it never re-enters `build_scene` (which would recurse
-/// through attribution). The `LayoutConflict` count here is directly comparable
-/// to `build_scene`'s own `diags` (same `solve_diagram` source).
+/// projection. `placement_would_conflict` re-solves a scratch clone through
+/// this for its speculative per-zone check, so it never re-enters
+/// `build_scene`. The `LayoutConflict` presence here is directly comparable to
+/// `build_scene`'s own `diags` (same `solve_diagram` source).
 fn solve_diags(
     model: &Model,
     diagram: &Diagram,
