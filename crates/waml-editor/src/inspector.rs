@@ -11,6 +11,10 @@ pub enum Subject {
     #[default]
     None,
     Classifier(String),
+    /// Group name (diagram-scoped; resolved by name, first match wins).
+    Group(String),
+    /// Synthetic `"src->tgt"` id (the Edge picker row's key).
+    Edge(String),
 }
 
 /// An editable inspector field. Overrides are keyed `(subject_key, FieldId)`.
@@ -103,6 +107,8 @@ pub struct InspectorView {
     pub stereotypes: Vec<String>,
     pub description: Option<String>,
     pub attributes: Vec<AttrRow>,
+    /// Group member display labels; empty for every non-group subject.
+    pub members: Vec<String>,
     pub associations: Vec<AssocRow>,
 }
 
@@ -202,23 +208,42 @@ pub fn diagram_elements(
 }
 
 /// The picker index for `subject`: 0 (placeholder) for `None` or a key with no
-/// matching `Node` row, else the `Node` row whose key matches.
+/// matching row of the right kind, else the row whose kind+key matches.
 pub fn subject_to_index(rows: &[ElementRow], subject: &Subject) -> usize {
-    let Subject::Classifier(key) = subject else {
-        return 0;
+    let (kind, key) = match subject {
+        Subject::Classifier(k) => (ElementKind::Node, k),
+        Subject::Group(k) => (ElementKind::Group, k),
+        Subject::Edge(k) => (ElementKind::Edge, k),
+        Subject::None => return 0,
     };
     rows.iter()
-        .position(|r| r.kind == ElementKind::Node && &r.key == key)
+        .position(|r| r.kind == kind && &r.key == key)
         .unwrap_or(0)
 }
 
+/// A node's display title, falling back to its key.
+fn node_title(model: &Model, key: &str) -> String {
+    model
+        .nodes
+        .iter()
+        .find(|n| n.key == key)
+        .and_then(|n| n.concept.title.clone())
+        .unwrap_or_else(|| key.to_string())
+}
+
 /// Project `subject` against `model`. Returns `None` for `Subject::None` and for
-/// a classifier key that resolves to nothing (both render the empty state).
+/// any key that resolves to nothing (all render the empty state).
 pub fn build_view(model: &Model, subject: &Subject) -> Option<InspectorView> {
-    let Subject::Classifier(key) = subject else {
-        return None;
-    };
-    let node = model.nodes.iter().find(|n| &n.key == key)?;
+    match subject {
+        Subject::None => None,
+        Subject::Classifier(key) => build_classifier_view(model, key),
+        Subject::Group(name) => build_group_view(model, name),
+        Subject::Edge(id) => build_edge_view(model, id),
+    }
+}
+
+fn build_classifier_view(model: &Model, key: &str) -> Option<InspectorView> {
+    let node = model.nodes.iter().find(|n| n.key == key)?;
 
     let attributes = node
         .attributes
@@ -234,22 +259,14 @@ pub fn build_view(model: &Model, subject: &Subject) -> Option<InspectorView> {
         })
         .collect();
 
-    let node_label = |k: &str| -> String {
-        model
-            .nodes
-            .iter()
-            .find(|n| n.key == k)
-            .and_then(|n| n.concept.title.clone())
-            .unwrap_or_else(|| k.to_string())
-    };
     let mut associations = Vec::new();
     for edge in &model.edges {
         // uml.Note anchor, not a real relationship (mirrors the web skip).
         if edge.kind == RelationshipKind::Annotates {
             continue;
         }
-        let outgoing = &edge.source == key;
-        let incoming = &edge.target == key;
+        let outgoing = edge.source == key;
+        let incoming = edge.target == key;
         if !outgoing && !incoming {
             continue;
         }
@@ -278,7 +295,7 @@ pub fn build_view(model: &Model, subject: &Subject) -> Option<InspectorView> {
         associations.push(AssocRow {
             kind: edge.kind.as_str().to_string(),
             dir,
-            other_label: node_label(far_key),
+            other_label: node_title(model, far_key),
             role,
             multiplicity,
         });
@@ -295,7 +312,57 @@ pub fn build_view(model: &Model, subject: &Subject) -> Option<InspectorView> {
         stereotypes: node.stereotypes.clone(),
         description: node.concept.description.clone(),
         attributes,
+        members: Vec::new(),
         associations,
+    })
+}
+
+fn build_group_view(model: &Model, name: &str) -> Option<InspectorView> {
+    fn find<'a>(groups: &'a [DiagramGroup], name: &str) -> Option<&'a DiagramGroup> {
+        for g in groups {
+            if g.name == name {
+                return Some(g);
+            }
+            if let Some(found) = find(&g.children, name) {
+                return Some(found);
+            }
+        }
+        None
+    }
+    // First match wins across every diagram's group tree (see Global Constraints).
+    let group = model.diagrams.iter().find_map(|d| find(&d.groups, name))?;
+    let members = group.members.iter().map(|k| node_title(model, k)).collect();
+    Some(InspectorView {
+        title: name.to_string(),
+        kind_label: "Group".to_string(),
+        abstract_flag: false,
+        stereotypes: Vec::new(),
+        description: None,
+        attributes: Vec::new(),
+        members,
+        associations: Vec::new(),
+    })
+}
+
+fn build_edge_view(model: &Model, id: &str) -> Option<InspectorView> {
+    let (src, tgt) = id.split_once("->")?;
+    let edge = model
+        .edges
+        .iter()
+        .find(|e| e.source == src && e.target == tgt)?;
+    Some(InspectorView {
+        title: format!(
+            "{} \u{2192} {}",
+            node_title(model, src),
+            node_title(model, tgt)
+        ),
+        kind_label: edge.kind.as_str().to_string(),
+        abstract_flag: false,
+        stereotypes: Vec::new(),
+        description: None,
+        attributes: Vec::new(),
+        members: Vec::new(),
+        associations: Vec::new(),
     })
 }
 
@@ -681,5 +748,95 @@ mod tests {
             group_rows.iter().all(|r| !r.key.is_empty()),
             "the implicit unnamed group must be skipped"
         );
+    }
+
+    #[test]
+    fn group_projects_name_kind_and_members() {
+        let model = mini_with_group();
+        let view = build_view(&model, &Subject::Group("Sales".into())).unwrap();
+        assert_eq!(view.title, "Sales");
+        assert_eq!(view.kind_label, "Group");
+        // Members are the group's direct members, mapped to node titles.
+        assert_eq!(
+            view.members,
+            vec!["Order".to_string(), "Customer".to_string()]
+        );
+        assert!(view.attributes.is_empty());
+        assert!(view.associations.is_empty());
+        assert!(view.description.is_none());
+    }
+
+    #[test]
+    fn unknown_group_yields_empty_state() {
+        let model = mini();
+        assert!(build_view(&model, &Subject::Group("Nope".into())).is_none());
+    }
+
+    #[test]
+    fn edge_projects_endpoint_titles_and_kind() {
+        let model = mini();
+        let order = key_for(&model, "Order");
+        let customer = key_for(&model, "Customer");
+        let id = format!("{order}->{customer}");
+        let view = build_view(&model, &Subject::Edge(id)).unwrap();
+        // Title carries both endpoint titles.
+        assert!(
+            view.title.contains("Order"),
+            "title has source: {}",
+            view.title
+        );
+        assert!(
+            view.title.contains("Customer"),
+            "title has target: {}",
+            view.title
+        );
+        // Kind is the relationship kind string.
+        assert_eq!(view.kind_label, "associates");
+        assert!(view.members.is_empty());
+    }
+
+    #[test]
+    fn unknown_edge_yields_empty_state() {
+        let model = mini();
+        assert!(build_view(&model, &Subject::Edge("a->b".into())).is_none());
+    }
+
+    #[test]
+    fn classifier_has_empty_members() {
+        let model = mini();
+        let key = key_for(&model, "Order");
+        let view = build_view(&model, &Subject::Classifier(key)).unwrap();
+        assert!(view.members.is_empty());
+    }
+
+    #[test]
+    fn subject_to_index_resolves_group_row() {
+        let model = mini_with_group();
+        let rows = diagram_elements(&model, "orders-diagram", "Orders", &node_keys(&model));
+        let idx = subject_to_index(&rows, &Subject::Group("Sales".into()));
+        assert_eq!(rows[idx].kind, ElementKind::Group);
+        assert_eq!(rows[idx].key, "Sales");
+    }
+
+    #[test]
+    fn subject_to_index_resolves_edge_row() {
+        let model = mini();
+        let rows = diagram_elements(&model, "orders-diagram", "Orders", &node_keys(&model));
+        let edge_key = format!(
+            "{}->{}",
+            key_for(&model, "Order"),
+            key_for(&model, "Customer")
+        );
+        let idx = subject_to_index(&rows, &Subject::Edge(edge_key.clone()));
+        assert_eq!(rows[idx].kind, ElementKind::Edge);
+        assert_eq!(rows[idx].key, edge_key);
+    }
+
+    #[test]
+    fn subject_to_index_unknown_group_and_edge_fall_back_to_placeholder() {
+        let model = mini();
+        let rows = diagram_elements(&model, "orders-diagram", "Orders", &node_keys(&model));
+        assert_eq!(subject_to_index(&rows, &Subject::Group("Nope".into())), 0);
+        assert_eq!(subject_to_index(&rows, &Subject::Edge("x->y".into())), 0);
     }
 }

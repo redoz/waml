@@ -160,6 +160,23 @@ script_mod! {
                 Row := mod.widgets.AttrRowView { }
             }
 
+            members_heading := SectionHeading { }
+            // A group's member labels, one per line, as a single dim Label.
+            // Members are plain strings, so no FlatList/Row widget is needed.
+            members_lines := Label {
+                text: ""
+                draw_text +: {
+                    color: atlas.text_dim
+                    text_style: TextStyle{
+                        font_size: 11
+                        font_family: FontFamily{
+                            latin := FontMember{res: crate_resource("self:resources/fonts/IBM_Plex_Sans/IBMPlexSans-Regular.ttf") asc: -0.1 desc: 0.0}
+                        }
+                        line_spacing: 1.5
+                    }
+                }
+            }
+
             rel_heading := SectionHeading { }
             rel_list := FlatList {
                 width: Fill
@@ -757,6 +774,18 @@ impl Widget for Inspector {
             y += GAP;
         }
 
+        // Members: a group's direct members, one dim row each. Mirrors the
+        // ATTRIBUTES compartment; only groups populate `view.members`.
+        if !view.members.is_empty() {
+            self.draw_dim.draw_abs(cx, dvec2(x, y), "MEMBERS");
+            y += ROW_H;
+            for m in &view.members {
+                self.draw_label.draw_abs(cx, dvec2(x, y), m);
+                y += ROW_H;
+            }
+            y += GAP;
+        }
+
         // Relationships: read-only cards derived from Model::edges (U6 breadth).
         // One bordered rounded-rect card per edge: line 1 = direction glyph
         // (accent) + far-end name (bright); line 2 = a dim meta run
@@ -853,6 +882,24 @@ impl Inspector {
                 .set_text(cx, "ATTRIBUTES");
         }
 
+        // MEMBERS: a group's member labels, one per line (a single dim Label).
+        let has_members = !view.members.is_empty();
+        self.view
+            .widget(cx, ids!(body.members_heading))
+            .set_visible(cx, has_members);
+        self.view
+            .widget(cx, ids!(body.members_lines))
+            .set_visible(cx, has_members);
+        if has_members {
+            self.view
+                .widget(cx, ids!(body.members_heading))
+                .as_section_heading()
+                .set_text(cx, "MEMBERS");
+            self.view
+                .label(cx, ids!(body.members_lines))
+                .set_text(cx, &view.members.join("\n"));
+        }
+
         let has_rels = !view.associations.is_empty();
         self.view
             .widget(cx, ids!(body.rel_heading))
@@ -942,8 +989,9 @@ impl Inspector {
     /// Build the picker rows as `SelectItem`s and record their id→index map (for
     /// `apply_pick`). Node rows lead with their catalog glyph (see `node_lead`,
     /// falling back to a per-type badge for `Unknown` types) and are enabled;
-    /// edge rows lead with the spline glyph (target-end label) and are disabled;
-    /// the root diagram row leads with the `Frame` glyph and is disabled. Index
+    /// group rows lead with the dashed-box glyph and are enabled; edge rows
+    /// lead with the spline glyph (target-end label) and are enabled; the root
+    /// diagram row leads with the `Frame` glyph and is disabled. Index
     /// 0 (placeholder) is skipped.
     fn build_select_items(&mut self, model: &Model) -> Vec<SelectItem> {
         self.picker_ids.clear();
@@ -972,10 +1020,17 @@ impl Inspector {
                         });
                     (lead, row.label.clone(), true)
                 }
+                ElementKind::Group => (
+                    // Dashed box reads as a group frame — distinct from the
+                    // diagram's solid `Frame` and any node's catalog icon.
+                    SelectLead::Icon(Icon::SquareDashedTopSolid),
+                    row.label.clone(),
+                    true,
+                ),
                 ElementKind::Edge => (
                     SelectLead::Icon(Icon::Spline),
                     edge_target(&row.label).to_string(),
-                    false,
+                    true,
                 ),
                 // The root diagram row leads with the `Frame` glyph -- distinct
                 // from any node's catalog icon, marking it as the container.
@@ -1026,7 +1081,7 @@ impl Inspector {
 
     /// Resolve a committed `PopupItem.id` (from `PopupRoot::closed`) back to its
     /// element and repoint the inspector. Returns the new subject, or `None` if
-    /// the id wasn't a pickable (node) element in the current list.
+    /// the id wasn't a pickable (node/group/edge) element in the current list.
     pub fn apply_pick(&mut self, cx: &mut Cx, model: &Model, id: LiveId) -> Option<Subject> {
         let idx = self
             .picker_ids
@@ -1034,17 +1089,21 @@ impl Inspector {
             .find(|(i, _)| *i == id)
             .map(|(_, x)| *x)?;
         let row = self.elements.get(idx)?;
-        if !matches!(row.kind, ElementKind::Node) {
-            return None;
-        }
-        let subject = Subject::Classifier(row.key.clone());
+        let subject = match row.kind {
+            ElementKind::Node => Subject::Classifier(row.key.clone()),
+            ElementKind::Group => Subject::Group(row.key.clone()),
+            ElementKind::Edge => Subject::Edge(row.key.clone()),
+            ElementKind::Diagram | ElementKind::Placeholder => return None,
+        };
         self.set_subject(cx, model, subject.clone());
         Some(subject)
     }
 
     fn subject_key(&self) -> Option<String> {
         match &self.subject {
-            Subject::Classifier(key) => Some(key.clone()),
+            Subject::Classifier(key) | Subject::Group(key) | Subject::Edge(key) => {
+                Some(key.clone())
+            }
             Subject::None => None,
         }
     }
