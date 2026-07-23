@@ -3,6 +3,7 @@ use makepad_widgets::*;
 
 mod action_link;
 mod app;
+mod attr_row;
 mod camera;
 mod canvas;
 mod card;

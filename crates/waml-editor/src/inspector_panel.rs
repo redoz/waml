@@ -24,6 +24,7 @@
 //! touched (UX mock only). A changed commit emits `InspectorAction::Edited`,
 //! which `App` uses to promote the active preview tab to persisted.
 
+use crate::attr_row::AttrRowViewWidgetRefExt;
 use crate::icon_button::IconButtonWidgetRefExt;
 use crate::icons::{Icon, IconSet};
 use crate::inspector::{
@@ -149,20 +150,13 @@ script_mod! {
             }
 
             attr_heading := SectionHeading { }
-            // INTERIM (Task 3 replaces with a FlatList<AttrRowView>): the
-            // attribute rows joined as one Mono multi-line label.
-            attr_lines := Label {
-                text: ""
-                draw_text +: {
-                    color: atlas.text
-                    text_style: TextStyle{
-                        font_size: 11
-                        font_family: FontFamily{
-                            latin := FontMember{res: crate_resource("self:resources/fonts/IBM_Plex_Mono/IBMPlexMono-Regular.ttf") asc: -0.1 desc: 0.0}
-                        }
-                        line_spacing: 1.4
-                    }
-                }
+            attr_list := FlatList {
+                width: Fill
+                height: Fit
+                flow: Down
+                spacing: 6.0
+
+                Row := mod.widgets.AttrRowView { }
             }
 
             rel_heading := SectionHeading { }
@@ -594,7 +588,29 @@ impl Widget for Inspector {
         // translucent so the canvas shows through. Replaces the old dimming
         // scrim (which painted last, over everything). See `panel_glass`.
         self.panel.draw(cx, &mut self.view.draw_bg);
-        while self.view.draw_walk(cx, scope, walk).step().is_some() {}
+        let attr_list_uid = self.view.widget(cx, ids!(body.attr_list)).widget_uid();
+        while let Some(item) = self.view.draw_walk(cx, scope, walk).step() {
+            if !show_body {
+                continue;
+            }
+            if item.widget_uid() == attr_list_uid {
+                if let Some(view) = self.proj.clone() {
+                    if let Some(mut list) = item.as_flat_list().borrow_mut() {
+                        for attr in &view.attributes {
+                            let item_id = LiveId::from_str(&attr.name);
+                            let row = list.item(cx, item_id, id!(Row)).unwrap();
+                            let rv = row.as_attr_row_view();
+                            let (vis, name, ty, mult) = attr_line_parts(attr);
+                            rv.set_visibility(cx, &vis);
+                            rv.set_name(cx, &name);
+                            rv.set_ty(cx, &ty);
+                            rv.set_mult(cx, &mult);
+                            row.draw_all(cx, &mut Scope::empty());
+                        }
+                    }
+                }
+            }
+        }
 
         let rect = self.view.area().rect(cx);
         self.view_rect = rect;
@@ -775,31 +791,18 @@ impl Inspector {
             .set_visible(cx, !stereo.is_empty());
         self.view.label(cx, ids!(body.stereo)).set_text(cx, &stereo);
 
-        // ATTRIBUTES (interim joined Mono lines; Task 3 swaps for a FlatList).
         let has_attrs = !view.attributes.is_empty();
         self.view
             .widget(cx, ids!(body.attr_heading))
             .set_visible(cx, has_attrs);
         self.view
-            .widget(cx, ids!(body.attr_lines))
+            .widget(cx, ids!(body.attr_list))
             .set_visible(cx, has_attrs);
         if has_attrs {
             self.view
                 .widget(cx, ids!(body.attr_heading))
                 .as_section_heading()
                 .set_text(cx, "ATTRIBUTES");
-            let joined = view
-                .attributes
-                .iter()
-                .map(|a| {
-                    let (vis, name, ty, mult) = attr_line_parts(a);
-                    format!("{vis}{name}: {ty}{mult}")
-                })
-                .collect::<Vec<_>>()
-                .join("\n");
-            self.view
-                .label(cx, ids!(body.attr_lines))
-                .set_text(cx, &joined);
         }
 
         // RELATIONSHIPS (interim joined lines; Task 4 swaps for a FlatList).

@@ -1601,6 +1601,7 @@ impl AppMain for App {
         // `AttrRowView` / `RelationshipCardView`) as DSL children, and the DSL
         // resolves `mod.widgets.*` eagerly at `use`-time, not lazily.
         crate::section_heading::script_mod(vm);
+        crate::attr_row::script_mod(vm);
         crate::inspector_panel::script_mod(vm);
         crate::doc_tabs::script_mod(vm);
         crate::diagram_switcher::script_mod(vm);
