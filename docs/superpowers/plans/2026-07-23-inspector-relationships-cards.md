@@ -32,7 +32,7 @@
 - `build_view` iterates `model.edges`. Skip `edge.kind == RelationshipKind::Annotates`. `outgoing = &edge.source == key`, `incoming = &edge.target == key`; skip edges touching neither. `dir` = `Bi` when `edge.bidirectional || (edge.from_end.navigable == Some(true) && edge.to_end.navigable == Some(true))`, else `Out` if outgoing, `In` if incoming. The far end is `to_end` if outgoing else `from_end`; `other_label` resolves the far node key via the existing `node_label` closure. `role` = far end's `role.clone().unwrap_or_default()`. `multiplicity` = far end's `Multiplicity::as_str()` string, but `""` when the multiplicity is `None` or the trivial `"1"` (mirrors the attribute-row convention of hiding a bare `1`).
 - The mini fixture's `Order→Customer` edge already carries roles (`from_end` = "1 order", `to_end` = "1 customer"), but all multiplicities are the trivial `"1"` (hidden) and there is no bidirectional or annotates edge. The two new-behavior tests therefore push hand-built `Edge`s onto a loaded `mini()` model (deterministic, no resolver/fixture coupling); the fixture files are left unchanged.
 
-- [ ] **Step 1: Update the two existing association tests and add three new ones**
+- [x] **Step 1: Update the two existing association tests and add three new ones**
 
 In `crates/waml-editor/src/inspector.rs`, replace the existing `classifier_projects_outgoing_association` and `classifier_projects_incoming_association` tests (currently ~lines 304-326) with these two updated tests plus append the three new tests immediately after them, inside the `mod tests` block:
 
@@ -150,12 +150,12 @@ In `crates/waml-editor/src/inspector.rs`, replace the existing `classifier_proje
     }
 ```
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
 Run: `cargo test -p waml-editor inspector::tests::classifier_projects`
 Expected: FAIL — compile errors (`no variant or associated item named 'Out' found for enum` / `no field 'dir' on type '&AssocRow'`), because `AssocDir` and the new fields don't exist yet.
 
-- [ ] **Step 3: Add `AssocDir`, reshape `AssocRow`, and import `RelationshipKind`**
+- [x] **Step 3: Add `AssocDir`, reshape `AssocRow`, and import `RelationshipKind`**
 
 In `crates/waml-editor/src/inspector.rs`, change the top import (~line 6):
 
@@ -187,7 +187,7 @@ pub struct AssocRow {
 }
 ```
 
-- [ ] **Step 4: Rewrite the `build_view` association loop**
+- [x] **Step 4: Rewrite the `build_view` association loop**
 
 In `crates/waml-editor/src/inspector.rs`, replace the association loop (~lines 214-229, the `let mut associations = Vec::new();` block through the closing `}` of the `for edge in &model.edges` loop) with:
 
@@ -231,12 +231,12 @@ In `crates/waml-editor/src/inspector.rs`, replace the association loop (~lines 2
     }
 ```
 
-- [ ] **Step 5: Run the projection tests to verify they pass**
+- [x] **Step 5: Run the projection tests to verify they pass**
 
 Run: `cargo test -p waml-editor inspector::tests::`
 Expected: PASS — all `inspector` unit tests green, including the two updated and three new association tests.
 
-- [ ] **Step 6: Gate — full crate tests + clippy**
+- [x] **Step 6: Gate — full crate tests + clippy**
 
 Run: `cargo test -p waml-editor`
 Expected: PASS (the panel still reads `assoc.direction` at this point — see note below).
@@ -245,7 +245,7 @@ Expected: FAIL at `crates/waml-editor/src/inspector_panel.rs` line ~478 — `no 
 
 > If you prefer a fully-green intermediate commit, you may apply Task 2's panel edits before committing and fold the two tasks; otherwise commit now and let Task 2 restore the build. The projection tests (`cargo test -p waml-editor --lib inspector::tests::`) are the authoritative gate for this task.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add crates/waml-editor/src/inspector.rs
@@ -268,7 +268,7 @@ git commit -m "feat(inspector): enrich AssocRow projection with AssocDir + role/
 - **Kind badge — DECISION: folded into the meta line's leading token (simpler path taken).** Wiring the edge picker's per-kind `IconSpline` SDF into an immediate-mode `draw_abs` loop is non-trivial (it is a widget-row `SelectLead`, not a draw pen). Line 1 is `direction glyph (accent) + far-end name (bright)`; the kind stays scannable as the first token of the meta line. An `IconSpline` badge is a noted follow-up.
 - **Direction glyphs — Unicode arrows with an ASCII fallback wired for Task 3.** `dir_glyph` returns `\u{2192}` / `\u{2190}` / `\u{2194}`. Task 3's native check confirms IBM Plex Sans renders them; the exact ASCII swap (`->` / `<-` / `<>`) is pre-specified there.
 
-- [ ] **Step 1: Write the failing helper tests**
+- [x] **Step 1: Write the failing helper tests**
 
 In `crates/waml-editor/src/inspector_panel.rs`, append inside the existing `mod tests` block (after `node_lead_falls_back_to_badge_for_unknown_type`, ~line 807):
 
@@ -305,12 +305,12 @@ In `crates/waml-editor/src/inspector_panel.rs`, append inside the existing `mod 
     }
 ```
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
 Run: `cargo test -p waml-editor inspector_panel::tests::`
 Expected: FAIL — compile errors (`cannot find function 'dir_glyph'`, `cannot find function 'meta_line'`, `cannot find type 'AssocRow'`/`'AssocDir'` in this scope).
 
-- [ ] **Step 3: Import the new types**
+- [x] **Step 3: Import the new types**
 
 In `crates/waml-editor/src/inspector_panel.rs`, replace the `crate::inspector` import (~lines 29-32) with:
 
@@ -321,7 +321,7 @@ use crate::inspector::{
 };
 ```
 
-- [ ] **Step 4: Add the two pure render helpers**
+- [x] **Step 4: Add the two pure render helpers**
 
 In `crates/waml-editor/src/inspector_panel.rs`, add these two functions immediately after the `edge_target` function (~line 230, before `fn rgb`):
 
@@ -354,7 +354,7 @@ fn meta_line(assoc: &AssocRow) -> String {
 }
 ```
 
-- [ ] **Step 5: Add the card geometry consts**
+- [x] **Step 5: Add the card geometry consts**
 
 In `crates/waml-editor/src/inspector_panel.rs`, add immediately after `const GAP: f64 = 12.0;` (~line 219):
 
@@ -368,7 +368,7 @@ const CARD_H: f64 = CARD_PAD * 2.0 + CARD_LINE_H + CARD_META_H; // full card hei
 const GLYPH_W: f64 = 18.0; // fixed x-advance reserved for the direction glyph
 ```
 
-- [ ] **Step 6: Add the three new draw pens to the `script_mod!` block**
+- [x] **Step 6: Add the three new draw pens to the `script_mod!` block**
 
 In `crates/waml-editor/src/inspector_panel.rs`, add immediately after `draw_field_bg +: { color: atlas.field_bg }` (~line 132, still inside the `mod.widgets.Inspector = ... do ... { }` body):
 
@@ -411,7 +411,7 @@ In `crates/waml-editor/src/inspector_panel.rs`, add immediately after `draw_fiel
         }
 ```
 
-- [ ] **Step 7: Add the three struct fields**
+- [x] **Step 7: Add the three struct fields**
 
 In `crates/waml-editor/src/inspector_panel.rs`, add immediately after the `draw_field_bg: DrawColor,` field (~line 166, inside `struct Inspector`):
 
@@ -427,7 +427,7 @@ In `crates/waml-editor/src/inspector_panel.rs`, add immediately after the `draw_
     draw_glyph: DrawText,
 ```
 
-- [ ] **Step 8: Replace the flat associations draw block with the card renderer**
+- [x] **Step 8: Replace the flat associations draw block with the card renderer**
 
 In `crates/waml-editor/src/inspector_panel.rs`, replace the entire associations block (~lines 471-483):
 
@@ -477,19 +477,19 @@ with:
         }
 ```
 
-- [ ] **Step 9: Run the helper tests to verify they pass**
+- [x] **Step 9: Run the helper tests to verify they pass**
 
 Run: `cargo test -p waml-editor inspector_panel::tests::`
 Expected: PASS — `dir_glyph_maps_each_orientation`, `meta_line_joins_present_parts_with_middot`, `meta_line_elides_empty_role_and_multiplicity`, plus the pre-existing `edge_target`/`node_lead` tests, all green.
 
-- [ ] **Step 10: Gate — full crate tests + clippy**
+- [x] **Step 10: Gate — full crate tests + clippy**
 
 Run: `cargo test -p waml-editor`
 Expected: PASS — the whole crate compiles (the `assoc.direction` reference is gone) and every test is green.
 Run: `cargo clippy -p waml-editor -- -D warnings`
 Expected: clean — no `dead_code` (`draw_card`/`draw_name`/`draw_glyph` are read in `draw_walk`; every card const is referenced; `dir_glyph`/`meta_line` are called by the draw loop, not only by tests), no warnings.
 
-- [ ] **Step 11: Commit**
+- [x] **Step 11: Commit**
 
 ```bash
 git add crates/waml-editor/src/inspector_panel.rs
@@ -506,7 +506,7 @@ git commit -m "feat(inspector): render RELATIONSHIPS as two-line bordered cards"
 
 **CRITICAL pid-safety note (standing memory — honor exactly):** The user very likely has their OWN `waml-editor` open. NEVER screenshot-by-window-name and NEVER `Stop-Process`/kill by process name — that captures or kills the user's session. Launch THIS worktree's own build via its own `scripts/run-native.ps1` (the script builds `$PSScriptRoot`, i.e. the checkout the `.ps1` lives in — NOT your cwd, so run the worktree's copy, not main's), capture the launched process's specific pid, screenshot ONLY that pid, and close ONLY that pid.
 
-- [ ] **Step 1: Launch this worktree's build and capture its pid**
+- [x] **Step 1: Launch this worktree's build and capture its pid**
 
 From the worktree root, run (PowerShell):
 
@@ -517,7 +517,7 @@ $p = Start-Process -FilePath "pwsh" -ArgumentList "-File","scripts/run-native.ps
 
 Wait for the window to finish building and appear. The pid to screenshot is the editor process spawned by the build; if `run-native.ps1` compiles then execs a child, resolve the actual `waml-editor` child pid under `$p.Id` (e.g. `Get-CimInstance Win32_Process -Filter "ParentProcessId=$($p.Id)"`) and use THAT pid. Do not fall back to name-based lookup.
 
-- [ ] **Step 2: Drive the inspector to a node with relationships and screenshot by pid**
+- [x] **Step 2: Drive the inspector to a node with relationships and screenshot by pid**
 
 In the launched editor: open the `mini` fixture (or any model with edges), select the `Order` node (outgoing `associates → Customer`) and the `Customer` node (incoming `associates ← Order`) so both orientations render. Capture a screenshot scoped to the captured pid ONLY.
 
@@ -528,7 +528,7 @@ Verify in the screenshot:
 - Line 2: dim meta run leading with the kind (e.g. `associates`, then `· customer` for `Order`'s card; `Order`'s multiplicity is the trivial `1` and is correctly hidden).
 - No glyph tofu (no empty boxes) where the direction arrows should be.
 
-- [ ] **Step 3: Conditional — if the arrows render as tofu, swap to ASCII**
+- [x] **Step 3: Conditional — if the arrows render as tofu, swap to ASCII**
 
 ONLY if Step 2 shows tofu boxes instead of arrows: in `crates/waml-editor/src/inspector_panel.rs`, edit `dir_glyph` — replace
 
@@ -555,7 +555,7 @@ git commit -m "fix(inspector): ASCII direction glyphs (IBM Plex Sans lacks arrow
 
 If the arrows render correctly, skip this step entirely — no edit, no commit.
 
-- [ ] **Step 4: Close only the launched pid**
+- [x] **Step 4: Close only the launched pid**
 
 Close the editor window you launched, or `Stop-Process -Id <captured-pid>` using the SPECIFIC captured pid only. Never `Stop-Process -Name waml-editor`.
 
