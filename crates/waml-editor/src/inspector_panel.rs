@@ -27,8 +27,8 @@
 use crate::icon_button::IconButtonWidgetRefExt;
 use crate::icons::{Icon, IconSet};
 use crate::inspector::{
-    build_view, effective_field, subject_to_index, ElementKind, ElementRow, FieldId, InspectorView,
-    Subject,
+    build_view, effective_field, subject_to_index, AssocDir, AssocRow, ElementKind, ElementRow,
+    FieldId, InspectorView, Subject,
 };
 use crate::node_style::{accent_bucket, AccentBucket};
 use crate::panel_glass::PanelGlass;
@@ -130,6 +130,42 @@ script_mod! {
             }
         }
         draw_field_bg +: { color: atlas.field_bg }
+        // Relationship-card background: a faint field-bg fill ringed by a
+        // low-alpha accent border, rounded corners via the working box-radius
+        // idiom (never `sdf.box(.., 0.0)` -- floods in this fork).
+        draw_card +: {
+            color: atlas.field_bg
+            border: uniform(atlas.accent)
+            pixel: fn() {
+                let sdf = Sdf2d.viewport(self.pos * self.rect_size)
+                sdf.box(0.75, 0.75, self.rect_size.x - 1.5, self.rect_size.y - 1.5, 6.0)
+                sdf.fill_keep(vec4(self.color.x, self.color.y, self.color.z, 0.5))
+                sdf.stroke(vec4(self.border.x, self.border.y, self.border.z, 0.20), 1.0)
+                return sdf.result
+            }
+        }
+        // Far-end name (line 1): brighter than the dim meta run.
+        draw_name +: {
+            color: atlas.text
+            text_style: TextStyle{
+                font_size: 13
+                font_family: FontFamily{
+                    latin := FontMember{res: crate_resource("self:resources/fonts/IBM_Plex_Sans/IBMPlexSans-Regular.ttf") asc: -0.1 desc: 0.0}
+                }
+                line_spacing: 1.2
+            }
+        }
+        // Direction glyph (line 1 lead): accent-colored orientation cue.
+        draw_glyph +: {
+            color: atlas.accent
+            text_style: TextStyle{
+                font_size: 14
+                font_family: FontFamily{
+                    latin := FontMember{res: crate_resource("self:resources/fonts/IBM_Plex_Sans/IBMPlexSans-Regular.ttf") asc: -0.1 desc: 0.0}
+                }
+                line_spacing: 1.2
+            }
+        }
     }
 }
 
@@ -164,6 +200,15 @@ pub struct Inspector {
     #[redraw]
     #[live]
     draw_field_bg: DrawColor,
+    #[redraw]
+    #[live]
+    draw_card: DrawColor,
+    #[redraw]
+    #[live]
+    draw_name: DrawText,
+    #[redraw]
+    #[live]
+    draw_glyph: DrawText,
 
     /// The flattened read model of the current subject (`None` = empty state).
     #[rust]
@@ -217,8 +262,15 @@ const PAD: f64 = 16.0;
 const TITLE_H: f64 = 26.0;
 const ROW_H: f64 = 20.0;
 const GAP: f64 = 12.0;
-// Bar strip height (matches `element_bar.height` in the DSL). The fold-caret +
-// pin affordances in it are now laid-out `IconButton` children, not hand-drawn.
+// Relationship-card geometry (px). No text measuring; fixed advances.
+const CARD_PAD: f64 = 10.0; // inner padding of each card
+const CARD_GAP: f64 = 8.0; // vertical gap between cards
+const CARD_LINE_H: f64 = 18.0; // name line height (line 1)
+const CARD_META_H: f64 = 16.0; // meta line height (line 2)
+const CARD_H: f64 = CARD_PAD * 2.0 + CARD_LINE_H + CARD_META_H; // full card height
+const GLYPH_W: f64 = 18.0; // fixed x-advance reserved for the direction glyph
+                           // Bar strip height (matches `element_bar.height` in the DSL). The fold-caret +
+                           // pin affordances in it are now laid-out `IconButton` children, not hand-drawn.
 const BAR_H: f64 = 56.0;
 
 /// An association row's display text in the picker popup: just the target end.
@@ -227,6 +279,33 @@ const BAR_H: f64 = 56.0;
 /// source is redundant. Falls back to the whole label if it isn't `A -> B`.
 fn edge_target(label: &str) -> &str {
     label.rsplit(" -> ").next().unwrap_or(label)
+}
+
+/// The leading orientation glyph for a relationship card. Unicode arrows
+/// (\u{2192} / \u{2190} / \u{2194}); if IBM Plex Sans renders any as tofu on the
+/// running native app, swap these three literals for the ASCII forms
+/// `->` / `<-` / `<>` (see the verification task).
+fn dir_glyph(dir: AssocDir) -> &'static str {
+    match dir {
+        AssocDir::Out => "\u{2192}",
+        AssocDir::In => "\u{2190}",
+        AssocDir::Bi => "\u{2194}",
+    }
+}
+
+/// The card's second line: `kind \u{b7} role \u{b7} multiplicity`, empty parts
+/// elided. Always leads with the kind so the relationship type stays scannable
+/// (the mock's kind badge, folded into the meta run for v1 -- an IconSpline
+/// badge is a noted follow-up).
+fn meta_line(assoc: &AssocRow) -> String {
+    let mut parts = vec![assoc.kind.clone()];
+    if !assoc.role.is_empty() {
+        parts.push(assoc.role.clone());
+    }
+    if !assoc.multiplicity.is_empty() {
+        parts.push(assoc.multiplicity.clone());
+    }
+    parts.join(" \u{b7} ")
 }
 
 /// RGB hex (no alpha) -> opaque `Vec4`, matching how the DSL decodes `#xrrggbb`.
@@ -468,16 +547,29 @@ impl Widget for Inspector {
             y += GAP;
         }
 
-        // Associations: read-only, derived from Model::edges (U6 breadth). Not
-        // click-to-edit -- there's no single scalar override target for a
-        // relationship yet.
+        // Relationships: read-only cards derived from Model::edges (U6 breadth).
+        // One bordered rounded-rect card per edge: line 1 = direction glyph
+        // (accent) + far-end name (bright); line 2 = a dim meta run
+        // "kind \u{b7} role \u{b7} multiplicity" (empty parts elided). Not
+        // click-to-edit -- no single scalar override target for a relationship.
         if !view.associations.is_empty() {
-            self.draw_dim.draw_abs(cx, dvec2(x, y), "ASSOCIATIONS");
+            self.draw_dim.draw_abs(cx, dvec2(x, y), "RELATIONSHIPS");
             y += ROW_H;
             for assoc in &view.associations {
-                let line = format!("{} {} {}", assoc.direction, assoc.other_label, assoc.kind);
-                self.draw_label.draw_abs(cx, dvec2(x, y), &line);
-                y += ROW_H;
+                let card = Rect {
+                    pos: dvec2(x, y),
+                    size: dvec2(field_w, CARD_H),
+                };
+                self.draw_card.draw_abs(cx, card);
+                let gx = x + CARD_PAD;
+                let gy = y + CARD_PAD;
+                self.draw_glyph
+                    .draw_abs(cx, dvec2(gx, gy), dir_glyph(assoc.dir));
+                self.draw_name
+                    .draw_abs(cx, dvec2(gx + GLYPH_W, gy), &assoc.other_label);
+                self.draw_dim
+                    .draw_abs(cx, dvec2(gx, gy + CARD_LINE_H), &meta_line(assoc));
+                y += CARD_H + CARD_GAP;
             }
             y += GAP;
         }
@@ -804,5 +896,36 @@ mod tests {
             matches!(lead, SelectLead::Badge { ref letter, .. } if letter == "W"),
             "Unknown node should fall back to the monogram badge, got {lead:?}"
         );
+    }
+
+    #[test]
+    fn dir_glyph_maps_each_orientation() {
+        assert_eq!(dir_glyph(AssocDir::Out), "\u{2192}");
+        assert_eq!(dir_glyph(AssocDir::In), "\u{2190}");
+        assert_eq!(dir_glyph(AssocDir::Bi), "\u{2194}");
+    }
+
+    #[test]
+    fn meta_line_joins_present_parts_with_middot() {
+        let assoc = AssocRow {
+            kind: "associates".into(),
+            dir: AssocDir::Out,
+            other_label: "Customer".into(),
+            role: "buyer".into(),
+            multiplicity: "0..1".into(),
+        };
+        assert_eq!(meta_line(&assoc), "associates \u{b7} buyer \u{b7} 0..1");
+    }
+
+    #[test]
+    fn meta_line_elides_empty_role_and_multiplicity() {
+        let assoc = AssocRow {
+            kind: "associates".into(),
+            dir: AssocDir::In,
+            other_label: "Order".into(),
+            role: String::new(),
+            multiplicity: String::new(),
+        };
+        assert_eq!(meta_line(&assoc), "associates");
     }
 }

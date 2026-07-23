@@ -3,7 +3,7 @@
 //! `inspector_panel.rs`. Mirrors the `tree.rs` (pure) / `tree_panel.rs` (widget)
 //! split.
 
-use waml::model::{ElementType, Model};
+use waml::model::{ElementType, Model, RelationshipKind};
 
 /// What the inspector is currently pointed at. `None` renders the empty state.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -73,14 +73,24 @@ pub struct OpRow {
     pub visibility: String, // "+"/"-"/"#"/"~" or ""
 }
 
+/// Orientation of a relationship from the *subject node's* point of view.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AssocDir {
+    Out, // subject is the edge's source        -> glyph "\u{2192}"
+    In,  // subject is the edge's target        -> glyph "\u{2190}"
+    Bi,  // both ends navigable / bidirectional -> glyph "\u{2194}"
+}
+
 /// One association row, pre-rendered to display strings. Derived from
 /// `Model::edges` where `key` is either endpoint -- read-only breadth (U6),
 /// not an editable field.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AssocRow {
-    pub kind: String,            // RelationshipKind::as_str(), e.g. "associates"
-    pub direction: &'static str, // "->" (key is source) or "<-" (key is target)
-    pub other_label: String,     // the other endpoint's title, falling back to its key
+    pub kind: String,         // RelationshipKind::as_str(), e.g. "associates"
+    pub dir: AssocDir,        // orientation from the subject's point of view
+    pub other_label: String,  // the far endpoint's title, falling back to its key
+    pub role: String,         // far end's role, "" when unset
+    pub multiplicity: String, // far end's multiplicity, "" when unset or trivial "1"
 }
 
 /// The flattened read model the panel renders.
@@ -213,19 +223,44 @@ pub fn build_view(model: &Model, subject: &Subject) -> Option<InspectorView> {
     };
     let mut associations = Vec::new();
     for edge in &model.edges {
-        if &edge.source == key {
-            associations.push(AssocRow {
-                kind: edge.kind.as_str().to_string(),
-                direction: "->",
-                other_label: node_label(&edge.target),
-            });
-        } else if &edge.target == key {
-            associations.push(AssocRow {
-                kind: edge.kind.as_str().to_string(),
-                direction: "<-",
-                other_label: node_label(&edge.source),
-            });
+        // uml.Note anchor, not a real relationship (mirrors the web skip).
+        if edge.kind == RelationshipKind::Annotates {
+            continue;
         }
+        let outgoing = &edge.source == key;
+        let incoming = &edge.target == key;
+        if !outgoing && !incoming {
+            continue;
+        }
+        let dir = if edge.bidirectional
+            || (edge.from_end.navigable == Some(true) && edge.to_end.navigable == Some(true))
+        {
+            AssocDir::Bi
+        } else if outgoing {
+            AssocDir::Out
+        } else {
+            AssocDir::In
+        };
+        // Role + multiplicity read from the FAR end.
+        let far_end = if outgoing {
+            &edge.to_end
+        } else {
+            &edge.from_end
+        };
+        let far_key = if outgoing { &edge.target } else { &edge.source };
+        let role = far_end.role.clone().unwrap_or_default();
+        // Hide a bare "1" like the attribute rows do.
+        let multiplicity = match &far_end.multiplicity {
+            Some(m) if m.as_str() != "1" => m.as_str().to_string(),
+            _ => String::new(),
+        };
+        associations.push(AssocRow {
+            kind: edge.kind.as_str().to_string(),
+            dir,
+            other_label: node_label(far_key),
+            role,
+            multiplicity,
+        });
     }
 
     Some(InspectorView {
@@ -309,8 +344,11 @@ mod tests {
         assert_eq!(view.associations.len(), 1);
         let assoc = &view.associations[0];
         assert_eq!(assoc.kind, "associates");
-        assert_eq!(assoc.direction, "->");
+        assert_eq!(assoc.dir, AssocDir::Out);
         assert_eq!(assoc.other_label, "Customer");
+        // Far end (to_end = "1 customer"): role kept, trivial "1" multiplicity hidden.
+        assert_eq!(assoc.role, "customer");
+        assert_eq!(assoc.multiplicity, "");
     }
 
     #[test]
@@ -321,8 +359,93 @@ mod tests {
         assert_eq!(view.associations.len(), 1);
         let assoc = &view.associations[0];
         assert_eq!(assoc.kind, "associates");
-        assert_eq!(assoc.direction, "<-");
+        assert_eq!(assoc.dir, AssocDir::In);
         assert_eq!(assoc.other_label, "Order");
+        // Far end (from_end = "1 order").
+        assert_eq!(assoc.role, "order");
+        assert_eq!(assoc.multiplicity, "");
+    }
+
+    #[test]
+    fn classifier_projects_bidirectional_association() {
+        use waml::model::{Edge, RelEnd, RelationshipKind};
+        let mut model = mini();
+        let order = key_for(&model, "Order");
+        let gateway = key_for(&model, "PaymentGateway");
+        model.edges.push(Edge {
+            source: order.clone(),
+            target: gateway,
+            kind: RelationshipKind::Associates,
+            name: None,
+            from_end: RelEnd::default(),
+            to_end: RelEnd::default(),
+            bidirectional: true,
+        });
+        let view = build_view(&model, &Subject::Classifier(order)).unwrap();
+        let bi = view
+            .associations
+            .iter()
+            .find(|r| r.dir == AssocDir::Bi)
+            .expect("a bidirectional row projected");
+        assert_eq!(bi.other_label, "PaymentGateway");
+        assert_eq!(bi.kind, "associates");
+    }
+
+    #[test]
+    fn classifier_projects_far_end_role_and_multiplicity() {
+        use waml::model::{Edge, RelEnd, RelationshipKind};
+        use waml::multiplicity::Multiplicity;
+        let mut model = mini();
+        let order = key_for(&model, "Order");
+        let gateway = key_for(&model, "PaymentGateway");
+        model.edges.push(Edge {
+            source: order.clone(),
+            target: gateway,
+            kind: RelationshipKind::Aggregates,
+            name: None,
+            from_end: RelEnd::default(),
+            to_end: RelEnd {
+                multiplicity: Multiplicity::parse("0..1"),
+                role: Some("buyer".to_string()),
+                navigable: None,
+            },
+            bidirectional: false,
+        });
+        let view = build_view(&model, &Subject::Classifier(order)).unwrap();
+        let agg = view
+            .associations
+            .iter()
+            .find(|r| r.kind == "aggregates")
+            .expect("the aggregates row projected");
+        assert_eq!(agg.dir, AssocDir::Out);
+        assert_eq!(agg.role, "buyer");
+        assert_eq!(agg.multiplicity, "0..1");
+    }
+
+    #[test]
+    fn annotates_edges_are_skipped() {
+        use waml::model::{Edge, RelEnd, RelationshipKind};
+        let mut model = mini();
+        let order = key_for(&model, "Order");
+        let gateway = key_for(&model, "PaymentGateway");
+        let before = build_view(&model, &Subject::Classifier(order.clone()))
+            .unwrap()
+            .associations
+            .len();
+        model.edges.push(Edge {
+            source: order.clone(),
+            target: gateway,
+            kind: RelationshipKind::Annotates,
+            name: None,
+            from_end: RelEnd::default(),
+            to_end: RelEnd::default(),
+            bidirectional: false,
+        });
+        let after = build_view(&model, &Subject::Classifier(order))
+            .unwrap()
+            .associations
+            .len();
+        assert_eq!(before, after, "an annotates edge must not project a row");
     }
 
     #[test]
