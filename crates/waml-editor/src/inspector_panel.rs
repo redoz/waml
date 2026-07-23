@@ -35,6 +35,7 @@ use crate::node_style::{accent_bucket, AccentBucket};
 use crate::panel_glass::PanelGlass;
 use crate::popup::base::PopupResult;
 use crate::popup::select::{SelectItem, SelectLead};
+use crate::relationship_card::RelationshipCardViewWidgetRefExt;
 use crate::section_heading::SectionHeadingWidgetRefExt;
 use crate::select_box::SelectBox;
 use crate::tree::kind_of;
@@ -160,20 +161,13 @@ script_mod! {
             }
 
             rel_heading := SectionHeading { }
-            // INTERIM (Task 4 replaces with a FlatList<RelationshipCardView>):
-            // the relationship rows joined as one dim multi-line label.
-            rel_lines := Label {
-                text: ""
-                draw_text +: {
-                    color: atlas.text_dim
-                    text_style: TextStyle{
-                        font_size: 11
-                        font_family: FontFamily{
-                            latin := FontMember{res: crate_resource("self:resources/fonts/IBM_Plex_Sans/IBMPlexSans-Regular.ttf") asc: -0.1 desc: 0.0}
-                        }
-                        line_spacing: 1.5
-                    }
-                }
+            rel_list := FlatList {
+                width: Fill
+                height: Fit
+                flow: Down
+                spacing: 8.0
+
+                Row := mod.widgets.RelationshipCardView { }
             }
 
             desc_heading := SectionHeading { }
@@ -589,6 +583,7 @@ impl Widget for Inspector {
         // scrim (which painted last, over everything). See `panel_glass`.
         self.panel.draw(cx, &mut self.view.draw_bg);
         let attr_list_uid = self.view.widget(cx, ids!(body.attr_list)).widget_uid();
+        let rel_list_uid = self.view.widget(cx, ids!(body.rel_list)).widget_uid();
         while let Some(item) = self.view.draw_walk(cx, scope, walk).step() {
             if !show_body {
                 continue;
@@ -605,6 +600,24 @@ impl Widget for Inspector {
                             rv.set_name(cx, &name);
                             rv.set_ty(cx, &ty);
                             rv.set_mult(cx, &mult);
+                            row.draw_all(cx, &mut Scope::empty());
+                        }
+                    }
+                }
+            }
+            if item.widget_uid() == rel_list_uid {
+                if let Some(view) = self.proj.clone() {
+                    if let Some(mut list) = item.as_flat_list().borrow_mut() {
+                        for (i, assoc) in view.associations.iter().enumerate() {
+                            let item_id = LiveId::from_str(&format!(
+                                "{}-{}-{}",
+                                i, assoc.kind, assoc.other_label
+                            ));
+                            let row = list.item(cx, item_id, id!(Row)).unwrap();
+                            let rv = row.as_relationship_card_view();
+                            rv.set_glyph(cx, dir_glyph(assoc.dir));
+                            rv.set_name(cx, &assoc.other_label);
+                            rv.set_meta(cx, &meta_line(assoc));
                             row.draw_all(cx, &mut Scope::empty());
                         }
                     }
@@ -805,35 +818,18 @@ impl Inspector {
                 .set_text(cx, "ATTRIBUTES");
         }
 
-        // RELATIONSHIPS (interim joined lines; Task 4 swaps for a FlatList).
         let has_rels = !view.associations.is_empty();
         self.view
             .widget(cx, ids!(body.rel_heading))
             .set_visible(cx, has_rels);
         self.view
-            .widget(cx, ids!(body.rel_lines))
+            .widget(cx, ids!(body.rel_list))
             .set_visible(cx, has_rels);
         if has_rels {
             self.view
                 .widget(cx, ids!(body.rel_heading))
                 .as_section_heading()
                 .set_text(cx, "RELATIONSHIPS");
-            let joined = view
-                .associations
-                .iter()
-                .map(|r| {
-                    format!(
-                        "{} {}  \u{b7}  {}",
-                        dir_glyph(r.dir),
-                        r.other_label,
-                        meta_line(r)
-                    )
-                })
-                .collect::<Vec<_>>()
-                .join("\n");
-            self.view
-                .label(cx, ids!(body.rel_lines))
-                .set_text(cx, &joined);
         }
 
         // DESCRIPTION (always shown so there is an affordance to add one).

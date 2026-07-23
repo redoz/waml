@@ -1602,6 +1602,7 @@ impl AppMain for App {
         // resolves `mod.widgets.*` eagerly at `use`-time, not lazily.
         crate::section_heading::script_mod(vm);
         crate::attr_row::script_mod(vm);
+        crate::relationship_card::script_mod(vm);
         crate::inspector_panel::script_mod(vm);
         crate::doc_tabs::script_mod(vm);
         crate::diagram_switcher::script_mod(vm);
