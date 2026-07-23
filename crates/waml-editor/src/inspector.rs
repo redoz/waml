@@ -515,6 +515,51 @@ mod tests {
         assert_eq!(c, view.title, "an unedited subject falls back to the model");
     }
 
+    /// `mini()` with one named group (`Sales` = Order + Customer) pushed onto the
+    /// `orders-diagram` diagram, alongside the parser-produced implicit (`""`)
+    /// group. The on-disk fixture is untouched, so scene/layout tests are
+    /// unaffected. Used by the group/edge tests below.
+    fn mini_with_group() -> Model {
+        let mut model = mini();
+        let order = key_for(&model, "Order");
+        let customer = key_for(&model, "Customer");
+        let diagram = model
+            .diagrams
+            .iter_mut()
+            .find(|d| d.key == "orders-diagram")
+            .expect("mini has the orders-diagram");
+        diagram.groups.push(waml::model::DiagramGroup {
+            name: "Sales".to_string(),
+            members: vec![order, customer],
+            children: Vec::new(),
+        });
+        model
+    }
+
+    #[test]
+    fn mini_with_group_shapes_the_diagram() {
+        let model = mini_with_group();
+        let diagram = model
+            .diagrams
+            .iter()
+            .find(|d| d.key == "orders-diagram")
+            .expect("mini has the orders-diagram");
+        // The named "Sales" group holds Order + Customer.
+        let sales = diagram
+            .groups
+            .iter()
+            .find(|g| g.name == "Sales")
+            .expect("Sales group present");
+        assert_eq!(sales.members.len(), 2, "Sales holds Order + Customer");
+        // The parser's implicit ("") group is still present (holds the flat members).
+        assert!(
+            diagram.groups.iter().any(|g| g.name.is_empty()),
+            "implicit unnamed group present"
+        );
+        // The on-disk fixture is untouched: still exactly three classifiers.
+        assert_eq!(model.nodes.len(), 3);
+    }
+
     fn node_keys(model: &Model) -> Vec<String> {
         model.nodes.iter().map(|n| n.key.clone()).collect()
     }
