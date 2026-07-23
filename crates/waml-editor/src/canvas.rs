@@ -426,6 +426,25 @@ pub fn zone_placed(z: Zone) -> Placed {
     Placed { dir: Some(dir) }
 }
 
+/// The placement relations in scope for the drag overlay: those touching either
+/// the dragged node or the hovered target (Feature 2 scope — dragged-node +
+/// hover-target only, not the whole diagram). Pure.
+fn relations_in_scope<'a>(
+    relations: &'a [crate::scene::SceneRelation],
+    dragged_key: &str,
+    target_key: &str,
+) -> Vec<&'a crate::scene::SceneRelation> {
+    relations
+        .iter()
+        .filter(|r| {
+            r.subject == dragged_key
+                || r.reference == dragged_key
+                || r.subject == target_key
+                || r.reference == target_key
+        })
+        .collect()
+}
+
 /// The DSL keyword for a `Direction`, for the live readout.
 fn dir_word(d: waml::syntax::Direction) -> &'static str {
     use waml::syntax::Direction::*;
@@ -1094,8 +1113,37 @@ impl GraphCanvas {
         self.fill_rect(cx, os.pos.x, os.pos.y, gt, os.size.y, grey);
         self.fill_rect(cx, os.pos.x + os.size.x - gt, os.pos.y, gt, os.size.y, grey);
 
-        // Dock compass, centered on the target node (only while one is armed).
+        // Relation overlay + dock compass, centered on the target node (only
+        // while one is armed). The overlay draws the placement relations
+        // touching the dragged node or the hovered target, so a drag makes the
+        // diagram's existing structure legible before it commits.
         if let Some(ti) = self.drag_target {
+            let target_key = self.scene.nodes[ti].key.clone();
+            // Resolve to owned node-index pairs first: `relations_in_scope`
+            // borrows `self.scene.relations` immutably, which must end before
+            // `fill_rect` (a `&mut self` method) draws each leg.
+            let legs: Vec<(usize, usize)> =
+                relations_in_scope(&self.scene.relations, &a_key, &target_key)
+                    .into_iter()
+                    .filter_map(|rel| {
+                        let si = self.scene.nodes.iter().position(|n| n.key == rel.subject)?;
+                        let ri = self
+                            .scene
+                            .nodes
+                            .iter()
+                            .position(|n| n.key == rel.reference)?;
+                        Some((si, ri))
+                    })
+                    .collect();
+            for (si, ri) in legs {
+                let a = self.node_screen_center(si);
+                let b = self.node_screen_center(ri);
+                // Orthogonal L from reference (b) to subject (a): horizontal
+                // leg then vertical leg, 2px slate.
+                let ind = vec4(0.55, 0.62, 0.72, 0.7);
+                self.fill_rect(cx, a.x.min(b.x), b.y, (a.x - b.x).abs(), 2.0, ind);
+                self.fill_rect(cx, a.x, a.y.min(b.y), 2.0, (a.y - b.y).abs(), ind);
+            }
             let center = self.node_screen_center(ti);
             self.draw_compass(cx, center, self.compass_zone);
         }
@@ -1422,6 +1470,35 @@ mod tests {
         assert_eq!(zone_placed(Zone::Right).dir, Some(RightOf));
         assert_eq!(zone_placed(Zone::Top).dir, Some(Above));
         assert_eq!(zone_placed(Zone::Bottom).dir, Some(Below));
+    }
+
+    #[test]
+    fn relations_in_scope_keeps_only_relations_touching_dragged_or_target() {
+        use crate::scene::SceneRelation;
+        use waml::syntax::Direction;
+        let rels = vec![
+            SceneRelation {
+                subject: "order".into(),
+                reference: "customer".into(),
+                dir: Direction::LeftOf,
+            },
+            SceneRelation {
+                subject: "payment-gateway".into(),
+                reference: "order".into(),
+                dir: Direction::Below,
+            },
+            SceneRelation {
+                subject: "invoice".into(),
+                reference: "shipment".into(),
+                dir: Direction::Above,
+            },
+        ];
+        // Dragging `payment-gateway` over target `customer`.
+        let got = relations_in_scope(&rels, "payment-gateway", "customer");
+        // order<->customer touches the target; payment-gateway<->order touches the
+        // dragged node; invoice<->shipment touches neither.
+        assert_eq!(got.len(), 2);
+        assert!(got.iter().all(|r| r.subject != "invoice"));
     }
 
     #[test]
