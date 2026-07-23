@@ -7,7 +7,7 @@ use crate::nav::NavState;
 use crate::popup::base::PopupResult;
 use crate::popup::root::{MenuOpen, PopupRoot, PopupSpec, RadialOpen};
 use crate::popup::select::{SelectItem, SelectLead};
-use crate::scene::{build_focus_scene, build_scene};
+use crate::scene::build_scene;
 use makepad_widgets::*;
 use std::collections::HashMap;
 use std::collections::HashSet;
@@ -318,10 +318,9 @@ pub struct App {
     #[rust]
     nav_filter_ids: Vec<(LiveId, Option<crate::tree::TreeKind>)>,
     /// One live view object per open tab, keyed by `DocTab::id`. Populated as
-    /// diagram tabs activate; pruned when a tab closes (`relay_outcome`) or
-    /// its base diagram is swapped (`switch_diagram`). Classifier tabs don't
-    /// populate this yet -- they still run the legacy inline path until
-    /// Task 4.
+    /// tabs (diagram and classifier-preview alike) activate; pruned when a
+    /// tab closes (`relay_outcome`) or its base diagram is swapped
+    /// (`switch_diagram`).
     #[rust]
     views: HashMap<LiveId, Box<dyn crate::doc_view::DocView>>,
 }
@@ -364,29 +363,12 @@ impl App {
                 body.set_tool_dock_visible(cx, view.wants_tooldock());
             }
             TabKind::Classifier => {
-                let scene = build_focus_scene(&self.model, &active.key);
-                if let Some(mut canvas) = body.canvas(cx).borrow_mut::<crate::canvas::GraphCanvas>()
-                {
-                    canvas.set_focus(cx, scene);
-                }
-                if let Some(mut inspector) = body
-                    .inspector(cx)
-                    .borrow_mut::<crate::inspector_panel::Inspector>()
-                {
-                    inspector.set_subject(cx, &self.model, Subject::Classifier(active.key.clone()));
-                    // Previewing a classifier/package (not a diagram): no
-                    // diagram element-picker.
-                    inspector.set_picker_visible(cx, false);
-                }
-                if let Some(mut toolbar) =
-                    body.selection_toolbar(cx)
-                        .borrow_mut::<crate::selection_toolbar::SelectionToolbar>()
-                {
-                    // Single-classifier focus only in this mock -- always 1.
-                    toolbar.set_selection(cx, Some(1));
-                }
-                // Previewing a classifier/package: no tool dock.
-                self.set_diagram_toolbars(cx, false);
+                let view = self
+                    .views
+                    .entry(active.id)
+                    .or_insert_with(|| crate::doc_view::make_view(&active));
+                view.sync(cx, &body, &self.model);
+                body.set_tool_dock_visible(cx, view.wants_tooldock());
             }
         }
         self.sync_statusbar(cx);
@@ -1321,27 +1303,24 @@ impl MatchEvent for App {
             return;
         }
 
-        // Diagram tab: the active `ClassDiagramView` fully owns its actions
-        // (inline-edit commit, element-picker open, tool dock, canvas pointer
-        // actions, selection toolbar) via `DocView::handle`; the shell only
-        // relays the returned `ViewOutcome`. Classifier tabs (and no active
-        // tab) fall through to the legacy blocks below, unchanged, until
-        // Task 4 migrates `ClassifierPreviewView` onto the same seam.
+        // Doc tab: the active view (`ClassDiagramView`/`ClassifierPreviewView`)
+        // fully owns its actions (inline-edit commit, element-picker open,
+        // tool dock, canvas pointer actions, selection toolbar) via
+        // `DocView::handle`; the shell only relays the returned `ViewOutcome`.
+        // No active tab falls through to the legacy blocks below, unchanged.
         let mut diagram_delegated = false;
         if let Some(active) = self.tabs.active_tab().cloned() {
-            if active.kind == TabKind::Diagram {
-                diagram_delegated = true;
-                let view = self
-                    .views
-                    .entry(active.id)
-                    .or_insert_with(|| crate::doc_view::make_view(&active));
-                if let Some(v) = view.downcast_diagram() {
-                    v.set_active(active.key.clone(), active.title.clone());
-                }
-                let outcome = view.handle(cx, &body, actions, &self.model);
-                if self.relay_outcome(cx, &active, outcome) {
-                    return;
-                }
+            diagram_delegated = true;
+            let view = self
+                .views
+                .entry(active.id)
+                .or_insert_with(|| crate::doc_view::make_view(&active));
+            if let Some(v) = view.downcast_diagram() {
+                v.set_active(active.key.clone(), active.title.clone());
+            }
+            let outcome = view.handle(cx, &body, actions, &self.model);
+            if self.relay_outcome(cx, &active, outcome) {
+                return;
             }
         }
 
@@ -1551,30 +1530,21 @@ impl MatchEvent for App {
         }
 
         if !diagram_delegated {
-            // Selection toolbar: `Delete` closes the focused classifier's doc
-            // tab (in-memory only -- the Model is never touched); `New Diagram`
-            // is a mock no-op (diagram creation is out of scope for this pass).
+            // Selection toolbar: `New Diagram` is a mock no-op (diagram
+            // creation is out of scope for this pass). `Delete` now flows
+            // entirely through the active view's `ViewOutcome::close_active`
+            // (relayed above) -- no active tab means no selection toolbar
+            // content to act on anyway, but the `NewDiagram` no-op stays
+            // reachable for the no-tab edge case.
             let toolbar_action = body
                 .selection_toolbar(cx)
                 .borrow_mut::<crate::selection_toolbar::SelectionToolbar>()
                 .and_then(|toolbar| toolbar.toolbar_action(actions));
-            match toolbar_action {
-                Some(crate::selection_toolbar::SelectionToolbarAction::Delete) => {
-                    if let Some(active) = self.tabs.active_tab() {
-                        if active.kind == TabKind::Classifier {
-                            let id = active.id;
-                            self.tabs.close(id);
-                            self.refresh_doc_tabs(cx);
-                            self.sync_active_tab(cx);
-                        }
-                    }
-                    return;
-                }
-                Some(crate::selection_toolbar::SelectionToolbarAction::NewDiagram) => {
-                    log!("selection toolbar: New Diagram (mock no-op)");
-                    return;
-                }
-                _ => {}
+            if let Some(crate::selection_toolbar::SelectionToolbarAction::NewDiagram) =
+                toolbar_action
+            {
+                log!("selection toolbar: New Diagram (mock no-op)");
+                return;
             }
         }
 
