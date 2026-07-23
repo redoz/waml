@@ -1304,6 +1304,32 @@ impl GraphCanvas {
         dvec2(s.pos.x + s.size.x * 0.5, s.pos.y + s.size.y * 0.5)
     }
 
+    /// Draw one placement relation as an orthogonal L connector between the
+    /// reference node (b) and the subject node (a) centers — horizontal leg then
+    /// vertical leg — plus a PLACEHOLDER direction glyph at the elbow. `color`
+    /// carries the weight/tint: calm slate for the persistent overlay, red for a
+    /// `conflicting` relation, brighter slate for the armed-drag emphasis. The
+    /// glyph is `dir_word` text standing in for final art (out of scope for v1).
+    /// Shared by the always-on overlay (`draw_relations_overlay`) and the
+    /// armed-drag overlay (`draw_drag_overlay`) so they never diverge.
+    fn draw_relation_connector(
+        &mut self,
+        cx: &mut Cx2d,
+        subject_idx: usize,
+        reference_idx: usize,
+        dir: waml::syntax::Direction,
+        color: Vec4,
+    ) {
+        let a = self.node_screen_center(subject_idx);
+        let b = self.node_screen_center(reference_idx);
+        self.fill_rect(cx, a.x.min(b.x), b.y, (a.x - b.x).abs(), 2.0, color);
+        self.fill_rect(cx, a.x, a.y.min(b.y), 2.0, (a.y - b.y).abs(), color);
+        // Placeholder direction glyph at the elbow corner (a.x, b.y).
+        self.draw_mono_dim.text_style.font_size = 11.0;
+        self.draw_mono_dim
+            .draw_abs(cx, dvec2(a.x + 4.0, b.y - 6.0), dir_word(dir));
+    }
+
     /// SPIKE (drag-place, throwaway): draw the live placement overlay -- the
     /// grey origin slot the node left behind, the dock compass over the target
     /// node (eight zones, the hovered one lit), the dragged ghost, and a DSL
@@ -1346,7 +1372,7 @@ impl GraphCanvas {
             // Resolve to owned node-index pairs first: `relations_in_scope`
             // borrows `self.scene.relations` immutably, which must end before
             // `fill_rect` (a `&mut self` method) draws each leg.
-            let legs: Vec<(usize, usize)> =
+            let legs: Vec<(usize, usize, waml::syntax::Direction)> =
                 relations_in_scope(&self.scene.relations, &a_key, &target_key)
                     .into_iter()
                     .filter_map(|rel| {
@@ -1356,17 +1382,13 @@ impl GraphCanvas {
                             .nodes
                             .iter()
                             .position(|n| n.key == rel.reference)?;
-                        Some((si, ri))
+                        Some((si, ri, rel.dir))
                     })
                     .collect();
-            for (si, ri) in legs {
-                let a = self.node_screen_center(si);
-                let b = self.node_screen_center(ri);
-                // Orthogonal L from reference (b) to subject (a): horizontal
-                // leg then vertical leg, 2px slate.
+            for (si, ri, dir) in legs {
+                // Armed-drag emphasis: brighter slate than the persistent overlay.
                 let ind = vec4(0.55, 0.62, 0.72, 0.7);
-                self.fill_rect(cx, a.x.min(b.x), b.y, (a.x - b.x).abs(), 2.0, ind);
-                self.fill_rect(cx, a.x, a.y.min(b.y), 2.0, (a.y - b.y).abs(), ind);
+                self.draw_relation_connector(cx, si, ri, dir, ind);
             }
             let center = self.node_screen_center(ti);
             self.draw_compass(cx, center, self.compass_zone);
