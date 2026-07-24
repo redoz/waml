@@ -46,6 +46,7 @@ use waml::model::{ElementType, Model};
 script_mod! {
     use mod.prelude.widgets_internal.*
     use mod.atlas
+    use mod.fonts
     use mod.widgets.*
     use mod.text.*
 
@@ -141,27 +142,16 @@ script_mod! {
                 text: ""
                 draw_text +: {
                     color: atlas.accent
-                    text_style: TextStyle{
-                        font_size: 11
-                        font_family: FontFamily{
-                            latin := FontMember{res: crate_resource("self:resources/fonts/IBM_Plex_Sans/IBMPlexSans-Medium.ttf") asc: -0.1 desc: 0.0}
-                        }
-                        line_spacing: 1.2
-                    }
+                    text_style: fonts.text_label
                 }
             }
-            // Stereotype chips ("<<entity>>"): dim, Regular 11.
+            // Stereotype chips ("<<entity>>"): dim, label-11 (was Regular; the
+            // shared token is Medium, a touch heavier than before).
             stereo := Label {
                 text: ""
                 draw_text +: {
                     color: atlas.text_dim
-                    text_style: TextStyle{
-                        font_size: 11
-                        font_family: FontFamily{
-                            latin := FontMember{res: crate_resource("self:resources/fonts/IBM_Plex_Sans/IBMPlexSans-Regular.ttf") asc: -0.1 desc: 0.0}
-                        }
-                        line_spacing: 1.2
-                    }
+                    text_style: fonts.text_label
                 }
             }
 
@@ -242,13 +232,7 @@ script_mod! {
                     text: ""
                     draw_text +: {
                         color: atlas.text
-                        text_style: TextStyle{
-                            font_size: 12
-                            font_family: FontFamily{
-                                latin := FontMember{res: crate_resource("self:resources/fonts/IBM_Plex_Sans/IBMPlexSans-Medium.ttf") asc: -0.1 desc: 0.0}
-                            }
-                            line_spacing: 1.2
-                        }
+                        text_style: fonts.text_body
                     }
                 }
             }
@@ -256,33 +240,15 @@ script_mod! {
 
         draw_title +: {
             color: atlas.text
-            text_style: TextStyle{
-                font_size: 16
-                font_family: FontFamily{
-                    latin := FontMember{res: crate_resource("self:resources/fonts/IBM_Plex_Sans/IBMPlexSans-Regular.ttf") asc: -0.1 desc: 0.0}
-                }
-                line_spacing: 1.2
-            }
+            text_style: fonts.text_heading
         }
         draw_label +: {
             color: atlas.text_dim
-            text_style: TextStyle{
-                font_size: 12
-                font_family: FontFamily{
-                    latin := FontMember{res: crate_resource("self:resources/fonts/IBM_Plex_Sans/IBMPlexSans-Regular.ttf") asc: -0.1 desc: 0.0}
-                }
-                line_spacing: 1.2
-            }
+            text_style: fonts.text_label
         }
         draw_dim +: {
             color: atlas.text_dim
-            text_style: TextStyle{
-                font_size: 12
-                font_family: FontFamily{
-                    latin := FontMember{res: crate_resource("self:resources/fonts/IBM_Plex_Sans/IBMPlexSans-Regular.ttf") asc: -0.1 desc: 0.0}
-                }
-                line_spacing: 1.2
-            }
+            text_style: fonts.text_label
         }
         draw_field_bg +: { color: atlas.field_bg }
         // Relationship-card background: a faint field-bg fill ringed by a
@@ -302,24 +268,15 @@ script_mod! {
         // Far-end name (line 1): brighter than the dim meta run.
         draw_name +: {
             color: atlas.text
-            text_style: TextStyle{
-                font_size: 13
-                font_family: FontFamily{
-                    latin := FontMember{res: crate_resource("self:resources/fonts/IBM_Plex_Sans/IBMPlexSans-Regular.ttf") asc: -0.1 desc: 0.0}
-                }
-                line_spacing: 1.2
-            }
+            text_style: fonts.text_heading
         }
-        // Direction glyph (line 1 lead): accent-colored orientation cue.
+        // Direction glyph (line 1 lead): accent-colored orientation cue. 14->13
+        // collapse onto the shared heading token; watch this glyph on live
+        // verification -- if the arrow degrades under the SemiBold cut, revert
+        // to its own TextStyle and list it as a documented exception (Task 11).
         draw_glyph +: {
             color: atlas.accent
-            text_style: TextStyle{
-                font_size: 14
-                font_family: FontFamily{
-                    latin := FontMember{res: crate_resource("self:resources/fonts/IBM_Plex_Sans/IBMPlexSans-Regular.ttf") asc: -0.1 desc: 0.0}
-                }
-                line_spacing: 1.2
-            }
+            text_style: fonts.text_heading
         }
     }
 }
