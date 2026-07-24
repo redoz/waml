@@ -603,6 +603,10 @@ fn placement_is_pair(stmt: &waml::syntax::LayoutStatement, subject: &str, refere
 /// ordered pair, then push the hypothetical one), re-solve, and report whether
 /// the solver emits a `LayoutConflict`. The solver is the ground truth — it
 /// catches transitive / cycle contradictions a hand-rolled rule would miss.
+///
+/// Production callers want the candidate layout too and go through
+/// `placement_preview`; this verdict-only wrapper is the tests' entry point.
+#[cfg(test)]
 pub fn placement_would_conflict(
     model: &Model,
     diagram: &Diagram,
@@ -611,6 +615,22 @@ pub fn placement_would_conflict(
     dir: waml::syntax::Direction,
     expanded: &std::collections::HashSet<String>,
 ) -> bool {
+    placement_preview(model, diagram, subject_slug, reference_slug, dir, expanded).0
+}
+
+/// The same speculative solve as `placement_would_conflict`, but keeping the
+/// candidate layout it produced (node key -> world rect) instead of throwing it
+/// away. The drag-time hover preview animates the canvas into this layout, so
+/// the two callers share one solve: the compass reddens a zone from `.0` and the
+/// preview tweens toward `.1`.
+pub fn placement_preview(
+    model: &Model,
+    diagram: &Diagram,
+    subject_slug: &str,
+    reference_slug: &str,
+    dir: waml::syntax::Direction,
+    expanded: &std::collections::HashSet<String>,
+) -> (bool, std::collections::BTreeMap<String, Rect>) {
     use waml::diagnostic::DiagCode;
     use waml::syntax::{LayoutStatement, NameRef, Operand, OperandRef};
 
@@ -632,30 +652,16 @@ pub fn placement_would_conflict(
         directions: vec![dir],
     });
 
-    let diags = solve_diags(model, &scratch, expanded);
-    diags.iter().any(|d| d.code == DiagCode::LayoutConflict)
-}
-
-/// Run the solver for `diagram` and return only its diagnostics — no scene
-/// projection. `placement_would_conflict` re-solves a scratch clone through
-/// this for its speculative per-zone check, so it never re-enters
-/// `build_scene`. The `LayoutConflict` presence here is directly comparable to
-/// `build_scene`'s own `diags` (same `solve_diagram` source).
-fn solve_diags(
-    model: &Model,
-    diagram: &Diagram,
-    expanded: &std::collections::HashSet<String>,
-) -> Vec<Diagnostic> {
-    let sizes = crate::sizing::size_map(model, diagram, expanded);
+    // The scratch always carries at least this one placement, so it never takes
+    // the stress-default path -- solve it through the constraint solver directly.
+    let sizes = crate::sizing::size_map(model, &scratch, expanded);
     let edges: Vec<(BoxId, BoxId)> = drawable_edges(model)
         .into_iter()
         .map(|e| (BoxId::Node(e.source.clone()), BoxId::Node(e.target.clone())))
         .collect();
-    if use_stress_default(diagram) {
-        Vec::new()
-    } else {
-        solve_diagram(diagram, &edges, &sizes, &SolveConfig::default()).1
-    }
+    let (solved, diags) = solve_diagram(&scratch, &edges, &sizes, &SolveConfig::default());
+    let conflict = diags.iter().any(|d| d.code == DiagCode::LayoutConflict);
+    (conflict, solved.nodes)
 }
 
 /// Axis-aligned bounding box over all node and group rects, or `None` if empty.

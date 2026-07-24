@@ -332,32 +332,37 @@ impl DocView for ClassDiagramView {
                 subject_key,
                 reference_key,
             }) => {
-                // The compass just armed on a (new) target: speculatively solve
-                // each zone's placement against the active diagram and push the
-                // per-zone conflict verdict back to the canvas so it can redden
-                // the zones the solver would reject.
+                // The dial just armed on a (new) target: speculatively solve each
+                // zone's placement against the active diagram. The solve yields
+                // both the conflict verdict (redden the zones the solver would
+                // reject) and the candidate layout itself, which the canvas
+                // animates to on hover -- so previewing costs no extra solve.
                 if let Some(diagram) = model.diagrams.iter().find(|d| d.key == self.active_key) {
                     let subject = strip_md_key(&subject_key);
                     let reference = strip_md_key(&reference_key);
                     let mut red = Vec::new();
+                    let mut layouts = Vec::new();
                     for z in crate::canvas::COMPASS_ZONES {
                         if let Some(dir) = crate::canvas::zone_placed(z).dir {
-                            if crate::scene::placement_would_conflict(
+                            let (conflict, nodes) = crate::scene::placement_preview(
                                 model,
                                 diagram,
                                 &subject,
                                 &reference,
                                 dir,
                                 &self.expanded,
-                            ) {
+                            );
+                            if conflict {
                                 red.push(z);
                             }
+                            layouts.push((z, nodes));
                         }
                     }
                     if let Some(mut canvas) =
                         body.canvas(cx).borrow_mut::<crate::canvas::GraphCanvas>()
                     {
                         canvas.set_conflict_zones(cx, red);
+                        canvas.set_zone_layouts(cx, layouts);
                     }
                 }
                 return out;

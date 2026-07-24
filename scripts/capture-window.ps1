@@ -11,9 +11,14 @@
 #
 # Usage:
 #   pwsh -File scripts/capture-window.ps1 -Out shot.png [-Process waml-editor]
+#   pwsh -File scripts/capture-window.ps1 -Out shot.png -ProcessId 1234
+#
+# Pass -ProcessId when several editors are open (a dev session of your own
+# alongside the one under test) -- by-name picks whichever comes back first.
 param(
     [Parameter(Mandatory = $true)][string]$Out,
-    [string]$Process = "waml-editor"
+    [string]$Process = "waml-editor",
+    [int]$ProcessId = 0
 )
 
 Add-Type -AssemblyName System.Drawing
@@ -27,8 +32,9 @@ public class WinCap {
 }
 "@
 
-$p = Get-Process $Process -ErrorAction SilentlyContinue |
-    Where-Object { $_.MainWindowHandle -ne 0 } | Select-Object -First 1
+$p = if ($ProcessId) { Get-Process -Id $ProcessId -ErrorAction SilentlyContinue }
+     else { Get-Process $Process -ErrorAction SilentlyContinue }
+$p = $p | Where-Object { $_.MainWindowHandle -ne 0 } | Select-Object -First 1
 if (-not $p) { Write-Error "no window found for process '$Process'"; exit 1 }
 
 $hwnd = $p.MainWindowHandle
