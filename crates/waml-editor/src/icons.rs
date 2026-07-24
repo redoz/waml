@@ -3208,6 +3208,204 @@ script_mod! {
         }
     }
 
+    // Zoom in: magnifier with a + in the lens.
+    // Faithful port of resources/icons/zoom-in.svg via scripts/gen-icon.py.
+    mod.draw.IconZoomIn = mod.draw.DrawColor{
+        pixel: fn() {
+            let s = self.rect_size.x
+            let w = s * 0.068
+            let sdf = Sdf2d.viewport(self.pos * self.rect_size)
+            sdf.move_to(s * 0.7917, s * 0.4583)
+            sdf.arc_to(s * 0.4583, s * 0.4583, s * 0.3333, 0.0000, 3.1416)
+            sdf.arc_to(s * 0.4583, s * 0.4583, s * 0.3333, 3.1416, 6.2832)
+            sdf.close_path()
+            sdf.stroke(self.color, w)
+            sdf.move_to(s * 0.8750, s * 0.8750)
+            sdf.line_to(s * 0.6938, s * 0.6938)
+            sdf.stroke(self.color, w)
+            sdf.move_to(s * 0.4583, s * 0.3333)
+            sdf.line_to(s * 0.4583, s * 0.5833)
+            sdf.stroke(self.color, w)
+            sdf.move_to(s * 0.3333, s * 0.4583)
+            sdf.line_to(s * 0.5833, s * 0.4583)
+            sdf.stroke(self.color, w)
+            return sdf.result
+        }
+    }
+
+    // Zoom out: magnifier with a - in the lens.
+    // Faithful port of resources/icons/zoom-out.svg via scripts/gen-icon.py.
+    mod.draw.IconZoomOut = mod.draw.DrawColor{
+        pixel: fn() {
+            let s = self.rect_size.x
+            let w = s * 0.068
+            let sdf = Sdf2d.viewport(self.pos * self.rect_size)
+            sdf.move_to(s * 0.7917, s * 0.4583)
+            sdf.arc_to(s * 0.4583, s * 0.4583, s * 0.3333, 0.0000, 3.1416)
+            sdf.arc_to(s * 0.4583, s * 0.4583, s * 0.3333, 3.1416, 6.2832)
+            sdf.close_path()
+            sdf.stroke(self.color, w)
+            sdf.move_to(s * 0.8750, s * 0.8750)
+            sdf.line_to(s * 0.6938, s * 0.6938)
+            sdf.stroke(self.color, w)
+            sdf.move_to(s * 0.3333, s * 0.4583)
+            sdf.line_to(s * 0.5833, s * 0.4583)
+            sdf.stroke(self.color, w)
+            return sdf.result
+        }
+    }
+
+    // Maximize: four outward corner brackets -- fit the whole diagram.
+    // Faithful port of resources/icons/maximize.svg via scripts/gen-icon.py.
+    mod.draw.IconMaximize = mod.draw.DrawColor{
+        pixel: fn() {
+            let s = self.rect_size.x
+            let w = s * 0.068
+            let sdf = Sdf2d.viewport(self.pos * self.rect_size)
+            sdf.move_to(s * 0.3333, s * 0.1250)
+            sdf.line_to(s * 0.2083, s * 0.1250)
+            sdf.arc_to(s * 0.2083, s * 0.2083, s * 0.0833, -1.5708, -3.1416)
+            sdf.line_to(s * 0.1250, s * 0.3333)
+            sdf.stroke(self.color, w)
+            sdf.move_to(s * 0.8750, s * 0.3333)
+            sdf.line_to(s * 0.8750, s * 0.2083)
+            sdf.arc_to(s * 0.7917, s * 0.2083, s * 0.0833, 0.0000, -1.5708)
+            sdf.line_to(s * 0.6667, s * 0.1250)
+            sdf.stroke(self.color, w)
+            sdf.move_to(s * 0.1250, s * 0.6667)
+            sdf.line_to(s * 0.1250, s * 0.7917)
+            sdf.arc_to(s * 0.2083, s * 0.7917, s * 0.0833, 3.1416, 1.5708)
+            sdf.line_to(s * 0.3333, s * 0.8750)
+            sdf.stroke(self.color, w)
+            sdf.move_to(s * 0.6667, s * 0.8750)
+            sdf.line_to(s * 0.7917, s * 0.8750)
+            sdf.arc_to(s * 0.7917, s * 0.7917, s * 0.0833, 1.5708, 0.0000)
+            sdf.line_to(s * 0.8750, s * 0.6667)
+            sdf.stroke(self.color, w)
+            return sdf.result
+        }
+    }
+
+    // Scan search: scan brackets around a magnifier -- fit to selection.
+    // Faithful port of resources/icons/scan-search.svg via scripts/gen-icon.py.
+    mod.draw.IconScanSearch = mod.draw.DrawColor{
+        pixel: fn() {
+            let s = self.rect_size.x
+            let w = s * 0.068
+            let sdf = Sdf2d.viewport(self.pos * self.rect_size)
+            sdf.move_to(s * 0.1250, s * 0.2917)
+            sdf.line_to(s * 0.1250, s * 0.2083)
+            sdf.arc_to(s * 0.2083, s * 0.2083, s * 0.0833, 3.1416, 4.7124)
+            sdf.line_to(s * 0.2917, s * 0.1250)
+            sdf.stroke(self.color, w)
+            sdf.move_to(s * 0.7083, s * 0.1250)
+            sdf.line_to(s * 0.7917, s * 0.1250)
+            sdf.arc_to(s * 0.7917, s * 0.2083, s * 0.0833, -1.5708, 0.0000)
+            sdf.line_to(s * 0.8750, s * 0.2917)
+            sdf.stroke(self.color, w)
+            sdf.move_to(s * 0.8750, s * 0.7083)
+            sdf.line_to(s * 0.8750, s * 0.7917)
+            sdf.arc_to(s * 0.7917, s * 0.7917, s * 0.0833, 0.0000, 1.5708)
+            sdf.line_to(s * 0.7083, s * 0.8750)
+            sdf.stroke(self.color, w)
+            sdf.move_to(s * 0.2917, s * 0.8750)
+            sdf.line_to(s * 0.2083, s * 0.8750)
+            sdf.arc_to(s * 0.2083, s * 0.7917, s * 0.0833, 1.5708, 3.1416)
+            sdf.line_to(s * 0.1250, s * 0.7083)
+            sdf.stroke(self.color, w)
+            sdf.move_to(s * 0.6250, s * 0.5000)
+            sdf.arc_to(s * 0.5000, s * 0.5000, s * 0.1250, 0.0000, 3.1416)
+            sdf.arc_to(s * 0.5000, s * 0.5000, s * 0.1250, 3.1416, 6.2832)
+            sdf.close_path()
+            sdf.stroke(self.color, w)
+            sdf.move_to(s * 0.6667, s * 0.6667)
+            sdf.line_to(s * 0.5875, s * 0.5875)
+            sdf.stroke(self.color, w)
+            return sdf.result
+        }
+    }
+
+    // Square dashed: a dashed-outline square -- the hidden group borders the
+    // x-ray toggle reveals.
+    // Faithful port of resources/icons/square-dashed.svg via scripts/gen-icon.py.
+    mod.draw.IconSquareDashed = mod.draw.DrawColor{
+        pixel: fn() {
+            let s = self.rect_size.x
+            let w = s * 0.068
+            let sdf = Sdf2d.viewport(self.pos * self.rect_size)
+            sdf.move_to(s * 0.2083, s * 0.1250)
+            sdf.arc_to(s * 0.2083, s * 0.2083, s * 0.0833, -1.5708, -3.1416)
+            sdf.stroke(self.color, w)
+            sdf.move_to(s * 0.7917, s * 0.1250)
+            sdf.arc_to(s * 0.7917, s * 0.2083, s * 0.0833, -1.5708, 0.0000)
+            sdf.stroke(self.color, w)
+            sdf.move_to(s * 0.8750, s * 0.7917)
+            sdf.arc_to(s * 0.7917, s * 0.7917, s * 0.0833, 0.0000, 1.5708)
+            sdf.stroke(self.color, w)
+            sdf.move_to(s * 0.2083, s * 0.8750)
+            sdf.arc_to(s * 0.2083, s * 0.7917, s * 0.0833, 1.5708, 3.1416)
+            sdf.stroke(self.color, w)
+            sdf.move_to(s * 0.3750, s * 0.1250)
+            sdf.line_to(s * 0.4167, s * 0.1250)
+            sdf.stroke(self.color, w)
+            sdf.move_to(s * 0.3750, s * 0.8750)
+            sdf.line_to(s * 0.4167, s * 0.8750)
+            sdf.stroke(self.color, w)
+            sdf.move_to(s * 0.5833, s * 0.1250)
+            sdf.line_to(s * 0.6250, s * 0.1250)
+            sdf.stroke(self.color, w)
+            sdf.move_to(s * 0.5833, s * 0.8750)
+            sdf.line_to(s * 0.6250, s * 0.8750)
+            sdf.stroke(self.color, w)
+            sdf.move_to(s * 0.1250, s * 0.3750)
+            sdf.line_to(s * 0.1250, s * 0.4167)
+            sdf.stroke(self.color, w)
+            sdf.move_to(s * 0.8750, s * 0.3750)
+            sdf.line_to(s * 0.8750, s * 0.4167)
+            sdf.stroke(self.color, w)
+            sdf.move_to(s * 0.1250, s * 0.5833)
+            sdf.line_to(s * 0.1250, s * 0.6250)
+            sdf.stroke(self.color, w)
+            sdf.move_to(s * 0.8750, s * 0.5833)
+            sdf.line_to(s * 0.8750, s * 0.6250)
+            sdf.stroke(self.color, w)
+            return sdf.result
+        }
+    }
+
+    // Ruler: the CAD dimension-constraint metaphor -- constraint visibility.
+    // Faithful port of resources/icons/ruler.svg via scripts/gen-icon.py.
+    mod.draw.IconRuler = mod.draw.DrawColor{
+        pixel: fn() {
+            let s = self.rect_size.x
+            let w = s * 0.068
+            let sdf = Sdf2d.viewport(self.pos * self.rect_size)
+            sdf.move_to(s * 0.8875, s * 0.6375)
+            sdf.arc_to(s * 0.8169, s * 0.7083, s * 0.1000, -0.7871, 0.7871)
+            sdf.line_to(s * 0.7792, s * 0.8875)
+            sdf.arc_to(s * 0.7083, s * 0.8169, s * 0.1000, 0.7837, 2.3579)
+            sdf.line_to(s * 0.1125, s * 0.3625)
+            sdf.arc_to(s * 0.1837, s * 0.2917, s * 0.1004, 2.3586, 3.9246)
+            sdf.line_to(s * 0.2208, s * 0.1125)
+            sdf.arc_to(s * 0.2917, s * 0.1837, s * 0.1004, -2.3538, -0.7878)
+            sdf.close_path()
+            sdf.stroke(self.color, w)
+            sdf.move_to(s * 0.6042, s * 0.5208)
+            sdf.line_to(s * 0.6875, s * 0.4375)
+            sdf.stroke(self.color, w)
+            sdf.move_to(s * 0.4792, s * 0.3958)
+            sdf.line_to(s * 0.5625, s * 0.3125)
+            sdf.stroke(self.color, w)
+            sdf.move_to(s * 0.3542, s * 0.2708)
+            sdf.line_to(s * 0.4375, s * 0.1875)
+            sdf.stroke(self.color, w)
+            sdf.move_to(s * 0.7292, s * 0.6458)
+            sdf.line_to(s * 0.8125, s * 0.5625)
+            sdf.stroke(self.color, w)
+            return sdf.result
+        }
+    }
+
     mod.widgets.IconSetBase = #(IconSet::script_component(vm))
 
     // Each field is a `DrawColor` pointing at its icon shader; the accent tint
