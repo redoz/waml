@@ -290,7 +290,11 @@ pub fn relation_statement(r: &SceneRelation) -> String {
 
 /// Human-readable error-list text for a dropped constraint: the dropped
 /// statement, the statements it contradicts, and a one-line "these contradict"
-/// note (spec §4).
+/// note (spec §4). Superseded as the badge's error-list rendering by
+/// `popup::conflict_list::rows_of`'s per-row `relation_statement`s (grouped,
+/// deletable list); kept (not deleted) as a plain one-line summary form for a
+/// future non-interactive use (tooltip/log), per "add-only, prune later".
+#[allow(dead_code)]
 pub fn conflict_statement(c: &SceneConflict) -> String {
     let mut lines = vec![relation_statement(&c.dropped)];
     for w in &c.conflicts_with {
@@ -301,6 +305,11 @@ pub fn conflict_statement(c: &SceneConflict) -> String {
 
 /// Every node key involved in a conflict (dropped + all contradicting relations),
 /// for the fade-the-rest focus (spec §4). Not deduped — callers dedup as needed.
+/// Canvas now fades by an explicit key set (`set_conflict_focus_keys`, keyed
+/// off a single focused RELATION's two nodes, not a whole conflict group) --
+/// kept for a future group-scoped ("All", spec §7) fade that DOES want every
+/// participant, per "add-only, prune later".
+#[allow(dead_code)]
 pub fn conflict_participants(c: &SceneConflict) -> Vec<String> {
     let mut out = vec![c.dropped.subject.clone(), c.dropped.reference.clone()];
     for w in &c.conflicts_with {
