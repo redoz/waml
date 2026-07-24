@@ -28,6 +28,7 @@ script_mod! {
     use mod.prelude.widgets_internal.*
     use mod.atlas
     use mod.widgets.*
+    use mod.fonts
 
     mod.widgets.ProjectTreeBase = #(ProjectTree::register_widget(vm))
 
@@ -138,23 +139,11 @@ script_mod! {
 
         draw_title +: {
             color: atlas.text
-            text_style: TextStyle{
-                font_size: 16
-                font_family: FontFamily{
-                    latin := FontMember{res: crate_resource("self:resources/fonts/IBM_Plex_Sans/IBMPlexSans-Regular.ttf") asc: -0.1 desc: 0.0}
-                }
-                line_spacing: 1.2
-            }
+            text_style: fonts.text_heading
         }
         draw_dim +: {
             color: atlas.text_dim
-            text_style: TextStyle{
-                font_size: 12
-                font_family: FontFamily{
-                    latin := FontMember{res: crate_resource("self:resources/fonts/IBM_Plex_Sans/IBMPlexSans-Regular.ttf") asc: -0.1 desc: 0.0}
-                }
-                line_spacing: 1.2
-            }
+            text_style: fonts.text_label
         }
         // Search-field / type-chip pill background (Task 9). Glass like the
         // panel body: `opacity` scales the fill alpha so the pills read as
@@ -204,7 +193,7 @@ script_mod! {
                     // selected-row text the same dark ink instead of the
                     // FileTree default (white), which is unreadable on it.
                     color_active: atlas.text
-                    text_style: theme.font_regular{font_size: 10}
+                    text_style: fonts.text_menu
                 }
                 draw_bg +: {
                     // Transparent so the panel's translucent glass fill (and the
@@ -228,7 +217,7 @@ script_mod! {
                 draw_text +: {
                     color: atlas.text
                     color_active: atlas.text
-                    text_style: theme.font_regular{font_size: 10}
+                    text_style: fonts.text_menu
                 }
                 draw_bg +: {
                     // Transparent (see file_node): the glass fill shows through.
@@ -325,6 +314,10 @@ const TITLE_ROW_H: f64 = 34.0;
 const PAD: f64 = 10.0;
 const ICON: f64 = 16.0;
 const ICON_GAP: f64 = 10.0;
+// Scope-title trigger's trailing chevron glyph (replaces the old tofu `\u{2304}`
+// text character): gap after the label, and the glyph's square size.
+const TITLE_CHEV_GAP: f64 = 4.0;
+const TITLE_CHEV_SIZE: f64 = 14.0;
 // Vertical room (px) reserved above the FileTree body for the two-line
 // `Elsewhere` note. Must match the `note_band` View's height in the DSL.
 const NOTE_H: f64 = 40.0;
@@ -668,23 +661,40 @@ impl Widget for ProjectTree {
         // inspector's pin/caret glyphs).
         let dim = self.draw_dim.color;
 
-        // Scope-title trigger: label + a small down-chevron, left-aligned.
+        // Scope-title trigger: label + a small down/up-chevron SDF glyph
+        // (mirrors the type-chip's trailing `ChevronsUpDown` below), left-
+        // aligned. The label used to append a literal `\u{2304}` character,
+        // which renders as tofu (missing-glyph box) in the chrome fonts --
+        // draw the bare title and a real glyph instead.
         let title = if self.scope_title.is_empty() {
             "Untitled"
         } else {
             self.scope_title.as_str()
         };
-        let label = format!("{title} \u{2304}");
         let text_w = self
             .draw_title
-            .layout(cx, 0.0, 0.0, None, false, Align::default(), &label)
+            .layout(cx, 0.0, 0.0, None, false, Align::default(), title)
             .size_in_lpxs
             .width as f64;
-        let title_pos = dvec2(rect.pos.x + PAD, cy - 8.0);
-        self.draw_title.draw_abs(cx, title_pos, &label);
+        // `text_heading` (13pt, SemiBold, line 1.2) replaced the old inline
+        // 16pt label; re-tuned from `cy - 8.0` so the smaller cut still seats
+        // on the title-row centerline.
+        let title_pos = dvec2(rect.pos.x + PAD, cy - 7.0);
+        self.draw_title.draw_abs(cx, title_pos, title);
+        let chev_rect = Rect {
+            pos: dvec2(
+                title_pos.x + text_w + TITLE_CHEV_GAP,
+                cy - TITLE_CHEV_SIZE * 0.5,
+            ),
+            size: dvec2(TITLE_CHEV_SIZE, TITLE_CHEV_SIZE),
+        };
+        self.icons.draw(cx, Icon::ChevronsUpDown, chev_rect, dim);
         self.title_rect = Rect {
             pos: rect.pos,
-            size: dvec2((PAD + text_w).max(0.0), TITLE_ROW_H),
+            size: dvec2(
+                (PAD + text_w + TITLE_CHEV_GAP + TITLE_CHEV_SIZE).max(0.0),
+                TITLE_ROW_H,
+            ),
         };
 
         // Search row: field + leading magnifier (left), rotating type chip
