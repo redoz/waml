@@ -24,6 +24,7 @@ script_mod! {
     use mod.widgets.ShortcutsOverlay
     use mod.widgets.ToolDock
     use mod.widgets.ConstraintToggle
+    use mod.widgets.ConflictBadge
     use mod.widgets.SelectionToolbar
     use mod.widgets.Statusbar
     use mod.widgets.SolidView
@@ -261,6 +262,16 @@ script_mod! {
                                 margin: Inset{right: 12.0, top: 12.0, bottom: 12.0}
                             }
                         }
+                        // Conflict counter: top area, right side (spec §4).
+                        conflict_badge_wrap := View{
+                            width: Fill
+                            height: Fill
+                            align: Align{x: 1.0, y: 0.0}
+                            conflict_badge := ConflictBadge{
+                                margin: Inset{right: 344.0, top: 14.0}
+                                visible: false
+                            }
+                        }
                         // Selection toolbar: bottom, centered.
                         View{
                             width: Fill
@@ -341,6 +352,10 @@ pub struct App {
     /// resolves to a scope to apply. Rebuilt every time the dropdown opens.
     #[rust]
     nav_scope_ids: Vec<(LiveId, String)>,
+    /// Maps each conflict-list popup item id back to its `scene.conflicts` index,
+    /// so the committed `LiveId` resolves to a conflict to focus-fade.
+    #[rust]
+    conflict_row_ids: Vec<(LiveId, usize)>,
     /// Maps each type-filter dropdown item id back to its filter (`None` = the
     /// "All" row), so the `nav_filter` tag's committed `LiveId` resolves to a
     /// `NavState::filter`. Rebuilt every time the dropdown opens.
@@ -408,6 +423,7 @@ impl App {
         body.set_tool_dock_visible(cx, view.wants_tooldock());
 
         self.sync_statusbar(cx);
+        self.sync_conflict_badge(cx);
     }
 
     fn refresh_doc_tabs(&mut self, cx: &mut Cx) {
@@ -514,6 +530,23 @@ impl App {
             .borrow_mut::<crate::statusbar::Statusbar>()
         {
             statusbar.set_state(cx, diagram_name, node_count, zoom_pct, tool_label);
+        }
+    }
+
+    /// Push the canvas's current conflict count onto the toolbar badge.
+    fn sync_conflict_badge(&mut self, cx: &mut Cx) {
+        let n = self
+            .ui
+            .widget(cx, ids!(canvas))
+            .borrow::<crate::canvas::GraphCanvas>()
+            .map(|c| c.conflict_count())
+            .unwrap_or(0);
+        if let Some(mut badge) = self
+            .ui
+            .widget(cx, ids!(conflict_badge))
+            .borrow_mut::<crate::conflict_badge::ConflictBadge>()
+        {
+            badge.set_count(cx, n);
         }
     }
 
@@ -997,6 +1030,7 @@ impl MatchEvent for App {
             let picker_closed = pr.closed(actions, live_id!(element_picker));
             let nav_scope_closed = pr.closed(actions, live_id!(nav_scope));
             let nav_filter_closed = pr.closed(actions, live_id!(nav_filter));
+            let conflict_closed = pr.closed(actions, live_id!(conflict_list));
             drop(pr);
 
             // Burger caller-local glow: any close of the burger tag drops it.
@@ -1086,6 +1120,18 @@ impl MatchEvent for App {
                 if let Some((_, filter)) = self.nav_filter_ids.iter().find(|(i, _)| *i == id) {
                     self.nav_state.filter = *filter;
                     self.refresh_nav(cx, false);
+                }
+            }
+            if let Some(PopupResult::Invoked(id)) = conflict_closed {
+                if let Some((_, idx)) = self.conflict_row_ids.iter().find(|(i, _)| *i == id) {
+                    let idx = *idx;
+                    if let Some(mut canvas) = self
+                        .ui
+                        .widget(cx, ids!(canvas))
+                        .borrow_mut::<crate::canvas::GraphCanvas>()
+                    {
+                        canvas.set_conflict_focus(cx, Some(idx));
+                    }
                 }
             }
         }
@@ -1327,6 +1373,63 @@ impl MatchEvent for App {
             return;
         }
 
+        // Conflict badge -> error-list popup (spec §4).
+        let badge_clicked = self
+            .ui
+            .widget(cx, ids!(conflict_badge))
+            .borrow::<crate::conflict_badge::ConflictBadge>()
+            .map(|b| b.clicked(actions))
+            .unwrap_or(false);
+        if badge_clicked {
+            let conflicts = self
+                .ui
+                .widget(cx, ids!(canvas))
+                .borrow::<crate::canvas::GraphCanvas>()
+                .map(|c| c.conflicts())
+                .unwrap_or_default();
+            self.conflict_row_ids.clear();
+            let items: Vec<crate::popup::base::PopupItem> = conflicts
+                .iter()
+                .enumerate()
+                .map(|(i, c)| {
+                    let id = LiveId::from_str(&format!("conflict:{i}"));
+                    self.conflict_row_ids.push((id, i));
+                    crate::popup::base::PopupItem {
+                        id,
+                        label: crate::scene::conflict_statement(c),
+                        icon: crate::icons::Icon::CircleX,
+                        danger: true,
+                        enabled: true,
+                    }
+                })
+                .collect();
+            if !items.is_empty() {
+                let btn = self.ui.widget(cx, ids!(conflict_badge)).area().rect(cx);
+                let anchor = dvec2(
+                    btn.pos.x,
+                    btn.pos.y + btn.size.y + crate::popup::menu::MENU_GAP,
+                );
+                let bounds = self.window_bounds(cx);
+                if let Some(mut pr) = self
+                    .ui
+                    .widget(cx, ids!(popup_root))
+                    .borrow_mut::<PopupRoot>()
+                {
+                    pr.show_at(
+                        cx,
+                        PopupSpec::Menu {
+                            tag: live_id!(conflict_list),
+                            anchor,
+                            bounds,
+                            items,
+                            open: MenuOpen::Popup,
+                        },
+                    );
+                }
+            }
+            return;
+        }
+
         // Doc tab: the active view (`ClassDiagramView`/`ClassifierPreviewView`)
         // fully owns its actions (inline-edit commit, element-picker open,
         // tool dock, canvas pointer actions, selection toolbar) via
@@ -1357,6 +1460,7 @@ impl MatchEvent for App {
                         {
                             v.resolve_active(cx, &body, &self.model);
                         }
+                        self.sync_conflict_badge(cx);
                     }
                     Err(e) => log!("place.set failed: {e:?}"),
                 }
@@ -1639,6 +1743,7 @@ impl AppMain for App {
         crate::shortcuts_overlay::script_mod(vm);
         crate::tool_dock::script_mod(vm);
         crate::constraint_toggle::script_mod(vm);
+        crate::conflict_badge::script_mod(vm);
         crate::selection_toolbar::script_mod(vm);
         crate::statusbar::script_mod(vm);
         crate::logo::script_mod(vm);

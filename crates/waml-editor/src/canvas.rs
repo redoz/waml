@@ -331,6 +331,11 @@ pub struct GraphCanvas {
     /// verdict never paints.
     #[rust]
     conflict_zones: Vec<Zone>,
+    /// Index into `scene.conflicts` whose participants should stay lit while every
+    /// other card fades (spec §4 "fade the rest"). `None` = no focus. Reset on
+    /// scene replace.
+    #[rust]
+    conflict_focus: Option<usize>,
     /// Index (into the current scene's nodes) of the click-selected node, or
     /// `None`. Drives the thicker `AccentFrame` highlight in `draw_walk`. It
     /// indexes *this* scene, so it MUST be reset to `None` whenever the scene is
@@ -1444,6 +1449,37 @@ impl Widget for GraphCanvas {
         // the armed-drag overlay's scoped emphasis.
         self.draw_relations_overlay(cx);
 
+        // Conflict focus (spec §4): fade every card except the focused conflict's
+        // participants, so the contradiction is locatable off the error list.
+        if let Some(i) = self.conflict_focus {
+            if let Some(conflict) = self.scene.conflicts.get(i).cloned() {
+                let keep: std::collections::HashSet<String> =
+                    crate::scene::conflict_participants(&conflict)
+                        .into_iter()
+                        .collect();
+                let dims: Vec<(usize, bool)> = self
+                    .scene
+                    .nodes
+                    .iter()
+                    .enumerate()
+                    .map(|(idx, n)| (idx, keep.contains(&n.key)))
+                    .collect();
+                for (idx, kept) in dims {
+                    if !kept {
+                        let s = self.node_screen_rect(idx);
+                        self.fill_rect(
+                            cx,
+                            s.pos.x,
+                            s.pos.y,
+                            s.size.x,
+                            s.size.y,
+                            vec4(0.62, 0.65, 0.70, 0.55),
+                        );
+                    }
+                }
+            }
+        }
+
         // SPIKE (drag-place): live placement overlay on top of everything.
         if self.drag_moved {
             self.draw_drag_overlay(cx, rect);
@@ -1878,6 +1914,7 @@ impl GraphCanvas {
         self.focus_mode = false;
         self.selected = None; // stale index would highlight the wrong node
         self.selected_key = None;
+        self.conflict_focus = None;
         self.draw_bg.redraw(cx);
     }
 
@@ -1900,6 +1937,7 @@ impl GraphCanvas {
         self.focus_mode = true;
         self.selected = None; // stale index would highlight the wrong node
         self.selected_key = None;
+        self.conflict_focus = None;
         self.draw_bg.redraw(cx);
     }
 
@@ -1920,6 +1958,23 @@ impl GraphCanvas {
     /// compass reddens the flagged zones on the next frame.
     pub fn set_conflict_zones(&mut self, cx: &mut Cx, zones: Vec<Zone>) {
         self.conflict_zones = zones;
+        self.draw_bg.redraw(cx);
+    }
+
+    /// Number of unsatisfiable constraints in the current scene (toolbar counter).
+    pub fn conflict_count(&self) -> usize {
+        self.scene.conflicts.len()
+    }
+
+    /// Clone of the current scene's conflicts, for the toolbar popup list.
+    pub fn conflicts(&self) -> Vec<crate::scene::SceneConflict> {
+        self.scene.conflicts.clone()
+    }
+
+    /// Focus a conflict (or clear): every card except the conflict's participants
+    /// fades. Clamped to the conflict count. Repaints.
+    pub fn set_conflict_focus(&mut self, cx: &mut Cx, idx: Option<usize>) {
+        self.conflict_focus = idx.filter(|&i| i < self.scene.conflicts.len());
         self.draw_bg.redraw(cx);
     }
 

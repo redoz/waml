@@ -268,6 +268,48 @@ fn project_conflicts(dropped: &[waml::solve::DroppedPlacement]) -> Vec<SceneConf
         .collect()
 }
 
+/// DSL keyword for a placement direction (matches the `## Layout` surface form).
+pub fn dir_keyword(d: waml::syntax::Direction) -> &'static str {
+    use waml::syntax::Direction::*;
+    match d {
+        LeftOf => "left of",
+        RightOf => "right of",
+        Above => "above",
+        Below => "below",
+        AboveLeft => "above left of",
+        AboveRight => "above right of",
+        BelowLeft => "below left of",
+        BelowRight => "below right of",
+    }
+}
+
+/// Render one relation as its `A <dir> B` DSL form.
+fn relation_statement(r: &SceneRelation) -> String {
+    format!("{} {} {}", r.subject, dir_keyword(r.dir), r.reference)
+}
+
+/// Human-readable error-list text for a dropped constraint: the dropped
+/// statement, the statements it contradicts, and a one-line "these contradict"
+/// note (spec §4).
+pub fn conflict_statement(c: &SceneConflict) -> String {
+    let mut lines = vec![relation_statement(&c.dropped)];
+    for w in &c.conflicts_with {
+        lines.push(relation_statement(w));
+    }
+    format!("{}  —  these contradict", lines.join("; "))
+}
+
+/// Every node key involved in a conflict (dropped + all contradicting relations),
+/// for the fade-the-rest focus (spec §4). Not deduped — callers dedup as needed.
+pub fn conflict_participants(c: &SceneConflict) -> Vec<String> {
+    let mut out = vec![c.dropped.subject.clone(), c.dropped.reference.clone()];
+    for w in &c.conflicts_with {
+        out.push(w.subject.clone());
+        out.push(w.reference.clone());
+    }
+    out
+}
+
 /// Native-only stress/grid default layout. Kept at this call seam (not inside
 /// `solve_diagram`) so the wasm/web path stays unchanged — web keeps dagre.
 /// Node set is every sized member; undirected `model.edges` among them drive the
@@ -1134,5 +1176,56 @@ mod tests {
             !scene.edges[0].points.is_empty(),
             "stress-default edges must carry a routed polyline"
         );
+    }
+
+    #[test]
+    fn conflict_statement_reads_as_dsl() {
+        use waml::syntax::Direction;
+        let c = SceneConflict {
+            dropped: SceneRelation {
+                subject: "order".into(),
+                reference: "customer".into(),
+                dir: Direction::LeftOf,
+            },
+            conflicts_with: vec![SceneRelation {
+                subject: "customer".into(),
+                reference: "order".into(),
+                dir: Direction::LeftOf,
+            }],
+        };
+        let s = conflict_statement(&c);
+        assert!(
+            s.contains("order left of customer"),
+            "dropped statement missing: {s}"
+        );
+        assert!(
+            s.contains("customer left of order"),
+            "conflict statement missing: {s}"
+        );
+        assert!(
+            s.to_lowercase().contains("contradict"),
+            "missing the 'contradict' note: {s}"
+        );
+    }
+
+    #[test]
+    fn conflict_participants_lists_every_involved_node() {
+        use waml::syntax::Direction;
+        let c = SceneConflict {
+            dropped: SceneRelation {
+                subject: "order".into(),
+                reference: "customer".into(),
+                dir: Direction::LeftOf,
+            },
+            conflicts_with: vec![SceneRelation {
+                subject: "customer".into(),
+                reference: "order".into(),
+                dir: Direction::LeftOf,
+            }],
+        };
+        let mut p = conflict_participants(&c);
+        p.sort();
+        p.dedup();
+        assert_eq!(p, vec!["customer".to_string(), "order".to_string()]);
     }
 }
