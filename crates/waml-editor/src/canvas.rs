@@ -346,6 +346,14 @@ pub struct GraphCanvas {
     /// Which constraint veils to draw (spec §1). Default `Selected`.
     #[rust]
     constraint_vis: ConstraintVisibility,
+    /// Front layer index in All mode (spec §3); other layers parallax-offset by
+    /// their depth relative to this. Clamped to the relation count.
+    #[rust]
+    scrub_layer: usize,
+    /// Camera pan captured when the scene fitted, so All-mode parallax measures
+    /// pan DRIFT (not absolute pan). `None` until first fit.
+    #[rust]
+    parallax_base: Option<(f64, f64)>,
 }
 
 impl Default for Camera {
@@ -473,6 +481,19 @@ fn relations_for_visibility<'a>(
                 .collect()
         }
     }
+}
+
+/// How strongly a layer's depth multiplies view-pan drift into a parallax shift
+/// (spec §3). Small so panning gently separates stacked veils.
+const PARALLAX_SPREAD: f64 = 0.14;
+
+/// Per-layer parallax shift: the pan drift times the layer's signed depth times
+/// `spread`. Depth 0 (the front / scrubbed layer) never moves; deeper/nearer
+/// layers slide at proportional rates so overlapping veils separate by motion.
+/// Pure, GPU-free.
+fn parallax_offset(pan_delta: DVec2, layer_depth: i32, spread: f64) -> DVec2 {
+    let k = layer_depth as f64 * spread;
+    dvec2(pan_delta.x * k, pan_delta.y * k)
 }
 
 /// Fixed screen-px geometry of the dock compass. Deliberately camera-*independent*
@@ -906,6 +927,23 @@ impl Widget for GraphCanvas {
                 return;
             }
         }
+        // Parallax layer scrub (spec §3): `[`/`]` advances the All-mode front
+        // layer. Only meaningful (and only acts) in All mode.
+        if let Event::KeyDown(ke) = event {
+            if self.constraint_vis == ConstraintVisibility::All {
+                match ke.key_code {
+                    KeyCode::RBracket => {
+                        self.cycle_scrub_layer(cx, 1);
+                        return;
+                    }
+                    KeyCode::LBracket => {
+                        self.cycle_scrub_layer(cx, -1);
+                        return;
+                    }
+                    _ => {}
+                }
+            }
+        }
         // SPIKE: dwell fired -> arm the compass on the node the cursor rested on.
         // The hovered zone stays whatever the last FingerMove computed (likely
         // `None`, cursor over the dead body center); the next move lights a handle.
@@ -1181,6 +1219,7 @@ impl Widget for GraphCanvas {
                     Camera::fit(bbox, rect.size.x, rect.size.y, 48.0)
                 };
                 self.fitted = true;
+                self.parallax_base = Some((self.camera.pan_x, self.camera.pan_y));
             }
         }
 
@@ -1435,15 +1474,18 @@ impl GraphCanvas {
     /// Draw one placement relation's veil: a hatched grey keep-out anchored to the
     /// reference node's near edge, distance-faded, plus a desaturating scrim over
     /// every non-participant card inside it (spec §2). The two participants keep
-    /// full colour. No connector line.
+    /// full colour. No connector line. `offset` is the All-mode parallax shift
+    /// (spec §3); zero in None/Selected mode.
     fn draw_veil_for(
         &mut self,
         cx: &mut Cx2d,
         subject_idx: usize,
         reference_idx: usize,
         dir: waml::syntax::Direction,
+        offset: DVec2,
     ) {
-        let reference_screen = self.node_screen_rect(reference_idx);
+        let mut reference_screen = self.node_screen_rect(reference_idx);
+        reference_screen.pos += offset;
         let band = veil_band(reference_screen, self.view_rect, dir, VEIL_REACH);
         // Clip the band to the view so we don't overdraw the whole window.
         let band = intersect_rect(band, self.view_rect);
@@ -1478,7 +1520,8 @@ impl GraphCanvas {
         .collect();
         for key in desats {
             if let Some(i) = self.scene.nodes.iter().position(|n| n.key == key) {
-                let s = self.node_screen_rect(i);
+                let mut s = self.node_screen_rect(i);
+                s.pos += offset;
                 self.fill_rect(
                     cx,
                     s.pos.x,
@@ -1512,8 +1555,32 @@ impl GraphCanvas {
             Some((si, ri, rel.dir))
         })
         .collect();
-        for (si, ri, dir) in chosen {
-            self.draw_veil_for(cx, si, ri, dir);
+
+        // In All mode each relation gets its own parallax layer, separated by
+        // camera-pan drift since the scene fitted (spec §3); None/Selected stack
+        // with no offset.
+        let parallax = if self.constraint_vis == ConstraintVisibility::All {
+            let base = self
+                .parallax_base
+                .unwrap_or((self.camera.pan_x, self.camera.pan_y));
+            // World pan drift -> screen drift (pan is in world units; scale by zoom).
+            let dx = (self.camera.pan_x - base.0) * self.camera.zoom;
+            let dy = (self.camera.pan_y - base.1) * self.camera.zoom;
+            Some(dvec2(dx, dy))
+        } else {
+            None
+        };
+
+        for (layer, (si, ri, dir)) in chosen.into_iter().enumerate() {
+            let offset = match parallax {
+                Some(pan_delta) => parallax_offset(
+                    pan_delta,
+                    layer as i32 - self.scrub_layer as i32,
+                    PARALLAX_SPREAD,
+                ),
+                None => dvec2(0.0, 0.0),
+            };
+            self.draw_veil_for(cx, si, ri, dir, offset);
         }
     }
 
@@ -1806,6 +1873,8 @@ impl GraphCanvas {
     pub fn set_scene(&mut self, cx: &mut Cx, scene: Scene) {
         self.scene = scene;
         self.fitted = false;
+        self.parallax_base = None;
+        self.scrub_layer = 0;
         self.focus_mode = false;
         self.selected = None; // stale index would highlight the wrong node
         self.selected_key = None;
@@ -1826,6 +1895,8 @@ impl GraphCanvas {
     pub fn set_focus(&mut self, cx: &mut Cx, scene: Scene) {
         self.scene = scene;
         self.fitted = false;
+        self.parallax_base = None;
+        self.scrub_layer = 0;
         self.focus_mode = true;
         self.selected = None; // stale index would highlight the wrong node
         self.selected_key = None;
@@ -1855,6 +1926,19 @@ impl GraphCanvas {
     /// Set the constraint-veil visibility mode and repaint.
     pub fn set_constraint_vis(&mut self, cx: &mut Cx, mode: ConstraintVisibility) {
         self.constraint_vis = mode;
+        self.draw_bg.redraw(cx);
+    }
+
+    /// Advance the front scrub layer in All mode, clamped to the relation count.
+    pub fn cycle_scrub_layer(&mut self, cx: &mut Cx, delta: i32) {
+        let n = self.scene.relations.len();
+        if n == 0 {
+            self.scrub_layer = 0;
+        } else {
+            let max = n - 1;
+            let next = (self.scrub_layer as i32 + delta).clamp(0, max as i32);
+            self.scrub_layer = next as usize;
+        }
         self.draw_bg.redraw(cx);
     }
 
@@ -2321,5 +2405,28 @@ mod tests {
             relations_for_visibility(&rels, ConstraintVisibility::All, None).len(),
             3
         );
+    }
+
+    #[test]
+    fn parallax_offset_scales_with_depth_and_pan() {
+        // The front layer (depth 0) never shifts.
+        assert_eq!(
+            parallax_offset(dvec2(100.0, -50.0), 0, 0.1),
+            dvec2(0.0, 0.0)
+        );
+        // Depth scales the pan drift linearly; sign follows the pan.
+        assert_eq!(
+            parallax_offset(dvec2(100.0, -50.0), 2, 0.1),
+            dvec2(20.0, -10.0)
+        );
+        // Negative depth shifts the opposite way (layers behind vs in front).
+        assert_eq!(
+            parallax_offset(dvec2(100.0, -50.0), -1, 0.1),
+            dvec2(-10.0, 5.0)
+        );
+        // Deeper layers shift monotonically further for a fixed pan.
+        let d1 = parallax_offset(dvec2(80.0, 0.0), 1, 0.2).x;
+        let d3 = parallax_offset(dvec2(80.0, 0.0), 3, 0.2).x;
+        assert!(d3.abs() > d1.abs());
     }
 }
