@@ -106,13 +106,28 @@ script_mod! {
         // `self.view.draw_walk`, revealed only when `show_picker` (the
         // classifier-preview path keeps its own immediate-mode body). Rows
         // self-size (Fit) -- no y-offsets, no text measuring.
+        //
+        // `height: Fill` claims the panel space below the 56px bar so a tall
+        // subject (many members/associations) scrolls instead of overflowing
+        // past the frame. `scroll_bars` styled Atlas-visible: the default
+        // handle color ~= our `field_bg` and vanishes (same trap tree_panel
+        // dodges) -- dim ink idle, accent on hover/drag.
         body := View {
             width: Fill
-            height: Fit
+            height: Fill
             flow: Down
             visible: false
             padding: Inset{left: 16.0, right: 16.0, top: 0.0, bottom: 16.0}
             spacing: 12.0
+            scroll_bars: ScrollBars {
+                scroll_bar_y: ScrollBar {
+                    draw_bg +: {
+                        color: atlas.text_dim
+                        color_hover: atlas.accent
+                        color_drag: atlas.accent
+                    }
+                }
+            }
 
             // Full-width hairline under the picker bar (web-header rule).
             divider := View {
