@@ -56,6 +56,38 @@ pub const ROW_HEIGHT: f64 = 61.0; // was 30.0
 Re-verified: exactly five full rows visible, no partial sixth peeking in, no
 fifth-row clipping, at `box_h = 5 * 61.0 + 2 * 5.0 = 315.0`.
 
+## Addendum: empty-state row (re-verified after the anchor fix)
+
+Everything above was screenshotted with 7-8 seeded recents, i.e. the **empty**
+recents state ("No recent models") was never captured. The later
+`clickable`-gate on the Package glyph suppressed only the *drawn* icon — the
+16px `glyph` anchor and the row's 10px flow spacing stayed reserved, so the
+placeholder text drew behind a 26px phantom icon gap. The anchor is now hidden
+outright on the empty row (`set_visible(cx, self.clickable)` in
+`recent_row.rs::draw_walk`); an invisible child walks no turtle, so both the
+slot and the spacing collapse.
+
+Re-verified against this worktree's `target/debug/waml-editor.exe`, launched and
+captured **by its specific pid** (PrintWindow on that pid's `MainWindowHandle`,
+`Stop-Process -Id <pid>` afterwards — never by process name, so other open
+editors were untouched). `~/.waml/editor.json` was copied to the session
+scratchpad first and restored from that copy afterwards; the same
+machine-shared-resource caveat below still applies.
+
+- **Empty state:** with `recents: []`, "No recent models" starts ~17px in from
+  the list-box border — exactly the box's `Inset` 5 plus the row's 12px left
+  padding, with no icon gap. PASS.
+- **Populated control (same build):** with 2 seeded recents (one carrying
+  `pinned_at`), the Package glyph draws at that same 17px offset and the titles
+  start 26px further right (16px glyph + 10px spacing), the pinned row sorts
+  first with a persistently-visible accent pin, and the `when` stamp stays
+  right-aligned — so the anchor change is scoped to the empty row and the
+  populated anatomy is unregressed. PASS.
+
+The right-hand 20px `pin` anchor is still reserved on the empty row; it costs
+trailing slack inside a `Fill` text column, which is not visible (the
+placeholder text is left-aligned), so it was left alone.
+
 ## Owed interactive sign-off (pointer-driven — NOT faked or skipped, genuinely deferred)
 
 The human is AFK for this run; a real pointer is required for these. Per the

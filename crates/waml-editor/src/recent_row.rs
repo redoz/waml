@@ -1,16 +1,23 @@
 //! `RecentRowView`: one recent-project row on the start screen. Renders
-//! `[accent marker] [title / path stacked] .......... [timestamp flush-right]`
+//! `[Package glyph] [title / path stacked] [timestamp flush-right] [pin]`
 //! purely from the makepad layout engine -- no text measurement, no y-offsets.
 //! The timestamp is right-anchored by the `Fill` width on the middle text
-//! column, which consumes all slack and shoves the `Fit`-width `when` label to
-//! the right edge.
+//! column, which consumes all slack and shoves the `Fit`-width `when` label
+//! right; the pin rides its own anchor past it, at the row's right edge. Both
+//! icons are drawn immediate-mode (`IconSet::draw`) over their layout anchors.
 //!
-//! Task 3 of the start-screen recents refactor adds interaction: the row now
-//! hit-tests its own area, emits a `RecentRowViewAction::Clicked` widget-action
-//! on `FingerUp` (read by `StartScreen` through `FlatList::items_with_actions`),
-//! and self-manages a subtle hover wash driven by FingerHoverIn/Out -- the
-//! `#[deref] View` hybrid pattern (same as `inspector_panel.rs`), with granular
-//! per-line setters the parent calls per row.
+//! The row hit-tests its own area and emits widget-actions read by
+//! `StartScreen` through `FlatList::items_with_actions`: `Clicked` on a
+//! `FingerUp` over the row body, and `TogglePin` when the pin anchor claims
+//! that `FingerUp` first. Its hover wash is self-managed from raw `MouseMove`
+//! rect-containment (not `FingerHoverIn`/`Out`, which the pin's child area
+//! would steal the moment the pointer crossed onto it) -- the `#[deref] View`
+//! hybrid pattern (same as `inspector_panel.rs`), with granular per-line
+//! setters the parent calls per row.
+//!
+//! The empty-state row (`set_clickable(false)`) neither washes nor fires, and
+//! hides the glyph anchor outright so its placeholder text starts flush at the
+//! row padding instead of behind a phantom icon gap.
 
 use makepad_widgets::*;
 
@@ -56,7 +63,8 @@ script_mod! {
         draw_pin_lit +: { color: atlas.accent }
 
         // Left document glyph anchor: a 16x16 spacer reserving the flow slot;
-        // `Icon::Package` is drawn immediate over this rect in `draw_walk`.
+        // `Icon::Package` is drawn immediate over this rect in `draw_walk`,
+        // which also hides this whole anchor on the empty-state row.
         glyph := View {
             width: 16.0
             height: 16.0
@@ -217,6 +225,13 @@ impl Widget for RecentRowView {
         self.view
             .draw_bg
             .set_uniform(cx, live_id!(hover), &[if self.hovered { 1.0 } else { 0.0 }]);
+        // The empty-state row draws no `Icon::Package`, so drop its anchor
+        // instead of merely skipping the glyph: an invisible child walks no
+        // turtle, so the 16px slot *and* the 10px flow spacing beside it both
+        // collapse and "No recent models" starts flush at the row padding.
+        self.view
+            .view(cx, ids!(glyph))
+            .set_visible(cx, self.clickable);
         let step = self.view.draw_walk(cx, scope, walk);
 
         // Cache post-layout rects for containment hover + immediate glyphs.
@@ -227,7 +242,8 @@ impl Widget for RecentRowView {
 
         // Left document glyph, filling its 16x16 anchor. Gated on `clickable`
         // like the pin below, so the empty-state row ("No recent models") shows
-        // bare text with no package icon beside it.
+        // bare text with no package icon beside it (its anchor is hidden above,
+        // so `glyph_rect` is meaningless there anyway).
         if self.clickable {
             self.icons
                 .draw(cx, Icon::Package, self.glyph_rect, self.draw_pkg.color);
