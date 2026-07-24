@@ -280,11 +280,15 @@ impl RecentRowView {
             .is_some_and(|a| matches!(a.cast(), RecentRowViewAction::Clicked))
     }
 
-    /// Intrinsic drawn pitch of one row (the 16px glyph / stacked text plus the
-    /// 2x3 vertical padding). `StartScreen` sizes its list box to
+    /// Intrinsic drawn pitch of one row (the two-line title/path text stack
+    /// plus the 2x3 vertical padding). `StartScreen` sizes its list box to
     /// `5 * ROW_HEIGHT + list padding` so exactly five rows fit; verify the fit
-    /// by screenshot after any font/padding change and retune if a 6th peeks in.
-    pub const ROW_HEIGHT: f64 = 30.0;
+    /// by screenshot after any font/padding change and retune if a 6th peeks
+    /// in or the 5th clips. Measured 61.0 by screenshot (2026-07-24): the
+    /// original 30.0 undersized the box (only ~2.5 rows fit) because it did
+    /// not account for the real two-line `text_label`/`text_menu` stack
+    /// height, only the 16px glyph anchor.
+    pub const ROW_HEIGHT: f64 = 61.0;
 
     /// Drive the pinned state (pin glyph visibility + accent tint), redrawing
     /// only on a change.
