@@ -352,10 +352,6 @@ pub struct App {
     /// resolves to a scope to apply. Rebuilt every time the dropdown opens.
     #[rust]
     nav_scope_ids: Vec<(LiveId, String)>,
-    /// Maps each conflict-list popup item id back to its `scene.conflicts` index,
-    /// so the committed `LiveId` resolves to a conflict to focus-fade.
-    #[rust]
-    conflict_row_ids: Vec<(LiveId, usize)>,
     /// Maps each type-filter dropdown item id back to its filter (`None` = the
     /// "All" row), so the `nav_filter` tag's committed `LiveId` resolves to a
     /// `NavState::filter`. Rebuilt every time the dropdown opens.
@@ -547,6 +543,33 @@ impl App {
             .borrow_mut::<crate::conflict_badge::ConflictBadge>()
         {
             badge.set_count(cx, n);
+        }
+    }
+
+    /// Open the grouped, deletable conflict-error-list card, anchored under
+    /// the toolbar badge. Shared by the badge click and the delete-refresh
+    /// path (which re-anchors the still-open list after a row is removed).
+    fn open_conflict_list(&mut self, cx: &mut Cx, conflicts: Vec<crate::scene::SceneConflict>) {
+        let btn = self.ui.widget(cx, ids!(conflict_badge)).area().rect(cx);
+        let anchor = dvec2(
+            btn.pos.x,
+            btn.pos.y + btn.size.y + crate::popup::menu::MENU_GAP,
+        );
+        let bounds = self.window_bounds(cx);
+        if let Some(mut pr) = self
+            .ui
+            .widget(cx, ids!(popup_root))
+            .borrow_mut::<PopupRoot>()
+        {
+            pr.show_at(
+                cx,
+                PopupSpec::Conflict {
+                    tag: live_id!(conflict_list),
+                    anchor,
+                    bounds,
+                    conflicts,
+                },
+            );
         }
     }
 
@@ -898,6 +921,25 @@ pub fn logo_command_for(id: LiveId) -> Option<LogoCommand> {
     }
 }
 
+/// Map a `ConflictListAction::Delete` to the `Op::PlaceRm` that removes it
+/// from `diagram`'s `## Layout` section. Pure so it is unit-testable without
+/// a live `Cx`/`App`; `None` for any other action (nothing to remove).
+fn place_rm_for(
+    diagram: &str,
+    action: &crate::popup::conflict_list::ConflictListAction,
+) -> Option<waml::ops::Op> {
+    match action {
+        crate::popup::conflict_list::ConflictListAction::Delete { subject, reference } => {
+            Some(waml::ops::Op::PlaceRm {
+                diagram: diagram.to_string(),
+                subject_slug: subject.clone(),
+                reference_slug: reference.clone(),
+            })
+        }
+        _ => None,
+    }
+}
+
 /// Humanize a recent's `opened_at` (unix seconds) as a coarse relative stamp
 /// ("just now", "yesterday", "3 weeks ago") for the start-screen row -- easier
 /// to scan than an absolute date and self-explanatory without a header.
@@ -1023,6 +1065,7 @@ impl MatchEvent for App {
         }
 
         // Popup outcomes (tag-filtered off the single action queue).
+        let mut conflict_action = None;
         if let Some(pr) = self.ui.widget(cx, ids!(popup_root)).borrow::<PopupRoot>() {
             let logo_closed = pr.closed(actions, live_id!(logo));
             let burger_closed = pr.closed(actions, live_id!(burger));
@@ -1030,7 +1073,10 @@ impl MatchEvent for App {
             let picker_closed = pr.closed(actions, live_id!(element_picker));
             let nav_scope_closed = pr.closed(actions, live_id!(nav_scope));
             let nav_filter_closed = pr.closed(actions, live_id!(nav_filter));
-            let conflict_closed = pr.closed(actions, live_id!(conflict_list));
+            // The conflict list never `Invoked`-closes (a row/trash press
+            // emits its own `ConflictListAction` and stays open), so it is
+            // read directly off the surface, not through `closed`.
+            conflict_action = pr.conflict_action(cx, actions);
             drop(pr);
 
             // Burger caller-local glow: any close of the burger tag drops it.
@@ -1122,18 +1168,71 @@ impl MatchEvent for App {
                     self.refresh_nav(cx, false);
                 }
             }
-            if let Some(PopupResult::Invoked(id)) = conflict_closed {
-                if let Some((_, idx)) = self.conflict_row_ids.iter().find(|(i, _)| *i == id) {
-                    let idx = *idx;
-                    if let Some(mut canvas) = self
-                        .ui
-                        .widget(cx, ids!(canvas))
-                        .borrow_mut::<crate::canvas::GraphCanvas>()
-                    {
-                        canvas.set_conflict_focus(cx, Some(idx));
+        }
+
+        // Conflict list: a row body press fades the canvas to that relation's
+        // two nodes; a trash press removes the placement and re-solves.
+        match conflict_action {
+            Some(crate::popup::conflict_list::ConflictListAction::Focus { subject, reference }) => {
+                if let Some(mut canvas) = self
+                    .ui
+                    .widget(cx, ids!(canvas))
+                    .borrow_mut::<crate::canvas::GraphCanvas>()
+                {
+                    canvas.set_conflict_focus_keys(cx, Some(vec![subject, reference]));
+                }
+            }
+            Some(action @ crate::popup::conflict_list::ConflictListAction::Delete { .. }) => {
+                let diagram = self
+                    .tabs
+                    .active_tab()
+                    .map(|t| t.key.clone())
+                    .unwrap_or_default();
+                // `place_rm_for` only ever returns `None` for a non-`Delete`
+                // action, which this arm's guard already excludes.
+                if let Some(op) = place_rm_for(&diagram, &action) {
+                    match waml::ops::apply(&self.bundle, &[op]) {
+                        Ok(new_bundle) => {
+                            self.bundle = new_bundle;
+                            self.model = waml::parse::build_model(&self.bundle);
+                            // Re-solve the active diagram view in place (camera
+                            // held) — same path as the drag-place apply above.
+                            if let Some(active) = self.tabs.active_tab().cloned() {
+                                if let Some(v) = self
+                                    .views
+                                    .get_mut(&active.id)
+                                    .and_then(|v| v.downcast_diagram())
+                                {
+                                    v.resolve_active(cx, &body, &self.model);
+                                }
+                            }
+                            self.sync_conflict_badge(cx);
+                            // Refresh the OPEN list (stays open, re-anchored)
+                            // or dismiss it if the delete cleared every
+                            // conflict.
+                            let conflicts = self
+                                .ui
+                                .widget(cx, ids!(canvas))
+                                .borrow::<crate::canvas::GraphCanvas>()
+                                .map(|c| c.conflicts())
+                                .unwrap_or_default();
+                            if conflicts.is_empty() {
+                                if let Some(mut pr) = self
+                                    .ui
+                                    .widget(cx, ids!(popup_root))
+                                    .borrow_mut::<PopupRoot>()
+                                {
+                                    pr.close(cx);
+                                }
+                            } else {
+                                self.open_conflict_list(cx, conflicts);
+                            }
+                        }
+                        Err(e) => log!("place.rm failed: {e:?}"),
                     }
                 }
             }
+            Some(crate::popup::conflict_list::ConflictListAction::None) | None => {}
         }
 
         // Scope title trigger: open the dropdown listing every package (row 0
@@ -1387,45 +1486,8 @@ impl MatchEvent for App {
                 .borrow::<crate::canvas::GraphCanvas>()
                 .map(|c| c.conflicts())
                 .unwrap_or_default();
-            self.conflict_row_ids.clear();
-            let items: Vec<crate::popup::base::PopupItem> = conflicts
-                .iter()
-                .enumerate()
-                .map(|(i, c)| {
-                    let id = LiveId::from_str(&format!("conflict:{i}"));
-                    self.conflict_row_ids.push((id, i));
-                    crate::popup::base::PopupItem {
-                        id,
-                        label: crate::scene::conflict_statement(c),
-                        icon: crate::icons::Icon::CircleX,
-                        danger: true,
-                        enabled: true,
-                    }
-                })
-                .collect();
-            if !items.is_empty() {
-                let btn = self.ui.widget(cx, ids!(conflict_badge)).area().rect(cx);
-                let anchor = dvec2(
-                    btn.pos.x,
-                    btn.pos.y + btn.size.y + crate::popup::menu::MENU_GAP,
-                );
-                let bounds = self.window_bounds(cx);
-                if let Some(mut pr) = self
-                    .ui
-                    .widget(cx, ids!(popup_root))
-                    .borrow_mut::<PopupRoot>()
-                {
-                    pr.show_at(
-                        cx,
-                        PopupSpec::Menu {
-                            tag: live_id!(conflict_list),
-                            anchor,
-                            bounds,
-                            items,
-                            open: MenuOpen::Popup,
-                        },
-                    );
-                }
+            if !conflicts.is_empty() {
+                self.open_conflict_list(cx, conflicts);
             }
             return;
         }
@@ -1891,8 +1953,68 @@ impl AppMain for App {
 
 #[cfg(test)]
 mod tests {
-    use super::{logo_command_for, LogoCommand};
+    use super::{logo_command_for, place_rm_for, LogoCommand};
+    use crate::popup::conflict_list::ConflictListAction;
     use makepad_widgets::*;
+
+    #[test]
+    fn conflict_delete_maps_to_place_rm() {
+        let action = ConflictListAction::Delete {
+            subject: "order".to_string(),
+            reference: "payment-gateway".to_string(),
+        };
+        let op = place_rm_for("dia", &action);
+        assert_eq!(
+            op,
+            Some(waml::ops::Op::PlaceRm {
+                diagram: "dia".to_string(),
+                subject_slug: "order".to_string(),
+                reference_slug: "payment-gateway".to_string(),
+            })
+        );
+    }
+
+    #[test]
+    fn conflict_focus_never_maps_to_an_op() {
+        let action = ConflictListAction::Focus {
+            subject: "order".to_string(),
+            reference: "payment-gateway".to_string(),
+        };
+        assert_eq!(place_rm_for("dia", &action), None);
+        assert_eq!(place_rm_for("dia", &ConflictListAction::None), None);
+    }
+
+    // End-to-end at the ops layer (no live `Cx`/`App` needed): the mapped
+    // `Op::PlaceRm` removes ONLY the targeted placement from the re-serialized
+    // bundle, leaving an unrelated one intact. The solver's dropped/
+    // conflicts_with reporting is already covered by Task 1's `waml::ops`
+    // tests and `scene.rs`'s `project_conflicts` tests.
+    #[test]
+    fn conflict_delete_removes_only_the_targeted_placement() {
+        let bundle = vec![(
+            "shop/dia.md".to_string(),
+            "---\ntype: Diagram\ntitle: D\nprofile: uml-domain\n---\n# D\n\n## Layout\n\
+             - [Order](./order.md) left of [PaymentGateway](./payment-gateway.md)\n\
+             - [Customer](./customer.md) below [Order](./order.md)\n"
+                .to_string(),
+        )];
+        let action = ConflictListAction::Delete {
+            subject: "order".to_string(),
+            reference: "payment-gateway".to_string(),
+        };
+        let op = place_rm_for("dia", &action).expect("Delete maps to an Op");
+        let out = waml::ops::apply(&bundle, &[op]).unwrap();
+        assert!(
+            !out[0].1.contains("left of"),
+            "the deleted placement is gone: {}",
+            out[0].1
+        );
+        assert!(
+            out[0].1.contains("below"),
+            "the OTHER placement survives: {}",
+            out[0].1
+        );
+    }
 
     #[test]
     fn logo_command_for_maps_ids_and_rejects_others() {

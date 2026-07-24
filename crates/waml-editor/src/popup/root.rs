@@ -178,8 +178,10 @@ impl PopupRoot {
 
     /// Open `spec`'s surface, superseding (dismissing) any currently-open popup
     /// first -- the single-active guarantee.
-    pub fn show_at(&mut self, cx: &mut Cx, spec: PopupSpec) {
-        // Supersede: reset the prior surface and emit its Dismissed close.
+    /// Reset whichever surface is active (if any) and emit its Dismissed
+    /// close. Shared by `show_at`'s supersede-before-open and `close`'s
+    /// dismiss-without-opening.
+    fn dismiss_active(&mut self, cx: &mut Cx) {
         if let Some((kind, tag)) = self.active.take() {
             match kind {
                 ActiveKind::Menu => {
@@ -224,6 +226,21 @@ impl PopupRoot {
                 },
             );
         }
+    }
+
+    /// Dismiss whatever is open, without opening a replacement (e.g. deleting
+    /// the last conflict closes the list instead of re-anchoring it empty).
+    /// A no-op (no action emitted) if nothing is active.
+    pub fn close(&mut self, cx: &mut Cx) {
+        if self.active.is_some() {
+            self.dismiss_active(cx);
+            self.body.redraw(cx);
+        }
+    }
+
+    pub fn show_at(&mut self, cx: &mut Cx, spec: PopupSpec) {
+        // Supersede: reset the prior surface and emit its Dismissed close.
+        self.dismiss_active(cx);
         match spec {
             PopupSpec::Menu {
                 tag,
@@ -422,6 +439,20 @@ impl PopupRoot {
             PopupRootAction::Closed { tag: t, result } if t == tag => Some(result),
             _ => None,
         }
+    }
+
+    /// Read the conflict-list surface's own action. A row body/trash press
+    /// never closes the surface (unlike a menu commit), so it never shows up
+    /// through `closed` -- `App` reads it directly off the `conflict` child.
+    pub fn conflict_action(
+        &self,
+        cx: &mut Cx,
+        actions: &Actions,
+    ) -> Option<crate::popup::conflict_list::ConflictListAction> {
+        self.body
+            .widget(cx, ids!(conflict))
+            .borrow::<ConflictList>()?
+            .action(actions)
     }
 }
 
