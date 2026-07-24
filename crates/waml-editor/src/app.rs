@@ -175,101 +175,138 @@ script_mod! {
                     // leaves canvas ground showing around it. The wrappers carry
                     // no bg and don't grab pointer events over empty area, so the
                     // canvas keeps its pan/zoom in the gaps between panels.
-                    View{
+                    // Body: a docked split. `dock_row` is flow:Right so a
+                    // pinned slot shrinks the Fill `center_stack` automatically
+                    // (no margin math). `peek_layer` is an Overlay sibling above
+                    // it, holding the real panel widgets: a Peek body overlaps
+                    // the center at zero layout cost and keeps real hit rects
+                    // (no draw_abs -- see the aligned-parent hit-rect bug). The
+                    // slots are bg-less reservation spacers whose width the app
+                    // drives from each panel's DockState (see `sync_dock_slots`).
+                    dock_body := View{
                         width: Fill
                         height: Fill
                         flow: Overlay
-                        canvas := GraphCanvas{
+                        dock_row := View{
                             width: Fill
                             height: Fill
-                        }
-                        // View Source tab body: renders the subject's raw markdown via the
-                        // upstream Markdown widget, scrolling vertically when it overflows. The
-                        // opaque `canvas_ground` bg preserves the occlusion contract (this slot
-                        // draws over the canvas whenever a Source tab is active).
-                        source_view := View{
-                            width: Fill
-                            height: Fill
-                            visible: false
-                            show_bg: true
-                            draw_bg.color: atlas.canvas_ground
-                            flow: Down
-                            scroll_bars: ScrollBars{ scroll_bar_y: ScrollBar{} }
-                            md := Markdown{
+                            flow: Right
+                            // Left (Model) reservation spacer. No bg, no content:
+                            // its only job is to reserve width so the center
+                            // shrinks when the Model panel pins. Width set at
+                            // runtime by `sync_dock_slots` (28 at rest, 28+280
+                            // pinned). Starts at 28 (Flag).
+                            left_slot := View{ width: 28.0, height: Fill }
+                            // Center: canvas base + aux HUD floaters. Fill, so it
+                            // takes whatever the slots leave. Overlay so each
+                            // floater wrapper gets the full center rect and parks
+                            // itself by `align`; wrappers carry no bg and grab no
+                            // pointer events over empty area, so the canvas keeps
+                            // pan/zoom in the gaps.
+                            center_stack := View{
                                 width: Fill
-                                height: Fit
-                            }
-                        }
-                        // Tool dock: left edge, vertically centered. Wrapper is
-                        // toggled visible only on a diagram tab (hidden while a
-                        // classifier/package is previewed) -- see `sync_active_tab`.
-                        tool_dock_wrap := View{
-                            width: Fill
-                            height: Fill
-                            align: Align{x: 0.0, y: 0.5}
-                            tool_dock := ToolDock{
-                                width: 48.0
-                                // Hugs its 7 buttons (7 * ITEM_H 44); the widget
-                                // draws items manually so Fit collapses to 0 --
-                                // an explicit height is required. Vertically
-                                // centered, right of the project tree (12+280+12).
-                                height: 308.0
-                                margin: Inset{left: 304.0}
-                            }
-                        }
-                        // Constraint-veil visibility toggle: top-left, right of
-                        // the tree, aligned with the tool dock's left edge.
-                        constraint_toggle_wrap := View{
-                            width: Fill
-                            height: Fill
-                            align: Align{x: 0.0, y: 0.0}
-                            constraint_toggle := ConstraintToggle{
-                                width: 110.0
-                                height: 36.0
-                                margin: Inset{left: 304.0, top: 12.0}
-                            }
-                        }
-                        // Project tree: far left edge.
-                        View{
-                            width: Fill
-                            height: Fill
-                            align: Align{x: 0.0, y: 0.0}
-                            project_tree := ProjectTree{
-                                width: 280.0
                                 height: Fill
-                                margin: Inset{left: 12.0, top: 12.0, bottom: 12.0}
+                                flow: Overlay
+                                canvas := GraphCanvas{
+                                    width: Fill
+                                    height: Fill
+                                }
+                                // View Source tab body: renders the subject's raw markdown via the
+                                // upstream Markdown widget, scrolling vertically when it overflows. The
+                                // opaque `canvas_ground` bg preserves the occlusion contract (this slot
+                                // draws over the canvas whenever a Source tab is active).
+                                source_view := View{
+                                    width: Fill
+                                    height: Fill
+                                    visible: false
+                                    show_bg: true
+                                    draw_bg.color: atlas.canvas_ground
+                                    flow: Down
+                                    scroll_bars: ScrollBars{ scroll_bar_y: ScrollBar{} }
+                                    md := Markdown{
+                                        width: Fill
+                                        height: Fit
+                                    }
+                                }
+                                // Tool dock: left edge of the CENTER, vertically
+                                // centered. Anchors to the real center rect now,
+                                // so it auto-tracks dock state (retired margin:304).
+                                tool_dock_wrap := View{
+                                    width: Fill
+                                    height: Fill
+                                    align: Align{x: 0.0, y: 0.5}
+                                    tool_dock := ToolDock{
+                                        width: 48.0
+                                        // Hugs its 7 buttons (7 * ITEM_H 44); the widget
+                                        // draws items manually so Fit collapses to 0 --
+                                        // an explicit height is required.
+                                        height: 308.0
+                                        margin: Inset{left: 12.0}
+                                    }
+                                }
+                                // Constraint-veil toggle: top-left of center.
+                                constraint_toggle_wrap := View{
+                                    width: Fill
+                                    height: Fill
+                                    align: Align{x: 0.0, y: 0.0}
+                                    constraint_toggle := ConstraintToggle{
+                                        width: 110.0
+                                        height: 36.0
+                                        margin: Inset{left: 12.0, top: 12.0}
+                                    }
+                                }
+                                // Conflict counter: top-right of center.
+                                conflict_badge_wrap := View{
+                                    width: Fill
+                                    height: Fill
+                                    align: Align{x: 1.0, y: 0.0}
+                                    conflict_badge := ConflictBadge{
+                                        margin: Inset{right: 12.0, top: 14.0}
+                                        visible: false
+                                    }
+                                }
+                                // Selection toolbar: bottom, centered.
+                                View{
+                                    width: Fill
+                                    height: Fill
+                                    align: Align{x: 0.5, y: 1.0}
+                                    selection_toolbar := SelectionToolbar{
+                                        width: Fit
+                                        height: 44.0
+                                        margin: Inset{bottom: 12.0}
+                                    }
+                                }
                             }
+                            // Right (Inspector) reservation spacer. Starts 28 (Flag).
+                            right_slot := View{ width: 28.0, height: Fill }
                         }
-                        // Inspector: top-right.
-                        View{
+                        // Peek/pinned bodies. Overlay above `dock_row`, so a peek
+                        // overhangs the center without shrinking it. The wraps are
+                        // edge-aligned and bg-less; each panel draws its flag spine
+                        // flush at the window edge and its body just inside it.
+                        peek_layer := View{
                             width: Fill
                             height: Fill
-                            align: Align{x: 1.0, y: 0.0}
-                            inspector := Inspector{
-                                width: 320.0
+                            flow: Overlay
+                            left_peek_wrap := View{
+                                width: Fill
                                 height: Fill
-                                margin: Inset{right: 12.0, top: 12.0, bottom: 12.0}
+                                align: Align{x: 0.0, y: 0.0}
+                                project_tree := ProjectTree{
+                                    width: 280.0
+                                    height: Fill
+                                    margin: Inset{top: 12.0, bottom: 12.0}
+                                }
                             }
-                        }
-                        // Conflict counter: top area, right side (spec §4).
-                        conflict_badge_wrap := View{
-                            width: Fill
-                            height: Fill
-                            align: Align{x: 1.0, y: 0.0}
-                            conflict_badge := ConflictBadge{
-                                margin: Inset{right: 344.0, top: 14.0}
-                                visible: false
-                            }
-                        }
-                        // Selection toolbar: bottom, centered.
-                        View{
-                            width: Fill
-                            height: Fill
-                            align: Align{x: 0.5, y: 1.0}
-                            selection_toolbar := SelectionToolbar{
-                                width: Fit
-                                height: 44.0
-                                margin: Inset{bottom: 12.0}
+                            right_peek_wrap := View{
+                                width: Fill
+                                height: Fill
+                                align: Align{x: 1.0, y: 0.0}
+                                inspector := Inspector{
+                                    width: 320.0
+                                    height: Fill
+                                    margin: Inset{top: 12.0, bottom: 12.0}
+                                }
                             }
                         }
                     }
