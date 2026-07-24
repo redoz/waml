@@ -284,7 +284,7 @@ pub fn dir_keyword(d: waml::syntax::Direction) -> &'static str {
 }
 
 /// Render one relation as its `A <dir> B` DSL form.
-fn relation_statement(r: &SceneRelation) -> String {
+pub fn relation_statement(r: &SceneRelation) -> String {
     format!("{} {} {}", r.subject, dir_keyword(r.dir), r.reference)
 }
 

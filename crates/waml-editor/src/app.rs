@@ -1716,6 +1716,7 @@ impl AppMain for App {
         crate::popup::menu::script_mod(vm);
         crate::popup::radial::script_mod(vm);
         crate::popup::select::script_mod(vm);
+        crate::popup::conflict_list::script_mod(vm);
         crate::popup::root::script_mod(vm);
         crate::canvas::script_mod(vm);
         // `IconButton` must register before EVERY consumer that mounts it as a

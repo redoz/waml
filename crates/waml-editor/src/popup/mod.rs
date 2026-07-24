@@ -5,6 +5,7 @@
 //! `MarkingCore`. See `docs/superpowers/specs/2026-07-21-generic-popup-mechanic-design.md`.
 
 pub mod base;
+pub mod conflict_list;
 pub mod marking;
 pub mod menu;
 pub mod node_menu;
