@@ -166,6 +166,11 @@ script_mod! {
     // zoom. Branch-free: an `if` on a uniform silently no-ops in this fork's
     // shader VM (see EdgeMarker above), so the on/off duty is a 0..1 mask
     // multiplied into the stroke alpha.
+    //
+    // Task 6 visual review (`tests/fixtures/groups`, x-ray toggled on): the
+    // diagonal-parameterized shader shipped as-is -- the dash runs continuously
+    // around all four corners with no bunching or phase seam, so the
+    // segment-stamping fallback was not needed.
     mod.draw.GroupDashed = mod.draw.DrawColor{
         dash_px: uniform(6.0)
         stroke_w: uniform(1.0)
