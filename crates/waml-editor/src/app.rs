@@ -1773,6 +1773,7 @@ impl AppMain for App {
                 mod.atlas = mod.themes.atlas_dark
             });
         }
+        crate::fonts::script_mod(vm);
         crate::icons::script_mod(vm);
         crate::frame::script_mod(vm);
         crate::popup::menu::script_mod(vm);

@@ -13,6 +13,7 @@ script_mod! {
     use mod.atlas
     use mod.widgets.*
     use mod.text.*
+    use mod.fonts
 
     mod.widgets.StatusbarBase = #(Statusbar::register_widget(vm))
 
@@ -22,13 +23,7 @@ script_mod! {
         draw_bg +: { color: atlas.surface }
         draw_text +: {
             color: atlas.text_dim
-            text_style: TextStyle{
-                font_size: 11
-                font_family: FontFamily{
-                    latin := FontMember{res: crate_resource("self:resources/fonts/IBM_Plex_Sans/IBMPlexSans-Regular.ttf") asc: -0.1 desc: 0.0}
-                }
-                line_spacing: 1.2
-            }
+            text_style: fonts.text_label
         }
     }
 }

@@ -16,6 +16,7 @@ mod constraint_toggle;
 mod diagram_switcher;
 mod doc_tabs;
 mod doc_view;
+mod fonts;
 mod fps_meter;
 mod frame;
 mod icon_button;
