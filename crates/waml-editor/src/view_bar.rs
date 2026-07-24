@@ -145,20 +145,31 @@ impl Default for ViewToggles {
 
 impl ViewToggles {
     /// Current state of a toggle. `false` for a one-shot option (never lit).
+    ///
+    /// The one-shots are listed out rather than caught by a `_` arm so that a
+    /// future `ViewOption` (Plans C/D extend this enum) whose `is_toggle()` is
+    /// `true` breaks the build here instead of silently reading back `false`.
     fn get(self, opt: ViewOption) -> bool {
         match opt {
             ViewOption::ShowConstraints => self.show_constraints,
             ViewOption::ShowHiddenBorders => self.show_hidden_borders,
-            _ => false,
+            ViewOption::ZoomIn
+            | ViewOption::ZoomOut
+            | ViewOption::FitToSize
+            | ViewOption::FitToSelection => false,
         }
     }
 
-    /// Store a toggle's new state. A one-shot option is ignored.
+    /// Store a toggle's new state. A one-shot option is ignored -- again spelled
+    /// out per variant so a new toggle can't silently drop its writes.
     fn set(&mut self, opt: ViewOption, on: bool) {
         match opt {
             ViewOption::ShowConstraints => self.show_constraints = on,
             ViewOption::ShowHiddenBorders => self.show_hidden_borders = on,
-            _ => {}
+            ViewOption::ZoomIn
+            | ViewOption::ZoomOut
+            | ViewOption::FitToSize
+            | ViewOption::FitToSelection => {}
         }
     }
 }
@@ -250,6 +261,20 @@ impl ViewBar {
             ViewOption::FitToSelection => Icon::ScanSearch,
             ViewOption::ShowHiddenBorders => Icon::SquareDashed,
             ViewOption::ShowConstraints => Icon::Ruler,
+        }
+    }
+
+    /// Push canvas-side state back into the bar's `ShowConstraints` toggle.
+    ///
+    /// The canvas is the source of truth for the veil mode; the bar's bool is a
+    /// mirror of it. Without this the widget's own click handler is the only
+    /// writer, so any drift (a tab activation, a future keyboard/programmatic
+    /// toggle) would leave the lit state lying until a restart. Repaints only
+    /// on a real change so the per-`sync` call is free.
+    pub fn set_show_constraints(&mut self, cx: &mut Cx, on: bool) {
+        if self.toggles.get(ViewOption::ShowConstraints) != on {
+            self.toggles.set(ViewOption::ShowConstraints, on);
+            self.view.redraw(cx);
         }
     }
 

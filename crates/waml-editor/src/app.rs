@@ -468,7 +468,17 @@ impl App {
     /// (feeding it without a `DocView` trait change was out of scope).
     fn sync_active_tab(&mut self, cx: &mut Cx) {
         self.reconcile_views();
-        let Some(active) = self.tabs.active_tab().cloned() else {
+        let active = self.tabs.active_tab().cloned();
+        // Tool dock + view bar are per-view chrome, so decide them up front --
+        // including for the no-active-tab case (every doc tab is closable). A
+        // bar left on screen with no tab keeps flipping its own toggles over a
+        // stale canvas while `handle_actions` skips the `DocView` delegate,
+        // permanently desyncing bar and canvas.
+        let body = crate::doc_view::BodyWidgets::new(cx, &self.ui);
+        let chrome = crate::doc_view::body_chrome(active.as_ref());
+        body.set_tool_dock_visible(cx, chrome.tool_dock);
+        body.set_view_bar_visible(cx, chrome.view_bar);
+        let Some(active) = active else {
             if let Some(mut panel) = self
                 .ui
                 .widget(cx, ids!(project_tree))
@@ -488,7 +498,6 @@ impl App {
             panel.set_selected_key(cx, Some(active.key.clone()));
         }
 
-        let body = crate::doc_view::BodyWidgets::new(cx, &self.ui);
         // Source tabs render markdown, not a diagram: show the `source_view`
         // slot and hide the whole canvas render (mutually exclusive). Diagram
         // + Preview tabs both drive the shared canvas, so it stays visible for
@@ -515,11 +524,6 @@ impl App {
             v.set_active(active.key.clone(), active.title.clone());
         }
         view.sync(cx, &body, &self.model);
-        body.set_tool_dock_visible(cx, view.wants_tooldock());
-        // The view bar only works on a tab whose view routes its actions
-        // (`ClassDiagramView::handle`); anywhere else it would flip its own
-        // toggles and desync from the canvas.
-        body.set_view_bar_visible(cx, view.wants_view_bar());
 
         self.sync_statusbar(cx);
         self.sync_conflict_badge(cx);
@@ -864,18 +868,13 @@ impl App {
         }
         self.sync_statusbar(cx);
 
-        // Tool dock and view bar are both diagram-only: show them when the base
-        // tab is a diagram, hide them for a diagram-less model. `open_dir`
-        // bypasses the tab-switch path (`sync_active_tab`, which early-returns
-        // with no active tab), so set both explicitly here.
-        let has_diagram = self
-            .tabs
-            .active_tab()
-            .map(|t| t.kind == TabKind::Diagram)
-            .unwrap_or(false);
+        // Tool dock and view bar are both per-view chrome: `open_dir` can leave
+        // the model with no diagram tab at all, so run them through the same
+        // `body_chrome` decision `sync_active_tab` uses.
+        let chrome = crate::doc_view::body_chrome(self.tabs.active_tab());
         let body = crate::doc_view::BodyWidgets::new(cx, &self.ui);
-        body.set_tool_dock_visible(cx, has_diagram);
-        body.set_view_bar_visible(cx, has_diagram);
+        body.set_tool_dock_visible(cx, chrome.tool_dock);
+        body.set_view_bar_visible(cx, chrome.view_bar);
 
         // Diagram switcher (U7): push the base tab's current diagram title into
         // the trigger chip (empty when the model carries no diagram).

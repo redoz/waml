@@ -33,6 +33,16 @@ fn constraint_vis_for(action: &crate::view_bar::ViewBarAction) -> Option<Constra
     }
 }
 
+/// The view bar's `ShowConstraints` lit state for a canvas veil mode -- the
+/// inverse of `constraint_vis_for`, used to push canvas state *back* into the
+/// bar so the two can re-converge if they ever drift.
+fn show_constraints_for(vis: ConstraintVisibility) -> bool {
+    match vis {
+        ConstraintVisibility::None => false,
+        ConstraintVisibility::Selected => true,
+    }
+}
+
 #[derive(Default)]
 pub struct ClassDiagramView {
     /// The base tab's current diagram identity, pushed by the shell before
@@ -123,6 +133,19 @@ impl DocView for ClassDiagramView {
             .borrow_mut::<crate::selection_toolbar::SelectionToolbar>()
         {
             toolbar.set_selection(cx, None);
+        }
+        // Re-converge the view bar's lit state onto the canvas veil mode. The
+        // canvas owns the state; the bar only caches it, and its own click
+        // handler is otherwise the sole writer -- so this is the one path that
+        // can heal a bar<->canvas disagreement (tab activation, model reload).
+        let vis = body
+            .canvas(cx)
+            .borrow::<crate::canvas::GraphCanvas>()
+            .map(|canvas| canvas.constraint_vis());
+        if let Some(vis) = vis {
+            if let Some(mut bar) = body.view_bar(cx).borrow_mut::<crate::view_bar::ViewBar>() {
+                bar.set_show_constraints(cx, show_constraints_for(vis));
+            }
         }
     }
 
@@ -401,7 +424,7 @@ impl DocView for ClassDiagramView {
 
 #[cfg(test)]
 mod tests {
-    use super::constraint_vis_for;
+    use super::{constraint_vis_for, show_constraints_for};
     use crate::canvas::ConstraintVisibility;
     use crate::view_bar::{ViewBarAction, ViewOption};
 
@@ -433,5 +456,19 @@ mod tests {
             );
         }
         assert_eq!(constraint_vis_for(&ViewBarAction::None), None);
+    }
+
+    #[test]
+    fn veil_mode_round_trips_through_the_bars_lit_state() {
+        // `sync` mirrors the canvas mode back onto the bar, so the two maps
+        // must be exact inverses or an activation would flip the veil.
+        for vis in [ConstraintVisibility::None, ConstraintVisibility::Selected] {
+            let on = show_constraints_for(vis);
+            assert_eq!(
+                constraint_vis_for(&ViewBarAction::Toggled(ViewOption::ShowConstraints, on)),
+                Some(vis),
+                "{vis:?} must survive the canvas->bar->canvas round trip"
+            );
+        }
     }
 }

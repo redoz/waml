@@ -172,6 +172,36 @@ impl dyn DocView {
     }
 }
 
+/// Which pieces of the shared body chrome the active tab drives.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct BodyChrome {
+    /// The left tool dock (`tool_dock_wrap`).
+    pub tool_dock: bool,
+    /// The bottom-centre view bar (`view_bar_wrap`).
+    pub view_bar: bool,
+}
+
+/// Body-chrome visibility for an active tab. Both pieces are *per-view*, so
+/// `None` -- no open tab at all (start screen, diagram-less model, every tab
+/// closed) -- hides both: `App::handle_actions` skips the `DocView` delegate
+/// when there is no active tab, so a still-visible view bar would flip its own
+/// toggles over a stale canvas with nothing calling `set_constraint_vis`.
+pub fn body_chrome(active: Option<&DocTab>) -> BodyChrome {
+    match active {
+        None => BodyChrome {
+            tool_dock: false,
+            view_bar: false,
+        },
+        Some(tab) => {
+            let view = make_view(tab);
+            BodyChrome {
+                tool_dock: view.wants_tooldock(),
+                view_bar: view.wants_view_bar(),
+            }
+        }
+    }
+}
+
 /// Create the view object for a tab, discriminating on `TabKind` (spec §5).
 pub fn make_view(tab: &DocTab) -> Box<dyn DocView> {
     match tab.kind {
@@ -238,5 +268,44 @@ mod tests {
         );
         let sv = make_view(&tab(TabKind::Source, TreeKind::Class));
         assert!(!sv.wants_view_bar(), "source view never reads the view bar");
+    }
+
+    #[test]
+    fn no_active_tab_hides_every_piece_of_body_chrome() {
+        // Every doc tab is closable, so "zero tabs" is reachable at runtime.
+        // With no active tab the shell skips the `DocView` delegate entirely,
+        // so a visible bar would desync from the canvas on the next click.
+        assert_eq!(
+            body_chrome(None),
+            BodyChrome {
+                tool_dock: false,
+                view_bar: false,
+            }
+        );
+    }
+
+    #[test]
+    fn body_chrome_follows_the_active_view() {
+        assert_eq!(
+            body_chrome(Some(&tab(TabKind::Diagram, TreeKind::Diagram))),
+            BodyChrome {
+                tool_dock: true,
+                view_bar: true,
+            }
+        );
+        assert_eq!(
+            body_chrome(Some(&tab(TabKind::Classifier, TreeKind::Class))),
+            BodyChrome {
+                tool_dock: false,
+                view_bar: false,
+            }
+        );
+        assert_eq!(
+            body_chrome(Some(&tab(TabKind::Source, TreeKind::Class))),
+            BodyChrome {
+                tool_dock: false,
+                view_bar: false,
+            }
+        );
     }
 }

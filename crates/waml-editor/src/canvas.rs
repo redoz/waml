@@ -2149,6 +2149,13 @@ impl GraphCanvas {
         self.draw_bg.redraw(cx);
     }
 
+    /// Current constraint-veil mode. The canvas owns this state; the view bar's
+    /// lit toggle is a mirror of it and re-syncs from here on every view
+    /// `sync`.
+    pub fn constraint_vis(&self) -> ConstraintVisibility {
+        self.constraint_vis
+    }
+
     /// Node count of the current scene, for the statusbar mock.
     pub fn node_count(&self) -> usize {
         self.scene.nodes.len()
