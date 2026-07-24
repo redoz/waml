@@ -195,16 +195,22 @@ script_mod! {
                             width: Fill
                             height: Fill
                         }
-                        // View Source tab body: an opaque, empty placeholder
-                        // document surface. Toggled visible only on a Source tab
-                        // (see `sync_active_tab`); when visible it occludes the
-                        // canvas (whose `set_visible` is a no-op). Real Markdown
-                        // rendering is a deferred follow-up.
-                        source_view := SolidView{
+                        // View Source tab body: renders the subject's raw markdown via the
+                        // upstream Markdown widget, scrolling vertically when it overflows. The
+                        // opaque `canvas_ground` bg preserves the occlusion contract (this slot
+                        // draws over the canvas whenever a Source tab is active).
+                        source_view := View{
                             width: Fill
                             height: Fill
                             visible: false
+                            show_bg: true
                             draw_bg.color: atlas.canvas_ground
+                            flow: Down
+                            scroll_bars: ScrollBars{ scroll_bar_y: ScrollBar{} }
+                            md := Markdown{
+                                width: Fill
+                                height: Fit
+                            }
                         }
                         // Tool dock: left edge, vertically centered. Wrapper is
                         // toggled visible only on a diagram tab (hidden while a
@@ -403,6 +409,15 @@ impl App {
         let body = crate::doc_view::BodyWidgets::new(cx, &self.ui);
         body.source_view(cx)
             .set_visible(cx, active.kind == TabKind::Source);
+        if active.kind == TabKind::Source {
+            let md = crate::load::source_for(&self.bundle, &active.key)
+                .map(str::to_string)
+                .unwrap_or_else(|| format!("*No source for `{}`*", active.key));
+            self.ui
+                .widget(cx, ids!(source_view.md))
+                .as_markdown()
+                .set_text(cx, &md);
+        }
         let view = self
             .views
             .entry(active.id)

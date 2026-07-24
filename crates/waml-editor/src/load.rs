@@ -48,6 +48,18 @@ pub fn load_bundle_and_model(
     Ok((bundle, model))
 }
 
+/// Return the raw markdown of the bundle file whose basename (minus `.md`)
+/// equals `key`. `key` is a bare classifier slug (`order`); bundle paths may be
+/// nested (`shop/order.md`), so match on the final path segment. `None` when no
+/// file matches.
+pub fn source_for<'a>(bundle: &'a [(String, String)], key: &str) -> Option<&'a str> {
+    bundle.iter().find_map(|(path, contents)| {
+        let base = path.rsplit('/').next().unwrap_or(path);
+        let stem = base.strip_suffix(".md").unwrap_or(base);
+        (stem == key).then_some(contents.as_str())
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -105,5 +117,26 @@ mod tests {
         ] {
             assert!(kinds.contains(&k), "sixkind fixture missing {k:?}");
         }
+    }
+
+    #[test]
+    fn source_for_matches_top_level_slug() {
+        let bundle = vec![
+            ("order.md".to_string(), "# Order\nbody".to_string()),
+            ("customer.md".to_string(), "# Customer".to_string()),
+        ];
+        assert_eq!(source_for(&bundle, "order"), Some("# Order\nbody"));
+    }
+
+    #[test]
+    fn source_for_matches_nested_slug_by_basename() {
+        let bundle = vec![("shop/order.md".to_string(), "# Order".to_string())];
+        assert_eq!(source_for(&bundle, "order"), Some("# Order"));
+    }
+
+    #[test]
+    fn source_for_returns_none_when_absent() {
+        let bundle = vec![("order.md".to_string(), "# Order".to_string())];
+        assert_eq!(source_for(&bundle, "invoice"), None);
     }
 }
