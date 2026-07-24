@@ -11,6 +11,7 @@
 //!   is factored into pure functions over `Vec<Recent>` so it unit-tests without
 //!   any filesystem.
 
+use std::cmp::Ordering;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -116,6 +117,11 @@ pub struct Recent {
     title: String,
     /// Unix seconds, last time opened.
     opened_at: u64,
+    /// Unix seconds when pinned; `None` when unpinned. Pinned recents sort to a
+    /// block at the top (oldest pin first) and are exempt from the MRU cap.
+    /// `#[serde(default)]` keeps files written before pinning existed loadable.
+    #[serde(default)]
+    pinned_at: Option<u64>,
 }
 
 impl Recent {
@@ -132,6 +138,11 @@ impl Recent {
     /// Unix seconds of the last time this project was opened.
     pub fn opened_at(&self) -> u64 {
         self.opened_at
+    }
+
+    /// Whether this recent is pinned (kept on the list, sorted to the top block).
+    pub fn pinned(&self) -> bool {
+        self.pinned_at.is_some()
     }
 }
 
@@ -150,6 +161,18 @@ fn canonical_key(path: &Path) -> PathBuf {
     std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
 }
 
+/// Order the recents for display: pinned block first (ascending `pinned_at`,
+/// so a freshly pinned entry lands directly below the last-pinned item), then
+/// the unpinned tail in MRU order (newest `opened_at` first). Stable sort.
+fn sort_recents(recents: &mut [Recent]) {
+    recents.sort_by(|a, b| match (a.pinned_at, b.pinned_at) {
+        (Some(ap), Some(bp)) => ap.cmp(&bp),
+        (Some(_), None) => Ordering::Less,
+        (None, Some(_)) => Ordering::Greater,
+        (None, None) => b.opened_at.cmp(&a.opened_at),
+    });
+}
+
 /// Add or promote `path` to the front of `recents` (MRU), refreshing its
 /// `opened_at`, then cap the list at `RECENTS_CAP` (dropping oldest first).
 fn add_or_promote(
@@ -166,9 +189,34 @@ fn add_or_promote(
             path: path.to_path_buf(),
             title: title.to_string(),
             opened_at,
+            pinned_at: None,
         },
     );
-    recents.truncate(RECENTS_CAP);
+    // Pinned entries are exempt from the cap; the cap trims only the unpinned
+    // tail. Sort first so the retained unpinned are the newest.
+    sort_recents(&mut recents);
+    let mut unpinned_kept = 0usize;
+    recents.retain(|r| {
+        if r.pinned_at.is_some() {
+            true
+        } else {
+            unpinned_kept += 1;
+            unpinned_kept <= RECENTS_CAP
+        }
+    });
+    recents
+}
+
+/// Set or clear the pin on every recent whose canonical path matches `path`
+/// (there is at most one after dedup). Pure over the vector; `set_pinned` wraps
+/// it with load/store.
+fn apply_pin(mut recents: Vec<Recent>, path: &Path, pinned: bool, now: u64) -> Vec<Recent> {
+    let key = canonical_key(path);
+    for r in recents.iter_mut() {
+        if canonical_key(&r.path) == key {
+            r.pinned_at = if pinned { Some(now) } else { None };
+        }
+    }
     recents
 }
 
@@ -186,7 +234,9 @@ fn prune_missing(recents: Vec<Recent>) -> Vec<Recent> {
 /// to the returned list only; the next `push_recent` persists the pruned state.
 pub fn recents() -> Vec<Recent> {
     let config: EditorConfig = load(EDITOR_FILE);
-    prune_missing(config.recents)
+    let mut list = prune_missing(config.recents);
+    sort_recents(&mut list);
+    list
 }
 
 /// Load `editor.json` and return the persisted UI theme (`Light` when the file
@@ -231,6 +281,21 @@ pub fn push_recent(path: &Path, title: &str) {
     }
 }
 
+/// Set/clear the pin on the recent whose canonical path matches `path`, then
+/// persist. Best-effort — a write failure is logged and swallowed. The caller
+/// reloads via `recents()` to see the re-sorted list.
+pub fn set_pinned(path: &Path, pinned: bool) {
+    let mut config: EditorConfig = load(EDITOR_FILE);
+    config.version = EDITOR_VERSION;
+    config.recents = apply_pin(config.recents, path, pinned, now_unix());
+    if let Err(e) = store(EDITOR_FILE, &config) {
+        log!(
+            "waml-editor: failed to persist pin {:?}={pinned}: {e}",
+            path
+        );
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -241,7 +306,91 @@ mod tests {
             path: PathBuf::from(path),
             title: format!("t:{path}"),
             opened_at,
+            pinned_at: None,
         }
+    }
+
+    fn pinned_rec(path: &str, opened_at: u64, pinned_at: u64) -> Recent {
+        Recent {
+            path: PathBuf::from(path),
+            title: format!("t:{path}"),
+            opened_at,
+            pinned_at: Some(pinned_at),
+        }
+    }
+
+    #[test]
+    fn sort_recents_pins_first_oldest_pin_on_top_then_mru() {
+        let mut list = vec![
+            rec("/u1", 10),
+            pinned_rec("/p_late", 1, 200),
+            rec("/u2", 30),
+            pinned_rec("/p_early", 1, 100),
+        ];
+        sort_recents(&mut list);
+        // Pinned block first, ascending pin time (a fresh pin lands directly
+        // below the last-pinned item).
+        assert_eq!(list[0].path, PathBuf::from("/p_early"));
+        assert_eq!(list[1].path, PathBuf::from("/p_late"));
+        // Then unpinned, newest opened_at first.
+        assert_eq!(list[2].path, PathBuf::from("/u2"));
+        assert_eq!(list[3].path, PathBuf::from("/u1"));
+    }
+
+    #[test]
+    fn cap_exempts_pins_and_caps_only_unpinned() {
+        // RECENTS_CAP unpinned already present, plus two pins.
+        let mut list = vec![pinned_rec("/pin_a", 1, 10), pinned_rec("/pin_b", 1, 20)];
+        for i in 0..RECENTS_CAP {
+            list = add_or_promote(list, Path::new(&format!("/u{i}")), "t", i as u64);
+        }
+        // One more distinct unpinned open.
+        list = add_or_promote(list, Path::new("/u-new"), "t", 999);
+        // Both pins survive regardless of the cap.
+        assert!(list.iter().any(|r| r.path == Path::new("/pin_a")));
+        assert!(list.iter().any(|r| r.path == Path::new("/pin_b")));
+        // Exactly RECENTS_CAP unpinned kept (the newest).
+        let unpinned = list.iter().filter(|r| !r.pinned()).count();
+        assert_eq!(unpinned, RECENTS_CAP);
+        assert!(list.iter().any(|r| r.path == Path::new("/u-new")));
+    }
+
+    #[test]
+    fn apply_pin_sets_and_clears_stamp() {
+        let list = vec![rec("/a", 1), rec("/b", 2)];
+        let pinned = apply_pin(list, Path::new("/b"), true, 500);
+        let b = pinned.iter().find(|r| r.path == Path::new("/b")).unwrap();
+        assert_eq!(b.pinned_at, Some(500), "pin stamps now");
+        assert!(pinned
+            .iter()
+            .find(|r| r.path == Path::new("/a"))
+            .unwrap()
+            .pinned_at
+            .is_none());
+
+        let unpinned = apply_pin(pinned, Path::new("/b"), false, 999);
+        assert!(
+            unpinned
+                .iter()
+                .find(|r| r.path == Path::new("/b"))
+                .unwrap()
+                .pinned_at
+                .is_none(),
+            "unpin clears"
+        );
+    }
+
+    #[test]
+    fn old_recent_without_pinned_field_loads_unpinned() {
+        let tmp = TempDir::new();
+        std::fs::write(
+            tmp.path().join(EDITOR_FILE),
+            br#"{"version":1,"recents":[{"path":"/x","title":"t","opened_at":1}]}"#,
+        )
+        .unwrap();
+        let cfg: EditorConfig = load_from(tmp.path(), EDITOR_FILE);
+        assert_eq!(cfg.recents.len(), 1);
+        assert!(!cfg.recents[0].pinned(), "absent pinned_at -> unpinned");
     }
 
     // ---- pure list functions (no filesystem) ----
@@ -263,8 +412,11 @@ mod tests {
         assert_eq!(out[0].path, PathBuf::from("/c"));
         assert_eq!(out[0].opened_at, 99, "opened_at refreshed");
         assert_eq!(out[0].title, "C-updated");
-        assert_eq!(out[1].path, PathBuf::from("/a"));
-        assert_eq!(out[2].path, PathBuf::from("/b"));
+        // `add_or_promote` now runs `sort_recents` before returning (Task 1:
+        // pin-exempt cap), so the unpinned tail is MRU order by `opened_at`,
+        // not raw insertion order: b (opened_at 2) outranks a (opened_at 1).
+        assert_eq!(out[1].path, PathBuf::from("/b"));
+        assert_eq!(out[2].path, PathBuf::from("/a"));
     }
 
     #[test]
@@ -305,11 +457,13 @@ mod tests {
                 path: here.clone(),
                 title: "here".into(),
                 opened_at: 1,
+                pinned_at: None,
             },
             Recent {
                 path: tmp.path().join("gone"),
                 title: "gone".into(),
                 opened_at: 2,
+                pinned_at: None,
             },
         ];
         let out = prune_missing(list);
@@ -323,6 +477,7 @@ mod tests {
             path: PathBuf::from("/proj"),
             title: "Proj".into(),
             opened_at: 5,
+            pinned_at: None,
         };
         assert_eq!(r.path(), Path::new("/proj"));
         assert_eq!(r.title(), "Proj");

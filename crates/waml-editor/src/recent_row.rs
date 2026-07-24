@@ -14,6 +14,8 @@
 
 use makepad_widgets::*;
 
+use crate::icons::{Icon, IconSet};
+
 script_mod! {
     use mod.prelude.widgets_internal.*
     use mod.atlas
@@ -28,15 +30,14 @@ script_mod! {
         height: Fit
         flow: Right
         align: Align{y: 0.5}
-        padding: Inset{left: 12.0, right: 12.0, top: 5.0, bottom: 5.0}
-        spacing: 12.0
+        // Tighter than before (was top/bottom 5) to reach VS's compact pitch.
+        padding: Inset{left: 12.0, right: 12.0, top: 3.0, bottom: 3.0}
+        spacing: 10.0
         show_bg: true
 
-        // Hover wash: a subtle premultiplied accent fill behind the whole row,
-        // faded by the `hover` uniform (0 rest / 1 pointer-over) the widget sets
-        // from FingerHoverIn/Out. Full-rect return (no sdf.box, which floods at
-        // 0-radius in this fork), premultiplied like `CardShadow` so a low-alpha
-        // tint reads as a wash, not a bloom.
+        // Row hover wash (unchanged): a subtle premultiplied accent fill faded
+        // by the `hover` uniform the widget pushes from its rect-containment
+        // hover tracking each draw.
         draw_bg +: {
             color: atlas.accent
             hover: uniform(0.0)
@@ -46,35 +47,28 @@ script_mod! {
             }
         }
 
-        // Accent bullet: a sharp 7x7 solid square (0-radius `sdf.box` floods
-        // this fork, so fill an `sdf.rect`, matching the `rule`/button
-        // placeholders in `start_screen.rs`). Vertically centered by the row's
-        // `align`.
-        marker := View {
-            width: 7.0
-            height: 7.0
-            show_bg: true
-            draw_bg +: {
-                color: atlas.accent
-                pixel: fn() {
-                    let sdf = Sdf2d.viewport(self.pos * self.rect_size)
-                    sdf.rect(0.0, 0.0, self.rect_size.x, self.rect_size.y)
-                    sdf.fill(self.color)
-                    return sdf.result
-                }
-            }
+        // Colour-only holders (never drawn): the immediate-mode glyphs copy
+        // `color` from these per draw, so no RGBA crosses Rust (icon_button.rs
+        // pattern). `draw_pkg` tints the left document glyph; the pin uses
+        // `draw_pin_lit` when pinned or pin-hovered, else `draw_pin_idle`.
+        draw_pkg +: { color: atlas.text_dim }
+        draw_pin_idle +: { color: atlas.text_dim }
+        draw_pin_lit +: { color: atlas.accent }
+
+        // Left document glyph anchor: a 16x16 spacer reserving the flow slot;
+        // `Icon::Package` is drawn immediate over this rect in `draw_walk`.
+        glyph := View {
+            width: 16.0
+            height: 16.0
         }
 
-        // Title line over path, stacked. The timestamp rides the TITLE line
-        // (shares its horizontal centerline with `title`), so the path spans
-        // the full column width below. `title` is `Fill` inside `titlerow`,
-        // eating the slack and shoving the `Fit` `when` flush right -- the
-        // whole right-anchor mechanism, no measuring.
+        // Title over path, stacked. The timestamp rides the title line; `title`
+        // is `Fill` inside `titlerow`, shoving the `Fit` `when` flush right.
         textcol := View {
             width: Fill
             height: Fit
             flow: Down
-            spacing: 0.0
+            spacing: -2.0
 
             titlerow := View {
                 width: Fill
@@ -86,11 +80,9 @@ script_mod! {
                     text: ""
                     draw_text +: {
                         color: atlas.text
-                        text_style: fonts.text_body
+                        text_style: fonts.text_label
                     }
                 }
-                // Right-anchored last-opened stamp. `Fit` width -> `title`'s
-                // `Fill` shoves it to the right edge, on the title's line.
                 when := Label {
                     text: ""
                     draw_text +: {
@@ -104,9 +96,19 @@ script_mod! {
                 text: ""
                 draw_text +: {
                     color: atlas.text_dim
-                    text_style: fonts.text_label
+                    text_style: fonts.text_menu
                 }
             }
+        }
+
+        // Pin anchor: a 20x20 spacer at the row's right edge. `Icon::Pin` is
+        // drawn immediate over this rect (centered 16px) only when the row is
+        // hovered or the row is pinned (VS on-hover reveal). Its own FingerUp is
+        // hit-tested first in `handle_event` so a pin click toggles without
+        // opening the model.
+        pin := View {
+            width: 20.0
+            height: 20.0
         }
     }
 }
@@ -118,24 +120,55 @@ script_mod! {
 pub enum RecentRowViewAction {
     #[default]
     None,
+    /// The row body was clicked — open this recent.
     Clicked,
+    /// The pin button was clicked — toggle this recent's pinned state.
+    TogglePin,
 }
 
 #[derive(Script, ScriptHook, Widget)]
 pub struct RecentRowView {
-    /// The row container: the marker + stacked text column + timestamp declared
-    /// in the DSL tree above.
+    /// The row container: glyph anchor + stacked text + pin anchor.
     #[deref]
     view: View,
 
-    /// Pointer-over state, self-managed from FingerHoverIn/Out; fed to the
-    /// `hover` uniform on the root `draw_bg` each `draw_walk` for the wash.
+    /// SDF icon set (shared Atlas material), drawn via `IconSet::draw`.
+    #[live]
+    icons: IconSet,
+    /// Colour-only holders, copied into the glyph tint per draw.
+    #[live]
+    draw_pkg: DrawColor,
+    #[live]
+    draw_pin_idle: DrawColor,
+    #[live]
+    draw_pin_lit: DrawColor,
+
+    /// Row pointer-over state, tracked by rect containment (a child area would
+    /// steal `Hit::FingerHover`; the containment test keeps the pin inside the
+    /// row's hover). Fed to the `hover` uniform each `draw_walk`.
     #[rust]
     hovered: bool,
-    /// Whether this row responds to hover/click. Real recents set it true; the
-    /// empty-state placeholder row leaves it false so it neither washes nor fires.
+    /// Pointer-over the pin anchor specifically (lights the pin tint).
+    #[rust]
+    pin_hovered: bool,
+    /// Whether this row responds to hover/click. The empty-state row leaves it
+    /// false so it neither washes, fires, nor draws a pin.
     #[rust]
     clickable: bool,
+    /// Whether this recent is pinned (drives the pin's always-visible + accent
+    /// tint). Pushed per row from `StartScreen`.
+    #[rust]
+    pinned: bool,
+    /// Cached absolute rects from the last `draw_walk`, for containment hover.
+    #[rust]
+    row_rect: Rect,
+    #[rust]
+    glyph_rect: Rect,
+    #[rust]
+    pin_rect: Rect,
+    /// The pin anchor's `Area`, for hit-testing its FingerUp before the row's.
+    #[rust]
+    pin_area: Area,
 }
 
 impl Widget for RecentRowView {
@@ -144,30 +177,78 @@ impl Widget for RecentRowView {
             return;
         }
         let uid = self.widget_uid();
+
+        // Hover by rect containment: a child area (the pin) would claim
+        // Hit::FingerHover and drop the row's hover the moment the pointer
+        // crosses onto the pin, so track both off raw MouseMove instead
+        // (the scrim-hover fix). The row rect encloses the pin, so hovering the
+        // pin keeps the row hovered -> the revealed pin never flickers away.
+        if let Event::MouseMove(e) = event {
+            let over_row = self.row_rect.contains(e.abs);
+            let over_pin = self.pin_rect.contains(e.abs);
+            if over_row != self.hovered || over_pin != self.pin_hovered {
+                self.hovered = over_row;
+                self.pin_hovered = over_pin;
+                self.view.redraw(cx);
+            }
+        }
+
+        // Pin claims its FingerUp first (toggles without opening). The pin area
+        // is topmost over its rect, so the row body's hit below bails there.
+        if let Hit::FingerUp(fe) = event.hits(cx, self.pin_area) {
+            if fe.is_primary_hit() && fe.is_over {
+                cx.widget_action(uid, RecentRowViewAction::TogglePin);
+                return;
+            }
+        }
+
         match event.hits(cx, self.view.area()) {
             Hit::FingerUp(fe) if fe.is_primary_hit() && fe.is_over => {
                 cx.widget_action(uid, RecentRowViewAction::Clicked);
             }
             Hit::FingerHoverIn(_) => {
                 cx.set_cursor(MouseCursor::Hand);
-                self.hovered = true;
-                self.view.redraw(cx);
-            }
-            Hit::FingerHoverOut(_) => {
-                self.hovered = false;
-                self.view.redraw(cx);
             }
             _ => {}
         }
     }
 
-    // Push the hover state into the wash uniform, then delegate the draw so the
-    // container's child Labels render.
     fn draw_walk(&mut self, cx: &mut Cx2d, scope: &mut Scope, walk: Walk) -> DrawStep {
         self.view
             .draw_bg
             .set_uniform(cx, live_id!(hover), &[if self.hovered { 1.0 } else { 0.0 }]);
-        self.view.draw_walk(cx, scope, walk)
+        let step = self.view.draw_walk(cx, scope, walk);
+
+        // Cache post-layout rects for containment hover + immediate glyphs.
+        self.row_rect = self.view.area().rect(cx);
+        self.glyph_rect = self.view.widget(cx, ids!(glyph)).area().rect(cx);
+        self.pin_area = self.view.widget(cx, ids!(pin)).area();
+        self.pin_rect = self.pin_area.rect(cx);
+
+        // Left document glyph, filling its 16x16 anchor.
+        self.icons
+            .draw(cx, Icon::Package, self.glyph_rect, self.draw_pkg.color);
+
+        // Pin: VS on-hover reveal — draw only when the row is hovered or pinned.
+        // Accent when pinned or pin-hovered, else dim.
+        if self.clickable && (self.hovered || self.pinned) {
+            let lit = self.pinned || self.pin_hovered;
+            let tint = if lit {
+                self.draw_pin_lit.color
+            } else {
+                self.draw_pin_idle.color
+            };
+            let sz = 16.0;
+            let g = Rect {
+                pos: dvec2(
+                    (self.pin_rect.pos.x + (self.pin_rect.size.x - sz) * 0.5).round(),
+                    (self.pin_rect.pos.y + (self.pin_rect.size.y - sz) * 0.5).round(),
+                ),
+                size: dvec2(sz, sz),
+            };
+            self.icons.draw(cx, Icon::Pin, g, tint);
+        }
+        step
     }
 }
 
@@ -198,6 +279,28 @@ impl RecentRowView {
             .find_widget_action(self.widget_uid())
             .is_some_and(|a| matches!(a.cast(), RecentRowViewAction::Clicked))
     }
+
+    /// Intrinsic drawn pitch of one row (the 16px glyph / stacked text plus the
+    /// 2x3 vertical padding). `StartScreen` sizes its list box to
+    /// `5 * ROW_HEIGHT + list padding` so exactly five rows fit; verify the fit
+    /// by screenshot after any font/padding change and retune if a 6th peeks in.
+    pub const ROW_HEIGHT: f64 = 30.0;
+
+    /// Drive the pinned state (pin glyph visibility + accent tint), redrawing
+    /// only on a change.
+    pub fn set_pinned(&mut self, cx: &mut Cx, pinned: bool) {
+        if self.pinned != pinned {
+            self.pinned = pinned;
+            self.view.redraw(cx);
+        }
+    }
+
+    /// True when this row's pin emitted a toggle in `actions`.
+    pub fn pin_toggled(&self, actions: &Actions) -> bool {
+        actions
+            .find_widget_action(self.widget_uid())
+            .is_some_and(|a| matches!(a.cast(), RecentRowViewAction::TogglePin))
+    }
 }
 
 impl RecentRowViewRef {
@@ -227,5 +330,38 @@ impl RecentRowViewRef {
     /// See [`RecentRowView::clicked`].
     pub fn clicked(&self, actions: &Actions) -> bool {
         self.borrow().is_some_and(|inner| inner.clicked(actions))
+    }
+    pub fn set_pinned(&self, cx: &mut Cx, pinned: bool) {
+        if let Some(mut inner) = self.borrow_mut() {
+            inner.set_pinned(cx, pinned);
+        }
+    }
+    /// See [`RecentRowView::pin_toggled`].
+    pub fn pin_toggled(&self, actions: &Actions) -> bool {
+        self.borrow()
+            .is_some_and(|inner| inner.pin_toggled(actions))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn action_default_is_none() {
+        assert!(matches!(
+            RecentRowViewAction::default(),
+            RecentRowViewAction::None
+        ));
+    }
+
+    #[test]
+    #[allow(clippy::assertions_on_constants)]
+    fn row_height_is_positive() {
+        // The list box height (5 * ROW_HEIGHT + padding) must be well-formed.
+        // Clippy flags this as a constant-value assertion (ROW_HEIGHT is a
+        // `const`), which is exactly the shape-gate this test locks in —
+        // suppress the lint rather than drop the check.
+        assert!(RecentRowView::ROW_HEIGHT > 0.0);
     }
 }

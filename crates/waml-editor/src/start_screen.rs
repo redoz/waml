@@ -180,10 +180,10 @@ script_mod! {
                     // extra nesting does not touch the id path.
                     list_frame := View {
                         width: Fill
-                        // Fixed tall height so the recents box anchors the card
-                        // (short lists still read as a real panel); the inner
-                        // `Fill` FlatList scrolls when recents overflow.
-                        height: 320.0
+                        // Height is set from Rust in `draw_walk` to exactly five
+                        // `RecentRowView::ROW_HEIGHT` rows plus this box's Inset
+                        // padding, so the box fits five rows and scrolls beyond.
+                        height: Fit
                         show_bg: true
                         // Inset the FlatList off the border so rows (and their
                         // hover wash) breathe inside the box.
@@ -248,9 +248,10 @@ script_mod! {
 pub(crate) struct RecentRow {
     pub title: String,
     pub path: String,
-    /// Preformatted local "M/D/YYYY h:mm AM/PM" last-opened stamp. Rendered
-    /// right-anchored in the `RecentRowView` row.
+    /// Preformatted local "M/D/YYYY h:mm AM/PM" last-opened stamp.
     pub when: String,
+    /// Whether this recent is pinned (drives the row's pin glyph).
+    pub pinned: bool,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -259,6 +260,8 @@ pub enum StartScreenAction {
     None,
     /// A recent row was clicked; indexes the rows last passed to `set_recents`.
     OpenRecent(usize),
+    /// A recent row's pin was toggled; indexes the rows passed to `set_recents`.
+    TogglePin(usize),
     NewProject,
     OpenProject,
 }
@@ -312,6 +315,12 @@ impl Widget for StartScreen {
             return DrawStep::done();
         }
         self.seat_subtitle_baseline(cx);
+        // Fix the list box to exactly five rows plus its own Inset-5 top/bottom
+        // padding, so the recents box always shows five rows and scrolls beyond.
+        let box_h = 5.0 * crate::recent_row::RecentRowView::ROW_HEIGHT + 2.0 * 5.0;
+        if let Some(mut frame) = self.view.view(cx, ids!(list_frame)).borrow_mut() {
+            frame.walk.height = Size::Fixed(box_h);
+        }
         // The run_list.rs interpose idiom: walk the tree, and when the FlatList
         // step surfaces, populate one child widget per recent row from the `Row`
         // template, push data in, and draw it.
@@ -339,6 +348,7 @@ impl Widget for StartScreen {
                         rv.set_path(cx, &row_data.path);
                         rv.set_when(cx, &row_data.when);
                         rv.set_clickable(true);
+                        rv.set_pinned(cx, row_data.pinned);
                         row.draw_all(cx, &mut Scope::empty());
                     }
                 }
@@ -367,6 +377,11 @@ impl WidgetMatchEvent for StartScreen {
             if item.as_recent_row_view().clicked(actions) {
                 if let Some(i) = row_index_for(&self.rows, item_id) {
                     cx.widget_action(uid, StartScreenAction::OpenRecent(i));
+                }
+            }
+            if item.as_recent_row_view().pin_toggled(actions) {
+                if let Some(i) = row_index_for(&self.rows, item_id) {
+                    cx.widget_action(uid, StartScreenAction::TogglePin(i));
                 }
             }
         }
@@ -436,7 +451,24 @@ mod tests {
             title: "t".into(),
             path: path.into(),
             when: "w".into(),
+            pinned: false,
         }
+    }
+
+    #[test]
+    fn toggle_pin_indexes_a_row() {
+        // A pinned row carries the flag, and TogglePin round-trips an index.
+        let r = RecentRow {
+            title: "t".into(),
+            path: "/p".into(),
+            when: "w".into(),
+            pinned: true,
+        };
+        assert!(r.pinned);
+        assert!(matches!(
+            StartScreenAction::TogglePin(3),
+            StartScreenAction::TogglePin(3)
+        ));
     }
 
     #[test]

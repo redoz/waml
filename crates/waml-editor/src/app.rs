@@ -778,10 +778,14 @@ impl App {
         let rows: Vec<crate::start_screen::RecentRow> = self
             .start_recents
             .iter()
+            // All recents feed the list; the box (Task 3) bounds the visible
+            // count to five and scrolls beyond, so pins past five stay reachable.
+            // Click/toggle indices still map 1:1 (rows[i] == start_recents[i]).
             .map(|r| crate::start_screen::RecentRow {
                 title: r.title().to_string(),
                 path: r.path().display().to_string(),
                 when: format_opened(r.opened_at()),
+                pinned: r.pinned(),
             })
             .collect();
         if let Some(mut screen) = self
@@ -1634,6 +1638,14 @@ impl MatchEvent for App {
                             if self.open_dir(cx, recent.path(), None) {
                                 self.show_editor(cx);
                             }
+                        }
+                    }
+                    crate::start_screen::StartScreenAction::TogglePin(i) => {
+                        if let Some(recent) = self.start_recents.get(i).cloned() {
+                            // Flip persisted pin, then reload the start screen so
+                            // the list re-sorts (pinned block floats to the top).
+                            crate::config::set_pinned(recent.path(), !recent.pinned());
+                            self.show_start_screen(cx);
                         }
                     }
                     crate::start_screen::StartScreenAction::NewProject => {
