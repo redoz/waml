@@ -225,9 +225,13 @@ impl Widget for RecentRowView {
         self.pin_area = self.view.widget(cx, ids!(pin)).area();
         self.pin_rect = self.pin_area.rect(cx);
 
-        // Left document glyph, filling its 16x16 anchor.
-        self.icons
-            .draw(cx, Icon::Package, self.glyph_rect, self.draw_pkg.color);
+        // Left document glyph, filling its 16x16 anchor. Gated on `clickable`
+        // like the pin below, so the empty-state row ("No recent models") shows
+        // bare text with no package icon beside it.
+        if self.clickable {
+            self.icons
+                .draw(cx, Icon::Package, self.glyph_rect, self.draw_pkg.color);
+        }
 
         // Pin: VS on-hover reveal — draw only when the row is hovered or pinned.
         // Accent when pinned or pin-hovered, else dim.

@@ -175,6 +175,8 @@ fn sort_recents(recents: &mut [Recent]) {
 
 /// Add or promote `path` to the front of `recents` (MRU), refreshing its
 /// `opened_at`, then cap the list at `RECENTS_CAP` (dropping oldest first).
+/// An existing entry's `pinned_at` is carried forward: `push_recent` runs on
+/// every open, so re-opening a pinned model must not silently unpin it.
 fn add_or_promote(
     mut recents: Vec<Recent>,
     path: &Path,
@@ -182,6 +184,10 @@ fn add_or_promote(
     opened_at: u64,
 ) -> Vec<Recent> {
     let key = canonical_key(path);
+    let pinned_at = recents
+        .iter()
+        .find(|r| canonical_key(&r.path) == key)
+        .and_then(|r| r.pinned_at);
     recents.retain(|r| canonical_key(&r.path) != key);
     recents.insert(
         0,
@@ -189,7 +195,7 @@ fn add_or_promote(
             path: path.to_path_buf(),
             title: title.to_string(),
             opened_at,
-            pinned_at: None,
+            pinned_at,
         },
     );
     // Pinned entries are exempt from the cap; the cap trims only the unpinned
@@ -417,6 +423,24 @@ mod tests {
         // not raw insertion order: b (opened_at 2) outranks a (opened_at 1).
         assert_eq!(out[1].path, PathBuf::from("/b"));
         assert_eq!(out[2].path, PathBuf::from("/a"));
+    }
+
+    #[test]
+    fn add_or_promote_preserves_pin() {
+        // `push_recent` (hence `add_or_promote`) runs on every open, so opening
+        // a pinned model must not silently unpin it.
+        let start = vec![pinned_rec("/a", 1, 50), rec("/b", 2)];
+        let out = add_or_promote(start, Path::new("/a"), "A-reopened", 99);
+        assert_eq!(out.len(), 2, "no duplicate for an existing path");
+        let a = out.iter().find(|r| r.path == Path::new("/a")).unwrap();
+        assert_eq!(a.pinned_at, Some(50), "re-opening keeps the original pin");
+        assert_eq!(a.opened_at, 99, "opened_at still refreshed");
+        assert_eq!(a.title, "A-reopened", "title still refreshed");
+        assert_eq!(
+            out[0].path,
+            PathBuf::from("/a"),
+            "still sorts into the pinned block"
+        );
     }
 
     #[test]
