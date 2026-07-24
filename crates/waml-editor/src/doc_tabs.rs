@@ -248,11 +248,9 @@ impl OpenTabs {
         id
     }
 
-    /// View Source: open a standalone `Source` tab for `key` (appended
-    /// rightmost), or focus it if already open. Unlike a classifier preview a
-    /// source doc is its OWN tab -- it never reuses or clobbers the preview
-    /// slot, and it opens persisted (`preview: false`) so a later classifier
-    /// click can't replace it. Never duplicates (id derives from key).
+    /// View Source: open (or focus) the single preview slot as a `Source` tab
+    /// for `key`. Mirrors `open_preview` -- never duplicates (id derives from
+    /// key), reuses the preview slot in place, always activates.
     pub fn open_source(&mut self, key: impl Into<String>, title: impl Into<String>) -> LiveId {
         let key = key.into();
         let title = title.into();
@@ -261,15 +259,20 @@ impl OpenTabs {
             self.active = id;
             return id;
         }
-        self.tabs.push(DocTab {
+        let tab = DocTab {
             id,
             key,
             title,
             kind: TabKind::Source,
             // No dedicated Source glyph; reuse the classifier glyph for the tab.
             node_kind: TreeKind::Class,
-            preview: false,
-        });
+            preview: true,
+        };
+        if let Some(idx) = self.preview_index() {
+            self.tabs[idx] = tab;
+        } else {
+            self.tabs.push(tab);
+        }
         self.active = id;
         id
     }
@@ -919,19 +922,18 @@ mod tests {
     }
 
     #[test]
-    fn open_source_opens_a_standalone_persisted_source_tab() {
+    fn open_source_uses_the_preview_slot_and_is_a_source_tab() {
         let mut open = OpenTabs::diagram_base("d", "Diagram");
         let id = open.open_source("customer", "Customer");
         assert_eq!(open.tabs.len(), 2);
         assert_eq!(open.tabs[1].kind, TabKind::Source);
-        // Its own tab, not a preview -- a later classifier click can't evict it.
-        assert!(!open.tabs[1].preview);
+        assert!(open.tabs[1].preview);
         assert_eq!(open.tabs[1].title, "Customer");
         assert_eq!(open.active, id);
     }
 
     #[test]
-    fn open_source_twice_focuses_the_same_tab() {
+    fn open_source_twice_reuses_the_same_slot_and_focuses() {
         let mut open = OpenTabs::diagram_base("d", "Diagram");
         let a = open.open_source("a", "A");
         let b = open.open_source("a", "A");
@@ -941,15 +943,12 @@ mod tests {
     }
 
     #[test]
-    fn open_source_leaves_the_preview_slot_intact() {
+    fn open_source_replaces_an_existing_preview_in_place() {
         let mut open = OpenTabs::diagram_base("d", "Diagram");
-        let prev = open.open_preview("customer", "Customer", TreeKind::Class);
+        open.open_preview("customer", "Customer", TreeKind::Class);
         let src = open.open_source("order", "Order");
-        // Source is appended as a THIRD tab; the preview slot is untouched.
-        assert_eq!(open.tabs.len(), 3);
-        assert_eq!(open.tabs[1].id, prev);
-        assert!(open.tabs[1].preview);
-        assert_eq!(open.tabs[2].id, src);
-        assert_eq!(open.tabs[2].kind, TabKind::Source);
+        assert_eq!(open.tabs.len(), 2);
+        assert_eq!(open.tabs[1].id, src);
+        assert_eq!(open.tabs[1].kind, TabKind::Source);
     }
 }
