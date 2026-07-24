@@ -13,6 +13,7 @@ use makepad_widgets::*;
 script_mod! {
     use mod.prelude.widgets_internal.*
     use mod.atlas
+    use mod.fonts
     use mod.widgets.*
     use mod.text.*
 
@@ -74,6 +75,11 @@ script_mod! {
         // #[live] DrawText fields; defaults are aa off / stem_darken 0.2.
         // Active tab: heavier weight (fork theme bold sans) so the focused
         // document reads as selected even before the accent strip registers.
+        // `draw_text_active` / `draw_text_preview` / `draw_text_preview_active`
+        // are DOCUMENTED STATE-FONT EXCEPTIONS (chrome-typography-scale Task 5):
+        // the 7-role set has no italic/bold-menu variant, so flattening these
+        // onto `fonts.text_menu` would destroy the Zed-style provisional/active
+        // tab device. Only the resting `draw_text_persisted` migrates.
         draw_text_active +: {
             color: atlas.text
             aa_2x2: 1.0
@@ -86,13 +92,7 @@ script_mod! {
             aa_2x2: 1.0
             stem_darken: 0.7
             stem_darken_max: 0.25
-            text_style: TextStyle{
-                font_size: 10
-                font_family: FontFamily{
-                    latin := FontMember{res: crate_resource("self:resources/fonts/IBM_Plex_Sans/IBMPlexSans-Regular.ttf") asc: -0.1 desc: 0.0}
-                }
-                line_spacing: 1.2
-            }
+            text_style: fonts.text_menu
         }
         // Preview ("dynamic") tab: italic, Zed-style, so a not-yet-pinned
         // document reads as provisional at a glance.

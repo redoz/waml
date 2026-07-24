@@ -27,6 +27,7 @@ pub enum SelectBoxAction {
 script_mod! {
     use mod.prelude.widgets_internal.*
     use mod.atlas
+    use mod.fonts
     use mod.widgets.*
     use mod.text.*
 
@@ -55,15 +56,16 @@ script_mod! {
         draw_badge: mod.draw.DrawColor{ color: atlas.bucket_slate }
         draw_badge_text +: {
             color: #xffffff
-            text_style: theme.font_regular{ font_size: 10 }
+            text_style: fonts.text_menu
         }
         draw_icon_idle +: { color: atlas.text }
         draw_caret +: { color: atlas.text_dim }
         // Web-header style: the selected subject's name reads as a bold title,
         // not a small combo-field label (mirrors the web inspector header).
+        // 14 Bold -> heading-13 SemiBold collapse.
         draw_label +: {
             color: atlas.text
-            text_style: theme.font_bold{ font_size: 14 line_spacing: 1.2 }
+            text_style: fonts.text_heading
         }
     }
 }
