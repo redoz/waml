@@ -8,6 +8,7 @@
 //! `docs/superpowers/specs/2026-07-22-select-box-flyout-design.md`.
 #![allow(dead_code)]
 
+use crate::frame::HudFrameExt;
 use crate::icons::{Icon, IconSet};
 use crate::popup::base::{Popup, PopupItem, PopupResult, PopupVerdict};
 use crate::popup::marking::{MarkOutcome, MarkingCore};
@@ -298,7 +299,7 @@ impl SelectFlyout {
 
         let panel = self.geom.panel_rect();
         self.draw_frame.set_uniform(cx, live_id!(zoom), &[0.6]);
-        self.draw_frame.draw_abs(cx, panel);
+        self.draw_frame.draw_hud_abs(cx, panel);
 
         // Read tint holders before borrowing `self.icons`.
         let idle = self.draw_icon_idle.color;

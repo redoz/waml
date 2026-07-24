@@ -6,6 +6,7 @@
 //! Structure/hit-handling mirror the fork's `widgets/src/map/view.rs`.
 
 use crate::camera::Camera;
+use crate::frame::HudFrameExt;
 use crate::inspector::Subject;
 use crate::popup::base::PopupItem;
 use crate::scene::{bounding_box, Scene};
@@ -222,7 +223,9 @@ script_mod! {
         // `frame.rs`): a thin accent stroke fading along a 150deg diagonal,
         // bright top-left (`frame_hi`) to dim bottom-right (`frame_lo`). Only
         // the fill differs from the frame defaults, so we override just `color`.
-        draw_node: mod.draw.AccentFrame{ color: atlas.field_bg }
+        // Depth knobs are the svelte `--node` preset (8px / 22px / .14), so a
+        // card sits ON the canvas ground rather than being flush with it.
+        draw_node: mod.draw.AccentFrame{ color: atlas.field_bg depth_y: 8.0 depth_blur: 22.0 depth_a: 0.14 }
         draw_edge_down: mod.draw.EdgeLine{ color: atlas.text_dim }
         // Rounded-corner pen; shares the edge line color so a fillet reads as part
         // of the same stroke.
@@ -1970,7 +1973,9 @@ impl Widget for GraphCanvas {
                 .set_uniform(cx, live_id!(selected), &[selected]);
             // Node card: rounded near-white glass fill + source-bright accent
             // frame, both in draw_node's SDF shader (see script_mod above).
-            self.draw_node.draw_abs(cx, screen);
+            // `draw_hud_abs` pads the quad so the depth shadow falls outside the
+            // card instead of clipping at its border (`frame.rs`).
+            self.draw_node.draw_hud_abs(cx, screen);
 
             // Every node renders the full card on top of its frame.
             self.draw_card(cx, screen, node, zoom);

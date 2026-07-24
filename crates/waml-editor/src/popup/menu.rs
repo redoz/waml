@@ -3,6 +3,7 @@
 //! by the shared `MarkingCore`. In-window overlay (the overlay `Presenter` in
 //! plan 1); geometry lives in the pure `LinearGeom`, unit-tested directly.
 
+use crate::frame::HudFrameExt;
 use crate::icons::IconSet;
 use crate::popup::base::{Popup, PopupItem, PopupResult, PopupVerdict};
 use crate::popup::marking::{MarkOutcome, MarkingCore};
@@ -313,7 +314,9 @@ script_mod! {
         // same source-bright stroke + field-bg fill that canvas nodes carry, so
         // the drop-down reads as one HUD material with the rest of the editor.
         // `zoom` defaults to 1.0 (screen-space hairline; no per-frame uniform).
-        draw_frame: mod.draw.AccentFrame{ color: atlas.field_bg }
+        // Depth knobs are the svelte `.hud-surface` panel preset (12px / 30px /
+        // .20) -- a menu floats furthest off its ground of any surface here.
+        draw_frame: mod.draw.AccentFrame{ color: atlas.field_bg depth_y: 12.0 depth_blur: 30.0 depth_a: 0.20 }
         draw_hover: mod.draw.DrawColor{ color: atlas.selection }
         // Row glyphs come from the shared project-tree SDF set (`IconSet`, the
         // same material the tool dock draws). Each is a single-color DrawColor
@@ -470,7 +473,7 @@ impl MenuPopup {
         // 1.0), so drive it below 1 -- a full-weight ring reads too heavy and
         // detaches the card from the wordmark it drops from.
         self.draw_frame.set_uniform(cx, live_id!(zoom), &[0.6]);
-        self.draw_frame.draw_abs(cx, panel);
+        self.draw_frame.draw_hud_abs(cx, panel);
         for (i, it) in items.iter().enumerate() {
             let row = self.geom.row_rect(i);
             let cy = row.pos.y + row.size.y * 0.5;

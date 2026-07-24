@@ -22,6 +22,7 @@ pub enum Swatch {
     FrameHi,
     FrameLo,
     Scrim,
+    Shadow,
     Danger,
     Text,
     TextDim,
@@ -88,6 +89,7 @@ pub const COLOR_GROUPS: &[(&str, &[ColorRow])] = &[
         "STATE",
         &[
             cr!("scrim", Scrim, "Modal overlay scrim"),
+            cr!("shadow", Shadow, "HUD surface depth-shadow tint"),
             cr!("danger", Danger, "Destructive affordance"),
         ],
     ),
@@ -171,6 +173,7 @@ script_mod! {
         draw_swatch_frame_hi       +: { color: atlas.frame_hi }
         draw_swatch_frame_lo       +: { color: atlas.frame_lo }
         draw_swatch_scrim          +: { color: atlas.scrim }
+        draw_swatch_shadow         +: { color: atlas.shadow }
         draw_swatch_danger         +: { color: atlas.danger }
         draw_swatch_text           +: { color: atlas.text }
         draw_swatch_text_dim       +: { color: atlas.text_dim }
@@ -266,6 +269,9 @@ pub struct ColorsOverlay {
     #[redraw]
     #[live]
     draw_swatch_scrim: DrawColor,
+    #[redraw]
+    #[live]
+    draw_swatch_shadow: DrawColor,
     #[redraw]
     #[live]
     draw_swatch_danger: DrawColor,
@@ -371,6 +377,7 @@ impl ColorsOverlay {
             Swatch::FrameHi => &mut self.draw_swatch_frame_hi,
             Swatch::FrameLo => &mut self.draw_swatch_frame_lo,
             Swatch::Scrim => &mut self.draw_swatch_scrim,
+            Swatch::Shadow => &mut self.draw_swatch_shadow,
             Swatch::Danger => &mut self.draw_swatch_danger,
             Swatch::Text => &mut self.draw_swatch_text,
             Swatch::TextDim => &mut self.draw_swatch_text_dim,
@@ -456,8 +463,8 @@ mod tests {
         fields.sort();
         assert_eq!(
             fields.len(),
-            26,
-            "expected 26 atlas_light tokens, got {fields:?}"
+            27,
+            "expected 27 atlas_light tokens, got {fields:?}"
         );
 
         let mut table: Vec<String> = COLOR_GROUPS

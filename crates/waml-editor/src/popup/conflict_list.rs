@@ -13,6 +13,7 @@
 // `base.rs`/`node_menu.rs`/`select.rs`.
 #![allow(dead_code)]
 
+use crate::frame::HudFrameExt;
 use crate::icons::{Icon, IconSet};
 use crate::popup::base::{Popup, PopupVerdict};
 use crate::scene::{relation_statement, SceneConflict};
@@ -271,7 +272,7 @@ impl ConflictList {
         // Card surface: source-bright Atlas frame + field-bg fill (see
         // `AccentFrame` in `frame.rs`), same thin hairline weight as the menu.
         self.draw_frame.set_uniform(cx, live_id!(zoom), &[0.6]);
-        self.draw_frame.draw_abs(cx, self.placed);
+        self.draw_frame.draw_hud_abs(cx, self.placed);
 
         let left = self.placed.pos.x + PAD_H;
         let right = self.placed.pos.x + self.placed.size.x - PAD_H;

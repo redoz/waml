@@ -55,6 +55,12 @@ script_mod! {
         // of light/dark mode, same as most HUD-style modal scrims.
         scrim: #x1b2836b3
 
+        // HUD depth-shadow tint (`frame.rs`'s `AccentFrame`). The svelte
+        // reference hardcodes rgba(40,70,110,..) -- a cool slate that recedes
+        // against the light blue-grey ground. Alpha comes from the pen's
+        // `depth_a` knob, not from the token.
+        shadow: #x28466e
+
         // Destructive affordance (member-row remove-on-hover).
         danger: #xeb4678
 
@@ -122,6 +128,11 @@ script_mod! {
 
         // Modal scrim: dim cool-dark, mode-invariant (same as light).
         scrim: #x1b2836b3
+
+        // HUD depth-shadow tint. NOT light's cool slate -- a blue-grey shadow
+        // reads as a *glow* against the burgundy ground instead of receding.
+        // Near-black, pulled a touch toward the plum ramp so it stays in family.
+        shadow: #x1a0a17
 
         // Destructive affordance (rose reads on dark unchanged).
         danger: #xeb4678
