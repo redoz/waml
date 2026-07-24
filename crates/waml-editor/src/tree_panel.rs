@@ -15,7 +15,7 @@
 //! immediate-mode hand-drawn over the header band -- the same hybrid the
 //! inspector's `element_bar` uses.
 
-use crate::dock::{DockEvent, DockState, PeekTimer};
+use crate::dock::{DockEdge, DockEvent, DockState, PeekTimer};
 use crate::icon_button::IconButtonWidgetRefExt;
 use crate::icons::Icon;
 use crate::icons::IconSet;
@@ -639,6 +639,12 @@ impl Widget for ProjectTree {
         if !crate::dock::body_visible(self.dock) {
             let mut fw = walk;
             fw.width = Size::Fixed(crate::dock::FLAG_W);
+            // Strip the docked-edge (left) margin so the flag spine sits flush
+            // at the window edge, inside the reserved [0, FLAG_W] slot. The
+            // panel's static `margin.left` would otherwise inset the flag to
+            // [FLAG_W, 2*FLAG_W] -- occluding the canvas corner and leaving a
+            // dead gutter of window bg between the edge and the flag.
+            fw.margin.left = 0.0;
             self.view
                 .file_tree(cx, ids!(file_tree))
                 .set_visible(cx, false);
@@ -920,7 +926,16 @@ impl Widget for ProjectTree {
                     }
                 }
                 DockState::Peek => {
-                    let inside = self.view.area().rect(cx).contains(e.abs);
+                    // The body sits one FLAG_W inside the left edge; widen the
+                    // containment toward the edge so hovering the flag gutter
+                    // (which opened the peek) keeps the auto-collapse timer
+                    // cancelled instead of immediately arming it.
+                    let r = self.view.area().rect(cx);
+                    let (lo, hi) = crate::dock::peek_hover_span(r.pos.x, r.size.x, DockEdge::Left);
+                    let inside = e.abs.x >= lo
+                        && e.abs.x < hi
+                        && e.abs.y >= r.pos.y
+                        && e.abs.y < r.pos.y + r.size.y;
                     if inside {
                         self.peek_timer.cancel();
                     } else if !self.peek_timer.is_armed() {

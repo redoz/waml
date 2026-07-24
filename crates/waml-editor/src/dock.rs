@@ -73,6 +73,37 @@ pub fn body_visible(state: DockState) -> bool {
     !matches!(state, DockState::Flag)
 }
 
+/// Whether the header pin/collapse controls should be shown. They must stay
+/// reachable whenever the panel is expanded (`Peek`/`Pinned`) so a `Pinned`
+/// panel is never stranded with no unpin/collapse affordance — independent of
+/// whether the element-picker bar is showing. (A classifier/package preview
+/// hides the picker, but a `Pinned` inspector switched onto such a tab must
+/// still expose its controls, since `Pinned` never auto-collapses.)
+pub fn header_controls_visible(state: DockState) -> bool {
+    body_visible(state)
+}
+
+/// Which window edge a dock panel is anchored to. The Model tree docks left,
+/// the Inspector docks right.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DockEdge {
+    Left,
+    Right,
+}
+
+/// The `[lo, hi)` x-interval to treat as "inside the panel" for the `Peek`
+/// auto-collapse timer, given the body's on-screen x-span (`body_x`, `body_w`)
+/// and the docked edge. The body starts one `FLAG_W` *inside* the window edge
+/// (the reserved flag gutter it does not itself span); this widens the span by
+/// `FLAG_W` toward that edge so the pointer that opened the peek from the flag
+/// strip still reads as "inside" and keeps the timer cancelled.
+pub fn peek_hover_span(body_x: f64, body_w: f64, edge: DockEdge) -> (f64, f64) {
+    match edge {
+        DockEdge::Left => (body_x - FLAG_W, body_x + body_w),
+        DockEdge::Right => (body_x, body_x + body_w + FLAG_W),
+    }
+}
+
 /// Seconds an unpinned peek lingers after the pointer leaves before collapsing.
 pub const PEEK_COLLAPSE_SECS: f64 = 0.6;
 
@@ -170,6 +201,29 @@ mod tests {
         assert!(!body_visible(DockState::Flag));
         assert!(body_visible(DockState::Peek));
         assert!(body_visible(DockState::Pinned));
+    }
+
+    #[test]
+    fn header_controls_visible_whenever_expanded() {
+        // Hidden only in Flag (no body drawn). A Pinned panel MUST keep its
+        // controls — even on a classifier/package preview tab (picker hidden) —
+        // or it strands with no unpin/collapse affordance (Pinned never
+        // auto-collapses).
+        assert!(!header_controls_visible(DockState::Flag));
+        assert!(header_controls_visible(DockState::Peek));
+        assert!(header_controls_visible(DockState::Pinned));
+    }
+
+    #[test]
+    fn peek_hover_span_widens_toward_docked_edge() {
+        // Left panel: body at [28, 308) (one FLAG_W inside the left edge).
+        // The span must reach the window edge (0) to cover the flag gutter.
+        assert_eq!(peek_hover_span(28.0, 280.0, DockEdge::Left), (0.0, 308.0));
+        // Right panel: body at [W-348, W-28). The span must reach the right
+        // window edge (W) to cover the flag gutter, without moving its left end.
+        let w = 1280.0;
+        let body_x = w - 348.0;
+        assert_eq!(peek_hover_span(body_x, 320.0, DockEdge::Right), (body_x, w));
     }
 
     #[test]

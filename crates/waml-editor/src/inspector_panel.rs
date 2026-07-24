@@ -27,7 +27,7 @@
 //! which `App` uses to promote the active preview tab to persisted.
 
 use crate::attr_row::AttrRowViewWidgetRefExt;
-use crate::dock::{DockEvent, DockState, PeekTimer};
+use crate::dock::{DockEdge, DockEvent, DockState, PeekTimer};
 use crate::icon_button::IconButtonWidgetRefExt;
 use crate::icons::{Icon, IconSet};
 use crate::inspector::{
@@ -610,7 +610,17 @@ impl Widget for Inspector {
                     }
                 }
                 DockState::Peek => {
-                    if self.view.area().rect(cx).contains(e.abs) {
+                    // The body sits one FLAG_W inside the right edge; widen the
+                    // containment toward the edge so hovering the flag gutter
+                    // (which opened the peek) keeps the auto-collapse timer
+                    // cancelled instead of immediately arming it.
+                    let r = self.view.area().rect(cx);
+                    let (lo, hi) = crate::dock::peek_hover_span(r.pos.x, r.size.x, DockEdge::Right);
+                    let inside = e.abs.x >= lo
+                        && e.abs.x < hi
+                        && e.abs.y >= r.pos.y
+                        && e.abs.y < r.pos.y + r.size.y;
+                    if inside {
                         self.peek_timer.cancel();
                     } else if !self.peek_timer.is_armed() {
                         self.peek_timer.arm();
@@ -717,6 +727,12 @@ impl Widget for Inspector {
         if !crate::dock::body_visible(self.dock) {
             let mut fw = walk;
             fw.width = Size::Fixed(crate::dock::FLAG_W);
+            // Strip the docked-edge (right) margin so the flag spine sits flush
+            // at the window edge, inside the reserved [W-FLAG_W, W] slot. The
+            // panel's static `margin.right` would otherwise inset the flag to
+            // [W-2*FLAG_W, W-FLAG_W] -- occluding the canvas corner and leaving
+            // a dead gutter of window bg between the edge and the flag.
+            fw.margin.right = 0.0;
             self.view.view(cx, ids!(element_bar)).set_visible(cx, false);
             self.view.widget(cx, ids!(body)).set_visible(cx, false);
             self.panel.force_opaque = false;
@@ -1126,7 +1142,12 @@ impl Inspector {
     /// children.
     fn sync_bar_buttons(&mut self, cx: &mut Cx) {
         let pinned = matches!(self.dock, DockState::Pinned);
-        let vis = self.show_picker;
+        // Controls follow the dock state, NOT the picker: they must stay
+        // reachable whenever the panel is expanded (Peek/Pinned). Gating on
+        // `show_picker` stranded a Pinned inspector on a classifier/package
+        // preview tab (picker hidden) with no visible unpin/collapse affordance,
+        // since Pinned never auto-collapses.
+        let vis = crate::dock::header_controls_visible(self.dock);
 
         // The fold caret only appears in an expanded (Peek/Pinned) panel and
         // always sends it to Flag -- no expand icon needed (that's the flag
