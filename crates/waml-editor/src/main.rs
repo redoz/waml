@@ -12,7 +12,6 @@ mod classifier_preview_view;
 mod cli;
 mod config;
 mod conflict_badge;
-mod constraint_toggle;
 mod diagram_switcher;
 mod doc_tabs;
 mod doc_view;
@@ -49,6 +48,7 @@ mod tool_dock;
 mod tree;
 mod tree_panel;
 mod veil;
+mod view_bar;
 
 use app::App;
 

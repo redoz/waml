@@ -41,12 +41,24 @@ impl BodyWidgets {
     pub fn source_view(&self, cx: &mut Cx) -> WidgetRef {
         self.ui.widget(cx, ids!(source_view))
     }
+    pub fn view_bar(&self, cx: &mut Cx) -> WidgetRef {
+        self.ui.widget(cx, ids!(view_bar))
+    }
 
     /// Show/hide the left tool dock wrapper (`tool_dock_wrap`). Body of the
     /// shell's old `set_diagram_toolbars`.
     pub fn set_tool_dock_visible(&self, cx: &mut Cx, show: bool) {
         self.ui
             .widget(cx, ids!(tool_dock_wrap))
+            .set_visible(cx, show);
+    }
+
+    /// Show/hide the bottom-centre view bar (`view_bar_wrap`). Follows the
+    /// canvas: a Source tab renders markdown, not a diagram, so the view
+    /// controls have nothing to act on.
+    pub fn set_view_bar_visible(&self, cx: &mut Cx, show: bool) {
+        self.ui
+            .widget(cx, ids!(view_bar_wrap))
             .set_visible(cx, show);
     }
 }

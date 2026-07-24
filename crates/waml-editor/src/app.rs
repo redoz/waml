@@ -25,7 +25,7 @@ script_mod! {
     use mod.widgets.ShortcutsOverlay
     use mod.widgets.FontsOverlay
     use mod.widgets.ToolDock
-    use mod.widgets.ConstraintToggle
+    use mod.widgets.ViewBar
     use mod.widgets.ConflictBadge
     use mod.widgets.SelectionToolbar
     use mod.widgets.Statusbar
@@ -265,22 +265,25 @@ script_mod! {
                                     align: Align{x: 0.0, y: 0.5}
                                     tool_dock := ToolDock{
                                         width: 48.0
-                                        // Hugs its 7 buttons (7 * ITEM_H 44); the widget
-                                        // draws items manually so Fit collapses to 0 --
-                                        // an explicit height is required.
-                                        height: 308.0
+                                        // Five real `IconButton` children in a
+                                        // `flow: Down` turtle since the IconButton
+                                        // extraction, so `Fit` measures correctly.
+                                        height: Fit
                                         margin: Inset{left: 12.0}
                                     }
                                 }
-                                // Constraint-veil toggle: top-left of center.
-                                constraint_toggle_wrap := View{
+                                // Canvas view bar: bottom-center, ALWAYS visible
+                                // over a diagram, so its click targets never move.
+                                // The contextual selection pill below stacks above
+                                // it (bottom margin 12 + 36 + 8 = 56).
+                                view_bar_wrap := View{
                                     width: Fill
                                     height: Fill
-                                    align: Align{x: 0.0, y: 0.0}
-                                    constraint_toggle := ConstraintToggle{
-                                        width: 110.0
+                                    align: Align{x: 0.5, y: 1.0}
+                                    view_bar := ViewBar{
+                                        width: Fit
                                         height: 36.0
-                                        margin: Inset{left: 12.0, top: 12.0}
+                                        margin: Inset{bottom: 12.0}
                                     }
                                 }
                                 // Conflict counter: top-right of center.
@@ -301,7 +304,7 @@ script_mod! {
                                     selection_toolbar := SelectionToolbar{
                                         width: Fit
                                         height: 44.0
-                                        margin: Inset{bottom: 12.0}
+                                        margin: Inset{bottom: 56.0}
                                     }
                                 }
                             }
@@ -481,6 +484,7 @@ impl App {
         self.ui
             .widget(cx, ids!(canvas_wrap))
             .set_visible(cx, !is_source);
+        body.set_view_bar_visible(cx, !is_source);
         if is_source {
             let md = crate::load::source_for(&self.bundle, &active.key)
                 .map(str::to_string)
@@ -1626,23 +1630,6 @@ impl MatchEvent for App {
             return;
         }
 
-        // Constraint-veil visibility toggle -> canvas.
-        let vis = self
-            .ui
-            .widget(cx, ids!(constraint_toggle))
-            .borrow::<crate::constraint_toggle::ConstraintToggle>()
-            .and_then(|t| t.toggle_action(actions));
-        if let Some(mode) = vis {
-            if let Some(mut canvas) = self
-                .ui
-                .widget(cx, ids!(canvas))
-                .borrow_mut::<crate::canvas::GraphCanvas>()
-            {
-                canvas.set_constraint_vis(cx, mode);
-            }
-            return;
-        }
-
         // Conflict badge -> error-list popup (spec §4).
         let badge_clicked = self
             .ui
@@ -2007,7 +1994,7 @@ impl AppMain for App {
         crate::shortcuts_overlay::script_mod(vm);
         crate::fonts_overlay::script_mod(vm);
         crate::tool_dock::script_mod(vm);
-        crate::constraint_toggle::script_mod(vm);
+        crate::view_bar::script_mod(vm);
         crate::conflict_badge::script_mod(vm);
         crate::selection_toolbar::script_mod(vm);
         crate::statusbar::script_mod(vm);

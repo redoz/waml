@@ -178,6 +178,37 @@ impl DocView for ClassDiagramView {
             return out;
         }
 
+        // View bar: `ShowConstraints` drives the canvas veil mode. The camera
+        // one-shots and `ShowHiddenBorders` are `log!` no-ops here -- Plan D
+        // wires the camera, Plan C wires the hidden borders.
+        if let Some(action) = body
+            .view_bar(cx)
+            .borrow_mut::<crate::view_bar::ViewBar>()
+            .and_then(|bar| bar.view_bar_action(actions))
+        {
+            match action {
+                crate::view_bar::ViewBarAction::Toggled(
+                    crate::view_bar::ViewOption::ShowConstraints,
+                    on,
+                ) => {
+                    if let Some(mut canvas) =
+                        body.canvas(cx).borrow_mut::<crate::canvas::GraphCanvas>()
+                    {
+                        canvas.set_constraint_vis(
+                            cx,
+                            if on {
+                                crate::canvas::ConstraintVisibility::Selected
+                            } else {
+                                crate::canvas::ConstraintVisibility::None
+                            },
+                        );
+                    }
+                }
+                other => log!("view bar: {other:?}"),
+            }
+            return out;
+        }
+
         // Canvas pointer actions.
         let canvas_action = body
             .canvas(cx)
