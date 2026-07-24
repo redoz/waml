@@ -652,7 +652,14 @@ impl Widget for ProjectTree {
             self.view.view(cx, ids!(note_band)).set_visible(cx, false);
             self.panel.force_opaque = false;
             self.panel.draw(cx, &mut self.view.draw_bg);
-            let _ = self.view.draw_walk(cx, scope, fw);
+            // `View::draw_walk` is a multi-step `DrawStep` machine: it opens the
+            // view's turtle on the first call and only closes it once the loop
+            // runs it to `done`. Calling it once and dropping the result leaves
+            // the turtle begun-but-never-ended, unbalancing the whole window's
+            // turtle stack -- every later draw (the inspector sibling and the
+            // window caption/frame) then silently aborts. Drive it to
+            // completion, exactly like the expanded path below.
+            while self.view.draw_walk(cx, scope, fw).step().is_some() {}
             let rect = self.view.area().rect(cx);
             self.flag_rect = rect;
             let accent = self.draw_title.color;
