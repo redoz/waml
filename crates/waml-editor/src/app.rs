@@ -1067,7 +1067,7 @@ pub fn logo_menu_items() -> Vec<crate::popup::base::PopupItem> {
         PopupItem {
             id: live_id!(fonts),
             label: "Fonts".into(),
-            icon: Icon::Paintbrush,
+            icon: Some(Icon::Paintbrush),
             danger: false,
             enabled: true,
         },
