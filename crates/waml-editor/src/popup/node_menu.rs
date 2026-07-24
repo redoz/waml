@@ -25,14 +25,14 @@ pub fn base_items() -> Vec<PopupItem> {
         PopupItem {
             id: live_id!(view_source),
             label: "View Source".into(),
-            icon: Icon::Braces,
+            icon: Some(Icon::Braces),
             danger: false,
             enabled: true,
         },
         PopupItem {
             id: live_id!(find_in_diagrams),
             label: "Find in diagrams".into(),
-            icon: Icon::Search,
+            icon: Some(Icon::Search),
             danger: false,
             enabled: true,
         },
@@ -90,7 +90,7 @@ mod tests {
         let ctx = vec![PopupItem {
             id: live_id!(ctx_a),
             label: "Ctx A".into(),
-            icon: Icon::Search,
+            icon: Some(Icon::Search),
             danger: false,
             enabled: true,
         }];

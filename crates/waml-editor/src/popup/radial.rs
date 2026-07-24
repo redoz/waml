@@ -406,6 +406,11 @@ pub struct RadialPopup {
     fan: RadialLayout,
     #[rust]
     start: f64,
+    /// Marking release fires on the PRIMARY button too (the drag-to-place dial
+    /// is opened mid-drag, with the left button already down). Off for the
+    /// right-press marking opens, where a stray left-up must not commit.
+    #[rust]
+    release_primary: bool,
     #[rust]
     next_frame: NextFrame,
 }
@@ -441,8 +446,34 @@ impl RadialPopup {
         self.fan = RadialLayout::snap(center, bounds, DISC_RADIUS, items.len());
         self.mark.begin_marking(center, items, DRAG_THRESHOLD);
         self.start = time;
+        self.release_primary = false;
         self.next_frame = cx.new_next_frame();
         self.draw_wedge.redraw(cx);
+    }
+
+    /// Drag-dwell open (drag-to-place): marking mode at `center`, released with
+    /// the PRIMARY button since the gesture that opened it is a left-drag
+    /// already in flight.
+    ///
+    /// The fan is FULL and never snapped: here a wedge index *is* a compass
+    /// direction, so rotating the fan to fit a window edge would point "Above"
+    /// somewhere other than up.
+    pub fn open_dial(&mut self, cx: &mut Cx, center: DVec2, items: Vec<PopupItem>, time: f64) {
+        self.center = center;
+        self.bounds = Rect::default();
+        self.fan = RadialLayout::full(items.len());
+        self.mark.begin_marking(center, items, DRAG_THRESHOLD);
+        self.start = time;
+        self.release_primary = true;
+        self.next_frame = cx.new_next_frame();
+        self.draw_wedge.redraw(cx);
+    }
+
+    /// The id of the wedge under the cursor, for openers that preview the armed
+    /// choice before it commits. `None` = nothing armed (hub / beyond the rim).
+    pub fn armed_id(&self) -> Option<LiveId> {
+        let i = self.mark.armed()?;
+        self.mark.items().get(i).map(|it| it.id)
     }
 
     /// Direct popup open (a left-click open), same snapped fan.
@@ -459,6 +490,7 @@ impl RadialPopup {
         self.fan = RadialLayout::snap(center, bounds, DISC_RADIUS, items.len());
         self.mark.begin_popup(items, DRAG_THRESHOLD);
         self.start = time;
+        self.release_primary = false;
         self.next_frame = cx.new_next_frame();
         self.draw_wedge.redraw(cx);
     }
@@ -580,10 +612,6 @@ impl RadialPopup {
             let icon_r = (hub_r + disc_r) * 0.5;
             let ix = center.x + icon_r * mid.sin();
             let iy = center.y - icon_r * mid.cos();
-            let icon_rect = Rect {
-                pos: dvec2(ix - 16.0, iy - 16.0),
-                size: dvec2(32.0, 32.0),
-            };
             // Tint chosen Rust-side, mirroring the old DrawIcon shader's nested
             // mix: disabled -> dim, else danger -> danger, else accent.
             let tint = if !it.enabled {
@@ -593,9 +621,33 @@ impl RadialPopup {
             } else {
                 self.draw_icon_accent.color
             };
-            self.icons.draw(cx, it.icon, icon_rect, tint);
-            self.draw_label
-                .draw_abs(cx, dvec2(ix - 16.0, iy + 14.0), &it.label);
+            match it.icon {
+                Some(icon) => {
+                    let icon_rect = Rect {
+                        pos: dvec2(ix - 16.0, iy - 16.0),
+                        size: dvec2(32.0, 32.0),
+                    };
+                    self.icons.draw(cx, icon, icon_rect, tint);
+                    self.draw_label
+                        .draw_abs(cx, dvec2(ix - 16.0, iy + 14.0), &it.label);
+                }
+                // Label-only wedge (the placement dial): no glyph to hang the
+                // label under, so centre it on the wedge's own mid-point.
+                None => {
+                    let w = self
+                        .draw_label
+                        .prepare_single_line_run(cx, &it.label)
+                        .map(|r| r.width_in_lpxs as f64)
+                        .unwrap_or(0.0);
+                    // The label is the only mark in the wedge, so it carries the
+                    // state tint the glyph would have.
+                    let saved = self.draw_label.color;
+                    self.draw_label.color = tint;
+                    self.draw_label
+                        .draw_abs(cx, dvec2((ix - w * 0.5).round(), iy - 6.0), &it.label);
+                    self.draw_label.color = saved;
+                }
+            }
         }
         // Hub: dark cancel disc + light X, scaled with the bloom.
         let hub_rect = Rect {
@@ -619,8 +671,11 @@ impl Popup for RadialPopup {
                 self.draw_wedge.redraw(cx);
                 PopupVerdict::Consumed
             }
-            // Marking release (secondary button let up after a press-drag).
-            Event::MouseUp(e) if e.button.is_secondary() => {
+            // Marking release: the secondary button let up after a right-press
+            // drag, or -- for a dial opened mid-left-drag -- the primary one.
+            Event::MouseUp(e)
+                if e.button.is_secondary() || (self.release_primary && e.button.is_primary()) =>
+            {
                 map_outcome(self.mark.release(self.hit(e.abs)))
             }
             // Popup mode: a PRIMARY press selects a wedge immediately. A press in
@@ -645,6 +700,7 @@ impl Popup for RadialPopup {
 
     fn reset(&mut self) {
         self.mark.close();
+        self.release_primary = false;
     }
 }
 
@@ -668,7 +724,7 @@ mod tests {
         PopupItem {
             id,
             label: "x".into(),
-            icon: Icon::PackageOpen,
+            icon: Some(Icon::PackageOpen),
             danger: false,
             enabled,
         }

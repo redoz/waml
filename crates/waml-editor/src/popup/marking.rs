@@ -175,7 +175,7 @@ mod tests {
         PopupItem {
             id,
             label: "x".into(),
-            icon: Icon::PackageOpen,
+            icon: Some(Icon::PackageOpen),
             danger: false,
             enabled,
         }

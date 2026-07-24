@@ -31,6 +31,9 @@ pub enum MenuOpen {
 pub enum RadialOpen {
     /// Right-press marking open.
     Marking,
+    /// Drag-dwell open: marking driven by the PRIMARY button (the left-drag
+    /// that opened it is still in flight), on an unsnapped full fan.
+    Dial,
     /// Direct latched popup open.
     Popup,
 }
@@ -78,6 +81,13 @@ pub enum PopupRootAction {
     Closed {
         tag: LiveId,
         result: PopupResult,
+    },
+    /// The armed (hovered) item changed while the surface is still open, so an
+    /// opener can preview the choice before it commits. `id: None` = nothing
+    /// armed. Only emitted on a CHANGE, never per pointer move.
+    Armed {
+        tag: LiveId,
+        id: Option<LiveId>,
     },
 }
 
@@ -159,6 +169,11 @@ pub struct PopupRoot {
     /// The single active surface + its opaque tag, or none.
     #[rust]
     active: Option<(ActiveKind, LiveId)>,
+
+    /// Last armed item reported for the active surface, so `route` emits
+    /// `Armed` only on a change.
+    #[rust]
+    armed_slot: Option<LiveId>,
 }
 
 impl Widget for PopupRoot {
@@ -183,6 +198,7 @@ impl PopupRoot {
     /// close. Shared by `show_at`'s supersede-before-open and `close`'s
     /// dismiss-without-opening.
     fn dismiss_active(&mut self, cx: &mut Cx) {
+        self.armed_slot = None;
         if let Some((kind, tag)) = self.active.take() {
             match kind {
                 ActiveKind::Menu => {
@@ -278,6 +294,7 @@ impl PopupRoot {
                 {
                     match open {
                         RadialOpen::Marking => r.open_marking(cx, center, bounds, items, t),
+                        RadialOpen::Dial => r.open_dial(cx, center, items, t),
                         RadialOpen::Popup => r.open_popup(cx, center, bounds, items, t),
                     }
                 }
@@ -406,6 +423,20 @@ impl PopupRoot {
                     .map(|mut c| c.handle(cx, ev))
                     .unwrap_or(PopupVerdict::Ignored),
             };
+            // Arm-change notification, emitted BEFORE any close so a preview
+            // opener sees the last hover even on the committing event. Only the
+            // radial reports an armed item today.
+            if kind == ActiveKind::Radial {
+                let armed = self
+                    .body
+                    .widget(cx, ids!(radial))
+                    .borrow::<RadialPopup>()
+                    .and_then(|r| r.armed_id());
+                if armed != self.armed_slot {
+                    self.armed_slot = armed;
+                    cx.widget_action(self.widget_uid(), PopupRootAction::Armed { tag, id: armed });
+                }
+            }
             decide(verdict, is_primary_press(ev))
         };
         if let RouteStep::Close(result) = step {
@@ -445,17 +476,33 @@ impl PopupRoot {
                 }
             }
             cx.widget_action(self.widget_uid(), PopupRootAction::Closed { tag, result });
+            self.armed_slot = None;
             self.active = None;
         }
     }
 
     /// Read a close for `tag` from the action queue (the opener's filter).
+    /// Scans ALL of our actions, not just the first: one event can emit an
+    /// `Armed` and a `Closed` together (a commit reports its last hover first).
     pub fn closed(&self, actions: &Actions, tag: LiveId) -> Option<PopupResult> {
-        let item = actions.find_widget_action(self.widget_uid())?;
-        match item.cast() {
-            PopupRootAction::Closed { tag: t, result } if t == tag => Some(result),
-            _ => None,
-        }
+        actions
+            .filter_widget_actions(self.widget_uid())
+            .find_map(|item| match item.cast() {
+                PopupRootAction::Closed { tag: t, result } if t == tag => Some(result),
+                _ => None,
+            })
+    }
+
+    /// Read an arm-change for `tag` from the action queue. The outer `Option`
+    /// is "was there a change"; the inner one is the armed id (`None` = the
+    /// pointer left every item).
+    pub fn armed(&self, actions: &Actions, tag: LiveId) -> Option<Option<LiveId>> {
+        actions
+            .filter_widget_actions(self.widget_uid())
+            .find_map(|item| match item.cast() {
+                PopupRootAction::Armed { tag: t, id } if t == tag => Some(id),
+                _ => None,
+            })
     }
 
     /// Read the conflict-list surface's own action. A row body/trash press

@@ -515,7 +515,11 @@ impl MenuPopup {
             } else {
                 self.draw_icon_idle.color
             };
-            self.icons.draw(cx, it.icon, icon_rect, tint);
+            // A label-only item (only the placement dial builds those) simply
+            // leaves the gutter empty; the linear card keeps its column.
+            if let Some(icon) = it.icon {
+                self.icons.draw(cx, icon, icon_rect, tint);
+            }
             // Label, baseline roughly centred for a ~10px font.
             self.draw_label
                 .draw_abs(cx, dvec2(row.pos.x + LABEL_X, cy - 6.0), &it.label);

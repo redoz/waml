@@ -11,7 +11,10 @@ use makepad_widgets::*;
 pub struct PopupItem {
     pub id: LiveId,
     pub label: String,
-    pub icon: Icon,
+    /// `None` = label-only. The radial's placement dial has no glyph to draw
+    /// (the catalog carries no eight-way arrow set, and the wedge's own
+    /// direction is the icon), so it centres the label in the wedge instead.
+    pub icon: Option<Icon>,
     /// Danger-token hue across all states.
     pub danger: bool,
     /// `false` = greyed, holds its slot, cannot arm or commit.

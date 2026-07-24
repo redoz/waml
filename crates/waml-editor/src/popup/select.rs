@@ -242,7 +242,7 @@ impl SelectFlyout {
             .map(|it| PopupItem {
                 id: it.id,
                 label: String::new(),
-                icon: Icon::Spline,
+                icon: Some(Icon::Spline),
                 danger: false,
                 enabled: it.enabled,
             })

@@ -8,7 +8,7 @@ use waml::model::Model;
 use crate::canvas::ConstraintVisibility;
 use crate::doc_view::{BodyWidgets, DocView, PopupRequest, ViewOutcome};
 use crate::inspector::{diagram_elements, subject_from, Subject};
-use crate::popup::base::PopupResult;
+use crate::popup::base::{PopupItem, PopupResult};
 use crate::scene::build_scene;
 
 /// Strip a defensive `.md` tail from a node/diagram key.
@@ -305,32 +305,14 @@ impl DocView for ClassDiagramView {
                 }
                 return out;
             }
-            Some(crate::canvas::GraphCanvasAction::AuthorPlacement {
-                subject_key,
-                subject_title,
-                reference_key,
-                reference_title,
-                directions,
-            }) => {
-                // Drag-to-place: author a `## Layout` placement for the dragged
-                // (subject) node relative to the drop-target (reference). The
-                // shell owns the Model, so the view only emits the Op; the shell
-                // applies it against the bundle and re-solves (see App). Slugs and
-                // the diagram id are bare -- strip a `.md` tail defensively.
-                let strip_md = |s: &str| s.strip_suffix(".md").unwrap_or(s).to_string();
-                out.ops.push(waml::ops::Op::PlaceSet {
-                    diagram: strip_md(&self.active_key),
-                    subject_title,
-                    subject_slug: strip_md(&subject_key),
-                    reference_title,
-                    reference_slug: strip_md(&reference_key),
-                    directions,
-                });
+            Some(crate::canvas::GraphCanvasAction::DialDismiss) => {
+                out.popup = Some(PopupRequest::Dismiss);
                 return out;
             }
             Some(crate::canvas::GraphCanvasAction::CompassArmed {
                 subject_key,
                 reference_key,
+                center,
             }) => {
                 // The dial just armed on a (new) target: speculatively solve each
                 // zone's placement against the active diagram. The solve yields
@@ -361,9 +343,24 @@ impl DocView for ClassDiagramView {
                     if let Some(mut canvas) =
                         body.canvas(cx).borrow_mut::<crate::canvas::GraphCanvas>()
                     {
-                        canvas.set_conflict_zones(cx, red);
+                        canvas.set_conflict_zones(cx, red.clone());
                         canvas.set_zone_layouts(cx, layouts);
                     }
+                    // Pop the dial itself: the shared radial, one wedge per
+                    // zone in its own clockwise-from-12 order, a zone the
+                    // solver would reject drawn as a danger wedge. No glyph --
+                    // the wedge's direction *is* the icon (`icon: None`).
+                    let items = crate::canvas::DIAL_ZONES
+                        .into_iter()
+                        .map(|z| PopupItem {
+                            id: crate::canvas::zone_id(z),
+                            label: crate::canvas::zone_label(z).into(),
+                            icon: None,
+                            danger: red.contains(&z),
+                            enabled: true,
+                        })
+                        .collect();
+                    out.popup = Some(PopupRequest::PlaceDial { center, items });
                 }
                 return out;
             }
@@ -408,9 +405,58 @@ impl DocView for ClassDiagramView {
             {
                 inspector.on_picker_closed(cx, model, result);
             }
+            return ViewOutcome::default();
+        }
+        // Drag-to-place dial: a committed wedge authors the `## Layout`
+        // placement for the dragged (subject) node relative to the drop target
+        // (reference). The view only emits the Op; the shell owns the Model and
+        // re-solves. Slugs and the diagram id are bare -- strip a `.md` tail
+        // defensively. A dismiss (hub, Escape, out of reach) authors nothing;
+        // the canvas puts the committed layout back on its own.
+        let mut out = ViewOutcome::default();
+        if tag == live_id!(place_dial) {
+            let zone = match result {
+                PopupResult::Invoked(id) => crate::canvas::zone_of_id(id),
+                PopupResult::Dismissed => None,
+            };
+            let placement = zone.and_then(|z| {
+                body.canvas(cx)
+                    .borrow::<crate::canvas::GraphCanvas>()
+                    .and_then(|c| c.placement_for(z))
+            });
+            if let Some(p) = placement {
+                let strip_md = |s: &str| s.strip_suffix(".md").unwrap_or(s).to_string();
+                out.ops.push(waml::ops::Op::PlaceSet {
+                    diagram: strip_md(&self.active_key),
+                    subject_title: p.subject_title,
+                    subject_slug: strip_md(&p.subject_key),
+                    reference_title: p.reference_title,
+                    reference_slug: strip_md(&p.reference_key),
+                    directions: p.directions,
+                });
+            }
         }
         // node_menu currently only `log!`s on commit -- kept in the shell for
         // now.
+        out
+    }
+
+    fn on_popup_armed(
+        &mut self,
+        cx: &mut Cx,
+        body: &BodyWidgets,
+        _model: &Model,
+        tag: LiveId,
+        id: Option<LiveId>,
+    ) -> ViewOutcome {
+        // The dial's armed wedge drives the live layout preview. The candidate
+        // layouts were already solved at arm time, so this costs no solve.
+        if tag == live_id!(place_dial) {
+            let zone = id.and_then(crate::canvas::zone_of_id);
+            if let Some(mut canvas) = body.canvas(cx).borrow_mut::<crate::canvas::GraphCanvas>() {
+                canvas.preview_zone(cx, zone);
+            }
+        }
         ViewOutcome::default()
     }
 

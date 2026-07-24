@@ -184,16 +184,6 @@ script_mod! {
         // relations (Task 4). Default color is overridden per-draw in
         // `draw_veil_for`; this seed just gets the pen registered.
         draw_veil: mod.draw.ConstraintVeil{ color: vec4(0.42, 0.47, 0.54, 1.0) }
-        // Drop-dial pens, borrowed wholesale from the radial popup surface
-        // (`popup/radial.rs`, registered before this module in `app.rs`): the
-        // near-opaque base disc with divider spokes, the per-wedge sector fill +
-        // masked rim arc, and the hub cancel token. The dial is drawn inline in
-        // this widget's own pass rather than mounted through `PopupRoot` -- the
-        // drag owns pointer capture -- but there is no reason for it to look
-        // like a different control.
-        draw_dial_disc: mod.draw.RadialDisc{ color: #x00000000 }
-        draw_dial_wedge: mod.draw.RadialWedge{ color: #x00000000 }
-        draw_dial_hub: mod.draw.RadialHub{ color: #x00000000 }
         // Sans body pen: overview node titles + group titles (the non-card text).
         draw_text +: {
             color: atlas.text
@@ -289,15 +279,6 @@ pub struct GraphCanvas {
     draw_veil: DrawColor,
     #[redraw]
     #[live]
-    draw_dial_disc: DrawColor,
-    #[redraw]
-    #[live]
-    draw_dial_wedge: DrawColor,
-    #[redraw]
-    #[live]
-    draw_dial_hub: DrawColor,
-    #[redraw]
-    #[live]
     draw_text: DrawText,
     #[redraw]
     #[live]
@@ -357,15 +338,12 @@ pub struct GraphCanvas {
     #[rust]
     compass_zone: Option<Zone>,
     /// Screen point the drag dial is centred on, frozen where the cursor was
-    /// when the dwell armed. Frozen so the wedges never move: the preview slides
-    /// the whole diagram around underneath, and a ring that moved with it would
-    /// pull its own hit targets out from under the cursor.
+    /// when the dwell armed -- so the wedges never move while the preview slides
+    /// the whole diagram around underneath them. The dial itself is the shared
+    /// `RadialPopup`, opened by the shell; the canvas keeps the centre only to
+    /// know a dial is up and to notice the cursor leaving its reach.
     #[rust]
     dial_center: Option<DVec2>,
-    /// `seconds_since_app_start` at the instant the dial popped, driving the
-    /// bloom-in (grow + fade) the radial surface uses.
-    #[rust]
-    dial_opened: f64,
     /// Candidate layout per zone (node key -> world rect), pushed by the view
     /// after the arm-time speculative solve. Hovering a wedge then costs no
     /// solve at all -- it just picks a target to tween toward.
@@ -626,21 +604,12 @@ fn reframe_to_selected<'a>(
     }
 }
 
-/// Fixed screen-px geometry of the drag dial -- a press-and-hold radial, popped
-/// centred on the cursor when the dwell arms. Camera-*independent*, so the
-/// wedges keep their size (and their hit area) however far the canvas is zoomed
-/// out. `DIAL_RIM` is only the drawn extent: picking is angle-only past the hub,
-/// so a long outward flick keeps its wedge.
-const DIAL_HUB: f64 = crate::popup::radial::HUB_RADIUS;
-const DIAL_RIM: f64 = crate::popup::radial::DISC_RADIUS;
 /// Once armed, the dial stays up while the cursor is within this radius of the
-/// dial centre. Past it the dial closes (and any preview unlatches), freeing the
-/// drag to dwell on another target.
-const DIAL_REACH: f64 = DIAL_RIM + 72.0;
+/// dial centre. Past it the canvas asks the shell to dismiss the dial (and
+/// unlatches any preview), freeing the drag to dwell on another target.
+const DIAL_REACH: f64 = crate::popup::radial::DISC_RADIUS + 72.0;
 /// Seconds a preview tween takes to settle into its candidate layout.
 const PREVIEW_SECS: f64 = 0.22;
-/// Bloom-in duration when the dial pops, matching the radial popup surface.
-const DIAL_BLOOM_SECS: f64 = 0.12;
 /// Dwell (seconds) the cursor must rest over a node before its compass arms.
 /// Stops the target flipping to a sibling when the cursor merely grazes a
 /// border on the way past.
@@ -649,24 +618,10 @@ const DWELL_SECS: f64 = 0.18;
 /// fading. Keeps a half-plane veil from flooding the canvas (spec §2).
 const VEIL_REACH: f64 = 420.0;
 
-/// The `(col, row)` grid offset of a `Zone` in {-1, 0, 1}^2. The center cell
-/// (0, 0) is the dead node body and has no zone.
-fn zone_offset(z: Zone) -> (f64, f64) {
-    match z {
-        Zone::Left => (-1.0, 0.0),
-        Zone::Right => (1.0, 0.0),
-        Zone::Top => (0.0, -1.0),
-        Zone::Bottom => (0.0, 1.0),
-        Zone::TopLeft => (-1.0, -1.0),
-        Zone::TopRight => (1.0, -1.0),
-        Zone::BottomLeft => (-1.0, 1.0),
-        Zone::BottomRight => (1.0, 1.0),
-    }
-}
-
 /// The dial's wedges in `RadialLayout::full(8)` index order -- clockwise from 12
 /// o'clock, so wedge `i` is `DIAL_ZONES[i]` and its direction points the way the
-/// wedge does.
+/// wedge does. The dial itself is the shared `RadialPopup`, opened by the shell;
+/// this table is the contract between its wedge order and a placement.
 pub const DIAL_ZONES: [Zone; 8] = [
     Zone::Top,
     Zone::TopRight,
@@ -678,14 +633,40 @@ pub const DIAL_ZONES: [Zone; 8] = [
     Zone::TopLeft,
 ];
 
-/// Which dial wedge the cursor `p` picks on a dial centred at `center`, or
-/// `None` inside the hub dead-zone (drop = cancel). Angle-only past the hub --
-/// the drawn rim doesn't gate picking, so an overshooting flick still lands.
-/// Pure, GPU-free (unit-testable like `node_at`).
-pub fn dial_zone_of(center: DVec2, p: DVec2) -> Option<Zone> {
-    crate::popup::radial::RadialLayout::full(8)
-        .index_at(center, p)
-        .map(|i| DIAL_ZONES[i])
+/// The `PopupItem` id a dial wedge commits, and its inverse. Ids (not slot
+/// indices) cross the popup seam, so the surface stays order-agnostic.
+pub fn zone_id(z: Zone) -> LiveId {
+    match z {
+        Zone::Top => live_id!(place_top),
+        Zone::TopRight => live_id!(place_top_right),
+        Zone::Right => live_id!(place_right),
+        Zone::BottomRight => live_id!(place_bottom_right),
+        Zone::Bottom => live_id!(place_bottom),
+        Zone::BottomLeft => live_id!(place_bottom_left),
+        Zone::Left => live_id!(place_left),
+        Zone::TopLeft => live_id!(place_top_left),
+    }
+}
+
+/// The zone a committed/armed dial id names, or `None` for a foreign id.
+pub fn zone_of_id(id: LiveId) -> Option<Zone> {
+    DIAL_ZONES.into_iter().find(|&z| zone_id(z) == id)
+}
+
+/// The wedge label. Reads as the placement it authors ("A *above* B"), and it
+/// is the only mark in the wedge -- the catalog has no eight-way arrow glyphs,
+/// so placement items carry `icon: None`.
+pub fn zone_label(z: Zone) -> &'static str {
+    match z {
+        Zone::Top => "Above",
+        Zone::TopRight => "Above right",
+        Zone::Right => "Right",
+        Zone::BottomRight => "Below right",
+        Zone::Bottom => "Below",
+        Zone::BottomLeft => "Below left",
+        Zone::Left => "Left",
+        Zone::TopLeft => "Above left",
+    }
 }
 
 /// The placement a compass `Zone` authors relative to the target: an edge zone
@@ -1120,6 +1101,19 @@ fn edge_point_to_screen(camera: &Camera, rect_pos: DVec2, p: (f64, f64)) -> DVec
     dvec2(rect_pos.x + lx, rect_pos.y + ly)
 }
 
+/// The `## Layout` placement a committed dial wedge authors: the dragged
+/// (subject) node relative to the drop target (reference), both by `SceneNode`
+/// key + title. `directions` is 1 (edge) or 2 (corner). The shell supplies the
+/// active diagram id and performs the write-back + re-solve.
+#[derive(Clone, Debug)]
+pub struct DialPlacement {
+    pub subject_key: String,
+    pub subject_title: String,
+    pub reference_key: String,
+    pub reference_title: String,
+    pub directions: Vec<waml::syntax::Direction>,
+}
+
 /// Canvas -> App action (same convention as `ToolDockAction`).
 #[derive(Clone, Debug, Default)]
 pub enum GraphCanvasAction {
@@ -1138,24 +1132,19 @@ pub enum GraphCanvasAction {
     /// A primary click landed on a node's overflow footer band: toggle its card
     /// expansion. Consumed — no selection change. Carries the `SceneNode::key`.
     ToggleExpand { key: String },
-    /// A node-drag dropped on a compass zone: author a `## Layout` placement.
-    /// `subject` = dragged node, `reference` = drop target (both by SceneNode
-    /// key + title); `directions` is 1 (edge) or 2 (corner). `App` supplies the
-    /// active diagram id and performs the in-memory write-back + re-solve.
-    AuthorPlacement {
-        subject_key: String,
-        subject_title: String,
-        reference_key: String,
-        reference_title: String,
-        directions: Vec<waml::syntax::Direction>,
-    },
     /// A node-drag armed the compass on a (new) target: the view computes the
-    /// per-zone conflict verdicts (speculative solve) and pushes them back via
-    /// `set_conflict_zones`. `subject` = dragged node, `reference` = target.
+    /// per-zone conflict verdicts (speculative solve), pushes them back via
+    /// `set_conflict_zones`, and asks the shell to pop the drop dial at
+    /// `center`. `subject` = dragged node, `reference` = target.
     CompassArmed {
         subject_key: String,
         reference_key: String,
+        center: DVec2,
     },
+    /// The drag pulled the cursor out of the open dial's reach: dismiss it so
+    /// the drag is free to dwell on another target. (The canvas can't close a
+    /// popup itself -- `PopupRoot` is the dismiss authority.)
+    DialDismiss,
 }
 
 impl Widget for GraphCanvas {
@@ -1180,18 +1169,17 @@ impl Widget for GraphCanvas {
                         let reference_key = self.scene.nodes[ri].key.clone();
                         self.conflict_zones.clear();
                         self.zone_layouts.clear();
-                        // Pop the dial where the cursor is resting -- press-hold
-                        // radial behaviour -- and freeze it there for the life of
-                        // the arm. The bloom needs frames of its own: nothing is
-                        // tweening yet, so kick the clock here.
+                        // The dial pops where the cursor is resting -- press-hold
+                        // radial behaviour -- and stays frozen there for the life
+                        // of the arm. The shell opens it (the real `RadialPopup`);
+                        // the canvas only remembers the centre.
                         self.dial_center = Some(self.cursor_abs);
-                        self.dial_opened = cx.seconds_since_app_start();
-                        self.preview_frame = cx.new_next_frame();
                         cx.widget_action(
                             uid,
                             GraphCanvasAction::CompassArmed {
                                 subject_key,
                                 reference_key,
+                                center: self.cursor_abs,
                             },
                         );
                     }
@@ -1219,15 +1207,9 @@ impl Widget for GraphCanvas {
             if self.preview.is_some() {
                 self.apply_preview(cx);
             }
-            // The dial's bloom needs frames even with nothing tweening (it plays
-            // on the arm, before any wedge is hovered).
-            let blooming = self.dial_center.is_some()
-                && cx.seconds_since_app_start() - self.dial_opened < DIAL_BLOOM_SECS;
-            if blooming {
-                self.draw_bg.redraw(cx);
-            }
-            let running = tweening || blooming;
-            if running {
+            // (The dial's own bloom is animated by `RadialPopup`, which drives
+            // its own next-frame clock -- this one only serves the tween.)
+            if tweening {
                 self.preview_frame = cx.new_next_frame();
             } else {
                 self.preview_last_time = 0.0;
@@ -1290,21 +1272,19 @@ impl Widget for GraphCanvas {
                     // While a dial is up the layout is being animated underneath
                     // it, so body hit-testing would re-target off nodes that are
                     // only where they are *speculatively*. The dial owns the
-                    // cursor until it closes: pick a wedge by angle, and close
-                    // only when the cursor leaves its reach.
+                    // cursor until it closes; the canvas only keeps A under the
+                    // pointer, and gives up when the cursor leaves its reach.
                     if let Some(center) = self.dial_center {
                         if (cursor - center).length() > DIAL_REACH {
+                            // Out of reach: tear our half down and ask the shell
+                            // to dismiss the surface (see `DialDismiss`).
                             self.close_dial(cx);
+                            let uid = self.widget_uid();
+                            cx.widget_action(uid, GraphCanvasAction::DialDismiss);
                         } else {
-                            let zone = dial_zone_of(center, cursor);
-                            if zone != self.compass_zone {
-                                self.compass_zone = zone;
-                                match zone {
-                                    Some(z) => self.latch_preview(cx, z),
-                                    None => self.unlatch_preview(cx),
-                                }
-                            }
-                            self.drag_place = zone.map(zone_placed).unwrap_or_default();
+                            // The wedge under the cursor is the dial's business,
+                            // not ours: `RadialPopup` resolves it and the shell
+                            // feeds the choice back through `preview_zone`.
                             if self.preview.is_some() {
                                 // A sticks to the cursor: re-derive the camera
                                 // rather than re-deriving the ghost.
@@ -1415,33 +1395,13 @@ impl Widget for GraphCanvas {
                             }
                         }
                         self.draw_bg.redraw(cx);
-                    } else if self.drag_moved {
-                        // SPIKE (Stage 2): a node-drag dropped on a compass zone
-                        // -> emit an `AuthorPlacement` so `App` writes the `##
-                        // Layout` statement(s) in-memory and re-solves. A drop
-                        // with no zone (empty canvas / dead center / outside the
-                        // ring) or no direction just cancels (snap back).
-                        if let (Some(ni), Some(ri), Some(_z)) =
-                            (self.drag_node, self.drag_target, self.compass_zone)
-                        {
-                            let directions: Vec<_> = self.drag_place.dir.into_iter().collect();
-                            if !directions.is_empty() {
-                                let uid = self.widget_uid();
-                                let subject = &self.scene.nodes[ni];
-                                let reference = &self.scene.nodes[ri];
-                                cx.widget_action(
-                                    uid,
-                                    GraphCanvasAction::AuthorPlacement {
-                                        subject_key: subject.key.clone(),
-                                        subject_title: subject.title.clone(),
-                                        reference_key: reference.key.clone(),
-                                        reference_title: reference.title.clone(),
-                                        directions,
-                                    },
-                                );
-                            }
-                        }
                     }
+                    // A drop on a wedge is NOT authored here: the dial is a real
+                    // `RadialPopup`, and its own marking release commits (the
+                    // shell turns that into the `AuthorPlacement`). `PopupRoot`
+                    // routes the `MouseUp` before this widget ever sees the
+                    // `FingerUp`, so all that is left here is tearing the drag
+                    // down.
                 }
                 self.close_dial(cx);
                 self.drag_node = None;
@@ -2008,10 +1968,8 @@ impl GraphCanvas {
                 .draw_abs(cx, dvec2(bx + 6.0, by + 6.0), &key);
         }
 
-        // Drag dial, frozen where the dwell popped it.
-        if let Some(center) = self.dial_center {
-            self.draw_dial(cx, center, self.compass_zone);
-        }
+        // (The dial itself is the shared `RadialPopup`, drawn by `PopupRoot` in
+        // the overlay above this canvas -- not here.)
 
         // Ghost: translucent accent rect tracking the cursor, carrying the
         // dragged node's identity so you can tell *what* is in flight. Under a
@@ -2049,157 +2007,6 @@ impl GraphCanvas {
                     .draw_abs(cx, dvec2(vx + 12.0, vy + 10.0), &line);
             }
         }
-    }
-
-    /// SPIKE (drag-place): draw the press-hold drag dial -- eight wedges fanned
-    /// clockwise from 12 o'clock around `center`, drawn on exactly the geometry
-    /// `RadialLayout::full(8)` hit-tests, so what lights is what `dial_zone_of`
-    /// picks. The `active` wedge lights blue (red where the solver would reject
-    /// that placement); the hub is a dead-zone that cancels. Fixed screen px, so
-    /// the dial keeps its size however far the canvas is zoomed out.
-    ///
-    /// TODO(replace-hint): once the document's `LayoutStatement`s reach the
-    /// canvas, tint a wedge whose `A <dir> B` already exists amber (a rewrite)
-    /// instead of the additive blue.
-    fn draw_dial(&mut self, cx: &mut Cx2d, center: DVec2, active: Option<Zone>) {
-        let layout = crate::popup::radial::RadialLayout::full(8);
-        // Bloom-in, same curve as `RadialPopup::draw`: grow from 55% and fade up
-        // over DIAL_BLOOM_SECS. Only the DRAWN radii scale -- `dial_zone_of`
-        // hit-tests the settled geometry throughout, so a fast flick during the
-        // bloom still picks the wedge it looks like it's pointing at.
-        let elapsed = cx.seconds_since_app_start() - self.dial_opened;
-        let t = (elapsed / DIAL_BLOOM_SECS).clamp(0.0, 1.0);
-        let e = 1.0 - (1.0 - t).powi(2);
-        let scale = 0.55 + 0.45 * e;
-        let fade = e as f32;
-        let rim = DIAL_RIM * scale;
-        let hub = DIAL_HUB * scale;
-        // One quad bounds the whole disc; every wedge shader masks its own slice
-        // out of it. Pad past the rim so the rim stroke's AA falls inside.
-        let pad = 3.0;
-        let quad = Rect {
-            pos: dvec2(center.x - rim - pad, center.y - rim - pad),
-            size: dvec2((rim + pad) * 2.0, (rim + pad) * 2.0),
-        };
-        let local_c = dvec2(rim + pad, rim + pad);
-
-        // Base disc + divider spokes.
-        self.draw_dial_disc.set_uniform(cx, live_id!(rim), &[rim as f32]);
-        self.draw_dial_disc.set_uniform(cx, live_id!(hub), &[hub as f32]);
-        self.draw_dial_disc.set_uniform(cx, live_id!(n), &[8.0]);
-        self.draw_dial_disc.set_uniform(cx, live_id!(fade), &[fade]);
-        self.draw_dial_disc.set_uniform(
-            cx,
-            live_id!(arc_start),
-            &[layout.arc_start.rem_euclid(std::f64::consts::TAU) as f32],
-        );
-        self.draw_dial_disc
-            .set_uniform(cx, live_id!(span), &[layout.span as f32]);
-        self.draw_dial_disc.draw_abs(cx, quad);
-
-        for (i, z) in DIAL_ZONES.into_iter().enumerate() {
-            let on = active == Some(z);
-            let conflict = self.conflict_zones.contains(&z);
-            let (a0, a1) = layout.wedge_bounds(i);
-            // The wedge shader's own vocabulary carries this exactly: `danger`
-            // swaps the accent hue for the danger token (a placement the solver
-            // would reject), `state` runs the rest/arm alpha ramp. The hovered
-            // wedge takes the top of the ramp (3.0, "flick") rather than the
-            // menu's 2.0: with no icon or label to carry the selection, and the
-            // ghost node sitting over the wedge under the cursor, the fill is
-            // the only cue there is.
-            self.draw_dial_wedge
-                .set_uniform(cx, live_id!(cx), &[local_c.x as f32]);
-            self.draw_dial_wedge
-                .set_uniform(cx, live_id!(cy), &[local_c.y as f32]);
-            self.draw_dial_wedge
-                .set_uniform(cx, live_id!(hub), &[hub as f32]);
-            self.draw_dial_wedge
-                .set_uniform(cx, live_id!(rim), &[rim as f32]);
-            self.draw_dial_wedge.set_uniform(
-                cx,
-                live_id!(a0),
-                &[a0.rem_euclid(std::f64::consts::TAU) as f32],
-            );
-            self.draw_dial_wedge.set_uniform(
-                cx,
-                live_id!(a1),
-                &[a1.rem_euclid(std::f64::consts::TAU) as f32],
-            );
-            self.draw_dial_wedge
-                .set_uniform(cx, live_id!(state), &[if on { 3.0 } else { 0.0 }]);
-            self.draw_dial_wedge
-                .set_uniform(cx, live_id!(danger), &[if conflict { 1.0 } else { 0.0 }]);
-            self.draw_dial_wedge
-                .set_uniform(cx, live_id!(enabled), &[1.0]);
-            self.draw_dial_wedge.set_uniform(cx, live_id!(fade), &[fade]);
-            self.draw_dial_wedge.draw_abs(cx, quad);
-
-            // Direction arrow at the wedge's mid-radius. The icon catalog has no
-            // eight-way arrow set, and a per-wedge triangle is exact anyway: it
-            // points along the placement the wedge authors.
-            let (ox, oy) = zone_offset(z);
-            let len = (ox * ox + oy * oy).sqrt();
-            let (dx, dy) = (ox / len, oy / len);
-            let (px, py) = (-dy, dx); // perpendicular
-            let mid = (hub + rim) * 0.5;
-            let hc = dvec2(center.x + dx * mid, center.y + dy * mid);
-            let r = 9.0 * scale;
-            let apex = dvec2(hc.x + dx * r, hc.y + dy * r);
-            let b1 = dvec2(
-                hc.x - dx * r * 0.35 + px * r * 0.8,
-                hc.y - dy * r * 0.35 + py * r * 0.8,
-            );
-            let b2 = dvec2(
-                hc.x - dx * r * 0.35 - px * r * 0.8,
-                hc.y - dy * r * 0.35 - py * r * 0.8,
-            );
-            let arrow = match (conflict, on) {
-                (true, true) => vec4(1.0, 0.86, 0.86, 1.0),
-                (true, false) => vec4(0.86, 0.42, 0.42, 0.90),
-                (false, true) => vec4(1.0, 1.0, 1.0, 1.0),
-                (false, false) => vec4(0.42, 0.55, 0.72, 0.90),
-            };
-            self.fill_tri(cx, apex, b1, b2, vec4(arrow.x, arrow.y, arrow.z, arrow.w * fade));
-        }
-
-        // Hub cancel token last, over the wedge fills.
-        let hub_rect = Rect {
-            pos: dvec2(center.x - hub, center.y - hub),
-            size: dvec2(hub * 2.0, hub * 2.0),
-        };
-        self.draw_dial_hub.set_uniform(cx, live_id!(fade), &[fade]);
-        self.draw_dial_hub.draw_abs(cx, hub_rect);
-    }
-
-    /// SPIKE: fill a screen-space triangle `a`-`b`-`c` with `color`, via the
-    /// `EdgeMarker` polygon pen (a degenerate 4th vertex closes the tri). The pen
-    /// is shared with edge adornments, which re-push their own uniforms every
-    /// frame -- but they do *not* reset `color`, so save/restore it here.
-    fn fill_tri(&mut self, cx: &mut Cx2d, a: DVec2, b: DVec2, c: DVec2, color: Vec4) {
-        let minx = a.x.min(b.x).min(c.x);
-        let miny = a.y.min(b.y).min(c.y);
-        let maxx = a.x.max(b.x).max(c.x);
-        let maxy = a.y.max(b.y).max(c.y);
-        let quad = Rect {
-            pos: dvec2(minx, miny),
-            size: dvec2((maxx - minx).max(1.0), (maxy - miny).max(1.0)),
-        };
-        // Vertices in the quad's local pixel space (see the EdgeMarker shader).
-        let la = ((a.x - minx) as f32, (a.y - miny) as f32);
-        let lb = ((b.x - minx) as f32, (b.y - miny) as f32);
-        let lc = ((c.x - minx) as f32, (c.y - miny) as f32);
-        let saved = self.draw_marker.color;
-        self.draw_marker
-            .set_uniform(cx, live_id!(v01), &[la.0, la.1, lb.0, lb.1]);
-        self.draw_marker
-            .set_uniform(cx, live_id!(v23), &[lc.0, lc.1, lc.0, lc.1]);
-        self.draw_marker.set_uniform(cx, live_id!(hollow), &[0.0]);
-        self.draw_marker.set_uniform(cx, live_id!(filled), &[1.0]);
-        self.draw_marker.set_uniform(cx, live_id!(stroke_w), &[0.7]);
-        self.draw_marker.color = color;
-        self.draw_marker.draw_abs(cx, quad);
-        self.draw_marker.color = saved;
     }
 
     /// Latch (or retarget) the hover preview onto `zone`'s candidate layout.
@@ -2585,6 +2392,40 @@ impl GraphCanvas {
         self.draw_bg.redraw(cx);
     }
 
+    /// The dial armed `zone` (or `None`: the hub / nothing armed). Drives the
+    /// live layout preview. The canvas no longer hit-tests the wedges itself --
+    /// the `RadialPopup` owns that, and the shell relays its arm changes here.
+    pub fn preview_zone(&mut self, cx: &mut Cx, zone: Option<Zone>) {
+        if zone == self.compass_zone {
+            return;
+        }
+        self.compass_zone = zone;
+        self.drag_place = zone.map(zone_placed).unwrap_or_default();
+        match zone {
+            Some(z) => self.latch_preview(cx, z),
+            None => self.unlatch_preview(cx),
+        }
+        self.draw_bg.redraw(cx);
+    }
+
+    /// The placement `zone` would author for the live drag: the dragged
+    /// (subject) node, the armed target (reference), and the direction(s).
+    /// `None` when no drag/target is live. Read by the shell when the dial
+    /// commits, so the committed wedge -- not the last-armed one -- decides.
+    pub fn placement_for(&self, zone: Zone) -> Option<DialPlacement> {
+        let (ni, ri) = (self.drag_node?, self.drag_target?);
+        let dir = zone_placed(zone).dir?;
+        let subject = &self.scene.nodes[ni];
+        let reference = &self.scene.nodes[ri];
+        Some(DialPlacement {
+            subject_key: subject.key.clone(),
+            subject_title: subject.title.clone(),
+            reference_key: reference.key.clone(),
+            reference_title: reference.title.clone(),
+            directions: vec![dir],
+        })
+    }
+
     pub fn set_conflict_zones(&mut self, cx: &mut Cx, zones: Vec<Zone>) {
         self.conflict_zones = zones;
         self.draw_bg.redraw(cx);
@@ -2663,20 +2504,27 @@ mod tests {
         assert_eq!(zone_placed(Zone::Bottom).dir, Some(Below));
     }
 
+    /// The wedge `RadialPopup` would resolve at `p`, mapped through the dial's
+    /// zone table -- i.e. exactly what the shell relays back into
+    /// `preview_zone`. Tests the seam between the widget's geometry and this
+    /// module's ordering; the widget owns the hit-test itself.
+    fn dial_pick(center: DVec2, p: DVec2) -> Option<Zone> {
+        crate::popup::radial::RadialLayout::full(DIAL_ZONES.len())
+            .index_at(center, p)
+            .map(|i| DIAL_ZONES[i])
+    }
+
     #[test]
     fn dial_wedges_follow_the_radial_clock() {
         let c = dvec2(500.0, 400.0);
         // Wedge 0 is centred on 12 o'clock and the ring runs clockwise, so the
         // dial's zone order has to read the same way round.
-        assert_eq!(dial_zone_of(c, dvec2(500.0, 400.0 - 60.0)), Some(Zone::Top));
-        assert_eq!(dial_zone_of(c, dvec2(500.0 + 60.0, 400.0)), Some(Zone::Right));
+        assert_eq!(dial_pick(c, dvec2(500.0, 400.0 - 60.0)), Some(Zone::Top));
+        assert_eq!(dial_pick(c, dvec2(500.0 + 60.0, 400.0)), Some(Zone::Right));
+        assert_eq!(dial_pick(c, dvec2(500.0, 400.0 + 60.0)), Some(Zone::Bottom));
+        assert_eq!(dial_pick(c, dvec2(500.0 - 60.0, 400.0)), Some(Zone::Left));
         assert_eq!(
-            dial_zone_of(c, dvec2(500.0, 400.0 + 60.0)),
-            Some(Zone::Bottom)
-        );
-        assert_eq!(dial_zone_of(c, dvec2(500.0 - 60.0, 400.0)), Some(Zone::Left));
-        assert_eq!(
-            dial_zone_of(c, dvec2(500.0 + 42.0, 400.0 - 42.0)),
+            dial_pick(c, dvec2(500.0 + 42.0, 400.0 - 42.0)),
             Some(Zone::TopRight)
         );
     }
@@ -2684,14 +2532,23 @@ mod tests {
     #[test]
     fn dial_hub_is_dead_and_overshoot_still_lands() {
         let c = dvec2(500.0, 400.0);
-        // Inside the hub: no zone, so dropping on the target's own body cancels.
-        assert_eq!(dial_zone_of(c, dvec2(500.0, 400.0 - DIAL_HUB * 0.5)), None);
+        let hub = crate::popup::radial::HUB_RADIUS;
+        let rim = crate::popup::radial::DISC_RADIUS;
+        // Inside the hub: no zone, so releasing on the target's own body cancels.
+        assert_eq!(dial_pick(c, dvec2(500.0, 400.0 - hub * 0.5)), None);
         // Past the rim the pick is angle-only: an overshot flick still counts,
         // and the drag only gives up on the dial past DIAL_REACH.
-        assert_eq!(
-            dial_zone_of(c, dvec2(500.0, 400.0 - DIAL_RIM * 3.0)),
-            Some(Zone::Top)
-        );
+        assert_eq!(dial_pick(c, dvec2(500.0, 400.0 - rim * 3.0)), Some(Zone::Top));
+    }
+
+    #[test]
+    fn every_wedge_id_round_trips_to_its_zone() {
+        // Ids (not slot indices) cross the popup seam, so a commit can only be
+        // mapped back if the table is injective.
+        for z in DIAL_ZONES {
+            assert_eq!(zone_of_id(zone_id(z)), Some(z));
+        }
+        assert_eq!(zone_of_id(live_id!(not_a_wedge)), None);
     }
 
     #[test]

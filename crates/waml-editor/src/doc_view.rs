@@ -108,6 +108,12 @@ pub enum PopupRequest {
         min_width: f64,
         items: Vec<SelectItem>,
     },
+    /// The drag-to-place dial: the shared radial, popped centred on `center`
+    /// mid-drag and released with the primary button (the drag that opened it
+    /// is still in flight).
+    PlaceDial { center: DVec2, items: Vec<PopupItem> },
+    /// Dismiss whatever popup is open, without opening a replacement.
+    Dismiss,
 }
 
 /// One open document tab's behavior + live state. Shell-owned, one per tab.
@@ -136,6 +142,22 @@ pub trait DocView {
         result: PopupResult,
     ) -> ViewOutcome {
         let _ = (cx, body, model, tag, result);
+        ViewOutcome::default()
+    }
+
+    /// The armed (hovered) item of a popup this view requested changed, while
+    /// it is still open. Lets a view preview a choice before it commits (the
+    /// placement dial animates the candidate layout). `id: None` = nothing
+    /// armed.
+    fn on_popup_armed(
+        &mut self,
+        cx: &mut Cx,
+        body: &BodyWidgets,
+        model: &Model,
+        tag: LiveId,
+        id: Option<LiveId>,
+    ) -> ViewOutcome {
+        let _ = (cx, body, model, tag, id);
         ViewOutcome::default()
     }
 

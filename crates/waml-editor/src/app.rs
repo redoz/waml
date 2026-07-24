@@ -5,7 +5,7 @@ use crate::inspector::Subject;
 use crate::load;
 use crate::nav::NavState;
 use crate::popup::base::PopupResult;
-use crate::popup::root::{MenuOpen, PopupRoot, PopupSpec};
+use crate::popup::root::{MenuOpen, PopupRoot, PopupSpec, RadialOpen};
 use crate::popup::select::{SelectItem, SelectLead};
 use makepad_widgets::*;
 use std::collections::HashMap;
@@ -1053,14 +1053,14 @@ pub fn logo_menu_items() -> Vec<crate::popup::base::PopupItem> {
         PopupItem {
             id: live_id!(properties),
             label: "Properties".into(),
-            icon: Icon::SlidersHorizontal,
+            icon: Some(Icon::SlidersHorizontal),
             danger: false,
             enabled: true,
         },
         PopupItem {
             id: live_id!(about),
             label: "About".into(),
-            icon: Icon::Info,
+            icon: Some(Icon::Info),
             danger: false,
             enabled: true,
         },
@@ -1088,7 +1088,7 @@ pub fn logo_menu_items() -> Vec<crate::popup::base::PopupItem> {
         PopupItem {
             id: live_id!(exit),
             label: "Exit".into(),
-            icon: Icon::CircleX,
+            icon: Some(Icon::CircleX),
             danger: true,
             enabled: true,
         },
@@ -1107,7 +1107,7 @@ pub fn burger_menu_items() -> Vec<crate::popup::base::PopupItem> {
             id: live_id!(new_model),
             // No model-specific glyph exists, so keep it a generic "Create".
             label: "Create".into(),
-            icon: Icon::SquarePlus,
+            icon: Some(Icon::SquarePlus),
             danger: false,
             enabled: true,
         },
@@ -1115,7 +1115,7 @@ pub fn burger_menu_items() -> Vec<crate::popup::base::PopupItem> {
             id: live_id!(open_model),
             label: "Open model".into(),
             // The open-door glyph, pairing with Close model's door-closed.
-            icon: Icon::DoorOpen,
+            icon: Some(Icon::DoorOpen),
             danger: false,
             enabled: true,
         },
@@ -1123,7 +1123,7 @@ pub fn burger_menu_items() -> Vec<crate::popup::base::PopupItem> {
             id: live_id!(close_model),
             label: "Close model".into(),
             // The door-closed glyph, drawn directly from the catalog.
-            icon: Icon::DoorClosed,
+            icon: Some(Icon::DoorClosed),
             danger: false,
             enabled: true,
         },
@@ -1314,6 +1314,8 @@ impl MatchEvent for App {
             let picker_closed = pr.closed(actions, live_id!(element_picker));
             let nav_scope_closed = pr.closed(actions, live_id!(nav_scope));
             let nav_filter_closed = pr.closed(actions, live_id!(nav_filter));
+            let dial_closed = pr.closed(actions, live_id!(place_dial));
+            let dial_armed = pr.armed(actions, live_id!(place_dial));
             // The conflict list never `Invoked`-closes (a row/trash press
             // emits its own `ConflictListAction` and stays open), so it is
             // read directly off the surface, not through `closed`.
@@ -1390,6 +1392,34 @@ impl MatchEvent for App {
                             &body,
                             &self.model,
                             live_id!(element_picker),
+                            result,
+                        );
+                        self.relay_outcome(cx, &active, outcome);
+                    }
+                }
+            }
+            // Placement dial: the arm-change drives the live candidate-layout
+            // preview while the drag is still in flight; the close commits (or
+            // drops) it. Both ride the same view seam the picker uses. Arm
+            // first -- a release emits Armed+Closed off one event, and the
+            // close is what turns the last armed zone into an `Op`.
+            if let Some(id) = dial_armed {
+                if let Some(active) = self.tabs.active_tab().cloned() {
+                    if let Some(view) = self.views.get_mut(&active.id) {
+                        let outcome =
+                            view.on_popup_armed(cx, &body, &self.model, live_id!(place_dial), id);
+                        self.relay_outcome(cx, &active, outcome);
+                    }
+                }
+            }
+            if let Some(result) = dial_closed {
+                if let Some(active) = self.tabs.active_tab().cloned() {
+                    if let Some(view) = self.views.get_mut(&active.id) {
+                        let outcome = view.on_popup_result(
+                            cx,
+                            &body,
+                            &self.model,
+                            live_id!(place_dial),
                             result,
                         );
                         self.relay_outcome(cx, &active, outcome);
@@ -1498,7 +1528,7 @@ impl MatchEvent for App {
                     crate::popup::base::PopupItem {
                         id,
                         label: format!("{}{}", "  ".repeat(row.depth), row.title),
-                        icon: crate::icons::Icon::Folder,
+                        icon: Some(crate::icons::Icon::Folder),
                         danger: false,
                         enabled: true,
                     }
@@ -1733,27 +1763,6 @@ impl MatchEvent for App {
                 v.set_active(active.key.clone(), active.title.clone());
             }
             let outcome = view.handle(cx, &body, actions, &self.model);
-            // A view emits `Op`s (drag-to-place authors a `## Layout` placement);
-            // the shell owns the Model, so it applies them against the retained
-            // bundle, rebuilds the model, and re-solves the active diagram view in
-            // place (camera held). Empty for every non-authoring action.
-            if !outcome.ops.is_empty() {
-                match waml::ops::apply(&self.bundle, &outcome.ops) {
-                    Ok(new_bundle) => {
-                        self.bundle = new_bundle;
-                        self.model = waml::parse::build_model(&self.bundle);
-                        if let Some(v) = self
-                            .views
-                            .get_mut(&active.id)
-                            .and_then(|v| v.downcast_diagram())
-                        {
-                            v.resolve_active(cx, &body, &self.model);
-                        }
-                        self.sync_conflict_badge(cx);
-                    }
-                    Err(e) => log!("place.set failed: {e:?}"),
-                }
-            }
             if self.relay_outcome(cx, &active, outcome) {
                 return;
             }
@@ -1926,9 +1935,31 @@ impl App {
     ) -> bool {
         let mut consumed = false;
 
-        // `ops` are applied upstream in `handle_actions` (the shell owns the
-        // Model + bundle and re-solves the active view there); by the time an
-        // outcome reaches `relay_outcome` its ops are already consumed.
+        // A view emits `Op`s (drag-to-place authors a `## Layout` placement);
+        // the shell owns the Model, so it applies them against the retained
+        // bundle, rebuilds the model, and re-solves the active diagram view in
+        // place (camera held). Empty for every non-authoring outcome. Applied
+        // here rather than at the `handle` call site so an outcome that comes
+        // back through a popup result (the placement dial's commit) authors
+        // too.
+        if !outcome.ops.is_empty() {
+            match waml::ops::apply(&self.bundle, &outcome.ops) {
+                Ok(new_bundle) => {
+                    self.bundle = new_bundle;
+                    self.model = waml::parse::build_model(&self.bundle);
+                    let body = crate::doc_view::BodyWidgets::new(cx, &self.ui);
+                    if let Some(v) = self
+                        .views
+                        .get_mut(&active.id)
+                        .and_then(|v| v.downcast_diagram())
+                    {
+                        v.resolve_active(cx, &body, &self.model);
+                    }
+                    self.sync_conflict_badge(cx);
+                }
+                Err(e) => log!("place.set failed: {e:?}"),
+            }
+        }
 
         if let Some(req) = outcome.popup {
             let bounds = self.window_bounds(cx);
@@ -1980,6 +2011,19 @@ impl App {
                             },
                         );
                     }
+                    crate::doc_view::PopupRequest::PlaceDial { center, items } => {
+                        pr.show_at(
+                            cx,
+                            PopupSpec::Radial {
+                                tag: live_id!(place_dial),
+                                center,
+                                bounds,
+                                items,
+                                open: RadialOpen::Dial,
+                            },
+                        );
+                    }
+                    crate::doc_view::PopupRequest::Dismiss => pr.close(cx),
                 }
             }
             consumed = true;
