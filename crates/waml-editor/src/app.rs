@@ -16,6 +16,7 @@ use waml::model::Model;
 script_mod! {
     use mod.prelude.widgets.*
     use mod.atlas
+    use mod.fonts
     use mod.widgets.GraphCanvas
     use mod.widgets.ProjectTree
     use mod.widgets.Inspector
@@ -86,7 +87,7 @@ script_mod! {
                             text: "/"
                             draw_text +: {
                                 color: atlas.text_dim
-                                text_style: theme.font_regular{font_size: 16}
+                                text_style: fonts.text_title
                             }
                         }
                     }
@@ -103,19 +104,13 @@ script_mod! {
                             text: ""
                             draw_text +: {
                                 color: atlas.text_dim
-                                // Medium weight for a title a touch heavier than
-                                // the tabs. Trim seats the glyphs on the caption's
-                                // vertical center: the y:0.5-centered metric box
-                                // centers glyph mass when ascender-|descender| ~=
-                                // cap height, so a positive `desc` shrinks the box
-                                // bottom and drops the glyphs down (negative rode
-                                // them high).
-                                text_style: TextStyle{
-                                    font_size: 13
-                                    font_family: FontFamily{
-                                        latin := FontMember{res: crate_resource("self:resources/fonts/IBM_Plex_Sans/IBMPlexSans-Medium.ttf") asc: 0.1 desc: 0.15}
-                                    }
-                                }
+                                // `text_title` (Condensed SemiBold, 16). The
+                                // caption/window-title role -- deliberately
+                                // larger than the old inline 13 (see plan Task 3
+                                // FLAG #1). Vertical trim lives on the token
+                                // itself in `fonts.rs` so it stays consistent
+                                // with the shortcuts-overlay title (Task 9).
+                                text_style: fonts.text_title
                             }
                         }
                     }
