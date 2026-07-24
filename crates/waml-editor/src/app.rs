@@ -51,7 +51,7 @@ script_mod! {
                     height: Fill
                     align: Align{y: 0.5}
                     draw_bg.color: atlas.field_bg
-                    // Fixed-width nav cluster (252) holding the logo/sep/name. The
+                    // Fixed-width nav cluster (252) holding the logo/name. The
                     // burger button follows it as a direct caption-bar child --
                     // its hit/drag-query path only works there, not nested --
                     // adding 40px (36 + 4 margins) so the burger's right edge and
@@ -77,18 +77,6 @@ script_mod! {
                         logo := LogoMark{
                             width: 52.0
                             height: 29.7
-                        }
-                    }
-                    sep := View{
-                        width: Fit
-                        height: Fill
-                        align: Align{x: 0.0, y: 0.5}
-                        Label{
-                            text: "/"
-                            draw_text +: {
-                                color: atlas.text_dim
-                                text_style: fonts.text_title
-                            }
                         }
                     }
                     // `Fill` + `clip_x` bound a long model path to the nav instead
@@ -772,6 +760,10 @@ impl App {
         // drop the editor's tab state so a re-open starts clean rather than
         // inheriting the closed model's tabs (open_dir rebuilds from scratch).
         self.ui.widget(cx, ids!(menu_btn)).set_visible(cx, false);
+        // Clear the stale model title: the caption bar keeps drawing (logo +
+        // name) even with no model open, so a leftover name reads as if the
+        // closed model were still loaded.
+        self.ui.label(cx, ids!(model_name)).set_text(cx, "");
         self.tabs = OpenTabs::default();
         self.refresh_doc_tabs(cx);
         if let Some(mut doc_tabs) = self
