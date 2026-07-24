@@ -3145,6 +3145,69 @@ script_mod! {
         }
     }
 
+    // List tree: three rows + an L-shaped tree connector.
+    // Faithful port of resources/icons/list-tree.svg via scripts/gen-icon.py.
+    mod.draw.IconListTree = mod.draw.DrawColor{
+        pixel: fn() {
+            let s = self.rect_size.x
+            let w = s * 0.068
+            let sdf = Sdf2d.viewport(self.pos * self.rect_size)
+            sdf.move_to(s * 0.3333, s * 0.2083)
+            sdf.line_to(s * 0.8750, s * 0.2083)
+            sdf.stroke(self.color, w)
+            sdf.move_to(s * 0.5417, s * 0.5000)
+            sdf.line_to(s * 0.8750, s * 0.5000)
+            sdf.stroke(self.color, w)
+            sdf.move_to(s * 0.5417, s * 0.7917)
+            sdf.line_to(s * 0.8750, s * 0.7917)
+            sdf.stroke(self.color, w)
+            sdf.move_to(s * 0.1250, s * 0.4167)
+            sdf.arc_to(s * 0.2083, s * 0.4167, s * 0.0833, 3.1416, 1.5708)
+            sdf.line_to(s * 0.3333, s * 0.5000)
+            sdf.stroke(self.color, w)
+            sdf.move_to(s * 0.1250, s * 0.2083)
+            sdf.line_to(s * 0.1250, s * 0.7083)
+            sdf.arc_to(s * 0.2083, s * 0.7083, s * 0.0833, 3.1416, 1.5708)
+            sdf.line_to(s * 0.3333, s * 0.7917)
+            sdf.stroke(self.color, w)
+            return sdf.result
+        }
+    }
+
+    // Inspection panel: rounded rect with a dot in each corner.
+    // Faithful port of resources/icons/inspection-panel.svg via scripts/gen-icon.py.
+    mod.draw.IconInspectionPanel = mod.draw.DrawColor{
+        pixel: fn() {
+            let s = self.rect_size.x
+            let w = s * 0.068
+            let sdf = Sdf2d.viewport(self.pos * self.rect_size)
+            sdf.move_to(s * 0.2083, s * 0.1250)
+            sdf.line_to(s * 0.7917, s * 0.1250)
+            sdf.arc_to(s * 0.7917, s * 0.2083, s * 0.0833, -1.5708, 0.0000)
+            sdf.line_to(s * 0.8750, s * 0.7917)
+            sdf.arc_to(s * 0.7917, s * 0.7917, s * 0.0833, 0.0000, 1.5708)
+            sdf.line_to(s * 0.2083, s * 0.8750)
+            sdf.arc_to(s * 0.2083, s * 0.7917, s * 0.0833, 1.5708, 3.1416)
+            sdf.line_to(s * 0.1250, s * 0.2083)
+            sdf.arc_to(s * 0.2083, s * 0.2083, s * 0.0833, 3.1416, 4.7124)
+            sdf.close_path()
+            sdf.stroke(self.color, w)
+            sdf.move_to(s * 0.2917, s * 0.2917)
+            sdf.line_to(s * 0.2921, s * 0.2917)
+            sdf.stroke(self.color, w)
+            sdf.move_to(s * 0.7083, s * 0.2917)
+            sdf.line_to(s * 0.7088, s * 0.2917)
+            sdf.stroke(self.color, w)
+            sdf.move_to(s * 0.2917, s * 0.7083)
+            sdf.line_to(s * 0.2921, s * 0.7083)
+            sdf.stroke(self.color, w)
+            sdf.move_to(s * 0.7083, s * 0.7083)
+            sdf.line_to(s * 0.7088, s * 0.7083)
+            sdf.stroke(self.color, w)
+            return sdf.result
+        }
+    }
+
     mod.widgets.IconSetBase = #(IconSet::script_component(vm))
 
     // Each field is a `DrawColor` pointing at its icon shader; the accent tint
@@ -3242,6 +3305,8 @@ script_mod! {
         search: mod.draw.IconSearch{ color: atlas.accent }
         message_square_warning: mod.draw.IconMessageSquareWarning{ color: atlas.accent }
         group: mod.draw.IconGroup{ color: atlas.accent }
+        list_tree: mod.draw.IconListTree{ color: atlas.accent }
+        inspection_panel: mod.draw.IconInspectionPanel{ color: atlas.accent }
     }
 }
 
@@ -3433,6 +3498,10 @@ pub struct IconSet {
     pub message_square_warning: DrawColor,
     #[live]
     pub group: DrawColor,
+    #[live]
+    pub list_tree: DrawColor,
+    #[live]
+    pub inspection_panel: DrawColor,
 }
 
 // Not every bin that `#[path]`-includes this file exercises the whole catalog
@@ -3536,6 +3605,8 @@ impl IconSet {
             Icon::Search => &mut self.search,
             Icon::MessageSquareWarning => &mut self.message_square_warning,
             Icon::Group => &mut self.group,
+            Icon::ListTree => &mut self.list_tree,
+            Icon::InspectionPanel => &mut self.inspection_panel,
         }
     }
 
@@ -3646,13 +3717,15 @@ pub enum Icon {
     Search,
     MessageSquareWarning,
     Group,
+    ListTree,
+    InspectionPanel,
 }
 
 #[allow(dead_code)] // ALL/label are unused in bins that don't iterate the catalog
 impl Icon {
     /// Every glyph, in field order. The single source of glyph identity; the
     /// `icon_harness` proof grid iterates this.
-    pub const ALL: [Icon; 92] = [
+    pub const ALL: [Icon; 94] = [
         Icon::Package,
         Icon::Message,
         Icon::PackagePlus,
@@ -3745,6 +3818,8 @@ impl Icon {
         Icon::Search,
         Icon::MessageSquareWarning,
         Icon::Group,
+        Icon::ListTree,
+        Icon::InspectionPanel,
     ];
 
     /// The `icon_harness` display slug (the Lucide source name), preserved
@@ -3843,6 +3918,8 @@ impl Icon {
             Icon::Search => "search",
             Icon::MessageSquareWarning => "message-square-warning",
             Icon::Group => "group",
+            Icon::ListTree => "list-tree",
+            Icon::InspectionPanel => "inspection-panel",
         }
     }
 }
@@ -3852,8 +3929,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn icon_all_has_92_entries() {
-        assert_eq!(Icon::ALL.len(), 92);
+    fn icon_all_has_94_entries() {
+        assert_eq!(Icon::ALL.len(), 94);
     }
 
     #[test]
@@ -3867,6 +3944,8 @@ mod tests {
         assert_eq!(Icon::ALL[89], Icon::Search);
         assert_eq!(Icon::ALL[90], Icon::MessageSquareWarning);
         assert_eq!(Icon::ALL[91], Icon::Group);
+        assert_eq!(Icon::ALL[92], Icon::ListTree);
+        assert_eq!(Icon::ALL[93], Icon::InspectionPanel);
     }
 
     #[test]
@@ -3878,7 +3957,13 @@ mod tests {
             assert!(!l.is_empty(), "empty label for {icon:?}");
             assert!(seen.insert(l), "duplicate label {l:?}");
         }
-        assert_eq!(seen.len(), 92);
+        assert_eq!(seen.len(), 94);
+    }
+
+    #[test]
+    fn flag_glyphs_present_with_lucide_slugs() {
+        assert_eq!(Icon::ListTree.label(), "list-tree");
+        assert_eq!(Icon::InspectionPanel.label(), "inspection-panel");
     }
 
     #[test]
