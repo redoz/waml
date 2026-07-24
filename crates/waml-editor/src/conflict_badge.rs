@@ -12,6 +12,7 @@ script_mod! {
     use mod.atlas
     use mod.widgets.*
     use mod.text.*
+    use mod.fonts
 
     mod.widgets.ConflictBadgeBase = #(ConflictBadge::register_widget(vm))
 
@@ -36,13 +37,7 @@ script_mod! {
             text: ""
             draw_text +: {
                 color: #FFF
-                text_style: TextStyle{
-                    font_size: 12
-                    font_family: FontFamily{
-                        latin := FontMember{res: crate_resource("self:resources/fonts/IBM_Plex_Sans/IBMPlexSans-SemiBold.ttf") asc: -0.1 desc: 0.0}
-                    }
-                    line_spacing: 1.2
-                }
+                text_style: fonts.text_body
             }
         }
     }

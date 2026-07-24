@@ -28,6 +28,7 @@ script_mod! {
     use mod.atlas
     use mod.widgets.*
     use mod.text.*
+    use mod.fonts
 
     mod.widgets.DiagramSwitcherBase = #(DiagramSwitcher::register_widget(vm))
 
@@ -38,23 +39,11 @@ script_mod! {
         draw_edge +: { color: atlas.frame_hi }
         draw_label +: {
             color: atlas.text
-            text_style: TextStyle{
-                font_size: 12
-                font_family: FontFamily{
-                    latin := FontMember{res: crate_resource("self:resources/fonts/IBM_Plex_Sans/IBMPlexSans-Regular.ttf") asc: -0.1 desc: 0.0}
-                }
-                line_spacing: 1.2
-            }
+            text_style: fonts.text_body
         }
         draw_caret +: {
             color: atlas.text_dim
-            text_style: TextStyle{
-                font_size: 11
-                font_family: FontFamily{
-                    latin := FontMember{res: crate_resource("self:resources/fonts/IBM_Plex_Sans/IBMPlexSans-Regular.ttf") asc: -0.1 desc: 0.0}
-                }
-                line_spacing: 1.2
-            }
+            text_style: fonts.text_label
         }
     }
 }
