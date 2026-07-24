@@ -798,7 +798,7 @@ impl Widget for Inspector {
             self.draw_dim.draw_abs(cx, dvec2(x, y), "MEMBERS");
             y += ROW_H;
             for m in &view.members {
-                self.draw_label.draw_abs(cx, dvec2(x, y), m);
+                self.draw_label.draw_abs(cx, dvec2(x, y), &m.label);
                 y += ROW_H;
             }
             y += GAP;
@@ -916,9 +916,15 @@ impl Inspector {
                 .widget(cx, ids!(body.members_heading))
                 .as_section_heading()
                 .set_text(cx, "MEMBERS");
-            self.view
-                .label(cx, ids!(body.members_lines))
-                .set_text(cx, &view.members.join("\n"));
+            self.view.label(cx, ids!(body.members_lines)).set_text(
+                cx,
+                &view
+                    .members
+                    .iter()
+                    .map(|m| m.label.clone())
+                    .collect::<Vec<_>>()
+                    .join("\n"),
+            );
         }
 
         let has_rels = !view.associations.is_empty();
@@ -1280,6 +1286,8 @@ mod tests {
             other_label: "Customer".into(),
             role: "buyer".into(),
             multiplicity: "0..1".into(),
+            target_key: "customer".into(),
+            target_kind: ElementKind::Node,
         };
         assert_eq!(meta_line(&assoc), "associates \u{b7} buyer \u{b7} 0..1");
     }
@@ -1292,6 +1300,8 @@ mod tests {
             other_label: "Order".into(),
             role: String::new(),
             multiplicity: String::new(),
+            target_key: "order".into(),
+            target_kind: ElementKind::Node,
         };
         assert_eq!(meta_line(&assoc), "associates");
     }
