@@ -6,15 +6,17 @@
 //! same hybrid `ProjectTree` uses (derefs `View`, yet does manual draws in its
 //! `draw_walk`). See `inspector.rs` for the pure `InspectorView` projection.
 //!
-//! Top bar: a real `SelectBox` child widget (badge + selected label + caret)
-//! listing the current diagram's contents (diagram, nodes, source-anchored
-//! edges), plus a square pin toggle. Clicking the box opens its `SelectFlyout`
+//! Top bar (`element_bar`): a real `SelectBox` child widget (badge + selected
+//! label + caret) listing the current diagram's contents (diagram, nodes,
+//! source-anchored edges), plus fold-caret + pin `IconButton`s that drive the
+//! panel's `dock: DockState` (Flag/Peek/Pinned; see `dock.rs`) -- pin docks the
+//! column and locks the interior fill opaque via `panel.force_opaque`, the
+//! caret always collapses to Flag. Clicking the box opens its `SelectFlyout`
 //! card (`App` relays `SelectBox`'s open request to `PopupRoot::show_at`), and
 //! a committed pick comes back through the tag-filtered `PopupRoot::closed`
 //! queue, resolved via `apply_pick` (which repoints the inspector,
 //! inspector-local). Diagram/edge rows are listed but picking them is a no-op
-//! for now. The pin is visual-only this cut (its keep-opaque-on-blur purpose
-//! is deferred).
+//! for now.
 //!
 //! Step C (inline edit): `Title`/`Description` are click-to-edit. Edits are
 //! hand-rolled (no fork `TextInput`) — same convention as `doc_tabs.rs`: rects
@@ -370,7 +372,7 @@ pub struct Inspector {
     #[rust]
     panel: PanelGlass,
     /// Dock visual state (Flag / Peek / Pinned), replacing `folded` and
-    /// `panel.pinned`. The app reads `slot_width()` for the right slot.
+    /// `panel.force_opaque`. The app reads `slot_width()` for the right slot.
     #[rust]
     dock: DockState,
     /// Auto-collapse countdown for Peek (armed when the pointer leaves the flag
@@ -717,7 +719,7 @@ impl Widget for Inspector {
             fw.width = Size::Fixed(crate::dock::FLAG_W);
             self.view.view(cx, ids!(element_bar)).set_visible(cx, false);
             self.view.widget(cx, ids!(body)).set_visible(cx, false);
-            self.panel.pinned = false;
+            self.panel.force_opaque = false;
             self.panel.draw(cx, &mut self.view.draw_bg);
             let _ = self.view.draw_walk(cx, scope, fw);
             let rect = self.view.area().rect(cx);
@@ -766,7 +768,7 @@ impl Widget for Inspector {
         // scrim (which painted last, over everything). See `panel_glass`.
         // `pinned` forces opaque; Peek eases with hover -- must be set BEFORE
         // `panel.draw`.
-        self.panel.pinned = matches!(self.dock, DockState::Pinned);
+        self.panel.force_opaque = matches!(self.dock, DockState::Pinned);
         self.panel.draw(cx, &mut self.view.draw_bg);
         let attr_list_uid = self.view.widget(cx, ids!(body.attr_list)).widget_uid();
         let members_list_uid = self.view.widget(cx, ids!(body.members_list)).widget_uid();

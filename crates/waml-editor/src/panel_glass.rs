@@ -1,9 +1,12 @@
-//! Shared translucency + hover state machine for the floating HUD panels
-//! (`tree_panel`, `inspector_panel`). Both panels float over the graph canvas
-//! (app `flow: Overlay`), so at rest their interior fill is translucent and the
-//! diagram shows through; hovering the panel -- or pinning it -- eases the fill
-//! to fully opaque. Only the interior fill's alpha moves: the accent frame
-//! stroke, text, and icons stay opaque, so the panel reads as glass, not dimmed.
+//! Shared translucency + hover state machine for the docked HUD panels
+//! (`tree_panel`, `inspector_panel`), which live in `peek_layer` over the
+//! docked `flow: Right` split (see `app.rs`). Only their **Peek** body eases:
+//! at rest its interior fill is translucent and the diagram shows through;
+//! hovering it eases the fill to fully opaque. **Pinned** locks the fill fully
+//! opaque via `force_opaque` (set by the panel from `dock == Pinned`); **Flag**
+//! draws no body at all. Only the interior fill's alpha moves: the accent
+//! frame stroke, text, and icons stay opaque, so the panel reads as glass, not
+//! dimmed.
 //!
 //! The panel's `draw_bg` shader (inlined per panel, kept in sync with
 //! `frame.rs`) must expose an `opacity: uniform(1.0)` that scales its fill
@@ -31,8 +34,9 @@ const GLASS_SECS_OUT: f64 = 0.32;
 pub struct PanelGlass {
     /// Pointer is over the panel (geometric, see module docs).
     pub hovered: bool,
-    /// Pinned: locks the fill fully opaque even when unhovered.
-    pub pinned: bool,
+    /// Force the interior fill fully opaque regardless of hover (the panel
+    /// sets this from `dock == Pinned`). A Peek body eases with hover only.
+    pub force_opaque: bool,
     /// Eased interior-fill opacity, seeded on the first `draw`.
     glass: f32,
     seeded: bool,
@@ -98,17 +102,8 @@ impl PanelGlass {
         self.glass
     }
 
-    /// Toggle the pin (locks the fill fully opaque) and kick the ease. Both
-    /// panels now drive `pinned` directly from `dock == Pinned` (Task 4/5);
-    /// this is retired by Task 6's `panel_glass` cleanup.
-    #[allow(dead_code)]
-    pub fn toggle_pin(&mut self, cx: &mut Cx) {
-        self.pinned = !self.pinned;
-        self.arm(cx);
-    }
-
     fn target(&self) -> f32 {
-        if self.hovered || self.pinned {
+        if self.hovered || self.force_opaque {
             1.0
         } else {
             GLASS_REST

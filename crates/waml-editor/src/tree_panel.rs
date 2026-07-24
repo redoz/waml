@@ -416,7 +416,7 @@ pub struct ProjectTree {
     #[rust]
     chip_rect: Rect,
     /// The dock visual state (Flag / Peek / Pinned), replacing the old
-    /// `collapsed` bool and `panel.pinned`. Owned here; the app reads
+    /// `collapsed` bool and `panel.force_opaque`. Owned here; the app reads
     /// `slot_width()` to drive the left reservation slot.
     #[rust]
     dock: DockState,
@@ -644,7 +644,7 @@ impl Widget for ProjectTree {
                 .set_visible(cx, false);
             self.view.view(cx, ids!(header)).set_visible(cx, false);
             self.view.view(cx, ids!(note_band)).set_visible(cx, false);
-            self.panel.pinned = false;
+            self.panel.force_opaque = false;
             self.panel.draw(cx, &mut self.view.draw_bg);
             let _ = self.view.draw_walk(cx, scope, fw);
             let rect = self.view.area().rect(cx);
@@ -691,7 +691,7 @@ impl Widget for ProjectTree {
         // ground-color dimming scrim, which washed content toward a flat color
         // instead of revealing the canvas. See `panel_glass`. `pinned` forces
         // opaque; Peek eases with hover -- must be set BEFORE `panel.draw`.
-        self.panel.pinned = pinned;
+        self.panel.force_opaque = pinned;
         self.panel.draw(cx, &mut self.view.draw_bg);
 
         while let Some(step) = self.view.draw_walk(cx, scope, walk).step() {
