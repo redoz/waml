@@ -53,9 +53,10 @@ impl BodyWidgets {
             .set_visible(cx, show);
     }
 
-    /// Show/hide the bottom-centre view bar (`view_bar_wrap`). Follows the
-    /// canvas: a Source tab renders markdown, not a diagram, so the view
-    /// controls have nothing to act on.
+    /// Show/hide the bottom-centre view bar (`view_bar_wrap`). Diagram-only,
+    /// like the tool dock: the bar's actions are routed by
+    /// `ClassDiagramView::handle`, so showing it over a preview/source tab
+    /// would flip its toggles with nothing to act on them.
     pub fn set_view_bar_visible(&self, cx: &mut Cx, show: bool) {
         self.ui
             .widget(cx, ids!(view_bar_wrap))
@@ -141,6 +142,14 @@ pub trait DocView {
     /// Does this view drive the left tool dock? (diagram: yes, preview: no)
     fn wants_tooldock(&self) -> bool;
 
+    /// Does this view route the bottom-centre view bar? Only a view whose
+    /// `handle` reads `view_bar_action` may show it -- otherwise the bar flips
+    /// its own toggle state with nothing acting on it and desyncs from the
+    /// canvas. Diagram: yes; preview/source: no.
+    fn wants_view_bar(&self) -> bool {
+        false
+    }
+
     fn on_activate(&mut self, cx: &mut Cx, body: &BodyWidgets) {
         let _ = (cx, body);
     }
@@ -214,5 +223,20 @@ mod tests {
     fn make_view_handles_source_kind() {
         let sv = make_view(&tab(TabKind::Source, TreeKind::Class));
         assert!(!sv.wants_tooldock(), "source view has no tool dock");
+    }
+
+    #[test]
+    fn only_the_diagram_view_wants_the_view_bar() {
+        // The bar's actions are only routed by `ClassDiagramView::handle`, so
+        // showing it over any other tab desyncs bar<->canvas.
+        let dv = make_view(&tab(TabKind::Diagram, TreeKind::Diagram));
+        assert!(dv.wants_view_bar(), "diagram view routes the view bar");
+        let cv = make_view(&tab(TabKind::Classifier, TreeKind::Class));
+        assert!(
+            !cv.wants_view_bar(),
+            "preview view never reads the view bar"
+        );
+        let sv = make_view(&tab(TabKind::Source, TreeKind::Class));
+        assert!(!sv.wants_view_bar(), "source view never reads the view bar");
     }
 }

@@ -1692,18 +1692,15 @@ impl GraphCanvas {
     /// Draw one placement relation's veil: a hatched grey keep-out anchored to the
     /// reference node's near edge, distance-faded, plus a desaturating scrim over
     /// every non-participant card inside it (spec §2). The two participants keep
-    /// full colour. No connector line. `offset` is the All-mode parallax shift
-    /// (spec §3); zero in None/Selected mode.
+    /// full colour. No connector line.
     fn draw_veil_for(
         &mut self,
         cx: &mut Cx2d,
         subject_idx: usize,
         reference_idx: usize,
         dir: waml::syntax::Direction,
-        offset: DVec2,
     ) {
-        let mut reference_screen = self.node_screen_rect(reference_idx);
-        reference_screen.pos += offset;
+        let reference_screen = self.node_screen_rect(reference_idx);
         let band = veil_band(reference_screen, self.view_rect, dir, VEIL_REACH);
         // Clip the band to the view so we don't overdraw the whole window.
         let band = intersect_rect(band, self.view_rect);
@@ -1738,8 +1735,7 @@ impl GraphCanvas {
         .collect();
         for key in desats {
             if let Some(i) = self.scene.nodes.iter().position(|n| n.key == key) {
-                let mut s = self.node_screen_rect(i);
-                s.pos += offset;
+                let s = self.node_screen_rect(i);
                 self.fill_rect(
                     cx,
                     s.pos.x,
@@ -1776,7 +1772,7 @@ impl GraphCanvas {
         .collect();
 
         for (si, ri, dir) in chosen {
-            self.draw_veil_for(cx, si, ri, dir, dvec2(0.0, 0.0));
+            self.draw_veil_for(cx, si, ri, dir);
         }
     }
 

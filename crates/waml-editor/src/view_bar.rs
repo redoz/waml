@@ -121,6 +121,48 @@ impl ViewOption {
     }
 }
 
+/// The bar's independent toggle state. A plain struct rather than two widget
+/// fields so the option->state map is unit-testable without constructing a
+/// `View` (makepad widgets aren't constructible outside a running `Cx`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ViewToggles {
+    /// Constraint veils on/off.
+    show_constraints: bool,
+    /// X-ray for groups that opt out of chrome.
+    show_hidden_borders: bool,
+}
+
+impl Default for ViewToggles {
+    /// Constraints default ON so the bar preserves today's behaviour
+    /// (`ConstraintVisibility::default()` is `Selected`); hidden borders OFF.
+    fn default() -> ViewToggles {
+        ViewToggles {
+            show_constraints: true,
+            show_hidden_borders: false,
+        }
+    }
+}
+
+impl ViewToggles {
+    /// Current state of a toggle. `false` for a one-shot option (never lit).
+    fn get(self, opt: ViewOption) -> bool {
+        match opt {
+            ViewOption::ShowConstraints => self.show_constraints,
+            ViewOption::ShowHiddenBorders => self.show_hidden_borders,
+            _ => false,
+        }
+    }
+
+    /// Store a toggle's new state. A one-shot option is ignored.
+    fn set(&mut self, opt: ViewOption, on: bool) {
+        match opt {
+            ViewOption::ShowConstraints => self.show_constraints = on,
+            ViewOption::ShowHiddenBorders => self.show_hidden_borders = on,
+            _ => {}
+        }
+    }
+}
+
 #[derive(Clone, Debug, Default)]
 pub enum ViewBarAction {
     #[default]
@@ -140,13 +182,9 @@ pub struct ViewBar {
     #[deref]
     view: View,
 
-    /// Constraint veils on/off. Defaults ON so the bar preserves today's
-    /// behaviour (`ConstraintVisibility::default()` is `Selected`).
-    #[rust(true)]
-    show_constraints: bool,
-    /// X-ray for groups that opt out of chrome. Defaults OFF.
+    /// The two independent view toggles (constraint veils, hidden borders).
     #[rust]
-    show_hidden_borders: bool,
+    toggles: ViewToggles,
 }
 
 impl Widget for ViewBar {
@@ -159,8 +197,8 @@ impl Widget for ViewBar {
             for opt in ViewOption::ALL {
                 if self.button(cx, opt).as_icon_button().clicked(actions) {
                     if opt.is_toggle() {
-                        let on = !self.toggle_state(opt);
-                        self.set_toggle_state(opt, on);
+                        let on = !self.toggles.get(opt);
+                        self.toggles.set(opt, on);
                         self.view.redraw(cx);
                         cx.widget_action(uid, ViewBarAction::Toggled(opt, on));
                     } else {
@@ -176,7 +214,7 @@ impl Widget for ViewBar {
         // Sync each child's glyph + lit state before the View lays them out:
         // only a toggle that is ON is lit; one-shot buttons never are.
         for opt in ViewOption::ALL {
-            let lit = opt.is_toggle() && self.toggle_state(opt);
+            let lit = opt.is_toggle() && self.toggles.get(opt);
             let btn = self.button(cx, opt).as_icon_button();
             btn.set_icon(cx, Self::icon_for(opt));
             btn.set_active(cx, lit);
@@ -212,24 +250,6 @@ impl ViewBar {
             ViewOption::FitToSelection => Icon::ScanSearch,
             ViewOption::ShowHiddenBorders => Icon::SquareDashed,
             ViewOption::ShowConstraints => Icon::Ruler,
-        }
-    }
-
-    /// Current state of a toggle. `false` for a one-shot option (never lit).
-    fn toggle_state(&self, opt: ViewOption) -> bool {
-        match opt {
-            ViewOption::ShowConstraints => self.show_constraints,
-            ViewOption::ShowHiddenBorders => self.show_hidden_borders,
-            _ => false,
-        }
-    }
-
-    /// Store a toggle's new state. A one-shot option is ignored.
-    fn set_toggle_state(&mut self, opt: ViewOption, on: bool) {
-        match opt {
-            ViewOption::ShowConstraints => self.show_constraints = on,
-            ViewOption::ShowHiddenBorders => self.show_hidden_borders = on,
-            _ => {}
         }
     }
 
@@ -281,6 +301,37 @@ mod tests {
             Icon::SquareDashed
         );
         assert_eq!(ViewBar::icon_for(ViewOption::ShowConstraints), Icon::Ruler);
+    }
+
+    #[test]
+    fn toggles_default_to_constraints_on_borders_off() {
+        // `ConstraintVisibility::default()` is `Selected`, so the veil toggle
+        // must start lit or the bar and the canvas disagree on first paint.
+        let t = ViewToggles::default();
+        assert!(t.get(ViewOption::ShowConstraints));
+        assert!(!t.get(ViewOption::ShowHiddenBorders));
+    }
+
+    #[test]
+    fn set_flips_only_the_named_toggle() {
+        let mut t = ViewToggles::default();
+        t.set(ViewOption::ShowConstraints, false);
+        assert!(!t.get(ViewOption::ShowConstraints));
+        assert!(!t.get(ViewOption::ShowHiddenBorders));
+        t.set(ViewOption::ShowHiddenBorders, true);
+        assert!(!t.get(ViewOption::ShowConstraints));
+        assert!(t.get(ViewOption::ShowHiddenBorders));
+    }
+
+    #[test]
+    fn one_shot_options_are_never_on() {
+        let mut t = ViewToggles::default();
+        for opt in ViewOption::ALL.iter().filter(|o| !o.is_toggle()) {
+            t.set(*opt, true);
+            assert!(!t.get(*opt), "{opt:?} is a one-shot, never lit");
+        }
+        // ...and setting one never disturbs the real toggles.
+        assert_eq!(t, ViewToggles::default());
     }
 
     #[test]

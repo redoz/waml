@@ -5,6 +5,7 @@ use makepad_widgets::*;
 use std::collections::HashSet;
 use waml::model::Model;
 
+use crate::canvas::ConstraintVisibility;
 use crate::doc_view::{BodyWidgets, DocView, PopupRequest, ViewOutcome};
 use crate::inspector::{diagram_elements, subject_from, Subject};
 use crate::popup::base::PopupResult;
@@ -13,6 +14,23 @@ use crate::scene::build_scene;
 /// Strip a defensive `.md` tail from a node/diagram key.
 fn strip_md_key(s: &str) -> String {
     s.strip_suffix(".md").unwrap_or(s).to_string()
+}
+
+/// The canvas veil mode a view-bar action should drive, or `None` when it
+/// drives no veil change (the camera one-shots and the hidden-borders toggle,
+/// both still `log!` no-ops). Pure so the on/off mapping is testable.
+fn constraint_vis_for(action: &crate::view_bar::ViewBarAction) -> Option<ConstraintVisibility> {
+    match action {
+        crate::view_bar::ViewBarAction::Toggled(
+            crate::view_bar::ViewOption::ShowConstraints,
+            on,
+        ) => Some(if *on {
+            ConstraintVisibility::Selected
+        } else {
+            ConstraintVisibility::None
+        }),
+        _ => None,
+    }
 }
 
 #[derive(Default)]
@@ -186,25 +204,15 @@ impl DocView for ClassDiagramView {
             .borrow_mut::<crate::view_bar::ViewBar>()
             .and_then(|bar| bar.view_bar_action(actions))
         {
-            match action {
-                crate::view_bar::ViewBarAction::Toggled(
-                    crate::view_bar::ViewOption::ShowConstraints,
-                    on,
-                ) => {
+            match constraint_vis_for(&action) {
+                Some(vis) => {
                     if let Some(mut canvas) =
                         body.canvas(cx).borrow_mut::<crate::canvas::GraphCanvas>()
                     {
-                        canvas.set_constraint_vis(
-                            cx,
-                            if on {
-                                crate::canvas::ConstraintVisibility::Selected
-                            } else {
-                                crate::canvas::ConstraintVisibility::None
-                            },
-                        );
+                        canvas.set_constraint_vis(cx, vis);
                     }
                 }
-                other => log!("view bar: {other:?}"),
+                None => log!("view bar: {action:?}"),
             }
             return out;
         }
@@ -382,7 +390,48 @@ impl DocView for ClassDiagramView {
         true
     }
 
+    fn wants_view_bar(&self) -> bool {
+        true
+    }
+
     fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
         self
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::constraint_vis_for;
+    use crate::canvas::ConstraintVisibility;
+    use crate::view_bar::{ViewBarAction, ViewOption};
+
+    #[test]
+    fn constraints_toggle_drives_the_veil_mode() {
+        assert_eq!(
+            constraint_vis_for(&ViewBarAction::Toggled(ViewOption::ShowConstraints, true)),
+            Some(ConstraintVisibility::Selected),
+            "toggle ON must light the sticky-selection veil"
+        );
+        assert_eq!(
+            constraint_vis_for(&ViewBarAction::Toggled(ViewOption::ShowConstraints, false)),
+            Some(ConstraintVisibility::None),
+            "toggle OFF must clear every veil"
+        );
+    }
+
+    #[test]
+    fn other_view_bar_actions_drive_no_veil_change() {
+        assert_eq!(
+            constraint_vis_for(&ViewBarAction::Toggled(ViewOption::ShowHiddenBorders, true)),
+            None
+        );
+        for opt in ViewOption::ALL.iter().filter(|o| !o.is_toggle()) {
+            assert_eq!(
+                constraint_vis_for(&ViewBarAction::Triggered(*opt)),
+                None,
+                "{opt:?} is a camera one-shot, not a veil change"
+            );
+        }
+        assert_eq!(constraint_vis_for(&ViewBarAction::None), None);
     }
 }

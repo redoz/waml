@@ -494,7 +494,6 @@ impl App {
         self.ui
             .widget(cx, ids!(canvas_wrap))
             .set_visible(cx, !is_source);
-        body.set_view_bar_visible(cx, !is_source);
         if is_source {
             let md = crate::load::source_for(&self.bundle, &active.key)
                 .map(str::to_string)
@@ -513,6 +512,10 @@ impl App {
         }
         view.sync(cx, &body, &self.model);
         body.set_tool_dock_visible(cx, view.wants_tooldock());
+        // The view bar only works on a tab whose view routes its actions
+        // (`ClassDiagramView::handle`); anywhere else it would flip its own
+        // toggles and desync from the canvas.
+        body.set_view_bar_visible(cx, view.wants_view_bar());
 
         self.sync_statusbar(cx);
         self.sync_conflict_badge(cx);
@@ -857,15 +860,18 @@ impl App {
         }
         self.sync_statusbar(cx);
 
-        // Tool dock is diagram-only: show it when the base tab is a diagram,
-        // hide it for a diagram-less model. `open_dir` bypasses the tab-switch
-        // path (`sync_active_tab`), so set it explicitly here.
+        // Tool dock and view bar are both diagram-only: show them when the base
+        // tab is a diagram, hide them for a diagram-less model. `open_dir`
+        // bypasses the tab-switch path (`sync_active_tab`, which early-returns
+        // with no active tab), so set both explicitly here.
         let has_diagram = self
             .tabs
             .active_tab()
             .map(|t| t.kind == TabKind::Diagram)
             .unwrap_or(false);
-        crate::doc_view::BodyWidgets::new(cx, &self.ui).set_tool_dock_visible(cx, has_diagram);
+        let body = crate::doc_view::BodyWidgets::new(cx, &self.ui);
+        body.set_tool_dock_visible(cx, has_diagram);
+        body.set_view_bar_visible(cx, has_diagram);
 
         // Diagram switcher (U7): push the base tab's current diagram title into
         // the trigger chip (empty when the model carries no diagram).
