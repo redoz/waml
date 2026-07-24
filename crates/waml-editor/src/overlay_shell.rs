@@ -5,6 +5,22 @@
 
 use makepad_widgets::*;
 
+// `OverlayShell` is embedded (not mounted as a DSL child) by each page widget
+// via `#[live] shell: OverlayShell`, which needs `OverlayShell` registered as
+// its own script type -- same `script_component` (not `register_widget`,
+// since this isn't a `Widget`) precedent as `icons.rs`'s `IconSet`. Without
+// this, a consumer's `shell: { panel_width: ... draw_scrim +: {...} }` nested
+// object literal fails VM type-check ("expected OverlayShell, got object")
+// and the whole `shell` field silently keeps its all-zero Rust default --
+// geometry still runs, but every draw color is transparent black.
+script_mod! {
+    use mod.prelude.widgets_internal.*
+
+    mod.widgets.OverlayShellBase = #(OverlayShell::script_component(vm))
+
+    mod.widgets.OverlayShell = set_type_default() do mod.widgets.OverlayShellBase{}
+}
+
 /// What `OverlayShell::handle_event` tells the owning widget to do.
 // No consumer until Task 3 (`ShortcutsOverlay` migration) — `#[allow(dead_code)]`
 // follows the `LinearGeom` precedent so the workspace clippy gate stays green.

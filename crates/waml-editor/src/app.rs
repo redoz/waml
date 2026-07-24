@@ -1939,6 +1939,11 @@ impl AppMain for App {
         crate::inspector_panel::script_mod(vm);
         crate::doc_tabs::script_mod(vm);
         crate::diagram_switcher::script_mod(vm);
+        // `OverlayShell` must register before `ShortcutsOverlay`: its DSL
+        // customizes `shell +: { ... }` (an embedded field merge, not a
+        // mounted DSL child, but the same eager `mod.widgets.*` resolution
+        // order rule).
+        crate::overlay_shell::script_mod(vm);
         crate::shortcuts_overlay::script_mod(vm);
         crate::tool_dock::script_mod(vm);
         crate::constraint_toggle::script_mod(vm);

@@ -19,6 +19,8 @@
 
 use makepad_widgets::*;
 
+use crate::overlay_shell::{OverlayShell, OverlayShellAction};
+
 script_mod! {
     use mod.prelude.widgets_internal.*
     use mod.atlas
@@ -31,9 +33,13 @@ script_mod! {
     mod.widgets.ShortcutsOverlay = set_type_default() do mod.widgets.ShortcutsOverlayBase{
         width: Fill
         height: Fill
-        draw_scrim +: { color: atlas.scrim }
-        draw_panel +: { color: atlas.surface }
-        draw_edge +: { color: atlas.frame_hi }
+        shell +: {
+            panel_width: 360.0
+            draw_scrim +: { color: atlas.scrim }
+            draw_panel +: { color: atlas.surface }
+            draw_edge +: { color: atlas.frame_hi }
+            draw_thumb +: { color: atlas.frame_lo }
+        }
         draw_title +: {
             color: atlas.text
             text_style: fonts.text_title
@@ -67,8 +73,6 @@ pub enum ShortcutsOverlayAction {
     Dismissed,
 }
 
-const PANEL_W: f64 = 360.0;
-const PANEL_PAD: f64 = 24.0;
 const TITLE_H: f64 = 28.0;
 const ROW_H: f64 = 26.0;
 const KEY_COL_W: f64 = 56.0;
@@ -84,16 +88,9 @@ pub struct ShortcutsOverlay {
     #[layout]
     layout: Layout,
 
-    #[redraw]
     #[live]
-    draw_scrim: DrawColor,
-    #[redraw]
-    #[live]
-    draw_panel: DrawColor,
-    /// Subtle source-bright top edge (shared HUD panel material).
-    #[redraw]
-    #[live]
-    draw_edge: DrawColor,
+    shell: OverlayShell,
+
     #[redraw]
     #[live]
     draw_title: DrawText,
@@ -103,90 +100,49 @@ pub struct ShortcutsOverlay {
     #[redraw]
     #[live]
     draw_desc: DrawText,
-
-    #[rust]
-    visible: bool,
-    #[rust]
-    panel_rect: Rect,
 }
 
 impl Widget for ShortcutsOverlay {
     fn handle_event(&mut self, cx: &mut Cx, event: &Event, _scope: &mut Scope) {
-        if !self.visible {
-            return;
-        }
-        let uid = self.widget_uid();
-        match event.hits_with_capture_overload(cx, self.draw_scrim.area(), false) {
-            Hit::FingerUp(fe) if fe.is_primary_hit() && !self.panel_rect.contains(fe.abs) => {
-                cx.widget_action(uid, ShortcutsOverlayAction::Dismissed);
-            }
-            _ => {}
+        if let OverlayShellAction::Dismissed = self.shell.handle_event(cx, event) {
+            cx.widget_action(self.widget_uid(), ShortcutsOverlayAction::Dismissed);
         }
     }
 
-    fn draw_walk(&mut self, cx: &mut Cx2d, _scope: &mut Scope, walk: Walk) -> DrawStep {
-        let rect = cx.walk_turtle(walk);
-        if !self.visible {
-            // Nothing drawn -- `main_column` (painted first, same overlay
-            // rect) shows through untouched.
-            return DrawStep::done();
+    fn draw_walk(&mut self, cx: &mut Cx2d, _scope: &mut Scope, _walk: Walk) -> DrawStep {
+        let h = self.content_height();
+        if let Some(pass) = self.shell.begin(cx, h) {
+            self.draw_rows(cx, pass.origin, pass.width);
+            self.shell.end(cx);
         }
-
-        self.draw_scrim.draw_abs(cx, rect);
-
-        let panel_h = TITLE_H + BINDINGS.len() as f64 * ROW_H + PANEL_PAD * 2.0;
-        let panel_x = rect.pos.x + rect.size.x * 0.5 - PANEL_W * 0.5;
-        let panel_y = rect.pos.y + rect.size.y * 0.5 - panel_h * 0.5;
-        self.panel_rect = Rect {
-            pos: dvec2(panel_x, panel_y),
-            size: dvec2(PANEL_W, panel_h),
-        };
-        self.draw_panel.draw_abs(cx, self.panel_rect);
-        self.draw_edge.draw_abs(
-            cx,
-            Rect {
-                pos: self.panel_rect.pos,
-                size: dvec2(self.panel_rect.size.x, 1.5),
-            },
-        );
-
-        self.draw_title.draw_abs(
-            cx,
-            dvec2(panel_x + PANEL_PAD, panel_y + PANEL_PAD),
-            "Shortcuts",
-        );
-
-        let mut y = panel_y + PANEL_PAD + TITLE_H;
-        for (key, desc) in BINDINGS {
-            self.draw_key
-                .draw_abs(cx, dvec2(panel_x + PANEL_PAD, y), key);
-            self.draw_desc
-                .draw_abs(cx, dvec2(panel_x + PANEL_PAD + KEY_COL_W, y), desc);
-            y += ROW_H;
-        }
-
         DrawStep::done()
     }
 }
 
 impl ShortcutsOverlay {
+    /// Content height the shell needs to size + scroll the panel.
+    fn content_height(&self) -> f64 {
+        TITLE_H + BINDINGS.len() as f64 * ROW_H
+    }
+
+    /// Draw the title + key/desc rows relative to the shell-provided origin.
+    fn draw_rows(&mut self, cx: &mut Cx2d, origin: DVec2, _width: f64) {
+        self.draw_title.draw_abs(cx, origin, "Shortcuts");
+        let mut y = origin.y + TITLE_H;
+        for (key, desc) in BINDINGS {
+            self.draw_key.draw_abs(cx, dvec2(origin.x, y), key);
+            self.draw_desc
+                .draw_abs(cx, dvec2(origin.x + KEY_COL_W, y), desc);
+            y += ROW_H;
+        }
+    }
+
     pub fn visible(&self) -> bool {
-        self.visible
+        self.shell.is_open()
     }
 
     pub fn set_visible(&mut self, cx: &mut Cx, visible: bool) {
-        if self.visible != visible {
-            self.visible = visible;
-            // `draw_scrim.redraw(cx)` alone isn't enough the first time:
-            // `draw_walk` returns early (no draw_abs calls at all) while
-            // `!visible`, so `draw_scrim`'s own `Area` stays `Area::Empty`
-            // (never assigned a draw-list id) and `Area::redraw` is a no-op
-            // for an invalid area (see `Cx::redraw_area`, which only acts
-            // when `area.draw_list_id()` is `Some`). `redraw_all` forces
-            // the whole window to repaint regardless, which is cheap enough
-            // for a rarely-toggled full-screen overlay.
-            cx.redraw_all();
-        }
+        self.shell.set_open(cx, visible);
     }
 
     /// Convenience reader for `App`, mirroring `ToolDock::dock_action`.
