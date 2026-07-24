@@ -184,6 +184,16 @@ script_mod! {
         // relations (Task 4). Default color is overridden per-draw in
         // `draw_veil_for`; this seed just gets the pen registered.
         draw_veil: mod.draw.ConstraintVeil{ color: vec4(0.42, 0.47, 0.54, 1.0) }
+        // Drop-dial pens, borrowed wholesale from the radial popup surface
+        // (`popup/radial.rs`, registered before this module in `app.rs`): the
+        // near-opaque base disc with divider spokes, the per-wedge sector fill +
+        // masked rim arc, and the hub cancel token. The dial is drawn inline in
+        // this widget's own pass rather than mounted through `PopupRoot` -- the
+        // drag owns pointer capture -- but there is no reason for it to look
+        // like a different control.
+        draw_dial_disc: mod.draw.RadialDisc{ color: #x00000000 }
+        draw_dial_wedge: mod.draw.RadialWedge{ color: #x00000000 }
+        draw_dial_hub: mod.draw.RadialHub{ color: #x00000000 }
         // Sans body pen: overview node titles + group titles (the non-card text).
         draw_text +: {
             color: atlas.text
@@ -279,6 +289,15 @@ pub struct GraphCanvas {
     draw_veil: DrawColor,
     #[redraw]
     #[live]
+    draw_dial_disc: DrawColor,
+    #[redraw]
+    #[live]
+    draw_dial_wedge: DrawColor,
+    #[redraw]
+    #[live]
+    draw_dial_hub: DrawColor,
+    #[redraw]
+    #[live]
     draw_text: DrawText,
     #[redraw]
     #[live]
@@ -343,6 +362,10 @@ pub struct GraphCanvas {
     /// pull its own hit targets out from under the cursor.
     #[rust]
     dial_center: Option<DVec2>,
+    /// `seconds_since_app_start` at the instant the dial popped, driving the
+    /// bloom-in (grow + fade) the radial surface uses.
+    #[rust]
+    dial_opened: f64,
     /// Candidate layout per zone (node key -> world rect), pushed by the view
     /// after the arm-time speculative solve. Hovering a wedge then costs no
     /// solve at all -- it just picks a target to tween toward.
@@ -609,14 +632,15 @@ fn reframe_to_selected<'a>(
 /// out. `DIAL_RIM` is only the drawn extent: picking is angle-only past the hub,
 /// so a long outward flick keeps its wedge.
 const DIAL_HUB: f64 = crate::popup::radial::HUB_RADIUS;
-const DIAL_RIM: f64 = 104.0;
+const DIAL_RIM: f64 = crate::popup::radial::DISC_RADIUS;
 /// Once armed, the dial stays up while the cursor is within this radius of the
 /// dial centre. Past it the dial closes (and any preview unlatches), freeing the
 /// drag to dwell on another target.
 const DIAL_REACH: f64 = DIAL_RIM + 72.0;
 /// Seconds a preview tween takes to settle into its candidate layout.
 const PREVIEW_SECS: f64 = 0.22;
-
+/// Bloom-in duration when the dial pops, matching the radial popup surface.
+const DIAL_BLOOM_SECS: f64 = 0.12;
 /// Dwell (seconds) the cursor must rest over a node before its compass arms.
 /// Stops the target flipping to a sibling when the cursor merely grazes a
 /// border on the way past.
@@ -1158,8 +1182,11 @@ impl Widget for GraphCanvas {
                         self.zone_layouts.clear();
                         // Pop the dial where the cursor is resting -- press-hold
                         // radial behaviour -- and freeze it there for the life of
-                        // the arm.
+                        // the arm. The bloom needs frames of its own: nothing is
+                        // tweening yet, so kick the clock here.
                         self.dial_center = Some(self.cursor_abs);
+                        self.dial_opened = cx.seconds_since_app_start();
+                        self.preview_frame = cx.new_next_frame();
                         cx.widget_action(
                             uid,
                             GraphCanvasAction::CompassArmed {
@@ -1182,7 +1209,7 @@ impl Widget for GraphCanvas {
                 ne.time - self.preview_last_time
             };
             self.preview_last_time = ne.time;
-            let running = match &mut self.preview {
+            let tweening = match &mut self.preview {
                 Some(p) => {
                     p.t = (p.t + dt / PREVIEW_SECS).min(1.0);
                     p.t < 1.0
@@ -1192,6 +1219,14 @@ impl Widget for GraphCanvas {
             if self.preview.is_some() {
                 self.apply_preview(cx);
             }
+            // The dial's bloom needs frames even with nothing tweening (it plays
+            // on the arm, before any wedge is hovered).
+            let blooming = self.dial_center.is_some()
+                && cx.seconds_since_app_start() - self.dial_opened < DIAL_BLOOM_SECS;
+            if blooming {
+                self.draw_bg.redraw(cx);
+            }
+            let running = tweening || blooming;
             if running {
                 self.preview_frame = cx.new_next_frame();
             } else {
@@ -2027,45 +2062,89 @@ impl GraphCanvas {
     /// canvas, tint a wedge whose `A <dir> B` already exists amber (a rewrite)
     /// instead of the additive blue.
     fn draw_dial(&mut self, cx: &mut Cx2d, center: DVec2, active: Option<Zone>) {
-        // Wedge fill is approximated by a fan of flat triangles between the hub
-        // and rim arcs -- the sector shader lives in `RadialPopup`, which can't
-        // draw inside the canvas's own pass.
-        const STEPS: usize = 8;
-        // Angular gap each side of a wedge, so neighbours read as separate keys.
-        const GAP: f64 = 0.045;
         let layout = crate::popup::radial::RadialLayout::full(8);
+        // Bloom-in, same curve as `RadialPopup::draw`: grow from 55% and fade up
+        // over DIAL_BLOOM_SECS. Only the DRAWN radii scale -- `dial_zone_of`
+        // hit-tests the settled geometry throughout, so a fast flick during the
+        // bloom still picks the wedge it looks like it's pointing at.
+        let elapsed = cx.seconds_since_app_start() - self.dial_opened;
+        let t = (elapsed / DIAL_BLOOM_SECS).clamp(0.0, 1.0);
+        let e = 1.0 - (1.0 - t).powi(2);
+        let scale = 0.55 + 0.45 * e;
+        let fade = e as f32;
+        let rim = DIAL_RIM * scale;
+        let hub = DIAL_HUB * scale;
+        // One quad bounds the whole disc; every wedge shader masks its own slice
+        // out of it. Pad past the rim so the rim stroke's AA falls inside.
+        let pad = 3.0;
+        let quad = Rect {
+            pos: dvec2(center.x - rim - pad, center.y - rim - pad),
+            size: dvec2((rim + pad) * 2.0, (rim + pad) * 2.0),
+        };
+        let local_c = dvec2(rim + pad, rim + pad);
+
+        // Base disc + divider spokes.
+        self.draw_dial_disc.set_uniform(cx, live_id!(rim), &[rim as f32]);
+        self.draw_dial_disc.set_uniform(cx, live_id!(hub), &[hub as f32]);
+        self.draw_dial_disc.set_uniform(cx, live_id!(n), &[8.0]);
+        self.draw_dial_disc.set_uniform(cx, live_id!(fade), &[fade]);
+        self.draw_dial_disc.set_uniform(
+            cx,
+            live_id!(arc_start),
+            &[layout.arc_start.rem_euclid(std::f64::consts::TAU) as f32],
+        );
+        self.draw_dial_disc
+            .set_uniform(cx, live_id!(span), &[layout.span as f32]);
+        self.draw_dial_disc.draw_abs(cx, quad);
+
         for (i, z) in DIAL_ZONES.into_iter().enumerate() {
             let on = active == Some(z);
             let conflict = self.conflict_zones.contains(&z);
-            let (fill, arrow) = match (conflict, on) {
-                (true, true) => (vec4(0.80, 0.22, 0.22, 0.88), vec4(1.0, 0.90, 0.90, 1.0)),
-                (true, false) => (vec4(0.52, 0.17, 0.17, 0.52), vec4(1.0, 0.72, 0.72, 0.85)),
-                (false, true) => (vec4(0.37, 0.63, 1.0, 0.80), vec4(1.0, 1.0, 1.0, 1.0)),
-                (false, false) => (vec4(0.13, 0.17, 0.24, 0.62), vec4(0.66, 0.79, 1.0, 0.85)),
-            };
             let (a0, a1) = layout.wedge_bounds(i);
-            let (s0, s1) = (a0 + GAP, a1 - GAP);
-            // Clockwise-from-12 angle -> screen point (matches `index_at`'s
-            // atan2(dx, -dy) convention).
-            let p = |ang: f64, r: f64| dvec2(center.x + ang.sin() * r, center.y - ang.cos() * r);
-            for s in 0..STEPS {
-                let t0 = s0 + (s1 - s0) * (s as f64 / STEPS as f64);
-                let t1 = s0 + (s1 - s0) * ((s + 1) as f64 / STEPS as f64);
-                let (i0, i1) = (p(t0, DIAL_HUB), p(t1, DIAL_HUB));
-                let (o0, o1) = (p(t0, DIAL_RIM), p(t1, DIAL_RIM));
-                self.fill_tri(cx, i0, o0, o1, fill);
-                self.fill_tri(cx, i0, o1, i1, fill);
-            }
+            // The wedge shader's own vocabulary carries this exactly: `danger`
+            // swaps the accent hue for the danger token (a placement the solver
+            // would reject), `state` runs the rest/arm alpha ramp. The hovered
+            // wedge takes the top of the ramp (3.0, "flick") rather than the
+            // menu's 2.0: with no icon or label to carry the selection, and the
+            // ghost node sitting over the wedge under the cursor, the fill is
+            // the only cue there is.
+            self.draw_dial_wedge
+                .set_uniform(cx, live_id!(cx), &[local_c.x as f32]);
+            self.draw_dial_wedge
+                .set_uniform(cx, live_id!(cy), &[local_c.y as f32]);
+            self.draw_dial_wedge
+                .set_uniform(cx, live_id!(hub), &[hub as f32]);
+            self.draw_dial_wedge
+                .set_uniform(cx, live_id!(rim), &[rim as f32]);
+            self.draw_dial_wedge.set_uniform(
+                cx,
+                live_id!(a0),
+                &[a0.rem_euclid(std::f64::consts::TAU) as f32],
+            );
+            self.draw_dial_wedge.set_uniform(
+                cx,
+                live_id!(a1),
+                &[a1.rem_euclid(std::f64::consts::TAU) as f32],
+            );
+            self.draw_dial_wedge
+                .set_uniform(cx, live_id!(state), &[if on { 3.0 } else { 0.0 }]);
+            self.draw_dial_wedge
+                .set_uniform(cx, live_id!(danger), &[if conflict { 1.0 } else { 0.0 }]);
+            self.draw_dial_wedge
+                .set_uniform(cx, live_id!(enabled), &[1.0]);
+            self.draw_dial_wedge.set_uniform(cx, live_id!(fade), &[fade]);
+            self.draw_dial_wedge.draw_abs(cx, quad);
 
-            // Outward arrow at the wedge's mid-radius, pointing the way the
-            // placement goes.
+            // Direction arrow at the wedge's mid-radius. The icon catalog has no
+            // eight-way arrow set, and a per-wedge triangle is exact anyway: it
+            // points along the placement the wedge authors.
             let (ox, oy) = zone_offset(z);
             let len = (ox * ox + oy * oy).sqrt();
             let (dx, dy) = (ox / len, oy / len);
             let (px, py) = (-dy, dx); // perpendicular
-            let mid = (DIAL_HUB + DIAL_RIM) * 0.5;
+            let mid = (hub + rim) * 0.5;
             let hc = dvec2(center.x + dx * mid, center.y + dy * mid);
-            let r = 9.0;
+            let r = 9.0 * scale;
             let apex = dvec2(hc.x + dx * r, hc.y + dy * r);
             let b1 = dvec2(
                 hc.x - dx * r * 0.35 + px * r * 0.8,
@@ -2075,8 +2154,22 @@ impl GraphCanvas {
                 hc.x - dx * r * 0.35 - px * r * 0.8,
                 hc.y - dy * r * 0.35 - py * r * 0.8,
             );
-            self.fill_tri(cx, apex, b1, b2, arrow);
+            let arrow = match (conflict, on) {
+                (true, true) => vec4(1.0, 0.86, 0.86, 1.0),
+                (true, false) => vec4(0.86, 0.42, 0.42, 0.90),
+                (false, true) => vec4(1.0, 1.0, 1.0, 1.0),
+                (false, false) => vec4(0.42, 0.55, 0.72, 0.90),
+            };
+            self.fill_tri(cx, apex, b1, b2, vec4(arrow.x, arrow.y, arrow.z, arrow.w * fade));
         }
+
+        // Hub cancel token last, over the wedge fills.
+        let hub_rect = Rect {
+            pos: dvec2(center.x - hub, center.y - hub),
+            size: dvec2(hub * 2.0, hub * 2.0),
+        };
+        self.draw_dial_hub.set_uniform(cx, live_id!(fade), &[fade]);
+        self.draw_dial_hub.draw_abs(cx, hub_rect);
     }
 
     /// SPIKE: fill a screen-space triangle `a`-`b`-`c` with `color`, via the
