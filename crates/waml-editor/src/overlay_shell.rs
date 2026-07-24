@@ -5,6 +5,27 @@
 
 use makepad_widgets::*;
 
+/// What `OverlayShell::handle_event` tells the owning widget to do.
+// No consumer until Task 3 (`ShortcutsOverlay` migration) — `#[allow(dead_code)]`
+// follows the `LinearGeom` precedent so the workspace clippy gate stays green.
+#[allow(dead_code)]
+#[derive(Clone, Debug, Default)]
+pub enum OverlayShellAction {
+    #[default]
+    None,
+    /// The scrim (outside the panel) was clicked — the owner should close.
+    Dismissed,
+}
+
+/// Handed to the consumer by `begin`: where + how wide to draw its content.
+#[allow(dead_code)]
+pub struct OverlayShellPass {
+    /// Top-left of the (already scroll-shifted, about-to-be-clipped) content.
+    pub origin: DVec2,
+    /// Content column width (panel width minus horizontal pad).
+    pub width: f64,
+}
+
 // Not yet consumed outside this file's own tests until Task 2 (`OverlayShell`)
 // wires it up — `#[allow(dead_code)]` follows the `LinearGeom` precedent
 // (popup/menu.rs) so the workspace clippy gate stays green in the meantime.
@@ -140,6 +161,171 @@ impl PanelGeom {
         let span = (track_h - thumb_h).max(1.0);
         let t = ((thumb_y - track_top) / span).clamp(0.0, 1.0);
         t * self.max_scroll()
+    }
+}
+
+/// Shared overlay chrome embedded by each page widget. Owns its own window-
+/// overlay draw list (`draw_list`) so it paints over the whole window,
+/// including the caption band — the `MenuPopup`/`SelectFlyout` idiom. Open/close
+/// is authoritative on the OWNER (App drives it for mutual exclusion); the
+/// shell only tracks the `open` flag it is told, plus scroll + geometry.
+#[allow(dead_code)]
+#[derive(Script, ScriptHook)]
+pub struct OverlayShell {
+    /// Window-overlay draw list (`begin_overlay_reuse`), same as `MenuPopup`.
+    #[live]
+    draw_list: DrawList2d,
+    #[live]
+    draw_scrim: DrawColor,
+    #[live]
+    draw_panel: DrawColor,
+    /// Source-bright top edge hairline (shared HUD panel material).
+    #[live]
+    draw_edge: DrawColor,
+    /// Scrollbar thumb.
+    #[live]
+    draw_thumb: DrawColor,
+    /// Fixed panel width for this consumer (wired from its DSL).
+    #[live]
+    panel_width: f64,
+
+    #[rust]
+    open: bool,
+    #[rust]
+    scroll: f64,
+    /// Snapshot of last-draw geometry, so `handle_event` (which runs between
+    /// draws) can hit-test the panel/thumb and clamp scroll without a `Cx2d`.
+    #[rust]
+    geom: PanelGeom,
+    /// Cursor y-offset from the thumb top while dragging it; `None` otherwise.
+    #[rust]
+    thumb_drag: Option<f64>,
+}
+
+#[allow(dead_code)]
+impl OverlayShell {
+    pub fn is_open(&self) -> bool {
+        self.open
+    }
+
+    /// Owner-driven visibility. `redraw_all` (not `draw_*.redraw`) because while
+    /// closed nothing is ever drawn, so the draw areas stay `Area::Empty` and a
+    /// targeted redraw is a no-op — the same reason `ShortcutsOverlay` used it.
+    pub fn set_open(&mut self, cx: &mut Cx, open: bool) {
+        if self.open != open {
+            self.open = open;
+            if !open {
+                self.scroll = 0.0;
+                self.thumb_drag = None;
+            }
+            cx.redraw_all();
+        }
+    }
+
+    /// Begin drawing: scrim + panel + top edge into the window overlay, then push
+    /// the content clip. Returns where the consumer should place its content, or
+    /// `None` when closed (nothing drawn). Pair with `end`.
+    pub fn begin(&mut self, cx: &mut Cx2d, content_height: f64) -> Option<OverlayShellPass> {
+        if !self.open {
+            return None;
+        }
+        let size = cx.current_pass_size();
+        let mut geom = PanelGeom::new(size, self.panel_width, content_height);
+        geom.set_scroll(self.scroll);
+        self.scroll = geom.scroll();
+        self.geom = geom;
+
+        self.draw_list.begin_overlay_reuse(cx);
+        cx.begin_root_turtle(size, Layout::flow_overlay());
+
+        self.draw_scrim.draw_abs(
+            cx,
+            Rect {
+                pos: dvec2(0.0, 0.0),
+                size,
+            },
+        );
+        self.draw_panel.draw_abs(cx, geom.panel_rect());
+        self.draw_edge.draw_abs(cx, geom.edge_rect());
+
+        cx.push_clip_rect(geom.clip_rect());
+        Some(OverlayShellPass {
+            origin: geom.content_origin(),
+            width: geom.content_width(),
+        })
+    }
+
+    /// End drawing: pop the content clip, draw the thumb over the (unclipped)
+    /// rows, and close the overlay list. Only valid after a `begin` that
+    /// returned `Some`.
+    pub fn end(&mut self, cx: &mut Cx2d) {
+        cx.pop_clip_rect();
+        if let Some(thumb) = self.geom.thumb_rect() {
+            self.draw_thumb.draw_abs(cx, thumb);
+        }
+        cx.end_pass_sized_turtle();
+        self.draw_list.end(cx);
+    }
+
+    /// Route a raw event while open: wheel-scroll + thumb-drag are consumed
+    /// inside the panel; a primary press on the scrim (outside the panel)
+    /// reports `Dismissed`; a press inside the panel is consumed (never
+    /// dismisses). Escape is routed by the App (same path as the shortcuts
+    /// overlay), not here, because a mounted overlay holds no key focus.
+    pub fn handle_event(&mut self, cx: &mut Cx, event: &Event) -> OverlayShellAction {
+        if !self.open {
+            return OverlayShellAction::None;
+        }
+        match event {
+            // Wheel over the panel scrolls; mark handled so the canvas below
+            // doesn't also pan (the scroll-occlusion contract).
+            Event::Scroll(e) if self.geom.panel_rect().contains(e.abs) => {
+                let prev = self.scroll;
+                self.geom.set_scroll(prev + e.scroll.y);
+                self.scroll = self.geom.scroll();
+                e.handled_x.set(true);
+                e.handled_y.set(true);
+                if self.scroll != prev {
+                    cx.redraw_all();
+                }
+                OverlayShellAction::None
+            }
+            Event::MouseMove(e) => {
+                if let Some(grab) = self.thumb_drag {
+                    self.geom
+                        .set_scroll(self.geom.scroll_for_thumb_y(e.abs.y - grab));
+                    self.scroll = self.geom.scroll();
+                    cx.redraw_all();
+                }
+                OverlayShellAction::None
+            }
+            Event::MouseUp(e) if e.button.is_primary() => {
+                self.thumb_drag = None;
+                OverlayShellAction::None
+            }
+            Event::MouseDown(e) if e.button.is_primary() => {
+                // Press on the thumb starts a drag; claim the press so the canvas
+                // below can't capture the digit and pan (fork `hits()` bails
+                // MouseDown when `handled` is non-empty).
+                if let Some(thumb) = self.geom.thumb_rect() {
+                    if thumb.contains(e.abs) {
+                        self.thumb_drag = Some(e.abs.y - thumb.pos.y);
+                        e.handled.set(self.draw_panel.area());
+                        return OverlayShellAction::None;
+                    }
+                }
+                if self.geom.panel_rect().contains(e.abs) {
+                    // Inside the panel: consume (modal), never dismiss.
+                    e.handled.set(self.draw_panel.area());
+                    OverlayShellAction::None
+                } else {
+                    // On the scrim: dismiss. Claim the press so nothing below acts.
+                    e.handled.set(self.draw_scrim.area());
+                    OverlayShellAction::Dismissed
+                }
+            }
+            _ => OverlayShellAction::None,
+        }
     }
 }
 
