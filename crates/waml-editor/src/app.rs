@@ -322,7 +322,7 @@ script_mod! {
                                 project_tree := ProjectTree{
                                     width: 280.0
                                     height: Fill
-                                    margin: Inset{top: 12.0, bottom: 12.0}
+                                    margin: Inset{left: 28.0, top: 12.0, bottom: 12.0}
                                 }
                             }
                             right_peek_wrap := View{
@@ -421,6 +421,10 @@ pub struct App {
     /// dispatched against it. Read in the `node_closed` branch (Task 4).
     #[rust]
     node_menu_key: Option<String>,
+    /// Last-applied (left, right) dock slot widths, so `sync_dock_slots` only
+    /// `apply_over`s on a real change.
+    #[rust]
+    dock_slot_w: (f64, f64),
 }
 
 impl App {
@@ -569,6 +573,31 @@ impl App {
         {
             overlay.set_visible(cx, visible);
         }
+    }
+
+    /// Push each panel's `DockState`-driven slot width onto its reservation
+    /// slot, so a pinned panel shrinks the `Fill` center. Cheap: mutates the
+    /// slot's `walk.width` only on a change (tracked in `dock_slot_w`). Called
+    /// each `handle_event`.
+    fn sync_dock_slots(&mut self, cx: &mut Cx) {
+        let lw = self
+            .ui
+            .widget(cx, ids!(project_tree))
+            .borrow::<crate::tree_panel::ProjectTree>()
+            .map(|p| p.slot_width())
+            .unwrap_or(crate::dock::FLAG_W);
+        if (lw - self.dock_slot_w.0).abs() > 0.5 {
+            self.dock_slot_w.0 = lw;
+            // Plain `View` reservation spacer: no `apply_over`/live-DSL setter
+            // exists in this fork's widget API, so mutate the public `walk`
+            // field directly and force a full relayout (the `flow: Right`
+            // parent must reflow, not just this child).
+            if let Some(mut slot) = self.ui.widget(cx, ids!(left_slot)).borrow_mut::<View>() {
+                slot.walk.width = Size::Fixed(lw);
+            }
+            cx.redraw_all();
+        }
+        // right_slot is synced in Task 5 once the inspector owns a DockState.
     }
 
     /// Push diagram name / node count / zoom / active tool into the bottom
@@ -2038,6 +2067,11 @@ impl AppMain for App {
                 dq.response.set(WindowDragQueryResponse::Client);
             }
         }
+
+        // Push each panel's DockState-driven slot width onto its reservation
+        // spacer every frame (including NextFrame, so the peek-timer's own
+        // dock transitions are picked up promptly).
+        self.sync_dock_slots(cx);
     }
 }
 

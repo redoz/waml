@@ -15,6 +15,7 @@
 //! immediate-mode hand-drawn over the header band -- the same hybrid the
 //! inspector's `element_bar` uses.
 
+use crate::dock::{DockEvent, DockState, PeekTimer};
 use crate::icon_button::IconButtonWidgetRefExt;
 use crate::icons::Icon;
 use crate::icons::IconSet;
@@ -322,6 +323,11 @@ const TITLE_CHEV_SIZE: f64 = 14.0;
 // `Elsewhere` note. Must match the `note_band` View's height in the DSL.
 const NOTE_H: f64 = 40.0;
 
+// Flag strip (rest state): a `dock::FLAG_W`-wide spine at the body edge with a
+// glyph near the top and a sideways "Model" label below it in accent ink.
+const FLAG_ICON_SIZE: f64 = 16.0;
+const FLAG_ICON_TOP: f64 = 12.0;
+
 /// Height (px) of the `note_band` spacer inserted between the header and the
 /// FileTree body for `tag`. Non-zero only in the reachable `Elsewhere` state
 /// while the body is shown -- that state draws a two-line note above the
@@ -409,9 +415,19 @@ pub struct ProjectTree {
     /// `ProjectTreeAction::FilterRequest`, opening the type-filter dropdown.
     #[rust]
     chip_rect: Rect,
-    /// Panel-local body fold: hides the `FileTree` body, header stays.
+    /// The dock visual state (Flag / Peek / Pinned), replacing the old
+    /// `collapsed` bool and `panel.pinned`. Owned here; the app reads
+    /// `slot_width()` to drive the left reservation slot.
     #[rust]
-    collapsed: bool,
+    dock: DockState,
+    /// Auto-collapse countdown for Peek (armed when the pointer leaves the flag
+    /// AND body; cancelled when it returns or the panel pins).
+    #[rust]
+    peek_timer: PeekTimer,
+    /// The flag strip's on-screen rect, captured in `draw_walk`, for hover/click
+    /// hit-testing (geometric containment, like `PanelGlass`).
+    #[rust]
+    flag_rect: Rect,
     /// Glass translucency + hover/pin state machine (shared with the inspector;
     /// see `panel_glass`). Owns `hovered`/`pinned` and eases the `draw_bg`
     /// `opacity` uniform between translucent-at-rest and fully-opaque-on-focus.
@@ -419,6 +435,12 @@ pub struct ProjectTree {
     panel: PanelGlass,
     #[rust]
     header_rect: Rect,
+    /// A dedicated `NextFrame`/clock for the Peek auto-collapse timer,
+    /// separate from `PanelGlass`'s own easing clock.
+    #[rust]
+    dock_frame: NextFrame,
+    #[rust]
+    dock_last_time: f64,
     /// The scope-title trigger's hit rect (label + `⌄`). A click emits
     /// `ProjectTreeAction::ScopeRequest`.
     #[rust]
@@ -526,6 +548,41 @@ fn draw_row_highlight(cx: &mut Cx2d, draw_selection: &mut DrawColor, row_top: Ve
     );
 }
 
+/// Draw the flag strip for the Model panel into `rect` (the `FLAG_W`-wide spine
+/// at the panel's left edge). Icon near the top; the label runs downward. Text
+/// rotation is unreliable in the fork's `DrawText`, so the label is a per-glyph
+/// vertical stack (one char per line, ~13px advance) — swap for a real 90deg
+/// rotated `DrawText` here if/when the fork supports it (impl decision).
+fn draw_model_flag(
+    cx: &mut Cx2d,
+    icons: &mut IconSet,
+    draw_dim: &mut DrawText,
+    accent: Vec4,
+    rect: Rect,
+) {
+    let cx_center = rect.pos.x + rect.size.x * 0.5;
+    let icon_rect = Rect {
+        pos: dvec2(
+            (cx_center - FLAG_ICON_SIZE * 0.5).round(),
+            (rect.pos.y + FLAG_ICON_TOP).round(),
+        ),
+        size: dvec2(FLAG_ICON_SIZE, FLAG_ICON_SIZE),
+    };
+    icons.draw(cx, Icon::ListTree, icon_rect, accent);
+    draw_dim.color = accent;
+    let mut y = rect.pos.y + FLAG_ICON_TOP + FLAG_ICON_SIZE + 8.0;
+    for ch in "Model".chars() {
+        let mut buf = [0u8; 4];
+        let s = ch.encode_utf8(&mut buf);
+        let w = draw_dim
+            .layout(cx, 0.0, 0.0, None, false, Align::default(), s)
+            .size_in_lpxs
+            .width as f64;
+        draw_dim.draw_abs(cx, dvec2((cx_center - w * 0.5).round(), y.round()), s);
+        y += 13.0;
+    }
+}
+
 /// Emit `begin_folder`/`end_folder` for packages and `file` for leaves, overlay
 /// a HUD glyph icon at the left of every row, and paint the active-row highlight
 /// on the row whose key matches `selected`. A collapsed folder returns `Err`
@@ -577,59 +634,64 @@ fn draw_nodes(
 
 impl Widget for ProjectTree {
     fn draw_walk(&mut self, cx: &mut Cx2d, scope: &mut Scope, walk: Walk) -> DrawStep {
-        // Panel-local collapse: hide the FileTree body and shrink the frame to
-        // hug just the header band.
-        let ft_widget = self.view.file_tree(cx, ids!(file_tree));
-        ft_widget.set_visible(cx, !self.collapsed);
+        // Flag rest state: draw only the thin spine (glyph + sideways label),
+        // no header/body. Capture the flag rect for hover/click hit-testing.
+        if !crate::dock::body_visible(self.dock) {
+            let mut fw = walk;
+            fw.width = Size::Fixed(crate::dock::FLAG_W);
+            self.view
+                .file_tree(cx, ids!(file_tree))
+                .set_visible(cx, false);
+            self.view.view(cx, ids!(header)).set_visible(cx, false);
+            self.view.view(cx, ids!(note_band)).set_visible(cx, false);
+            self.panel.pinned = false;
+            self.panel.draw(cx, &mut self.view.draw_bg);
+            let _ = self.view.draw_walk(cx, scope, fw);
+            let rect = self.view.area().rect(cx);
+            self.flag_rect = rect;
+            let accent = self.draw_title.color;
+            draw_model_flag(cx, &mut self.icons, &mut self.draw_dim, accent, rect);
+            return DrawStep::done();
+        }
+        // Expanded (Peek or Pinned): restore the header + body children.
+        self.view.view(cx, ids!(header)).set_visible(cx, true);
+        self.view
+            .file_tree(cx, ids!(file_tree))
+            .set_visible(cx, true);
 
         // Reserve room above the body for the `Elsewhere` note so its two lines
         // don't overlap the whole-model rows. The band is a laid-out spacer, so
         // showing it (Down flow) pushes the FileTree body down by `NOTE_H`; every
         // other state hides it and the rows fill from the top.
-        let note_visible = note_band_height(self.nav_tag, self.collapsed) > 0.0;
+        let note_visible = note_band_height(self.nav_tag, false) > 0.0;
         self.view
             .view(cx, ids!(note_band))
             .set_visible(cx, note_visible);
 
         // Sync the two interactive glyph controls onto their shared `IconButton`
-        // children before the header View lays them out: collapse shows the fold
-        // chevron (reusing the inspector's `ListCollapse`/`ListExpand`), pin
-        // shows Pin/PinOff and reads lit while the panel is pinned (matches the
-        // inspector). Their clicks are read in `handle_event` from `Event::Actions`
-        // -- they own their own `view.area()` hit-test, so no `hit_off`.
+        // children before the header View lays them out: collapse always shows
+        // the fold chevron (it only appears expanded and always sends the
+        // panel to Flag), pin shows Pin/PinOff and reads lit while Pinned.
+        // Their clicks are read in `handle_event` from `Event::Actions` --
+        // they own their own `view.area()` hit-test, so no `hit_off`.
         let collapse_btn = self.view.widget(cx, ids!(header.title_row.collapse_btn));
-        collapse_btn.as_icon_button().set_icon(
-            cx,
-            if self.collapsed {
-                Icon::ListExpand
-            } else {
-                Icon::ListCollapse
-            },
-        );
+        collapse_btn
+            .as_icon_button()
+            .set_icon(cx, Icon::ListCollapse);
+        let pinned = matches!(self.dock, DockState::Pinned);
         let pin_btn = self.view.widget(cx, ids!(header.title_row.pin_btn));
-        pin_btn.as_icon_button().set_icon(
-            cx,
-            if self.panel.pinned {
-                Icon::Pin
-            } else {
-                Icon::PinOff
-            },
-        );
-        pin_btn.as_icon_button().set_active(cx, self.panel.pinned);
-
-        let mut walk = walk;
-        if self.collapsed {
-            walk.height = Size::Fit {
-                min: None,
-                max: None,
-            };
-        }
+        pin_btn
+            .as_icon_button()
+            .set_icon(cx, if pinned { Icon::Pin } else { Icon::PinOff });
+        pin_btn.as_icon_button().set_active(cx, pinned);
 
         // Glass translucency: opaque when hovered/pinned, else translucent so
         // the canvas diagram shows through (only the interior fill's alpha moves
         // -- frame stroke, text, and icons stay opaque). Replaces the old
         // ground-color dimming scrim, which washed content toward a flat color
-        // instead of revealing the canvas. See `panel_glass`.
+        // instead of revealing the canvas. See `panel_glass`. `pinned` forces
+        // opaque; Peek eases with hover -- must be set BEFORE `panel.draw`.
+        self.panel.pinned = pinned;
         self.panel.draw(cx, &mut self.view.draw_bg);
 
         while let Some(step) = self.view.draw_walk(cx, scope, walk).step() {
@@ -698,12 +760,10 @@ impl Widget for ProjectTree {
         };
 
         // Search row: field + leading magnifier (left), rotating type chip
-        // (right). Sits in the header band below the title row; hidden along
-        // with the rest of the body when collapsed.
-        if self.collapsed {
-            self.search_rect = Rect::default();
-            self.chip_rect = Rect::default();
-        } else {
+        // (right). Sits in the header band below the title row. An expanded
+        // (Peek/Pinned) panel always draws the full body, so this runs
+        // unconditionally.
+        {
             let row_h = HEADER_H - TITLE_ROW_H;
             let field_h = row_h - 6.0;
             let field_y = rect.pos.y + TITLE_ROW_H + 3.0;
@@ -790,8 +850,9 @@ impl Widget for ProjectTree {
         }
 
         // Empty-state / elsewhere note, over the body area, below the header.
-        // `Browse`/`Results` draw no note -- the rows speak for themselves.
-        if !self.collapsed {
+        // `Browse`/`Results` draw no note -- the rows speak for themselves. An
+        // expanded panel always draws the body, so this runs unconditionally.
+        {
             let body_top = rect.pos.y + HEADER_H;
             match self.nav_tag {
                 NavStateTag::Elsewhere => {
@@ -845,6 +906,55 @@ impl Widget for ProjectTree {
         // `Hit::FingerHover*` -- see `panel_glass`).
         if self.panel.handle_event(cx, event, panel_rect) {
             self.view.redraw(cx);
+        }
+
+        // Flag interaction + peek auto-collapse. The panel's on-screen rect is
+        // the flag spine (Flag) or the full column (Peek/Pinned); use geometric
+        // containment (like PanelGlass), not Hit::FingerHover* (inner children
+        // claim it first).
+        if let Event::MouseMove(e) = event {
+            match self.dock {
+                DockState::Flag => {
+                    if self.flag_rect.contains(e.abs) {
+                        self.apply_dock(cx, DockEvent::FlagActivate);
+                    }
+                }
+                DockState::Peek => {
+                    let inside = self.view.area().rect(cx).contains(e.abs);
+                    if inside {
+                        self.peek_timer.cancel();
+                    } else if !self.peek_timer.is_armed() {
+                        self.peek_timer.arm();
+                        self.arm_frame(cx);
+                    }
+                }
+                DockState::Pinned => {}
+            }
+        }
+        if let Some(ne) = self.dock_frame.is_event(event) {
+            let dt = if self.dock_last_time == 0.0 {
+                0.0
+            } else {
+                ne.time - self.dock_last_time
+            };
+            self.dock_last_time = ne.time;
+            if self.peek_timer.advance(dt) {
+                self.dock_last_time = 0.0;
+                self.apply_dock(cx, DockEvent::PointerLeft);
+            } else if self.peek_timer.is_armed() {
+                self.dock_frame = cx.new_next_frame();
+            } else {
+                self.dock_last_time = 0.0;
+            }
+        }
+        // Also accept a primary click on the flag as FlagActivate.
+        if let Hit::FingerUp(fe) = event.hits(cx, self.view.area()) {
+            if fe.is_primary_hit()
+                && self.dock == DockState::Flag
+                && self.flag_rect.contains(fe.abs)
+            {
+                self.apply_dock(cx, DockEvent::FlagActivate);
+            }
         }
 
         match event.hits(cx, self.view.area()) {
@@ -912,8 +1022,7 @@ impl Widget for ProjectTree {
                 .as_icon_button()
                 .clicked(actions)
             {
-                self.collapsed = !self.collapsed;
-                self.view.redraw(cx);
+                self.apply_dock(cx, DockEvent::Collapse);
             }
             if self
                 .view
@@ -921,8 +1030,7 @@ impl Widget for ProjectTree {
                 .as_icon_button()
                 .clicked(actions)
             {
-                self.panel.toggle_pin(cx);
-                self.view.redraw(cx);
+                self.apply_dock(cx, DockEvent::PinToggle);
             }
             if let Some(id) = file_tree.file_clicked(actions) {
                 let kind = self.id_to_kind.get(&id).copied();
@@ -958,6 +1066,40 @@ impl Widget for ProjectTree {
 }
 
 impl ProjectTree {
+    /// Apply a dock event: transition, (re)arm/cancel the peek timer, and
+    /// redraw. No-op if the state is unchanged.
+    fn apply_dock(&mut self, cx: &mut Cx, ev: DockEvent) {
+        let next = crate::dock::next(self.dock, ev);
+        if next == self.dock {
+            return;
+        }
+        self.dock = next;
+        // Entering Peek arms nothing yet (pointer is over the panel); leaving
+        // Peek cancels any pending countdown.
+        if self.dock != DockState::Peek {
+            self.peek_timer.cancel();
+        }
+        self.view.redraw(cx);
+    }
+
+    fn arm_frame(&mut self, cx: &mut Cx) {
+        self.dock_last_time = 0.0;
+        self.dock_frame = cx.new_next_frame();
+    }
+
+    /// The current dock state. Plan-specified symmetry accessor (mirrors
+    /// `Inspector::dock_state` from Task 5); no in-crate caller yet since the
+    /// app currently only reads `slot_width()`.
+    #[allow(dead_code)]
+    pub fn dock_state(&self) -> DockState {
+        self.dock
+    }
+
+    /// The layout width the app must reserve in the left slot for this panel.
+    pub fn slot_width(&self) -> f64 {
+        crate::dock::slot_width(self.dock, 280.0)
+    }
+
     pub fn set_view(&mut self, cx: &mut Cx, view: NavView) {
         let (tree, tag) = match view {
             NavView::Browse(t) => (t, NavStateTag::Browse),
