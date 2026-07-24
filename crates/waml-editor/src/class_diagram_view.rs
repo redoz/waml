@@ -6,7 +6,7 @@ use std::collections::HashSet;
 use waml::model::Model;
 
 use crate::doc_view::{BodyWidgets, DocView, PopupRequest, ViewOutcome};
-use crate::inspector::{diagram_elements, Subject};
+use crate::inspector::{diagram_elements, subject_from, Subject};
 use crate::popup::base::PopupResult;
 use crate::scene::build_scene;
 
@@ -138,6 +138,29 @@ impl DocView for ClassDiagramView {
                 min_width,
                 items,
             });
+            return out;
+        }
+
+        // Reference-card navigation: a member/association card was clicked.
+        // Repoint the inspector AND select the node on the canvas (edge keys
+        // repoint only -- no node to select).
+        if let Some((key, kind)) = body
+            .inspector(cx)
+            .borrow_mut::<crate::inspector_panel::Inspector>()
+            .and_then(|mut inspector| inspector.navigate(cx, actions))
+        {
+            if let Some(subject) = subject_from(&key, kind) {
+                if let Some(mut inspector) = body
+                    .inspector(cx)
+                    .borrow_mut::<crate::inspector_panel::Inspector>()
+                {
+                    inspector.set_subject(cx, model, subject);
+                }
+                if let Some(mut canvas) = body.canvas(cx).borrow_mut::<crate::canvas::GraphCanvas>()
+                {
+                    canvas.select_by_key(cx, &key);
+                }
+            }
             return out;
         }
 

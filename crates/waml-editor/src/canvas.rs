@@ -1983,6 +1983,19 @@ impl GraphCanvas {
         self.draw_bg.redraw(cx);
     }
 
+    /// Select the node whose key is `key` (inspector-driven navigation). Sets
+    /// `selected_key` and re-resolves `selected` by key against the current
+    /// scene; a key with no node in this scene (e.g. an edge) clears the
+    /// selection but is otherwise a no-op. Repaints the highlight.
+    pub fn select_by_key(&mut self, cx: &mut Cx, key: &str) {
+        self.selected_key = Some(key.to_string());
+        self.selected = selection_index(&self.scene.nodes, Some(key));
+        if self.selected.is_none() {
+            self.selected_key = None;
+        }
+        self.draw_bg.redraw(cx);
+    }
+
     /// Store the per-zone conflict verdict pushed by the view; repaint so the
     /// compass reddens the flagged zones on the next frame.
     pub fn set_conflict_zones(&mut self, cx: &mut Cx, zones: Vec<Zone>) {

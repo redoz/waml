@@ -256,6 +256,17 @@ pub fn subject_to_index(rows: &[ElementRow], subject: &Subject) -> usize {
         .unwrap_or(0)
 }
 
+/// Build the `Subject` a navigable reference points at. Node/Group/Edge map to
+/// their inspectable subjects; Diagram/Placeholder are not inspectable (`None`).
+pub fn subject_from(key: &str, kind: ElementKind) -> Option<Subject> {
+    match kind {
+        ElementKind::Node => Some(Subject::Classifier(key.to_string())),
+        ElementKind::Group => Some(Subject::Group(key.to_string())),
+        ElementKind::Edge => Some(Subject::Edge(key.to_string())),
+        ElementKind::Diagram | ElementKind::Placeholder => None,
+    }
+}
+
 /// A node's display title, falling back to its key.
 fn node_title(model: &Model, key: &str) -> String {
     model
@@ -922,6 +933,24 @@ mod tests {
         let rows = diagram_elements(&model, "orders-diagram", "Orders", &node_keys(&model));
         assert_eq!(subject_to_index(&rows, &Subject::Group("Nope".into())), 0);
         assert_eq!(subject_to_index(&rows, &Subject::Edge("x->y".into())), 0);
+    }
+
+    #[test]
+    fn subject_from_maps_each_kind() {
+        assert_eq!(
+            subject_from("k", ElementKind::Node),
+            Some(Subject::Classifier("k".into()))
+        );
+        assert_eq!(
+            subject_from("g", ElementKind::Group),
+            Some(Subject::Group("g".into()))
+        );
+        assert_eq!(
+            subject_from("a->b", ElementKind::Edge),
+            Some(Subject::Edge("a->b".into()))
+        );
+        assert_eq!(subject_from("d", ElementKind::Diagram), None);
+        assert_eq!(subject_from("", ElementKind::Placeholder), None);
     }
 
     /// `mini()` with two *parallel* Order->PaymentGateway edges of different

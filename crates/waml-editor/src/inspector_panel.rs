@@ -700,6 +700,7 @@ impl Widget for Inspector {
                             rv.set_icon(cx, ref_card_icon(m.kind));
                             rv.set_name(cx, &m.label);
                             rv.set_meta(cx, ""); // members are single-line
+                            rv.set_target(&m.key, m.kind);
                             row.draw_all(cx, &mut Scope::empty());
                         }
                     }
@@ -722,6 +723,7 @@ impl Widget for Inspector {
                                 cx,
                                 &format!("{} {}", dir_glyph(assoc.dir), meta_line(assoc)),
                             );
+                            rv.set_target(&assoc.target_key, assoc.target_kind);
                             row.draw_all(cx, &mut Scope::empty());
                         }
                     }
@@ -1227,6 +1229,25 @@ impl Inspector {
             InspectorAction::Edited(key) => Some(key),
             _ => None,
         }
+    }
+
+    /// A member/association card was clicked this pass. Scans both section
+    /// FlatLists' grouped actions and returns the clicked row's `(key, kind)`.
+    /// `App`/`ClassDiagramView` repoints the inspector and selects the node.
+    pub fn navigate(&mut self, cx: &mut Cx, actions: &Actions) -> Option<(String, ElementKind)> {
+        let members = self.view.flat_list(cx, ids!(body.members_list));
+        for (_item_id, item) in members.items_with_actions(actions) {
+            if let Some(t) = item.as_ref_card_view().nav_target(actions) {
+                return Some(t);
+            }
+        }
+        let rel = self.view.flat_list(cx, ids!(body.rel_list));
+        for (_item_id, item) in rel.items_with_actions(actions) {
+            if let Some(t) = item.as_ref_card_view().nav_target(actions) {
+                return Some(t);
+            }
+        }
+        None
     }
 
     /// Forward the child `SelectBox`'s open request (App relays it to
