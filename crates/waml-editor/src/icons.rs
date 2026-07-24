@@ -3505,6 +3505,12 @@ script_mod! {
         group: mod.draw.IconGroup{ color: atlas.accent }
         list_tree: mod.draw.IconListTree{ color: atlas.accent }
         inspection_panel: mod.draw.IconInspectionPanel{ color: atlas.accent }
+        zoom_in: mod.draw.IconZoomIn{ color: atlas.accent }
+        zoom_out: mod.draw.IconZoomOut{ color: atlas.accent }
+        maximize: mod.draw.IconMaximize{ color: atlas.accent }
+        scan_search: mod.draw.IconScanSearch{ color: atlas.accent }
+        square_dashed: mod.draw.IconSquareDashed{ color: atlas.accent }
+        ruler: mod.draw.IconRuler{ color: atlas.accent }
     }
 }
 
@@ -3700,6 +3706,18 @@ pub struct IconSet {
     pub list_tree: DrawColor,
     #[live]
     pub inspection_panel: DrawColor,
+    #[live]
+    pub zoom_in: DrawColor,
+    #[live]
+    pub zoom_out: DrawColor,
+    #[live]
+    pub maximize: DrawColor,
+    #[live]
+    pub scan_search: DrawColor,
+    #[live]
+    pub square_dashed: DrawColor,
+    #[live]
+    pub ruler: DrawColor,
 }
 
 // Not every bin that `#[path]`-includes this file exercises the whole catalog
@@ -3805,6 +3823,12 @@ impl IconSet {
             Icon::Group => &mut self.group,
             Icon::ListTree => &mut self.list_tree,
             Icon::InspectionPanel => &mut self.inspection_panel,
+            Icon::ZoomIn => &mut self.zoom_in,
+            Icon::ZoomOut => &mut self.zoom_out,
+            Icon::Maximize => &mut self.maximize,
+            Icon::ScanSearch => &mut self.scan_search,
+            Icon::SquareDashed => &mut self.square_dashed,
+            Icon::Ruler => &mut self.ruler,
         }
     }
 
@@ -3917,13 +3941,19 @@ pub enum Icon {
     Group,
     ListTree,
     InspectionPanel,
+    ZoomIn,
+    ZoomOut,
+    Maximize,
+    ScanSearch,
+    SquareDashed,
+    Ruler,
 }
 
 #[allow(dead_code)] // ALL/label are unused in bins that don't iterate the catalog
 impl Icon {
     /// Every glyph, in field order. The single source of glyph identity; the
     /// `icon_harness` proof grid iterates this.
-    pub const ALL: [Icon; 94] = [
+    pub const ALL: [Icon; 100] = [
         Icon::Package,
         Icon::Message,
         Icon::PackagePlus,
@@ -4018,6 +4048,12 @@ impl Icon {
         Icon::Group,
         Icon::ListTree,
         Icon::InspectionPanel,
+        Icon::ZoomIn,
+        Icon::ZoomOut,
+        Icon::Maximize,
+        Icon::ScanSearch,
+        Icon::SquareDashed,
+        Icon::Ruler,
     ];
 
     /// The `icon_harness` display slug (the Lucide source name), preserved
@@ -4118,6 +4154,12 @@ impl Icon {
             Icon::Group => "group",
             Icon::ListTree => "list-tree",
             Icon::InspectionPanel => "inspection-panel",
+            Icon::ZoomIn => "zoom-in",
+            Icon::ZoomOut => "zoom-out",
+            Icon::Maximize => "maximize",
+            Icon::ScanSearch => "scan-search",
+            Icon::SquareDashed => "square-dashed",
+            Icon::Ruler => "ruler",
         }
     }
 }
@@ -4127,8 +4169,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn icon_all_has_94_entries() {
-        assert_eq!(Icon::ALL.len(), 94);
+    fn icon_all_has_100_entries() {
+        assert_eq!(Icon::ALL.len(), 100);
     }
 
     #[test]
@@ -4144,6 +4186,23 @@ mod tests {
         assert_eq!(Icon::ALL[91], Icon::Group);
         assert_eq!(Icon::ALL[92], Icon::ListTree);
         assert_eq!(Icon::ALL[93], Icon::InspectionPanel);
+        // View-bar glyphs, appended in ViewOption layout order.
+        assert_eq!(Icon::ALL[94], Icon::ZoomIn);
+        assert_eq!(Icon::ALL[95], Icon::ZoomOut);
+        assert_eq!(Icon::ALL[96], Icon::Maximize);
+        assert_eq!(Icon::ALL[97], Icon::ScanSearch);
+        assert_eq!(Icon::ALL[98], Icon::SquareDashed);
+        assert_eq!(Icon::ALL[99], Icon::Ruler);
+    }
+
+    #[test]
+    fn view_bar_glyphs_present_with_lucide_slugs() {
+        assert_eq!(Icon::ZoomIn.label(), "zoom-in");
+        assert_eq!(Icon::ZoomOut.label(), "zoom-out");
+        assert_eq!(Icon::Maximize.label(), "maximize");
+        assert_eq!(Icon::ScanSearch.label(), "scan-search");
+        assert_eq!(Icon::SquareDashed.label(), "square-dashed");
+        assert_eq!(Icon::Ruler.label(), "ruler");
     }
 
     #[test]
@@ -4155,7 +4214,7 @@ mod tests {
             assert!(!l.is_empty(), "empty label for {icon:?}");
             assert!(seen.insert(l), "duplicate label {l:?}");
         }
-        assert_eq!(seen.len(), 94);
+        assert_eq!(seen.len(), 100);
     }
 
     #[test]
