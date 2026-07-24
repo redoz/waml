@@ -421,7 +421,11 @@ mod tests {
         for d in [
             LeftOf, RightOf, Above, Below, AboveLeft, AboveRight, BelowLeft, BelowRight,
         ] {
-            assert_eq!(d.opposite().opposite(), d, "opposite must be its own inverse");
+            assert_eq!(
+                d.opposite().opposite(),
+                d,
+                "opposite must be its own inverse"
+            );
         }
     }
 
