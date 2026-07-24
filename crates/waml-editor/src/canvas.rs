@@ -488,6 +488,30 @@ fn relations_for_visibility<'a>(
     }
 }
 
+/// Reframe a stored placement onto the selected node's point of view. A relation
+/// is stored one way (`subject A left of reference B`) but is the *same*
+/// constraint from either end (`B right of A`). The veil anchors its keep-out to
+/// the returned reference (that node reads "hatched out") and leaves the returned
+/// subject in the clear — so whichever participant the user selected should come
+/// back as the subject. When the selection is the stored reference we swap the two
+/// and flip the direction; otherwise (selection is the subject, or no POV) the
+/// stored orientation already reads correctly. Returns `(subject, reference, dir)`.
+/// Pure, GPU-free.
+fn reframe_to_selected<'a>(
+    subject: &'a str,
+    reference: &'a str,
+    dir: waml::syntax::Direction,
+    pov: Option<&str>,
+) -> (&'a str, &'a str, waml::syntax::Direction) {
+    // Flip only when the selected node is the stored *reference* (and not also the
+    // subject, which the pair invariant already forbids).
+    if pov == Some(reference) && pov != Some(subject) {
+        (reference, subject, dir.opposite())
+    } else {
+        (subject, reference, dir)
+    }
+}
+
 /// How strongly a layer's depth multiplies view-pan drift into a parallax shift
 /// (spec §3). Small so panning gently separates stacked veils.
 const PARALLAX_SPREAD: f64 = 0.14;
@@ -1575,6 +1599,13 @@ impl GraphCanvas {
     /// touching the selected node, All draws every relation.
     fn draw_relations_overlay(&mut self, cx: &mut Cx2d) {
         let selected_key = self.selected_key.clone();
+        // Reframe onto the selected node's POV only in Selected mode — All mode is
+        // an audit view with no single-node vantage, so it keeps stored orientation.
+        let pov = if self.constraint_vis == ConstraintVisibility::Selected {
+            selected_key.as_deref()
+        } else {
+            None
+        };
         let chosen: Vec<(usize, usize, waml::syntax::Direction)> = relations_for_visibility(
             &self.scene.relations,
             self.constraint_vis,
@@ -1582,13 +1613,11 @@ impl GraphCanvas {
         )
         .into_iter()
         .filter_map(|rel| {
-            let si = self.scene.nodes.iter().position(|n| n.key == rel.subject)?;
-            let ri = self
-                .scene
-                .nodes
-                .iter()
-                .position(|n| n.key == rel.reference)?;
-            Some((si, ri, rel.dir))
+            let (subject, reference, dir) =
+                reframe_to_selected(&rel.subject, &rel.reference, rel.dir, pov);
+            let si = self.scene.nodes.iter().position(|n| n.key == subject)?;
+            let ri = self.scene.nodes.iter().position(|n| n.key == reference)?;
+            Some((si, ri, dir))
         })
         .collect();
 
@@ -2459,6 +2488,40 @@ mod tests {
         assert_eq!(
             relations_for_visibility(&rels, ConstraintVisibility::All, None).len(),
             3
+        );
+    }
+
+    #[test]
+    fn reframe_puts_the_selected_node_in_the_clear() {
+        use waml::syntax::Direction;
+        // Stored `A left of B`. Anchor lands on the returned reference (hatched);
+        // the returned subject stays clear.
+        // Select the subject (A): stored orientation is already correct — A clear,
+        // B hatched, reads "A left of B".
+        assert_eq!(
+            reframe_to_selected("a", "b", Direction::LeftOf, Some("a")),
+            ("a", "b", Direction::LeftOf)
+        );
+        // Select the reference (B): flip so B is clear and A is anchored/hatched,
+        // reading "B right of A".
+        assert_eq!(
+            reframe_to_selected("a", "b", Direction::LeftOf, Some("b")),
+            ("b", "a", Direction::RightOf)
+        );
+        // A diagonal flips on both axes when reframed onto the reference.
+        assert_eq!(
+            reframe_to_selected("a", "b", Direction::AboveLeft, Some("b")),
+            ("b", "a", Direction::BelowRight)
+        );
+        // No POV (All mode / nothing selected) and an unrelated selection both keep
+        // the stored orientation.
+        assert_eq!(
+            reframe_to_selected("a", "b", Direction::Below, None),
+            ("a", "b", Direction::Below)
+        );
+        assert_eq!(
+            reframe_to_selected("a", "b", Direction::Below, Some("c")),
+            ("a", "b", Direction::Below)
         );
     }
 

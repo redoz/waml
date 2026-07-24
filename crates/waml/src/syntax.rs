@@ -195,6 +195,26 @@ pub enum Direction {
     BelowRight,
 }
 
+impl Direction {
+    /// The mirror direction — the same placement seen from the other node's point
+    /// of view. `A left of B` is the very same constraint as `B right of A`, so
+    /// reframing a veil onto the selected node flips the stored direction here.
+    /// Diagonals mirror on both axes.
+    pub fn opposite(self) -> Direction {
+        use Direction::*;
+        match self {
+            LeftOf => RightOf,
+            RightOf => LeftOf,
+            Above => Below,
+            Below => Above,
+            AboveLeft => BelowRight,
+            BelowRight => AboveLeft,
+            AboveRight => BelowLeft,
+            BelowLeft => AboveRight,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Anchored {
@@ -386,6 +406,24 @@ pub struct MessagesBlock {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn direction_opposite_mirrors_both_axes_and_is_an_involution() {
+        use Direction::*;
+        assert_eq!(LeftOf.opposite(), RightOf);
+        assert_eq!(RightOf.opposite(), LeftOf);
+        assert_eq!(Above.opposite(), Below);
+        assert_eq!(Below.opposite(), Above);
+        assert_eq!(AboveLeft.opposite(), BelowRight);
+        assert_eq!(BelowRight.opposite(), AboveLeft);
+        assert_eq!(AboveRight.opposite(), BelowLeft);
+        assert_eq!(BelowLeft.opposite(), AboveRight);
+        for d in [
+            LeftOf, RightOf, Above, Below, AboveLeft, AboveRight, BelowLeft, BelowRight,
+        ] {
+            assert_eq!(d.opposite().opposite(), d, "opposite must be its own inverse");
+        }
+    }
 
     #[test]
     fn line_wraps_parsed_and_error_nodes() {
