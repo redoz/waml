@@ -19,6 +19,7 @@ script_mod! {
     use mod.atlas
     use mod.widgets.*
     use mod.text.*
+    use mod.fonts
 
     mod.widgets.RecentRowViewBase = #(RecentRowView::register_widget(vm))
 
@@ -85,7 +86,7 @@ script_mod! {
                     text: ""
                     draw_text +: {
                         color: atlas.text
-                        text_style: theme.font_regular{font_size: atlas.size_body line_spacing: 1.0}
+                        text_style: fonts.text_body
                     }
                 }
                 // Right-anchored last-opened stamp. `Fit` width -> `title`'s
@@ -94,7 +95,7 @@ script_mod! {
                     text: ""
                     draw_text +: {
                         color: atlas.text_dim
-                        text_style: theme.font_regular{font_size: atlas.size_eyebrow line_spacing: 1.0}
+                        text_style: fonts.text_label
                     }
                 }
             }
@@ -103,7 +104,7 @@ script_mod! {
                 text: ""
                 draw_text +: {
                     color: atlas.text_dim
-                    text_style: theme.font_regular{font_size: atlas.size_eyebrow line_spacing: 1.0}
+                    text_style: fonts.text_label
                 }
             }
         }

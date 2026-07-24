@@ -21,6 +21,7 @@ script_mod! {
     use mod.atlas
     use mod.widgets.*
     use mod.text.*
+    use mod.fonts
 
     // Soft ambient lift beneath the card. NOT drawn this task (wiring it needs
     // the card's post-layout rect *and* correct z-order behind the card, which
@@ -126,7 +127,7 @@ script_mod! {
                     // change automatically. See `seat_subtitle_baseline`.
                     draw_text +: {
                         color: atlas.text_dim
-                        text_style: theme.font_regular{font_size: atlas.size_caption line_spacing: 1.0}
+                        text_style: fonts.text_label
                     }
                 }
             }
@@ -168,7 +169,7 @@ script_mod! {
                         text: "RECENT"
                         draw_text +: {
                             color: atlas.accent
-                            text_style: theme.font_bold{font_size: atlas.size_eyebrow line_spacing: 1.2}
+                            text_style: fonts.text_eyebrow
                         }
                     }
                     // Bordered frame around the recents list. Stroke-only (no
@@ -227,7 +228,7 @@ script_mod! {
                         text: "START"
                         draw_text +: {
                             color: atlas.accent
-                            text_style: theme.font_bold{font_size: atlas.size_eyebrow line_spacing: 1.2}
+                            text_style: fonts.text_eyebrow
                         }
                     }
                     // VS-style borderless action links: an accent icon + prose

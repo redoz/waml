@@ -69,19 +69,6 @@ script_mod! {
         logo_mid: #x474747
         logo_lo: #x262626
 
-        // Type scale, in points (makepad DSL `font_size` units). Semantic steps
-        // so widgets reference `atlas.size_*` instead of a bare number. These are
-        // mode-independent -- mirror them verbatim in `atlas_dark`.
-        //   eyebrow  smallest step: uppercase section labels (RECENT /
-        //            START) and small meta text (timestamps, paths)
-        //   caption  secondary text: the header subtitle, action links
-        //   body     default UI text: row titles
-        //   title    headings
-        size_eyebrow: 10.0
-        size_caption: 11.0
-        size_body: 12.0
-        size_title: 16.0
-
         // Node-kind accent bucket colors (`node_style::AccentBucket`), taken
         // verbatim from the HUD swatch set (hud-icons-mock.html /
         // hud-inspector-mock.html / hud-node-mock.html JS `colors` array).
@@ -148,13 +135,6 @@ script_mod! {
         logo_hi: #xe4e7ec
         logo_mid: #xb8bfc9
         logo_lo: #x8b95a3
-
-        // Type scale, mirrored verbatim from `atlas_light` (mode-independent --
-        // see the semantic-step notes there).
-        size_eyebrow: 10.0
-        size_caption: 11.0
-        size_body: 12.0
-        size_title: 16.0
 
         // Node-kind accent buckets: saturated HUD swatches, unchanged --
         // they read on both grounds.
