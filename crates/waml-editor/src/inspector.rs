@@ -51,6 +51,16 @@ pub enum ElementKind {
     Edge,
 }
 
+/// A navigable reference to one diagram element: enough for the panel to
+/// repoint (`key` + `kind`) and to label a card (`label`). Backs both member
+/// and association cards.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ElementRef {
+    pub key: String,
+    pub kind: ElementKind,
+    pub label: String,
+}
+
 /// The label of the index-0 sentinel row (shown when nothing is selected).
 pub const PICKER_PLACEHOLDER: &str = "Select an element…";
 
@@ -91,11 +101,13 @@ pub enum AssocDir {
 /// not an editable field.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AssocRow {
-    pub kind: String,         // RelationshipKind::as_str(), e.g. "associates"
-    pub dir: AssocDir,        // orientation from the subject's point of view
-    pub other_label: String,  // the far endpoint's title, falling back to its key
-    pub role: String,         // far end's role, "" when unset
-    pub multiplicity: String, // far end's multiplicity, "" when unset or trivial "1"
+    pub kind: String,             // RelationshipKind::as_str(), e.g. "associates"
+    pub dir: AssocDir,            // orientation from the subject's point of view
+    pub other_label: String,      // the far endpoint's title, falling back to its key
+    pub role: String,             // far end's role, "" when unset
+    pub multiplicity: String,     // far end's multiplicity, "" when unset or trivial "1"
+    pub target_key: String,       // the far endpoint's element key (the navigate target)
+    pub target_kind: ElementKind, // the far endpoint's kind (Node for associations)
 }
 
 /// The flattened read model the panel renders.
@@ -107,8 +119,8 @@ pub struct InspectorView {
     pub stereotypes: Vec<String>,
     pub description: Option<String>,
     pub attributes: Vec<AttrRow>,
-    /// Group member display labels; empty for every non-group subject.
-    pub members: Vec<String>,
+    /// Group member references; empty for every non-group subject.
+    pub members: Vec<ElementRef>,
     pub associations: Vec<AssocRow>,
 }
 
@@ -321,6 +333,8 @@ fn build_classifier_view(model: &Model, key: &str) -> Option<InspectorView> {
             other_label: node_title(model, far_key),
             role,
             multiplicity,
+            target_key: far_key.clone(),
+            target_kind: ElementKind::Node,
         });
     }
 
@@ -354,7 +368,15 @@ fn build_group_view(model: &Model, name: &str) -> Option<InspectorView> {
     }
     // First match wins across every diagram's group tree (see Global Constraints).
     let group = model.diagrams.iter().find_map(|d| find(&d.groups, name))?;
-    let members = group.members.iter().map(|k| node_title(model, k)).collect();
+    let members = group
+        .members
+        .iter()
+        .map(|k| ElementRef {
+            key: k.clone(),
+            kind: ElementKind::Node,
+            label: node_title(model, k),
+        })
+        .collect();
     Some(InspectorView {
         title: name.to_string(),
         kind_label: "Group".to_string(),
@@ -786,14 +808,46 @@ mod tests {
         let view = build_view(&model, &Subject::Group("Sales".into())).unwrap();
         assert_eq!(view.title, "Sales");
         assert_eq!(view.kind_label, "Group");
-        // Members are the group's direct members, mapped to node titles.
-        assert_eq!(
-            view.members,
-            vec!["Order".to_string(), "Customer".to_string()]
-        );
+        // Members are ElementRefs: node kind, key = member key, label = node title.
+        let order = key_for(&model, "Order");
+        let customer = key_for(&model, "Customer");
+        assert_eq!(view.members.len(), 2);
+        assert_eq!(view.members[0].key, order);
+        assert_eq!(view.members[0].kind, ElementKind::Node);
+        assert_eq!(view.members[0].label, "Order");
+        assert_eq!(view.members[1].key, customer);
+        assert_eq!(view.members[1].kind, ElementKind::Node);
+        assert_eq!(view.members[1].label, "Customer");
         assert!(view.attributes.is_empty());
         assert!(view.associations.is_empty());
         assert!(view.description.is_none());
+    }
+
+    #[test]
+    fn association_target_resolves_to_far_endpoint() {
+        let model = mini();
+        let order = key_for(&model, "Order");
+        let customer = key_for(&model, "Customer");
+        let view = build_view(&model, &Subject::Classifier(order)).unwrap();
+        assert_eq!(view.associations.len(), 1);
+        let assoc = &view.associations[0];
+        // Outgoing Order->Customer: far endpoint is Customer.
+        assert_eq!(assoc.target_key, customer);
+        assert_eq!(assoc.target_kind, ElementKind::Node);
+        assert_eq!(assoc.other_label, "Customer");
+    }
+
+    #[test]
+    fn incoming_association_target_is_the_source_node() {
+        let model = mini();
+        let order = key_for(&model, "Order");
+        let customer = key_for(&model, "Customer");
+        let view = build_view(&model, &Subject::Classifier(customer)).unwrap();
+        assert_eq!(view.associations.len(), 1);
+        let assoc = &view.associations[0];
+        // Incoming (Customer is the target): far endpoint is the source, Order.
+        assert_eq!(assoc.target_key, order);
+        assert_eq!(assoc.target_kind, ElementKind::Node);
     }
 
     #[test]
