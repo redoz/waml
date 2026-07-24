@@ -300,6 +300,7 @@ mod tests {
 script_mod! {
     use mod.prelude.widgets_internal.*
     use mod.atlas
+    use mod.fonts
     use mod.widgets.*
     use mod.text.*
 
@@ -330,7 +331,7 @@ script_mod! {
         draw_divider_bright: mod.draw.DrawColor{ color: atlas.frame_lo }
         draw_label +: {
             color: atlas.text
-            text_style: theme.font_regular{ font_size: 10 line_spacing: 1.2 }
+            text_style: fonts.text_menu
         }
     }
 }

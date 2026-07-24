@@ -69,6 +69,7 @@ pub fn select_width(label_hug: f64, min_width: f64, cap: f64) -> f64 {
 script_mod! {
     use mod.prelude.widgets_internal.*
     use mod.atlas
+    use mod.fonts
     use mod.widgets.*
     use mod.text.*
 
@@ -93,7 +94,7 @@ script_mod! {
         draw_badge: mod.draw.DrawColor{ color: atlas.bucket_slate }
         draw_badge_text +: {
             color: #xffffff
-            text_style: theme.font_regular{ font_size: 10 }
+            text_style: fonts.text_menu
         }
         // Trailing check mark on the selected row — a small inline SDF stroke,
         // NOT a catalog glyph (keeps the Icon order invariant untouched).
@@ -124,7 +125,7 @@ script_mod! {
         }
         draw_label +: {
             color: atlas.text
-            text_style: theme.font_regular{ font_size: 10 line_spacing: 1.2 }
+            text_style: fonts.text_menu
         }
     }
 }
