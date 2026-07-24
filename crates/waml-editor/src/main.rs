@@ -10,6 +10,7 @@ mod card;
 mod class_diagram_view;
 mod classifier_preview_view;
 mod cli;
+mod colors_overlay;
 mod config;
 mod conflict_badge;
 mod diagram_switcher;

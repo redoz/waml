@@ -25,6 +25,7 @@ script_mod! {
     use mod.widgets.ShortcutsOverlay
     use mod.widgets.FontsOverlay
     use mod.widgets.IconsOverlay
+    use mod.widgets.ColorsOverlay
     use mod.widgets.ToolDock
     use mod.widgets.ViewBar
     use mod.widgets.ConflictBadge
@@ -355,6 +356,10 @@ script_mod! {
                         width: Fill
                         height: Fill
                     }
+                    colors_overlay := ColorsOverlay{
+                        width: Fill
+                        height: Fill
+                    }
                     start_screen := StartScreen{
                         width: Fill
                         height: Fill
@@ -611,7 +616,13 @@ impl App {
         {
             o.set_visible(cx, false);
         }
-        // Task 6 extends this with colors_overlay.
+        if let Some(mut o) = self
+            .ui
+            .widget(cx, ids!(colors_overlay))
+            .borrow_mut::<crate::colors_overlay::ColorsOverlay>()
+        {
+            o.set_visible(cx, false);
+        }
     }
 
     /// Close every overlay/page, then show the requested style-guide page.
@@ -633,8 +644,15 @@ impl App {
             {
                 o.set_visible(cx, true);
             }
+        } else if which == LogoCommand::Colors {
+            if let Some(mut o) = self
+                .ui
+                .widget(cx, ids!(colors_overlay))
+                .borrow_mut::<crate::colors_overlay::ColorsOverlay>()
+            {
+                o.set_visible(cx, true);
+            }
         }
-        // Task 6 extends this with LogoCommand::Colors.
     }
 
     /// Push each panel's `DockState`-driven slot width onto its reservation
@@ -1052,6 +1070,13 @@ pub fn logo_menu_items() -> Vec<crate::popup::base::PopupItem> {
             enabled: true,
         },
         PopupItem {
+            id: live_id!(colors),
+            label: "Colors".into(),
+            icon: Icon::Squircle,
+            danger: false,
+            enabled: true,
+        },
+        PopupItem {
             id: live_id!(exit),
             label: "Exit".into(),
             icon: Icon::CircleX,
@@ -1104,6 +1129,7 @@ pub enum LogoCommand {
     About,
     Fonts,
     Icons,
+    Colors,
     Exit,
 }
 
@@ -1118,6 +1144,8 @@ pub fn logo_command_for(id: LiveId) -> Option<LogoCommand> {
         Some(LogoCommand::Fonts)
     } else if id == live_id!(icons) {
         Some(LogoCommand::Icons)
+    } else if id == live_id!(colors) {
+        Some(LogoCommand::Colors)
     } else if id == live_id!(exit) {
         Some(LogoCommand::Exit)
     } else {
@@ -1312,6 +1340,7 @@ impl MatchEvent for App {
                         }
                         LogoCommand::Fonts => self.open_page_overlay(cx, LogoCommand::Fonts),
                         LogoCommand::Icons => self.open_page_overlay(cx, LogoCommand::Icons),
+                        LogoCommand::Colors => self.open_page_overlay(cx, LogoCommand::Colors),
                         LogoCommand::Exit => cx.quit(),
                     }
                 }
@@ -1837,6 +1866,17 @@ impl MatchEvent for App {
             return;
         }
 
+        // Colors style-guide page: scrim-click or Esc dismisses it the same way.
+        let colors_dismissed = self
+            .ui
+            .widget(cx, ids!(colors_overlay))
+            .borrow_mut::<crate::colors_overlay::ColorsOverlay>()
+            .and_then(|overlay| overlay.overlay_action(actions));
+        if let Some(crate::colors_overlay::ColorsOverlayAction::Dismissed) = colors_dismissed {
+            self.close_page_overlays(cx);
+            return;
+        }
+
         // Doc tab strip: click a tab to activate it, or its close button.
         let tab_action = self
             .ui
@@ -2036,6 +2076,7 @@ impl AppMain for App {
         crate::shortcuts_overlay::script_mod(vm);
         crate::fonts_overlay::script_mod(vm);
         crate::icons_overlay::script_mod(vm);
+        crate::colors_overlay::script_mod(vm);
         crate::tool_dock::script_mod(vm);
         crate::view_bar::script_mod(vm);
         crate::conflict_badge::script_mod(vm);
@@ -2257,6 +2298,10 @@ mod tests {
         assert_eq!(logo_command_for(live_id!(about)), Some(LogoCommand::About));
         assert_eq!(logo_command_for(live_id!(fonts)), Some(LogoCommand::Fonts));
         assert_eq!(logo_command_for(live_id!(icons)), Some(LogoCommand::Icons));
+        assert_eq!(
+            logo_command_for(live_id!(colors)),
+            Some(LogoCommand::Colors)
+        );
         assert_eq!(logo_command_for(live_id!(exit)), Some(LogoCommand::Exit));
         // Cancel maps to nothing (the radial just closes on commit).
         assert_eq!(logo_command_for(live_id!(cancel)), None);

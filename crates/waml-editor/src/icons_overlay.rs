@@ -43,6 +43,7 @@ pub const ICON_GROUPS: &[(&str, &[IconEntry])] = &[
             ie!(DoorClosed, "Close model"),
             ie!(Paintbrush, "Fonts reference (this menu family)"),
             ie!(SquareMenu, "Icons reference (this menu family)"),
+            ie!(Squircle, "Colors reference (this menu family)"),
         ],
     ),
     (
