@@ -159,11 +159,42 @@ script_mod! {
         }
     }
 
+    // Hidden-group border pen (the x-ray, spec §3): a dashed hairline on the
+    // group rect with NO fill. The dash rides the (x+y) diagonal so the pattern
+    // stays continuous across all four sides and around the corners, unlike
+    // per-side stamping. `dash_px` is pushed per draw so the dash grows with
+    // zoom. Branch-free: an `if` on a uniform silently no-ops in this fork's
+    // shader VM (see EdgeMarker above), so the on/off duty is a 0..1 mask
+    // multiplied into the stroke alpha.
+    mod.draw.GroupDashed = mod.draw.DrawColor{
+        dash_px: uniform(6.0)
+        stroke_w: uniform(1.0)
+        pixel: fn() {
+            let p = self.pos * self.rect_size
+            let sdf = Sdf2d.viewport(p)
+            let inset = self.stroke_w * 0.5
+            sdf.rect(inset, inset, self.rect_size.x - inset * 2.0, self.rect_size.y - inset * 2.0)
+            // 50% duty cycle with ~1px of antialiasing on the leading edge.
+            let f = fract((p.x + p.y) / self.dash_px)
+            let mask = clamp((0.5 - f) * self.dash_px, 0.0, 1.0)
+            sdf.stroke(
+                vec4(self.color.x, self.color.y, self.color.z, self.color.w * mask),
+                self.stroke_w
+            )
+            return sdf.result
+        }
+    }
+
     mod.widgets.GraphCanvas = set_type_default() do mod.widgets.GraphCanvasBase{
         width: Fill
         height: Fill
         draw_bg +: { color: atlas.canvas_ground }
         draw_group +: { color: atlas.group_fill }
+        // Hidden-group x-ray outline; dim ink so it reads as secondary chrome.
+        draw_group_dashed: mod.draw.GroupDashed{ color: atlas.text_dim }
+        // Colour-only holder (never drawn): the dim ink copied onto `draw_text`
+        // for a hidden group's title, so no RGBA crosses Rust.
+        draw_group_title_dim +: { color: atlas.text_dim }
         // Node card: a near-white glass panel carrying the Atlas
         // "source-bright" frame -- the reusable `AccentFrame` primitive (see
         // `frame.rs`): a thin accent stroke fading along a 150deg diagonal,
@@ -262,6 +293,12 @@ pub struct GraphCanvas {
     #[redraw]
     #[live]
     draw_group: DrawColor,
+    #[redraw]
+    #[live]
+    draw_group_dashed: DrawColor,
+    /// Colour-only holder for a hidden group's dim title ink (never drawn).
+    #[live]
+    draw_group_title_dim: DrawColor,
     #[redraw]
     #[live]
     draw_edge_down: DrawColor,
@@ -403,6 +440,10 @@ pub struct GraphCanvas {
     /// Which constraint veils to draw (spec §1). Default `Selected`.
     #[rust]
     constraint_vis: ConstraintVisibility,
+    /// X-ray for groups that opt out of chrome (spec §3): when on, `box`/
+    /// `shrink` groups draw a dashed hairline instead of nothing. Default off.
+    #[rust]
+    show_hidden_borders: bool,
 }
 
 /// A live hover preview: the canvas tweens out of the committed layout into the
@@ -590,6 +631,41 @@ fn relations_for_visibility<'a>(
                 .collect()
         }
     }
+}
+
+/// What chrome a group gets this frame (spec §3). Three outcomes, not two: a
+/// group either draws its full chrome, draws only the x-ray outline, or draws
+/// nothing at all.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum GroupDraw {
+    /// Tinted fill + title — a `frame` group, exactly as the canvas drew every
+    /// group before this change.
+    Chrome,
+    /// Dashed hairline + dim title, no fill — a layout-only group revealed by
+    /// the hidden-borders x-ray.
+    Dashed,
+    /// Nothing. A layout-only group with the x-ray off.
+    Skip,
+}
+
+/// Per-group render decision. Only `Shape::Frame` opts into chrome
+/// (`docs/uaml-spec.md:674-681`); `box`/`shrink` reserve space without drawing,
+/// which is what the web renderer already does. The hidden-borders toggle is an
+/// x-ray that brings the invisible ones back as dashed outlines. Pure, GPU-free.
+fn group_draw_mode(shape: waml::syntax::Shape, show_hidden: bool) -> GroupDraw {
+    match (shape, show_hidden) {
+        (waml::syntax::Shape::Frame, _) => GroupDraw::Chrome,
+        (_, true) => GroupDraw::Dashed,
+        (_, false) => GroupDraw::Skip,
+    }
+}
+
+/// Display name for an unnamed group under the x-ray. `SolvedGroup.title` is
+/// `None` for inline groups; `n` is a 1-based counter over the untitled groups
+/// in `scene.groups` order, so the labels are stable across redraws of the same
+/// scene. Renderer-side only — no model change.
+fn untitled_label(n: usize) -> String {
+    format!("Untitled {n}")
 }
 
 /// Reframe a stored placement onto the selected node's point of view. A relation
@@ -1505,35 +1581,79 @@ impl Widget for GraphCanvas {
         self.draw_node
             .set_uniform(cx, live_id!(zoom), &[zoom as f32]);
 
-        // Groups: framed rects behind everything else, now with a debug-grade
-        // outline so group extents are legible while organizing. Deeper nesting
-        // keeps the same fill; draw-order (shallow first) leaves inner groups on
-        // top. Collect screen rects first so `fill_rect` (&mut self) can stroke
-        // the outline without holding the `self.scene.groups` borrow.
-        let group_draws: Vec<(Rect, Option<String>)> = self
+        // Groups: only a `frame`-shaped group draws chrome -- `box`/`shrink` are
+        // layout-only per docs/uaml-spec.md:674-681, which is what the web
+        // renderer already does; this brings native into line. The view bar's
+        // hidden-borders x-ray brings the invisible ones back as a dashed
+        // hairline with a dim title (`Untitled N` when the group is unnamed).
+        // Nesting is unchanged: draw-order (shallow first) leaves inner groups on
+        // top. Collect screen rects first so the pens (&mut self) can draw
+        // without holding the `self.scene.groups` borrow.
+        let show_hidden = self.show_hidden_borders;
+        let mut untitled_seen = 0usize;
+        let group_draws: Vec<(Rect, Option<String>, GroupDraw)> = self
             .scene
             .groups
             .iter()
-            .map(|g| {
+            .filter_map(|g| {
+                let mode = group_draw_mode(g.shape, show_hidden);
+                // Count every untitled group, drawn or not, so the labels are
+                // stable regardless of which ones the x-ray is showing.
+                let untitled = if g.title.is_none() {
+                    untitled_seen += 1;
+                    Some(untitled_seen)
+                } else {
+                    None
+                };
+                if mode == GroupDraw::Skip {
+                    return None;
+                }
+                // A `frame` group with no name draws no title (as before); only
+                // the x-ray outline gets the `Untitled N` fallback.
+                let label = match (&g.title, untitled) {
+                    (Some(t), _) => Some(t.clone()),
+                    (None, Some(n)) if mode == GroupDraw::Dashed => Some(untitled_label(n)),
+                    _ => None,
+                };
                 let (lx, ly) = self.camera.world_to_local(g.rect.x, g.rect.y);
                 let screen = Rect {
                     pos: dvec2(rect.pos.x + lx, rect.pos.y + ly),
                     size: dvec2(g.rect.w * self.camera.zoom, g.rect.h * self.camera.zoom),
                 };
-                (screen, g.title.clone())
+                Some((screen, label, mode))
             })
             .collect();
-        for (screen, title) in group_draws {
-            self.draw_group.draw_abs(cx, screen);
-            if let Some(title) = &title {
+        // Group titles borrow the shared body pen; stash its ink so the node
+        // titles drawn later in this pass are unaffected by the dim override.
+        let title_ink = self.draw_text.color;
+        let dim_ink = self.draw_group_title_dim.color;
+        // Dash period grows with zoom but stays legible at either extreme.
+        let dash_px = (6.0 * zoom).clamp(3.0, 18.0) as f32;
+        for (screen, label, mode) in group_draws {
+            match mode {
+                GroupDraw::Chrome => self.draw_group.draw_abs(cx, screen),
+                GroupDraw::Dashed => {
+                    self.draw_group_dashed
+                        .set_uniform(cx, live_id!(dash_px), &[dash_px]);
+                    self.draw_group_dashed.draw_abs(cx, screen);
+                }
+                GroupDraw::Skip => {}
+            }
+            if let Some(label) = &label {
+                self.draw_text.color = if mode == GroupDraw::Dashed {
+                    dim_ink
+                } else {
+                    title_ink
+                };
                 self.draw_text.text_style.font_size = (12.0 * zoom) as f32;
                 self.draw_text.draw_abs(
                     cx,
                     dvec2(screen.pos.x + 6.0 * zoom, screen.pos.y + 4.0 * zoom),
-                    title,
+                    label,
                 );
             }
         }
+        self.draw_text.color = title_ink;
 
         // Edges: draw each consecutive point pair of the routed orthogonal
         // polyline as its own axis-aligned EdgeLine quad, filled by the pen.
@@ -2484,6 +2604,12 @@ impl GraphCanvas {
         self.draw_bg.redraw(cx);
     }
 
+    /// Toggle the hidden-group-border x-ray and repaint.
+    pub fn set_show_hidden_borders(&mut self, cx: &mut Cx, on: bool) {
+        self.show_hidden_borders = on;
+        self.draw_bg.redraw(cx);
+    }
+
     /// Current constraint-veil mode. The canvas owns this state; the view bar's
     /// lit toggle is a mirror of it and re-syncs from here on every view
     /// `sync`.
@@ -2515,6 +2641,27 @@ impl GraphCanvas {
 mod tests {
     use super::*;
     use waml::solve::Rect as WorldRect;
+
+    #[test]
+    fn only_frame_groups_draw_chrome() {
+        use waml::syntax::Shape;
+        // Frame always draws its chrome, x-ray or not.
+        assert_eq!(group_draw_mode(Shape::Frame, false), GroupDraw::Chrome);
+        assert_eq!(group_draw_mode(Shape::Frame, true), GroupDraw::Chrome);
+        // Box/Shrink are layout-only: invisible by default...
+        assert_eq!(group_draw_mode(Shape::Box, false), GroupDraw::Skip);
+        assert_eq!(group_draw_mode(Shape::Shrink, false), GroupDraw::Skip);
+        // ...and dashed under the hidden-borders x-ray.
+        assert_eq!(group_draw_mode(Shape::Box, true), GroupDraw::Dashed);
+        assert_eq!(group_draw_mode(Shape::Shrink, true), GroupDraw::Dashed);
+    }
+
+    #[test]
+    fn untitled_groups_get_a_one_based_label() {
+        assert_eq!(untitled_label(1), "Untitled 1");
+        assert_eq!(untitled_label(2), "Untitled 2");
+        assert_eq!(untitled_label(12), "Untitled 12");
+    }
 
     #[test]
     fn corner_zones_author_a_single_diagonal_direction() {

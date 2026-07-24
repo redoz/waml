@@ -219,23 +219,35 @@ impl DocView for ClassDiagramView {
             return out;
         }
 
-        // View bar: `ShowConstraints` drives the canvas veil mode. The camera
-        // one-shots and `ShowHiddenBorders` are `log!` no-ops here -- Plan D
-        // wires the camera, Plan C wires the hidden borders.
+        // View bar: `ShowConstraints` drives the canvas veil mode and
+        // `ShowHiddenBorders` the group x-ray. The camera one-shots are `log!`
+        // no-ops here -- Plan D wires them.
         if let Some(action) = body
             .view_bar(cx)
             .borrow_mut::<crate::view_bar::ViewBar>()
             .and_then(|bar| bar.view_bar_action(actions))
         {
-            match constraint_vis_for(&action) {
-                Some(vis) => {
+            match &action {
+                crate::view_bar::ViewBarAction::Toggled(
+                    crate::view_bar::ViewOption::ShowHiddenBorders,
+                    on,
+                ) => {
                     if let Some(mut canvas) =
                         body.canvas(cx).borrow_mut::<crate::canvas::GraphCanvas>()
                     {
-                        canvas.set_constraint_vis(cx, vis);
+                        canvas.set_show_hidden_borders(cx, *on);
                     }
                 }
-                None => log!("view bar: {action:?}"),
+                _ => match constraint_vis_for(&action) {
+                    Some(vis) => {
+                        if let Some(mut canvas) =
+                            body.canvas(cx).borrow_mut::<crate::canvas::GraphCanvas>()
+                        {
+                            canvas.set_constraint_vis(cx, vis);
+                        }
+                    }
+                    None => log!("view bar: {action:?}"),
+                },
             }
             return out;
         }
