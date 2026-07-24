@@ -12,7 +12,7 @@ waml = { path = "../waml", features = ["serde"] }
 # stacked on waml-fxc-opt, adds handled_x/handled_y scroll occlusion to hits() so overlays
 # and popups stop bleeding scroll into the canvas). rev is the reproducible pin; survives
 # upstream force-push / branch renames.
-makepad-widgets = { git = "https://github.com/redoz/makepad.git", rev = "0062dc5e" }
+makepad-widgets = { git = "https://github.com/redoz/makepad.git", rev = "d4952075" }
 taffy = "0.12.2"
 serde = { workspace = true }
 serde_json = { workspace = true }
