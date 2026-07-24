@@ -86,6 +86,35 @@ script_mod! {
         }
     }
 
+    // Message square warning: speech bubble with a vertical bar + dot (alert).
+    // Faithful port of resources/icons/message-square-warning.svg via scripts/gen-icon.py.
+    mod.draw.IconMessageSquareWarning = mod.draw.DrawColor{
+        pixel: fn() {
+            let s = self.rect_size.x
+            let w = s * 0.068
+            let sdf = Sdf2d.viewport(self.pos * self.rect_size)
+            sdf.move_to(s * 0.9167, s * 0.7083)
+            sdf.arc_to(s * 0.8333, s * 0.7083, s * 0.0833, 0.0000, 1.5708)
+            sdf.line_to(s * 0.2845, s * 0.7917)
+            sdf.arc_to(s * 0.2845, s * 0.8750, s * 0.0833, -1.5710, -2.3563)
+            sdf.line_to(s * 0.1338, s * 0.9078)
+            sdf.arc_to(s * 0.1129, s * 0.8869, s * 0.0296, 0.7855, 3.1415)
+            sdf.line_to(s * 0.0833, s * 0.2083)
+            sdf.arc_to(s * 0.1667, s * 0.2083, s * 0.0833, 3.1416, 4.7124)
+            sdf.line_to(s * 0.8333, s * 0.1250)
+            sdf.arc_to(s * 0.8333, s * 0.2083, s * 0.0833, -1.5708, 0.0000)
+            sdf.close_path()
+            sdf.stroke(self.color, w)
+            sdf.move_to(s * 0.5000, s * 0.3333)
+            sdf.line_to(s * 0.5000, s * 0.4583)
+            sdf.stroke(self.color, w)
+            sdf.move_to(s * 0.5000, s * 0.6250)
+            sdf.line_to(s * 0.5004, s * 0.6250)
+            sdf.stroke(self.color, w)
+            return sdf.result
+        }
+    }
+
     // Package plus: box with a + badge.
     // Faithful port of resources/icons/package-plus.svg via scripts/gen-icon.py.
     mod.draw.IconPackagePlus = mod.draw.DrawColor{
@@ -3169,6 +3198,7 @@ script_mod! {
         folder_closed: mod.draw.IconFolderClosed{ color: atlas.accent }
         door_open: mod.draw.IconDoorOpen{ color: atlas.accent }
         search: mod.draw.IconSearch{ color: atlas.accent }
+        message_square_warning: mod.draw.IconMessageSquareWarning{ color: atlas.accent }
     }
 }
 
@@ -3356,6 +3386,8 @@ pub struct IconSet {
     pub door_open: DrawColor,
     #[live]
     pub search: DrawColor,
+    #[live]
+    pub message_square_warning: DrawColor,
 }
 
 // Not every bin that `#[path]`-includes this file exercises the whole catalog
@@ -3457,6 +3489,7 @@ impl IconSet {
             Icon::FolderClosed => &mut self.folder_closed,
             Icon::DoorOpen => &mut self.door_open,
             Icon::Search => &mut self.search,
+            Icon::MessageSquareWarning => &mut self.message_square_warning,
         }
     }
 
@@ -3565,13 +3598,14 @@ pub enum Icon {
     FolderClosed,
     DoorOpen,
     Search,
+    MessageSquareWarning,
 }
 
 #[allow(dead_code)] // ALL/label are unused in bins that don't iterate the catalog
 impl Icon {
     /// Every glyph, in field order. The single source of glyph identity; the
     /// `icon_harness` proof grid iterates this.
-    pub const ALL: [Icon; 90] = [
+    pub const ALL: [Icon; 91] = [
         Icon::Package,
         Icon::Message,
         Icon::PackagePlus,
@@ -3662,6 +3696,7 @@ impl Icon {
         Icon::FolderClosed,
         Icon::DoorOpen,
         Icon::Search,
+        Icon::MessageSquareWarning,
     ];
 
     /// The `icon_harness` display slug (the Lucide source name), preserved
@@ -3758,6 +3793,7 @@ impl Icon {
             Icon::FolderClosed => "folder-closed",
             Icon::DoorOpen => "door-open",
             Icon::Search => "search",
+            Icon::MessageSquareWarning => "message-square-warning",
         }
     }
 }
@@ -3767,8 +3803,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn icon_all_has_90_entries() {
-        assert_eq!(Icon::ALL.len(), 90);
+    fn icon_all_has_91_entries() {
+        assert_eq!(Icon::ALL.len(), 91);
     }
 
     #[test]
@@ -3790,7 +3826,7 @@ mod tests {
             assert!(!l.is_empty(), "empty label for {icon:?}");
             assert!(seen.insert(l), "duplicate label {l:?}");
         }
-        assert_eq!(seen.len(), 90);
+        assert_eq!(seen.len(), 91);
     }
 
     #[test]
@@ -3800,5 +3836,6 @@ mod tests {
         assert_eq!(Icon::Paintbrush.label(), "paintbrush-vertical");
         assert_eq!(Icon::ListCollapse.label(), "list-chevrons-down-up");
         assert_eq!(Icon::ListExpand.label(), "list-chevrons-up-down");
+        assert_eq!(Icon::MessageSquareWarning.label(), "message-square-warning");
     }
 }
