@@ -221,10 +221,21 @@ impl Widget for RecentRowView {
 
         // Pin claims its FingerUp first (toggles without opening). The pin area
         // is topmost over its rect, so the row body's hit below bails there.
-        if let Hit::FingerUp(fe) = event.hits(cx, self.pin_area) {
-            if fe.is_primary_hit() && fe.is_over {
-                cx.widget_action(uid, RecentRowViewAction::TogglePin);
-                return;
+        //
+        // Gated on the same verdict as the draw: the 20x20 anchor is laid out on
+        // every row whether or not the pin is revealed, so an ungated hit lets an
+        // *invisible* pin swallow the press. Two ways that bites: a `TogglePin`
+        // re-sorts the list and clears hover, and no MouseMove follows a
+        // stationary pointer -- so a second click in the same spot would pin
+        // whichever recent slid underneath; and a wheel-scroll leaves hover
+        // stale-false, so a click at a row's right edge would pin instead of
+        // opening the model.
+        if pin_visible(self.clickable, self.hovered, self.pinned) {
+            if let Hit::FingerUp(fe) = event.hits(cx, self.pin_area) {
+                if fe.is_primary_hit() && fe.is_over {
+                    cx.widget_action(uid, RecentRowViewAction::TogglePin);
+                    return;
+                }
             }
         }
 
@@ -267,8 +278,10 @@ impl Widget for RecentRowView {
         }
 
         // Pin: VS on-hover reveal — draw only when the row is hovered or pinned.
-        // Accent when pinned or pin-hovered, else dim.
-        if self.clickable && (self.hovered || self.pinned) {
+        // Accent when pinned or pin-hovered, else dim. Same verdict gates the
+        // pin's hit test in `handle_event`, so the pin is never clickable while
+        // it is invisible.
+        if pin_visible(self.clickable, self.hovered, self.pinned) {
             let lit = self.pinned || self.pin_hovered;
             let tint = if lit {
                 self.draw_pin_lit.color
@@ -298,6 +311,17 @@ impl Widget for RecentRowView {
 /// `row`/`pin` are the *clipped* rects, so a row only partly inside the list
 /// box is only hovered over its visible part. The pin only counts while the row
 /// does, since the pin sits inside the row.
+/// Whether the pin is revealed on this row — VS shows it on row hover, and
+/// keeps it up permanently once pinned. The empty-state row (`clickable`
+/// false) never shows one.
+///
+/// Single source of truth for both the draw and the pin's hit test: the pin
+/// anchor is laid out on every row regardless, so a hit test that did not agree
+/// with the draw would let an invisible pin eat clicks meant for the row body.
+fn pin_visible(clickable: bool, hovered: bool, pinned: bool) -> bool {
+    clickable && (hovered || pinned)
+}
+
 fn hover_verdict(drawn: bool, row: Rect, pin: Rect, p: DVec2) -> (bool, bool) {
     // `Rect::contains` is inclusive on both edges, so a collapsed rect (an area
     // clipped fully away, or one that was never drawn) still "contains" its own
@@ -449,6 +473,19 @@ mod tests {
             RecentRowViewAction::default(),
             RecentRowViewAction::None
         ));
+    }
+
+    #[test]
+    fn pin_is_hittable_exactly_when_it_is_drawn() {
+        // Hovered or pinned reveals it; the empty-state row never shows one.
+        assert!(pin_visible(true, true, false));
+        assert!(pin_visible(true, false, true));
+        assert!(pin_visible(true, true, true));
+        assert!(!pin_visible(false, true, true));
+        // The unhovered, unpinned row: the 20x20 anchor is still laid out, so
+        // this false is what keeps the invisible pin from swallowing a click
+        // after a re-sort or a wheel-scroll left `hovered` stale-false.
+        assert!(!pin_visible(true, false, false));
     }
 
     fn rects() -> (Rect, Rect) {
