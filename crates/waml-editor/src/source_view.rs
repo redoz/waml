@@ -1,8 +1,9 @@
-//! `SourceView` -- the View Source tab body. Renders the shared empty
-//! `source_view` slot (an opaque placeholder document surface; real Markdown
-//! rendering of the element's markdown file is a deferred follow-up) and hides
-//! the diagram chrome: the canvas is occluded by the opaque slot, the tool dock
-//! by `wants_tooldock() == false`, the inspector's element picker explicitly.
+//! `SourceView` -- the View Source tab body. Renders the subject classifier's
+//! raw markdown into the shared `source_view` slot (a scrolling `Markdown`
+//! surface fed the verbatim bundle file text; the feed itself is pushed from
+//! the shell in `App::sync_active_tab`) and hides the diagram chrome: the
+//! canvas is occluded by the opaque slot, the tool dock by
+//! `wants_tooldock() == false`, the inspector's element picker explicitly.
 
 use makepad_widgets::*;
 use waml::model::Model;

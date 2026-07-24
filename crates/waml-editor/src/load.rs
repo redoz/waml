@@ -48,16 +48,17 @@ pub fn load_bundle_and_model(
     Ok((bundle, model))
 }
 
-/// Return the raw markdown of the bundle file whose basename (minus `.md`)
-/// equals `key`. `key` is a bare classifier slug (`order`); bundle paths may be
-/// nested (`shop/order.md`), so match on the final path segment. `None` when no
-/// file matches.
+/// Return the raw markdown of the bundle file whose OKF id equals `key`. A
+/// classifier's node key is exactly [`waml::okf::id_of`] of its source path
+/// (the forward-slash-normalized bundle-relative path minus the trailing
+/// `.md`), so the match is on the whole path -- a nested `shop/order.md` is
+/// keyed `shop/order`, not the bare `order`, and duplicate basenames in
+/// different directories stay distinct. `None` when no file matches. Bundle
+/// paths are unique, so at most one file can match.
 pub fn source_for<'a>(bundle: &'a [(String, String)], key: &str) -> Option<&'a str> {
-    bundle.iter().find_map(|(path, contents)| {
-        let base = path.rsplit('/').next().unwrap_or(path);
-        let stem = base.strip_suffix(".md").unwrap_or(base);
-        (stem == key).then_some(contents.as_str())
-    })
+    bundle
+        .iter()
+        .find_map(|(path, contents)| (waml::okf::id_of(path) == key).then_some(contents.as_str()))
 }
 
 #[cfg(test)]
@@ -129,9 +130,30 @@ mod tests {
     }
 
     #[test]
-    fn source_for_matches_nested_slug_by_basename() {
+    fn source_for_matches_nested_key_by_full_id() {
+        // The key is the full OKF id (`shop/order`), not the bare basename --
+        // a bare `order` must NOT match a nested `shop/order.md`.
         let bundle = vec![("shop/order.md".to_string(), "# Order".to_string())];
-        assert_eq!(source_for(&bundle, "order"), Some("# Order"));
+        assert_eq!(source_for(&bundle, "shop/order"), Some("# Order"));
+        assert_eq!(source_for(&bundle, "order"), None);
+    }
+
+    #[test]
+    fn source_for_disambiguates_duplicate_basenames_by_dir() {
+        // Same basename in two packages: the full-id match returns the file in
+        // the requested directory, never the first basename hit.
+        let bundle = vec![
+            ("shop/order.md".to_string(), "# Shop order".to_string()),
+            (
+                "warehouse/order.md".to_string(),
+                "# Warehouse order".to_string(),
+            ),
+        ];
+        assert_eq!(source_for(&bundle, "shop/order"), Some("# Shop order"));
+        assert_eq!(
+            source_for(&bundle, "warehouse/order"),
+            Some("# Warehouse order")
+        );
     }
 
     #[test]
