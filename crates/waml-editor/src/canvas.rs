@@ -878,7 +878,10 @@ fn corner_fillet(
     // Tangent points + arc center off the SNAPPED vertex.
     let p1 = dvec2(v_prime.x - din.x * r, v_prime.y - din.y * r);
     let p2 = dvec2(v_prime.x + dout.x * r, v_prime.y + dout.y * r);
-    let c = dvec2(v_prime.x - din.x * r + dout.x * r, v_prime.y - din.y * r + dout.y * r);
+    let c = dvec2(
+        v_prime.x - din.x * r + dout.x * r,
+        v_prime.y - din.y * r + dout.y * r,
+    );
     // Stub far ends, overlapping each straight bar off the curve.
     let m = t_snap * CORNER_STUB_OVERLAP;
     let q1 = dvec2(p1.x - din.x * m, p1.y - din.y * m);
@@ -1591,8 +1594,7 @@ impl Widget for GraphCanvas {
                     bars[i],
                     radius[i],
                 ) {
-                    self.draw_elbow
-                        .set_uniform(cx, live_id!(bar_in), &f.bar_in);
+                    self.draw_elbow.set_uniform(cx, live_id!(bar_in), &f.bar_in);
                     self.draw_elbow
                         .set_uniform(cx, live_id!(bar_out), &f.bar_out);
                     self.draw_elbow.set_uniform(cx, live_id!(gate), &f.gate);
