@@ -18,6 +18,7 @@ mod doc_tabs;
 mod doc_view;
 mod dock;
 mod fonts;
+mod fonts_overlay;
 mod fps_meter;
 mod frame;
 mod icon_button;
