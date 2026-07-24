@@ -643,8 +643,11 @@ impl RadialPopup {
                     // state tint the glyph would have.
                     let saved = self.draw_label.color;
                     self.draw_label.color = tint;
-                    self.draw_label
-                        .draw_abs(cx, dvec2((ix - w * 0.5).round(), iy - 6.0), &it.label);
+                    self.draw_label.draw_abs(
+                        cx,
+                        dvec2((ix - w * 0.5).round(), iy - 6.0),
+                        &it.label,
+                    );
                     self.draw_label.color = saved;
                 }
             }

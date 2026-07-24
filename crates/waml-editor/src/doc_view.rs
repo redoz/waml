@@ -111,7 +111,10 @@ pub enum PopupRequest {
     /// The drag-to-place dial: the shared radial, popped centred on `center`
     /// mid-drag and released with the primary button (the drag that opened it
     /// is still in flight).
-    PlaceDial { center: DVec2, items: Vec<PopupItem> },
+    PlaceDial {
+        center: DVec2,
+        items: Vec<PopupItem>,
+    },
     /// Dismiss whatever popup is open, without opening a replacement.
     Dismiss,
 }

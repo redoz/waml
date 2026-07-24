@@ -344,6 +344,9 @@ pub struct GraphCanvas {
     /// know a dial is up and to notice the cursor leaving its reach.
     #[rust]
     dial_center: Option<DVec2>,
+    /// Who the open dial is about, by name -- see `DialPair`.
+    #[rust]
+    dial_pair: Option<DialPair>,
     /// Candidate layout per zone (node key -> world rect), pushed by the view
     /// after the arm-time speculative solve. Hovering a wedge then costs no
     /// solve at all -- it just picks a target to tween toward.
@@ -453,7 +456,13 @@ fn lerp_rect(a: waml::solve::Rect, b: waml::solve::Rect, t: f64) -> waml::solve:
 /// Zoom that fits `a` and `b` (world rects) into a `view` with `pad` px inset,
 /// clamped so a preview never magnifies past 1:1 and never zooms further in than
 /// a quarter-step past where the drag started. Pure.
-fn preview_zoom(a: waml::solve::Rect, b: waml::solve::Rect, view: DVec2, pad: f64, start: f64) -> f64 {
+fn preview_zoom(
+    a: waml::solve::Rect,
+    b: waml::solve::Rect,
+    view: DVec2,
+    pad: f64,
+    start: f64,
+) -> f64 {
     let min_x = a.x.min(b.x);
     let min_y = a.y.min(b.y);
     let max_x = (a.x + a.w).max(b.x + b.w);
@@ -461,7 +470,10 @@ fn preview_zoom(a: waml::solve::Rect, b: waml::solve::Rect, view: DVec2, pad: f6
     let (w, h) = ((max_x - min_x).max(1.0), (max_y - min_y).max(1.0));
     let fit = ((view.x - 2.0 * pad).max(1.0) / w).min((view.y - 2.0 * pad).max(1.0) / h);
     let ceiling = (start * 1.25).min(1.0);
-    fit.clamp(crate::camera::MIN_ZOOM, ceiling.max(crate::camera::MIN_ZOOM))
+    fit.clamp(
+        crate::camera::MIN_ZOOM,
+        ceiling.max(crate::camera::MIN_ZOOM),
+    )
 }
 
 impl Default for Camera {
@@ -1101,6 +1113,20 @@ fn edge_point_to_screen(camera: &Camera, rect_pos: DVec2, p: (f64, f64)) -> DVec
     dvec2(rect_pos.x + lx, rect_pos.y + ly)
 }
 
+/// The subject/reference pair the open dial was armed on, kept by name so a
+/// wedge commit can still identify them. It has to outlive the drag: the commit
+/// arrives as a popup result, which the shell drains from the action queue
+/// *after* the same event pass already tore the drag down in `FingerUp` -- so
+/// reading the live `drag_node`/`drag_target` indices at that point would always
+/// come back empty. Overwritten by the next arm.
+#[derive(Clone, Debug)]
+struct DialPair {
+    subject_key: String,
+    subject_title: String,
+    reference_key: String,
+    reference_title: String,
+}
+
 /// The `## Layout` placement a committed dial wedge authors: the dragged
 /// (subject) node relative to the drop target (reference), both by `SceneNode`
 /// key + title. `directions` is 1 (edge) or 2 (corner). The shell supplies the
@@ -1167,6 +1193,12 @@ impl Widget for GraphCanvas {
                         let uid = self.widget_uid();
                         let subject_key = self.scene.nodes[ni].key.clone();
                         let reference_key = self.scene.nodes[ri].key.clone();
+                        self.dial_pair = Some(DialPair {
+                            subject_key: subject_key.clone(),
+                            subject_title: self.scene.nodes[ni].title.clone(),
+                            reference_key: reference_key.clone(),
+                            reference_title: self.scene.nodes[ri].title.clone(),
+                        });
                         self.conflict_zones.clear();
                         self.zone_layouts.clear();
                         // The dial pops where the cursor is resting -- press-hold
@@ -2066,9 +2098,9 @@ impl GraphCanvas {
                         .iter()
                         .map(|e| {
                             let find = |r: waml::solve::Rect| {
-                                current
-                                    .iter()
-                                    .position(|c| (c.x - r.x).abs() < 0.5 && (c.y - r.y).abs() < 0.5)
+                                current.iter().position(|c| {
+                                    (c.x - r.x).abs() < 0.5 && (c.y - r.y).abs() < 0.5
+                                })
                             };
                             Some((find(e.source)?, find(e.target)?))
                         })
@@ -2413,15 +2445,13 @@ impl GraphCanvas {
     /// `None` when no drag/target is live. Read by the shell when the dial
     /// commits, so the committed wedge -- not the last-armed one -- decides.
     pub fn placement_for(&self, zone: Zone) -> Option<DialPlacement> {
-        let (ni, ri) = (self.drag_node?, self.drag_target?);
+        let pair = self.dial_pair.as_ref()?;
         let dir = zone_placed(zone).dir?;
-        let subject = &self.scene.nodes[ni];
-        let reference = &self.scene.nodes[ri];
         Some(DialPlacement {
-            subject_key: subject.key.clone(),
-            subject_title: subject.title.clone(),
-            reference_key: reference.key.clone(),
-            reference_title: reference.title.clone(),
+            subject_key: pair.subject_key.clone(),
+            subject_title: pair.subject_title.clone(),
+            reference_key: pair.reference_key.clone(),
+            reference_title: pair.reference_title.clone(),
             directions: vec![dir],
         })
     }
@@ -2538,7 +2568,10 @@ mod tests {
         assert_eq!(dial_pick(c, dvec2(500.0, 400.0 - hub * 0.5)), None);
         // Past the rim the pick is angle-only: an overshot flick still counts,
         // and the drag only gives up on the dial past DIAL_REACH.
-        assert_eq!(dial_pick(c, dvec2(500.0, 400.0 - rim * 3.0)), Some(Zone::Top));
+        assert_eq!(
+            dial_pick(c, dvec2(500.0, 400.0 - rim * 3.0)),
+            Some(Zone::Top)
+        );
     }
 
     #[test]
