@@ -382,8 +382,12 @@ impl App {
 
     /// Registry-driven: look up (or create) the active tab's view, delegate
     /// `sync`, and let it drive the shared body surface + tool dock
-    /// visibility. Both `TabKind`s go through the identical path now --
-    /// their differing behavior lives entirely in the view objects.
+    /// visibility. Both `TabKind`s otherwise go through the identical path --
+    /// their differing behavior lives in the view objects -- with one seam:
+    /// the View Source tab's markdown feed is pushed here in the shell rather
+    /// than from `SourceView::sync`, because `DocView::sync` receives `&Model`
+    /// but not the raw `self.bundle` the source text is read from verbatim
+    /// (feeding it without a `DocView` trait change was out of scope).
     fn sync_active_tab(&mut self, cx: &mut Cx) {
         self.reconcile_views();
         let Some(active) = self.tabs.active_tab().cloned() else {
