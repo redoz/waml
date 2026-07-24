@@ -13,7 +13,12 @@
 //! rect-containment (not `FingerHoverIn`/`Out`, which the pin's child area
 //! would steal the moment the pointer crossed onto it) -- the `#[deref] View`
 //! hybrid pattern (same as `inspector_panel.rs`), with granular per-line
-//! setters the parent calls per row.
+//! setters the parent calls per row. Containment is tested against the row's
+//! *live, clipped* area, and only for a row the current pass actually drew, so
+//! a row `FlatList` scrolled out of the five-row box cannot latch hover off a
+//! stale rect; hover is likewise dropped on window leave and whenever the row
+//! is re-seated (`set_pinned`/`set_clickable`), since a `TogglePin` re-sort
+//! moves the row out from under a pointer that never moves again.
 //!
 //! The empty-state row (`set_clickable(false)`) neither washes nor fires, and
 //! hides the glyph anchor outright so its placeholder text starts flush at the
@@ -153,7 +158,9 @@ pub struct RecentRowView {
 
     /// Row pointer-over state, tracked by rect containment (a child area would
     /// steal `Hit::FingerHover`; the containment test keeps the pin inside the
-    /// row's hover). Fed to the `hover` uniform each `draw_walk`.
+    /// row's hover). Fed to the `hover` uniform each `draw_walk`. Only ever true
+    /// while this row's area is live for the current draw pass — see
+    /// [`hover_verdict`].
     #[rust]
     hovered: bool,
     /// Pointer-over the pin anchor specifically (lights the pin tint).
@@ -167,9 +174,9 @@ pub struct RecentRowView {
     /// tint). Pushed per row from `StartScreen`.
     #[rust]
     pinned: bool,
-    /// Cached absolute rects from the last `draw_walk`, for containment hover.
-    #[rust]
-    row_rect: Rect,
+    /// Cached absolute rects from the last `draw_walk`, for the immediate-mode
+    /// glyphs drawn over their anchors. Hover does NOT read these — it re-reads
+    /// the live areas each event, so a stale cache cannot latch hover.
     #[rust]
     glyph_rect: Rect,
     #[rust]
@@ -192,11 +199,22 @@ impl Widget for RecentRowView {
         // (the scrim-hover fix). The row rect encloses the pin, so hovering the
         // pin keeps the row hovered -> the revealed pin never flickers away.
         if let Event::MouseMove(e) = event {
-            let over_row = self.row_rect.contains(e.abs);
-            let over_pin = self.pin_rect.contains(e.abs);
+            let (over_row, over_pin) = self.hover_at(cx, e.abs);
             if over_row != self.hovered || over_pin != self.pin_hovered {
                 self.hovered = over_row;
                 self.pin_hovered = over_pin;
+                self.view.redraw(cx);
+            }
+        }
+
+        // MouseMove is the only thing that can *clear* containment hover, and
+        // it never arrives when the pointer leaves the window outright -- which
+        // would otherwise strand a washed, pin-revealed row behind the user's
+        // back. Drop hover on the way out.
+        if let Event::MouseLeave(_) = event {
+            if self.hovered || self.pin_hovered {
+                self.hovered = false;
+                self.pin_hovered = false;
                 self.view.redraw(cx);
             }
         }
@@ -234,8 +252,7 @@ impl Widget for RecentRowView {
             .set_visible(cx, self.clickable);
         let step = self.view.draw_walk(cx, scope, walk);
 
-        // Cache post-layout rects for containment hover + immediate glyphs.
-        self.row_rect = self.view.area().rect(cx);
+        // Cache post-layout rects for the immediate-mode glyphs below.
         self.glyph_rect = self.view.widget(cx, ids!(glyph)).area().rect(cx);
         self.pin_area = self.view.widget(cx, ids!(pin)).area();
         self.pin_rect = self.pin_area.rect(cx);
@@ -272,7 +289,43 @@ impl Widget for RecentRowView {
     }
 }
 
+/// Containment-hover verdict for one row: `(over_row, over_pin)`.
+///
+/// `drawn` is false for a row this pass did not lay out (a `FlatList` only
+/// draws its visible window, so a row scrolled out of the five-row box keeps
+/// whatever rect it last had): such a row must never claim the pointer, or its
+/// stale rect latches a hover wash + revealed pin on a row nobody is over.
+/// `row`/`pin` are the *clipped* rects, so a row only partly inside the list
+/// box is only hovered over its visible part. The pin only counts while the row
+/// does, since the pin sits inside the row.
+fn hover_verdict(drawn: bool, row: Rect, pin: Rect, p: DVec2) -> (bool, bool) {
+    // `Rect::contains` is inclusive on both edges, so a collapsed rect (an area
+    // clipped fully away, or one that was never drawn) still "contains" its own
+    // corner -- require real extent before a rect may claim the pointer.
+    fn covers(r: Rect, p: DVec2) -> bool {
+        r.size.x > 0.0 && r.size.y > 0.0 && r.contains(p)
+    }
+    let over_row = drawn && covers(row, p);
+    (over_row, over_row && covers(pin, p))
+}
+
 impl RecentRowView {
+    /// Live containment hover for pointer `p`: re-reads this row's areas (never
+    /// a cached rect), so a row the current pass did not draw reports no hover.
+    fn hover_at(&self, cx: &Cx, p: DVec2) -> (bool, bool) {
+        let row_area = self.view.area();
+        let drawn = row_area.is_valid(cx);
+        if !drawn {
+            return hover_verdict(false, Rect::default(), Rect::default(), p);
+        }
+        let pin = if self.pin_area.is_valid(cx) {
+            self.pin_area.clipped_rect(cx)
+        } else {
+            Rect::default()
+        };
+        hover_verdict(true, row_area.clipped_rect(cx), pin, p)
+    }
+
     /// Set the bold project title (top line).
     pub fn set_title(&mut self, cx: &mut Cx, s: &str) {
         self.view
@@ -290,8 +343,22 @@ impl RecentRowView {
             .set_text(cx, s);
     }
     /// Toggle whether the row hovers/clicks (false for the empty-state row).
+    /// A change re-seats the row (`FlatList` recycles row widgets), so drop any
+    /// hover it carried: the pointer never entered *this* content.
     pub fn set_clickable(&mut self, clickable: bool) {
-        self.clickable = clickable;
+        if self.clickable != clickable {
+            self.clickable = clickable;
+            self.clear_hover();
+        }
+    }
+
+    /// Forget containment hover. Called whenever the row is re-seated onto
+    /// different content, since hover is only ever *cleared* by a MouseMove and
+    /// a re-sort (e.g. the pinned block jumping to the top after `TogglePin`)
+    /// can move this row out from under a stationary pointer.
+    fn clear_hover(&mut self) {
+        self.hovered = false;
+        self.pin_hovered = false;
     }
     /// True when this row emitted a click in `actions`.
     pub fn clicked(&self, actions: &Actions) -> bool {
@@ -315,6 +382,11 @@ impl RecentRowView {
     pub fn set_pinned(&mut self, cx: &mut Cx, pinned: bool) {
         if self.pinned != pinned {
             self.pinned = pinned;
+            // The toggle re-sorts the list (pinned block first), so the row very
+            // likely moved out from under the pointer -- and no MouseMove
+            // follows a stationary click. Drop hover; the next move re-acquires
+            // it on whichever row is genuinely underneath.
+            self.clear_hover();
             self.view.redraw(cx);
         }
     }
@@ -377,6 +449,64 @@ mod tests {
             RecentRowViewAction::default(),
             RecentRowViewAction::None
         ));
+    }
+
+    fn rects() -> (Rect, Rect) {
+        // A row at y=100..161 with its 20x20 pin anchor at the right edge.
+        let row = Rect {
+            pos: dvec2(0.0, 100.0),
+            size: dvec2(400.0, 61.0),
+        };
+        let pin = Rect {
+            pos: dvec2(370.0, 120.0),
+            size: dvec2(20.0, 20.0),
+        };
+        (row, pin)
+    }
+
+    #[test]
+    fn hover_tracks_row_and_pin_when_drawn() {
+        let (row, pin) = rects();
+        assert_eq!(
+            hover_verdict(true, row, pin, dvec2(50.0, 130.0)),
+            (true, false)
+        );
+        // The pin sits inside the row, so hovering it keeps the row hovered.
+        assert_eq!(
+            hover_verdict(true, row, pin, dvec2(378.0, 130.0)),
+            (true, true)
+        );
+        assert_eq!(
+            hover_verdict(true, row, pin, dvec2(50.0, 300.0)),
+            (false, false)
+        );
+    }
+
+    #[test]
+    fn undrawn_row_never_hovers_off_a_stale_rect() {
+        // A row the pass did not lay out (scrolled out of the five-row box)
+        // keeps its last rects; containment against them would latch a hover
+        // wash + revealed pin on a row the pointer is nowhere near.
+        let (row, pin) = rects();
+        assert_eq!(
+            hover_verdict(false, row, pin, dvec2(50.0, 130.0)),
+            (false, false)
+        );
+        assert_eq!(
+            hover_verdict(false, row, pin, dvec2(378.0, 130.0)),
+            (false, false)
+        );
+    }
+
+    #[test]
+    fn clipped_away_row_never_hovers() {
+        // Scrolled fully under the list box's clip: `clipped_rect` collapses to
+        // an empty rect, which must claim nothing (not even at the origin).
+        let empty = Rect::default();
+        assert_eq!(
+            hover_verdict(true, empty, empty, dvec2(0.0, 0.0)),
+            (false, false)
+        );
     }
 
     #[test]
