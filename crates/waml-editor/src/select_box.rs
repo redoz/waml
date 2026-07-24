@@ -172,7 +172,7 @@ impl Widget for SelectBox {
                 }
             }
             self.draw_label
-                .draw_abs(cx, dvec2(label_x, cy - 8.0), &sel.label);
+                .draw_abs(cx, dvec2(label_x, cy - 9.5), &sel.label);
         }
 
         // Trailing caret (chevrons-up-down = the standard combo affordance).

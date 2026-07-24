@@ -112,7 +112,7 @@ script_mod! {
             flow: Down
             visible: false
             padding: Inset{left: 16.0, right: 16.0, top: 0.0, bottom: 16.0}
-            spacing: 16.0
+            spacing: 12.0
 
             // Full-width hairline under the picker bar (web-header rule).
             divider := View {
@@ -183,7 +183,7 @@ script_mod! {
                     width: Fill
                     height: Fit
                     flow: Down
-                    spacing: 8.0
+                    spacing: 6.0
 
                     Row := mod.widgets.RefCardView { }
                 }
@@ -198,7 +198,7 @@ script_mod! {
                     width: Fill
                     height: Fit
                     flow: Down
-                    spacing: 8.0
+                    spacing: 6.0
 
                     Row := mod.widgets.RefCardView { }
                 }
