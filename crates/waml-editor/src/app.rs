@@ -1732,11 +1732,16 @@ impl AppMain for App {
         crate::select_box::script_mod(vm);
         // The inspector body's declared child widgets must register before
         // `inspector_panel`: it mounts `SectionHeading` (and, in later tasks,
-        // `AttrRowView` / `RelationshipCardView`) as DSL children, and the DSL
+        // `AttrRowView` / `RefCardView`) as DSL children, and the DSL
         // resolves `mod.widgets.*` eagerly at `use`-time, not lazily.
         crate::section_heading::script_mod(vm);
         crate::attr_row::script_mod(vm);
-        crate::relationship_card::script_mod(vm);
+        // `RefCardView` must register before `inspector_panel`: the inspector's
+        // MEMBERS and ASSOCIATIONS FlatLists mount it as a DSL child, and the DSL
+        // resolves `mod.widgets.*` eagerly at `use`-time, not lazily. An
+        // unregistered child is a dead, invisible node (finding survives both
+        // green tests and review).
+        crate::ref_card::script_mod(vm);
         crate::inspector_panel::script_mod(vm);
         crate::doc_tabs::script_mod(vm);
         crate::diagram_switcher::script_mod(vm);

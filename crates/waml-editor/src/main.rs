@@ -30,7 +30,7 @@ mod node_style;
 mod panel_glass;
 mod popup;
 mod recent_row;
-mod relationship_card;
+mod ref_card;
 mod scene;
 mod section_heading;
 mod select_box;

@@ -35,7 +35,7 @@ use crate::node_style::{accent_bucket, AccentBucket};
 use crate::panel_glass::PanelGlass;
 use crate::popup::base::PopupResult;
 use crate::popup::select::{SelectItem, SelectLead};
-use crate::relationship_card::RelationshipCardViewWidgetRefExt;
+use crate::ref_card::RefCardViewWidgetRefExt;
 use crate::section_heading::SectionHeadingWidgetRefExt;
 use crate::select_box::SelectBox;
 use crate::tree::kind_of;
@@ -174,19 +174,18 @@ script_mod! {
             }
 
             members_heading := SectionHeading { }
-            // A group's member labels, one per line, as a single dim Label.
-            // Members are plain strings, so no FlatList/Row widget is needed.
-            members_lines := Label {
-                text: ""
-                draw_text +: {
-                    color: atlas.text_dim
-                    text_style: TextStyle{
-                        font_size: 11
-                        font_family: FontFamily{
-                            latin := FontMember{res: crate_resource("self:resources/fonts/IBM_Plex_Sans/IBMPlexSans-Regular.ttf") asc: -0.1 desc: 0.0}
-                        }
-                        line_spacing: 1.5
-                    }
+            // Group members as compact reference cards (icon + name), one per row.
+            members_list_wrap := View {
+                width: Fill
+                height: Fit
+                flow: Down
+                members_list := FlatList {
+                    width: Fill
+                    height: Fit
+                    flow: Down
+                    spacing: 8.0
+
+                    Row := mod.widgets.RefCardView { }
                 }
             }
 
@@ -201,7 +200,7 @@ script_mod! {
                     flow: Down
                     spacing: 8.0
 
-                    Row := mod.widgets.RelationshipCardView { }
+                    Row := mod.widgets.RefCardView { }
                 }
             }
 
@@ -449,6 +448,16 @@ fn meta_line(assoc: &AssocRow) -> String {
     parts.join(" \u{b7} ")
 }
 
+/// The lead glyph for a reference card, by element kind. `Group` maps to a
+/// placeholder until the dedicated `group` glyph lands (see the icon task).
+fn ref_card_icon(kind: ElementKind) -> Icon {
+    match kind {
+        ElementKind::Edge => Icon::Spline,
+        // Node / Group / Diagram / Placeholder: the class/panel glyph for now.
+        _ => Icon::PanelTop,
+    }
+}
+
 /// Display parts for one attribute row: `(visibility, name, ty, mult)`. Empty
 /// visibility and the trivial `"1"` multiplicity are elided. Kept pure so the
 /// formatting is unit-tested without a `Cx`; consumed by the attribute row
@@ -473,6 +482,13 @@ fn attr_line_parts(attr: &crate::inspector::AttrRow) -> (String, String, String,
 /// (last-write-wins). Mirrors the index-prefixed relationship-row keying.
 fn attr_item_id(i: usize, name: &str) -> LiveId {
     LiveId::from_str(&format!("{i}-{name}"))
+}
+
+/// `FlatList` item id for member row `i` (keyed `key`). Index-prefixed so two
+/// members sharing a key still key to distinct list items (mirrors
+/// `attr_item_id`).
+fn member_item_id(i: usize, key: &str) -> LiveId {
+    LiveId::from_str(&format!("{i}-{key}"))
 }
 
 /// RGB hex (no alpha) -> opaque `Vec4`, matching how the DSL decodes `#xrrggbb`.
@@ -651,6 +667,7 @@ impl Widget for Inspector {
         // scrim (which painted last, over everything). See `panel_glass`.
         self.panel.draw(cx, &mut self.view.draw_bg);
         let attr_list_uid = self.view.widget(cx, ids!(body.attr_list)).widget_uid();
+        let members_list_uid = self.view.widget(cx, ids!(body.members_list)).widget_uid();
         let rel_list_uid = self.view.widget(cx, ids!(body.rel_list)).widget_uid();
         while let Some(item) = self.view.draw_walk(cx, scope, walk).step() {
             if !show_body {
@@ -673,6 +690,21 @@ impl Widget for Inspector {
                     }
                 }
             }
+            if item.widget_uid() == members_list_uid {
+                if let Some(view) = self.proj.clone() {
+                    if let Some(mut list) = item.as_flat_list().borrow_mut() {
+                        for (i, m) in view.members.iter().enumerate() {
+                            let item_id = member_item_id(i, &m.key);
+                            let row = list.item(cx, item_id, id!(Row)).unwrap();
+                            let rv = row.as_ref_card_view();
+                            rv.set_icon(cx, ref_card_icon(m.kind));
+                            rv.set_name(cx, &m.label);
+                            rv.set_meta(cx, ""); // members are single-line
+                            row.draw_all(cx, &mut Scope::empty());
+                        }
+                    }
+                }
+            }
             if item.widget_uid() == rel_list_uid {
                 if let Some(view) = self.proj.clone() {
                     if let Some(mut list) = item.as_flat_list().borrow_mut() {
@@ -682,10 +714,14 @@ impl Widget for Inspector {
                                 i, assoc.kind, assoc.other_label
                             ));
                             let row = list.item(cx, item_id, id!(Row)).unwrap();
-                            let rv = row.as_relationship_card_view();
-                            rv.set_glyph(cx, dir_glyph(assoc.dir));
+                            let rv = row.as_ref_card_view();
+                            rv.set_icon(cx, ref_card_icon(assoc.target_kind));
                             rv.set_name(cx, &assoc.other_label);
-                            rv.set_meta(cx, &meta_line(assoc));
+                            // Line 2: direction glyph + kind/role/multiplicity run.
+                            rv.set_meta(
+                                cx,
+                                &format!("{} {}", dir_glyph(assoc.dir), meta_line(assoc)),
+                            );
                             row.draw_all(cx, &mut Scope::empty());
                         }
                     }
@@ -903,28 +939,19 @@ impl Inspector {
                 .set_text(cx, "ATTRIBUTES");
         }
 
-        // MEMBERS: a group's member labels, one per line (a single dim Label).
+        // MEMBERS: reference cards (filled in the draw_walk list loop).
         let has_members = !view.members.is_empty();
         self.view
             .widget(cx, ids!(body.members_heading))
             .set_visible(cx, has_members);
         self.view
-            .widget(cx, ids!(body.members_lines))
+            .widget(cx, ids!(body.members_list_wrap))
             .set_visible(cx, has_members);
         if has_members {
             self.view
                 .widget(cx, ids!(body.members_heading))
                 .as_section_heading()
                 .set_text(cx, "MEMBERS");
-            self.view.label(cx, ids!(body.members_lines)).set_text(
-                cx,
-                &view
-                    .members
-                    .iter()
-                    .map(|m| m.label.clone())
-                    .collect::<Vec<_>>()
-                    .join("\n"),
-            );
         }
 
         let has_rels = !view.associations.is_empty();
@@ -1318,6 +1345,22 @@ mod tests {
     #[test]
     fn attr_item_id_is_stable_for_same_index_and_name() {
         assert_eq!(attr_item_id(2, "name"), attr_item_id(2, "name"));
+    }
+
+    #[test]
+    fn member_item_id_distinguishes_duplicate_keys() {
+        assert_ne!(member_item_id(0, "k"), member_item_id(1, "k"));
+    }
+
+    #[test]
+    fn member_item_id_is_stable_for_same_index_and_key() {
+        assert_eq!(member_item_id(2, "k"), member_item_id(2, "k"));
+    }
+
+    #[test]
+    fn ref_card_icon_maps_edge_and_node() {
+        assert!(matches!(ref_card_icon(ElementKind::Edge), Icon::Spline));
+        assert!(matches!(ref_card_icon(ElementKind::Node), Icon::PanelTop));
     }
 
     #[test]
