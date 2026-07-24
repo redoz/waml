@@ -1008,10 +1008,11 @@ fn operand_slug(op: &Operand) -> Option<&str> {
 /// Horizontal axis = Left/Right; Vertical = Above/Below.
 ///
 /// A 2-operand `[subject] <dir> [reference]` placement on the given axis.
-/// True when `stmt` is a 2-operand placement for the `subject -> reference`
-/// pair, on ANY axis. Placement is one-relation-per-pair: authoring a new
-/// direction rewrites whatever relation the pair already had (a pair can't hold
-/// both `left of` and `below` -- the solver center-aligns the cross axis, so two
+/// True when `stmt` is a 2-operand placement for the UNORDERED `{subject,
+/// reference}` pair, on ANY axis and in EITHER operand order. Placement is
+/// one-relation-per-pair: authoring a new direction rewrites whatever relation
+/// the pair already had (a pair can't hold both `left of` and `below` -- the
+/// solver center-aligns the cross axis, so two
 /// relations on one pair mutually conflict).
 fn placement_matches(stmt: &LayoutStatement, subject: &str, reference: &str) -> bool {
     let LayoutStatement::Placement {
@@ -1021,10 +1022,11 @@ fn placement_matches(stmt: &LayoutStatement, subject: &str, reference: &str) -> 
     else {
         return false;
     };
+    let (a, b) = (operand_slug(&operands[0]), operand_slug(&operands[1]));
     operands.len() == 2
         && directions.len() == 1
-        && operand_slug(&operands[0]) == Some(subject)
-        && operand_slug(&operands[1]) == Some(reference)
+        && ((a == Some(subject) && b == Some(reference))
+            || (a == Some(reference) && b == Some(subject)))
 }
 
 fn op_place_set(
@@ -2122,6 +2124,50 @@ mod tests {
         assert!(
             !out[0].1.contains("left of"),
             "prior same-pair placement replaced, not duplicated: {}",
+            out[0].1
+        );
+    }
+
+    #[test]
+    fn place_set_replaces_a_reversed_pair_placement() {
+        // One relation per UNORDERED pair. A prior drag authored
+        // `PaymentGateway left of Order` (subject=PaymentGateway). Re-dragging
+        // Order against PaymentGateway -- the SAME pair with subject/reference
+        // swapped -- must REWRITE that relation, not stack a second conflicting
+        // one. The retain check is pair-symmetric, so operand order can't hide
+        // the existing line.
+        let b = layout_diagram(
+            "- [PaymentGateway](./payment-gateway.md) left of [Order](./order.md)\n",
+        );
+        let out = apply(
+            &b,
+            &[placeset(
+                ("Order", "order"),
+                ("PaymentGateway", "payment-gateway"),
+                vec![Direction::RightOf],
+            )],
+        )
+        .unwrap();
+        assert!(
+            out[0]
+                .1
+                .contains("- [Order](./order.md) right of [PaymentGateway](./payment-gateway.md)"),
+            "new placement present: {}",
+            out[0].1
+        );
+        let doc = parse_document(&out[0].1);
+        let layout = doc
+            .sections
+            .iter()
+            .find_map(|s| match s {
+                Section::Layout(l) => Some(l),
+                _ => None,
+            })
+            .expect("layout section present");
+        assert_eq!(
+            layout.len(),
+            1,
+            "reversed-pair placement replaced, not stacked: {}",
             out[0].1
         );
     }

@@ -568,8 +568,10 @@ fn title_for(model: &Model, slug: &str) -> String {
         .unwrap_or_else(|| slug.to_string())
 }
 
-/// True iff a placement matches the given ordered `(subject, reference)` pair
-/// as a 2-operand single-direction relation (mirrors `ops::placement_matches`).
+/// True iff a placement matches the given UNORDERED `{subject, reference}` pair
+/// as a 2-operand single-direction relation, in EITHER operand order (mirrors
+/// `ops::placement_matches`). Pair-symmetric so a reversed-pair re-drag replaces
+/// the existing relation rather than stacking a conflicting one.
 fn placement_is_pair(stmt: &waml::syntax::LayoutStatement, subject: &str, reference: &str) -> bool {
     use waml::syntax::LayoutStatement;
     if let LayoutStatement::Placement {
@@ -577,10 +579,11 @@ fn placement_is_pair(stmt: &waml::syntax::LayoutStatement, subject: &str, refere
         directions,
     } = stmt
     {
+        let (a, b) = (operand_slug(&operands[0]), operand_slug(&operands[1]));
         operands.len() == 2
             && directions.len() == 1
-            && operand_slug(&operands[0]) == Some(subject)
-            && operand_slug(&operands[1]) == Some(reference)
+            && ((a == Some(subject) && b == Some(reference))
+                || (a == Some(reference) && b == Some(subject)))
     } else {
         false
     }
@@ -793,14 +796,51 @@ mod tests {
 
     #[test]
     fn oracle_flags_a_contradictory_placement() {
-        // mini has `Order left of Customer`. Authoring the REVERSED ordered pair
-        // `Customer left of Order` is a different pair (so the existing relation is
-        // NOT replaced) — both coexist, the solver cannot satisfy them, and emits a
-        // LayoutConflict.
+        use waml::syntax::{Direction, LayoutStatement, NameRef, Operand, OperandRef};
+        // A genuine TRANSITIVE contradiction the override rule can't dissolve.
+        // Seed a horizontal chain: mini already has `order left of customer`; add
+        // `customer left of payment-gateway`. Dragging `payment-gateway left of
+        // order` closes an unsatisfiable cycle (order < customer <
+        // payment-gateway < order). The dragged pair has no prior relation to
+        // replace, so the cycle stands and the solver conflicts.
+        let model = mini();
+        let mut diagram = model.diagrams[0].clone();
+        let link = |slug: &str| Operand {
+            ref_: OperandRef::Name(NameRef::Link {
+                title: title_for(&model, slug),
+                slug: slug.to_string(),
+            }),
+            axis: None,
+            hints: Vec::new(),
+        };
+        diagram.layout.push(LayoutStatement::Placement {
+            operands: vec![link("customer"), link("payment-gateway")],
+            directions: vec![Direction::LeftOf],
+        });
+        assert!(
+            placement_would_conflict(
+                &model,
+                &diagram,
+                "payment-gateway",
+                "order",
+                Direction::LeftOf,
+                &std::collections::HashSet::new(),
+            ),
+            "a transitive cycle the override can't dissolve must be predicted conflicting"
+        );
+    }
+
+    #[test]
+    fn oracle_accepts_a_reversed_pair_via_override() {
+        // mini has `order left of customer`. Dragging the REVERSED pair `customer
+        // left of order` REPLACES it (one relation per UNORDERED pair), so the
+        // scratch holds only the new relation -- satisfiable, no conflict. The
+        // drag oracle must mirror the write-back's override, not predict a
+        // phantom conflict against the line it is about to overwrite.
         let model = mini();
         let diagram = &model.diagrams[0];
         assert!(
-            placement_would_conflict(
+            !placement_would_conflict(
                 &model,
                 diagram,
                 "customer",
@@ -808,7 +848,7 @@ mod tests {
                 waml::syntax::Direction::LeftOf,
                 &std::collections::HashSet::new(),
             ),
-            "reversed cardinal on an existing pair must be predicted conflicting"
+            "a reversed-pair re-drag overrides, so it must NOT be predicted conflicting"
         );
     }
 
