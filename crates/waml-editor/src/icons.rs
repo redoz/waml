@@ -2383,6 +2383,48 @@ script_mod! {
         }
     }
 
+    // Group: four corner brackets framing two overlapping rounded rectangles.
+    // Faithful port of resources/icons/group.svg (hand-tuned for the HUD size;
+    // silhouette is a first pass, tuned live in `icon_harness`).
+    mod.draw.IconGroup = mod.draw.DrawColor{
+        pixel: fn() {
+            let s = self.rect_size.x
+            let w = s * 0.068
+            let sdf = Sdf2d.viewport(self.pos * self.rect_size)
+            // Top-left bracket.
+            sdf.move_to(s * 0.1250, s * 0.2917)
+            sdf.line_to(s * 0.1250, s * 0.2083)
+            sdf.arc_to(s * 0.2083, s * 0.2083, s * 0.0833, 3.1416, 4.7124)
+            sdf.line_to(s * 0.2917, s * 0.1250)
+            sdf.stroke(self.color, w)
+            // Top-right bracket.
+            sdf.move_to(s * 0.7083, s * 0.1250)
+            sdf.line_to(s * 0.7917, s * 0.1250)
+            sdf.arc_to(s * 0.7917, s * 0.2083, s * 0.0833, -1.5708, 0.0000)
+            sdf.line_to(s * 0.8750, s * 0.2917)
+            sdf.stroke(self.color, w)
+            // Bottom-right bracket.
+            sdf.move_to(s * 0.8750, s * 0.7083)
+            sdf.line_to(s * 0.8750, s * 0.7917)
+            sdf.arc_to(s * 0.7917, s * 0.7917, s * 0.0833, 0.0000, 1.5708)
+            sdf.line_to(s * 0.7083, s * 0.8750)
+            sdf.stroke(self.color, w)
+            // Bottom-left bracket.
+            sdf.move_to(s * 0.2917, s * 0.8750)
+            sdf.line_to(s * 0.2083, s * 0.8750)
+            sdf.arc_to(s * 0.2083, s * 0.7917, s * 0.0833, 1.5708, 3.1416)
+            sdf.line_to(s * 0.1250, s * 0.7083)
+            sdf.stroke(self.color, w)
+            // Upper grouped rect (rounded; real radius so it is not degenerate).
+            sdf.box(s * 0.2917, s * 0.2917, s * 0.2917, s * 0.2083, s * 0.0625)
+            sdf.stroke(self.color, w)
+            // Lower grouped rect, offset to overlap.
+            sdf.box(s * 0.4167, s * 0.5000, s * 0.2917, s * 0.2083, s * 0.0625)
+            sdf.stroke(self.color, w)
+            return sdf.result
+        }
+    }
+
     // Faithful port of resources/icons/square-menu.svg via scripts/gen-icon.py.
     // Faithful port of resources/icons/square-menu.svg via scripts/gen-icon.py.
     mod.draw.IconSquareMenu = mod.draw.DrawColor{
@@ -3199,6 +3241,7 @@ script_mod! {
         door_open: mod.draw.IconDoorOpen{ color: atlas.accent }
         search: mod.draw.IconSearch{ color: atlas.accent }
         message_square_warning: mod.draw.IconMessageSquareWarning{ color: atlas.accent }
+        group: mod.draw.IconGroup{ color: atlas.accent }
     }
 }
 
@@ -3388,6 +3431,8 @@ pub struct IconSet {
     pub search: DrawColor,
     #[live]
     pub message_square_warning: DrawColor,
+    #[live]
+    pub group: DrawColor,
 }
 
 // Not every bin that `#[path]`-includes this file exercises the whole catalog
@@ -3490,6 +3535,7 @@ impl IconSet {
             Icon::DoorOpen => &mut self.door_open,
             Icon::Search => &mut self.search,
             Icon::MessageSquareWarning => &mut self.message_square_warning,
+            Icon::Group => &mut self.group,
         }
     }
 
@@ -3599,13 +3645,14 @@ pub enum Icon {
     DoorOpen,
     Search,
     MessageSquareWarning,
+    Group,
 }
 
 #[allow(dead_code)] // ALL/label are unused in bins that don't iterate the catalog
 impl Icon {
     /// Every glyph, in field order. The single source of glyph identity; the
     /// `icon_harness` proof grid iterates this.
-    pub const ALL: [Icon; 91] = [
+    pub const ALL: [Icon; 92] = [
         Icon::Package,
         Icon::Message,
         Icon::PackagePlus,
@@ -3697,6 +3744,7 @@ impl Icon {
         Icon::DoorOpen,
         Icon::Search,
         Icon::MessageSquareWarning,
+        Icon::Group,
     ];
 
     /// The `icon_harness` display slug (the Lucide source name), preserved
@@ -3794,6 +3842,7 @@ impl Icon {
             Icon::DoorOpen => "door-open",
             Icon::Search => "search",
             Icon::MessageSquareWarning => "message-square-warning",
+            Icon::Group => "group",
         }
     }
 }
@@ -3803,8 +3852,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn icon_all_has_91_entries() {
-        assert_eq!(Icon::ALL.len(), 91);
+    fn icon_all_has_92_entries() {
+        assert_eq!(Icon::ALL.len(), 92);
     }
 
     #[test]
@@ -3815,6 +3864,9 @@ mod tests {
         assert_eq!(Icon::ALL[86], Icon::Folder);
         assert_eq!(Icon::ALL[87], Icon::FolderClosed);
         assert_eq!(Icon::ALL[88], Icon::DoorOpen);
+        assert_eq!(Icon::ALL[89], Icon::Search);
+        assert_eq!(Icon::ALL[90], Icon::MessageSquareWarning);
+        assert_eq!(Icon::ALL[91], Icon::Group);
     }
 
     #[test]
@@ -3826,7 +3878,7 @@ mod tests {
             assert!(!l.is_empty(), "empty label for {icon:?}");
             assert!(seen.insert(l), "duplicate label {l:?}");
         }
-        assert_eq!(seen.len(), 91);
+        assert_eq!(seen.len(), 92);
     }
 
     #[test]

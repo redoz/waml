@@ -448,12 +448,12 @@ fn meta_line(assoc: &AssocRow) -> String {
     parts.join(" \u{b7} ")
 }
 
-/// The lead glyph for a reference card, by element kind. `Group` maps to a
-/// placeholder until the dedicated `group` glyph lands (see the icon task).
+/// The lead glyph for a reference card, by element kind.
 fn ref_card_icon(kind: ElementKind) -> Icon {
     match kind {
+        ElementKind::Group => Icon::Group,
         ElementKind::Edge => Icon::Spline,
-        // Node / Group / Diagram / Placeholder: the class/panel glyph for now.
+        // Node / Diagram / Placeholder: the class/panel glyph for now.
         _ => Icon::PanelTop,
     }
 }
@@ -1078,9 +1078,10 @@ impl Inspector {
                     (lead, row.label.clone(), true)
                 }
                 ElementKind::Group => (
-                    // Dashed box reads as a group frame — distinct from the
-                    // diagram's solid `Frame` and any node's catalog icon.
-                    SelectLead::Icon(Icon::SquareDashedTopSolid),
+                    // The Lucide group glyph -- distinct from the diagram's solid
+                    // `Frame` and any node's catalog icon. Drives the collapsed
+                    // select-box lead (the panel header) too.
+                    SelectLead::Icon(Icon::Group),
                     row.label.clone(),
                     true,
                 ),
@@ -1382,6 +1383,7 @@ mod tests {
     fn ref_card_icon_maps_edge_and_node() {
         assert!(matches!(ref_card_icon(ElementKind::Edge), Icon::Spline));
         assert!(matches!(ref_card_icon(ElementKind::Node), Icon::PanelTop));
+        assert!(matches!(ref_card_icon(ElementKind::Group), Icon::Group));
     }
 
     #[test]
