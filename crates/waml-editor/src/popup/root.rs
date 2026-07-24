@@ -6,12 +6,14 @@
 use crate::popup::base::{
     is_light_dismiss, is_primary_press, Popup, PopupItem, PopupResult, PopupVerdict,
 };
+use crate::popup::conflict_list::ConflictList;
 use crate::popup::menu::{MenuPopup, MENU_MAX_W, PAD_V, ROW_H};
 use crate::popup::presenter::Presenter;
 use crate::popup::radial::RadialPopup;
 use crate::popup::select::{
     SelectFlyout, SelectItem, SELECT_BOTTOM_MARGIN, SELECT_MAX_H, SELECT_MAX_W,
 };
+use crate::scene::SceneConflict;
 use makepad_widgets::*;
 
 /// How to open the linear card.
@@ -58,6 +60,12 @@ pub enum PopupSpec {
         bounds: Rect,
         items: Vec<SelectItem>,
     },
+    Conflict {
+        tag: LiveId,
+        anchor: DVec2,
+        bounds: Rect,
+        conflicts: Vec<SceneConflict>,
+    },
 }
 
 /// Emitted on every close. Openers filter for their own `tag`; `PopupRoot` never
@@ -80,6 +88,7 @@ enum ActiveKind {
     Menu,
     Radial,
     Select,
+    Conflict,
 }
 
 /// The routing decision for one already-handled event.
@@ -124,6 +133,7 @@ script_mod! {
             menu := MenuPopup{ width: Fill height: Fill }
             radial := RadialPopup{ width: Fill height: Fill }
             select := SelectFlyout{ width: Fill height: Fill }
+            conflict := ConflictList{ width: Fill height: Fill }
         }
     }
 }
@@ -194,6 +204,15 @@ impl PopupRoot {
                         .borrow_mut::<SelectFlyout>()
                     {
                         s.reset();
+                    }
+                }
+                ActiveKind::Conflict => {
+                    if let Some(mut c) = self
+                        .body
+                        .widget(cx, ids!(conflict))
+                        .borrow_mut::<ConflictList>()
+                    {
+                        c.reset();
                     }
                 }
             }
@@ -282,6 +301,23 @@ impl PopupRoot {
                 }
                 self.active = Some((ActiveKind::Select, tag));
             }
+            PopupSpec::Conflict {
+                tag,
+                anchor,
+                bounds,
+                conflicts,
+            } => {
+                let size = crate::popup::conflict_list::content_size(&conflicts);
+                let placed = Presenter::place(anchor, size, bounds);
+                if let Some(mut c) = self
+                    .body
+                    .widget(cx, ids!(conflict))
+                    .borrow_mut::<ConflictList>()
+                {
+                    c.open(cx, Rect { pos: placed, size }, conflicts);
+                }
+                self.active = Some((ActiveKind::Conflict, tag));
+            }
         }
         // A session-first open: `menu`/`radial`'s own draw components (`draw_frame`
         // / `draw_wedge`) are `#[redraw]` but have never executed `draw_abs`
@@ -324,6 +360,17 @@ impl PopupRoot {
                     .borrow_mut::<SelectFlyout>()
                     .map(|mut s| s.handle(cx, ev))
                     .unwrap_or(PopupVerdict::Ignored),
+                // Ridden on the same `decide` table as every other surface: a
+                // `Consumed` verdict (row hover, trash/body press -- which
+                // emit `ConflictListAction` but never self-close) keeps it
+                // open, an `Ignored` primary press is an outside-click
+                // dismiss. No new `RouteStep`/`decide` variant needed.
+                ActiveKind::Conflict => self
+                    .body
+                    .widget(cx, ids!(conflict))
+                    .borrow_mut::<ConflictList>()
+                    .map(|mut c| c.handle(cx, ev))
+                    .unwrap_or(PopupVerdict::Ignored),
             };
             decide(verdict, is_primary_press(ev))
         };
@@ -353,6 +400,15 @@ impl PopupRoot {
                         s.reset();
                     }
                 }
+                ActiveKind::Conflict => {
+                    if let Some(mut c) = self
+                        .body
+                        .widget(cx, ids!(conflict))
+                        .borrow_mut::<ConflictList>()
+                    {
+                        c.reset();
+                    }
+                }
             }
             cx.widget_action(self.widget_uid(), PopupRootAction::Closed { tag, result });
             self.active = None;
@@ -373,6 +429,11 @@ impl PopupRoot {
 mod tests {
     use super::*;
     use crate::popup::base::{PopupResult, PopupVerdict};
+
+    // `ActiveKind::Conflict` rides this same `decide` table as every other
+    // surface (no new `RouteStep`/`decide` variant): `a_consumed_event_keeps_it_open`
+    // covers a hover/press that emits `ConflictListAction` without closing, and
+    // `an_ignored_primary_press_is_outside_click_dismiss` covers an outside click.
 
     #[test]
     fn a_commit_closes_with_its_result() {
