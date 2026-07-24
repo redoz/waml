@@ -765,6 +765,9 @@ impl OpDto {
             Op::PlaceSet { .. } => {
                 unreachable!("place.set no web DTO yet (native-only)")
             }
+            Op::PlaceRm { .. } => {
+                unreachable!("place.rm no web DTO yet (native-only)")
+            }
         }
     }
 }

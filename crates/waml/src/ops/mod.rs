@@ -173,6 +173,11 @@ pub enum Op {
         reference_slug: String,
         directions: Vec<Direction>,
     },
+    PlaceRm {
+        diagram: String,
+        subject_slug: String,
+        reference_slug: String,
+    },
 }
 
 pub fn apply(bundle: &[(String, String)], ops: &[Op]) -> Result<Bundle, OpError> {
@@ -288,6 +293,11 @@ fn apply_one(work: &mut Bundle, op: &Op) -> Result<(), OpError> {
             reference_slug,
             directions,
         ),
+        Op::PlaceRm {
+            diagram,
+            subject_slug,
+            reference_slug,
+        } => op_place_rm(work, diagram, subject_slug, reference_slug),
     }
 }
 
@@ -1063,6 +1073,24 @@ fn op_place_set(
             };
             layout.push(Line::Parsed(LayoutItem { line: 0, stmt }));
         }
+        Ok(())
+    })
+}
+
+fn op_place_rm(
+    work: &mut Bundle,
+    diagram: &str,
+    subject_slug: &str,
+    reference_slug: &str,
+) -> Result<(), OpError> {
+    let subject_slug = subject_slug.to_string();
+    let reference_slug = reference_slug.to_string();
+    edit_doc(work, diagram, "place.rm", |doc| {
+        let layout = layout_mut(doc);
+        layout.retain(|line| match line.parsed() {
+            Some(item) => !placement_matches(&item.stmt, &subject_slug, &reference_slug),
+            None => true,
+        });
         Ok(())
     })
 }
@@ -2269,5 +2297,67 @@ mod tests {
             })
             .expect("layout section present");
         assert_eq!(layout.len(), 2, "corner drop authored two statements");
+    }
+
+    // ---- Op::PlaceRm (## Layout removal) ----
+
+    fn placerm(subject_slug: &str, reference_slug: &str) -> Op {
+        Op::PlaceRm {
+            diagram: "dia".into(),
+            subject_slug: subject_slug.into(),
+            reference_slug: reference_slug.into(),
+        }
+    }
+
+    #[test]
+    fn place_rm_removes_a_matching_placement() {
+        let b = layout_diagram(
+            "- [Order](./order.md) left of [PaymentGateway](./payment-gateway.md)\n",
+        );
+        let out = apply(&b, &[placerm("order", "payment-gateway")]).unwrap();
+        assert!(
+            !out[0].1.contains("left of"),
+            "matching placement removed: {}",
+            out[0].1
+        );
+    }
+
+    #[test]
+    fn place_rm_removes_a_reversed_pair_placement() {
+        // Stored order is PaymentGateway left of Order; remove with the operand
+        // order swapped (subject=order, reference=payment-gateway) -- pair
+        // symmetry means it still matches and is removed.
+        let b = layout_diagram(
+            "- [PaymentGateway](./payment-gateway.md) left of [Order](./order.md)\n",
+        );
+        let out = apply(&b, &[placerm("order", "payment-gateway")]).unwrap();
+        assert!(
+            !out[0].1.contains("left of"),
+            "reversed-pair placement removed: {}",
+            out[0].1
+        );
+    }
+
+    #[test]
+    fn place_rm_is_a_noop_when_absent() {
+        let b = layout_diagram("- [Customer](./customer.md) below [Order](./order.md)\n");
+        let out = apply(&b, &[placerm("order", "payment-gateway")]).unwrap();
+        assert!(
+            out[0]
+                .1
+                .contains("- [Customer](./customer.md) below [Order](./order.md)"),
+            "unrelated placement kept: {}",
+            out[0].1
+        );
+    }
+
+    #[test]
+    fn place_rm_is_a_noop_without_a_layout_section() {
+        let out = apply(&diagram_no_layout(), &[placerm("order", "payment-gateway")]).unwrap();
+        assert!(
+            !out[0].1.contains("- ["),
+            "no placement introduced by a no-op removal on a docless-Layout diagram: {}",
+            out[0].1
+        );
     }
 }
