@@ -207,25 +207,52 @@ script_mod! {
                                 width: Fill
                                 height: Fill
                                 flow: Overlay
-                                canvas := GraphCanvas{
+                                // Canvas gets its own wrapper View so the shell can
+                                // hide the whole diagram render on a Source tab
+                                // (GraphCanvas has no `visible` field of its own and
+                                // draws every frame unconditionally). Diagram + Preview
+                                // tabs keep it shown; `sync_active_tab` toggles it off
+                                // only for a Source tab, mutually exclusive with
+                                // `source_view` below.
+                                canvas_wrap := View{
                                     width: Fill
                                     height: Fill
+                                    flow: Overlay
+                                    canvas := GraphCanvas{
+                                        width: Fill
+                                        height: Fill
+                                    }
                                 }
                                 // View Source tab body: renders the subject's raw markdown via the
-                                // upstream Markdown widget, scrolling vertically when it overflows. The
-                                // opaque `canvas_ground` bg preserves the occlusion contract (this slot
-                                // draws over the canvas whenever a Source tab is active).
+                                // upstream Markdown widget, scrolling vertically when it overflows.
+                                // The `surface` (paper white) bg reads as a document page, and the
+                                // canvas beneath is hidden outright on a Source tab (see above), so
+                                // this slot no longer relies on opaque occlusion. The upstream
+                                // Markdown default inks text with `theme.color_label_inner`
+                                // (near-white) -- unreadable on a light slot -- so `font_color` is
+                                // repointed at the Atlas `text` ink for dark-on-light contrast.
                                 source_view := View{
                                     width: Fill
                                     height: Fill
                                     visible: false
                                     show_bg: true
-                                    draw_bg.color: atlas.canvas_ground
+                                    draw_bg.color: atlas.surface
                                     flow: Down
                                     scroll_bars: ScrollBars{ scroll_bar_y: ScrollBar{} }
                                     md := Markdown{
                                         width: Fill
                                         height: Fit
+                                        font_color: atlas.text
+                                        draw_text +: { color: atlas.text }
+                                        draw_block +: {
+                                            line_color: atlas.text
+                                            quote_fg_color: atlas.text
+                                            quote_bg_color: atlas.group_fill
+                                            code_color: atlas.group_fill
+                                            sep_color: atlas.text_dim
+                                            table_header_bg_color: atlas.group_fill
+                                            table_border_color: atlas.text_dim
+                                        }
                                     }
                                 }
                                 // Tool dock: left edge of the CENTER, vertically
@@ -436,9 +463,16 @@ impl App {
         }
 
         let body = crate::doc_view::BodyWidgets::new(cx, &self.ui);
-        body.source_view(cx)
-            .set_visible(cx, active.kind == TabKind::Source);
-        if active.kind == TabKind::Source {
+        // Source tabs render markdown, not a diagram: show the `source_view`
+        // slot and hide the whole canvas render (mutually exclusive). Diagram
+        // + Preview tabs both drive the shared canvas, so it stays visible for
+        // anything that isn't a Source tab.
+        let is_source = active.kind == TabKind::Source;
+        body.source_view(cx).set_visible(cx, is_source);
+        self.ui
+            .widget(cx, ids!(canvas_wrap))
+            .set_visible(cx, !is_source);
+        if is_source {
             let md = crate::load::source_for(&self.bundle, &active.key)
                 .map(str::to_string)
                 .unwrap_or_else(|| format!("*No source for `{}`*", active.key));
