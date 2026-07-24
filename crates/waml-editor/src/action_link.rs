@@ -30,6 +30,7 @@ script_mod! {
     use mod.atlas
     use mod.widgets.*
     use mod.text.*
+    use mod.fonts
 
     mod.widgets.ActionLinkBase = #(ActionLink::register_widget(vm))
 
@@ -90,7 +91,7 @@ script_mod! {
             text: ""
             draw_text +: {
                 color: atlas.text
-                text_style: theme.font_regular{font_size: atlas.size_caption line_spacing: 1.0}
+                text_style: fonts.text_label
             }
         }
     }
