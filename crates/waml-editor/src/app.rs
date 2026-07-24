@@ -1074,14 +1074,14 @@ pub fn logo_menu_items() -> Vec<crate::popup::base::PopupItem> {
         PopupItem {
             id: live_id!(icons),
             label: "Icons".into(),
-            icon: Icon::SquareMenu,
+            icon: Some(Icon::SquareMenu),
             danger: false,
             enabled: true,
         },
         PopupItem {
             id: live_id!(colors),
             label: "Colors".into(),
-            icon: Icon::Squircle,
+            icon: Some(Icon::Squircle),
             danger: false,
             enabled: true,
         },
