@@ -65,6 +65,17 @@ pub fn is_primary_press(event: &Event) -> bool {
     matches!(event, Event::MouseDown(e) if e.button.is_primary())
 }
 
+/// The pointer events whose `handled` flag `PopupRoot::route` stamps while a
+/// popup owns the screen, so a click on a menu row -- or an outside-click that
+/// dismisses -- never *also* lands on the canvas beneath the overlay. Only the
+/// events that carry a `handled` cell qualify: `MouseDown` (the one that would
+/// capture the digit) and `MouseMove` (hover). `MouseUp` has no such flag and
+/// needs none -- once the capturing `MouseDown` is swallowed, its `FingerUp` is
+/// never delivered to the widget below.
+pub fn swallows_underlay(event: &Event) -> bool {
+    matches!(event, Event::MouseDown(_) | Event::MouseMove(_))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -94,5 +105,36 @@ mod tests {
         });
         assert!(is_primary_press(&e));
         assert!(!is_light_dismiss(&e));
+    }
+
+    #[test]
+    fn mouse_down_and_move_swallow_the_underlay_mouse_up_does_not() {
+        let down = Event::MouseDown(MouseDownEvent {
+            abs: Vec2d::default(),
+            button: MouseButton::PRIMARY,
+            window_id: WindowId(0, 0),
+            modifiers: KeyModifiers::default(),
+            handled: Cell::new(Area::default()),
+            time: 0.0,
+        });
+        let mv = Event::MouseMove(MouseMoveEvent {
+            abs: Vec2d::default(),
+            window_id: WindowId(0, 0),
+            modifiers: KeyModifiers::default(),
+            time: 0.0,
+            handled: Cell::new(Area::default()),
+        });
+        // `MouseUpEvent` carries no `handled` cell -- capture-based delivery
+        // already gates it -- so it is deliberately excluded.
+        let up = Event::MouseUp(MouseUpEvent {
+            abs: Vec2d::default(),
+            button: MouseButton::PRIMARY,
+            window_id: WindowId(0, 0),
+            modifiers: KeyModifiers::default(),
+            time: 0.0,
+        });
+        assert!(swallows_underlay(&down));
+        assert!(swallows_underlay(&mv));
+        assert!(!swallows_underlay(&up));
     }
 }

@@ -4,7 +4,8 @@
 //! popup app-wide: `show_at` supersedes (dismisses) any open popup first.
 
 use crate::popup::base::{
-    is_light_dismiss, is_primary_press, Popup, PopupItem, PopupResult, PopupVerdict,
+    is_light_dismiss, is_primary_press, swallows_underlay, Popup, PopupItem, PopupResult,
+    PopupVerdict,
 };
 use crate::popup::conflict_list::ConflictList;
 use crate::popup::menu::{MenuPopup, MENU_MAX_W, PAD_V, ROW_H};
@@ -352,6 +353,22 @@ impl PopupRoot {
         let Some((kind, tag)) = self.active else {
             return;
         };
+        // Modality: while a popup owns the screen, swallow pointer events from
+        // the rest of the widget tree beneath the overlay. `App` runs `route`
+        // before `ui.handle_event`, so without this a row click -- or an
+        // outside-click that dismisses -- would *also* hit-test the canvas node
+        // under the card (its `hits()` skips any event whose `handled` is set).
+        // `body` draws every frame, so its area is a valid non-empty capture
+        // target by the time any surface is active. (See `swallows_underlay`
+        // for why `MouseUp` is excluded.)
+        if swallows_underlay(event) {
+            let area = self.body.area();
+            match event {
+                Event::MouseDown(e) => e.handled.set(area),
+                Event::MouseMove(e) => e.handled.set(area),
+                _ => {}
+            }
+        }
         // Overlay backing: localize is identity (events already in main-window
         // space). A later plan's DComp backing translates here.
         let ev = Presenter.localize(event);
