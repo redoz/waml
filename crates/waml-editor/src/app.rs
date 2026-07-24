@@ -276,8 +276,12 @@ script_mod! {
                                 }
                                 // Canvas view bar: bottom-center, ALWAYS visible
                                 // over a diagram, so its click targets never move.
-                                // The contextual selection pill below stacks above
-                                // it (bottom margin 12 + 36 + 8 = 56).
+                                // It shares the bottom-center slot with the
+                                // selection pill below, but the two are never
+                                // co-visible: the bar is diagram-only
+                                // (`DocView::wants_view_bar`) and the pill is only
+                                // populated by `ClassifierPreviewView`, so both sit
+                                // at the same 12px bottom offset.
                                 view_bar_wrap := View{
                                     width: Fill
                                     height: Fill
@@ -306,7 +310,7 @@ script_mod! {
                                     selection_toolbar := SelectionToolbar{
                                         width: Fit
                                         height: 44.0
-                                        margin: Inset{bottom: 56.0}
+                                        margin: Inset{bottom: 12.0}
                                     }
                                 }
                             }
