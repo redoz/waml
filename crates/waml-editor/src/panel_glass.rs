@@ -98,7 +98,10 @@ impl PanelGlass {
         self.glass
     }
 
-    /// Toggle the pin (locks the fill fully opaque) and kick the ease.
+    /// Toggle the pin (locks the fill fully opaque) and kick the ease. Both
+    /// panels now drive `pinned` directly from `dock == Pinned` (Task 4/5);
+    /// this is retired by Task 6's `panel_glass` cleanup.
+    #[allow(dead_code)]
     pub fn toggle_pin(&mut self, cx: &mut Cx) {
         self.pinned = !self.pinned;
         self.arm(cx);

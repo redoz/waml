@@ -332,7 +332,7 @@ script_mod! {
                                 inspector := Inspector{
                                     width: 320.0
                                     height: Fill
-                                    margin: Inset{top: 12.0, bottom: 12.0}
+                                    margin: Inset{right: 28.0, top: 12.0, bottom: 12.0}
                                 }
                             }
                         }
@@ -597,7 +597,19 @@ impl App {
             }
             cx.redraw_all();
         }
-        // right_slot is synced in Task 5 once the inspector owns a DockState.
+        let rw = self
+            .ui
+            .widget(cx, ids!(inspector))
+            .borrow::<crate::inspector_panel::Inspector>()
+            .map(|p| p.slot_width())
+            .unwrap_or(crate::dock::FLAG_W);
+        if (rw - self.dock_slot_w.1).abs() > 0.5 {
+            self.dock_slot_w.1 = rw;
+            if let Some(mut slot) = self.ui.widget(cx, ids!(right_slot)).borrow_mut::<View>() {
+                slot.walk.width = Size::Fixed(rw);
+            }
+            cx.redraw_all();
+        }
     }
 
     /// Push diagram name / node count / zoom / active tool into the bottom
