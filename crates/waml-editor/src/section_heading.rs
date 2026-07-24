@@ -9,6 +9,7 @@ use makepad_widgets::*;
 script_mod! {
     use mod.prelude.widgets_internal.*
     use mod.atlas
+    use mod.fonts
     use mod.widgets.*
     use mod.text.*
 
@@ -22,13 +23,7 @@ script_mod! {
             text: ""
             draw_text +: {
                 color: atlas.text_dim
-                text_style: TextStyle{
-                    font_size: 10
-                    font_family: FontFamily{
-                        latin := FontMember{res: crate_resource("self:resources/fonts/IBM_Plex_Sans/IBMPlexSans-SemiBold.ttf") asc: -0.1 desc: 0.0}
-                    }
-                    line_spacing: 1.2
-                }
+                text_style: fonts.text_eyebrow
             }
         }
     }

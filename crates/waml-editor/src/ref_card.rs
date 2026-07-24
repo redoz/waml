@@ -19,6 +19,7 @@ use makepad_widgets::*;
 script_mod! {
     use mod.prelude.widgets_internal.*
     use mod.atlas
+    use mod.fonts
     use mod.widgets.*
     use mod.text.*
 
@@ -68,26 +69,14 @@ script_mod! {
                 text: ""
                 draw_text +: {
                     color: atlas.text
-                    text_style: TextStyle{
-                        font_size: 13
-                        font_family: FontFamily{
-                            latin := FontMember{res: crate_resource("self:resources/fonts/IBM_Plex_Sans/IBMPlexSans-Regular.ttf") asc: -0.1 desc: 0.0}
-                        }
-                        line_spacing: 1.1
-                    }
+                    text_style: fonts.text_heading
                 }
             }
             meta := Label {
                 text: ""
                 draw_text +: {
                     color: atlas.text_dim
-                    text_style: TextStyle{
-                        font_size: 11
-                        font_family: FontFamily{
-                            latin := FontMember{res: crate_resource("self:resources/fonts/IBM_Plex_Sans/IBMPlexSans-Regular.ttf") asc: -0.1 desc: 0.0}
-                        }
-                        line_spacing: 1.1
-                    }
+                    text_style: fonts.text_label
                 }
             }
         }

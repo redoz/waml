@@ -9,6 +9,7 @@ use makepad_widgets::*;
 script_mod! {
     use mod.prelude.widgets_internal.*
     use mod.atlas
+    use mod.fonts
     use mod.widgets.*
     use mod.text.*
 
@@ -24,65 +25,35 @@ script_mod! {
             text: ""
             draw_text +: {
                 color: atlas.text
-                text_style: TextStyle{
-                    font_size: 11
-                    font_family: FontFamily{
-                        latin := FontMember{res: crate_resource("self:resources/fonts/IBM_Plex_Mono/IBMPlexMono-Regular.ttf") asc: -0.1 desc: 0.0}
-                    }
-                    line_spacing: 1.2
-                }
+                text_style: fonts.text_mono
             }
         }
         name := Label {
             text: ""
             draw_text +: {
                 color: atlas.text
-                text_style: TextStyle{
-                    font_size: 11
-                    font_family: FontFamily{
-                        latin := FontMember{res: crate_resource("self:resources/fonts/IBM_Plex_Mono/IBMPlexMono-Regular.ttf") asc: -0.1 desc: 0.0}
-                    }
-                    line_spacing: 1.2
-                }
+                text_style: fonts.text_mono
             }
         }
         colon := Label {
             text: ": "
             draw_text +: {
                 color: atlas.text
-                text_style: TextStyle{
-                    font_size: 11
-                    font_family: FontFamily{
-                        latin := FontMember{res: crate_resource("self:resources/fonts/IBM_Plex_Mono/IBMPlexMono-Regular.ttf") asc: -0.1 desc: 0.0}
-                    }
-                    line_spacing: 1.2
-                }
+                text_style: fonts.text_mono
             }
         }
         ty := Label {
             text: ""
             draw_text +: {
                 color: atlas.accent
-                text_style: TextStyle{
-                    font_size: 11
-                    font_family: FontFamily{
-                        latin := FontMember{res: crate_resource("self:resources/fonts/IBM_Plex_Mono/IBMPlexMono-Regular.ttf") asc: -0.1 desc: 0.0}
-                    }
-                    line_spacing: 1.2
-                }
+                text_style: fonts.text_mono
             }
         }
         mult := Label {
             text: ""
             draw_text +: {
                 color: atlas.text_dim
-                text_style: TextStyle{
-                    font_size: 11
-                    font_family: FontFamily{
-                        latin := FontMember{res: crate_resource("self:resources/fonts/IBM_Plex_Mono/IBMPlexMono-Regular.ttf") asc: -0.1 desc: 0.0}
-                    }
-                    line_spacing: 1.2
-                }
+                text_style: fonts.text_mono
             }
         }
     }
