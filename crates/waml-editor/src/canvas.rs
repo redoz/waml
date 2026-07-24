@@ -48,29 +48,51 @@ script_mod! {
     }
 
     // Edge corner pen: the rounded fillet that replaces a hard 90-degree turn
-    // where two orthogonal `EdgeLine` bars meet. The bars are trimmed back by the
-    // fillet radius at the vertex and this pen strokes the bare quarter-arc
-    // centerline (`arc_to`) to the bar thickness, tangent to both -- so the turn
-    // stays orthogonal-legal (a corner fillet, NOT a spline). Geometry per bend is
-    // computed in `elbow_geometry` and fed in as `center`/`radius`/`a0`/`a1` in
-    // this quad's local pixel space. Fades text_dim -> text zoomed out just like
-    // `EdgeLine` so a corner never reads brighter than the bars it joins.
+    // where two orthogonal `EdgeLine` bars meet, drawn as ONE combined SDF so the
+    // turn stays orthogonal-legal (a corner fillet, NOT a spline). The pixel fn
+    // UNIONS three shapes -- the two short bar stubs (`bar_in`/`bar_out`) and the
+    // quarter-arc band -- so the arc-to-bar joints are interior to a single filled
+    // shape: solid, no antialiased seam, AA only on the outer boundary. The stubs
+    // share the snapped straight bars' centerline + thickness (they overlap them
+    // off the curve), and the arc band's `hw` equals that half-thickness, so the
+    // corner reads the exact same weight as the bars with no notch or lateral jog.
+    // Geometry per bend is computed in `corner_fillet`, all in this quad's local
+    // pixel space. Fades text_dim -> text zoomed out like `EdgeLine` so a corner
+    // never reads brighter than the bars it joins.
     mod.draw.EdgeElbow = mod.draw.DrawColor{
         zoom: uniform(1.0)
         color_deep: uniform(atlas.text)
         center: uniform(vec2(0.0, 0.0))
         radius: uniform(0.0)
-        a0: uniform(0.0)
-        a1: uniform(0.0)
-        // HALF the stroke width: `stroke` renders `abs(shape) - hw` either side, so
-        // hw = thickness/2 gives a full-thickness band matching the bar (same
-        // convention as EdgeMarker's stroke_w).
+        // Arc band HALF-width (= snapped bar thickness / 2), so the band matches the
+        // bars it unions with.
         hw: uniform(1.0)
+        // Axis-aligned quadrant that gates the annulus to the quarter facing the
+        // corner vertex: (x, y, w, h) in quad-local pixels, anchored at the arc
+        // center and extending toward the vertex.
+        gate: uniform(vec4(0.0, 0.0, 0.0, 0.0))
+        // Bar stubs, packed (x, y, w, h) in quad-local pixels.
+        bar_in: uniform(vec4(0.0, 0.0, 0.0, 0.0))
+        bar_out: uniform(vec4(0.0, 0.0, 0.0, 0.0))
         pixel: fn() {
             let sdf = Sdf2d.viewport(self.pos * self.rect_size)
-            sdf.arc_to(self.center.x, self.center.y, self.radius, self.a0, self.a1)
+            // Fillet arc band = annulus (outer disc minus inner disc). Built with
+            // shape METHODS only -- assigning sdf.shape/dist directly from a pixel fn
+            // silently fails this fork's shader VM, so there's no manual `min`.
+            sdf.circle(self.center.x, self.center.y, self.radius + self.hw)
+            sdf.circle(self.center.x, self.center.y, self.radius - self.hw)
+            sdf.subtract()
+            // Gate to the quarter facing the vertex: intersect with the quadrant
+            // rect. Both bounding rays are axis-aligned for an orthogonal bend, so a
+            // plain rect suffices and the band flat-caps exactly on the bar tangents.
+            sdf.rect(self.gate.x, self.gate.y, self.gate.z, self.gate.w)
+            sdf.intersect()
+            // Union the two bar stubs; each `rect` mins into `sdf.shape`, so the
+            // arc-to-bar joints are interior to one filled shape (solid, no AA seam).
+            sdf.rect(self.bar_in.x, self.bar_in.y, self.bar_in.z, self.bar_in.w)
+            sdf.rect(self.bar_out.x, self.bar_out.y, self.bar_out.z, self.bar_out.w)
             let k = clamp((1.0 - self.zoom) * 2.0, 0.0, 0.85)
-            sdf.stroke(mix(self.color, self.color_deep, k), self.hw)
+            sdf.fill(mix(self.color, self.color_deep, k))
             return sdf.result
         }
     }
@@ -735,19 +757,31 @@ fn snap_bar_to_device(rect: Rect, dpi: f64) -> Rect {
 /// invisible (see the draw loop).
 const ELBOW_MIN_DEVICE_PX: f64 = 6.0;
 
-/// A rounded corner (fillet) for one interior bend of a routed edge: the
-/// quarter-arc that replaces the hard 90-degree turn where two orthogonal bars
-/// meet. Screen-space; `center`/`radius`/`a0`/`a1` are in the returned `quad`'s
-/// LOCAL pixel frame (matching the shader's `self.pos * self.rect_size`), so the
-/// pen strokes the bare arc centerline (`arc_to`) to the bar thickness.
-struct EdgeElbow {
+/// A rounded corner (fillet) for one interior bend of a routed edge, built as ONE
+/// combined SDF: the pen unions two short bar stubs with the quarter-arc band, so
+/// the arc-to-bar joints are interior to a single filled shape (solid, no AA) and
+/// antialiasing lands only on the outer boundary. Screen-space; `bar_in`/`bar_out`
+/// (packed `[x, y, w, h]`), `gate`, `center`/`radius` are all in the returned
+/// `quad`'s LOCAL pixel frame (matching the shader's `self.pos * self.rect_size`).
+/// The stubs and the arc share the SNAPPED bar centerlines + half-width, so the
+/// arc reads the same thickness as the bars and lands exactly on them.
+struct CornerFillet {
     quad: Rect,
+    /// Incoming bar stub, quad-local `[x, y, w, h]`; overlaps the straight bar and
+    /// butts the arc at the incoming tangent.
+    bar_in: [f32; 4],
+    /// Outgoing bar stub, quad-local `[x, y, w, h]`.
+    bar_out: [f32; 4],
+    /// Axis-aligned quadrant `[x, y, w, h]` (quad-local) that intersects the annulus
+    /// down to the quarter facing the vertex -- its two edges are the bend's
+    /// bounding rays, so the band flat-caps exactly on the bar tangents.
+    gate: [f32; 4],
     /// Arc center in `quad`-local pixel space.
     center: DVec2,
     radius: f64,
-    /// Sweep endpoints, radians, 0 = +x (screen y-down, same frame as the pen).
-    a0: f32,
-    a1: f32,
+    /// Arc band half-width (= snapped bar thickness / 2), so the band matches the
+    /// bars it joins.
+    hw: f64,
 }
 
 /// The fillet radius for the bend at vertex `v` (incoming from `a`, outgoing to
@@ -773,15 +807,46 @@ fn elbow_radius(a: DVec2, v: DVec2, b: DVec2, r_base: f64) -> f64 {
     r_base.min(lin * 0.5).min(lout * 0.5)
 }
 
-/// Build the fillet arc for the orthogonal bend `a -> v -> b` (screen space), or
-/// `None` if this bend isn't rounded (see [`elbow_radius`]). The arc is tangent
-/// to both centerlines: it starts where the incoming bar is trimmed
-/// (`P1 = v - din*r`) and ends where the outgoing bar resumes (`P2 = v + dout*r`),
-/// centered at `C = v - din*r + dout*r`. The bounding quad spans `C..v` (the arc
-/// centerline's extent, since din/dout are axis-aligned) inflated by the stroke
-/// half-width. Pure, for a GPU-free test.
-fn elbow_geometry(a: DVec2, v: DVec2, b: DVec2, thickness: f64, r_base: f64) -> Option<EdgeElbow> {
-    let r = elbow_radius(a, v, b, r_base);
+/// Overlap length (in the bar's own units) of each corner stub back onto its
+/// straight bar. The stub is drawn UN-snapped inside the combined pen but shares
+/// the straight bar's snapped centerline + thickness, so its coverage coincides
+/// with the straight bar over this overlap -- the butt reads as one continuous
+/// bar, no lateral jog. One thickness is plenty to seat the join.
+const CORNER_STUB_OVERLAP: f64 = 1.0;
+
+/// How far (as a fraction of the arc-band half-width) each stub reaches PAST its
+/// tangent into the arc band, so the stub interpenetrates the band instead of
+/// butting it. Without this overlap the stub and the band's flat cap share a
+/// zero-crossing exactly on the tangent and `fill` antialiases it to a hairline
+/// seam; half the half-width buries the crossing while the straight stub's bulge
+/// past the arc's outer curve stays well under a pixel.
+const CORNER_STUB_SEAL: f64 = 0.5;
+
+/// Build the combined-SDF corner fillet for the orthogonal bend `a -> v -> b`
+/// (screen space), or `None` if this bend isn't rounded (see [`elbow_radius`]).
+///
+/// `in_bar`/`out_bar` are the SNAPPED straight-segment quads the draw loop already
+/// computed for the incoming and outgoing runs; the fillet reads its centerlines
+/// and half-width off them so the arc lands exactly on the (device-snapped) bars
+/// instead of the un-snapped ideal centerline -- that snap-vs-no-snap mismatch was
+/// the notch/thin-arc/lateral-jog. Because both incident bars snap to the SAME
+/// thickness (`snap_bar_to_device` rounds the constant thin axis identically),
+/// the arc band's half-width matches both ends.
+///
+/// The effective vertex `v'` is where the two snapped centerlines cross; the arc
+/// is tangent to both at `P1 = v' - din*r` (incoming) and `P2 = v' + dout*r`
+/// (outgoing), centered at `C = v' - din*r + dout*r`. The two returned bar stubs
+/// run from each tangent back along their bar by [`CORNER_STUB_OVERLAP`] so the
+/// combined shape butts the straight bars off the curve. Pure, for a GPU-free
+/// test.
+fn corner_fillet(
+    a: DVec2,
+    v: DVec2,
+    b: DVec2,
+    in_bar: Rect,
+    out_bar: Rect,
+    r: f64,
+) -> Option<CornerFillet> {
     if r <= 0.0 {
         return None;
     }
@@ -789,37 +854,94 @@ fn elbow_geometry(a: DVec2, v: DVec2, b: DVec2, thickness: f64, r_base: f64) -> 
     let dout = dvec2(b.x - v.x, b.y - v.y);
     let lin = (din.x * din.x + din.y * din.y).sqrt();
     let lout = (dout.x * dout.x + dout.y * dout.y).sqrt();
+    if lin < 1e-6 || lout < 1e-6 {
+        return None;
+    }
     let din = dvec2(din.x / lin, din.y / lin);
     let dout = dvec2(dout.x / lout, dout.y / lout);
-    // Center tangent to both centerlines; the arc endpoints relative to it are
-    // P1-C = -dout*r (start) and P2-C = din*r (end).
-    let c = dvec2(v.x - din.x * r + dout.x * r, v.y - din.y * r + dout.y * r);
-    // Short 90-degree sweep from -dout to din; wrap the raw atan2 delta into
-    // (-pi, pi] so we never take the long 270-degree way around.
-    let a0 = (-dout.y).atan2(-dout.x);
-    let a1 = din.y.atan2(din.x);
-    let pi = std::f64::consts::PI;
-    let tau = 2.0 * pi;
-    let mut d = a1 - a0;
-    while d > pi {
-        d -= tau;
+    // Snapped centerlines: the incoming bar constrains the coordinate PERPENDICULAR
+    // to its run (its thin axis' center); the outgoing bar constrains the other.
+    // Their crossing is the effective (snapped) vertex the arc pivots around. The
+    // snapped thickness is that thin dimension.
+    let (v_prime, t_snap) = if din.y.abs() < 1e-6 {
+        // Incoming horizontal -> its snapped center pins y; outgoing vertical pins x.
+        let cy = in_bar.pos.y + in_bar.size.y * 0.5;
+        let cx = out_bar.pos.x + out_bar.size.x * 0.5;
+        (dvec2(cx, cy), in_bar.size.y)
+    } else {
+        // Incoming vertical -> pins x; outgoing horizontal pins y.
+        let cx = in_bar.pos.x + in_bar.size.x * 0.5;
+        let cy = out_bar.pos.y + out_bar.size.y * 0.5;
+        (dvec2(cx, cy), in_bar.size.x)
+    };
+    let hw = t_snap * 0.5;
+    // Tangent points + arc center off the SNAPPED vertex.
+    let p1 = dvec2(v_prime.x - din.x * r, v_prime.y - din.y * r);
+    let p2 = dvec2(v_prime.x + dout.x * r, v_prime.y + dout.y * r);
+    let c = dvec2(v_prime.x - din.x * r + dout.x * r, v_prime.y - din.y * r + dout.y * r);
+    // Stub far ends, overlapping each straight bar off the curve.
+    let m = t_snap * CORNER_STUB_OVERLAP;
+    let q1 = dvec2(p1.x - din.x * m, p1.y - din.y * m);
+    let q2 = dvec2(p2.x + dout.x * m, p2.y + dout.y * m);
+    // Arc-side stub ends, pushed a short way PAST each tangent INTO the arc band.
+    // A stub that merely butts the tangent shares its zero-crossing with the arc's
+    // flat cap there, so `fill`'s antialiasing renders that shared edge at partial
+    // coverage -- the sub-pixel hairline seam. Interpenetrating the band by `seal`
+    // keeps the union solid (both distances negative) across the tangent, so the
+    // seam is buried; `seal` is small enough that the straight stub barely bulges
+    // past the arc's outer curve (offset ~ seal^2 / 2(r+hw), well under a pixel).
+    let seal = hw * CORNER_STUB_SEAL;
+    let p1s = dvec2(p1.x + din.x * seal, p1.y + din.y * seal);
+    let p2s = dvec2(p2.x - dout.x * seal, p2.y - dout.y * seal);
+    // Quad bounds everything the pen touches: arc center, effective vertex (bounds
+    // the arc's outer bulge), and both stub far ends, inflated by the half-width.
+    let mut lo = dvec2(c.x.min(v_prime.x), c.y.min(v_prime.y));
+    let mut hi = dvec2(c.x.max(v_prime.x), c.y.max(v_prime.y));
+    for p in [q1, q2] {
+        lo = dvec2(lo.x.min(p.x), lo.y.min(p.y));
+        hi = dvec2(hi.x.max(p.x), hi.y.max(p.y));
     }
-    while d < -pi {
-        d += tau;
-    }
-    let a1 = a0 + d;
-    let hw = thickness * 0.5;
-    let lo = dvec2(c.x.min(v.x) - hw, c.y.min(v.y) - hw);
-    let hi = dvec2(c.x.max(v.x) + hw, c.y.max(v.y) + hw);
-    Some(EdgeElbow {
-        quad: Rect {
-            pos: lo,
-            size: dvec2(hi.x - lo.x, hi.y - lo.y),
-        },
-        center: dvec2(c.x - lo.x, c.y - lo.y),
+    lo = dvec2(lo.x - hw, lo.y - hw);
+    hi = dvec2(hi.x + hw, hi.y + hw);
+    let quad = Rect {
+        pos: lo,
+        size: dvec2(hi.x - lo.x, hi.y - lo.y),
+    };
+    // Stub rects: `segment_quad` inflates the degenerate axis to `t_snap` centered
+    // on the shared centerline (Q..P sit on it), so each stub is the exact bar
+    // cross-section. Emit quad-local `[x, y, w, h]`.
+    let local = |seg: Rect| {
+        [
+            (seg.pos.x - lo.x) as f32,
+            (seg.pos.y - lo.y) as f32,
+            seg.size.x as f32,
+            seg.size.y as f32,
+        ]
+    };
+    // Gate quadrant: anchored at the arc center, extending toward the vertex along
+    // whichever axis sign points at it. `big` spans the whole quad so the far edges
+    // never clip the band. Intersecting the annulus with this keeps only the quarter
+    // between the two axis-aligned tangents.
+    let center_local = dvec2(c.x - lo.x, c.y - lo.y);
+    let big = quad.size.x + quad.size.y;
+    let gate_x = if v_prime.x >= c.x {
+        center_local.x
+    } else {
+        center_local.x - big
+    };
+    let gate_y = if v_prime.y >= c.y {
+        center_local.y
+    } else {
+        center_local.y - big
+    };
+    Some(CornerFillet {
+        quad,
+        bar_in: local(segment_quad(q1, p1s, t_snap)),
+        bar_out: local(segment_quad(p2s, q2, t_snap)),
+        gate: [gate_x as f32, gate_y as f32, big as f32, big as f32],
+        center: center_local,
         radius: r,
-        a0: a0 as f32,
-        a1: a1 as f32,
+        hw,
     })
 }
 
@@ -1353,6 +1475,17 @@ impl Widget for GraphCanvas {
                 // no arc).
                 radius[i] = if r >= elbow_min { r } else { 0.0 };
             }
+            // Snapped straight bars, built in three passes so each fillet-adjacent
+            // bar butts the corner pen exactly where the pen's arc is tangent. The
+            // ideal-vs-snapped bar-end mismatch (bar trimmed to the un-snapped
+            // vertex, arc tangent on the snapped one) was the sub-pixel hairline at
+            // the two tangents; trimming the bars to the SAME snapped vertex the
+            // pen pivots on closes it.
+            //
+            // Pass 1: snap each segment's ideal-trimmed quad. This fixes the
+            // perpendicular (thin-axis) coverage; the snapped centerlines are what
+            // the corner pen reads.
+            let mut bars: Vec<Rect> = Vec::with_capacity(n.saturating_sub(1));
             for i in 0..n.saturating_sub(1) {
                 let a = screen[i];
                 let b = screen[i + 1];
@@ -1360,36 +1493,119 @@ impl Widget for GraphCanvas {
                 let len = (seg.x * seg.x + seg.y * seg.y).sqrt();
                 let (mut a, mut b) = (a, b);
                 if len > 1e-6 {
-                    // Pull each end in by that vertex's fillet radius; the arc
-                    // covers the freed corner. Both trims are <= half this segment,
-                    // so the bar never inverts.
                     let u = dvec2(seg.x / len, seg.y / len);
                     let (ts, te) = (radius[i], radius[i + 1]);
                     a = dvec2(a.x + u.x * ts, a.y + u.y * ts);
                     b = dvec2(b.x - u.x * te, b.y - u.y * te);
                 }
-                let quad = snap_bar_to_device(segment_quad(a, b, thickness), dpi);
+                bars.push(snap_bar_to_device(segment_quad(a, b, thickness), dpi));
+            }
+            // Pass 2: the snapped bend vertex per interior fillet -- the crossing of
+            // the two adjacent snapped bar centerlines. This is the SAME pivot
+            // `corner_fillet` derives from the bars, so a bar end trimmed to it
+            // lands exactly on the pen's tangent point (P1/P2).
+            let mut vprime = vec![dvec2(0.0, 0.0); n];
+            for i in 1..n.saturating_sub(1) {
+                if radius[i] <= 0.0 {
+                    continue;
+                }
+                let (in_bar, out_bar) = (bars[i - 1], bars[i]);
+                let din = dvec2(screen[i].x - screen[i - 1].x, screen[i].y - screen[i - 1].y);
+                vprime[i] = if din.y.abs() < 1e-6 {
+                    // Incoming horizontal: its snapped bar pins y, the outgoing pins x.
+                    dvec2(
+                        out_bar.pos.x + out_bar.size.x * 0.5,
+                        in_bar.pos.y + in_bar.size.y * 0.5,
+                    )
+                } else {
+                    dvec2(
+                        in_bar.pos.x + in_bar.size.x * 0.5,
+                        out_bar.pos.y + out_bar.size.y * 0.5,
+                    )
+                };
+            }
+            // Pass 3: re-trim each bar's fillet-side end(s) to the snapped vertex --
+            // exact, with NO long-axis snap (that would nudge the end back off the
+            // tangent) -- while keeping the snapped perpendicular from pass 1. A
+            // non-fillet end keeps the snapped straight coverage. Then draw.
+            let snap = |v: f64| (v * dpi).round() / dpi;
+            for i in 0..n.saturating_sub(1) {
+                let a_fillet = radius[i] > 0.0;
+                let b_fillet = radius[i + 1] > 0.0;
+                let sb = bars[i];
+                let seg = dvec2(screen[i + 1].x - screen[i].x, screen[i + 1].y - screen[i].y);
+                let len = (seg.x * seg.x + seg.y * seg.y).sqrt();
+                let quad = if len < 1e-6 {
+                    sb
+                } else {
+                    let u = dvec2(seg.x / len, seg.y / len);
+                    // `a` = vertex i end, `b` = vertex i+1 end. A fillet end moves to
+                    // the snapped tangent; a straight end stays on its routed point.
+                    let a = if a_fillet {
+                        dvec2(vprime[i].x + u.x * radius[i], vprime[i].y + u.y * radius[i])
+                    } else {
+                        screen[i]
+                    };
+                    let b = if b_fillet {
+                        dvec2(
+                            vprime[i + 1].x - u.x * radius[i + 1],
+                            vprime[i + 1].y - u.y * radius[i + 1],
+                        )
+                    } else {
+                        screen[i + 1]
+                    };
+                    if u.x.abs() >= u.y.abs() {
+                        // Horizontal run: x from the ends (fillet ends stay exact,
+                        // straight ends snap), perpendicular y from the snapped bar.
+                        let ax = if a_fillet { a.x } else { snap(a.x) };
+                        let bx = if b_fillet { b.x } else { snap(b.x) };
+                        let (x0, x1) = (ax.min(bx), ax.max(bx));
+                        Rect {
+                            pos: dvec2(x0, sb.pos.y),
+                            size: dvec2((x1 - x0).max(1.0 / dpi), sb.size.y),
+                        }
+                    } else {
+                        let ay = if a_fillet { a.y } else { snap(a.y) };
+                        let by = if b_fillet { b.y } else { snap(b.y) };
+                        let (y0, y1) = (ay.min(by), ay.max(by));
+                        Rect {
+                            pos: dvec2(sb.pos.x, y0),
+                            size: dvec2(sb.size.x, (y1 - y0).max(1.0 / dpi)),
+                        }
+                    }
+                };
+                bars[i] = quad;
                 self.draw_edge_down.draw_abs(cx, quad);
             }
             for i in 1..n.saturating_sub(1) {
                 if radius[i] <= 0.0 {
                     continue;
                 }
-                if let Some(e) =
-                    elbow_geometry(screen[i - 1], screen[i], screen[i + 1], thickness, r_base)
-                {
+                // Incoming run = bars[i - 1], outgoing = bars[i]; the combined pen
+                // unions two stubs overlapping those with the arc band.
+                if let Some(f) = corner_fillet(
+                    screen[i - 1],
+                    screen[i],
+                    screen[i + 1],
+                    bars[i - 1],
+                    bars[i],
+                    radius[i],
+                ) {
+                    self.draw_elbow
+                        .set_uniform(cx, live_id!(bar_in), &f.bar_in);
+                    self.draw_elbow
+                        .set_uniform(cx, live_id!(bar_out), &f.bar_out);
+                    self.draw_elbow.set_uniform(cx, live_id!(gate), &f.gate);
                     self.draw_elbow.set_uniform(
                         cx,
                         live_id!(center),
-                        &[e.center.x as f32, e.center.y as f32],
+                        &[f.center.x as f32, f.center.y as f32],
                     );
                     self.draw_elbow
-                        .set_uniform(cx, live_id!(radius), &[e.radius as f32]);
-                    self.draw_elbow.set_uniform(cx, live_id!(a0), &[e.a0]);
-                    self.draw_elbow.set_uniform(cx, live_id!(a1), &[e.a1]);
+                        .set_uniform(cx, live_id!(radius), &[f.radius as f32]);
                     self.draw_elbow
-                        .set_uniform(cx, live_id!(hw), &[(thickness * 0.5) as f32]);
-                    self.draw_elbow.draw_abs(cx, e.quad);
+                        .set_uniform(cx, live_id!(hw), &[f.hw as f32]);
+                    self.draw_elbow.draw_abs(cx, f.quad);
                 }
             }
             // Terminal adornments: pick the standard-UML glyph per end + kind
@@ -2252,36 +2468,77 @@ mod tests {
     }
 
     #[test]
-    fn elbow_geometry_is_tangent_to_both_bars() {
+    fn corner_fillet_arc_meets_bars_at_equal_width() {
         let thickness = 2.0;
         // Horizontal-in from the left, turning up; r clamps to 4.
-        let e = elbow_geometry(
-            dvec2(0.0, 0.0),
-            dvec2(10.0, 0.0),
-            dvec2(10.0, -10.0),
-            thickness,
-            4.0,
-        )
-        .unwrap();
-        assert_eq!(e.radius, 4.0);
-        // Center C = v - din*r + dout*r = (6, -4); the quad spans C..v inflated by
-        // the stroke half-width (1), so pos = (5, -5), size = (6, 6).
-        assert_eq!(e.quad.pos, dvec2(5.0, -5.0));
-        assert_eq!(e.quad.size, dvec2(6.0, 6.0));
-        // Center in quad-local space: C - pos = (1, 1).
-        assert_eq!(e.center, dvec2(1.0, 1.0));
-        let near = |a: f32, b: f32| (a - b).abs() < 1e-4;
-        // Sweep from -dout (straight down, +pi/2 in y-down) to din (+x, 0).
-        assert!(near(e.a0, std::f32::consts::FRAC_PI_2), "a0 = {}", e.a0);
-        assert!(near(e.a1, 0.0), "a1 = {}", e.a1);
-        // The trimmed bar ends (P1 = v - din*r, P2 = v + dout*r) sit exactly `r`
-        // from C along each axis, i.e. on the arc.
-        let p1_local = dvec2(6.0 - e.quad.pos.x, 0.0 - e.quad.pos.y); // (1, 5)
-        let p2_local = dvec2(10.0 - e.quad.pos.x, -4.0 - e.quad.pos.y); // (5, 1)
-        for p in [p1_local, p2_local] {
-            let d = ((p.x - e.center.x).powi(2) + (p.y - e.center.y).powi(2)).sqrt();
-            assert!((d - e.radius).abs() < 1e-9, "endpoint off the arc: {}", d);
+        let a = dvec2(0.0, 0.0);
+        let v = dvec2(10.0, 0.0);
+        let b = dvec2(10.0, -10.0);
+        // The snapped straight bars the draw loop feeds in: the fillet reads its
+        // centerlines + thickness off these so the arc lands exactly on them. Here
+        // they're the un-snapped ideal quads, so the arithmetic is exact.
+        let in_bar = segment_quad(a, v, thickness);
+        let out_bar = segment_quad(v, b, thickness);
+        let f = corner_fillet(a, v, b, in_bar, out_bar, 4.0).unwrap();
+        assert_eq!(f.radius, 4.0);
+        // The arc band half-width equals the bar half-width, so a corner reads the
+        // SAME thickness as the bars it joins (the notch/thin-arc came from these
+        // disagreeing).
+        assert_eq!(f.hw, thickness * 0.5);
+        // The two arc tangent points in quad-local space: P1 = v - din*r = (6, 0),
+        // P2 = v + dout*r = (10, -4).
+        let to_local = |p: DVec2| dvec2(p.x - f.quad.pos.x, p.y - f.quad.pos.y);
+        let p1 = to_local(dvec2(6.0, 0.0));
+        let p2 = to_local(dvec2(10.0, -4.0));
+        // 1) Each tangent point lies exactly on the arc centerline (radius r from
+        //    the arc center).
+        for p in [p1, p2] {
+            let d = ((p.x - f.center.x).powi(2) + (p.y - f.center.y).powi(2)).sqrt();
+            assert!((d - f.radius).abs() < 1e-9, "tangent off the arc: {}", d);
         }
+        // 2) The bar rect meeting the arc at each tangent spans the arc band's full
+        //    width there (centerline +/- hw), so the union joint is solid interior
+        //    -- no notch, no lateral jog. Incoming bar is horizontal, so its thin
+        //    (y) span must bracket P1.y by hw and its near end must reach P1.x.
+        let bx0 = f.bar_in[0] as f64;
+        let bx1 = bx0 + f.bar_in[2] as f64;
+        let by0 = f.bar_in[1] as f64;
+        let by1 = by0 + f.bar_in[3] as f64;
+        assert!(
+            (by0 - (p1.y - f.hw)).abs() < 1e-9 && (by1 - (p1.y + f.hw)).abs() < 1e-9,
+            "bar_in y-span {:?} != arc band at P1 y {} +/- {}",
+            (by0, by1),
+            p1.y,
+            f.hw
+        );
+        // The stub does not merely reach the tangent -- it runs THROUGH it and a
+        // short `seal` PAST it into the arc band, so the union has no coincident
+        // zero-crossing at the tangent (that shared edge was the hairline seam).
+        // Incoming din = +x, so the arc-side (max x) end overhangs P1.x by `seal`.
+        let seal = f.hw * CORNER_STUB_SEAL;
+        assert!(
+            bx0 < p1.x && p1.x < bx1,
+            "tangent x {} not buried inside bar_in x-span {:?}",
+            p1.x,
+            (bx0, bx1)
+        );
+        assert!(
+            (bx1 - (p1.x + seal)).abs() < 1e-9,
+            "bar_in arc-side end {} != P1.x {} + seal {}",
+            bx1,
+            p1.x,
+            seal
+        );
+        // Outgoing bar is vertical: its thin (x) span brackets P2.x by hw.
+        let ox0 = f.bar_out[0] as f64;
+        let ox1 = ox0 + f.bar_out[2] as f64;
+        assert!(
+            (ox0 - (p2.x - f.hw)).abs() < 1e-9 && (ox1 - (p2.x + f.hw)).abs() < 1e-9,
+            "bar_out x-span {:?} != arc band at P2 x {} +/- {}",
+            (ox0, ox1),
+            p2.x,
+            f.hw
+        );
     }
 
     #[test]
