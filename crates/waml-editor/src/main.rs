@@ -22,6 +22,7 @@ mod fps_meter;
 mod frame;
 mod icon_button;
 mod icons;
+mod icons_overlay;
 mod inspector;
 mod inspector_panel;
 mod load;
