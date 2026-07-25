@@ -125,10 +125,6 @@ pub struct IconButton {
     /// Pointer-over state, self-managed from FingerHoverIn/Out.
     #[rust]
     hovered: bool,
-    /// Last-drawn absolute rect, cached in `draw_walk` (menu anchor / a later
-    /// caption drag-query seam).
-    #[rust]
-    rect: Rect,
 }
 
 /// The two independent light channels of an icon button, split so a resting
@@ -178,7 +174,6 @@ impl Widget for IconButton {
             .set_uniform(cx, live_id!(lit), &[if hot { 1.0 } else { 0.0 }]);
         let step = self.view.draw_walk(cx, scope, walk);
         let rect = self.view.area().rect(cx);
-        self.rect = rect;
         if let Some(icon) = self.icon {
             let tint = if ink {
                 self.draw_icon_lit.color
@@ -246,10 +241,19 @@ impl IconButton {
             })
     }
 
-    /// The button's last-drawn absolute rect (a menu anchor / caption
-    /// drag-query seam). Unread until the caption buttons migrate here.
-    pub fn rect(&self) -> Rect {
-        self.rect
+    /// The button's on-screen rect (a menu anchor / the caption drag-query
+    /// seam), read LIVE off the drawn `Area` rather than cached in `draw_walk`.
+    ///
+    /// The distinction is load-bearing: makepad DEFERS a `Size::Fill` sibling,
+    /// so a button that TRAILS one in a `flow: Right` row (`inspector_btn`
+    /// after the `Fill` tab strip) walks while the turtle is still parked at
+    /// the strip's start, and only gets shifted to its final x once the row's
+    /// turtle closes. A rect captured mid-`draw_walk` therefore names the
+    /// PRE-shift position -- which, hit-tested by the caption's
+    /// `WindowDragQuery`, made every press over `[I]` an OS window drag and the
+    /// toggle silently dead. The `Area` resolves after the shift.
+    pub fn rect(&self, cx: &Cx) -> Rect {
+        self.view.area().rect(cx)
     }
 }
 
@@ -286,8 +290,10 @@ impl IconButtonRef {
     }
 
     /// See [`IconButton::rect`].
-    pub fn rect(&self) -> Rect {
-        self.borrow().map(|inner| inner.rect()).unwrap_or_default()
+    pub fn rect(&self, cx: &Cx) -> Rect {
+        self.borrow()
+            .map(|inner| inner.rect(cx))
+            .unwrap_or_default()
     }
 }
 

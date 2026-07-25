@@ -1774,7 +1774,7 @@ impl MatchEvent for App {
             // from the button's bottom with NO `CAPTION_H` clamp. Clamping (the
             // logo menu's behaviour, right for a full-band logo) would shove the
             // card down to the caption bottom and leave a big gap under the glyph.
-            let btn = self.ui.widget(cx, ids!(menu_btn)).as_icon_button().rect();
+            let btn = self.ui.widget(cx, ids!(menu_btn)).as_icon_button().rect(cx);
             let anchor = dvec2(
                 btn.pos.x + crate::popup::menu::MENU_INDENT_X,
                 btn.pos.y + btn.size.y + crate::popup::menu::MENU_GAP,
@@ -2821,7 +2821,7 @@ impl AppMain for App {
                 .ui
                 .widget(cx, ids!(menu_btn))
                 .as_icon_button()
-                .rect()
+                .rect(cx)
                 .contains(dq.abs);
             // Same for the tab row's tree-column toggle: it sits in the caption
             // drag region, so without this its clicks become window drags and
@@ -2830,16 +2830,23 @@ impl AppMain for App {
                 .ui
                 .widget(cx, ids!(tree_btn))
                 .as_icon_button()
-                .rect()
+                .rect(cx)
                 .contains(dq.abs);
             // Same for the tab row's right-dock toggle: it sits in the caption
             // drag region, so without this every press becomes a window drag
             // and the toggle is silently dead.
+            //
+            // This one is why `IconButton::rect` reads the LIVE area instead of
+            // a rect cached in `draw_walk`: `[I]` TRAILS the `Fill` tab strip,
+            // whose deferred walk shifts the button right only after the row's
+            // turtle closes. The cached rect named the pre-shift x (the tree
+            // column's right edge), so this test was false everywhere the
+            // button actually is.
             let over_inspector_btn = self
                 .ui
                 .widget(cx, ids!(inspector_btn))
                 .as_icon_button()
-                .rect()
+                .rect(cx)
                 .contains(dq.abs);
             // While the drop-down is open, treat the WHOLE caption as client
             // area. The header is otherwise an OS window-drag region, so a press
