@@ -38,7 +38,7 @@ pub const MENU_GAP: f64 = -4.0;
 pub const MENU_INDENT_X: f64 = 2.0;
 /// Caption-bar height (matches `window.caption_bar_height_override` in the App
 /// DSL). The card top is clamped to this so it clears the caption's clip band.
-pub const CAPTION_H: f64 = 44.0;
+pub const CAPTION_H: f64 = 66.0;
 /// Cursor travel (lpx) from the press point before a held press is
 /// treated as a marking drag rather than a tap (mirrors `Radial`'s threshold).
 pub const DRAG_THRESHOLD: f64 = 6.0;

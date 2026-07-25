@@ -47,7 +47,7 @@ script_mod! {
         width: Fill
         height: 34.0
         draw_bg +: { color: atlas.field_bg }
-        draw_edge +: { color: atlas.frame_hi }
+        draw_edge +: { color: atlas.surface_border }
         draw_tab: mod.draw.TabFrame{ color: atlas.canvas_ground }
         // Leading per-kind glyph tint. Dark text ink (not the icon set's default
         // accent) so the glyph reads against the blue-tinted bar / white card --
@@ -390,9 +390,26 @@ const CLOSE_HOVER_DY: f64 = 2.0;
 const ICON_SIZE: f64 = 14.0;
 /// Gap between the leading glyph and the tab label.
 const ICON_GAP: f64 = 6.0;
-/// Inset from the bar's top edge down to the tab card, so the card's top
-/// accent line is visible and tabs float below the window's top edge.
-const TOP_MARGIN: f64 = 14.0;
+/// Inset from the tab-row's top edge down to the tab card, so the card's top
+/// accent line is visible and tabs float below the title row. Smaller now that
+/// the strip owns a dedicated lower band (two-row caption) instead of sharing a
+/// single 44px bar -- lets the cards stand taller and fill the row.
+const TOP_MARGIN: f64 = 8.0;
+/// Right-side reserve (min/max/close cluster, 3 x 46px) the tab strip does not
+/// span; the top rule overshoots its own turtle by this so the line reaches the
+/// window's right edge (buttons hug the top, leaving this y clear). Only works
+/// because `caption_col`/`tab_row` set `clip_x:false` (see `app.rs`).
+const WINDOW_BUTTONS_W: f64 = 138.0;
+/// Device-px over which the top rule dissolves before the window's right edge. A
+/// crisp 1px rule is a plain quad (an SDF fill under ~2px has zero AA coverage on
+/// this fork -- see the shader-gotchas memory), and a plain quad carries one flat
+/// colour, so the fade is faked as `EDGE_FADE_STEPS` stacked 1px segments of
+/// decreasing alpha rather than a true per-pixel gradient.
+const EDGE_FADE: f64 = 48.0;
+const EDGE_FADE_STEPS: usize = 4;
+/// Left inset of the first tab so its card border lines up with the left edge of
+/// the burger icon on the title row above (burger button left + its icon inset).
+const TAB_LEFT_INSET: f64 = 10.0;
 const MAX_TITLE_CHARS: usize = 18;
 
 fn truncate_title(s: &str) -> String {
@@ -574,18 +591,35 @@ impl Widget for DocTabs {
         }
         let rect = cx.walk_turtle(walk);
         self.draw_bg.draw_abs(cx, rect);
-        self.draw_edge.draw_abs(
-            cx,
-            Rect {
-                pos: rect.pos,
-                size: dvec2(rect.size.x, 1.5),
-            },
-        );
+        // Top rule: a crisp, pixel-snapped 1px line. Snapping the y to a whole
+        // device row keeps it from straddling (and blurring across) two rows. The
+        // line overshoots the tab band into the window-button gap so it reaches the
+        // window's right edge, then dissolves over the last `EDGE_FADE` px -- faked
+        // as stacked 1px segments of falling alpha since a crisp plain quad carries
+        // one flat colour (see `EDGE_FADE`).
+        let base = self.draw_edge.color;
+        let y = rect.pos.y.round();
+        let x0 = rect.pos.x.round();
+        let x_end = (rect.pos.x + rect.size.x + WINDOW_BUTTONS_W).round();
+        let solid_end = x_end - EDGE_FADE;
+        self.draw_edge.color = base;
+        self.draw_edge
+            .draw_abs(cx, Rect { pos: dvec2(x0, y), size: dvec2(solid_end - x0, 1.0) });
+        for i in 0..EDGE_FADE_STEPS {
+            let step_w = EDGE_FADE / EDGE_FADE_STEPS as f64;
+            let sx = solid_end + step_w * i as f64;
+            // Alpha falls from ~0.875 (nearest the solid run) to ~0.125 at the edge.
+            let a = 1.0 - (i as f32 + 0.5) / EDGE_FADE_STEPS as f32;
+            self.draw_edge.color = Vec4 { x: base.x, y: base.y, z: base.z, w: base.w * a };
+            self.draw_edge
+                .draw_abs(cx, Rect { pos: dvec2(sx, y), size: dvec2(step_w, 1.0) });
+        }
+        self.draw_edge.color = base;
 
         self.tab_rects.clear();
         self.close_rects.clear();
 
-        let mut x = rect.pos.x;
+        let mut x = rect.pos.x + TAB_LEFT_INSET;
         for (i, tab) in self.tabs.iter().enumerate() {
             // Every doc tab is closable now, including the Diagram base.
             let title = truncate_title(&tab.title);

@@ -44,86 +44,121 @@ script_mod! {
             main_window := Window{
                 window.inner_size: vec2(1280, 840)
                 window.title: "WAML"
-                window.caption_bar_height_override: 44.0
+                window.caption_bar_height_override: 66.0
                 caption_bar: SolidView{
                     visible: false
+                    // Two-row Zed-style title bar. A big logo pinned left spans the
+                    // full 64px band (both rows); a right column stacks the model-
+                    // name title row over the doc-tab row. `flow: Right` with
+                    // `align y:0.5` centres the logo + burger across the whole band,
+                    // and the column itself carries the vertical split.
+                    //
+                    // The logo and burger stay DIRECT caption-bar children: the
+                    // burger because its drop-down anchor derives the caption bottom
+                    // from `btn centre + CAPTION_H/2` (only valid when it is centred
+                    // in the full band) AND interactive caption widgets lose their
+                    // hover/press when nested; the logo because it is drag-query
+                    // driven off `logo.drawn_rect()`. `doc_tabs` tolerates nesting
+                    // (its own capture-overload hit path + drag-query `hits_any_tab`).
                     flow: Right
-                    // Fill the 44px caption slot and center children on its
-                    // vertical axis; `Fit` let the shorter content top-sit, which
-                    // read as the model name riding too high.
                     height: Fill
                     align: Align{y: 0.5}
                     draw_bg.color: atlas.field_bg
-                    // Fixed-width nav cluster (252) holding the logo/name. The
-                    // burger button follows it as a direct caption-bar child --
-                    // its hit/drag-query path only works there, not nested --
-                    // adding 40px (36 + 4 margins) so the burger's right edge and
-                    // the first doc tab both land on the tree's right edge
-                    // (12 margin + 280 tree = 292).
-                    nav := View{
-                        width: 252.0
-                        height: Fill
-                        flow: Right
-                        align: Align{y: 0.5}
+                    // 6-color "W" wordmark, drawn as an anti-aliased SDF (see
+                    // `logo.rs`) -- DrawSvg stair-stepped at this size. An
+                    // interactive `LogoMark` widget: hover plays the shimmer,
+                    // a left-click opens the app radial (see the drag-query
+                    // override + `logo_action` wiring below). Bigger than the
+                    // old 52x29.7 now that it owns the full band height --
+                    // holds the logo's ~1.749 content aspect (70/40).
                     wordmark := View{
                         width: Fit
                         height: Fill
                         align: Align{x: 0.0, y: 0.5}
-                        margin: Inset{left: 2.0}
+                        margin: Inset{left: 6.0}
                         padding: Inset{left: 6.0, right: 10.0}
-                        // 6-color "W" wordmark, drawn as an anti-aliased SDF (see
-                        // `logo.rs`) -- DrawSvg stair-stepped at this size. Now an
-                        // interactive `LogoMark` widget: hover plays the shimmer,
-                        // a left-click opens the app radial (see the drag-query
-                        // override + `logo_action` wiring below). Fixed size holds
-                        // the logo's ~1.749 content aspect.
                         logo := LogoMark{
-                            width: 52.0
-                            height: 29.7
+                            width: 70.0
+                            height: 40.0
                         }
                     }
-                    // `Fill` + `clip_x` bound a long model path to the nav instead
-                    // of letting a `Fit` box grow with the path and shove the
-                    // burger past 292. Left-aligned; the nav's fixed width holds
-                    // the layout regardless of name length.
-                    model_name_view := View{
+                    // Right column: model-name title row (with the burger) over the
+                    // doc-tab row.
+                    caption_col := View{
                         width: Fill
                         height: Fill
-                        clip_x: true
-                        align: Align{x: 0.0, y: 0.5}
-                        model_name := Label{
-                            text: ""
-                            draw_text +: {
-                                color: atlas.text_dim
-                                // `text_title` (Condensed SemiBold, 16). The
-                                // caption/window-title role -- deliberately
-                                // larger than the old inline 13 (see plan Task 3
-                                // FLAG #1). Vertical trim lives on the token
-                                // itself in `fonts.rs` so it stays consistent
-                                // with the shortcuts-overlay title (Task 9).
-                                text_style: fonts.text_title
+                        flow: Down
+                        // Don't clip the tab band at the column's right edge: the
+                        // top rule (drawn by `DocTabs`) extends past this column into
+                        // the top-hugging window-button gap so it reaches the window's
+                        // right edge. `title_row` keeps its own `clip_x` for the model
+                        // name; only the tab band needs the overshoot.
+                        clip_x: false
+                        // Title row: the burger + the open model's name, sitting on
+                        // one line above the tabs. `clip_x` bounds a long model path
+                        // to the row.
+                        title_row := View{
+                            width: Fill
+                            height: 34.0
+                            flow: Right
+                            // `align y:0.5` centres the burger + heading metric box
+                            // in the row (the proven single-row recipe -- margins
+                            // are absorbed by this centring turtle and do nothing
+                            // for the label here).
+                            align: Align{x: 0.0, y: 0.5}
+                            clip_x: true
+                            padding: Inset{left: 2.0}
+                            // Burger on the title line, scaled up (30px button, 20px
+                            // glyph) so it reads as a peer of the heading and sits on
+                            // its centreline. 30 in a 34px row leaves 2px slack top
+                            // and bottom, clearing the window top edge. Hidden until
+                            // a model opens (`show_editor`/`show_start_screen`); its
+                            // drop-down anchors off the caption bottom (see the
+                            // burger-menu handler), so its row placement is free.
+                            menu_btn := IconButton{ width: 30.0 height: 30.0 icon_size: 18.0 margin: Inset{left: 0.0, right: 2.0, top: 4.0} visible: false }
+                            model_name := Label{
+                                text: ""
+                                draw_text +: {
+                                    color: atlas.text
+                                    // Regular weight, 11px -- one px above the 10px
+                                    // doc-tab labels so it reads as the heading. The
+                                    // y:0.5-centred metric box centres glyph mass
+                                    // when ascender-|descender| ~= cap; the
+                                    // `asc:0.1 desc:0.15` trim (proven for the old
+                                    // single-row name) seats it on the row centre,
+                                    // clear of the window top edge.
+                                    text_style: TextStyle{
+                                        font_size: 11
+                                        font_family: FontFamily{
+                                            latin := FontMember{res: crate_resource("self:resources/fonts/IBM_Plex_Sans/IBMPlexSans-Regular.ttf") asc: 0.1 desc: 0.15}
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        // Tab row: the doc-tab strip fills the lower band. Its own
+                        // `draw_bg` repaints `field_bg`, so it reads seamless with
+                        // the caption; the active tab card bleeds down into the body.
+                        tab_row := View{
+                            width: Fill
+                            height: Fill
+                            flow: Right
+                            // See `caption_col`: the tab strip's top rule overshoots
+                            // this row's right edge to reach the window edge.
+                            clip_x: false
+                            doc_tabs := DocTabs{
+                                width: Fill
+                                height: Fill
                             }
                         }
                     }
-                    }
-                    // Burger button right after the nav, as a direct caption-bar
-                    // child. Outer margins hold the 292 edge (252 + 40). It
-                    // starts hidden -- `App` flips it visible only while a model
-                    // is open (see `show_editor` / `show_start_screen`). Save is
-                    // gone: the editor autosaves.
-                    // The 32px button is seated by the bar's `align: y:0.5`; the
-                    // asymmetric `top: 2` margin (vs `bottom: 0`) biases it 1px
-                    // BELOW the geometric centre -- at a true centre the burger
-                    // reads optically high, so the layout, not the button, carries
-                    // the 1px down-nudge. Left/right hold the 292 edge (252 + 40).
-                    menu_btn := IconButton{ margin: Inset{left: 1.0, right: 3.0, top: 2.0} visible: false }
-                    doc_tabs := DocTabs{
-                        width: Fill
-                        height: Fill
-                    }
+                    // Min/max/close hug the TOP of the tall caption band: the bar's
+                    // `align y:0.5` would otherwise float them mid-height. `height:
+                    // Fill` + own top-align seats the 29px buttons at y0.
                     windows_buttons := View {
                         visible: false
-                        width: Fit height: Fit
+                        width: Fit height: Fill
+                        align: Align{y: 0.0}
                         min := DesktopButton {
                             draw_bg.button_type: DesktopButtonType.WindowsMin
                             width: 46 height: 29
@@ -1339,23 +1374,17 @@ impl MatchEvent for App {
             //
             // Anchored a touch right of the button's left edge and tucked up
             // under it (negative `MENU_GAP`) so the card hangs off the glyph.
-            // No caption clamp: `MenuPopup` draws in the window overlay, so the
-            // card renders over the caption band instead of being clipped at the
-            // body's top edge.
             //
-            // The burger is a 32px `IconButton` centred in the 44px caption bar,
-            // so its own bottom edge sits well inside the band. Anchor the card
-            // off the CAPTION-BAR bottom instead (button centre + half the bar
-            // height), so the drop keeps the same gap regardless of the button's
-            // height -- deriving it from `btn.size.y` alone let the shorter box
-            // pull the card up into the caption (read as attaching too close).
+            // The burger sits in the title row (upper band). `MenuPopup` draws in
+            // the full-window overlay (see its `draw_walk`) -- over the caption
+            // band, NOT clipped at the caption/body boundary -- so drop straight
+            // from the button's bottom with NO `CAPTION_H` clamp. Clamping (the
+            // logo menu's behaviour, right for a full-band logo) would shove the
+            // card down to the caption bottom and leave a big gap under the glyph.
             let btn = self.ui.widget(cx, ids!(menu_btn)).as_icon_button().rect();
             let anchor = dvec2(
                 btn.pos.x + crate::popup::menu::MENU_INDENT_X,
-                btn.pos.y
-                    + btn.size.y * 0.5
-                    + crate::popup::menu::CAPTION_H * 0.5
-                    + crate::popup::menu::MENU_GAP,
+                btn.pos.y + btn.size.y + crate::popup::menu::MENU_GAP,
             );
             let bounds = self.window_bounds(cx);
             if let Some(mut pr) = self
@@ -1858,7 +1887,7 @@ impl MatchEvent for App {
             .and_then(|l| l.logo_action(actions).map(|_| l.drawn_rect()));
         if let Some(logo_rect) = logo_click {
             // Anchor the card at the logo's bottom-left so it drops down-right.
-            // The wordmark sits INSIDE the 44px caption bar (see
+            // The wordmark sits INSIDE the 66px caption bar (see
             // `window.caption_bar_height_override`), but `MenuPopup` draws in the
             // window overlay, whose clip rect starts at the caption's bottom --
             // so clamp the top down to the caption bottom, else the card's top
