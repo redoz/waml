@@ -63,33 +63,59 @@ which leaves a blank window with no chrome and no explanation. It changes to log
 `show_start_screen(cx)`, so a typo'd flag yields a usable window. This is a pre-existing
 bug that a mistyped `--color` would otherwise make routine.
 
-### 2. Badge — right-floated in `title_row`
+### 2. Both marks are one widget: `AgentMark`
 
-Lives in the two-row caption's upper row (`app.rs`, `title_row`), which today holds the
-burger and the model name.
+A new `crates/waml-editor/src/agent_mark.rs` owns the wash and the badge together, in a
+single widget mounted in the two-row caption's upper row (`app.rs`, `title_row`).
 
-- `model_name` changes from its default `Fit` to `width: Fill`, absorbing the row's
-  slack so the badge floats hard right, landing just left of the min/max/close cluster.
-  The label still starts at the same x and still left-aligns, so short names look
-  unchanged; long paths clip on the row's existing `clip_x` exactly as now.
-- A new `agent_badge := SolidView{ visible: false }` follows it: `Fit`/`Fit`, padding
-  6px horizontal / 2px vertical, 6px right margin, holding a single `Label`.
+**Why a custom widget rather than tinting a `SolidView`.** The obvious shape — make
+`title_row` a `SolidView` and set its `draw_bg.color` at runtime — cannot be built on
+this fork. `View::draw_bg` is a `DrawQuad`, and `SolidView`'s `color` is a shader
+`instance` (`view_ui.rs:85`). The fork exposes `set_uniform` for *uniforms*
+(`canvas.rs:2359`) but nothing for instance vars, and it has no `apply_over`-style
+setter — `app.rs:789` records exactly this, which is why `sync_dock_slots` pokes public
+`walk` fields instead. A runtime-settable colour therefore requires a Rust-typed draw
+struct: `DrawColor` (`draw_quad.rs:103`, `{ draw_super: DrawQuad, color: Vec4f }`), the
+pattern `canvas.rs` already uses for `draw_rule` / `draw_veil`.
+
+`AgentMark` holds:
+
+- `draw_wash: DrawColor` — the title-row band
+- `draw_chip: DrawColor` — the badge fill
+- `draw_label: DrawText` — the badge text
+- `#[rust] badge: Option<String>`, `#[rust] tint: Option<Vec4>`, `#[rust] row_w: f64`
+
+**Mounting: zero layout footprint.** It is declared as the **first** child of
+`title_row` with `width: 0.0, height: Fill`. Zero width means it consumes no space in
+the `flow: Right` row, so `menu_btn` and `model_name` keep their exact current
+positions — no `width: Fill` change to `model_name`, no restructuring, and critically
+no extra nesting for `menu_btn`, whose interactivity is depth-sensitive and gate-blind.
+First position also fixes paint order: the wash paints *under* the burger and the model
+name rather than gelling over them.
+
+Everything is then drawn with `draw_abs` from the widget's own origin, over a width the
+App supplies. This is the established trick in this file: `DocTabs::left_overshoot`
+(`doc_tabs.rs:823`, driven from `app.rs:856`) already draws outside its own turtle rect
+using an App-measured delta, and `title_row`'s existing `clip_x: true` bounds the result
+to the row.
+
+- **Wash:** a `row_w × row_h` quad at the widget's origin, filled with `field_bg`
+  blended 15% toward the tint. Drawn only when a tint is set.
+- **Badge:** the label measured, then a chip right-aligned at `row_w - chip_w - 6`,
+  padded 6px horizontal / 2px vertical. Drawn only when `--title` was given.
 - The label uses the existing `fonts.text_caption` role — the same role `model_name`
   uses. Reusing it avoids adding a font role, which would require `fonts.rs`,
   `script_gate.rs` and `fonts_overlay.rs` to move together.
-- Fill colour is `--color`. Label colour is chosen by the fill's relative luminance
-  (near-white on dark fills, near-black on light ones) so any hex an agent picks stays
-  readable.
-- With `--title` but no `--color`, the chip falls back to Atlas tokens (a dim chrome
-  fill with `atlas.text`), so the badge is still legible in both themes.
-- `visible` is driven by whether `--title` was given. `--color` alone shows no badge.
+- Chip fill is `--color`; label colour is picked by the fill's relative luminance
+  (near-white on dark fills, near-black on light ones) so any hex stays readable. With
+  `--title` and no `--color`, the chip falls back to Atlas tokens (`selection` fill,
+  `atlas.text` ink) so it stays legible in both themes.
 
-### 3. Wash — the title row only
+`App` supplies `row_w` by measuring `ids!(title_row)`'s drawn rect, change-guarded and
+pushed via `set_row_width(cx, px)` — the same measure-and-push shape as `sync_tree_gap`.
+Zero until the row has been laid out once, which draws nothing; the next pass fills in.
 
-`title_row` changes from `View` to `SolidView` with `draw_bg.color: atlas.field_bg`.
-That is pixel-identical to today (the caption bar behind it already paints
-`atlas.field_bg`); it exists so the colour is addressable at runtime. With `--color` set,
-its `draw_bg.color` is blended 15% toward the tint.
+### 3. Why the wash covers the title row and not the whole caption
 
 The tint deliberately does **not** go on `caption_bar` itself, for two reasons:
 
@@ -103,29 +129,33 @@ Washing one clean 34px band and leaving the tabs untouched avoids both.
 15% is low enough that the window still reads as Atlas in light and dark rather than as
 a broken theme, and high enough to identify at a glance across a monitor.
 
-The strip is **static**. An animated/pulsing tint was considered and rejected: it would
+The wash is **static**. An animated/pulsing tint was considered and rejected: it would
 keep the app redrawing forever, and canvas draws are already expensive.
+
+`agent_mark::script_mod(vm)` must be registered **before** `app.rs`'s own in
+`main.rs` — a custom widget mounted as a DSL child is a dead, invisible node if its
+module resolves late, and neither tests nor review catch it.
 
 ### 4. State and reapplication
 
 `App` holds `agent_badge: Option<String>` and `agent_tint: Option<Vec4>`, populated in
 `handle_startup` from the parsed `Args`.
 
-A single `apply_agent_marks(&mut self, cx)` sets the badge text, the badge visibility,
-the badge fill/label colours, and the title-row wash. It is called from:
+A single `apply_agent_marks(&mut self, cx)` pushes both into the `AgentMark` widget. It
+is called from:
 
 - `handle_startup`, after parsing; and
 - `rehydrate`, **before** its start-screen early-return.
 
 The second call is required, not defensive. The `T` theme toggle goes through
-`cx.request_live_edit()` → `Apply::Reload`, which resets DSL-declared values — including
-`title_row`'s `draw_bg.color` and the badge's text and visibility. Without the
-`rehydrate` call, both marks vanish the first time an agent toggles the theme, and the
-window silently becomes indistinguishable again.
+`cx.request_live_edit()` → `Apply::Reload`, which resets `#[live]`/`#[rust]` widget state
+— including `AgentMark`'s `badge` and `tint`. Without the `rehydrate` call, both marks
+vanish the first time an agent toggles the theme, and the window silently becomes
+indistinguishable again.
 
-Runtime mutation follows the pattern already in `sync_dock_slots`: `borrow_mut::<T>()`
-on the widget and poke the public field, since this fork's widget API has no
-`apply_over`-style setter.
+Reaching the widget follows the pattern already in `sync_dock_slots`: `borrow_mut::<T>()`
+on the widget and call its setter, since this fork's widget API has no `apply_over`-style
+setter.
 
 ## Data flow
 
@@ -135,12 +165,16 @@ argv ──> cli::parse ──> Args{badge, tint}
                           ├─ App.agent_badge / App.agent_tint   (handle_startup)
                           │
                           └─ apply_agent_marks(cx)
-                                 ├─ agent_badge label text + visible
-                                 ├─ agent_badge draw_bg.color   = tint
-                                 ├─ agent_badge label colour    = luminance pick
-                                 └─ title_row  draw_bg.color    = mix(field_bg, tint, 0.15)
-                                        ▲
-                                 rehydrate() re-invokes after every theme reload
+                                 └─ AgentMark::set_marks(cx, badge, tint)
+                                        │      ▲
+                                        │      └─ rehydrate() re-invokes after every
+                                        │         theme reload
+                                        └─ draw_walk (draw_abs over App-supplied row_w)
+                                               ├─ draw_wash  = mix(field_bg, tint, 0.15)
+                                               ├─ draw_chip  = tint
+                                               └─ draw_label = luminance pick
+
+sync_agent_row(cx): measure ids!(title_row) rect ──> AgentMark::set_row_width(cx, px)
 ```
 
 ## Error handling
@@ -166,20 +200,31 @@ Unit tests in `cli.rs` (no `Cx`, runs in the headless gate):
 - unparseable hex, wrong-length hex, and missing values each return `Err`
 - absent flags leave both fields `None`
 
-Plus a pure, tested luminance → label-colour function.
+Plus pure, tested helpers in `agent_mark.rs`: luminance → label-colour, and
+`mix(field_bg, tint, 0.15)`.
 
 No UI test: the gate is headless and cannot assert on drawn pixels. Verification is an
 interactive launch, captured per-pid, of two windows with different `--title`/`--color`
-values, confirming the badge sits right-floated in the title row without displacing the
-model name, the wash reads at a glance, and both survive a `T` theme toggle.
+values, confirming:
 
-## Open item
+- the badge sits right-floated in the title row and the burger and model name have not
+  moved a pixel from their current positions;
+- `menu_btn` still opens its drop-down and `tree_btn` still toggles the column — the
+  caption is the known gate-blind failure class, so the click test is mandatory, not
+  optional;
+- the wash reads at a glance and does not gel the burger glyph or the model name;
+- both marks survive a `T` theme toggle;
+- a no-dir `--color`-only launch shows the wash on the start screen.
 
-Whether the caption bar is visible on the start screen (pre-model) is unconfirmed —
-`caption_bar` declares `visible: false` and nothing in `app.rs` flips it, so makepad's
-`Window` appears to own that. If the caption is hidden there, a `--title`-only launch of
-the start screen shows no marker at all. Resolve during implementation; if confirmed,
-note it in the flags' help text rather than growing the design.
+## Resolved: caption visibility on the start screen
+
+`caption_bar`'s `visible: false` is the makepad default and does **not** hide it — the
+`Window` widget flips it on Windows, which is why nothing in `app.rs` touches it. The
+caption, and therefore both marks, render on the start screen as well as with a model
+open. A `--color`-only, no-dir launch is a valid way to tag a window.
+
+`menu_btn` and `tree_btn` *are* app-hidden until a model opens, but `AgentMark` is not
+gated on that — it shows whenever it has something to draw.
 
 ## Explicitly out of scope
 
