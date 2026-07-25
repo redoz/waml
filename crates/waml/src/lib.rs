@@ -13,6 +13,7 @@ pub mod ops;
 pub mod parse;
 pub mod seed;
 pub mod serialize;
+pub mod share;
 pub mod slug;
 pub mod solve;
 pub mod syntax;

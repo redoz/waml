@@ -29,6 +29,24 @@ enum Command {
         #[arg(long, value_enum, default_value_t = Format::Human)]
         format: Format,
     },
+    /// Print a shareable link that carries the whole bundle in its URL fragment.
+    ///
+    /// The web editor reconstructs the model from the fragment, so the link is
+    /// self-contained: nothing is uploaded anywhere, and browsers never send a
+    /// fragment to the server.
+    Share {
+        /// Files or directories to pack into the link.
+        paths: Vec<PathBuf>,
+        /// Read a single document/bundle from stdin instead.
+        #[arg(long)]
+        stdin: bool,
+        /// Where the web editor is hosted. Omit to print just the fragment.
+        #[arg(long, default_value = "https://redoz.github.io/waml/")]
+        base_url: String,
+        /// Print only the `w1.` fragment, with no URL around it.
+        #[arg(long)]
+        fragment_only: bool,
+    },
     /// Run the WAML language server (stdio LSP).
     Lsp {
         /// Use stdio transport (the only supported transport in Phase 1).
@@ -295,6 +313,28 @@ fn main() {
             };
             println!("{out}");
             commands::check_exit_code(&diags)
+        }
+        Command::Share {
+            paths,
+            stdin,
+            base_url,
+            fragment_only,
+        } => {
+            let bundle = match io::read_bundle(&paths, stdin) {
+                Ok(b) => b,
+                Err(e) => {
+                    eprintln!("waml: {e}");
+                    std::process::exit(2);
+                }
+            };
+            let fragment = waml::share::encode(&bundle);
+            if fragment_only {
+                println!("{fragment}");
+            } else {
+                // One `#` exactly, whether or not the base URL ends in a slash.
+                println!("{}#{fragment}", base_url.trim_end_matches('#'));
+            }
+            0
         }
         Command::Fmt {
             paths,

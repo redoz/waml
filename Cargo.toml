@@ -10,6 +10,8 @@ license = "Apache-2.0"
 [workspace.dependencies]
 regex = "1"
 pulldown-cmark = { version = "0.12", default-features = false }
+# Pure-Rust deflate, so it cross-compiles to wasm32 with no C toolchain.
+miniz_oxide = "0.8"
 ttf-parser = "0.25"
 clap = { version = "4", features = ["derive"] }
 serde = { version = "1", features = ["derive"] }
