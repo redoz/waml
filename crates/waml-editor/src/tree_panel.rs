@@ -64,30 +64,29 @@ script_mod! {
                 return sdf.result
             }
         }
-        // Panel carries the Atlas HUD frame. Unlike the inspector / tool_dock
-        // panels -- which own a `draw_bg: DrawColor` field and can point it
-        // straight at `mod.draw.AccentFrame` -- this widget derefs `View`, whose
-        // `draw_bg` is a `DrawQuad`; a `DrawColor` object can't swap onto it.
-        // So the AccentFrame material is inlined onto the DrawQuad here. Keep this
-        // shader in sync with `frame.rs` (opaque `field_bg` fill ringed by the
-        // source-bright accent stroke, 150deg alpha gradient). Padding insets the
-        // FileTree so it stops painting `field_bg` over the 1.5px frame ring.
+        // Flat, opaque `field_bg` -- no ring, no corner radius, no divider. The
+        // panel used to inline the `frame.rs` / `AccentFrame` material (a 1.5px
+        // accent stroke round the fill) because it floated as a HUD card; it is
+        // a flush column now, butted to the window's left edge and to the caption
+        // band above it, so the ring had nothing left to separate and only cut
+        // the two apart. Chrome mass versus canvas ground carries the edge
+        // instead. The inspector still floats and still keeps its ring -- the
+        // asymmetry is deliberate, so do NOT sync this shader back to `frame.rs`.
+        //
+        // A flat fill rather than an SDF one: nothing here needs coverage or
+        // antialiasing now that the ring and the radius are gone. The body is
+        // still inlined onto the `DrawQuad` because this widget derefs `View`,
+        // whose `draw_bg` is a `DrawQuad` a `DrawColor` object can't swap onto --
+        // so this repeats `mod.draw.DrawColor`'s own pixel fn verbatim, including
+        // its premultiply (the render pass blends premultiplied alpha).
         draw_bg +: {
             color: atlas.field_bg
-            border_hi: uniform(atlas.frame_hi)
-            border_lo: uniform(atlas.frame_lo)
             pixel: fn() {
-                let inset = 1.5
-                let sdf = Sdf2d.viewport(self.pos * self.rect_size)
-                sdf.rect(inset, inset, self.rect_size.x - inset * 2.0, self.rect_size.y - inset * 2.0)
-                sdf.fill_keep(self.color)
-                let dir = vec2(0.5, 0.8660254)
-                let span = 1.3660254
-                let t = clamp((self.pos.x * dir.x + self.pos.y * dir.y) / span, 0.0, 1.0)
-                sdf.stroke(mix(self.border_hi, self.border_lo, t), inset)
-                return sdf.result
+                return vec4(self.color.rgb * self.color.a, self.color.a)
             }
         }
+        // Keeps the FileTree rows and the header band off the column's own
+        // edges; it used to double as clearance for the 1.5px frame ring.
         padding: 6.0
 
         // Header band: a real `flow: Down` container of two empty spacers.

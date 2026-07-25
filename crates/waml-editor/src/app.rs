@@ -144,33 +144,39 @@ script_mod! {
                         // active tab card bleeds down into the body.
                         //
                         // `flow: Right` is what makes the Zed reading cheap: one
-                        // runtime-driven spacer moves `[T]` AND every tab card
-                        // together, so no tab-side offset arithmetic is needed.
+                        // runtime-driven spacer between `[T]` and the strip moves
+                        // every tab card, so no tab-side offset arithmetic is needed.
                         tab_row := View{
                             width: Fill
                             height: Fill
                             flow: Right
                             // See `caption_col`: the tab strip's top rule overshoots
-                            // this row's right edge to reach the window edge.
+                            // this row on BOTH sides -- right to the window edge, left
+                            // back to this row's own left edge (the wordmark's right
+                            // edge, past `[T]` and the spacer).
                             clip_x: false
-                            // Runtime-driven spacer (`sync_dock_slots`) that pushes
-                            // `[T]` right until its RIGHT edge lands on the tree
-                            // column's right edge -- `[T]` marks the point where the
-                            // `field_bg` chrome mass steps in from full-width to
-                            // column-width. 0 while the tree is collapsed, so `[T]`
-                            // sits immediately right of the logo.
-                            tree_gap := View{ width: 0.0, height: Fill }
-                            // The tree-column toggle. 24px button / 16px glyph under
-                            // an 8px top margin: row 2 is 32px tall and the tab cards
-                            // inset `TOP_MARGIN` (8) from its top, so this box is
-                            // exactly co-extensive with a card -- same top, same
-                            // bottom, same centreline -- and reads as their peer. The
-                            // title row's burger is 30/18 because that row is 34px;
-                            // reusing it here would overhang the cards. Hidden until a
-                            // model opens (`show_editor`/`show_start_screen`), which
-                            // also sets the glyph (`Icon::ListTree`, inherited from the
-                            // retired tree flag spine).
+                            // The tree-column toggle, FIRST child so it is anchored
+                            // hard against the wordmark and never moves: expanding the
+                            // tree must slide only the tab cards, not the control that
+                            // slides them. 24px button / 16px glyph under an 8px top
+                            // margin: row 2 is 32px tall and the tab cards inset
+                            // `TOP_MARGIN` (8) from its top, so this box is exactly
+                            // co-extensive with a card -- same top, same bottom, same
+                            // centreline -- and reads as their peer. The title row's
+                            // burger is 30/18 because that row is 34px; reusing it here
+                            // would overhang the cards. Hidden until a model opens
+                            // (`show_editor`/`show_start_screen`), which also sets the
+                            // glyph (`Icon::ListTree`, inherited from the retired tree
+                            // flag spine).
                             tree_btn := IconButton{ width: 24.0 height: 24.0 icon_size: 16.0 margin: Inset{top: 8.0} visible: false }
+                            // Runtime-driven spacer (`sync_dock_slots`) between `[T]`
+                            // and the strip, sized so the STRIP's left edge lands on
+                            // the tree column's right edge -- where the `field_bg`
+                            // chrome mass steps in from full-width to column-width;
+                            // the first card then sits `TAB_LEFT_INSET` inside that.
+                            // 0 while the tree is collapsed, so the strip falls back
+                            // against `[T]` with only that inset between them.
+                            tree_gap := View{ width: 0.0, height: Fill }
                             doc_tabs := DocTabs{
                                 width: Fill
                                 height: Fill
@@ -451,8 +457,10 @@ script_mod! {
 }
 
 /// Side of the caption's tree-column toggle, mirroring the `tree_btn` DSL
-/// `width`. Kept here because `sync_tree_gap` has to subtract it from the tree
-/// column's width to land the button's RIGHT edge on the column's right edge.
+/// `width` (which carries no horizontal margin, so this is its whole footprint).
+/// Kept here because `sync_tree_gap` has to subtract it from the tree column's
+/// width: the button leads the row, so the spacer after it is short by exactly
+/// the button's own width.
 const TREE_BTN_W: f64 = 24.0;
 
 #[derive(Script, ScriptHook)]
@@ -527,6 +535,12 @@ pub struct App {
     /// writes, even when the computed gap is 0 (collapsed tree).
     #[rust(-1.0)]
     tree_gap_w: f64,
+    /// Last-applied `DocTabs::left_overshoot` (see `sync_tree_gap`). Guarded
+    /// separately from `tree_gap_w` because it is measured off `doc_tabs`' own
+    /// rect, which settles one frame AFTER the gap that moved it. Negative so
+    /// the first sync always writes.
+    #[rust(-1.0)]
+    rule_overshoot: f64,
 }
 
 impl App {
@@ -752,7 +766,8 @@ impl App {
     /// each `handle_event`.
     ///
     /// The tree's width has a second consumer: the caption's `tree_gap`, which
-    /// keeps `[T]` on the column's right edge (see `sync_tree_gap`).
+    /// keeps the first tab card on the column's right edge (see
+    /// `sync_tree_gap`).
     fn sync_dock_slots(&mut self, cx: &mut Cx) {
         let lw = self
             .ui
@@ -794,24 +809,44 @@ impl App {
         }
     }
 
-    /// Size the caption's `tree_gap` so `[T]`'s RIGHT edge lands on the tree
-    /// column's right edge -- the invariant that makes the two-row caption read
-    /// as one chrome mass: `[T]` marks where `field_bg` steps in from full-width
-    /// to column-width.
+    /// Size the caption's `tree_gap` so the tab STRIP's left edge lands on the
+    /// tree column's right edge -- the invariant that makes the two-row caption
+    /// read as one chrome mass: the tabs start exactly where `field_bg` steps in
+    /// from full-width to column-width (the first card sits `TAB_LEFT_INSET`
+    /// inside that). `[T]` itself leads the row and never moves; only the cards
+    /// travel, because the control that moves them must not move itself.
     ///
     /// `tree_w` is the column's width in window coordinates (the body starts at
     /// x=0, so it is also the column's right edge). `tab_row` starts at the
-    /// wordmark's right edge, so the gap is what is left after that offset and
-    /// the button itself; clamped at 0 so the collapsed state parks `[T]`
-    /// immediately right of the logo instead of going negative.
+    /// wordmark's right edge and `[T]` occupies the first `TREE_BTN_W` of it, so
+    /// the gap is what is left after those two; clamped at 0 so the collapsed
+    /// state collapses the spacer instead of going negative and the strip sits
+    /// immediately right of `[T]` (`TAB_LEFT_INSET` supplies the breathing gap).
     ///
     /// The row offset is read from the last-drawn `tab_row` rect rather than
-    /// hardcoded, so a resized logo can't silently desync the button from the
+    /// hardcoded, so a resized logo can't silently desync the cards from the
     /// column. That makes this a two-frame settle on the very first draw (the
     /// rect is zero until `tab_row` has been laid out once), hence the guard is
     /// on the computed gap rather than on `tree_w` alone.
+    ///
+    /// Same measured rects also drive the tab strip's top-rule left overshoot:
+    /// `doc_tabs` no longer begins at the window's left edge, and the rule must
+    /// reach back to `tab_row`'s left edge -- but no further, because the logo
+    /// is a keep-out zone the rule would otherwise slice through.
     fn sync_tree_gap(&mut self, cx: &mut Cx, tree_w: f64) {
         let row_x = self.ui.widget(cx, ids!(tab_row)).area().rect(cx).pos.x;
+        let tabs_x = self.ui.widget(cx, ids!(doc_tabs)).area().rect(cx).pos.x;
+        let overshoot = (tabs_x - row_x).max(0.0);
+        if (overshoot - self.rule_overshoot).abs() > 0.5 {
+            self.rule_overshoot = overshoot;
+            if let Some(mut tabs) = self
+                .ui
+                .widget(cx, ids!(doc_tabs))
+                .borrow_mut::<crate::doc_tabs::DocTabs>()
+            {
+                tabs.set_left_overshoot(cx, overshoot);
+            }
+        }
         let gap = (tree_w - row_x - TREE_BTN_W).max(0.0);
         if (gap - self.tree_gap_w).abs() <= 0.5 {
             return;

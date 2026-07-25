@@ -397,9 +397,10 @@ const ICON_GAP: f64 = 6.0;
 const TOP_MARGIN: f64 = 8.0;
 /// Right-side reserve (min/max/close cluster, 3 x 46px) the tab strip does not
 /// span; the top rule overshoots its own turtle by this so the line reaches the
-/// window's right edge (buttons hug the top, leaving this y clear). There is no
-/// left-hand twin of this constant: the rule's left end is window-absolute x=0
-/// (see `draw_walk`). Both reaches only work because `caption_col`/`tab_row` set
+/// window's right edge (buttons hug the top, leaving this y clear). Its left
+/// twin is the runtime-driven `left_overshoot` field rather than a constant,
+/// because that distance is whatever the tree-column spacer plus `[T]` happen to
+/// measure. Both reaches only work because `caption_col`/`tab_row` set
 /// `clip_x:false` (see `app.rs`).
 const WINDOW_BUTTONS_W: f64 = 138.0;
 /// Device-px over which the top rule dissolves before the window's right edge. A
@@ -527,6 +528,15 @@ pub struct DocTabs {
     /// `false` -> shown; `App::show_start_screen` hides it, `show_editor` reveals.
     #[rust]
     hidden: bool,
+
+    /// Left twin of `WINDOW_BUTTONS_W`: how far the top rule reaches back past
+    /// this strip's own turtle, so it starts at `tab_row`'s left edge (the
+    /// wordmark's right edge) rather than at the first tab card. Runtime-driven
+    /// by `App::sync_tree_gap`, because the distance is whatever the tree-column
+    /// spacer plus `[T]` currently measure. Defaults 0 -> no overshoot, which is
+    /// the safe reading if the wiring is ever dropped.
+    #[rust]
+    left_overshoot: f64,
 }
 
 impl Widget for DocTabs {
@@ -598,29 +608,28 @@ impl Widget for DocTabs {
         }
         let rect = cx.walk_turtle(walk);
         self.draw_bg.draw_abs(cx, rect);
-        // Top rule: a crisp, pixel-snapped 1px line spanning the FULL window
-        // width, across the logo and the tree toggle, not just this strip's
-        // turtle. Snapping the y to a whole device row keeps it from straddling
-        // (and blurring across) two rows.
+        // Top rule: a crisp, pixel-snapped 1px line spanning from the wordmark's
+        // right edge to the window's right edge -- across the tree toggle and
+        // the tree-column spacer, not just this strip's turtle. Snapping the y to
+        // a whole device row keeps it from straddling (and blurring across) two
+        // rows.
         //
-        // `draw_abs` here is window-absolute: makepad's win32 backend answers
-        // `WM_NCCALCSIZE` with a zero left/top/right inset, so the client area
-        // (and the pass turtle drawn into it) starts at the window's own
-        // top-left corner. That is why `WindowDragQuery`, whose `abs` the
-        // platform defines as mouse-pos minus the window rect origin, can be
-        // tested straight against `self.tab_rects` (see `hits_any_tab` and the
-        // drag-query handler in `app.rs`). So the window's left edge is simply
-        // x = 0 -- no left twin of `WINDOW_BUTTONS_W` and no wiring from `App`
-        // is needed, even though `doc_tabs` now begins to the right of the tree
-        // spacer and `[T]`.
+        // At the near end it reaches back by `left_overshoot`, the runtime-driven
+        // left twin of `WINDOW_BUTTONS_W`, landing on `tab_row`'s left edge. It
+        // deliberately stops there rather than at the window's own left edge
+        // (x = 0): the logo is a keep-out zone and a rule through it slices the
+        // wordmark in half.
         //
         // At the far end the line overshoots the tab band into the window-button
         // gap so it reaches the window's right edge, then dissolves over the last
         // `EDGE_FADE` px -- faked as stacked 1px segments of falling alpha since a
         // crisp plain quad carries one flat colour (see `EDGE_FADE`).
+        //
+        // Both reaches escape this strip's turtle only because `caption_col` and
+        // `tab_row` set `clip_x: false` (see `app.rs`).
         let base = self.draw_edge.color;
         let y = rect.pos.y.round();
-        let x0 = 0.0;
+        let x0 = (rect.pos.x - self.left_overshoot).round();
         let x_end = (rect.pos.x + rect.size.x + WINDOW_BUTTONS_W).round();
         let solid_end = x_end - EDGE_FADE;
         self.draw_edge.color = base;
@@ -806,6 +815,14 @@ impl DocTabs {
             self.hidden = !visible;
             cx.redraw_all();
         }
+    }
+
+    /// How far the top rule reaches back past this strip's turtle (see
+    /// `left_overshoot`). `App` measures it; the caller already change-guards,
+    /// so this just stores and repaints.
+    pub fn set_left_overshoot(&mut self, cx: &mut Cx, px: f64) {
+        self.left_overshoot = px;
+        self.draw_bg.redraw(cx);
     }
 }
 
