@@ -6,17 +6,17 @@ Branch: `title-tab-two-row`
 ## Goal
 
 Today the tree panel sits *under* the doc tabs: the tab strip spans the full window
-width and the tree floats beneath it as a HUD card. Make the tree a real left column
-whose top-right corner is marked by a toggle button in the caption's second row, so the
-tab cards begin where the content area begins — the Zed reading.
+width and the tree floats beneath it as a HUD card. Make the tree a real left column,
+toggled by a button in the caption's second row, so the tab cards begin where the
+content area begins — the Zed reading.
 
 Target layout, expanded:
 
 ```
 +---------------------------------------------------------------+
 |#[LOGO]#=##models/orders.waml####################_###[]###X#####|  row 1, 34px
-|#[LOGO]#--------------------------------------------------~~####|  rule at y=34, FULL width
-|#[LOGO]#########(gap)###########[T]#| orders |x| schema |x|#####|  row 2, 32px
+|#[LOGO]#---------------------------------------------------~~###|  rule at y=34
+|#[LOGO]#[T]##########(gap)##########| orders |x| schema |x|#####|  row 2, 32px
 |####################################+--------------------------+  y=66
 |#  PROJECT TREE                     |                          |
 |#   > src                           |     C A N V A S          |
@@ -29,20 +29,22 @@ Collapsed:
 ```
 +---------------------------------------------------------------+
 |#[LOGO]#=##models/orders.waml####################_###[]###X#####|
-|#[LOGO]#--------------------------------------------------~~####|
+|#[LOGO]#---------------------------------------------------~~###|
 |#[LOGO]#[T]#| orders |x| schema |x|############################|
 +---------------------------------------------------------------+
 |                                                               |
 |                       C A N V A S                             |
 ```
 
-`#` = `atlas.field_bg`. `[LOGO]` spans both rows and is a keep-out zone. `[T]` is the
-tree toggle, always immediately left of the first tab card. `~~` = the existing 48px
+`#` = `atlas.field_bg`. `[LOGO]` spans both rows and is a keep-out zone: neither the
+rule nor any control crosses it. `[T]` is the tree toggle, anchored against the
+wordmark's right edge and stacked directly under the burger. `~~` = the existing 48px
 alpha fade before the window's right edge.
 
-The invariant that makes this coherent: `[T]` marks the point where the `field_bg`
-chrome mass steps in from full-width to column-width. One number — the tree's slot
-width — positions the gap, `[T]`, and every tab card.
+The invariant that makes this coherent: the tab strip's left edge is the point where the
+`field_bg` chrome mass steps in from full-width to column-width. One number — the tree's
+slot width — sizes the gap and therefore positions every tab card. `[T]` is deliberately
+outside that: the control that moves the tabs must not itself move.
 
 ## Decisions
 
@@ -60,9 +62,11 @@ Settled during brainstorming, with the rejected alternative noted where it was c
    the tabs" quality this change exists to remove.
 4. **The flag spine is deleted.** Collapsed means zero pixels — no 28px gutter, no
    sideways label. `[T]` is the only affordance.
-5. **The tab band and its top rule stay full width.** Only the tab cards and `[T]`
-   indent. Rejected: starting the rule at the column's right edge, which is more
-   literally Zed but introduces a rule/divider corner to solve.
+5. **The tab band and its top rule span the full width right of the logo.** Only the tab
+   cards indent. Rejected: starting the rule at the column's right edge, which is more
+   literally Zed but introduces a rule/divider corner to solve. Also rejected, after
+   seeing it on screen: running the rule to window x=0, which slices horizontally
+   through the wordmark.
 6. **No divider between column and canvas.** Separation is carried by `field_bg` versus
    canvas ground. Because the tree card is already `field_bg` (`tree_panel.rs:73`), the
    caption band and the tree column merge into one continuous chrome mass.
@@ -76,6 +80,15 @@ Settled during brainstorming, with the rejected alternative noted where it was c
 10. **`[T]` is hidden until a model opens**, matching the burger (`app.rs:118`).
 11. **The inspector is untouched.** It keeps its floating card and all three dock
     states. The asymmetry is deliberate.
+12. **`[T]` is anchored, not carried.** It sits at the tab row's left edge in both dock
+    states; expanding the tree slides only the tab cards. Rejected, after seeing it on
+    screen: letting `[T]` ride the column's right edge, which made the control that
+    moves the tabs a moving hit target.
+13. **`[T]` is the burger's twin: 30px button, 18px glyph, inset 2 from the row's left
+    edge**, so the two stack on one centreline. This makes it taller than a tab card, so
+    it overhangs them rather than sitting flush. Rejected, after seeing it on screen:
+    24/16 sized to be co-extensive with a tab card, which read as a mismatched pair
+    directly under the burger.
 
 ## Design
 
@@ -96,16 +109,19 @@ so the reserved 280 and the drawn 280 already agree; nothing to reconcile.
 
 ```
 tab_row := View{
+    tree_btn := IconButton{ ... visible: false }   // Icon::ListTree, 30/18, margin left 2
     tree_gap := View{ width: 0.0, height: Fill }   // runtime-driven
-    tree_btn := IconButton{ ... visible: false }   // Icon::ListTree
     doc_tabs := DocTabs{ width: Fill, height: Fill }
 }
 ```
 
-`tree_gap.walk.width` is driven from the same tree slot width that drives `left_slot`,
-minus `[T]`'s own width and its inset, so that `[T]`'s right edge lands on the column's
-right edge. Because `tab_row` is `flow: Right`, `[T]` and every tab card follow
-automatically; no tab-side offset arithmetic is needed.
+The button leads the row, so it is anchored at the wordmark's right edge and never
+moves. `tree_gap.walk.width` is driven from the same tree slot width that drives
+`left_slot`, minus the button's own footprint (`TREE_BTN_W`, its width plus its left
+margin), so that the STRIP's left edge lands on the column's right edge. Because
+`tab_row` is `flow: Right`, every tab card follows automatically; no tab-side offset
+arithmetic is needed. Clamped at 0, so the collapsed state puts the strip immediately
+right of the button.
 
 `TAB_LEFT_INSET` (currently 10, aligning the first card with the burger glyph above)
 becomes the gap between `[T]` and the first card instead. The burger alignment it
@@ -121,10 +137,12 @@ no longer begins at the window's left edge.
   is the same ink, so the region left of `doc_tabs` in row 2 is already correct.
 - **Top rule** gains a `left_overshoot: f64` field on `DocTabs`, the twin of the
   existing `WINDOW_BUTTONS_W = 138` right overshoot. `x0` becomes
-  `(rect.pos.x - left_overshoot).round()`. The app sets it to the strip's distance from
-  the window's left edge, so the rule spans full width in both states. This works for
-  the same reason the right overshoot does: `caption_col` and `tab_row` both set
-  `clip_x: false`.
+  `(rect.pos.x - left_overshoot).round()`. The app sets it to `doc_tabs.x - tab_row.x`,
+  so the rule's left end lands on the tab row's left edge — the wordmark's right edge —
+  in both dock states, spanning everything right of the logo without touching it.
+  Because the overshoot is a delta between two measured rects rather than an absolute,
+  it is invariant under any post-layout alignment shift. This works for the same reason
+  the right overshoot does: `caption_col` and `tab_row` both set `clip_x: false`.
 
 The rule stays a pixel-snapped plain `DrawColor` quad with its fade faked as
 `EDGE_FADE_STEPS` stacked 1px segments. An SDF fill under ~2px has zero AA coverage on
@@ -159,12 +177,26 @@ the `DockState::Peek` match arms in `draw_walk`. `dock.rs` keeps `PeekTimer` and
 `ProjectTree` initialises its own `dock` field to `Pinned` on model open. `DockState`'s
 `#[derive(Default)]` stays `Flag` — the inspector depends on it.
 
+### The column's fill
+
+`ProjectTree`'s `draw_bg` is a custom shader that mirrors `frame.rs`: an opaque
+`field_bg` fill ringed by a 1.5px border, sized for a floating card. The tree is now
+always a flush column and never floats, so the ring has no remaining job and is deleted
+outright — flat `field_bg`, no ring, no corner radius, which is what makes the caption
+band and the column read as one chrome mass. `frame.rs` and the Inspector keep theirs.
+
 ### Wiring seams
 
 - `App::sync_dock_slots` already computes the tree's slot width each `handle_event` and
-  writes `left_slot.walk.width`. It gains a second consumer: `tree_gap.walk.width` and
-  `DocTabs::left_overshoot`, from the same value, behind the same change-threshold
-  guard so the redraw cost is unchanged.
+  writes `left_slot.walk.width`. A sibling `sync_tree_gap` drives `tree_gap.walk.width`
+  and `DocTabs::left_overshoot` from that same width plus the measured `tab_row` /
+  `doc_tabs` rects, each behind its own change-threshold guard. They cannot share one
+  guard: `doc_tabs`' rect settles one frame after the gap that moved it, so a shared
+  guard strands a stale overshoot.
+- `[T]` sits in the caption band, which is an OS window-drag region. It needs its own
+  arm in the `Event::WindowDragQuery` handler alongside the logo, burger and tab strip;
+  without it a press starts a window drag and never reaches the widget, leaving the
+  button silently dead.
 - `[T]`'s click is read from `Event::Actions` via `IconButton::clicked`, and applies
   `DockEvent::Toggle` to the tree.
 - `[T]`'s lit state uses the existing `IconButton::set_active` (accent wash at 16%) —
@@ -211,7 +243,8 @@ pointing its click at `DockEvent::Toggle`.
 
 ## Verification
 
-1. `cargo test --workspace` — baseline is 372 passed / 0 failed.
+1. `cargo test --workspace` — baseline is 372 passed / 0 failed in the waml-editor lib
+   suite (943 across the workspace); the new `dock.rs` test takes it to 373.
 2. `cargo clippy --workspace --all-targets -- -D warnings` — clean. Two benign
    fork dup-package warnings are expected. Note that `dead_code` is promoted to a hard
    error here, so code orphaned by the `Peek` removal must actually be deleted.
@@ -221,9 +254,14 @@ pointing its click at `DockEvent::Toggle`.
    script lives in, not the cwd) and screenshot by specific pid — capturing or killing
    by process name hits the user's own editor session. Confirm, in both dock states:
    - caption text renders at all (the real smoke test),
-   - the top rule reaches both window edges,
-   - `[T]` sits flush against the first tab card and against the column's right edge,
-   - the tree column is flush at top, left, and bottom with no window-bg frame,
+   - the rule runs from the wordmark's right edge to the window's right edge, and does
+     not cross the logo,
+   - `[T]` holds the same x in both states and shares the burger's centreline,
+   - the tab strip's left edge sits on the column's right edge when expanded,
+   - the tree column is flush at top, left, and bottom, with no ring and no window-bg
+     frame,
    - collapsing leaves zero tree pixels.
-5. Interactive click-test, still owed from the prior two-row caption task and not yet
-   done: burger drop-down, tab hover/press, and now `[T]` toggle round-trips.
+5. Interactive click-test, still owed from the prior two-row caption task: burger
+   drop-down, tab hover/press, and `[T]` toggle round-trips. Note when driving this with
+   synthetic clicks: the first click on an unfocused window only activates it, so a
+   single click reads as a dead button. Fire twice, or focus first.
