@@ -1154,6 +1154,17 @@ impl App {
         true
     }
 
+    /// The caption bar ships hidden and makepad only unhides it for the
+    /// platforms that hand an app its own window chrome -- `sync_caption_bar_state`
+    /// has arms for Windows, macOS and Wayland CSD, and an empty one for
+    /// `OsType::Web`. That is the right default for a title bar, but ours also
+    /// carries the wordmark, doc tabs, tree toggle and burger, so the browser
+    /// build would come up with no navigation at all. Reveal it ourselves.
+    #[cfg(target_arch = "wasm32")]
+    fn reveal_caption_bar_on_web(&mut self, cx: &mut Cx) {
+        self.ui.widget(cx, ids!(caption_bar)).set_visible(cx, true);
+    }
+
     /// Reveal the editor, hide the start screen. `main_column` is a `View`
     /// (honors `WidgetRef::set_visible`); `StartScreen` is a custom widget
     /// whose no-op default `Widget::set_visible` means we must toggle its own
@@ -1564,6 +1575,7 @@ impl MatchEvent for App {
     /// the start screen -- never a blank window.
     #[cfg(target_arch = "wasm32")]
     fn handle_startup(&mut self, cx: &mut Cx) {
+        self.reveal_caption_bar_on_web(cx);
         let Some(fragment) = web_location_hash(cx) else {
             self.show_start_screen(cx);
             return;
