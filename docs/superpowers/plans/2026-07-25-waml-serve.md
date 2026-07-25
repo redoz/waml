@@ -999,7 +999,7 @@ The semantic core, with no HTTP in it. Because `ServeState` is directly testable
 - Modify: `crates/waml-cli/src/serve/mod.rs` (add `pub mod state;`)
 
 **Interfaces:**
-- Consumes: `crate::io::{read_files, write_back}` (`crates/waml-cli/src/io.rs:121` and `:150`), `crate::serve::paths::is_safe_rel`, `waml::ops::{apply, OpError}` (`crates/waml/src/ops/mod.rs:183`, error fields `index`/`op`/`selector`/`reason`), `waml::parse::build_model` (`crates/waml/src/parse.rs:822`), `waml::validate::validate`, `waml_ops_dto::OpDto`.
+- Consumes: `crate::io::{read_files, write_back}` (`crates/waml-cli/src/io.rs:121` and `:150`), `crate::serve::paths::safe_join`, `waml::ops::{apply, OpError}` (`crates/waml/src/ops/mod.rs:183`, error fields `index`/`op`/`selector`/`reason`), `waml::parse::build_model` (`crates/waml/src/parse.rs:822`), `waml::validate::validate`, `waml_ops_dto::OpDto`.
 - Produces:
   - `pub struct ServeState` with `pub fn revision(&self) -> u64`, `pub fn bundle(&self) -> &[(String, String)]`, `pub fn root(&self) -> &Path`, `pub fn model(&self) -> waml::model::Model`, `pub fn diagnostics(&self) -> Vec<waml::diagnostic::Diagnostic>`, `pub fn apply_ops(&mut self, at: u64, dtos: &[OpDto]) -> Result<Vec<(String, String)>, ApplyFailure>`
   - `pub fn load(root: &Path) -> std::io::Result<ServeState>`
@@ -1095,6 +1095,18 @@ mod tests {
     }
 
     #[test]
+    fn a_path_that_escapes_the_root_is_refused() {
+        let (_d, root) = fixture();
+        let mut st = load(&root).unwrap();
+        assert!(safe_join(&root, "../escape.md").is_err());
+        // And the same rejection reaches callers as an Io failure.
+        assert!(matches!(
+            safe_join(st.root(), "../escape.md").map_err(ApplyFailure::Io),
+            Err(ApplyFailure::Io(_))
+        ));
+    }
+
+    #[test]
     fn a_failing_op_writes_nothing_and_names_its_index() {
         let (_d, root) = fixture();
         let mut st = load(&root).unwrap();
@@ -1140,7 +1152,7 @@ use std::path::{Path, PathBuf};
 use waml_ops_dto::OpDto;
 
 use crate::io;
-use crate::serve::paths::is_safe_rel;
+use crate::serve::paths::safe_join;
 
 pub struct ServeState {
     root: PathBuf,
@@ -1223,9 +1235,11 @@ impl ServeState {
 
         // Confinement runs over the RESULT, so an op that invents a path is
         // caught even though no op names a path directly. Checked before any
-        // write, so a rejected batch leaves the disk untouched.
+        // write, so a rejected batch leaves the disk untouched. `safe_join`
+        // rather than `is_safe_rel`: the syntactic check alone would miss a
+        // symlink inside the root that points out of it.
         for (p, _) in &next {
-            is_safe_rel(p).map_err(ApplyFailure::Io)?;
+            safe_join(&self.root, p).map_err(ApplyFailure::Io)?;
         }
 
         io::write_back(&self.bundle, &next).map_err(|e| ApplyFailure::Io(e.to_string()))?;
@@ -1248,7 +1262,7 @@ impl ServeState {
 }
 ```
 
-`io::write_back` opens exactly the path strings that appear in the bundle, and `io::read_files` produced those from the served root — so `is_safe_rel` above is checking the same strings that will be opened. If `read_files` turns out to yield paths that are absolute or otherwise not root-relative, store them relative in `load` and join `root` at the write site. Do **not** relax `is_safe_rel` to accommodate it.
+`io::write_back` opens exactly the path strings that appear in the bundle, and `io::read_files` produced those from the served root — so `safe_join` above is checking the same strings that will be opened. If `read_files` turns out to yield paths that are absolute or otherwise not root-relative, store them relative in `load` and join `root` at the write site. Do **not** relax either confinement function to accommodate it.
 
 - [ ] **Step 4: Declare the module**
 
@@ -1257,7 +1271,7 @@ In `crates/waml-cli/src/serve/mod.rs`, add `pub mod state;`. `tempfile` and `ser
 - [ ] **Step 5: Run the tests to verify they pass**
 
 Run: `cargo test -p waml-cli serve::state`
-Expected: PASS, 5 tests.
+Expected: PASS, 6 tests.
 
 - [ ] **Step 6: Commit**
 
@@ -1858,3 +1872,761 @@ Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>"
 ```
 
 ---
+
+### Task 8: Embed and serve the web artifact
+
+Compiles the built wasm artifact into the binary as brotli bytes and serves it from the same origin as the API. Degrades to API-only when no artifact is present, which is what keeps `cargo test --workspace` runnable without a wasm toolchain.
+
+**Files:**
+- Create: `crates/waml-cli/build.rs`
+- Create: `crates/waml-cli/src/serve/embed.rs`
+- Modify: `crates/waml-cli/Cargo.toml` (`build = "build.rs"`)
+- Modify: `crates/waml-cli/src/serve/routes.rs` (UI routes)
+- Modify: `crates/waml-cli/tests/serve_e2e.rs`
+
+**Interfaces:**
+- Consumes: `brotli` (build-dependency only).
+- Produces:
+  - Generated `$OUT_DIR/assets.rs` defining `pub static ASSETS: &[(&str, &str, &[u8])]` — `(request path, content type, brotli bytes)`.
+  - `pub fn assets() -> &'static [(&'static str, &'static str, &'static [u8])]`
+  - `pub fn lookup(path: &str) -> Option<(&'static str, &'static [u8])>` — content type and brotli bytes.
+  - `pub fn is_empty() -> bool`
+
+- [ ] **Step 1: Write the build script**
+
+Create `crates/waml-cli/build.rs`:
+
+```rust
+//! Compile the built web editor into the binary as brotli-precompressed bytes.
+//!
+//! The artifact directory is optional on purpose: a plain `cargo build` on a
+//! machine with no wasm toolchain must still produce a working `waml`, which
+//! then serves the API and reports that the UI is unavailable. Release builds
+//! set `WAML_WEB_ARTIFACT` explicitly.
+
+use std::io::Write;
+use std::path::{Path, PathBuf};
+
+fn main() {
+    println!("cargo:rerun-if-env-changed=WAML_WEB_ARTIFACT");
+
+    let dir = std::env::var("WAML_WEB_ARTIFACT")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| {
+            Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../../target/makepad-wasm-app/release/waml-editor")
+        });
+
+    let out = PathBuf::from(std::env::var("OUT_DIR").unwrap()).join("assets.rs");
+    let mut files = Vec::new();
+    if dir.is_dir() {
+        println!("cargo:rerun-if-changed={}", dir.display());
+        walk(&dir, &dir, &mut files);
+    }
+
+    let mut src = String::from(
+        "pub static ASSETS: &[(&str, &str, &[u8])] = &[\n",
+    );
+    for (rel, abs) in &files {
+        let raw = std::fs::read(abs).unwrap();
+        let squeezed = brotli_compress(&raw);
+        let blob = PathBuf::from(std::env::var("OUT_DIR").unwrap())
+            .join(format!("asset_{}", rel.replace(['/', '.', '-'], "_")));
+        std::fs::write(&blob, &squeezed).unwrap();
+        src.push_str(&format!(
+            "    ({rel:?}, {ct:?}, include_bytes!({blob:?})),\n",
+            ct = content_type(rel),
+            blob = blob.to_string_lossy().replace('\\', "/"),
+        ));
+    }
+    src.push_str("];\n");
+    std::fs::write(&out, src).unwrap();
+}
+
+/// Collect every file under `dir` as (request path, absolute path).
+fn walk(root: &Path, dir: &Path, out: &mut Vec<(String, PathBuf)>) {
+    for entry in std::fs::read_dir(dir).unwrap().flatten() {
+        let p = entry.path();
+        if p.is_dir() {
+            walk(root, &p, out);
+        } else {
+            // Forward slashes even on Windows: this string is a URL path, and a
+            // backslash here is what blanks every text asset in the wasm build.
+            let rel = p
+                .strip_prefix(root)
+                .unwrap()
+                .to_string_lossy()
+                .replace('\\', "/");
+            out.push((rel, p));
+        }
+    }
+}
+
+fn brotli_compress(raw: &[u8]) -> Vec<u8> {
+    let mut out = Vec::new();
+    let mut w = brotli::CompressorWriter::new(&mut out, 4096, 11, 22);
+    w.write_all(raw).unwrap();
+    drop(w);
+    out
+}
+
+fn content_type(rel: &str) -> &'static str {
+    match rel.rsplit('.').next().unwrap_or("") {
+        "html" => "text/html; charset=utf-8",
+        "js" | "mjs" => "text/javascript; charset=utf-8",
+        "css" => "text/css; charset=utf-8",
+        "wasm" => "application/wasm",
+        "json" => "application/json",
+        "ttf" => "font/ttf",
+        "woff2" => "font/woff2",
+        "png" => "image/png",
+        "svg" => "image/svg+xml",
+        _ => "application/octet-stream",
+    }
+}
+```
+
+Add `build = "build.rs"` to the `[package]` table in `crates/waml-cli/Cargo.toml`.
+
+Note the backslash replacement in `walk`: a Windows-host build that leaves backslashes in these keys produces an artifact whose text assets all resolve to nothing. That is a known, previously-hit failure mode, not a hypothetical.
+
+- [ ] **Step 2: Write the failing tests**
+
+Append to `crates/waml-cli/tests/serve_e2e.rs`:
+
+```rust
+#[tokio::test]
+async fn api_only_serves_no_ui() {
+    let (_d, root) = fixture();
+    let (addr, tok) = boot(&root).await; // boot() passes api_only = true
+    let res = reqwest::Client::new()
+        .get(format!("http://127.0.0.1:{}/", addr.port()))
+        .bearer_auth(&tok)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(res.status(), 404);
+}
+
+#[tokio::test]
+async fn an_unknown_asset_path_is_404_not_the_shell() {
+    let (_d, root) = fixture();
+    let (addr, tok) = boot_with_ui(&root).await;
+    let res = reqwest::Client::new()
+        .get(format!("http://127.0.0.1:{}/no/such/asset.js", addr.port()))
+        .bearer_auth(&tok)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(res.status(), 404);
+}
+
+#[tokio::test]
+async fn ui_bytes_are_served_brotli_or_not_at_all() {
+    let (_d, root) = fixture();
+    let (addr, tok) = boot_with_ui(&root).await;
+    if waml_cli::serve::embed::is_empty() {
+        eprintln!("no embedded artifact in this build; skipping");
+        return;
+    }
+    let c = reqwest::Client::builder()
+        .no_brotli() // do not let reqwest transparently decompress
+        .build()
+        .unwrap();
+    let res = c
+        .get(format!("http://127.0.0.1:{}/", addr.port()))
+        .bearer_auth(&tok)
+        .header("Accept-Encoding", "br")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(res.status(), 200);
+    assert_eq!(res.headers()["content-encoding"], "br");
+
+    let res = c
+        .get(format!("http://127.0.0.1:{}/", addr.port()))
+        .bearer_auth(&tok)
+        .header("Accept-Encoding", "identity")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(res.status(), 406);
+}
+```
+
+and add a second boot helper next to `boot`:
+
+```rust
+/// Same as `boot`, but with the embedded UI enabled.
+async fn boot_with_ui(root: &std::path::Path) -> (SocketAddr, String) {
+    let raw = "test-token".to_string();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let app = routes::App::new(
+        serve::state::load(root).unwrap(),
+        Token::from_raw(raw.clone()),
+        addr.port(),
+        false,
+        false,
+    );
+    tokio::spawn(async move { routes::serve_on(listener, app).await.unwrap() });
+    (addr, raw)
+}
+```
+
+If `reqwest`'s builder has no `no_brotli()` in the pinned version, build the client with `.brotli(false)` instead — the requirement is only that the client must not transparently decode, so the test can see the header.
+
+- [ ] **Step 3: Run the tests to verify they fail**
+
+Run: `cargo test -p waml-cli --test serve_e2e ui`
+Expected: FAIL — `could not find 'embed' in 'serve'`.
+
+- [ ] **Step 4: Implement the embed module**
+
+Create `crates/waml-cli/src/serve/embed.rs`:
+
+```rust
+//! Access to the build-time asset table.
+//!
+//! Bytes are stored brotli-compressed and go straight onto the socket: there
+//! is no runtime compression and no runtime decompression.
+
+include!(concat!(env!("OUT_DIR"), "/assets.rs"));
+
+pub fn assets() -> &'static [(&'static str, &'static str, &'static [u8])] {
+    ASSETS
+}
+
+pub fn is_empty() -> bool {
+    ASSETS.is_empty()
+}
+
+/// Resolve a request path to (content type, brotli bytes).
+///
+/// `/` maps to `index.html`. Anything not in the table is `None` — the server
+/// never falls back to the shell, because that turns a typo into a silent
+/// blank page.
+pub fn lookup(path: &str) -> Option<(&'static str, &'static [u8])> {
+    let key = match path.trim_start_matches('/') {
+        "" => "index.html",
+        other => other,
+    };
+    ASSETS
+        .iter()
+        .find(|(p, _, _)| *p == key)
+        .map(|(_, ct, bytes)| (*ct, *bytes))
+}
+```
+
+Add `pub mod embed;` to `crates/waml-cli/src/serve/mod.rs`.
+
+- [ ] **Step 5: Serve the UI**
+
+In `crates/waml-cli/src/serve/routes.rs`, add the fallback handler:
+
+```rust
+use axum::body::Body;
+use axum::extract::Path as UrlPath;
+
+async fn get_asset(
+    State(app): State<App>,
+    headers: HeaderMap,
+    Query(q): Query<HashMap<String, String>>,
+    path: Option<UrlPath<String>>,
+) -> Response {
+    guarded!(app, headers, q, false);
+    if app.api_only {
+        return StatusCode::NOT_FOUND.into_response();
+    }
+    let requested = path.map(|UrlPath(p)| p).unwrap_or_default();
+    let Some((ct, bytes)) = crate::serve::embed::lookup(&requested) else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    let accepts_br = headers
+        .get("accept-encoding")
+        .and_then(|v| v.to_str().ok())
+        .is_some_and(|v| v.split(',').any(|e| e.trim().starts_with("br")));
+    if !accepts_br {
+        return (
+            StatusCode::NOT_ACCEPTABLE,
+            Json(json!({"error": "this server only serves brotli; send Accept-Encoding: br"})),
+        )
+            .into_response();
+    }
+    Response::builder()
+        .status(StatusCode::OK)
+        .header("content-type", ct)
+        .header("content-encoding", "br")
+        .body(Body::from(bytes))
+        .unwrap()
+}
+```
+
+and in `router`, after the API routes:
+
+```rust
+        .route("/", get(get_asset))
+        .route("/{*path}", get(get_asset))
+```
+
+Use whatever wildcard syntax the pinned axum version accepts — 0.8 spells it `/{*path}`, older releases spell it `/*path`. If the router panics at startup with a path-syntax message, that is which spelling to change.
+
+- [ ] **Step 6: Run the tests to verify they pass**
+
+Run: `cargo test -p waml-cli --test serve_e2e`
+Expected: PASS. The brotli test self-skips when no artifact is embedded; that is intended, and Task 9 is what actually exercises the served UI.
+
+- [ ] **Step 7: Verify a build with a real artifact**
+
+Run: `WAML_WEB_ARTIFACT=$PWD/target/makepad-wasm-app/release/waml-editor cargo build -p waml-cli --release`
+Expected: builds. If that directory does not exist, build the web artifact first with the repo's usual wasm build; if the toolchain is unavailable here, say so explicitly in the commit body rather than claiming the path was exercised.
+
+- [ ] **Step 8: Commit**
+
+```bash
+git add crates/waml-cli
+git commit -m "feat(serve): embed and serve the web artifact as brotli bytes
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>"
+```
+
+---
+
+### Task 9: Browser verification
+
+Proves the served UI actually boots in a browser and, separately, that the cross-origin path stays closed. The second half is a regression guard on the measurement that decided the architecture.
+
+**Files:**
+- Create: `scripts/serve-browser-check.mjs`
+
+**Interfaces:**
+- Consumes: a running `waml serve` (the script starts one itself), `playwright-core`, the ms-playwright `chromium-1228` build.
+- Produces: exit code 0 on success; a written screenshot; a printed verdict.
+
+- [ ] **Step 1: Write the script**
+
+Create `scripts/serve-browser-check.mjs`:
+
+```js
+// Boots `waml serve` against a fixture, loads the served UI in headless
+// Chromium, and asserts three things:
+//   1. the wasm boots without a console panic,
+//   2. the API answers same-origin from inside that page,
+//   3. a page on a foreign origin still cannot reach the API.
+//
+// (3) is the regression guard: the whole same-origin design rests on Chromium
+// blocking a cross-origin fetch into the loopback address space, and that was
+// measured rather than assumed.
+
+import { spawn } from 'node:child_process';
+import { chromium } from 'playwright-core';
+
+const FIXTURE = 'crates/waml-editor/tests/fixtures/mini';
+const PORT = 8231;
+
+const proc = spawn(
+  'cargo',
+  ['run', '-p', 'waml-cli', '--release', '--', 'serve', FIXTURE, '--port', String(PORT), '--no-open'],
+  { stdio: ['ignore', 'inherit', 'pipe'] },
+);
+
+const token = await new Promise((resolve, reject) => {
+  let buf = '';
+  const timer = setTimeout(() => reject(new Error('server did not print a URL in 180s')), 180_000);
+  proc.stderr.on('data', (d) => {
+    buf += d.toString();
+    process.stderr.write(d);
+    const m = buf.match(/token=([A-Za-z0-9_-]+)/);
+    if (m) {
+      clearTimeout(timer);
+      resolve(m[1]);
+    }
+  });
+});
+
+const browser = await chromium.launch({
+  channel: undefined,
+  args: ['--use-gl=swiftshader', '--enable-unsafe-swiftshader'],
+});
+const page = await browser.newPage();
+const panics = [];
+page.on('console', (m) => {
+  const t = m.text();
+  if (/panic|unreachable executed|RuntimeError/i.test(t)) panics.push(t);
+});
+page.on('pageerror', (e) => panics.push(String(e)));
+
+await page.goto(`http://127.0.0.1:${PORT}/?token=${token}`, { waitUntil: 'load' });
+await page.waitForTimeout(15_000); // wasm boot + first frame
+await page.screenshot({ path: 'serve-browser-check.png' });
+
+const sameOrigin = await page.evaluate(async (t) => {
+  const r = await fetch(`/api/model?token=${t}`);
+  return r.status;
+}, token);
+
+const cross = await page.evaluate(async (t) => {
+  try {
+    const r = await fetch(`http://127.0.0.1:${8231}/api/model?token=${t}`, { mode: 'cors' });
+    return `reached: ${r.status}`;
+  } catch (e) {
+    return `blocked: ${e}`;
+  }
+}, token);
+
+// Foreign origin: same fetch, run from a real remote page.
+const foreign = await browser.newPage();
+await foreign.goto('https://redoz.github.io/waml/', { waitUntil: 'domcontentloaded' });
+const foreignResult = await foreign.evaluate(async (t) => {
+  try {
+    const r = await fetch(`http://127.0.0.1:8231/api/model?token=${t}`, { mode: 'cors' });
+    return `reached: ${r.status}`;
+  } catch (e) {
+    return `blocked: ${e}`;
+  }
+}, token);
+
+await browser.close();
+proc.kill();
+
+const ok =
+  panics.length === 0 && sameOrigin === 200 && foreignResult.startsWith('blocked');
+console.log(JSON.stringify({ panics, sameOrigin, cross, foreignResult, ok }, null, 2));
+process.exit(ok ? 0 : 1);
+```
+
+- [ ] **Step 2: Run it**
+
+Run: `node scripts/serve-browser-check.mjs`
+Expected: `"ok": true`, `"sameOrigin": 200`, `"foreignResult"` starting `blocked:` and mentioning the loopback address space, and `serve-browser-check.png` showing the editor rather than a blank canvas.
+
+If `playwright-core` resolves no browser, point it at the ms-playwright `chromium-1228` build explicitly via `executablePath` — the Windows directory is `chrome-win64`, **not** `chrome-win`.
+
+If the script reports `sameOrigin: 200` but the screenshot is blank, that is the wasm failing to boot, not a server bug: check the console output the script echoed before chasing anything in `serve`.
+
+- [ ] **Step 3: Commit**
+
+```bash
+git add scripts/serve-browser-check.mjs
+git commit -m "test(serve): verify the served UI boots and stays same-origin
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>"
+```
+
+---
+
+### Task 10: Editor `Backend::Http` save arm
+
+Fills the native `save_backend` stub and gives the web build a real backing. The editor already routes every mutation through `waml::ops::apply`, so an op log is a small addition at two call sites rather than a refactor.
+
+**Files:**
+- Modify: `crates/waml-editor/Cargo.toml` (depend on `waml-ops-dto`)
+- Modify: `crates/waml-editor/src/app.rs` — the `App` fields near line 528, `save_backend` at lines 1113 and 1122, the apply sites at lines 2007 and 2490, and `handle_startup` at lines 1689 / 1722
+
+**Interfaces:**
+- Consumes: `waml_ops_dto::OpDto::from_op`, makepad's `HttpRequest::new(url, HttpMethod::POST)` + `set_header` + `set_string_body` (`C:/dev/makepad/platform/network/src/types.rs:79,131,158`), `cx.http_request` (`cx_api.rs:1453`), `NetworkResponse::HttpResponse` via `MatchEvent::handle_network_responses` (`draw/src/match_event.rs:52`), `OsType::Web(params).search` (`platform/src/cx.rs:245`).
+- Produces: `enum Backend { Fragment, Stub, Http { base: String, token: String } }` on `App`, plus `pending_ops: Vec<waml::ops::Op>` and `revision: u64`.
+
+- [ ] **Step 1: Add the dependency and the fields**
+
+In `crates/waml-editor/Cargo.toml`, add `waml-ops-dto = { path = "../waml-ops-dto" }`.
+
+In `crates/waml-editor/src/app.rs`, next to the `save_timer` field (near line 532) add:
+
+```rust
+    /// How this build persists. Chosen once at startup, never per save: the
+    /// editor has one document model and several backings, and this is the
+    /// only place that difference is allowed to exist.
+    #[live(ignore)] // if the struct is a makepad live struct, match the attribute style of its neighbours
+    backend: Backend,
+    /// Ops applied since the last successful save, in order. The HTTP backend
+    /// sends these; the other backends ignore them.
+    pending_ops: Vec<waml::ops::Op>,
+    /// Server revision this editor believes it holds. Meaningless for the
+    /// other backends.
+    revision: u64,
+```
+
+Use whatever field-attribute style the surrounding fields use — copy a neighbour rather than inventing one. Then, near the other small types in the file:
+
+```rust
+/// Where saves go.
+#[derive(Default, Clone)]
+enum Backend {
+    /// Browser with no server: the URL fragment is the whole filesystem.
+    Fragment,
+    /// Desktop with no server: nothing is persisted.
+    #[default]
+    Stub,
+    /// A `waml serve` instance. Transport, not platform — both the native and
+    /// the wasm build can select it.
+    Http { base: String, token: String },
+}
+```
+
+- [ ] **Step 2: Record ops as they are applied**
+
+At line 2007 and line 2490 — the two `waml::ops::apply(&self.bundle, …)` call sites — push the ops that succeeded onto `self.pending_ops` in the success branch, before `mark_dirty`. For the single-op site:
+
+```rust
+                    match waml::ops::apply(&self.bundle, &[op.clone()]) {
+                        Ok(next) => {
+                            self.bundle = next;
+                            self.pending_ops.push(op);
+                            // …existing success body…
+                        }
+```
+
+and for the batch site at 2490, `self.pending_ops.extend(outcome.ops.iter().cloned());`. Do not push on the error branch: an op that failed locally must never be sent.
+
+- [ ] **Step 3: Select the backend at startup**
+
+In the wasm `handle_startup` (line 1722), before the fragment handling, read the query string:
+
+```rust
+        // `?api=…&token=…` means a `waml serve` is hosting us and owns the
+        // filesystem; the fragment backing is then not used at all.
+        if let makepad_widgets::makepad_platform::OsType::Web(params) = cx.os_type() {
+            if let Some((base, token)) = serve_params(&params.search) {
+                self.backend = Backend::Http { base, token };
+            } else {
+                self.backend = Backend::Fragment;
+            }
+        }
+```
+
+with a helper next to `web_location_hash` (line 1678):
+
+```rust
+/// Parse `?api=<origin>&token=<t>` out of a query string. Both must be
+/// present; a token without an endpoint is not a backing.
+fn serve_params(search: &str) -> Option<(String, String)> {
+    let mut api = None;
+    let mut token = None;
+    for pair in search.trim_start_matches('?').split('&') {
+        match pair.split_once('=') {
+            Some(("api", v)) => api = Some(v.to_string()),
+            Some(("token", v)) => token = Some(v.to_string()),
+            _ => {}
+        }
+    }
+    Some((api?, token?))
+}
+```
+
+In the native `handle_startup` (line 1689), select `Backend::Http` when the same values arrive on argv — add `--api` and `--token` to `crate::cli::parse` following the existing flags there, and leave `Backend::Stub` when they are absent so today's behaviour is unchanged.
+
+When the server serves the UI it must therefore hand the page both values. Update `get_asset` in `crates/waml-cli/src/serve/routes.rs` only if the shell needs `api` injected; the same-origin default means the editor can fall back to `location.origin`, so prefer treating a missing `api` as "same origin as this page" in `serve_params` rather than rewriting served HTML.
+
+- [ ] **Step 4: Implement the save arm**
+
+Replace both `save_backend` definitions (lines 1113 and 1122) with one non-`cfg` function that matches on the backend:
+
+```rust
+    /// Persist the open bundle by whatever means this build has.
+    fn save_backend(&mut self, cx: &mut Cx) {
+        match self.backend.clone() {
+            Backend::Stub => {}
+            Backend::Fragment => {
+                #[cfg(target_arch = "wasm32")]
+                cx.browser_update_url(&format!("#{}", waml::share::encode(&self.bundle)), true);
+            }
+            Backend::Http { base, token } => {
+                if self.pending_ops.is_empty() {
+                    return;
+                }
+                let dtos: Vec<_> = self
+                    .pending_ops
+                    .iter()
+                    .map(waml_ops_dto::OpDto::from_op)
+                    .collect();
+                let body = serde_json::json!({ "revision": self.revision, "ops": dtos });
+                let mut req = makepad_widgets::makepad_platform::HttpRequest::new(
+                    format!("{base}/api/ops"),
+                    makepad_widgets::makepad_platform::HttpMethod::POST,
+                );
+                req.set_header("Content-Type".into(), "application/json".into());
+                req.set_header("Authorization".into(), format!("Bearer {token}"));
+                req.set_header("X-Waml-Client".into(), "1".into());
+                req.set_string_body(body.to_string());
+                cx.http_request(live_id!(waml_save), req);
+            }
+        }
+    }
+```
+
+`Backend::Fragment` keeps its `cfg` inside the arm rather than duplicating the whole function, so the seam is one function with three cases on every platform. Import paths for `HttpRequest`/`HttpMethod` may differ — follow whatever `makepad_widgets` re-exports rather than reaching into `makepad_platform` directly if a shorter path exists.
+
+- [ ] **Step 5: Handle the response**
+
+Add to the `impl MatchEvent for App` block:
+
+```rust
+    /// The server is the authority on what is on disk: apply what it returns,
+    /// and on a stale revision reload rather than clobber.
+    fn handle_network_responses(
+        &mut self,
+        cx: &mut Cx,
+        responses: &makepad_widgets::makepad_platform::NetworkResponsesEvent,
+    ) {
+        for r in responses {
+            if r.request_id != live_id!(waml_save) {
+                continue;
+            }
+            let makepad_widgets::makepad_platform::NetworkResponse::HttpResponse { response, .. } =
+                &r.response
+            else {
+                continue;
+            };
+            match response.status_code {
+                200 => {
+                    let Some(body) = response.get_string_body() else { continue };
+                    let Ok(v) = serde_json::from_str::<serde_json::Value>(&body) else { continue };
+                    if let Some(rev) = v["revision"].as_u64() {
+                        self.revision = rev;
+                    }
+                    if let Some(changed) = v["changed"].as_array() {
+                        for entry in changed {
+                            let (Some(path), Some(md)) =
+                                (entry[0].as_str(), entry[1].as_str())
+                            else {
+                                continue;
+                            };
+                            match self.bundle.iter_mut().find(|(p, _)| p == path) {
+                                Some(slot) => slot.1 = md.to_string(),
+                                None => self.bundle.push((path.into(), md.into())),
+                            }
+                        }
+                    }
+                    self.pending_ops.clear();
+                }
+                409 => {
+                    // Someone else moved the files. Re-read rather than
+                    // overwrite: a silent clobber is the one outcome worse
+                    // than losing this batch.
+                    self.pending_ops.clear();
+                    self.reload_from_server(cx);
+                }
+                code => {
+                    log!("waml serve refused the save: {code}");
+                    self.pending_ops.clear();
+                }
+            }
+        }
+    }
+```
+
+`NetworkResponse`'s exact field shape (`request_id` alongside the variant, versus inside it) is defined at `C:/dev/makepad/platform/network/src/types.rs:315` — read it and match what is there.
+
+Add `reload_from_server`, which issues `GET /api/bundle` under a second `live_id!(waml_reload)` and, on 200, replaces `self.bundle` and `self.revision` wholesale and shows the "reloaded from disk" notice through whatever toast/notice mechanism the editor already has. If there is none, `log!` it and leave a one-line comment saying a visible notice is owed — do not invent a new chrome surface inside this task.
+
+- [ ] **Step 6: Verify**
+
+Run: `cargo test -p waml-editor && cargo clippy --workspace --all-targets -- -D warnings`
+Expected: clean.
+
+Then verify by hand, which is the only way this arm is really tested:
+
+1. `cargo run -p waml-cli -- serve /tmp/scratch-bundle --port 8123`
+2. `cargo run -p waml-editor -- /tmp/scratch-bundle --api http://127.0.0.1:8123 --token <printed>`
+3. Drag a node to author a placement, wait 3 seconds for the save debounce.
+4. Confirm the markdown on disk gained a placement line, and that the server's `GET /api/bundle` reports revision 1.
+
+Capture the editor window by **specific pid**, in one PowerShell call — never by process name, which grabs whatever editor the user has open, and never `Stop-Process` by name.
+
+- [ ] **Step 7: Commit**
+
+```bash
+git add crates/waml-editor
+git commit -m "feat(editor): save through a waml serve backend
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>"
+```
+
+---
+
+### Task 11: Documentation
+
+The command exists and works; make it discoverable, and write down the security posture where a user will actually read it.
+
+**Files:**
+- Modify: `README.md`
+- Modify: `crates/waml-cli/src/main.rs` (the `Serve` variant's doc comment, if Task 1's wording drifted)
+
+**Interfaces:**
+- Consumes: the finished behaviour of Tasks 1–10.
+- Produces: no code.
+
+- [ ] **Step 1: Document the command**
+
+In `README.md`, in whatever section lists the CLI commands, add an entry matching the surrounding style:
+
+```markdown
+### `waml serve [DIR]`
+
+Serves the web editor and an ops API over `DIR`, so the browser editor can
+read and write real files.
+
+```
+waml serve docs --port 8099
+```
+
+It prints one URL containing a freshly generated access token, which every
+request must present. The token is not stored anywhere and changes each run.
+
+By default the server binds `127.0.0.1`. `--bind-all` exposes it to the
+network and warns when it does. Loopback is **not** access control — the token
+is. Requests are additionally checked against the server's own `Origin` and
+`Host`, and writes require an `X-Waml-Client: 1` header, so a hostile page in
+your browser cannot drive the API even while the editor is open.
+
+The editor served here is the same one published to GitHub Pages. A page on
+that hosted origin cannot talk to this server: Chromium blocks cross-origin
+requests into the loopback address space, which is why the UI is served from
+the same origin as the API rather than left hosted.
+```
+
+- [ ] **Step 2: Check the help text agrees with the README**
+
+Run: `cargo run -p waml-cli -- serve --help`
+Expected: flag descriptions do not contradict the README. Fix the doc comments, not the README, if they drift.
+
+- [ ] **Step 3: Full gate**
+
+Run: `cargo test --workspace && cargo clippy --workspace --all-targets -- -D warnings`
+Expected: clean.
+
+- [ ] **Step 4: Commit**
+
+```bash
+git add README.md crates/waml-cli
+git commit -m "docs(serve): document waml serve and its security posture
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>"
+```
+
+---
+
+## Spec coverage
+
+| Spec section | Task |
+| --- | --- |
+| Writes are ops, not files | 5, 7 |
+| Reads are state + model projection (`/api/bundle`, `/api/model`, `/api/diagnostics`) | 5, 6 |
+| Ops return changed files + revision; 409 on mismatch; 422 all-or-nothing | 5, 7 |
+| Artifact embedded, brotli-precompressed, 406 without `br` | 8 |
+| Same-origin only; cross-origin regression guard | 8, 9 |
+| Command surface (`DIR`, `--port`, `--bind-all`, `--api-only`, `--no-open`) | 1, 6, 8 |
+| API status-code table | 6, 7, 8 |
+| Security 1 — token always required, constant time | 4 |
+| Security 2 — `X-Waml-Client` on mutating routes | 4, 7 |
+| Security 3 — Origin allowlist, no `*`, no PNA header | 4, 6 |
+| Security 4 — Host check / anti-rebinding | 4 |
+| Security 5 — path confinement | 3, 5 |
+| Security 6 — loopback default, `--bind-all` warns | 1, 6 |
+| Security 7 — no shell-out, no arbitrary-path reads | 3, 8 |
+| Editor `Backend::Http` behind the one seam | 10 |
+| Testing — unit / integration / contract / browser | 3, 4, 5, 6, 7, 9 |
+| Out of scope items | not implemented, by construction |
+
+Two things the spec assumed that turned out not to hold, both handled above rather than discovered mid-implementation: `Op::PlaceSet`/`Op::PlaceRm` had no wire DTO (Task 2), and the editor kept no op log (Task 10, Step 2).
