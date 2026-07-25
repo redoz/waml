@@ -40,6 +40,11 @@ impl DocView for ClassifierPreviewView {
             // Single-classifier focus only in this mock -- always 1.
             toolbar.set_selection(cx, Some(1));
         }
+        // The preview tab focuses one classifier but never selects a canvas
+        // node, so fit-to-selection has no target here.
+        if let Some(mut bar) = body.view_bar(cx).borrow_mut::<crate::view_bar::ViewBar>() {
+            bar.set_fit_to_selection_enabled(cx, false);
+        }
     }
 
     fn handle(

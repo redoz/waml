@@ -17,9 +17,9 @@ fn strip_md_key(s: &str) -> String {
 }
 
 /// The canvas veil mode a view-bar action should drive, or `None` when it
-/// drives no veil change (the camera one-shots, still `log!` no-ops, and the
-/// hidden-borders toggle, which `show_hidden_borders_for` owns). Pure so the
-/// on/off mapping is testable.
+/// drives no veil change (the camera one-shots, handled inline in `handle`,
+/// and the hidden-borders toggle, which `show_hidden_borders_for` owns). Pure
+/// so the on/off mapping is testable.
 fn constraint_vis_for(action: &crate::view_bar::ViewBarAction) -> Option<ConstraintVisibility> {
     match action {
         crate::view_bar::ViewBarAction::Toggled(
@@ -148,6 +148,11 @@ impl DocView for ClassDiagramView {
         {
             toolbar.set_selection(cx, None);
         }
+        // A fresh scene clears the selection (`set_scene`), so the button starts
+        // dim on every diagram activation.
+        if let Some(mut bar) = body.view_bar(cx).borrow_mut::<crate::view_bar::ViewBar>() {
+            bar.set_fit_to_selection_enabled(cx, false);
+        }
         // Re-converge the view bar's lit state onto the canvas. The canvas owns
         // both the veil mode and the hidden-border x-ray; the bar only caches
         // them, and its own click handler is otherwise the sole writer -- so
@@ -173,6 +178,18 @@ impl DocView for ClassDiagramView {
         model: &Model,
     ) -> ViewOutcome {
         let mut out = ViewOutcome::default();
+
+        // Keep the view bar's fit-to-selection button in step with the canvas
+        // selection. `GraphCanvas` mutates `selected_key` in `handle_event`,
+        // which runs before `Event::Actions` is dispatched, so this reads the
+        // selection as of THIS batch. Cheap: the setter redraws only on change.
+        let has_selection = body
+            .canvas(cx)
+            .borrow::<crate::canvas::GraphCanvas>()
+            .is_some_and(|c| c.has_selection());
+        if let Some(mut bar) = body.view_bar(cx).borrow_mut::<crate::view_bar::ViewBar>() {
+            bar.set_fit_to_selection_enabled(cx, has_selection);
+        }
 
         // Inline-edit commit: inspector emits `Edited(subject_key)`.
         if let Some(key) = body
@@ -235,9 +252,9 @@ impl DocView for ClassDiagramView {
             return out;
         }
 
-        // View bar: `ShowConstraints` drives the canvas veil mode and
-        // `ShowHiddenBorders` the group x-ray. The camera one-shots are `log!`
-        // no-ops here -- Plan D wires them.
+        // View bar: `ShowConstraints` drives the canvas veil mode,
+        // `ShowHiddenBorders` the group x-ray, and the four camera one-shots
+        // are thin wrappers over the `Camera` API on `GraphCanvas`.
         if let Some(action) = body
             .view_bar(cx)
             .borrow_mut::<crate::view_bar::ViewBar>()
@@ -248,7 +265,28 @@ impl DocView for ClassDiagramView {
             let vis = constraint_vis_for(&action);
             let hidden = show_hidden_borders_for(&action);
             if vis.is_none() && hidden.is_none() {
-                log!("view bar: {action:?}");
+                if let crate::view_bar::ViewBarAction::Triggered(opt) = action {
+                    if let Some(mut canvas) =
+                        body.canvas(cx).borrow_mut::<crate::canvas::GraphCanvas>()
+                    {
+                        match opt {
+                            crate::view_bar::ViewOption::ZoomIn => {
+                                canvas.zoom_step(cx, crate::canvas::ZOOM_STEP)
+                            }
+                            crate::view_bar::ViewOption::ZoomOut => {
+                                canvas.zoom_step(cx, 1.0 / crate::canvas::ZOOM_STEP)
+                            }
+                            crate::view_bar::ViewOption::FitToSize => canvas.fit_to_scene(cx),
+                            crate::view_bar::ViewOption::FitToSelection => {
+                                canvas.fit_to_selection(cx)
+                            }
+                            // The toggles never arrive as `Triggered`.
+                            _ => {}
+                        }
+                    }
+                } else {
+                    log!("view bar: {action:?}");
+                }
             } else if let Some(mut canvas) =
                 body.canvas(cx).borrow_mut::<crate::canvas::GraphCanvas>()
             {
