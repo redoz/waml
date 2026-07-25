@@ -31,20 +31,23 @@ script_mod! {
         height: 32.0
         show_bg: true
         // Rounded accent wash behind the glyph, faded in by `lit` (hover ||
-        // active). A centred `min(w,h)-4` square (28px for a 32px button), the
-        // SAME premultiplied accent @16% the tool dock / caption buttons paint, so
-        // every icon button reads identically. Sizing off the SMALLER side (not
-        // `rect_size - 4` per axis) keeps the wash a fixed 28px square even when a
-        // host stretches the button taller than wide. Inline `pixel:` on `draw_bg`
-        // renders here (proven by the inspector/tree frame shaders); `lit` is
-        // pushed each `draw_walk`.
+        // active). A centred 28px square, the SAME accent @16% the tool dock /
+        // caption buttons paint, so every icon button reads identically. The
+        // square is CAPPED at 28px (`min(w,h)-4`, clamped) so a host that
+        // stretches the button -- e.g. the inspector's `Fill x Fill` flag button
+        // collapsing to the whole panel -- still gets a small fixed wash, not one
+        // that grows with the box. Inline `pixel:` on `draw_bg` renders here
+        // (proven by the inspector/tree frame shaders); `lit` is pushed each
+        // `draw_walk`. `sdf.fill` premultiplies the color it is handed, so pass a
+        // STRAIGHT accent + alpha `a` -- premultiplying here too double-darkens
+        // the wash to a grey.
         draw_bg +: {
             color: atlas.accent
             lit: uniform(0.0)
             pixel: fn() {
                 let sdf = Sdf2d.viewport(self.pos * self.rect_size)
                 let a = 0.16 * self.lit
-                let ws = min(self.rect_size.x, self.rect_size.y) - 4.0
+                let ws = min(min(self.rect_size.x, self.rect_size.y) - 4.0, 28.0)
                 sdf.box(
                     (self.rect_size.x - ws) * 0.5,
                     (self.rect_size.y - ws) * 0.5,
@@ -52,7 +55,7 @@ script_mod! {
                     ws,
                     2.0,
                 )
-                sdf.fill(vec4(self.color.x * a, self.color.y * a, self.color.z * a, a))
+                sdf.fill(vec4(self.color.x, self.color.y, self.color.z, a))
                 return sdf.result
             }
         }
