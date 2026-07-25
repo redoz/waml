@@ -168,7 +168,16 @@ script_mod! {
                             // (`show_editor`/`show_start_screen`), which also sets the
                             // glyph (`Icon::ListTree`, inherited from the retired tree
                             // flag spine).
-                            tree_btn := IconButton{ width: 24.0 height: 24.0 icon_size: 16.0 margin: Inset{top: 8.0} visible: false }
+                            //
+                            // `left: 5` stacks this glyph on the burger's centreline one
+                            // row above. The two rows inset their first control
+                            // differently -- `title_row` has `padding left: 2` and a 30px
+                            // burger (centre at row_x+17), this row has no padding and a
+                            // 24px button (centre at row_x+12) -- so the 5px closes that
+                            // gap. Both rows start at the same x (the wordmark's right
+                            // edge), so aligning the centres aligns the columns. Counted
+                            // into `TREE_BTN_W`, which `sync_tree_gap` subtracts.
+                            tree_btn := IconButton{ width: 24.0 height: 24.0 icon_size: 16.0 margin: Inset{left: 5.0, top: 8.0} visible: false }
                             // Runtime-driven spacer (`sync_dock_slots`) between `[T]`
                             // and the strip, sized so the STRIP's left edge lands on
                             // the tree column's right edge -- where the `field_bg`
@@ -456,12 +465,12 @@ script_mod! {
     }
 }
 
-/// Side of the caption's tree-column toggle, mirroring the `tree_btn` DSL
-/// `width` (which carries no horizontal margin, so this is its whole footprint).
-/// Kept here because `sync_tree_gap` has to subtract it from the tree column's
-/// width: the button leads the row, so the spacer after it is short by exactly
-/// the button's own width.
-const TREE_BTN_W: f64 = 24.0;
+/// Footprint of the caption's tree-column toggle: the `tree_btn` DSL `width`
+/// (24) plus its 5px left margin, which seats it on the burger's centreline one
+/// row above (see the `tree_btn` comment). Kept here because `sync_tree_gap` has
+/// to subtract it from the tree column's width: the button leads the row, so the
+/// spacer after it is short by exactly the button's own footprint.
+const TREE_BTN_W: f64 = 29.0;
 
 #[derive(Script, ScriptHook)]
 pub struct App {
