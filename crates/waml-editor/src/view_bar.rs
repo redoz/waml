@@ -121,6 +121,13 @@ impl ViewOption {
     }
 }
 
+/// Whether an option's button renders dim (and swallows its own clicks). Only
+/// `FitToSelection` ever does, and only when nothing is selected. Pure, so the
+/// draw-time push and the event-time swallow can't drift apart.
+fn option_is_dim(opt: ViewOption, fit_enabled: bool) -> bool {
+    opt == ViewOption::FitToSelection && !fit_enabled
+}
+
 /// The bar's independent toggle state. A plain struct rather than two widget
 /// fields so the option->state map is unit-testable without constructing a
 /// `View` (makepad widgets aren't constructible outside a running `Cx`).
@@ -178,10 +185,10 @@ impl ViewToggles {
 pub enum ViewBarAction {
     #[default]
     None,
-    /// A camera one-shot fired. The `ViewOption` payload is kept for the
-    /// `log!` in `class_diagram_view.rs` (Debug-only) while these buttons stay
-    /// `log!` no-ops -- Plan D wires the camera actions.
-    Triggered(#[allow(dead_code)] ViewOption),
+    /// A camera one-shot fired (zoom in/out, fit to size, fit to selection).
+    /// `class_diagram_view.rs` maps the `ViewOption` payload onto the matching
+    /// `GraphCanvas` camera method.
+    Triggered(ViewOption),
     /// A toggle flipped; carries its new state.
     Toggled(ViewOption, bool),
 }
@@ -196,6 +203,12 @@ pub struct ViewBar {
     /// The two independent view toggles (constraint veils, hidden borders).
     #[rust]
     toggles: ViewToggles,
+
+    /// Whether `FitToSelection` has anything to fit. Pushed by the diagram view
+    /// from the canvas's selection; when false the button draws dim and swallows
+    /// its own clicks. Starts false — nothing is selected before the first sync.
+    #[rust]
+    fit_to_selection_enabled: bool,
 }
 
 impl Widget for ViewBar {
@@ -207,6 +220,11 @@ impl Widget for ViewBar {
         if let Event::Actions(actions) = event {
             for opt in ViewOption::ALL {
                 if self.button(cx, opt).as_icon_button().clicked(actions) {
+                    // A dim FitToSelection has nothing to fit: swallow the click
+                    // here so the action stream only ever carries real intent.
+                    if option_is_dim(opt, self.fit_to_selection_enabled) {
+                        break;
+                    }
                     if opt.is_toggle() {
                         let on = !self.toggles.get(opt);
                         self.toggles.set(opt, on);
@@ -229,6 +247,7 @@ impl Widget for ViewBar {
             let btn = self.button(cx, opt).as_icon_button();
             btn.set_icon(cx, Self::icon_for(opt));
             btn.set_active(cx, lit);
+            btn.set_dim(cx, option_is_dim(opt, self.fit_to_selection_enabled));
         }
 
         while self.view.draw_walk(cx, scope, walk).step().is_some() {}
@@ -295,6 +314,15 @@ impl ViewBar {
         match item.cast() {
             ViewBarAction::None => None,
             action => Some(action),
+        }
+    }
+
+    /// Drive the fit-to-selection button between enabled and dim, redrawing only
+    /// on a change (this is pushed on every action batch).
+    pub fn set_fit_to_selection_enabled(&mut self, cx: &mut Cx, on: bool) {
+        if self.fit_to_selection_enabled != on {
+            self.fit_to_selection_enabled = on;
+            self.view.redraw(cx);
         }
     }
 }
@@ -375,5 +403,19 @@ mod tests {
             assert!(!opt.label().is_empty(), "empty label for {opt:?}");
         }
         assert_eq!(ViewOption::ShowConstraints.label(), "Show Constraints");
+    }
+
+    #[test]
+    fn only_fit_to_selection_dims_and_only_when_disabled() {
+        for opt in ViewOption::ALL {
+            // With a selection, nothing is dim.
+            assert!(!option_is_dim(opt, true), "{opt:?} dim despite a selection");
+            // With no selection, only FitToSelection dims.
+            assert_eq!(
+                option_is_dim(opt, false),
+                opt == ViewOption::FitToSelection,
+                "{opt:?} dim-ness mismatch"
+            );
+        }
     }
 }
