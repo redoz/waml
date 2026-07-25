@@ -2378,32 +2378,13 @@ impl GraphCanvas {
         // Selected mode is the only drawing mode, so the veil always reframes
         // onto the selected node's POV.
         let pov = selected_key.as_deref();
-        // While a card is in flight it becomes the selection (see `FingerMove`),
-        // so every drawn relation touches it. At rest the veil anchors to the
-        // *other* participant (`reframe_to_selected`), which is stationary -- but
-        // during a drag that leaves the hatch pinned to the node NOT moving, so
-        // it only looks right once the drop re-solves the layout. Re-anchor the
-        // veil to the dragged node itself for the duration of the drag: the
-        // keep-out then emanates from the card in your hand and tracks live via
-        // the ghost rect (`node_screen_rect`), reading from the moving node's
-        // point of view (`opposite` when it is the stored subject).
-        let dragged = self.drag_node.filter(|_| self.drag_moved);
-        let chosen: Vec<(usize, waml::syntax::Direction)> = relations_for_visibility(
+        let mut chosen: Vec<(usize, waml::syntax::Direction)> = relations_for_visibility(
             &self.scene.relations,
             self.constraint_vis,
             selected_key.as_deref(),
         )
         .into_iter()
         .filter_map(|rel| {
-            if let Some(d) = dragged {
-                let d_key = &self.scene.nodes[d].key;
-                if rel.subject == *d_key {
-                    return Some((d, rel.dir.opposite()));
-                }
-                if rel.reference == *d_key {
-                    return Some((d, rel.dir));
-                }
-            }
             let (subject, reference, dir) =
                 reframe_to_selected(&rel.subject, &rel.reference, rel.dir, pov);
             // The subject must still exist in the scene for the relation to be
@@ -2413,6 +2394,20 @@ impl GraphCanvas {
             Some((ri, dir))
         })
         .collect();
+
+        // While a hover preview is up the layout is tweened into the candidate
+        // the dial wedge would author, but that placement is not in
+        // `scene.relations` yet -- so its keep-out would be missing until the
+        // drop commits. Draw the candidate veil now, at the previewed positions
+        // (`apply_preview` already tweened the node rects), so the hatch reads
+        // exactly as the accepted layout would. The candidate is `A <dir> B`
+        // with A the dragged selection, so it anchors to the reference B just as
+        // the committed relation would (`reframe_to_selected` is a no-op here).
+        if let (Some(p), Some(_a), Some(b)) = (&self.preview, self.drag_node, self.drag_target) {
+            if let Some(dir) = zone_placed(p.zone).dir {
+                chosen.push((b, dir));
+            }
+        }
 
         for (ri, dir) in chosen {
             self.draw_veil_for(cx, ri, dir);
