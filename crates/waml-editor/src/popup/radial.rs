@@ -302,7 +302,8 @@ script_mod! {
     // quad's local px (set per draw); `disc_col` defaults to the HUD field bg.
     mod.draw.RadialDisc = mod.draw.DrawColor{
         disc_col: uniform(atlas.field_bg)
-        spoke_col: uniform(atlas.accent)
+        border_hi: uniform(atlas.frame_hi)
+        border_lo: uniform(atlas.frame_lo)
         rim: uniform(114.0)
         hub: uniform(30.0)
         n: uniform(4.0)
@@ -335,8 +336,16 @@ script_mod! {
             let perp = r * abs(rel - bnd)
             let within = step(self.hub, r) * (1.0 - step(self.rim, r))
             let on = within * in_arc * (1.0 - smoothstep(0.4, 1.1, perp))
-            let sc = mix(self.spoke_col.xyz, vec3(1.0, 1.0, 1.0), self.invert)
-            let o = mix(col, vec4(sc.x, sc.y, sc.z, 1.0), on)
+            // Spokes share the rim border's source-bright gradient (border_hi ->
+            // border_lo across the same 150deg axis as the wedge rim) so the
+            // dividers read as one frame with the ring; they invert to white on
+            // recede like the rest of the card.
+            let bdir = vec2(0.5, 0.8660254)
+            let bspan = 1.3660254
+            let bt = clamp((self.pos.x * bdir.x + self.pos.y * bdir.y) / bspan, 0.0, 1.0)
+            let bord = mix(self.border_hi, self.border_lo, bt)
+            let sc = mix(bord.xyz, vec3(1.0, 1.0, 1.0), self.invert)
+            let o = mix(col, vec4(sc.x, sc.y, sc.z, bord.w), on)
             // Output PREMULTIPLIED alpha (makepad blends Src=ONE, Dst=INV_SRC_ALPHA).
             // `col`/`spoke` are straight, so scale rgb by the final coverage --
             // otherwise a light `disc_col` leaks full colour into the transparent
