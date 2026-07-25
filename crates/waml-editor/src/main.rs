@@ -51,6 +51,9 @@ mod tree_panel;
 mod veil;
 mod view_bar;
 
+#[cfg(test)]
+mod script_gate;
+
 use app::App;
 
 app_main!(App);
