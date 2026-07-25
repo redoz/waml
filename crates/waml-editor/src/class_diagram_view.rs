@@ -137,11 +137,14 @@ impl DocView for ClassDiagramView {
             let active_title = self.active_title.clone();
             self.sync_inspector_elements(cx, body, model, &active_key, &active_title, &node_keys);
         }
+        // Nothing is selected yet on a fresh sync (tab activation, model
+        // reload), so the diagram itself is the subject.
+        let diagram_subject = Subject::Diagram(self.active_key.clone());
         if let Some(mut inspector) = body
             .inspector(cx)
             .borrow_mut::<crate::inspector_panel::Inspector>()
         {
-            inspector.set_subject(cx, model, Subject::None);
+            inspector.set_subject(cx, model, diagram_subject);
         }
         if let Some(mut toolbar) = body
             .selection_toolbar(cx)
@@ -224,17 +227,15 @@ impl DocView for ClassDiagramView {
             .borrow_mut::<crate::inspector_panel::Inspector>()
             .and_then(|mut inspector| inspector.navigate(cx, actions))
         {
-            if let Some(subject) = subject_from(&key, kind) {
-                if let Some(mut inspector) = body
-                    .inspector(cx)
-                    .borrow_mut::<crate::inspector_panel::Inspector>()
-                {
-                    inspector.set_subject(cx, model, subject);
-                }
-                if let Some(mut canvas) = body.canvas(cx).borrow_mut::<crate::canvas::GraphCanvas>()
-                {
-                    canvas.select_by_key(cx, &key);
-                }
+            let subject = subject_from(&key, kind);
+            if let Some(mut inspector) = body
+                .inspector(cx)
+                .borrow_mut::<crate::inspector_panel::Inspector>()
+            {
+                inspector.set_subject(cx, model, subject);
+            }
+            if let Some(mut canvas) = body.canvas(cx).borrow_mut::<crate::canvas::GraphCanvas>() {
+                canvas.select_by_key(cx, &key);
             }
             return out;
         }
@@ -339,11 +340,14 @@ impl DocView for ClassDiagramView {
                 return out;
             }
             Some(crate::canvas::GraphCanvasAction::NodeDeselect) => {
+                // Deselecting on the canvas falls back to the diagram, never to
+                // an empty panel.
+                let diagram_subject = Subject::Diagram(self.active_key.clone());
                 if let Some(mut inspector) = body
                     .inspector(cx)
                     .borrow_mut::<crate::inspector_panel::Inspector>()
                 {
-                    inspector.set_subject(cx, model, Subject::None);
+                    inspector.set_subject(cx, model, diagram_subject);
                 }
                 return out;
             }

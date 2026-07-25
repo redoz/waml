@@ -15,8 +15,8 @@
 //! card (`App` relays `SelectBox`'s open request to `PopupRoot::show_at`), and
 //! a committed pick comes back through the tag-filtered `PopupRoot::closed`
 //! queue, resolved via `apply_pick` (which repoints the inspector,
-//! inspector-local). Diagram/edge rows are listed but picking them is a no-op
-//! for now.
+//! inspector-local). Every listed row picks, the row-0 diagram included -- the
+//! diagram is the fallback subject, selected whenever nothing else is.
 //!
 //! Step C (inline edit): `Title`/`Description` are click-to-edit. Edits are
 //! hand-rolled (no fork `TextInput`) — same convention as `doc_tabs.rs`: rects
@@ -128,6 +128,31 @@ script_mod! {
                 draw_text +: {
                     color: atlas.accent
                     text_style: fonts.text_label
+                }
+            }
+            // Profile row ("Profile   uml"): dim label + bright value on one
+            // line. Diagram subjects only -- hidden (gap and all) for every
+            // other subject, which leaves `profile` empty.
+            profile_row := View {
+                width: Fill
+                height: Fit
+                flow: Right
+                spacing: 8.0
+                visible: false
+                profile_label := Label {
+                    text: "Profile"
+                    draw_text +: {
+                        color: atlas.text_dim
+                        text_style: fonts.text_label
+                    }
+                }
+                profile_value := Label {
+                    width: Fill
+                    text: ""
+                    draw_text +: {
+                        color: atlas.text
+                        text_style: fonts.text_label
+                    }
                 }
             }
             // Stereotype chips ("<<entity>>"): dim, label-11 (was Regular; the
@@ -410,8 +435,9 @@ fn ref_card_icon(kind: ElementKind) -> Icon {
     match kind {
         ElementKind::Group => Icon::Group,
         ElementKind::Edge => Icon::Spline,
-        // Node / Diagram / Placeholder: the class/panel glyph for now.
-        _ => Icon::PanelTop,
+        // The container glyph, matching the diagram's own picker row.
+        ElementKind::Diagram => Icon::Frame,
+        ElementKind::Node => Icon::PanelTop,
     }
 }
 
@@ -821,6 +847,15 @@ impl Inspector {
             .label(cx, ids!(body.kind))
             .set_text(cx, &kind_line);
 
+        // Profile: diagram subjects only; the row (label included) disappears
+        // when empty, so no stray gap for a classifier/group/edge.
+        self.view
+            .widget(cx, ids!(body.profile_row))
+            .set_visible(cx, !view.profile.is_empty());
+        self.view
+            .label(cx, ids!(body.profile_row.profile_value))
+            .set_text(cx, &view.profile);
+
         let stereo = if view.stereotypes.is_empty() {
             String::new()
         } else {
@@ -976,13 +1011,14 @@ impl Inspector {
     /// `apply_pick`). Node rows lead with their catalog glyph (see `node_lead`,
     /// falling back to a per-type badge for `Unknown` types) and are enabled;
     /// group rows lead with the dashed-box glyph and are enabled; edge rows
-    /// lead with the spline glyph (target-end label) and are enabled; the root
-    /// diagram row leads with the `Frame` glyph and is disabled. Index
-    /// 0 (placeholder) is skipped.
+    /// lead with the spline glyph (target-end label) and are enabled; the row-0
+    /// diagram row leads with the `Frame` glyph and is enabled too (it is the
+    /// fallback subject). Every row maps 1:1 to an item -- there is no skipped
+    /// sentinel, so item index == element index.
     fn build_select_items(&mut self, model: &Model) -> Vec<SelectItem> {
         self.picker_ids.clear();
         let mut items = Vec::new();
-        for idx in 1..self.elements.len() {
+        for idx in 0..self.elements.len() {
             let row = self.elements[idx].clone();
             let id = LiveId::from_str(&row.key);
             self.picker_ids.push((id, idx));
@@ -1021,8 +1057,7 @@ impl Inspector {
                 ),
                 // The root diagram row leads with the `Frame` glyph -- distinct
                 // from any node's catalog icon, marking it as the container.
-                ElementKind::Diagram => (SelectLead::Icon(Icon::Frame), row.label.clone(), false),
-                _ => (SelectLead::None, row.label.clone(), false),
+                ElementKind::Diagram => (SelectLead::Icon(Icon::Frame), row.label.clone(), true),
             };
             items.push(SelectItem {
                 id,
@@ -1043,8 +1078,11 @@ impl Inspector {
         // Feeding diagram rows implies a diagram tab: show the picker bar.
         self.show_picker = true;
         let items = self.build_select_items(model);
-        let sel = subject_to_index(&self.elements, &self.subject);
-        let sel_in_items = if sel == 0 { None } else { Some(sel - 1) };
+        // Item index == element index (no skipped sentinel row). `None` only
+        // when there are no rows at all -- `subject_to_index` would answer 0,
+        // which would point past the end of an empty item list.
+        let sel_in_items =
+            (!self.elements.is_empty()).then(|| subject_to_index(&self.elements, &self.subject));
         if let Some(mut b) = self
             .view
             .widget(cx, ids!(element_bar.select_box))
@@ -1066,7 +1104,8 @@ impl Inspector {
 
     /// Resolve a committed `PopupItem.id` (from `PopupRoot::closed`) back to its
     /// element and repoint the inspector. Returns the new subject, or `None` if
-    /// the id wasn't a pickable (node/group/edge) element in the current list.
+    /// the id isn't in the current element list at all. Every listed row is
+    /// pickable, the diagram row included.
     pub fn apply_pick(&mut self, cx: &mut Cx, model: &Model, id: LiveId) -> Option<Subject> {
         let idx = self
             .picker_ids
@@ -1074,21 +1113,17 @@ impl Inspector {
             .find(|(i, _)| *i == id)
             .map(|(_, x)| *x)?;
         let row = self.elements.get(idx)?;
-        let subject = match row.kind {
-            ElementKind::Node => Subject::Classifier(row.key.clone()),
-            ElementKind::Group => Subject::Group(row.key.clone()),
-            ElementKind::Edge => Subject::Edge(row.key.clone()),
-            ElementKind::Diagram | ElementKind::Placeholder => return None,
-        };
+        let subject = crate::inspector::subject_from(&row.key, row.kind);
         self.set_subject(cx, model, subject.clone());
         Some(subject)
     }
 
     fn subject_key(&self) -> Option<String> {
         match &self.subject {
-            Subject::Classifier(key) | Subject::Group(key) | Subject::Edge(key) => {
-                Some(key.clone())
-            }
+            Subject::Diagram(key)
+            | Subject::Classifier(key)
+            | Subject::Group(key)
+            | Subject::Edge(key) => Some(key.clone()),
             Subject::None => None,
         }
     }

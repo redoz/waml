@@ -10,6 +10,10 @@ use waml::model::{DiagramGroup, ElementType, Model, RelationshipKind};
 pub enum Subject {
     #[default]
     None,
+    /// Diagram key (`Model::diagrams[].key`, unique across the model). The
+    /// fallback subject: a diagram view points here when nothing else is
+    /// selected.
+    Diagram(String),
     Classifier(String),
     /// Group name (diagram-scoped; resolved by name, first match wins).
     Group(String),
@@ -28,14 +32,11 @@ pub enum FieldId {
 }
 
 /// One row in the inspector's element-picker dropdown. The picker lists a
-/// diagram's whole contents; only `Node` rows actually inspect (Diagram and
-/// Edge rows are listed for completeness but selecting them is a no-op for now,
-/// pending `Subject::Diagram` / `Subject::Edge` views).
+/// diagram's whole contents; every row inspects.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ElementRow {
     /// For `Node`, the classifier key (the `set_subject` target). For `Diagram`,
-    /// the diagram key. For `Edge`, a synthetic `"src->tgt"` id (unused while
-    /// edge rows are no-ops). Empty for `Placeholder`.
+    /// the diagram key. For `Edge`, a synthetic `"src->tgt"` id.
     pub key: String,
     pub label: String,
     pub kind: ElementKind,
@@ -43,8 +44,6 @@ pub struct ElementRow {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ElementKind {
-    /// Index-0 sentinel shown when nothing is selected.
-    Placeholder,
     Diagram,
     Group,
     Node,
@@ -60,9 +59,6 @@ pub struct ElementRef {
     pub kind: ElementKind,
     pub label: String,
 }
-
-/// The label of the index-0 sentinel row (shown when nothing is selected).
-pub const PICKER_PLACEHOLDER: &str = "Select an element…";
 
 /// One attribute row, pre-rendered to display strings.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -115,6 +111,9 @@ pub struct AssocRow {
 pub struct InspectorView {
     pub title: String,
     pub kind_label: String,
+    /// The diagram's declared profile. Empty for every non-diagram subject (and
+    /// for a diagram that declares none); the panel hides the row when empty.
+    pub profile: String,
     pub abstract_flag: bool,
     pub stereotypes: Vec<String>,
     pub description: Option<String>,
@@ -178,9 +177,10 @@ fn edge_key(edges: &[waml::model::Edge], idx: usize) -> String {
 }
 
 /// Build the ordered picker rows for a diagram whose drawable node set is
-/// `node_keys` (in display order). Row 0 is always the placeholder sentinel;
-/// then the diagram title; then each node followed immediately by the edges it
-/// is the *source* of (source end), giving a shallow two-level hierarchy. Only
+/// `node_keys` (in display order). Row 0 is the diagram itself -- the fallback
+/// subject, selected whenever nothing else is; then the groups; then each node
+/// followed immediately by the edges it is the *source* of (source end), giving
+/// a shallow two-level hierarchy. Only
 /// edges whose target is also in `node_keys` are listed (an edge to a node
 /// outside this diagram isn't drawn, so it isn't part of the diagram either).
 ///
@@ -202,12 +202,7 @@ pub fn diagram_elements(
             .unwrap_or_else(|| k.to_string())
     };
 
-    let mut rows = Vec::with_capacity(node_keys.len() + 2);
-    rows.push(ElementRow {
-        key: String::new(),
-        label: PICKER_PLACEHOLDER.to_string(),
-        kind: ElementKind::Placeholder,
-    });
+    let mut rows = Vec::with_capacity(node_keys.len() + 1);
     rows.push(ElementRow {
         key: diagram_key.to_string(),
         label: diagram_title.to_string(),
@@ -242,10 +237,13 @@ pub fn diagram_elements(
     rows
 }
 
-/// The picker index for `subject`: 0 (placeholder) for `None` or a key with no
-/// matching row of the right kind, else the row whose kind+key matches.
+/// The picker index for `subject`: the row whose kind+key matches, else 0.
+/// Row 0 is the diagram, so that fallback -- taken for `Subject::None` and for
+/// any key with no matching row -- lands on the diagram itself, matching the
+/// rule that the diagram is selected when nothing else is.
 pub fn subject_to_index(rows: &[ElementRow], subject: &Subject) -> usize {
     let (kind, key) = match subject {
+        Subject::Diagram(k) => (ElementKind::Diagram, k),
         Subject::Classifier(k) => (ElementKind::Node, k),
         Subject::Group(k) => (ElementKind::Group, k),
         Subject::Edge(k) => (ElementKind::Edge, k),
@@ -256,14 +254,14 @@ pub fn subject_to_index(rows: &[ElementRow], subject: &Subject) -> usize {
         .unwrap_or(0)
 }
 
-/// Build the `Subject` a navigable reference points at. Node/Group/Edge map to
-/// their inspectable subjects; Diagram/Placeholder are not inspectable (`None`).
-pub fn subject_from(key: &str, kind: ElementKind) -> Option<Subject> {
+/// Build the `Subject` a navigable reference points at. Total: every element
+/// kind is inspectable now that the diagram has its own subject.
+pub fn subject_from(key: &str, kind: ElementKind) -> Subject {
     match kind {
-        ElementKind::Node => Some(Subject::Classifier(key.to_string())),
-        ElementKind::Group => Some(Subject::Group(key.to_string())),
-        ElementKind::Edge => Some(Subject::Edge(key.to_string())),
-        ElementKind::Diagram | ElementKind::Placeholder => None,
+        ElementKind::Diagram => Subject::Diagram(key.to_string()),
+        ElementKind::Node => Subject::Classifier(key.to_string()),
+        ElementKind::Group => Subject::Group(key.to_string()),
+        ElementKind::Edge => Subject::Edge(key.to_string()),
     }
 }
 
@@ -282,10 +280,29 @@ fn node_title(model: &Model, key: &str) -> String {
 pub fn build_view(model: &Model, subject: &Subject) -> Option<InspectorView> {
     match subject {
         Subject::None => None,
+        Subject::Diagram(key) => build_diagram_view(model, key),
         Subject::Classifier(key) => build_classifier_view(model, key),
         Subject::Group(name) => build_group_view(model, name),
         Subject::Edge(id) => build_edge_view(model, id),
     }
+}
+
+/// The diagram's own identity: title, profile, description. Contents (groups,
+/// nodes), display settings and layout statements are deliberately out of scope
+/// -- the picker already lists the contents, and each has its own subject.
+fn build_diagram_view(model: &Model, key: &str) -> Option<InspectorView> {
+    let diagram = model.diagrams.iter().find(|d| d.key == key)?;
+    Some(InspectorView {
+        title: diagram.title.clone(),
+        kind_label: "Diagram".to_string(),
+        profile: diagram.profile.clone(),
+        abstract_flag: false,
+        stereotypes: Vec::new(),
+        description: diagram.description.clone(),
+        attributes: Vec::new(),
+        members: Vec::new(),
+        associations: Vec::new(),
+    })
 }
 
 fn build_classifier_view(model: &Model, key: &str) -> Option<InspectorView> {
@@ -356,6 +373,7 @@ fn build_classifier_view(model: &Model, key: &str) -> Option<InspectorView> {
             .clone()
             .unwrap_or_else(|| node.key.clone()),
         kind_label: kind_label(&node.ty),
+        profile: String::new(),
         abstract_flag: node.abstract_,
         stereotypes: node.stereotypes.clone(),
         description: node.concept.description.clone(),
@@ -391,6 +409,7 @@ fn build_group_view(model: &Model, name: &str) -> Option<InspectorView> {
     Some(InspectorView {
         title: name.to_string(),
         kind_label: "Group".to_string(),
+        profile: String::new(),
         abstract_flag: false,
         stereotypes: Vec::new(),
         description: None,
@@ -420,6 +439,7 @@ fn build_edge_view(model: &Model, id: &str) -> Option<InspectorView> {
             node_title(model, tgt)
         ),
         kind_label: edge.kind.as_str().to_string(),
+        profile: String::new(),
         abstract_flag: false,
         stereotypes: Vec::new(),
         description: None,
@@ -716,14 +736,12 @@ mod tests {
     }
 
     #[test]
-    fn picker_rows_lead_with_placeholder_then_diagram() {
+    fn picker_rows_lead_with_the_diagram() {
         let model = mini();
         let rows = diagram_elements(&model, "d1", "Orders", &node_keys(&model));
-        assert_eq!(rows[0].kind, ElementKind::Placeholder);
-        assert_eq!(rows[0].label, PICKER_PLACEHOLDER);
-        assert_eq!(rows[1].kind, ElementKind::Diagram);
-        assert_eq!(rows[1].key, "d1");
-        assert_eq!(rows[1].label, "Orders");
+        assert_eq!(rows[0].kind, ElementKind::Diagram);
+        assert_eq!(rows[0].key, "d1");
+        assert_eq!(rows[0].label, "Orders");
     }
 
     #[test]
@@ -768,7 +786,7 @@ mod tests {
     }
 
     #[test]
-    fn subject_to_index_none_and_unknown_fall_back_to_placeholder() {
+    fn subject_to_index_none_and_unknown_fall_back_to_the_diagram() {
         let model = mini();
         let rows = diagram_elements(&model, "d1", "Orders", &node_keys(&model));
         assert_eq!(subject_to_index(&rows, &Subject::None), 0);
@@ -776,6 +794,17 @@ mod tests {
             subject_to_index(&rows, &Subject::Classifier("nope".into())),
             0
         );
+        // Row 0 is the diagram, so both fallbacks select the diagram itself.
+        assert_eq!(rows[0].kind, ElementKind::Diagram);
+    }
+
+    #[test]
+    fn subject_to_index_resolves_the_diagram_row() {
+        let model = mini();
+        let rows = diagram_elements(&model, "d1", "Orders", &node_keys(&model));
+        let idx = subject_to_index(&rows, &Subject::Diagram("d1".into()));
+        assert_eq!(idx, 0);
+        assert_eq!(rows[idx].kind, ElementKind::Diagram);
     }
 
     #[test]
@@ -784,11 +813,11 @@ mod tests {
         // Pass the REAL diagram key so groups resolve off the model.
         let rows = diagram_elements(&model, "orders-diagram", "Orders", &node_keys(&model));
 
-        // Row 0 = placeholder, row 1 = diagram, row 2 = first (only) named group.
-        assert_eq!(rows[1].kind, ElementKind::Diagram);
-        assert_eq!(rows[2].kind, ElementKind::Group);
-        assert_eq!(rows[2].key, "Sales");
-        assert_eq!(rows[2].label, "Sales");
+        // Row 0 = diagram, row 1 = first (only) named group.
+        assert_eq!(rows[0].kind, ElementKind::Diagram);
+        assert_eq!(rows[1].kind, ElementKind::Group);
+        assert_eq!(rows[1].key, "Sales");
+        assert_eq!(rows[1].label, "Sales");
 
         // Groups precede nodes.
         let first_group = rows
@@ -928,7 +957,7 @@ mod tests {
     }
 
     #[test]
-    fn subject_to_index_unknown_group_and_edge_fall_back_to_placeholder() {
+    fn subject_to_index_unknown_group_and_edge_fall_back_to_the_diagram() {
         let model = mini();
         let rows = diagram_elements(&model, "orders-diagram", "Orders", &node_keys(&model));
         assert_eq!(subject_to_index(&rows, &Subject::Group("Nope".into())), 0);
@@ -939,18 +968,60 @@ mod tests {
     fn subject_from_maps_each_kind() {
         assert_eq!(
             subject_from("k", ElementKind::Node),
-            Some(Subject::Classifier("k".into()))
+            Subject::Classifier("k".into())
         );
         assert_eq!(
             subject_from("g", ElementKind::Group),
-            Some(Subject::Group("g".into()))
+            Subject::Group("g".into())
         );
         assert_eq!(
             subject_from("a->b", ElementKind::Edge),
-            Some(Subject::Edge("a->b".into()))
+            Subject::Edge("a->b".into())
         );
-        assert_eq!(subject_from("d", ElementKind::Diagram), None);
-        assert_eq!(subject_from("", ElementKind::Placeholder), None);
+        assert_eq!(
+            subject_from("d", ElementKind::Diagram),
+            Subject::Diagram("d".into())
+        );
+    }
+
+    #[test]
+    fn diagram_view_projects_identity_only() {
+        let model = mini();
+        let view = build_view(&model, &Subject::Diagram("orders-diagram".into()))
+            .expect("the fixture's diagram resolves");
+
+        assert_eq!(view.title, "Orders");
+        assert_eq!(view.kind_label, "Diagram");
+        assert_eq!(view.profile, "uml-domain");
+        assert!(!view.abstract_flag);
+        // Identity only: contents, display settings and layout are deferred, and
+        // the picker already lists the contents as their own subjects.
+        assert!(view.stereotypes.is_empty());
+        assert!(view.attributes.is_empty());
+        assert!(view.members.is_empty());
+        assert!(view.associations.is_empty());
+    }
+
+    #[test]
+    fn diagram_view_of_unknown_key_is_none() {
+        let model = mini();
+        assert!(build_view(&model, &Subject::Diagram("nope".into())).is_none());
+    }
+
+    #[test]
+    fn profile_is_empty_for_non_diagram_subjects() {
+        let model = mini();
+        let customer = key_for(&model, "Customer");
+        let node = build_view(&model, &Subject::Classifier(customer)).expect("a classifier view");
+        assert_eq!(node.profile, "");
+
+        let edge_id = format!(
+            "{}->{}",
+            key_for(&model, "Order"),
+            key_for(&model, "Customer")
+        );
+        let edge = build_view(&model, &Subject::Edge(edge_id)).expect("an edge view");
+        assert_eq!(edge.profile, "");
     }
 
     /// `mini()` with two *parallel* Order->PaymentGateway edges of different
