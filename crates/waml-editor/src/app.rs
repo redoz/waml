@@ -120,19 +120,17 @@ script_mod! {
                                 text: ""
                                 draw_text +: {
                                     color: atlas.text
-                                    // Regular weight, 11px -- one px above the 10px
-                                    // doc-tab labels so it reads as the heading. The
-                                    // y:0.5-centred metric box centres glyph mass
-                                    // when ascender-|descender| ~= cap; the
+                                    // `text_caption` (Regular, 11) -- one px above the
+                                    // 10px doc-tab labels so it reads as the heading,
+                                    // and quieter than `text_title`, which at
+                                    // Condensed SemiBold 16 competes with the 30px
+                                    // burger instead of heading the tabs. The
+                                    // y:0.5-centred metric box centres glyph mass when
+                                    // ascender-|descender| ~= cap; the token's
                                     // `asc:0.1 desc:0.15` trim (proven for the old
                                     // single-row name) seats it on the row centre,
                                     // clear of the window top edge.
-                                    text_style: TextStyle{
-                                        font_size: 11
-                                        font_family: FontFamily{
-                                            latin := FontMember{res: crate_resource("self:resources/fonts/IBM_Plex_Sans/IBMPlexSans-Regular.ttf") asc: 0.1 desc: 0.15}
-                                        }
-                                    }
+                                    text_style: fonts.text_caption
                                 }
                             }
                         }

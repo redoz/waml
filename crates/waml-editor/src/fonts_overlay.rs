@@ -31,6 +31,7 @@ script_mod! {
         draw_sample_title +:   { color: atlas.text, text_style: fonts.text_title }
         draw_sample_heading +: { color: atlas.text, text_style: fonts.text_heading }
         draw_sample_body +:    { color: atlas.text, text_style: fonts.text_body }
+        draw_sample_caption +: { color: atlas.text, text_style: fonts.text_caption }
         draw_sample_label +:   { color: atlas.text, text_style: fonts.text_label }
         draw_sample_menu +:    { color: atlas.text, text_style: fonts.text_menu }
         draw_sample_eyebrow +: { color: atlas.text, text_style: fonts.text_eyebrow }
@@ -49,11 +50,12 @@ pub enum FontsOverlayAction {
 const SAMPLE: &str = "The five boxing wizards jump quickly — 0123456789";
 
 /// (role name, spec line). ORDER matches the `draw_sample_*` match in `draw_rows`
-/// AND `mod.fonts`'s scale order. The coverage test locks this to the 7 roles.
-pub const ROLES: [(&str, &str); 7] = [
+/// AND `mod.fonts`'s scale order. The coverage test locks this to the 8 roles.
+pub const ROLES: [(&str, &str); 8] = [
     ("Title", "IBM Plex Sans Condensed SemiBold · 16px · 1.1"),
     ("Heading", "IBM Plex Sans SemiBold · 13px · 1.2"),
     ("Body", "IBM Plex Sans Regular · 12px · 1.2"),
+    ("Caption", "IBM Plex Sans Regular · 11px · 1.2"),
     ("Label", "IBM Plex Sans Medium · 11px · 1.2"),
     ("Menu", "IBM Plex Sans Regular · 10px · 1.2"),
     ("Eyebrow", "IBM Plex Sans SemiBold · 10px · 1.2"),
@@ -91,6 +93,9 @@ pub struct FontsOverlay {
     #[redraw]
     #[live]
     draw_sample_body: DrawText,
+    #[redraw]
+    #[live]
+    draw_sample_caption: DrawText,
     #[redraw]
     #[live]
     draw_sample_label: DrawText,
@@ -138,9 +143,10 @@ impl FontsOverlay {
                 0 => self.draw_sample_title.draw_abs(cx, sy, SAMPLE),
                 1 => self.draw_sample_heading.draw_abs(cx, sy, SAMPLE),
                 2 => self.draw_sample_body.draw_abs(cx, sy, SAMPLE),
-                3 => self.draw_sample_label.draw_abs(cx, sy, SAMPLE),
-                4 => self.draw_sample_menu.draw_abs(cx, sy, SAMPLE),
-                5 => self.draw_sample_eyebrow.draw_abs(cx, sy, SAMPLE),
+                3 => self.draw_sample_caption.draw_abs(cx, sy, SAMPLE),
+                4 => self.draw_sample_label.draw_abs(cx, sy, SAMPLE),
+                5 => self.draw_sample_menu.draw_abs(cx, sy, SAMPLE),
+                6 => self.draw_sample_eyebrow.draw_abs(cx, sy, SAMPLE),
                 _ => self.draw_sample_mono.draw_abs(cx, sy, SAMPLE),
             }
         }
@@ -171,13 +177,13 @@ impl FontsOverlay {
 mod tests {
     use super::*;
     #[test]
-    fn roles_table_covers_the_7_mod_fonts_roles() {
-        // The 7 role tokens in mod.fonts, in scale order. If fonts.rs gains/loses
+    fn roles_table_covers_the_8_mod_fonts_roles() {
+        // The 8 role tokens in mod.fonts, in scale order. If fonts.rs gains/loses
         // a role, this list + ROLES must move together.
-        const CANON: [&str; 7] = [
-            "Title", "Heading", "Body", "Label", "Menu", "Eyebrow", "Mono",
+        const CANON: [&str; 8] = [
+            "Title", "Heading", "Body", "Caption", "Label", "Menu", "Eyebrow", "Mono",
         ];
-        assert_eq!(ROLES.len(), 7);
+        assert_eq!(ROLES.len(), 8);
         for (i, (name, _)) in ROLES.iter().enumerate() {
             assert_eq!(*name, CANON[i], "role {i} drifted from the mod.fonts scale");
         }

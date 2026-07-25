@@ -1,4 +1,4 @@
-//! Mode-independent chrome typography scale: 7 semantic `TextStyle` role
+//! Mode-independent chrome typography scale: 8 semantic `TextStyle` role
 //! tokens (family + size + weight + line-spacing) that every chrome widget
 //! references instead of an ad-hoc inline `font_size:`/`FontMember`. Mirrors
 //! `theme_atlas.rs`'s shape (a single top-level `script_mod!` block of named
@@ -51,6 +51,25 @@ script_mod! {
             font_size: 12
             font_family: FontFamily{
                 latin := FontMember{res: crate_resource("self:resources/fonts/IBM_Plex_Sans/IBMPlexSans-Regular.ttf") asc: -0.1 desc: 0.0}
+            }
+            line_spacing: 1.2
+        }
+
+        // The two-row caption bar's model-name heading. Deliberately NOT
+        // `text_title`: on the 34px title row a Condensed SemiBold 16 sits as a
+        // peer of the 30px burger rather than a heading over the tabs, so this
+        // is the quiet cut -- Regular 11, one px above the 10px `text_menu` doc
+        // tab labels beneath it.
+        //
+        // The trim is the odd one in this scale: every other role runs
+        // `asc: -0.1 desc: 0.0`, which rides glyphs HIGH. In a `y: 0.5`-centred
+        // 34px row that puts the name against the window's top edge, so this
+        // token carries a positive `desc` to seat it on the row centre (see the
+        // asc/desc trim notes on `text_title`'s call site in `app.rs`).
+        text_caption: TextStyle{
+            font_size: 11
+            font_family: FontFamily{
+                latin := FontMember{res: crate_resource("self:resources/fonts/IBM_Plex_Sans/IBMPlexSans-Regular.ttf") asc: 0.1 desc: 0.15}
             }
             line_spacing: 1.2
         }
