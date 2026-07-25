@@ -1677,8 +1677,26 @@ impl Widget for GraphCanvas {
                     // over is the target; the compass zone (edge/corner) picks
                     // the placement axes.
                     if let Some(start) = self.drag_start_abs {
-                        if !is_click(start, fe.abs) {
+                        if !is_click(start, fe.abs) && !self.drag_moved {
                             self.drag_moved = true;
+                            // Grabbing a card to move it makes it the selection,
+                            // so the constraint veil reframes onto the card in
+                            // flight and its keep-out tracks live -- Selected mode
+                            // only draws the selection's relations, so an
+                            // unselected drag would show no hatch for what you're
+                            // actually moving. Pure clicks keep their
+                            // select-on-release semantics (handled in FingerUp).
+                            if self.selected != Some(ni) {
+                                self.selected = Some(ni);
+                                self.selected_key = Some(self.scene.nodes[ni].key.clone());
+                                let uid = self.widget_uid();
+                                cx.widget_action(
+                                    uid,
+                                    GraphCanvasAction::NodeSelect {
+                                        key: self.scene.nodes[ni].key.clone(),
+                                    },
+                                );
+                            }
                         }
                     }
                     let (wx, wy) = self.camera.local_to_world(
