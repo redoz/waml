@@ -208,7 +208,7 @@ browser.
    invocation, never persisted to disk. Accepted as `Authorization: Bearer <t>`
    or as a `?token=` query parameter — the query form is required because the
    wasm editor reads its parameters from `WebParams.search`
-   (makepad `platform/src/cx.rs:246`) and has no JS-to-wasm channel to receive a
+   (makepad `platform/src/cx.rs:245`) and has no JS-to-wasm channel to receive a
    header. Compared in constant time. This is required even on loopback and even
    without `--bind-all`; loopback is not access control.
 2. **Custom header on mutating routes.** `POST /api/ops` additionally requires
