@@ -76,7 +76,6 @@ pub const ICON_GROUPS: &[(&str, &[IconEntry])] = &[
             ie!(ArrowLeftRight, "Association kind"),
             ie!(StickyNote, "Note kind"),
             ie!(ChevronsUpDown, "Scope / select dropdown"),
-            ie!(ListTree, "Tree panel flag spine"),
         ],
     ),
     ("START SCREEN", &[ie!(Package, "Recent-model row glyph")]),
