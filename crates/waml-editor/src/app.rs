@@ -1471,7 +1471,10 @@ impl MatchEvent for App {
         let args = match crate::cli::parse(&argv) {
             Ok(a) => a,
             Err(e) => {
+                // Land on the start screen rather than a blank window: a bad flag
+                // should cost you the flag, not the session.
                 log!("{e}");
+                self.show_start_screen(cx);
                 return;
             }
         };

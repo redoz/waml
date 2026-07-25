@@ -7,12 +7,44 @@ use waml::model::{Diagram, Model};
 pub struct Args {
     pub dir: Option<PathBuf>,
     pub diagram: Option<String>,
+    /// Badge text from `--title`. Identifies which agent launched this window;
+    /// purely cosmetic, never interpreted.
+    pub badge: Option<String>,
+    /// sRGB components in `0.0..=1.0` from `--color`. Deliberately not a makepad
+    /// `Vec4`, so this module stays makepad-free and its tests need no `Cx`.
+    pub tint: Option<[f32; 3]>,
 }
 
-/// Parse `argv` (including argv[0]). Usage: `waml-editor <okf-dir> [--diagram <name>]`.
+/// Parse `#rgb` / `#rrggbb` (leading `#` optional, case-insensitive) into sRGB
+/// components in `0.0..=1.0`. Alpha forms are rejected: the blend factors are
+/// fixed by the design, so a caller-supplied alpha would have no meaning.
+fn parse_hex(s: &str) -> Option<[f32; 3]> {
+    let h: Vec<char> = s.strip_prefix('#').unwrap_or(s).chars().collect();
+    let nib = |c: char| c.to_digit(16).map(|d| d as u16);
+    let rgb: [u16; 3] = match h.len() {
+        // `f` -> `ff`: doubling the nibble, i.e. * 17.
+        3 => [nib(h[0])? * 17, nib(h[1])? * 17, nib(h[2])? * 17],
+        6 => [
+            nib(h[0])? * 16 + nib(h[1])?,
+            nib(h[2])? * 16 + nib(h[3])?,
+            nib(h[4])? * 16 + nib(h[5])?,
+        ],
+        _ => return None,
+    };
+    Some([
+        rgb[0] as f32 / 255.0,
+        rgb[1] as f32 / 255.0,
+        rgb[2] as f32 / 255.0,
+    ])
+}
+
+/// Parse `argv` (including argv[0]).
+/// Usage: `waml-editor [<okf-dir>] [--diagram <name>] [--title <text>] [--color <hex>]`.
 pub fn parse(argv: &[String]) -> Result<Args, String> {
     let mut dir: Option<PathBuf> = None;
     let mut diagram: Option<String> = None;
+    let mut badge: Option<String> = None;
+    let mut tint: Option<[f32; 3]> = None;
     let mut i = 1;
     while i < argv.len() {
         match argv[i].as_str() {
@@ -20,12 +52,28 @@ pub fn parse(argv: &[String]) -> Result<Args, String> {
                 i += 1;
                 diagram = Some(argv.get(i).cloned().ok_or("--diagram requires a value")?);
             }
+            "--title" => {
+                i += 1;
+                badge = Some(argv.get(i).cloned().ok_or("--title requires a value")?);
+            }
+            "--color" => {
+                i += 1;
+                let raw = argv.get(i).ok_or("--color requires a value")?;
+                tint = Some(
+                    parse_hex(raw).ok_or_else(|| format!("--color: not a hex colour: {raw}"))?,
+                );
+            }
             other if dir.is_none() => dir = Some(PathBuf::from(other)),
             other => return Err(format!("unexpected argument: {other}")),
         }
         i += 1;
     }
-    Ok(Args { dir, diagram })
+    Ok(Args {
+        dir,
+        diagram,
+        badge,
+        tint,
+    })
 }
 
 /// Pick a diagram by title or key; fall back to the first diagram.
@@ -149,5 +197,96 @@ mod tests {
         let model = two_diagram_model();
         let picked = select_diagram(&model, Some("nonexistent")).unwrap();
         assert_eq!(picked.key, "orders-key");
+    }
+
+    #[test]
+    fn parses_title_flag() {
+        let a = parse(&argv(&["waml-editor", "some/dir", "--title", "veil-fix"])).unwrap();
+        assert_eq!(a.dir, Some(PathBuf::from("some/dir")));
+        assert_eq!(a.badge.as_deref(), Some("veil-fix"));
+        assert_eq!(a.tint, None);
+    }
+
+    #[test]
+    fn parses_color_flag_six_digit_with_hash() {
+        let a = parse(&argv(&["waml-editor", "--color", "#ff0080"])).unwrap();
+        let t = a.tint.unwrap();
+        assert!((t[0] - 1.0).abs() < 1e-6);
+        assert!((t[1] - 0.0).abs() < 1e-6);
+        assert!((t[2] - 128.0 / 255.0).abs() < 1e-6);
+        assert_eq!(a.badge, None);
+        assert_eq!(a.dir, None);
+    }
+
+    #[test]
+    fn parses_color_flag_without_hash_and_mixed_case() {
+        let a = parse(&argv(&["waml-editor", "--color", "FF0080"])).unwrap();
+        assert!((a.tint.unwrap()[0] - 1.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn parses_three_digit_shorthand_by_doubling_nibbles() {
+        // f0a -> ff00aa
+        let short = parse(&argv(&["waml-editor", "--color", "f0a"]))
+            .unwrap()
+            .tint
+            .unwrap();
+        let long = parse(&argv(&["waml-editor", "--color", "#ff00aa"]))
+            .unwrap()
+            .tint
+            .unwrap();
+        for i in 0..3 {
+            assert!((short[i] - long[i]).abs() < 1e-6, "component {i}");
+        }
+    }
+
+    #[test]
+    fn both_flags_compose_with_dir_and_diagram_in_any_order() {
+        let a = parse(&argv(&[
+            "waml-editor",
+            "--title",
+            "opus-3",
+            "some/dir",
+            "--color",
+            "#2b8",
+            "--diagram",
+            "Orders",
+        ]))
+        .unwrap();
+        assert_eq!(a.dir, Some(PathBuf::from("some/dir")));
+        assert_eq!(a.diagram.as_deref(), Some("Orders"));
+        assert_eq!(a.badge.as_deref(), Some("opus-3"));
+        assert!(a.tint.is_some());
+    }
+
+    #[test]
+    fn empty_title_is_accepted() {
+        let a = parse(&argv(&["waml-editor", "--title", ""])).unwrap();
+        assert_eq!(a.badge.as_deref(), Some(""));
+    }
+
+    #[test]
+    fn missing_flag_values_are_errors() {
+        assert!(parse(&argv(&["waml-editor", "--title"])).is_err());
+        assert!(parse(&argv(&["waml-editor", "--color"])).is_err());
+    }
+
+    #[test]
+    fn bad_hex_is_an_error_naming_the_value() {
+        let e = parse(&argv(&["waml-editor", "--color", "zzz"])).unwrap_err();
+        assert!(
+            e.contains("zzz"),
+            "error should name the bad value, got: {e}"
+        );
+        assert!(parse(&argv(&["waml-editor", "--color", "#ff00"])).is_err()); // wrong length
+        assert!(parse(&argv(&["waml-editor", "--color", "#ff00800"])).is_err()); // wrong length
+        assert!(parse(&argv(&["waml-editor", "--color", ""])).is_err());
+    }
+
+    #[test]
+    fn absent_flags_leave_both_fields_none() {
+        let a = parse(&argv(&["waml-editor", "some/dir"])).unwrap();
+        assert_eq!(a.badge, None);
+        assert_eq!(a.tint, None);
     }
 }
