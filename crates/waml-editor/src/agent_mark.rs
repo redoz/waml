@@ -1,8 +1,12 @@
-//! Per-window agent marker: a faint colour wash across the title row plus a
-//! right-floated badge chip, so several concurrently-running `waml-editor`
-//! windows can be told apart by eye. Mounted zero-width as the first child of
-//! `title_row`; drawing is purely optional (both badge and tint are `None`
-//! unless `--title`/`--color` were passed on the command line).
+//! Per-window agent marker: a right-floated pill in the title row, so several
+//! concurrently-running `waml-editor` windows can be told apart by eye.
+//! Mounted zero-width as the first child of `title_row`; drawing is purely
+//! optional (both badge and tint are `None` unless `--title`/`--color` were
+//! passed on the command line).
+//!
+//! The pill is the ONLY mark. A first cut also washed the whole title row 15%
+//! toward the tint; that read as a broken theme rather than as a marker, so the
+//! row keeps its plain `atlas.field_bg` and `--color` now only fills the pill.
 
 use makepad_widgets::*;
 
@@ -18,10 +22,8 @@ script_mod! {
     mod.widgets.AgentMark = set_type_default() do mod.widgets.AgentMarkBase{
         width: 0.0
         height: Fill
-        wash_base: atlas.field_bg
         chip_fallback: atlas.selection
         ink_fallback: atlas.text
-        draw_wash +: { color: #0000 }
         draw_chip +: {
             color: #0000
             pixel: fn() {
@@ -38,12 +40,17 @@ script_mod! {
     }
 }
 
-/// Blend fraction for the title-row wash: subtle enough to leave burger/model
-/// text at full legibility, strong enough to read at a glance.
-const WASH_AMOUNT: f32 = 0.15;
+/// Chip padding and its gap from the row's right edge. The chip is sized FROM
+/// its text (`text box + 2 * pad`), never from the row height -- sizing it off
+/// the 34px row made it read as a tall block sitting high in the row rather
+/// than as a pill around a word.
 const CHIP_PAD_X: f64 = 6.0;
-const CHIP_PAD_Y: f64 = 2.0;
+const CHIP_PAD_Y: f64 = 3.0;
 const CHIP_RIGHT_GAP: f64 = 6.0;
+
+/// Inner width of a `--color`-only pill, which has no text to size it. Keeps
+/// that flag useful on its own now that the title-row wash is gone.
+const SWATCH_W: f64 = 14.0;
 
 /// Pick black or white ink for a chip of colour `fill`, by Rec.709 luma.
 pub fn label_ink(fill: Vec4) -> Vec4 {
@@ -53,17 +60,6 @@ pub fn label_ink(fill: Vec4) -> Vec4 {
     } else {
         vec4(0.98, 0.98, 0.99, 1.0)
     }
-}
-
-/// Linearly blend `base` toward `tint` by `amount`; always fully opaque (this
-/// replaces a chrome fill, not a translucent overlay).
-pub fn wash(base: Vec4, tint: Vec4, amount: f32) -> Vec4 {
-    vec4(
-        base.x + (tint.x - base.x) * amount,
-        base.y + (tint.y - base.y) * amount,
-        base.z + (tint.z - base.z) * amount,
-        1.0,
-    )
 }
 
 #[derive(Script, ScriptHook, Widget)]
@@ -79,16 +75,11 @@ pub struct AgentMark {
 
     #[redraw]
     #[live]
-    draw_wash: DrawColor,
-    #[redraw]
-    #[live]
     draw_chip: DrawColor,
     #[redraw]
     #[live]
     draw_label: DrawText,
 
-    #[live]
-    wash_base: Vec4,
     #[live]
     chip_fallback: Vec4,
     #[live]
@@ -97,7 +88,7 @@ pub struct AgentMark {
     /// Badge text from `--title`; `None` draws nothing.
     #[rust]
     badge: Option<String>,
-    /// Tint from `--color`; `None` draws nothing.
+    /// Tint from `--color`; `None` falls back to `chip_fallback`.
     #[rust]
     tint: Option<Vec4>,
     /// The title row's own width in pixels, pushed each frame by `App`
@@ -125,39 +116,61 @@ impl Widget for AgentMark {
             size: dvec2(self.row_w, anchor.size.y),
         };
 
-        if let Some(tint) = self.tint {
-            self.draw_wash.color = wash(self.wash_base, tint, WASH_AMOUNT);
-            self.draw_wash.draw_abs(cx, row);
-        }
+        let text = self.badge.clone().unwrap_or_default();
+        // Measure the line box even for a `--color`-only launch, which draws a
+        // bare swatch: its height must match a titled window's, or the same
+        // chrome element reads as two different ones side by side.
+        let metrics = self
+            .draw_label
+            .layout(
+                cx,
+                0.0,
+                0.0,
+                None,
+                false,
+                Align::default(),
+                if text.is_empty() { "Ag" } else { &text },
+            )
+            .size_in_lpxs;
 
-        if let Some(text) = self.badge.clone() {
-            let fill = self.tint.unwrap_or(self.chip_fallback);
-            let text_w = self
-                .draw_label
-                .layout(cx, 0.0, 0.0, None, false, Align::default(), &text)
-                .size_in_lpxs
-                .width as f64;
-            let chip_w = text_w + CHIP_PAD_X * 2.0;
-            let chip_h = row.size.y - CHIP_PAD_Y * 2.0;
-            let chip = Rect {
-                pos: dvec2(
-                    row.pos.x + row.size.x - chip_w - CHIP_RIGHT_GAP,
-                    row.pos.y + CHIP_PAD_Y,
-                ),
-                size: dvec2(chip_w, chip_h),
-            };
+        let inner_w = if text.is_empty() {
+            SWATCH_W
+        } else {
+            metrics.width as f64
+        };
+        // Sized FROM the text box, never from the row: the pill hugs the word.
+        let chip_w = inner_w + CHIP_PAD_X * 2.0;
+        let chip_h = metrics.height as f64 + CHIP_PAD_Y * 2.0;
+        let chip = Rect {
+            pos: dvec2(
+                row.pos.x + row.size.x - chip_w - CHIP_RIGHT_GAP,
+                // Centred in the row. Because the chip is sized from the text
+                // box, centring the chip centres the word with it -- which is
+                // what makes the pill read as seated rather than floating high.
+                (row.pos.y + (row.size.y - chip_h) * 0.5).round(),
+            ),
+            size: dvec2(chip_w, chip_h),
+        };
 
-            self.draw_chip.color = fill;
-            self.draw_chip.draw_abs(cx, chip);
+        let fill = self.tint.unwrap_or(self.chip_fallback);
+        self.draw_chip.color = fill;
+        self.draw_chip.draw_abs(cx, chip);
 
+        if !text.is_empty() {
             self.draw_label.color = if self.tint.is_some() {
                 label_ink(fill)
             } else {
                 self.ink_fallback
             };
-            let text_y = chip.pos.y + chip.size.y * 0.5 - 6.0;
-            self.draw_label
-                .draw_abs(cx, dvec2(chip.pos.x + CHIP_PAD_X, text_y), &text);
+            // `DrawText::draw_abs` takes the text box's TOP-LEFT, so the same
+            // pad that sized the chip seats the text inside it. No magic
+            // half-line-box constant (contrast `diagram_switcher.rs`, which
+            // centres text in a rect it did not size).
+            self.draw_label.draw_abs(
+                cx,
+                dvec2(chip.pos.x + CHIP_PAD_X, chip.pos.y + CHIP_PAD_Y),
+                &text,
+            );
         }
 
         DrawStep::done()
@@ -209,30 +222,4 @@ mod tests {
         assert_eq!(label_ink(vec4(0.5, 0.5, 0.5, 1.0)).w, 1.0);
     }
 
-    #[test]
-    fn wash_at_zero_is_the_base() {
-        let base = vec4(1.0, 1.0, 1.0, 1.0);
-        let got = wash(base, vec4(1.0, 0.0, 0.0, 1.0), 0.0);
-        assert!((got.x - 1.0).abs() < 1e-6);
-        assert!((got.y - 1.0).abs() < 1e-6);
-        assert!((got.z - 1.0).abs() < 1e-6);
-    }
-
-    #[test]
-    fn wash_at_one_is_the_tint() {
-        let got = wash(vec4(1.0, 1.0, 1.0, 1.0), vec4(0.2, 0.4, 0.6, 1.0), 1.0);
-        assert!((got.x - 0.2).abs() < 1e-6);
-        assert!((got.y - 0.4).abs() < 1e-6);
-        assert!((got.z - 0.6).abs() < 1e-6);
-    }
-
-    #[test]
-    fn wash_interpolates_linearly_and_stays_opaque() {
-        let got = wash(vec4(1.0, 1.0, 1.0, 1.0), vec4(0.0, 0.0, 0.0, 1.0), 0.15);
-        assert!((got.x - 0.85).abs() < 1e-6, "got {got:?}");
-        assert_eq!(
-            got.w, 1.0,
-            "wash must stay opaque: it replaces a chrome fill"
-        );
-    }
 }
