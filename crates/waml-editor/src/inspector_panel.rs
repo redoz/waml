@@ -660,7 +660,9 @@ impl Widget for Inspector {
             self.view.widget(cx, ids!(body)).set_visible(cx, false);
             let flag_btn = self.view.widget(cx, ids!(flag_btn));
             flag_btn.set_visible(cx, true);
-            flag_btn.as_icon_button().set_icon(cx, Icon::SlidersHorizontal);
+            flag_btn
+                .as_icon_button()
+                .set_icon(cx, Icon::SlidersHorizontal);
             // `View::draw_walk` is a multi-step `DrawStep` machine: it opens the
             // view's turtle on the first call and only closes it once the loop
             // runs it to `done`. Calling it once and dropping the result leaves

@@ -606,9 +606,7 @@ impl Widget for ProjectTree {
             // Strip the docked-edge (left) margin so the tab sits flush at the
             // window edge (the panel's static `margin.left` would inset it).
             fw.margin.left = 0.0;
-            self.view
-                .view(cx, ids!(tree_scroll))
-                .set_visible(cx, false);
+            self.view.view(cx, ids!(tree_scroll)).set_visible(cx, false);
             self.view.view(cx, ids!(header)).set_visible(cx, false);
             self.view.view(cx, ids!(note_band)).set_visible(cx, false);
             let flag_btn = self.view.widget(cx, ids!(flag_btn));
@@ -627,9 +625,7 @@ impl Widget for ProjectTree {
         // Expanded (Peek or Pinned): hide the flag tab, restore header + body.
         self.view.widget(cx, ids!(flag_btn)).set_visible(cx, false);
         self.view.view(cx, ids!(header)).set_visible(cx, true);
-        self.view
-            .view(cx, ids!(tree_scroll))
-            .set_visible(cx, true);
+        self.view.view(cx, ids!(tree_scroll)).set_visible(cx, true);
 
         // Reserve room above the body for the `Elsewhere` note so its two lines
         // don't overlap the whole-model rows. The band is a laid-out spacer, so
