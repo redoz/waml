@@ -435,6 +435,18 @@ pub struct GraphCanvas {
     preview_frame: NextFrame,
     #[rust]
     preview_last_time: f64,
+    /// The live view-bar camera glide, or `None` when the camera is at rest.
+    #[rust]
+    cam_tween: Option<CamTween>,
+    /// Animation clock for `cam_tween`. An *interval*, not a `NextFrame`: a
+    /// next-frame chain only re-arms once the paint loop has already painted, so
+    /// after an idle click it inherits the loop's wake-up ramp and delivers ~5
+    /// frames in the first 250ms. A repeating timer wakes the loop on its own
+    /// schedule and paces the glide evenly. See `CAMERA_TICK`.
+    #[rust]
+    cam_timer: Timer,
+    #[rust]
+    cam_last_time: f64,
     /// Last cursor position seen during a drag. The preview camera re-derives
     /// itself from this every tick so the dragged node keeps sitting under the
     /// pointer while the layout moves.
@@ -527,6 +539,45 @@ struct Preview {
 fn ease_out(t: f64) -> f64 {
     let u = 1.0 - t.clamp(0.0, 1.0);
     1.0 - u * u * u
+}
+
+/// A camera glide. The view bar's zoom/fit buttons ease the camera along this
+/// instead of assigning it, so the diagram keeps its spatial continuity: the
+/// user sees where it went, not just where it landed.
+struct CamTween {
+    from: Camera,
+    /// Where the glide settles — the exact camera the old snap assigned. Also
+    /// the base a further button press composes onto, so three steps in and
+    /// three out still round-trip regardless of when they were pressed.
+    to: Camera,
+    /// Raw tween progress, 0 (from) to 1 (settled); eased at apply time.
+    t: f64,
+}
+
+/// Interpolate `from` -> `to` at *eased* progress `e`, anchored on the viewport
+/// centre: zoom travels geometrically (constant per-frame scale ratio, which is
+/// what reads as an even glide) while the world point under the centre of the
+/// view travels linearly. A zoom step's fixed point IS that centre, so it stays
+/// nailed for the whole tween rather than drifting the way independently lerped
+/// pan and zoom would. `e >= 1` returns `to` verbatim, so a settled glide is the
+/// exact camera the snap produced. Pure, GPU-free.
+fn lerp_camera(from: Camera, to: Camera, view: DVec2, e: f64) -> Camera {
+    if e <= 0.0 {
+        return from;
+    }
+    if e >= 1.0 {
+        return to;
+    }
+    let (half_w, half_h) = (view.x * 0.5, view.y * 0.5);
+    let a = from.local_to_world(half_w, half_h);
+    let b = to.local_to_world(half_w, half_h);
+    let zoom = (from.zoom.ln() + (to.zoom.ln() - from.zoom.ln()) * e).exp();
+    let (wx, wy) = (a.0 + (b.0 - a.0) * e, a.1 + (b.1 - a.1) * e);
+    Camera {
+        pan_x: wx - half_w / zoom,
+        pan_y: wy - half_h / zoom,
+        zoom,
+    }
 }
 
 /// Linear blend of two rects, for the per-node tween.
@@ -803,6 +854,13 @@ fn reframe_to_selected<'a>(
 const DIAL_REACH: f64 = crate::popup::radial::DISC_RADIUS + 72.0;
 /// Seconds a preview tween takes to settle into its candidate layout.
 const PREVIEW_SECS: f64 = 0.22;
+/// Seconds a view-bar camera glide takes to settle. Same feel as the preview
+/// tween — long enough to read the motion, short enough not to lag the click.
+const CAMERA_SECS: f64 = 0.22;
+/// Interval the glide clock ticks at: a little under half a 60Hz frame, so the
+/// paint loop always has a wake-up pending and the tween is paced by vsync
+/// rather than by how fast the loop happens to be spinning up.
+const CAMERA_TICK: f64 = 1.0 / 144.0;
 /// Dwell (seconds) the cursor must rest over a node before its compass arms.
 /// Stops the target flipping to a sibling when the cursor merely grazes a
 /// border on the way past.
@@ -1417,6 +1475,36 @@ pub enum GraphCanvasAction {
 
 impl Widget for GraphCanvas {
     fn handle_event(&mut self, cx: &mut Cx, event: &Event, _scope: &mut Scope) {
+        // View-bar camera glide clock: advance `t` by the wall-clock gap since
+        // the last tick, write the eased camera, and stop the interval once it
+        // settles. Sits above the drag early-returns so a glide can't be starved
+        // by one.
+        if let Some(te) = self.cam_timer.is_event(event) {
+            let now = te.time.unwrap_or(0.0);
+            let dt = if self.cam_last_time == 0.0 || now <= self.cam_last_time {
+                CAMERA_TICK
+            } else {
+                now - self.cam_last_time
+            };
+            self.cam_last_time = now;
+            match &mut self.cam_tween {
+                Some(tw) => {
+                    tw.t = (tw.t + dt / CAMERA_SECS).min(1.0);
+                    let (from, to, t) = (tw.from, tw.to, tw.t);
+                    self.camera = lerp_camera(from, to, self.view_rect.size, ease_out(t));
+                    if t >= 1.0 {
+                        cx.stop_timer(self.cam_timer);
+                        self.cam_tween = None;
+                        self.cam_last_time = 0.0;
+                    }
+                    self.draw_bg.redraw(cx);
+                }
+                None => {
+                    cx.stop_timer(self.cam_timer);
+                    self.cam_last_time = 0.0;
+                }
+            }
+        }
         // SPIKE: Escape cancels an in-progress placement drag (snap back, no log).
         if let Event::KeyDown(ke) = event {
             if ke.key_code == KeyCode::Escape && self.drag_node.is_some() {
@@ -1506,6 +1594,10 @@ impl Widget for GraphCanvas {
                 }
             }
             Hit::FingerDown(fe) if fe.is_primary_hit() => {
+                // The press owns the camera from here (pan, or a placement drag
+                // whose preview drives it) -- drop any glide where it stands, so
+                // `drag_start_pan` isn't captured off a moving target.
+                self.cancel_camera_glide(cx);
                 self.drag_start_abs = Some(fe.abs);
                 self.drag_start_pan = (self.camera.pan_x, self.camera.pan_y);
                 // SPIKE: a press that lands on a node starts a *potential* placement
@@ -1710,6 +1802,9 @@ impl Widget for GraphCanvas {
                     fs.scroll.x
                 };
                 let factor = (-scroll / 240.0).exp2(); // smooth multiplicative zoom
+                // Scroll-zoom is its own continuous motion; a button glide still
+                // in the air would fight it for the camera.
+                self.cancel_camera_glide(cx);
                 let local_x = fs.abs.x - self.view_rect.pos.x;
                 let local_y = fs.abs.y - self.view_rect.pos.y;
                 self.camera.zoom_at(local_x, local_y, factor);
@@ -2684,6 +2779,9 @@ impl GraphCanvas {
 
     pub fn set_scene(&mut self, cx: &mut Cx, scene: Scene) {
         self.scene = scene;
+        // A glide aimed at the old scene's bbox is meaningless now; the
+        // load-time fit below re-frames from scratch.
+        self.cancel_camera_glide(cx);
         self.fitted = false;
         self.focus_mode = false;
         self.selected = None; // stale index would highlight the wrong node
@@ -2705,6 +2803,7 @@ impl GraphCanvas {
     /// classifier-focus doc tab.
     pub fn set_focus(&mut self, cx: &mut Cx, scene: Scene) {
         self.scene = scene;
+        self.cancel_camera_glide(cx);
         self.fitted = false;
         self.focus_mode = true;
         self.selected = None; // stale index would highlight the wrong node
@@ -2824,13 +2923,58 @@ impl GraphCanvas {
     /// no cursor to honour, so holding the middle of the canvas stable is the
     /// predictable behaviour. `Camera::zoom_at` clamps to `MIN_ZOOM`/`MAX_ZOOM`;
     /// at a bound this is simply a no-op.
+    /// Glides rather than snaps; the step composes onto the glide's *target*, so
+    /// three presses in and three out round-trip exactly even when each lands
+    /// mid-flight.
     pub fn zoom_step(&mut self, cx: &mut Cx, factor: f64) {
-        self.camera.zoom_at(
+        let mut target = self.camera_target();
+        target.zoom_at(
             self.view_rect.size.x * 0.5,
             self.view_rect.size.y * 0.5,
             factor,
         );
+        self.glide_camera_to(cx, target);
+    }
+
+    /// Where the camera is headed: the live glide's destination, or the camera
+    /// itself when at rest. Camera actions compose onto this, never onto a
+    /// half-travelled frame.
+    fn camera_target(&self) -> Camera {
+        match &self.cam_tween {
+            Some(tw) => tw.to,
+            None => self.camera,
+        }
+    }
+
+    /// Ease the camera to `target` over `CAMERA_SECS`. A press landing mid-glide
+    /// retargets from wherever the camera currently is (no snap-back, no stall).
+    /// A target equal to the current camera is a no-op, so a zoom press at a
+    /// clamp bound stays the no-op it was.
+    fn glide_camera_to(&mut self, cx: &mut Cx, target: Camera) {
+        if target == self.camera {
+            self.cancel_camera_glide(cx);
+            return;
+        }
+        if self.cam_tween.is_none() {
+            self.cam_timer = cx.start_interval(CAMERA_TICK);
+        }
+        self.cam_tween = Some(CamTween {
+            from: self.camera,
+            to: target,
+            t: 0.0,
+        });
+        self.cam_last_time = 0.0;
         self.draw_bg.redraw(cx);
+    }
+
+    /// Abandon any glide where the camera stands. Instant, not a reverse tween:
+    /// this fires when a gesture (pan, scroll-zoom) or a scene swap takes the
+    /// camera over, and a lingering animation would fight it — the same reasoning
+    /// as `unlatch_preview`.
+    fn cancel_camera_glide(&mut self, cx: &mut Cx) {
+        cx.stop_timer(self.cam_timer);
+        self.cam_tween = None;
+        self.cam_last_time = 0.0;
     }
 
     /// Frame the whole scene (spec §4). An empty scene (`bounding_box` returns
@@ -2845,9 +2989,11 @@ impl GraphCanvas {
         let Some(bbox) = bounding_box(&self.scene) else {
             return;
         };
-        self.camera = fit_scene_camera(bbox, self.view_rect.size.x, self.view_rect.size.y);
+        let target = fit_scene_camera(bbox, self.view_rect.size.x, self.view_rect.size.y);
+        // Set at press, not at settle: a pending load-time fit must not stomp a
+        // glide that is still in the air.
         self.fitted = true;
-        self.draw_bg.redraw(cx);
+        self.glide_camera_to(cx, target);
     }
 
     /// Frame the selected node (spec §4). No selection, a key with no node in
@@ -2868,9 +3014,9 @@ impl GraphCanvas {
         else {
             return;
         };
-        self.camera = fit_scene_camera(bbox, self.view_rect.size.x, self.view_rect.size.y);
+        let target = fit_scene_camera(bbox, self.view_rect.size.x, self.view_rect.size.y);
         self.fitted = true;
-        self.draw_bg.redraw(cx);
+        self.glide_camera_to(cx, target);
     }
 
     /// Whether a node is currently selected — drives the view bar's
@@ -3332,6 +3478,80 @@ mod tests {
         cam.zoom_at(400.0, 300.0, 1.0 / ZOOM_STEP);
         assert!((cam.zoom - 1.0).abs() < 1e-9, "zoom drifted: {}", cam.zoom);
         assert!(cam.pan_x.abs() < 1e-9 && cam.pan_y.abs() < 1e-9);
+    }
+
+    #[test]
+    fn a_camera_glide_lands_on_the_snap_camera_exactly() {
+        // The tween may only change HOW the camera gets there: a settled glide
+        // must be bit-identical to the assignment it replaced, or a zoom in/out
+        // round-trip stops returning the same frame.
+        let view = dvec2(1280.0, 880.0);
+        let from = Camera {
+            pan_x: 0.0,
+            pan_y: 0.0,
+            zoom: 1.0,
+        };
+        let mut to = from;
+        to.zoom_at(view.x * 0.5, view.y * 0.5, ZOOM_STEP);
+        assert_eq!(lerp_camera(from, to, view, 1.0), to);
+        assert_eq!(lerp_camera(from, to, view, 0.0), from);
+        // ease_out saturates at 1, so the final frame goes through the same door.
+        assert_eq!(lerp_camera(from, to, view, ease_out(1.0)), to);
+    }
+
+    #[test]
+    fn a_zoom_glide_holds_the_viewport_centre() {
+        // `zoom_step` anchors at the viewport centre; the tween must keep that
+        // point nailed for every intermediate frame, not just the endpoints.
+        let view = dvec2(1280.0, 880.0);
+        let from = Camera {
+            pan_x: -120.0,
+            pan_y: 40.0,
+            zoom: 0.8,
+        };
+        let mut to = from;
+        to.zoom_at(view.x * 0.5, view.y * 0.5, ZOOM_STEP);
+        let anchor = from.local_to_world(view.x * 0.5, view.y * 0.5);
+        for step in 0..=10 {
+            let mid = lerp_camera(from, to, view, step as f64 / 10.0);
+            let held = mid.local_to_world(view.x * 0.5, view.y * 0.5);
+            assert!(
+                (held.0 - anchor.0).abs() < 1e-9 && (held.1 - anchor.1).abs() < 1e-9,
+                "centre drifted at {step}: {held:?} != {anchor:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_camera_glide_actually_moves_between_the_ends() {
+        // Mid-tween frames differ from both endpoints (it animates), and zoom
+        // travels geometrically so each frame scales by a constant ratio.
+        let view = dvec2(1280.0, 880.0);
+        let from = Camera {
+            pan_x: 0.0,
+            pan_y: 0.0,
+            zoom: 0.5,
+        };
+        let to = fit_scene_camera(
+            waml::solve::Rect {
+                x: 400.0,
+                y: 300.0,
+                w: 200.0,
+                h: 100.0,
+            },
+            view.x,
+            view.y,
+        );
+        let mid = lerp_camera(from, to, view, 0.5);
+        assert_ne!(mid, from);
+        assert_ne!(mid, to);
+        assert!(
+            (mid.zoom - (from.zoom * to.zoom).sqrt()).abs() < 1e-9,
+            "zoom is not the geometric mean: {}",
+            mid.zoom
+        );
+        // Monotone: the glide never overshoots either end.
+        assert!(mid.zoom > from.zoom && mid.zoom < to.zoom);
     }
 
     #[test]
