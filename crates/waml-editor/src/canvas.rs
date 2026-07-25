@@ -2378,6 +2378,16 @@ impl GraphCanvas {
         // Selected mode is the only drawing mode, so the veil always reframes
         // onto the selected node's POV.
         let pov = selected_key.as_deref();
+        // While a card is in flight it becomes the selection (see `FingerMove`),
+        // so every drawn relation touches it. At rest the veil anchors to the
+        // *other* participant (`reframe_to_selected`), which is stationary -- but
+        // during a drag that leaves the hatch pinned to the node NOT moving, so
+        // it only looks right once the drop re-solves the layout. Re-anchor the
+        // veil to the dragged node itself for the duration of the drag: the
+        // keep-out then emanates from the card in your hand and tracks live via
+        // the ghost rect (`node_screen_rect`), reading from the moving node's
+        // point of view (`opposite` when it is the stored subject).
+        let dragged = self.drag_node.filter(|_| self.drag_moved);
         let chosen: Vec<(usize, waml::syntax::Direction)> = relations_for_visibility(
             &self.scene.relations,
             self.constraint_vis,
@@ -2385,6 +2395,15 @@ impl GraphCanvas {
         )
         .into_iter()
         .filter_map(|rel| {
+            if let Some(d) = dragged {
+                let d_key = &self.scene.nodes[d].key;
+                if rel.subject == *d_key {
+                    return Some((d, rel.dir.opposite()));
+                }
+                if rel.reference == *d_key {
+                    return Some((d, rel.dir));
+                }
+            }
             let (subject, reference, dir) =
                 reframe_to_selected(&rel.subject, &rel.reference, rel.dir, pov);
             // The subject must still exist in the scene for the relation to be
