@@ -167,10 +167,19 @@ script_mod! {
     // shader VM (see EdgeMarker above), so the on/off duty is a 0..1 mask
     // multiplied into the stroke alpha.
     //
-    // Task 6 visual review (`tests/fixtures/groups`, x-ray toggled on): the
-    // diagonal-parameterized shader shipped as-is -- the dash runs continuously
-    // around all four corners with no bunching or phase seam, so the
-    // segment-stamping fallback was not needed.
+    // Task 6 visual review (`tests/fixtures/groups`, x-ray on), RE-RUN after the
+    // duty mask below was reworked -- the first review predates that rework and
+    // signed off a mask that no longer ships. What ships, confirmed on a native
+    // capture of the `Billing` (shrink) group:
+    //   * the diagonal-parameterized shader, not the segment-stamping fallback:
+    //     the dash runs continuously around all four corners with no bunching
+    //     and no phase seam, so the fallback was not needed;
+    //   * the symmetric `abs(fract(..) - 0.5)` duty mask: a pixel readout across
+    //     the dashed border shows partial-coverage samples on BOTH ends of every
+    //     dash (bg 235, ink 182, ends 219/194, 226/187, 185/228), which is the
+    //     antialiasing the superseded one-sided `(0.5 - f)` ramp gave only one
+    //     end of. `the_dash_mask_filters_both_edges_symmetrically` locks the
+    //     idiom in, since the pixel fn cannot run headless.
     mod.draw.GroupDashed = mod.draw.DrawColor{
         dash_px: uniform(6.0)
         stroke_w: uniform(1.0)
