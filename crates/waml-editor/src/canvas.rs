@@ -565,6 +565,19 @@ fn is_click(down: DVec2, up: DVec2) -> bool {
     (up - down).length() < SELECT_SLOP
 }
 
+/// Viewport inset used whenever the canvas frames a bounding box — the one-shot
+/// load-time fit and the view bar's explicit fit actions alike. Extracted so the
+/// two cannot drift apart.
+const FIT_PAD: f64 = 48.0;
+
+/// Frame `bbox` in a `viewport_w` x `viewport_h` canvas at the shared pad. The
+/// single `Camera::fit` call site that carries a pad. `Camera::fit` clamps zoom
+/// to `MIN_ZOOM`/`MAX_ZOOM`, so callers need no clamping of their own. Pure,
+/// GPU-free.
+fn fit_scene_camera(bbox: waml::solve::Rect, viewport_w: f64, viewport_h: f64) -> Camera {
+    Camera::fit(bbox, viewport_w, viewport_h, FIT_PAD)
+}
+
 /// Index of the topmost node whose on-screen rect contains `abs`, or `None`.
 /// Topmost = last-drawn, so we scan in reverse. Pure (takes world rects +
 /// camera), matching the draw-time transform in `draw_walk`.
@@ -1634,7 +1647,7 @@ impl Widget for GraphCanvas {
                         zoom,
                     }
                 } else {
-                    Camera::fit(bbox, rect.size.x, rect.size.y, 48.0)
+                    fit_scene_camera(bbox, rect.size.x, rect.size.y)
                 };
                 self.fitted = true;
             }
@@ -3051,6 +3064,23 @@ mod tests {
         assert_eq!(node_at(&rects, &camera, view, dvec2(50.0, 30.0)), Some(0));
         assert_eq!(node_at(&rects, &camera, view, dvec2(250.0, 30.0)), Some(1));
         assert_eq!(node_at(&rects, &camera, view, dvec2(150.0, 30.0)), None);
+    }
+
+    #[test]
+    fn the_scene_fit_helper_uses_the_shared_pad() {
+        let bbox = waml::solve::Rect {
+            x: 0.0,
+            y: 0.0,
+            w: 200.0,
+            h: 100.0,
+        };
+        assert_eq!(FIT_PAD, 48.0);
+        // Both the load-time fit and the explicit fit action go through this
+        // helper, so they cannot drift apart.
+        assert_eq!(
+            fit_scene_camera(bbox, 800.0, 600.0),
+            crate::camera::Camera::fit(bbox, 800.0, 600.0, FIT_PAD)
+        );
     }
 
     #[test]
