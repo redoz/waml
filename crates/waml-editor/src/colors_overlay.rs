@@ -436,42 +436,42 @@ mod tests {
         assert_eq!(vec4_to_hex(vec4(1.0, 1.0, 1.0, 0.5)), "#ffffff80");
     }
 
-    /// The tokens table must cover exactly the fields defined in
-    /// `mod.themes.atlas_light` (source-parsed), the same technique the fonts
-    /// coverage guard uses.
+    /// The swatch table (`COLOR_GROUPS`) must cover EXACTLY the keys the real
+    /// `mod.themes.atlas_light` namespace produces. Boots the actual script VM
+    /// (not a source parse), runs `theme_atlas::script_mod`, reads the produced
+    /// object back, and compares id sets — so a token added to one side but not
+    /// the other, or a namespace that failed to evaluate, is caught
+    /// semantically. Replaces the deleted `include_str!` coverage scan.
     #[test]
-    fn color_rows_cover_exactly_atlas_light_fields() {
-        let src = include_str!("theme_atlas.rs");
-        let block = src
-            .split_once("mod.themes.atlas_light = {")
-            .and_then(|(_, rest)| rest.split_once("\n    }\n"))
-            .map(|(body, _)| body)
-            .expect("theme_atlas.rs must contain the atlas_light block");
-        // A token line looks like `    name: #x....` (skip `let atlas = me`).
-        let mut fields: Vec<String> = block
-            .lines()
-            .filter_map(|l| {
-                let t = l.trim_start();
-                let (name, rest) = t.split_once(':')?;
-                if rest.trim_start().starts_with("#x") {
-                    Some(name.trim().to_string())
-                } else {
-                    None
-                }
-            })
-            .collect();
-        fields.sort();
-        assert_eq!(
-            fields.len(),
-            27,
-            "expected 27 atlas_light tokens, got {fields:?}"
+    fn atlas_light_keys_equal_the_swatch_table() {
+        use crate::script_gate::{boot_test_vm, namespace_key_ids};
+
+        let mut vm = boot_test_vm();
+        crate::theme_atlas::script_mod(&mut vm);
+
+        let atlas = script_eval!(vm, { mod.themes.atlas_light });
+        let vm_keys = namespace_key_ids(&mut vm, atlas).expect(
+            "mod.themes.atlas_light must resolve to an object; a malformed \
+             block leaves it absent and every `use mod.atlas` consumer breaks",
         );
 
-        let mut table: Vec<String> = COLOR_GROUPS
+        // Expected = the swatch table, mapped name -> LiveId (same hash the
+        // `atlas_light` block's `name:` fields produce). Drift-proof: no
+        // hardcoded token list, just the live table.
+        let expected: std::collections::BTreeSet<LiveId> = COLOR_GROUPS
             .iter()
-            .flat_map(|(_, rows)| rows.iter().map(|r| r.name.to_string()))
+            .flat_map(|(_, rows)| rows.iter().map(|r| LiveId::from_str(r.name)))
             .collect();
-        table.sort();
-        assert_eq!(table, fields, "COLOR_GROUPS must match mod.atlas exactly");
+
+        assert_eq!(
+            expected.len(),
+            27,
+            "expected 27 swatch tokens, got {}",
+            expected.len()
+        );
+        assert_eq!(
+            vm_keys, expected,
+            "mod.themes.atlas_light keys and the COLOR_GROUPS swatch table drifted apart"
+        );
     }
 }
