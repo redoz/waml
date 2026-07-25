@@ -23,9 +23,11 @@ test("renders the active diagram title with the blue treatment (no Target icon)"
   const btn = screen.getByRole("button", { name: /switch diagram/i });
   // Shows the active diagram's title.
   expect(btn.textContent).toContain("Overview");
-  // Keeps the blue background treatment carried over from the old goal button.
-  expect(btn.className).toContain("bg-[#e6f1fb]");
-  expect(btn.className).toContain("text-[#1e88e5]");
+  // Keeps the tinted-accent treatment carried over from the old goal button.
+  // Atlas (f491706) swapped the hardcoded blue for the theme's accent token,
+  // so assert the token spelling rather than a literal hex.
+  expect(btn.className).toContain("bg-[color:rgba(var(--accent),.12)]");
+  expect(btn.className).toContain("text-[color:rgb(var(--accent))]");
 });
 
 test("no longer renders the Business Goal button", () => {

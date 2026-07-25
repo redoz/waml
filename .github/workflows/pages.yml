@@ -47,7 +47,7 @@ jobs:
         run: >
           cargo install cargo-makepad
           --git https://github.com/redoz/makepad.git
-          --rev d4952075
+          --rev ce47f8ef
           --locked
 
       # --no-threads is load-bearing, not an optimisation: the threaded build
