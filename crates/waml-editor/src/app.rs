@@ -779,10 +779,9 @@ impl App {
         }
     }
 
-    /// Load `dir` and populate the editor (tree, canvas, tabs, inspector,
-    /// statusbar, diagram switcher). A model with zero diagrams still opens --
-    /// empty canvas, no diagram tab. Returns `false` (having `log!`d) only when
-    /// the model fails to load, so the caller keeps the start screen up.
+    /// Read `dir` off disk and populate the editor. Returns `false` (having
+    /// `log!`d) only when the model fails to load, so the caller keeps the
+    /// start screen up.
     fn open_dir(&mut self, cx: &mut Cx, dir: &Path, wanted_diagram: Option<&str>) -> bool {
         let (bundle, model) = match load::load_bundle_and_model(dir) {
             Ok(pair) => pair,
@@ -791,6 +790,43 @@ impl App {
                 return false;
             }
         };
+        // Folder basename backs the display name when the bundle has no root
+        // name of its own. `..` / drive-root degenerate to an empty basename;
+        // "bundle" is the last-ditch label.
+        let display_name = dir
+            .file_name()
+            .and_then(|n| n.to_str())
+            .filter(|n| !n.is_empty())
+            .unwrap_or("bundle")
+            .to_string();
+        // Record this open in the recents store (best-effort; see config.rs).
+        // Recents are a filesystem affordance: only an open with a path behind
+        // it can be reopened later, so this stays on the `open_dir` side.
+        let root_name = if model.path.is_empty() {
+            display_name.as_str()
+        } else {
+            model.path.as_str()
+        };
+        crate::config::push_recent(dir, root_name);
+        self.open_bundle(cx, bundle, model, display_name, wanted_diagram)
+    }
+
+    /// Populate the editor from an already-read bundle (tree, canvas, tabs,
+    /// inspector, statusbar, diagram switcher). A model with zero diagrams
+    /// still opens -- empty canvas, no diagram tab.
+    ///
+    /// Split out of `open_dir` so the web build, which has no filesystem, can
+    /// open a model decoded from the URL fragment through exactly this path.
+    /// Always returns `true`: the fallible part -- reading and parsing -- has
+    /// already happened by the time it is called.
+    fn open_bundle(
+        &mut self,
+        cx: &mut Cx,
+        bundle: Vec<(String, String)>,
+        model: waml::model::Model,
+        display_name: String,
+        wanted_diagram: Option<&str>,
+    ) -> bool {
         self.model = model;
         // Fresh model: no tab ids (and so no view state, e.g. expansion) carry
         // over -- `open_dir` always rebuilds `self.tabs` from scratch below.
@@ -804,15 +840,7 @@ impl App {
         self.nav_kinds = crate::nav::kinds_in_model(&self.model);
         self.nav_state = NavState::default();
 
-        // Folder basename backs the display name when the bundle has no root
-        // name of its own. `..` / drive-root degenerate to an empty basename;
-        // "bundle" is the last-ditch label.
-        self.open_name = dir
-            .file_name()
-            .and_then(|n| n.to_str())
-            .filter(|n| !n.is_empty())
-            .unwrap_or("bundle")
-            .to_string();
+        self.open_name = display_name;
 
         let root_name = if self.model.path.is_empty() {
             self.open_name.as_str()
@@ -820,9 +848,6 @@ impl App {
             self.model.path.as_str()
         };
         self.ui.label(cx, ids!(model_name)).set_text(cx, root_name);
-
-        // Record this open in the recents store (best-effort; see config.rs).
-        crate::config::push_recent(dir, root_name);
 
         self.refresh_nav(cx, true);
 
@@ -843,7 +868,7 @@ impl App {
             None => {
                 log!(
                     "no diagrams in {:?}; opening model with an empty canvas",
-                    dir
+                    self.open_name
                 );
                 // Empty scene draws nothing and `bounding_box` returns `None`, so
                 // the fit path leaves the camera untouched (no divide-by-zero). No
@@ -987,6 +1012,7 @@ impl App {
     /// model". Blocks the window while modal, as OS file dialogs do; Cancel
     /// yields `None` (no-op); a non-model dir makes `open_dir` log + return
     /// false, so we stay put.
+    #[cfg(not(target_arch = "wasm32"))]
     fn open_model_via_picker(&mut self, cx: &mut Cx) {
         if let Some(dir) = rfd::FileDialog::new()
             .set_title("Open a model")
@@ -997,6 +1023,13 @@ impl App {
             }
         }
     }
+
+    /// The browser has no directory picker and no filesystem to point one at,
+    /// so the web build gets its model from the URL fragment instead. Keeping
+    /// the method (rather than cfg-ing out every call site) leaves the start
+    /// screen and burger wiring identical across targets.
+    #[cfg(target_arch = "wasm32")]
+    fn open_model_via_picker(&mut self, _cx: &mut Cx) {}
 
     /// The main window's client rect in main-window coords (popup clip bounds).
     fn window_bounds(&mut self, cx: &mut Cx) -> Rect {
@@ -1224,7 +1257,22 @@ fn format_opened(secs: u64) -> String {
     }
 }
 
+/// The current URL fragment, `#` included, or `None` when the page has none.
+///
+/// makepad hands the browser's `location` to Rust as `OsType::Web`, refreshed
+/// on every `hashchange`, so this is a plain read -- no JS interop needed.
+#[cfg(target_arch = "wasm32")]
+fn web_location_hash(cx: &Cx) -> Option<String> {
+    match cx.os_type() {
+        makepad_widgets::makepad_platform::OsType::Web(params) if !params.hash.is_empty() => {
+            Some(params.hash.clone())
+        }
+        _ => None,
+    }
+}
+
 impl MatchEvent for App {
+    #[cfg(not(target_arch = "wasm32"))]
     fn handle_startup(&mut self, cx: &mut Cx) {
         let argv: Vec<String> = std::env::args().collect();
         let args = match crate::cli::parse(&argv) {
@@ -1244,6 +1292,34 @@ impl MatchEvent for App {
                 }
             }
             None => self.show_start_screen(cx),
+        }
+    }
+
+    /// The browser has no argv and no filesystem, so the URL fragment is the
+    /// document: `#w1.<payload>` carries a whole deflated bundle (see
+    /// [`waml::share`]). No fragment, or one we cannot decode, falls back to
+    /// the start screen -- never a blank window.
+    #[cfg(target_arch = "wasm32")]
+    fn handle_startup(&mut self, cx: &mut Cx) {
+        let Some(fragment) = web_location_hash(cx) else {
+            self.show_start_screen(cx);
+            return;
+        };
+        if !waml::share::is_share_link(&fragment) {
+            // Some other anchor (or nothing at all): not our business.
+            self.show_start_screen(cx);
+            return;
+        }
+        match waml::share::decode(&fragment) {
+            Ok(bundle) => {
+                let model = waml::parse::build_model(&bundle);
+                self.open_bundle(cx, bundle, model, "shared".to_string(), None);
+                self.show_editor(cx);
+            }
+            Err(e) => {
+                log!("could not open the model in this link: {e}");
+                self.show_start_screen(cx);
+            }
         }
     }
 
