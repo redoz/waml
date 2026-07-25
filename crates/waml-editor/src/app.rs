@@ -899,7 +899,15 @@ impl App {
     /// verdict is pushed to `DocTabs` (see `doc_tabs::rule_x_end`).
     fn sync_right_dock_btn(&mut self, cx: &mut Cx, glyph: Option<crate::icons::Icon>) {
         let btn = self.ui.widget(cx, ids!(inspector_btn));
-        btn.set_visible(cx, glyph.is_some());
+        // While hidden the button's `Area` is never assigned a draw-list id, so
+        // the scoped redraw inside `set_visible` is a no-op -- force a full
+        // repaint on the flip, the same guard `DocTabs::set_visible` carries.
+        // The tab strip's turtle changes width with the button, so the top
+        // rule's overshoot depends on this relayout actually happening.
+        if btn.visible() != glyph.is_some() {
+            btn.set_visible(cx, glyph.is_some());
+            cx.redraw_all();
+        }
         if let Some(icon) = glyph {
             btn.as_icon_button().set_icon(cx, icon);
         }

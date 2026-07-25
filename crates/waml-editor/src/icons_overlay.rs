@@ -109,7 +109,13 @@ pub const ICON_GROUPS: &[(&str, &[IconEntry])] = &[
     ),
     (
         "CATALOG ONLY",
-        &[ie!(PinOff, "Unpin — catalog glyph, no current call site")],
+        &[
+            ie!(PinOff, "Unpin — catalog glyph, no current call site"),
+            ie!(
+                InspectionPanel,
+                "Inspection panel — catalog glyph, no current call site"
+            ),
+        ],
     ),
 ];
 
@@ -264,7 +270,7 @@ mod drift {
     /// code draws them right now: the catalog is add-only (prune deliberately),
     /// so losing a call site must not silently hide a glyph from the reference.
     /// Guard 2 allows exactly these rows to have no `Icon::<Variant>` call site.
-    const UNWIRED_BUT_LISTED: &[Icon] = &[Icon::PinOff];
+    const UNWIRED_BUT_LISTED: &[Icon] = &[Icon::PinOff, Icon::InspectionPanel];
 
     fn table_icons() -> Vec<Icon> {
         ICON_GROUPS

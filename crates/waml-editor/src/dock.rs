@@ -4,9 +4,12 @@
 //! the slot/center width arithmetic that makes Pin shrink the center. No
 //! makepad types here.
 //!
-//! This module is pure and unit-tested standalone; it is wired into the app
-//! body DSL and panel widgets across Tasks 3-5, so its public API is inert
-//! (and thus dead-code-silenced) until then.
+//! This module is pure and unit-tested standalone. Parts of its public API have
+//! no production sender any more -- `Peek` and everything that serves it
+//! (`PeekTimer`, `peek_hover_span`, `FlagActivate`, `PointerLeft`, `PinToggle`,
+//! `FLAG_W`, `DockEdge`, `header_controls_visible`) went inert when both panels
+//! became binary `Flag` <-> `Pinned` columns. The states stay modelled and
+//! tested rather than deleted; `allow(dead_code)` is what keeps that green.
 #![allow(dead_code)]
 
 /// Which visual state a dock panel is in. Replaces the panels' old separate
@@ -16,8 +19,10 @@ pub enum DockState {
     /// Resting: a thin sideways-label strip at the body edge, no body drawn.
     #[default]
     Flag,
-    /// Unpinned + expanded: body floats over the (frozen) center via
-    /// `peek_layer`; auto-collapses back to `Flag` after `PEEK_COLLAPSE_SECS`.
+    /// Unpinned + expanded: body floats over the (frozen) center, auto-collapsing
+    /// back to `Flag` after `PEEK_COLLAPSE_SECS`. No panel enters this state any
+    /// more -- the `peek_layer` that hosted the floating body was deleted when the
+    /// inspector became a binary column, and both panels now toggle Flag <-> Pinned.
     Peek,
     /// Docked column: consumes layout width, the center shrinks, sticky.
     Pinned,
@@ -82,8 +87,8 @@ pub const FLAG_W: f64 = 28.0;
 
 /// The layout width a panel's slot reserves in the `flow: Right` dock row.
 /// Only `Pinned` reserves a column and thereby shrinks the center; `Flag`/`Peek`
-/// reserve nothing (the flag tab / peek body overlay the canvas via `peek_layer`
-/// and must not carve a window-bg gutter down the edge).
+/// reserve nothing (a collapsed panel draws zero pixels and must not carve a
+/// window-bg gutter down the edge).
 pub fn slot_width(state: DockState, body_w: f64) -> f64 {
     match state {
         DockState::Flag | DockState::Peek => 0.0,

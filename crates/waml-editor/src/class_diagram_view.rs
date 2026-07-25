@@ -536,7 +536,7 @@ impl DocView for ClassDiagramView {
     }
 
     /// The shared `inspector` widget: this view feeds it the diagram's element
-    /// picker, so its caption toggle wears the inspection-panel glyph.
+    /// picker, so its caption toggle wears the properties sliders glyph.
     fn right_dock(&self) -> Option<Icon> {
         Some(Icon::SlidersHorizontal)
     }

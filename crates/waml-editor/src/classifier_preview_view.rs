@@ -131,7 +131,7 @@ impl DocView for ClassifierPreviewView {
 
     /// The shared `inspector` widget: this view points it at the previewed
     /// classifier (picker hidden), so its caption toggle wears the
-    /// inspection-panel glyph.
+    /// properties sliders glyph.
     fn right_dock(&self) -> Option<Icon> {
         Some(Icon::SlidersHorizontal)
     }

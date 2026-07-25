@@ -74,8 +74,9 @@ script_mod! {
 
         // The element-picker bar. Hosts the real `SelectBox` child widget
         // (badge + selected label + caret, its own click handling and open
-        // request). Hidden (`visible: false`) until a diagram feeds the
-        // picker -- see `apply_dock`. The dropped list is the shared
+        // request). Hidden (`visible: false`) here and shown by `draw_walk`
+        // whenever the panel body draws; the `Flag` branch re-hides it so a
+        // collapsed column costs zero pixels. The dropped list is the shared
         // `SelectFlyout` surface (routed through `PopupRoot`), so each
         // association row still carries the real `IconSpline` SDF.
         element_bar := View {
