@@ -18,6 +18,10 @@ export default tseslint.config(
       // Vendored wasm-bindgen glue (browser globals, machine-generated).
       "packages/wasm/src/generated/**",
       "**/pkg/**",
+      // Cargo build output. `cargo makepad wasm build` drops makepad's own JS
+      // glue under target/makepad-wasm-app/, which is machine-generated and
+      // written against browser/worker globals eslint does not know about.
+      "target/**",
     ],
   },
   js.configs.recommended,

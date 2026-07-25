@@ -1,0 +1,88 @@
+# Publishes the makepad waml-editor to GitHub Pages as a WebAssembly app.
+#
+# Deliberately separate from ci.yml: that workflow is currently disabled and
+# gates the Rust/pnpm test suites, which have nothing to do with shipping the
+# editor. Keeping them apart means re-enabling CI later cannot break the deploy
+# and a red test cannot silently stop the site from updating.
+name: Publish web editor
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# Required by actions/deploy-pages. `contents: read` is all the build needs.
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Never let two deploys race; the newest push wins.
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: build wasm bundle
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # cargo-makepad shells out to `rustup run nightly cargo build` with
+      # `-Z build-std=panic_abort,std` and `-Z json-target-spec`, so nightly is
+      # a hard requirement and `rust-src` must be present for build-std.
+      - name: Install Rust nightly
+        uses: dtolnay/rust-toolchain@nightly
+        with:
+          targets: wasm32-unknown-unknown
+          components: rust-src
+
+      - uses: Swatinem/rust-cache@v2
+
+      # Pinned to the same makepad rev as crates/waml-editor/Cargo.toml. If that
+      # rev moves, move this one with it -- the build tool and the framework
+      # share the wasm ABI and the generated JS glue.
+      - name: Install cargo-makepad
+        run: >
+          cargo install cargo-makepad
+          --git https://github.com/redoz/makepad.git
+          --rev d4952075
+          --locked
+
+      # --no-threads is load-bearing, not an optimisation: the threaded build
+      # needs Cross-Origin-Opener-Policy/Cross-Origin-Embedder-Policy response
+      # headers for SharedArrayBuffer, and GitHub Pages cannot set headers.
+      # It also implies --small-fonts, which drops ~48 MB of CJK/emoji fonts
+      # pulled in from makepad-widgets/resources.
+      - name: Build
+        run: cargo makepad wasm build -p waml-editor --release --no-threads
+
+      # cargo-makepad mirrors every crate's entire resources/ tree next to the
+      # wasm, which for waml-editor means 148 font files (~52 MB) when the app
+      # names 8. Prune to what the source actually references: 67 MB -> 17 MB.
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+
+      - name: Prune unreferenced fonts
+        run: node scripts/prune-web-fonts.mjs target/makepad-wasm-app/release/waml-editor
+
+      - uses: actions/configure-pages@v5
+
+      # Layout emitted by cargo-makepad: index.html, waml-editor.wasm, the
+      # makepad_platform/* JS glue, and one resources/ tree per crate.
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: target/makepad-wasm-app/release/waml-editor
+
+  deploy:
+    name: deploy to Pages
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
