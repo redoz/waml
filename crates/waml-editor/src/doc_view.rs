@@ -421,7 +421,7 @@ mod tests {
             BodyChrome {
                 tool_dock: true,
                 view_bar: true,
-                right_dock: Some(Icon::InspectionPanel),
+                right_dock: Some(Icon::SlidersHorizontal),
             }
         );
         assert_eq!(
@@ -429,7 +429,7 @@ mod tests {
             BodyChrome {
                 tool_dock: false,
                 view_bar: false,
-                right_dock: Some(Icon::InspectionPanel),
+                right_dock: Some(Icon::SlidersHorizontal),
             }
         );
         assert_eq!(
@@ -437,7 +437,7 @@ mod tests {
             BodyChrome {
                 tool_dock: false,
                 view_bar: false,
-                right_dock: Some(Icon::InspectionPanel),
+                right_dock: Some(Icon::SlidersHorizontal),
             }
         );
     }
@@ -454,7 +454,7 @@ mod tests {
         ] {
             assert_eq!(
                 body_chrome(Some(&tab(kind, node_kind))).right_dock,
-                Some(Icon::InspectionPanel),
+                Some(Icon::SlidersHorizontal),
                 "a {kind:?} tab must declare the inspector dock"
             );
         }

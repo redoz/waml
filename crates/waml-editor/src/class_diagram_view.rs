@@ -538,7 +538,7 @@ impl DocView for ClassDiagramView {
     /// The shared `inspector` widget: this view feeds it the diagram's element
     /// picker, so its caption toggle wears the inspection-panel glyph.
     fn right_dock(&self) -> Option<Icon> {
-        Some(Icon::InspectionPanel)
+        Some(Icon::SlidersHorizontal)
     }
 
     fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
