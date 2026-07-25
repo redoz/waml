@@ -7,7 +7,11 @@ param(
     [Parameter(Position = 0)]
     [string]$Fixture,
     [switch]$Empty,
-    [switch]$Optimized
+    [switch]$Optimized,
+    # Per-agent window marker: badge text and wash colour, so several
+    # concurrently-running editors can be told apart by eye.
+    [string]$Title,
+    [string]$Color
 )
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
@@ -18,6 +22,10 @@ Set-Location $root
 # [string[]] keeps the single-element case an array; a bare @(...) unwraps to a
 # scalar that @-splats character-by-character (a stray '-' cargo then rejects).
 [string[]]$profileArgs = if ($Optimized) { '--release' } else { @() }
+
+[string[]]$markArgs = @()
+if ($Title) { $markArgs += @('--title', $Title) }
+if ($Color) { $markArgs += @('--color', $Color) }
 
 # A still-running instance holds the target exe lock, so cargo would relink
 # against a stale binary (or fail) and the new window would show old code.
@@ -33,9 +41,9 @@ cargo build -p waml-editor --bin waml-editor @profileArgs
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
 if ($Empty) {
-    cargo run -p waml-editor --bin waml-editor @profileArgs
+    cargo run -p waml-editor --bin waml-editor @profileArgs -- @markArgs
 }
 else {
     if (-not $Fixture) { $Fixture = 'crates/waml-editor/tests/fixtures/mini' }
-    cargo run -p waml-editor --bin waml-editor @profileArgs -- $Fixture
+    cargo run -p waml-editor --bin waml-editor @profileArgs -- $Fixture @markArgs
 }
