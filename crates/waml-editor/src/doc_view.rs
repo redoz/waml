@@ -353,7 +353,10 @@ mod tests {
         // Raw text, not a rendered model view -- the subject's kind must not
         // leak into the accent, or a source tab and a preview tab on the same
         // element would read as the same thing.
-        assert_eq!(tab_accent(Some(&tab(TabKind::Source, TreeKind::Enum))), slate);
+        assert_eq!(
+            tab_accent(Some(&tab(TabKind::Source, TreeKind::Enum))),
+            slate
+        );
         assert_eq!(
             tab_accent(Some(&tab(TabKind::Source, TreeKind::Class))),
             slate

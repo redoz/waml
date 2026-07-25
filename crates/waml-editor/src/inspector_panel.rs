@@ -26,6 +26,7 @@
 //! touched (UX mock only). A changed commit emits `InspectorAction::Edited`,
 //! which `App` uses to promote the active preview tab to persisted.
 
+use crate::accent::bucket_color;
 use crate::attr_row::AttrRowViewWidgetRefExt;
 use crate::dock::{DockEdge, DockEvent, DockState, PeekTimer};
 use crate::icon_button::IconButtonWidgetRefExt;
@@ -34,7 +35,6 @@ use crate::inspector::{
     build_view, effective_field, subject_to_index, AssocDir, AssocRow, ElementKind, ElementRow,
     FieldId, InspectorView, Subject,
 };
-use crate::accent::bucket_color;
 use crate::node_style::{accent_bucket, AccentBucket};
 use crate::popup::base::PopupResult;
 use crate::popup::select::{SelectItem, SelectLead};

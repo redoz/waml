@@ -676,16 +676,31 @@ impl Widget for DocTabs {
         let x_end = (rect.pos.x + rect.size.x + WINDOW_BUTTONS_W).round();
         let solid_end = x_end - EDGE_FADE;
         self.draw_edge.color = base;
-        self.draw_edge
-            .draw_abs(cx, Rect { pos: dvec2(x0, y), size: dvec2(solid_end - x0, 1.0) });
+        self.draw_edge.draw_abs(
+            cx,
+            Rect {
+                pos: dvec2(x0, y),
+                size: dvec2(solid_end - x0, 1.0),
+            },
+        );
         for i in 0..EDGE_FADE_STEPS {
             let step_w = EDGE_FADE / EDGE_FADE_STEPS as f64;
             let sx = solid_end + step_w * i as f64;
             // Alpha falls from ~0.875 (nearest the solid run) to ~0.125 at the edge.
             let a = 1.0 - (i as f32 + 0.5) / EDGE_FADE_STEPS as f32;
-            self.draw_edge.color = Vec4 { x: base.x, y: base.y, z: base.z, w: base.w * a };
-            self.draw_edge
-                .draw_abs(cx, Rect { pos: dvec2(sx, y), size: dvec2(step_w, 1.0) });
+            self.draw_edge.color = Vec4 {
+                x: base.x,
+                y: base.y,
+                z: base.z,
+                w: base.w * a,
+            };
+            self.draw_edge.draw_abs(
+                cx,
+                Rect {
+                    pos: dvec2(sx, y),
+                    size: dvec2(step_w, 1.0),
+                },
+            );
         }
         self.draw_edge.color = base;
 

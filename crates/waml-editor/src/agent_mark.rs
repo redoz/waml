@@ -244,5 +244,4 @@ mod tests {
     fn label_ink_is_always_opaque() {
         assert_eq!(label_ink(vec4(0.5, 0.5, 0.5, 1.0)).w, 1.0);
     }
-
 }

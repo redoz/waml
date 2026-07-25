@@ -656,8 +656,7 @@ impl RadialPopup {
         self.draw_disc.set_uniform(cx, live_id!(n), &[n as f32]);
         self.draw_disc
             .set_uniform(cx, live_id!(fade), &[fade * disc_idle]);
-        self.draw_disc
-            .set_uniform(cx, live_id!(invert), &[recede]);
+        self.draw_disc.set_uniform(cx, live_id!(invert), &[recede]);
         // Arc window (radians): the disc fill + spokes mask to this span so a
         // partial (edge-snapped) fan renders as a "C" instead of a full circle.
         self.draw_disc.set_uniform(
@@ -682,7 +681,11 @@ impl RadialPopup {
             };
             // Idle recede: the armed wedge holds full (`ARMED_FLOOR`), every
             // other wedge -- fill, rim, icon, label -- ghosts to `GHOST_FLOOR`.
-            let floor = if armed == Some(i) { ARMED_FLOOR } else { GHOST_FLOOR };
+            let floor = if armed == Some(i) {
+                ARMED_FLOOR
+            } else {
+                GHOST_FLOOR
+            };
             let wedge_idle = 1.0 - recede * (1.0 - floor);
             self.draw_wedge
                 .set_uniform(cx, live_id!(cx), &[local_c.x as f32]);
@@ -734,7 +737,12 @@ impl RadialPopup {
             };
             // Fade the mark's alpha with its wedge so a ghosted wedge's glyph +
             // label recede too, while the armed wedge's stay crisp.
-            let tint = vec4(base_tint.x, base_tint.y, base_tint.z, base_tint.w * wedge_idle);
+            let tint = vec4(
+                base_tint.x,
+                base_tint.y,
+                base_tint.z,
+                base_tint.w * wedge_idle,
+            );
             match it.icon {
                 Some(icon) => {
                     let icon_rect = Rect {
@@ -743,8 +751,7 @@ impl RadialPopup {
                     };
                     self.icons.draw(cx, icon, icon_rect, tint);
                     let saved = self.draw_label.color;
-                    self.draw_label.color =
-                        vec4(saved.x, saved.y, saved.z, saved.w * wedge_idle);
+                    self.draw_label.color = vec4(saved.x, saved.y, saved.z, saved.w * wedge_idle);
                     self.draw_label
                         .draw_abs(cx, dvec2(ix - 16.0, iy + 12.0), &it.label);
                     self.draw_label.color = saved;
@@ -778,8 +785,7 @@ impl RadialPopup {
         };
         self.draw_hub
             .set_uniform(cx, live_id!(fade), &[fade * hub_idle]);
-        self.draw_hub
-            .set_uniform(cx, live_id!(invert), &[recede]);
+        self.draw_hub.set_uniform(cx, live_id!(invert), &[recede]);
         self.draw_hub.draw_abs(cx, hub_rect);
     }
 }

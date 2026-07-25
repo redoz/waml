@@ -1874,8 +1874,8 @@ impl Widget for GraphCanvas {
                     fs.scroll.x
                 };
                 let factor = (-scroll / 240.0).exp2(); // smooth multiplicative zoom
-                // Scroll-zoom is its own continuous motion; a button glide still
-                // in the air would fight it for the camera.
+                                                       // Scroll-zoom is its own continuous motion; a button glide still
+                                                       // in the air would fight it for the camera.
                 self.cancel_camera_glide(cx);
                 let local_x = fs.abs.x - self.view_rect.pos.x;
                 let local_y = fs.abs.y - self.view_rect.pos.y;
@@ -2363,10 +2363,12 @@ impl GraphCanvas {
         // band edge on the unlocked axis; a constant 1 on the locked axis.
         let (cross_ctr, cross_plateau, cross_soft) =
             cross_fade_params(band, reference_screen, dir, VEIL_REACH);
-        self.draw_veil.set_uniform(cx, live_id!(cross_ctr), &cross_ctr);
+        self.draw_veil
+            .set_uniform(cx, live_id!(cross_ctr), &cross_ctr);
         self.draw_veil
             .set_uniform(cx, live_id!(cross_plateau), &cross_plateau);
-        self.draw_veil.set_uniform(cx, live_id!(cross_soft), &cross_soft);
+        self.draw_veil
+            .set_uniform(cx, live_id!(cross_soft), &cross_soft);
         // The veil you are actively authoring (the candidate under the dial)
         // reads in the selection accent with a tighter, bolder hatch, so it is
         // legible against the calm neutral grey of the committed keep-outs you
@@ -2808,8 +2810,16 @@ impl GraphCanvas {
         let accent_full = self.draw_mono_accent.color;
         let amber_full = self.draw_mono_amber.color;
         let dim = self.draw_mono_dim.color;
-        let accent = if grey { desaturate(accent_full) } else { accent_full };
-        let amber = if grey { desaturate(amber_full) } else { amber_full };
+        let accent = if grey {
+            desaturate(accent_full)
+        } else {
+            accent_full
+        };
+        let amber = if grey {
+            desaturate(amber_full)
+        } else {
+            amber_full
+        };
         let card_w = placed.size.0 * zoom;
 
         // Header accent wash (a filled band), only when the header is `Fill`.

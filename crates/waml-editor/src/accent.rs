@@ -75,7 +75,10 @@ mod tests {
     fn tree_kinds_agree_with_the_element_type_buckets() {
         // The two mappings are written out separately, so pin the pairs that
         // would silently drift if one side gained a metaclass.
-        assert_eq!(tree_kind_bucket(TreeKind::Interface), AccentBucket::Interface);
+        assert_eq!(
+            tree_kind_bucket(TreeKind::Interface),
+            AccentBucket::Interface
+        );
         assert_eq!(tree_kind_bucket(TreeKind::Enum), AccentBucket::Enum);
         assert_eq!(tree_kind_bucket(TreeKind::DataType), AccentBucket::Enum);
         assert_eq!(tree_kind_bucket(TreeKind::Package), AccentBucket::Package);
