@@ -330,7 +330,8 @@ script_mod! {
             let perp = r * abs(rel - bnd)
             let within = step(self.hub, r) * (1.0 - step(self.rim, r))
             let on = within * in_arc * (1.0 - smoothstep(0.4, 1.1, perp))
-            let o = mix(col, vec4(self.spoke_col.x, self.spoke_col.y, self.spoke_col.z, 1.0), on)
+            let sc = mix(self.spoke_col.xyz, vec3(1.0, 1.0, 1.0), self.invert)
+            let o = mix(col, vec4(sc.x, sc.y, sc.z, 1.0), on)
             // Output PREMULTIPLIED alpha (makepad blends Src=ONE, Dst=INV_SRC_ALPHA).
             // `col`/`spoke` are straight, so scale rgb by the final coverage --
             // otherwise a light `disc_col` leaks full colour into the transparent
