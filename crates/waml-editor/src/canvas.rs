@@ -791,6 +791,15 @@ fn node_focus_state(
     }
 }
 
+/// Rec.601 luminance grey of a colour, alpha preserved -- the Rust-side twin of
+/// the AccentFrame shader's `grey` stroke mute, used to desaturate a muted card's
+/// chromatic body bits (header wash, accent/amber text, port nubs). Same weights
+/// as the shader so ring and body land on the same grey.
+fn desaturate(c: Vec4) -> Vec4 {
+    let l = c.x * 0.299 + c.y * 0.587 + c.z * 0.114;
+    vec4(l, l, l, c.w)
+}
+
 /// What chrome a group gets this frame (spec §3). Three outcomes, not two: a
 /// group either draws its full chrome, draws only the x-ray outline, or draws
 /// nothing at all.
@@ -2236,12 +2245,9 @@ impl Widget for GraphCanvas {
             // (neither the picked node nor a constraint neighbour) to greyscale.
             // Only when a focus is active, so a bare diagram stays full colour.
             let fs = node_focus_state(&node.key, selected_key.as_deref(), &focus_keys);
-            let grey = if focus_active && !fs.coloured() {
-                1.0f32
-            } else {
-                0.0
-            };
-            self.draw_node.set_uniform(cx, live_id!(grey), &[grey]);
+            let muted = focus_active && !fs.coloured();
+            self.draw_node
+                .set_uniform(cx, live_id!(grey), &[if muted { 1.0f32 } else { 0.0 }]);
             // Node card: rounded near-white glass fill + source-bright accent
             // frame, both in draw_node's SDF shader (see script_mod above).
             // `draw_surface_abs` pads the quad so the depth shadow falls outside the
@@ -2249,7 +2255,7 @@ impl Widget for GraphCanvas {
             self.draw_node.draw_surface_abs(cx, screen);
 
             // Every node renders the full card on top of its frame.
-            self.draw_card(cx, screen, node, zoom);
+            self.draw_card(cx, screen, node, zoom, muted);
         }
 
         // Persistent relation overlay: the full projected relation set, always-on
@@ -2733,14 +2739,24 @@ impl GraphCanvas {
         screen: Rect,
         node: &crate::scene::SceneNode,
         zoom: f64,
+        grey: bool,
     ) {
         use crate::card::{self, Token, Weight};
         use crate::scene::HeaderStyle;
         let placed = card::measure(&card::class_shape(node, &card::mono_sheet()));
         // Accent/dim are read off the mono pens (both already resolved to the live
         // theme) so the wash/dividers/nubs track the card's own palette.
-        let accent = self.draw_mono_accent.color;
+        // `grey` (out-of-focus card under the Selected POV) mutes the chromatic
+        // body bits -- header wash, accent/amber text, port nubs -- to their own
+        // luminance, the Rust twin of AccentFrame's `grey` stroke mute, so the
+        // whole card desaturates coherently, not just its frame ring. `accent_full`
+        // / `amber_full` are the un-muted theme colours captured before any pen
+        // mutation, so the pens restore cleanly for the next (coloured) card.
+        let accent_full = self.draw_mono_accent.color;
+        let amber_full = self.draw_mono_amber.color;
         let dim = self.draw_mono_dim.color;
+        let accent = if grey { desaturate(accent_full) } else { accent_full };
+        let amber = if grey { desaturate(amber_full) } else { amber_full };
         let card_w = placed.size.0 * zoom;
 
         // Header accent wash (a filled band), only when the header is `Fill`.
@@ -2783,6 +2799,12 @@ impl GraphCanvas {
             );
         }
 
+        // Mute the coloured text pens for an out-of-focus card; restored after the
+        // loop so the next card draws full-chroma. Bold/dim are already neutral.
+        if grey {
+            self.draw_mono_accent.color = accent;
+            self.draw_mono_amber.color = amber;
+        }
         for pt in &placed.texts {
             let pos = dvec2(screen.pos.x + pt.x * zoom, screen.pos.y + pt.y * zoom);
             let size = (pt.style.size_pt * zoom) as f32; // TextStyle.font_size is f32
@@ -2804,6 +2826,10 @@ impl GraphCanvas {
                     self.draw_mono_dim.draw_abs(cx, pos, &pt.text);
                 }
             }
+        }
+        if grey {
+            self.draw_mono_accent.color = accent_full;
+            self.draw_mono_amber.color = amber_full;
         }
 
         // Port nubs: small accent squares straddling the left/right border at the
