@@ -3406,6 +3406,150 @@ script_mod! {
         }
     }
 
+    // Arrow up: directional glyph, straight shaft with open chevron head.
+    // Faithful port of resources/icons/arrow-up.svg via scripts/gen-icon.py.
+    mod.draw.IconArrowUp = mod.draw.DrawColor{
+        pixel: fn() {
+            let s = self.rect_size.x
+            let w = s * 0.068
+            let sdf = Sdf2d.viewport(self.pos * self.rect_size)
+            sdf.move_to(s * 0.2083, s * 0.5000)
+            sdf.line_to(s * 0.5000, s * 0.2083)
+            sdf.line_to(s * 0.7917, s * 0.5000)
+            sdf.stroke(self.color, w)
+            sdf.move_to(s * 0.5000, s * 0.7917)
+            sdf.line_to(s * 0.5000, s * 0.2083)
+            sdf.stroke(self.color, w)
+            return sdf.result
+        }
+    }
+
+    // Arrow up-right: directional glyph, diagonal shaft with open chevron head.
+    // Faithful port of resources/icons/arrow-up-right.svg via scripts/gen-icon.py.
+    mod.draw.IconArrowUpRight = mod.draw.DrawColor{
+        pixel: fn() {
+            let s = self.rect_size.x
+            let w = s * 0.068
+            let sdf = Sdf2d.viewport(self.pos * self.rect_size)
+            sdf.move_to(s * 0.2917, s * 0.2917)
+            sdf.line_to(s * 0.7083, s * 0.2917)
+            sdf.line_to(s * 0.7083, s * 0.7083)
+            sdf.stroke(self.color, w)
+            sdf.move_to(s * 0.2917, s * 0.7083)
+            sdf.line_to(s * 0.7083, s * 0.2917)
+            sdf.stroke(self.color, w)
+            return sdf.result
+        }
+    }
+
+    // Arrow right: directional glyph, straight shaft with open chevron head.
+    // Faithful port of resources/icons/arrow-right.svg via scripts/gen-icon.py.
+    mod.draw.IconArrowRight = mod.draw.DrawColor{
+        pixel: fn() {
+            let s = self.rect_size.x
+            let w = s * 0.068
+            let sdf = Sdf2d.viewport(self.pos * self.rect_size)
+            sdf.move_to(s * 0.2083, s * 0.5000)
+            sdf.line_to(s * 0.7917, s * 0.5000)
+            sdf.stroke(self.color, w)
+            sdf.move_to(s * 0.5000, s * 0.2083)
+            sdf.line_to(s * 0.7917, s * 0.5000)
+            sdf.line_to(s * 0.5000, s * 0.7917)
+            sdf.stroke(self.color, w)
+            return sdf.result
+        }
+    }
+
+    // Arrow down-right: directional glyph, diagonal shaft with open chevron head.
+    // Faithful port of resources/icons/arrow-down-right.svg via scripts/gen-icon.py.
+    mod.draw.IconArrowDownRight = mod.draw.DrawColor{
+        pixel: fn() {
+            let s = self.rect_size.x
+            let w = s * 0.068
+            let sdf = Sdf2d.viewport(self.pos * self.rect_size)
+            sdf.move_to(s * 0.2917, s * 0.2917)
+            sdf.line_to(s * 0.7083, s * 0.7083)
+            sdf.stroke(self.color, w)
+            sdf.move_to(s * 0.7083, s * 0.2917)
+            sdf.line_to(s * 0.7083, s * 0.7083)
+            sdf.line_to(s * 0.2917, s * 0.7083)
+            sdf.stroke(self.color, w)
+            return sdf.result
+        }
+    }
+
+    // Arrow down: directional glyph, straight shaft with open chevron head.
+    // Faithful port of resources/icons/arrow-down.svg via scripts/gen-icon.py.
+    mod.draw.IconArrowDown = mod.draw.DrawColor{
+        pixel: fn() {
+            let s = self.rect_size.x
+            let w = s * 0.068
+            let sdf = Sdf2d.viewport(self.pos * self.rect_size)
+            sdf.move_to(s * 0.5000, s * 0.2083)
+            sdf.line_to(s * 0.5000, s * 0.7917)
+            sdf.stroke(self.color, w)
+            sdf.move_to(s * 0.7917, s * 0.5000)
+            sdf.line_to(s * 0.5000, s * 0.7917)
+            sdf.line_to(s * 0.2083, s * 0.5000)
+            sdf.stroke(self.color, w)
+            return sdf.result
+        }
+    }
+
+    // Arrow down-left: directional glyph, diagonal shaft with open chevron head.
+    // Faithful port of resources/icons/arrow-down-left.svg via scripts/gen-icon.py.
+    mod.draw.IconArrowDownLeft = mod.draw.DrawColor{
+        pixel: fn() {
+            let s = self.rect_size.x
+            let w = s * 0.068
+            let sdf = Sdf2d.viewport(self.pos * self.rect_size)
+            sdf.move_to(s * 0.7083, s * 0.2917)
+            sdf.line_to(s * 0.2917, s * 0.7083)
+            sdf.stroke(self.color, w)
+            sdf.move_to(s * 0.7083, s * 0.7083)
+            sdf.line_to(s * 0.2917, s * 0.7083)
+            sdf.line_to(s * 0.2917, s * 0.2917)
+            sdf.stroke(self.color, w)
+            return sdf.result
+        }
+    }
+
+    // Arrow left: directional glyph, straight shaft with open chevron head.
+    // Faithful port of resources/icons/arrow-left.svg via scripts/gen-icon.py.
+    mod.draw.IconArrowLeft = mod.draw.DrawColor{
+        pixel: fn() {
+            let s = self.rect_size.x
+            let w = s * 0.068
+            let sdf = Sdf2d.viewport(self.pos * self.rect_size)
+            sdf.move_to(s * 0.5000, s * 0.7917)
+            sdf.line_to(s * 0.2083, s * 0.5000)
+            sdf.line_to(s * 0.5000, s * 0.2083)
+            sdf.stroke(self.color, w)
+            sdf.move_to(s * 0.7917, s * 0.5000)
+            sdf.line_to(s * 0.2083, s * 0.5000)
+            sdf.stroke(self.color, w)
+            return sdf.result
+        }
+    }
+
+    // Arrow up-left: directional glyph, diagonal shaft with open chevron head.
+    // Faithful port of resources/icons/arrow-up-left.svg via scripts/gen-icon.py.
+    mod.draw.IconArrowUpLeft = mod.draw.DrawColor{
+        pixel: fn() {
+            let s = self.rect_size.x
+            let w = s * 0.068
+            let sdf = Sdf2d.viewport(self.pos * self.rect_size)
+            sdf.move_to(s * 0.2917, s * 0.7083)
+            sdf.line_to(s * 0.2917, s * 0.2917)
+            sdf.line_to(s * 0.7083, s * 0.2917)
+            sdf.stroke(self.color, w)
+            sdf.move_to(s * 0.7083, s * 0.7083)
+            sdf.line_to(s * 0.2917, s * 0.2917)
+            sdf.stroke(self.color, w)
+            return sdf.result
+        }
+    }
+
     mod.widgets.IconSetBase = #(IconSet::script_component(vm))
 
     // Each field is a `DrawColor` pointing at its icon shader; the accent tint
@@ -3511,6 +3655,14 @@ script_mod! {
         scan_search: mod.draw.IconScanSearch{ color: atlas.accent }
         square_dashed: mod.draw.IconSquareDashed{ color: atlas.accent }
         ruler: mod.draw.IconRuler{ color: atlas.accent }
+        arrow_up: mod.draw.IconArrowUp{ color: atlas.accent }
+        arrow_up_right: mod.draw.IconArrowUpRight{ color: atlas.accent }
+        arrow_right: mod.draw.IconArrowRight{ color: atlas.accent }
+        arrow_down_right: mod.draw.IconArrowDownRight{ color: atlas.accent }
+        arrow_down: mod.draw.IconArrowDown{ color: atlas.accent }
+        arrow_down_left: mod.draw.IconArrowDownLeft{ color: atlas.accent }
+        arrow_left: mod.draw.IconArrowLeft{ color: atlas.accent }
+        arrow_up_left: mod.draw.IconArrowUpLeft{ color: atlas.accent }
     }
 }
 
@@ -3718,6 +3870,22 @@ pub struct IconSet {
     pub square_dashed: DrawColor,
     #[live]
     pub ruler: DrawColor,
+    #[live]
+    pub arrow_up: DrawColor,
+    #[live]
+    pub arrow_up_right: DrawColor,
+    #[live]
+    pub arrow_right: DrawColor,
+    #[live]
+    pub arrow_down_right: DrawColor,
+    #[live]
+    pub arrow_down: DrawColor,
+    #[live]
+    pub arrow_down_left: DrawColor,
+    #[live]
+    pub arrow_left: DrawColor,
+    #[live]
+    pub arrow_up_left: DrawColor,
 }
 
 // Not every bin that `#[path]`-includes this file exercises the whole catalog
@@ -3829,6 +3997,14 @@ impl IconSet {
             Icon::ScanSearch => &mut self.scan_search,
             Icon::SquareDashed => &mut self.square_dashed,
             Icon::Ruler => &mut self.ruler,
+            Icon::ArrowUp => &mut self.arrow_up,
+            Icon::ArrowUpRight => &mut self.arrow_up_right,
+            Icon::ArrowRight => &mut self.arrow_right,
+            Icon::ArrowDownRight => &mut self.arrow_down_right,
+            Icon::ArrowDown => &mut self.arrow_down,
+            Icon::ArrowDownLeft => &mut self.arrow_down_left,
+            Icon::ArrowLeft => &mut self.arrow_left,
+            Icon::ArrowUpLeft => &mut self.arrow_up_left,
         }
     }
 
@@ -3947,13 +4123,21 @@ pub enum Icon {
     ScanSearch,
     SquareDashed,
     Ruler,
+    ArrowUp,
+    ArrowUpRight,
+    ArrowRight,
+    ArrowDownRight,
+    ArrowDown,
+    ArrowDownLeft,
+    ArrowLeft,
+    ArrowUpLeft,
 }
 
 #[allow(dead_code)] // ALL/label are unused in bins that don't iterate the catalog
 impl Icon {
     /// Every glyph, in field order. The single source of glyph identity; the
     /// `icon_harness` proof grid iterates this.
-    pub const ALL: [Icon; 100] = [
+    pub const ALL: [Icon; 108] = [
         Icon::Package,
         Icon::Message,
         Icon::PackagePlus,
@@ -4054,6 +4238,14 @@ impl Icon {
         Icon::ScanSearch,
         Icon::SquareDashed,
         Icon::Ruler,
+        Icon::ArrowUp,
+        Icon::ArrowUpRight,
+        Icon::ArrowRight,
+        Icon::ArrowDownRight,
+        Icon::ArrowDown,
+        Icon::ArrowDownLeft,
+        Icon::ArrowLeft,
+        Icon::ArrowUpLeft,
     ];
 
     /// The `icon_harness` display slug (the Lucide source name), preserved
@@ -4160,6 +4352,14 @@ impl Icon {
             Icon::ScanSearch => "scan-search",
             Icon::SquareDashed => "square-dashed",
             Icon::Ruler => "ruler",
+            Icon::ArrowUp => "arrow-up",
+            Icon::ArrowUpRight => "arrow-up-right",
+            Icon::ArrowRight => "arrow-right",
+            Icon::ArrowDownRight => "arrow-down-right",
+            Icon::ArrowDown => "arrow-down",
+            Icon::ArrowDownLeft => "arrow-down-left",
+            Icon::ArrowLeft => "arrow-left",
+            Icon::ArrowUpLeft => "arrow-up-left",
         }
     }
 }
@@ -4170,7 +4370,7 @@ mod tests {
 
     #[test]
     fn icon_all_has_100_entries() {
-        assert_eq!(Icon::ALL.len(), 100);
+        assert_eq!(Icon::ALL.len(), 108);
     }
 
     #[test]
@@ -4193,6 +4393,15 @@ mod tests {
         assert_eq!(Icon::ALL[97], Icon::ScanSearch);
         assert_eq!(Icon::ALL[98], Icon::SquareDashed);
         assert_eq!(Icon::ALL[99], Icon::Ruler);
+        // Directional arrow glyphs, appended in clockwise order from up.
+        assert_eq!(Icon::ALL[100], Icon::ArrowUp);
+        assert_eq!(Icon::ALL[101], Icon::ArrowUpRight);
+        assert_eq!(Icon::ALL[102], Icon::ArrowRight);
+        assert_eq!(Icon::ALL[103], Icon::ArrowDownRight);
+        assert_eq!(Icon::ALL[104], Icon::ArrowDown);
+        assert_eq!(Icon::ALL[105], Icon::ArrowDownLeft);
+        assert_eq!(Icon::ALL[106], Icon::ArrowLeft);
+        assert_eq!(Icon::ALL[107], Icon::ArrowUpLeft);
     }
 
     #[test]
@@ -4214,7 +4423,7 @@ mod tests {
             assert!(!l.is_empty(), "empty label for {icon:?}");
             assert!(seen.insert(l), "duplicate label {l:?}");
         }
-        assert_eq!(seen.len(), 100);
+        assert_eq!(seen.len(), 108);
     }
 
     #[test]
