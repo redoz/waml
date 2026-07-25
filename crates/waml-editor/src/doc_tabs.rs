@@ -17,30 +17,6 @@ script_mod! {
     use mod.widgets.*
     use mod.text.*
 
-    // The active tab's card border: the same Atlas "source-bright" gradient
-    // stroke as the reusable `AccentFrame` (see `frame.rs`), but open at the
-    // bottom so the tab reads as bleeding down into the document body. The box
-    // is a full `rect_size.y` tall (not inset from the bottom), so its bottom
-    // edge falls one inset below the viewport and never samples -- top + both
-    // sides stroke, the bottom stays open. Same 150deg diagonal (bright
-    // top-left `frame_hi` to dim bottom-right `frame_lo`) as every other frame,
-    // so the tab matches the panels/nodes instead of the old flat accent strip.
-    mod.draw.TabFrame = mod.draw.DrawColor{
-        border_hi: uniform(atlas.frame_hi)
-        border_lo: uniform(atlas.frame_lo)
-        pixel: fn() {
-            let inset = 1.5
-            let sdf = Sdf2d.viewport(self.pos * self.rect_size)
-            sdf.rect(inset, inset, self.rect_size.x - inset * 2.0, self.rect_size.y)
-            sdf.fill_keep(self.color)
-            let dir = vec2(0.5, 0.8660254)
-            let span = 1.3660254
-            let t = clamp((self.pos.x * dir.x + self.pos.y * dir.y) / span, 0.0, 1.0)
-            sdf.stroke(mix(self.border_hi, self.border_lo, t), inset)
-            return sdf.result
-        }
-    }
-
     mod.widgets.DocTabsBase = #(DocTabs::register_widget(vm))
 
     mod.widgets.DocTabs = set_type_default() do mod.widgets.DocTabsBase{
@@ -48,7 +24,15 @@ script_mod! {
         height: 34.0
         draw_bg +: { color: atlas.field_bg }
         draw_edge +: { color: atlas.surface_border }
-        draw_tab: mod.draw.TabFrame{ color: atlas.canvas_ground }
+        // The active tab is a flat, full-height block of the document body's own
+        // colour, so it reads as continuous with the canvas below rather than as
+        // a raised card floating on the bar. No border, no rounding -- the only
+        // chrome left on this strip is `draw_accent` and `draw_divider`.
+        draw_tab +: { color: atlas.canvas_ground }
+        // The active tab's sole ornament: a 2px accent bar along its top edge,
+        // painted over the strip's top rule so the rule reads as interrupted by
+        // the selected document.
+        draw_accent +: { color: atlas.accent }
         // Leading per-kind glyph tint. Dark text ink (not the icon set's default
         // accent) so the glyph reads against the blue-tinted bar / white card --
         // accent-on-blue was too low-contrast. Mirrors the tree's icon_color.
@@ -78,8 +62,14 @@ script_mod! {
         // `draw_text_active` / `draw_text_preview` / `draw_text_preview_active`
         // are DOCUMENTED STATE-FONT EXCEPTIONS (chrome-typography-scale Task 5):
         // the 7-role set has no italic/bold-menu variant, so flattening these
-        // onto `fonts.text_menu` would destroy the Zed-style provisional/active
-        // tab device. Only the resting `draw_text_persisted` migrates.
+        // onto a role would destroy the Zed-style provisional/active tab device.
+        // Only the resting `draw_text_persisted` migrates.
+        //
+        // All four hold at 10 -- the row grew when the cards went full-height,
+        // but the label did not follow it: 10 is the doc tab size the whole
+        // chrome scale is set against (`fonts.rs` pitches `text_caption`, the
+        // title row's own cut, as "one px above the 10px `text_menu` doc tab
+        // labels beneath it"). An 11 here quietly outranks the model name.
         draw_text_active +: {
             color: atlas.text
             aa_2x2: 1.0
@@ -87,6 +77,8 @@ script_mod! {
             stem_darken_max: 0.25
             text_style: theme.font_bold{font_size: 10}
         }
+        // `fonts.text_menu` -- the "dense interactive menu/select/tab rows" role,
+        // Regular 10, which is exactly this.
         draw_text_persisted +: {
             color: atlas.text_dim
             aa_2x2: 1.0
@@ -386,15 +378,28 @@ const CLOSE_HOVER_RIGHT_DX: f64 = 11.0;
 /// Downward nudge of the hover square from the card's vertical center, so it
 /// sits centered on the x's ink rather than its baseline box.
 const CLOSE_HOVER_DY: f64 = 2.0;
-/// Leading per-kind glyph, matched to the tree's `ICON_SIZE`.
-const ICON_SIZE: f64 = 14.0;
+/// Leading per-kind glyph. One px up from the tree's `ICON_SIZE`: the tabs now
+/// own the full row height, which affords a slightly larger mark than the dense
+/// tree rows do.
+const ICON_SIZE: f64 = 15.0;
 /// Gap between the leading glyph and the tab label.
 const ICON_GAP: f64 = 6.0;
-/// Inset from the tab-row's top edge down to the tab card, so the card's top
-/// accent line is visible and tabs float below the title row. Smaller now that
-/// the strip owns a dedicated lower band (two-row caption) instead of sharing a
-/// single 44px bar -- lets the cards stand taller and fill the row.
-const TOP_MARGIN: f64 = 8.0;
+/// Thickness of the active tab's top accent bar. Painted at the strip's top
+/// edge, so it sits over (and interrupts) the 1px top rule.
+const ACCENT_H: f64 = 2.0;
+/// Fraction of the row height a between-tabs divider spans, centred vertically.
+/// A short hairline reads as a separator; a full-bleed one reads as a grid and
+/// re-boxes the tabs the flat treatment just un-boxed.
+const DIVIDER_FRAC: f64 = 0.6;
+/// The same for the run's two outer dividers, which run the full row instead.
+/// They are doing a different job from the inner ones -- bounding the tab run
+/// against the bare strip rather than parting two tabs -- and a short hairline
+/// floating in the middle of the row reads as a dropped separator there.
+const EDGE_DIVIDER_FRAC: f64 = 1.0;
+/// Optical nudge applied after geometric centring of the label. The `asc: -0.1`
+/// trim shared by the font roles rides glyphs high inside their line box (see
+/// the asc/desc notes in `fonts.rs`), so true centring still reads a touch high.
+const TEXT_DY: f64 = 1.0;
 /// Right-side reserve (min/max/close cluster, 3 x 46px) the tab strip does not
 /// span; the top rule overshoots its own turtle by this so the line reaches the
 /// window's right edge (buttons hug the top, leaving this y clear). Its left
@@ -411,14 +416,34 @@ const WINDOW_BUTTONS_W: f64 = 138.0;
 const EDGE_FADE: f64 = 48.0;
 const EDGE_FADE_STEPS: usize = 4;
 /// Breathing room between the tab row's tree-column toggle `[T]` and the first
-/// tab card. `tab_row` is `flow: Right` (see `app.rs`), so this strip's turtle
-/// starts flush against `[T]`'s right edge and this inset is the whole gap
-/// between them -- matching `CLOSE_GAP`, the other label-to-control gap on the
-/// card. It used to align the first card with the burger glyph on the title row
-/// above; that alignment is superseded, because the tree-slot spacer and `[T]`
-/// now set where the cards begin and they move with the tree column.
-const TAB_LEFT_INSET: f64 = 10.0;
+/// tab card, applied ONLY when the tree column is collapsed. `tab_row` is
+/// `flow: Right` (see `app.rs`), so with no column to span, this strip's turtle
+/// starts flush against `[T]`'s right edge and the cards would butt straight
+/// into it; this inset is then the whole gap between them, matching `CLOSE_GAP`.
+///
+/// With the column open the inset is 0: the strip's turtle already starts on the
+/// column's right edge, which is also the canvas's left edge, so a flush first
+/// card puts the tab's left flank on the canvas's -- no step in the chrome.
+/// `App::sync_tree_gap` picks between the two (see `lead_inset`).
+pub const TAB_LEFT_INSET: f64 = 10.0;
 const MAX_TITLE_CHARS: usize = 18;
+
+/// One divider hairline: 1px wide, `frac` of `row`'s height, centred on its
+/// vertical midline and snapped to whole device pixels. A free fn taking the
+/// `DrawColor` by itself rather than a `&mut self` method, because every caller
+/// runs inside the `self.tabs.iter()` loop and a whole-`self` borrow would
+/// collide with it.
+fn draw_divider_line(draw: &mut DrawColor, cx: &mut Cx2d, x: f64, row: Rect, frac: f64) {
+    let dh = (row.size.y * frac).round();
+    let dy = (row.pos.y + (row.size.y - dh) / 2.0).round();
+    draw.draw_abs(
+        cx,
+        Rect {
+            pos: dvec2(x.round(), dy),
+            size: dvec2(1.0, dh),
+        },
+    );
+}
 
 fn truncate_title(s: &str) -> String {
     if s.chars().count() <= MAX_TITLE_CHARS {
@@ -459,11 +484,15 @@ pub struct DocTabs {
     #[redraw]
     #[live]
     draw_edge: DrawColor,
-    /// The active tab's card: the `AccentFrame`-style gradient border, open at
-    /// the bottom (`mod.draw.TabFrame`), filled near-white.
+    /// The active tab's block: a flat fill in the document body's own colour,
+    /// so the tab reads as continuous with the canvas rather than as a card.
     #[redraw]
     #[live]
     draw_tab: DrawColor,
+    /// The active tab's top accent bar, its only ornament.
+    #[redraw]
+    #[live]
+    draw_accent: DrawColor,
     /// 1px hairline between adjacent inactive tabs.
     #[redraw]
     #[live]
@@ -537,6 +566,20 @@ pub struct DocTabs {
     /// the safe reading if the wiring is ever dropped.
     #[rust]
     left_overshoot: f64,
+
+    /// Gap between this strip's turtle and the first card. Runtime-driven by
+    /// `App::sync_tree_gap`: 0 while the tree column is open (so the first
+    /// card's left flank lands on the canvas's left edge), `TAB_LEFT_INSET`
+    /// while it is collapsed and the cards would otherwise butt into `[T]`.
+    /// Defaults to `TAB_LEFT_INSET`, the safe reading if the wiring is dropped.
+    #[rust(TAB_LEFT_INSET)]
+    lead_inset: f64,
+
+    /// Colour override for the active tab's top accent bar, as dictated by the
+    /// view that tab opens (`DocView::tab_accent`). `None` keeps the DSL
+    /// default on `draw_accent`, the theme accent.
+    #[rust]
+    active_accent: Option<Vec4>,
 }
 
 impl Widget for DocTabs {
@@ -649,38 +692,59 @@ impl Widget for DocTabs {
         self.tab_rects.clear();
         self.close_rects.clear();
 
-        let mut x = rect.pos.x + TAB_LEFT_INSET;
+        let mut x = rect.pos.x + self.lead_inset;
         for (i, tab) in self.tabs.iter().enumerate() {
             // Every doc tab is closable now, including the Diagram base.
             let title = truncate_title(&tab.title);
             // Content-size each tab to its label so the close x sits snug to
             // the title instead of stranded at a fixed-width right edge.
-            let text_w = self
+            // Measured off the ACTIVE style for every tab, so a tab neither
+            // resizes nor shifts its baseline when it gains/loses focus and all
+            // four state fonts sit on one shared centre line.
+            let text_size = self
                 .draw_text_active
                 .layout(cx, 0.0, 0.0, None, false, Align::default(), &title)
-                .size_in_lpxs
-                .width as f64;
+                .size_in_lpxs;
+            let text_w = text_size.width as f64;
+            let text_h = text_size.height as f64;
             // Every tab leads with a kind glyph, so its content width folds in
             // the icon box + gap ahead of the label.
             let lead = TEXT_PAD + ICON_SIZE + ICON_GAP;
             let w = lead + text_w + CLOSE_GAP + CLOSE_W;
+            // The card fills the whole row now -- no top margin, no float. The
+            // tabs' own edges are the strip's edges, which is what lets the
+            // active fill run into the document body without a seam.
             let tab_rect = Rect {
-                pos: dvec2(x, rect.pos.y + TOP_MARGIN),
-                size: dvec2(w, rect.size.y - TOP_MARGIN),
+                pos: dvec2(x, rect.pos.y),
+                size: dvec2(w, rect.size.y),
             };
             let is_active = tab.id == self.active;
 
             if is_active {
-                // Raised card carrying the shared Atlas HUD frame (gradient
-                // accent stroke on top + both sides, bottom left open so the
-                // tab bleeds into the body -- see `mod.draw.TabFrame`). Snap the
-                // rect to whole device pixels so the 1.5px stroke lands crisp on
-                // both flanks instead of smearing across a subpixel boundary.
+                // Flat block of the body's own colour, plus a top accent bar --
+                // no frame, no rounding. Snap to whole device pixels so the
+                // accent and the fill's flanks land crisp.
                 let card = Rect {
                     pos: dvec2(tab_rect.pos.x.round(), tab_rect.pos.y.round()),
                     size: dvec2(tab_rect.size.x.round(), tab_rect.size.y),
                 };
                 self.draw_tab.draw_abs(cx, card);
+                // The view's own colour when it named one, else the theme
+                // accent already sitting in the DSL default. Set-and-restore
+                // around the draw, same as the top rule's fade segments -- the
+                // field is the live default, not per-frame state.
+                let accent_default = self.draw_accent.color;
+                if let Some(c) = self.active_accent {
+                    self.draw_accent.color = c;
+                }
+                self.draw_accent.draw_abs(
+                    cx,
+                    Rect {
+                        pos: card.pos,
+                        size: dvec2(card.size.x, ACCENT_H),
+                    },
+                );
+                self.draw_accent.color = accent_default;
             } else {
                 // Press preview reuses the active card fill; hover is a
                 // lighter wash. Drawn under the divider + label.
@@ -689,23 +753,52 @@ impl Widget for DocTabs {
                 } else if self.hovered == tab.id {
                     self.draw_hover.draw_abs(cx, tab_rect);
                 }
-                // A hairline on this tab's right edge separating it from the
-                // next tab -- but skip the divider flanking the active tab
-                // (its raised fill already separates it) and the strip's end.
+                // A short, vertically centred hairline on this tab's right edge
+                // separating it from the next -- but skip the divider flanking
+                // the active tab (its fill and accent already separate it) and
+                // the strip's end. Only one of the active tab's two flanks is
+                // reachable from here; the other never draws because the active
+                // branch above emits no divider at all.
                 let next_active = self
                     .tabs
                     .get(i + 1)
                     .map(|t| t.id == self.active)
                     .unwrap_or(true);
                 if !next_active {
-                    self.draw_divider.draw_abs(
+                    draw_divider_line(
+                        &mut self.draw_divider,
                         cx,
-                        Rect {
-                            pos: dvec2(x + w - 1.0, tab_rect.pos.y + 4.0),
-                            size: dvec2(1.0, tab_rect.size.y - 8.0),
-                        },
+                        x + w - 1.0,
+                        tab_rect,
+                        DIVIDER_FRAC,
                     );
                 }
+            }
+
+            // The run's outer brackets: a divider on the first tab's left flank
+            // and on the last tab's right flank, both full-height. Unlike the
+            // between-tabs ones these are unconditional -- they separate the tab
+            // run from the bare strip (and, on the left, from the tree column /
+            // `[T]`), which the active tab's fill and accent do nothing to mark.
+            // Drawn after the fill so an active first/last tab doesn't paint
+            // over them.
+            if i == 0 {
+                draw_divider_line(
+                    &mut self.draw_divider,
+                    cx,
+                    tab_rect.pos.x,
+                    tab_rect,
+                    EDGE_DIVIDER_FRAC,
+                );
+            }
+            if i + 1 == self.tabs.len() {
+                draw_divider_line(
+                    &mut self.draw_divider,
+                    cx,
+                    x + w - 1.0,
+                    tab_rect,
+                    EDGE_DIVIDER_FRAC,
+                );
             }
 
             // Leading per-kind glyph, vertically centered in the card. Pixel-
@@ -725,7 +818,11 @@ impl Widget for DocTabs {
                 );
             }
 
-            let text_y = tab_rect.pos.y + tab_rect.size.y * 0.5 - 7.0;
+            // True vertical centring off the measured line box, replacing the
+            // old hand-fudged half-height offset: the card is now the full row
+            // and the fudge was tuned to the short floating one. `TEXT_DY`
+            // absorbs the `asc: -0.1` trim, which rides the ink high in its box.
+            let text_y = (tab_rect.pos.y + (tab_rect.size.y - text_h) / 2.0 + TEXT_DY).round();
             let draw_text = match (is_active, tab.preview) {
                 (true, true) => &mut self.draw_text_preview_active,
                 (true, false) => &mut self.draw_text_active,
@@ -823,6 +920,25 @@ impl DocTabs {
     pub fn set_left_overshoot(&mut self, cx: &mut Cx, px: f64) {
         self.left_overshoot = px;
         self.draw_bg.redraw(cx);
+    }
+
+    /// Gap from this strip's turtle to the first card (see `lead_inset`).
+    /// `App::sync_tree_gap` already change-guards, so this just stores and
+    /// repaints.
+    pub fn set_lead_inset(&mut self, cx: &mut Cx, px: f64) {
+        self.lead_inset = px;
+        self.draw_bg.redraw(cx);
+    }
+
+    /// Colour for the active tab's accent bar, as dictated by the view that tab
+    /// opens; `None` restores the theme accent. Cheap and change-guarded here
+    /// rather than at the call site, because `refresh_doc_tabs` runs on every
+    /// tab mutation and the answer usually hasn't moved.
+    pub fn set_active_accent(&mut self, cx: &mut Cx, accent: Option<Vec4>) {
+        if self.active_accent != accent {
+            self.active_accent = accent;
+            self.draw_bg.redraw(cx);
+        }
     }
 }
 

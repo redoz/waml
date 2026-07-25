@@ -639,6 +639,9 @@ impl App {
             .borrow_mut::<crate::doc_tabs::DocTabs>()
         {
             doc_tabs.set_tabs(cx, &self.tabs);
+            // The active tab's accent bar is the view's to colour, so ask it
+            // here -- the one place every tab mutation funnels through.
+            doc_tabs.set_active_accent(cx, crate::doc_view::tab_accent(self.tabs.active_tab()));
         }
     }
 
@@ -861,6 +864,23 @@ impl App {
             return;
         }
         self.tree_gap_w = gap;
+        // The first card's lead-in is a pure function of the gap, so it rides
+        // the same change guard. Open column (gap > 0): flush, so the card's
+        // left flank lands on the tree column's right edge -- the canvas's left
+        // edge -- and the chrome has no step in it. Collapsed (gap == 0): the
+        // strip butts against `[T]`, which needs the breathing room back.
+        if let Some(mut tabs) = self
+            .ui
+            .widget(cx, ids!(doc_tabs))
+            .borrow_mut::<crate::doc_tabs::DocTabs>()
+        {
+            let inset = if gap > 0.5 {
+                0.0
+            } else {
+                crate::doc_tabs::TAB_LEFT_INSET
+            };
+            tabs.set_lead_inset(cx, inset);
+        }
         // Same seam as the dock slots: no live-DSL setter in this fork, so
         // mutate the public `walk` field and force a full relayout (the
         // `flow: Right` row must reflow, not just this child).

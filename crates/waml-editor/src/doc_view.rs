@@ -164,6 +164,20 @@ pub trait DocView {
         ViewOutcome::default()
     }
 
+    /// The colour of the accent bar the tab strip paints along the top of this
+    /// view's tab while it is selected. `None` keeps the theme accent -- the
+    /// DSL default on `DocTabs::draw_accent` -- so a view only implements this
+    /// when it has something of its own to say.
+    ///
+    /// Takes the tab because a view's identity often lives there rather than in
+    /// the view object: a classifier preview knows its subject *key*, but the
+    /// resolved kind that picks the colour is already on the tab, and reaching
+    /// it from the key would mean threading `&Model` in for one swatch.
+    fn tab_accent(&self, tab: &DocTab) -> Option<Vec4> {
+        let _ = tab;
+        None
+    }
+
     /// Does this view drive the left tool dock? (diagram: yes, preview: no)
     fn wants_tooldock(&self) -> bool;
 
@@ -225,6 +239,15 @@ pub fn body_chrome(active: Option<&DocTab>) -> BodyChrome {
             }
         }
     }
+}
+
+/// The accent colour for the active tab's top bar, asked of the view that tab
+/// opens. `None` -- no open tab, or a view with no opinion -- leaves the theme
+/// accent in place. Mirrors `body_chrome`: same throwaway `make_view`, because
+/// the answer depends only on the tab, not on live view state.
+pub fn tab_accent(active: Option<&DocTab>) -> Option<Vec4> {
+    let tab = active?;
+    make_view(tab).tab_accent(tab)
 }
 
 /// Create the view object for a tab, discriminating on `TabKind` (spec §5).
@@ -293,6 +316,48 @@ mod tests {
         );
         let sv = make_view(&tab(TabKind::Source, TreeKind::Class));
         assert!(!sv.wants_view_bar(), "source view never reads the view bar");
+    }
+
+    #[test]
+    fn the_diagram_base_tab_keeps_the_theme_accent() {
+        // `None` = "no opinion", which leaves the DSL default on
+        // `DocTabs::draw_accent` in place.
+        assert!(tab_accent(Some(&tab(TabKind::Diagram, TreeKind::Diagram))).is_none());
+        assert!(tab_accent(None).is_none());
+    }
+
+    #[test]
+    fn a_classifier_tab_takes_its_subjects_node_kind_swatch() {
+        use crate::accent::bucket_color;
+        use crate::node_style::AccentBucket;
+
+        assert_eq!(
+            tab_accent(Some(&tab(TabKind::Classifier, TreeKind::Enum))),
+            Some(bucket_color(AccentBucket::Enum))
+        );
+        assert_eq!(
+            tab_accent(Some(&tab(TabKind::Classifier, TreeKind::Interface))),
+            Some(bucket_color(AccentBucket::Interface))
+        );
+        // A plain class has no swatch on the canvas either, so its tab falls
+        // back to the theme accent rather than to the neutral slate.
+        assert!(tab_accent(Some(&tab(TabKind::Classifier, TreeKind::Class))).is_none());
+    }
+
+    #[test]
+    fn a_source_tab_is_neutral_whatever_its_subject_is() {
+        use crate::accent::bucket_color;
+        use crate::node_style::AccentBucket;
+
+        let slate = Some(bucket_color(AccentBucket::None));
+        // Raw text, not a rendered model view -- the subject's kind must not
+        // leak into the accent, or a source tab and a preview tab on the same
+        // element would read as the same thing.
+        assert_eq!(tab_accent(Some(&tab(TabKind::Source, TreeKind::Enum))), slate);
+        assert_eq!(
+            tab_accent(Some(&tab(TabKind::Source, TreeKind::Class))),
+            slate
+        );
     }
 
     #[test]

@@ -1,7 +1,9 @@
 //! Pure node-kind -> visual style mapping (U9 mock): buckets a model
 //! element's `ElementType` into a small accent-color category plus an
 //! optional stereotype guillemet label, both consumed by `canvas.rs`'s node
-//! renderer. No makepad/GPU dependency here -- trivially unit-tested.
+//! renderer. No makepad/GPU dependency here -- trivially unit-tested. The
+//! buckets' actual swatches live in `accent.rs`, which is shell-only; this
+//! module is also compiled into the standalone node-editor harness bin.
 //!
 //! Buckets are coarse on purpose (breadth over polish): several UML
 //! metaclasses share a bucket rather than each getting a bespoke color.

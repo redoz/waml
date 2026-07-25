@@ -34,6 +34,7 @@ use crate::inspector::{
     build_view, effective_field, subject_to_index, AssocDir, AssocRow, ElementKind, ElementRow,
     FieldId, InspectorView, Subject,
 };
+use crate::accent::bucket_color;
 use crate::node_style::{accent_bucket, AccentBucket};
 use crate::popup::base::PopupResult;
 use crate::popup::select::{SelectItem, SelectLead};
@@ -479,31 +480,6 @@ fn attr_item_id(i: usize, name: &str) -> LiveId {
 /// `attr_item_id`).
 fn member_item_id(i: usize, key: &str) -> LiveId {
     LiveId::from_str(&format!("{i}-{key}"))
-}
-
-/// RGB hex (no alpha) -> opaque `Vec4`, matching how the DSL decodes `#xrrggbb`.
-fn rgb(hex: u32) -> Vec4 {
-    Vec4 {
-        x: ((hex >> 16) & 0xff) as f32 / 255.0,
-        y: ((hex >> 8) & 0xff) as f32 / 255.0,
-        z: (hex & 0xff) as f32 / 255.0,
-        w: 1.0,
-    }
-}
-
-/// Badge fill for an accent bucket (Atlas `bucket_*` swatches; `None` and
-/// `Unknown` share the neutral slate).
-fn bucket_color(b: AccentBucket) -> Vec4 {
-    match b {
-        AccentBucket::Interface => rgb(0x1496dc),
-        AccentBucket::Enum => rgb(0x00b4d2),
-        AccentBucket::Note => rgb(0x14bea0),
-        AccentBucket::Actor => rgb(0x5a6ef0),
-        AccentBucket::UseCase => rgb(0xe69614),
-        AccentBucket::Package => rgb(0x3cbe5a),
-        AccentBucket::Behavior => rgb(0xeb4678),
-        AccentBucket::None | AccentBucket::Unknown => rgb(0x64748b),
-    }
 }
 
 /// Leading visual for a node picker row: the shared catalog glyph for the

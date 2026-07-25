@@ -8,6 +8,7 @@
 use makepad_widgets::*;
 use waml::model::Model;
 
+use crate::doc_tabs::DocTab;
 use crate::doc_view::{BodyWidgets, DocView, ViewOutcome};
 use crate::inspector::Subject;
 
@@ -42,6 +43,16 @@ impl DocView for SourceView {
         _model: &Model,
     ) -> ViewOutcome {
         ViewOutcome::default()
+    }
+
+    /// Neutral slate, deliberately not the subject's node-kind swatch: a source
+    /// tab shows raw text rather than a rendered model view, and the flat grey
+    /// says so next to the coloured preview tabs.
+    fn tab_accent(&self, tab: &DocTab) -> Option<Vec4> {
+        let _ = tab;
+        Some(crate::accent::bucket_color(
+            crate::node_style::AccentBucket::None,
+        ))
     }
 
     fn wants_tooldock(&self) -> bool {

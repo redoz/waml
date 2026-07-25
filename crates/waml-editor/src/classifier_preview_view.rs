@@ -4,6 +4,7 @@
 use makepad_widgets::*;
 use waml::model::Model;
 
+use crate::doc_tabs::DocTab;
 use crate::doc_view::{BodyWidgets, DocView, ViewOutcome};
 use crate::inspector::Subject;
 use crate::scene::build_focus_scene;
@@ -113,6 +114,14 @@ impl DocView for ClassifierPreviewView {
         }
 
         out
+    }
+
+    /// The subject's own node-kind swatch -- the colour its card already wears
+    /// on the canvas -- so the tab's accent names *what* is open, not just that
+    /// something is. A plain class and an unresolved type have no swatch of
+    /// their own, so those keep the theme accent.
+    fn tab_accent(&self, tab: &DocTab) -> Option<Vec4> {
+        crate::accent::tree_kind_color(tab.node_kind)
     }
 
     fn wants_tooldock(&self) -> bool {

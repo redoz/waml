@@ -1,6 +1,7 @@
 pub use makepad_widgets;
 use makepad_widgets::*;
 
+mod accent;
 mod action_link;
 mod app;
 mod attr_row;
