@@ -10,6 +10,7 @@ use waml::model::Model;
 
 use crate::doc_tabs::DocTab;
 use crate::doc_view::{BodyWidgets, DocView, ViewOutcome};
+use crate::icons::Icon;
 use crate::inspector::Subject;
 
 pub struct SourceView {
@@ -57,6 +58,13 @@ impl DocView for SourceView {
 
     fn wants_tooldock(&self) -> bool {
         false
+    }
+
+    /// The shared `inspector` widget: a source tab still points it at the
+    /// subject classifier (picker hidden), so its caption toggle wears the
+    /// inspection-panel glyph.
+    fn right_dock(&self) -> Option<Icon> {
+        Some(Icon::InspectionPanel)
     }
 
     fn as_any_mut(&mut self) -> &mut dyn std::any::Any {

@@ -7,6 +7,7 @@ use waml::model::Model;
 
 use crate::canvas::ConstraintVisibility;
 use crate::doc_view::{BodyWidgets, DocView, PopupRequest, ViewOutcome};
+use crate::icons::Icon;
 use crate::inspector::{diagram_elements, subject_from, Subject};
 use crate::popup::base::{PopupItem, PopupResult};
 use crate::scene::build_scene;
@@ -532,6 +533,12 @@ impl DocView for ClassDiagramView {
 
     fn wants_view_bar(&self) -> bool {
         true
+    }
+
+    /// The shared `inspector` widget: this view feeds it the diagram's element
+    /// picker, so its caption toggle wears the inspection-panel glyph.
+    fn right_dock(&self) -> Option<Icon> {
+        Some(Icon::InspectionPanel)
     }
 
     fn as_any_mut(&mut self) -> &mut dyn std::any::Any {

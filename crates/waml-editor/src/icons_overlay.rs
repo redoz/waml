@@ -62,6 +62,7 @@ pub const ICON_GROUPS: &[(&str, &[IconEntry])] = &[
             ie!(Pin, "Pin inspector"),
             ie!(PinOff, "Unpin inspector"),
             ie!(Frame, "Frame / bounds"),
+            ie!(InspectionPanel, "Caption right-dock toggle"),
         ],
     ),
     (

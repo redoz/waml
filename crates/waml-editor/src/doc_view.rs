@@ -68,6 +68,7 @@ use waml::model::Model;
 use waml::ops::Op;
 
 use crate::doc_tabs::{DocTab, TabKind};
+use crate::icons::Icon;
 use crate::popup::base::PopupItem;
 use crate::popup::base::PopupResult;
 use crate::popup::select::SelectItem;
@@ -90,6 +91,15 @@ pub struct ViewOutcome {
     pub close_active: bool,
     /// Ask the shell to re-push the statusbar snapshot.
     pub statusbar_dirty: bool,
+    /// Ask the shell to open the right-hand docked panel -- a view-side user
+    /// action that needs the panel visible (select a node, hit a body control).
+    /// Request-only: a view never asks for a collapse, so a user who closed the
+    /// panel isn't fought by the next click. Ignored when the active view
+    /// declares no right dock (`DocView::right_dock() == None`).
+    ///
+    /// Nothing sets this yet. Like `ops` and `open_preview` before it, it lands
+    /// as a wired and tested channel whose first real caller comes later.
+    pub open_right_dock: bool,
 }
 
 /// A popup a view wants placed. The view describes it; the shell computes window
@@ -189,6 +199,17 @@ pub trait DocView {
         false
     }
 
+    /// The right-hand docked panel this view drives, and the glyph its caption
+    /// toggle wears. `None` -> no right dock; the shell hides the toggle.
+    ///
+    /// The view declares *whether* and *which glyph*, and nothing else:
+    /// open/closed state, slot width, button placement and lit state are all
+    /// the app's. Shaped so a later view can name its own panel without any
+    /// shell change.
+    fn right_dock(&self) -> Option<Icon> {
+        None
+    }
+
     fn on_activate(&mut self, cx: &mut Cx, body: &BodyWidgets) {
         let _ = (cx, body);
     }
@@ -218,6 +239,9 @@ pub struct BodyChrome {
     pub tool_dock: bool,
     /// The bottom-centre view bar (`view_bar_wrap`).
     pub view_bar: bool,
+    /// The right-hand docked panel the active view drives, and the glyph its
+    /// caption toggle wears (`None` = no dock, so the toggle is hidden).
+    pub right_dock: Option<Icon>,
 }
 
 /// Body-chrome visibility for an active tab. Both pieces are *per-view*, so
@@ -230,12 +254,14 @@ pub fn body_chrome(active: Option<&DocTab>) -> BodyChrome {
         None => BodyChrome {
             tool_dock: false,
             view_bar: false,
+            right_dock: None,
         },
         Some(tab) => {
             let view = make_view(tab);
             BodyChrome {
                 tool_dock: view.wants_tooldock(),
                 view_bar: view.wants_view_bar(),
+                right_dock: view.right_dock(),
             }
         }
     }
@@ -287,6 +313,7 @@ mod tests {
         assert!(o.promote_subject.is_none());
         assert!(!o.close_active);
         assert!(!o.statusbar_dirty);
+        assert!(!o.open_right_dock);
     }
 
     #[test]
@@ -373,6 +400,7 @@ mod tests {
             BodyChrome {
                 tool_dock: false,
                 view_bar: false,
+                right_dock: None,
             }
         );
     }
@@ -384,6 +412,7 @@ mod tests {
             BodyChrome {
                 tool_dock: true,
                 view_bar: true,
+                right_dock: Some(Icon::InspectionPanel),
             }
         );
         assert_eq!(
@@ -391,6 +420,7 @@ mod tests {
             BodyChrome {
                 tool_dock: false,
                 view_bar: false,
+                right_dock: Some(Icon::InspectionPanel),
             }
         );
         assert_eq!(
@@ -398,7 +428,26 @@ mod tests {
             BodyChrome {
                 tool_dock: false,
                 view_bar: false,
+                right_dock: Some(Icon::InspectionPanel),
             }
         );
+    }
+
+    #[test]
+    fn every_open_tab_kind_declares_the_inspector_right_dock() {
+        // All three concrete views drive the one shared `inspector` widget
+        // today, so all three wear the same glyph. The seam earns its keep on
+        // the `None` path (no open tab -> no toggle) and on views yet written.
+        for (kind, node_kind) in [
+            (TabKind::Diagram, TreeKind::Diagram),
+            (TabKind::Classifier, TreeKind::Class),
+            (TabKind::Source, TreeKind::Class),
+        ] {
+            assert_eq!(
+                body_chrome(Some(&tab(kind, node_kind))).right_dock,
+                Some(Icon::InspectionPanel),
+                "a {kind:?} tab must declare the inspector dock"
+            );
+        }
     }
 }
