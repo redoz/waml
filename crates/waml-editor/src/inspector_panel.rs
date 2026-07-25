@@ -10,8 +10,8 @@
 //! label + caret) listing the current diagram's contents (diagram, nodes,
 //! source-anchored edges), plus fold-caret + pin `IconButton`s that drive the
 //! panel's `dock: DockState` (Flag/Peek/Pinned; see `dock.rs`) -- pin docks the
-//! column and locks the interior fill opaque via `panel.force_opaque`, the
-//! caret always collapses to Flag. Clicking the box opens its `SelectFlyout`
+//! column as a flush sidebar, the caret always collapses to Flag. Clicking the
+//! box opens its `SelectFlyout`
 //! card (`App` relays `SelectBox`'s open request to `PopupRoot::show_at`), and
 //! a committed pick comes back through the tag-filtered `PopupRoot::closed`
 //! queue, resolved via `apply_pick` (which repoints the inspector,
@@ -35,7 +35,6 @@ use crate::inspector::{
     FieldId, InspectorView, Subject,
 };
 use crate::node_style::{accent_bucket, AccentBucket};
-use crate::panel_glass::PanelGlass;
 use crate::popup::base::PopupResult;
 use crate::popup::select::{SelectItem, SelectLead};
 use crate::ref_card::RefCardViewWidgetRefExt;
@@ -62,22 +61,17 @@ script_mod! {
         flow: Down
         // Panel carries the Atlas HUD frame. The container is a `View`, whose
         // `draw_bg` is a `DrawQuad`; the AccentFrame material is inlined onto it
-        // (keep in sync with `frame.rs` / `tree_panel.rs`): glass `field_bg`
+        // (keep in sync with `frame.rs` / `tree_panel.rs`): opaque `field_bg`
         // fill ringed by the source-bright accent stroke, 150deg alpha gradient.
         draw_bg +: {
             color: atlas.field_bg
             border_hi: uniform(atlas.frame_hi)
             border_lo: uniform(atlas.frame_lo)
-            // Glass translucency: `opacity` scales only the interior fill's
-            // alpha (frame stroke stays opaque), driven by hover/pin via
-            // `PanelGlass` -- see `panel_glass` / `tree_panel`.
-            opacity: uniform(1.0)
             pixel: fn() {
                 let inset = 1.5
                 let sdf = Sdf2d.viewport(self.pos * self.rect_size)
                 sdf.rect(inset, inset, self.rect_size.x - inset * 2.0, self.rect_size.y - inset * 2.0)
-                let fill = vec4(self.color.x, self.color.y, self.color.z, self.color.w * self.opacity)
-                sdf.fill_keep(fill)
+                sdf.fill_keep(self.color)
                 let dir = vec2(0.5, 0.8660254)
                 let span = 1.3660254
                 let t = clamp((self.pos.x * dir.x + self.pos.y * dir.y) / span, 0.0, 1.0)
@@ -102,8 +96,20 @@ script_mod! {
             padding: Inset{left: 16.0, right: 16.0}
             spacing: 2.0
             select_box := SelectBox { width: Fill }
-            fold_btn := IconButton { visible: false }
             pin_btn := IconButton { visible: false }
+        }
+
+        // Flag rest state: a small square tab at the docked edge holding this
+        // IconButton (the whole panel collapses to it). Hidden while expanded;
+        // `draw_walk`'s Flag branch shows it, sets its glyph, and sizes the panel
+        // to a `FLAG_SQUARE` box around it. A click opens the peek.
+        flag_btn := IconButton {
+            width: Fill
+            height: Fill
+            // Larger glyph than the header buttons: this one sits alone in the
+            // `FLAG_SQUARE` (44px) tab, so the default 16px reads as tiny.
+            icon_size: 20.0
+            visible: false
         }
 
         // The diagram/picker body: a declared Turtle column drawn by
@@ -325,11 +331,6 @@ pub struct Inspector {
     #[live]
     draw_glyph: DrawText,
 
-    /// Glyph shader set for the flag spine's icon (see `draw_inspector_flag`).
-    /// No per-widget DSL override needed -- `IconSet`'s own live defaults apply.
-    #[live]
-    icons: IconSet,
-
     /// The flattened read model of the current subject (`None` = empty state).
     #[rust]
     proj: Option<InspectorView>,
@@ -366,25 +367,15 @@ pub struct Inspector {
     /// the list is fed. Reverses a committed `SelectItem.id` back to its row.
     #[rust]
     picker_ids: Vec<(LiveId, usize)>,
-    /// Glass translucency + hover/pin state machine (shared with the tree
-    /// panel; see `panel_glass`). Owns `hovered`/`pinned` and eases the
-    /// `draw_bg` `opacity` uniform between translucent-at-rest and opaque.
-    #[rust]
-    panel: PanelGlass,
-    /// Dock visual state (Flag / Peek / Pinned), replacing `folded` and
-    /// `panel.force_opaque`. The app reads `slot_width()` for the right slot.
+    /// Dock visual state (Flag / Peek / Pinned), replacing `folded`. The app
+    /// reads `slot_width()` for the right slot.
     #[rust]
     dock: DockState,
     /// Auto-collapse countdown for Peek (armed when the pointer leaves the flag
     /// AND body; cancelled when it returns or the panel pins).
     #[rust]
     peek_timer: PeekTimer,
-    /// The flag strip's on-screen rect, captured in `draw_walk`, for hover/click
-    /// hit-testing (geometric containment, like `PanelGlass`).
-    #[rust]
-    flag_rect: Rect,
-    /// A dedicated `NextFrame`/clock for the Peek auto-collapse timer, separate
-    /// from `PanelGlass`'s own easing clock.
+    /// A dedicated `NextFrame`/clock for the Peek auto-collapse timer.
     #[rust]
     dock_frame: NextFrame,
     #[rust]
@@ -407,47 +398,10 @@ const GLYPH_W: f64 = 18.0; // fixed x-advance reserved for the direction glyph
                            // pin affordances in it are now laid-out `IconButton` children, not hand-drawn.
 const BAR_H: f64 = 56.0;
 
-// Flag strip (rest state): a `dock::FLAG_W`-wide spine at the body edge with a
-// glyph near the top and a sideways "Inspector" label below it in accent ink.
-const FLAG_ICON_SIZE: f64 = 16.0;
-const FLAG_ICON_TOP: f64 = 12.0;
-
-/// Draw the Inspector flag spine into `rect`. Per-glyph vertical label (text
-/// rotation is unreliable in the fork's DrawText -- swap for a rotated DrawText
-/// if the fork gains it).
-fn draw_inspector_flag(
-    cx: &mut Cx2d,
-    icons: &mut IconSet,
-    draw_dim: &mut DrawText,
-    accent: Vec4,
-    rect: Rect,
-) {
-    let cxr = rect.pos.x + rect.size.x * 0.5;
-    icons.draw(
-        cx,
-        Icon::InspectionPanel,
-        Rect {
-            pos: dvec2(
-                (cxr - FLAG_ICON_SIZE * 0.5).round(),
-                (rect.pos.y + FLAG_ICON_TOP).round(),
-            ),
-            size: dvec2(FLAG_ICON_SIZE, FLAG_ICON_SIZE),
-        },
-        accent,
-    );
-    draw_dim.color = accent;
-    let mut y = rect.pos.y + FLAG_ICON_TOP + FLAG_ICON_SIZE + 8.0;
-    for ch in "Inspector".chars() {
-        let mut buf = [0u8; 4];
-        let s = ch.encode_utf8(&mut buf);
-        let w = draw_dim
-            .layout(cx, 0.0, 0.0, None, false, Align::default(), s)
-            .size_in_lpxs
-            .width as f64;
-        draw_dim.draw_abs(cx, dvec2((cxr - w * 0.5).round(), y.round()), s);
-        y += 13.0;
-    }
-}
+// Flag rest state: the panel collapses to a small square tab at the docked edge
+// holding the `flag_btn` IconButton. Side of that square (the panel's `padding`
+// insets the 32px button inside it).
+const FLAG_SQUARE: f64 = 44.0;
 
 /// An association row's display text in the picker popup: just the target end.
 /// The model label is `Source -> Target`, but each edge row is drawn beneath its
@@ -589,26 +543,12 @@ impl Widget for Inspector {
         let panel_rect = self.view.area().rect(cx);
         let hit_off = panel_rect.pos - self.view_rect.pos;
 
-        // Glass hover + opacity easing off the real on-screen rect (geometric
-        // MouseMove containment, not `Hit::FingerHover*` -- the child
-        // `SelectBox` / picker claim the pointer's hover first, so a hit-based
-        // test leaves the panel stuck translucent under the cursor; see
-        // `panel_glass`).
-        if self.panel.handle_event(cx, event, panel_rect) {
-            self.view.redraw(cx);
-        }
-
-        // Flag interaction + peek auto-collapse. The panel's on-screen rect is
-        // the flag spine (Flag) or the full column (Peek/Pinned); use geometric
-        // containment (like PanelGlass), not Hit::FingerHover* (inner children
-        // claim it first).
+        // Peek auto-collapse. (Flag opens on a `flag_btn` click, read from
+        // `Event::Actions` below; Pinned never auto-collapses.) Use geometric
+        // containment, not Hit::FingerHover* (inner children claim it first).
         if let Event::MouseMove(e) = event {
             match self.dock {
-                DockState::Flag => {
-                    if self.flag_rect.contains(e.abs) {
-                        self.apply_dock(cx, DockEvent::FlagActivate);
-                    }
-                }
+                DockState::Flag => {}
                 DockState::Peek => {
                     // The body sits one FLAG_W inside the right edge; widen the
                     // containment toward the edge so hovering the flag gutter
@@ -646,24 +586,18 @@ impl Widget for Inspector {
                 self.dock_last_time = 0.0;
             }
         }
-        // Also accept a primary click on the flag as FlagActivate. The
-        // inspector's own body hit-testing below uses
-        // `hits_with_capture_overload`; this extra `event.hits(...)` FingerUp
-        // check is only consulted while `dock == Flag` (body hidden), so there
-        // is no double-handling.
-        if let Hit::FingerUp(fe) = event.hits(cx, self.view.area()) {
-            if fe.is_primary_hit()
-                && self.dock == DockState::Flag
-                && self.flag_rect.contains(fe.abs)
+        // Flag tab + fold-caret + pin `IconButton` children emit their clicks as
+        // widget actions; read them here. The flag opens the panel (Flag ->
+        // Peek); the pin pins/unpins the dock; the caret always collapses to Flag.
+        if let Event::Actions(actions) = event {
+            if self
+                .view
+                .widget(cx, ids!(flag_btn))
+                .as_icon_button()
+                .clicked(actions)
             {
                 self.apply_dock(cx, DockEvent::FlagActivate);
             }
-        }
-
-        // Fold-caret + pin `IconButton` children emit their clicks as widget
-        // actions; read them here. The pin pins/unpins the dock; the caret
-        // always collapses to Flag.
-        if let Event::Actions(actions) = event {
             if self
                 .view
                 .widget(cx, ids!(element_bar.pin_btn))
@@ -671,15 +605,6 @@ impl Widget for Inspector {
                 .clicked(actions)
             {
                 self.apply_dock(cx, DockEvent::PinToggle);
-                self.sync_bar_buttons(cx);
-            }
-            if self
-                .view
-                .widget(cx, ids!(element_bar.fold_btn))
-                .as_icon_button()
-                .clicked(actions)
-            {
-                self.apply_dock(cx, DockEvent::Collapse);
                 self.sync_bar_buttons(cx);
             }
         }
@@ -722,21 +647,20 @@ impl Widget for Inspector {
     }
 
     fn draw_walk(&mut self, cx: &mut Cx2d, scope: &mut Scope, walk: Walk) -> DrawStep {
-        // Flag rest state: draw only the thin spine (glyph + sideways label),
-        // no bar/body. Capture the flag rect for hover/click hit-testing.
+        // Flag rest state: collapse the panel to a small `FLAG_SQUARE` tab at the
+        // docked edge, holding just the `flag_btn` IconButton (bar + body hidden).
         if !crate::dock::body_visible(self.dock) {
             let mut fw = walk;
-            fw.width = Size::Fixed(crate::dock::FLAG_W);
-            // Strip the docked-edge (right) margin so the flag spine sits flush
-            // at the window edge, inside the reserved [W-FLAG_W, W] slot. The
-            // panel's static `margin.right` would otherwise inset the flag to
-            // [W-2*FLAG_W, W-FLAG_W] -- occluding the canvas corner and leaving
-            // a dead gutter of window bg between the edge and the flag.
+            fw.width = Size::Fixed(FLAG_SQUARE);
+            fw.height = Size::Fixed(FLAG_SQUARE);
+            // Strip the docked-edge (right) margin so the tab sits flush at the
+            // window edge (the panel's static `margin.right` would inset it).
             fw.margin.right = 0.0;
             self.view.view(cx, ids!(element_bar)).set_visible(cx, false);
             self.view.widget(cx, ids!(body)).set_visible(cx, false);
-            self.panel.force_opaque = false;
-            self.panel.draw(cx, &mut self.view.draw_bg);
+            let flag_btn = self.view.widget(cx, ids!(flag_btn));
+            flag_btn.set_visible(cx, true);
+            flag_btn.as_icon_button().set_icon(cx, Icon::SlidersHorizontal);
             // `View::draw_walk` is a multi-step `DrawStep` machine: it opens the
             // view's turtle on the first call and only closes it once the loop
             // runs it to `done`. Calling it once and dropping the result leaves
@@ -745,25 +669,24 @@ impl Widget for Inspector {
             // caption/frame) then silently aborts. Drive it to completion,
             // exactly like the expanded path below.
             while self.view.draw_walk(cx, scope, fw).step().is_some() {}
-            let rect = self.view.area().rect(cx);
-            self.flag_rect = rect;
-            let accent = self.draw_glyph.color;
-            draw_inspector_flag(cx, &mut self.icons, &mut self.draw_dim, accent, rect);
             return DrawStep::done();
         }
+        self.view.widget(cx, ids!(flag_btn)).set_visible(cx, false);
         self.view.view(cx, ids!(element_bar)).set_visible(cx, true);
         // Draw the container (HUD frame bg) and the bar child (dropdown).
-        // Collapsed = nothing selected. Collapse the frame to hug just the bar;
-        // the parent wrapper aligns this panel top-right, so a `Fit` height
-        // floats it to the top.
+        // `collapsed` = nothing selected: the frame still fills full height (like
+        // the left Model panel), but the body content below the bar is suppressed.
         let collapsed = self.proj.is_none();
+        // Expanded (Peek/Pinned) always draws a full-height column butted to the
+        // window edge -- the DSL `height: Fill` carries through untouched, even
+        // with nothing selected. Strip the docked-edge (right) margin + the float
+        // top/bottom margins so no window-bg frame shows. Peek overlays the
+        // (frozen) canvas; Pinned reserves an equal-width slot (see `slot_width`)
+        // and shrinks it.
         let mut walk = walk;
-        if collapsed {
-            walk.height = Size::Fit {
-                min: None,
-                max: None,
-            };
-        }
+        walk.margin.right = 0.0;
+        walk.margin.top = 0.0;
+        walk.margin.bottom = 0.0;
         // The diagram/picker body column is a real child; reveal it only when
         // the picker bar is shown and we are not collapsed. The classifier
         // preview (`!show_picker`) keeps its immediate-mode body below.
@@ -785,14 +708,6 @@ impl Widget for Inspector {
             }
         }
 
-        // Glass translucency: seed + push the eased `opacity` uniform before the
-        // container draws its frame bg. Opaque when hovered/pinned, else
-        // translucent so the canvas shows through. Replaces the old dimming
-        // scrim (which painted last, over everything). See `panel_glass`.
-        // `pinned` forces opaque; Peek eases with hover -- must be set BEFORE
-        // `panel.draw`.
-        self.panel.force_opaque = matches!(self.dock, DockState::Pinned);
-        self.panel.draw(cx, &mut self.view.draw_bg);
         let attr_list_uid = self.view.widget(cx, ids!(body.attr_list)).widget_uid();
         let members_list_uid = self.view.widget(cx, ids!(body.members_list)).widget_uid();
         let rel_list_uid = self.view.widget(cx, ids!(body.rel_list)).widget_uid();
@@ -867,9 +782,9 @@ impl Widget for Inspector {
         // visibility track `dock`/`show_picker` via `sync_bar_buttons`
         // on each state change, so there's nothing to hand-draw here.
 
-        // Body, below the bar (or floated to the top when the bar is hidden).
-        // When collapsed the frame already hugs the bar -- the placeholder lives
-        // in the field itself, so there's no body.
+        // Body, below the bar. When nothing is selected the full-height frame
+        // stays empty below the bar (no field_rects to capture) -- the picker bar
+        // alone sits at the top of the column.
         if collapsed {
             return DrawStep::done();
         }
@@ -1142,26 +1057,18 @@ impl Inspector {
         self.view.redraw(cx);
     }
 
-    /// Sync the fold-caret + pin `IconButton` children to the current state:
-    /// glyph (collapse/expand, pin/pin-off), the pin's lit state (`pinned`), and
-    /// visibility (only shown while the picker bar is). Called on every state
-    /// change that affects them; the buttons draw themselves as `element_bar`
-    /// children.
+    /// Sync the pin `IconButton` child to the current state: glyph (pin/pin-off),
+    /// its lit state (`pinned`), and visibility (only shown while the picker bar
+    /// is). Called on every state change that affects it; the button draws itself
+    /// as an `element_bar` child.
     fn sync_bar_buttons(&mut self, cx: &mut Cx) {
         let pinned = matches!(self.dock, DockState::Pinned);
         // Controls follow the dock state, NOT the picker: they must stay
         // reachable whenever the panel is expanded (Peek/Pinned). Gating on
         // `show_picker` stranded a Pinned inspector on a classifier/package
-        // preview tab (picker hidden) with no visible unpin/collapse affordance,
+        // preview tab (picker hidden) with no visible unpin affordance,
         // since Pinned never auto-collapses.
         let vis = crate::dock::header_controls_visible(self.dock);
-
-        // The fold caret only appears in an expanded (Peek/Pinned) panel and
-        // always sends it to Flag -- no expand icon needed (that's the flag
-        // strip's own click target).
-        let fold = self.view.widget(cx, ids!(element_bar.fold_btn));
-        fold.set_visible(cx, vis);
-        fold.as_icon_button().set_icon(cx, Icon::ListCollapse);
 
         let pin = self.view.widget(cx, ids!(element_bar.pin_btn));
         pin.set_visible(cx, vis);

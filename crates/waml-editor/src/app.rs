@@ -197,9 +197,10 @@ script_mod! {
                             // Left (Model) reservation spacer. No bg, no content:
                             // its only job is to reserve width so the center
                             // shrinks when the Model panel pins. Width set at
-                            // runtime by `sync_dock_slots` (28 at rest, 28+280
-                            // pinned). Starts at 28 (Flag).
-                            left_slot := View{ width: 28.0, height: Fill }
+                            // runtime by `sync_dock_slots` (0 at rest, body width
+                            // pinned). Starts at 0 (Flag/Peek reserve nothing --
+                            // the flag tab + peek body overlay the canvas).
+                            left_slot := View{ width: 0.0, height: Fill }
                             // Center: canvas base + aux HUD floaters. Fill, so it
                             // takes whatever the slots leave. Overlay so each
                             // floater wrapper gets the full center rect and parks
@@ -314,8 +315,8 @@ script_mod! {
                                     }
                                 }
                             }
-                            // Right (Inspector) reservation spacer. Starts 28 (Flag).
-                            right_slot := View{ width: 28.0, height: Fill }
+                            // Right (Inspector) reservation spacer. Starts 0 (Flag/Peek).
+                            right_slot := View{ width: 0.0, height: Fill }
                         }
                         // Peek/pinned bodies. Overlay above `dock_row`, so a peek
                         // overhangs the center without shrinking it. The wraps are
@@ -676,7 +677,7 @@ impl App {
             .widget(cx, ids!(project_tree))
             .borrow::<crate::tree_panel::ProjectTree>()
             .map(|p| p.slot_width())
-            .unwrap_or(crate::dock::FLAG_W);
+            .unwrap_or(0.0);
         if (lw - self.dock_slot_w.0).abs() > 0.5 {
             self.dock_slot_w.0 = lw;
             // Plain `View` reservation spacer: no `apply_over`/live-DSL setter
@@ -693,7 +694,7 @@ impl App {
             .widget(cx, ids!(inspector))
             .borrow::<crate::inspector_panel::Inspector>()
             .map(|p| p.slot_width())
-            .unwrap_or(crate::dock::FLAG_W);
+            .unwrap_or(0.0);
         if (rw - self.dock_slot_w.1).abs() > 0.5 {
             self.dock_slot_w.1 = rw;
             if let Some(mut slot) = self.ui.widget(cx, ids!(right_slot)).borrow_mut::<View>() {

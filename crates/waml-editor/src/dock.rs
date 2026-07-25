@@ -1,8 +1,8 @@
 //! Pure state model for the docked/collapsible Model + Inspector panels. Holds
 //! the `DockState` enum, its transition table (`next`), the peek auto-collapse
-//! timer (`PeekTimer`, a pure dt function — same NextFrame dt pattern as
-//! `panel_glass`, but testable without a live `Cx`), and the slot/center width
-//! arithmetic that makes Pin shrink the center. No makepad types here.
+//! timer (`PeekTimer`, a pure dt function testable without a live `Cx`), and
+//! the slot/center width arithmetic that makes Pin shrink the center. No
+//! makepad types here.
 //!
 //! This module is pure and unit-tested standalone; it is wired into the app
 //! body DSL and panel widgets across Tasks 3-5, so its public API is inert
@@ -33,8 +33,6 @@ pub enum DockEvent {
     PointerLeft,
     /// Header pin button: Peek -> Pinned, or Pinned -> Flag (unpin).
     PinToggle,
-    /// Header collapse button: Pinned -> Flag.
-    Collapse,
 }
 
 /// The transition table. Any unlisted (state, event) pair is a no-op (returns
@@ -48,7 +46,6 @@ pub fn next(state: DockState, ev: DockEvent) -> DockState {
         (Peek, PointerLeft) => Flag,
         (Peek, PinToggle) => Pinned,
         (Pinned, PinToggle) => Flag,
-        (Pinned, Collapse) => Flag,
         (s, _) => s,
     }
 }
@@ -58,12 +55,13 @@ pub fn next(state: DockState, ev: DockEvent) -> DockState {
 pub const FLAG_W: f64 = 28.0;
 
 /// The layout width a panel's slot reserves in the `flow: Right` dock row.
-/// Only `Pinned` reserves the full column and thereby shrinks the center;
-/// `Flag`/`Peek` reserve just the flag spine.
+/// Only `Pinned` reserves a column and thereby shrinks the center; `Flag`/`Peek`
+/// reserve nothing (the flag tab / peek body overlay the canvas via `peek_layer`
+/// and must not carve a window-bg gutter down the edge).
 pub fn slot_width(state: DockState, body_w: f64) -> f64 {
     match state {
-        DockState::Flag | DockState::Peek => FLAG_W,
-        DockState::Pinned => FLAG_W + body_w,
+        DockState::Flag | DockState::Peek => 0.0,
+        DockState::Pinned => body_w,
     }
 }
 
@@ -164,15 +162,12 @@ mod tests {
         assert_eq!(next(Flag, FlagActivate), Peek);
         assert_eq!(next(Flag, PointerLeft), Flag);
         assert_eq!(next(Flag, PinToggle), Flag);
-        assert_eq!(next(Flag, Collapse), Flag);
         // Peek: PointerLeft -> Flag, PinToggle -> Pinned.
         assert_eq!(next(Peek, PointerLeft), Flag);
         assert_eq!(next(Peek, PinToggle), Pinned);
         assert_eq!(next(Peek, FlagActivate), Peek);
-        assert_eq!(next(Peek, Collapse), Peek);
-        // Pinned: PinToggle (unpin) and Collapse both -> Flag; never auto-collapses.
+        // Pinned: PinToggle unpins -> Flag; never auto-collapses.
         assert_eq!(next(Pinned, PinToggle), Flag);
-        assert_eq!(next(Pinned, Collapse), Flag);
         assert_eq!(next(Pinned, PointerLeft), Pinned);
         assert_eq!(next(Pinned, FlagActivate), Pinned);
     }
@@ -185,15 +180,15 @@ mod tests {
         assert_eq!(s, DockState::Peek);
         s = next(s, DockEvent::PinToggle);
         assert_eq!(s, DockState::Pinned);
-        s = next(s, DockEvent::Collapse);
+        s = next(s, DockEvent::PinToggle);
         assert_eq!(s, DockState::Flag);
     }
 
     #[test]
     fn slot_width_only_pinned_reserves_body() {
-        assert_eq!(slot_width(DockState::Flag, 280.0), FLAG_W);
-        assert_eq!(slot_width(DockState::Peek, 280.0), FLAG_W);
-        assert_eq!(slot_width(DockState::Pinned, 280.0), FLAG_W + 280.0);
+        assert_eq!(slot_width(DockState::Flag, 280.0), 0.0);
+        assert_eq!(slot_width(DockState::Peek, 280.0), 0.0);
+        assert_eq!(slot_width(DockState::Pinned, 280.0), 280.0);
     }
 
     #[test]
