@@ -1,7 +1,6 @@
 use crate::doc_tabs::{OpenTabs, TabKind};
 use crate::fps_meter::FpsMeter;
 use crate::icon_button::IconButtonWidgetRefExt;
-use crate::inspector::Subject;
 use crate::load;
 use crate::nav::NavState;
 use crate::popup::base::PopupResult;
@@ -1178,8 +1177,10 @@ impl App {
         self.refresh_nav(cx, true);
 
         // A model may carry zero diagrams (a pure classifier/behavior bundle). We
-        // still open it -- the tree and inspector are useful on their own -- just
-        // with an empty canvas and no active diagram tab.
+        // still open it -- the project tree is useful on its own -- just with an
+        // empty canvas and no active diagram tab. With no tab there is no view to
+        // declare a right dock, so the inspector stays closed and its `[I]`
+        // toggle stays hidden.
         match crate::cli::select_diagram(&self.model, wanted_diagram) {
             Some(diagram) => {
                 // Seed the base tab; `self.views` was just cleared above, so
@@ -1198,7 +1199,8 @@ impl App {
                 );
                 // Empty scene draws nothing and `bounding_box` returns `None`, so
                 // the fit path leaves the camera untouched (no divide-by-zero). No
-                // diagram tab; the tree/inspector below still populate.
+                // diagram tab; the project tree was already populated by
+                // `refresh_nav` above.
                 if let Some(mut canvas) = self
                     .ui
                     .widget(cx, ids!(canvas))
@@ -1208,14 +1210,9 @@ impl App {
                 }
                 self.tabs = OpenTabs::default();
                 self.refresh_doc_tabs(cx);
-                if let Some(mut inspector) = self
-                    .ui
-                    .widget(cx, ids!(inspector))
-                    .borrow_mut::<crate::inspector_panel::Inspector>()
-                {
-                    inspector.set_subject(cx, &self.model, Subject::None);
-                    inspector.set_diagram_elements(cx, &self.model, vec![]);
-                }
+                // Nothing to seed the inspector with: with no active tab no
+                // view declares a right dock, so `sync_right_dock_btn` below
+                // hides `[I]` and force-closes the panel anyway.
             }
         }
         self.sync_statusbar(cx);

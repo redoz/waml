@@ -470,17 +470,18 @@ impl Widget for Inspector {
         let uid = self.widget_uid();
         // All hit rects (pin, caret, pencil, inline-edit fields) are recorded
         // in `draw_walk` off `self.view.area().rect(cx)`, which *during a
-        // draw* reports the pre-alignment turtle origin (x≈0). This panel
-        // lives in a right-aligned parent, so the finished draw list is
-        // shifted right by the panel's x — the glyphs render there, but the
-        // stored rects keep the unshifted origin. Pointer events arrive in that
-        // shifted (post-alignment) space, so translate the event point back
-        // into draw-time space by the offset between the two before any
-        // `contains` test. (The picker field itself is now the child
-        // `SelectBox`'s own hit rect, event-time-anchored — see `select_box.rs`.)
-        // `area().rect` at event time is the real (post-alignment) on-screen
-        // rect; `self.view_rect` is the pre-alignment draw-time rect (x≈0 in
-        // this right-aligned parent). `hit_off` is the shift between them.
+        // draw* reports the pre-alignment turtle origin. The panel used to live
+        // in a right-aligned parent, whose alignment shifted the finished draw
+        // list right of those stored rects; it is a laid-out `right_slot`
+        // column now, so this offset is normally zero -- the translation is
+        // kept because it stays correct either way and the rects are still
+        // captured mid-draw. Pointer events arrive in post-alignment space, so
+        // translate the event point back into draw-time space by the offset
+        // between the two before any `contains` test. (The picker field itself
+        // is now the child `SelectBox`'s own hit rect, event-time-anchored —
+        // see `select_box.rs`.) `area().rect` at event time is the real
+        // on-screen rect; `self.view_rect` is the draw-time rect. `hit_off` is
+        // the shift between them.
         let panel_rect = self.view.area().rect(cx);
         let hit_off = panel_rect.pos - self.view_rect.pos;
 
