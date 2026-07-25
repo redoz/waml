@@ -505,9 +505,10 @@ script_mod! {
 const TREE_BTN_W: f64 = 32.0;
 
 /// How long the document has to sit unchanged before `mark_dirty` turns into a
-/// `save`. Long enough that a drag settles first, short enough that a tab
-/// closed right after an edit has already been persisted.
-const SAVE_DEBOUNCE_SECS: f64 = 0.5;
+/// `save`. Sized for a pause in editing, not for the tail of a single gesture:
+/// a save is a full deflate of the bundle, so coalescing a run of related edits
+/// into one is worth more than persisting each of them promptly.
+const SAVE_DEBOUNCE_SECS: f64 = 3.0;
 
 /// Footprint of the caption's right-dock toggle `[I]`: the `inspector_btn` DSL
 /// `width` (30, the burger's size) plus its 2px right margin. The right-hand
