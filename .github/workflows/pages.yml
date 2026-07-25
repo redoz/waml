@@ -68,6 +68,12 @@ jobs:
       - name: Prune unreferenced fonts
         run: node scripts/prune-web-fonts.mjs target/makepad-wasm-app/release/waml-editor
 
+      # cargo-makepad generates index.html, so the tab icon has to be patched
+      # into the artifact rather than checked in. Uses the same icon.ico the
+      # Windows exe embeds.
+      - name: Add favicon
+        run: node scripts/add-favicon.mjs target/makepad-wasm-app/release/waml-editor
+
       - uses: actions/configure-pages@v5
 
       # Layout emitted by cargo-makepad: index.html, waml-editor.wasm, the
