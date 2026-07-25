@@ -158,26 +158,25 @@ script_mod! {
                             // The tree-column toggle, FIRST child so it is anchored
                             // hard against the wordmark and never moves: expanding the
                             // tree must slide only the tab cards, not the control that
-                            // slides them. 24px button / 16px glyph under an 8px top
-                            // margin: row 2 is 32px tall and the tab cards inset
-                            // `TOP_MARGIN` (8) from its top, so this box is exactly
-                            // co-extensive with a card -- same top, same bottom, same
-                            // centreline -- and reads as their peer. The title row's
-                            // burger is 30/18 because that row is 34px; reusing it here
-                            // would overhang the cards. Hidden until a model opens
+                            // slides them. 30px button / 18px glyph -- the burger's exact
+                            // size, because the two stack in one column and any mismatch
+                            // reads as a mistake. That makes this box taller than a tab
+                            // card (which insets `TOP_MARGIN` = 8 into the 32px row), so
+                            // it deliberately overhangs the cards rather than sitting
+                            // flush with them; `top: 1` centres the 30px box in the 32px
+                            // row. Hidden until a model opens
                             // (`show_editor`/`show_start_screen`), which also sets the
                             // glyph (`Icon::ListTree`, inherited from the retired tree
                             // flag spine).
                             //
-                            // `left: 5` stacks this glyph on the burger's centreline one
-                            // row above. The two rows inset their first control
-                            // differently -- `title_row` has `padding left: 2` and a 30px
-                            // burger (centre at row_x+17), this row has no padding and a
-                            // 24px button (centre at row_x+12) -- so the 5px closes that
-                            // gap. Both rows start at the same x (the wordmark's right
-                            // edge), so aligning the centres aligns the columns. Counted
-                            // into `TREE_BTN_W`, which `sync_tree_gap` subtracts.
-                            tree_btn := IconButton{ width: 24.0 height: 24.0 icon_size: 16.0 margin: Inset{left: 5.0, top: 8.0} visible: false }
+                            // `left: 2` stacks this glyph on the burger's centreline one
+                            // row above: the burger gets its 2px from `title_row`'s
+                            // `padding`, this row has no padding, so the button carries
+                            // the same 2 as a margin instead. Both rows start at the same
+                            // x (the wordmark's right edge) and both boxes are now 30px
+                            // wide, so equal insets align the columns. Counted into
+                            // `TREE_BTN_W`, which `sync_tree_gap` subtracts.
+                            tree_btn := IconButton{ width: 30.0 height: 30.0 icon_size: 18.0 margin: Inset{left: 2.0, top: 1.0} visible: false }
                             // Runtime-driven spacer (`sync_dock_slots`) between `[T]`
                             // and the strip, sized so the STRIP's left edge lands on
                             // the tree column's right edge -- where the `field_bg`
@@ -466,11 +465,12 @@ script_mod! {
 }
 
 /// Footprint of the caption's tree-column toggle: the `tree_btn` DSL `width`
-/// (24) plus its 5px left margin, which seats it on the burger's centreline one
-/// row above (see the `tree_btn` comment). Kept here because `sync_tree_gap` has
-/// to subtract it from the tree column's width: the button leads the row, so the
-/// spacer after it is short by exactly the button's own footprint.
-const TREE_BTN_W: f64 = 29.0;
+/// (30, the burger's size) plus its 2px left margin, which seats it on the
+/// burger's centreline one row above (see the `tree_btn` comment). Kept here
+/// because `sync_tree_gap` has to subtract it from the tree column's width: the
+/// button leads the row, so the spacer after it is short by exactly the button's
+/// own footprint.
+const TREE_BTN_W: f64 = 32.0;
 
 #[derive(Script, ScriptHook)]
 pub struct App {
