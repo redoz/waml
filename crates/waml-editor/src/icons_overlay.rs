@@ -30,7 +30,7 @@ pub const ICON_GROUPS: &[(&str, &[IconEntry])] = &[
             ie!(MousePointer2, "Select tool"),
             ie!(SquarePlus, "Add tool"),
             ie!(Spline, "Connect tool"),
-            ie!(SlidersHorizontal, "Properties tool"),
+            ie!(SlidersHorizontal, "Properties tool / inspector flag spine"),
             ie!(CircleX, "Close / clear"),
         ],
     ),
@@ -61,9 +61,7 @@ pub const ICON_GROUPS: &[(&str, &[IconEntry])] = &[
             ie!(PanelTop, "Node / panel section"),
             ie!(Pin, "Pin inspector"),
             ie!(PinOff, "Unpin inspector"),
-            ie!(ListCollapse, "Collapse rows"),
             ie!(Frame, "Frame / bounds"),
-            ie!(InspectionPanel, "Inspector flag spine"),
         ],
     ),
     (
