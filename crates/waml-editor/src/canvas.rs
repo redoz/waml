@@ -2296,7 +2296,15 @@ impl GraphCanvas {
     /// On-screen rect of scene node `i` under the current camera. Mirrors the
     /// draw-time transform in `draw_walk` / `node_at`.
     fn node_screen_rect(&self, i: usize) -> Rect {
-        let r = self.scene.nodes[i].rect;
+        // While a card is in flight it lives at its transient `drag_ghost`
+        // position, not its committed scene rect (which stays at the origin
+        // slot until drop). Anchor overlays -- the keep-out veil above all --
+        // to the ghost so the hatching tracks the card live instead of
+        // snapping only when the drag lands.
+        let r = match (self.drag_node, self.drag_ghost) {
+            (Some(ni), Some(ghost)) if ni == i => ghost,
+            _ => self.scene.nodes[i].rect,
+        };
         let (lx, ly) = self.camera.world_to_local(r.x, r.y);
         Rect {
             pos: dvec2(self.view_rect.pos.x + lx, self.view_rect.pos.y + ly),
