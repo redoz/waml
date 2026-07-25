@@ -100,6 +100,13 @@ pub struct SelectionToolbar {
 
 impl Widget for SelectionToolbar {
     fn handle_event(&mut self, cx: &mut Cx, event: &Event, _scope: &mut Scope) {
+        // Hidden means inert: the `ViewBar` owns this same bottom-centre slot
+        // (`app.rs`, both at `align: Align{x: 0.5, y: 1.0}` / `bottom: 12`), so
+        // hit-testing `draw_bg.area()` while `count` is `None` would eat the
+        // bar's button clicks.
+        if self.count.is_none() {
+            return;
+        }
         let uid = self.widget_uid();
         match event.hits_with_capture_overload(cx, self.draw_bg.area(), false) {
             Hit::FingerUp(fe) if fe.is_primary_hit() => {
@@ -135,12 +142,24 @@ impl Widget for SelectionToolbar {
 
     fn draw_walk(&mut self, cx: &mut Cx2d, _scope: &mut Scope, walk: Walk) -> DrawStep {
         let rect = cx.walk_turtle(walk);
-        self.draw_bg.draw_surface_abs(cx, rect);
         self.item_rects.clear();
 
         let Some(count) = self.count else {
+            // Degenerate, not skipped: the background still has to be drawn so
+            // `draw_bg.area()` stays a live redraw anchor for `set_selection`,
+            // but at zero size it paints nothing over the `ViewBar` sharing this
+            // slot and contains no point.
+            self.draw_bg.draw_surface_abs(
+                cx,
+                Rect {
+                    pos: rect.pos,
+                    size: DVec2::default(),
+                },
+            );
             return DrawStep::done();
         };
+
+        self.draw_bg.draw_surface_abs(cx, rect);
 
         // All positions below are computed relative to `rect.pos` (itself
         // treated as the local origin) so `item_rects` can be re-anchored to
