@@ -302,7 +302,7 @@ script_mod! {
     // quad's local px (set per draw); `disc_col` defaults to the HUD field bg.
     mod.draw.RadialDisc = mod.draw.DrawColor{
         disc_col: uniform(atlas.field_bg)
-        spoke_col: uniform(atlas.text)
+        spoke_col: uniform(atlas.accent)
         rim: uniform(114.0)
         hub: uniform(30.0)
         n: uniform(4.0)
