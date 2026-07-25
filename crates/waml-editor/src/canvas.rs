@@ -179,9 +179,17 @@ script_mod! {
             let sdf = Sdf2d.viewport(p)
             let inset = self.stroke_w * 0.5
             sdf.rect(inset, inset, self.rect_size.x - inset * 2.0, self.rect_size.y - inset * 2.0)
-            // 50% duty cycle with ~1px of antialiasing on the leading edge.
-            let f = fract((p.x + p.y) / self.dash_px)
-            let mask = clamp((0.5 - f) * self.dash_px, 0.0, 1.0)
+            // 50% duty cycle with ~1px of antialiasing on BOTH dash edges.
+            // `d` is the symmetric triangle-wave distance to the nearest dash
+            // centre in PIXELS (the same `abs(fract(..) - 0.5) * period` idiom
+            // as ConstraintVeil above); inking where it exceeds a quarter
+            // period gives the 50% duty. Because the wave is symmetric, the
+            // edge where `fract` wraps 1 -> 0 is filtered exactly like the
+            // other one -- a one-sided `(0.5 - f)` ramp leaves that wrap a hard
+            // step and the dash ends crawl and shimmer under pan and zoom. The
+            // `+ 0.5` centres the ~1px blend band on the dash edge.
+            let d = abs(fract((p.x + p.y) / self.dash_px) - 0.5) * self.dash_px
+            let mask = clamp(d - self.dash_px * 0.25 + 0.5, 0.0, 1.0)
             sdf.stroke(
                 vec4(self.color.x, self.color.y, self.color.z, self.color.w * mask),
                 self.stroke_w
@@ -2682,6 +2690,45 @@ impl GraphCanvas {
 mod tests {
     use super::*;
     use waml::solve::Rect as WorldRect;
+
+    /// Shader-shape gate for the `GroupDashed` pen's dash mask. The pixel fn
+    /// cannot be executed headless (it needs a `Cx`/GPU), so the only place an
+    /// asymmetric duty mask can be caught is a source assertion here.
+    ///
+    /// A mask built as `clamp((0.5 - f) * dash_px, 0, 1)` filters only the
+    /// TRAILING edge of each dash: at the wrap point (`fract` rolls 1 -> 0) the
+    /// term jumps straight from a large negative to +0.5*dash_px, so the
+    /// leading edge is a hard step that crawls and shimmers under pan/zoom.
+    /// The fix is the symmetric triangle-wave distance `abs(fract(..) - 0.5)`
+    /// that `ConstraintVeil` already uses, which filters both edges alike.
+    #[test]
+    fn the_dash_mask_filters_both_edges_symmetrically() {
+        let src = include_str!("canvas.rs");
+        let pen = src
+            .split_once("mod.draw.GroupDashed = ")
+            .and_then(|(_, rest)| rest.split_once("\n    }\n"))
+            .map(|(body, _)| body)
+            .expect("canvas.rs must define the `mod.draw.GroupDashed` pen");
+        // Drop the pen's own comments -- they name the broken idiom on purpose.
+        let pen: String = pen
+            .lines()
+            .filter(|l| !l.trim_start().starts_with("//"))
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        assert!(
+            pen.contains("abs(fract("),
+            "the GroupDashed dash mask must take its distance from the \
+             symmetric `abs(fract(..) - 0.5)` triangle wave (the ConstraintVeil \
+             idiom) so BOTH dash edges are antialiased"
+        );
+        assert!(
+            !pen.contains("(0.5 - f)"),
+            "`(0.5 - f)` is the one-sided ramp that leaves the leading dash \
+             edge a hard step (it crawls under pan/zoom); use the symmetric \
+             `abs(fract(..) - 0.5)` distance instead"
+        );
+    }
 
     #[test]
     fn only_frame_groups_draw_chrome() {
