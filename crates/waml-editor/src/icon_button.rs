@@ -1,7 +1,10 @@
 //! `IconButton`: a small square icon button -- a catalog glyph (`IconSet`) over a
-//! rounded accent hover/active wash. The shared recipe already proven by the
-//! tool dock: a hover (or an `active` flag) lights the wash and tints the glyph
-//! `atlas.text` -> `atlas.accent`. The glyph is picked at runtime (`set_icon`),
+//! rounded accent hover wash. The shared recipe already proven by the tool
+//! dock, split across two channels (`wash_and_ink`): a hover lights the wash,
+//! and hover OR an `active` flag tints the glyph `atlas.text` ->
+//! `atlas.accent`. A resting-active toggle is therefore a bare accent glyph
+//! with no wash, so "on" never reads as "hovered". The glyph is picked at
+//! runtime (`set_icon`),
 //! so one instance can flip between paired states (pin/pin-off,
 //! collapse/expand).
 //!
@@ -30,8 +33,9 @@ script_mod! {
         width: 32.0
         height: 32.0
         show_bg: true
-        // Rounded accent wash behind the glyph, faded in by `lit` (hover ||
-        // active). A centred 28px square, the SAME accent @16% the tool dock /
+        // Rounded accent wash behind the glyph, faded in by `lit` -- HOVER
+        // only now; an `active` button tints its glyph and paints no wash (see
+        // `wash_and_ink`). A centred 28px square, the SAME accent @16% the tool dock /
         // caption buttons paint, so every icon button reads identically. The
         // square is CAPPED at 28px (`min(w,h)-4`, clamped) so a host that
         // stretches the button -- e.g. the inspector's `Fill x Fill` flag button
@@ -109,8 +113,9 @@ pub struct IconButton {
     /// until set -- nothing draws (an empty, unlit button).
     #[rust]
     icon: Option<Icon>,
-    /// Persistent lit state (e.g. an active tool / a pinned panel). OR'd with
-    /// `hovered` into the `lit` uniform + accent glyph tint.
+    /// Persistent lit state (e.g. an active tool / a pinned panel). Tints the
+    /// glyph `atlas.accent` on its own; it does NOT paint the hover wash (see
+    /// `wash_and_ink`), so resting-on and hovered are distinguishable states.
     #[rust]
     active: bool,
     /// Disabled: the glyph greys and the wash never lights. The button keeps its
@@ -124,6 +129,19 @@ pub struct IconButton {
     /// caption drag-query seam).
     #[rust]
     rect: Rect,
+}
+
+/// The two independent light channels of an icon button, split so a resting
+/// `active` toggle does not read as a hovered one:
+/// `.0` = the 16% accent **wash** behind the glyph (hover only);
+/// `.1` = the accent glyph **tint** (hover OR active).
+/// A `dim` (disabled) button lights neither, however it is hovered or flagged.
+/// Pure so the rule is unit-testable without a `Cx`.
+fn wash_and_ink(hovered: bool, active: bool, dim: bool) -> (bool, bool) {
+    if dim {
+        return (false, false);
+    }
+    (hovered, hovered || active)
 }
 
 impl Widget for IconButton {
@@ -152,16 +170,17 @@ impl Widget for IconButton {
     }
 
     fn draw_walk(&mut self, cx: &mut Cx2d, scope: &mut Scope, walk: Walk) -> DrawStep {
-        // A dim button never lights, however it is hovered or flagged active.
-        let lit = (self.hovered || self.active) && !self.dim;
+        // Two channels (see `wash_and_ink`): `hot` paints the wash, `ink` tints
+        // the glyph. A dim button never lights either.
+        let (hot, ink) = wash_and_ink(self.hovered, self.active, self.dim);
         self.view
             .draw_bg
-            .set_uniform(cx, live_id!(lit), &[if lit { 1.0 } else { 0.0 }]);
+            .set_uniform(cx, live_id!(lit), &[if hot { 1.0 } else { 0.0 }]);
         let step = self.view.draw_walk(cx, scope, walk);
         let rect = self.view.area().rect(cx);
         self.rect = rect;
         if let Some(icon) = self.icon {
-            let tint = if lit {
+            let tint = if ink {
                 self.draw_icon_lit.color
             } else if self.dim {
                 self.draw_icon_dim.color
@@ -269,5 +288,38 @@ impl IconButtonRef {
     /// See [`IconButton::rect`].
     pub fn rect(&self) -> Rect {
         self.borrow().map(|inner| inner.rect()).unwrap_or_default()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::wash_and_ink;
+
+    // The whole point of the split: an active-but-unhovered toggle reads as a
+    // bare accent glyph, so "on" no longer looks identical to "hovered".
+    #[test]
+    fn resting_active_tints_the_glyph_without_the_wash() {
+        assert_eq!(wash_and_ink(false, true, false), (false, true));
+    }
+
+    // An active button that is also hovered looks like any other hovered
+    // button -- both channels lit.
+    #[test]
+    fn hover_lights_both_channels() {
+        assert_eq!(wash_and_ink(true, false, false), (true, true));
+        assert_eq!(wash_and_ink(true, true, false), (true, true));
+    }
+
+    #[test]
+    fn idle_lights_neither_channel() {
+        assert_eq!(wash_and_ink(false, false, false), (false, false));
+    }
+
+    // Disabled never lights, however it is hovered or flagged active.
+    #[test]
+    fn dim_never_lights_either_channel() {
+        assert_eq!(wash_and_ink(true, true, true), (false, false));
+        assert_eq!(wash_and_ink(false, true, true), (false, false));
+        assert_eq!(wash_and_ink(true, false, true), (false, false));
     }
 }
