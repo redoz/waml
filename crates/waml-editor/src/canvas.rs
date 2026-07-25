@@ -143,6 +143,14 @@ script_mod! {
         ramp: uniform(vec2(1.0, 0.0))
         bias: uniform(vec2(0.0, 0.0))
         hatch_px: uniform(9.0)
+        // Cross-axis (perpendicular) fade, normalized to the drawn quad. Per axis
+        // `1 - clamp((|pos - ctr| - plateau)/soft, 0, 1)`: opaque across the
+        // reference span, decaying to 0 at the band edge. Defaults give a constant
+        // 1 (plateau 2.0 covers the whole 0..1 quad); the locked axis keeps these
+        // defaults, the unlocked axis is overridden per draw (`cross_fade_params`).
+        cross_ctr: uniform(vec2(0.5, 0.5))
+        cross_plateau: uniform(vec2(2.0, 2.0))
+        cross_soft: uniform(vec2(1.0, 1.0))
         pixel: fn() {
             let sdf = Sdf2d.viewport(self.pos * self.rect_size)
             let p = self.pos * self.rect_size
@@ -153,7 +161,11 @@ script_mod! {
             let ay = self.pos.y * self.ramp.y + self.bias.y
             let t = clamp(max(ax, ay), 0.0, 1.0)
             let fade = 1.0 - t
-            let a = self.color.w * (0.22 + 0.55 * line) * fade
+            // Symmetric cross-axis fade, one factor per axis (locked axis ≈ 1).
+            let cfx = 1.0 - clamp((abs(self.pos.x - self.cross_ctr.x) - self.cross_plateau.x) / self.cross_soft.x, 0.0, 1.0)
+            let cfy = 1.0 - clamp((abs(self.pos.y - self.cross_ctr.y) - self.cross_plateau.y) / self.cross_soft.y, 0.0, 1.0)
+            let cross = cfx * cfy
+            let a = self.color.w * (0.22 + 0.55 * line) * fade * cross
             sdf.rect(0.0, 0.0, self.rect_size.x, self.rect_size.y)
             sdf.fill(vec4(self.color.x, self.color.y, self.color.z, a))
             return sdf.result
@@ -909,25 +921,84 @@ fn selection_index(nodes: &[crate::scene::SceneNode], key: Option<&str>) -> Opti
 }
 
 /// Screen-space fill rect for a veil: the keep-out region anchored to the
-/// reference's screen rect (spec §2 mapping), clamped to `reach` px on each locked
-/// axis and to the `view` bounds on the unlocked axis. Cardinal ⇒ one locked axis;
-/// diagonal ⇒ both. Pure, GPU-free (unit-testable like `segment_quad`).
-fn veil_band(reference: Rect, view: Rect, dir: waml::syntax::Direction, reach: f64) -> Rect {
+/// reference's screen rect (spec §2 mapping). Each LOCKED (extend) axis is
+/// clamped to `reach` px off the reference edge; each UNLOCKED (cross) axis is
+/// bounded to the reference's own span grown by `reach` on each side, centred on
+/// the reference (the extent the cross-axis fade decays across -- see
+/// `cross_fade_params`), so the veil reads as a soft blob hugging the reference
+/// rather than an infinite strip. The caller clips the band to the viewport.
+/// Cardinal ⇒ one locked axis; diagonal ⇒ both. Pure, GPU-free (unit-testable
+/// like `segment_quad`).
+fn veil_band(reference: Rect, dir: waml::syntax::Direction, reach: f64) -> Rect {
     use waml::syntax::Direction::*;
     let (x0, xw) = match dir {
         LeftOf | AboveLeft | BelowLeft => (reference.pos.x, reach),
         RightOf | AboveRight | BelowRight => (reference.pos.x + reference.size.x - reach, reach),
-        Above | Below => (view.pos.x, view.size.x),
+        Above | Below => (reference.pos.x - reach, reference.size.x + 2.0 * reach),
     };
     let (y0, yh) = match dir {
         Above | AboveLeft | AboveRight => (reference.pos.y, reach),
         Below | BelowLeft | BelowRight => (reference.pos.y + reference.size.y - reach, reach),
-        LeftOf | RightOf => (view.pos.y, view.size.y),
+        LeftOf | RightOf => (reference.pos.y - reach, reference.size.y + 2.0 * reach),
     };
     Rect {
         pos: dvec2(x0, y0),
         size: dvec2(xw, yh),
     }
+}
+
+/// Per-axis cross-fade uniforms for `ConstraintVeil`, expressed in the drawn
+/// (already view-clipped) `band`'s normalized 0..1 frame: `(ctr, plateau, soft)`
+/// vec2 triples. Each axis fades as `1 - clamp((|pos - ctr| - plateau)/soft, 0,
+/// 1)`: fully opaque (`1`) across the reference's span and decaying to `0` at the
+/// band edge. The LOCKED (extend) axis and both axes of a diagonal get a plateau
+/// wider than the quad, so their cross-fade is a constant `1` and only the
+/// extend `ramp`/`bias` fade shapes them. Pure, GPU-free.
+fn cross_fade_params(
+    band: Rect,
+    reference: Rect,
+    dir: waml::syntax::Direction,
+    reach: f64,
+) -> ([f32; 2], [f32; 2], [f32; 2]) {
+    use waml::syntax::Direction::*;
+    // (ctr, plateau, soft) that yields a constant cross-fade of 1: plateau 2.0
+    // covers the whole 0..1 quad, so `|pos - ctr| - plateau` is always <= 0.
+    let flat = (0.5f32, 2.0f32, 1.0f32);
+    // Reference-centred plateau with a `reach`-px soft tail, normalized to `band`.
+    let axis = |origin: f64, span: f64, ref_ctr: f64, ref_half: f64| -> (f32, f32, f32) {
+        if span <= 0.0 {
+            return flat;
+        }
+        let ctr = ((ref_ctr - origin) / span) as f32;
+        let plateau = (ref_half / span) as f32;
+        let soft = (reach / span).max(1e-4) as f32;
+        (ctr, plateau, soft)
+    };
+    let (cx, cy) = match dir {
+        // x unlocked: fade across the width, centred on the reference's x span.
+        Above | Below => (
+            axis(
+                band.pos.x,
+                band.size.x,
+                reference.pos.x + reference.size.x * 0.5,
+                reference.size.x * 0.5,
+            ),
+            flat,
+        ),
+        // y unlocked: fade across the height, centred on the reference's y span.
+        LeftOf | RightOf => (
+            flat,
+            axis(
+                band.pos.y,
+                band.size.y,
+                reference.pos.y + reference.size.y * 0.5,
+                reference.size.y * 0.5,
+            ),
+        ),
+        // Diagonals lock both axes; the extend fade already bounds them.
+        _ => (flat, flat),
+    };
+    ([cx.0, cy.0], [cx.1, cy.1], [cx.2, cy.2])
 }
 
 /// Per-direction alpha-ramp uniforms for `ConstraintVeil`: `(ramp, bias)` so the
@@ -2078,7 +2149,7 @@ impl GraphCanvas {
         dir: waml::syntax::Direction,
     ) {
         let reference_screen = self.node_screen_rect(reference_idx);
-        let band = veil_band(reference_screen, self.view_rect, dir, VEIL_REACH);
+        let band = veil_band(reference_screen, dir, VEIL_REACH);
         // Clip the band to the view so we don't overdraw the whole window.
         let band = intersect_rect(band, self.view_rect);
         if band.size.x <= 0.5 || band.size.y <= 0.5 {
@@ -2087,6 +2158,15 @@ impl GraphCanvas {
         let (ramp, bias) = veil_ramp(dir);
         self.draw_veil.set_uniform(cx, live_id!(ramp), &ramp);
         self.draw_veil.set_uniform(cx, live_id!(bias), &bias);
+        // Cross-axis fade, normalized to the clipped band (so it survives the
+        // view clip above): opaque across the reference span, decaying to the
+        // band edge on the unlocked axis; a constant 1 on the locked axis.
+        let (cross_ctr, cross_plateau, cross_soft) =
+            cross_fade_params(band, reference_screen, dir, VEIL_REACH);
+        self.draw_veil.set_uniform(cx, live_id!(cross_ctr), &cross_ctr);
+        self.draw_veil
+            .set_uniform(cx, live_id!(cross_plateau), &cross_plateau);
+        self.draw_veil.set_uniform(cx, live_id!(cross_soft), &cross_soft);
         self.draw_veil.color = vec4(0.42, 0.47, 0.54, 1.0);
         self.draw_veil.draw_abs(cx, band);
 
@@ -3122,44 +3202,75 @@ mod tests {
 
     #[test]
     fn veil_band_anchors_and_clamps_per_direction() {
-        // reference screen rect, view rect, reach.
+        // reference screen rect, reach.
         let reference = Rect {
-            pos: dvec2(200.0, 100.0),
+            pos: dvec2(200.0, 100.0), // x span 200..380, y span 100..180
             size: dvec2(180.0, 80.0),
-        };
-        let view = Rect {
-            pos: dvec2(0.0, 0.0),
-            size: dvec2(1000.0, 700.0),
         };
         let reach = 300.0;
         use waml::syntax::Direction::*;
 
-        // left of: band starts at the reference LEFT edge, extends right `reach`,
-        // spans the full view height (y unlocked).
-        let b = veil_band(reference, view, LeftOf, reach);
+        // left of: band starts at the reference LEFT edge, extends right `reach`;
+        // the y (cross) axis is bounded to the reference span grown by `reach`
+        // each side (100-300 .. 180+300), centred on the reference -- no longer
+        // the full view.
+        let b = veil_band(reference, LeftOf, reach);
         assert_eq!(b.pos.x, 200.0);
         assert_eq!(b.size.x, 300.0);
-        assert_eq!(b.pos.y, 0.0);
-        assert_eq!(b.size.y, 700.0);
+        assert_eq!(b.pos.y, -200.0);
+        assert_eq!(b.size.y, 680.0);
 
         // right of: band ends at the reference RIGHT edge (380), extends left `reach`.
-        let b = veil_band(reference, view, RightOf, reach);
+        let b = veil_band(reference, RightOf, reach);
         assert_eq!(b.pos.x + b.size.x, 380.0);
         assert_eq!(b.size.x, 300.0);
+        assert_eq!(b.pos.y, -200.0);
+        assert_eq!(b.size.y, 680.0);
 
-        // above: band starts at the reference TOP edge, extends down `reach`, x unlocked.
-        let b = veil_band(reference, view, Above, reach);
+        // above: band starts at the reference TOP edge, extends down `reach`; the
+        // x (cross) axis is the reference span grown by `reach` each side.
+        let b = veil_band(reference, Above, reach);
         assert_eq!(b.pos.y, 100.0);
         assert_eq!(b.size.y, 300.0);
-        assert_eq!(b.pos.x, 0.0);
-        assert_eq!(b.size.x, 1000.0);
+        assert_eq!(b.pos.x, -100.0);
+        assert_eq!(b.size.x, 780.0);
 
         // above left of: BOTH axes locked to reach off the top-left corner.
-        let b = veil_band(reference, view, AboveLeft, reach);
+        let b = veil_band(reference, AboveLeft, reach);
         assert_eq!(
             (b.pos.x, b.pos.y, b.size.x, b.size.y),
             (200.0, 100.0, 300.0, 300.0)
         );
+    }
+
+    #[test]
+    fn cross_fade_centres_on_the_reference_on_the_unlocked_axis() {
+        use waml::syntax::Direction::*;
+        let reference = Rect {
+            pos: dvec2(200.0, 100.0), // y span 100..180, centre 140, half 40
+            size: dvec2(180.0, 80.0),
+        };
+        let reach = 300.0;
+        let close = |a: f32, b: f32| (a - b).abs() < 1e-4;
+
+        // LeftOf: y unlocked. Band is the reference y-span grown by reach each
+        // side (height 680), so the reference sits dead-centre -> ctr 0.5. The
+        // plateau (opaque core) is the reference half-span and the soft tail is
+        // `reach`, both normalized to the band height.
+        let band = veil_band(reference, LeftOf, reach);
+        let (ctr, plateau, soft) = cross_fade_params(band, reference, LeftOf, reach);
+        // x axis is locked -> the flat "always 1" triple.
+        assert_eq!((ctr[0], plateau[0], soft[0]), (0.5, 2.0, 1.0));
+        // y axis carries the real fade.
+        assert!(close(ctr[1], 0.5));
+        assert!(close(plateau[1], 40.0 / 680.0));
+        assert!(close(soft[1], 300.0 / 680.0));
+
+        // Diagonals lock both axes -> flat on both (extend fade shapes them).
+        let band = veil_band(reference, AboveLeft, reach);
+        let (ctr, plateau, soft) = cross_fade_params(band, reference, AboveLeft, reach);
+        assert_eq!((ctr[0], plateau[0], soft[0]), (0.5, 2.0, 1.0));
+        assert_eq!((ctr[1], plateau[1], soft[1]), (0.5, 2.0, 1.0));
     }
 
     #[test]

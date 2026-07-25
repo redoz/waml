@@ -82,13 +82,15 @@ impl MarkingCore {
     }
 
     /// Pointer moved to `cursor`; `hit` is the raw slot under it (or `None`).
-    /// Promotes a held press to a drag past the threshold, then arms `hit`.
+    /// Promotes a held press to a drag past the threshold, then arms `hit` --
+    /// but only if that slot is enabled. A disabled wedge is a dead-zone (same
+    /// as the hub), so it arms nothing and fires no candidate preview.
     pub fn pointer_move(&mut self, cursor: DVec2, hit: Option<usize>) {
         if self.pressed && !self.dragged && (cursor - self.press_pos).length() > self.drag_threshold
         {
             self.dragged = true;
         }
-        self.armed = hit;
+        self.armed = hit.filter(|&i| self.items[i].enabled);
     }
 
     /// Button released over slot `hit`. A held press let up without dragging (and
@@ -233,6 +235,19 @@ mod tests {
     }
 
     #[test]
+    fn pointer_move_over_disabled_arms_nothing() {
+        // A disabled wedge is a dead-zone: hovering it must not arm (so no
+        // candidate preview fires), same as resting in the hub.
+        let mut c = MarkingCore::default();
+        c.begin_marking(P, menu(), T);
+        c.pointer_move(dvec2(P.x + 20.0, P.y), Some(1)); // disabled slot 1
+        assert_eq!(c.armed(), None);
+        // An enabled sibling still arms normally.
+        c.pointer_move(dvec2(P.x + 20.0, P.y), Some(0));
+        assert_eq!(c.armed(), Some(0));
+    }
+
+    #[test]
     fn tiny_move_under_threshold_is_still_a_tap() {
         let mut c = MarkingCore::default();
         c.begin_marking(P, menu(), T);
@@ -322,12 +337,12 @@ mod tests {
     }
 
     #[test]
-    fn pointer_move_sets_armed_raw_even_for_disabled() {
+    fn pointer_move_off_all_items_clears_armed() {
         let mut c = MarkingCore::default();
         c.begin_popup(menu(), T);
-        c.pointer_move(dvec2(P.x, P.y), Some(1)); // disabled slot still arms (raw)
-        assert_eq!(c.armed(), Some(1));
-        c.pointer_move(dvec2(P.x, P.y), None);
+        c.pointer_move(dvec2(P.x, P.y), Some(0)); // enabled slot arms
+        assert_eq!(c.armed(), Some(0));
+        c.pointer_move(dvec2(P.x, P.y), None); // off the surface clears it
         assert_eq!(c.armed(), None);
     }
 }

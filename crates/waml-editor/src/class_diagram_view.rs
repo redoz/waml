@@ -417,8 +417,13 @@ impl DocView for ClassDiagramView {
                             id: crate::canvas::zone_id(z),
                             label: String::new(),
                             icon: Some(crate::canvas::zone_arrow(z)),
-                            danger: red.contains(&z),
-                            enabled: true,
+                            // A direction the solver would reject ships DISABLED:
+                            // an inert grey dead-zone that can't preview or commit,
+                            // so the diagram is never dropped into conflict. The
+                            // disabled grey look overrides `danger`, so the old red
+                            // hue is redundant here.
+                            danger: false,
+                            enabled: !red.contains(&z),
                         })
                         .collect();
                     out.popup = Some(PopupRequest::PlaceDial { center, items });
