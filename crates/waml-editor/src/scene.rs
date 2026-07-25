@@ -699,6 +699,59 @@ mod tests {
         load::load_model(&dir).unwrap()
     }
 
+    fn groups() -> Model {
+        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/groups");
+        load::load_model(&dir).unwrap()
+    }
+
+    /// The `groups` fixture is what the canvas's group-render gating is judged
+    /// against: one `frame` group (draws chrome) and one default-shape group
+    /// (layout-only, invisible unless the hidden-borders x-ray is on). Pin both
+    /// the shapes and the clean solve here, or the gating's whole premise can
+    /// rot silently.
+    #[test]
+    fn groups_fixture_solves_a_frame_and_a_default_group() {
+        use waml::diagnostic::DiagCode;
+        use waml::syntax::Shape;
+        let model = groups();
+        let (scene, diags) = build_scene(
+            &model,
+            &model.diagrams[0],
+            &std::collections::HashSet::new(),
+        );
+        assert!(
+            !diags.iter().any(|d| d.code == DiagCode::LayoutConflict),
+            "groups fixture must load conflict-free: {diags:?}"
+        );
+        assert!(
+            diags.is_empty(),
+            "groups fixture must load clean: {diags:?}"
+        );
+        assert!(
+            scene.conflicts.is_empty(),
+            "groups fixture must drop no placement: {:?}",
+            scene.conflicts
+        );
+        let by_title = |t: &str| {
+            scene
+                .groups
+                .iter()
+                .find(|g| g.title.as_deref() == Some(t))
+                .unwrap_or_else(|| panic!("no `{t}` group in {:?}", scene.groups))
+        };
+        assert_eq!(scene.groups.len(), 2, "{:?}", scene.groups);
+        assert_eq!(
+            by_title("Users").shape,
+            Shape::Frame,
+            "`with frame` must resolve to the chrome-drawing shape"
+        );
+        assert_eq!(
+            by_title("Billing").shape,
+            Shape::Shrink,
+            "a shapeless group must resolve to the layout-only default"
+        );
+    }
+
     #[test]
     fn scene_projects_existing_placement_relations() {
         let model = mini();

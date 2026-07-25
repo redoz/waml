@@ -278,6 +278,16 @@ impl ViewBar {
         }
     }
 
+    /// Push canvas-side state back into the bar's `ShowHiddenBorders` toggle.
+    /// Same contract as `set_show_constraints`: the canvas owns the x-ray, the
+    /// bar's bool mirrors it, and this is what re-converges the two.
+    pub fn set_show_hidden_borders(&mut self, cx: &mut Cx, on: bool) {
+        if self.toggles.get(ViewOption::ShowHiddenBorders) != on {
+            self.toggles.set(ViewOption::ShowHiddenBorders, on);
+            self.view.redraw(cx);
+        }
+    }
+
     /// Convenience reader for the active `DocView`, mirroring
     /// `ToolDock::dock_action`.
     pub fn view_bar_action(&self, actions: &Actions) -> Option<ViewBarAction> {

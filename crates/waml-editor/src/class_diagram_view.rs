@@ -17,8 +17,9 @@ fn strip_md_key(s: &str) -> String {
 }
 
 /// The canvas veil mode a view-bar action should drive, or `None` when it
-/// drives no veil change (the camera one-shots and the hidden-borders toggle,
-/// both still `log!` no-ops). Pure so the on/off mapping is testable.
+/// drives no veil change (the camera one-shots, still `log!` no-ops, and the
+/// hidden-borders toggle, which `show_hidden_borders_for` owns). Pure so the
+/// on/off mapping is testable.
 fn constraint_vis_for(action: &crate::view_bar::ViewBarAction) -> Option<ConstraintVisibility> {
     match action {
         crate::view_bar::ViewBarAction::Toggled(
@@ -40,6 +41,19 @@ fn show_constraints_for(vis: ConstraintVisibility) -> bool {
     match vis {
         ConstraintVisibility::None => false,
         ConstraintVisibility::Selected => true,
+    }
+}
+
+/// The canvas hidden-group-border x-ray state a view-bar action should drive,
+/// or `None` when it drives no x-ray change. Sibling of `constraint_vis_for`;
+/// pure for the same reason.
+fn show_hidden_borders_for(action: &crate::view_bar::ViewBarAction) -> Option<bool> {
+    match action {
+        crate::view_bar::ViewBarAction::Toggled(
+            crate::view_bar::ViewOption::ShowHiddenBorders,
+            on,
+        ) => Some(*on),
+        _ => None,
     }
 }
 
@@ -134,17 +148,19 @@ impl DocView for ClassDiagramView {
         {
             toolbar.set_selection(cx, None);
         }
-        // Re-converge the view bar's lit state onto the canvas veil mode. The
-        // canvas owns the state; the bar only caches it, and its own click
-        // handler is otherwise the sole writer -- so this is the one path that
-        // can heal a bar<->canvas disagreement (tab activation, model reload).
-        let vis = body
+        // Re-converge the view bar's lit state onto the canvas. The canvas owns
+        // both the veil mode and the hidden-border x-ray; the bar only caches
+        // them, and its own click handler is otherwise the sole writer -- so
+        // this is the one path that can heal a bar<->canvas disagreement (tab
+        // activation, model reload).
+        let canvas_state = body
             .canvas(cx)
             .borrow::<crate::canvas::GraphCanvas>()
-            .map(|canvas| canvas.constraint_vis());
-        if let Some(vis) = vis {
+            .map(|canvas| (canvas.constraint_vis(), canvas.show_hidden_borders()));
+        if let Some((vis, hidden)) = canvas_state {
             if let Some(mut bar) = body.view_bar(cx).borrow_mut::<crate::view_bar::ViewBar>() {
                 bar.set_show_constraints(cx, show_constraints_for(vis));
+                bar.set_show_hidden_borders(cx, hidden);
             }
         }
     }
@@ -227,27 +243,21 @@ impl DocView for ClassDiagramView {
             .borrow_mut::<crate::view_bar::ViewBar>()
             .and_then(|bar| bar.view_bar_action(actions))
         {
-            match &action {
-                crate::view_bar::ViewBarAction::Toggled(
-                    crate::view_bar::ViewOption::ShowHiddenBorders,
-                    on,
-                ) => {
-                    if let Some(mut canvas) =
-                        body.canvas(cx).borrow_mut::<crate::canvas::GraphCanvas>()
-                    {
-                        canvas.set_show_hidden_borders(cx, *on);
-                    }
+            // Both toggles route through their own pure mapper; at most one of
+            // them claims a given action, so a single borrow serves both.
+            let vis = constraint_vis_for(&action);
+            let hidden = show_hidden_borders_for(&action);
+            if vis.is_none() && hidden.is_none() {
+                log!("view bar: {action:?}");
+            } else if let Some(mut canvas) =
+                body.canvas(cx).borrow_mut::<crate::canvas::GraphCanvas>()
+            {
+                if let Some(vis) = vis {
+                    canvas.set_constraint_vis(cx, vis);
                 }
-                _ => match constraint_vis_for(&action) {
-                    Some(vis) => {
-                        if let Some(mut canvas) =
-                            body.canvas(cx).borrow_mut::<crate::canvas::GraphCanvas>()
-                        {
-                            canvas.set_constraint_vis(cx, vis);
-                        }
-                    }
-                    None => log!("view bar: {action:?}"),
-                },
+                if let Some(on) = hidden {
+                    canvas.set_show_hidden_borders(cx, on);
+                }
             }
             return out;
         }
@@ -487,7 +497,7 @@ impl DocView for ClassDiagramView {
 
 #[cfg(test)]
 mod tests {
-    use super::{constraint_vis_for, show_constraints_for};
+    use super::{constraint_vis_for, show_constraints_for, show_hidden_borders_for};
     use crate::canvas::ConstraintVisibility;
     use crate::view_bar::{ViewBarAction, ViewOption};
 
@@ -519,6 +529,58 @@ mod tests {
             );
         }
         assert_eq!(constraint_vis_for(&ViewBarAction::None), None);
+    }
+
+    #[test]
+    fn hidden_borders_toggle_drives_the_group_xray() {
+        assert_eq!(
+            show_hidden_borders_for(&ViewBarAction::Toggled(ViewOption::ShowHiddenBorders, true)),
+            Some(true),
+            "toggle ON must light the x-ray"
+        );
+        assert_eq!(
+            show_hidden_borders_for(&ViewBarAction::Toggled(
+                ViewOption::ShowHiddenBorders,
+                false
+            )),
+            Some(false),
+            "toggle OFF must clear the x-ray"
+        );
+    }
+
+    #[test]
+    fn other_view_bar_actions_drive_no_xray_change() {
+        assert_eq!(
+            show_hidden_borders_for(&ViewBarAction::Toggled(ViewOption::ShowConstraints, true)),
+            None
+        );
+        for opt in ViewOption::ALL.iter().filter(|o| !o.is_toggle()) {
+            assert_eq!(
+                show_hidden_borders_for(&ViewBarAction::Triggered(*opt)),
+                None,
+                "{opt:?} is a camera one-shot, not an x-ray change"
+            );
+        }
+        assert_eq!(show_hidden_borders_for(&ViewBarAction::None), None);
+    }
+
+    #[test]
+    fn the_two_toggle_mappers_never_claim_the_same_action() {
+        // `handle` applies both mappers to one action and only logs when both
+        // decline; if they ever overlapped, one click would drive two pieces of
+        // canvas state.
+        let mut actions = vec![ViewBarAction::None];
+        for opt in ViewOption::ALL {
+            actions.push(ViewBarAction::Triggered(opt));
+            actions.push(ViewBarAction::Toggled(opt, true));
+            actions.push(ViewBarAction::Toggled(opt, false));
+        }
+        for action in &actions {
+            assert!(
+                constraint_vis_for(action).is_none() || show_hidden_borders_for(action).is_none(),
+                "{action:?} is claimed by both mappers"
+            );
+        }
     }
 
     #[test]

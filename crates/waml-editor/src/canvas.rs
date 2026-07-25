@@ -673,6 +673,49 @@ fn untitled_label(n: usize) -> String {
     format!("Untitled {n}")
 }
 
+/// The title a group draws, given its authored name and its 1-based untitled
+/// ordinal (`None` when the group *is* named). A named group always draws its
+/// name; an unnamed one only gets the `Untitled N` fallback under the x-ray, so
+/// an unnamed `frame` group keeps drawing no title exactly as it did before this
+/// change. Pure so the rule is testable without a GPU.
+fn group_label(
+    title: &Option<String>,
+    untitled_n: Option<usize>,
+    mode: GroupDraw,
+) -> Option<String> {
+    match (title, untitled_n) {
+        (Some(t), _) => Some(t.clone()),
+        (None, Some(n)) if mode == GroupDraw::Dashed => Some(untitled_label(n)),
+        _ => None,
+    }
+}
+
+/// The whole scene's per-group draw decision + title, in `scene.groups` order
+/// (one entry per group, `Skip` included, so callers can zip it back onto the
+/// groups). The untitled counter advances for *every* unnamed group, drawn or
+/// not, so `Untitled N` labels stay stable no matter which groups the x-ray is
+/// showing. Pure: this is the whole of `draw_walk`'s group bookkeeping, lifted
+/// out so it can be tested.
+fn group_plan(
+    groups: &[waml::solve::SolvedGroup],
+    show_hidden: bool,
+) -> Vec<(GroupDraw, Option<String>)> {
+    let mut untitled_seen = 0usize;
+    groups
+        .iter()
+        .map(|g| {
+            let mode = group_draw_mode(g.shape, show_hidden);
+            let untitled = if g.title.is_none() {
+                untitled_seen += 1;
+                Some(untitled_seen)
+            } else {
+                None
+            };
+            (mode, group_label(&g.title, untitled, mode))
+        })
+        .collect()
+}
+
 /// Reframe a stored placement onto the selected node's point of view. A relation
 /// is stored one way (`subject A left of reference B`) but is the *same*
 /// constraint from either end (`B right of A`). The veil anchors its keep-out to
@@ -1594,32 +1637,18 @@ impl Widget for GraphCanvas {
         // Nesting is unchanged: draw-order (shallow first) leaves inner groups on
         // top. Collect screen rects first so the pens (&mut self) can draw
         // without holding the `self.scene.groups` borrow.
-        let show_hidden = self.show_hidden_borders;
-        let mut untitled_seen = 0usize;
+        // Mode + label per group come from the pure `group_plan` seam; only the
+        // camera projection stays here.
+        let plan = group_plan(&self.scene.groups, self.show_hidden_borders);
         let group_draws: Vec<(Rect, Option<String>, GroupDraw)> = self
             .scene
             .groups
             .iter()
-            .filter_map(|g| {
-                let mode = group_draw_mode(g.shape, show_hidden);
-                // Count every untitled group, drawn or not, so the labels are
-                // stable regardless of which ones the x-ray is showing.
-                let untitled = if g.title.is_none() {
-                    untitled_seen += 1;
-                    Some(untitled_seen)
-                } else {
-                    None
-                };
+            .zip(plan)
+            .filter_map(|(g, (mode, label))| {
                 if mode == GroupDraw::Skip {
                     return None;
                 }
-                // A `frame` group with no name draws no title (as before); only
-                // the x-ray outline gets the `Untitled N` fallback.
-                let label = match (&g.title, untitled) {
-                    (Some(t), _) => Some(t.clone()),
-                    (None, Some(n)) if mode == GroupDraw::Dashed => Some(untitled_label(n)),
-                    _ => None,
-                };
                 let (lx, ly) = self.camera.world_to_local(g.rect.x, g.rect.y);
                 let screen = Rect {
                     pos: dvec2(rect.pos.x + lx, rect.pos.y + ly),
@@ -2622,6 +2651,13 @@ impl GraphCanvas {
         self.constraint_vis
     }
 
+    /// Current hidden-group-border x-ray state. Same ownership story as
+    /// `constraint_vis`: the canvas holds it, the view bar's lit toggle mirrors
+    /// it and re-syncs from here on every view `sync`.
+    pub fn show_hidden_borders(&self) -> bool {
+        self.show_hidden_borders
+    }
+
     /// Node count of the current scene, for the statusbar mock.
     pub fn node_count(&self) -> usize {
         self.scene.nodes.len()
@@ -2666,6 +2702,100 @@ mod tests {
         assert_eq!(untitled_label(1), "Untitled 1");
         assert_eq!(untitled_label(2), "Untitled 2");
         assert_eq!(untitled_label(12), "Untitled 12");
+    }
+
+    /// A `SolvedGroup` with just the two fields the render gating reads.
+    fn group(title: Option<&str>, shape: waml::syntax::Shape) -> waml::solve::SolvedGroup {
+        waml::solve::SolvedGroup {
+            rect: WorldRect {
+                x: 0.0,
+                y: 0.0,
+                w: 10.0,
+                h: 10.0,
+            },
+            shape,
+            title: title.map(|s| s.to_string()),
+            depth: 0,
+        }
+    }
+
+    #[test]
+    fn a_named_group_always_draws_its_own_name() {
+        // Named groups keep their title in every mode -- the `Untitled N`
+        // fallback must never win over an authored name.
+        for mode in [GroupDraw::Chrome, GroupDraw::Dashed] {
+            assert_eq!(
+                group_label(&Some("Users".to_string()), None, mode),
+                Some("Users".to_string()),
+                "{mode:?} must draw the authored name"
+            );
+        }
+        // An unnamed `frame` group draws no title, exactly as before the x-ray.
+        assert_eq!(group_label(&None, Some(1), GroupDraw::Chrome), None);
+        // Only the dashed x-ray outline gets the fallback.
+        assert_eq!(
+            group_label(&None, Some(3), GroupDraw::Dashed),
+            Some("Untitled 3".to_string())
+        );
+        // No ordinal (i.e. a named group) means no fallback either way.
+        assert_eq!(group_label(&None, None, GroupDraw::Dashed), None);
+    }
+
+    #[test]
+    fn the_plan_covers_every_group_in_scene_order() {
+        use waml::syntax::Shape;
+        let groups = [
+            group(Some("Users"), Shape::Frame),
+            group(None, Shape::Box),
+            group(Some("Billing"), Shape::Shrink),
+        ];
+        // X-ray off: only the `frame` draws; the two layout-only groups are
+        // skipped but still occupy their slot so callers can zip by index.
+        let plan = group_plan(&groups, false);
+        assert_eq!(
+            plan.len(),
+            groups.len(),
+            "one entry per group, Skip included"
+        );
+        assert_eq!(plan[0], (GroupDraw::Chrome, Some("Users".to_string())));
+        assert_eq!(plan[1].0, GroupDraw::Skip);
+        assert_eq!(plan[2].0, GroupDraw::Skip);
+    }
+
+    #[test]
+    fn the_untitled_counter_advances_over_groups_that_draw_no_title() {
+        use waml::syntax::Shape;
+        // An unnamed `frame` (drawn, but titleless) leads, then a `box` pair
+        // straddling a named group. The counter must advance past the frame --
+        // it burns ordinal 1 without ever showing it -- so the first x-rayed
+        // group reads `Untitled 2`, not `Untitled 1`.
+        let groups = [
+            group(None, Shape::Frame),
+            group(None, Shape::Box),
+            group(Some("Billing"), Shape::Box),
+            group(None, Shape::Box),
+        ];
+        let off = group_plan(&groups, false);
+        assert_eq!(off[0], (GroupDraw::Chrome, None));
+        assert_eq!(off[1].0, GroupDraw::Skip);
+
+        let on = group_plan(&groups, true);
+        assert_eq!(
+            on[0],
+            (GroupDraw::Chrome, None),
+            "an unnamed frame stays titleless under the x-ray"
+        );
+        assert_eq!(
+            on[1],
+            (GroupDraw::Dashed, Some("Untitled 2".to_string())),
+            "the titleless frame must still consume ordinal 1"
+        );
+        assert_eq!(on[2], (GroupDraw::Dashed, Some("Billing".to_string())));
+        assert_eq!(
+            on[3],
+            (GroupDraw::Dashed, Some("Untitled 3".to_string())),
+            "a named group must not consume an untitled ordinal"
+        );
     }
 
     #[test]
