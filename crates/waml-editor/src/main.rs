@@ -48,7 +48,6 @@ mod theme_atlas;
 mod tool_dock;
 mod tree;
 mod tree_panel;
-mod veil;
 mod view_bar;
 
 #[cfg(test)]

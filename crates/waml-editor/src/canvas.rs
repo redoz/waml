@@ -746,6 +746,51 @@ fn relations_for_visibility<'a>(
     }
 }
 
+/// CSS-inspired focus state of a canvas element under constraint visibility.
+///
+/// Modeled as orthogonal boolean states (like `:focus` / a `:related` custom
+/// state) rather than a pushed float, so the render layer reads *why* an element
+/// is emphasised, not just a magnitude. `selected` is the picked node itself;
+/// `related` is a node that shares a visible constraint with it (a direct
+/// neighbour). Everything that is neither is out of focus and renders greyscale.
+///
+/// Shared vocabulary for nodes now; edges adopt the same struct when their mute
+/// lands -- an edge is never `selected`, only `related` (it touches the picked
+/// node). `disabled` / `hovered` are the natural next orthogonal states and slot
+/// in here without disturbing the colour split. Pure + GPU-free so the split is
+/// unit-testable.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+struct FocusState {
+    selected: bool,
+    related: bool,
+}
+
+impl FocusState {
+    /// Full colour when in focus (the picked node or a constraint neighbour);
+    /// greyscale otherwise. The one rule the render layer keys the `grey` uniform
+    /// off of.
+    fn coloured(self) -> bool {
+        self.selected || self.related
+    }
+}
+
+/// Focus state of node `key` given the picked node and the set of keys sharing a
+/// visible constraint with it (the picked key plus every endpoint of the
+/// relations touching it). `related` excludes the picked node so the two states
+/// stay mutually exclusive -- the selection is `selected`, its neighbours are
+/// `related`, everyone else is neither. Pure so the colour/greyscale split is
+/// testable without a GPU.
+fn node_focus_state(
+    key: &str,
+    selected_key: Option<&str>,
+    focus_keys: &std::collections::HashSet<String>,
+) -> FocusState {
+    FocusState {
+        selected: selected_key == Some(key),
+        related: selected_key != Some(key) && focus_keys.contains(key),
+    }
+}
+
 /// What chrome a group gets this frame (spec §3). Three outcomes, not two: a
 /// group either draws its full chrome, draws only the x-ray outline, or draws
 /// nothing at all.
@@ -2151,6 +2196,23 @@ impl Widget for GraphCanvas {
         // of `self.scene` so the body render can take `&mut self`
         // (`draw_card`) without holding an immutable borrow of the scene.
         let nodes = self.scene.nodes.clone();
+        // Constraint-focus set (greyscale mute): under the Selected POV a picked
+        // node with visible constraints keeps itself + its direct constraint
+        // neighbours in full colour and mutes every other card to greyscale. The
+        // set is every endpoint of the relations touching the selection (which
+        // includes the selection); empty when nothing is selected or the
+        // selection has no constraints, in which case `focus_active` is false and
+        // no card greys. Owned keys so it outlives the `&mut self` draw loop.
+        let focus_keys: std::collections::HashSet<String> = relations_for_visibility(
+            &self.scene.relations,
+            self.constraint_vis,
+            self.selected_key.as_deref(),
+        )
+        .iter()
+        .flat_map(|r| [r.subject.clone(), r.reference.clone()])
+        .collect();
+        let focus_active = !focus_keys.is_empty();
+        let selected_key = self.selected_key.clone();
         for (i, node) in nodes.iter().enumerate() {
             let (lx, ly) = self.camera.world_to_local(node.rect.x, node.rect.y);
             let screen = Rect {
@@ -2170,6 +2232,16 @@ impl Widget for GraphCanvas {
             };
             self.draw_node
                 .set_uniform(cx, live_id!(selected), &[selected]);
+            // Push the per-node `grey` uniform: mute a card that is out of focus
+            // (neither the picked node nor a constraint neighbour) to greyscale.
+            // Only when a focus is active, so a bare diagram stays full colour.
+            let fs = node_focus_state(&node.key, selected_key.as_deref(), &focus_keys);
+            let grey = if focus_active && !fs.coloured() {
+                1.0f32
+            } else {
+                0.0
+            };
+            self.draw_node.set_uniform(cx, live_id!(grey), &[grey]);
             // Node card: rounded near-white glass fill + source-bright accent
             // frame, both in draw_node's SDF shader (see script_mod above).
             // `draw_surface_abs` pads the quad so the depth shadow falls outside the
@@ -2233,13 +2305,13 @@ impl GraphCanvas {
     }
 
     /// Draw one placement relation's veil: a hatched grey keep-out anchored to the
-    /// reference node's near edge, distance-faded, plus a desaturating scrim over
-    /// every non-participant card inside it (spec §2). The two participants keep
-    /// full colour. No connector line.
+    /// reference node's near edge, distance-faded on both axes. No connector line.
+    /// Card muting is no longer this pen's job -- the per-node `grey` uniform
+    /// (`FocusState`) desaturates every out-of-focus card once, over the whole
+    /// scene, instead of a per-relation scrim over the keep-out.
     fn draw_veil_for(
         &mut self,
         cx: &mut Cx2d,
-        subject_idx: usize,
         reference_idx: usize,
         dir: waml::syntax::Direction,
     ) {
@@ -2264,40 +2336,6 @@ impl GraphCanvas {
         self.draw_veil.set_uniform(cx, live_id!(cross_soft), &cross_soft);
         self.draw_veil.color = vec4(0.42, 0.47, 0.54, 1.0);
         self.draw_veil.draw_abs(cx, band);
-
-        // Desaturation scrim over non-participant cards inside the keep-out.
-        let subject_key = self.scene.nodes[subject_idx].key.clone();
-        let reference_key = self.scene.nodes[reference_idx].key.clone();
-        let reference_world = self.scene.nodes[reference_idx].rect;
-        let cards: Vec<(String, waml::solve::Rect)> = self
-            .scene
-            .nodes
-            .iter()
-            .map(|n| (n.key.clone(), n.rect))
-            .collect();
-        let desats: Vec<String> = crate::veil::desaturated_cards(
-            reference_world,
-            dir,
-            &cards,
-            &subject_key,
-            &reference_key,
-        )
-        .into_iter()
-        .map(str::to_string)
-        .collect();
-        for key in desats {
-            if let Some(i) = self.scene.nodes.iter().position(|n| n.key == key) {
-                let s = self.node_screen_rect(i);
-                self.fill_rect(
-                    cx,
-                    s.pos.x,
-                    s.pos.y,
-                    s.size.x,
-                    s.size.y,
-                    vec4(0.62, 0.65, 0.70, 0.45),
-                );
-            }
-        }
     }
 
     /// Persistent constraint overlay, gated by the visibility mode + sticky
@@ -2308,7 +2346,7 @@ impl GraphCanvas {
         // Selected mode is the only drawing mode, so the veil always reframes
         // onto the selected node's POV.
         let pov = selected_key.as_deref();
-        let chosen: Vec<(usize, usize, waml::syntax::Direction)> = relations_for_visibility(
+        let chosen: Vec<(usize, waml::syntax::Direction)> = relations_for_visibility(
             &self.scene.relations,
             self.constraint_vis,
             selected_key.as_deref(),
@@ -2317,14 +2355,16 @@ impl GraphCanvas {
         .filter_map(|rel| {
             let (subject, reference, dir) =
                 reframe_to_selected(&rel.subject, &rel.reference, rel.dir, pov);
-            let si = self.scene.nodes.iter().position(|n| n.key == subject)?;
+            // The subject must still exist in the scene for the relation to be
+            // real, but the veil is anchored to the reference only.
+            self.scene.nodes.iter().position(|n| n.key == subject)?;
             let ri = self.scene.nodes.iter().position(|n| n.key == reference)?;
-            Some((si, ri, dir))
+            Some((ri, dir))
         })
         .collect();
 
-        for (si, ri, dir) in chosen {
-            self.draw_veil_for(cx, si, ri, dir);
+        for (ri, dir) in chosen {
+            self.draw_veil_for(cx, ri, dir);
         }
     }
 
@@ -3955,6 +3995,40 @@ mod tests {
             ConstraintVisibility::default(),
             ConstraintVisibility::Selected
         );
+    }
+
+    #[test]
+    fn focus_state_splits_selected_neighbour_and_outsider() {
+        use std::collections::HashSet;
+        // Focus set: the picked node `order` plus its two constraint neighbours.
+        let focus: HashSet<String> = ["order", "payment-gateway", "user"]
+            .into_iter()
+            .map(String::from)
+            .collect();
+        // The picked node: `selected`, not `related`, coloured.
+        let sel = node_focus_state("order", Some("order"), &focus);
+        assert_eq!(
+            sel,
+            FocusState {
+                selected: true,
+                related: false
+            }
+        );
+        assert!(sel.coloured());
+        // A neighbour: `related`, not `selected`, coloured.
+        let nbr = node_focus_state("payment-gateway", Some("order"), &focus);
+        assert_eq!(
+            nbr,
+            FocusState {
+                selected: false,
+                related: true
+            }
+        );
+        assert!(nbr.coloured());
+        // An outsider (not in the focus set): neither -> greyscale.
+        let out = node_focus_state("archive", Some("order"), &focus);
+        assert_eq!(out, FocusState::default());
+        assert!(!out.coloured());
     }
 
     #[test]

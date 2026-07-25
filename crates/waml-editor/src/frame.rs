@@ -107,6 +107,11 @@ script_mod! {
     // `selected` (0.0/1.0) widens the inset+stroke ~1.5x for the canvas's picked
     // node; the canvas pushes it per node before draw_abs, same as `zoom`.
     // Everyone else leaves it at 0.0 (the common, visually-unchanged path).
+    // `grey` (0.0/1.0) desaturates the accent stroke to its own luminance -- the
+    // canvas mutes a card that is neither the picked node nor a constraint
+    // neighbour of it under the Selected visibility POV (`FocusState`, canvas.rs).
+    // The near-white fill has no chroma to lose, so the stroke is the whole tell.
+    // Default 0.0: full-chroma stroke, the common unchanged path.
     //
     // Sharp corners use `sdf.rect`, NOT `sdf.box(..., 0.0)`: a zero corner radius
     // degenerates `box` and floods the fill (rounded variants get their own
@@ -118,6 +123,7 @@ script_mod! {
         border_lo: uniform(atlas.frame_lo)
         zoom: uniform(1.0)
         selected: uniform(0.0)
+        grey: uniform(0.0)
         // Padding the CALLER added on every side so the shadow has room to fall
         // outside the surface (`SurfaceExt::draw_surface_abs` pushes it). At the
         // default 0.0 the geometry below is byte-for-byte the pre-phase-C frame,
@@ -189,7 +195,14 @@ script_mod! {
             // the common path is unchanged.
             let col = mix(self.border_hi, self.border_lo, t)
             let k = clamp((1.0 - self.zoom) * 2.0, 0.0, 0.85)
-            sdf.stroke(vec4(col.rgb, mix(col.a, 1.0, k)), sw)
+            // Constraint-focus mute: collapse the stroke's chroma to its own
+            // Rec.601 luminance when `grey == 1.0`, leaving the coloured path
+            // (grey == 0.0) byte-for-byte. `dot()` silently fails this VM, so the
+            // weighted sum is longhand -- same rule as the gradient projection.
+            let g = col.rgb
+            let lum = g.x * 0.299 + g.y * 0.587 + g.z * 0.114
+            let scol = mix(col.rgb, vec3(lum, lum, lum), self.grey)
+            sdf.stroke(vec4(scol, mix(col.a, 1.0, k)), sw)
             return sdf.result
         }
     }
