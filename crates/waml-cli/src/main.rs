@@ -320,7 +320,7 @@ fn main() {
             base_url,
             fragment_only,
         } => {
-            let bundle = match io::read_bundle(&paths, stdin) {
+            let bundle = match io::read_bundle_rooted(&paths, stdin) {
                 Ok(b) => b,
                 Err(e) => {
                     eprintln!("waml: {e}");

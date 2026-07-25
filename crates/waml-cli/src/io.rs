@@ -59,6 +59,64 @@ pub fn read_bundle(paths: &[PathBuf], stdin: bool) -> std::io::Result<Vec<(Strin
     Ok(out)
 }
 
+/// `share`: like [`read_bundle`], but keys every document by its path *relative
+/// to the bundle root* rather than as typed on the command line.
+///
+/// The distinction matters because a bundle's paths are its OKF ids
+/// ([`waml::okf::id_of`]). Diagnostics-facing commands must echo the path the
+/// user typed, but a shared bundle is a model: keying it off the invocation
+/// path would make the same directory encode to a different model depending on
+/// where it was shared from, would disagree with the editor (which reads paths
+/// relative to the model directory), and would stamp the author's directory
+/// layout into every link.
+pub fn read_bundle_rooted(
+    paths: &[PathBuf],
+    stdin: bool,
+) -> std::io::Result<Vec<(String, String)>> {
+    if stdin {
+        let mut buf = String::new();
+        std::io::stdin().read_to_string(&mut buf)?;
+        return Ok(expand_text("stdin", &buf));
+    }
+    let files = collect_md(paths)?;
+    let root = bundle_root(paths, &files);
+    let mut out = Vec::new();
+    for file in &files {
+        let text = fs::read_to_string(file)?;
+        let rel = root
+            .as_ref()
+            .and_then(|r| file.strip_prefix(r).ok())
+            .unwrap_or(file);
+        out.extend(expand_text(&path_key(rel), &text));
+    }
+    // Match the editor's `read_bundle`: sorted keys make the encoding
+    // deterministic, so the same model always yields the same link.
+    out.sort_by(|a, b| a.0.cmp(&b.0));
+    Ok(out)
+}
+
+/// The directory paths should be made relative to: the directory itself when a
+/// single one was given (the common case, and what the editor does), otherwise
+/// the deepest directory containing every collected file. `None` when there is
+/// no shared ancestor, in which case paths are left as-is.
+fn bundle_root(paths: &[PathBuf], files: &[PathBuf]) -> Option<PathBuf> {
+    if let [only] = paths {
+        if only.is_dir() {
+            return Some(only.clone());
+        }
+    }
+    let mut root = files.first()?.parent()?.to_path_buf();
+    for file in files.iter().skip(1) {
+        let parent = file.parent()?;
+        while !parent.starts_with(&root) {
+            if !root.pop() {
+                return None;
+            }
+        }
+    }
+    Some(root)
+}
+
 /// `fmt`: each physical `.md` file is a single document (no blob splitting).
 pub fn read_files(paths: &[PathBuf]) -> std::io::Result<Vec<(String, String)>> {
     let mut out = Vec::new();
@@ -114,6 +172,66 @@ pub fn write_back(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn fixture(name: &str) -> PathBuf {
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../waml-editor/tests/fixtures")
+            .join(name)
+    }
+
+    /// A bundle's paths are its OKF ids, so a shared model must key off the
+    /// bundle root -- exactly like the editor's `load::read_bundle` -- and not
+    /// off whatever prefix happened to be typed at the shell.
+    #[test]
+    fn rooted_read_keys_relative_to_the_bundle_dir() {
+        let bundle = read_bundle_rooted(&[fixture("mini")], false).unwrap();
+        let keys: Vec<&str> = bundle.iter().map(|(p, _)| p.as_str()).collect();
+        assert_eq!(
+            keys,
+            [
+                "customer.md",
+                "index.md",
+                "order.md",
+                "orders-diagram.md",
+                "payment-gateway.md"
+            ]
+        );
+    }
+
+    /// The same model shared from a different working directory must encode
+    /// identically; otherwise one model has as many identities as it has
+    /// callers, and links leak the author's directory layout.
+    #[test]
+    fn rooted_read_is_independent_of_the_path_typed() {
+        let absolute = read_bundle_rooted(&[fixture("mini")], false).unwrap();
+        let indirect =
+            read_bundle_rooted(&[fixture("groups").parent().unwrap().join("mini")], false).unwrap();
+        assert_eq!(absolute, indirect);
+    }
+
+    /// Given loose files rather than a directory, the root is the deepest
+    /// directory containing all of them.
+    #[test]
+    fn rooted_read_uses_the_common_ancestor_of_loose_files() {
+        let dir = fixture("mini");
+        let bundle =
+            read_bundle_rooted(&[dir.join("order.md"), dir.join("customer.md")], false).unwrap();
+        let keys: Vec<&str> = bundle.iter().map(|(p, _)| p.as_str()).collect();
+        assert_eq!(keys, ["customer.md", "order.md"]);
+    }
+
+    /// `read_bundle` keeps the as-typed path on purpose: diagnostics have to
+    /// cite something the user can act on. Guard the two apart.
+    #[test]
+    fn plain_read_still_keys_by_the_path_as_typed() {
+        let dir = fixture("mini");
+        let bundle = read_bundle(&[dir.join("order.md")], false).unwrap();
+        assert!(
+            bundle[0].0.ends_with("fixtures/mini/order.md"),
+            "expected an as-typed path, got {}",
+            bundle[0].0
+        );
+    }
 
     #[test]
     fn expands_blob_text_into_docs() {
