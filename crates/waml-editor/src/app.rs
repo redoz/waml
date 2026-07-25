@@ -215,9 +215,12 @@ script_mod! {
                             // `sync_right_dock_btn`), NOT from
                             // `show_editor`/`show_start_screen` the way
                             // `tree_btn` is: the button exists because the
-                            // active view says it does. Counted into
+                            // active view says it does (and when it does not,
+                            // the same seam forces the column shut -- this is
+                            // its only close affordance). Counted into
                             // `INSPECTOR_BTN_W`, which `DocTabs` adds back to
-                            // its top rule's right overshoot.
+                            // its top rule's right overshoot while the button
+                            // is mounted (`doc_tabs::rule_x_end`).
                             //
                             // Known cosmetic (accepted, see the design spec):
                             // `tab_row` ends `WINDOW_BUTTONS_W` (138px) inboard
@@ -883,11 +886,39 @@ impl App {
     /// `body_chrome(None)` reports `None`. The view declares *whether* and
     /// *which glyph*; open/closed state, slot width and lit state stay the
     /// app's (see `sync_dock_slots`).
+    ///
+    /// Declaring no dock also RECONCILES the panel itself, forcing it shut. The
+    /// toggle is the panel's only affordance now that the flag spine and pin
+    /// button are gone, so hiding the button over a still-`Pinned` column would
+    /// strand a 320px slab of the closed tab's stale subject with no way to
+    /// close it (close the last tab, or open a model with no diagrams). The
+    /// reconcile is one-way -- a declared dock never force-OPENS, so the user's
+    /// closed panel isn't reopened by a tab switch. `sync_dock_slots` picks the
+    /// new width up on the same event pass.
+    ///
+    /// The strip's top rule also overshoots by the button's width, so the same
+    /// verdict is pushed to `DocTabs` (see `doc_tabs::rule_x_end`).
     fn sync_right_dock_btn(&mut self, cx: &mut Cx, glyph: Option<crate::icons::Icon>) {
         let btn = self.ui.widget(cx, ids!(inspector_btn));
         btn.set_visible(cx, glyph.is_some());
         if let Some(icon) = glyph {
             btn.as_icon_button().set_icon(cx, icon);
+        }
+        if let Some(mut tabs) = self
+            .ui
+            .widget(cx, ids!(doc_tabs))
+            .borrow_mut::<crate::doc_tabs::DocTabs>()
+        {
+            tabs.set_right_dock_btn(cx, glyph.is_some());
+        }
+        if glyph.is_none() {
+            if let Some(mut panel) = self
+                .ui
+                .widget(cx, ids!(inspector))
+                .borrow_mut::<crate::inspector_panel::Inspector>()
+            {
+                panel.close_dock(cx);
+            }
         }
     }
 

@@ -43,6 +43,14 @@ pub enum DockEvent {
     /// ANY state to `Pinned` and never collapses, so a user who closed the
     /// panel isn't fought by the next click.
     Open,
+    /// The shell forced the panel shut because the active view declares no such
+    /// dock (`BodyChrome.right_dock == None` -- the last tab was closed, or a
+    /// model with no diagrams was opened). The mirror of `Open`: it drives ANY
+    /// state to `Flag` and never expands. Not a user gesture -- with the flag
+    /// spine and pin button gone, the caption toggle is the only affordance,
+    /// and it is hidden in exactly this case, so a still-`Pinned` column would
+    /// strand on screen with no way to close it.
+    Close,
 }
 
 /// The transition table. Any unlisted (state, event) pair is a no-op (returns
@@ -63,6 +71,7 @@ pub fn next(state: DockState, ev: DockEvent) -> DockState {
         // and collapsing is the safer reading of a toggle-off.
         (Peek, Toggle) => Flag,
         (_, Open) => Pinned,
+        (_, Close) => Flag,
         (s, _) => s,
     }
 }
@@ -211,6 +220,19 @@ mod tests {
         assert_eq!(next(Flag, Open), Pinned);
         assert_eq!(next(Peek, Open), Pinned);
         assert_eq!(next(Pinned, Open), Pinned);
+    }
+
+    #[test]
+    fn close_is_idempotent_and_never_opens() {
+        use DockEvent::*;
+        use DockState::*;
+        // The mirror of `Open`: the shell forces a panel shut when the active
+        // view declares no such dock (the last tab closed, or a model with no
+        // diagrams opened). Every state lands on Flag, including Flag itself (a
+        // no-op, so no redraw).
+        assert_eq!(next(Pinned, Close), Flag);
+        assert_eq!(next(Peek, Close), Flag);
+        assert_eq!(next(Flag, Close), Flag);
     }
 
     #[test]

@@ -949,6 +949,14 @@ impl Inspector {
         self.apply_dock(cx, DockEvent::Open);
     }
 
+    /// Force the panel shut, idempotently -- the shell's reconcile for an active
+    /// view that declares no right dock (`BodyChrome.right_dock == None`; see
+    /// `App::sync_right_dock_btn`). Never expands: see `DockEvent::Close`. A
+    /// no-op when already closed, so there is no redraw churn on tab switches.
+    pub fn close_dock(&mut self, cx: &mut Cx) {
+        self.apply_dock(cx, DockEvent::Close);
+    }
+
     /// The current dock state. Plan-specified symmetry accessor (mirrors
     /// `ProjectTree::dock_state`); no in-crate caller yet since the app
     /// currently only reads `slot_width()`.
