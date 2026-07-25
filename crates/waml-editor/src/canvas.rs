@@ -2189,26 +2189,6 @@ impl GraphCanvas {
             self.fill_rect(cx, os.pos.x + os.size.x - gt, os.pos.y, gt, os.size.y, grey);
         }
 
-        // Ghost B: a preview has moved the reference node off with the rest of
-        // the diagram, so leave a translucent copy where it stood. The dial
-        // hangs off it, and it's the landmark that says what you were aiming at.
-        if let Some(p) = &self.preview {
-            let (c, sz, key) = (p.ghost_b_center, p.ghost_b_size, p.ghost_b_key.clone());
-            let z = self.camera.zoom;
-            let (w, h) = (sz.x * z, sz.y * z);
-            let (bx, by) = (c.x - w * 0.5, c.y - h * 0.5);
-            self.fill_rect(cx, bx, by, w, h, vec4(0.52, 0.57, 0.64, 0.20));
-            let line = vec4(0.62, 0.67, 0.74, 0.55);
-            let t = 1.5;
-            self.fill_rect(cx, bx, by, w, t, line);
-            self.fill_rect(cx, bx, by + h - t, w, t, line);
-            self.fill_rect(cx, bx, by, t, h, line);
-            self.fill_rect(cx, bx + w - t, by, t, h, line);
-            self.draw_mono_dim.text_style.font_size = 11.0;
-            self.draw_mono_dim
-                .draw_abs(cx, dvec2(bx + 6.0, by + 6.0), &key);
-        }
-
         // (The dial itself is the shared `RadialPopup`, drawn by `PopupRoot` in
         // the overlay above this canvas -- not here.)
 
