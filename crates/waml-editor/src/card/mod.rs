@@ -152,19 +152,25 @@ impl Placed {
         self.blocks.iter().find(|b| b.block == Block::Header)
     }
 
-    /// y of the hairline that separates the header from the body, centered in the
-    /// gutter between them — same convention as `compartment_dividers`. `None`
-    /// when the node has no header, or no body under it (a header-only card would
-    /// draw the rule on its own bottom border).
+    /// y of the hairline that separates the header from the body: the header
+    /// block's own bottom edge, where the web renderer's `.node-hdr`
+    /// border-bottom sat. NOT the gutter midpoint `compartment_dividers` uses —
+    /// makepad draws a line's glyphs higher inside its box than the sizing model
+    /// puts them, so the midpoint reads visibly low (measured 18px of air above
+    /// the rule against 8px below); the box edge lands it optically centered.
+    /// `None` when the node has no header, or no body under it (a header-only
+    /// card would draw the rule on its own bottom border).
     pub fn header_divider(&self) -> Option<f64> {
         let h = self.header()?;
-        let body = self.blocks.iter().find(|b| {
-            matches!(
-                b.block,
-                Block::Attributes | Block::Operations | Block::Footer
-            )
-        })?;
-        Some((h.y + h.h + body.y) * 0.5)
+        self.blocks
+            .iter()
+            .any(|b| {
+                matches!(
+                    b.block,
+                    Block::Attributes | Block::Operations | Block::Footer
+                )
+            })
+            .then(|| h.y + h.h)
     }
 
     /// Bottom edge of the header band, which the accent wash fills to: the
