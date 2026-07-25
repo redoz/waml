@@ -937,11 +937,6 @@ impl Inspector {
     /// Expand <-> collapse, driven by the caption bar's `[I]` toggle. Binary by
     /// construction: `DockEvent::Toggle` never routes through `Peek`, so the
     /// column is either a full 320px or zero pixels.
-    ///
-    /// No caller yet -- Task 4 wires the caption `[I]` `IconButton` to this.
-    /// Until then the inspector cannot be opened at all; this is the plan's
-    /// documented intermediate regression, not a bug.
-    #[allow(dead_code)]
     pub fn toggle_dock(&mut self, cx: &mut Cx) {
         self.apply_dock(cx, DockEvent::Toggle);
     }

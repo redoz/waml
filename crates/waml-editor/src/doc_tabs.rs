@@ -406,7 +406,9 @@ const TEXT_DY: f64 = 1.0;
 /// twin is the runtime-driven `left_overshoot` field rather than a constant,
 /// because that distance is whatever the tree-column spacer plus `[T]` happen to
 /// measure. Both reaches only work because `caption_col`/`tab_row` set
-/// `clip_x:false` (see `app.rs`).
+/// `clip_x:false` (see `app.rs`). Since the caption's `[I]` toggle now trails
+/// the strip inside `tab_row`, the rule adds `crate::app::INSPECTOR_BTN_W` on
+/// top of this reserve.
 const WINDOW_BUTTONS_W: f64 = 138.0;
 /// Device-px over which the top rule dissolves before the window's right edge. A
 /// crisp 1px rule is a plain quad (an SDF fill under ~2px has zero AA coverage on
@@ -663,17 +665,20 @@ impl Widget for DocTabs {
         // (x = 0): the logo is a keep-out zone and a rule through it slices the
         // wordmark in half.
         //
-        // At the far end the line overshoots the tab band into the window-button
-        // gap so it reaches the window's right edge, then dissolves over the last
-        // `EDGE_FADE` px -- faked as stacked 1px segments of falling alpha since a
-        // crisp plain quad carries one flat colour (see `EDGE_FADE`).
+        // At the far end the line overshoots the tab band by the caption's
+        // right-dock toggle (`INSPECTOR_BTN_W`, which now trails the strip in
+        // `tab_row`) plus the window-button gap, so it still reaches the
+        // window's right edge, then dissolves over the last `EDGE_FADE` px --
+        // faked as stacked 1px segments of falling alpha since a crisp plain
+        // quad carries one flat colour (see `EDGE_FADE`).
         //
         // Both reaches escape this strip's turtle only because `caption_col` and
         // `tab_row` set `clip_x: false` (see `app.rs`).
         let base = self.draw_edge.color;
         let y = rect.pos.y.round();
         let x0 = (rect.pos.x - self.left_overshoot).round();
-        let x_end = (rect.pos.x + rect.size.x + WINDOW_BUTTONS_W).round();
+        let x_end =
+            (rect.pos.x + rect.size.x + crate::app::INSPECTOR_BTN_W + WINDOW_BUTTONS_W).round();
         let solid_end = x_end - EDGE_FADE;
         self.draw_edge.color = base;
         self.draw_edge.draw_abs(

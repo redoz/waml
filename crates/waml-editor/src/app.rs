@@ -199,6 +199,33 @@ script_mod! {
                                 width: Fill
                                 height: Fill
                             }
+                            // The right-hand twin of `[T]`: the ACTIVE VIEW's
+                            // right-dock toggle. LAST child, so it is anchored
+                            // hard against the row's right edge and never
+                            // moves -- the `Fill` tab strip absorbs every bit
+                            // of slack between the two, so opening tabs or
+                            // expanding the tree column slides only the cards.
+                            // The same 30px box / 18px glyph as `menu_btn` and
+                            // `tree_btn`, so all three caption glyphs read as
+                            // one set, with `[T]`'s 2px inset mirrored to the
+                            // right edge.
+                            //
+                            // Visibility AND glyph come from
+                            // `BodyChrome.right_dock` (see
+                            // `sync_right_dock_btn`), NOT from
+                            // `show_editor`/`show_start_screen` the way
+                            // `tree_btn` is: the button exists because the
+                            // active view says it does. Counted into
+                            // `INSPECTOR_BTN_W`, which `DocTabs` adds back to
+                            // its top rule's right overshoot.
+                            //
+                            // Known cosmetic (accepted, see the design spec):
+                            // `tab_row` ends `WINDOW_BUTTONS_W` (138px) inboard
+                            // of the window's right edge because
+                            // `windows_buttons` follows `caption_col` in the
+                            // caption's `flow: Right`, so `[I]` does not line
+                            // up with the column it toggles.
+                            inspector_btn := IconButton{ width: 30.0 height: 30.0 icon_size: 18.0 margin: Inset{right: 2.0, top: 1.0} visible: false }
                         }
                     }
                     // Min/max/close hug the TOP of the tall caption band: the bar's
@@ -475,6 +502,13 @@ script_mod! {
 /// own footprint.
 const TREE_BTN_W: f64 = 32.0;
 
+/// Footprint of the caption's right-dock toggle `[I]`: the `inspector_btn` DSL
+/// `width` (30, the burger's size) plus its 2px right margin. The right-hand
+/// twin of `TREE_BTN_W`. `pub(crate)` because `DocTabs` has the other consumer:
+/// the tab strip's turtle is now shorter by exactly this, so its top rule has to
+/// overshoot by this much more to still reach the window's right edge.
+pub(crate) const INSPECTOR_BTN_W: f64 = 32.0;
+
 #[derive(Script, ScriptHook)]
 pub struct App {
     #[live]
@@ -595,6 +629,7 @@ impl App {
         let chrome = crate::doc_view::body_chrome(active.as_ref());
         body.set_tool_dock_visible(cx, chrome.tool_dock);
         body.set_view_bar_visible(cx, chrome.view_bar);
+        self.sync_right_dock_btn(cx, chrome.right_dock);
         let Some(active) = active else {
             if let Some(mut panel) = self
                 .ui
@@ -831,7 +866,28 @@ impl App {
             if let Some(mut slot) = self.ui.widget(cx, ids!(right_slot)).borrow_mut::<View>() {
                 slot.walk.width = Size::Fixed(rw);
             }
+            // `[I]` is lit exactly when the column occupies pixels -- the same
+            // source of truth as the layout, so the glyph can't disagree with
+            // the pixels.
+            self.ui
+                .widget(cx, ids!(inspector_btn))
+                .as_icon_button()
+                .set_active(cx, rw > 0.5);
             cx.redraw_all();
+        }
+    }
+
+    /// Drive the caption's `[I]` toggle from the active view's declared right
+    /// dock: visible and wearing the view's glyph exactly when the view has
+    /// one, hidden otherwise -- including the no-active-tab case, where
+    /// `body_chrome(None)` reports `None`. The view declares *whether* and
+    /// *which glyph*; open/closed state, slot width and lit state stay the
+    /// app's (see `sync_dock_slots`).
+    fn sync_right_dock_btn(&mut self, cx: &mut Cx, glyph: Option<crate::icons::Icon>) {
+        let btn = self.ui.widget(cx, ids!(inspector_btn));
+        btn.set_visible(cx, glyph.is_some());
+        if let Some(icon) = glyph {
+            btn.as_icon_button().set_icon(cx, icon);
         }
     }
 
@@ -1140,6 +1196,7 @@ impl App {
         let body = crate::doc_view::BodyWidgets::new(cx, &self.ui);
         body.set_tool_dock_visible(cx, chrome.tool_dock);
         body.set_view_bar_visible(cx, chrome.view_bar);
+        self.sync_right_dock_btn(cx, chrome.right_dock);
 
         // Diagram switcher (U7): push the base tab's current diagram title into
         // the trigger chip (empty when the model carries no diagram).
@@ -1252,6 +1309,12 @@ impl App {
         // rebuilds from scratch).
         self.ui.widget(cx, ids!(menu_btn)).set_visible(cx, false);
         self.ui.widget(cx, ids!(tree_btn)).set_visible(cx, false);
+        // No open model means no active tab, and `body_chrome(None)` declares
+        // no right dock -- push that through the same seam rather than special-
+        // casing the button, so the start screen can't strand a stale `[I]`
+        // from the model that was just closed. (`show_start_screen` does not
+        // run `sync_active_tab`, which is where the push otherwise happens.)
+        self.sync_right_dock_btn(cx, crate::doc_view::body_chrome(None).right_dock);
         // Clear the stale model title: the caption bar keeps drawing (logo +
         // name) even with no model open, so a leftover name reads as if the
         // closed model were still loaded.
@@ -1659,6 +1722,26 @@ impl MatchEvent for App {
                 .ui
                 .widget(cx, ids!(project_tree))
                 .borrow_mut::<crate::tree_panel::ProjectTree>()
+            {
+                panel.toggle_dock(cx);
+            }
+        }
+
+        // Caption right-dock toggle `[I]`: the twin of `[T]`, and the active
+        // view's only affordance for its right-hand panel now that the flag
+        // spine and the pin button are gone. Same binary `DockEvent::Toggle`,
+        // so one glyph covers both directions; `sync_dock_slots` picks the new
+        // width up on this same event pass and relights the button.
+        if self
+            .ui
+            .widget(cx, ids!(inspector_btn))
+            .as_icon_button()
+            .clicked(actions)
+        {
+            if let Some(mut panel) = self
+                .ui
+                .widget(cx, ids!(inspector))
+                .borrow_mut::<crate::inspector_panel::Inspector>()
             {
                 panel.toggle_dock(cx);
             }
@@ -2627,6 +2710,15 @@ impl AppMain for App {
                 .as_icon_button()
                 .rect()
                 .contains(dq.abs);
+            // Same for the tab row's right-dock toggle: it sits in the caption
+            // drag region, so without this every press becomes a window drag
+            // and the toggle is silently dead.
+            let over_inspector_btn = self
+                .ui
+                .widget(cx, ids!(inspector_btn))
+                .as_icon_button()
+                .rect()
+                .contains(dq.abs);
             // While the drop-down is open, treat the WHOLE caption as client
             // area. The header is otherwise an OS window-drag region, so a press
             // there starts a drag and never reaches the app as a click -- the
@@ -2639,7 +2731,8 @@ impl AppMain for App {
                 .borrow::<PopupRoot>()
                 .map(|pr| pr.is_open())
                 .unwrap_or(false);
-            if over_tab || over_logo || over_btn || over_tree_btn || menu_open {
+            if over_tab || over_logo || over_btn || over_tree_btn || over_inspector_btn || menu_open
+            {
                 dq.response.set(WindowDragQueryResponse::Client);
             }
         }
