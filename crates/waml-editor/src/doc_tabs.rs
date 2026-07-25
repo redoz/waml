@@ -397,8 +397,10 @@ const ICON_GAP: f64 = 6.0;
 const TOP_MARGIN: f64 = 8.0;
 /// Right-side reserve (min/max/close cluster, 3 x 46px) the tab strip does not
 /// span; the top rule overshoots its own turtle by this so the line reaches the
-/// window's right edge (buttons hug the top, leaving this y clear). Only works
-/// because `caption_col`/`tab_row` set `clip_x:false` (see `app.rs`).
+/// window's right edge (buttons hug the top, leaving this y clear). There is no
+/// left-hand twin of this constant: the rule's left end is window-absolute x=0
+/// (see `draw_walk`). Both reaches only work because `caption_col`/`tab_row` set
+/// `clip_x:false` (see `app.rs`).
 const WINDOW_BUTTONS_W: f64 = 138.0;
 /// Device-px over which the top rule dissolves before the window's right edge. A
 /// crisp 1px rule is a plain quad (an SDF fill under ~2px has zero AA coverage on
@@ -407,8 +409,13 @@ const WINDOW_BUTTONS_W: f64 = 138.0;
 /// decreasing alpha rather than a true per-pixel gradient.
 const EDGE_FADE: f64 = 48.0;
 const EDGE_FADE_STEPS: usize = 4;
-/// Left inset of the first tab so its card border lines up with the left edge of
-/// the burger icon on the title row above (burger button left + its icon inset).
+/// Breathing room between the tab row's tree-column toggle `[T]` and the first
+/// tab card. `tab_row` is `flow: Right` (see `app.rs`), so this strip's turtle
+/// starts flush against `[T]`'s right edge and this inset is the whole gap
+/// between them -- matching `CLOSE_GAP`, the other label-to-control gap on the
+/// card. It used to align the first card with the burger glyph on the title row
+/// above; that alignment is superseded, because the tree-slot spacer and `[T]`
+/// now set where the cards begin and they move with the tree column.
 const TAB_LEFT_INSET: f64 = 10.0;
 const MAX_TITLE_CHARS: usize = 18;
 
@@ -591,15 +598,29 @@ impl Widget for DocTabs {
         }
         let rect = cx.walk_turtle(walk);
         self.draw_bg.draw_abs(cx, rect);
-        // Top rule: a crisp, pixel-snapped 1px line. Snapping the y to a whole
-        // device row keeps it from straddling (and blurring across) two rows. The
-        // line overshoots the tab band into the window-button gap so it reaches the
-        // window's right edge, then dissolves over the last `EDGE_FADE` px -- faked
-        // as stacked 1px segments of falling alpha since a crisp plain quad carries
-        // one flat colour (see `EDGE_FADE`).
+        // Top rule: a crisp, pixel-snapped 1px line spanning the FULL window
+        // width, across the logo and the tree toggle, not just this strip's
+        // turtle. Snapping the y to a whole device row keeps it from straddling
+        // (and blurring across) two rows.
+        //
+        // `draw_abs` here is window-absolute: makepad's win32 backend answers
+        // `WM_NCCALCSIZE` with a zero left/top/right inset, so the client area
+        // (and the pass turtle drawn into it) starts at the window's own
+        // top-left corner. That is why `WindowDragQuery`, whose `abs` the
+        // platform defines as mouse-pos minus the window rect origin, can be
+        // tested straight against `self.tab_rects` (see `hits_any_tab` and the
+        // drag-query handler in `app.rs`). So the window's left edge is simply
+        // x = 0 -- no left twin of `WINDOW_BUTTONS_W` and no wiring from `App`
+        // is needed, even though `doc_tabs` now begins to the right of the tree
+        // spacer and `[T]`.
+        //
+        // At the far end the line overshoots the tab band into the window-button
+        // gap so it reaches the window's right edge, then dissolves over the last
+        // `EDGE_FADE` px -- faked as stacked 1px segments of falling alpha since a
+        // crisp plain quad carries one flat colour (see `EDGE_FADE`).
         let base = self.draw_edge.color;
         let y = rect.pos.y.round();
-        let x0 = rect.pos.x.round();
+        let x0 = 0.0;
         let x_end = (rect.pos.x + rect.size.x + WINDOW_BUTTONS_W).round();
         let solid_end = x_end - EDGE_FADE;
         self.draw_edge.color = base;
