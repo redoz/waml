@@ -80,19 +80,39 @@ pub(crate) fn namespace_key_ids(vm: &mut ScriptVm, ns: ScriptValue) -> Option<BT
     }))
 }
 
+/// The 7 semantic chrome-typography role tokens `fonts.rs` defines in its
+/// single `mod.fonts = { ... }` object literal. Building this namespace
+/// field-by-field (`mod.fonts.text_x = ...`) instead aborts the VM
+/// type-check, the namespace is never created, and ALL chrome text blanks at
+/// runtime while icons still draw. This test boots the real VM and reads the
+/// produced object back, so that failure class is caught semantically —
+/// unlike the deleted `include_str!` substring grep.
 #[test]
-fn spike_boot_vm_and_read_mod_fonts() {
+fn mod_fonts_carries_exactly_the_seven_role_keys() {
     let mut vm = boot_test_vm();
-    // Run the module under test — registers `mod.fonts`.
     crate::fonts::script_mod(&mut vm);
-    // Read the namespace object back. CONFIRM during spike: whether an aborted
-    // block surfaces here as a void read (this `expect` fires -> test fails,
-    // the desired signal) or as a panic inside `script_mod` above.
+
     let fonts = script_eval!(vm, { mod.fonts });
-    let keys = namespace_key_ids(&mut vm, fonts)
-        .expect("mod.fonts must resolve to an object (namespace was not created)");
-    assert!(
-        !keys.is_empty(),
-        "mod.fonts resolved but carries no keys — the block evaluated wrong"
+    let keys = namespace_key_ids(&mut vm, fonts).expect(
+        "mod.fonts must be created by one object literal `mod.fonts = { .. }`; \
+         a field-by-field `mod.fonts.text_x = ..` aborts the VM type-check and \
+         leaves the namespace absent (all chrome text blanks at runtime)",
+    );
+
+    let expected: BTreeSet<LiveId> = [
+        live_id!(text_title),
+        live_id!(text_heading),
+        live_id!(text_body),
+        live_id!(text_label),
+        live_id!(text_menu),
+        live_id!(text_eyebrow),
+        live_id!(text_mono),
+    ]
+    .into_iter()
+    .collect();
+
+    assert_eq!(
+        keys, expected,
+        "mod.fonts key set drifted from the 7 declared role tokens"
     );
 }

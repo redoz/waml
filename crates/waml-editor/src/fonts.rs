@@ -93,54 +93,6 @@ script_mod! {
     }
 }
 
-/// Namespace-creation gate: the `mod.fonts` block MUST be created by a single
-/// object-literal assignment (`mod.fonts = { text_x: ... }`), the same shape
-/// `theme_atlas.rs` uses for `mod.themes.atlas_light`. Assigning field-by-field
-/// (`mod.fonts.text_x = ...`) instead aborts the script-VM type-check ("field
-/// fonts not found") -- the namespace is never created, every `use mod.fonts`
-/// consumer resolves `NotFound`, and ALL chrome text silently vanishes at
-/// runtime (icons still render). That outage compiles clean and passes the
-/// whole `cargo test`/`pnpm` gate, because the gate never boots the makepad
-/// script VM (which needs a `Cx`/GPU context unavailable headless) -- so this
-/// class can only be caught by a source-shape assertion here. See
-/// `App::script_mod` in `app.rs` for the registration order the runtime relies
-/// on.
-#[cfg(test)]
-mod fonts_namespace_shape_gate {
-    /// The token module registers under this script namespace. Any consumer
-    /// does `use mod.fonts.*`; if the namespace is never created the widget
-    /// falls back to an empty font family and renders no text.
-    #[test]
-    fn mod_fonts_is_created_by_one_object_literal_not_field_by_field() {
-        let src = include_str!("fonts.rs");
-        // Keep only the `script_mod! { ... }` block so the doc comments above
-        // (which name the broken shape on purpose) don't trip the assertion.
-        let block = src
-            .split_once("script_mod! {")
-            .and_then(|(_, rest)| rest.split_once("\n}\n"))
-            .map(|(body, _)| body)
-            .expect("fonts.rs must contain a `script_mod! { ... }` block");
-
-        assert!(
-            block.contains("mod.fonts = {"),
-            "fonts.rs must CREATE the namespace with a single object-literal \
-             assignment `mod.fonts = {{ ... }}` (mirrors theme_atlas.rs)"
-        );
-        // The field-by-field shape `mod.fonts.text_x = ...` is the exact bug
-        // that blanks all chrome text -- forbid it inside the script block.
-        let offender = block
-            .lines()
-            .find(|l| l.trim_start().starts_with("mod.fonts.") && l.contains('='));
-        assert!(
-            offender.is_none(),
-            "field-by-field `mod.fonts.<field> = ...` aborts the VM type-check \
-             and blanks all chrome text; use `text_<field>:` fields inside the \
-             single `mod.fonts = {{ ... }}` object literal instead. Offender: {}",
-            offender.unwrap_or("").trim()
-        );
-    }
-}
-
 /// chrome-typography-scale Task 11: locks in "no ad-hoc chrome type" so a
 /// future edit can't silently reintroduce a bare `font_size:`/`FontMember`
 /// instead of a `mod.fonts` role token. Mirrors the plan's verification grep:
