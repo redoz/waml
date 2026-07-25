@@ -170,7 +170,7 @@ impl Placed {
                     Block::Attributes | Block::Operations | Block::Footer
                 )
             })
-            .then(|| h.y + h.h)
+            .then_some(h.y + h.h)
     }
 
     /// Bottom edge of the header band, which the accent wash fills to: the
