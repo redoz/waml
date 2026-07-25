@@ -400,6 +400,7 @@ script_mod! {
         draw_icon_accent +: { color: atlas.accent }
         draw_icon_danger +: { color: atlas.danger }
         draw_icon_dim +: { color: atlas.text_dim }
+        draw_icon_text +: { color: atlas.text }
         draw_label +: {
             color: atlas.text
             text_style: fonts.text_menu
@@ -437,6 +438,9 @@ pub struct RadialPopup {
     #[redraw]
     #[live]
     draw_icon_dim: DrawColor,
+    #[redraw]
+    #[live]
+    draw_icon_text: DrawColor,
     #[live]
     icons: IconSet,
     #[redraw]
@@ -716,14 +720,17 @@ impl RadialPopup {
             let icon_r = (hub_r + disc_r) * 0.5;
             let ix = center.x + icon_r * mid.sin();
             let iy = center.y - icon_r * mid.cos();
-            // Tint chosen Rust-side, mirroring the old DrawIcon shader's nested
-            // mix: disabled -> dim, else danger -> danger, else accent.
+            // Tint chosen Rust-side: disabled -> dim, danger -> danger; an
+            // ordinary wedge sits at dim_text and lifts to full text only when
+            // it is the armed choice (hover), so the fan reads quiet until aimed.
             let base_tint = if !it.enabled {
                 self.draw_icon_dim.color
             } else if it.danger {
                 self.draw_icon_danger.color
+            } else if armed == Some(i) {
+                self.draw_icon_text.color
             } else {
-                self.draw_icon_accent.color
+                self.draw_icon_dim.color
             };
             // Fade the mark's alpha with its wedge so a ghosted wedge's glyph +
             // label recede too, while the armed wedge's stay crisp.
@@ -731,15 +738,15 @@ impl RadialPopup {
             match it.icon {
                 Some(icon) => {
                     let icon_rect = Rect {
-                        pos: dvec2(ix - 16.0, iy - 16.0),
-                        size: dvec2(32.0, 32.0),
+                        pos: dvec2(ix - 13.0, iy - 13.0),
+                        size: dvec2(26.0, 26.0),
                     };
                     self.icons.draw(cx, icon, icon_rect, tint);
                     let saved = self.draw_label.color;
                     self.draw_label.color =
                         vec4(saved.x, saved.y, saved.z, saved.w * wedge_idle);
                     self.draw_label
-                        .draw_abs(cx, dvec2(ix - 16.0, iy + 14.0), &it.label);
+                        .draw_abs(cx, dvec2(ix - 16.0, iy + 12.0), &it.label);
                     self.draw_label.color = saved;
                 }
                 // Label-only wedge (the placement dial): no glyph to hang the
