@@ -10,6 +10,7 @@ use crate::frame::SurfaceExt;
 use crate::inspector::Subject;
 use crate::popup::base::PopupItem;
 use crate::scene::{bounding_box, Scene};
+use makepad_widgets::event::{TouchPoint, TouchState, TouchUpdateEvent};
 use makepad_widgets::*;
 use waml::adornment::{end_marker, End, Marker};
 
@@ -382,6 +383,9 @@ pub struct GraphCanvas {
     view_rect: Rect,
     #[rust]
     drag_start_abs: Option<DVec2>,
+    /// The two-finger gesture in flight, or `None`. See [`Pinch`].
+    #[rust]
+    pinch: Option<Pinch>,
     #[rust]
     drag_start_pan: (f64, f64),
     /// SPIKE (drag-place, throwaway): index of the node being dragged to author
@@ -652,6 +656,34 @@ fn fit_scene_camera(bbox: waml::solve::Rect, viewport_w: f64, viewport_h: f64) -
 /// Multiplicative step for one press of the view bar's zoom buttons. `ZoomIn`
 /// multiplies by it, `ZoomOut` divides, so a press-and-undo round-trips exactly.
 pub const ZOOM_STEP: f64 = 1.2;
+
+/// A two-finger gesture in flight: the pair it belongs to, plus the sample it
+/// was last measured at. Both fingers are identified by uid so a third finger
+/// touching down (or one of the two lifting) restarts the gesture rather than
+/// silently re-anchoring it to a different pair.
+#[derive(Clone, Copy, Debug)]
+struct Pinch {
+    a: u64,
+    b: u64,
+    /// Distance between the two fingers, in screen px.
+    spread: f64,
+    /// Their midpoint, in absolute (window) coordinates.
+    mid: DVec2,
+}
+
+/// Fingers closer together than this are treated as one point: the spread ratio
+/// explodes near zero and would slam the camera into a zoom clamp.
+const MIN_PINCH_SPREAD: f64 = 8.0;
+
+/// Zoom factor for one pinch sample, or `None` when the pair is too close
+/// together to carry a meaningful ratio. Pure, so the gesture's arithmetic is
+/// testable without a touch device.
+fn pinch_factor(prev_spread: f64, spread: f64) -> Option<f64> {
+    if prev_spread < MIN_PINCH_SPREAD || spread < MIN_PINCH_SPREAD {
+        return None;
+    }
+    Some(spread / prev_spread)
+}
 
 /// Index of the topmost node whose on-screen rect contains `abs`, or `None`.
 /// Topmost = last-drawn, so we scan in reverse. Pure (takes world rects +
@@ -1635,6 +1667,16 @@ impl Widget for GraphCanvas {
                 self.preview_frame = cx.new_next_frame();
             } else {
                 self.preview_last_time = 0.0;
+            }
+        }
+        // Pinch-zoom. A two-finger gesture never reaches `hits()` as a pair --
+        // it would arrive as two independent drags fighting over the camera --
+        // so the canvas reads `TouchUpdate` itself and swallows the event for
+        // as long as the gesture lasts. A lone finger falls straight through
+        // (on web it is emulated as the mouse before this widget ever sees it).
+        if let Event::TouchUpdate(tu) = event {
+            if self.handle_pinch(cx, tu) {
+                return;
             }
         }
         match event.hits_with_capture_overload(cx, self.draw_bg.area(), false) {
@@ -3118,6 +3160,59 @@ impl GraphCanvas {
         self.cam_last_time = 0.0;
     }
 
+    /// Drive the two-finger camera gesture: the spread ratio scales the camera
+    /// about the fingers' midpoint, and the midpoint's own travel pans, so a
+    /// pinch can reframe and zoom in one motion. Returns true when the event
+    /// belongs to a pinch, meaning the caller must not also read it as a drag.
+    fn handle_pinch(&mut self, cx: &mut Cx, tu: &TouchUpdateEvent) -> bool {
+        let live: Vec<&TouchPoint> = tu
+            .touches
+            .iter()
+            .filter(|t| !matches!(t.state, TouchState::Stop))
+            .collect();
+        if live.len() < 2 {
+            // The gesture is over. A finger still resting on the glass is
+            // deliberately NOT promoted to a pan -- the user is mid-lift, and
+            // the camera jumping to follow the survivor reads as a glitch.
+            return self.pinch.take().is_some();
+        }
+        let (a, b) = (live[0], live[1]);
+        let spread = a.abs.distance(&b.abs);
+        let mid = (a.abs + b.abs) * 0.5;
+        match self.pinch {
+            // Same pair as last sample: scale + pan by what changed.
+            Some(p) if p.a == a.uid && p.b == b.uid => {
+                if let Some(factor) = pinch_factor(p.spread, spread) {
+                    self.camera.zoom_at(
+                        mid.x - self.view_rect.pos.x,
+                        mid.y - self.view_rect.pos.y,
+                        factor,
+                    );
+                }
+                let travel = mid - p.mid;
+                self.camera.pan_x -= travel.x / self.camera.zoom;
+                self.camera.pan_y -= travel.y / self.camera.zoom;
+                self.draw_bg.redraw(cx);
+            }
+            // A new pair (first sample, or a finger swapped): anchor here and
+            // take the camera off whatever else was driving it.
+            _ => {
+                self.cancel_camera_glide(cx);
+                if self.drag_node.is_some() {
+                    self.cancel_drag(cx);
+                }
+                self.drag_start_abs = None;
+            }
+        }
+        self.pinch = Some(Pinch {
+            a: a.uid,
+            b: b.uid,
+            spread,
+            mid,
+        });
+        true
+    }
+
     /// Frame the whole scene (spec §4). An empty scene (`bounding_box` returns
     /// `None`) or a not-yet-drawn canvas is a no-op with no camera mutation.
     /// Marks the camera as fitted so a pending one-shot load-time fit cannot
@@ -3210,6 +3305,46 @@ impl GraphCanvas {
 mod tests {
     use super::*;
     use waml::solve::Rect as WorldRect;
+
+    #[test]
+    fn pinch_factor_is_the_spread_ratio() {
+        assert_eq!(pinch_factor(100.0, 200.0), Some(2.0));
+        assert_eq!(pinch_factor(200.0, 100.0), Some(0.5));
+        // A steady pair holds the camera still.
+        assert_eq!(pinch_factor(120.0, 120.0), Some(1.0));
+    }
+
+    /// Fingers landing almost on top of each other would produce a ratio in the
+    /// hundreds and slam the camera into a zoom clamp, from which the rest of
+    /// the gesture cannot recover.
+    #[test]
+    fn a_degenerate_spread_yields_no_factor() {
+        assert_eq!(pinch_factor(0.0, 200.0), None);
+        assert_eq!(pinch_factor(200.0, 0.0), None);
+        assert_eq!(pinch_factor(MIN_PINCH_SPREAD - 0.1, 200.0), None);
+        assert!(pinch_factor(MIN_PINCH_SPREAD, MIN_PINCH_SPREAD).is_some());
+    }
+
+    /// The gesture's fixed point: the midpoint of the two fingers is where
+    /// `zoom_at` is anchored, so the diagram under the pinch stays put while
+    /// everything around it scales.
+    #[test]
+    fn zooming_about_the_pinch_midpoint_pins_the_world_point_under_it() {
+        let mut cam = Camera {
+            pan_x: 0.0,
+            pan_y: 0.0,
+            zoom: 1.0,
+        };
+        // Fingers at (100, 100) and (300, 200) -> midpoint (200, 150).
+        let (mid_x, mid_y) = (200.0, 150.0);
+        let before = cam.local_to_world(mid_x, mid_y);
+        let factor = pinch_factor(100.0, 180.0).unwrap();
+        cam.zoom_at(mid_x, mid_y, factor);
+        let after = cam.local_to_world(mid_x, mid_y);
+        assert!((before.0 - after.0).abs() < 1e-9);
+        assert!((before.1 - after.1).abs() < 1e-9);
+        assert!((cam.zoom - 1.8).abs() < 1e-9);
+    }
 
     /// Shader-shape gate for the `GroupDashed` pen's dash mask. The pixel fn
     /// cannot be executed headless (it needs a `Cx`/GPU), so the only place an
