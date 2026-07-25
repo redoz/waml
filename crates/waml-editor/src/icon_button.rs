@@ -61,6 +61,9 @@ script_mod! {
         // Rust.
         draw_icon_lit +: { color: atlas.accent }
         draw_icon_idle +: { color: atlas.text }
+        // Disabled ink: the glyph greys out and the wash never lights, so a
+        // no-op control reads inert without changing size or moving neighbours.
+        draw_icon_dim +: { color: atlas.text_dim }
         icon_size: 16.0
     }
 }
@@ -89,6 +92,8 @@ pub struct IconButton {
     draw_icon_lit: DrawColor,
     #[live]
     draw_icon_idle: DrawColor,
+    #[live]
+    draw_icon_dim: DrawColor,
     /// SDF icon set (the shared Atlas material), drawn via `IconSet::draw`,
     /// tinted per-draw from the holders above.
     #[live]
@@ -105,6 +110,10 @@ pub struct IconButton {
     /// `hovered` into the `lit` uniform + accent glyph tint.
     #[rust]
     active: bool,
+    /// Disabled: the glyph greys and the wash never lights. The button keeps its
+    /// size and still emits `Clicked` — the host decides what that means.
+    #[rust]
+    dim: bool,
     /// Pointer-over state, self-managed from FingerHoverIn/Out.
     #[rust]
     hovered: bool,
@@ -125,7 +134,9 @@ impl Widget for IconButton {
                 cx.widget_action(uid, IconButtonAction::Clicked);
             }
             Hit::FingerHoverIn(_) => {
-                cx.set_cursor(MouseCursor::Hand);
+                if !self.dim {
+                    cx.set_cursor(MouseCursor::Hand);
+                }
                 self.hovered = true;
                 self.view.redraw(cx);
             }
@@ -138,7 +149,8 @@ impl Widget for IconButton {
     }
 
     fn draw_walk(&mut self, cx: &mut Cx2d, scope: &mut Scope, walk: Walk) -> DrawStep {
-        let lit = self.hovered || self.active;
+        // A dim button never lights, however it is hovered or flagged active.
+        let lit = (self.hovered || self.active) && !self.dim;
         self.view
             .draw_bg
             .set_uniform(cx, live_id!(lit), &[if lit { 1.0 } else { 0.0 }]);
@@ -148,6 +160,8 @@ impl Widget for IconButton {
         if let Some(icon) = self.icon {
             let tint = if lit {
                 self.draw_icon_lit.color
+            } else if self.dim {
+                self.draw_icon_dim.color
             } else {
                 self.draw_icon_idle.color
             };
@@ -179,6 +193,14 @@ impl IconButton {
     pub fn set_active(&mut self, cx: &mut Cx, active: bool) {
         if self.active != active {
             self.active = active;
+            self.view.redraw(cx);
+        }
+    }
+
+    /// Drive the disabled (dim) state, redrawing only on a change.
+    pub fn set_dim(&mut self, cx: &mut Cx, dim: bool) {
+        if self.dim != dim {
+            self.dim = dim;
             self.view.redraw(cx);
         }
     }
@@ -221,6 +243,13 @@ impl IconButtonRef {
     pub fn set_active(&self, cx: &mut Cx, active: bool) {
         if let Some(mut inner) = self.borrow_mut() {
             inner.set_active(cx, active);
+        }
+    }
+
+    /// See [`IconButton::set_dim`].
+    pub fn set_dim(&self, cx: &mut Cx, dim: bool) {
+        if let Some(mut inner) = self.borrow_mut() {
+            inner.set_dim(cx, dim);
         }
     }
 
