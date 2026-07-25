@@ -55,6 +55,11 @@ const IDLE_FADE_SECS: f64 = 0.28;
 /// armed wedge holds full so the choice you are on stays crisp.
 #[allow(dead_code)]
 const DISC_FLOOR: f32 = 0.34;
+/// The cancel hub keeps near-full alpha when receded so its inverted white
+/// disc + black X stays legible (a `DISC_FLOOR` hub washes out to nothing over a
+/// light canvas). It only inverts colour; it does not ghost away.
+#[allow(dead_code)]
+const HUB_FLOOR: f32 = 0.92;
 #[allow(dead_code)]
 const GHOST_FLOOR: f32 = 0.16;
 #[allow(dead_code)]
@@ -616,6 +621,7 @@ impl RadialPopup {
         };
         let recede = self.recede * self.recede * (3.0 - 2.0 * self.recede); // smoothstep
         let disc_idle = 1.0 - recede * (1.0 - DISC_FLOOR);
+        let hub_idle = 1.0 - recede * (1.0 - HUB_FLOOR);
         let disc_r = DISC_RADIUS * scale;
         let hub_r = HUB_RADIUS * scale;
         // Quad bounding the whole disc; every wedge shader shares it and masks
@@ -755,7 +761,7 @@ impl RadialPopup {
             size: dvec2(hub_r * 2.0, hub_r * 2.0),
         };
         self.draw_hub
-            .set_uniform(cx, live_id!(fade), &[fade * disc_idle]);
+            .set_uniform(cx, live_id!(fade), &[fade * hub_idle]);
         self.draw_hub
             .set_uniform(cx, live_id!(invert), &[recede]);
         self.draw_hub.draw_abs(cx, hub_rect);
