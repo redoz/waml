@@ -28,7 +28,7 @@ script_mod! {
             color: #0000
             pixel: fn() {
                 let sdf = Sdf2d.viewport(self.pos * self.rect_size)
-                sdf.box(0.0, 0.0, self.rect_size.x, self.rect_size.y, 4.0)
+                sdf.box(0.0, 0.0, self.rect_size.x, self.rect_size.y, 2.5)
                 sdf.fill(self.color)
                 return sdf.result
             }
@@ -40,10 +40,7 @@ script_mod! {
     }
 }
 
-/// Chip padding and its gap from the row's right edge. The chip is sized FROM
-/// its text (`text box + 2 * pad`), never from the row height -- sizing it off
-/// the 34px row made it read as a tall block sitting high in the row rather
-/// than as a pill around a word.
+/// Chip padding and its gap from the row's right edge.
 const CHIP_PAD_X: f64 = 6.0;
 const CHIP_PAD_Y: f64 = 3.0;
 const CHIP_RIGHT_GAP: f64 = 6.0;
@@ -51,6 +48,24 @@ const CHIP_RIGHT_GAP: f64 = 6.0;
 /// Inner width of a `--color`-only pill, which has no text to size it. Keeps
 /// that flag useful on its own now that the title-row wash is gone.
 const SWATCH_W: f64 = 14.0;
+
+/// Reference string for the pill's VERTICAL band: a cap and a descender. The
+/// band is measured from this rather than from the badge text, so every
+/// window's pill is the same height whatever letters its badge happens to use,
+/// and a `--color`-only swatch matches a titled pill exactly.
+const BAND_REF: &str = "Hg";
+
+/// The glyph band as a fraction of the font size, above and below the
+/// baseline: cap height and lowercase descender depth for IBM Plex Sans.
+///
+/// The laid-out LINE BOX is NOT usable here. For `fonts.text_caption` it
+/// measures 16lpx while the glyphs occupy only the bottom 10 of it (the role's
+/// `asc`/`desc` em fudges pad the box and push the glyphs down inside it), so
+/// sizing the pill on the box gave a 22px pill with 10px of dead space above
+/// the word and 2px below. Deriving the band from the baseline instead makes
+/// the pill hug the word and puts the word in its middle.
+const CAP_RATIO: f64 = 0.72;
+const DESC_RATIO: f64 = 0.21;
 
 /// Pick black or white ink for a chip of colour `fill`, by Rec.709 luma.
 pub fn label_ink(fill: Vec4) -> Vec4 {
@@ -117,36 +132,45 @@ impl Widget for AgentMark {
         };
 
         let text = self.badge.clone().unwrap_or_default();
-        // Measure the line box even for a `--color`-only launch, which draws a
-        // bare swatch: its height must match a titled window's, or the same
-        // chrome element reads as two different ones side by side.
-        let metrics = self
+
+        // Vertical band, from the reference string's baseline. `band_top` is
+        // measured DOWN from the text box's top-left, which is what
+        // `DrawText::draw_abs` takes, so seating the text is
+        // `chip_top + pad - band_top`.
+        let refbox = self
             .draw_label
-            .layout(
-                cx,
-                0.0,
-                0.0,
-                None,
-                false,
-                Align::default(),
-                if text.is_empty() { "Ag" } else { &text },
-            )
-            .size_in_lpxs;
+            .layout(cx, 0.0, 0.0, None, false, Align::default(), BAND_REF);
+        let (band_top, band_h) = match refbox.rows.first().and_then(|r| {
+            r.glyphs
+                .first()
+                .map(|g| (r.origin_in_lpxs.y as f64, g.font_size_in_lpxs as f64))
+        }) {
+            Some((baseline, font_size)) => (
+                baseline - CAP_RATIO * font_size,
+                (CAP_RATIO + DESC_RATIO) * font_size,
+            ),
+            // No glyphs laid out (font not yet loaded): fall back to the line
+            // box rather than drawing a zero-height pill.
+            None => (0.0, refbox.size_in_lpxs.height as f64),
+        };
 
         let inner_w = if text.is_empty() {
             SWATCH_W
         } else {
-            metrics.width as f64
+            self.draw_label
+                .layout(cx, 0.0, 0.0, None, false, Align::default(), &text)
+                .size_in_lpxs
+                .width as f64
         };
-        // Sized FROM the text box, never from the row: the pill hugs the word.
+
         let chip_w = inner_w + CHIP_PAD_X * 2.0;
-        let chip_h = metrics.height as f64 + CHIP_PAD_Y * 2.0;
+        let chip_h = band_h + CHIP_PAD_Y * 2.0;
         let chip = Rect {
             pos: dvec2(
                 row.pos.x + row.size.x - chip_w - CHIP_RIGHT_GAP,
-                // Centred in the row. Because the chip is sized from the text
-                // box, centring the chip centres the word with it -- which is
-                // what makes the pill read as seated rather than floating high.
+                // Centred in the row. The chip is sized from the glyph band, so
+                // centring the chip centres the word with it -- which is what
+                // makes the pill read as seated rather than floating high.
                 (row.pos.y + (row.size.y - chip_h) * 0.5).round(),
             ),
             size: dvec2(chip_w, chip_h),
@@ -162,13 +186,12 @@ impl Widget for AgentMark {
             } else {
                 self.ink_fallback
             };
-            // `DrawText::draw_abs` takes the text box's TOP-LEFT, so the same
-            // pad that sized the chip seats the text inside it. No magic
-            // half-line-box constant (contrast `diagram_switcher.rs`, which
-            // centres text in a rect it did not size).
             self.draw_label.draw_abs(
                 cx,
-                dvec2(chip.pos.x + CHIP_PAD_X, chip.pos.y + CHIP_PAD_Y),
+                dvec2(
+                    chip.pos.x + CHIP_PAD_X,
+                    (chip.pos.y + CHIP_PAD_Y - band_top).round(),
+                ),
                 &text,
             );
         }
