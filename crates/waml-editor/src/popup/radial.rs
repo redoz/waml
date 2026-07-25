@@ -302,6 +302,7 @@ script_mod! {
         hub: uniform(30.0)
         n: uniform(4.0)
         fade: uniform(1.0)
+        invert: uniform(0.0)
         arc_start: uniform(0.0)
         span: uniform(6.2831853)
         pixel: fn() {
@@ -315,9 +316,12 @@ script_mod! {
             let rel = modf(ang - self.arc_start + 6.2831853, 6.2831853)
             let full = step(6.2831, self.span)
             let in_arc = max(full, 1.0 - step(self.span, rel))
-            // Base disc fill, AA'd on the outer rim.
+            // Base disc fill, AA'd on the outer rim. When receded the gap fill
+            // inverts toward white so the ghosted dial reads as a faint white
+            // wash rather than a dim smudge of the field colour.
             let rim_aa = 1.0 - smoothstep(self.rim - 1.0, self.rim + 1.0, r)
-            let col = vec4(self.disc_col.x, self.disc_col.y, self.disc_col.z, 0.92 * rim_aa * in_arc)
+            let dc = mix(self.disc_col.xyz, vec3(1.0, 1.0, 1.0), self.invert)
+            let col = vec4(dc.x, dc.y, dc.z, 0.92 * rim_aa * in_arc)
             // Divider spokes at the wedge boundaries arc_start + k*w, k = 0..n
             // (the two ends of a partial arc are caps drawn as spokes too).
             let w = self.span / self.n
@@ -344,18 +348,24 @@ script_mod! {
         hub_col: uniform(atlas.text)
         mark_col: uniform(atlas.field_bg)
         fade: uniform(1.0)
+        invert: uniform(0.0)
         pixel: fn() {
             let sdf = Sdf2d.viewport(self.pos * self.rect_size)
             let c = self.rect_size * 0.5
             let rad = min(c.x, c.y)
+            // When receded the hub inverts: the dark fill turns white and the
+            // light X turns dark, so the ghosted token flips to a white disc with
+            // a black cancel mark.
+            let fillc = mix(self.hub_col.xyz, vec3(1.0, 1.0, 1.0), self.invert)
+            let xc = mix(self.mark_col.xyz, self.hub_col.xyz, self.invert)
             sdf.circle(c.x, c.y, rad - 1.0)
-            sdf.fill(vec4(self.hub_col.x, self.hub_col.y, self.hub_col.z, 1.0))
+            sdf.fill(vec4(fillc.x, fillc.y, fillc.z, 1.0))
             let e = rad * 0.4
             sdf.move_to(c.x - e, c.y - e)
             sdf.line_to(c.x + e, c.y + e)
             sdf.move_to(c.x + e, c.y - e)
             sdf.line_to(c.x - e, c.y + e)
-            sdf.stroke(vec4(self.mark_col.x, self.mark_col.y, self.mark_col.z, 1.0), 2.0)
+            sdf.stroke(vec4(xc.x, xc.y, xc.z, 1.0), 2.0)
             let o = sdf.result
             // Premultiplied (see RadialWedge): scale rgb by fade, not just alpha.
             return vec4(o.x * self.fade, o.y * self.fade, o.z * self.fade, o.w * self.fade)
@@ -434,6 +444,13 @@ pub struct RadialPopup {
     rest_anchor: DVec2,
     #[rust]
     last_move_time: f64,
+    /// Eased 0..1 recede value + the app-clock time of the last draw it stepped
+    /// from. `recede` chases its target (1 when rested, 0 the instant you move)
+    /// a frame at a time so the dial fades out AND back in, never snapping.
+    #[rust]
+    recede: f32,
+    #[rust]
+    last_draw_time: f64,
     /// Marking release fires on the PRIMARY button too (the drag-to-place dial
     /// is opened mid-drag, with the left button already down). Off for the
     /// right-press marking opens, where a stray left-up must not commit.
@@ -476,6 +493,8 @@ impl RadialPopup {
         self.start = time;
         self.rest_anchor = center;
         self.last_move_time = time;
+        self.recede = 0.0;
+        self.last_draw_time = time;
         self.release_primary = false;
         self.next_frame = cx.new_next_frame();
         self.draw_wedge.redraw(cx);
@@ -496,6 +515,8 @@ impl RadialPopup {
         self.start = time;
         self.rest_anchor = center;
         self.last_move_time = time;
+        self.recede = 0.0;
+        self.last_draw_time = time;
         self.release_primary = true;
         self.next_frame = cx.new_next_frame();
         self.draw_wedge.redraw(cx);
@@ -524,6 +545,8 @@ impl RadialPopup {
         self.start = time;
         self.rest_anchor = center;
         self.last_move_time = time;
+        self.recede = 0.0;
+        self.last_draw_time = time;
         self.release_primary = false;
         self.next_frame = cx.new_next_frame();
         self.draw_wedge.redraw(cx);
@@ -569,13 +592,28 @@ impl RadialPopup {
         let e = 1.0 - (1.0 - t).powi(2); // ease-out quad
         let scale = 0.55 + 0.45 * e;
         let fade = e as f32;
-        // Idle recede toward the ghost floors (see `IDLE_*`). 0 = awake/full,
-        // 1 = fully receded; eased so the dial melts back rather than snapping.
-        // `disc_idle` fades the whole card; the wedge loop picks a per-wedge
-        // floor so the armed choice holds while the rest turn ghost-like.
-        let idle = cx.seconds_since_app_start() - self.last_move_time;
-        let rt = (((idle - IDLE_DELAY) / IDLE_FADE_SECS).clamp(0.0, 1.0)) as f32;
-        let recede = rt * rt * (3.0 - 2.0 * rt); // smoothstep
+        // Idle recede toward the ghost floors (see `IDLE_*`). Stored as a raw
+        // 0..1 that eases toward its target every frame -- 1 once the cursor has
+        // rested past `IDLE_DELAY`, 0 the instant it moves -- so the dial melts
+        // back AND fades back in over `IDLE_FADE_SECS`, rather than snapping to
+        // full the frame you nudge it. `disc_idle` fades the whole card; the
+        // wedge loop picks a per-wedge floor so the armed choice holds while the
+        // rest turn ghost-like. `recede` (smoothstepped) also drives the palette
+        // inversion (gaps -> white, hub X -> black) via the `invert` uniforms.
+        let now = cx.seconds_since_app_start();
+        let target: f32 = if now - self.last_move_time >= IDLE_DELAY {
+            1.0
+        } else {
+            0.0
+        };
+        let step = ((now - self.last_draw_time).max(0.0) / IDLE_FADE_SECS) as f32;
+        self.last_draw_time = now;
+        self.recede = if self.recede < target {
+            (self.recede + step).min(target)
+        } else {
+            (self.recede - step).max(target)
+        };
+        let recede = self.recede * self.recede * (3.0 - 2.0 * self.recede); // smoothstep
         let disc_idle = 1.0 - recede * (1.0 - DISC_FLOOR);
         let disc_r = DISC_RADIUS * scale;
         let hub_r = HUB_RADIUS * scale;
@@ -598,6 +636,8 @@ impl RadialPopup {
         self.draw_disc.set_uniform(cx, live_id!(n), &[n as f32]);
         self.draw_disc
             .set_uniform(cx, live_id!(fade), &[fade * disc_idle]);
+        self.draw_disc
+            .set_uniform(cx, live_id!(invert), &[recede]);
         // Arc window (radians): the disc fill + spokes mask to this span so a
         // partial (edge-snapped) fan renders as a "C" instead of a full circle.
         self.draw_disc.set_uniform(
@@ -707,12 +747,16 @@ impl RadialPopup {
                 }
             }
         }
-        // Hub: dark cancel disc + light X, scaled with the bloom.
+        // Hub: dark cancel disc + light X, scaled with the bloom. Recedes with
+        // the card and inverts (white disc / black X) as it ghosts out.
         let hub_rect = Rect {
             pos: dvec2(center.x - hub_r, center.y - hub_r),
             size: dvec2(hub_r * 2.0, hub_r * 2.0),
         };
-        self.draw_hub.set_uniform(cx, live_id!(fade), &[fade]);
+        self.draw_hub
+            .set_uniform(cx, live_id!(fade), &[fade * disc_idle]);
+        self.draw_hub
+            .set_uniform(cx, live_id!(invert), &[recede]);
         self.draw_hub.draw_abs(cx, hub_rect);
     }
 }
