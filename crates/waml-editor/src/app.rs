@@ -93,10 +93,10 @@ script_mod! {
                         height: Fill
                         flow: Down
                         // Don't clip the tab band at the column's right edge: the
-                        // top rule (drawn by `DocTabs`) extends past this column into
-                        // the top-hugging window-button gap so it reaches the window's
-                        // right edge. `title_row` keeps its own `clip_x` for the model
-                        // name; only the tab band needs the overshoot.
+                        // top rule (drawn by `DocTabs`) still extends past this
+                        // column's LEFT edge, back over `[T]` and the tree spacer to
+                        // `tab_row`'s own start. `title_row` keeps its own `clip_x`
+                        // for the model name; only the tab band needs the overshoot.
                         clip_x: false
                         // Title row: the burger + the open model's name, sitting on
                         // one line above the tabs. `clip_x` bounds a long model path
@@ -129,7 +129,14 @@ script_mod! {
                             // drop-down anchors off the caption bottom (see the
                             // burger-menu handler), so its row placement is free.
                             menu_btn := IconButton{ width: 30.0 height: 30.0 icon_size: 18.0 margin: Inset{left: 0.0, right: 2.0, top: 4.0} visible: false }
+                            // `Fill`, not `Fit`: the name has to ABSORB the row's
+                            // slack so `windows_buttons` behind it stays pinned to
+                            // the window's right edge. A `Fit` label long enough to
+                            // overflow would shove the button cluster past the row
+                            // and `clip_x` would eat it (the caption-child trap).
+                            // Overflow is clipped by this row instead.
                             model_name := Label{
+                                width: Fill
                                 text: ""
                                 draw_text +: {
                                     color: atlas.text
@@ -144,6 +151,50 @@ script_mod! {
                                     // single-row name) seats it on the row centre,
                                     // clear of the window top edge.
                                     text_style: fonts.text_caption
+                                }
+                            }
+                            // Min/max/close live INSIDE the title row, not beside
+                            // `caption_col` in the caption's `flow: Right`. As a
+                            // sibling of the column they charged their whole 138px
+                            // (3 x 46) to BOTH rows, even though the buttons are 29px
+                            // tall and hug the top -- the tab row's y is clear of
+                            // them. That reserve was what held `[I]` 138px inboard of
+                            // the window edge instead of over the column it toggles.
+                            // Charged to this row alone, the tab row now runs the full
+                            // window width and `[I]` lands flush right.
+                            //
+                            // The fork resolves these by id (`ids!(windows_buttons)`,
+                            // a descending path search) for its own drag query and
+                            // min/max/close handlers, so re-parenting is invisible to
+                            // it. `height: Fill` + own top-align still seats them at
+                            // y0 of the band, since this row IS the top of the band.
+                            windows_buttons := View {
+                                visible: false
+                                width: Fit height: Fill
+                                align: Align{y: 0.0}
+                                min := DesktopButton {
+                                    draw_bg.button_type: DesktopButtonType.WindowsMin
+                                    width: 46 height: 29
+                                    draw_bg +: {
+                                        color: #000, color_hover: #000, color_down: #000
+                                        bg_color_hover: #E9E9E9, bg_color_down: #CCCCCC
+                                    }
+                                }
+                                max := DesktopButton {
+                                    draw_bg.button_type: DesktopButtonType.WindowsMax
+                                    width: 46 height: 29
+                                    draw_bg +: {
+                                        color: #000, color_hover: #000, color_down: #000
+                                        bg_color_hover: #E9E9E9, bg_color_down: #CCCCCC
+                                    }
+                                }
+                                close := DesktopButton {
+                                    draw_bg.button_type: DesktopButtonType.WindowsClose
+                                    width: 46 height: 29
+                                    draw_bg +: {
+                                        color: #000, color_hover: #FFF, color_down: #FFF
+                                        bg_color_hover: #E81123, bg_color_down: #F1707A
+                                    }
                                 }
                             }
                         }
@@ -221,45 +272,11 @@ script_mod! {
                             // its top rule's right overshoot while the button
                             // is mounted (`doc_tabs::rule_x_end`).
                             //
-                            // Known cosmetic (accepted, see the design spec):
-                            // `tab_row` ends `WINDOW_BUTTONS_W` (138px) inboard
-                            // of the window's right edge because
-                            // `windows_buttons` follows `caption_col` in the
-                            // caption's `flow: Right`, so `[I]` does not line
-                            // up with the column it toggles.
+                            // This row now runs the FULL window width -- the
+                            // min/max/close reserve is charged to `title_row`
+                            // alone -- so `[I]` sits flush against the window's
+                            // right edge, over the dock column it toggles.
                             inspector_btn := IconButton{ width: 30.0 height: 30.0 icon_size: 18.0 margin: Inset{right: 2.0, top: 1.0} visible: false }
-                        }
-                    }
-                    // Min/max/close hug the TOP of the tall caption band: the bar's
-                    // `align y:0.5` would otherwise float them mid-height. `height:
-                    // Fill` + own top-align seats the 29px buttons at y0.
-                    windows_buttons := View {
-                        visible: false
-                        width: Fit height: Fill
-                        align: Align{y: 0.0}
-                        min := DesktopButton {
-                            draw_bg.button_type: DesktopButtonType.WindowsMin
-                            width: 46 height: 29
-                            draw_bg +: {
-                                color: #000, color_hover: #000, color_down: #000
-                                bg_color_hover: #E9E9E9, bg_color_down: #CCCCCC
-                            }
-                        }
-                        max := DesktopButton {
-                            draw_bg.button_type: DesktopButtonType.WindowsMax
-                            width: 46 height: 29
-                            draw_bg +: {
-                                color: #000, color_hover: #000, color_down: #000
-                                bg_color_hover: #E9E9E9, bg_color_down: #CCCCCC
-                            }
-                        }
-                        close := DesktopButton {
-                            draw_bg.button_type: DesktopButtonType.WindowsClose
-                            width: 46 height: 29
-                            draw_bg +: {
-                                color: #000, color_hover: #FFF, color_down: #FFF
-                                bg_color_hover: #E81123, bg_color_down: #F1707A
-                            }
                         }
                     }
                 }
@@ -959,11 +976,23 @@ impl App {
     /// across it with `draw_abs` (it is mounted zero-width, so it cannot learn
     /// the row width from its own turtle). Same measure-and-push shape as
     /// `sync_tree_gap` feeding `DocTabs::set_left_overshoot`.
+    ///
+    /// The min/max/close cluster shares this row, and the marker is a
+    /// RIGHT-floated pill, so the cluster's width is subtracted -- otherwise the
+    /// pill floats to the window edge and lands underneath the buttons.
     fn sync_agent_row(&mut self, cx: &mut Cx) {
         if self.agent_badge.is_none() && self.agent_tint.is_none() {
             return;
         }
-        let w = self.ui.widget(cx, ids!(title_row)).area().rect(cx).size.x;
+        let w = (self.ui.widget(cx, ids!(title_row)).area().rect(cx).size.x
+            - self
+                .ui
+                .widget(cx, ids!(windows_buttons))
+                .area()
+                .rect(cx)
+                .size
+                .x)
+            .max(0.0);
         if (w - self.agent_row_w).abs() <= 0.5 {
             return;
         }

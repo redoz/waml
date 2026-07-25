@@ -400,17 +400,6 @@ const EDGE_DIVIDER_FRAC: f64 = 1.0;
 /// trim shared by the font roles rides glyphs high inside their line box (see
 /// the asc/desc notes in `fonts.rs`), so true centring still reads a touch high.
 const TEXT_DY: f64 = 1.0;
-/// Right-side reserve (min/max/close cluster, 3 x 46px) the tab strip does not
-/// span; the top rule overshoots its own turtle by this so the line reaches the
-/// window's right edge (buttons hug the top, leaving this y clear). Its left
-/// twin is the runtime-driven `left_overshoot` field rather than a constant,
-/// because that distance is whatever the tree-column spacer plus `[T]` happen to
-/// measure. Both reaches only work because `caption_col`/`tab_row` set
-/// `clip_x:false` (see `app.rs`). Since the caption's `[I]` toggle now trails
-/// the strip inside `tab_row`, the rule adds `crate::app::INSPECTOR_BTN_W` on
-/// top of this reserve -- but only while that toggle is actually mounted (see
-/// `rule_x_end`).
-const WINDOW_BUTTONS_W: f64 = 138.0;
 /// Device-px over which the top rule dissolves before the window's right edge. A
 /// crisp 1px rule is a plain quad (an SDF fill under ~2px has zero AA coverage on
 /// this fork -- see the shader-gotchas memory), and a plain quad carries one flat
@@ -561,7 +550,7 @@ pub struct DocTabs {
     #[rust]
     hidden: bool,
 
-    /// Left twin of `WINDOW_BUTTONS_W`: how far the top rule reaches back past
+    /// Left-end reach of the top rule: how far it goes back past
     /// this strip's own turtle, so it starts at `tab_row`'s left edge (the
     /// wordmark's right edge) rather than at the first tab card. Runtime-driven
     /// by `App::sync_tree_gap`, because the distance is whatever the tree-column
@@ -596,10 +585,10 @@ pub struct DocTabs {
 }
 
 /// Far end of the top rule, given this strip's own right edge and whether the
-/// caption's right-dock toggle `[I]` is on screen. The rule overshoots the strip
-/// to reach the window's right edge, past the window-button reserve and -- only
-/// while it is actually mounted -- the toggle that trails the strip inside
-/// `tab_row`.
+/// caption's right-dock toggle `[I]` is on screen. `tab_row` runs the full window
+/// width (the min/max/close reserve is charged to `title_row` alone), so the only
+/// thing between this strip and the window's right edge is the toggle that trails
+/// it -- and then only while that toggle is actually mounted.
 ///
 /// The toggle's width has to be conditional rather than a constant: `[I]` is
 /// hidden whenever the active view declares no right dock (no active tab at
@@ -613,7 +602,7 @@ fn rule_x_end(strip_right: f64, right_dock_btn: bool) -> f64 {
     } else {
         0.0
     };
-    (strip_right + btn + WINDOW_BUTTONS_W).round()
+    (strip_right + btn).round()
 }
 
 impl Widget for DocTabs {
@@ -691,15 +680,14 @@ impl Widget for DocTabs {
         // a whole device row keeps it from straddling (and blurring across) two
         // rows.
         //
-        // At the near end it reaches back by `left_overshoot`, the runtime-driven
-        // left twin of `WINDOW_BUTTONS_W`, landing on `tab_row`'s left edge. It
-        // deliberately stops there rather than at the window's own left edge
-        // (x = 0): the logo is a keep-out zone and a rule through it slices the
-        // wordmark in half.
+        // At the near end it reaches back by `left_overshoot`, runtime-driven,
+        // landing on `tab_row`'s left edge. It deliberately stops there rather
+        // than at the window's own left edge (x = 0): the logo is a keep-out
+        // zone and a rule through it slices the wordmark in half.
         //
-        // At the far end the line overshoots the tab band by the window-button
-        // gap plus -- only while it is mounted -- the caption's right-dock
-        // toggle (which trails the strip in `tab_row`), so it still reaches the
+        // At the far end the line overshoots the tab band by -- only while it is
+        // mounted -- the caption's right-dock toggle (which trails the strip in
+        // `tab_row`), so it still reaches the
         // window's right edge, then dissolves over the last `EDGE_FADE` px --
         // faked as stacked 1px segments of falling alpha since a crisp plain
         // quad carries one flat colour (see `EDGE_FADE`). `rule_x_end` owns
@@ -1201,11 +1189,8 @@ mod tests {
         // -- overshooting by the constant while the button is hidden would push
         // the whole `EDGE_FADE` run off-screen and terminate the rule hard.
         let win = 1000.0;
-        assert_eq!(
-            rule_x_end(win - WINDOW_BUTTONS_W - crate::app::INSPECTOR_BTN_W, true),
-            win
-        );
-        assert_eq!(rule_x_end(win - WINDOW_BUTTONS_W, false), win);
+        assert_eq!(rule_x_end(win - crate::app::INSPECTOR_BTN_W, true), win);
+        assert_eq!(rule_x_end(win, false), win);
     }
 
     #[test]
