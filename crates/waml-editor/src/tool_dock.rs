@@ -19,6 +19,11 @@ use makepad_widgets::*;
 use crate::icon_button::IconButtonWidgetRefExt;
 use crate::icons::Icon;
 
+/// Transparent band the drop shadow's blur fills on every side of the strip.
+/// The `draw_shadow` quad is the bar rect grown by this, and the shader reads
+/// the same `pad` back out to recover the true rect -- keep the two in sync.
+const SHADOW_PAD: f64 = 24.0;
+
 script_mod! {
     use mod.prelude.widgets_internal.*
     use mod.atlas
@@ -60,6 +65,29 @@ script_mod! {
         // Subtle source-bright top edge (shared HUD panel material), drawn over
         // the frame's own top border in `draw_walk`.
         draw_edge +: { color: atlas.frame_hi }
+
+        // Soft drop shadow, same HUD depth material as the canvas cards
+        // (`frame.rs`'s `AccentFrame`): a `shadow`-tinted, downward-offset blur.
+        // `draw_walk` paints it on a `SHADOW_PAD`-padded quad BEHIND the frame so
+        // the strip reads as floating over the canvas instead of flush with it.
+        draw_shadow +: {
+            color: atlas.shadow
+            pixel: fn() {
+                let p = self.pos * self.rect_size
+                // Keep in sync with `SHADOW_PAD`: the transparent band the blur
+                // fills, so the true bar rect is the quad minus this on all sides.
+                let pad = 24.0
+                let hw = (self.rect_size.x - pad * 2.0) * 0.5
+                let hh = (self.rect_size.y - pad * 2.0) * 0.5
+                let qx = abs(p.x - self.rect_size.x * 0.5) - hw
+                let qy = abs(p.y - (self.rect_size.y * 0.5 + 6.0)) - hh
+                let ox = max(qx, 0.0)
+                let oy = max(qy, 0.0)
+                let sd = sqrt(ox * ox + oy * oy) + min(max(qx, qy), 0.0)
+                let a = 0.16 * (1.0 - smoothstep(-9.0, 9.0, sd))
+                return vec4(self.color.rgb * a, a)
+            }
+        }
 
         // The five entries: the mode group (Select/Add/Connect) then the action
         // group (DiagramProps/Clear), separated by the group gap. Each is a bare
@@ -147,6 +175,11 @@ pub struct ToolDock {
     #[live]
     draw_edge: DrawColor,
 
+    /// Soft drop shadow (HUD depth material, mirrors the canvas cards), drawn
+    /// abs BEHIND the frame at the top of `draw_walk`.
+    #[live]
+    draw_shadow: DrawColor,
+
     #[rust]
     active: Tool,
 }
@@ -183,6 +216,20 @@ impl Widget for ToolDock {
             let btn = self.button(cx, tool).as_icon_button();
             btn.set_icon(cx, Self::icon_for(tool));
             btn.set_active(cx, tool.is_mode() && tool == self.active);
+        }
+
+        // Drop shadow first, so it sits BEHIND the opaque frame the View paints.
+        // Uses last frame's rect (the strip is fixed-size, so it never lags
+        // visibly); grown by `SHADOW_PAD` on every side to give the blur room.
+        let prev = self.view.area().rect(cx);
+        if prev.size.x > 0.0 {
+            self.draw_shadow.draw_abs(
+                cx,
+                Rect {
+                    pos: prev.pos - dvec2(SHADOW_PAD, SHADOW_PAD),
+                    size: prev.size + dvec2(SHADOW_PAD * 2.0, SHADOW_PAD * 2.0),
+                },
+            );
         }
 
         while self.view.draw_walk(cx, scope, walk).step().is_some() {}
