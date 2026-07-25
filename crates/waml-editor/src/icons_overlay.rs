@@ -23,6 +23,8 @@ macro_rules! ie {
 }
 
 /// Used glyphs grouped by primary usage-area. Each glyph appears exactly once.
+/// The trailing "CATALOG ONLY" group holds glyphs that lost their call site but
+/// stay in the reference (the catalog is add-only; prune deliberately).
 pub const ICON_GROUPS: &[(&str, &[IconEntry])] = &[
     (
         "TOOL DOCK",
@@ -101,6 +103,10 @@ pub const ICON_GROUPS: &[(&str, &[IconEntry])] = &[
             ie!(SquareDashed, "Show hidden borders"),
             ie!(Ruler, "Show constraints"),
         ],
+    ),
+    (
+        "CATALOG ONLY",
+        &[ie!(PinOff, "Unpin — catalog glyph, no current call site")],
     ),
 ];
 
@@ -251,11 +257,30 @@ mod drift {
     use std::collections::BTreeSet;
     use std::path::{Path, PathBuf};
 
+    /// Catalog glyphs deliberately kept in the style guide even though no UI
+    /// code draws them right now: the catalog is add-only (prune deliberately),
+    /// so losing a call site must not silently hide a glyph from the reference.
+    /// Guard 2 allows exactly these rows to have no `Icon::<Variant>` call site.
+    const UNWIRED_BUT_LISTED: &[Icon] = &[Icon::PinOff];
+
     fn table_icons() -> Vec<Icon> {
         ICON_GROUPS
             .iter()
             .flat_map(|(_, rows)| rows.iter().map(|e| e.icon))
             .collect()
+    }
+
+    /// Guard 3: every deliberately-unwired catalog glyph still has a row.
+    #[test]
+    fn unwired_catalog_glyphs_are_still_listed() {
+        let table: BTreeSet<String> = table_icons().iter().map(|i| variant_name(*i)).collect();
+        for icon in UNWIRED_BUT_LISTED {
+            assert!(
+                table.contains(&variant_name(*icon)),
+                "{} left the catalog reference; catalog glyphs are pruned deliberately, not by accident",
+                variant_name(*icon),
+            );
+        }
     }
 
     /// Guard 1: no glyph is listed twice (one row per glyph invariant).
@@ -286,8 +311,8 @@ mod drift {
     }
 
     /// Guard 2: the table's icon set equals the set of `Icon::<Variant>` used in
-    /// UI code (excl. the catalog file, this file, and `bin/`). `Icon::ALL` is
-    /// filtered (not a variant).
+    /// UI code (excl. the catalog file, this file, and `bin/`) plus the
+    /// deliberately-unwired rows. `Icon::ALL` is filtered (not a variant).
     #[test]
     fn table_covers_exactly_the_used_icons() {
         let src_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
@@ -316,10 +341,12 @@ mod drift {
             }
         }
 
+        used.extend(UNWIRED_BUT_LISTED.iter().map(|i| variant_name(*i)));
+
         let table: BTreeSet<String> = table_icons().iter().map(|i| variant_name(*i)).collect();
         assert_eq!(
             table, used,
-            "\nICON_GROUPS must cover exactly the used icons.\nmissing from table: {:?}\nstale in table: {:?}",
+            "\nICON_GROUPS must cover exactly the used icons (plus UNWIRED_BUT_LISTED).\nmissing from table: {:?}\nstale in table: {:?}",
             used.difference(&table).collect::<Vec<_>>(),
             table.difference(&used).collect::<Vec<_>>(),
         );
