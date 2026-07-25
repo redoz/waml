@@ -6,7 +6,7 @@
 //! Structure/hit-handling mirror the fork's `widgets/src/map/view.rs`.
 
 use crate::camera::Camera;
-use crate::frame::HudFrameExt;
+use crate::frame::SurfaceExt;
 use crate::inspector::Subject;
 use crate::popup::base::PopupItem;
 use crate::scene::{bounding_box, Scene};
@@ -1990,9 +1990,9 @@ impl Widget for GraphCanvas {
                 .set_uniform(cx, live_id!(selected), &[selected]);
             // Node card: rounded near-white glass fill + source-bright accent
             // frame, both in draw_node's SDF shader (see script_mod above).
-            // `draw_hud_abs` pads the quad so the depth shadow falls outside the
+            // `draw_surface_abs` pads the quad so the depth shadow falls outside the
             // card instead of clipping at its border (`frame.rs`).
-            self.draw_node.draw_hud_abs(cx, screen);
+            self.draw_node.draw_surface_abs(cx, screen);
 
             // Every node renders the full card on top of its frame.
             self.draw_card(cx, screen, node, zoom);

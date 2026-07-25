@@ -9,7 +9,7 @@
 //! overlay) and simply draws nothing but background when hidden -- lower
 //! risk than overlay compositing for a mock.
 
-use crate::frame::HudFrameExt;
+use crate::frame::SurfaceExt;
 use makepad_widgets::*;
 
 script_mod! {
@@ -135,7 +135,7 @@ impl Widget for SelectionToolbar {
 
     fn draw_walk(&mut self, cx: &mut Cx2d, _scope: &mut Scope, walk: Walk) -> DrawStep {
         let rect = cx.walk_turtle(walk);
-        self.draw_bg.draw_hud_abs(cx, rect);
+        self.draw_bg.draw_surface_abs(cx, rect);
         self.item_rects.clear();
 
         let Some(count) = self.count else {

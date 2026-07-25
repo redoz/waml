@@ -82,24 +82,24 @@ let h  = self.rect_size.y - (self.bleed + inset) * 2.0
 At the default `bleed = 0.0` this is byte-for-byte today's geometry, so an
 un-migrated consumer is visually unchanged.
 
-### `draw_hud_abs` helper — the generic seam
+### `draw_surface_abs` helper — the generic seam
 
 An extension trait in `frame.rs`:
 
 ```rust
 /// Draw an `AccentFrame`-derived pen at `rect`, padding the drawn quad so the
 /// depth shadow and bloom have room to fall outside the surface.
-pub trait HudFrameExt {
-    fn draw_hud_abs(&mut self, cx: &mut Cx2d, rect: Rect);
+pub trait SurfaceExt {
+    fn draw_surface_abs(&mut self, cx: &mut Cx2d, rect: Rect);
 }
 
-impl HudFrameExt for DrawColor { /* … */ }
+impl SurfaceExt for DrawColor { /* … */ }
 ```
 
 It reads the pen's own knob uniforms, computes the bleed, pushes it, inflates
 the rect, and calls `draw_abs`. Every consumer's diff is one word:
-`draw_abs` -> `draw_hud_abs`. Any future popup that points its `draw_frame` at
-`mod.draw.AccentFrame` and calls `draw_hud_abs` gets the shadow with no
+`draw_abs` -> `draw_surface_abs`. Any future popup that points its `draw_frame`
+at `mod.draw.AccentFrame` and calls `draw_surface_abs` gets the shadow with no
 geometry math of its own. That is the whole point of the seam.
 
 ### Bleed math — the testable unit
@@ -109,7 +109,7 @@ Extracted as a pure function so it is unit-testable without a GPU:
 ```rust
 /// Pixels of padding a HUD surface needs on every side for its shadow and
 /// bloom to fall outside the frame without clipping.
-pub fn hud_bleed(depth_y: f64, depth_blur: f64, bloom_px: f64, zoom: f64) -> f64
+pub fn surface_bleed(depth_y: f64, depth_blur: f64, bloom_px: f64, zoom: f64) -> f64
 ```
 
 Returns `(max(depth_blur + depth_y, bloom_px) * zoom).max(0.0) + 2.0`. The
@@ -161,7 +161,7 @@ constant of `0.4` (the `--glow` token). A zero-offset falloff of `accent_col`
 over `14.0 * glow` pixels at alpha `bloom * glow`, composited above the shadow
 and below the fill. `accent_col` is reused by unit 3's frost tint.
 
-`hud_bleed`'s `bloom_px` argument starts carrying `14.0 * glow`.
+`surface_bleed`'s `bloom_px` argument starts carrying `14.0 * glow`.
 
 **Sign-off:** the halo reads as accent-tinted, not as a second grey shadow.
 
@@ -194,15 +194,16 @@ Three DSL objects in `frame.rs`, carrying the svelte numbers from the table
 above:
 
 ```
-mod.draw.HudPanel = mod.draw.AccentFrame{ frost_top: 0.95 frost_bot: 0.82 frost_tint: 0.06 depth_y: 12.0 depth_blur: 30.0 depth_a: 0.20 bloom: 0.16 }
-mod.draw.HudNode  = mod.draw.AccentFrame{ frost_top: 0.94 frost_bot: 0.80 frost_tint: 0.06 depth_y:  8.0 depth_blur: 22.0 depth_a: 0.14 bloom: 0.18 }
-mod.draw.HudBtn   = mod.draw.AccentFrame{ frost_top: 0.92 frost_bot: 0.74 frost_tint: 0.10 depth_y:  6.0 depth_blur: 18.0 depth_a: 0.14 bloom: 0.22 }
+mod.draw.PanelSurface  = mod.draw.AccentFrame{ frost_top: 0.95 frost_bot: 0.82 frost_tint: 0.06 depth_y: 12.0 depth_blur: 30.0 depth_a: 0.20 bloom: 0.16 }
+mod.draw.NodeSurface   = mod.draw.AccentFrame{ frost_top: 0.94 frost_bot: 0.80 frost_tint: 0.06 depth_y:  8.0 depth_blur: 22.0 depth_a: 0.14 bloom: 0.18 }
+mod.draw.ButtonSurface = mod.draw.AccentFrame{ frost_top: 0.92 frost_bot: 0.74 frost_tint: 0.10 depth_y:  6.0 depth_blur: 18.0 depth_a: 0.14 bloom: 0.22 }
 ```
 
-Consumers repoint: `canvas.rs:172` -> `HudNode`; `selection_toolbar.rs:26`,
+Consumers repoint: `canvas.rs:172` -> `NodeSurface`; `selection_toolbar.rs:26`,
 `popup/select.rs:83`, `popup/menu.rs:316`, `popup/conflict_list.rs:144` ->
-`HudPanel`. `HudBtn` is declared for `icon_button`/`ToolDock` to adopt later;
-declaring it now keeps the three presets together and readable as one table.
+`PanelSurface`. `ButtonSurface` is declared for `icon_button`/`ToolDock` to
+adopt later; declaring it now keeps the three presets together and readable as
+one table.
 
 **Selected lift.** The existing `selected` uniform is already 0.0/1.0 and
 already widens the stroke. It additionally drives depth toward
@@ -258,7 +259,7 @@ behaviour in the svelte reference and is deliberately not special-cased.
 Shaders are not unit-testable in this harness (same constraint the phase-1 spec
 recorded), so verification is split:
 
-- **`cargo test`** covers `hud_bleed` — zero knobs give the `+2.0` floor, blur
+- **`cargo test`** covers `surface_bleed` — zero knobs give the `+2.0` floor, blur
   and offset add, bloom dominates when larger, and the result scales with zoom.
 - **Build gate** — `cargo test --workspace` green per unit.
 - **Visual** — launch the worktree's *own* `scripts/run-native.ps1` (it builds

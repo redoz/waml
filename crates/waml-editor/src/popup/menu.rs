@@ -3,7 +3,7 @@
 //! by the shared `MarkingCore`. In-window overlay (the overlay `Presenter` in
 //! plan 1); geometry lives in the pure `LinearGeom`, unit-tested directly.
 
-use crate::frame::HudFrameExt;
+use crate::frame::SurfaceExt;
 use crate::icons::IconSet;
 use crate::popup::base::{Popup, PopupItem, PopupResult, PopupVerdict};
 use crate::popup::marking::{MarkOutcome, MarkingCore};
@@ -473,7 +473,7 @@ impl MenuPopup {
         // 1.0), so drive it below 1 -- a full-weight ring reads too heavy and
         // detaches the card from the wordmark it drops from.
         self.draw_frame.set_uniform(cx, live_id!(zoom), &[0.6]);
-        self.draw_frame.draw_hud_abs(cx, panel);
+        self.draw_frame.draw_surface_abs(cx, panel);
         for (i, it) in items.iter().enumerate() {
             let row = self.geom.row_rect(i);
             let cy = row.pos.y + row.size.y * 0.5;

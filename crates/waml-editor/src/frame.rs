@@ -1,4 +1,9 @@
-//! `AccentFrame`: the one reusable Atlas "HUD" frame primitive, used app-wide.
+//! `AccentFrame`: the one reusable Atlas surface primitive, used app-wide.
+//!
+//! "Surface", not "HUD": the svelte class this ports is called `.hud-surface`,
+//! but nothing here is a heads-up display -- it's the material worn by canvas
+//! nodes, panels, popups and buttons alike. References to the CSS class keep
+//! its real name; our own identifiers say `surface`.
 //!
 //! A `DrawColor` whose interior is a flat fill (`color`) ringed by the Atlas
 //! source-bright accent stroke -- a thin border whose color fades along a
@@ -20,33 +25,33 @@
 //! Shadow and bloom paint OUTSIDE the surface, but the SDF is clamped to
 //! `rect_size` -- so the drawn quad has to be bigger than the surface it frames.
 //! `bleed` is that padding: the shader offsets its geometry inward by it so the
-//! frame still lands on the true rect, and [`HudFrameExt::draw_hud_abs`] does the
-//! padding for the caller. Consumers call `draw_hud_abs` instead of `draw_abs`
-//! and get the shadow with no geometry math of their own.
+//! frame still lands on the true rect, and [`SurfaceExt::draw_surface_abs`]
+//! does the padding for the caller. Consumers call `draw_surface_abs` instead
+//! of `draw_abs` and get the shadow with no geometry math of their own.
 
 use makepad_widgets::*;
 
 /// Floor applied to `zoom` before it scales the depth shadow, so the shadow
 /// doesn't vanish at fit-zoom -- the same idea as the stroke's `max(1.25, inset)`
-/// in the shader below. Both [`hud_bleed`]'s caller and the shader apply it, or
-/// the padded quad and the drawn shadow disagree and the shadow clips.
+/// in the shader below. Both [`surface_bleed`]'s caller and the shader apply
+/// it, or the padded quad and the drawn shadow disagree and the shadow clips.
 ///
 /// `allow(dead_code)` here and on the two items below: `node_editor_harness`
 /// pulls this module in by `#[path]` for its `script_mod` alone and never calls
-/// `draw_hud_abs`, so the whole Rust-side seam is genuinely unreferenced in that
-/// binary even though the editor uses all of it.
+/// `draw_surface_abs`, so the whole Rust-side seam is genuinely unreferenced in
+/// that binary even though the editor uses all of it.
 #[allow(dead_code)]
-pub const HUD_SHADOW_ZOOM_FLOOR: f64 = 0.35;
+pub const SURFACE_SHADOW_ZOOM_FLOOR: f64 = 0.35;
 
-/// Pixels of padding a HUD surface needs on every side for its shadow and bloom
-/// to fall outside the frame without clipping.
+/// Pixels of padding a surface needs on every side for its shadow and bloom to
+/// fall outside the frame without clipping.
 ///
 /// `depth_blur + depth_y` covers the downward-offset shadow's far edge;
-/// `bloom_px` is the un-offset halo radius; `+ 2.0` is antialias slack. `zoom` is
-/// the already-floored effective zoom (see [`HUD_SHADOW_ZOOM_FLOOR`]) and must
-/// match what the shader scales by.
+/// `bloom_px` is the un-offset halo radius; `+ 2.0` is antialias slack. `zoom`
+/// is the already-floored effective zoom (see [`SURFACE_SHADOW_ZOOM_FLOOR`])
+/// and must match what the shader scales by.
 #[allow(dead_code)]
-pub fn hud_bleed(depth_y: f64, depth_blur: f64, bloom_px: f64, zoom: f64) -> f64 {
+pub fn surface_bleed(depth_y: f64, depth_blur: f64, bloom_px: f64, zoom: f64) -> f64 {
     ((depth_blur + depth_y).max(bloom_px) * zoom).max(0.0) + 2.0
 }
 
@@ -54,18 +59,18 @@ pub fn hud_bleed(depth_y: f64, depth_blur: f64, bloom_px: f64, zoom: f64) -> f64
 /// drawn quad so the depth shadow and bloom have room to fall outside the
 /// surface.
 #[allow(dead_code)]
-pub trait HudFrameExt {
+pub trait SurfaceExt {
     /// Reads the pen's own knob uniforms, computes the bleed, pushes it, and
     /// draws the inflated quad. `rect` stays the TRUE surface rect -- the frame
     /// lands exactly where `draw_abs(cx, rect)` would have put it.
     ///
     /// Only for pens derived from `mod.draw.AccentFrame`; a pen without the
     /// `bleed` uniform would take the padding without compensating for it.
-    fn draw_hud_abs(&mut self, cx: &mut Cx2d, rect: Rect);
+    fn draw_surface_abs(&mut self, cx: &mut Cx2d, rect: Rect);
 }
 
-impl HudFrameExt for DrawColor {
-    fn draw_hud_abs(&mut self, cx: &mut Cx2d, rect: Rect) {
+impl SurfaceExt for DrawColor {
+    fn draw_surface_abs(&mut self, cx: &mut Cx2d, rect: Rect) {
         let read = |pen: &Self, cx: &mut Cx2d, id: LiveId| -> f64 {
             let mut slot = [0.0f32];
             pen.get_uniform(cx, id, &mut slot);
@@ -73,11 +78,11 @@ impl HudFrameExt for DrawColor {
         };
         // `bloom` doesn't exist yet; get_uniform leaves the slot untouched, so an
         // absent knob reads as 0.0 and simply doesn't widen the bleed.
-        let bleed = hud_bleed(
+        let bleed = surface_bleed(
             read(self, cx, live_id!(depth_y)),
             read(self, cx, live_id!(depth_blur)),
             read(self, cx, live_id!(bloom)),
-            read(self, cx, live_id!(zoom)).max(HUD_SHADOW_ZOOM_FLOOR),
+            read(self, cx, live_id!(zoom)).max(SURFACE_SHADOW_ZOOM_FLOOR),
         );
         self.set_uniform(cx, live_id!(bleed), &[bleed as f32]);
         self.draw_abs(
@@ -114,7 +119,7 @@ script_mod! {
         zoom: uniform(1.0)
         selected: uniform(0.0)
         // Padding the CALLER added on every side so the shadow has room to fall
-        // outside the surface (`HudFrameExt::draw_hud_abs` pushes it). At the
+        // outside the surface (`SurfaceExt::draw_surface_abs` pushes it). At the
         // default 0.0 the geometry below is byte-for-byte the pre-phase-C frame,
         // so a consumer still on plain `draw_abs` is visually unchanged.
         bleed: uniform(0.0)
@@ -200,32 +205,32 @@ mod tests {
 
     #[test]
     fn zero_knobs_give_the_antialias_floor() {
-        approx(hud_bleed(0.0, 0.0, 0.0, 1.0), 2.0);
+        approx(surface_bleed(0.0, 0.0, 0.0, 1.0), 2.0);
     }
 
     #[test]
     fn offset_and_blur_add() {
         // The far edge of a shadow blurred by 22 and pushed down 8.
-        approx(hud_bleed(8.0, 22.0, 0.0, 1.0), 32.0);
+        approx(surface_bleed(8.0, 22.0, 0.0, 1.0), 32.0);
     }
 
     #[test]
     fn bloom_dominates_when_larger() {
-        approx(hud_bleed(2.0, 4.0, 20.0, 1.0), 22.0);
+        approx(surface_bleed(2.0, 4.0, 20.0, 1.0), 22.0);
         // ...and loses when it isn't.
-        approx(hud_bleed(12.0, 30.0, 20.0, 1.0), 44.0);
+        approx(surface_bleed(12.0, 30.0, 20.0, 1.0), 44.0);
     }
 
     #[test]
     fn scales_with_zoom() {
-        approx(hud_bleed(8.0, 22.0, 0.0, 0.5), 17.0);
-        approx(hud_bleed(8.0, 22.0, 0.0, 2.0), 62.0);
+        approx(surface_bleed(8.0, 22.0, 0.0, 0.5), 17.0);
+        approx(surface_bleed(8.0, 22.0, 0.0, 2.0), 62.0);
     }
 
     #[test]
     fn never_goes_below_the_floor() {
         // Nonsense knobs can't shrink the quad below the surface it frames.
-        approx(hud_bleed(-100.0, 0.0, 0.0, 1.0), 2.0);
-        approx(hud_bleed(8.0, 22.0, 0.0, 0.0), 2.0);
+        approx(surface_bleed(-100.0, 0.0, 0.0, 1.0), 2.0);
+        approx(surface_bleed(8.0, 22.0, 0.0, 0.0), 2.0);
     }
 }
