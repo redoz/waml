@@ -495,6 +495,14 @@ struct Preview {
     zoom_to: f64,
     /// Camera to restore on unlatch.
     cam_baseline: Camera,
+    /// True once the preview is tweening BACK to `baseline` -- the return-to-
+    /// neutral animation played when the cursor lands in the hub. While set the
+    /// camera eases to `cam_baseline` instead of tracking the cursor, and the
+    /// tick loop tears the preview down when it lands.
+    closing: bool,
+    /// Camera at the instant the return tween began: the `from` for the eased
+    /// pan/zoom back to `cam_baseline`. Unused while latching forward.
+    cam_from: Camera,
     /// Frozen screen centre + world size of the reference node, for the
     /// translucent copy left behind where B used to be.
     ghost_b_center: DVec2,
@@ -826,19 +834,21 @@ pub fn zone_of_id(id: LiveId) -> Option<Zone> {
     DIAL_ZONES.into_iter().find(|&z| zone_id(z) == id)
 }
 
-/// The wedge label. Reads as the placement it authors ("A *above* B"), and it
-/// is the only mark in the wedge -- the catalog has no eight-way arrow glyphs,
-/// so placement items carry `icon: None`.
-pub fn zone_label(z: Zone) -> &'static str {
+/// The directional-arrow glyph a dial wedge shows. The arrow points the way the
+/// wedge would push the dragged node relative to the target -- dropping A on B's
+/// top-left zone (`A above left of B`) shows an up-left arrow. The arrow *is* the
+/// wedge's meaning, so the wedge carries no text.
+pub fn zone_arrow(z: Zone) -> crate::icons::Icon {
+    use crate::icons::Icon::*;
     match z {
-        Zone::Top => "Above",
-        Zone::TopRight => "Above right",
-        Zone::Right => "Right",
-        Zone::BottomRight => "Below right",
-        Zone::Bottom => "Below",
-        Zone::BottomLeft => "Below left",
-        Zone::Left => "Left",
-        Zone::TopLeft => "Above left",
+        Zone::Top => ArrowUp,
+        Zone::TopRight => ArrowUpRight,
+        Zone::Right => ArrowRight,
+        Zone::BottomRight => ArrowDownRight,
+        Zone::Bottom => ArrowDown,
+        Zone::BottomLeft => ArrowDownLeft,
+        Zone::Left => ArrowLeft,
+        Zone::TopLeft => ArrowUpLeft,
     }
 }
 
@@ -1399,6 +1409,12 @@ impl Widget for GraphCanvas {
             };
             if self.preview.is_some() {
                 self.apply_preview(cx);
+            }
+            // A finished *closing* preview is the return tween landing: tear it
+            // down (baseline verbatim + clear) now that it has eased home.
+            let closing_done = !tweening && self.preview.as_ref().is_some_and(|p| p.closing);
+            if closing_done {
+                self.unlatch_preview(cx);
             }
             // (The dial's own bloom is animated by `RadialPopup`, which drives
             // its own next-frame clock -- this one only serves the tween.)
@@ -2242,7 +2258,13 @@ impl GraphCanvas {
     fn latch_preview(&mut self, cx: &mut Cx, zone: Zone) {
         // Already heading there -- let the in-flight tween finish rather than
         // restarting it (the cursor jitters inside a wedge; the layout shouldn't).
-        if self.preview.as_ref().is_some_and(|p| p.zone == zone) {
+        // A *closing* preview always re-latches, even onto its own former zone:
+        // sweeping back out of the hub must catch the return tween and reverse it.
+        if self
+            .preview
+            .as_ref()
+            .is_some_and(|p| p.zone == zone && !p.closing)
+        {
             return;
         }
         let (Some(ni), Some(ri)) = (self.drag_node, self.drag_target) else {
@@ -2322,6 +2344,8 @@ impl GraphCanvas {
             zoom_from: self.camera.zoom,
             zoom_to,
             cam_baseline,
+            closing: false,
+            cam_from: self.camera,
             ghost_b_center: gb_center,
             ghost_b_size: gb_size,
             ghost_b_key: gb_key,
@@ -2331,10 +2355,11 @@ impl GraphCanvas {
         self.apply_preview(cx);
     }
 
-    /// Drop the preview and put the committed layout, edges and camera back.
-    /// Instant, not a reverse tween: this fires when the cursor drops into the
-    /// hub or leaves the dial, where a lingering animation would fight the next
-    /// thing the drag does.
+    /// Drop the preview and put the committed layout, edges and camera back,
+    /// instantly. This is the teardown: it fires when the dial closes (drop /
+    /// leave-reach / cancel), where the committed re-solve is about to replace
+    /// the layout anyway, and as the final step of the animated return once its
+    /// tween lands.
     fn unlatch_preview(&mut self, cx: &mut Cx) {
         let Some(p) = self.preview.take() else {
             return;
@@ -2353,6 +2378,42 @@ impl GraphCanvas {
         self.draw_bg.redraw(cx);
     }
 
+    /// Begin the return-to-neutral tween. Rather than snapping the committed
+    /// layout back the instant the cursor lands in the hub, retarget the live
+    /// preview from wherever it stands to `baseline` and ease it home on the same
+    /// curve the forward latch used; the tick loop tears it down (via
+    /// `unlatch_preview`) once it lands. A no-op if no preview is up, or one is
+    /// already closing -- so the repeated hub moves of a resting cursor don't
+    /// restart the animation.
+    fn unlatch_preview_animated(&mut self, cx: &mut Cx) {
+        let cam_now = self.camera;
+        let Some(p) = self.preview.as_mut() else {
+            return;
+        };
+        if p.closing {
+            return;
+        }
+        // Freeze the current interpolated rects as the tween source, aim at the
+        // committed baseline, and flip to the eased-camera return path.
+        let e = ease_out(p.t);
+        let current: Vec<waml::solve::Rect> = p
+            .from
+            .iter()
+            .zip(p.to.iter())
+            .map(|(a, b)| lerp_rect(*a, *b, e))
+            .collect();
+        p.from = current;
+        p.to = p.baseline.clone();
+        p.zoom_from = cam_now.zoom;
+        p.zoom_to = p.cam_baseline.zoom;
+        p.cam_from = cam_now;
+        p.t = 0.0;
+        p.closing = true;
+        self.preview_last_time = 0.0;
+        self.preview_frame = cx.new_next_frame();
+        self.apply_preview(cx);
+    }
+
     /// Write the current tween frame into the scene: interpolated node rects,
     /// straight stand-in edges, and the cursor-anchored camera.
     fn apply_preview(&mut self, cx: &mut Cx) {
@@ -2360,6 +2421,7 @@ impl GraphCanvas {
             return;
         };
         let e = ease_out(p.t);
+        let closing = p.closing;
         let rects: Vec<waml::solve::Rect> = p
             .from
             .iter()
@@ -2384,11 +2446,29 @@ impl GraphCanvas {
                 ];
             }
         }
-        self.apply_preview_camera();
+        if closing {
+            self.apply_preview_return_camera();
+        } else {
+            self.apply_preview_camera();
+        }
         if let Some(ni) = self.drag_node {
             self.drag_ghost = Some(self.scene.nodes[ni].rect);
         }
         self.draw_bg.redraw(cx);
+    }
+
+    /// Camera for the return tween: ease pan + zoom from `cam_from` back to
+    /// `cam_baseline` (the committed view) rather than pinning the dragged node
+    /// to the cursor. The whole diagram, A included, slides home to where it
+    /// committed.
+    fn apply_preview_return_camera(&mut self) {
+        let Some(p) = &self.preview else {
+            return;
+        };
+        let e = ease_out(p.t);
+        self.camera.pan_x = p.cam_from.pan_x + (p.cam_baseline.pan_x - p.cam_from.pan_x) * e;
+        self.camera.pan_y = p.cam_from.pan_y + (p.cam_baseline.pan_y - p.cam_from.pan_y) * e;
+        self.camera.zoom = p.cam_from.zoom + (p.cam_baseline.zoom - p.cam_from.zoom) * e;
     }
 
     /// Re-derive the camera so the dragged node's *previewed* rect lands exactly
@@ -2628,7 +2708,9 @@ impl GraphCanvas {
         self.drag_place = zone.map(zone_placed).unwrap_or_default();
         match zone {
             Some(z) => self.latch_preview(cx, z),
-            None => self.unlatch_preview(cx),
+            // Sweeping onto the hub (the cancel target) eases the layout back to
+            // the committed baseline rather than snapping it.
+            None => self.unlatch_preview_animated(cx),
         }
         self.draw_bg.redraw(cx);
     }

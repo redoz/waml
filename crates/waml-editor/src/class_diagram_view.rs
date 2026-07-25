@@ -408,14 +408,15 @@ impl DocView for ClassDiagramView {
                     }
                     // Pop the dial itself: the shared radial, one wedge per
                     // zone in its own clockwise-from-12 order, a zone the
-                    // solver would reject drawn as a danger wedge. No glyph --
-                    // the wedge's direction *is* the icon (`icon: None`).
+                    // solver would reject drawn as a danger wedge. Each wedge
+                    // carries a directional-arrow glyph (`zone_arrow`) pointing
+                    // the way it would place the dragged node -- no text label.
                     let items = crate::canvas::DIAL_ZONES
                         .into_iter()
                         .map(|z| PopupItem {
                             id: crate::canvas::zone_id(z),
-                            label: crate::canvas::zone_label(z).into(),
-                            icon: None,
+                            label: String::new(),
+                            icon: Some(crate::canvas::zone_arrow(z)),
                             danger: red.contains(&z),
                             enabled: true,
                         })
