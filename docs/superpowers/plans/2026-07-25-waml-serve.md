@@ -698,3 +698,1163 @@ Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>"
 ```
 
 ---
+
+### Task 4: Token and request guards
+
+The access controls, still as pure functions with no server around them. Every rule from the spec's Security section that can be decided from a token string plus a few headers lives here and is tested here.
+
+**Files:**
+- Create: `crates/waml-cli/src/serve/guard.rs`
+- Modify: `crates/waml-cli/src/serve/mod.rs` (add `pub mod guard;`)
+
+**Interfaces:**
+- Consumes: nothing.
+- Produces:
+  - `pub struct Token(String)` with `pub fn generate() -> Token`, `pub fn from_raw(s: String) -> Token`, `pub fn as_str(&self) -> &str`, `pub fn matches(&self, presented: &str) -> bool`
+  - `pub struct Guard { pub token: Token, pub origin: String, pub port: u16, pub bind_all: bool }`
+  - `pub enum Deny { Unauthorized, Forbidden(String) }`
+  - `pub struct ReqFacts<'a> { pub bearer: Option<&'a str>, pub query_token: Option<&'a str>, pub origin: Option<&'a str>, pub host: Option<&'a str>, pub client_header: Option<&'a str>, pub mutating: bool }`
+  - `pub fn check(g: &Guard, req: &ReqFacts) -> Result<(), Deny>`
+
+- [ ] **Step 1: Write the failing tests**
+
+Create `crates/waml-cli/src/serve/guard.rs` containing only:
+
+```rust
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn guard() -> Guard {
+        Guard {
+            token: Token::from_raw("secret".into()),
+            origin: "http://127.0.0.1:8099".into(),
+            port: 8099,
+            bind_all: false,
+        }
+    }
+
+    fn facts() -> ReqFacts<'static> {
+        ReqFacts {
+            bearer: Some("secret"),
+            query_token: None,
+            origin: None,
+            host: Some("127.0.0.1:8099"),
+            client_header: None,
+            mutating: false,
+        }
+    }
+
+    #[test]
+    fn a_generated_token_is_long_and_unique() {
+        let a = Token::generate();
+        let b = Token::generate();
+        assert!(a.as_str().len() >= 43, "got {}", a.as_str().len());
+        assert_ne!(a.as_str(), b.as_str());
+        assert!(a
+            .as_str()
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_'));
+    }
+
+    #[test]
+    fn accepts_the_token_in_either_position() {
+        assert!(check(&guard(), &facts()).is_ok());
+        let f = ReqFacts { bearer: None, query_token: Some("secret"), ..facts() };
+        assert!(check(&guard(), &f).is_ok());
+    }
+
+    #[test]
+    fn rejects_a_missing_or_wrong_token() {
+        let f = ReqFacts { bearer: None, ..facts() };
+        assert!(matches!(check(&guard(), &f), Err(Deny::Unauthorized)));
+        let f = ReqFacts { bearer: Some("secre"), ..facts() };
+        assert!(matches!(check(&guard(), &f), Err(Deny::Unauthorized)));
+        let f = ReqFacts { bearer: Some("secretx"), ..facts() };
+        assert!(matches!(check(&guard(), &f), Err(Deny::Unauthorized)));
+    }
+
+    #[test]
+    fn rejects_a_foreign_origin() {
+        let f = ReqFacts { origin: Some("https://redoz.github.io"), ..facts() };
+        assert!(matches!(check(&guard(), &f), Err(Deny::Forbidden(_))));
+        let f = ReqFacts { origin: Some("http://127.0.0.1:8099"), ..facts() };
+        assert!(check(&guard(), &f).is_ok());
+    }
+
+    #[test]
+    fn rejects_a_rebound_host() {
+        let f = ReqFacts { host: Some("evil.example.com:8099"), ..facts() };
+        assert!(matches!(check(&guard(), &f), Err(Deny::Forbidden(_))));
+        let f = ReqFacts { host: Some("[::1]:8099"), ..facts() };
+        assert!(check(&guard(), &f).is_ok());
+        let f = ReqFacts { host: Some("127.0.0.1:9999"), ..facts() };
+        assert!(matches!(check(&guard(), &f), Err(Deny::Forbidden(_))));
+    }
+
+    #[test]
+    fn mutating_requests_need_the_client_header() {
+        let f = ReqFacts { mutating: true, ..facts() };
+        assert!(matches!(check(&guard(), &f), Err(Deny::Forbidden(_))));
+        let f = ReqFacts { mutating: true, client_header: Some("1"), ..facts() };
+        assert!(check(&guard(), &f).is_ok());
+    }
+
+    #[test]
+    fn bind_all_relaxes_only_the_host_check() {
+        let g = Guard { bind_all: true, ..guard() };
+        let f = ReqFacts { host: Some("192.168.1.5:8099"), ..facts() };
+        assert!(check(&g, &f).is_ok());
+        let f = ReqFacts { host: Some("192.168.1.5:8099"), bearer: None, ..facts() };
+        assert!(matches!(check(&g, &f), Err(Deny::Unauthorized)));
+    }
+}
+```
+
+`Guard` must therefore derive nothing special, but it does need to be constructible field-by-field with struct-update syntax — keep all fields `pub`.
+
+- [ ] **Step 2: Run the tests to verify they fail**
+
+Run: `cargo test -p waml-cli serve::guard`
+Expected: FAIL to compile — `cannot find struct 'Guard' in this scope`.
+
+- [ ] **Step 3: Implement**
+
+Above the test module in the same file:
+
+```rust
+//! Access control for `waml serve`.
+//!
+//! The token is the control. Origin, Host and the custom-header requirement
+//! are defence in depth against a browser being made to act as a confused
+//! deputy; none of them is trusted on its own, and loopback is not treated as
+//! authentication at all.
+
+use rand::RngCore;
+use subtle::ConstantTimeEq;
+
+/// A per-invocation access token. Never persisted, and never printed except in
+/// the single startup URL.
+#[derive(Clone)]
+pub struct Token(String);
+
+impl Token {
+    /// 256 bits from the OS CSPRNG, URL-safe base64 without padding so it can
+    /// ride in a query string untouched.
+    pub fn generate() -> Token {
+        let mut raw = [0u8; 32];
+        rand::rngs::OsRng.fill_bytes(&mut raw);
+        Token(b64url(&raw))
+    }
+
+    /// Adopt an existing string. Used by tests and by the router, which is
+    /// handed the same token `run` printed.
+    pub fn from_raw(s: String) -> Token {
+        Token(s)
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+
+    /// Constant-time compare. Length is compared in the clear because the
+    /// token length is public — it is always 43 characters.
+    pub fn matches(&self, presented: &str) -> bool {
+        let a = self.0.as_bytes();
+        let b = presented.as_bytes();
+        a.len() == b.len() && bool::from(a.ct_eq(b))
+    }
+}
+
+/// URL-safe base64, no padding. Hand-rolled rather than adding a dependency
+/// for twelve lines.
+fn b64url(bytes: &[u8]) -> String {
+    const ALPHA: &[u8; 64] =
+        b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+    let mut out = String::new();
+    for chunk in bytes.chunks(3) {
+        let b = [
+            chunk[0],
+            *chunk.get(1).unwrap_or(&0),
+            *chunk.get(2).unwrap_or(&0),
+        ];
+        let n = ((b[0] as u32) << 16) | ((b[1] as u32) << 8) | b[2] as u32;
+        for i in 0..chunk.len() + 1 {
+            out.push(ALPHA[((n >> (18 - 6 * i)) & 0x3f) as usize] as char);
+        }
+    }
+    out
+}
+
+/// Server-side facts every check is made against.
+pub struct Guard {
+    pub token: Token,
+    /// The server's own origin, e.g. `http://127.0.0.1:8099`.
+    pub origin: String,
+    pub port: u16,
+    pub bind_all: bool,
+}
+
+/// Request-side facts, read from headers before any body is touched.
+pub struct ReqFacts<'a> {
+    pub bearer: Option<&'a str>,
+    pub query_token: Option<&'a str>,
+    pub origin: Option<&'a str>,
+    pub host: Option<&'a str>,
+    pub client_header: Option<&'a str>,
+    /// True for routes that write. Only these require the custom header.
+    pub mutating: bool,
+}
+
+#[derive(Debug)]
+pub enum Deny {
+    Unauthorized,
+    Forbidden(String),
+}
+
+/// Run every check. All must pass; the order only decides which error the
+/// caller is told about first.
+pub fn check(g: &Guard, req: &ReqFacts) -> Result<(), Deny> {
+    let presented = req.bearer.or(req.query_token).ok_or(Deny::Unauthorized)?;
+    if !g.token.matches(presented) {
+        return Err(Deny::Unauthorized);
+    }
+    if let Some(origin) = req.origin {
+        if origin != g.origin {
+            return Err(Deny::Forbidden(format!("origin `{origin}` not allowed")));
+        }
+    }
+    let host = req
+        .host
+        .ok_or_else(|| Deny::Forbidden("no Host header".into()))?;
+    if !host_ok(g, host) {
+        return Err(Deny::Forbidden(format!("host `{host}` not allowed")));
+    }
+    if req.mutating && req.client_header != Some("1") {
+        return Err(Deny::Forbidden("missing X-Waml-Client: 1".into()));
+    }
+    Ok(())
+}
+
+/// A loopback host on the bound port, or — under `--bind-all` — any host on
+/// that port.
+///
+/// The port comparison is what makes this an anti-rebinding control: a
+/// hostile name that resolves to 127.0.0.1 still arrives with its own name in
+/// `Host`, and is refused here.
+fn host_ok(g: &Guard, host: &str) -> bool {
+    let Some((name, port)) = split_host(host) else {
+        return false;
+    };
+    if port != g.port {
+        return false;
+    }
+    if g.bind_all {
+        return true;
+    }
+    matches!(name, "127.0.0.1" | "localhost" | "[::1]" | "::1")
+}
+
+/// Split `host:port`, tolerating a bracketed IPv6 literal.
+fn split_host(host: &str) -> Option<(&str, u16)> {
+    let (name, port) = if let Some(rest) = host.strip_prefix('[') {
+        let end = rest.find(']')?;
+        (&host[..end + 2], rest[end + 1..].strip_prefix(':')?)
+    } else {
+        let i = host.rfind(':')?;
+        (&host[..i], &host[i + 1..])
+    };
+    Some((name, port.parse().ok()?))
+}
+```
+
+`localhost` is accepted because browsers resolve it to loopback and it makes the printed URL friendlier. It does not weaken the control: the port must still match a socket this process bound.
+
+- [ ] **Step 4: Declare the module**
+
+In `crates/waml-cli/src/serve/mod.rs`, next to `pub mod paths;`, add `pub mod guard;`.
+
+- [ ] **Step 5: Run the tests to verify they pass**
+
+Run: `cargo test -p waml-cli serve::guard`
+Expected: PASS, 7 tests.
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add crates/waml-cli/src/serve
+git commit -m "feat(serve): token, origin, host and client-header guards
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>"
+```
+
+---
+
+### Task 5: Serve state — bundle, revision, apply, write-back
+
+The semantic core, with no HTTP in it. Because `ServeState` is directly testable, the route tasks that follow only have to test wiring.
+
+**Files:**
+- Create: `crates/waml-cli/src/serve/state.rs`
+- Modify: `crates/waml-cli/src/serve/mod.rs` (add `pub mod state;`)
+
+**Interfaces:**
+- Consumes: `crate::io::{read_files, write_back}` (`crates/waml-cli/src/io.rs:121` and `:150`), `crate::serve::paths::is_safe_rel`, `waml::ops::{apply, OpError}` (`crates/waml/src/ops/mod.rs:183`, error fields `index`/`op`/`selector`/`reason`), `waml::parse::build_model` (`crates/waml/src/parse.rs:822`), `waml::validate::validate`, `waml_ops_dto::OpDto`.
+- Produces:
+  - `pub struct ServeState` with `pub fn revision(&self) -> u64`, `pub fn bundle(&self) -> &[(String, String)]`, `pub fn root(&self) -> &Path`, `pub fn model(&self) -> waml::model::Model`, `pub fn diagnostics(&self) -> Vec<waml::diagnostic::Diagnostic>`, `pub fn apply_ops(&mut self, at: u64, dtos: &[OpDto]) -> Result<Vec<(String, String)>, ApplyFailure>`
+  - `pub fn load(root: &Path) -> std::io::Result<ServeState>`
+  - `pub enum ApplyFailure { Stale { current: u64 }, Op { index: usize, reason: String }, Io(String) }`
+
+- [ ] **Step 1: Write the failing tests**
+
+Create `crates/waml-cli/src/serve/state.rs` containing only:
+
+```rust
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A minimal on-disk bundle: one package index plus one class document.
+    fn fixture() -> (tempfile::TempDir, PathBuf) {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().to_path_buf();
+        std::fs::write(
+            root.join("index.md"),
+            "---\ntype: uml.Package\n---\n\n# Shop\n",
+        )
+        .unwrap();
+        std::fs::write(
+            root.join("order.md"),
+            "---\ntype: uml.Class\n---\n\n# Order\n",
+        )
+        .unwrap();
+        (dir, root)
+    }
+
+    fn attr_add() -> OpDto {
+        serde_json::from_str(
+            r#"{"op":"attr.add","node":"order","name":"total","tyToken":"Money"}"#,
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn load_reads_the_directory_and_starts_at_revision_zero() {
+        let (_d, root) = fixture();
+        let st = load(&root).unwrap();
+        assert_eq!(st.revision(), 0);
+        assert_eq!(st.bundle().len(), 2);
+        assert!(st.bundle().iter().any(|(p, _)| p.ends_with("order.md")));
+    }
+
+    #[test]
+    fn the_model_projection_equals_calling_waml_directly() {
+        let (_d, root) = fixture();
+        let st = load(&root).unwrap();
+        let direct = waml::parse::build_model(st.bundle());
+        assert_eq!(
+            serde_json::to_string(&st.model()).unwrap(),
+            serde_json::to_string(&direct).unwrap()
+        );
+        let _ = st.diagnostics();
+    }
+
+    #[test]
+    fn apply_bumps_the_revision_and_returns_only_changed_files() {
+        let (_d, root) = fixture();
+        let mut st = load(&root).unwrap();
+        let before_index = std::fs::read_to_string(root.join("index.md")).unwrap();
+        let changed = st.apply_ops(0, &[attr_add()]).unwrap();
+        assert_eq!(st.revision(), 1);
+        assert_eq!(changed.len(), 1, "only order.md changed: {changed:?}");
+        assert!(changed[0].0.ends_with("order.md"));
+        assert!(std::fs::read_to_string(root.join("order.md"))
+            .unwrap()
+            .contains("total"));
+        assert_eq!(
+            std::fs::read_to_string(root.join("index.md")).unwrap(),
+            before_index,
+            "an untouched file must not be rewritten"
+        );
+    }
+
+    #[test]
+    fn a_stale_revision_is_rejected_without_writing() {
+        let (_d, root) = fixture();
+        let mut st = load(&root).unwrap();
+        st.apply_ops(0, &[attr_add()]).unwrap();
+        let before = std::fs::read_to_string(root.join("order.md")).unwrap();
+        match st.apply_ops(0, &[attr_add()]) {
+            Err(ApplyFailure::Stale { current }) => assert_eq!(current, 1),
+            other => panic!("expected Stale, got {other:?}"),
+        }
+        assert_eq!(
+            std::fs::read_to_string(root.join("order.md")).unwrap(),
+            before
+        );
+    }
+
+    #[test]
+    fn a_failing_op_writes_nothing_and_names_its_index() {
+        let (_d, root) = fixture();
+        let mut st = load(&root).unwrap();
+        let bad: OpDto = serde_json::from_str(
+            r#"{"op":"attr.add","node":"no-such-node","name":"x","tyToken":"Money"}"#,
+        )
+        .unwrap();
+        let before = std::fs::read_to_string(root.join("order.md")).unwrap();
+        match st.apply_ops(0, &[attr_add(), bad]) {
+            Err(ApplyFailure::Op { index, .. }) => assert_eq!(index, 1),
+            other => panic!("expected Op failure, got {other:?}"),
+        }
+        assert_eq!(st.revision(), 0, "a failed batch must not bump the revision");
+        assert_eq!(
+            std::fs::read_to_string(root.join("order.md")).unwrap(),
+            before
+        );
+    }
+}
+```
+
+If the `attr.add` JSON above does not match the real DTO field names, read the enum at `crates/waml-ops-dto/src/lib.rs:15` and fix the **test** to the real spelling. Never reshape the DTO to fit a guess in this plan.
+
+- [ ] **Step 2: Run the tests to verify they fail**
+
+Run: `cargo test -p waml-cli serve::state`
+Expected: FAIL to compile — `cannot find function 'load' in this scope`.
+
+- [ ] **Step 3: Implement**
+
+Above the test module in the same file:
+
+```rust
+//! The served bundle, its revision, and the only path that mutates it.
+//!
+//! Deliberately free of HTTP concepts: this is where "the server owns
+//! validation and canonical formatting" is actually true, and it is tested
+//! without a socket.
+
+use std::collections::BTreeMap;
+use std::path::{Path, PathBuf};
+
+use waml_ops_dto::OpDto;
+
+use crate::io;
+use crate::serve::paths::is_safe_rel;
+
+pub struct ServeState {
+    root: PathBuf,
+    bundle: Vec<(String, String)>,
+    /// Bumped on every successful apply. Clients echo the revision they hold;
+    /// a mismatch means they are working from a stale read.
+    revision: u64,
+}
+
+#[derive(Debug)]
+pub enum ApplyFailure {
+    /// The client's revision is behind. It must re-read before retrying.
+    Stale { current: u64 },
+    /// An op was rejected. Nothing was written.
+    Op { index: usize, reason: String },
+    /// Filesystem or path-confinement failure.
+    Io(String),
+}
+
+/// Read every markdown document under `root` into memory.
+pub fn load(root: &Path) -> std::io::Result<ServeState> {
+    let bundle = io::read_files(std::slice::from_ref(&root.to_path_buf()))?;
+    Ok(ServeState {
+        root: root.to_path_buf(),
+        bundle,
+        revision: 0,
+    })
+}
+
+impl ServeState {
+    pub fn revision(&self) -> u64 {
+        self.revision
+    }
+
+    pub fn bundle(&self) -> &[(String, String)] {
+        &self.bundle
+    }
+
+    pub fn root(&self) -> &Path {
+        &self.root
+    }
+
+    /// The resolved model. Identical to calling `waml::parse::build_model` on
+    /// `bundle()` — that equivalence is the entire justification for the
+    /// `/api/model` projection, so it is asserted in the tests.
+    pub fn model(&self) -> waml::model::Model {
+        waml::parse::build_model(&self.bundle)
+    }
+
+    pub fn diagnostics(&self) -> Vec<waml::diagnostic::Diagnostic> {
+        waml::validate::validate(&self.bundle)
+    }
+
+    /// Apply `dtos` as one all-or-nothing batch.
+    ///
+    /// `at` is the revision the client believes it holds. On success the new
+    /// bundle is written to disk, the revision is bumped, and only the
+    /// documents whose bytes actually changed are returned.
+    pub fn apply_ops(
+        &mut self,
+        at: u64,
+        dtos: &[OpDto],
+    ) -> Result<Vec<(String, String)>, ApplyFailure> {
+        if at != self.revision {
+            return Err(ApplyFailure::Stale {
+                current: self.revision,
+            });
+        }
+        let mut ops = Vec::with_capacity(dtos.len());
+        for (i, dto) in dtos.iter().enumerate() {
+            ops.push(
+                dto.to_op()
+                    .map_err(|reason| ApplyFailure::Op { index: i, reason })?,
+            );
+        }
+        let next = waml::ops::apply(&self.bundle, &ops).map_err(|e| ApplyFailure::Op {
+            index: e.index,
+            reason: e.reason,
+        })?;
+
+        // Confinement runs over the RESULT, so an op that invents a path is
+        // caught even though no op names a path directly. Checked before any
+        // write, so a rejected batch leaves the disk untouched.
+        for (p, _) in &next {
+            is_safe_rel(p).map_err(ApplyFailure::Io)?;
+        }
+
+        io::write_back(&self.bundle, &next).map_err(|e| ApplyFailure::Io(e.to_string()))?;
+
+        let old: BTreeMap<&str, &str> = self
+            .bundle
+            .iter()
+            .map(|(p, c)| (p.as_str(), c.as_str()))
+            .collect();
+        let changed: Vec<(String, String)> = next
+            .iter()
+            .filter(|(p, c)| old.get(p.as_str()) != Some(&c.as_str()))
+            .cloned()
+            .collect();
+
+        self.bundle = next;
+        self.revision += 1;
+        Ok(changed)
+    }
+}
+```
+
+`io::write_back` opens exactly the path strings that appear in the bundle, and `io::read_files` produced those from the served root — so `is_safe_rel` above is checking the same strings that will be opened. If `read_files` turns out to yield paths that are absolute or otherwise not root-relative, store them relative in `load` and join `root` at the write site. Do **not** relax `is_safe_rel` to accommodate it.
+
+- [ ] **Step 4: Declare the module**
+
+In `crates/waml-cli/src/serve/mod.rs`, add `pub mod state;`. `tempfile` and `serde_json` are already available from Task 1.
+
+- [ ] **Step 5: Run the tests to verify they pass**
+
+Run: `cargo test -p waml-cli serve::state`
+Expected: PASS, 5 tests.
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add crates/waml-cli/src/serve
+git commit -m "feat(serve): bundle state, revisions and all-or-nothing op apply
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>"
+```
+
+---
+
+### Task 6: Read routes and the running server
+
+The first task with a socket. Brings up axum, wires the guard into every handler, serves the three read projections, and turns `serve::run` from a stub into a real server.
+
+**Files:**
+- Create: `crates/waml-cli/src/lib.rs`
+- Create: `crates/waml-cli/src/serve/routes.rs`
+- Create: `crates/waml-cli/tests/serve_e2e.rs`
+- Modify: `crates/waml-cli/Cargo.toml` (add a `[lib]` target)
+- Modify: `crates/waml-cli/src/main.rs` (use the library's modules instead of declaring its own)
+- Modify: `crates/waml-cli/src/serve/mod.rs` (real `run`)
+
+**Interfaces:**
+- Consumes: `serve::state::{load, ServeState, ApplyFailure}`, `serve::guard::{check, Guard, Deny, ReqFacts, Token}`.
+- Produces:
+  - `pub struct App { pub state: Arc<Mutex<ServeState>>, pub guard: Arc<Guard>, pub api_only: bool }`
+  - `pub fn App::new(state: ServeState, token: Token, port: u16, bind_all: bool, api_only: bool) -> App`
+  - `pub fn router(app: App) -> axum::Router`
+  - `pub async fn serve_on(listener: tokio::net::TcpListener, app: App) -> std::io::Result<()>`
+  - Response shapes: `{"revision":N,"files":[[path,md],…]}`, `{"revision":N,"model":{…}}`, `{"revision":N,"diagnostics":[…]}`
+
+- [ ] **Step 1: Give the crate a library target**
+
+The integration test drives the server in-process, so the modules must be reachable from outside the binary.
+
+Add to `crates/waml-cli/Cargo.toml`, above the existing `[[bin]]`:
+
+```toml
+[lib]
+name = "waml_cli"
+path = "src/lib.rs"
+```
+
+Create `crates/waml-cli/src/lib.rs`:
+
+```rust
+//! Library face of the CLI, so integration tests can drive the server
+//! in-process instead of shelling out to the binary.
+
+pub mod commands;
+pub mod io;
+pub mod lsp;
+pub mod ops_dto;
+pub mod serve;
+```
+
+In `crates/waml-cli/src/main.rs`, delete the `mod commands;` / `mod io;` / `mod lsp;` / `mod ops_dto;` / `mod serve;` declarations and replace them with:
+
+```rust
+use waml_cli::{commands, io, lsp, ops_dto, serve};
+```
+
+A binary can name its own package's library directly; no extra dependency entry is needed. If any of those modules referred to a sibling as `crate::io`, that still resolves inside the library — only `main.rs` changes.
+
+Run: `cargo test -p waml-cli`
+Expected: the existing suite still passes with no duplicated modules.
+
+- [ ] **Step 2: Write the failing integration test**
+
+Create `crates/waml-cli/tests/serve_e2e.rs`:
+
+```rust
+//! Drives a real server on an ephemeral port. No mocks — the point is that the
+//! guard, the router and the state agree with each other.
+
+use std::net::SocketAddr;
+
+use waml_cli::serve::{self, guard::Token, routes};
+
+fn fixture() -> (tempfile::TempDir, std::path::PathBuf) {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().to_path_buf();
+    std::fs::write(root.join("index.md"), "---\ntype: uml.Package\n---\n\n# Shop\n").unwrap();
+    std::fs::write(root.join("order.md"), "---\ntype: uml.Class\n---\n\n# Order\n").unwrap();
+    (dir, root)
+}
+
+/// Boot a server on port 0 and return its address plus the token it wants.
+async fn boot(root: &std::path::Path) -> (SocketAddr, String) {
+    let raw = "test-token".to_string();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let app = routes::App::new(
+        serve::state::load(root).unwrap(),
+        Token::from_raw(raw.clone()),
+        addr.port(),
+        false,
+        true,
+    );
+    tokio::spawn(async move { routes::serve_on(listener, app).await.unwrap() });
+    (addr, raw)
+}
+
+#[tokio::test]
+async fn reads_require_a_token() {
+    let (_d, root) = fixture();
+    let (addr, _tok) = boot(&root).await;
+    let res = reqwest::Client::new()
+        .get(format!("http://127.0.0.1:{}/api/bundle", addr.port()))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(res.status(), 401);
+}
+
+#[tokio::test]
+async fn bundle_model_and_diagnostics_all_carry_the_revision() {
+    let (_d, root) = fixture();
+    let (addr, tok) = boot(&root).await;
+    let c = reqwest::Client::new();
+    for route in ["bundle", "model", "diagnostics"] {
+        let v: serde_json::Value = c
+            .get(format!("http://127.0.0.1:{}/api/{route}", addr.port()))
+            .bearer_auth(&tok)
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        assert_eq!(v["revision"], 0, "{route}");
+    }
+    let v: serde_json::Value = c
+        .get(format!("http://127.0.0.1:{}/api/bundle", addr.port()))
+        .bearer_auth(&tok)
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(v["files"].as_array().unwrap().len(), 2);
+}
+
+#[tokio::test]
+async fn the_token_may_ride_in_the_query_string() {
+    let (_d, root) = fixture();
+    let (addr, tok) = boot(&root).await;
+    let res = reqwest::get(format!(
+        "http://127.0.0.1:{}/api/bundle?token={tok}",
+        addr.port()
+    ))
+    .await
+    .unwrap();
+    assert_eq!(res.status(), 200);
+}
+
+#[tokio::test]
+async fn a_foreign_origin_is_refused_even_with_the_token() {
+    let (_d, root) = fixture();
+    let (addr, tok) = boot(&root).await;
+    let res = reqwest::Client::new()
+        .get(format!("http://127.0.0.1:{}/api/bundle", addr.port()))
+        .bearer_auth(&tok)
+        .header("Origin", "https://redoz.github.io")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(res.status(), 403);
+}
+
+#[tokio::test]
+async fn the_model_route_matches_calling_waml_directly() {
+    let (_d, root) = fixture();
+    let (addr, tok) = boot(&root).await;
+    let v: serde_json::Value = reqwest::Client::new()
+        .get(format!("http://127.0.0.1:{}/api/model", addr.port()))
+        .bearer_auth(&tok)
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let bundle = waml_cli::io::read_files(&[root.clone()]).unwrap();
+    let direct = serde_json::to_value(waml::parse::build_model(&bundle)).unwrap();
+    assert_eq!(v["model"], direct);
+}
+```
+
+This test needs `tokio`'s `macros` feature (already in the workspace feature list) and `waml` as a dev-dependency of `waml-cli` — it is already a normal dependency, so nothing to add.
+
+- [ ] **Step 3: Run the test to verify it fails**
+
+Run: `cargo test -p waml-cli --test serve_e2e`
+Expected: FAIL to compile — `could not find 'routes' in 'serve'`.
+
+- [ ] **Step 4: Implement the router**
+
+Create `crates/waml-cli/src/serve/routes.rs`:
+
+```rust
+//! HTTP surface. Every semantic decision belongs to `state`; this module only
+//! translates between it and status codes.
+
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
+
+use axum::extract::{Query, State};
+use axum::http::{HeaderMap, StatusCode};
+use axum::response::{IntoResponse, Response};
+use axum::routing::get;
+use axum::{Json, Router};
+use serde_json::json;
+use tokio::net::TcpListener;
+
+use crate::serve::guard::{check, Deny, Guard, ReqFacts, Token};
+use crate::serve::state::ServeState;
+
+#[derive(Clone)]
+pub struct App {
+    pub state: Arc<Mutex<ServeState>>,
+    pub guard: Arc<Guard>,
+    pub api_only: bool,
+}
+
+impl App {
+    pub fn new(state: ServeState, token: Token, port: u16, bind_all: bool, api_only: bool) -> App {
+        let host = if bind_all { "0.0.0.0" } else { "127.0.0.1" };
+        App {
+            state: Arc::new(Mutex::new(state)),
+            guard: Arc::new(Guard {
+                token,
+                origin: format!("http://{host}:{port}"),
+                port,
+                bind_all,
+            }),
+            api_only,
+        }
+    }
+}
+
+/// Pull the guard's inputs out of a request, so handlers stay one line of
+/// policy each.
+fn facts<'a>(
+    headers: &'a HeaderMap,
+    q: &'a HashMap<String, String>,
+    mutating: bool,
+) -> ReqFacts<'a> {
+    let hv = |k: &str| headers.get(k).and_then(|v| v.to_str().ok());
+    ReqFacts {
+        bearer: hv("authorization").and_then(|v| v.strip_prefix("Bearer ")),
+        query_token: q.get("token").map(|s| s.as_str()),
+        origin: hv("origin"),
+        host: hv("host"),
+        client_header: hv("x-waml-client"),
+        mutating,
+    }
+}
+
+fn deny_response(d: Deny) -> Response {
+    match d {
+        Deny::Unauthorized => (
+            StatusCode::UNAUTHORIZED,
+            Json(json!({"error": "missing or invalid token"})),
+        )
+            .into_response(),
+        Deny::Forbidden(why) => {
+            (StatusCode::FORBIDDEN, Json(json!({"error": why}))).into_response()
+        }
+    }
+}
+
+/// Guard a handler, returning early on denial.
+macro_rules! guarded {
+    ($app:expr, $headers:expr, $q:expr, $mutating:expr) => {
+        if let Err(d) = check(&$app.guard, &facts(&$headers, &$q, $mutating)) {
+            return deny_response(d);
+        }
+    };
+}
+
+async fn get_bundle(
+    State(app): State<App>,
+    headers: HeaderMap,
+    Query(q): Query<HashMap<String, String>>,
+) -> Response {
+    guarded!(app, headers, q, false);
+    let st = app.state.lock().unwrap();
+    Json(json!({ "revision": st.revision(), "files": st.bundle() })).into_response()
+}
+
+async fn get_model(
+    State(app): State<App>,
+    headers: HeaderMap,
+    Query(q): Query<HashMap<String, String>>,
+) -> Response {
+    guarded!(app, headers, q, false);
+    let st = app.state.lock().unwrap();
+    Json(json!({ "revision": st.revision(), "model": st.model() })).into_response()
+}
+
+async fn get_diagnostics(
+    State(app): State<App>,
+    headers: HeaderMap,
+    Query(q): Query<HashMap<String, String>>,
+) -> Response {
+    guarded!(app, headers, q, false);
+    let st = app.state.lock().unwrap();
+    Json(json!({ "revision": st.revision(), "diagnostics": st.diagnostics() })).into_response()
+}
+
+pub fn router(app: App) -> Router {
+    Router::new()
+        .route("/api/bundle", get(get_bundle))
+        .route("/api/model", get(get_model))
+        .route("/api/diagnostics", get(get_diagnostics))
+        .with_state(app)
+}
+
+pub async fn serve_on(listener: TcpListener, app: App) -> std::io::Result<()> {
+    axum::serve(listener, router(app)).await
+}
+```
+
+- [ ] **Step 5: Make `run` bring the server up**
+
+In `crates/waml-cli/src/serve/mod.rs`, add `pub mod routes;` alongside the other module declarations and replace the stub body of `run`:
+
+```rust
+pub fn run(args: ServeArgs) -> i32 {
+    let state = match state::load(&args.dir) {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("waml: {}: {e}", args.dir.display());
+            return 2;
+        }
+    };
+    let token = guard::Token::generate();
+    let host = if args.bind_all { "0.0.0.0" } else { "127.0.0.1" };
+
+    let rt = match tokio::runtime::Runtime::new() {
+        Ok(rt) => rt,
+        Err(e) => {
+            eprintln!("waml: {e}");
+            return 2;
+        }
+    };
+    rt.block_on(async move {
+        let listener = match tokio::net::TcpListener::bind((host, args.port)).await {
+            Ok(l) => l,
+            Err(e) => {
+                eprintln!("waml: bind {host}:{}: {e}", args.port);
+                return 2;
+            }
+        };
+        let port = listener.local_addr().map(|a| a.port()).unwrap_or(args.port);
+        if args.bind_all {
+            eprintln!(
+                "waml serve: WARNING binding 0.0.0.0 — every host that can reach \
+                 this machine can reach this API if it learns the token below"
+            );
+        }
+        eprintln!(
+            "waml serve  http://127.0.0.1:{port}/?token={}   (serving {})",
+            token.as_str(),
+            args.dir.display()
+        );
+        let app = routes::App::new(state, token, port, args.bind_all, args.api_only);
+        match routes::serve_on(listener, app).await {
+            Ok(()) => 0,
+            Err(e) => {
+                eprintln!("waml: {e}");
+                2
+            }
+        }
+    })
+}
+```
+
+`--no-open` is parsed and, for now, controls nothing: there is no browser launch yet. Do **not** add an `open`-style dependency to give it something to suppress; if a launch is added later, it reads this flag then.
+
+- [ ] **Step 6: Run the tests to verify they pass**
+
+Run: `cargo test -p waml-cli --test serve_e2e`
+Expected: PASS, 5 tests.
+
+- [ ] **Step 7: Verify by hand**
+
+In one shell: `cargo run -p waml-cli -- serve crates/waml-editor/tests/fixtures/mini --port 8123`
+In another, using the token it printed:
+
+```bash
+curl -s "http://127.0.0.1:8123/api/model?token=TOKEN" | head -c 200
+curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:8123/api/model
+```
+
+Expected: JSON beginning `{"revision":0,"model":{`, then `401`.
+
+- [ ] **Step 8: Commit**
+
+```bash
+git add crates/waml-cli
+git commit -m "feat(serve): serve bundle, model and diagnostics over guarded HTTP
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>"
+```
+
+---
+
+### Task 7: `POST /api/ops`
+
+The write path, including the two failure modes that matter: a stale client and a rejected op.
+
+**Files:**
+- Modify: `crates/waml-cli/src/serve/routes.rs`
+- Modify: `crates/waml-cli/tests/serve_e2e.rs`
+
+**Interfaces:**
+- Consumes: `ServeState::apply_ops`, `ApplyFailure`, `waml_ops_dto::OpDto`.
+- Produces: `pub struct OpsRequest { pub revision: u64, pub ops: Vec<OpDto> }`; route `POST /api/ops` returning `{"revision":N+1,"changed":[[path,md],…]}`, or `409 {"error":"stale","current":N}`, or `422 {"index":I,"reason":"…"}`, or `500 {"error":"…"}`.
+
+- [ ] **Step 1: Write the failing tests**
+
+Append to `crates/waml-cli/tests/serve_e2e.rs`:
+
+```rust
+fn attr_add() -> serde_json::Value {
+    serde_json::json!({"op":"attr.add","node":"order","name":"total","tyToken":"Money"})
+}
+
+#[tokio::test]
+async fn ops_write_the_file_and_return_only_what_changed() {
+    let (_d, root) = fixture();
+    let (addr, tok) = boot(&root).await;
+    let res = reqwest::Client::new()
+        .post(format!("http://127.0.0.1:{}/api/ops", addr.port()))
+        .bearer_auth(&tok)
+        .header("X-Waml-Client", "1")
+        .json(&serde_json::json!({"revision": 0, "ops": [attr_add()]}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(res.status(), 200);
+    let v: serde_json::Value = res.json().await.unwrap();
+    assert_eq!(v["revision"], 1);
+    let changed = v["changed"].as_array().unwrap();
+    assert_eq!(changed.len(), 1);
+    assert!(changed[0][0].as_str().unwrap().ends_with("order.md"));
+    assert!(std::fs::read_to_string(root.join("order.md"))
+        .unwrap()
+        .contains("total"));
+}
+
+#[tokio::test]
+async fn a_write_without_the_client_header_is_refused() {
+    let (_d, root) = fixture();
+    let (addr, tok) = boot(&root).await;
+    let res = reqwest::Client::new()
+        .post(format!("http://127.0.0.1:{}/api/ops", addr.port()))
+        .bearer_auth(&tok)
+        .json(&serde_json::json!({"revision": 0, "ops": [attr_add()]}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(res.status(), 403);
+    assert!(!std::fs::read_to_string(root.join("order.md"))
+        .unwrap()
+        .contains("total"));
+}
+
+#[tokio::test]
+async fn a_stale_revision_gets_409_with_the_current_one() {
+    let (_d, root) = fixture();
+    let (addr, tok) = boot(&root).await;
+    let c = reqwest::Client::new();
+    let url = format!("http://127.0.0.1:{}/api/ops", addr.port());
+    c.post(&url)
+        .bearer_auth(&tok)
+        .header("X-Waml-Client", "1")
+        .json(&serde_json::json!({"revision": 0, "ops": [attr_add()]}))
+        .send()
+        .await
+        .unwrap();
+    let res = c
+        .post(&url)
+        .bearer_auth(&tok)
+        .header("X-Waml-Client", "1")
+        .json(&serde_json::json!({"revision": 0, "ops": [attr_add()]}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(res.status(), 409);
+    let v: serde_json::Value = res.json().await.unwrap();
+    assert_eq!(v["current"], 1);
+}
+
+#[tokio::test]
+async fn a_rejected_op_gets_422_naming_its_index() {
+    let (_d, root) = fixture();
+    let (addr, tok) = boot(&root).await;
+    let bad =
+        serde_json::json!({"op":"attr.add","node":"no-such-node","name":"x","tyToken":"Money"});
+    let res = reqwest::Client::new()
+        .post(format!("http://127.0.0.1:{}/api/ops", addr.port()))
+        .bearer_auth(&tok)
+        .header("X-Waml-Client", "1")
+        .json(&serde_json::json!({"revision": 0, "ops": [attr_add(), bad]}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(res.status(), 422);
+    let v: serde_json::Value = res.json().await.unwrap();
+    assert_eq!(v["index"], 1);
+    assert!(!std::fs::read_to_string(root.join("order.md"))
+        .unwrap()
+        .contains("total"));
+}
+```
+
+- [ ] **Step 2: Run the tests to verify they fail**
+
+Run: `cargo test -p waml-cli --test serve_e2e ops`
+Expected: FAIL — `405 Method Not Allowed`, since `/api/ops` has no route.
+
+- [ ] **Step 3: Implement the route**
+
+In `crates/waml-cli/src/serve/routes.rs`, add the imports, the request shape, and the handler:
+
+```rust
+use axum::routing::post;
+use serde::Deserialize;
+use waml_ops_dto::OpDto;
+
+use crate::serve::state::ApplyFailure;
+
+#[derive(Deserialize)]
+pub struct OpsRequest {
+    /// The revision the client believes it holds.
+    pub revision: u64,
+    pub ops: Vec<OpDto>,
+}
+
+async fn post_ops(
+    State(app): State<App>,
+    headers: HeaderMap,
+    Query(q): Query<HashMap<String, String>>,
+    Json(body): Json<OpsRequest>,
+) -> Response {
+    guarded!(app, headers, q, true);
+    let mut st = app.state.lock().unwrap();
+    match st.apply_ops(body.revision, &body.ops) {
+        Ok(changed) => {
+            Json(json!({ "revision": st.revision(), "changed": changed })).into_response()
+        }
+        Err(ApplyFailure::Stale { current }) => (
+            StatusCode::CONFLICT,
+            Json(json!({ "error": "stale", "current": current })),
+        )
+            .into_response(),
+        Err(ApplyFailure::Op { index, reason }) => (
+            StatusCode::UNPROCESSABLE_ENTITY,
+            Json(json!({ "index": index, "reason": reason })),
+        )
+            .into_response(),
+        Err(ApplyFailure::Io(why)) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({ "error": why })),
+        )
+            .into_response(),
+    }
+}
+```
+
+and in `router`, add `.route("/api/ops", post(post_ops))`.
+
+Extractor order is load-bearing: axum runs extractors left to right, and `Json(body)` consumes the request body. It is last in the argument list so the guard decides before any body is parsed. Do not move it earlier.
+
+- [ ] **Step 4: Run the tests to verify they pass**
+
+Run: `cargo test -p waml-cli --test serve_e2e`
+Expected: PASS, 9 tests.
+
+- [ ] **Step 5: Full gate**
+
+Run: `cargo test --workspace && cargo clippy --workspace --all-targets -- -D warnings`
+Expected: clean.
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add crates/waml-cli
+git commit -m "feat(serve): apply ops over HTTP with revision and error mapping
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>"
+```
+
+---
