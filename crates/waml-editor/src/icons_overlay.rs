@@ -67,6 +67,7 @@ pub const ICON_GROUPS: &[(&str, &[IconEntry])] = &[
     (
         "TREE PANEL",
         &[
+            ie!(ListTree, "Caption tree-column toggle"),
             ie!(Folder, "Folder / package node"),
             ie!(Funnel, "Filter chip"),
             ie!(SquareDashedTopSolid, "Classifier kind"),

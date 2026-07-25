@@ -920,10 +920,8 @@ impl ProjectTree {
     /// Apply a dock event: transition, then redraw. No-op if the state is
     /// unchanged.
     ///
-    /// No in-crate caller yet -- the panel has no controls of its own now, and
-    /// the caption bar's tree toggle that sends `DockEvent::Toggle` through
-    /// here is wired in the next step.
-    #[allow(dead_code)]
+    /// The panel has no controls of its own now; every caller comes in through
+    /// [`ProjectTree::toggle_dock`] below.
     fn apply_dock(&mut self, cx: &mut Cx, ev: DockEvent) {
         let next = crate::dock::next(self.dock, ev);
         if next == self.dock {
@@ -933,9 +931,17 @@ impl ProjectTree {
         self.view.redraw(cx);
     }
 
+    /// Expand <-> collapse, driven by the caption bar's tree toggle. Binary by
+    /// construction: `DockEvent::Toggle` never routes through `Peek`, so the
+    /// column is either a full 280px or zero pixels.
+    pub fn toggle_dock(&mut self, cx: &mut Cx) {
+        self.apply_dock(cx, DockEvent::Toggle);
+    }
+
     /// The current dock state. Plan-specified symmetry accessor (mirrors
-    /// `Inspector::dock_state` from Task 5); no in-crate caller yet since the
-    /// app currently only reads `slot_width()`.
+    /// `Inspector::dock_state` from Task 5); no in-crate caller since the app
+    /// drives both the slot width and the toggle's lit state off
+    /// `slot_width()`, the same number the layout uses.
     #[allow(dead_code)]
     pub fn dock_state(&self) -> DockState {
         self.dock

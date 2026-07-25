@@ -60,6 +60,10 @@ script_mod! {
                     // hover/press when nested; the logo because it is drag-query
                     // driven off `logo.drawn_rect()`. `doc_tabs` tolerates nesting
                     // (its own capture-overload hit path + drag-query `hits_any_tab`).
+                    // `tree_btn` is nested in `tab_row` too -- it has no drop-down to
+                    // anchor, and like every other caption control it is client-ized
+                    // in the `WindowDragQuery` handler so its rect isn't an OS drag
+                    // region.
                     flow: Right
                     height: Fill
                     align: Align{y: 0.5}
@@ -134,9 +138,14 @@ script_mod! {
                                 }
                             }
                         }
-                        // Tab row: the doc-tab strip fills the lower band. Its own
-                        // `draw_bg` repaints `field_bg`, so it reads seamless with
-                        // the caption; the active tab card bleeds down into the body.
+                        // Tab row: the tree-column toggle then the doc-tab strip fill
+                        // the lower band. `DocTabs`' own `draw_bg` repaints
+                        // `field_bg`, so it reads seamless with the caption; the
+                        // active tab card bleeds down into the body.
+                        //
+                        // `flow: Right` is what makes the Zed reading cheap: one
+                        // runtime-driven spacer moves `[T]` AND every tab card
+                        // together, so no tab-side offset arithmetic is needed.
                         tab_row := View{
                             width: Fill
                             height: Fill
@@ -144,6 +153,24 @@ script_mod! {
                             // See `caption_col`: the tab strip's top rule overshoots
                             // this row's right edge to reach the window edge.
                             clip_x: false
+                            // Runtime-driven spacer (`sync_dock_slots`) that pushes
+                            // `[T]` right until its RIGHT edge lands on the tree
+                            // column's right edge -- `[T]` marks the point where the
+                            // `field_bg` chrome mass steps in from full-width to
+                            // column-width. 0 while the tree is collapsed, so `[T]`
+                            // sits immediately right of the logo.
+                            tree_gap := View{ width: 0.0, height: Fill }
+                            // The tree-column toggle. 24px button / 16px glyph under
+                            // an 8px top margin: row 2 is 32px tall and the tab cards
+                            // inset `TOP_MARGIN` (8) from its top, so this box is
+                            // exactly co-extensive with a card -- same top, same
+                            // bottom, same centreline -- and reads as their peer. The
+                            // title row's burger is 30/18 because that row is 34px;
+                            // reusing it here would overhang the cards. Hidden until a
+                            // model opens (`show_editor`/`show_start_screen`), which
+                            // also sets the glyph (`Icon::ListTree`, inherited from the
+                            // retired tree flag spine).
+                            tree_btn := IconButton{ width: 24.0 height: 24.0 icon_size: 16.0 margin: Inset{top: 8.0} visible: false }
                             doc_tabs := DocTabs{
                                 width: Fill
                                 height: Fill
@@ -214,11 +241,12 @@ script_mod! {
                     // Body: a docked split. `dock_row` is flow:Right so a
                     // pinned slot shrinks the Fill `center_stack` automatically
                     // (no margin math). `peek_layer` is an Overlay sibling above
-                    // it, holding the real panel widgets: a Peek body overlaps
-                    // the center at zero layout cost and keeps real hit rects
-                    // (no draw_abs -- see the aligned-parent hit-rect bug). The
-                    // slots are bg-less reservation spacers whose width the app
-                    // drives from each panel's DockState (see `sync_dock_slots`).
+                    // it, holding the INSPECTOR: a Peek body overlaps the center
+                    // at zero layout cost and keeps real hit rects (no draw_abs
+                    // -- see the aligned-parent hit-rect bug). Both slot widths
+                    // are driven from each panel's DockState (`sync_dock_slots`),
+                    // but only `right_slot` is a bare spacer -- the tree lives
+                    // INSIDE `left_slot` as a flush column, since it never peeks.
                     dock_body := View{
                         width: Fill
                         height: Fill
@@ -227,13 +255,26 @@ script_mod! {
                             width: Fill
                             height: Fill
                             flow: Right
-                            // Left (Model) reservation spacer. No bg, no content:
-                            // its only job is to reserve width so the center
-                            // shrinks when the Model panel pins. Width set at
-                            // runtime by `sync_dock_slots` (0 at rest, body width
-                            // pinned). Starts at 0 (Flag/Peek reserve nothing --
-                            // the flag tab + peek body overlay the canvas).
-                            left_slot := View{ width: 0.0, height: Fill }
+                            // Left (Model) column. Unlike the right slot this is NOT
+                            // a bare spacer: the tree never peeks any more, so it is
+                            // a real layout child rather than an overlay floater.
+                            // Its flush top (the body's y=66), flush left and full
+                            // height all fall out of the layout for free, and the
+                            // shared `field_bg` merges it with the caption band into
+                            // one chrome mass -- no divider needed.
+                            //
+                            // Width is set at runtime by `sync_dock_slots` (280 when
+                            // Pinned, 0 when collapsed), which is what shrinks the
+                            // `Fill` center. Starts at 0 so the first frame can't
+                            // flash a column before the slot sync runs.
+                            left_slot := View{
+                                width: 0.0
+                                height: Fill
+                                project_tree := ProjectTree{
+                                    width: Fill
+                                    height: Fill
+                                }
+                            }
                             // Center: canvas base + aux HUD floaters. Fill, so it
                             // takes whatever the slots leave. Overlay so each
                             // floater wrapper gets the full center rect and parks
@@ -352,23 +393,18 @@ script_mod! {
                             right_slot := View{ width: 0.0, height: Fill }
                         }
                         // Peek/pinned bodies. Overlay above `dock_row`, so a peek
-                        // overhangs the center without shrinking it. The wraps are
-                        // edge-aligned and bg-less; each panel draws its flag spine
+                        // overhangs the center without shrinking it. The wrap is
+                        // edge-aligned and bg-less; the panel draws its flag spine
                         // flush at the window edge and its body just inside it.
+                        //
+                        // The INSPECTOR only, now: it keeps its floating card and all
+                        // three dock states. The tree left this layer to become a real
+                        // `left_slot` child (see above), so its `left_peek_wrap` is
+                        // gone; the asymmetry is deliberate.
                         peek_layer := View{
                             width: Fill
                             height: Fill
                             flow: Overlay
-                            left_peek_wrap := View{
-                                width: Fill
-                                height: Fill
-                                align: Align{x: 0.0, y: 0.0}
-                                project_tree := ProjectTree{
-                                    width: 280.0
-                                    height: Fill
-                                    margin: Inset{left: 28.0, top: 12.0, bottom: 12.0}
-                                }
-                            }
                             right_peek_wrap := View{
                                 width: Fill
                                 height: Fill
@@ -413,6 +449,11 @@ script_mod! {
         }
     }
 }
+
+/// Side of the caption's tree-column toggle, mirroring the `tree_btn` DSL
+/// `width`. Kept here because `sync_tree_gap` has to subtract it from the tree
+/// column's width to land the button's RIGHT edge on the column's right edge.
+const TREE_BTN_W: f64 = 24.0;
 
 #[derive(Script, ScriptHook)]
 pub struct App {
@@ -481,6 +522,11 @@ pub struct App {
     /// `apply_over`s on a real change.
     #[rust]
     dock_slot_w: (f64, f64),
+    /// Last-applied caption `tree_gap` width, same change-guard role as
+    /// `dock_slot_w` (see `sync_tree_gap`). Negative so the first sync always
+    /// writes, even when the computed gap is 0 (collapsed tree).
+    #[rust(-1.0)]
+    tree_gap_w: f64,
 }
 
 impl App {
@@ -704,6 +750,9 @@ impl App {
     /// slot, so a pinned panel shrinks the `Fill` center. Cheap: mutates the
     /// slot's `walk.width` only on a change (tracked in `dock_slot_w`). Called
     /// each `handle_event`.
+    ///
+    /// The tree's width has a second consumer: the caption's `tree_gap`, which
+    /// keeps `[T]` on the column's right edge (see `sync_tree_gap`).
     fn sync_dock_slots(&mut self, cx: &mut Cx) {
         let lw = self
             .ui
@@ -720,8 +769,16 @@ impl App {
             if let Some(mut slot) = self.ui.widget(cx, ids!(left_slot)).borrow_mut::<View>() {
                 slot.walk.width = Size::Fixed(lw);
             }
+            // `[T]` is lit exactly when the column occupies pixels -- same
+            // source of truth as the gap, so the glyph can't disagree with the
+            // layout.
+            self.ui
+                .widget(cx, ids!(tree_btn))
+                .as_icon_button()
+                .set_active(cx, lw > 0.5);
             cx.redraw_all();
         }
+        self.sync_tree_gap(cx, lw);
         let rw = self
             .ui
             .widget(cx, ids!(inspector))
@@ -735,6 +792,38 @@ impl App {
             }
             cx.redraw_all();
         }
+    }
+
+    /// Size the caption's `tree_gap` so `[T]`'s RIGHT edge lands on the tree
+    /// column's right edge -- the invariant that makes the two-row caption read
+    /// as one chrome mass: `[T]` marks where `field_bg` steps in from full-width
+    /// to column-width.
+    ///
+    /// `tree_w` is the column's width in window coordinates (the body starts at
+    /// x=0, so it is also the column's right edge). `tab_row` starts at the
+    /// wordmark's right edge, so the gap is what is left after that offset and
+    /// the button itself; clamped at 0 so the collapsed state parks `[T]`
+    /// immediately right of the logo instead of going negative.
+    ///
+    /// The row offset is read from the last-drawn `tab_row` rect rather than
+    /// hardcoded, so a resized logo can't silently desync the button from the
+    /// column. That makes this a two-frame settle on the very first draw (the
+    /// rect is zero until `tab_row` has been laid out once), hence the guard is
+    /// on the computed gap rather than on `tree_w` alone.
+    fn sync_tree_gap(&mut self, cx: &mut Cx, tree_w: f64) {
+        let row_x = self.ui.widget(cx, ids!(tab_row)).area().rect(cx).pos.x;
+        let gap = (tree_w - row_x - TREE_BTN_W).max(0.0);
+        if (gap - self.tree_gap_w).abs() <= 0.5 {
+            return;
+        }
+        self.tree_gap_w = gap;
+        // Same seam as the dock slots: no live-DSL setter in this fork, so
+        // mutate the public `walk` field and force a full relayout (the
+        // `flow: Right` row must reflow, not just this child).
+        if let Some(mut spacer) = self.ui.widget(cx, ids!(tree_gap)).borrow_mut::<View>() {
+            spacer.walk.width = Size::Fixed(gap);
+        }
+        cx.redraw_all();
     }
 
     /// Push diagram name / node count / zoom / active tool into the bottom
@@ -948,12 +1037,17 @@ impl App {
     fn show_editor(&mut self, cx: &mut Cx) {
         self.editor_shown = true;
         self.ui.widget(cx, ids!(main_column)).set_visible(cx, true);
-        // Caption burger + doc-tab strip belong to an open model.
+        // Caption burger + tree toggle + doc-tab strip belong to an open model.
         self.ui.widget(cx, ids!(menu_btn)).set_visible(cx, true);
         self.ui
             .widget(cx, ids!(menu_btn))
             .as_icon_button()
             .set_icon(cx, crate::icons::Icon::Menu);
+        self.ui.widget(cx, ids!(tree_btn)).set_visible(cx, true);
+        self.ui
+            .widget(cx, ids!(tree_btn))
+            .as_icon_button()
+            .set_icon(cx, crate::icons::Icon::ListTree);
         if let Some(mut doc_tabs) = self
             .ui
             .widget(cx, ids!(doc_tabs))
@@ -1020,10 +1114,12 @@ impl App {
             screen.set_visible(cx, true);
         }
         self.ui.widget(cx, ids!(main_column)).set_visible(cx, false);
-        // No open model on the start screen: hide burger + doc-tab strip, and
-        // drop the editor's tab state so a re-open starts clean rather than
-        // inheriting the closed model's tabs (open_dir rebuilds from scratch).
+        // No open model on the start screen: hide burger + tree toggle +
+        // doc-tab strip, and drop the editor's tab state so a re-open starts
+        // clean rather than inheriting the closed model's tabs (open_dir
+        // rebuilds from scratch).
         self.ui.widget(cx, ids!(menu_btn)).set_visible(cx, false);
+        self.ui.widget(cx, ids!(tree_btn)).set_visible(cx, false);
         // Clear the stale model title: the caption bar keeps drawing (logo +
         // name) even with no model open, so a leftover name reads as if the
         // closed model were still loaded.
@@ -1407,6 +1503,26 @@ impl MatchEvent for App {
                 .widget(cx, ids!(menu_btn))
                 .as_icon_button()
                 .set_active(cx, true);
+        }
+
+        // Caption tree-column toggle: the sole expand/collapse affordance now
+        // that the tree's flag spine is gone. `DockEvent::Toggle` is the binary
+        // Flag <-> Pinned transition (never Peek), so one glyph covers both
+        // directions; `sync_dock_slots` picks the new width up on this same
+        // event pass and relights the button.
+        if self
+            .ui
+            .widget(cx, ids!(tree_btn))
+            .as_icon_button()
+            .clicked(actions)
+        {
+            if let Some(mut panel) = self
+                .ui
+                .widget(cx, ids!(project_tree))
+                .borrow_mut::<crate::tree_panel::ProjectTree>()
+            {
+                panel.toggle_dock(cx);
+            }
         }
 
         // Popup outcomes (tag-filtered off the single action queue).
@@ -2357,6 +2473,15 @@ impl AppMain for App {
                 .as_icon_button()
                 .rect()
                 .contains(dq.abs);
+            // Same for the tab row's tree-column toggle: it sits in the caption
+            // drag region, so without this its clicks become window drags and
+            // the toggle is dead.
+            let over_tree_btn = self
+                .ui
+                .widget(cx, ids!(tree_btn))
+                .as_icon_button()
+                .rect()
+                .contains(dq.abs);
             // While the drop-down is open, treat the WHOLE caption as client
             // area. The header is otherwise an OS window-drag region, so a press
             // there starts a drag and never reaches the app as a click -- the
@@ -2369,7 +2494,7 @@ impl AppMain for App {
                 .borrow::<PopupRoot>()
                 .map(|pr| pr.is_open())
                 .unwrap_or(false);
-            if over_tab || over_logo || over_btn || menu_open {
+            if over_tab || over_logo || over_btn || over_tree_btn || menu_open {
                 dq.response.set(WindowDragQueryResponse::Client);
             }
         }
