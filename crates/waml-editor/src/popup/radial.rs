@@ -38,6 +38,28 @@ pub const DRAG_THRESHOLD: f64 = 12.0;
 #[allow(dead_code)]
 const BLOOM_SECS: f64 = 0.12;
 
+/// Idle recede (get-out-of-the-way): once the cursor has rested within
+/// `IDLE_DEADZONE` px of its anchor for `IDLE_DELAY` s, the dial fades over
+/// `IDLE_FADE_SECS` toward the floors below so the layout + candidate veil under
+/// it read through -- the armed wedge stays legible, the rest turn ghost-like.
+/// Any move past the deadzone wakes it (fade back to full) and recenters the
+/// anchor, so the dwell timer restarts from wherever the cursor came to rest.
+#[allow(dead_code)]
+const IDLE_DEADZONE: f64 = 6.0;
+#[allow(dead_code)]
+const IDLE_DELAY: f64 = 0.35;
+#[allow(dead_code)]
+const IDLE_FADE_SECS: f64 = 0.28;
+/// Receded alpha multipliers (1.0 = never fades). The base disc + hub ghost to
+/// `DISC_FLOOR`; a non-armed wedge (fill/rim/label/icon) to `GHOST_FLOOR`; the
+/// armed wedge holds full so the choice you are on stays crisp.
+#[allow(dead_code)]
+const DISC_FLOOR: f32 = 0.34;
+#[allow(dead_code)]
+const GHOST_FLOOR: f32 = 0.16;
+#[allow(dead_code)]
+const ARMED_FLOOR: f32 = 1.0;
+
 /// Angular layout of the wedge fan. Out in open space this is the full 360 deg
 /// disc (`span == TAU`, wedge 0 centred on 12 o'clock). Near a screen/window
 /// edge the fan collapses to a partial arc (a "C") that opens *away* from the
@@ -406,6 +428,12 @@ pub struct RadialPopup {
     fan: RadialLayout,
     #[rust]
     start: f64,
+    /// Idle recede state: the deadzone anchor the dwell is measured from, and the
+    /// app-clock time of the last move that escaped it. See `IDLE_*` consts.
+    #[rust]
+    rest_anchor: DVec2,
+    #[rust]
+    last_move_time: f64,
     /// Marking release fires on the PRIMARY button too (the drag-to-place dial
     /// is opened mid-drag, with the left button already down). Off for the
     /// right-press marking opens, where a stray left-up must not commit.
@@ -446,6 +474,8 @@ impl RadialPopup {
         self.fan = RadialLayout::snap(center, bounds, DISC_RADIUS, items.len());
         self.mark.begin_marking(center, items, DRAG_THRESHOLD);
         self.start = time;
+        self.rest_anchor = center;
+        self.last_move_time = time;
         self.release_primary = false;
         self.next_frame = cx.new_next_frame();
         self.draw_wedge.redraw(cx);
@@ -464,6 +494,8 @@ impl RadialPopup {
         self.fan = RadialLayout::full(items.len());
         self.mark.begin_marking(center, items, DRAG_THRESHOLD);
         self.start = time;
+        self.rest_anchor = center;
+        self.last_move_time = time;
         self.release_primary = true;
         self.next_frame = cx.new_next_frame();
         self.draw_wedge.redraw(cx);
@@ -490,6 +522,8 @@ impl RadialPopup {
         self.fan = RadialLayout::snap(center, bounds, DISC_RADIUS, items.len());
         self.mark.begin_popup(items, DRAG_THRESHOLD);
         self.start = time;
+        self.rest_anchor = center;
+        self.last_move_time = time;
         self.release_primary = false;
         self.next_frame = cx.new_next_frame();
         self.draw_wedge.redraw(cx);
@@ -535,6 +569,14 @@ impl RadialPopup {
         let e = 1.0 - (1.0 - t).powi(2); // ease-out quad
         let scale = 0.55 + 0.45 * e;
         let fade = e as f32;
+        // Idle recede toward the ghost floors (see `IDLE_*`). 0 = awake/full,
+        // 1 = fully receded; eased so the dial melts back rather than snapping.
+        // `disc_idle` fades the whole card; the wedge loop picks a per-wedge
+        // floor so the armed choice holds while the rest turn ghost-like.
+        let idle = cx.seconds_since_app_start() - self.last_move_time;
+        let rt = (((idle - IDLE_DELAY) / IDLE_FADE_SECS).clamp(0.0, 1.0)) as f32;
+        let recede = rt * rt * (3.0 - 2.0 * rt); // smoothstep
+        let disc_idle = 1.0 - recede * (1.0 - DISC_FLOOR);
         let disc_r = DISC_RADIUS * scale;
         let hub_r = HUB_RADIUS * scale;
         // Quad bounding the whole disc; every wedge shader shares it and masks
@@ -554,7 +596,8 @@ impl RadialPopup {
         self.draw_disc
             .set_uniform(cx, live_id!(hub), &[hub_r as f32]);
         self.draw_disc.set_uniform(cx, live_id!(n), &[n as f32]);
-        self.draw_disc.set_uniform(cx, live_id!(fade), &[fade]);
+        self.draw_disc
+            .set_uniform(cx, live_id!(fade), &[fade * disc_idle]);
         // Arc window (radians): the disc fill + spokes mask to this span so a
         // partial (edge-snapped) fan renders as a "C" instead of a full circle.
         self.draw_disc.set_uniform(
@@ -577,6 +620,10 @@ impl RadialPopup {
             } else {
                 0.0
             };
+            // Idle recede: the armed wedge holds full (`ARMED_FLOOR`), every
+            // other wedge -- fill, rim, icon, label -- ghosts to `GHOST_FLOOR`.
+            let floor = if armed == Some(i) { ARMED_FLOOR } else { GHOST_FLOOR };
+            let wedge_idle = 1.0 - recede * (1.0 - floor);
             self.draw_wedge
                 .set_uniform(cx, live_id!(cx), &[local_c.x as f32]);
             self.draw_wedge
@@ -604,7 +651,8 @@ impl RadialPopup {
                 live_id!(enabled),
                 &[if it.enabled { 1.0 } else { 0.0 }],
             );
-            self.draw_wedge.set_uniform(cx, live_id!(fade), &[fade]);
+            self.draw_wedge
+                .set_uniform(cx, live_id!(fade), &[fade * wedge_idle]);
             self.draw_wedge.draw_abs(cx, quad);
 
             // Icon + label centred on the wedge mid-angle at a fixed radius.
@@ -614,13 +662,16 @@ impl RadialPopup {
             let iy = center.y - icon_r * mid.cos();
             // Tint chosen Rust-side, mirroring the old DrawIcon shader's nested
             // mix: disabled -> dim, else danger -> danger, else accent.
-            let tint = if !it.enabled {
+            let base_tint = if !it.enabled {
                 self.draw_icon_dim.color
             } else if it.danger {
                 self.draw_icon_danger.color
             } else {
                 self.draw_icon_accent.color
             };
+            // Fade the mark's alpha with its wedge so a ghosted wedge's glyph +
+            // label recede too, while the armed wedge's stay crisp.
+            let tint = vec4(base_tint.x, base_tint.y, base_tint.z, base_tint.w * wedge_idle);
             match it.icon {
                 Some(icon) => {
                     let icon_rect = Rect {
@@ -628,8 +679,12 @@ impl RadialPopup {
                         size: dvec2(32.0, 32.0),
                     };
                     self.icons.draw(cx, icon, icon_rect, tint);
+                    let saved = self.draw_label.color;
+                    self.draw_label.color =
+                        vec4(saved.x, saved.y, saved.z, saved.w * wedge_idle);
                     self.draw_label
                         .draw_abs(cx, dvec2(ix - 16.0, iy + 14.0), &it.label);
+                    self.draw_label.color = saved;
                 }
                 // Label-only wedge (the placement dial): no glyph to hang the
                 // label under, so centre it on the wedge's own mid-point.
@@ -670,6 +725,12 @@ impl Popup for RadialPopup {
         self.tick(cx, event);
         let verdict = match event {
             Event::MouseMove(e) => {
+                // Idle recede: a move that escapes the deadzone wakes the dial
+                // and recenters the dwell anchor on the new cursor rest.
+                if (e.abs - self.rest_anchor).length() > IDLE_DEADZONE {
+                    self.rest_anchor = e.abs;
+                    self.last_move_time = cx.seconds_since_app_start();
+                }
                 self.mark.pointer_move(e.abs, self.hit(e.abs));
                 self.draw_wedge.redraw(cx);
                 PopupVerdict::Consumed
