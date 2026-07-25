@@ -2346,6 +2346,7 @@ impl GraphCanvas {
         cx: &mut Cx2d,
         reference_idx: usize,
         dir: waml::syntax::Direction,
+        active: bool,
     ) {
         let reference_screen = self.node_screen_rect(reference_idx);
         let band = veil_band(reference_screen, dir, VEIL_REACH);
@@ -2366,7 +2367,17 @@ impl GraphCanvas {
         self.draw_veil
             .set_uniform(cx, live_id!(cross_plateau), &cross_plateau);
         self.draw_veil.set_uniform(cx, live_id!(cross_soft), &cross_soft);
-        self.draw_veil.color = vec4(0.42, 0.47, 0.54, 1.0);
+        // The veil you are actively authoring (the candidate under the dial)
+        // reads in the selection accent with a tighter, bolder hatch, so it is
+        // legible against the calm neutral grey of the committed keep-outs you
+        // are not manipulating.
+        if active {
+            self.draw_veil.set_uniform(cx, live_id!(hatch_px), &[6.5]);
+            self.draw_veil.color = vec4(0.16, 0.52, 0.86, 1.0);
+        } else {
+            self.draw_veil.set_uniform(cx, live_id!(hatch_px), &[9.0]);
+            self.draw_veil.color = vec4(0.42, 0.47, 0.54, 1.0);
+        }
         self.draw_veil.draw_abs(cx, band);
     }
 
@@ -2378,7 +2389,7 @@ impl GraphCanvas {
         // Selected mode is the only drawing mode, so the veil always reframes
         // onto the selected node's POV.
         let pov = selected_key.as_deref();
-        let mut chosen: Vec<(usize, waml::syntax::Direction)> = relations_for_visibility(
+        let mut chosen: Vec<(usize, waml::syntax::Direction, bool)> = relations_for_visibility(
             &self.scene.relations,
             self.constraint_vis,
             selected_key.as_deref(),
@@ -2391,7 +2402,8 @@ impl GraphCanvas {
             // real, but the veil is anchored to the reference only.
             self.scene.nodes.iter().position(|n| n.key == subject)?;
             let ri = self.scene.nodes.iter().position(|n| n.key == reference)?;
-            Some((ri, dir))
+            // Committed keep-out: static (not being manipulated).
+            Some((ri, dir, false))
         })
         .collect();
 
@@ -2405,12 +2417,13 @@ impl GraphCanvas {
         // the committed relation would (`reframe_to_selected` is a no-op here).
         if let (Some(p), Some(_a), Some(b)) = (&self.preview, self.drag_node, self.drag_target) {
             if let Some(dir) = zone_placed(p.zone).dir {
-                chosen.push((b, dir));
+                // The placement being authored: active (accent hatch).
+                chosen.push((b, dir, true));
             }
         }
 
-        for (ri, dir) in chosen {
-            self.draw_veil_for(cx, ri, dir);
+        for (ri, dir, active) in chosen {
+            self.draw_veil_for(cx, ri, dir, active);
         }
     }
 
