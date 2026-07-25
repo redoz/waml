@@ -152,6 +152,30 @@ impl Placed {
         self.blocks.iter().find(|b| b.block == Block::Header)
     }
 
+    /// y of the hairline that separates the header from the body, centered in the
+    /// gutter between them — same convention as `compartment_dividers`. `None`
+    /// when the node has no header, or no body under it (a header-only card would
+    /// draw the rule on its own bottom border).
+    pub fn header_divider(&self) -> Option<f64> {
+        let h = self.header()?;
+        let body = self.blocks.iter().find(|b| {
+            matches!(
+                b.block,
+                Block::Attributes | Block::Operations | Block::Footer
+            )
+        })?;
+        Some((h.y + h.h + body.y) * 0.5)
+    }
+
+    /// Bottom edge of the header band, which the accent wash fills to: the
+    /// header/body seam when there is a body (so the wash meets its own hairline,
+    /// as the web renderer's `.node-hdr` does), else a symmetric inset under the
+    /// header text. `None` when the node has no header.
+    pub fn header_band_bottom(&self) -> Option<f64> {
+        let h = self.header()?;
+        Some(self.header_divider().unwrap_or(h.y + h.h + h.y))
+    }
+
     /// y of a hairline divider between each pair of adjacent member compartments
     /// (Attributes/Operations), centered in the gutter between them. Empty for a
     /// single compartment — so today's plain nodes (attributes only) get none.
@@ -867,6 +891,46 @@ mod tests {
         let n = scene_node("Order", vec![], vec![]);
         let placed = measure(&class_shape(&n, &mono_sheet()));
         assert!(placed.header().is_some());
+    }
+
+    #[test]
+    fn header_divider_sits_between_the_header_and_the_first_body_row() {
+        let n = scene_node("Order", vec![], vec![attr("id", "Int", "+", "")]);
+        let placed = measure(&class_shape(&n, &mono_sheet()));
+        let dy = placed.header_divider().expect("header divider");
+        let hdr = placed.header().unwrap();
+        let at = placed
+            .blocks
+            .iter()
+            .find(|b| b.block == Block::Attributes)
+            .unwrap();
+        assert!(dy >= hdr.y + hdr.h, "divider above the header text");
+        assert!(dy <= at.y, "divider below the first attribute row");
+    }
+
+    #[test]
+    fn hidden_header_has_no_header_divider() {
+        let mut n = scene_node("Order", vec![], vec![attr("id", "Int", "+", "")]);
+        n.header = crate::scene::HeaderStyle::Hidden;
+        let placed = measure(&class_shape(&n, &mono_sheet()));
+        assert!(placed.header_divider().is_none());
+    }
+
+    #[test]
+    fn a_header_only_node_has_no_header_divider() {
+        let n = scene_node("Order", vec![], vec![]);
+        let placed = measure(&class_shape(&n, &mono_sheet()));
+        assert!(placed.header().is_some());
+        assert!(placed.header_divider().is_none());
+        // The wash still needs a bottom: the symmetric inset under the title.
+        assert!(placed.header_band_bottom().is_some());
+    }
+
+    #[test]
+    fn the_header_wash_ends_on_its_own_hairline() {
+        let n = scene_node("Order", vec![], vec![attr("id", "Int", "+", "")]);
+        let placed = measure(&class_shape(&n, &mono_sheet()));
+        assert_eq!(placed.header_band_bottom(), placed.header_divider());
     }
 
     #[test]

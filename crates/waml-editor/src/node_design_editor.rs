@@ -1251,8 +1251,7 @@ impl NodeDesignEditor {
 
         // Header accent wash (Fill only).
         if node.header == HeaderStyle::Fill {
-            if let Some(h) = placed.header() {
-                let bottom = h.y + h.h + h.y; // symmetric inset around the header
+            if let Some(bottom) = placed.header_band_bottom() {
                 self.draw_rule.color = Vec4 {
                     x: accent.x,
                     y: accent.y,
@@ -1267,6 +1266,23 @@ impl NodeDesignEditor {
                     },
                 );
             }
+        }
+
+        // Header/body separator, on the header band's bottom edge (any header).
+        if let Some(dy) = placed.header_divider() {
+            self.draw_rule.color = Vec4 {
+                x: accent.x,
+                y: accent.y,
+                z: accent.z,
+                w: 0.22,
+            };
+            self.draw_rule.draw_abs(
+                cx,
+                Rect {
+                    pos: dvec2(ox, oy + dy - 0.5),
+                    size: dvec2(cw, 1.0),
+                },
+            );
         }
 
         // Inter-compartment dividers.

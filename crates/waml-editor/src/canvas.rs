@@ -2705,9 +2705,7 @@ impl GraphCanvas {
 
         // Header accent wash (a filled band), only when the header is `Fill`.
         if node.header == HeaderStyle::Fill {
-            if let Some(h) = placed.header() {
-                // Symmetric inset around the header text (h.y == card_pad.t).
-                let bottom = h.y + h.h + h.y;
+            if let Some(bottom) = placed.header_band_bottom() {
                 self.draw_rule.color = vec4(accent.x, accent.y, accent.z, 0.12);
                 self.draw_rule.draw_abs(
                     cx,
@@ -2717,6 +2715,20 @@ impl GraphCanvas {
                     },
                 );
             }
+        }
+
+        // Header/body separator, on the header band's bottom edge. Drawn for any
+        // header (`Plain` as well as `Fill`), like the web renderer's
+        // `.node-hdr` border-bottom.
+        if let Some(dy) = placed.header_divider() {
+            self.draw_rule.color = vec4(accent.x, accent.y, accent.z, 0.22);
+            self.draw_rule.draw_abs(
+                cx,
+                Rect {
+                    pos: dvec2(screen.pos.x, screen.pos.y + dy * zoom),
+                    size: dvec2(card_w, (1.0 * zoom).max(1.0)),
+                },
+            );
         }
 
         // Inter-compartment dividers (attributes | operations).
