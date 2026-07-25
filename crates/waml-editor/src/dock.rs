@@ -33,6 +33,10 @@ pub enum DockEvent {
     PointerLeft,
     /// Header pin button: Peek -> Pinned, or Pinned -> Flag (unpin).
     PinToggle,
+    /// The caption bar's tree toggle. Moves Flag <-> Pinned directly: a column
+    /// summoned from the window chrome is a deliberate act, so it must not
+    /// land in the self-collapsing `Peek` state the flag strip opens into.
+    Toggle,
 }
 
 /// The transition table. Any unlisted (state, event) pair is a no-op (returns
@@ -46,6 +50,12 @@ pub fn next(state: DockState, ev: DockEvent) -> DockState {
         (Peek, PointerLeft) => Flag,
         (Peek, PinToggle) => Pinned,
         (Pinned, PinToggle) => Flag,
+        (Flag, Toggle) => Pinned,
+        (Pinned, Toggle) => Flag,
+        // The tree, `Toggle`'s only sender, never enters Peek — this arm exists
+        // so the pair is total rather than silently falling through the
+        // catch-all, and collapsing is the safer reading of a toggle-off.
+        (Peek, Toggle) => Flag,
         (s, _) => s,
     }
 }
@@ -170,6 +180,18 @@ mod tests {
         assert_eq!(next(Pinned, PinToggle), Flag);
         assert_eq!(next(Pinned, PointerLeft), Pinned);
         assert_eq!(next(Pinned, FlagActivate), Pinned);
+    }
+
+    #[test]
+    fn toggle_skips_peek_in_both_directions() {
+        use DockEvent::*;
+        use DockState::*;
+        // The caption tree toggle jumps straight to the docked column and back;
+        // it must never park the tree in the self-collapsing Peek state.
+        assert_eq!(next(Flag, Toggle), Pinned);
+        assert_eq!(next(Pinned, Toggle), Flag);
+        // Unreachable for the tree (it never peeks), but defined for totality.
+        assert_eq!(next(Peek, Toggle), Flag);
     }
 
     #[test]
