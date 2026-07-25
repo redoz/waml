@@ -1,7 +1,10 @@
 # Agent window marker — design
 
 **Date:** 2026-07-25
-**Status:** approved, ready for planning
+**Status:** approved; **revised 2026-07-25 after visual review** — the title-row wash is
+cut, the pill is the only mark, and the pill is sized from its text and centred on the
+row. Sections below are updated in place; the wash is described only where the record of
+why it was dropped is useful.
 
 ## Problem
 
@@ -18,13 +21,13 @@ already covers the tooling case.
 Two independent launch flags, either usable alone, both composable with the existing
 positional dir and `--diagram`:
 
-- `--title <text>` — text shown in a badge in the caption bar.
-- `--color <hex>` — a colour that tints both the badge and the caption's title row.
+- `--title <text>` — text shown in a pill at the right end of the caption's title row.
+- `--color <hex>` — the pill's fill colour. Alone, it draws a bare tinted swatch pill.
 
 ```
 waml-editor crates/waml-editor/tests/fixtures/mini --title veil-fix --color '#e91e63'
 waml-editor --color 2b8            # start screen, tint only
-waml-editor . --title opus-3       # badge only, default chrome colours
+waml-editor . --title opus-3       # text only, default chrome colours
 ```
 
 `scripts/run-native.ps1` gains `-Title` / `-Color` params that pass straight through.
@@ -63,10 +66,10 @@ which leaves a blank window with no chrome and no explanation. It changes to log
 `show_start_screen(cx)`, so a typo'd flag yields a usable window. This is a pre-existing
 bug that a mistyped `--color` would otherwise make routine.
 
-### 2. Both marks are one widget: `AgentMark`
+### 2. The mark is one widget: `AgentMark`
 
-A new `crates/waml-editor/src/agent_mark.rs` owns the wash and the badge together, in a
-single widget mounted in the two-row caption's upper row (`app.rs`, `title_row`).
+A new `crates/waml-editor/src/agent_mark.rs` owns the pill, mounted in the two-row
+caption's upper row (`app.rs`, `title_row`).
 
 **Why a custom widget rather than tinting a `SolidView`.** The obvious shape — make
 `title_row` a `SolidView` and set its `draw_bg.color` at runtime — cannot be built on
@@ -80,9 +83,8 @@ pattern `canvas.rs` already uses for `draw_rule` / `draw_veil`.
 
 `AgentMark` holds:
 
-- `draw_wash: DrawColor` — the title-row band
-- `draw_chip: DrawColor` — the badge fill
-- `draw_label: DrawText` — the badge text
+- `draw_chip: DrawColor` — the pill fill
+- `draw_label: DrawText` — the pill text
 - `#[rust] badge: Option<String>`, `#[rust] tint: Option<Vec4>`, `#[rust] row_w: f64`
 
 **Mounting: zero layout footprint.** It is declared as the **first** child of
@@ -90,8 +92,6 @@ pattern `canvas.rs` already uses for `draw_rule` / `draw_veil`.
 the `flow: Right` row, so `menu_btn` and `model_name` keep their exact current
 positions — no `width: Fill` change to `model_name`, no restructuring, and critically
 no extra nesting for `menu_btn`, whose interactivity is depth-sensitive and gate-blind.
-First position also fixes paint order: the wash paints *under* the burger and the model
-name rather than gelling over them.
 
 Everything is then drawn with `draw_abs` from the widget's own origin, over a width the
 App supplies. This is the established trick in this file: `DocTabs::left_overshoot`
@@ -99,37 +99,44 @@ App supplies. This is the established trick in this file: `DocTabs::left_oversho
 using an App-measured delta, and `title_row`'s existing `clip_x: true` bounds the result
 to the row.
 
-- **Wash:** a `row_w × row_h` quad at the widget's origin, filled with `field_bg`
-  blended 15% toward the tint. Drawn only when a tint is set.
-- **Badge:** the label measured, then a chip right-aligned at `row_w - chip_w - 6`,
-  padded 6px horizontal / 2px vertical. Drawn only when `--title` was given.
+- **Geometry.** The label's line box is measured, and the pill is sized **from that box**:
+  `text + 6px horizontal / 3px vertical padding`, right-aligned at `row_w - chip_w - 6`,
+  and **vertically centred in the row**. Sizing the pill from the row height instead —
+  the first cut — produced a ~30px block in a 34px row that read as a coloured slab
+  sitting high, rather than as a pill around a word. Because the pill is sized from the
+  text box, the same padding that sized it also seats the text inside it: no
+  half-line-box centring constant is needed.
+- With `--color` and no `--title` there is no text to size against, so the pill becomes a
+  fixed-width swatch (14px inner) at the same measured height, keeping the two flags'
+  marks the same chrome element.
 - The label uses the existing `fonts.text_caption` role — the same role `model_name`
   uses. Reusing it avoids adding a font role, which would require `fonts.rs`,
   `script_gate.rs` and `fonts_overlay.rs` to move together.
-- Chip fill is `--color`; label colour is picked by the fill's relative luminance
+- Pill fill is `--color`; label colour is picked by the fill's relative luminance
   (near-white on dark fills, near-black on light ones) so any hex stays readable. With
-  `--title` and no `--color`, the chip falls back to Atlas tokens (`selection` fill,
+  `--title` and no `--color`, the pill falls back to Atlas tokens (`selection` fill,
   `atlas.text` ink) so it stays legible in both themes.
 
 `App` supplies `row_w` by measuring `ids!(title_row)`'s drawn rect, change-guarded and
 pushed via `set_row_width(cx, px)` — the same measure-and-push shape as `sync_tree_gap`.
 Zero until the row has been laid out once, which draws nothing; the next pass fills in.
 
-### 3. Why the wash covers the title row and not the whole caption
+### 3. Why the caption is not tinted at all (cut)
 
-The tint deliberately does **not** go on `caption_bar` itself, for two reasons:
+The first cut washed the title row 15% toward the tint, as a second, larger marker
+alongside the pill. On review it was **cut**: it read as a broken theme rather than as a
+marker, and the pill alone identifies a window across a monitor. The title row keeps its
+plain `atlas.field_bg`, and `--color` now only fills the pill.
+
+Two constraints made the wash awkward anyway, and they still rule out any future
+bar-wide tint:
 
 1. `caption_bar` is a `Window` field with no id, so `ids!(...)` cannot reach it.
-2. `DocTabs` repaints `field_bg` across the tab row itself. Tinting the bar would wash
+2. `DocTabs` repaints `field_bg` across the tab row itself. Tinting the bar would colour
    the title row and leave the tab band at the original colour — a half-tinted bar reads
    as a rendering bug, not as a marker.
 
-Washing one clean 34px band and leaving the tabs untouched avoids both.
-
-15% is low enough that the window still reads as Atlas in light and dark rather than as
-a broken theme, and high enough to identify at a glance across a monitor.
-
-The wash is **static**. An animated/pulsing tint was considered and rejected: it would
+The mark is **static**. An animated/pulsing tint was considered and rejected: it would
 keep the app redrawing forever, and canvas draws are already expensive.
 
 `agent_mark::script_mod(vm)` must be registered **before** `app.rs`'s own in
@@ -141,7 +148,8 @@ module resolves late, and neither tests nor review catch it.
 `App` holds `agent_badge: Option<String>` and `agent_tint: Option<Vec4>`, populated in
 `handle_startup` from the parsed `Args`.
 
-A single `apply_agent_marks(&mut self, cx)` pushes both into the `AgentMark` widget. It
+A single `apply_agent_marks(&mut self, cx)` pushes both values into the `AgentMark`
+widget. It
 is called from:
 
 - `handle_startup`, after parsing; and
@@ -149,8 +157,8 @@ is called from:
 
 The second call is required, not defensive. The `T` theme toggle goes through
 `cx.request_live_edit()` → `Apply::Reload`, which resets `#[live]`/`#[rust]` widget state
-— including `AgentMark`'s `badge` and `tint`. Without the `rehydrate` call, both marks
-vanish the first time an agent toggles the theme, and the window silently becomes
+— including `AgentMark`'s `badge` and `tint`. Without the `rehydrate` call, the mark
+vanishes the first time an agent toggles the theme, and the window silently becomes
 indistinguishable again.
 
 Reaching the widget follows the pattern already in `sync_dock_slots`: `borrow_mut::<T>()`
@@ -170,8 +178,9 @@ argv ──> cli::parse ──> Args{badge, tint}
                                         │      └─ rehydrate() re-invokes after every
                                         │         theme reload
                                         └─ draw_walk (draw_abs over App-supplied row_w)
-                                               ├─ draw_wash  = mix(field_bg, tint, 0.15)
-                                               ├─ draw_chip  = tint
+                                               ├─ measure label line box
+                                               ├─ draw_chip  = tint, sized from that box,
+                                               │               right-floated + row-centred
                                                └─ draw_label = luminance pick
 
 sync_agent_row(cx): measure ids!(title_row) rect ──> AgentMark::set_row_width(cx, px)
@@ -184,9 +193,9 @@ sync_agent_row(cx): measure ids!(title_row) rect ──> AgentMark::set_row_widt
 | `--title` with no following value | `Err("--title requires a value")`, start screen |
 | `--color` with no following value | `Err("--color requires a value")`, start screen |
 | `--color` with unparseable hex | `Err` naming the bad value, start screen |
-| Neither flag given | No badge, no wash — today's appearance exactly |
-| `--color` only | Wash applied, no badge |
-| `--title` only | Badge in Atlas fallback colours, no wash |
+| Neither flag given | No pill — today's appearance exactly |
+| `--color` only | Bare tinted swatch pill, no text |
+| `--title` only | Pill in Atlas fallback colours |
 
 Every error path logs and lands on the start screen. No path produces a blank window.
 
@@ -200,27 +209,29 @@ Unit tests in `cli.rs` (no `Cx`, runs in the headless gate):
 - unparseable hex, wrong-length hex, and missing values each return `Err`
 - absent flags leave both fields `None`
 
-Plus pure, tested helpers in `agent_mark.rs`: luminance → label-colour, and
-`mix(field_bg, tint, 0.15)`.
+Plus one pure, tested helper in `agent_mark.rs`: luminance → label-colour.
 
 No UI test: the gate is headless and cannot assert on drawn pixels. Verification is an
 interactive launch, captured per-pid, of two windows with different `--title`/`--color`
 values, confirming:
 
-- the badge sits right-floated in the title row and the burger and model name have not
+- the pill sits right-floated in the title row and the burger and model name have not
   moved a pixel from their current positions;
+- the title row's background is still plain white `field_bg` — the pill is the only
+  tinted pixel;
+- the pill is vertically centred in the row and hugs its word, measured on the
+  screenshot rather than eyeballed;
 - `menu_btn` still opens its drop-down and `tree_btn` still toggles the column — the
   caption is the known gate-blind failure class, so the click test is mandatory, not
   optional;
-- the wash reads at a glance and does not gel the burger glyph or the model name;
-- both marks survive a `T` theme toggle;
-- a no-dir `--color`-only launch shows the wash on the start screen.
+- the mark survives a `T` theme toggle;
+- a no-dir `--color`-only launch shows the swatch pill on the start screen.
 
 ## Resolved: caption visibility on the start screen
 
 `caption_bar`'s `visible: false` is the makepad default and does **not** hide it — the
 `Window` widget flips it on Windows, which is why nothing in `app.rs` touches it. The
-caption, and therefore both marks, render on the start screen as well as with a model
+caption, and therefore the mark, renders on the start screen as well as with a model
 open. A `--color`-only, no-dir launch is a valid way to tag a window.
 
 `menu_btn` and `tree_btn` *are* app-hidden until a model opens, but `AgentMark` is not
