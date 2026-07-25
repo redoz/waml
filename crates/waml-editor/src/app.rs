@@ -1663,6 +1663,14 @@ impl MatchEvent for App {
     #[cfg(target_arch = "wasm32")]
     fn handle_startup(&mut self, cx: &mut Cx) {
         self.reveal_caption_bar_on_web(cx);
+        // A browser touch device delivers `TouchUpdate` and nothing else (the
+        // backend `preventDefault()`s touches, which also kills the browser's
+        // compatibility mouse events). Half this chrome -- every popup surface,
+        // the panel scrims, the recents rows, the inspector hover -- routes on
+        // raw `MouseDown`/`MouseMove`/`MouseUp`, so under touch it is simply
+        // dead. Let a lone finger drive the mouse stream; a second finger still
+        // arrives as touch, which is what the canvas pinch-zoom reads.
+        cx.set_touch_emulates_mouse(true);
         let Some(fragment) = web_location_hash(cx) else {
             self.show_start_screen(cx);
             return;
