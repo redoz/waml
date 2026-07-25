@@ -578,6 +578,10 @@ fn fit_scene_camera(bbox: waml::solve::Rect, viewport_w: f64, viewport_h: f64) -
     Camera::fit(bbox, viewport_w, viewport_h, FIT_PAD)
 }
 
+/// Multiplicative step for one press of the view bar's zoom buttons. `ZoomIn`
+/// multiplies by it, `ZoomOut` divides, so a press-and-undo round-trips exactly.
+pub const ZOOM_STEP: f64 = 1.2;
+
 /// Index of the topmost node whose on-screen rect contains `abs`, or `None`.
 /// Topmost = last-drawn, so we scan in reverse. Pure (takes world rects +
 /// camera), matching the draw-time transform in `draw_walk`.
@@ -2673,6 +2677,66 @@ impl GraphCanvas {
         self.draw_bg.redraw(cx);
     }
 
+    /// Zoom by `factor` about the VIEWPORT CENTRE (spec §4). Deliberately
+    /// unlike the scroll path, which anchors at the cursor: a button press has
+    /// no cursor to honour, so holding the middle of the canvas stable is the
+    /// predictable behaviour. `Camera::zoom_at` clamps to `MIN_ZOOM`/`MAX_ZOOM`;
+    /// at a bound this is simply a no-op.
+    pub fn zoom_step(&mut self, cx: &mut Cx, factor: f64) {
+        self.camera.zoom_at(
+            self.view_rect.size.x * 0.5,
+            self.view_rect.size.y * 0.5,
+            factor,
+        );
+        self.draw_bg.redraw(cx);
+    }
+
+    /// Frame the whole scene (spec §4). An empty scene (`bounding_box` returns
+    /// `None`) or a not-yet-drawn canvas is a no-op with no camera mutation.
+    /// Marks the camera as fitted so a pending one-shot load-time fit cannot
+    /// stomp this on the next draw, and ignores `focus_mode` -- the user asked
+    /// for a fit.
+    pub fn fit_to_scene(&mut self, cx: &mut Cx) {
+        if self.view_rect.size.x <= 0.0 || self.view_rect.size.y <= 0.0 {
+            return;
+        }
+        let Some(bbox) = bounding_box(&self.scene) else {
+            return;
+        };
+        self.camera = fit_scene_camera(bbox, self.view_rect.size.x, self.view_rect.size.y);
+        self.fitted = true;
+        self.draw_bg.redraw(cx);
+    }
+
+    /// Frame the selected node (spec §4). No selection, a key with no node in
+    /// this scene, or a not-yet-drawn canvas is a no-op.
+    pub fn fit_to_selection(&mut self, cx: &mut Cx) {
+        if self.view_rect.size.x <= 0.0 || self.view_rect.size.y <= 0.0 {
+            return;
+        }
+        let Some(key) = self.selected_key.clone() else {
+            return;
+        };
+        let Some(bbox) = self
+            .scene
+            .nodes
+            .iter()
+            .find(|n| n.key == key)
+            .map(|n| n.rect)
+        else {
+            return;
+        };
+        self.camera = fit_scene_camera(bbox, self.view_rect.size.x, self.view_rect.size.y);
+        self.fitted = true;
+        self.draw_bg.redraw(cx);
+    }
+
+    /// Whether a node is currently selected — drives the view bar's
+    /// fit-to-selection button between enabled and dim.
+    pub fn has_selection(&self) -> bool {
+        self.selected_key.is_some()
+    }
+
     /// Toggle the hidden-group-border x-ray and repaint.
     pub fn set_show_hidden_borders(&mut self, cx: &mut Cx, on: bool) {
         self.show_hidden_borders = on;
@@ -3081,6 +3145,20 @@ mod tests {
             fit_scene_camera(bbox, 800.0, 600.0),
             crate::camera::Camera::fit(bbox, 800.0, 600.0, FIT_PAD)
         );
+    }
+
+    #[test]
+    fn zoom_step_is_a_symmetric_pair() {
+        // In and out are exact inverses, so a press-and-undo round-trips.
+        let mut cam = crate::camera::Camera {
+            pan_x: 0.0,
+            pan_y: 0.0,
+            zoom: 1.0,
+        };
+        cam.zoom_at(400.0, 300.0, ZOOM_STEP);
+        cam.zoom_at(400.0, 300.0, 1.0 / ZOOM_STEP);
+        assert!((cam.zoom - 1.0).abs() < 1e-9, "zoom drifted: {}", cam.zoom);
+        assert!(cam.pan_x.abs() < 1e-9 && cam.pan_y.abs() < 1e-9);
     }
 
     #[test]
