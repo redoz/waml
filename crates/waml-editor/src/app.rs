@@ -38,6 +38,7 @@ script_mod! {
     use mod.widgets.PopupRoot
     use mod.widgets.LogoMark
     use mod.widgets.IconButton
+    use mod.widgets.AgentMark
 
     startup() do #(App::script_component(vm)){
         ui: Root{
@@ -112,6 +113,15 @@ script_mod! {
                             align: Align{x: 0.0, y: 0.5}
                             clip_x: true
                             padding: Inset{left: 2.0}
+                            // Per-agent window marker (--title / --color). FIRST
+                            // child and zero-width: it reserves no space in this
+                            // `flow: Right` row, so the burger and model name do
+                            // not move, and drawing first puts its wash UNDER
+                            // them instead of gelling over them. It draws across
+                            // the full row via `draw_abs` and an App-measured
+                            // width (`sync_agent_row`), bounded by this row's
+                            // `clip_x`.
+                            agent_mark := AgentMark{}
                             // Burger on the title line, scaled up (30px button, 20px
                             // glyph) so it reads as a peer of the heading and sits on
                             // its centreline. 30 in a 34px row leaves 2px slack top
@@ -550,6 +560,17 @@ pub struct App {
     /// the first sync always writes.
     #[rust(-1.0)]
     rule_overshoot: f64,
+    /// `--title` badge text, retained so a theme live-edit reload can re-push it
+    /// (`Apply::Reload` wipes the widget's own `#[rust]` state).
+    #[rust]
+    agent_badge: Option<String>,
+    /// `--color` tint, retained for the same reason as `agent_badge`.
+    #[rust]
+    agent_tint: Option<Vec4>,
+    /// Last-pushed title-row width, so `sync_agent_row` only pushes on a real
+    /// change (same guard shape as `dock_slot_w`).
+    #[rust]
+    agent_row_w: f64,
 }
 
 impl App {
@@ -818,6 +839,45 @@ impl App {
                 slot.walk.width = Size::Fixed(rw);
             }
             cx.redraw_all();
+        }
+    }
+
+    /// Push the launch-flag marks into `AgentMark`. Called at startup AND from
+    /// `rehydrate`: the `T` theme toggle goes through `cx.request_live_edit()`
+    /// -> `Apply::Reload`, which resets the widget's `#[rust]` state, so without
+    /// the second call both marks vanish the first time an agent toggles the
+    /// theme and the window silently becomes indistinguishable again.
+    fn apply_agent_marks(&mut self, cx: &mut Cx) {
+        let badge = self.agent_badge.clone();
+        let tint = self.agent_tint;
+        if let Some(mut mark) = self
+            .ui
+            .widget(cx, ids!(agent_mark))
+            .borrow_mut::<crate::agent_mark::AgentMark>()
+        {
+            mark.set_marks(cx, badge, tint);
+        }
+    }
+
+    /// Measure the title row and push its width to `AgentMark`, which draws
+    /// across it with `draw_abs` (it is mounted zero-width, so it cannot learn
+    /// the row width from its own turtle). Same measure-and-push shape as
+    /// `sync_tree_gap` feeding `DocTabs::set_left_overshoot`.
+    fn sync_agent_row(&mut self, cx: &mut Cx) {
+        if self.agent_badge.is_none() && self.agent_tint.is_none() {
+            return;
+        }
+        let w = self.ui.widget(cx, ids!(title_row)).area().rect(cx).size.x;
+        if (w - self.agent_row_w).abs() <= 0.5 {
+            return;
+        }
+        self.agent_row_w = w;
+        if let Some(mut mark) = self
+            .ui
+            .widget(cx, ids!(agent_mark))
+            .borrow_mut::<crate::agent_mark::AgentMark>()
+        {
+            mark.set_row_width(cx, w);
         }
     }
 
@@ -1134,6 +1194,10 @@ impl App {
     /// the tool-dock mode (back to `Select`) and the inspector element-picker
     /// are the only bits not restored, both cheap to re-touch by hand.
     fn rehydrate(&mut self, cx: &mut Cx) {
+        // First, before the start-screen early return: the marks apply to both
+        // screens.
+        self.apply_agent_marks(cx);
+        self.agent_row_w = 0.0; // force `sync_agent_row` to re-push after reload
         if !self.editor_shown {
             // Start screen: `show_start_screen` re-reads recents and re-shows.
             self.show_start_screen(cx);
@@ -1478,6 +1542,9 @@ impl MatchEvent for App {
                 return;
             }
         };
+        self.agent_badge = args.badge.clone();
+        self.agent_tint = args.tint.map(|[r, g, b]| vec4(r, g, b, 1.0));
+        self.apply_agent_marks(cx);
         match args.dir {
             Some(dir) => {
                 if self.open_dir(cx, &dir, args.diagram.as_deref()) {
@@ -2420,6 +2487,12 @@ impl AppMain for App {
         crate::tool_dock::script_mod(vm);
         crate::view_bar::script_mod(vm);
         crate::conflict_badge::script_mod(vm);
+        // `AgentMark` must register before `App`'s own DSL, which mounts it as a
+        // child of `title_row`: a module's DSL resolves `mod.widgets.*` eagerly
+        // at `use`-time, not lazily, so an unregistered child silently becomes a
+        // dead, invisible node whose setters no-op. Green tests and review both
+        // miss it.
+        crate::agent_mark::script_mod(vm);
         crate::selection_toolbar::script_mod(vm);
         crate::statusbar::script_mod(vm);
         crate::logo::script_mod(vm);
@@ -2570,6 +2643,9 @@ impl AppMain for App {
         // spacer every frame (including NextFrame, so the peek-timer's own
         // dock transitions are picked up promptly).
         self.sync_dock_slots(cx);
+        // Same shape for the marker's row width: it is mounted zero-width, so
+        // `App` is the only thing that knows how wide the title row is.
+        self.sync_agent_row(cx);
     }
 }
 
