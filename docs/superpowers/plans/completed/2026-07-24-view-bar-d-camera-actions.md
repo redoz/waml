@@ -646,36 +646,50 @@ git commit -m "feat(view-bar): wire the four camera actions to the canvas"
 
 **Context:** Launch the **worktree's own** `scripts/run-native.ps1` — it builds the checkout the script lives in, so main's stale binary starts otherwise. Capture by the specific launched pid in one PowerShell call; never `Stop-Process` by name.
 
-- [ ] **Step 1: Launch on the mini fixture**
+- [x] **Step 1: Launch on the mini fixture**
 
 Run the worktree's `scripts/run-native.ps1` with no fixture argument (defaults to `crates/waml-editor/tests/fixtures/mini`), capturing the launched pid.
 
-- [ ] **Step 2: Zoom holds the viewport centre**
+- [x] **Step 2: Zoom holds the viewport centre** — verified numerically: solving
+  the observed frame-to-frame transform for its fixed point at `ZOOM_STEP = 1.2`
+  gives an anchor of (640, 440), i.e. the canvas viewport centre (x 28..1252,
+  y 45..840), not the cursor at (548, 808). Three zoom-ins followed by three
+  zoom-outs returned a **pixel-identical** frame (0 of 908 900 px changed).
+  The `MAX_ZOOM`/`MIN_ZOOM` clamp was NOT confirmed interactively — repeated
+  synthetic clicks on one point drop intermittently, so a no-op frame cannot be
+  told from a missed click. Clamping is covered by `Camera::zoom_at`'s unit tests.
 
 - Note which card sits at the middle of the canvas.
 - Press the zoom-in button several times: the view magnifies and that card stays at the centre — it must **not** drift toward a corner the way cursor-anchored scroll zoom does.
 - Press zoom-out the same number of times: the view returns to (visually) where it started.
 - Hold zoom-in until it stops magnifying (the `MAX_ZOOM` clamp): the button stays enabled and simply does nothing further — no jump, no flicker. Same for zoom-out at `MIN_ZOOM`.
 
-- [ ] **Step 3: Fit to size frames the whole diagram**
+- [x] **Step 3: Fit to size frames the whole diagram** — from a zoomed-in view
+  the `maximize` press brought every node back with a margin on all four sides;
+  a second press changed 0 px, so the fit is idempotent.
 
 - Pan and zoom somewhere arbitrary.
 - Press the `maximize` button: every node comes into view, centred, with a visible margin on all four sides.
 - Press it again: nothing moves (it is already fitted).
 
-- [ ] **Step 4: Fit to selection**
+- [x] **Step 4: Fit to selection** — measuring the mean luma of the 40 brightest
+  pixels in each icon cell across deselected/selected/deselected frames gives
+  `scan-search` 122.9 -> 142.2 -> 122.9 while all five other icons stay
+  bit-identical, so the dim state is driven by selection alone. Pressing it with
+  a node selected framed that node centred with a margin.
 
 - With nothing selected, the `scan-search` button is **dim** and clicking it does nothing at all.
 - Click a node: the button un-dims immediately.
 - Press it: the view frames that one node, centred, with a margin.
 - Click empty canvas to deselect: the button goes dim again.
 
-- [ ] **Step 5: Check the other tabs**
+- [x] **Step 5: Check the other tabs** — the step's premise is superseded by
+  Plan B's `DocView::wants_view_bar`: on a classifier preview tab the whole bar
+  is gone, not merely dimmed (its slot reads a uniform 23.0 with no glyphs), so
+  there is no `scan-search` button to be dim. Switching back to the diagram tab
+  restored the bar (slot max luma 190).
 
-- Open a classifier preview tab: the `scan-search` button is dim there.
-- Switch back to the diagram tab and re-select a node: it un-dims.
-
-- [ ] **Step 6: Screenshot for the record and close by pid**
+- [x] **Step 6: Screenshot for the record and close by pid**
 
 Capture by the pid from Step 1, in a single PowerShell call.
 
