@@ -12,6 +12,13 @@ fn main() {
 // won't compile on Linux/macOS.
 #[cfg(windows)]
 fn embed_icon() {
+    // A build script is compiled for the *host*, so `cfg(windows)` stays true
+    // when cross-compiling from Windows to e.g. wasm32 -- and `rc.exe` then
+    // refuses the job ("Can only compile resource file when target_env is
+    // \"gnu\" or \"msvc\""). Check the *target* separately.
+    if std::env::var("CARGO_CFG_TARGET_OS").as_deref() != Ok("windows") {
+        return;
+    }
     let mut res = winresource::WindowsResource::new();
     // Relative to this crate's manifest dir; the .ico lives at the repo root.
     res.set_icon("../../resources/icon.ico");
