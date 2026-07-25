@@ -504,6 +504,11 @@ script_mod! {
 /// own footprint.
 const TREE_BTN_W: f64 = 32.0;
 
+/// How long the document has to sit unchanged before `mark_dirty` turns into a
+/// `save`. Long enough that a drag settles first, short enough that a tab
+/// closed right after an edit has already been persisted.
+const SAVE_DEBOUNCE_SECS: f64 = 0.5;
+
 /// Footprint of the caption's right-dock toggle `[I]`: the `inspector_btn` DSL
 /// `width` (30, the burger's size) plus its 2px right margin. The right-hand
 /// twin of `TREE_BTN_W`. `pub(crate)` because `DocTabs` has the other consumer:
@@ -523,6 +528,9 @@ pub struct App {
     /// model. In-memory only — never written back to disk in the spike.
     #[rust]
     bundle: Vec<(String, String)>,
+    /// Debounce for `mark_dirty` -> `save`; see `SAVE_DEBOUNCE_SECS`.
+    #[rust]
+    save_timer: Timer,
     /// Basename of the currently-open bundle directory. The bundle's display
     /// name falls back to this when the model carries no root name (`model.path`
     /// is empty -- no root `index.md` H1 / frontmatter title), so an unnamed
@@ -1067,6 +1075,50 @@ impl App {
             statusbar.set_state(cx, diagram_name, node_count, zoom_pct, tool_label);
         }
     }
+
+    /// The open document changed. Schedules a save; does not perform one.
+    ///
+    /// Restarts the timer rather than extending it, so a burst of ops -- a drag
+    /// that re-authors placement as it moves -- coalesces into a single save
+    /// when it settles instead of one per frame.
+    fn mark_dirty(&mut self, cx: &mut Cx) {
+        cx.stop_timer(self.save_timer);
+        self.save_timer = cx.start_timeout(SAVE_DEBOUNCE_SECS);
+    }
+
+    /// Persist the open bundle, by whatever means this build has.
+    ///
+    /// The editor has one document model and two very different backings, so
+    /// this is the seam where that difference lives; callers only ever say the
+    /// document changed (`mark_dirty`), never how to store it.
+    fn save(&mut self, cx: &mut Cx) {
+        if self.bundle.is_empty() {
+            return;
+        }
+        self.save_backend(cx);
+    }
+
+    /// Browser backing: the URL fragment is the whole filesystem.
+    ///
+    /// Two things ride on this. A refresh restores the document, because
+    /// `handle_startup` decodes exactly this fragment. And the update-check
+    /// toast in `index.html` (see `scripts/inject-runtime-shell.mjs`) can build
+    /// its reload URL from `location.hash` alone -- it never has to call into
+    /// wasm, which makepad gives us no channel for anyway.
+    ///
+    /// `replace`, not push: an edit is not a navigation, and one history entry
+    /// per save would make Back mean "undo some edits, sometimes".
+    #[cfg(target_arch = "wasm32")]
+    fn save_backend(&mut self, cx: &mut Cx) {
+        cx.browser_update_url(&format!("#{}", waml::share::encode(&self.bundle)), true);
+    }
+
+    /// Native backing: writing `self.bundle` back over the opened OKF directory.
+    /// Not implemented -- the editor has never written a document to disk (see
+    /// the note on the `bundle` field), so drag-to-place edits are still
+    /// in-memory only on desktop. The seam is here for it.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn save_backend(&mut self, _cx: &mut Cx) {}
 
     /// Push the canvas's current conflict count onto the toolbar badge.
     fn sync_conflict_badge(&mut self, cx: &mut Cx) {
@@ -1967,6 +2019,7 @@ impl MatchEvent for App {
                                 }
                             }
                             self.sync_conflict_badge(cx);
+                            self.mark_dirty(cx);
                             // Refresh the OPEN list (stays open, re-anchored)
                             // or dismiss it if the delete cleared every
                             // conflict.
@@ -2446,6 +2499,7 @@ impl App {
                         v.resolve_active(cx, &body, &self.model);
                     }
                     self.sync_conflict_badge(cx);
+                    self.mark_dirty(cx);
                 }
                 Err(e) => log!("place.set failed: {e:?}"),
             }
@@ -2720,6 +2774,12 @@ impl AppMain for App {
             }
         }
         self.match_event(cx, event);
+
+        // Debounced save: the document has sat unchanged for a beat, so persist
+        // it through whichever backing this build has.
+        if self.save_timer.is_event(event).is_some() {
+            self.save(cx);
+        }
 
         // Single popup seam: light-dismiss + active-surface routing + emission.
         if let Some(mut pr) = self

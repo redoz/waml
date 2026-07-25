@@ -74,6 +74,16 @@ jobs:
       - name: Brand the artifact
         run: node scripts/brand-web-artifact.mjs target/makepad-wasm-app/release/waml-editor
 
+      # Writes version.json and patches index.html with the logo loading screen
+      # and the new-version check. The commit sha is the build id: the check
+      # compares the deployed version.json against the value baked into the
+      # loaded page, so it only has to be unique per deploy.
+      - name: Inject the runtime shell
+        run: >
+          node scripts/inject-runtime-shell.mjs
+          target/makepad-wasm-app/release/waml-editor
+          ${{ github.sha }}
+
       - uses: actions/configure-pages@v5
 
       # Layout emitted by cargo-makepad: index.html, waml-editor.wasm, the
