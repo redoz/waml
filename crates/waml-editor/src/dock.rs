@@ -33,10 +33,16 @@ pub enum DockEvent {
     PointerLeft,
     /// Header pin button: Peek -> Pinned, or Pinned -> Flag (unpin).
     PinToggle,
-    /// The caption bar's tree toggle. Moves Flag <-> Pinned directly: a column
-    /// summoned from the window chrome is a deliberate act, so it must not
-    /// land in the self-collapsing `Peek` state the flag strip opens into.
+    /// A caption bar dock toggle (`[T]` for the tree, `[I]` for the right
+    /// dock). Moves Flag <-> Pinned directly: a column summoned from the
+    /// window chrome is a deliberate act, so it must not land in the
+    /// self-collapsing `Peek` state the flag strip opens into.
     Toggle,
+    /// A view asked the shell to open its right-hand docked panel
+    /// (`ViewOutcome::open_right_dock`). Request-only and idempotent: it drives
+    /// ANY state to `Pinned` and never collapses, so a user who closed the
+    /// panel isn't fought by the next click.
+    Open,
 }
 
 /// The transition table. Any unlisted (state, event) pair is a no-op (returns
@@ -52,10 +58,11 @@ pub fn next(state: DockState, ev: DockEvent) -> DockState {
         (Pinned, PinToggle) => Flag,
         (Flag, Toggle) => Pinned,
         (Pinned, Toggle) => Flag,
-        // The tree, `Toggle`'s only sender, never enters Peek — this arm exists
-        // so the pair is total rather than silently falling through the
-        // catch-all, and collapsing is the safer reading of a toggle-off.
+        // Neither `Toggle` sender ever enters Peek — this arm exists so the
+        // pair is total rather than silently falling through the catch-all,
+        // and collapsing is the safer reading of a toggle-off.
         (Peek, Toggle) => Flag,
+        (_, Open) => Pinned,
         (s, _) => s,
     }
 }
@@ -192,6 +199,18 @@ mod tests {
         assert_eq!(next(Pinned, Toggle), Flag);
         // Unreachable for the tree (it never peeks), but defined for totality.
         assert_eq!(next(Peek, Toggle), Flag);
+    }
+
+    #[test]
+    fn open_is_idempotent_and_never_collapses() {
+        use DockEvent::*;
+        use DockState::*;
+        // Request-only: a view can ask for its panel, never for its collapse,
+        // so a user who closed it isn't fought by the next click. Every state
+        // lands on Pinned, including Pinned itself (a no-op, so no redraw).
+        assert_eq!(next(Flag, Open), Pinned);
+        assert_eq!(next(Peek, Open), Pinned);
+        assert_eq!(next(Pinned, Open), Pinned);
     }
 
     #[test]

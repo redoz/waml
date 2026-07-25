@@ -2377,6 +2377,10 @@ impl App {
     ) -> bool {
         let mut consumed = false;
 
+        // Read the right-dock request BEFORE the owned `outcome`'s fields are
+        // moved out below (`popup`, `promote_subject`, `open_preview` all move).
+        let open_right_dock = crate::doc_view::right_dock_open_requested(&outcome, Some(active));
+
         // A view emits `Op`s (drag-to-place authors a `## Layout` placement);
         // the shell owns the Model, so it applies them against the retained
         // bundle, rebuilds the model, and re-solves the active diagram view in
@@ -2505,6 +2509,19 @@ impl App {
                 self.sync_active_tab(cx);
             }
             consumed = true;
+        }
+
+        // Request-only, and idempotent: the shell opens the panel and never
+        // closes it, so a user who collapsed it isn't fought by the next click.
+        // Nothing sets the flag yet -- this is the wired channel, not a caller.
+        if open_right_dock {
+            if let Some(mut panel) = self
+                .ui
+                .widget(cx, ids!(inspector))
+                .borrow_mut::<crate::inspector_panel::Inspector>()
+            {
+                panel.open_dock(cx);
+            }
         }
 
         if outcome.statusbar_dirty {

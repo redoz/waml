@@ -267,6 +267,15 @@ pub fn body_chrome(active: Option<&DocTab>) -> BodyChrome {
     }
 }
 
+/// Whether a returned `ViewOutcome` actually asks for the right-hand dock to
+/// open: the flag is set AND the active tab's view declares a right dock at
+/// all. Pure, so the gating rule is testable without a `Cx`; the shell calls it
+/// once at the top of `relay_outcome`, before the owned outcome's fields are
+/// moved out beneath it.
+pub fn right_dock_open_requested(outcome: &ViewOutcome, active: Option<&DocTab>) -> bool {
+    outcome.open_right_dock && body_chrome(active).right_dock.is_some()
+}
+
 /// The accent colour for the active tab's top bar, asked of the view that tab
 /// opens. `None` -- no open tab, or a view with no opinion -- leaves the theme
 /// accent in place. Mirrors `body_chrome`: same throwaway `make_view`, because
@@ -449,5 +458,21 @@ mod tests {
                 "a {kind:?} tab must declare the inspector dock"
             );
         }
+    }
+
+    #[test]
+    fn an_open_request_needs_both_the_flag_and_a_declared_dock() {
+        let asked = ViewOutcome {
+            open_right_dock: true,
+            ..Default::default()
+        };
+        let quiet = ViewOutcome::default();
+        let diagram = tab(TabKind::Diagram, TreeKind::Diagram);
+        assert!(right_dock_open_requested(&asked, Some(&diagram)));
+        // No flag: never opens. This is the common case -- nothing sets it yet.
+        assert!(!right_dock_open_requested(&quiet, Some(&diagram)));
+        // No active tab: `body_chrome(None).right_dock` is `None`, so the
+        // request is ignored rather than opening a panel with no view behind it.
+        assert!(!right_dock_open_requested(&asked, None));
     }
 }
