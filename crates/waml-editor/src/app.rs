@@ -264,13 +264,13 @@ script_mod! {
                     // canvas keeps its pan/zoom in the gaps between panels.
                     // Body: a docked split. `dock_row` is flow:Right so a
                     // pinned slot shrinks the Fill `center_stack` automatically
-                    // (no margin math). `peek_layer` is an Overlay sibling above
-                    // it, holding the INSPECTOR: a Peek body overlaps the center
-                    // at zero layout cost and keeps real hit rects (no draw_abs
-                    // -- see the aligned-parent hit-rect bug). Both slot widths
-                    // are driven from each panel's DockState (`sync_dock_slots`),
-                    // but only `right_slot` is a bare spacer -- the tree lives
-                    // INSIDE `left_slot` as a flush column, since it never peeks.
+                    // (no margin math). Both side panels are now real layout
+                    // children of `dock_row` -- the tree lives INSIDE `left_slot`
+                    // and the inspector lives INSIDE `right_slot`, both flush
+                    // columns since neither ever peeks any more. Both slot
+                    // widths are driven from each panel's DockState
+                    // (`sync_dock_slots`). `dock_body` itself is just a thin
+                    // wrapper around `dock_row` now (no more Overlay peek layer).
                     dock_body := View{
                         width: Fill
                         height: Fill
@@ -413,30 +413,23 @@ script_mod! {
                                     }
                                 }
                             }
-                            // Right (Inspector) reservation spacer. Starts 0 (Flag/Peek).
-                            right_slot := View{ width: 0.0, height: Fill }
-                        }
-                        // Peek/pinned bodies. Overlay above `dock_row`, so a peek
-                        // overhangs the center without shrinking it. The wrap is
-                        // edge-aligned and bg-less; the panel draws its flag spine
-                        // flush at the window edge and its body just inside it.
-                        //
-                        // The INSPECTOR only, now: it keeps its floating card and all
-                        // three dock states. The tree left this layer to become a real
-                        // `left_slot` child (see above), so its `left_peek_wrap` is
-                        // gone; the asymmetry is deliberate.
-                        peek_layer := View{
-                            width: Fill
-                            height: Fill
-                            flow: Overlay
-                            right_peek_wrap := View{
-                                width: Fill
+                            // Right (Inspector) column. Like `left_slot`, NOT a bare
+                            // spacer: the inspector never peeks any more, so it is a
+                            // real layout child rather than an overlay floater. Its
+                            // flush top, flush right and full height all fall out of
+                            // the layout for free, and the shared `field_bg` merges
+                            // it with the caption band into one chrome mass -- same
+                            // symmetry as `left_slot`.
+                            //
+                            // Width is set at runtime by `sync_dock_slots` (320 when
+                            // Pinned, 0 when collapsed). Starts at 0 so the first
+                            // frame can't flash a column before the slot sync runs.
+                            right_slot := View{
+                                width: 0.0
                                 height: Fill
-                                align: Align{x: 1.0, y: 0.0}
                                 inspector := Inspector{
-                                    width: 320.0
+                                    width: Fill
                                     height: Fill
-                                    margin: Inset{right: 28.0, top: 12.0, bottom: 12.0}
                                 }
                             }
                         }

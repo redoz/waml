@@ -16,7 +16,7 @@
 //! header band.
 //!
 //! The panel's dock state is binary -- `Pinned` (a flush column) or `Flag`
-//! (zero pixels, nothing drawn). Unlike the inspector it never enters `Peek`,
+//! (zero pixels, nothing drawn). Like the inspector it never enters `Peek`,
 //! so it carries no flag spine and no auto-collapse timer.
 
 use crate::dock::{DockEvent, DockState};
@@ -70,8 +70,9 @@ script_mod! {
         // a flush column now, butted to the window's left edge and to the caption
         // band above it, so the ring had nothing left to separate and only cut
         // the two apart. Chrome mass versus canvas ground carries the edge
-        // instead. The inspector still floats and still keeps its ring -- the
-        // asymmetry is deliberate, so do NOT sync this shader back to `frame.rs`.
+        // instead. The inspector's own `draw_bg` repeats this same flat-fill
+        // shader now -- the two panels are symmetric flush columns, so do NOT
+        // reintroduce the old `frame.rs` ring on either one.
         //
         // A flat fill rather than an SDF one: nothing here needs coverage or
         // antialiasing now that the ring and the radius are gone. The body is

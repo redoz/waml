@@ -59,8 +59,6 @@ pub const ICON_GROUPS: &[(&str, &[IconEntry])] = &[
         &[
             ie!(Group, "Group / package section"),
             ie!(PanelTop, "Node / panel section"),
-            ie!(Pin, "Pin inspector"),
-            ie!(PinOff, "Unpin inspector"),
             ie!(Frame, "Frame / bounds"),
             ie!(InspectionPanel, "Caption right-dock toggle"),
         ],
@@ -80,7 +78,13 @@ pub const ICON_GROUPS: &[(&str, &[IconEntry])] = &[
             ie!(ChevronsUpDown, "Scope / select dropdown"),
         ],
     ),
-    ("START SCREEN", &[ie!(Package, "Recent-model row glyph")]),
+    (
+        "START SCREEN",
+        &[
+            ie!(Package, "Recent-model row glyph"),
+            ie!(Pin, "Pin recent model row"),
+        ],
+    ),
     (
         "CONFLICT BADGE / LIST",
         &[
