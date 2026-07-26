@@ -16,7 +16,7 @@
   const update = (i: number, patch: Partial<Attribute>) =>
     onChange(attributes.map((a, idx) => (idx === i ? { ...a, ...patch } : a)));
   const remove = (i: number) => onChange(attributes.filter((_, idx) => idx !== i));
-  const add = () => onChange([...attributes, { name: "", type: { name: "String" }, multiplicity: "1" }]);
+  const add = () => onChange([...attributes, { name: "", type: { name: "String" } }]);
   const move = (from: number, to: number) => {
     if (from === to || from < 0 || to < 0) return;
     const next = attributes.slice();
@@ -103,9 +103,9 @@
           />
           <input
             type="text"
-            value={a.multiplicity}
+            value={a.multiplicity ?? ""}
             placeholder="1"
-            oninput={(e) => update(i, { multiplicity: e.currentTarget.value || "1" })}
+            oninput={(e) => update(i, { multiplicity: e.currentTarget.value || undefined })}
             class={inputCls}
           />
           <select
