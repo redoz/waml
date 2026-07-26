@@ -2,7 +2,7 @@
 //! `View` (so it can host real child widgets — the element-picker bar, and, in
 //! time, the form of editable field controls the body will grow into). The
 //! **body** is still drawn immediate-mode with `DrawText`, exactly like
-//! `GraphCanvas` draws node titles, until those controls actually land — the
+//! `ClassDiagramSurface` draws node titles, until those controls actually land — the
 //! same hybrid `ProjectTree` uses (derefs `View`, yet does manual draws in its
 //! `draw_walk`). See `inspector.rs` for the pure `InspectorView` projection.
 //!

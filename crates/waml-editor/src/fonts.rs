@@ -116,17 +116,18 @@ script_mod! {
 /// future edit can't silently reintroduce a bare `font_size:`/`FontMember`
 /// instead of a `mod.fonts` role token. Mirrors the plan's verification grep:
 ///   rg -n 'font_size:|FontMember' crates/waml-editor/src \
-///     --glob '!**/canvas.rs' --glob '!**/node_design_editor.rs' \
+///     --glob '!**/canvas/class/widget.rs' --glob '!**/node_design_editor.rs' \
 ///     --glob '!**/bin/**' --glob '!**/card/**'
 #[cfg(test)]
 mod chrome_typography_gate {
     use std::path::{Path, PathBuf};
 
     /// Task 11 "Excluded files (not chrome)": a full-screen mock render
-    /// surface, the standalone node-design mock harness, dev/debug bin
+    /// surface, the class-diagram surface, the standalone node-design mock harness, dev/debug bin
     /// targets, and the card-preview widget -- none was migrated by this
     /// plan.
-    const EXCLUDED_FILES: &[&str] = &["canvas.rs", "node_design_editor.rs"];
+    const EXCLUDED_FILES: &[&str] = &["node_design_editor.rs"];
+    const EXCLUDED_RELATIVE_PATHS: &[&str] = &["canvas/class/widget.rs"];
     const EXCLUDED_DIRS: &[&str] = &["bin", "card"];
 
     /// This file (`fonts.rs`) IS the `mod.fonts` token-definition module --
@@ -142,6 +143,12 @@ mod chrome_typography_gate {
     /// `font_size:`/`FontMember` hit in this file is one of those four -- see
     /// the call-site comments in `doc_tabs.rs` itself.
     const STATE_FONT_EXCEPTION_FILE: &str = "doc_tabs.rs";
+
+    fn is_excluded_relative_path(path: &Path) -> bool {
+        EXCLUDED_RELATIVE_PATHS
+            .iter()
+            .any(|excluded| path == Path::new(excluded))
+    }
 
     fn collect_rs_files(dir: &Path, out: &mut Vec<PathBuf>) {
         for entry in std::fs::read_dir(dir).expect("read_dir") {
@@ -172,7 +179,11 @@ mod chrome_typography_gate {
         let mut offenders = Vec::new();
         for path in &files {
             let file_name = path.file_name().unwrap().to_string_lossy().into_owned();
+            let relative_path = path
+                .strip_prefix(&src_dir)
+                .expect("collected source file must be below src");
             if EXCLUDED_FILES.contains(&file_name.as_str())
+                || is_excluded_relative_path(relative_path)
                 || file_name == DEFINITION_FILE
                 || file_name == STATE_FONT_EXCEPTION_FILE
             {
@@ -191,5 +202,14 @@ mod chrome_typography_gate {
             "residual ad-hoc font_size:/FontMember outside documented mod.fonts exceptions:\n{}",
             offenders.join("\n")
         );
+    }
+
+    #[test]
+    fn class_surface_exclusion_is_limited_to_its_moved_path() {
+        assert!(is_excluded_relative_path(Path::new(
+            "canvas/class/widget.rs"
+        )));
+        assert!(!is_excluded_relative_path(Path::new("canvas/widget.rs")));
+        assert!(!is_excluded_relative_path(Path::new("widget.rs")));
     }
 }

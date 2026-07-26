@@ -2,7 +2,7 @@
 //! classifier tabs. `OpenTabs` is pure state (no `Cx`), unit-tested like
 //! `tree.rs`/`inspector.rs`. `DocTabs` is the immediate-mode widget that
 //! renders it as a hand-rolled `DrawText` strip — no fork `TabBar` machinery,
-//! same convention as `GraphCanvas`/`inspector_panel` (`draw_abs` at manually
+//! same convention as `ClassDiagramSurface`/`inspector_panel` (`draw_abs` at manually
 //! tracked positions, click regions captured during `draw_walk` and hit-tested
 //! against on `FingerUp`).
 

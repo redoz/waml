@@ -47,7 +47,7 @@ script_mod! {
     use mod.prelude.widgets.*
     use mod.atlas
     use mod.fonts
-    use mod.widgets.GraphCanvas
+    use mod.widgets.ClassDiagramSurface
     use mod.widgets.ProjectTree
     use mod.widgets.Inspector
     use mod.widgets.DocTabs
@@ -337,7 +337,7 @@ script_mod! {
                                 flow: Overlay
                                 // Canvas gets its own wrapper View so the shell can
                                 // hide the whole diagram render on a Source tab
-                                // (GraphCanvas has no `visible` field of its own and
+                                // (ClassDiagramSurface has no `visible` field of its own and
                                 // draws every frame unconditionally). Diagram + Preview
                                 // tabs keep it shown; `sync_active_tab` toggles it off
                                 // only for a Source tab, mutually exclusive with
@@ -346,7 +346,7 @@ script_mod! {
                                     width: Fill
                                     height: Fill
                                     flow: Overlay
-                                    canvas := GraphCanvas{
+                                    canvas := ClassDiagramSurface{
                                         width: Fill
                                         height: Fill
                                     }
@@ -1208,7 +1208,7 @@ impl App {
         let (node_count, zoom_pct) = self
             .ui
             .widget(cx, ids!(canvas))
-            .borrow_mut::<crate::canvas::GraphCanvas>()
+            .borrow_mut::<crate::canvas::ClassDiagramSurface>()
             .map(|c| (c.node_count(), c.zoom_pct()))
             .unwrap_or((0, 100));
         let tool_label = self
@@ -1275,7 +1275,7 @@ impl App {
         let n = self
             .ui
             .widget(cx, ids!(canvas))
-            .borrow::<crate::canvas::GraphCanvas>()
+            .borrow::<crate::canvas::ClassDiagramSurface>()
             .map(|c| c.conflict_count())
             .unwrap_or(0);
         if let Some(mut badge) = self
@@ -1414,7 +1414,7 @@ impl App {
                 if let Some(mut canvas) = self
                     .ui
                     .widget(cx, ids!(canvas))
-                    .borrow_mut::<crate::canvas::GraphCanvas>()
+                    .borrow_mut::<crate::canvas::ClassDiagramSurface>()
                 {
                     canvas.set_scene(cx, crate::scene::Scene::default());
                 }
@@ -2195,7 +2195,7 @@ impl MatchEvent for App {
                 if let Some(mut canvas) = self
                     .ui
                     .widget(cx, ids!(canvas))
-                    .borrow_mut::<crate::canvas::GraphCanvas>()
+                    .borrow_mut::<crate::canvas::ClassDiagramSurface>()
                 {
                     canvas.set_conflict_focus_keys(cx, Some(vec![subject, reference]));
                 }
@@ -2232,7 +2232,7 @@ impl MatchEvent for App {
                             let conflicts = self
                                 .ui
                                 .widget(cx, ids!(canvas))
-                                .borrow::<crate::canvas::GraphCanvas>()
+                                .borrow::<crate::canvas::ClassDiagramSurface>()
                                 .map(|c| c.conflicts())
                                 .unwrap_or_default();
                             if conflicts.is_empty() {
@@ -2491,7 +2491,7 @@ impl MatchEvent for App {
             let conflicts = self
                 .ui
                 .widget(cx, ids!(canvas))
-                .borrow::<crate::canvas::GraphCanvas>()
+                .borrow::<crate::canvas::ClassDiagramSurface>()
                 .map(|c| c.conflicts())
                 .unwrap_or_default();
             if !conflicts.is_empty() {

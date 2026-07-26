@@ -23,7 +23,7 @@ cargo run -p waml-editor -- crates/waml-editor/tests/fixtures/mini
 Opens the native GPU window. The window is a resizable `Splitter`: the left
 pane is the `ProjectTree` panel (a `FileTree` showing the `Mini` bundle's root
 package with the `Order`/`Customer` classifiers and the `Orders` diagram); the
-right pane is the `GraphCanvas`. Clicking the `Orders` diagram row loads it into
+right pane is the `ClassDiagramSurface`. Clicking the `Orders` diagram row loads it into
 the canvas (fits on first draw). Pan the canvas with left-drag, zoom with the
 scroll wheel; drag the splitter bar to resize the panes. This interactive run is
 the **verification of record** for both the renderer and the tree panel — there
@@ -60,7 +60,7 @@ independent, decisive reasons found while implementing it:
    `#[cfg(headless)]` inside `makepad-platform` — not a public API and not even
    compiled in a normal `cargo test` build. A `tests/*.rs` integration test is a
    *separate crate* that can only touch `waml-editor`'s public items, and
-   `GraphCanvas` is a **bin-private** widget (declared via `mod` in `main.rs`).
+   `ClassDiagramSurface` is a **bin-private** widget (declared via `mod` in `main.rs`).
    There is no in-process "render this widget to an RGBA buffer" function to
    call, so the check cannot participate in `cargo test -p waml-editor`.
 

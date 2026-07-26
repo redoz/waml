@@ -215,7 +215,7 @@ pub enum ViewBarAction {
     None,
     /// A camera one-shot fired (zoom in/out, fit to size, fit to selection).
     /// `class_diagram_view.rs` maps the `ViewOption` payload onto the matching
-    /// `GraphCanvas` camera method.
+    /// `ClassDiagramSurface` camera method.
     Triggered(ViewOption),
     /// A toggle flipped; carries its new state.
     Toggled(ViewOption, bool),

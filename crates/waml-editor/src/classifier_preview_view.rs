@@ -24,7 +24,10 @@ impl ClassifierPreviewView {
 impl DocView for ClassifierPreviewView {
     fn sync(&mut self, cx: &mut Cx, body: &BodyWidgets, model: &Model) {
         let scene = build_focus_scene(model, &self.key);
-        if let Some(mut canvas) = body.canvas(cx).borrow_mut::<crate::canvas::GraphCanvas>() {
+        if let Some(mut canvas) = body
+            .canvas(cx)
+            .borrow_mut::<crate::canvas::ClassDiagramSurface>()
+        {
             canvas.set_focus(cx, scene);
         }
         if let Some(mut inspector) = body
@@ -71,10 +74,10 @@ impl DocView for ClassifierPreviewView {
         // Canvas select/deselect repoints the inspector (inspector-local).
         let canvas_action = body
             .canvas(cx)
-            .borrow_mut::<crate::canvas::GraphCanvas>()
-            .and_then(|c| c.canvas_action(actions));
+            .borrow_mut::<crate::canvas::ClassDiagramSurface>()
+            .and_then(|c| c.surface_action(actions));
         match canvas_action {
-            Some(crate::canvas::GraphCanvasAction::NodeSelect { key }) => {
+            Some(crate::canvas::ClassDiagramSurfaceAction::NodeSelect { key }) => {
                 if let Some(mut inspector) = body
                     .inspector(cx)
                     .borrow_mut::<crate::inspector_panel::Inspector>()
@@ -83,7 +86,7 @@ impl DocView for ClassifierPreviewView {
                 }
                 return out;
             }
-            Some(crate::canvas::GraphCanvasAction::NodeDeselect) => {
+            Some(crate::canvas::ClassDiagramSurfaceAction::NodeDeselect) => {
                 if let Some(mut inspector) = body
                     .inspector(cx)
                     .borrow_mut::<crate::inspector_panel::Inspector>()

@@ -92,7 +92,10 @@ impl ClassDiagramView {
             for d in &diags {
                 log!("diagnostic: {d:?}");
             }
-            if let Some(mut canvas) = body.canvas(cx).borrow_mut::<crate::canvas::GraphCanvas>() {
+            if let Some(mut canvas) = body
+                .canvas(cx)
+                .borrow_mut::<crate::canvas::ClassDiagramSurface>()
+            {
                 canvas.update_scene(cx, scene);
             }
         }
@@ -130,7 +133,10 @@ impl DocView for ClassDiagramView {
                 log!("diagnostic: {d:?}");
             }
             let node_keys: Vec<String> = scene.nodes.iter().map(|n| n.key.clone()).collect();
-            if let Some(mut canvas) = body.canvas(cx).borrow_mut::<crate::canvas::GraphCanvas>() {
+            if let Some(mut canvas) = body
+                .canvas(cx)
+                .borrow_mut::<crate::canvas::ClassDiagramSurface>()
+            {
                 canvas.set_scene(cx, scene);
             }
             let active_key = self.active_key.clone();
@@ -164,7 +170,7 @@ impl DocView for ClassDiagramView {
         // activation, model reload).
         let canvas_state = body
             .canvas(cx)
-            .borrow::<crate::canvas::GraphCanvas>()
+            .borrow::<crate::canvas::ClassDiagramSurface>()
             .map(|canvas| (canvas.constraint_vis(), canvas.show_hidden_borders()));
         if let Some((vis, hidden)) = canvas_state {
             if let Some(mut bar) = body.view_bar(cx).borrow_mut::<crate::view_bar::ViewBar>() {
@@ -184,12 +190,12 @@ impl DocView for ClassDiagramView {
         let mut out = ViewOutcome::default();
 
         // Keep the view bar's fit-to-selection button in step with the canvas
-        // selection. `GraphCanvas` mutates `selected_key` in `handle_event`,
+        // selection. `ClassDiagramSurface` mutates `selected_key` in `handle_event`,
         // which runs before `Event::Actions` is dispatched, so this reads the
         // selection as of THIS batch. Cheap: the setter redraws only on change.
         let has_selection = body
             .canvas(cx)
-            .borrow::<crate::canvas::GraphCanvas>()
+            .borrow::<crate::canvas::ClassDiagramSurface>()
             .is_some_and(|c| c.has_selection());
         if let Some(mut bar) = body.view_bar(cx).borrow_mut::<crate::view_bar::ViewBar>() {
             bar.set_fit_to_selection_enabled(cx, has_selection);
@@ -234,7 +240,10 @@ impl DocView for ClassDiagramView {
             {
                 inspector.set_subject(cx, model, subject);
             }
-            if let Some(mut canvas) = body.canvas(cx).borrow_mut::<crate::canvas::GraphCanvas>() {
+            if let Some(mut canvas) = body
+                .canvas(cx)
+                .borrow_mut::<crate::canvas::ClassDiagramSurface>()
+            {
                 canvas.select_by_key(cx, &key);
             }
             return out;
@@ -256,7 +265,7 @@ impl DocView for ClassDiagramView {
 
         // View bar: `ShowConstraints` drives the canvas veil mode,
         // `ShowHiddenBorders` the group x-ray, and the four camera one-shots
-        // are thin wrappers over the `Camera` API on `GraphCanvas`.
+        // are thin wrappers over the `Camera` API on `ClassDiagramSurface`.
         if let Some(action) = body
             .view_bar(cx)
             .borrow_mut::<crate::view_bar::ViewBar>()
@@ -268,8 +277,9 @@ impl DocView for ClassDiagramView {
             let hidden = show_hidden_borders_for(&action);
             if vis.is_none() && hidden.is_none() {
                 if let crate::view_bar::ViewBarAction::Triggered(opt) = action {
-                    if let Some(mut canvas) =
-                        body.canvas(cx).borrow_mut::<crate::canvas::GraphCanvas>()
+                    if let Some(mut canvas) = body
+                        .canvas(cx)
+                        .borrow_mut::<crate::canvas::ClassDiagramSurface>()
                     {
                         match opt {
                             crate::view_bar::ViewOption::ZoomIn => {
@@ -289,8 +299,9 @@ impl DocView for ClassDiagramView {
                 } else {
                     log!("view bar: {action:?}");
                 }
-            } else if let Some(mut canvas) =
-                body.canvas(cx).borrow_mut::<crate::canvas::GraphCanvas>()
+            } else if let Some(mut canvas) = body
+                .canvas(cx)
+                .borrow_mut::<crate::canvas::ClassDiagramSurface>()
             {
                 if let Some(vis) = vis {
                     canvas.set_constraint_vis(cx, vis);
@@ -305,10 +316,10 @@ impl DocView for ClassDiagramView {
         // Canvas pointer actions.
         let canvas_action = body
             .canvas(cx)
-            .borrow_mut::<crate::canvas::GraphCanvas>()
-            .and_then(|c| c.canvas_action(actions));
+            .borrow_mut::<crate::canvas::ClassDiagramSurface>()
+            .and_then(|c| c.surface_action(actions));
         match canvas_action {
-            Some(crate::canvas::GraphCanvasAction::NodeMenu { abs, key }) => {
+            Some(crate::canvas::ClassDiagramSurfaceAction::NodeMenu { abs, key }) => {
                 // Select-on-right-click: point the inspector at the node (the
                 // same call `NodeSelect` makes).
                 if let Some(mut inspector) = body
@@ -320,7 +331,7 @@ impl DocView for ClassDiagramView {
                 // Gather the diagram's per-node context items (empty for now).
                 let context = body
                     .canvas(cx)
-                    .borrow::<crate::canvas::GraphCanvas>()
+                    .borrow::<crate::canvas::ClassDiagramSurface>()
                     .map(|c| c.context_items(&Subject::Classifier(key.clone())))
                     .unwrap_or_default();
                 out.popup = Some(PopupRequest::NodeContextMenu {
@@ -330,7 +341,7 @@ impl DocView for ClassDiagramView {
                 });
                 return out;
             }
-            Some(crate::canvas::GraphCanvasAction::NodeSelect { key }) => {
+            Some(crate::canvas::ClassDiagramSurfaceAction::NodeSelect { key }) => {
                 if let Some(mut inspector) = body
                     .inspector(cx)
                     .borrow_mut::<crate::inspector_panel::Inspector>()
@@ -339,7 +350,7 @@ impl DocView for ClassDiagramView {
                 }
                 return out;
             }
-            Some(crate::canvas::GraphCanvasAction::NodeDeselect) => {
+            Some(crate::canvas::ClassDiagramSurfaceAction::NodeDeselect) => {
                 // Deselecting on the canvas falls back to the diagram, never to
                 // an empty panel.
                 let diagram_subject = Subject::Diagram(self.active_key.clone());
@@ -351,7 +362,7 @@ impl DocView for ClassDiagramView {
                 }
                 return out;
             }
-            Some(crate::canvas::GraphCanvasAction::ToggleExpand { key }) => {
+            Some(crate::canvas::ClassDiagramSurfaceAction::ToggleExpand { key }) => {
                 if !self.expanded.remove(&key) {
                     self.expanded.insert(key);
                 }
@@ -362,19 +373,20 @@ impl DocView for ClassDiagramView {
                     for d in &diags {
                         log!("diagnostic: {d:?}");
                     }
-                    if let Some(mut canvas) =
-                        body.canvas(cx).borrow_mut::<crate::canvas::GraphCanvas>()
+                    if let Some(mut canvas) = body
+                        .canvas(cx)
+                        .borrow_mut::<crate::canvas::ClassDiagramSurface>()
                     {
                         canvas.update_scene(cx, scene);
                     }
                 }
                 return out;
             }
-            Some(crate::canvas::GraphCanvasAction::DialDismiss) => {
+            Some(crate::canvas::ClassDiagramSurfaceAction::DialDismiss) => {
                 out.popup = Some(PopupRequest::Dismiss);
                 return out;
             }
-            Some(crate::canvas::GraphCanvasAction::CompassArmed {
+            Some(crate::canvas::ClassDiagramSurfaceAction::CompassArmed {
                 subject_key,
                 reference_key,
                 center,
@@ -405,8 +417,9 @@ impl DocView for ClassDiagramView {
                             layouts.push((z, nodes));
                         }
                     }
-                    if let Some(mut canvas) =
-                        body.canvas(cx).borrow_mut::<crate::canvas::GraphCanvas>()
+                    if let Some(mut canvas) = body
+                        .canvas(cx)
+                        .borrow_mut::<crate::canvas::ClassDiagramSurface>()
                     {
                         canvas.set_conflict_zones(cx, red.clone());
                         canvas.set_zone_layouts(cx, layouts);
@@ -492,7 +505,7 @@ impl DocView for ClassDiagramView {
             };
             let placement = zone.and_then(|z| {
                 body.canvas(cx)
-                    .borrow::<crate::canvas::GraphCanvas>()
+                    .borrow::<crate::canvas::ClassDiagramSurface>()
                     .and_then(|c| c.placement_for(z))
             });
             if let Some(p) = placement {
@@ -524,7 +537,10 @@ impl DocView for ClassDiagramView {
         // layouts were already solved at arm time, so this costs no solve.
         if tag == live_id!(place_dial) {
             let zone = id.and_then(crate::canvas::zone_of_id);
-            if let Some(mut canvas) = body.canvas(cx).borrow_mut::<crate::canvas::GraphCanvas>() {
+            if let Some(mut canvas) = body
+                .canvas(cx)
+                .borrow_mut::<crate::canvas::ClassDiagramSurface>()
+            {
                 canvas.preview_zone(cx, zone);
             }
         }

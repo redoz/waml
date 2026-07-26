@@ -1,4 +1,4 @@
-//! The `GraphCanvas` widget: draws the flattened `Scene` under a pan/zoom
+//! The `ClassDiagramSurface` widget: draws the flattened `Scene` under a pan/zoom
 //! `Camera`. Read-only — no editing, no hit-testing of individual nodes.
 //! Fits the scene to the view on first draw; left-drag pans; scroll zooms
 //! toward the cursor. Each node is a filled rect + its title text.
@@ -20,7 +20,7 @@ script_mod! {
     use mod.widgets.*
     use mod.text.*
 
-    mod.widgets.GraphCanvasBase = #(GraphCanvas::register_widget(vm))
+    mod.widgets.ClassDiagramSurfaceBase = #(ClassDiagramSurface::register_widget(vm))
 
     // Edge pen: fill the segment quad. Each routed segment is drawn as its own
     // axis-aligned quad (`segment_quad`), already inflated to the stroke
@@ -221,7 +221,7 @@ script_mod! {
         }
     }
 
-    mod.widgets.GraphCanvas = set_type_default() do mod.widgets.GraphCanvasBase{
+    mod.widgets.ClassDiagramSurface = set_type_default() do mod.widgets.ClassDiagramSurfaceBase{
         width: Fill
         height: Fill
         draw_bg +: { color: atlas.canvas_ground }
@@ -312,7 +312,7 @@ script_mod! {
 }
 
 #[derive(Script, ScriptHook, Widget)]
-pub struct GraphCanvas {
+pub struct ClassDiagramSurface {
     #[uid]
     uid: WidgetUid,
     #[source]
@@ -1531,7 +1531,7 @@ pub struct DialPlacement {
 
 /// Canvas -> App action (same convention as `ToolDockAction`).
 #[derive(Clone, Debug, Default)]
-pub enum GraphCanvasAction {
+pub enum ClassDiagramSurfaceAction {
     #[default]
     None,
     /// A right-press landed on a node: open the node menu at `abs` for the
@@ -1562,7 +1562,7 @@ pub enum GraphCanvasAction {
     DialDismiss,
 }
 
-impl Widget for GraphCanvas {
+impl Widget for ClassDiagramSurface {
     fn handle_event(&mut self, cx: &mut Cx, event: &Event, _scope: &mut Scope) {
         // View-bar camera glide clock: advance `t` by the wall-clock gap since
         // the last tick, write the eased camera, and stop the interval once it
@@ -1627,7 +1627,7 @@ impl Widget for GraphCanvas {
                         self.dial_center = Some(self.cursor_abs);
                         cx.widget_action(
                             uid,
-                            GraphCanvasAction::CompassArmed {
+                            ClassDiagramSurfaceAction::CompassArmed {
                                 subject_key,
                                 reference_key,
                                 center: self.cursor_abs,
@@ -1689,7 +1689,10 @@ impl Widget for GraphCanvas {
                 if let Some(node) = node_at(&rects, &self.camera, self.view_rect, fe.abs) {
                     let key = self.scene.nodes[node].key.clone();
                     let uid = self.widget_uid();
-                    cx.widget_action(uid, GraphCanvasAction::NodeMenu { abs: fe.abs, key });
+                    cx.widget_action(
+                        uid,
+                        ClassDiagramSurfaceAction::NodeMenu { abs: fe.abs, key },
+                    );
                 }
             }
             Hit::FingerDown(fe) if fe.is_primary_hit() => {
@@ -1737,7 +1740,7 @@ impl Widget for GraphCanvas {
                                 let uid = self.widget_uid();
                                 cx.widget_action(
                                     uid,
-                                    GraphCanvasAction::NodeSelect {
+                                    ClassDiagramSurfaceAction::NodeSelect {
                                         key: self.scene.nodes[ni].key.clone(),
                                     },
                                 );
@@ -1769,7 +1772,7 @@ impl Widget for GraphCanvas {
                             // to dismiss the surface (see `DialDismiss`).
                             self.close_dial(cx);
                             let uid = self.widget_uid();
-                            cx.widget_action(uid, GraphCanvasAction::DialDismiss);
+                            cx.widget_action(uid, ClassDiagramSurfaceAction::DialDismiss);
                         } else {
                             // The wedge under the cursor is the dial's business,
                             // not ours: `RadialPopup` resolves it and the shell
@@ -1862,7 +1865,7 @@ impl Widget for GraphCanvas {
                                     // Consumed: toggle expansion, no selection change.
                                     cx.widget_action(
                                         uid,
-                                        GraphCanvasAction::ToggleExpand {
+                                        ClassDiagramSurfaceAction::ToggleExpand {
                                             key: node.key.clone(),
                                         },
                                     );
@@ -1871,7 +1874,7 @@ impl Widget for GraphCanvas {
                                     self.selected_key = Some(node.key.clone());
                                     cx.widget_action(
                                         uid,
-                                        GraphCanvasAction::NodeSelect {
+                                        ClassDiagramSurfaceAction::NodeSelect {
                                             key: node.key.clone(),
                                         },
                                     );
@@ -1880,7 +1883,7 @@ impl Widget for GraphCanvas {
                             None => {
                                 self.selected = None;
                                 self.selected_key = None;
-                                cx.widget_action(uid, GraphCanvasAction::NodeDeselect);
+                                cx.widget_action(uid, ClassDiagramSurfaceAction::NodeDeselect);
                             }
                         }
                         self.draw_bg.redraw(cx);
@@ -2358,7 +2361,7 @@ impl Widget for GraphCanvas {
     }
 }
 
-impl GraphCanvas {
+impl ClassDiagramSurface {
     /// On-screen rect of scene node `i` under the current camera. Mirrors the
     /// draw-time transform in `draw_walk` / `node_at`.
     fn node_screen_rect(&self, i: usize) -> Rect {
@@ -3301,10 +3304,10 @@ impl GraphCanvas {
     }
 
     /// Convenience reader for `App` (mirrors `ToolDock::dock_action`).
-    pub fn canvas_action(&self, actions: &Actions) -> Option<GraphCanvasAction> {
+    pub fn surface_action(&self, actions: &Actions) -> Option<ClassDiagramSurfaceAction> {
         let item = actions.find_widget_action(self.widget_uid())?;
         match item.cast() {
-            GraphCanvasAction::None => None,
+            ClassDiagramSurfaceAction::None => None,
             action => Some(action),
         }
     }
@@ -3412,12 +3415,12 @@ mod tests {
     /// that `ConstraintVeil` already uses, which filters both edges alike.
     #[test]
     fn the_dash_mask_filters_both_edges_symmetrically() {
-        let src = include_str!("canvas.rs");
+        let src = include_str!("widget.rs");
         let pen = src
             .split_once("mod.draw.GroupDashed = ")
             .and_then(|(_, rest)| rest.split_once("\n    }\n"))
             .map(|(body, _)| body)
-            .expect("canvas.rs must define the `mod.draw.GroupDashed` pen");
+            .expect("widget.rs must define the `mod.draw.GroupDashed` pen");
         // Drop the pen's own comments -- they name the broken idiom on purpose.
         let pen: String = pen
             .lines()

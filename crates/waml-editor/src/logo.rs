@@ -511,7 +511,7 @@ const HOVER_SECS: f64 = 0.15;
 // the current colour variant to the next over this window.
 const FADE_SECS: f64 = 0.4;
 
-/// `LogoMark` -> `App` action (same convention as `GraphCanvasAction`). Carries
+/// `LogoMark` -> `App` action (same convention as `ClassDiagramSurfaceAction`). Carries
 /// the wordmark's screen-space centre so `App` can open the radial there.
 ///
 /// `#[allow(dead_code)]`: the `logo_harness` bin path-includes `logo.rs` without
@@ -753,7 +753,7 @@ impl LogoMark {
         self.rect
     }
 
-    /// Reader for `App` (mirrors `GraphCanvas::canvas_action`): the wordmark
+    /// Reader for `App` (mirrors `ClassDiagramSurface::surface_action`): the wordmark
     /// centre if a `Clicked` action landed this frame, else `None`.
     pub fn logo_action(&self, actions: &Actions) -> Option<DVec2> {
         let item = actions.find_widget_action(self.widget_uid())?;
