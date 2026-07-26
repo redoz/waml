@@ -87,7 +87,7 @@ tab so they describe the new shared-preview model.
 Run:
 
 ```powershell
-rtk cargo test -p waml-editor --lib doc_tabs::tests
+rtk cargo test -p waml-editor doc_tabs::tests
 ```
 
 Expected: compilation or assertion failures because `diagram_preview` and
@@ -132,7 +132,7 @@ ID behavior after their callers and tests are migrated.
 Run:
 
 ```powershell
-rtk cargo test -p waml-editor --lib doc_tabs::tests
+rtk cargo test -p waml-editor doc_tabs::tests
 ```
 
 Expected: all `doc_tabs` tests pass.
@@ -198,7 +198,7 @@ fn document_action_ignores_folders() {
 Run:
 
 ```powershell
-rtk cargo test -p waml-editor --lib tree_panel::tests
+rtk cargo test -p waml-editor tree_panel::tests
 ```
 
 Expected: compilation failures because `OpenDocument` and
@@ -236,7 +236,7 @@ Add `ProjectTree::open_document` returning `(key, node_kind, persistent)`.
 Run:
 
 ```powershell
-rtk cargo test -p waml-editor --lib tree_panel::tests
+rtk cargo test -p waml-editor tree_panel::tests
 ```
 
 Expected: all `tree_panel` tests pass.
@@ -281,7 +281,7 @@ tab, because multiple promoted diagram tabs may now coexist.
 Run:
 
 ```powershell
-rtk cargo test -p waml-editor --lib
+rtk cargo test -p waml-editor
 ```
 
 Expected: all tests pass with no warnings introduced by the changed code.
@@ -292,7 +292,7 @@ Run:
 
 ```powershell
 rtk cargo fmt --all -- --check
-rtk cargo clippy -p waml-editor --lib --tests -- -D warnings
+rtk cargo clippy -p waml-editor --tests -- -D warnings
 rtk git diff --check
 rtk git status --short
 ```
