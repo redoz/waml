@@ -667,6 +667,7 @@ impl ClassDiagramSurface {
             InteractionEffects::default()
         };
 
+        self.viewport.end_pinch();
         let mut viewport_effects = self.viewport.cancel_glide();
         let bounds = bounding_box(scene);
         self.selection.reconcile(&scene.nodes, policy.selection);
@@ -1308,6 +1309,60 @@ mod tests {
             assert!(
                 !surface.viewport.pan_to(dvec2(30.0, 30.0)),
                 "a cancelled placement must not leave a live viewport pan"
+            );
+        }
+
+        fn assert_scene_update_starts_matching_touch_ids_as_a_new_pinch(update: SceneUpdate) {
+            let mut vm = crate::script_gate::boot_test_vm();
+            let mut surface = ClassDiagramSurface::script_new(&mut vm);
+            surface.viewport.set_view_rect(Rect {
+                pos: dvec2(0.0, 0.0),
+                size: dvec2(800.0, 600.0),
+            });
+            surface.viewport.apply_pinch_sample(TouchPair {
+                a: 1,
+                b: 2,
+                spread: 100.0,
+                midpoint_abs: dvec2(300.0, 200.0),
+            });
+            let camera_before_reconciliation = surface.viewport.camera();
+
+            match update {
+                SceneUpdate::Replace => surface.set_scene(vm.cx_mut(), Scene::default()),
+                SceneUpdate::Focus { .. } => surface.set_focus(vm.cx_mut(), Scene::default()),
+                SceneUpdate::PreserveViewport => {
+                    surface.update_scene(vm.cx_mut(), Scene::default())
+                }
+            }
+
+            let restarted = surface.viewport.apply_pinch_sample(TouchPair {
+                a: 1,
+                b: 2,
+                spread: 200.0,
+                midpoint_abs: dvec2(360.0, 240.0),
+            });
+            assert_eq!(surface.viewport.camera(), camera_before_reconciliation);
+            assert!(!restarted.redraw);
+            assert_eq!(restarted.camera_timer, ViewportTimerCommand::Stop);
+
+            let continued = surface.viewport.apply_pinch_sample(TouchPair {
+                a: 1,
+                b: 2,
+                spread: 150.0,
+                midpoint_abs: dvec2(380.0, 250.0),
+            });
+            assert!(continued.redraw);
+            assert_ne!(surface.viewport.camera(), camera_before_reconciliation);
+        }
+
+        #[test]
+        fn every_scene_reconciliation_starts_matching_touch_ids_as_a_new_pinch() {
+            assert_scene_update_starts_matching_touch_ids_as_a_new_pinch(SceneUpdate::Replace);
+            assert_scene_update_starts_matching_touch_ids_as_a_new_pinch(SceneUpdate::Focus {
+                key: "ignored-by-public-set-focus".into(),
+            });
+            assert_scene_update_starts_matching_touch_ids_as_a_new_pinch(
+                SceneUpdate::PreserveViewport,
             );
         }
 
