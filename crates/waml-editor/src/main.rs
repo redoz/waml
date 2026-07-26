@@ -14,6 +14,7 @@ mod cli;
 mod colors_overlay;
 mod config;
 mod conflict_badge;
+mod diagram_display;
 mod diagram_switcher;
 mod doc_tabs;
 mod doc_view;

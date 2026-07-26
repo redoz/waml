@@ -22,6 +22,8 @@ mod theme_atlas;
 #[allow(dead_code)]
 #[path = "../card/mod.rs"]
 mod card;
+#[path = "../diagram_display.rs"]
+mod diagram_display;
 #[allow(dead_code)]
 #[path = "../inspector.rs"]
 mod inspector;

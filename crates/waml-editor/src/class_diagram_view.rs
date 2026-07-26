@@ -6,6 +6,7 @@ use std::collections::HashSet;
 use waml::model::Model;
 
 use crate::canvas::ConstraintVisibility;
+use crate::diagram_display::resolve_display;
 use crate::doc_view::{BodyChrome, BodyWidgets, DocView, PopupRequest, ViewData, ViewOutcome};
 use crate::editor_session::SessionChange;
 use crate::icons::Icon;
@@ -92,7 +93,12 @@ impl ClassDiagramView {
 
     fn update_scene(&self, cx: &mut Cx, body: &BodyWidgets, model: &Model) {
         if let Some(diagram) = model.diagrams.iter().find(|d| d.key == self.key) {
-            let (scene, diagnostics) = build_scene(model, diagram, &self.expanded);
+            let (scene, diagnostics) = build_scene(
+                model,
+                diagram,
+                resolve_display(&diagram.display),
+                &self.expanded,
+            );
             for diagnostic in &diagnostics {
                 log!("diagnostic: {diagnostic:?}");
             }
@@ -133,7 +139,7 @@ impl DocView for ClassDiagramView {
             .diagrams
             .iter()
             .find(|d| d.key == self.key)
-            .map(|d| build_scene(model, d, &self.expanded));
+            .map(|d| build_scene(model, d, resolve_display(&d.display), &self.expanded));
         if let Some((scene, diags)) = built {
             for d in &diags {
                 log!("diagnostic: {d:?}");
@@ -376,7 +382,12 @@ impl DocView for ClassDiagramView {
                 // Re-solve the current diagram with the updated set; update_scene
                 // holds the camera and re-resolves the selection by key.
                 if let Some(diagram) = model.diagrams.iter().find(|d| d.key == self.key) {
-                    let (scene, diags) = build_scene(model, diagram, &self.expanded);
+                    let (scene, diags) = build_scene(
+                        model,
+                        diagram,
+                        resolve_display(&diagram.display),
+                        &self.expanded,
+                    );
                     for d in &diags {
                         log!("diagnostic: {d:?}");
                     }

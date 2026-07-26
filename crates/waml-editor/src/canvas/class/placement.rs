@@ -836,6 +836,7 @@ mod tests {
 
     fn scene() -> Scene {
         Scene {
+            display: Default::default(),
             nodes: vec![
                 test_node("a", 0.0),
                 test_node("b", 120.0),

@@ -7,6 +7,8 @@ use waml::solve::{
     route, solve_diagram, stress, BoxId, Rect, Size, SizeMap, SolveConfig, Solved, SolvedGroup,
 };
 
+use crate::diagram_display::ResolvedDiagramDisplay;
+
 /// How a node's header (eyebrow + title) is treated. Additive: `Plain` is the
 /// historical look (no wash) and is what every projected node uses, so real
 /// canvas nodes render unchanged. Only the node design editor sets `Hidden`/
@@ -101,6 +103,7 @@ pub struct SceneConflict {
 // An empty scene (derived Default) is the sensible startup default (fed a real one via set_scene).
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct Scene {
+    pub display: ResolvedDiagramDisplay,
     pub nodes: Vec<SceneNode>,
     pub groups: Vec<SolvedGroup>,
     pub edges: Vec<SceneEdge>,
@@ -411,6 +414,7 @@ fn fallback_route(source: Rect, target: Rect) -> Vec<(f64, f64)> {
 pub fn build_scene(
     model: &Model,
     diagram: &Diagram,
+    display: ResolvedDiagramDisplay,
     expanded: &std::collections::HashSet<String>,
 ) -> (Scene, Vec<Diagnostic>) {
     use std::collections::BTreeMap;
@@ -500,6 +504,7 @@ pub fn build_scene(
 
     (
         Scene {
+            display,
             nodes,
             groups: solved.groups.clone(),
             edges,
@@ -516,6 +521,7 @@ pub fn build_scene(
 pub fn build_focus_scene(model: &Model, key: &str) -> Scene {
     let Some(node) = model.nodes.iter().find(|n| n.key == key) else {
         return Scene {
+            display: ResolvedDiagramDisplay::default(),
             nodes: vec![],
             groups: vec![],
             edges: vec![],
@@ -558,6 +564,7 @@ pub fn build_focus_scene(model: &Model, key: &str) -> Scene {
         h,
     };
     Scene {
+        display: ResolvedDiagramDisplay::default(),
         nodes: vec![scene_node],
         groups: vec![],
         edges: vec![],
@@ -704,6 +711,10 @@ mod tests {
         load::load_model(&dir).unwrap()
     }
 
+    fn test_display() -> ResolvedDiagramDisplay {
+        ResolvedDiagramDisplay::default()
+    }
+
     /// The `groups` fixture is what the canvas's group-render gating is judged
     /// against: one `frame` group (draws chrome) and one default-shape group
     /// (layout-only, invisible unless the hidden-borders x-ray is on). Pin both
@@ -717,6 +728,7 @@ mod tests {
         let (scene, diags) = build_scene(
             &model,
             &model.diagrams[0],
+            test_display(),
             &std::collections::HashSet::new(),
         );
         assert!(
@@ -758,6 +770,7 @@ mod tests {
         let (scene, _) = build_scene(
             &model,
             &model.diagrams[0],
+            test_display(),
             &std::collections::HashSet::new(),
         );
         use waml::syntax::Direction;
@@ -789,6 +802,7 @@ mod tests {
         let (scene, diags) = build_scene(
             &model,
             &model.diagrams[0],
+            test_display(),
             &std::collections::HashSet::new(),
         );
         use waml::diagnostic::DiagCode;
@@ -825,7 +839,12 @@ mod tests {
             directions: vec![Direction::LeftOf],
         });
 
-        let (scene, diags) = build_scene(&model, &diagram, &std::collections::HashSet::new());
+        let (scene, diags) = build_scene(
+            &model,
+            &diagram,
+            test_display(),
+            &std::collections::HashSet::new(),
+        );
         use waml::diagnostic::DiagCode;
         assert!(
             diags.iter().any(|d| d.code == DiagCode::LayoutConflict),
@@ -949,6 +968,7 @@ mod tests {
         let (scene, diags) = build_scene(
             &model,
             &model.diagrams[0],
+            test_display(),
             &std::collections::HashSet::new(),
         );
         assert!(diags.is_empty(), "unexpected diagnostics: {diags:?}");
@@ -1034,6 +1054,7 @@ mod tests {
         let (scene, _) = build_scene(
             &model,
             &model.diagrams[0],
+            test_display(),
             &std::collections::HashSet::new(),
         );
         let order = scene.nodes.iter().find(|n| n.key == "order").unwrap();
@@ -1047,6 +1068,7 @@ mod tests {
         let (scene, _) = build_scene(
             &model,
             &model.diagrams[0],
+            test_display(),
             &std::collections::HashSet::new(),
         );
         let order = scene.nodes.iter().find(|n| n.key == "order").unwrap();
@@ -1071,6 +1093,7 @@ mod tests {
         let (scene, _) = build_scene(
             &model,
             &model.diagrams[0],
+            test_display(),
             &std::collections::HashSet::new(),
         );
         assert_eq!(scene.edges.len(), 1);
@@ -1091,6 +1114,7 @@ mod tests {
         let (scene, _) = build_scene(
             &model,
             &model.diagrams[0],
+            test_display(),
             &std::collections::HashSet::new(),
         );
         let order = scene.nodes.iter().find(|n| n.key == "order").unwrap();
@@ -1105,6 +1129,7 @@ mod tests {
         let (scene, _) = build_scene(
             &model,
             &model.diagrams[0],
+            test_display(),
             &std::collections::HashSet::new(),
         );
         let bbox = bounding_box(&scene).unwrap();
@@ -1120,6 +1145,7 @@ mod tests {
     #[test]
     fn bounding_box_none_for_empty_scene() {
         let scene = Scene {
+            display: test_display(),
             nodes: vec![],
             groups: vec![],
             edges: vec![],
@@ -1142,7 +1168,7 @@ mod tests {
         let model = mini();
         let mut expanded = std::collections::HashSet::new();
         expanded.insert("order".to_string());
-        let (scene, _) = build_scene(&model, &model.diagrams[0], &expanded);
+        let (scene, _) = build_scene(&model, &model.diagrams[0], test_display(), &expanded);
         let order = scene.nodes.iter().find(|n| n.key == "order").unwrap();
         let customer = scene.nodes.iter().find(|n| n.key == "customer").unwrap();
         assert!(order.expanded, "order was in the expanded set");
@@ -1186,6 +1212,7 @@ mod tests {
         let (scene, _) = build_scene(
             &model,
             &model.diagrams[0],
+            test_display(),
             &std::collections::HashSet::new(),
         );
         let edge = &scene.edges[0];
@@ -1260,6 +1287,7 @@ mod tests {
         let (scene, _) = build_scene(
             &model,
             &model.diagrams[0],
+            test_display(),
             &std::collections::HashSet::new(),
         );
         assert_eq!(
@@ -1278,7 +1306,12 @@ mod tests {
         diagram.layout = Vec::new();
         assert!(super::use_stress_default(&diagram), "expected stress path");
 
-        let (scene, _) = build_scene(&model, &diagram, &std::collections::HashSet::new());
+        let (scene, _) = build_scene(
+            &model,
+            &diagram,
+            test_display(),
+            &std::collections::HashSet::new(),
+        );
         assert_eq!(scene.edges.len(), 1, "mini has one drawable edge");
         assert!(
             !scene.edges[0].points.is_empty(),
