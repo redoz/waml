@@ -1,4 +1,5 @@
 use crate::doc_tabs::{OpenTabs, TabKind};
+use crate::dock::ResponsiveDockLayout;
 use crate::fps_meter::FpsMeter;
 use crate::icon_button::IconButtonWidgetRefExt;
 use crate::load;
@@ -47,47 +48,13 @@ script_mod! {
                 window.caption_bar_height_override: 66.0
                 caption_bar: SolidView{
                     visible: false
-                    // Two-row Zed-style title bar. A big logo pinned left spans the
-                    // full 64px band (both rows); a right column stacks the model-
-                    // name title row over the doc-tab row. `flow: Right` with
-                    // `align y:0.5` centres the logo + burger across the whole band,
-                    // and the column itself carries the vertical split.
-                    //
-                    // The logo and burger stay DIRECT caption-bar children: the
-                    // burger because its drop-down anchor derives the caption bottom
-                    // from `btn centre + CAPTION_H/2` (only valid when it is centred
-                    // in the full band) AND interactive caption widgets lose their
-                    // hover/press when nested; the logo because it is drag-query
-                    // driven off `logo.drawn_rect()`. `doc_tabs` tolerates nesting
-                    // (its own capture-overload hit path + drag-query `hits_any_tab`).
-                    // `tree_btn` is nested in `tab_row` too -- it has no drop-down to
-                    // anchor, and like every other caption control it is client-ized
-                    // in the `WindowDragQuery` handler so its rect isn't an OS drag
-                    // region.
-                    flow: Right
+                    // Full-width two-row caption. `caption_col` owns the vertical
+                    // split: title controls live above the document strip. Every
+                    // interactive child is made client area by `WindowDragQuery`,
+                    // overriding the surrounding native drag region.
+                    width: Fill
                     height: Fill
-                    align: Align{y: 0.5}
                     draw_bg.color: atlas.field_bg
-                    // 6-color "W" wordmark, drawn as an anti-aliased SDF (see
-                    // `logo.rs`) -- DrawSvg stair-stepped at this size. An
-                    // interactive `LogoMark` widget: hover plays the shimmer,
-                    // a left-click opens the app radial (see the drag-query
-                    // override + `logo_action` wiring below). Bigger than the
-                    // old 52x29.7 now that it owns the full band height --
-                    // holds the logo's ~1.749 content aspect (70/40).
-                    wordmark := View{
-                        width: Fit
-                        height: Fill
-                        align: Align{x: 0.0, y: 0.5}
-                        margin: Inset{left: 6.0}
-                        padding: Inset{left: 6.0, right: 10.0}
-                        logo := LogoMark{
-                            width: 70.0
-                            height: 40.0
-                        }
-                    }
-                    // Right column: model-name title row (with the burger) over the
-                    // doc-tab row.
                     caption_col := View{
                         width: Fill
                         height: Fill
@@ -121,6 +88,9 @@ script_mod! {
                             // width (`sync_agent_row`), bounded by this row's
                             // `clip_x`.
                             agent_mark := AgentMark{}
+                            // Interactive app mark. Its menu drops from this upper
+                            // row and its rectangle is excluded from window dragging.
+                            logo := LogoMark{ width: 44.0 height: 25.0 }
                             // Burger on the title line, scaled up (30px button, 20px
                             // glyph) so it reads as a peer of the heading and sits on
                             // its centreline. 30 in a 34px row leaves 2px slack top
@@ -212,11 +182,11 @@ script_mod! {
                             flow: Right
                             // See `caption_col`: the tab strip's top rule overshoots
                             // this row on BOTH sides -- right to the window edge, left
-                            // back to this row's own left edge (the wordmark's right
-                            // edge, past `[T]` and the spacer).
+                            // back to this row's own left edge (x=0, past `[T]` and
+                            // the spacer).
                             clip_x: false
                             // The tree-column toggle, FIRST child so it is anchored
-                            // hard against the wordmark and never moves: expanding the
+                            // hard against the full-width row's left edge and never moves: expanding the
                             // tree must slide only the tab cards, not the control that
                             // slides them. 30px button / 18px glyph -- the burger's exact
                             // size, because the two stack in one column and any mismatch
@@ -233,7 +203,7 @@ script_mod! {
                             // row above: the burger gets its 2px from `title_row`'s
                             // `padding`, this row has no padding, so the button carries
                             // the same 2 as a margin instead. Both rows start at the same
-                            // x (the wordmark's right edge) and both boxes are now 30px
+                            // x=0 and both boxes are now 30px
                             // wide, so equal insets align the columns. Counted into
                             // `TREE_BTN_W`, which `sync_tree_gap` subtracts.
                             tree_btn := IconButton{ width: 30.0 height: 30.0 icon_size: 18.0 margin: Inset{left: 2.0, top: 1.0} visible: false }
@@ -308,15 +278,9 @@ script_mod! {
                     // leaves canvas ground showing around it. The wrappers carry
                     // no bg and don't grab pointer events over empty area, so the
                     // canvas keeps its pan/zoom in the gaps between panels.
-                    // Body: a docked split. `dock_row` is flow:Right so a
-                    // pinned slot shrinks the Fill `center_stack` automatically
-                    // (no margin math). Both side panels are now real layout
-                    // children of `dock_row` -- the tree lives INSIDE `left_slot`
-                    // and the inspector lives INSIDE `right_slot`, both flush
-                    // columns since neither ever peeks any more. Both slot
-                    // widths are driven from each panel's DockState
-                    // (`sync_dock_slots`). `dock_body` itself is just a thin
-                    // wrapper around `dock_row` now (no more Overlay peek layer).
+                    // `dock_row` reserves center space while the following overlay
+                    // layers paint the panel bodies. Keeping reservation and hosts
+                    // separate lets narrow mode float a panel over the full center.
                     dock_body := View{
                         width: Fill
                         height: Fill
@@ -325,25 +289,11 @@ script_mod! {
                             width: Fill
                             height: Fill
                             flow: Right
-                            // Left (Model) column. Unlike the right slot this is NOT
-                            // a bare spacer: the tree never peeks any more, so it is
-                            // a real layout child rather than an overlay floater.
-                            // Its flush top (the body's y=66), flush left and full
-                            // height all fall out of the layout for free, and the
-                            // shared `field_bg` merges it with the caption band into
-                            // one chrome mass -- no divider needed.
-                            //
-                            // Width is set at runtime by `sync_dock_slots` (280 when
-                            // Pinned, 0 when collapsed), which is what shrinks the
-                            // `Fill` center. Starts at 0 so the first frame can't
-                            // flash a column before the slot sync runs.
+                            // Empty runtime-sized reservation: it narrows the center
+                            // only in wide mode; the tree itself paints in tree_layer.
                             left_slot := View{
                                 width: 0.0
                                 height: Fill
-                                project_tree := ProjectTree{
-                                    width: Fill
-                                    height: Fill
-                                }
                             }
                             // Center: canvas base + aux HUD floaters. Fill, so it
                             // takes whatever the slots leave. Overlay so each
@@ -459,24 +409,32 @@ script_mod! {
                                     }
                                 }
                             }
-                            // Right (Inspector) column. Like `left_slot`, NOT a bare
-                            // spacer: the inspector never peeks any more, so it is a
-                            // real layout child rather than an overlay floater. Its
-                            // flush top, flush right and full height all fall out of
-                            // the layout for free, and the shared `field_bg` merges
-                            // it with the caption band into one chrome mass -- same
-                            // symmetry as `left_slot`.
-                            //
-                            // Width is set at runtime by `sync_dock_slots` (320 when
-                            // Pinned, 0 when collapsed). Starts at 0 so the first
-                            // frame can't flash a column before the slot sync runs.
+                            // Empty runtime-sized reservation for the right host.
                             right_slot := View{
                                 width: 0.0
                                 height: Fill
-                                inspector := Inspector{
-                                    width: Fill
-                                    height: Fill
-                                }
+                            }
+                        }
+                        // Paint tree before inspector. Hosts are runtime-sized, so a
+                        // narrow pinned panel overlays the unchanged center stack.
+                        tree_layer := View{
+                            width: Fill
+                            height: Fill
+                            align: Align{x: 0.0, y: 0.0}
+                            tree_host := View{
+                                width: 0.0
+                                height: Fill
+                                project_tree := ProjectTree{ width: Fill height: Fill }
+                            }
+                        }
+                        inspector_layer := View{
+                            width: Fill
+                            height: Fill
+                            align: Align{x: 1.0, y: 0.0}
+                            inspector_host := View{
+                                width: 0.0
+                                height: Fill
+                                inspector := Inspector{ width: Fill height: Fill }
                             }
                         }
                     }
@@ -520,6 +478,16 @@ script_mod! {
 /// button leads the row, so the spacer after it is short by exactly the button's
 /// own footprint.
 const TREE_BTN_W: f64 = 32.0;
+const NARROW_ENTER_W: f64 = 640.0;
+const NARROW_EXIT_W: f64 = 680.0;
+
+fn next_narrow(narrow: bool, viewport_w: f64) -> bool {
+    if narrow {
+        viewport_w <= NARROW_EXIT_W
+    } else {
+        viewport_w < NARROW_ENTER_W
+    }
+}
 
 /// How long the document has to sit unchanged before `mark_dirty` turns into a
 /// `save`. Sized for a pause in editing, not for the tail of a single gesture:
@@ -566,7 +534,7 @@ pub struct App {
     /// re-hydrates the right one. See `rehydrate`.
     #[rust]
     editor_shown: bool,
-    /// FPS-heat meter for the top-bar wordmark: samples framerate across a user
+    /// FPS-heat meter for the top-bar logo: samples framerate across a user
     /// interaction and maps it to the tint the logo renders. See `fps_meter.rs`.
     #[rust]
     fps_meter: FpsMeter,
@@ -600,12 +568,12 @@ pub struct App {
     /// dispatched against it. Read in the `node_closed` branch (Task 4).
     #[rust]
     node_menu_key: Option<String>,
-    /// Last-applied (left, right) dock slot widths, so `sync_dock_slots` only
-    /// `apply_over`s on a real change.
     #[rust]
-    dock_slot_w: (f64, f64),
+    narrow: bool,
+    #[rust]
+    dock_layout: ResponsiveDockLayout,
     /// Last-applied caption `tree_gap` width, same change-guard role as
-    /// `dock_slot_w` (see `sync_tree_gap`). Negative so the first sync always
+    /// `dock_layout` (see `sync_tree_gap`). Negative so the first sync always
     /// writes, even when the computed gap is 0 (collapsed tree).
     #[rust(-1.0)]
     tree_gap_w: f64,
@@ -623,7 +591,7 @@ pub struct App {
     #[rust]
     agent_tint: Option<Vec4>,
     /// Last-pushed title-row width, so `sync_agent_row` only pushes on a real
-    /// change (same guard shape as `dock_slot_w`).
+    /// change (same guard shape as `dock_layout`).
     #[rust]
     agent_row_w: f64,
 }
@@ -849,60 +817,116 @@ impl App {
         }
     }
 
-    /// Push each panel's `DockState`-driven slot width onto its reservation
-    /// slot, so a pinned panel shrinks the `Fill` center. Cheap: mutates the
-    /// slot's `walk.width` only on a change (tracked in `dock_slot_w`). Called
-    /// each `handle_event`.
-    ///
-    /// The tree's width has a second consumer: the caption's `tree_gap`, which
-    /// keeps the first tab card on the column's right edge (see
-    /// `sync_tree_gap`).
-    fn sync_dock_slots(&mut self, cx: &mut Cx) {
-        let lw = self
+    fn dock_states(&mut self, cx: &mut Cx) -> (crate::dock::DockState, crate::dock::DockState) {
+        let tree = self
             .ui
             .widget(cx, ids!(project_tree))
             .borrow::<crate::tree_panel::ProjectTree>()
-            .map(|p| p.slot_width())
-            .unwrap_or(0.0);
-        if (lw - self.dock_slot_w.0).abs() > 0.5 {
-            self.dock_slot_w.0 = lw;
-            // Plain `View` reservation spacer: no `apply_over`/live-DSL setter
-            // exists in this fork's widget API, so mutate the public `walk`
-            // field directly and force a full relayout (the `flow: Right`
-            // parent must reflow, not just this child).
-            if let Some(mut slot) = self.ui.widget(cx, ids!(left_slot)).borrow_mut::<View>() {
-                slot.walk.width = Size::Fixed(lw);
-            }
-            // `[T]` is lit exactly when the column occupies pixels -- same
-            // source of truth as the gap, so the glyph can't disagree with the
-            // layout.
-            self.ui
-                .widget(cx, ids!(tree_btn))
-                .as_icon_button()
-                .set_active(cx, lw > 0.5);
-            cx.redraw_all();
-        }
-        self.sync_tree_gap(cx, lw);
-        let rw = self
+            .map(|panel| panel.dock_state())
+            .unwrap_or(crate::dock::DockState::Flag);
+        let inspector = self
             .ui
             .widget(cx, ids!(inspector))
             .borrow::<crate::inspector_panel::Inspector>()
-            .map(|p| p.slot_width())
-            .unwrap_or(0.0);
-        if (rw - self.dock_slot_w.1).abs() > 0.5 {
-            self.dock_slot_w.1 = rw;
-            if let Some(mut slot) = self.ui.widget(cx, ids!(right_slot)).borrow_mut::<View>() {
-                slot.walk.width = Size::Fixed(rw);
+            .map(|panel| panel.dock_state())
+            .unwrap_or(crate::dock::DockState::Flag);
+        (tree, inspector)
+    }
+
+    fn apply_dock_states(
+        &mut self,
+        cx: &mut Cx,
+        tree: crate::dock::DockState,
+        inspector: crate::dock::DockState,
+    ) {
+        if let Some(mut panel) = self
+            .ui
+            .widget(cx, ids!(project_tree))
+            .borrow_mut::<crate::tree_panel::ProjectTree>()
+        {
+            if panel.dock_state() != tree {
+                if tree == crate::dock::DockState::Pinned {
+                    panel.open_dock(cx);
+                } else {
+                    panel.close_dock(cx);
+                }
             }
-            // `[I]` is lit exactly when the column occupies pixels -- the same
-            // source of truth as the layout, so the glyph can't disagree with
-            // the pixels.
-            self.ui
-                .widget(cx, ids!(inspector_btn))
-                .as_icon_button()
-                .set_active(cx, rw > 0.5);
+        }
+        if let Some(mut panel) = self
+            .ui
+            .widget(cx, ids!(inspector))
+            .borrow_mut::<crate::inspector_panel::Inspector>()
+        {
+            if panel.dock_state() != inspector {
+                if inspector == crate::dock::DockState::Pinned {
+                    panel.open_dock(cx);
+                } else {
+                    panel.close_dock(cx);
+                }
+            }
+        }
+    }
+
+    /// Reconcile responsive mode and panel state, then update reservation slots
+    /// and overlay hosts together so one layout model owns all dock geometry.
+    fn sync_dock_slots(&mut self, cx: &mut Cx) {
+        let viewport_w = self.window_bounds(cx).size.x;
+        let next = next_narrow(self.narrow, viewport_w);
+        if next != self.narrow {
+            self.narrow = next;
+            if self.narrow {
+                let (tree, inspector) = self.dock_states(cx);
+                let (tree, inspector) = crate::dock::narrow_entry_states(tree, inspector);
+                self.apply_dock_states(cx, tree, inspector);
+            }
+            if let Some(mut tabs) = self
+                .ui
+                .widget(cx, ids!(doc_tabs))
+                .borrow_mut::<crate::doc_tabs::DocTabs>()
+            {
+                tabs.set_narrow(cx, self.narrow);
+            }
             cx.redraw_all();
         }
+
+        let (tree_state, inspector_state) = self.dock_states(cx);
+        let layout = crate::dock::responsive_layout(
+            self.narrow,
+            viewport_w,
+            tree_state,
+            inspector_state,
+            crate::tree_panel::PROJECT_TREE_W,
+            crate::inspector_panel::INSPECTOR_W,
+        );
+        if layout != self.dock_layout {
+            self.dock_layout = layout;
+            if let Some(mut view) = self.ui.widget(cx, ids!(left_slot)).borrow_mut::<View>() {
+                view.walk.width = Size::Fixed(layout.left_slot);
+            }
+            if let Some(mut view) = self.ui.widget(cx, ids!(right_slot)).borrow_mut::<View>() {
+                view.walk.width = Size::Fixed(layout.right_slot);
+            }
+            if let Some(mut view) = self.ui.widget(cx, ids!(tree_host)).borrow_mut::<View>() {
+                view.walk.width = Size::Fixed(layout.tree_body);
+            }
+            if let Some(mut view) = self
+                .ui
+                .widget(cx, ids!(inspector_host))
+                .borrow_mut::<View>()
+            {
+                view.walk.width = Size::Fixed(layout.inspector_body);
+            }
+            cx.redraw_all();
+        }
+        self.ui
+            .widget(cx, ids!(tree_btn))
+            .as_icon_button()
+            .set_active(cx, tree_state == crate::dock::DockState::Pinned);
+        self.ui
+            .widget(cx, ids!(inspector_btn))
+            .as_icon_button()
+            .set_active(cx, inspector_state == crate::dock::DockState::Pinned);
+        self.sync_tree_gap(cx, layout.left_slot);
     }
 
     /// Drive the caption's `[I]` toggle from the active view's declared right
@@ -1014,22 +1038,22 @@ impl App {
     /// travel, because the control that moves them must not move itself.
     ///
     /// `tree_w` is the column's width in window coordinates (the body starts at
-    /// x=0, so it is also the column's right edge). `tab_row` starts at the
-    /// wordmark's right edge and `[T]` occupies the first `TREE_BTN_W` of it, so
-    /// the gap is what is left after those two; clamped at 0 so the collapsed
+    /// x=0, so it is also the column's right edge). `tab_row` starts at x=0 and
+    /// `[T]` occupies the first `TREE_BTN_W` of it, so the gap is what is left
+    /// after the button; clamped at 0 so the collapsed
     /// state collapses the spacer instead of going negative and the strip sits
     /// immediately right of `[T]` (`TAB_LEFT_INSET` supplies the breathing gap).
     ///
     /// The row offset is read from the last-drawn `tab_row` rect rather than
-    /// hardcoded, so a resized logo can't silently desync the cards from the
+    /// hardcoded, so a reshaped caption can't silently desync the cards from the
     /// column. That makes this a two-frame settle on the very first draw (the
     /// rect is zero until `tab_row` has been laid out once), hence the guard is
     /// on the computed gap rather than on `tree_w` alone.
     ///
     /// Same measured rects also drive the tab strip's top-rule left overshoot:
     /// `doc_tabs` no longer begins at the window's left edge, and the rule must
-    /// reach back to `tab_row`'s left edge -- but no further, because the logo
-    /// is a keep-out zone the rule would otherwise slice through.
+    /// reach back to `tab_row`'s left edge, which is the window edge in this
+    /// full-width caption hierarchy.
     fn sync_tree_gap(&mut self, cx: &mut Cx, tree_w: f64) {
         let row_x = self.ui.widget(cx, ids!(tab_row)).area().rect(cx).pos.x;
         let tabs_x = self.ui.widget(cx, ids!(doc_tabs)).area().rect(cx).pos.x;
@@ -1044,7 +1068,7 @@ impl App {
                 tabs.set_left_overshoot(cx, overshoot);
             }
         }
-        let gap = (tree_w - row_x - TREE_BTN_W).max(0.0);
+        let gap = (tree_w - TREE_BTN_W).max(0.0);
         if (gap - self.tree_gap_w).abs() <= 0.5 {
             return;
         }
@@ -1326,7 +1350,7 @@ impl App {
     /// platforms that hand an app its own window chrome -- `sync_caption_bar_state`
     /// has arms for Windows, macOS and Wayland CSD, and an empty one for
     /// `OsType::Web`. That is the right default for a title bar, but ours also
-    /// carries the wordmark, doc tabs, tree toggle and burger, so the browser
+    /// carries the logo, doc tabs, tree toggle and burger, so the browser
     /// build would come up with no navigation at all. Reveal it ourselves.
     #[cfg(target_arch = "wasm32")]
     fn reveal_caption_bar_on_web(&mut self, cx: &mut Cx) {
@@ -1380,6 +1404,17 @@ impl App {
         if !self.editor_shown {
             // Start screen: `show_start_screen` re-reads recents and re-shows.
             self.show_start_screen(cx);
+            if let Some(mut tabs) = self
+                .ui
+                .widget(cx, ids!(doc_tabs))
+                .borrow_mut::<crate::doc_tabs::DocTabs>()
+            {
+                tabs.set_narrow(cx, self.narrow);
+            }
+            self.dock_layout = crate::dock::ResponsiveDockLayout::default();
+            self.tree_gap_w = -1.0;
+            self.rule_overshoot = -1.0;
+            self.sync_dock_slots(cx);
             return;
         }
         let root_name = if self.model.path.is_empty() {
@@ -1394,6 +1429,17 @@ impl App {
         self.sync_active_tab(cx);
         self.sync_diagram_switcher_current(cx);
         self.show_editor(cx);
+        if let Some(mut tabs) = self
+            .ui
+            .widget(cx, ids!(doc_tabs))
+            .borrow_mut::<crate::doc_tabs::DocTabs>()
+        {
+            tabs.set_narrow(cx, self.narrow);
+        }
+        self.dock_layout = crate::dock::ResponsiveDockLayout::default();
+        self.tree_gap_w = -1.0;
+        self.rule_overshoot = -1.0;
+        self.sync_dock_slots(cx);
     }
 
     /// Load recents into the start screen and reveal it, hiding the editor.
@@ -1801,8 +1847,8 @@ impl MatchEvent for App {
             // the full-window overlay (see its `draw_walk`) -- over the caption
             // band, NOT clipped at the caption/body boundary -- so drop straight
             // from the button's bottom with NO `CAPTION_H` clamp. Clamping (the
-            // logo menu's behaviour, right for a full-band logo) would shove the
-            // card down to the caption bottom and leave a big gap under the glyph.
+            // former full-band-logo behaviour) would shove the card down to the
+            // caption bottom and leave a big gap under the glyph.
             let btn = self.ui.widget(cx, ids!(menu_btn)).as_icon_button().rect(cx);
             let anchor = dvec2(
                 btn.pos.x + crate::popup::menu::MENU_INDENT_X,
@@ -2343,8 +2389,8 @@ impl MatchEvent for App {
             }
         }
 
-        // Logo drop-down: a left-click on the top-bar wordmark opens a plain
-        // vertical menu that drops DOWN-right from the mark (the wordmark sits
+        // Logo drop-down: a left-click on the upper-row mark opens a plain
+        // vertical menu that drops DOWN-right from the mark (the logo sits
         // in the window's top-left corner, so a radial there is always
         // degenerate -- a drop-down stays fully on-screen). (Hover/click only
         // reach the widget because of the drag-query override below.) Routed
@@ -2355,16 +2401,10 @@ impl MatchEvent for App {
             .borrow::<crate::logo::LogoMark>()
             .and_then(|l| l.logo_action(actions).map(|_| l.drawn_rect()));
         if let Some(logo_rect) = logo_click {
-            // Anchor the card at the logo's bottom-left so it drops down-right.
-            // The wordmark sits INSIDE the 66px caption bar (see
-            // `window.caption_bar_height_override`), but `MenuPopup` draws in the
-            // window overlay, whose clip rect starts at the caption's bottom --
-            // so clamp the top down to the caption bottom, else the card's top
-            // frame edge falls in the caption band and gets clipped away.
+            // Anchor the card at the upper-row logo's bottom-left.
             let anchor = dvec2(
                 logo_rect.pos.x,
-                (logo_rect.pos.y + logo_rect.size.y + crate::popup::menu::MENU_GAP)
-                    .max(crate::popup::menu::CAPTION_H),
+                logo_rect.pos.y + logo_rect.size.y + crate::popup::menu::MENU_GAP,
             );
             let bounds = self.window_bounds(cx);
             if let Some(mut pr) = self
@@ -2759,10 +2799,10 @@ impl AppMain for App {
             self.rehydrate(cx);
         }
 
-        // Wordmark FPS-heat meter: `App` forwards every raw event to the meter,
+        // Logo FPS-heat meter: `App` forwards every raw event to the meter,
         // which owns all interaction-span detection (primary press/release plus
         // the mouse-wheel scroll tail) and framerate sampling. When it reports a
-        // change, push the fresh colour/strength to the top-bar wordmark. This is
+        // change, push the fresh colour/strength to the top-bar logo. This is
         // app-wide (not hit-tested), so it fires no matter which child widget
         // captures the drag, and is a no-op on the splash instance.
         if self.fps_meter.on_event(cx, event) {
@@ -2848,7 +2888,7 @@ impl AppMain for App {
                 .borrow::<crate::doc_tabs::DocTabs>()
                 .map(|tabs| tabs.hits_any_tab(dq.abs))
                 .unwrap_or(false);
-            // The wordmark also lives in the caption drag region; without this
+            // The logo also lives in the caption drag region; without this
             // the logo never gets hover/click (the whole feature is dead).
             let over_logo = self
                 .ui
@@ -2919,9 +2959,24 @@ impl AppMain for App {
 
 #[cfg(test)]
 mod tests {
-    use super::{logo_command_for, place_rm_for, LogoCommand};
+    use super::{logo_command_for, next_narrow, place_rm_for, LogoCommand};
     use crate::popup::conflict_list::ConflictListAction;
     use makepad_widgets::*;
+
+    #[test]
+    fn breakpoint_enters_below_640_and_leaves_above_680() {
+        assert!(next_narrow(false, 639.9));
+        assert!(next_narrow(true, 680.0));
+        assert!(!next_narrow(true, 680.1));
+    }
+
+    #[test]
+    fn breakpoint_preserves_mode_through_the_hysteresis_band() {
+        for width in [640.0, 650.0, 680.0] {
+            assert!(!next_narrow(false, width));
+            assert!(next_narrow(true, width));
+        }
+    }
 
     #[test]
     fn conflict_delete_maps_to_place_rm() {
