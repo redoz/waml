@@ -3,6 +3,7 @@ mod actions;
 use crate::doc_tabs::{OpenTabs, TabKind};
 use crate::dock::DockState;
 use crate::dock::ResponsiveDockLayout;
+use crate::document_host::{DocumentCommand, DocumentHost};
 use crate::editor_session::EditorSession;
 use crate::fps_meter::FpsMeter;
 use crate::icon_button::IconButtonWidgetRefExt;
@@ -12,8 +13,6 @@ use crate::popup::base::PopupResult;
 use crate::popup::root::{MenuOpen, PopupRoot, PopupSpec, RadialOpen};
 use crate::popup::select::{SelectItem, SelectLead};
 use makepad_widgets::*;
-use std::collections::HashMap;
-use std::collections::HashSet;
 use std::path::Path;
 
 fn open_overlay_contains(
@@ -555,7 +554,7 @@ pub struct App {
     #[rust]
     open_name: String,
     #[rust]
-    tabs: OpenTabs,
+    documents: DocumentHost,
     /// Complete recent-config backing list. `StartScreen` renders a capped copy
     /// of its first five entries, so `OpenRecent(i)` and `TogglePin(i)` resolve
     /// here without re-reading disk or introducing index drift.
@@ -588,12 +587,6 @@ pub struct App {
     /// `NavState::filter`. Rebuilt every time the dropdown opens.
     #[rust]
     nav_filter_ids: Vec<(LiveId, Option<crate::tree::TreeKind>)>,
-    /// One live view object per open tab, keyed by `DocTab::id`. Populated as
-    /// tabs (diagram and classifier-preview alike) activate; pruned when a
-    /// tab closes (`relay_outcome`) or a preview is replaced
-    /// (`open_document`).
-    #[rust]
-    views: HashMap<LiveId, Box<dyn crate::doc_view::DocView>>,
     /// The key of the node whose context menu is currently open, stashed when
     /// the menu opens so the committed id (which carries no subject) can be
     /// dispatched against it. Read in the `node_closed` branch (Task 4).
@@ -629,19 +622,7 @@ pub struct App {
     agent_row_w: f64,
 }
 
-fn reconcile_open_views<V>(views: &mut HashMap<LiveId, V>, tabs: &OpenTabs) {
-    let open: HashSet<LiveId> = tabs.tabs.iter().map(|tab| tab.id).collect();
-    views.retain(|id, _| open.contains(id));
-}
-
 impl App {
-    /// Drop view objects for tabs that are no longer open. Keeps per-tab live
-    /// state (a diagram's `expanded`, a preview's key) alive across tab
-    /// switches but reclaims it when the tab closes.
-    fn reconcile_views(&mut self) {
-        reconcile_open_views(&mut self.views, &self.tabs);
-    }
-
     /// Registry-driven: look up (or create) the active tab's view, delegate
     /// `sync`, and let it drive the shared body surface + tool dock
     /// visibility. Both `TabKind`s otherwise go through the identical path --
@@ -650,80 +631,30 @@ impl App {
     /// than from `SourceView::sync`, because `DocView::sync` receives `&Model`
     /// but not the raw session bundle the source text is read from verbatim
     /// (feeding it without a `DocView` trait change was out of scope).
-    fn sync_active_tab(&mut self, cx: &mut Cx) {
-        self.reconcile_views();
-        let active = self.tabs.active_tab().cloned();
-        let body = crate::doc_view::BodyWidgets::new(cx, &self.ui);
-        let Some(active) = active else {
-            body.apply_chrome(cx, crate::doc_view::BodyChrome::HIDDEN);
-            if let Some(mut panel) = self
-                .ui
-                .widget(cx, ids!(project_tree))
-                .borrow_mut::<crate::tree_panel::ProjectTree>()
-            {
-                panel.set_selected_key(cx, None);
-            }
-            return;
-        };
-        // Mirror the active tab onto the tree row highlight (single choke point
-        // for every activation source: tab click, tree click, switcher, keys).
-        if let Some(mut panel) = self
+    fn sync_document_shell(&mut self, cx: &mut Cx) {
+        let selected = self.documents.active_tab().map(|tab| tab.key.clone());
+        if let Some(mut tree) = self
             .ui
             .widget(cx, ids!(project_tree))
             .borrow_mut::<crate::tree_panel::ProjectTree>()
         {
-            panel.set_selected_key(cx, Some(active.key.clone()));
+            tree.set_selected_key(cx, selected);
         }
-
-        let data = crate::doc_view::ViewData {
-            model: self.session.model(),
-            bundle: self.session.bundle(),
-            revision: self.session.revision(),
-        };
-        let view = self
-            .views
-            .entry(active.id)
-            .or_insert_with(|| crate::doc_view::make_view(&active));
-        let accent = view.tab_accent();
-        body.apply_chrome(cx, view.chrome());
-        view.sync(cx, &body, data);
-        if let Some(mut doc_tabs) = self
-            .ui
-            .widget(cx, ids!(doc_tabs))
-            .borrow_mut::<crate::doc_tabs::DocTabs>()
-        {
-            doc_tabs.set_active_accent(cx, accent);
-        }
-
+        self.sync_diagram_switcher_current(cx);
         self.sync_statusbar(cx);
         self.sync_conflict_badge(cx);
-    }
-
-    fn refresh_doc_tabs(&mut self, cx: &mut Cx) {
-        if let Some(mut doc_tabs) = self
-            .ui
-            .widget(cx, ids!(doc_tabs))
-            .borrow_mut::<crate::doc_tabs::DocTabs>()
-        {
-            doc_tabs.set_tabs(cx, &self.tabs);
-            let accent = self
-                .views
-                .get(&self.tabs.active)
-                .and_then(|view| view.tab_accent());
-            doc_tabs.set_active_accent(cx, accent);
-        }
     }
 
     /// Open or focus a document through the shared preview slot. All callers
     /// use this path so replacement cleanup and view/chrome synchronization
     /// stay identical for classifiers and diagrams.
-    fn open_document(
+    fn transition_document(
         &mut self,
         cx: &mut Cx,
         key: &str,
         node_kind: crate::tree::TreeKind,
         persistent: bool,
-    ) {
+    ) -> bool {
         let title = if node_kind == crate::tree::TreeKind::Diagram {
             self.session
                 .model()
@@ -745,34 +676,34 @@ impl App {
                 })
         };
         let Some(title) = title else {
-            return;
+            return false;
         };
 
-        let id = self.tabs.open_preview(key.to_owned(), title, node_kind);
-        if persistent {
-            self.tabs.promote(id);
-        }
-        self.refresh_doc_tabs(cx);
-        self.sync_active_tab(cx);
-        if self
-            .tabs
-            .active_tab()
-            .is_some_and(|tab| tab.kind == TabKind::Diagram)
-        {
-            self.sync_diagram_switcher_current(cx);
-        }
+        let changed = self.documents.transition(
+            cx,
+            &self.ui,
+            &self.session,
+            DocumentCommand::Open {
+                key: key.to_owned(),
+                title,
+                node_kind,
+                persistent,
+            },
+        );
+        self.sync_document_shell(cx);
+        changed
     }
 
     /// Push the active diagram title into the switcher's trigger chip, falling
     /// back to another open diagram when a classifier is active.
     fn sync_diagram_switcher_current(&mut self, cx: &mut Cx) {
         let title = self
-            .tabs
+            .documents
             .active_tab()
             .filter(|tab| tab.kind == TabKind::Diagram)
             .or_else(|| {
-                self.tabs
-                    .tabs
+                self.documents
+                    .tabs()
                     .iter()
                     .find(|tab| tab.kind == TabKind::Diagram)
             })
@@ -1188,8 +1119,8 @@ impl App {
     /// startup, tool-dock mode change), not live during a canvas drag.
     fn sync_statusbar(&mut self, cx: &mut Cx) {
         let diagram_name = self
-            .tabs
-            .tabs
+            .documents
+            .tabs()
             .first()
             .map(|t| t.title.clone())
             .unwrap_or_default();
@@ -1361,9 +1292,6 @@ impl App {
     ) -> bool {
         let change = self.session.replace(bundle, model);
         debug_assert_eq!(change.revision, self.session.revision());
-        // Fresh model: no tab ids (and so no view state, e.g. expansion) carry
-        // over -- `open_dir` always rebuilds `self.tabs` from scratch below.
-        self.views.clear();
         // Retain the raw bundle so drag-to-place ops can re-author `## Layout`
         // in-memory: the diagram view emits `Op::PlaceSet`, the shell applies it
         // against this bundle and rebuilds the model (see `handle_actions`).
@@ -1388,16 +1316,14 @@ impl App {
         // empty canvas and no active diagram tab. With no tab there is no view to
         // declare a right dock, so the inspector stays closed and its `[I]`
         // toggle stays hidden.
-        match crate::cli::select_diagram(self.session.model(), wanted_diagram) {
+        let initial_tabs = match crate::cli::select_diagram(self.session.model(), wanted_diagram) {
             Some(diagram) => {
                 // Seed the diagram preview; `self.views` was just cleared above, so
                 // `sync_active_tab` lazily creates a fresh `ClassDiagramView`
                 // (no card expansion carried over) and drives the canvas,
                 // inspector, tree-row highlight, and tool dock through the
                 // normal registry-driven path.
-                self.tabs = OpenTabs::diagram_preview(diagram.key.clone(), diagram.title.clone());
-                self.refresh_doc_tabs(cx);
-                self.sync_active_tab(cx);
+                OpenTabs::diagram_preview(diagram.key.clone(), diagram.title.clone())
             }
             None => {
                 log!(
@@ -1415,29 +1341,12 @@ impl App {
                 {
                     canvas.clear(cx);
                 }
-                self.tabs = OpenTabs::default();
-                self.refresh_doc_tabs(cx);
-                // Nothing to seed the inspector with: with no active tab no
-                // view declares a right dock, so `sync_right_dock_btn` below
-                // hides `[I]` and force-closes the panel anyway.
+                OpenTabs::default()
             }
-        }
-        self.sync_statusbar(cx);
-
-        // Tool dock and view bar are both per-view chrome: `open_dir` can leave
-        // the model with no diagram tab at all, so run them through the same
-        // `body_chrome` decision `sync_active_tab` uses.
-        let chrome = self
-            .views
-            .get(&self.tabs.active)
-            .map(|view| view.chrome())
-            .unwrap_or(crate::doc_view::BodyChrome::HIDDEN);
-        let body = crate::doc_view::BodyWidgets::new(cx, &self.ui);
-        body.apply_chrome(cx, chrome);
-
-        // Diagram switcher (U7): push the active tab's current diagram title into
-        // the trigger chip (empty when the model carries no diagram).
-        self.sync_diagram_switcher_current(cx);
+        };
+        self.documents
+            .replace_for_session(cx, &self.ui, &self.session, initial_tabs);
+        self.sync_document_shell(cx);
         true
     }
 
@@ -1520,9 +1429,8 @@ impl App {
         self.ui.label(cx, ids!(model_name)).set_text(cx, root_name);
 
         self.refresh_nav(cx, true);
-        self.refresh_doc_tabs(cx);
-        self.sync_active_tab(cx);
-        self.sync_diagram_switcher_current(cx);
+        self.documents.sync_active(cx, &self.ui, &self.session);
+        self.sync_document_shell(cx);
         self.show_editor(cx);
         if let Some(mut tabs) = self
             .ui
@@ -1579,8 +1487,8 @@ impl App {
         // name) even with no model open, so a leftover name reads as if the
         // closed model were still loaded.
         self.ui.label(cx, ids!(model_name)).set_text(cx, "");
-        self.tabs = OpenTabs::default();
-        self.refresh_doc_tabs(cx);
+        self.documents
+            .replace_for_session(cx, &self.ui, &self.session, OpenTabs::default());
         if let Some(mut doc_tabs) = self
             .ui
             .widget(cx, ids!(doc_tabs))
@@ -1750,9 +1658,8 @@ pub fn burger_menu_items() -> Vec<crate::popup::base::PopupItem> {
 
 const DOC_SWITCHER_MAX_H: f64 = 360.0;
 
-fn doc_switcher_items(open: &OpenTabs) -> Vec<crate::popup::base::PopupItem> {
-    open.tabs
-        .iter()
+fn doc_switcher_items(open: &[crate::doc_tabs::DocTab]) -> Vec<crate::popup::base::PopupItem> {
+    open.iter()
         .map(|tab| crate::popup::base::PopupItem {
             id: tab.id,
             label: tab.title.clone(),
@@ -1938,7 +1845,6 @@ impl MatchEvent for App {
     }
 
     fn handle_actions(&mut self, cx: &mut Cx, actions: &Actions) {
-        let body = crate::doc_view::BodyWidgets::new(cx, &self.ui);
         // Caption burger -- placeholder menu wiring this pass.
         if let Some(press) = self
             .ui
@@ -2069,9 +1975,13 @@ impl MatchEvent for App {
                     .set_active(cx, false);
             }
             if let Some(PopupResult::Invoked(id)) = doc_switcher_closed {
-                self.tabs.activate(id);
-                self.refresh_doc_tabs(cx);
-                self.sync_active_tab(cx);
+                self.documents.transition(
+                    cx,
+                    &self.ui,
+                    &self.session,
+                    DocumentCommand::Activate(id),
+                );
+                self.sync_document_shell(cx);
             }
             if let Some(PopupResult::Invoked(id)) = burger_closed {
                 if id == live_id!(new_model) {
@@ -2113,9 +2023,16 @@ impl MatchEvent for App {
                                     .title
                                     .clone()
                                     .unwrap_or_else(|| node.key.clone());
-                                self.tabs.open_source(key.clone(), title);
-                                self.refresh_doc_tabs(cx);
-                                self.sync_active_tab(cx);
+                                self.documents.transition(
+                                    cx,
+                                    &self.ui,
+                                    &self.session,
+                                    DocumentCommand::OpenSource {
+                                        key: key.clone(),
+                                        title,
+                                    },
+                                );
+                                self.sync_document_shell(cx);
                             }
                         }
                         crate::popup::node_menu::NodeMenuCommand::FindInDiagrams => {
@@ -2131,15 +2048,14 @@ impl MatchEvent for App {
             // document-scoped popup result stays view-local (`popup_root`
             // access itself stays in the shell).
             if let Some(result) = picker_closed {
-                if let Some(active) = self.tabs.active_tab().cloned() {
-                    let data = crate::doc_view::ViewData {
-                        model: self.session.model(),
-                        bundle: self.session.bundle(),
-                        revision: self.session.revision(),
-                    };
-                    if let Some(view) = self.views.get_mut(&active.id) {
-                        let outcome =
-                            view.on_popup_result(cx, &body, data, live_id!(element_picker), result);
+                if let Some(active) = self.documents.active_tab().cloned() {
+                    if let Some(outcome) = self.documents.on_active_popup_result(
+                        cx,
+                        &self.ui,
+                        &self.session,
+                        live_id!(element_picker),
+                        result,
+                    ) {
                         self.relay_outcome(cx, &active, outcome);
                     }
                 }
@@ -2150,29 +2066,27 @@ impl MatchEvent for App {
             // first -- a release emits Armed+Closed off one event, and the
             // close is what turns the last armed zone into an `Op`.
             if let Some(id) = dial_armed {
-                if let Some(active) = self.tabs.active_tab().cloned() {
-                    let data = crate::doc_view::ViewData {
-                        model: self.session.model(),
-                        bundle: self.session.bundle(),
-                        revision: self.session.revision(),
-                    };
-                    if let Some(view) = self.views.get_mut(&active.id) {
-                        let outcome =
-                            view.on_popup_armed(cx, &body, data, live_id!(place_dial), id);
+                if let Some(active) = self.documents.active_tab().cloned() {
+                    if let Some(outcome) = self.documents.on_active_popup_armed(
+                        cx,
+                        &self.ui,
+                        &self.session,
+                        live_id!(place_dial),
+                        id,
+                    ) {
                         self.relay_outcome(cx, &active, outcome);
                     }
                 }
             }
             if let Some(result) = dial_closed {
-                if let Some(active) = self.tabs.active_tab().cloned() {
-                    let data = crate::doc_view::ViewData {
-                        model: self.session.model(),
-                        bundle: self.session.bundle(),
-                        revision: self.session.revision(),
-                    };
-                    if let Some(view) = self.views.get_mut(&active.id) {
-                        let outcome =
-                            view.on_popup_result(cx, &body, data, live_id!(place_dial), result);
+                if let Some(active) = self.documents.active_tab().cloned() {
+                    if let Some(outcome) = self.documents.on_active_popup_result(
+                        cx,
+                        &self.ui,
+                        &self.session,
+                        live_id!(place_dial),
+                        result,
+                    ) {
                         self.relay_outcome(cx, &active, outcome);
                     }
                 }
@@ -2209,7 +2123,7 @@ impl MatchEvent for App {
             }
             Some(action @ crate::popup::conflict_list::ConflictListAction::Delete { .. }) => {
                 let diagram = self
-                    .tabs
+                    .documents
                     .active_tab()
                     .map(|t| t.key.clone())
                     .unwrap_or_default();
@@ -2220,16 +2134,12 @@ impl MatchEvent for App {
                         Ok(change) => {
                             // Re-solve the active diagram view in place (camera
                             // held) — same path as the drag-place apply above.
-                            if let Some(active) = self.tabs.active_tab().cloned() {
-                                let data = crate::doc_view::ViewData {
-                                    model: self.session.model(),
-                                    bundle: self.session.bundle(),
-                                    revision: self.session.revision(),
-                                };
-                                if let Some(view) = self.views.get_mut(&active.id) {
-                                    view.after_session_change(cx, &body, data, change);
-                                }
-                            }
+                            self.documents.after_session_change(
+                                cx,
+                                &self.ui,
+                                &self.session,
+                                change,
+                            );
                             self.sync_conflict_badge(cx);
                             self.mark_dirty(cx);
                             // Refresh the OPEN list (stays open, re-anchored)
@@ -2399,7 +2309,7 @@ impl MatchEvent for App {
                 .find(|node| node.key == key)
                 .map(|node| crate::tree::kind_of(&node.ty));
             if let Some(node_kind) = node_kind {
-                self.open_document(cx, &key, node_kind, false);
+                self.transition_document(cx, &key, node_kind, false);
             }
             self.node_menu_key = Some(key);
             let bounds = self.window_bounds(cx);
@@ -2436,7 +2346,7 @@ impl MatchEvent for App {
             .borrow_mut::<crate::tree_panel::ProjectTree>()
             .and_then(|panel| panel.open_document(actions));
         if let Some((key, node_kind, persistent)) = document {
-            self.open_document(cx, &key, node_kind, persistent);
+            self.transition_document(cx, &key, node_kind, persistent);
             return;
         }
 
@@ -2456,19 +2366,19 @@ impl MatchEvent for App {
                 .map(|d| d.key.clone())
                 .collect();
             let current = self
-                .tabs
+                .documents
                 .active_tab()
                 .filter(|tab| tab.kind == TabKind::Diagram)
                 .or_else(|| {
-                    self.tabs
-                        .tabs
+                    self.documents
+                        .tabs()
                         .iter()
                         .find(|tab| tab.kind == TabKind::Diagram)
                 })
                 .map(|t| t.key.clone())
                 .unwrap_or_default();
             if let Some(next) = crate::diagram_switcher::next_diagram_key(&keys, &current) {
-                self.open_document(cx, &next, crate::tree::TreeKind::Diagram, false);
+                self.transition_document(cx, &next, crate::tree::TreeKind::Diagram, false);
             }
             return;
         }
@@ -2498,19 +2408,14 @@ impl MatchEvent for App {
         // tool dock, canvas pointer actions, selection toolbar) via
         // `DocView::handle`; the shell only relays the returned `ViewOutcome`.
         // No active tab (start screen / diagram-less model) simply skips this.
-        if let Some(active) = self.tabs.active_tab().cloned() {
-            let data = crate::doc_view::ViewData {
-                model: self.session.model(),
-                bundle: self.session.bundle(),
-                revision: self.session.revision(),
-            };
-            let view = self
-                .views
-                .entry(active.id)
-                .or_insert_with(|| crate::doc_view::make_view(&active));
-            let outcome = view.handle(cx, &body, actions, data);
-            if self.relay_outcome(cx, &active, outcome) {
-                return;
+        if let Some(active) = self.documents.active_tab().cloned() {
+            if let Some(outcome) =
+                self.documents
+                    .handle_active(cx, &self.ui, actions, &self.session)
+            {
+                if self.relay_outcome(cx, &active, outcome) {
+                    return;
+                }
             }
         }
 
@@ -2646,8 +2551,8 @@ impl MatchEvent for App {
             .and_then(|tabs| tabs.tab_action(actions));
         match tab_action {
             Some(crate::doc_tabs::DocTabsAction::OpenSwitcher { anchor }) => {
-                if self.tabs.active_tab().is_some() {
-                    let items = doc_switcher_items(&self.tabs);
+                if self.documents.active_tab().is_some() {
+                    let items = doc_switcher_items(self.documents.tabs());
                     let bounds = self.window_bounds(cx);
                     if let Some(mut root) = self
                         .ui
@@ -2662,7 +2567,7 @@ impl MatchEvent for App {
                                 bounds,
                                 items,
                                 open: MenuOpen::Popup {
-                                    open_marking: Some(self.tabs.active),
+                                    open_marking: Some(self.documents.active_id()),
                                     max_height: Some(DOC_SWITCHER_MAX_H),
                                 },
                             },
@@ -2671,20 +2576,27 @@ impl MatchEvent for App {
                 }
             }
             Some(crate::doc_tabs::DocTabsAction::Activate(id)) => {
-                self.tabs.activate(id);
-                self.refresh_doc_tabs(cx);
-                self.sync_active_tab(cx);
+                self.documents.transition(
+                    cx,
+                    &self.ui,
+                    &self.session,
+                    DocumentCommand::Activate(id),
+                );
+                self.sync_document_shell(cx);
             }
             Some(crate::doc_tabs::DocTabsAction::Promote(id)) => {
-                self.tabs.activate(id);
-                self.tabs.promote(id);
-                self.refresh_doc_tabs(cx);
-                self.sync_active_tab(cx);
+                self.documents.transition(
+                    cx,
+                    &self.ui,
+                    &self.session,
+                    DocumentCommand::Promote(id),
+                );
+                self.sync_document_shell(cx);
             }
             Some(crate::doc_tabs::DocTabsAction::Close(id)) => {
-                self.tabs.close(id);
-                self.refresh_doc_tabs(cx);
-                self.sync_active_tab(cx);
+                self.documents
+                    .transition(cx, &self.ui, &self.session, DocumentCommand::Close(id));
+                self.sync_document_shell(cx);
             }
             _ => {}
         }
@@ -2705,11 +2617,8 @@ impl App {
 
         // Read the right-dock request BEFORE the owned `outcome`'s fields are
         // moved out below (`popup`, `promote_subject`, `open_preview` all move).
-        let open_right_dock = outcome.open_right_dock
-            && self
-                .views
-                .get(&active.id)
-                .is_some_and(|view| view.chrome().right_dock.is_some());
+        let open_right_dock =
+            outcome.open_right_dock && self.documents.active_chrome().right_dock.is_some();
 
         // A view emits `Op`s (drag-to-place authors a `## Layout` placement);
         // the shell owns the Model, so it applies them against the retained
@@ -2721,15 +2630,8 @@ impl App {
         if !outcome.ops.is_empty() {
             match self.session.apply_ops(&outcome.ops) {
                 Ok(change) => {
-                    let body = crate::doc_view::BodyWidgets::new(cx, &self.ui);
-                    let data = crate::doc_view::ViewData {
-                        model: self.session.model(),
-                        bundle: self.session.bundle(),
-                        revision: self.session.revision(),
-                    };
-                    if let Some(view) = self.views.get_mut(&active.id) {
-                        view.after_session_change(cx, &body, data, change);
-                    }
+                    self.documents
+                        .after_session_change(cx, &self.ui, &self.session, change);
                     self.sync_conflict_badge(cx);
                     self.mark_dirty(cx);
                 }
@@ -2809,20 +2711,24 @@ impl App {
         }
 
         if let Some(key) = outcome.promote_subject {
-            if let Some(tab) = self.tabs.tabs.iter().find(|t| t.key == key) {
-                let id = tab.id;
-                self.tabs.promote(id);
-                self.refresh_doc_tabs(cx);
-            }
+            self.documents.transition(
+                cx,
+                &self.ui,
+                &self.session,
+                DocumentCommand::PromoteSubject(key),
+            );
+            self.sync_document_shell(cx);
             consumed = true;
         }
 
         if outcome.close_active {
-            let id = active.id;
-            self.tabs.close(id);
-            self.views.remove(&id);
-            self.refresh_doc_tabs(cx);
-            self.sync_active_tab(cx);
+            self.documents.transition(
+                cx,
+                &self.ui,
+                &self.session,
+                DocumentCommand::Close(active.id),
+            );
+            self.sync_document_shell(cx);
             consumed = true;
         }
 
@@ -2838,7 +2744,7 @@ impl App {
                 .find(|node| node.key == key)
                 .map(|node| crate::tree::kind_of(&node.ty));
             if let Some(node_kind) = node_kind {
-                self.open_document(cx, &key, node_kind, false);
+                self.transition_document(cx, &key, node_kind, false);
             }
             consumed = true;
         }
@@ -3129,14 +3035,13 @@ impl AppMain for App {
 mod tests {
     use super::{
         doc_switcher_items, logo_command_for, next_narrow, open_overlay_contains, place_rm_for,
-        reconcile_open_views, should_dismiss_narrow_dock, LogoCommand,
+        should_dismiss_narrow_dock, LogoCommand,
     };
     use crate::doc_tabs::OpenTabs;
     use crate::dock::DockState;
     use crate::popup::conflict_list::ConflictListAction;
     use crate::tree::TreeKind;
     use makepad_widgets::*;
-    use std::collections::HashMap;
 
     #[test]
     fn document_switcher_items_preserve_order_and_tab_identity() {
@@ -3147,7 +3052,7 @@ mod tests {
         let order = tabs.open_preview("order", "Order", TreeKind::Class);
         assert_eq!(tabs.active, order);
 
-        let items = doc_switcher_items(&tabs);
+        let items = doc_switcher_items(&tabs.tabs);
         assert_eq!(
             items.iter().map(|item| item.id).collect::<Vec<_>>(),
             tabs.tabs.iter().map(|tab| tab.id).collect::<Vec<_>>()
@@ -3160,34 +3065,6 @@ mod tests {
             vec!["Diagram", "Customer", "Order"]
         );
         assert!(items.iter().all(|item| item.enabled && !item.danger));
-    }
-
-    #[test]
-    fn view_reconciliation_keeps_all_still_open_tabs_when_focus_changes() {
-        let mut tabs = OpenTabs::diagram_preview("orders", "Orders");
-        let orders = tabs.active;
-        tabs.promote(orders);
-        let customer = tabs.open_preview("customer", "Customer", TreeKind::Class);
-        let mut views = HashMap::from([(orders, "orders view"), (customer, "customer view")]);
-
-        tabs.open_preview("orders", "Orders", TreeKind::Diagram);
-        reconcile_open_views(&mut views, &tabs);
-
-        assert_eq!(views.len(), 2);
-        assert_eq!(views.get(&orders), Some(&"orders view"));
-        assert_eq!(views.get(&customer), Some(&"customer view"));
-    }
-
-    #[test]
-    fn view_reconciliation_removes_only_views_without_an_open_tab() {
-        let mut tabs = OpenTabs::diagram_preview("orders", "Orders");
-        let orders = tabs.active;
-        let mut views = HashMap::from([(orders, "orders view")]);
-
-        tabs.open_preview("customer", "Customer", TreeKind::Class);
-        reconcile_open_views(&mut views, &tabs);
-
-        assert!(views.is_empty());
     }
 
     #[test]

@@ -18,6 +18,7 @@ mod diagram_switcher;
 mod doc_tabs;
 mod doc_view;
 mod dock;
+mod document_host;
 mod editor_session;
 mod fonts;
 mod fonts_overlay;

@@ -14,7 +14,6 @@ use makepad_widgets::*;
 use waml::model::Model;
 use waml::ops::Op;
 
-use crate::doc_tabs::{DocTab, TabKind};
 use crate::editor_session::SessionChange;
 use crate::icon_button::IconButtonWidgetRefExt;
 use crate::icons::Icon;
@@ -265,41 +264,10 @@ impl BodyChrome {
 }
 
 /// Create the view object for a tab, discriminating on `TabKind` (spec §5).
-pub fn make_view(tab: &DocTab) -> Box<dyn DocView> {
-    match tab.kind {
-        TabKind::Diagram => Box::new(crate::class_diagram_view::ClassDiagramView::new(
-            tab.key.clone(),
-            tab.title.clone(),
-        )),
-        TabKind::Classifier => {
-            Box::new(crate::classifier_preview_view::ClassifierPreviewView::new(
-                tab.key.clone(),
-                tab.node_kind,
-            ))
-        }
-        TabKind::Source => Box::new(crate::source_view::SourceView::new(
-            tab.key.clone(),
-            tab.node_kind,
-        )),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::doc_tabs::{DocTab, TabKind};
     use crate::tree::TreeKind;
-
-    fn tab(kind: TabKind, node_kind: TreeKind) -> DocTab {
-        DocTab {
-            id: LiveId::from_str("t"),
-            key: "k".into(),
-            title: "T".into(),
-            kind,
-            node_kind,
-            preview: false,
-        }
-    }
 
     #[test]
     fn view_outcome_default_is_all_empty() {
