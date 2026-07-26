@@ -73,6 +73,25 @@ Have it return a typed `SessionChange` describing what invalidated (model, activ
 
 Do not begin by mechanically splitting `app.rs` into files while leaving `App` as shared mutable gravity. That changes navigation, not changeability.
 
+## P1 — `DocView` is a façade rather than an ownership boundary
+
+Evidence:
+
+- `crates/waml-editor/src/doc_view.rs:133` says each live view owns synchronization and action handling, but `App::sync_active_tab` still special-cases `TabKind::Source` to feed source text.
+- `App` downcasts `dyn DocView` to `ClassDiagramView` both to push the active diagram identity and to refresh the scene after a model mutation.
+- `body_chrome` and `tab_accent` construct throwaway views instead of querying the registered live view.
+- Adding a view therefore still requires shell-side type knowledge and synchronization choreography even though dispatch is expressed through trait objects.
+
+The abstraction hides concrete types syntactically without transferring authority. In practice it behaves like an indirect tagged union: the application pays for allocation and dynamic dispatch while central branching remains the real extension mechanism.
+
+Recommendation:
+
+1. Give each registered view all immutable tab identity and source data it needs to synchronize itself; remove the source-tab branch from `App`.
+2. Replace concrete downcasts with trait-level lifecycle and post-mutation hooks owned by the live view.
+3. Query chrome and accent metadata from the registered live view rather than constructing temporary views.
+4. Retain only outcome channels with real producers and consumers. Remove the unused `open_preview` and `open_right_dock` relay scaffolding until behavior needs them.
+5. Keep model mutation and popup placement in the shell/session boundary, but let the active view decide how a successful mutation invalidates and refreshes its presentation.
+
 ## P1 — `GraphCanvas` combines too many reasons to change
 
 Evidence:
