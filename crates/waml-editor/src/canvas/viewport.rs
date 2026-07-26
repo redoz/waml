@@ -73,7 +73,9 @@ const MIN_PINCH_SPREAD: f64 = 8.0;
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) enum InitialFit {
     None,
+    ScenePending,
     Scene(waml::solve::Rect),
+    FocusPending,
     Focus(waml::solve::Rect),
 }
 
@@ -177,6 +179,7 @@ impl ViewportController {
         }
         let camera = match self.initial_fit {
             InitialFit::None => return false,
+            InitialFit::ScenePending | InitialFit::FocusPending => return false,
             InitialFit::Scene(bounds) => {
                 fit_scene_camera(bounds, self.view_rect.size.x, self.view_rect.size.y)
             }
@@ -196,9 +199,15 @@ impl ViewportController {
         replacement_bounds: Option<waml::solve::Rect>,
     ) -> ViewportEffects {
         self.initial_fit = match (self.initial_fit, replacement_bounds) {
-            (InitialFit::None, _) | (_, None) => InitialFit::None,
-            (InitialFit::Scene(_), Some(bounds)) => InitialFit::Scene(bounds),
-            (InitialFit::Focus(_), Some(bounds)) => InitialFit::Focus(bounds),
+            (InitialFit::None, _) => InitialFit::None,
+            (InitialFit::ScenePending | InitialFit::Scene(_), None) => InitialFit::ScenePending,
+            (InitialFit::ScenePending | InitialFit::Scene(_), Some(bounds)) => {
+                InitialFit::Scene(bounds)
+            }
+            (InitialFit::FocusPending | InitialFit::Focus(_), None) => InitialFit::FocusPending,
+            (InitialFit::FocusPending | InitialFit::Focus(_), Some(bounds)) => {
+                InitialFit::Focus(bounds)
+            }
         };
         self.tween = None;
         self.tween_last_time = 0.0;
@@ -669,5 +678,58 @@ mod tests {
         assert_eq!(effects.camera_timer, TimerCommand::Stop);
         assert!(!viewport.apply_initial_fit());
         assert_eq!(viewport.camera(), settled);
+    }
+
+    #[test]
+    fn empty_scene_then_populated_update_fits_on_the_first_valid_draw() {
+        let mut viewport = ViewportController::default();
+        viewport.set_view_rect(ViewRect {
+            pos: dvec2(0.0, 0.0),
+            size: dvec2(800.0, 600.0),
+        });
+        viewport.request_initial_fit(InitialFit::ScenePending);
+
+        assert!(!viewport.apply_initial_fit());
+        assert_eq!(viewport.camera(), Camera::default());
+
+        let scene_b = Rect {
+            x: 1000.0,
+            y: 700.0,
+            w: 400.0,
+            h: 300.0,
+        };
+        viewport.retain_for_scene_update(Some(scene_b));
+        assert!(viewport.apply_initial_fit());
+        assert_eq!(viewport.camera(), fit_scene_camera(scene_b, 800.0, 600.0),);
+    }
+
+    #[test]
+    fn empty_focus_then_populated_update_retains_focus_fit_semantics() {
+        let mut viewport = ViewportController::default();
+        viewport.set_view_rect(ViewRect {
+            pos: dvec2(0.0, 0.0),
+            size: dvec2(800.0, 600.0),
+        });
+        viewport.request_initial_fit(InitialFit::FocusPending);
+
+        assert!(!viewport.apply_initial_fit());
+        assert!(!viewport.apply_initial_fit());
+
+        let focus_b = Rect {
+            x: 1000.0,
+            y: 700.0,
+            w: 400.0,
+            h: 300.0,
+        };
+        viewport.retain_for_scene_update(Some(focus_b));
+        assert!(viewport.apply_initial_fit());
+        assert_eq!(
+            viewport.camera(),
+            Camera {
+                pan_x: 800.0,
+                pan_y: 550.0,
+                zoom: 1.0,
+            },
+        );
     }
 }

@@ -2551,10 +2551,11 @@ impl ClassDiagramSurface {
         // load-time fit below re-frames from scratch.
         let effects = self.viewport.cancel_glide();
         self.apply_viewport_effects(cx, effects);
-        self.viewport.request_initial_fit(InitialFit::None);
-        if let Some(bounds) = bounding_box(&self.scene) {
-            self.viewport.request_initial_fit(InitialFit::Scene(bounds));
-        }
+        self.viewport
+            .request_initial_fit(match bounding_box(&self.scene) {
+                Some(bounds) => InitialFit::Scene(bounds),
+                None => InitialFit::ScenePending,
+            });
         self.selected = None; // stale index would highlight the wrong node
         self.selected_key = None;
         self.conflict_focus_keys = None;
@@ -2576,10 +2577,11 @@ impl ClassDiagramSurface {
         self.scene = scene;
         let effects = self.viewport.cancel_glide();
         self.apply_viewport_effects(cx, effects);
-        self.viewport.request_initial_fit(InitialFit::None);
-        if let Some(bounds) = bounding_box(&self.scene) {
-            self.viewport.request_initial_fit(InitialFit::Focus(bounds));
-        }
+        self.viewport
+            .request_initial_fit(match bounding_box(&self.scene) {
+                Some(bounds) => InitialFit::Focus(bounds),
+                None => InitialFit::FocusPending,
+            });
         self.selected = None; // stale index would highlight the wrong node
         self.selected_key = None;
         self.conflict_focus_keys = None;
