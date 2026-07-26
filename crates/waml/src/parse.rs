@@ -340,6 +340,17 @@ fn scan_frontmatter_and_preamble(src: &str) -> Vec<Diagnostic> {
                     ));
                 }
             }
+            if let Some(rest) = trimmed.strip_prefix("cardinality:") {
+                let value = rest.trim().trim_matches('"');
+                if !matches!(value, "off" | "explicit" | "all") {
+                    diags.push(Diagnostic::new(
+                        DiagCode::FrontmatterNotClean,
+                        format!("invalid cardinality '{value}' — expected off, explicit, or all"),
+                        "",
+                        n,
+                    ));
+                }
+            }
             continue;
         }
 
@@ -1699,6 +1710,27 @@ mod tests {
             .unwrap();
         assert_eq!(d.line, 2);
         assert_eq!(d.severity, crate::diagnostic::Severity::Warning);
+    }
+
+    #[test]
+    fn parse_reports_invalid_diagram_cardinality_on_frontmatter_line() {
+        let src = "---\ntype: Diagram\ntitle: X\ncardinality: sometimes\n---\n# X\n";
+        let (_doc, diags) = parse(src);
+        let d = diags
+            .iter()
+            .find(|d| d.code == DiagCode::FrontmatterNotClean && d.line == 4)
+            .expect("invalid cardinality must produce a frontmatter diagnostic");
+        assert!(d.message.contains("invalid cardinality 'sometimes'"));
+    }
+
+    #[test]
+    fn parse_accepts_all_diagram_cardinality_values_without_diagnostics() {
+        for cardinality in ["off", "explicit", "all"] {
+            let src =
+                format!("---\ntype: Diagram\ntitle: X\ncardinality: {cardinality}\n---\n# X\n");
+            let (_doc, diags) = parse(&src);
+            assert!(diags.is_empty(), "{cardinality}: {diags:?}");
+        }
     }
 
     #[test]

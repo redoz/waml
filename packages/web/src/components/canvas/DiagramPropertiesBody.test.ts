@@ -20,7 +20,7 @@ test("renders all six display controls", () => {
   expect(screen.getByRole("switch", { name: "Show attributes" })).toBeTruthy();
   expect(screen.getByRole("switch", { name: "Show type" })).toBeTruthy();
   expect(screen.getByRole("switch", { name: "Show roles" })).toBeTruthy();
-  expect(screen.getByRole("switch", { name: "Show cardinality" })).toBeTruthy();
+  expect(screen.getByRole("button", { name: "Cardinality visibility: explicit" })).toBeTruthy();
   expect(screen.getByRole("switch", { name: "Show labels" })).toBeTruthy();
   expect(screen.getByRole("switch", { name: "Show stereotype" })).toBeTruthy();
 });
@@ -49,7 +49,7 @@ test("a non-default display value drives every control's rendered state", () => 
     showAttributes: false,
     showType: false,
     showRoles: false,
-    showCardinality: false,
+    cardinality: "off" as const,
     showLabels: false,
     showStereotype: false,
   };
@@ -59,9 +59,7 @@ test("a non-default display value drives every control's rendered state", () => 
     "false",
   );
   expect(screen.getByRole("switch", { name: "Show roles" }).getAttribute("aria-checked")).toBe("false");
-  expect(screen.getByRole("switch", { name: "Show cardinality" }).getAttribute("aria-checked")).toBe(
-    "false",
-  );
+  expect(screen.getByRole("button", { name: "Cardinality visibility: off" })).toBeTruthy();
   expect(screen.getByRole("switch", { name: "Show labels" }).getAttribute("aria-checked")).toBe(
     "false",
   );
@@ -72,13 +70,13 @@ test("a non-default display value drives every control's rendered state", () => 
   expect(screen.getByRole("switch", { name: "Show type" }).getAttribute("aria-checked")).toBe("false");
 });
 
-test("toggling 'Show roles'/'Show cardinality'/'Show labels' each emit their inverted flag", async () => {
+test("relationship controls emit roles, next cardinality mode, and labels", async () => {
   const onChange = vi.fn();
   render(DiagramPropertiesBody, { props: props({ onChange }) });
   await fireEvent.click(screen.getByRole("switch", { name: "Show roles" }));
   expect(onChange).toHaveBeenCalledWith({ showRoles: false });
-  await fireEvent.click(screen.getByRole("switch", { name: "Show cardinality" }));
-  expect(onChange).toHaveBeenCalledWith({ showCardinality: false });
+  await fireEvent.click(screen.getByRole("button", { name: "Cardinality visibility: explicit" }));
+  expect(onChange).toHaveBeenCalledWith({ cardinality: "all" });
   await fireEvent.click(screen.getByRole("switch", { name: "Show labels" }));
   expect(onChange).toHaveBeenCalledWith({ showLabels: false });
 });

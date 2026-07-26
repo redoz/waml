@@ -2,7 +2,7 @@
   // The active diagram's display controls, extracted from Dock's popover so the
   // central edit panel host can render the identical set. Display toggles only — no
   // title/profile. Each control emits a single changed field via onChange.
-  import type { DiagramDisplay, Diagram } from "@waml/okf";
+  import type { CardinalityVisibility, DiagramDisplay, Diagram } from "@waml/okf";
   import { inputCls, labelCls } from "../inspector/field-styles";
 
   let { display, diagram, candidateStereotypes, editable, onChange, onUpdateDiagram }: {
@@ -16,6 +16,12 @@
 
   function patch(p: Partial<DiagramDisplay>) {
     onChange(p);
+  }
+
+  function nextCardinality(current: CardinalityVisibility): CardinalityVisibility {
+    if (current === "off") return "explicit";
+    if (current === "explicit") return "all";
+    return "off";
   }
 
   let disabledAll = $derived(!editable);
@@ -183,9 +189,22 @@
       {@render toggleRow("Show roles", display.showRoles, () =>
         patch({ showRoles: !display.showRoles }), disabledAll,
       )}
-      {@render toggleRow("Show cardinality", display.showCardinality, () =>
-        patch({ showCardinality: !display.showCardinality }), disabledAll,
-      )}
+      <button
+        type="button"
+        aria-label={`Cardinality visibility: ${display.cardinality}`}
+        disabled={disabledAll}
+        onclick={() => {
+          if (!disabledAll) patch({ cardinality: nextCardinality(display.cardinality) });
+        }}
+        class="flex w-full items-center justify-between gap-3 rounded-lg px-2 py-1.5 text-left transition-colors {disabledAll
+          ? 'opacity-40 cursor-not-allowed'
+          : 'hover:bg-[color:rgba(var(--accent),.12)]'}"
+      >
+        <span class="text-[13px] font-medium text-slate-800">Cardinality</span>
+        <span class="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-semibold capitalize text-slate-600">
+          {display.cardinality}
+        </span>
+      </button>
       {@render toggleRow("Show labels", display.showLabels, () =>
         patch({ showLabels: !display.showLabels }), disabledAll,
       )}

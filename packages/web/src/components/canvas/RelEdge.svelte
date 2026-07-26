@@ -1,14 +1,14 @@
 <script lang="ts">
   // Mirrors packages/web/src/components/canvas/RelEdge.tsx.
   import { BaseEdge, EdgeLabel, EdgeReconnectAnchor, getSmoothStepPath, useInternalNode, type EdgeProps, type Position } from "@xyflow/svelte";
-  import type { ModelEdge, RelEnd, RelationshipKind } from "@waml/okf";
+  import type { CardinalityVisibility, ModelEdge, RelEnd, RelationshipKind } from "@waml/okf";
   import { getEdgeParams, portPoint, type NodeGeom, type Rect, type Slot } from "./floating";
-  import { edgeStereotype } from "./edges";
+  import { edgeStereotype, relationshipEndText } from "./edges";
 
   type RelEdgeData = Pick<ModelEdge, "kind" | "fromEnd" | "toEnd" | "bidirectional" | "name"> & {
     modelEdgeId?: string;
     showRoles?: boolean;
-    showCardinality?: boolean;
+    cardinality?: CardinalityVisibility;
     showLabels?: boolean;
     // Pre-assigned by edges.ts so a hub's edges space themselves along each border.
     sourceSide?: Position;
@@ -121,15 +121,14 @@
   });
 
   const showRoles = $derived(d?.showRoles ?? true);
-  const showCardinality = $derived(d?.showCardinality ?? true);
+  const cardinality = $derived<CardinalityVisibility>(d?.cardinality ?? "explicit");
   const showLabels = $derived(d?.showLabels ?? true);
-  const endText = (e: RelEnd) =>
-    [showCardinality ? e.multiplicity : undefined, showRoles ? e.role : undefined].filter(Boolean).join(" ");
+  const endText = (e: RelEnd) => relationshipEndText(kind, e, cardinality, showRoles);
   const lerp = (a: number, b: number, t: number) => a + (b - a) * t;
 
   const labels = $derived.by(() => {
     const out: { x: number; y: number; text: string }[] = [];
-    if ((!showRoles && !showCardinality) || !geometry) return out;
+    if ((!showRoles && cardinality === "off") || !geometry) return out;
     const { sx, sy, tx, ty } = geometry;
     const ft = endText(fromEnd);
     const tt = endText(toEnd);
