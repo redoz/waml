@@ -138,6 +138,25 @@ const LOADER_CSS = `
                 opacity: 0;
                 transition: opacity 140ms linear;
             }
+            .canvas_loader[data-phase='compiling'] .waml_loader_segment,
+            .canvas_loader[data-phase='starting'] .waml_loader_segment {
+                animation: waml_loader_chase 1.25s ease-in-out infinite;
+                animation-delay: calc(var(--segment-index) * 90ms);
+            }
+            @keyframes waml_loader_chase {
+                0%, 55%, 100% { opacity: 0.42; }
+                22% { opacity: 1; }
+            }
+            .canvas_loader[data-phase='error'] .waml_loader_segment {
+                opacity: 1;
+            }
+            @media (prefers-reduced-motion: reduce) {
+                .canvas_loader[data-phase='compiling'] .waml_loader_segment,
+                .canvas_loader[data-phase='starting'] .waml_loader_segment {
+                    animation: none;
+                    opacity: 1;
+                }
+            }
             .canvas_loader .waml_loader_status {
                 color: #8f96a3;
                 font-family: system-ui, sans-serif;
@@ -210,7 +229,34 @@ const RUNTIME_JS = `
                 progress = Math.max(progress, Math.min(1, p));
                 applyProgress();
             };
-            document.addEventListener('DOMContentLoaded', applyProgress);
+            var phase = 'loading';
+            var phaseLabels = {
+                loading: 'Loading…',
+                compiling: 'Compiling…',
+                starting: 'Starting…',
+                error: 'Couldn’t start WAML'
+            };
+            var applyPhase = function () {
+                var loader = document.querySelector('.canvas_loader');
+                var status = document.querySelector('.waml_loader_status');
+                if (loader) {
+                    loader.setAttribute('data-phase', phase);
+                }
+                if (status) {
+                    status.textContent = phaseLabels[phase];
+                }
+            };
+            var setPhase = function (nextPhase) {
+                phase = nextPhase;
+                if (nextPhase === 'compiling' || nextPhase === 'starting') {
+                    setProgress(1);
+                }
+                applyPhase();
+            };
+            document.addEventListener('DOMContentLoaded', function () {
+                applyProgress();
+                applyPhase();
+            });
 
             var nativeFetch = window.fetch.bind(window);
             window.fetch = function (input, init) {
@@ -236,6 +282,7 @@ const RUNTIME_JS = `
                             return reader.read().then(function (chunk) {
                                 if (chunk.done) {
                                     setProgress(1);
+                                    setPhase('compiling');
                                     controller.close();
                                     return;
                                 }
@@ -258,6 +305,27 @@ const RUNTIME_JS = `
                         headers: response.headers
                     });
                 });
+            };
+
+            var nativeCompileStreaming = WebAssembly.compileStreaming;
+            WebAssembly.compileStreaming = function () {
+                var compiled;
+                try {
+                    compiled = nativeCompileStreaming.apply(WebAssembly, arguments);
+                } catch (error) {
+                    setPhase('error');
+                    throw error;
+                }
+                return Promise.resolve(compiled).then(
+                    function (module) {
+                        setPhase('starting');
+                        return module;
+                    },
+                    function (error) {
+                        setPhase('error');
+                        throw error;
+                    }
+                );
             };
 
             // -- update check ------------------------------------------------
