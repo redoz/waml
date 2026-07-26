@@ -5,6 +5,10 @@
 //!
 //! Structure/hit-handling mirror the fork's `widgets/src/map/view.rs`.
 
+use super::{
+    selection::{ConstraintVisibility, SelectionPolicy, SelectionState},
+    SceneUpdate,
+};
 use crate::canvas::geometry::{
     corner_fillet, elbow_radius, intersect_rect, marker_geometry, segment_quad, snap_bar_to_device,
     ELBOW_MIN_DEVICE_PX,
@@ -460,31 +464,8 @@ pub struct ClassDiagramSurface {
     /// verdict never paints.
     #[rust]
     conflict_zones: Vec<Zone>,
-    /// Node keys that should stay lit while every other card fades (spec §4
-    /// "fade the rest"). `None` = no focus. Reset on scene replace. Keyed (not
-    /// indexed) so a delete-and-refresh of the open conflict list can re-focus
-    /// a still-valid pair even though `scene.conflicts` indices have shifted.
     #[rust]
-    conflict_focus_keys: Option<std::collections::HashSet<String>>,
-    /// Index (into the current scene's nodes) of the click-selected node, or
-    /// `None`. Drives the thicker `AccentFrame` highlight in `draw_walk`. It
-    /// indexes *this* scene, so it MUST be reset to `None` whenever the scene is
-    /// replaced (`set_scene` / `set_focus`), or a stale index would highlight
-    /// the wrong node.
-    #[rust]
-    selected: Option<usize>,
-    /// Key of the click-selected node, tracked alongside `selected` so a
-    /// same-diagram re-solve (`update_scene`) can re-find the node by key after
-    /// its index shifts. Reset to `None` whenever the scene is replaced.
-    #[rust]
-    selected_key: Option<String>,
-    /// Which constraint veils to draw (spec §1). Default `Selected`.
-    #[rust]
-    constraint_vis: ConstraintVisibility,
-    /// X-ray for groups that opt out of chrome (spec §3): when on, `box`/
-    /// `shrink` groups draw a dashed hairline instead of nothing. Default off.
-    #[rust]
-    show_hidden_borders: bool,
+    selection: SelectionState,
 }
 
 /// A live hover preview: the canvas tweens out of the committed layout into the
@@ -627,17 +608,6 @@ pub const COMPASS_ZONES: [Zone; 8] = [
     Zone::BottomLeft,
     Zone::BottomRight,
 ];
-
-/// What constraint veils the canvas draws (spec §1). Persisted in view state and
-/// driven by the view bar's constraints toggle.
-#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
-pub enum ConstraintVisibility {
-    /// No constraint marks — pure diagram.
-    None,
-    /// Selecting a node lights every constraint touching it (sticky). Default.
-    #[default]
-    Selected,
-}
 
 /// The relations that should be drawn under a visibility mode + sticky selection
 /// (spec §1). `None` ⇒ empty; `Selected` ⇒ relations touching `selected_key` as
@@ -934,14 +904,6 @@ pub fn footer_screen_rect(node: &crate::scene::SceneNode, screen: Rect, zoom: f6
         pos: dvec2(screen.pos.x + f.x * zoom, screen.pos.y + f.y * zoom),
         size: dvec2(f.w * zoom, f.h * zoom),
     })
-}
-
-/// Index of the node whose key equals `key`, or `None` (missing key / `None`).
-/// Used by `update_scene` to re-resolve the selection after a re-solve reorders
-/// the node vector. Pure, for a GPU-free test.
-fn selection_index(nodes: &[crate::scene::SceneNode], key: Option<&str>) -> Option<usize> {
-    let key = key?;
-    nodes.iter().position(|n| n.key == key)
 }
 
 /// Screen-space fill rect for a veil: the keep-out region anchored to the
@@ -1302,15 +1264,12 @@ impl Widget for ClassDiagramSurface {
                             // unselected drag would show no hatch for what you're
                             // actually moving. Pure clicks keep their
                             // select-on-release semantics (handled in FingerUp).
-                            if self.selected != Some(ni) {
-                                self.selected = Some(ni);
-                                self.selected_key = Some(self.scene.nodes[ni].key.clone());
+                            let key = self.scene.nodes[ni].key.clone();
+                            if self.selection.select(&key, &self.scene.nodes) {
                                 let uid = self.widget_uid();
                                 cx.widget_action(
                                     uid,
-                                    ClassDiagramSurfaceAction::NodeSelect {
-                                        key: self.scene.nodes[ni].key.clone(),
-                                    },
+                                    ClassDiagramSurfaceAction::NodeSelect { key },
                                 );
                             }
                         }
@@ -1441,8 +1400,7 @@ impl Widget for ClassDiagramSurface {
                                         },
                                     );
                                 } else {
-                                    self.selected = Some(i);
-                                    self.selected_key = Some(node.key.clone());
+                                    self.selection.select(&node.key, &self.scene.nodes);
                                     cx.widget_action(
                                         uid,
                                         ClassDiagramSurfaceAction::NodeSelect {
@@ -1452,8 +1410,7 @@ impl Widget for ClassDiagramSurface {
                                 }
                             }
                             None => {
-                                self.selected = None;
-                                self.selected_key = None;
+                                self.selection.clear();
                                 cx.widget_action(uid, ClassDiagramSurfaceAction::NodeDeselect);
                             }
                         }
@@ -1510,6 +1467,7 @@ impl Widget for ClassDiagramSurface {
         self.draw_bg.draw_abs(cx, rect);
 
         self.viewport.apply_initial_fit();
+        let selection = self.selection.snapshot();
 
         // Contents (text offsets, font sizes, hairline weights) scale by the same
         // factor as the box geometry, so a zoomed shape magnifies its interior too.
@@ -1530,7 +1488,7 @@ impl Widget for ClassDiagramSurface {
         // without holding the `self.scene.groups` borrow.
         // Mode + label per group come from the pure `group_plan` seam; only the
         // camera projection stays here.
-        let plan = group_plan(&self.scene.groups, self.show_hidden_borders);
+        let plan = group_plan(&self.scene.groups, selection.show_hidden_borders);
         let group_draws: Vec<(Rect, Option<String>, GroupDraw)> = self
             .scene
             .groups
@@ -1837,14 +1795,14 @@ impl Widget for ClassDiagramSurface {
         // no card greys. Owned keys so it outlives the `&mut self` draw loop.
         let focus_keys: std::collections::HashSet<String> = relations_for_visibility(
             &self.scene.relations,
-            self.constraint_vis,
-            self.selected_key.as_deref(),
+            selection.constraint_visibility,
+            selection.selected_key.as_deref(),
         )
         .iter()
         .flat_map(|r| [r.subject.clone(), r.reference.clone()])
         .collect();
         let focus_active = !focus_keys.is_empty();
-        let selected_key = self.selected_key.clone();
+        let selected_key = selection.selected_key.clone();
         for (i, node) in nodes.iter().enumerate() {
             let camera = self.viewport.camera();
             let (lx, ly) = camera.world_to_local(node.rect.x, node.rect.y);
@@ -1855,7 +1813,7 @@ impl Widget for ClassDiagramSurface {
             // Push the per-node `selected` uniform (1.0 for the picked node,
             // 0.0 otherwise) so its frame widens; every other node draws exactly
             // as before. Same set_uniform-before-draw_abs cadence as `zoom`.
-            let selected = if self.selected == Some(i) {
+            let selected = if selection.selected_index == Some(i) {
                 1.0f32
             } else {
                 0.0
@@ -1888,7 +1846,7 @@ impl Widget for ClassDiagramSurface {
         // relation's two nodes, so the contradiction is locatable off the
         // error list. Keyed by node key (not conflict index) so it survives a
         // delete-and-refresh of the open list.
-        if let Some(keep) = self.conflict_focus_keys.clone() {
+        if let Some(keep) = selection.conflict_focus_keys {
             for idx in 0..self.scene.nodes.len() {
                 if !keep.contains(&self.scene.nodes[idx].key) {
                     let s = self.node_screen_rect(idx);
@@ -1913,7 +1871,86 @@ impl Widget for ClassDiagramSurface {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum CameraPolicy {
+    Refit,
+    Focus,
+    Retain,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct ReconciliationPolicy {
+    clear_placement: bool,
+    selection: SelectionPolicy,
+    camera: CameraPolicy,
+}
+
+fn reconciliation_policy(update: &SceneUpdate) -> ReconciliationPolicy {
+    match update {
+        SceneUpdate::Replace => ReconciliationPolicy {
+            clear_placement: true,
+            selection: SelectionPolicy::Clear,
+            camera: CameraPolicy::Refit,
+        },
+        SceneUpdate::Focus { .. } => ReconciliationPolicy {
+            clear_placement: true,
+            selection: SelectionPolicy::Clear,
+            camera: CameraPolicy::Focus,
+        },
+        SceneUpdate::PreserveViewport => ReconciliationPolicy {
+            clear_placement: true,
+            selection: SelectionPolicy::Preserve,
+            camera: CameraPolicy::Retain,
+        },
+    }
+}
+
 impl ClassDiagramSurface {
+    fn reset_placement_for_scene_change(&mut self, cx: &mut Cx) {
+        self.cancel_drag(cx);
+        self.zone_layouts.clear();
+        self.conflict_zones.clear();
+        cx.stop_timer(self.dwell_timer);
+    }
+
+    fn reconcile_scene(&mut self, cx: &mut Cx, scene: Scene, update: SceneUpdate) {
+        let policy = reconciliation_policy(&update);
+        if policy.clear_placement {
+            self.reset_placement_for_scene_change(cx);
+        }
+
+        let cancel_effects = self.viewport.cancel_glide();
+        self.apply_viewport_effects(cx, cancel_effects);
+        let bounds = bounding_box(&scene);
+        self.selection.reconcile(&scene.nodes, policy.selection);
+
+        match (&update, policy.camera) {
+            (SceneUpdate::Replace, CameraPolicy::Refit) => {
+                self.viewport.request_initial_fit(match bounds {
+                    Some(bounds) => InitialFit::Scene(bounds),
+                    None => InitialFit::ScenePending,
+                });
+            }
+            (SceneUpdate::Focus { key }, CameraPolicy::Focus) => {
+                let focus = scene
+                    .nodes
+                    .iter()
+                    .find(|node| &node.key == key)
+                    .map(|node| InitialFit::Focus(node.rect))
+                    .unwrap_or(InitialFit::FocusPending);
+                self.viewport.request_initial_fit(focus);
+            }
+            (SceneUpdate::PreserveViewport, CameraPolicy::Retain) => {
+                let effects = self.viewport.retain_for_scene_update(bounds);
+                self.apply_viewport_effects(cx, effects);
+            }
+            _ => unreachable!("reconciliation policy must match its scene update"),
+        }
+
+        self.scene = scene;
+        self.draw_bg.redraw(cx);
+    }
+
     /// On-screen rect of scene node `i` under the current camera. Mirrors the
     /// draw-time transform in `draw_walk` / `node_at`.
     fn node_screen_rect(&self, i: usize) -> Rect {
@@ -1991,13 +2028,14 @@ impl ClassDiagramSurface {
     /// selection (spec §1): None draws nothing, Selected draws only relations
     /// touching the selected node.
     fn draw_relations_overlay(&mut self, cx: &mut Cx2d) {
-        let selected_key = self.selected_key.clone();
+        let selection = self.selection.snapshot();
+        let selected_key = selection.selected_key;
         // Selected mode is the only drawing mode, so the veil always reframes
         // onto the selected node's POV.
         let pov = selected_key.as_deref();
         let mut chosen: Vec<(usize, waml::syntax::Direction, bool)> = relations_for_visibility(
             &self.scene.relations,
-            self.constraint_vis,
+            selection.constraint_visibility,
             selected_key.as_deref(),
         )
         .into_iter()
@@ -2546,20 +2584,7 @@ impl ClassDiagramSurface {
     }
 
     pub fn set_scene(&mut self, cx: &mut Cx, scene: Scene) {
-        self.scene = scene;
-        // A glide aimed at the old scene's bbox is meaningless now; the
-        // load-time fit below re-frames from scratch.
-        let effects = self.viewport.cancel_glide();
-        self.apply_viewport_effects(cx, effects);
-        self.viewport
-            .request_initial_fit(match bounding_box(&self.scene) {
-                Some(bounds) => InitialFit::Scene(bounds),
-                None => InitialFit::ScenePending,
-            });
-        self.selected = None; // stale index would highlight the wrong node
-        self.selected_key = None;
-        self.conflict_focus_keys = None;
-        self.draw_bg.redraw(cx);
+        self.reconcile_scene(cx, scene, SceneUpdate::Replace);
     }
 
     /// Diagram-contributed context menu items for a right-clicked subject.
@@ -2574,18 +2599,12 @@ impl ClassDiagramSurface {
     /// node instead of fitting the whole scene to the view. Used for the
     /// classifier-focus doc tab.
     pub fn set_focus(&mut self, cx: &mut Cx, scene: Scene) {
-        self.scene = scene;
-        let effects = self.viewport.cancel_glide();
-        self.apply_viewport_effects(cx, effects);
-        self.viewport
-            .request_initial_fit(match bounding_box(&self.scene) {
-                Some(bounds) => InitialFit::Focus(bounds),
-                None => InitialFit::FocusPending,
-            });
-        self.selected = None; // stale index would highlight the wrong node
-        self.selected_key = None;
-        self.conflict_focus_keys = None;
-        self.draw_bg.redraw(cx);
+        let key = scene
+            .nodes
+            .first()
+            .map(|node| node.key.clone())
+            .unwrap_or_default();
+        self.reconcile_scene(cx, scene, SceneUpdate::Focus { key });
     }
 
     /// Swap the scene for a same-diagram re-solve (e.g. an expand toggle). Unlike
@@ -2594,16 +2613,7 @@ impl ClassDiagramSurface {
     /// so the inspector highlight survives even though the node's index may have
     /// shifted.
     pub fn update_scene(&mut self, cx: &mut Cx, scene: Scene) {
-        self.scene = scene;
-        let effects = self
-            .viewport
-            .retain_for_scene_update(bounding_box(&self.scene));
-        self.apply_viewport_effects(cx, effects);
-        self.selected = selection_index(&self.scene.nodes, self.selected_key.as_deref());
-        if self.selected.is_none() {
-            self.selected_key = None;
-        }
-        self.draw_bg.redraw(cx);
+        self.reconcile_scene(cx, scene, SceneUpdate::PreserveViewport);
     }
 
     /// Select the node whose key is `key` (inspector-driven navigation). Sets
@@ -2611,11 +2621,7 @@ impl ClassDiagramSurface {
     /// scene; a key with no node in this scene (e.g. an edge) clears the
     /// selection but is otherwise a no-op. Repaints the highlight.
     pub fn select_by_key(&mut self, cx: &mut Cx, key: &str) {
-        self.selected_key = Some(key.to_string());
-        self.selected = selection_index(&self.scene.nodes, Some(key));
-        if self.selected.is_none() {
-            self.selected_key = None;
-        }
+        self.selection.select(key, &self.scene.nodes);
         self.draw_bg.redraw(cx);
     }
 
@@ -2689,13 +2695,13 @@ impl ClassDiagramSurface {
     /// Focus a relation's two nodes (or clear): every other card fades.
     /// Repaints.
     pub fn set_conflict_focus_keys(&mut self, cx: &mut Cx, keys: Option<Vec<String>>) {
-        self.conflict_focus_keys = keys.map(|v| v.into_iter().collect());
+        self.selection.set_conflict_focus_keys(keys);
         self.draw_bg.redraw(cx);
     }
 
     /// Set the constraint-veil visibility mode and repaint.
     pub fn set_constraint_vis(&mut self, cx: &mut Cx, mode: ConstraintVisibility) {
-        self.constraint_vis = mode;
+        self.selection.set_constraint_visibility(mode);
         self.draw_bg.redraw(cx);
     }
 
@@ -2758,7 +2764,7 @@ impl ClassDiagramSurface {
     /// Frame the selected node (spec §4). No selection, a key with no node in
     /// this scene, or a not-yet-drawn canvas is a no-op.
     pub fn fit_to_selection(&mut self, cx: &mut Cx) {
-        let Some(key) = self.selected_key.clone() else {
+        let Some(key) = self.selection.selected_key().map(str::to_owned) else {
             return;
         };
         let Some(bbox) = self
@@ -2777,12 +2783,12 @@ impl ClassDiagramSurface {
     /// Whether a node is currently selected — drives the view bar's
     /// fit-to-selection button between enabled and dim.
     pub fn has_selection(&self) -> bool {
-        self.selected_key.is_some()
+        self.selection.has_selection()
     }
 
     /// Toggle the hidden-group-border x-ray and repaint.
     pub fn set_show_hidden_borders(&mut self, cx: &mut Cx, on: bool) {
-        self.show_hidden_borders = on;
+        self.selection.set_show_hidden_borders(on);
         self.draw_bg.redraw(cx);
     }
 
@@ -2790,14 +2796,14 @@ impl ClassDiagramSurface {
     /// lit toggle is a mirror of it and re-syncs from here on every view
     /// `sync`.
     pub fn constraint_vis(&self) -> ConstraintVisibility {
-        self.constraint_vis
+        self.selection.snapshot().constraint_visibility
     }
 
     /// Current hidden-group-border x-ray state. Same ownership story as
     /// `constraint_vis`: the canvas holds it, the view bar's lit toggle mirrors
     /// it and re-syncs from here on every view `sync`.
     pub fn show_hidden_borders(&self) -> bool {
-        self.show_hidden_borders
+        self.selection.snapshot().show_hidden_borders
     }
 
     /// Node count of the current scene, for the statusbar mock.
@@ -3371,16 +3377,6 @@ mod tests {
     }
 
     #[test]
-    fn selection_index_resolves_by_key_and_clears_on_miss() {
-        let a = many_attr_node("a", 1);
-        let b = many_attr_node("b", 1);
-        let nodes = vec![a, b];
-        assert_eq!(selection_index(&nodes, Some("b")), Some(1));
-        assert_eq!(selection_index(&nodes, Some("gone")), None);
-        assert_eq!(selection_index(&nodes, None), None);
-    }
-
-    #[test]
     fn visibility_gates_which_relations_draw() {
         use crate::scene::SceneRelation;
         use waml::syntax::Direction;
@@ -3499,5 +3495,42 @@ mod tests {
             .map(|(body, _)| body.trim())
             .expect("ClassDiagramSurface must expose clear");
         assert_eq!(body, "self.set_scene(cx, Scene::default());");
+    }
+
+    mod reconciliation {
+        use super::*;
+
+        #[test]
+        fn replace_clears_selection_and_refits() {
+            assert_eq!(
+                reconciliation_policy(&SceneUpdate::Replace),
+                ReconciliationPolicy {
+                    clear_placement: true,
+                    selection: SelectionPolicy::Clear,
+                    camera: CameraPolicy::Refit,
+                },
+            );
+        }
+
+        #[test]
+        fn focus_preserves_the_unselected_preview_behavior() {
+            let policy = reconciliation_policy(&SceneUpdate::Focus {
+                key: "order".into(),
+            });
+            assert_eq!(policy.selection, SelectionPolicy::Clear);
+            assert_eq!(policy.camera, CameraPolicy::Focus);
+        }
+
+        #[test]
+        fn update_scene_preserves_camera_and_re_resolves_selection() {
+            assert_eq!(
+                reconciliation_policy(&SceneUpdate::PreserveViewport),
+                ReconciliationPolicy {
+                    clear_placement: true,
+                    selection: SelectionPolicy::Preserve,
+                    camera: CameraPolicy::Retain,
+                },
+            );
+        }
     }
 }
