@@ -3,6 +3,7 @@ mod actions;
 use crate::doc_tabs::{OpenTabs, TabKind};
 use crate::dock::DockState;
 use crate::dock::ResponsiveDockLayout;
+use crate::editor_session::EditorSession;
 use crate::fps_meter::FpsMeter;
 use crate::icon_button::IconButtonWidgetRefExt;
 use crate::load;
@@ -14,7 +15,6 @@ use makepad_widgets::*;
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::path::Path;
-use waml::model::Model;
 
 fn open_overlay_contains(
     point: DVec2,
@@ -543,13 +543,7 @@ pub struct App {
     #[live]
     ui: WidgetRef,
     #[rust]
-    model: Model,
-    /// SPIKE (drag-place, Stage 2): the raw `(rel_path, contents)` bundle the
-    /// model was built from, retained so drag-to-place can author `## Layout`
-    /// placement statements in-memory via `waml::ops::apply` and rebuild the
-    /// model. In-memory only — never written back to disk in the spike.
-    #[rust]
-    bundle: Vec<(String, String)>,
+    session: EditorSession,
     /// Debounce for `mark_dirty` -> `save`; see `SAVE_DEBOUNCE_SECS`.
     #[rust]
     save_timer: Timer,
@@ -654,7 +648,7 @@ impl App {
     /// their differing behavior lives in the view objects -- with one seam:
     /// the View Source tab's markdown feed is pushed here in the shell rather
     /// than from `SourceView::sync`, because `DocView::sync` receives `&Model`
-    /// but not the raw `self.bundle` the source text is read from verbatim
+    /// but not the raw session bundle the source text is read from verbatim
     /// (feeding it without a `DocView` trait change was out of scope).
     fn sync_active_tab(&mut self, cx: &mut Cx) {
         self.reconcile_views();
@@ -699,7 +693,7 @@ impl App {
             .widget(cx, ids!(canvas_wrap))
             .set_visible(cx, !is_source);
         if is_source {
-            let md = crate::load::source_for(&self.bundle, &active.key)
+            let md = crate::load::source_for(self.session.bundle(), &active.key)
                 .map(str::to_string)
                 .unwrap_or_else(|| format!("*No source for `{}`*", active.key));
             self.ui
@@ -714,7 +708,7 @@ impl App {
         if let Some(v) = view.downcast_diagram() {
             v.set_active(active.key.clone(), active.title.clone());
         }
-        view.sync(cx, &body, &self.model);
+        view.sync(cx, &body, self.session.model());
 
         self.sync_statusbar(cx);
         self.sync_conflict_badge(cx);
@@ -744,13 +738,15 @@ impl App {
         persistent: bool,
     ) {
         let title = if node_kind == crate::tree::TreeKind::Diagram {
-            self.model
+            self.session
+                .model()
                 .diagrams
                 .iter()
                 .find(|diagram| diagram.key == key)
                 .map(|diagram| diagram.title.clone())
         } else {
-            self.model
+            self.session
+                .model()
                 .nodes
                 .iter()
                 .find(|node| node.key == key)
@@ -1279,10 +1275,13 @@ impl App {
     /// this is the seam where that difference lives; callers only ever say the
     /// document changed (`mark_dirty`), never how to store it.
     fn save(&mut self, cx: &mut Cx) {
-        if self.bundle.is_empty() {
+        if self.session.bundle().is_empty() {
             return;
         }
-        self.save_backend(cx);
+        let revision = self.session.revision();
+        if self.save_backend(cx) {
+            self.session.mark_saved(revision);
+        }
     }
 
     /// Browser backing: the URL fragment is the whole filesystem.
@@ -1296,16 +1295,22 @@ impl App {
     /// `replace`, not push: an edit is not a navigation, and one history entry
     /// per save would make Back mean "undo some edits, sometimes".
     #[cfg(target_arch = "wasm32")]
-    fn save_backend(&mut self, cx: &mut Cx) {
-        cx.browser_update_url(&format!("#{}", waml::share::encode(&self.bundle)), true);
+    fn save_backend(&mut self, cx: &mut Cx) -> bool {
+        cx.browser_update_url(
+            &format!("#{}", waml::share::encode(self.session.bundle())),
+            true,
+        );
+        true
     }
 
-    /// Native backing: writing `self.bundle` back over the opened OKF directory.
+    /// Native backing: writing the session bundle back over the opened OKF directory.
     /// Not implemented -- the editor has never written a document to disk (see
     /// the note on the `bundle` field), so drag-to-place edits are still
     /// in-memory only on desktop. The seam is here for it.
     #[cfg(not(target_arch = "wasm32"))]
-    fn save_backend(&mut self, _cx: &mut Cx) {}
+    fn save_backend(&mut self, _cx: &mut Cx) -> bool {
+        false
+    }
 
     /// Push the canvas's current conflict count onto the toolbar badge.
     fn sync_conflict_badge(&mut self, cx: &mut Cx) {
@@ -1399,25 +1404,25 @@ impl App {
         display_name: String,
         wanted_diagram: Option<&str>,
     ) -> bool {
-        self.model = model;
+        let change = self.session.replace(bundle, model);
+        debug_assert_eq!(change.revision, self.session.revision());
         // Fresh model: no tab ids (and so no view state, e.g. expansion) carry
         // over -- `open_dir` always rebuilds `self.tabs` from scratch below.
         self.views.clear();
         // Retain the raw bundle so drag-to-place ops can re-author `## Layout`
         // in-memory: the diagram view emits `Op::PlaceSet`, the shell applies it
         // against this bundle and rebuilds the model (see `handle_actions`).
-        self.bundle = bundle;
         // Fresh model: recompute the type-filter chip's cycle and reset scope /
         // search / filter to the whole-model browse state.
-        self.nav_kinds = crate::nav::kinds_in_model(&self.model);
+        self.nav_kinds = crate::nav::kinds_in_model(self.session.model());
         self.nav_state = NavState::default();
 
         self.open_name = display_name;
 
-        let root_name = if self.model.path.is_empty() {
+        let root_name = if self.session.model().path.is_empty() {
             self.open_name.as_str()
         } else {
-            self.model.path.as_str()
+            self.session.model().path.as_str()
         };
         self.ui.label(cx, ids!(model_name)).set_text(cx, root_name);
 
@@ -1428,7 +1433,7 @@ impl App {
         // empty canvas and no active diagram tab. With no tab there is no view to
         // declare a right dock, so the inspector stays closed and its `[I]`
         // toggle stays hidden.
-        match crate::cli::select_diagram(&self.model, wanted_diagram) {
+        match crate::cli::select_diagram(self.session.model(), wanted_diagram) {
             Some(diagram) => {
                 // Seed the diagram preview; `self.views` was just cleared above, so
                 // `sync_active_tab` lazily creates a fresh `ClassDiagramView`
@@ -1550,10 +1555,10 @@ impl App {
             self.sync_dock_slots(cx);
             return;
         }
-        let root_name = if self.model.path.is_empty() {
+        let root_name = if self.session.model().path.is_empty() {
             self.open_name.as_str()
         } else {
-            self.model.path.as_str()
+            self.session.model().path.as_str()
         };
         self.ui.label(cx, ids!(model_name)).set_text(cx, root_name);
 
@@ -1674,10 +1679,10 @@ impl App {
     /// clear the search field when they reset `nav_state.query` (otherwise the
     /// field keeps showing the previous model's text over an unfiltered tree).
     fn refresh_nav(&mut self, cx: &mut Cx, scope_changed: bool) {
-        let view = crate::nav::view(&self.model, &self.nav_state);
+        let view = crate::nav::view(self.session.model(), &self.nav_state);
         let chip = crate::nav::chip_label(self.nav_state.filter).to_string();
         let title = scope_changed.then(|| {
-            crate::nav::packages(&self.model)
+            crate::nav::packages(self.session.model())
                 .into_iter()
                 .find(|r| r.key == self.nav_state.scope)
                 .map(|r| r.title)
@@ -2142,7 +2147,9 @@ impl MatchEvent for App {
                     let key = self.node_menu_key.clone().unwrap_or_default();
                     match cmd {
                         crate::popup::node_menu::NodeMenuCommand::ViewSource => {
-                            if let Some(node) = self.model.nodes.iter().find(|n| n.key == key) {
+                            if let Some(node) =
+                                self.session.model().nodes.iter().find(|n| n.key == key)
+                            {
                                 let title = node
                                     .concept
                                     .title
@@ -2171,7 +2178,7 @@ impl MatchEvent for App {
                         let outcome = view.on_popup_result(
                             cx,
                             &body,
-                            &self.model,
+                            self.session.model(),
                             live_id!(element_picker),
                             result,
                         );
@@ -2187,8 +2194,13 @@ impl MatchEvent for App {
             if let Some(id) = dial_armed {
                 if let Some(active) = self.tabs.active_tab().cloned() {
                     if let Some(view) = self.views.get_mut(&active.id) {
-                        let outcome =
-                            view.on_popup_armed(cx, &body, &self.model, live_id!(place_dial), id);
+                        let outcome = view.on_popup_armed(
+                            cx,
+                            &body,
+                            self.session.model(),
+                            live_id!(place_dial),
+                            id,
+                        );
                         self.relay_outcome(cx, &active, outcome);
                     }
                 }
@@ -2199,7 +2211,7 @@ impl MatchEvent for App {
                         let outcome = view.on_popup_result(
                             cx,
                             &body,
-                            &self.model,
+                            self.session.model(),
                             live_id!(place_dial),
                             result,
                         );
@@ -2246,10 +2258,8 @@ impl MatchEvent for App {
                 // `place_rm_for` only ever returns `None` for a non-`Delete`
                 // action, which this arm's guard already excludes.
                 if let Some(op) = place_rm_for(&diagram, &action) {
-                    match waml::ops::apply(&self.bundle, &[op]) {
-                        Ok(new_bundle) => {
-                            self.bundle = new_bundle;
-                            self.model = waml::parse::build_model(&self.bundle);
+                    match self.session.apply_ops(&[op]) {
+                        Ok(_change) => {
                             // Re-solve the active diagram view in place (camera
                             // held) — same path as the drag-place apply above.
                             if let Some(active) = self.tabs.active_tab().cloned() {
@@ -2258,7 +2268,7 @@ impl MatchEvent for App {
                                     .get_mut(&active.id)
                                     .and_then(|v| v.downcast_diagram())
                                 {
-                                    v.resolve_active(cx, &body, &self.model);
+                                    v.resolve_active(cx, &body, self.session.model());
                                 }
                             }
                             self.sync_conflict_badge(cx);
@@ -2302,20 +2312,21 @@ impl MatchEvent for App {
             .and_then(|panel| panel.scope_request(actions));
         if let Some(anchor_rect) = scope_anchor {
             self.nav_scope_ids.clear();
-            let items: Vec<crate::popup::base::PopupItem> = crate::nav::packages(&self.model)
-                .into_iter()
-                .map(|row| {
-                    let id = LiveId::from_str(&format!("scope:{}", row.key));
-                    self.nav_scope_ids.push((id, row.key.clone()));
-                    crate::popup::base::PopupItem {
-                        id,
-                        label: format!("{}{}", "  ".repeat(row.depth), row.title),
-                        icon: Some(crate::icons::Icon::Folder),
-                        danger: false,
-                        enabled: true,
-                    }
-                })
-                .collect();
+            let items: Vec<crate::popup::base::PopupItem> =
+                crate::nav::packages(self.session.model())
+                    .into_iter()
+                    .map(|row| {
+                        let id = LiveId::from_str(&format!("scope:{}", row.key));
+                        self.nav_scope_ids.push((id, row.key.clone()));
+                        crate::popup::base::PopupItem {
+                            id,
+                            label: format!("{}{}", "  ".repeat(row.depth), row.title),
+                            icon: Some(crate::icons::Icon::Folder),
+                            danger: false,
+                            enabled: true,
+                        }
+                    })
+                    .collect();
             let anchor = dvec2(
                 anchor_rect.pos.x,
                 anchor_rect.pos.y + anchor_rect.size.y + crate::popup::menu::MENU_GAP,
@@ -2422,7 +2433,8 @@ impl MatchEvent for App {
             .and_then(|panel| panel.context_menu_request(actions));
         if let Some((key, anchor)) = tree_context {
             let node_kind = self
-                .model
+                .session
+                .model()
                 .nodes
                 .iter()
                 .find(|node| node.key == key)
@@ -2477,7 +2489,13 @@ impl MatchEvent for App {
             .borrow_mut::<crate::diagram_switcher::DiagramSwitcher>()
             .and_then(|switcher| switcher.switcher_action(actions));
         if let Some(crate::diagram_switcher::DiagramSwitcherAction::Clicked) = switcher_clicked {
-            let keys: Vec<String> = self.model.diagrams.iter().map(|d| d.key.clone()).collect();
+            let keys: Vec<String> = self
+                .session
+                .model()
+                .diagrams
+                .iter()
+                .map(|d| d.key.clone())
+                .collect();
             let current = self
                 .tabs
                 .active_tab()
@@ -2529,7 +2547,7 @@ impl MatchEvent for App {
             if let Some(v) = view.downcast_diagram() {
                 v.set_active(active.key.clone(), active.title.clone());
             }
-            let outcome = view.handle(cx, &body, actions, &self.model);
+            let outcome = view.handle(cx, &body, actions, self.session.model());
             if self.relay_outcome(cx, &active, outcome) {
                 return;
             }
@@ -2736,17 +2754,15 @@ impl App {
         // back through a popup result (the placement dial's commit) authors
         // too.
         if !outcome.ops.is_empty() {
-            match waml::ops::apply(&self.bundle, &outcome.ops) {
-                Ok(new_bundle) => {
-                    self.bundle = new_bundle;
-                    self.model = waml::parse::build_model(&self.bundle);
+            match self.session.apply_ops(&outcome.ops) {
+                Ok(_change) => {
                     let body = crate::doc_view::BodyWidgets::new(cx, &self.ui);
                     if let Some(v) = self
                         .views
                         .get_mut(&active.id)
                         .and_then(|v| v.downcast_diagram())
                     {
-                        v.resolve_active(cx, &body, &self.model);
+                        v.resolve_active(cx, &body, self.session.model());
                     }
                     self.sync_conflict_badge(cx);
                     self.mark_dirty(cx);
@@ -2849,7 +2865,8 @@ impl App {
             // drives previews). Placeholder relay for the forward-looking
             // channel; resolves title/kind off the model.
             let node_kind = self
-                .model
+                .session
+                .model()
                 .nodes
                 .iter()
                 .find(|node| node.key == key)
