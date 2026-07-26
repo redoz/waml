@@ -6,7 +6,6 @@ mod action_link;
 mod agent_mark;
 mod app;
 mod attr_row;
-mod camera;
 mod canvas;
 mod card;
 mod class_diagram_view;

@@ -5,10 +5,13 @@
 //!
 //! Structure/hit-handling mirror the fork's `widgets/src/map/view.rs`.
 
-use crate::camera::Camera;
 use crate::canvas::geometry::{
     corner_fillet, elbow_radius, intersect_rect, marker_geometry, segment_quad, snap_bar_to_device,
     ELBOW_MIN_DEVICE_PX,
+};
+use crate::canvas::viewport::{
+    ease_out, Camera, InitialFit, TimerCommand, TouchPair, ViewportController, ViewportEffects,
+    MIN_ZOOM,
 };
 use crate::frame::SurfaceExt;
 use crate::inspector::Subject;
@@ -375,23 +378,9 @@ pub struct ClassDiagramSurface {
     #[rust]
     scene: Scene,
     #[rust]
-    camera: Camera,
-    #[rust]
-    fitted: bool,
-    /// Set by `set_focus`: on the next draw, pin the camera at 1.5x zoom
-    /// centered on the (already 1.5x-scaled) focus node instead of the usual
-    /// fit-to-view. Cleared once applied.
-    #[rust]
-    focus_mode: bool,
-    #[rust]
-    view_rect: Rect,
+    viewport: ViewportController,
     #[rust]
     drag_start_abs: Option<DVec2>,
-    /// The two-finger gesture in flight, or `None`. See [`Pinch`].
-    #[rust]
-    pinch: Option<Pinch>,
-    #[rust]
-    drag_start_pan: (f64, f64),
     /// SPIKE (drag-place, throwaway): index of the node being dragged to author
     /// a placement, or `None` when the press is a pan/click. Set on FingerDown
     /// over a node, cleared on FingerUp.
@@ -443,18 +432,13 @@ pub struct ClassDiagramSurface {
     preview_frame: NextFrame,
     #[rust]
     preview_last_time: f64,
-    /// The live view-bar camera glide, or `None` when the camera is at rest.
-    #[rust]
-    cam_tween: Option<CamTween>,
-    /// Animation clock for `cam_tween`. An *interval*, not a `NextFrame`: a
+    /// Animation clock for viewport glides. An *interval*, not a `NextFrame`: a
     /// next-frame chain only re-arms once the paint loop has already painted, so
     /// after an idle click it inherits the loop's wake-up ramp and delivers ~5
     /// frames in the first 250ms. A repeating timer wakes the loop on its own
-    /// schedule and paces the glide evenly. See `CAMERA_TICK`.
+    /// schedule and paces the glide evenly.
     #[rust]
     cam_timer: Timer,
-    #[rust]
-    cam_last_time: f64,
     /// Last cursor position seen during a drag. The preview camera re-derives
     /// itself from this every tick so the dragged node keeps sitting under the
     /// pointer while the layout moves.
@@ -542,52 +526,6 @@ struct Preview {
     ghost_b_key: String,
 }
 
-/// Ease-out cubic: fast departure, soft landing. The settle matters more than
-/// the launch here -- the frame the motion stops on is the one being read.
-fn ease_out(t: f64) -> f64 {
-    let u = 1.0 - t.clamp(0.0, 1.0);
-    1.0 - u * u * u
-}
-
-/// A camera glide. The view bar's zoom/fit buttons ease the camera along this
-/// instead of assigning it, so the diagram keeps its spatial continuity: the
-/// user sees where it went, not just where it landed.
-struct CamTween {
-    from: Camera,
-    /// Where the glide settles — the exact camera the old snap assigned. Also
-    /// the base a further button press composes onto, so three steps in and
-    /// three out still round-trip regardless of when they were pressed.
-    to: Camera,
-    /// Raw tween progress, 0 (from) to 1 (settled); eased at apply time.
-    t: f64,
-}
-
-/// Interpolate `from` -> `to` at *eased* progress `e`, anchored on the viewport
-/// centre: zoom travels geometrically (constant per-frame scale ratio, which is
-/// what reads as an even glide) while the world point under the centre of the
-/// view travels linearly. A zoom step's fixed point IS that centre, so it stays
-/// nailed for the whole tween rather than drifting the way independently lerped
-/// pan and zoom would. `e >= 1` returns `to` verbatim, so a settled glide is the
-/// exact camera the snap produced. Pure, GPU-free.
-fn lerp_camera(from: Camera, to: Camera, view: DVec2, e: f64) -> Camera {
-    if e <= 0.0 {
-        return from;
-    }
-    if e >= 1.0 {
-        return to;
-    }
-    let (half_w, half_h) = (view.x * 0.5, view.y * 0.5);
-    let a = from.local_to_world(half_w, half_h);
-    let b = to.local_to_world(half_w, half_h);
-    let zoom = (from.zoom.ln() + (to.zoom.ln() - from.zoom.ln()) * e).exp();
-    let (wx, wy) = (a.0 + (b.0 - a.0) * e, a.1 + (b.1 - a.1) * e);
-    Camera {
-        pan_x: wx - half_w / zoom,
-        pan_y: wy - half_h / zoom,
-        zoom,
-    }
-}
-
 /// Linear blend of two rects, for the per-node tween.
 fn lerp_rect(a: waml::solve::Rect, b: waml::solve::Rect, t: f64) -> waml::solve::Rect {
     waml::solve::Rect {
@@ -615,20 +553,7 @@ fn preview_zoom(
     let (w, h) = ((max_x - min_x).max(1.0), (max_y - min_y).max(1.0));
     let fit = ((view.x - 2.0 * pad).max(1.0) / w).min((view.y - 2.0 * pad).max(1.0) / h);
     let ceiling = (start * 1.25).min(1.0);
-    fit.clamp(
-        crate::camera::MIN_ZOOM,
-        ceiling.max(crate::camera::MIN_ZOOM),
-    )
-}
-
-impl Default for Camera {
-    fn default() -> Self {
-        Camera {
-            pan_x: 0.0,
-            pan_y: 0.0,
-            zoom: 1.0,
-        }
-    }
+    fit.clamp(MIN_ZOOM, ceiling.max(MIN_ZOOM))
 }
 
 /// A primary press counts as a *click* (not a pan) only if the pointer stayed
@@ -642,51 +567,6 @@ const SELECT_SLOP: f64 = 4.0;
 /// without a GPU.
 fn is_click(down: DVec2, up: DVec2) -> bool {
     (up - down).length() < SELECT_SLOP
-}
-
-/// Viewport inset used whenever the canvas frames a bounding box — the one-shot
-/// load-time fit and the view bar's explicit fit actions alike. Extracted so the
-/// two cannot drift apart.
-const FIT_PAD: f64 = 48.0;
-
-/// Frame `bbox` in a `viewport_w` x `viewport_h` canvas at the shared pad. The
-/// single `Camera::fit` call site that carries a pad. `Camera::fit` clamps zoom
-/// to `MIN_ZOOM`/`MAX_ZOOM`, so callers need no clamping of their own. Pure,
-/// GPU-free.
-fn fit_scene_camera(bbox: waml::solve::Rect, viewport_w: f64, viewport_h: f64) -> Camera {
-    Camera::fit(bbox, viewport_w, viewport_h, FIT_PAD)
-}
-
-/// Multiplicative step for one press of the view bar's zoom buttons. `ZoomIn`
-/// multiplies by it, `ZoomOut` divides, so a press-and-undo round-trips exactly.
-pub const ZOOM_STEP: f64 = 1.2;
-
-/// A two-finger gesture in flight: the pair it belongs to, plus the sample it
-/// was last measured at. Both fingers are identified by uid so a third finger
-/// touching down (or one of the two lifting) restarts the gesture rather than
-/// silently re-anchoring it to a different pair.
-#[derive(Clone, Copy, Debug)]
-struct Pinch {
-    a: u64,
-    b: u64,
-    /// Distance between the two fingers, in screen px.
-    spread: f64,
-    /// Their midpoint, in absolute (window) coordinates.
-    mid: DVec2,
-}
-
-/// Fingers closer together than this are treated as one point: the spread ratio
-/// explodes near zero and would slam the camera into a zoom clamp.
-const MIN_PINCH_SPREAD: f64 = 8.0;
-
-/// Zoom factor for one pinch sample, or `None` when the pair is too close
-/// together to carry a meaningful ratio. Pure, so the gesture's arithmetic is
-/// testable without a touch device.
-fn pinch_factor(prev_spread: f64, spread: f64) -> Option<f64> {
-    if prev_spread < MIN_PINCH_SPREAD || spread < MIN_PINCH_SPREAD {
-        return None;
-    }
-    Some(spread / prev_spread)
 }
 
 /// Index of the topmost node whose on-screen rect contains `abs`, or `None`.
@@ -944,16 +824,9 @@ fn reframe_to_selected<'a>(
 const DIAL_REACH: f64 = crate::popup::radial::DISC_RADIUS + 72.0;
 /// Seconds a preview tween takes to settle into its candidate layout.
 const PREVIEW_SECS: f64 = 0.22;
-/// Seconds a view-bar camera glide takes to settle. Same feel as the preview
-/// tween — long enough to read the motion, short enough not to lag the click.
-const CAMERA_SECS: f64 = 0.22;
 const FONT_RASTER_SIZES: &[f32] = &[
     32.0, 40.0, 50.0, 63.0, 79.0, 99.0, 124.0, 155.0, 194.0, 243.0, 304.0,
 ];
-/// Interval the glide clock ticks at: a little under half a 60Hz frame, so the
-/// paint loop always has a wake-up pending and the tween is paced by vsync
-/// rather than by how fast the loop happens to be spinning up.
-const CAMERA_TICK: f64 = 1.0 / 144.0;
 /// Dwell (seconds) the cursor must rest over a node before its compass arms.
 /// Stops the target flipping to a sibling when the cursor merely grazes a
 /// border on the way past.
@@ -1282,35 +1155,9 @@ pub enum ClassDiagramSurfaceAction {
 
 impl Widget for ClassDiagramSurface {
     fn handle_event(&mut self, cx: &mut Cx, event: &Event, _scope: &mut Scope) {
-        // View-bar camera glide clock: advance `t` by the wall-clock gap since
-        // the last tick, write the eased camera, and stop the interval once it
-        // settles. Sits above the drag early-returns so a glide can't be starved
-        // by one.
         if let Some(te) = self.cam_timer.is_event(event) {
-            let now = te.time.unwrap_or(0.0);
-            let dt = if self.cam_last_time == 0.0 || now <= self.cam_last_time {
-                CAMERA_TICK
-            } else {
-                now - self.cam_last_time
-            };
-            self.cam_last_time = now;
-            match &mut self.cam_tween {
-                Some(tw) => {
-                    tw.t = (tw.t + dt / CAMERA_SECS).min(1.0);
-                    let (from, to, t) = (tw.from, tw.to, tw.t);
-                    self.camera = lerp_camera(from, to, self.view_rect.size, ease_out(t));
-                    if t >= 1.0 {
-                        cx.stop_timer(self.cam_timer);
-                        self.cam_tween = None;
-                        self.cam_last_time = 0.0;
-                    }
-                    self.draw_bg.redraw(cx);
-                }
-                None => {
-                    cx.stop_timer(self.cam_timer);
-                    self.cam_last_time = 0.0;
-                }
-            }
+            let effects = self.viewport.tick_camera(te.time.unwrap_or(0.0));
+            self.apply_viewport_effects(cx, effects);
         }
         // SPIKE: Escape cancels an in-progress placement drag (snap back, no log).
         if let Event::KeyDown(ke) = event {
@@ -1404,7 +1251,8 @@ impl Widget for ClassDiagramSurface {
             Hit::FingerDown(fe) if fe.mouse_button() == Some(MouseButton::SECONDARY) => {
                 let rects: Vec<waml::solve::Rect> =
                     self.scene.nodes.iter().map(|n| n.rect).collect();
-                if let Some(node) = node_at(&rects, &self.camera, self.view_rect, fe.abs) {
+                let viewport = self.viewport.snapshot();
+                if let Some(node) = node_at(&rects, &viewport.camera, viewport.view_rect, fe.abs) {
                     let key = self.scene.nodes[node].key.clone();
                     let uid = self.widget_uid();
                     cx.widget_action(
@@ -1416,18 +1264,20 @@ impl Widget for ClassDiagramSurface {
             Hit::FingerDown(fe) if fe.is_primary_hit() => {
                 // The press owns the camera from here (pan, or a placement drag
                 // whose preview drives it) -- drop any glide where it stands, so
-                // `drag_start_pan` isn't captured off a moving target.
-                self.cancel_camera_glide(cx);
+                // the pan origin isn't captured off a moving target.
+                let effects = self.viewport.cancel_glide();
+                self.apply_viewport_effects(cx, effects);
                 self.drag_start_abs = Some(fe.abs);
-                self.drag_start_pan = (self.camera.pan_x, self.camera.pan_y);
+                self.viewport.begin_pan(fe.abs);
                 // SPIKE: a press that lands on a node starts a *potential* placement
                 // drag (a click still selects on FingerUp; only movement drags).
                 let rects: Vec<waml::solve::Rect> =
                     self.scene.nodes.iter().map(|n| n.rect).collect();
-                if let Some(i) = node_at(&rects, &self.camera, self.view_rect, fe.abs) {
-                    let (wx, wy) = self.camera.local_to_world(
-                        fe.abs.x - self.view_rect.pos.x,
-                        fe.abs.y - self.view_rect.pos.y,
+                let viewport = self.viewport.snapshot();
+                if let Some(i) = node_at(&rects, &viewport.camera, viewport.view_rect, fe.abs) {
+                    let (wx, wy) = viewport.camera.local_to_world(
+                        fe.abs.x - viewport.view_rect.pos.x,
+                        fe.abs.y - viewport.view_rect.pos.y,
                     );
                     self.drag_node = Some(i);
                     self.drag_grab = (wx - rects[i].x, wy - rects[i].y);
@@ -1465,9 +1315,10 @@ impl Widget for ClassDiagramSurface {
                             }
                         }
                     }
-                    let (wx, wy) = self.camera.local_to_world(
-                        fe.abs.x - self.view_rect.pos.x,
-                        fe.abs.y - self.view_rect.pos.y,
+                    let viewport = self.viewport.snapshot();
+                    let (wx, wy) = viewport.camera.local_to_world(
+                        fe.abs.x - viewport.view_rect.pos.x,
+                        fe.abs.y - viewport.view_rect.pos.y,
                     );
                     let base = self.scene.nodes[ni].rect;
                     let ghost = waml::solve::Rect {
@@ -1510,8 +1361,8 @@ impl Widget for ClassDiagramSurface {
                     // Target selection with a dwell so the dial doesn't pop on a
                     // node the cursor merely grazes. `hovered` = the node body
                     // under the cursor (never the dragged node itself).
-                    let hovered =
-                        node_at(&rects, &self.camera, self.view_rect, cursor).filter(|&t| t != ni);
+                    let hovered = node_at(&rects, &viewport.camera, viewport.view_rect, cursor)
+                        .filter(|&t| t != ni);
                     match hovered {
                         Some(h) if self.drag_target == Some(h) => {
                             // Back over the already-armed target: drop any pending
@@ -1543,10 +1394,10 @@ impl Widget for ClassDiagramSurface {
                     self.drag_ghost = Some(ghost);
                     self.draw_bg.redraw(cx);
                 } else if let Some(start) = self.drag_start_abs {
-                    let delta = fe.abs - start;
-                    self.camera.pan_x = self.drag_start_pan.0 - delta.x / self.camera.zoom;
-                    self.camera.pan_y = self.drag_start_pan.1 - delta.y / self.camera.zoom;
-                    self.draw_bg.redraw(cx);
+                    let _ = start;
+                    if self.viewport.pan_to(fe.abs) {
+                        self.draw_bg.redraw(cx);
+                    }
                 }
             }
             Hit::FingerUp(fe) if fe.is_primary_hit() => {
@@ -1559,24 +1410,26 @@ impl Widget for ClassDiagramSurface {
                         let rects: Vec<waml::solve::Rect> =
                             self.scene.nodes.iter().map(|n| n.rect).collect();
                         let uid = self.widget_uid();
-                        match node_at(&rects, &self.camera, self.view_rect, fe.abs) {
+                        let viewport = self.viewport.snapshot();
+                        match node_at(&rects, &viewport.camera, viewport.view_rect, fe.abs) {
                             Some(i) => {
                                 // Clone the node so the footer measure + redraw
                                 // don't hold an immutable borrow of the scene.
                                 let node = self.scene.nodes[i].clone();
-                                let (lx, ly) = self.camera.world_to_local(node.rect.x, node.rect.y);
+                                let (lx, ly) =
+                                    viewport.camera.world_to_local(node.rect.x, node.rect.y);
                                 let screen = Rect {
                                     pos: dvec2(
-                                        self.view_rect.pos.x + lx,
-                                        self.view_rect.pos.y + ly,
+                                        viewport.view_rect.pos.x + lx,
+                                        viewport.view_rect.pos.y + ly,
                                     ),
                                     size: dvec2(
-                                        node.rect.w * self.camera.zoom,
-                                        node.rect.h * self.camera.zoom,
+                                        node.rect.w * viewport.camera.zoom,
+                                        node.rect.h * viewport.camera.zoom,
                                     ),
                                 };
                                 let footer_hit =
-                                    footer_screen_rect(&node, screen, self.camera.zoom)
+                                    footer_screen_rect(&node, screen, viewport.camera.zoom)
                                         .map(|fr| fr.contains(fe.abs))
                                         .unwrap_or(false);
                                 if footer_hit {
@@ -1614,6 +1467,7 @@ impl Widget for ClassDiagramSurface {
                     // down.
                 }
                 self.close_dial(cx);
+                self.viewport.end_pan();
                 self.drag_node = None;
                 self.drag_moved = false;
                 self.drag_ghost = None;
@@ -1624,6 +1478,7 @@ impl Widget for ClassDiagramSurface {
             }
             Hit::FingerUp(_) => {
                 self.drag_start_abs = None;
+                self.viewport.end_pan();
                 self.close_dial(cx);
                 self.drag_node = None;
                 self.drag_moved = false;
@@ -1642,11 +1497,8 @@ impl Widget for ClassDiagramSurface {
                 let factor = (-scroll / 240.0).exp2(); // smooth multiplicative zoom
                                                        // Scroll-zoom is its own continuous motion; a button glide still
                                                        // in the air would fight it for the camera.
-                self.cancel_camera_glide(cx);
-                let local_x = fs.abs.x - self.view_rect.pos.x;
-                let local_y = fs.abs.y - self.view_rect.pos.y;
-                self.camera.zoom_at(local_x, local_y, factor);
-                self.draw_bg.redraw(cx);
+                let effects = self.viewport.apply_scroll_zoom(fs.abs, factor);
+                self.apply_viewport_effects(cx, effects);
             }
             _ => {}
         }
@@ -1654,32 +1506,14 @@ impl Widget for ClassDiagramSurface {
 
     fn draw_walk(&mut self, cx: &mut Cx2d, _scope: &mut Scope, walk: Walk) -> DrawStep {
         let rect = cx.walk_turtle(walk);
-        self.view_rect = rect;
+        self.viewport.set_view_rect(rect);
         self.draw_bg.draw_abs(cx, rect);
 
-        if !self.fitted && rect.size.x > 0.0 && rect.size.y > 0.0 {
-            if let Some(bbox) = bounding_box(&self.scene) {
-                self.camera = if self.focus_mode {
-                    // Zoom 1.0 so the card's world units equal screen pixels and
-                    // its fixed-px compartment text lines up exactly (the card is
-                    // sized in `sizing::focus_card_layout` to wrap that layout).
-                    let zoom = 1.0;
-                    let (cx_, cy_) = (bbox.x + bbox.w * 0.5, bbox.y + bbox.h * 0.5);
-                    Camera {
-                        pan_x: cx_ - rect.size.x * 0.5 / zoom,
-                        pan_y: cy_ - rect.size.y * 0.5 / zoom,
-                        zoom,
-                    }
-                } else {
-                    fit_scene_camera(bbox, rect.size.x, rect.size.y)
-                };
-                self.fitted = true;
-            }
-        }
+        self.viewport.apply_initial_fit();
 
         // Contents (text offsets, font sizes, hairline weights) scale by the same
         // factor as the box geometry, so a zoomed shape magnifies its interior too.
-        let zoom = self.camera.zoom;
+        let zoom = self.viewport.camera().zoom;
         // Node frame inset + stroke live in draw_node's SDF shader; feed zoom in
         // as a uniform so the border thickens with the box rather than staying a
         // fixed screen-pixel hairline.
@@ -1706,10 +1540,11 @@ impl Widget for ClassDiagramSurface {
                 if mode == GroupDraw::Skip {
                     return None;
                 }
-                let (lx, ly) = self.camera.world_to_local(g.rect.x, g.rect.y);
+                let camera = self.viewport.camera();
+                let (lx, ly) = camera.world_to_local(g.rect.x, g.rect.y);
                 let screen = Rect {
                     pos: dvec2(rect.pos.x + lx, rect.pos.y + ly),
-                    size: dvec2(g.rect.w * self.camera.zoom, g.rect.h * self.camera.zoom),
+                    size: dvec2(g.rect.w * camera.zoom, g.rect.h * camera.zoom),
                 };
                 Some((screen, label, mode))
             })
@@ -1796,7 +1631,7 @@ impl Widget for ClassDiagramSurface {
                 .points
                 .iter()
                 .map(|p| {
-                    let (x, y) = self.camera.world_to_local(p.0, p.1);
+                    let (x, y) = self.viewport.camera().world_to_local(p.0, p.1);
                     dvec2(rect.pos.x + x, rect.pos.y + y)
                 })
                 .collect();
@@ -1950,10 +1785,11 @@ impl Widget for ClassDiagramSurface {
             // past the border.
             let pts = &edge.points;
             if pts.len() >= 2 {
-                let ep_to = edge_point_to_screen(&self.camera, rect.pos, pts[pts.len() - 1]);
-                let prev = edge_point_to_screen(&self.camera, rect.pos, pts[pts.len() - 2]);
-                let ep_from = edge_point_to_screen(&self.camera, rect.pos, pts[0]);
-                let next = edge_point_to_screen(&self.camera, rect.pos, pts[1]);
+                let camera = self.viewport.camera();
+                let ep_to = edge_point_to_screen(&camera, rect.pos, pts[pts.len() - 1]);
+                let prev = edge_point_to_screen(&camera, rect.pos, pts[pts.len() - 2]);
+                let ep_from = edge_point_to_screen(&camera, rect.pos, pts[0]);
+                let next = edge_point_to_screen(&camera, rect.pos, pts[1]);
                 let ends = [
                     (
                         end_marker(edge.kind, End::To, edge.to_end.navigable),
@@ -2010,13 +1846,11 @@ impl Widget for ClassDiagramSurface {
         let focus_active = !focus_keys.is_empty();
         let selected_key = self.selected_key.clone();
         for (i, node) in nodes.iter().enumerate() {
-            let (lx, ly) = self.camera.world_to_local(node.rect.x, node.rect.y);
+            let camera = self.viewport.camera();
+            let (lx, ly) = camera.world_to_local(node.rect.x, node.rect.y);
             let screen = Rect {
                 pos: dvec2(rect.pos.x + lx, rect.pos.y + ly),
-                size: dvec2(
-                    node.rect.w * self.camera.zoom,
-                    node.rect.h * self.camera.zoom,
-                ),
+                size: dvec2(node.rect.w * camera.zoom, node.rect.h * camera.zoom),
             };
             // Push the per-node `selected` uniform (1.0 for the picked node,
             // 0.0 otherwise) so its frame widens; every other node draws exactly
@@ -2092,10 +1926,11 @@ impl ClassDiagramSurface {
             (Some(ni), Some(ghost)) if ni == i => ghost,
             _ => self.scene.nodes[i].rect,
         };
-        let (lx, ly) = self.camera.world_to_local(r.x, r.y);
+        let viewport = self.viewport.snapshot();
+        let (lx, ly) = viewport.camera.world_to_local(r.x, r.y);
         Rect {
-            pos: dvec2(self.view_rect.pos.x + lx, self.view_rect.pos.y + ly),
-            size: dvec2(r.w * self.camera.zoom, r.h * self.camera.zoom),
+            pos: dvec2(viewport.view_rect.pos.x + lx, viewport.view_rect.pos.y + ly),
+            size: dvec2(r.w * viewport.camera.zoom, r.h * viewport.camera.zoom),
         }
     }
 
@@ -2120,7 +1955,7 @@ impl ClassDiagramSurface {
         let reference_screen = self.node_screen_rect(reference_idx);
         let band = veil_band(reference_screen, dir, VEIL_REACH);
         // Clip the band to the view so we don't overdraw the whole window.
-        let band = intersect_rect(band, self.view_rect);
+        let band = intersect_rect(band, self.viewport.snapshot().view_rect);
         if band.size.x <= 0.5 || band.size.y <= 0.5 {
             return;
         }
@@ -2211,10 +2046,11 @@ impl ClassDiagramSurface {
         let (vx, vy) = (view.pos.x, view.pos.y);
 
         let to_screen = |r: waml::solve::Rect| -> Rect {
-            let (lx, ly) = self.camera.world_to_local(r.x, r.y);
+            let camera = self.viewport.camera();
+            let (lx, ly) = camera.world_to_local(r.x, r.y);
             Rect {
                 pos: dvec2(view.pos.x + lx, view.pos.y + ly),
-                size: dvec2(r.w * self.camera.zoom, r.h * self.camera.zoom),
+                size: dvec2(r.w * camera.zoom, r.h * camera.zoom),
             }
         };
         let gs = to_screen(ghost);
@@ -2352,14 +2188,20 @@ impl ClassDiagramSurface {
                         current.clone(),
                         edges,
                         ends,
-                        self.camera,
+                        self.viewport.camera(),
                         self.node_screen_center(ri),
                         dvec2(b.w, b.h),
                         self.scene.nodes[ri].key.clone(),
                     )
                 }
             };
-        let zoom_to = preview_zoom(to[ni], to[ri], self.view_rect.size, 72.0, cam_baseline.zoom);
+        let zoom_to = preview_zoom(
+            to[ni],
+            to[ri],
+            self.viewport.snapshot().view_rect.size,
+            72.0,
+            cam_baseline.zoom,
+        );
         self.preview = Some(Preview {
             zone,
             from: current,
@@ -2368,11 +2210,11 @@ impl ClassDiagramSurface {
             baseline_edges,
             edge_ends,
             t: 0.0,
-            zoom_from: self.camera.zoom,
+            zoom_from: self.viewport.camera().zoom,
             zoom_to,
             cam_baseline,
             closing: false,
-            cam_from: self.camera,
+            cam_from: self.viewport.camera(),
             ghost_b_center: gb_center,
             ghost_b_size: gb_size,
             ghost_b_key: gb_key,
@@ -2397,7 +2239,7 @@ impl ClassDiagramSurface {
         for (e, pts) in self.scene.edges.iter_mut().zip(p.baseline_edges.iter()) {
             e.points = pts.clone();
         }
-        self.camera = p.cam_baseline;
+        self.viewport.set_transient_camera(p.cam_baseline);
         self.preview_last_time = 0.0;
         if let Some(ni) = self.drag_node {
             self.drag_ghost = Some(self.scene.nodes[ni].rect);
@@ -2413,7 +2255,7 @@ impl ClassDiagramSurface {
     /// already closing -- so the repeated hub moves of a resting cursor don't
     /// restart the animation.
     fn unlatch_preview_animated(&mut self, cx: &mut Cx) {
-        let cam_now = self.camera;
+        let cam_now = self.viewport.camera();
         let Some(p) = self.preview.as_mut() else {
             return;
         };
@@ -2493,9 +2335,11 @@ impl ClassDiagramSurface {
             return;
         };
         let e = ease_out(p.t);
-        self.camera.pan_x = p.cam_from.pan_x + (p.cam_baseline.pan_x - p.cam_from.pan_x) * e;
-        self.camera.pan_y = p.cam_from.pan_y + (p.cam_baseline.pan_y - p.cam_from.pan_y) * e;
-        self.camera.zoom = p.cam_from.zoom + (p.cam_baseline.zoom - p.cam_from.zoom) * e;
+        self.viewport.set_transient_camera(Camera {
+            pan_x: p.cam_from.pan_x + (p.cam_baseline.pan_x - p.cam_from.pan_x) * e,
+            pan_y: p.cam_from.pan_y + (p.cam_baseline.pan_y - p.cam_from.pan_y) * e,
+            zoom: p.cam_from.zoom + (p.cam_baseline.zoom - p.cam_from.zoom) * e,
+        });
     }
 
     /// Re-derive the camera so the dragged node's *previewed* rect lands exactly
@@ -2507,10 +2351,12 @@ impl ClassDiagramSurface {
         };
         let zoom = p.zoom_from + (p.zoom_to - p.zoom_from) * ease_out(p.t);
         let a = self.scene.nodes[ni].rect;
-        let local = self.cursor_abs - self.view_rect.pos;
-        self.camera.zoom = zoom;
-        self.camera.pan_x = a.x - local.x / zoom + self.drag_grab.0;
-        self.camera.pan_y = a.y - local.y / zoom + self.drag_grab.1;
+        let local = self.cursor_abs - self.viewport.snapshot().view_rect.pos;
+        self.viewport.set_transient_camera(Camera {
+            zoom,
+            pan_x: a.x - local.x / zoom + self.drag_grab.0,
+            pan_y: a.y - local.y / zoom + self.drag_grab.1,
+        });
     }
 
     /// Close the dial: unlatch the preview, forget the frozen centre and the
@@ -2703,9 +2549,12 @@ impl ClassDiagramSurface {
         self.scene = scene;
         // A glide aimed at the old scene's bbox is meaningless now; the
         // load-time fit below re-frames from scratch.
-        self.cancel_camera_glide(cx);
-        self.fitted = false;
-        self.focus_mode = false;
+        let effects = self.viewport.cancel_glide();
+        self.apply_viewport_effects(cx, effects);
+        self.viewport.request_initial_fit(InitialFit::None);
+        if let Some(bounds) = bounding_box(&self.scene) {
+            self.viewport.request_initial_fit(InitialFit::Scene(bounds));
+        }
         self.selected = None; // stale index would highlight the wrong node
         self.selected_key = None;
         self.conflict_focus_keys = None;
@@ -2725,9 +2574,12 @@ impl ClassDiagramSurface {
     /// classifier-focus doc tab.
     pub fn set_focus(&mut self, cx: &mut Cx, scene: Scene) {
         self.scene = scene;
-        self.cancel_camera_glide(cx);
-        self.fitted = false;
-        self.focus_mode = true;
+        let effects = self.viewport.cancel_glide();
+        self.apply_viewport_effects(cx, effects);
+        self.viewport.request_initial_fit(InitialFit::None);
+        if let Some(bounds) = bounding_box(&self.scene) {
+            self.viewport.request_initial_fit(InitialFit::Focus(bounds));
+        }
         self.selected = None; // stale index would highlight the wrong node
         self.selected_key = None;
         self.conflict_focus_keys = None;
@@ -2735,11 +2587,12 @@ impl ClassDiagramSurface {
     }
 
     /// Swap the scene for a same-diagram re-solve (e.g. an expand toggle). Unlike
-    /// `set_scene`, this holds the camera (`fitted` and `focus_mode` untouched)
+    /// `set_scene`, this holds the camera and pending initial-fit state untouched
     /// and re-resolves the selection by key, so the inspector highlight survives
     /// even though the node's index may have shifted.
     pub fn update_scene(&mut self, cx: &mut Cx, scene: Scene) {
         self.scene = scene;
+        self.viewport.retain_for_scene_update();
         self.selected = selection_index(&self.scene.nodes, self.selected_key.as_deref());
         if self.selected.is_none() {
             self.selected_key = None;
@@ -2849,54 +2702,8 @@ impl ClassDiagramSurface {
     /// three presses in and three out round-trip exactly even when each lands
     /// mid-flight.
     pub fn zoom_step(&mut self, cx: &mut Cx, factor: f64) {
-        let mut target = self.camera_target();
-        target.zoom_at(
-            self.view_rect.size.x * 0.5,
-            self.view_rect.size.y * 0.5,
-            factor,
-        );
-        self.glide_camera_to(cx, target);
-    }
-
-    /// Where the camera is headed: the live glide's destination, or the camera
-    /// itself when at rest. Camera actions compose onto this, never onto a
-    /// half-travelled frame.
-    fn camera_target(&self) -> Camera {
-        match &self.cam_tween {
-            Some(tw) => tw.to,
-            None => self.camera,
-        }
-    }
-
-    /// Ease the camera to `target` over `CAMERA_SECS`. A press landing mid-glide
-    /// retargets from wherever the camera currently is (no snap-back, no stall).
-    /// A target equal to the current camera is a no-op, so a zoom press at a
-    /// clamp bound stays the no-op it was.
-    fn glide_camera_to(&mut self, cx: &mut Cx, target: Camera) {
-        if target == self.camera {
-            self.cancel_camera_glide(cx);
-            return;
-        }
-        if self.cam_tween.is_none() {
-            self.cam_timer = cx.start_interval(CAMERA_TICK);
-        }
-        self.cam_tween = Some(CamTween {
-            from: self.camera,
-            to: target,
-            t: 0.0,
-        });
-        self.cam_last_time = 0.0;
-        self.draw_bg.redraw(cx);
-    }
-
-    /// Abandon any glide where the camera stands. Instant, not a reverse tween:
-    /// this fires when a gesture (pan, scroll-zoom) or a scene swap takes the
-    /// camera over, and a lingering animation would fight it — the same reasoning
-    /// as `unlatch_preview`.
-    fn cancel_camera_glide(&mut self, cx: &mut Cx) {
-        cx.stop_timer(self.cam_timer);
-        self.cam_tween = None;
-        self.cam_last_time = 0.0;
+        let effects = self.viewport.zoom_step(factor);
+        self.apply_viewport_effects(cx, effects);
     }
 
     /// Drive the two-finger camera gesture: the spread ratio scales the camera
@@ -2913,70 +2720,38 @@ impl ClassDiagramSurface {
             // The gesture is over. A finger still resting on the glass is
             // deliberately NOT promoted to a pan -- the user is mid-lift, and
             // the camera jumping to follow the survivor reads as a glitch.
-            return self.pinch.take().is_some();
+            return self.viewport.end_pinch();
         }
         let (a, b) = (live[0], live[1]);
         let spread = a.abs.distance(&b.abs);
         let mid = (a.abs + b.abs) * 0.5;
-        match self.pinch {
-            // Same pair as last sample: scale + pan by what changed.
-            Some(p) if p.a == a.uid && p.b == b.uid => {
-                if let Some(factor) = pinch_factor(p.spread, spread) {
-                    self.camera.zoom_at(
-                        mid.x - self.view_rect.pos.x,
-                        mid.y - self.view_rect.pos.y,
-                        factor,
-                    );
-                }
-                let travel = mid - p.mid;
-                self.camera.pan_x -= travel.x / self.camera.zoom;
-                self.camera.pan_y -= travel.y / self.camera.zoom;
-                self.draw_bg.redraw(cx);
-            }
-            // A new pair (first sample, or a finger swapped): anchor here and
-            // take the camera off whatever else was driving it.
-            _ => {
-                self.cancel_camera_glide(cx);
-                if self.drag_node.is_some() {
-                    self.cancel_drag(cx);
-                }
-                self.drag_start_abs = None;
-            }
+        if self.drag_node.is_some() {
+            self.cancel_drag(cx);
         }
-        self.pinch = Some(Pinch {
+        self.drag_start_abs = None;
+        let effects = self.viewport.apply_pinch_sample(TouchPair {
             a: a.uid,
             b: b.uid,
             spread,
-            mid,
+            midpoint_abs: mid,
         });
+        self.apply_viewport_effects(cx, effects);
         true
     }
 
     /// Frame the whole scene (spec §4). An empty scene (`bounding_box` returns
     /// `None`) or a not-yet-drawn canvas is a no-op with no camera mutation.
     /// Marks the camera as fitted so a pending one-shot load-time fit cannot
-    /// stomp this on the next draw, and ignores `focus_mode` -- the user asked
+    /// stomp this on the next draw -- the user explicitly asked
     /// for a fit.
     pub fn fit_to_scene(&mut self, cx: &mut Cx) {
-        if self.view_rect.size.x <= 0.0 || self.view_rect.size.y <= 0.0 {
-            return;
-        }
-        let Some(bbox) = bounding_box(&self.scene) else {
-            return;
-        };
-        let target = fit_scene_camera(bbox, self.view_rect.size.x, self.view_rect.size.y);
-        // Set at press, not at settle: a pending load-time fit must not stomp a
-        // glide that is still in the air.
-        self.fitted = true;
-        self.glide_camera_to(cx, target);
+        let effects = self.viewport.fit_to_bounds(bounding_box(&self.scene));
+        self.apply_viewport_effects(cx, effects);
     }
 
     /// Frame the selected node (spec §4). No selection, a key with no node in
     /// this scene, or a not-yet-drawn canvas is a no-op.
     pub fn fit_to_selection(&mut self, cx: &mut Cx) {
-        if self.view_rect.size.x <= 0.0 || self.view_rect.size.y <= 0.0 {
-            return;
-        }
         let Some(key) = self.selected_key.clone() else {
             return;
         };
@@ -2989,9 +2764,8 @@ impl ClassDiagramSurface {
         else {
             return;
         };
-        let target = fit_scene_camera(bbox, self.view_rect.size.x, self.view_rect.size.y);
-        self.fitted = true;
-        self.glide_camera_to(cx, target);
+        let effects = self.viewport.fit_to_bounds(Some(bbox));
+        self.apply_viewport_effects(cx, effects);
     }
 
     /// Whether a node is currently selected — drives the view bar's
@@ -3036,7 +2810,20 @@ impl ClassDiagramSurface {
 
     /// Current zoom as a whole-number percentage, for the statusbar mock.
     pub fn zoom_pct(&self) -> i32 {
-        (self.camera.zoom * 100.0).round() as i32
+        (self.viewport.camera().zoom * 100.0).round() as i32
+    }
+
+    fn apply_viewport_effects(&mut self, cx: &mut Cx, effects: ViewportEffects) {
+        match effects.camera_timer {
+            TimerCommand::Keep => {}
+            TimerCommand::StartInterval(seconds) => {
+                self.cam_timer = cx.start_interval(seconds);
+            }
+            TimerCommand::Stop => cx.stop_timer(self.cam_timer),
+        }
+        if effects.redraw {
+            self.draw_bg.redraw(cx);
+        }
     }
 }
 
@@ -3084,46 +2871,6 @@ mod tests {
         assert_eq!(font_raster_size(44.0), 40.0);
         assert_eq!(font_raster_size(45.0), 50.0);
         assert_eq!(font_raster_size(400.0), 304.0);
-    }
-
-    #[test]
-    fn pinch_factor_is_the_spread_ratio() {
-        assert_eq!(pinch_factor(100.0, 200.0), Some(2.0));
-        assert_eq!(pinch_factor(200.0, 100.0), Some(0.5));
-        // A steady pair holds the camera still.
-        assert_eq!(pinch_factor(120.0, 120.0), Some(1.0));
-    }
-
-    /// Fingers landing almost on top of each other would produce a ratio in the
-    /// hundreds and slam the camera into a zoom clamp, from which the rest of
-    /// the gesture cannot recover.
-    #[test]
-    fn a_degenerate_spread_yields_no_factor() {
-        assert_eq!(pinch_factor(0.0, 200.0), None);
-        assert_eq!(pinch_factor(200.0, 0.0), None);
-        assert_eq!(pinch_factor(MIN_PINCH_SPREAD - 0.1, 200.0), None);
-        assert!(pinch_factor(MIN_PINCH_SPREAD, MIN_PINCH_SPREAD).is_some());
-    }
-
-    /// The gesture's fixed point: the midpoint of the two fingers is where
-    /// `zoom_at` is anchored, so the diagram under the pinch stays put while
-    /// everything around it scales.
-    #[test]
-    fn zooming_about_the_pinch_midpoint_pins_the_world_point_under_it() {
-        let mut cam = Camera {
-            pan_x: 0.0,
-            pan_y: 0.0,
-            zoom: 1.0,
-        };
-        // Fingers at (100, 100) and (300, 200) -> midpoint (200, 150).
-        let (mid_x, mid_y) = (200.0, 150.0);
-        let before = cam.local_to_world(mid_x, mid_y);
-        let factor = pinch_factor(100.0, 180.0).unwrap();
-        cam.zoom_at(mid_x, mid_y, factor);
-        let after = cam.local_to_world(mid_x, mid_y);
-        assert!((before.0 - after.0).abs() < 1e-9);
-        assert!((before.1 - after.1).abs() < 1e-9);
-        assert!((cam.zoom - 1.8).abs() < 1e-9);
     }
 
     /// Shader-shape gate for the `GroupDashed` pen's dash mask. The pixel fn
@@ -3503,111 +3250,6 @@ mod tests {
         assert_eq!(node_at(&rects, &camera, view, dvec2(50.0, 30.0)), Some(0));
         assert_eq!(node_at(&rects, &camera, view, dvec2(250.0, 30.0)), Some(1));
         assert_eq!(node_at(&rects, &camera, view, dvec2(150.0, 30.0)), None);
-    }
-
-    #[test]
-    fn the_scene_fit_helper_uses_the_shared_pad() {
-        let bbox = waml::solve::Rect {
-            x: 0.0,
-            y: 0.0,
-            w: 200.0,
-            h: 100.0,
-        };
-        assert_eq!(FIT_PAD, 48.0);
-        // Both the load-time fit and the explicit fit action go through this
-        // helper, so they cannot drift apart.
-        assert_eq!(
-            fit_scene_camera(bbox, 800.0, 600.0),
-            crate::camera::Camera::fit(bbox, 800.0, 600.0, FIT_PAD)
-        );
-    }
-
-    #[test]
-    fn zoom_step_is_a_symmetric_pair() {
-        // In and out are exact inverses, so a press-and-undo round-trips.
-        let mut cam = crate::camera::Camera {
-            pan_x: 0.0,
-            pan_y: 0.0,
-            zoom: 1.0,
-        };
-        cam.zoom_at(400.0, 300.0, ZOOM_STEP);
-        cam.zoom_at(400.0, 300.0, 1.0 / ZOOM_STEP);
-        assert!((cam.zoom - 1.0).abs() < 1e-9, "zoom drifted: {}", cam.zoom);
-        assert!(cam.pan_x.abs() < 1e-9 && cam.pan_y.abs() < 1e-9);
-    }
-
-    #[test]
-    fn a_camera_glide_lands_on_the_snap_camera_exactly() {
-        // The tween may only change HOW the camera gets there: a settled glide
-        // must be bit-identical to the assignment it replaced, or a zoom in/out
-        // round-trip stops returning the same frame.
-        let view = dvec2(1280.0, 880.0);
-        let from = Camera {
-            pan_x: 0.0,
-            pan_y: 0.0,
-            zoom: 1.0,
-        };
-        let mut to = from;
-        to.zoom_at(view.x * 0.5, view.y * 0.5, ZOOM_STEP);
-        assert_eq!(lerp_camera(from, to, view, 1.0), to);
-        assert_eq!(lerp_camera(from, to, view, 0.0), from);
-        // ease_out saturates at 1, so the final frame goes through the same door.
-        assert_eq!(lerp_camera(from, to, view, ease_out(1.0)), to);
-    }
-
-    #[test]
-    fn a_zoom_glide_holds_the_viewport_centre() {
-        // `zoom_step` anchors at the viewport centre; the tween must keep that
-        // point nailed for every intermediate frame, not just the endpoints.
-        let view = dvec2(1280.0, 880.0);
-        let from = Camera {
-            pan_x: -120.0,
-            pan_y: 40.0,
-            zoom: 0.8,
-        };
-        let mut to = from;
-        to.zoom_at(view.x * 0.5, view.y * 0.5, ZOOM_STEP);
-        let anchor = from.local_to_world(view.x * 0.5, view.y * 0.5);
-        for step in 0..=10 {
-            let mid = lerp_camera(from, to, view, step as f64 / 10.0);
-            let held = mid.local_to_world(view.x * 0.5, view.y * 0.5);
-            assert!(
-                (held.0 - anchor.0).abs() < 1e-9 && (held.1 - anchor.1).abs() < 1e-9,
-                "centre drifted at {step}: {held:?} != {anchor:?}"
-            );
-        }
-    }
-
-    #[test]
-    fn a_camera_glide_actually_moves_between_the_ends() {
-        // Mid-tween frames differ from both endpoints (it animates), and zoom
-        // travels geometrically so each frame scales by a constant ratio.
-        let view = dvec2(1280.0, 880.0);
-        let from = Camera {
-            pan_x: 0.0,
-            pan_y: 0.0,
-            zoom: 0.5,
-        };
-        let to = fit_scene_camera(
-            waml::solve::Rect {
-                x: 400.0,
-                y: 300.0,
-                w: 200.0,
-                h: 100.0,
-            },
-            view.x,
-            view.y,
-        );
-        let mid = lerp_camera(from, to, view, 0.5);
-        assert_ne!(mid, from);
-        assert_ne!(mid, to);
-        assert!(
-            (mid.zoom - (from.zoom * to.zoom).sqrt()).abs() < 1e-9,
-            "zoom is not the geometric mean: {}",
-            mid.zoom
-        );
-        // Monotone: the glide never overshoots either end.
-        assert!(mid.zoom > from.zoom && mid.zoom < to.zoom);
     }
 
     #[test]
