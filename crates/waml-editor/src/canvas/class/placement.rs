@@ -1,7 +1,7 @@
 use super::interaction::{is_click, node_at};
 use super::{FrameCommand, InteractionEffects, SurfaceIntent, TimerCommand};
 use crate::canvas::viewport::{ease_out, Camera, ViewportController, MIN_ZOOM};
-use crate::scene::Scene;
+use crate::scene::{Scene, SceneEdge};
 use makepad_widgets::{dvec2, DVec2, LiveId};
 use std::collections::BTreeMap;
 
@@ -112,7 +112,7 @@ struct Preview {
     from: Vec<waml::solve::Rect>,
     to: Vec<waml::solve::Rect>,
     baseline: Vec<waml::solve::Rect>,
-    baseline_edges: Vec<Vec<(f64, f64)>>,
+    baseline_edges: Vec<SceneEdge>,
     edge_ends: Vec<Option<(usize, usize)>>,
     t: f64,
     zoom_from: f64,
@@ -239,6 +239,14 @@ impl PlacementInteraction {
             self.cursor_abs = abs;
         }
 
+        let mut dismissed_dial = false;
+        if let Some(center) = self.dial_center {
+            if (abs - center).length() > DIAL_REACH {
+                self.close_dial(scene, viewport);
+                dismissed_dial = true;
+            }
+        }
+
         let viewport_snapshot = viewport.snapshot();
         let (world_x, world_y) = viewport_snapshot.camera.local_to_world(
             abs.x - viewport_snapshot.view_rect.pos.x,
@@ -251,18 +259,7 @@ impl PlacementInteraction {
             w: base.w,
             h: base.h,
         };
-
-        if let Some(center) = self.dial_center {
-            if (abs - center).length() > DIAL_REACH {
-                self.close_dial(scene, viewport);
-                return InteractionEffects {
-                    consumed: true,
-                    redraw: true,
-                    preview_frame: FrameCommand::Stop,
-                    intent: Some(SurfaceIntent::DialDismiss),
-                    ..Default::default()
-                };
-            }
+        if self.dial_center.is_some() {
             if self.preview.is_some() {
                 self.apply_preview_camera(scene, viewport);
                 self.ghost = Some(scene.nodes[index].rect);
@@ -275,7 +272,6 @@ impl PlacementInteraction {
                 ..Default::default()
             };
         }
-
         let hovered = node_at(&scene.nodes, viewport_snapshot, abs)
             .filter(|&target| target != index)
             .map(|target| scene.nodes[target].key.clone());
@@ -284,6 +280,10 @@ impl PlacementInteraction {
         self.ghost = Some(ghost);
         effects.consumed = true;
         effects.redraw = true;
+        if dismissed_dial {
+            effects.preview_frame = FrameCommand::Stop;
+            effects.intent = Some(SurfaceIntent::DialDismiss);
+        }
         effects
     }
 
@@ -604,7 +604,7 @@ impl PlacementInteraction {
         ) = match carried {
             Some(carried) => carried,
             None => {
-                let edges = scene.edges.iter().map(|edge| edge.points.clone()).collect();
+                let edges = scene.edges.clone();
                 let ends = scene
                     .edges
                     .iter()
@@ -672,8 +672,8 @@ impl PlacementInteraction {
         for (node, rect) in scene.nodes.iter_mut().zip(preview.baseline.iter()) {
             node.rect = *rect;
         }
-        for (edge, points) in scene.edges.iter_mut().zip(preview.baseline_edges.iter()) {
-            edge.points = points.clone();
+        for (edge, baseline) in scene.edges.iter_mut().zip(preview.baseline_edges.iter()) {
+            *edge = baseline.clone();
         }
         viewport.set_transient_camera(preview.cam_baseline);
         self.preview_last_time = 0.0;
@@ -848,6 +848,21 @@ mod tests {
         }
     }
 
+    fn scene_with_edge() -> Scene {
+        use waml::model::{RelEnd, RelationshipKind};
+
+        let mut scene = scene();
+        scene.edges.push(crate::scene::SceneEdge {
+            source: scene.nodes[0].rect,
+            target: scene.nodes[1].rect,
+            kind: RelationshipKind::Associates,
+            from_end: RelEnd::default(),
+            to_end: RelEnd::default(),
+            points: vec![(40.0, 30.0), (40.0, 90.0), (160.0, 90.0), (160.0, 30.0)],
+        });
+        scene
+    }
+
     fn scene_without(key: &str) -> Scene {
         let mut scene = scene();
         scene.nodes.retain(|node| node.key != key);
@@ -867,6 +882,59 @@ mod tests {
         let mut placement = PlacementInteraction::default();
         placement.begin_drag(key, dvec2(10.0, 10.0), (2.0, 3.0));
         placement
+    }
+
+    fn preview_layout(a_x: f64, b_x: f64) -> BTreeMap<String, waml::solve::Rect> {
+        BTreeMap::from([
+            (
+                "a".to_string(),
+                waml::solve::Rect {
+                    x: a_x,
+                    y: 0.0,
+                    w: 80.0,
+                    h: 60.0,
+                },
+            ),
+            (
+                "b".to_string(),
+                waml::solve::Rect {
+                    x: b_x,
+                    y: 0.0,
+                    w: 80.0,
+                    h: 60.0,
+                },
+            ),
+        ])
+    }
+
+    fn assert_complete_preview_baseline(
+        scene: &Scene,
+        baseline: &Scene,
+        viewport: &ViewportController,
+        camera: Camera,
+    ) {
+        assert_eq!(
+            scene.nodes.iter().map(|node| node.rect).collect::<Vec<_>>(),
+            baseline
+                .nodes
+                .iter()
+                .map(|node| node.rect)
+                .collect::<Vec<_>>(),
+            "node rects must roll back"
+        );
+        assert_eq!(
+            scene.edges[0].source, baseline.edges[0].source,
+            "edge source must roll back"
+        );
+        assert_eq!(
+            scene.edges[0].target, baseline.edges[0].target,
+            "edge target must roll back"
+        );
+        assert_eq!(
+            scene.edges[0].points, baseline.edges[0].points,
+            "edge route points must roll back"
+        );
+        assert_eq!(viewport.camera(), camera, "camera must roll back");
     }
 
     #[test]
@@ -950,20 +1018,100 @@ mod tests {
     }
 
     #[test]
-    fn leaving_dial_reach_requests_dismiss_and_clears_verdicts() {
+    fn leaving_dial_reach_dismisses_and_falls_through_to_retarget_dwell() {
         let mut placement = dragging("a");
         let mut scene = scene();
         let mut viewport = viewport();
         placement.hover_target(Some("b"), &scene);
         placement.dwell_elapsed(&scene, dvec2(100.0, 100.0));
         placement.set_conflict_zones(vec![Zone::Left]);
-        let effects = placement.drag_to(
-            dvec2(100.0 + DIAL_REACH + 1.0, 100.0),
-            &mut scene,
-            &mut viewport,
-        );
+        let over_c = dvec2(280.0, 30.0);
+        assert!((over_c - dvec2(100.0, 100.0)).length() > DIAL_REACH);
+
+        let effects = placement.drag_to(over_c, &mut scene, &mut viewport);
+
         assert_eq!(effects.intent, Some(SurfaceIntent::DialDismiss));
+        assert_eq!(effects.preview_frame, FrameCommand::Stop);
+        assert_eq!(effects.dwell_timer, TimerCommand::StartTimeout(DWELL_SECS));
         assert!(placement.snapshot().conflict_zones.is_empty());
+        assert_eq!(placement.dwell_candidate_key.as_deref(), Some("c"));
+        assert_eq!(
+            placement.snapshot().ghost,
+            Some(waml::solve::Rect {
+                x: 278.0,
+                y: 27.0,
+                w: 80.0,
+                h: 60.0,
+            })
+        );
+
+        let armed = placement.dwell_elapsed(&scene, over_c);
+        assert_eq!(
+            armed.intent,
+            Some(SurfaceIntent::CompassArmed {
+                subject_key: "a".into(),
+                reference_key: "c".into(),
+                center: over_c,
+            })
+        );
+    }
+
+    #[test]
+    fn leaving_a_preview_dial_retargets_after_restoring_baseline_geometry() {
+        let mut placement = PlacementInteraction::default();
+        placement.begin_drag("a", dvec2(2.0, 3.0), (2.0, 3.0));
+        let mut scene = scene_with_edge();
+        let baseline = scene.clone();
+        let mut viewport = viewport();
+        let camera = viewport.camera();
+        placement.hover_target(Some("b"), &scene);
+        placement.dwell_elapsed(&scene, dvec2(100.0, 100.0));
+        let mut layout = preview_layout(-200.0, -80.0);
+        layout.insert(
+            "c".into(),
+            waml::solve::Rect {
+                x: 600.0,
+                y: 0.0,
+                w: 80.0,
+                h: 60.0,
+            },
+        );
+        placement.set_candidate_layouts(vec![(Zone::Right, layout)], &mut scene, &mut viewport);
+        placement.preview_zone(Some(Zone::Right), &mut scene, &mut viewport);
+        placement.tick_preview(10.0, &mut scene, &mut viewport);
+        placement.tick_preview(10.0 + PREVIEW_SECS, &mut scene, &mut viewport);
+        assert_eq!(scene.nodes[2].rect.x, 600.0);
+
+        let over_baseline_c = dvec2(280.0, 30.0);
+        assert!((over_baseline_c - dvec2(100.0, 100.0)).length() > DIAL_REACH);
+        let effects = placement.drag_to(over_baseline_c, &mut scene, &mut viewport);
+
+        assert_eq!(effects.intent, Some(SurfaceIntent::DialDismiss));
+        assert_eq!(effects.preview_frame, FrameCommand::Stop);
+        assert_eq!(effects.dwell_timer, TimerCommand::StartTimeout(DWELL_SECS));
+        assert_eq!(placement.dwell_candidate_key.as_deref(), Some("c"));
+        assert_eq!(
+            placement.snapshot().ghost,
+            Some(waml::solve::Rect {
+                x: 278.0,
+                y: 27.0,
+                w: 80.0,
+                h: 60.0,
+            })
+        );
+        assert_complete_preview_baseline(&scene, &baseline, &viewport, camera);
+
+        let armed = placement.dwell_elapsed(&scene, over_baseline_c);
+        assert!(matches!(
+            armed.intent,
+            Some(SurfaceIntent::CompassArmed {
+                subject_key,
+                reference_key,
+                center,
+            }) if subject_key == "a"
+                && reference_key == "c"
+                && center == over_baseline_c
+        ));
     }
 
     #[test]
@@ -1046,6 +1194,79 @@ mod tests {
         placement.tick_preview(10.0, &mut scene, &mut viewport);
         placement.tick_preview(10.0 + PREVIEW_SECS, &mut scene, &mut viewport);
         assert!(placement.preview.is_none());
+    }
+
+    #[test]
+    fn abrupt_cancel_restores_nodes_complete_edges_and_camera() {
+        let mut placement = dragging("a");
+        let mut scene = scene_with_edge();
+        let mut viewport = viewport();
+        viewport.set_transient_camera(Camera {
+            pan_x: 12.0,
+            pan_y: -5.0,
+            zoom: 0.8,
+        });
+        placement.hover_target(Some("b"), &scene);
+        placement.dwell_elapsed(&scene, dvec2(100.0, 100.0));
+        placement.set_candidate_layouts(
+            vec![(Zone::Right, preview_layout(200.0, 80.0))],
+            &mut scene,
+            &mut viewport,
+        );
+        let baseline = scene.clone();
+        let camera = viewport.camera();
+
+        placement.preview_zone(Some(Zone::Right), &mut scene, &mut viewport);
+        placement.tick_preview(10.0, &mut scene, &mut viewport);
+        placement.tick_preview(10.0 + PREVIEW_SECS * 0.5, &mut scene, &mut viewport);
+        assert_ne!(scene.nodes[0].rect, baseline.nodes[0].rect);
+        assert_ne!(scene.edges[0].source, baseline.edges[0].source);
+        assert_ne!(viewport.camera(), camera);
+
+        placement.cancel(&mut scene, &mut viewport);
+
+        assert_complete_preview_baseline(&scene, &baseline, &viewport, camera);
+    }
+
+    #[test]
+    fn successful_relatch_keeps_the_complete_original_rollback_baseline() {
+        let mut placement = dragging("a");
+        let mut scene = scene_with_edge();
+        let mut viewport = viewport();
+        viewport.set_transient_camera(Camera {
+            pan_x: 12.0,
+            pan_y: -5.0,
+            zoom: 0.8,
+        });
+        placement.hover_target(Some("b"), &scene);
+        placement.dwell_elapsed(&scene, dvec2(100.0, 100.0));
+        placement.set_candidate_layouts(
+            vec![
+                (Zone::Right, preview_layout(200.0, 80.0)),
+                (Zone::Left, preview_layout(-120.0, 120.0)),
+            ],
+            &mut scene,
+            &mut viewport,
+        );
+        let baseline = scene.clone();
+        let camera = viewport.camera();
+
+        placement.preview_zone(Some(Zone::Right), &mut scene, &mut viewport);
+        placement.tick_preview(20.0, &mut scene, &mut viewport);
+        placement.tick_preview(20.0 + PREVIEW_SECS, &mut scene, &mut viewport);
+        placement.preview_zone(Some(Zone::Left), &mut scene, &mut viewport);
+        placement.tick_preview(30.0, &mut scene, &mut viewport);
+        placement.tick_preview(30.0 + PREVIEW_SECS, &mut scene, &mut viewport);
+        assert_eq!(
+            placement.preview.as_ref().map(|preview| preview.zone),
+            Some(Zone::Left)
+        );
+        assert_eq!(scene.nodes[0].rect.x, -120.0);
+        assert_eq!(scene.edges[0].source, scene.nodes[0].rect);
+
+        placement.cancel(&mut scene, &mut viewport);
+
+        assert_complete_preview_baseline(&scene, &baseline, &viewport, camera);
     }
 
     #[test]

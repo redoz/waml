@@ -83,6 +83,7 @@ pub(super) enum SceneUpdate {
 }
 
 pub(crate) use placement::{
-    zone_arrow, zone_id, zone_of_id, zone_placed, DialPlacement, Zone, COMPASS_ZONES, DIAL_ZONES,
+    zone_arrow, zone_id, zone_of_id, zone_placed, DialPlacement, Placed, Zone, COMPASS_ZONES,
+    DIAL_ZONES,
 };
 pub(crate) use widget::{script_mod, ClassDiagramSurface, ClassDiagramSurfaceAction};

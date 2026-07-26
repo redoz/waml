@@ -3,6 +3,11 @@ use waml::adornment::Marker;
 
 pub(crate) const ELBOW_MIN_DEVICE_PX: f64 = 6.0;
 
+/// Draw-ready geometry for an orthogonal corner fillet.
+///
+/// The quarter-circle band and the two tangent bar stubs share one snapped
+/// centerline and stroke width. The stubs overlap the straight bars just beyond
+/// each tangent, keeping the join solid without changing the routed path.
 pub(crate) struct CornerFillet {
     pub(crate) quad: Rect,
     pub(crate) bar_in: [f32; 4],
@@ -13,6 +18,10 @@ pub(crate) struct CornerFillet {
     pub(crate) hw: f64,
 }
 
+/// Draw-ready polygon geometry for a relationship terminal marker.
+///
+/// The vertices are packed as two pairs in the marker quad's local coordinates;
+/// the marker tip remains exactly on the routed endpoint.
 pub(crate) struct MarkerGeometry {
     pub(crate) quad: Rect,
     pub(crate) v01: [f32; 4],
@@ -73,6 +82,12 @@ pub(crate) fn elbow_radius(a: DVec2, v: DVec2, b: DVec2, r_base: f64) -> f64 {
 const CORNER_STUB_OVERLAP: f64 = 1.0;
 const CORNER_STUB_SEAL: f64 = 0.5;
 
+/// Constructs the tangent quarter-circle that replaces an orthogonal hard turn.
+///
+/// The returned arc has the same half-width as the adjacent bars. Its local
+/// quadrant gate faces the route vertex, while short sealed stubs overlap both
+/// bars to prevent a notch at either tangent. Degenerate, straight, or
+/// zero-radius turns have no fillet.
 pub(crate) fn corner_fillet(
     a: DVec2,
     v: DVec2,
@@ -158,6 +173,12 @@ pub(crate) fn corner_fillet(
     })
 }
 
+/// Builds a standard UML terminal polygon at `ep`, oriented along `dir_raw`.
+///
+/// Open arrows, hollow triangles, and hollow/filled diamonds share one
+/// four-vertex representation. The body extends backward from the routed
+/// endpoint, so the glyph tip never drifts under zoom. `Marker::None` and
+/// degenerate directions produce no geometry.
 pub(crate) fn marker_geometry(
     marker: Marker,
     ep: DVec2,

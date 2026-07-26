@@ -232,10 +232,6 @@ impl ViewportController {
         self.release_down_abs
     }
 
-    pub(crate) fn suppress_release(&mut self) {
-        self.release_down_abs = None;
-    }
-
     pub(crate) fn pan_to(&mut self, abs: DVec2) -> bool {
         let Some(origin) = self.pan else {
             return false;
@@ -283,6 +279,7 @@ impl ViewportController {
                 effects.redraw = true;
             }
             _ => {
+                self.end_pan();
                 self.tween = None;
                 self.tween_last_time = 0.0;
                 effects.camera_timer = TimerCommand::Stop;
@@ -513,16 +510,6 @@ mod tests {
         viewport.pan_to(dvec2(360.0, 230.0));
         assert_eq!(viewport.camera().pan_x, -60.0);
         assert_eq!(viewport.camera().pan_y, -30.0);
-    }
-
-    #[test]
-    fn suppressing_release_keeps_the_existing_pan_origin() {
-        let mut viewport = ViewportController::default();
-        viewport.begin_pan(dvec2(100.0, 100.0));
-        viewport.suppress_release();
-        assert_eq!(viewport.pan_down_abs(), None);
-        assert!(viewport.pan_to(dvec2(120.0, 100.0)));
-        assert_eq!(viewport.camera().pan_x, -20.0);
     }
 
     #[test]

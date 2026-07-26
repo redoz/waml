@@ -58,18 +58,12 @@ script_mod! {
         }
     }
 
-    // Edge corner pen: the rounded fillet that replaces a hard 90-degree turn
-    // where two orthogonal `EdgeLine` bars meet, drawn as ONE combined SDF so the
-    // turn stays orthogonal-legal (a corner fillet, NOT a spline). The pixel fn
-    // UNIONS three shapes -- the two short bar stubs (`bar_in`/`bar_out`) and the
-    // quarter-arc band -- so the arc-to-bar joints are interior to a single filled
-    // shape: solid, no antialiased seam, AA only on the outer boundary. The stubs
-    // share the snapped straight bars' centerline + thickness (they overlap them
-    // off the curve), and the arc band's `hw` equals that half-thickness, so the
-    // corner reads the exact same weight as the bars with no notch or lateral jog.
-    // Geometry per bend is computed in `corner_fillet`, all in this quad's local
-    // pixel space. Fades text_dim -> text zoomed out like `EdgeLine` so a corner
-    // never reads brighter than the bars it joins.
+    // Edge corner shader: rasterizes the quad-local geometry from
+    // `corner_fillet` as ONE combined SDF. The pixel fn UNIONS the two short bar
+    // stubs (`bar_in`/`bar_out`) and quarter-arc band, so their joints are
+    // interior to one filled shape: solid, with AA only on the outer boundary.
+    // Fades text_dim -> text zoomed out like `EdgeLine` so a corner never reads
+    // brighter than the bars it joins.
     mod.draw.EdgeElbow = mod.draw.DrawColor{
         zoom: uniform(1.0)
         color_deep: uniform(atlas.text)
@@ -108,16 +102,12 @@ script_mod! {
         }
     }
 
-    // Edge end adornment pen: a standard-UML terminal glyph (open arrow, hollow
-    // triangle, hollow/filled diamond) at a relationship endpoint, oriented along
-    // the route's terminal segment. The glyph shape lives in `waml::adornment`
-    // (frontend-shared selection); the polygon geometry is computed per-draw in
-    // `marker_geometry` and fed in as the four path vertices `v01`/`v23` (packed
-    // xy pairs, in this quad's local pixel space). The shader is branch-free: an
-    // `if` on a uniform silently no-ops in this fork's shader VM (see
-    // `action_link`), so fill vs hollow vs open is selected by the `hollow`/
-    // `filled` flags multiplying colors -- open (both 0) -> transparent interior +
-    // stroke, hollow -> `bg` interior + stroke, filled -> `color` interior + stroke.
+    // Edge end-adornment shader: consumes `marker_geometry`'s four quad-local
+    // path vertices in `v01`/`v23`. The shader is branch-free: an `if` on a
+    // uniform silently no-ops in this fork's shader VM (see `action_link`), so
+    // fill vs hollow vs open is selected by the `hollow`/`filled` flags
+    // multiplying colors -- open (both 0) -> transparent interior + stroke,
+    // hollow -> `bg` interior + stroke, filled -> `color` interior + stroke.
     mod.draw.EdgeMarker = mod.draw.DrawColor{
         // Packed path vertices: v01 = (v0.xy, v1.xy), v23 = (v2.xy, v3.xy).
         v01: uniform(vec4(0.0, 0.0, 0.0, 0.0))
@@ -852,7 +842,6 @@ impl ClassDiagramSurface {
             let effects = self.cancel_active_placement();
             self.apply_interaction_effects(cx, effects);
         }
-        self.viewport.suppress_release();
         let effects = self.viewport.apply_pinch_sample(TouchPair {
             a: a.uid,
             b: b.uid,
@@ -1180,6 +1169,7 @@ mod tests {
 
     mod reconciliation {
         use super::*;
+        use std::cell::Cell;
 
         fn surface_with_live_dial(vm: &mut ScriptVm) -> ClassDiagramSurface {
             use waml::model::{ElementType, UmlMetaclass};
@@ -1310,6 +1300,70 @@ mod tests {
                 !surface.viewport.pan_to(dvec2(30.0, 30.0)),
                 "a cancelled placement must not leave a live viewport pan"
             );
+        }
+
+        fn touch(uid: u64, state: TouchState, x: f64, y: f64) -> TouchPoint {
+            TouchPoint {
+                state,
+                abs: dvec2(x, y),
+                time: 0.0,
+                uid,
+                rotation_angle: 0.0,
+                force: 0.0,
+                radius: dvec2(1.0, 1.0),
+                handled: Cell::new(Area::Empty),
+                sweep_lock: Cell::new(Area::Empty),
+            }
+        }
+
+        fn dispatch_touch_update(
+            surface: &mut ClassDiagramSurface,
+            vm: &mut ScriptVm,
+            touches: Vec<TouchPoint>,
+        ) {
+            let event = Event::TouchUpdate(TouchUpdateEvent {
+                time: 0.0,
+                window_id: WindowId(0, 0),
+                modifiers: KeyModifiers::default(),
+                touches,
+            });
+            surface.handle_event(vm.cx_mut(), &event, &mut Scope::empty());
+        }
+
+        #[test]
+        fn production_pinch_takeover_cancels_pan_without_promoting_the_survivor() {
+            let mut vm = crate::script_gate::boot_test_vm();
+            let mut surface = ClassDiagramSurface::script_new(&mut vm);
+            surface.viewport.set_view_rect(Rect {
+                pos: dvec2(0.0, 0.0),
+                size: dvec2(800.0, 600.0),
+            });
+            surface.viewport.begin_pan(dvec2(100.0, 100.0));
+
+            dispatch_touch_update(
+                &mut surface,
+                &mut vm,
+                vec![
+                    touch(1, TouchState::Start, 100.0, 100.0),
+                    touch(2, TouchState::Start, 200.0, 100.0),
+                ],
+            );
+            dispatch_touch_update(
+                &mut surface,
+                &mut vm,
+                vec![
+                    touch(1, TouchState::Move, 110.0, 100.0),
+                    touch(2, TouchState::Stop, 200.0, 100.0),
+                ],
+            );
+
+            let camera_after_pinch = surface.viewport.camera();
+            assert_eq!(surface.viewport.pan_down_abs(), None);
+            assert!(
+                !surface.viewport.pan_to(dvec2(130.0, 100.0)),
+                "the surviving touch must not resume the pre-pinch pan"
+            );
+            assert_eq!(surface.viewport.camera(), camera_after_pinch);
         }
 
         fn assert_scene_update_starts_matching_touch_ids_as_a_new_pinch(update: SceneUpdate) {
