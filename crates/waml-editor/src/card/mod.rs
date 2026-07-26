@@ -525,7 +525,11 @@ pub fn class_shape(node: &crate::scene::SceneNode, sheet: &StyleSheet) -> Shape 
             }
             if !attr.multiplicity.is_empty() {
                 cells.push(Shape::Text {
-                    text: format!("{{{}}}", attr.multiplicity),
+                    text: if attr.multiplicity.starts_with('{') {
+                        attr.multiplicity.clone()
+                    } else {
+                        format!("{{{}}}", attr.multiplicity)
+                    },
                     style: sheet.cardinality,
                 });
             }
@@ -787,6 +791,15 @@ mod tests {
         assert!(!drawn(&without).iter().any(|s| s.starts_with('{')));
         let with = scene_node("Order", vec![], vec![attr("id", "Int", "+", "1..*")]);
         assert!(drawn(&with).contains(&"{1..*}".to_string()));
+    }
+
+    #[test]
+    fn projected_cardinality_is_not_wrapped_twice() {
+        let node = scene_node("Order", vec![], vec![attr("id", "Int", "+", "{1}")]);
+        let text = drawn(&node);
+
+        assert!(text.contains(&"{1}".to_string()));
+        assert!(!text.contains(&"{{1}}".to_string()));
     }
 
     #[test]

@@ -2,7 +2,8 @@
 //! Nothing below this module touches makepad; nothing here touches a GPU.
 
 use waml::diagnostic::Diagnostic;
-use waml::model::{Diagram, ElementType, Model, RelEnd, RelationshipKind};
+use waml::model::{CardinalityVisibility, Diagram, ElementType, Model, RelEnd, RelationshipKind};
+use waml::multiplicity::Multiplicity;
 use waml::solve::{
     route, solve_diagram, stress, BoxId, Rect, Size, SizeMap, SolveConfig, Solved, SolvedGroup,
 };
@@ -111,15 +112,73 @@ pub struct Scene {
     pub conflicts: Vec<SceneConflict>,
 }
 
+/// Render an attribute's cardinality under the diagram display policy.
+pub fn attribute_cardinality_text(
+    authored: Option<&Multiplicity>,
+    mode: CardinalityVisibility,
+) -> Option<String> {
+    match (mode, authored) {
+        (CardinalityVisibility::Off, _) => None,
+        (CardinalityVisibility::Explicit, None) => None,
+        (CardinalityVisibility::Explicit, Some(m)) | (CardinalityVisibility::All, Some(m)) => {
+            Some(format!("{{{}}}", m.as_str()))
+        }
+        (CardinalityVisibility::All, None) => Some("{1}".into()),
+    }
+}
+
 /// Project classifier `key`'s attribute compartment rows via the shared
 /// `inspector::build_view` seam, so the canvas card and the inspector panel
 /// never re-derive UML member extraction. A non-classifier or missing key
 /// yields no rows.
-fn attribute_rows(model: &Model, key: &str) -> Vec<crate::inspector::AttrRow> {
+fn attribute_rows(
+    model: &Model,
+    key: &str,
+    display: &ResolvedDiagramDisplay,
+) -> Vec<crate::inspector::AttrRow> {
     use crate::inspector::{build_view, Subject};
-    build_view(model, &Subject::Classifier(key.to_string()))
-        .map(|v| v.attributes)
-        .unwrap_or_default()
+    if !display.show_attributes {
+        return Vec::new();
+    }
+    let Some(node) = model.nodes.iter().find(|node| node.key == key) else {
+        return Vec::new();
+    };
+    let Some(view) = build_view(model, &Subject::Classifier(key.to_string())) else {
+        return Vec::new();
+    };
+    let max = display.max_attributes.map(|max| max as usize);
+    view.attributes
+        .into_iter()
+        .zip(&node.attributes)
+        .take(max.unwrap_or(usize::MAX))
+        .map(|(row, attribute)| crate::inspector::AttrRow {
+            name: row.name,
+            ty: display.show_type.then_some(row.ty).unwrap_or_default(),
+            multiplicity: attribute_cardinality_text(
+                attribute.multiplicity.as_ref(),
+                display.cardinality,
+            )
+            .unwrap_or_default(),
+            visibility: display
+                .show_attribute_visibility
+                .then_some(row.visibility)
+                .unwrap_or_default(),
+        })
+        .collect()
+}
+
+fn displayed_stereotypes(stereotypes: &[String], display: &ResolvedDiagramDisplay) -> Vec<String> {
+    if !display.show_stereotype {
+        return Vec::new();
+    }
+    match &display.stereotype_filter {
+        Some(allowed) => stereotypes
+            .iter()
+            .filter(|stereotype| allowed.contains(stereotype))
+            .cloned()
+            .collect(),
+        None => stereotypes.to_vec(),
+    }
 }
 
 /// The card's «stereotype» eyebrow label (raw, no guillemets): the node's own
@@ -140,6 +199,16 @@ pub fn focus_eyebrow(stereotypes: &[String], ty: &ElementType) -> Option<String>
 /// attributes so measurement and drawing never diverge. `emphasized` and
 /// `collapsed` default to `false`; callers set them from solved flags.
 pub fn project_scene_node(model: &Model, node: &waml::model::Node) -> SceneNode {
+    project_scene_node_with_display(model, node, &ResolvedDiagramDisplay::default())
+}
+
+/// Project model `node` into a `SceneNode` using its diagram's resolved display
+/// policy. Enabled columns are the only text that reaches card measurement.
+pub fn project_scene_node_with_display(
+    model: &Model,
+    node: &waml::model::Node,
+    display: &ResolvedDiagramDisplay,
+) -> SceneNode {
     SceneNode {
         key: node.key.clone(),
         title: node
@@ -148,8 +217,8 @@ pub fn project_scene_node(model: &Model, node: &waml::model::Node) -> SceneNode 
             .clone()
             .unwrap_or_else(|| node.key.clone()),
         element_type: node.ty.clone(),
-        stereotypes: node.stereotypes.clone(),
-        attributes: attribute_rows(model, &node.key),
+        stereotypes: displayed_stereotypes(&node.stereotypes, display),
+        attributes: attribute_rows(model, &node.key, display),
         operations: Vec::new(),
         header: HeaderStyle::Plain,
         ports: false,
@@ -419,7 +488,15 @@ pub fn build_scene(
 ) -> (Scene, Vec<Diagnostic>) {
     use std::collections::BTreeMap;
 
-    let sizes = crate::sizing::size_map(model, diagram, expanded);
+    let mut sizes = crate::sizing::size_map(model, diagram, expanded);
+    for (key, size) in &mut sizes {
+        if let Some(node) = model.nodes.iter().find(|node| node.key == *key) {
+            let mut projected = project_scene_node_with_display(model, node, &display);
+            projected.expanded = expanded.contains(key);
+            let (w, h) = crate::card::card_size(&projected, &crate::card::mono_sheet());
+            *size = Size { w, h };
+        }
+    }
     let edges: Vec<(BoxId, BoxId)> = drawable_edges(model)
         .into_iter()
         .map(|e| (BoxId::Node(e.source.clone()), BoxId::Node(e.target.clone())))
@@ -437,7 +514,7 @@ pub fn build_scene(
     for (key, rect) in &solved.nodes {
         let flags = solved.flags.get(key).copied().unwrap_or_default();
         let mut node = match node_of.get(key.as_str()).copied() {
-            Some(model_node) => project_scene_node(model, model_node),
+            Some(model_node) => project_scene_node_with_display(model, model_node, &display),
             // Keys with no resolving model node (synthetic/unknown) fall back to
             // a title-only node: key as title, Unknown type, no members.
             None => SceneNode {
@@ -534,14 +611,15 @@ pub fn build_focus_scene(model: &Model, key: &str) -> Scene {
         .title
         .clone()
         .unwrap_or_else(|| node.key.clone());
-    let attributes = attribute_rows(model, key);
+    let display = ResolvedDiagramDisplay::default();
+    let attributes = attribute_rows(model, key, &display);
     // The focus card is drawn at zoom 1.0 (world px == screen px). Build the
     // scene node, then size its rect to the exact hull the card box-tree hugs.
     let mut scene_node = SceneNode {
         key: key.to_string(),
         title,
         element_type: node.ty.clone(),
-        stereotypes: node.stereotypes.clone(),
+        stereotypes: displayed_stereotypes(&node.stereotypes, &display),
         attributes,
         operations: Vec::new(),
         header: HeaderStyle::Plain,
@@ -713,6 +791,113 @@ mod tests {
 
     fn test_display() -> ResolvedDiagramDisplay {
         ResolvedDiagramDisplay::default()
+    }
+
+    #[test]
+    fn attribute_cardinality_respects_all_three_modes() {
+        use waml::model::CardinalityVisibility::{All, Explicit, Off};
+        use waml::multiplicity::Multiplicity;
+
+        let implicit = None;
+        let explicit_one = Multiplicity::parse("1");
+        let explicit_many = Multiplicity::parse("0..*");
+
+        assert_eq!(attribute_cardinality_text(implicit.as_ref(), Off), None);
+        assert_eq!(attribute_cardinality_text(explicit_one.as_ref(), Off), None);
+        assert_eq!(
+            attribute_cardinality_text(implicit.as_ref(), Explicit),
+            None
+        );
+        assert_eq!(
+            attribute_cardinality_text(explicit_one.as_ref(), Explicit),
+            Some("{1}".into())
+        );
+        assert_eq!(
+            attribute_cardinality_text(explicit_many.as_ref(), Explicit),
+            Some("{0..*}".into())
+        );
+        assert_eq!(
+            attribute_cardinality_text(implicit.as_ref(), All),
+            Some("{1}".into())
+        );
+    }
+
+    #[test]
+    fn display_hides_attributes_before_card_measurement() {
+        let model = mini();
+        let (full, _) = build_scene(
+            &model,
+            &model.diagrams[0],
+            test_display(),
+            &std::collections::HashSet::new(),
+        );
+        let mut display = test_display();
+        display.show_attributes = false;
+        let (hidden, _) = build_scene(
+            &model,
+            &model.diagrams[0],
+            display,
+            &std::collections::HashSet::new(),
+        );
+        let full_order = full.nodes.iter().find(|node| node.key == "order").unwrap();
+        let hidden_order = hidden
+            .nodes
+            .iter()
+            .find(|node| node.key == "order")
+            .unwrap();
+
+        assert!(hidden_order.attributes.is_empty());
+        assert!(
+            crate::card::card_size(hidden_order, &crate::card::mono_sheet()).1
+                < crate::card::card_size(full_order, &crate::card::mono_sheet()).1
+        );
+        assert!(hidden_order.rect.h < full_order.rect.h);
+    }
+
+    #[test]
+    fn display_projects_attribute_columns_and_cap_before_measurement() {
+        let model = mini();
+        let mut display = test_display();
+        display.show_type = false;
+        display.show_attribute_visibility = false;
+        display.cardinality = waml::model::CardinalityVisibility::Off;
+        display.max_attributes = Some(1);
+        let (scene, _) = build_scene(
+            &model,
+            &model.diagrams[0],
+            display,
+            &std::collections::HashSet::new(),
+        );
+        let order = scene.nodes.iter().find(|node| node.key == "order").unwrap();
+
+        assert_eq!(order.attributes.len(), 1);
+        assert_eq!(order.attributes[0].name, "id");
+        assert!(order.attributes[0].ty.is_empty());
+        assert!(order.attributes[0].visibility.is_empty());
+        assert!(order.attributes[0].multiplicity.is_empty());
+    }
+
+    #[test]
+    fn display_filters_stereotypes_before_card_eyebrow() {
+        let model = mini();
+        let mut display = test_display();
+        display.stereotype_filter = Some(Vec::new());
+        let (scene, _) = build_scene(
+            &model,
+            &model.diagrams[0],
+            display,
+            &std::collections::HashSet::new(),
+        );
+        let order = scene.nodes.iter().find(|node| node.key == "order").unwrap();
+        let text: Vec<_> =
+            crate::card::measure(&crate::card::class_shape(order, &crate::card::mono_sheet()))
+                .texts
+                .into_iter()
+                .map(|text| text.text)
+                .collect();
+
+        assert!(order.stereotypes.is_empty());
+        assert!(!text.contains(&"«AGGREGATEROOT»".to_string()));
     }
 
     /// The `groups` fixture is what the canvas's group-render gating is judged
