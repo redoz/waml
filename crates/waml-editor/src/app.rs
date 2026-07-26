@@ -960,6 +960,15 @@ impl App {
         let viewport_w = self.window_bounds(cx).size.x;
         let next = next_narrow(self.narrow, viewport_w);
         if next != self.narrow {
+            if let Some(mut root) = self
+                .ui
+                .widget(cx, ids!(popup_root))
+                .borrow_mut::<PopupRoot>()
+            {
+                if root.is_open_for(live_id!(doc_switcher)) {
+                    root.close(cx);
+                }
+            }
             self.narrow = next;
             if self.narrow {
                 let (tree, inspector) = self.dock_states(cx);
@@ -1739,6 +1748,21 @@ pub fn burger_menu_items() -> Vec<crate::popup::base::PopupItem> {
     ]
 }
 
+const DOC_SWITCHER_MAX_H: f64 = 360.0;
+
+fn doc_switcher_items(open: &OpenTabs) -> Vec<crate::popup::base::PopupItem> {
+    open.tabs
+        .iter()
+        .map(|tab| crate::popup::base::PopupItem {
+            id: tab.id,
+            label: tab.title.clone(),
+            icon: crate::icons::IconSet::icon_for(tab.node_kind),
+            danger: false,
+            enabled: true,
+        })
+        .collect()
+}
+
 /// The logo-radial commands `App` acts on. `Cancel` is intentionally absent:
 /// committing the Cancel wedge just closes the radial (mapped to `None`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -2024,6 +2048,7 @@ impl MatchEvent for App {
         if let Some(pr) = self.ui.widget(cx, ids!(popup_root)).borrow::<PopupRoot>() {
             let logo_closed = pr.closed(actions, live_id!(logo));
             let burger_closed = pr.closed(actions, live_id!(burger));
+            let doc_switcher_closed = pr.closed(actions, live_id!(doc_switcher));
             let node_closed = pr.closed(actions, live_id!(node_menu));
             let picker_closed = pr.closed(actions, live_id!(element_picker));
             let nav_scope_closed = pr.closed(actions, live_id!(nav_scope));
@@ -2042,6 +2067,11 @@ impl MatchEvent for App {
                     .widget(cx, ids!(menu_btn))
                     .as_icon_button()
                     .set_active(cx, false);
+            }
+            if let Some(PopupResult::Invoked(id)) = doc_switcher_closed {
+                self.tabs.activate(id);
+                self.refresh_doc_tabs(cx);
+                self.sync_active_tab(cx);
             }
             if let Some(PopupResult::Invoked(id)) = burger_closed {
                 if id == live_id!(new_model) {
@@ -2620,6 +2650,31 @@ impl MatchEvent for App {
             .borrow_mut::<crate::doc_tabs::DocTabs>()
             .and_then(|tabs| tabs.tab_action(actions));
         match tab_action {
+            Some(crate::doc_tabs::DocTabsAction::OpenSwitcher { anchor }) => {
+                if self.tabs.active_tab().is_some() {
+                    let items = doc_switcher_items(&self.tabs);
+                    let bounds = self.window_bounds(cx);
+                    if let Some(mut root) = self
+                        .ui
+                        .widget(cx, ids!(popup_root))
+                        .borrow_mut::<PopupRoot>()
+                    {
+                        root.show_at(
+                            cx,
+                            PopupSpec::Menu {
+                                tag: live_id!(doc_switcher),
+                                anchor,
+                                bounds,
+                                items,
+                                open: MenuOpen::Popup {
+                                    open_marking: Some(self.tabs.active),
+                                    max_height: Some(DOC_SWITCHER_MAX_H),
+                                },
+                            },
+                        );
+                    }
+                }
+            }
             Some(crate::doc_tabs::DocTabsAction::Activate(id)) => {
                 self.tabs.activate(id);
                 self.refresh_doc_tabs(cx);
@@ -3076,12 +3131,37 @@ impl AppMain for App {
 #[cfg(test)]
 mod tests {
     use super::{
-        logo_command_for, next_narrow, open_overlay_contains, place_rm_for,
+        doc_switcher_items, logo_command_for, next_narrow, open_overlay_contains, place_rm_for,
         should_dismiss_narrow_dock, LogoCommand,
     };
+    use crate::doc_tabs::OpenTabs;
     use crate::dock::DockState;
     use crate::popup::conflict_list::ConflictListAction;
+    use crate::tree::TreeKind;
     use makepad_widgets::*;
+
+    #[test]
+    fn document_switcher_items_preserve_order_and_tab_identity() {
+        let mut tabs = OpenTabs::diagram_base("d", "Diagram");
+        let customer = tabs.open_preview("customer", "Customer", TreeKind::Class);
+        tabs.promote(customer);
+        let order = tabs.open_preview("order", "Order", TreeKind::Class);
+        assert_eq!(tabs.active, order);
+
+        let items = doc_switcher_items(&tabs);
+        assert_eq!(
+            items.iter().map(|item| item.id).collect::<Vec<_>>(),
+            tabs.tabs.iter().map(|tab| tab.id).collect::<Vec<_>>()
+        );
+        assert_eq!(
+            items
+                .iter()
+                .map(|item| item.label.as_str())
+                .collect::<Vec<_>>(),
+            vec!["Diagram", "Customer", "Order"]
+        );
+        assert!(items.iter().all(|item| item.enabled && !item.danger));
+    }
 
     #[test]
     fn breakpoint_enters_below_640_and_leaves_above_680() {
