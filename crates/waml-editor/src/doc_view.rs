@@ -124,12 +124,8 @@ impl BodyWidgets {
 /// place that applies ops, opens tabs, and places popups (spec §3).
 #[derive(Default)]
 pub struct ViewOutcome {
-    /// Edit intents the shell applies to `Model`. Empty in the seam migration --
-    /// no `Op` is applied in the shell yet; this channel is forward-looking.
     pub ops: Vec<Op>,
     /// Ask the shell to open an element preview by key (spec §5). Unused this
-    /// migration: the project tree (shell chrome) still drives previews.
-    pub open_preview: Option<String>,
     /// A cross-tree popup the shell must place via `popup_root`.
     pub popup: Option<PopupRequest>,
     /// Ask the shell to promote (pin) the tab whose key matches this subject.
@@ -138,15 +134,6 @@ pub struct ViewOutcome {
     pub close_active: bool,
     /// Ask the shell to re-push the statusbar snapshot.
     pub statusbar_dirty: bool,
-    /// Ask the shell to open the right-hand docked panel -- a view-side user
-    /// action that needs the panel visible (select a node, hit a body control).
-    /// Request-only: a view never asks for a collapse, so a user who closed the
-    /// panel isn't fought by the next click. Ignored when the active view
-    /// declares no right dock (`DocView::right_dock() == None`).
-    ///
-    /// Nothing sets this yet. Like `ops` and `open_preview` before it, it lands
-    /// as a wired and tested channel whose first real caller comes later.
-    pub open_right_dock: bool,
 }
 
 /// A popup a view wants placed. The view describes it; the shell computes window
@@ -273,12 +260,10 @@ mod tests {
     fn view_outcome_default_is_all_empty() {
         let o = ViewOutcome::default();
         assert!(o.ops.is_empty());
-        assert!(o.open_preview.is_none());
         assert!(o.popup.is_none());
         assert!(o.promote_subject.is_none());
         assert!(!o.close_active);
         assert!(!o.statusbar_dirty);
-        assert!(!o.open_right_dock);
     }
 
     #[test]

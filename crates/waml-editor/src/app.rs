@@ -1,5 +1,6 @@
 mod actions;
 
+use self::actions::ActionFlow;
 use crate::doc_tabs::{OpenTabs, TabKind};
 use crate::dock::DockState;
 use crate::dock::ResponsiveDockLayout;
@@ -10,7 +11,7 @@ use crate::icon_button::IconButtonWidgetRefExt;
 use crate::load;
 use crate::nav::NavState;
 use crate::popup::base::PopupResult;
-use crate::popup::root::{MenuOpen, PopupRoot, PopupSpec, RadialOpen};
+use crate::popup::root::{MenuOpen, PopupRoot, PopupSpec};
 use crate::popup::select::{SelectItem, SelectLead};
 use makepad_widgets::*;
 use std::path::Path;
@@ -2048,16 +2049,14 @@ impl MatchEvent for App {
             // document-scoped popup result stays view-local (`popup_root`
             // access itself stays in the shell).
             if let Some(result) = picker_closed {
-                if let Some(active) = self.documents.active_tab().cloned() {
-                    if let Some(outcome) = self.documents.on_active_popup_result(
-                        cx,
-                        &self.ui,
-                        &self.session,
-                        live_id!(element_picker),
-                        result,
-                    ) {
-                        self.relay_outcome(cx, &active, outcome);
-                    }
+                if let Some(outcome) = self.documents.on_active_popup_result(
+                    cx,
+                    &self.ui,
+                    &self.session,
+                    live_id!(element_picker),
+                    result,
+                ) {
+                    let _ = self.apply_view_outcome(cx, outcome);
                 }
             }
             // Placement dial: the arm-change drives the live candidate-layout
@@ -2066,29 +2065,25 @@ impl MatchEvent for App {
             // first -- a release emits Armed+Closed off one event, and the
             // close is what turns the last armed zone into an `Op`.
             if let Some(id) = dial_armed {
-                if let Some(active) = self.documents.active_tab().cloned() {
-                    if let Some(outcome) = self.documents.on_active_popup_armed(
-                        cx,
-                        &self.ui,
-                        &self.session,
-                        live_id!(place_dial),
-                        id,
-                    ) {
-                        self.relay_outcome(cx, &active, outcome);
-                    }
+                if let Some(outcome) = self.documents.on_active_popup_armed(
+                    cx,
+                    &self.ui,
+                    &self.session,
+                    live_id!(place_dial),
+                    id,
+                ) {
+                    let _ = self.apply_view_outcome(cx, outcome);
                 }
             }
             if let Some(result) = dial_closed {
-                if let Some(active) = self.documents.active_tab().cloned() {
-                    if let Some(outcome) = self.documents.on_active_popup_result(
-                        cx,
-                        &self.ui,
-                        &self.session,
-                        live_id!(place_dial),
-                        result,
-                    ) {
-                        self.relay_outcome(cx, &active, outcome);
-                    }
+                if let Some(outcome) = self.documents.on_active_popup_result(
+                    cx,
+                    &self.ui,
+                    &self.session,
+                    live_id!(place_dial),
+                    result,
+                ) {
+                    let _ = self.apply_view_outcome(cx, outcome);
                 }
             }
             // Scope dropdown: a pick sets `NavState::scope` and rebuilds the
@@ -2130,40 +2125,27 @@ impl MatchEvent for App {
                 // `place_rm_for` only ever returns `None` for a non-`Delete`
                 // action, which this arm's guard already excludes.
                 if let Some(op) = place_rm_for(&diagram, &action) {
-                    match self.session.apply_ops(&[op]) {
-                        Ok(change) => {
-                            // Re-solve the active diagram view in place (camera
-                            // held) — same path as the drag-place apply above.
-                            self.documents.after_session_change(
-                                cx,
-                                &self.ui,
-                                &self.session,
-                                change,
-                            );
-                            self.sync_conflict_badge(cx);
-                            self.mark_dirty(cx);
-                            // Refresh the OPEN list (stays open, re-anchored)
-                            // or dismiss it if the delete cleared every
-                            // conflict.
-                            let conflicts = self
+                    if self
+                        .apply_session_ops(cx, &[op], "place.rm failed")
+                        .is_some()
+                    {
+                        let conflicts = self
+                            .ui
+                            .widget(cx, ids!(canvas))
+                            .borrow::<crate::canvas::ClassDiagramSurface>()
+                            .map(|canvas| canvas.conflicts())
+                            .unwrap_or_default();
+                        if conflicts.is_empty() {
+                            if let Some(mut popup) = self
                                 .ui
-                                .widget(cx, ids!(canvas))
-                                .borrow::<crate::canvas::ClassDiagramSurface>()
-                                .map(|c| c.conflicts())
-                                .unwrap_or_default();
-                            if conflicts.is_empty() {
-                                if let Some(mut pr) = self
-                                    .ui
-                                    .widget(cx, ids!(popup_root))
-                                    .borrow_mut::<PopupRoot>()
-                                {
-                                    pr.close(cx);
-                                }
-                            } else {
-                                self.open_conflict_list(cx, conflicts);
+                                .widget(cx, ids!(popup_root))
+                                .borrow_mut::<PopupRoot>()
+                            {
+                                popup.close(cx);
                             }
+                        } else {
+                            self.open_conflict_list(cx, conflicts);
                         }
-                        Err(e) => log!("place.rm failed: {e:?}"),
                     }
                 }
             }
@@ -2408,12 +2390,12 @@ impl MatchEvent for App {
         // tool dock, canvas pointer actions, selection toolbar) via
         // `DocView::handle`; the shell only relays the returned `ViewOutcome`.
         // No active tab (start screen / diagram-less model) simply skips this.
-        if let Some(active) = self.documents.active_tab().cloned() {
+        if self.documents.active_tab().is_some() {
             if let Some(outcome) =
                 self.documents
                     .handle_active(cx, &self.ui, actions, &self.session)
             {
-                if self.relay_outcome(cx, &active, outcome) {
+                if self.apply_view_outcome(cx, outcome) == ActionFlow::Consumed {
                     return;
                 }
             }
@@ -2600,182 +2582,6 @@ impl MatchEvent for App {
             }
             _ => {}
         }
-    }
-}
-
-impl App {
-    /// Apply a view's `ViewOutcome`: place popups, relay tab-lifecycle intents,
-    /// re-snap the statusbar. Returns `true` if the shell consumed the event
-    /// (mirrors the old `return`-after-handling flow in `handle_actions`).
-    fn relay_outcome(
-        &mut self,
-        cx: &mut Cx,
-        active: &crate::doc_tabs::DocTab,
-        outcome: crate::doc_view::ViewOutcome,
-    ) -> bool {
-        let mut consumed = false;
-
-        // Read the right-dock request BEFORE the owned `outcome`'s fields are
-        // moved out below (`popup`, `promote_subject`, `open_preview` all move).
-        let open_right_dock =
-            outcome.open_right_dock && self.documents.active_chrome().right_dock.is_some();
-
-        // A view emits `Op`s (drag-to-place authors a `## Layout` placement);
-        // the shell owns the Model, so it applies them against the retained
-        // bundle, rebuilds the model, and re-solves the active diagram view in
-        // place (camera held). Empty for every non-authoring outcome. Applied
-        // here rather than at the `handle` call site so an outcome that comes
-        // back through a popup result (the placement dial's commit) authors
-        // too.
-        if !outcome.ops.is_empty() {
-            match self.session.apply_ops(&outcome.ops) {
-                Ok(change) => {
-                    self.documents
-                        .after_session_change(cx, &self.ui, &self.session, change);
-                    self.sync_conflict_badge(cx);
-                    self.mark_dirty(cx);
-                }
-                Err(e) => log!("place.set failed: {e:?}"),
-            }
-        }
-
-        if let Some(req) = outcome.popup {
-            let bounds = self.window_bounds(cx);
-            if let Some(mut pr) = self
-                .ui
-                .widget(cx, ids!(popup_root))
-                .borrow_mut::<PopupRoot>()
-            {
-                match req {
-                    crate::doc_view::PopupRequest::NodeContextMenu {
-                        anchor,
-                        key,
-                        context,
-                    } => {
-                        self.node_menu_key = Some(key);
-                        pr.show_at(
-                            cx,
-                            PopupSpec::Menu {
-                                tag: live_id!(node_menu),
-                                anchor,
-                                bounds,
-                                items: crate::popup::node_menu::compose(
-                                    context,
-                                    crate::popup::node_menu::base_items(),
-                                ),
-                                open: MenuOpen::Popup {
-                                    open_marking: None,
-                                    max_height: None,
-                                },
-                            },
-                        );
-                    }
-                    crate::doc_view::PopupRequest::ElementPicker {
-                        anchor_rect,
-                        min_width,
-                        items,
-                    } => {
-                        let anchor = dvec2(
-                            anchor_rect.pos.x,
-                            anchor_rect.pos.y
-                                + anchor_rect.size.y
-                                + crate::popup::select::SELECT_GAP,
-                        );
-                        pr.show_at(
-                            cx,
-                            PopupSpec::Select {
-                                tag: live_id!(element_picker),
-                                anchor,
-                                min_width,
-                                bounds,
-                                items,
-                            },
-                        );
-                    }
-                    crate::doc_view::PopupRequest::PlaceDial { center, items } => {
-                        pr.show_at(
-                            cx,
-                            PopupSpec::Radial {
-                                tag: live_id!(place_dial),
-                                center,
-                                bounds,
-                                items,
-                                open: RadialOpen::Dial,
-                            },
-                        );
-                    }
-                    crate::doc_view::PopupRequest::Dismiss => pr.close(cx),
-                }
-            }
-            consumed = true;
-        }
-
-        if let Some(key) = outcome.promote_subject {
-            self.documents.transition(
-                cx,
-                &self.ui,
-                &self.session,
-                DocumentCommand::PromoteSubject(key),
-            );
-            self.sync_document_shell(cx);
-            consumed = true;
-        }
-
-        if outcome.close_active {
-            self.documents.transition(
-                cx,
-                &self.ui,
-                &self.session,
-                DocumentCommand::Close(active.id),
-            );
-            self.sync_document_shell(cx);
-            consumed = true;
-        }
-
-        if let Some(key) = outcome.open_preview {
-            // Unused this migration (the project tree, shell chrome, still
-            // drives previews). Placeholder relay for the forward-looking
-            // channel; resolves title/kind off the model.
-            let node_kind = self
-                .session
-                .model()
-                .nodes
-                .iter()
-                .find(|node| node.key == key)
-                .map(|node| crate::tree::kind_of(&node.ty));
-            if let Some(node_kind) = node_kind {
-                self.transition_document(cx, &key, node_kind, false);
-            }
-            consumed = true;
-        }
-
-        // Request-only, and idempotent: the shell opens the panel and never
-        // closes it, so a user who collapsed it isn't fought by the next click.
-        // Nothing sets the flag yet -- this is the wired channel, not a caller.
-        if open_right_dock {
-            if self.narrow {
-                if let Some(mut tree) = self
-                    .ui
-                    .widget(cx, ids!(project_tree))
-                    .borrow_mut::<crate::tree_panel::ProjectTree>()
-                {
-                    tree.close_dock(cx);
-                }
-            }
-            if let Some(mut panel) = self
-                .ui
-                .widget(cx, ids!(inspector))
-                .borrow_mut::<crate::inspector_panel::Inspector>()
-            {
-                panel.open_dock(cx);
-            }
-        }
-
-        if outcome.statusbar_dirty {
-            self.sync_statusbar(cx);
-        }
-
-        consumed
     }
 }
 

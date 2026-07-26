@@ -987,10 +987,8 @@ impl Inspector {
         self.apply_dock(cx, DockEvent::Toggle);
     }
 
-    /// Open the panel, idempotently -- the shell's relay for a view-side
-    /// request (`ViewOutcome::open_right_dock`). Never collapses: see
-    /// `DockEvent::Open`. A no-op when already open, so there is no redraw
-    /// churn on a repeated request.
+    /// Open the panel idempotently for responsive shell coordination. A no-op
+    /// when already open, so repeated layout reconciliation causes no redraw.
     pub fn open_dock(&mut self, cx: &mut Cx) {
         self.apply_dock(cx, DockEvent::Open);
     }

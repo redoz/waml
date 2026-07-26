@@ -43,10 +43,8 @@ pub enum DockEvent {
     /// window chrome is a deliberate act, so it must not land in the
     /// self-collapsing `Peek` state the flag strip opens into.
     Toggle,
-    /// A view asked the shell to open its right-hand docked panel
-    /// (`ViewOutcome::open_right_dock`). Request-only and idempotent: it drives
-    /// ANY state to `Pinned` and never collapses, so a user who closed the
-    /// panel isn't fought by the next click.
+    /// The responsive shell forced a dock open, idempotently. Drives any state to
+    /// `Pinned` and never collapses.
     Open,
     /// The shell forced the panel shut because the active view declares no such
     /// dock (`BodyChrome.right_dock == None` -- the last tab was closed, or a
