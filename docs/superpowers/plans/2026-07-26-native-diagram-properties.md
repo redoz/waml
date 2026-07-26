@@ -6,7 +6,7 @@
 
 **Architecture:** `ClassDiagramView` owns a binary canvas/properties mode and returns `Op::DiagramSet` changes through the existing `ViewOutcome` seam. The shared WAML schema stores optional authored attribute multiplicities and a direct cardinality enum; one Rust resolver produces a complete display policy before scene projection. Focused native widgets render the properties form, while `GraphCanvas` remains responsible for cards and edge labels.
 
-**Tech Stack:** Rust, WAML parser/model/ops crates, Makepad widgets, TypeScript generated/WASM consumers, Cargo tests, Vitest.
+**Tech Stack:** Rust, WAML parser/model/ops crates, Makepad widgets, Cargo tests.
 
 ## Global Constraints
 
@@ -21,6 +21,8 @@
 - Cardinality defaults to `Explicit`.
 - No persistence compatibility shim is required for the unreleased `showCardinality` schema.
 - Preserve canvas camera and selection while properties are open.
+- Tasks 3–8 are native-only. Do not modify `packages/`; existing cross-stack changes from Tasks 1–2 remain as authored.
+- Task 8 omits TypeScript/Svelte tests and type checks. Native Rust verification, runtime inspection, and screenshot review remain required.
 - Use test-driven development and commit after every task.
 
 ---
@@ -907,18 +909,16 @@ cargo clippy -p waml-editor --all-targets -- -D warnings
 
 Expected: all workspace tests pass and Clippy reports no warnings.
 
-- [ ] **Step 3: Run TypeScript checks**
+- [ ] **Step 3: Confirm Tasks 3–8 stayed native-only**
 
-Run the repository's package checks:
+Run:
 
 ```powershell
-pnpm --filter @waml/okf test
-pnpm --filter @waml/core test
-pnpm --filter @waml/web test
-pnpm -r typecheck
+git diff --exit-code dfa463d...HEAD -- packages
 ```
 
-Expected: all tests and type checks pass.
+Expected: no output and exit success, proving Tasks 3–8 did not add Svelte or
+other package changes beyond the already-completed Task 1–2 baseline.
 
 - [ ] **Step 4: Launch the native editor**
 
