@@ -1,4 +1,5 @@
 use crate::doc_tabs::{OpenTabs, TabKind};
+use crate::dock::DockState;
 use crate::dock::ResponsiveDockLayout;
 use crate::fps_meter::FpsMeter;
 use crate::icon_button::IconButtonWidgetRefExt;
@@ -12,6 +13,35 @@ use std::collections::HashMap;
 use std::collections::HashSet;
 use std::path::Path;
 use waml::model::Model;
+
+fn open_overlay_contains(
+    point: DVec2,
+    tree_state: DockState,
+    tree_rect: Rect,
+    inspector_state: DockState,
+    inspector_rect: Rect,
+) -> bool {
+    (tree_state == DockState::Pinned && tree_rect.contains(point))
+        || (inspector_state == DockState::Pinned && inspector_rect.contains(point))
+}
+
+fn should_dismiss_narrow_dock(
+    point: DVec2,
+    canvas_rect: Rect,
+    tree_state: DockState,
+    tree_rect: Rect,
+    inspector_state: DockState,
+    inspector_rect: Rect,
+) -> bool {
+    canvas_rect.contains(point)
+        && !open_overlay_contains(
+            point,
+            tree_state,
+            tree_rect,
+            inspector_state,
+            inspector_rect,
+        )
+}
 
 script_mod! {
     use mod.prelude.widgets.*
@@ -417,6 +447,10 @@ script_mod! {
                         }
                         // Paint tree before inspector. Hosts are runtime-sized, so a
                         // narrow pinned panel overlays the unchanged center stack.
+                        // These overlay children follow `dock_row`, so Makepad's
+                        // reverse child event order (`EventOrder::Up`) lets an
+                        // inside panel hit arrive before the earlier canvas. The
+                        // empty host area stays transparent: no full-screen scrim.
                         tree_layer := View{
                             width: Fill
                             height: Fill
@@ -570,6 +604,8 @@ pub struct App {
     node_menu_key: Option<String>,
     #[rust]
     narrow: bool,
+    #[rust]
+    pointer_in_narrow_dock: bool,
     #[rust]
     dock_layout: ResponsiveDockLayout,
     /// Last-applied caption `tree_gap` width, same change-guard role as
@@ -864,6 +900,57 @@ impl App {
                     panel.close_dock(cx);
                 }
             }
+        }
+    }
+
+    fn route_narrow_dock_pointer(&mut self, cx: &mut Cx, event: &Event, popup_was_open: bool) {
+        if !self.narrow {
+            return;
+        }
+        let (tree_state, inspector_state) = self.dock_states(cx);
+        let tree_rect = self
+            .ui
+            .widget(cx, ids!(project_tree))
+            .borrow::<crate::tree_panel::ProjectTree>()
+            .map(|panel| panel.drawn_rect(cx))
+            .unwrap_or_default();
+        let inspector_rect = self
+            .ui
+            .widget(cx, ids!(inspector))
+            .borrow::<crate::inspector_panel::Inspector>()
+            .map(|panel| panel.drawn_rect(cx))
+            .unwrap_or_default();
+        let canvas_rect = self.ui.widget(cx, ids!(canvas)).area().rect(cx);
+        let contains = |point| {
+            open_overlay_contains(
+                point,
+                tree_state,
+                tree_rect,
+                inspector_state,
+                inspector_rect,
+            )
+        };
+        match event {
+            Event::MouseMove(e) => {
+                self.pointer_in_narrow_dock = contains(e.abs);
+            }
+            Event::MouseDown(e) if e.button.is_primary() => {
+                let inside = contains(e.abs);
+                self.pointer_in_narrow_dock = inside;
+                if !popup_was_open
+                    && should_dismiss_narrow_dock(
+                        e.abs,
+                        canvas_rect,
+                        tree_state,
+                        tree_rect,
+                        inspector_state,
+                        inspector_rect,
+                    )
+                {
+                    self.apply_dock_states(cx, DockState::Flag, DockState::Flag);
+                }
+            }
+            _ => {}
         }
     }
 
@@ -1890,7 +1977,12 @@ impl MatchEvent for App {
             .as_icon_button()
             .clicked(actions)
         {
-            if let Some(mut panel) = self
+            if self.narrow {
+                let (tree, inspector) = self.dock_states(cx);
+                let (tree, inspector) =
+                    crate::dock::narrow_toggle_states(tree, inspector, crate::dock::DockEdge::Left);
+                self.apply_dock_states(cx, tree, inspector);
+            } else if let Some(mut panel) = self
                 .ui
                 .widget(cx, ids!(project_tree))
                 .borrow_mut::<crate::tree_panel::ProjectTree>()
@@ -1910,7 +2002,15 @@ impl MatchEvent for App {
             .as_icon_button()
             .clicked(actions)
         {
-            if let Some(mut panel) = self
+            if self.narrow {
+                let (tree, inspector) = self.dock_states(cx);
+                let (tree, inspector) = crate::dock::narrow_toggle_states(
+                    tree,
+                    inspector,
+                    crate::dock::DockEdge::Right,
+                );
+                self.apply_dock_states(cx, tree, inspector);
+            } else if let Some(mut panel) = self
                 .ui
                 .widget(cx, ids!(inspector))
                 .borrow_mut::<crate::inspector_panel::Inspector>()
@@ -2695,6 +2795,15 @@ impl App {
         // closes it, so a user who collapsed it isn't fought by the next click.
         // Nothing sets the flag yet -- this is the wired channel, not a caller.
         if open_right_dock {
+            if self.narrow {
+                if let Some(mut tree) = self
+                    .ui
+                    .widget(cx, ids!(project_tree))
+                    .borrow_mut::<crate::tree_panel::ProjectTree>()
+                {
+                    tree.close_dock(cx);
+                }
+            }
             if let Some(mut panel) = self
                 .ui
                 .widget(cx, ids!(inspector))
@@ -2864,6 +2973,12 @@ impl AppMain for App {
         }
 
         // Single popup seam: light-dismiss + active-surface routing + emission.
+        let popup_was_open = self
+            .ui
+            .widget(cx, ids!(popup_root))
+            .borrow::<PopupRoot>()
+            .map(|root| root.is_open())
+            .unwrap_or(false);
         if let Some(mut pr) = self
             .ui
             .widget(cx, ids!(popup_root))
@@ -2871,6 +2986,7 @@ impl AppMain for App {
         {
             pr.route(cx, event);
         }
+        self.route_narrow_dock_pointer(cx, event, popup_was_open);
 
         self.ui.handle_event(cx, event, &mut Scope::empty());
 
@@ -2959,7 +3075,11 @@ impl AppMain for App {
 
 #[cfg(test)]
 mod tests {
-    use super::{logo_command_for, next_narrow, place_rm_for, LogoCommand};
+    use super::{
+        logo_command_for, next_narrow, open_overlay_contains, place_rm_for,
+        should_dismiss_narrow_dock, LogoCommand,
+    };
+    use crate::dock::DockState;
     use crate::popup::conflict_list::ConflictListAction;
     use makepad_widgets::*;
 
@@ -2976,6 +3096,52 @@ mod tests {
             assert!(!next_narrow(false, width));
             assert!(next_narrow(true, width));
         }
+    }
+
+    #[test]
+    fn only_the_open_narrow_panel_counts_as_inside() {
+        let canvas = Rect {
+            pos: dvec2(0.0, 66.0),
+            size: dvec2(390.0, 700.0),
+        };
+        let tree = Rect {
+            pos: dvec2(0.0, 66.0),
+            size: dvec2(280.0, 700.0),
+        };
+        let inspector = Rect {
+            pos: dvec2(70.0, 66.0),
+            size: dvec2(320.0, 700.0),
+        };
+        assert!(open_overlay_contains(
+            dvec2(100.0, 200.0),
+            DockState::Pinned,
+            tree,
+            DockState::Flag,
+            inspector
+        ));
+        assert!(!open_overlay_contains(
+            dvec2(300.0, 200.0),
+            DockState::Pinned,
+            tree,
+            DockState::Flag,
+            inspector
+        ));
+        assert!(should_dismiss_narrow_dock(
+            dvec2(300.0, 200.0),
+            canvas,
+            DockState::Pinned,
+            tree,
+            DockState::Flag,
+            inspector
+        ));
+        assert!(!should_dismiss_narrow_dock(
+            dvec2(16.0, 50.0),
+            canvas,
+            DockState::Pinned,
+            tree,
+            DockState::Flag,
+            inspector
+        ));
     }
 
     #[test]
