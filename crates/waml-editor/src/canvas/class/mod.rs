@@ -1,5 +1,6 @@
 mod interaction;
 mod placement;
+mod render;
 mod selection;
 mod widget;
 
