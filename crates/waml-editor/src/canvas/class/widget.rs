@@ -3061,7 +3061,6 @@ fn font_raster_size(target_size: f32) -> f32 {
 mod tests {
     use super::*;
 
-    const CORNER_STUB_SEAL: f64 = 0.5;
     use waml::solve::Rect as WorldRect;
 
     #[test]
@@ -3666,6 +3665,7 @@ mod tests {
         assert_eq!(resolve(down, dvec2(280.0, 30.0)), None);
     }
 
+    /* Moved to canvas::geometry::tests.
     #[test]
     fn segment_quad_centers_the_stroke_on_the_routed_line() {
         let thickness = 2.0;
@@ -3893,6 +3893,8 @@ mod tests {
         assert_eq!(q.pos, dvec2(4.0, 4.0));
         assert_eq!(q.size, dvec2(10.0, 0.5));
     }
+
+    */
 
     fn many_attr_node(key: &str, n: usize) -> crate::scene::SceneNode {
         use crate::inspector::AttrRow;

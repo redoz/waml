@@ -242,4 +242,161 @@ mod tests {
         assert_eq!(snapped.pos, dvec2(10.5, 20.5));
         assert_eq!(snapped.size, dvec2(0.5, 12.0));
     }
+
+    #[test]
+    fn segment_quad_centers_the_stroke_on_the_routed_line() {
+        let thickness = 2.0;
+        let q = segment_quad(dvec2(10.0, 50.0), dvec2(30.0, 50.0), thickness);
+        assert_eq!(q.pos.x, 10.0);
+        assert_eq!(q.size.x, 20.0);
+        assert_eq!(q.pos.y, 50.0 - thickness / 2.0);
+        assert_eq!(q.size.y, thickness);
+        assert_eq!(
+            q.pos.y + q.size.y / 2.0,
+            50.0,
+            "Y center on the routed line"
+        );
+        let q = segment_quad(dvec2(70.0, 20.0), dvec2(70.0, 5.0), thickness);
+        assert_eq!(q.pos.y, 5.0);
+        assert_eq!(q.size.y, 15.0);
+        assert_eq!(q.pos.x, 70.0 - thickness / 2.0);
+        assert_eq!(q.size.x, thickness);
+        assert_eq!(
+            q.pos.x + q.size.x / 2.0,
+            70.0,
+            "X center on the routed line"
+        );
+        let q = segment_quad(dvec2(0.0, 0.0), dvec2(8.0, 6.0), thickness);
+        assert_eq!(q.pos, dvec2(0.0, 0.0));
+        assert_eq!(q.size, dvec2(8.0, 6.0));
+    }
+
+    #[test]
+    fn elbow_radius_rounds_only_orthogonal_bends() {
+        let a = dvec2(0.0, 0.0);
+        let v = dvec2(10.0, 0.0);
+        assert_eq!(elbow_radius(a, v, dvec2(10.0, -10.0), 4.0), 4.0);
+        assert_eq!(elbow_radius(a, v, dvec2(10.0, -3.0), 4.0), 1.5);
+        assert_eq!(elbow_radius(a, v, dvec2(20.0, 0.0), 4.0), 0.0);
+        assert_eq!(elbow_radius(a, v, dvec2(20.0, -10.0), 4.0), 0.0);
+        assert_eq!(elbow_radius(a, v, dvec2(0.0, 0.0), 4.0), 0.0);
+    }
+
+    #[test]
+    fn corner_fillet_arc_meets_bars_at_equal_width() {
+        let thickness = 2.0;
+        let a = dvec2(0.0, 0.0);
+        let v = dvec2(10.0, 0.0);
+        let b = dvec2(10.0, -10.0);
+        let in_bar = segment_quad(a, v, thickness);
+        let out_bar = segment_quad(v, b, thickness);
+        let f = corner_fillet(a, v, b, in_bar, out_bar, 4.0).unwrap();
+        assert_eq!(f.radius, 4.0);
+        assert_eq!(f.hw, thickness * 0.5);
+        let to_local = |p: DVec2| dvec2(p.x - f.quad.pos.x, p.y - f.quad.pos.y);
+        let p1 = to_local(dvec2(6.0, 0.0));
+        let p2 = to_local(dvec2(10.0, -4.0));
+        for p in [p1, p2] {
+            let d = ((p.x - f.center.x).powi(2) + (p.y - f.center.y).powi(2)).sqrt();
+            assert!((d - f.radius).abs() < 1e-9, "tangent off the arc: {}", d);
+        }
+        let bx0 = f.bar_in[0] as f64;
+        let bx1 = bx0 + f.bar_in[2] as f64;
+        let by0 = f.bar_in[1] as f64;
+        let by1 = by0 + f.bar_in[3] as f64;
+        assert!((by0 - (p1.y - f.hw)).abs() < 1e-9 && (by1 - (p1.y + f.hw)).abs() < 1e-9);
+        let seal = f.hw * CORNER_STUB_SEAL;
+        assert!(bx0 < p1.x && p1.x < bx1);
+        assert!((bx1 - (p1.x + seal)).abs() < 1e-9);
+        let ox0 = f.bar_out[0] as f64;
+        let ox1 = ox0 + f.bar_out[2] as f64;
+        assert!((ox0 - (p2.x - f.hw)).abs() < 1e-9 && (ox1 - (p2.x + f.hw)).abs() < 1e-9);
+    }
+
+    #[test]
+    fn marker_geometry_puts_the_tip_on_the_endpoint() {
+        let ep = dvec2(100.0, 100.0);
+        let m = marker_geometry(Marker::HollowTriangle, ep, dvec2(1.0, 0.0), 10.0).unwrap();
+        let near = |a: f64, b: f64| (a - b).abs() < 1e-3;
+        let tip = dvec2(
+            m.quad.pos.x + m.v01[0] as f64,
+            m.quad.pos.y + m.v01[1] as f64,
+        );
+        assert!(
+            near(tip.x, ep.x) && near(tip.y, ep.y),
+            "apex on the endpoint"
+        );
+        let bl = dvec2(
+            m.quad.pos.x + m.v01[2] as f64,
+            m.quad.pos.y + m.v01[3] as f64,
+        );
+        assert!(
+            near(bl.x, 90.0) && near(bl.y, 100.0 + 6.2),
+            "base back along -dir, offset by w"
+        );
+        assert_eq!(
+            (m.hollow, m.filled),
+            (1.0, 0.0),
+            "generalization triangle is hollow"
+        );
+    }
+
+    #[test]
+    fn marker_geometry_flags_match_the_glyph() {
+        let ep = dvec2(0.0, 0.0);
+        let d = dvec2(0.0, 1.0);
+        assert_eq!(
+            marker_geometry(Marker::FilledDiamond, ep, d, 8.0).map(|m| (m.hollow, m.filled)),
+            Some((0.0, 1.0))
+        );
+        assert_eq!(
+            marker_geometry(Marker::HollowDiamond, ep, d, 8.0).map(|m| (m.hollow, m.filled)),
+            Some((1.0, 0.0))
+        );
+        assert_eq!(
+            marker_geometry(Marker::OpenArrow, ep, d, 8.0).map(|m| (m.hollow, m.filled)),
+            Some((0.0, 0.0))
+        );
+        assert!(marker_geometry(Marker::None, ep, d, 8.0).is_none());
+        assert!(marker_geometry(Marker::OpenArrow, ep, dvec2(0.0, 0.0), 8.0).is_none());
+    }
+
+    #[test]
+    fn snap_bar_lands_on_the_device_grid() {
+        let q = snap_bar_to_device(
+            Rect {
+                pos: dvec2(10.3, 49.7),
+                size: dvec2(20.4, 0.6),
+            },
+            1.0,
+        );
+        assert_eq!(q.pos, dvec2(10.0, 50.0));
+        assert_eq!(q.size, dvec2(20.0, 1.0));
+        let a = snap_bar_to_device(
+            Rect {
+                pos: dvec2(0.0, 12.2),
+                size: dvec2(30.0, 1.0),
+            },
+            1.0,
+        );
+        let b = snap_bar_to_device(
+            Rect {
+                pos: dvec2(0.0, 12.7),
+                size: dvec2(30.0, 1.0),
+            },
+            1.0,
+        );
+        assert_eq!(a.size, b.size);
+        assert_eq!(a.pos.y.fract(), 0.0);
+        assert_eq!(b.pos.y.fract(), 0.0);
+        let q = snap_bar_to_device(
+            Rect {
+                pos: dvec2(4.1, 4.1),
+                size: dvec2(10.0, 0.5),
+            },
+            2.0,
+        );
+        assert_eq!(q.pos, dvec2(4.0, 4.0));
+        assert_eq!(q.size, dvec2(10.0, 0.5));
+    }
 }
