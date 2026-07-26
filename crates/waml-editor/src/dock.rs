@@ -96,6 +96,57 @@ pub fn slot_width(state: DockState, body_w: f64) -> f64 {
     }
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct ResponsiveDockLayout {
+    pub left_slot: f64,
+    pub right_slot: f64,
+    pub tree_body: f64,
+    pub inspector_body: f64,
+}
+
+pub fn responsive_layout(
+    narrow: bool,
+    viewport_w: f64,
+    tree: DockState,
+    inspector: DockState,
+    tree_w: f64,
+    inspector_w: f64,
+) -> ResponsiveDockLayout {
+    let cap = viewport_w.max(0.0);
+    let tree_body = if tree == DockState::Pinned {
+        if narrow {
+            tree_w.min(cap)
+        } else {
+            tree_w
+        }
+    } else {
+        0.0
+    };
+    let inspector_body = if inspector == DockState::Pinned {
+        if narrow {
+            inspector_w.min(cap)
+        } else {
+            inspector_w
+        }
+    } else {
+        0.0
+    };
+    ResponsiveDockLayout {
+        left_slot: if narrow { 0.0 } else { tree_body },
+        right_slot: if narrow { 0.0 } else { inspector_body },
+        tree_body,
+        inspector_body,
+    }
+}
+
+pub fn narrow_entry_states(tree: DockState, inspector: DockState) -> (DockState, DockState) {
+    if tree == DockState::Pinned && inspector == DockState::Pinned {
+        (tree, DockState::Flag)
+    } else {
+        (tree, inspector)
+    }
+}
+
 /// Whether the panel body (frame + contents) draws at all. `Flag` draws only
 /// the strip.
 pub fn body_visible(state: DockState) -> bool {
@@ -118,6 +169,31 @@ pub fn header_controls_visible(state: DockState) -> bool {
 pub enum DockEdge {
     Left,
     Right,
+}
+
+pub fn narrow_toggle_states(
+    tree: DockState,
+    inspector: DockState,
+    edge: DockEdge,
+) -> (DockState, DockState) {
+    match edge {
+        DockEdge::Left => {
+            let next_tree = next(tree, DockEvent::Toggle);
+            if next_tree == DockState::Pinned {
+                (next_tree, DockState::Flag)
+            } else {
+                (next_tree, inspector)
+            }
+        }
+        DockEdge::Right => {
+            let next_inspector = next(inspector, DockEvent::Toggle);
+            if next_inspector == DockState::Pinned {
+                (DockState::Flag, next_inspector)
+            } else {
+                (tree, next_inspector)
+            }
+        }
+    }
 }
 
 /// The `[lo, hi)` x-interval to treat as "inside the panel" for the `Peek`
@@ -184,6 +260,85 @@ impl PeekTimer {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn wide_and_narrow_layout_use_the_same_dock_states() {
+        let wide = responsive_layout(
+            false,
+            900.0,
+            DockState::Pinned,
+            DockState::Pinned,
+            280.0,
+            320.0,
+        );
+        assert_eq!(
+            wide,
+            ResponsiveDockLayout {
+                left_slot: 280.0,
+                right_slot: 320.0,
+                tree_body: 280.0,
+                inspector_body: 320.0,
+            }
+        );
+        let narrow = responsive_layout(
+            true,
+            390.0,
+            DockState::Pinned,
+            DockState::Flag,
+            280.0,
+            320.0,
+        );
+        assert_eq!(
+            narrow,
+            ResponsiveDockLayout {
+                left_slot: 0.0,
+                right_slot: 0.0,
+                tree_body: 280.0,
+                inspector_body: 0.0,
+            }
+        );
+    }
+
+    #[test]
+    fn narrow_body_width_is_capped_to_the_viewport() {
+        let layout = responsive_layout(
+            true,
+            240.0,
+            DockState::Pinned,
+            DockState::Flag,
+            280.0,
+            320.0,
+        );
+        assert_eq!(layout.tree_body, 240.0);
+    }
+
+    #[test]
+    fn entering_narrow_with_two_open_docks_keeps_tree() {
+        assert_eq!(
+            narrow_entry_states(DockState::Pinned, DockState::Pinned),
+            (DockState::Pinned, DockState::Flag)
+        );
+        assert_eq!(
+            narrow_entry_states(DockState::Flag, DockState::Pinned),
+            (DockState::Flag, DockState::Pinned)
+        );
+    }
+
+    #[test]
+    fn narrow_toggles_are_mutually_exclusive() {
+        assert_eq!(
+            narrow_toggle_states(DockState::Flag, DockState::Pinned, DockEdge::Left),
+            (DockState::Pinned, DockState::Flag)
+        );
+        assert_eq!(
+            narrow_toggle_states(DockState::Pinned, DockState::Flag, DockEdge::Right),
+            (DockState::Flag, DockState::Pinned)
+        );
+        assert_eq!(
+            narrow_toggle_states(DockState::Pinned, DockState::Flag, DockEdge::Left),
+            (DockState::Flag, DockState::Flag)
+        );
+    }
 
     #[test]
     fn transition_table_matches_spec() {

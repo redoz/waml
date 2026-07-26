@@ -393,7 +393,7 @@ const BAR_H: f64 = 56.0;
 // The column's open width, mirroring `tree_panel.rs`'s own slot constant --
 // flush against the window edge, no `FLAG_SQUARE` tab now that the caption
 // `[I]` toggle is the panel's only affordance.
-const INSPECTOR_W: f64 = 320.0;
+pub(crate) const INSPECTOR_W: f64 = 320.0;
 
 /// An association row's display text in the picker popup: just the target end.
 /// The model label is `Source -> Target`, but each edge row is drawn beneath its
@@ -1012,8 +1012,13 @@ impl Inspector {
     }
 
     /// The layout width the app must reserve in the right slot for this panel.
+    #[allow(dead_code)]
     pub fn slot_width(&self) -> f64 {
         crate::dock::slot_width(self.dock, INSPECTOR_W)
+    }
+
+    pub fn drawn_rect(&self, cx: &Cx) -> Rect {
+        self.view.area().rect(cx)
     }
 
     /// Build the picker rows as `SelectItem`s and record their id→index map (for

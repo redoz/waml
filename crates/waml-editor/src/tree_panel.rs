@@ -27,6 +27,8 @@ use crate::tree::{ProjectTree as ProjectTreeData, TreeKind, TreeNode};
 use makepad_widgets::*;
 use std::collections::HashMap;
 
+pub(crate) const PROJECT_TREE_W: f64 = 280.0;
+
 script_mod! {
     use mod.prelude.widgets_internal.*
     use mod.atlas
@@ -938,18 +940,30 @@ impl ProjectTree {
         self.apply_dock(cx, DockEvent::Toggle);
     }
 
+    pub fn open_dock(&mut self, cx: &mut Cx) {
+        self.apply_dock(cx, DockEvent::Open);
+    }
+
+    pub fn close_dock(&mut self, cx: &mut Cx) {
+        self.apply_dock(cx, DockEvent::Close);
+    }
+
     /// The current dock state. Plan-specified symmetry accessor (mirrors
     /// `Inspector::dock_state` from Task 5); no in-crate caller since the app
     /// drives both the slot width and the toggle's lit state off
     /// `slot_width()`, the same number the layout uses.
-    #[allow(dead_code)]
     pub fn dock_state(&self) -> DockState {
         self.dock
     }
 
     /// The layout width the app must reserve in the left slot for this panel.
+    #[allow(dead_code)]
     pub fn slot_width(&self) -> f64 {
-        crate::dock::slot_width(self.dock, 280.0)
+        crate::dock::slot_width(self.dock, PROJECT_TREE_W)
+    }
+
+    pub fn drawn_rect(&self, cx: &Cx) -> Rect {
+        self.view.area().rect(cx)
     }
 
     pub fn set_view(&mut self, cx: &mut Cx, view: NavView) {
