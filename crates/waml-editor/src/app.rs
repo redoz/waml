@@ -1,3 +1,5 @@
+mod actions;
+
 use crate::doc_tabs::{OpenTabs, TabKind};
 use crate::dock::DockState;
 use crate::dock::ResponsiveDockLayout;

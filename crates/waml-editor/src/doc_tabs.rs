@@ -1267,6 +1267,23 @@ mod tests {
     }
 
     #[test]
+    fn classifier_and_source_tabs_for_one_subject_have_distinct_stable_ids() {
+        let classifier = classifier_tab_id("customer");
+        let source = source_tab_id("customer");
+        assert_ne!(classifier, source);
+
+        let mut open = OpenTabs::default();
+        let classifier_open = open.open_preview("customer", "Customer", TreeKind::Class);
+        open.promote(classifier_open);
+        let source_open = open.open_source("customer", "Customer");
+
+        assert_eq!(classifier_open, classifier);
+        assert_eq!(source_open, source);
+        assert_eq!(open.tabs.len(), 2);
+        assert_eq!(open.active, source);
+    }
+
+    #[test]
     fn top_rule_overshoot_tracks_the_right_dock_toggle() {
         // `[I]` is the last child of `tab_row` and the strip is `Fill`, so the
         // strip's right edge moves by exactly the button's width as the button
