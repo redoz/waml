@@ -245,6 +245,8 @@ script_mod! {
         // Terminal adornment pen; shares the edge line color so glyphs read as
         // part of the same stroke.
         draw_marker: mod.draw.EdgeMarker{ color: atlas.text_dim }
+        // Opaque label chip keeps terminal text legible over crossed edge runs.
+        draw_edge_label_bg +: { color: atlas.field_bg }
         // Flat fill pen for card compartment dividers, the header accent wash, and
         // port nubs. The renderer pushes `color` (accent/dim + alpha) per draw.
         draw_rule +: { color: atlas.text_dim }
@@ -259,6 +261,16 @@ script_mod! {
                 font_size: 12
                 font_family: FontFamily{
                     latin := FontMember{res: crate_resource("self:resources/fonts/IBM_Plex_Sans/IBMPlexSans-Regular.ttf") asc: -0.1 desc: 0.0}
+                }
+                line_spacing: 1.2
+            }
+        }
+        draw_edge_label +: {
+            color: atlas.text_dim
+            text_style: TextStyle{
+                font_size: 11
+                font_family: FontFamily{
+                    latin := FontMember{res: crate_resource("self:resources/fonts/IBM_Plex_Mono/IBMPlexMono-Regular.ttf") asc: -0.1 desc: 0.0}
                 }
                 line_spacing: 1.2
             }
@@ -347,6 +359,9 @@ pub struct ClassDiagramSurface {
     draw_marker: DrawColor,
     #[redraw]
     #[live]
+    draw_edge_label_bg: DrawColor,
+    #[redraw]
+    #[live]
     draw_rule: DrawColor,
     #[redraw]
     #[live]
@@ -354,6 +369,9 @@ pub struct ClassDiagramSurface {
     #[redraw]
     #[live]
     draw_text: DrawText,
+    #[redraw]
+    #[live]
+    draw_edge_label: DrawText,
     #[redraw]
     #[live]
     draw_mono_dim: DrawText,
@@ -561,9 +579,11 @@ impl Widget for ClassDiagramSurface {
             draw_edge_down,
             draw_elbow,
             draw_marker,
+            draw_edge_label_bg,
             draw_rule,
             draw_veil,
             draw_text,
+            draw_edge_label,
             draw_mono_dim,
             draw_mono_bold,
             draw_mono_accent,
@@ -588,9 +608,11 @@ impl Widget for ClassDiagramSurface {
             edge: draw_edge_down,
             elbow: draw_elbow,
             marker: draw_marker,
+            edge_label_bg: draw_edge_label_bg,
             rule: draw_rule,
             veil: draw_veil,
             text: draw_text,
+            edge_label: draw_edge_label,
             mono_dim: draw_mono_dim,
             mono_bold: draw_mono_bold,
             mono_accent: draw_mono_accent,

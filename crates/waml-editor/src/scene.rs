@@ -68,6 +68,9 @@ pub struct SceneEdge {
     pub source: Rect,
     pub target: Rect,
     pub kind: RelationshipKind,
+    /// Optional relationship label, carried through so the canvas can apply
+    /// the diagram's `show_labels` policy without reaching back into the model.
+    pub name: Option<waml::model::AssocName>,
     /// Relationship ends (multiplicity, role, navigability), carried verbatim
     /// from `model::Edge`. The router is geometry-only; end adornments
     /// (arrowheads, crowsfoot, multiplicity labels) are chosen downstream from
@@ -569,6 +572,7 @@ pub fn build_scene(
                 source,
                 target,
                 kind: e.kind,
+                name: e.name.clone(),
                 from_end: e.from_end.clone(),
                 to_end: e.to_end.clone(),
                 points,

@@ -20,6 +20,7 @@ mod doc_tabs;
 mod doc_view;
 mod dock;
 mod document_host;
+mod edge_labels;
 mod editor_session;
 mod fonts;
 mod fonts_overlay;
@@ -60,3 +61,130 @@ mod script_gate;
 use app::App;
 
 app_main!(App);
+
+#[cfg(test)]
+mod edge_labels_tests {
+    use crate::diagram_display::ResolvedDiagramDisplay;
+    use crate::edge_labels::{edge_end_labels, LabelAlign};
+    use crate::scene::SceneEdge;
+    use waml::model::{CardinalityVisibility, RelEnd, RelationshipKind};
+    use waml::multiplicity::Multiplicity;
+    use waml::solve::Rect;
+
+    fn display(cardinality: CardinalityVisibility) -> ResolvedDiagramDisplay {
+        ResolvedDiagramDisplay {
+            cardinality,
+            ..Default::default()
+        }
+    }
+
+    fn edge(kind: RelationshipKind, from_end: RelEnd, to_end: RelEnd) -> SceneEdge {
+        SceneEdge {
+            source: Rect {
+                x: 0.0,
+                y: 0.0,
+                w: 20.0,
+                h: 20.0,
+            },
+            target: Rect {
+                x: 100.0,
+                y: 0.0,
+                w: 20.0,
+                h: 20.0,
+            },
+            kind,
+            name: None,
+            from_end,
+            to_end,
+            points: vec![(20.0, 10.0), (100.0, 10.0)],
+        }
+    }
+
+    fn ended_edge(from: Option<Multiplicity>, to: Option<Multiplicity>) -> SceneEdge {
+        edge(
+            RelationshipKind::Associates,
+            RelEnd {
+                multiplicity: from,
+                ..Default::default()
+            },
+            RelEnd {
+                multiplicity: to,
+                ..Default::default()
+            },
+        )
+    }
+
+    fn texts(labels: Vec<crate::edge_labels::EdgeLabel>) -> Vec<String> {
+        labels.into_iter().map(|label| label.text).collect()
+    }
+
+    #[test]
+    fn edge_cardinality_uses_the_shared_three_state_policy() {
+        let edge = ended_edge(None, Multiplicity::parse("0..*"));
+        assert!(edge_end_labels(&edge, &display(CardinalityVisibility::Off)).is_empty());
+        assert_eq!(
+            texts(edge_end_labels(
+                &edge,
+                &display(CardinalityVisibility::Explicit)
+            )),
+            vec!["{0..*}"]
+        );
+        assert_eq!(
+            texts(edge_end_labels(&edge, &display(CardinalityVisibility::All))),
+            vec!["{1}", "{0..*}"]
+        );
+    }
+
+    #[test]
+    fn non_ended_relationships_never_synthesize_default_ends() {
+        let edge = edge(
+            RelationshipKind::Specializes,
+            RelEnd::default(),
+            RelEnd::default(),
+        );
+        assert!(edge_end_labels(&edge, &display(CardinalityVisibility::All)).is_empty());
+    }
+
+    #[test]
+    fn roles_and_relationship_names_follow_their_display_switches() {
+        let mut edge = ended_edge(None, None);
+        edge.from_end.role = Some("orders".into());
+        edge.name = Some(waml::model::AssocName::Label("places".into()));
+        let mut display = display(CardinalityVisibility::Off);
+        display.show_roles = false;
+        display.show_labels = false;
+        assert!(edge_end_labels(&edge, &display).is_empty());
+
+        display.show_roles = true;
+        assert_eq!(texts(edge_end_labels(&edge, &display)), vec!["orders"]);
+
+        display.show_labels = true;
+        assert_eq!(
+            texts(edge_end_labels(&edge, &display)),
+            vec!["orders", "places"]
+        );
+    }
+
+    #[test]
+    fn horizontal_terminal_labels_move_into_open_space() {
+        let labels = edge_end_labels(
+            &ended_edge(Multiplicity::parse("1"), Multiplicity::parse("0..*")),
+            &display(CardinalityVisibility::All),
+        );
+        assert_eq!(labels[0].align, LabelAlign::Right);
+        assert!(labels[0].anchor.0 > 20.0);
+        assert_eq!(labels[1].align, LabelAlign::Left);
+        assert!(labels[1].anchor.0 < 100.0);
+    }
+
+    #[test]
+    fn vertical_terminal_labels_move_into_open_space() {
+        let mut edge = ended_edge(Multiplicity::parse("1"), Multiplicity::parse("0..*"));
+        edge.points = vec![(10.0, 20.0), (10.0, 100.0)];
+        let labels = edge_end_labels(&edge, &display(CardinalityVisibility::All));
+        assert_eq!(labels[0].align, LabelAlign::Below);
+        assert!(labels[0].anchor.1 > 20.0);
+        assert_eq!(labels[1].align, LabelAlign::Above);
+        assert!(labels[1].anchor.1 < 100.0);
+    }
+}

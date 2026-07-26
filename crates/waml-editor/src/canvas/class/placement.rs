@@ -857,6 +857,7 @@ mod tests {
             source: scene.nodes[0].rect,
             target: scene.nodes[1].rect,
             kind: RelationshipKind::Associates,
+            name: None,
             from_end: RelEnd::default(),
             to_end: RelEnd::default(),
             points: vec![(40.0, 30.0), (40.0, 90.0), (160.0, 90.0), (160.0, 30.0)],

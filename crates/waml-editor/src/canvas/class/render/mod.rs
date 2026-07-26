@@ -1,5 +1,6 @@
 mod edges;
 mod groups;
+mod labels;
 mod nodes;
 mod overlays;
 mod primitives;
@@ -23,16 +24,18 @@ pub(super) enum RenderPass {
     Background,
     Groups,
     Edges,
+    EdgeLabels,
     Nodes,
     Relations,
     ConflictFocus,
     Placement,
 }
 
-pub(super) const PASS_ORDER: [RenderPass; 7] = [
+pub(super) const PASS_ORDER: [RenderPass; 8] = [
     RenderPass::Background,
     RenderPass::Groups,
     RenderPass::Edges,
+    RenderPass::EdgeLabels,
     RenderPass::Nodes,
     RenderPass::Relations,
     RenderPass::ConflictFocus,
@@ -49,6 +52,7 @@ pub(super) fn draw(
             RenderPass::Background => draws.bg.draw_abs(cx, snapshot.viewport.view_rect),
             RenderPass::Groups => groups::draw_groups(cx, snapshot, draws),
             RenderPass::Edges => edges::draw_edges(cx, snapshot, draws),
+            RenderPass::EdgeLabels => labels::draw_edge_labels(cx, snapshot, draws),
             RenderPass::Nodes => nodes::draw_nodes(cx, snapshot, draws),
             RenderPass::Relations => relations::draw_relations(cx, snapshot, draws),
             RenderPass::ConflictFocus => overlays::draw_conflict_focus(cx, snapshot, draws),
@@ -69,6 +73,7 @@ mod tests {
                 RenderPass::Background,
                 RenderPass::Groups,
                 RenderPass::Edges,
+                RenderPass::EdgeLabels,
                 RenderPass::Nodes,
                 RenderPass::Relations,
                 RenderPass::ConflictFocus,
