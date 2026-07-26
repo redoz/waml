@@ -1416,7 +1416,7 @@ impl App {
                     .widget(cx, ids!(canvas))
                     .borrow_mut::<crate::canvas::ClassDiagramSurface>()
                 {
-                    canvas.set_scene(cx, crate::scene::Scene::default());
+                    canvas.clear(cx);
                 }
                 self.tabs = OpenTabs::default();
                 self.refresh_doc_tabs(cx);

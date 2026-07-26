@@ -2977,6 +2977,10 @@ impl ClassDiagramSurface {
         }
     }
 
+    pub fn clear(&mut self, cx: &mut Cx) {
+        self.set_scene(cx, Scene::default());
+    }
+
     pub fn set_scene(&mut self, cx: &mut Cx, scene: Scene) {
         self.scene = scene;
         // A glide aimed at the old scene's bbox is meaningless now; the
@@ -4344,5 +4348,17 @@ mod tests {
             reframe_to_selected("a", "b", Direction::Below, Some("c")),
             ("a", "b", Direction::Below)
         );
+    }
+
+    #[test]
+    fn clear_delegates_to_the_existing_empty_scene_reset() {
+        let _: fn(&mut ClassDiagramSurface, &mut Cx) = ClassDiagramSurface::clear;
+        let src = include_str!("widget.rs");
+        let body = src
+            .split_once("    pub fn clear(&mut self, cx: &mut Cx) {")
+            .and_then(|(_, rest)| rest.split_once("\n    }"))
+            .map(|(body, _)| body.trim())
+            .expect("ClassDiagramSurface must expose clear");
+        assert_eq!(body, "self.set_scene(cx, Scene::default());");
     }
 }
