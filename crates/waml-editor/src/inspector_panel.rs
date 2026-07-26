@@ -403,6 +403,16 @@ fn edge_target(label: &str) -> &str {
     label.rsplit(" -> ").next().unwrap_or(label)
 }
 
+/// The `SelectBox` item index for `subject`. Item index == element index --
+/// every element row becomes an item, the row-0 diagram included, so there is no
+/// sentinel to shift past. `None` only for an empty element list, where
+/// `subject_to_index`'s 0 would point past the end. Both the picker's feeders
+/// (`set_diagram_elements` and `set_subject`) go through here so they cannot
+/// drift apart again.
+fn selected_item_index(elements: &[ElementRow], subject: &Subject) -> Option<usize> {
+    (!elements.is_empty()).then(|| subject_to_index(elements, subject))
+}
+
 /// The leading orientation glyph for a relationship card. Unicode arrows
 /// (\u{2192} / \u{2190} / \u{2194}); if IBM Plex Sans renders any as tofu on the
 /// running native app, swap these three literals for the ASCII forms
@@ -948,8 +958,7 @@ impl Inspector {
         // of the selected subject.
         // Re-mark the box's selection so a pick made elsewhere (canvas/tree)
         // shows up in the picker bar too.
-        let sel = subject_to_index(&self.elements, &self.subject);
-        let sel_in_items = if sel == 0 { None } else { Some(sel - 1) };
+        let sel_in_items = selected_item_index(&self.elements, &self.subject);
         if let Some(mut b) = self
             .view
             .widget(cx, ids!(element_bar.select_box))
@@ -1078,11 +1087,7 @@ impl Inspector {
         // Feeding diagram rows implies a diagram tab: show the picker bar.
         self.show_picker = true;
         let items = self.build_select_items(model);
-        // Item index == element index (no skipped sentinel row). `None` only
-        // when there are no rows at all -- `subject_to_index` would answer 0,
-        // which would point past the end of an empty item list.
-        let sel_in_items =
-            (!self.elements.is_empty()).then(|| subject_to_index(&self.elements, &self.subject));
+        let sel_in_items = selected_item_index(&self.elements, &self.subject);
         if let Some(mut b) = self
             .view
             .widget(cx, ids!(element_bar.select_box))
@@ -1243,6 +1248,56 @@ impl Inspector {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn rows() -> Vec<ElementRow> {
+        vec![
+            ElementRow {
+                key: "d1".into(),
+                label: "Orders".into(),
+                kind: ElementKind::Diagram,
+            },
+            ElementRow {
+                key: "Customer".into(),
+                label: "Customer".into(),
+                kind: ElementKind::Node,
+            },
+            ElementRow {
+                key: "Order".into(),
+                label: "Order".into(),
+                kind: ElementKind::Node,
+            },
+        ]
+    }
+
+    // The box label is drawn from `items[selected]`, so a selection that is off
+    // by one shows the PREVIOUS row's name over the right body -- the sentinel
+    // row is gone, and with it the shift that used to compensate for it.
+    #[test]
+    fn selected_item_index_does_not_shift_past_a_sentinel() {
+        let rows = rows();
+        assert_eq!(
+            selected_item_index(&rows, &Subject::Classifier("Order".into())),
+            Some(2)
+        );
+    }
+
+    // Row 0 is the diagram and is pickable; answering `None` here would blank
+    // the box instead of naming the diagram.
+    #[test]
+    fn selected_item_index_resolves_the_row_zero_diagram() {
+        let rows = rows();
+        assert_eq!(
+            selected_item_index(&rows, &Subject::Diagram("d1".into())),
+            Some(0)
+        );
+        // `Subject::None` falls back to the diagram too.
+        assert_eq!(selected_item_index(&rows, &Subject::None), Some(0));
+    }
+
+    #[test]
+    fn selected_item_index_is_none_for_an_empty_list() {
+        assert_eq!(selected_item_index(&[], &Subject::None), None);
+    }
 
     #[test]
     fn edge_target_returns_target_end() {
