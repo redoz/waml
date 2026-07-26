@@ -1,28 +1,28 @@
 //! `ClassifierPreviewView` — the single-element preview (focus canvas + inspector-
 //! without-picker, no tool dock). Real behavior lands in Task 4.
 
-use makepad_widgets::*;
-use waml::model::Model;
-
-use crate::doc_tabs::DocTab;
-use crate::doc_view::{BodyWidgets, DocView, ViewOutcome};
+use crate::doc_view::{BodyChrome, BodyWidgets, DocView, ViewData, ViewOutcome};
 use crate::icons::Icon;
 use crate::inspector::Subject;
 use crate::scene::build_focus_scene;
+use crate::tree::TreeKind;
+use makepad_widgets::*;
 
 pub struct ClassifierPreviewView {
-    /// The previewed classifier/package key.
     key: String,
+    node_kind: TreeKind,
 }
 
 impl ClassifierPreviewView {
-    pub fn new(key: String) -> ClassifierPreviewView {
-        ClassifierPreviewView { key }
+    pub fn new(key: String, node_kind: TreeKind) -> ClassifierPreviewView {
+        ClassifierPreviewView { key, node_kind }
     }
 }
 
 impl DocView for ClassifierPreviewView {
-    fn sync(&mut self, cx: &mut Cx, body: &BodyWidgets, model: &Model) {
+    fn sync(&mut self, cx: &mut Cx, body: &BodyWidgets, data: ViewData<'_>) {
+        body.show_canvas(cx);
+        let model = data.model;
         let scene = build_focus_scene(model, &self.key);
         if let Some(mut canvas) = body
             .canvas(cx)
@@ -57,8 +57,9 @@ impl DocView for ClassifierPreviewView {
         cx: &mut Cx,
         body: &BodyWidgets,
         actions: &Actions,
-        model: &Model,
+        data: ViewData<'_>,
     ) -> ViewOutcome {
+        let model = data.model;
         let mut out = ViewOutcome::default();
 
         // Inline-edit commit: promote (pin) this preview tab.
@@ -124,22 +125,15 @@ impl DocView for ClassifierPreviewView {
     /// on the canvas -- so the tab's accent names *what* is open, not just that
     /// something is. A plain class and an unresolved type have no swatch of
     /// their own, so those keep the theme accent.
-    fn tab_accent(&self, tab: &DocTab) -> Option<Vec4> {
-        crate::accent::tree_kind_color(tab.node_kind)
+    fn chrome(&self) -> BodyChrome {
+        BodyChrome {
+            tool_dock: false,
+            view_bar: false,
+            right_dock: Some(Icon::SlidersHorizontal),
+        }
     }
 
-    fn wants_tooldock(&self) -> bool {
-        false
-    }
-
-    /// The shared `inspector` widget: this view points it at the previewed
-    /// classifier (picker hidden), so its caption toggle wears the
-    /// properties sliders glyph.
-    fn right_dock(&self) -> Option<Icon> {
-        Some(Icon::SlidersHorizontal)
-    }
-
-    fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
-        self
+    fn tab_accent(&self) -> Option<Vec4> {
+        crate::accent::tree_kind_color(self.node_kind)
     }
 }

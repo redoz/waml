@@ -653,17 +653,9 @@ impl App {
     fn sync_active_tab(&mut self, cx: &mut Cx) {
         self.reconcile_views();
         let active = self.tabs.active_tab().cloned();
-        // Tool dock + view bar are per-view chrome, so decide them up front --
-        // including for the no-active-tab case (every doc tab is closable). A
-        // bar left on screen with no tab keeps flipping its own toggles over a
-        // stale canvas while `handle_actions` skips the `DocView` delegate,
-        // permanently desyncing bar and canvas.
         let body = crate::doc_view::BodyWidgets::new(cx, &self.ui);
-        let chrome = crate::doc_view::body_chrome(active.as_ref());
-        body.set_tool_dock_visible(cx, chrome.tool_dock);
-        body.set_view_bar_visible(cx, chrome.view_bar);
-        self.sync_right_dock_btn(cx, chrome.right_dock);
         let Some(active) = active else {
+            body.apply_chrome(cx, crate::doc_view::BodyChrome::HIDDEN);
             if let Some(mut panel) = self
                 .ui
                 .widget(cx, ids!(project_tree))
@@ -683,32 +675,25 @@ impl App {
             panel.set_selected_key(cx, Some(active.key.clone()));
         }
 
-        // Source tabs render markdown, not a diagram: show the `source_view`
-        // slot and hide the whole canvas render (mutually exclusive). Diagram
-        // + Preview tabs both drive the shared canvas, so it stays visible for
-        // anything that isn't a Source tab.
-        let is_source = active.kind == TabKind::Source;
-        body.source_view(cx).set_visible(cx, is_source);
-        self.ui
-            .widget(cx, ids!(canvas_wrap))
-            .set_visible(cx, !is_source);
-        if is_source {
-            let md = crate::load::source_for(self.session.bundle(), &active.key)
-                .map(str::to_string)
-                .unwrap_or_else(|| format!("*No source for `{}`*", active.key));
-            self.ui
-                .widget(cx, ids!(source_view.md))
-                .as_markdown()
-                .set_text(cx, &md);
-        }
+        let data = crate::doc_view::ViewData {
+            model: self.session.model(),
+            bundle: self.session.bundle(),
+            revision: self.session.revision(),
+        };
         let view = self
             .views
             .entry(active.id)
             .or_insert_with(|| crate::doc_view::make_view(&active));
-        if let Some(v) = view.downcast_diagram() {
-            v.set_active(active.key.clone(), active.title.clone());
+        let accent = view.tab_accent();
+        body.apply_chrome(cx, view.chrome());
+        view.sync(cx, &body, data);
+        if let Some(mut doc_tabs) = self
+            .ui
+            .widget(cx, ids!(doc_tabs))
+            .borrow_mut::<crate::doc_tabs::DocTabs>()
+        {
+            doc_tabs.set_active_accent(cx, accent);
         }
-        view.sync(cx, &body, self.session.model());
 
         self.sync_statusbar(cx);
         self.sync_conflict_badge(cx);
@@ -721,9 +706,11 @@ impl App {
             .borrow_mut::<crate::doc_tabs::DocTabs>()
         {
             doc_tabs.set_tabs(cx, &self.tabs);
-            // The active tab's accent bar is the view's to colour, so ask it
-            // here -- the one place every tab mutation funnels through.
-            doc_tabs.set_active_accent(cx, crate::doc_view::tab_accent(self.tabs.active_tab()));
+            let accent = self
+                .views
+                .get(&self.tabs.active)
+                .and_then(|view| view.tab_accent());
+            doc_tabs.set_active_accent(cx, accent);
         }
     }
 
@@ -1076,38 +1063,6 @@ impl App {
     ///
     /// The strip's top rule also overshoots by the button's width, so the same
     /// verdict is pushed to `DocTabs` (see `doc_tabs::rule_x_end`).
-    fn sync_right_dock_btn(&mut self, cx: &mut Cx, glyph: Option<crate::icons::Icon>) {
-        let btn = self.ui.widget(cx, ids!(inspector_btn));
-        // While hidden the button's `Area` is never assigned a draw-list id, so
-        // the scoped redraw inside `set_visible` is a no-op -- force a full
-        // repaint on the flip, the same guard `DocTabs::set_visible` carries.
-        // The tab strip's turtle changes width with the button, so the top
-        // rule's overshoot depends on this relayout actually happening.
-        if btn.visible() != glyph.is_some() {
-            btn.set_visible(cx, glyph.is_some());
-            cx.redraw_all();
-        }
-        if let Some(icon) = glyph {
-            btn.as_icon_button().set_icon(cx, icon);
-        }
-        if let Some(mut tabs) = self
-            .ui
-            .widget(cx, ids!(doc_tabs))
-            .borrow_mut::<crate::doc_tabs::DocTabs>()
-        {
-            tabs.set_right_dock_btn(cx, glyph.is_some());
-        }
-        if glyph.is_none() {
-            if let Some(mut panel) = self
-                .ui
-                .widget(cx, ids!(inspector))
-                .borrow_mut::<crate::inspector_panel::Inspector>()
-            {
-                panel.close_dock(cx);
-            }
-        }
-    }
-
     /// Push the launch-flag marks into `AgentMark`. Called at startup AND from
     /// `rehydrate`: the `T` theme toggle goes through `cx.request_live_edit()`
     /// -> `Apply::Reload`, which resets the widget's `#[rust]` state, so without
@@ -1472,11 +1427,13 @@ impl App {
         // Tool dock and view bar are both per-view chrome: `open_dir` can leave
         // the model with no diagram tab at all, so run them through the same
         // `body_chrome` decision `sync_active_tab` uses.
-        let chrome = crate::doc_view::body_chrome(self.tabs.active_tab());
+        let chrome = self
+            .views
+            .get(&self.tabs.active)
+            .map(|view| view.chrome())
+            .unwrap_or(crate::doc_view::BodyChrome::HIDDEN);
         let body = crate::doc_view::BodyWidgets::new(cx, &self.ui);
-        body.set_tool_dock_visible(cx, chrome.tool_dock);
-        body.set_view_bar_visible(cx, chrome.view_bar);
-        self.sync_right_dock_btn(cx, chrome.right_dock);
+        body.apply_chrome(cx, chrome);
 
         // Diagram switcher (U7): push the active tab's current diagram title into
         // the trigger chip (empty when the model carries no diagram).
@@ -1616,7 +1573,8 @@ impl App {
         // casing the button, so the start screen can't strand a stale `[I]`
         // from the model that was just closed. (`show_start_screen` does not
         // run `sync_active_tab`, which is where the push otherwise happens.)
-        self.sync_right_dock_btn(cx, crate::doc_view::body_chrome(None).right_dock);
+        let body = crate::doc_view::BodyWidgets::new(cx, &self.ui);
+        body.apply_chrome(cx, crate::doc_view::BodyChrome::HIDDEN);
         // Clear the stale model title: the caption bar keeps drawing (logo +
         // name) even with no model open, so a leftover name reads as if the
         // closed model were still loaded.
@@ -2174,14 +2132,14 @@ impl MatchEvent for App {
             // access itself stays in the shell).
             if let Some(result) = picker_closed {
                 if let Some(active) = self.tabs.active_tab().cloned() {
+                    let data = crate::doc_view::ViewData {
+                        model: self.session.model(),
+                        bundle: self.session.bundle(),
+                        revision: self.session.revision(),
+                    };
                     if let Some(view) = self.views.get_mut(&active.id) {
-                        let outcome = view.on_popup_result(
-                            cx,
-                            &body,
-                            self.session.model(),
-                            live_id!(element_picker),
-                            result,
-                        );
+                        let outcome =
+                            view.on_popup_result(cx, &body, data, live_id!(element_picker), result);
                         self.relay_outcome(cx, &active, outcome);
                     }
                 }
@@ -2193,28 +2151,28 @@ impl MatchEvent for App {
             // close is what turns the last armed zone into an `Op`.
             if let Some(id) = dial_armed {
                 if let Some(active) = self.tabs.active_tab().cloned() {
+                    let data = crate::doc_view::ViewData {
+                        model: self.session.model(),
+                        bundle: self.session.bundle(),
+                        revision: self.session.revision(),
+                    };
                     if let Some(view) = self.views.get_mut(&active.id) {
-                        let outcome = view.on_popup_armed(
-                            cx,
-                            &body,
-                            self.session.model(),
-                            live_id!(place_dial),
-                            id,
-                        );
+                        let outcome =
+                            view.on_popup_armed(cx, &body, data, live_id!(place_dial), id);
                         self.relay_outcome(cx, &active, outcome);
                     }
                 }
             }
             if let Some(result) = dial_closed {
                 if let Some(active) = self.tabs.active_tab().cloned() {
+                    let data = crate::doc_view::ViewData {
+                        model: self.session.model(),
+                        bundle: self.session.bundle(),
+                        revision: self.session.revision(),
+                    };
                     if let Some(view) = self.views.get_mut(&active.id) {
-                        let outcome = view.on_popup_result(
-                            cx,
-                            &body,
-                            self.session.model(),
-                            live_id!(place_dial),
-                            result,
-                        );
+                        let outcome =
+                            view.on_popup_result(cx, &body, data, live_id!(place_dial), result);
                         self.relay_outcome(cx, &active, outcome);
                     }
                 }
@@ -2259,16 +2217,17 @@ impl MatchEvent for App {
                 // action, which this arm's guard already excludes.
                 if let Some(op) = place_rm_for(&diagram, &action) {
                     match self.session.apply_ops(&[op]) {
-                        Ok(_change) => {
+                        Ok(change) => {
                             // Re-solve the active diagram view in place (camera
                             // held) — same path as the drag-place apply above.
                             if let Some(active) = self.tabs.active_tab().cloned() {
-                                if let Some(v) = self
-                                    .views
-                                    .get_mut(&active.id)
-                                    .and_then(|v| v.downcast_diagram())
-                                {
-                                    v.resolve_active(cx, &body, self.session.model());
+                                let data = crate::doc_view::ViewData {
+                                    model: self.session.model(),
+                                    bundle: self.session.bundle(),
+                                    revision: self.session.revision(),
+                                };
+                                if let Some(view) = self.views.get_mut(&active.id) {
+                                    view.after_session_change(cx, &body, data, change);
                                 }
                             }
                             self.sync_conflict_badge(cx);
@@ -2540,14 +2499,16 @@ impl MatchEvent for App {
         // `DocView::handle`; the shell only relays the returned `ViewOutcome`.
         // No active tab (start screen / diagram-less model) simply skips this.
         if let Some(active) = self.tabs.active_tab().cloned() {
+            let data = crate::doc_view::ViewData {
+                model: self.session.model(),
+                bundle: self.session.bundle(),
+                revision: self.session.revision(),
+            };
             let view = self
                 .views
                 .entry(active.id)
                 .or_insert_with(|| crate::doc_view::make_view(&active));
-            if let Some(v) = view.downcast_diagram() {
-                v.set_active(active.key.clone(), active.title.clone());
-            }
-            let outcome = view.handle(cx, &body, actions, self.session.model());
+            let outcome = view.handle(cx, &body, actions, data);
             if self.relay_outcome(cx, &active, outcome) {
                 return;
             }
@@ -2744,7 +2705,11 @@ impl App {
 
         // Read the right-dock request BEFORE the owned `outcome`'s fields are
         // moved out below (`popup`, `promote_subject`, `open_preview` all move).
-        let open_right_dock = crate::doc_view::right_dock_open_requested(&outcome, Some(active));
+        let open_right_dock = outcome.open_right_dock
+            && self
+                .views
+                .get(&active.id)
+                .is_some_and(|view| view.chrome().right_dock.is_some());
 
         // A view emits `Op`s (drag-to-place authors a `## Layout` placement);
         // the shell owns the Model, so it applies them against the retained
@@ -2755,14 +2720,15 @@ impl App {
         // too.
         if !outcome.ops.is_empty() {
             match self.session.apply_ops(&outcome.ops) {
-                Ok(_change) => {
+                Ok(change) => {
                     let body = crate::doc_view::BodyWidgets::new(cx, &self.ui);
-                    if let Some(v) = self
-                        .views
-                        .get_mut(&active.id)
-                        .and_then(|v| v.downcast_diagram())
-                    {
-                        v.resolve_active(cx, &body, self.session.model());
+                    let data = crate::doc_view::ViewData {
+                        model: self.session.model(),
+                        bundle: self.session.bundle(),
+                        revision: self.session.revision(),
+                    };
+                    if let Some(view) = self.views.get_mut(&active.id) {
+                        view.after_session_change(cx, &body, data, change);
                     }
                     self.sync_conflict_badge(cx);
                     self.mark_dirty(cx);

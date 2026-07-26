@@ -11,6 +11,16 @@
 #![allow(dead_code)]
 
 use makepad_widgets::*;
+use waml::model::Model;
+use waml::ops::Op;
+
+use crate::doc_tabs::{DocTab, TabKind};
+use crate::editor_session::SessionChange;
+use crate::icon_button::IconButtonWidgetRefExt;
+use crate::icons::Icon;
+use crate::popup::base::PopupItem;
+use crate::popup::base::PopupResult;
+use crate::popup::select::SelectItem;
 
 /// Typed handles to the single shared body surface (canvas + inspector + tool
 /// dock + selection toolbar) the active `DocView` renders through. Cheap: holds
@@ -62,16 +72,54 @@ impl BodyWidgets {
             .widget(cx, ids!(view_bar_wrap))
             .set_visible(cx, show);
     }
+
+    pub fn show_canvas(&self, cx: &mut Cx) {
+        self.source_view(cx).set_visible(cx, false);
+        self.ui.widget(cx, ids!(canvas_wrap)).set_visible(cx, true);
+    }
+
+    pub fn show_source(&self, cx: &mut Cx) {
+        self.source_view(cx).set_visible(cx, true);
+        self.ui.widget(cx, ids!(canvas_wrap)).set_visible(cx, false);
+    }
+
+    pub fn set_source_markdown(&self, cx: &mut Cx, markdown: &str) {
+        self.ui
+            .widget(cx, ids!(source_view.md))
+            .as_markdown()
+            .set_text(cx, markdown);
+    }
+
+    pub fn apply_chrome(&self, cx: &mut Cx, chrome: BodyChrome) {
+        self.set_tool_dock_visible(cx, chrome.tool_dock);
+        self.set_view_bar_visible(cx, chrome.view_bar);
+
+        let button = self.ui.widget(cx, ids!(inspector_btn));
+        if button.visible() != chrome.right_dock.is_some() {
+            button.set_visible(cx, chrome.right_dock.is_some());
+            cx.redraw_all();
+        }
+        if let Some(icon) = chrome.right_dock {
+            button.as_icon_button().set_icon(cx, icon);
+        }
+        if let Some(mut tabs) = self
+            .ui
+            .widget(cx, ids!(doc_tabs))
+            .borrow_mut::<crate::doc_tabs::DocTabs>()
+        {
+            tabs.set_right_dock_btn(cx, chrome.right_dock.is_some());
+        }
+        if chrome.right_dock.is_none() {
+            if let Some(mut panel) = self
+                .ui
+                .widget(cx, ids!(inspector))
+                .borrow_mut::<crate::inspector_panel::Inspector>()
+            {
+                panel.close_dock(cx);
+            }
+        }
+    }
 }
-
-use waml::model::Model;
-use waml::ops::Op;
-
-use crate::doc_tabs::{DocTab, TabKind};
-use crate::icons::Icon;
-use crate::popup::base::PopupItem;
-use crate::popup::base::PopupResult;
-use crate::popup::select::SelectItem;
 
 /// What a view hands back to the shell per interaction. The shell is the only
 /// place that applies ops, opens tabs, and places popups (spec §3).
@@ -129,106 +177,70 @@ pub enum PopupRequest {
     Dismiss,
 }
 
-/// One open document tab's behavior + live state. Shell-owned, one per tab.
-pub trait DocView {
-    /// Push this view's state into the shared body surface from a read-only
-    /// `Model`. Imperative (plain `Cx`), like the shell's old `sync_active_tab`.
-    fn sync(&mut self, cx: &mut Cx, body: &BodyWidgets, model: &Model);
+#[derive(Clone, Copy)]
+pub struct ViewData<'a> {
+    pub model: &'a Model,
+    pub bundle: &'a [(String, String)],
+    pub revision: u64,
+}
 
-    /// Consume tab-routed actions; return intent upward.
+pub trait DocView {
+    fn sync(&mut self, cx: &mut Cx, body: &BodyWidgets, data: ViewData<'_>);
+
     fn handle(
         &mut self,
         cx: &mut Cx,
         body: &BodyWidgets,
         actions: &Actions,
-        model: &Model,
+        data: ViewData<'_>,
     ) -> ViewOutcome;
 
-    /// A document-scoped popup this view requested has closed; route its result
-    /// back down. `popup_root` is read by the shell; only the result crosses.
     fn on_popup_result(
         &mut self,
         cx: &mut Cx,
         body: &BodyWidgets,
-        model: &Model,
+        data: ViewData<'_>,
         tag: LiveId,
         result: PopupResult,
     ) -> ViewOutcome {
-        let _ = (cx, body, model, tag, result);
+        let _ = (cx, body, data, tag, result);
         ViewOutcome::default()
     }
 
-    /// The armed (hovered) item of a popup this view requested changed, while
-    /// it is still open. Lets a view preview a choice before it commits (the
-    /// placement dial animates the candidate layout). `id: None` = nothing
-    /// armed.
     fn on_popup_armed(
         &mut self,
         cx: &mut Cx,
         body: &BodyWidgets,
-        model: &Model,
+        data: ViewData<'_>,
         tag: LiveId,
         id: Option<LiveId>,
     ) -> ViewOutcome {
-        let _ = (cx, body, model, tag, id);
+        let _ = (cx, body, data, tag, id);
         ViewOutcome::default()
     }
 
-    /// The colour of the accent bar the tab strip paints along the top of this
-    /// view's tab while it is selected. `None` keeps the theme accent -- the
-    /// DSL default on `DocTabs::draw_accent` -- so a view only implements this
-    /// when it has something of its own to say.
-    ///
-    /// Takes the tab because a view's identity often lives there rather than in
-    /// the view object: a classifier preview knows its subject *key*, but the
-    /// resolved kind that picks the colour is already on the tab, and reaching
-    /// it from the key would mean threading `&Model` in for one swatch.
-    fn tab_accent(&self, tab: &DocTab) -> Option<Vec4> {
-        let _ = tab;
-        None
+    fn after_session_change(
+        &mut self,
+        cx: &mut Cx,
+        body: &BodyWidgets,
+        data: ViewData<'_>,
+        _change: SessionChange,
+    ) {
+        self.sync(cx, body, data);
     }
 
-    /// Does this view drive the left tool dock? (diagram: yes, preview: no)
-    fn wants_tooldock(&self) -> bool;
+    fn chrome(&self) -> BodyChrome;
 
-    /// Does this view route the bottom-centre view bar? Only a view whose
-    /// `handle` reads `view_bar_action` may show it -- otherwise the bar flips
-    /// its own toggle state with nothing acting on it and desyncs from the
-    /// canvas. Diagram: yes; preview/source: no.
-    fn wants_view_bar(&self) -> bool {
-        false
-    }
-
-    /// The right-hand docked panel this view drives, and the glyph its caption
-    /// toggle wears. `None` -> no right dock; the shell hides the toggle.
-    ///
-    /// The view declares *whether* and *which glyph*, and nothing else:
-    /// open/closed state, slot width, button placement and lit state are all
-    /// the app's. Shaped so a later view can name its own panel without any
-    /// shell change.
-    fn right_dock(&self) -> Option<Icon> {
+    fn tab_accent(&self) -> Option<Vec4> {
         None
     }
 
     fn on_activate(&mut self, cx: &mut Cx, body: &BodyWidgets) {
         let _ = (cx, body);
     }
+
     fn on_deactivate(&mut self, cx: &mut Cx, body: &BodyWidgets) {
         let _ = (cx, body);
-    }
-
-    /// Downcast seam so the shell can reach `ClassDiagramView::set_active`
-    /// before `sync`/`handle` without widening the trait with a diagram-only
-    /// method. `{ self }` on every concrete view.
-    fn as_any_mut(&mut self) -> &mut dyn std::any::Any;
-}
-
-impl dyn DocView {
-    /// Downcast helper so the shell can push the active diagram key/title
-    /// before sync. Returns `None` for a preview view.
-    pub fn downcast_diagram(&mut self) -> Option<&mut crate::class_diagram_view::ClassDiagramView> {
-        self.as_any_mut()
-            .downcast_mut::<crate::class_diagram_view::ClassDiagramView>()
     }
 }
 
@@ -244,55 +256,31 @@ pub struct BodyChrome {
     pub right_dock: Option<Icon>,
 }
 
-/// Body-chrome visibility for an active tab. Both pieces are *per-view*, so
-/// `None` -- no open tab at all (start screen, diagram-less model, every tab
-/// closed) -- hides both: `App::handle_actions` skips the `DocView` delegate
-/// when there is no active tab, so a still-visible view bar would flip its own
-/// toggles over a stale canvas with nothing calling `set_constraint_vis`.
-pub fn body_chrome(active: Option<&DocTab>) -> BodyChrome {
-    match active {
-        None => BodyChrome {
-            tool_dock: false,
-            view_bar: false,
-            right_dock: None,
-        },
-        Some(tab) => {
-            let view = make_view(tab);
-            BodyChrome {
-                tool_dock: view.wants_tooldock(),
-                view_bar: view.wants_view_bar(),
-                right_dock: view.right_dock(),
-            }
-        }
-    }
-}
-
-/// Whether a returned `ViewOutcome` actually asks for the right-hand dock to
-/// open: the flag is set AND the active tab's view declares a right dock at
-/// all. Pure, so the gating rule is testable without a `Cx`; the shell calls it
-/// once at the top of `relay_outcome`, before the owned outcome's fields are
-/// moved out beneath it.
-pub fn right_dock_open_requested(outcome: &ViewOutcome, active: Option<&DocTab>) -> bool {
-    outcome.open_right_dock && body_chrome(active).right_dock.is_some()
-}
-
-/// The accent colour for the active tab's top bar, asked of the view that tab
-/// opens. `None` -- no open tab, or a view with no opinion -- leaves the theme
-/// accent in place. Mirrors `body_chrome`: same throwaway `make_view`, because
-/// the answer depends only on the tab, not on live view state.
-pub fn tab_accent(active: Option<&DocTab>) -> Option<Vec4> {
-    let tab = active?;
-    make_view(tab).tab_accent(tab)
+impl BodyChrome {
+    pub const HIDDEN: BodyChrome = BodyChrome {
+        tool_dock: false,
+        view_bar: false,
+        right_dock: None,
+    };
 }
 
 /// Create the view object for a tab, discriminating on `TabKind` (spec §5).
 pub fn make_view(tab: &DocTab) -> Box<dyn DocView> {
     match tab.kind {
-        TabKind::Diagram => Box::new(crate::class_diagram_view::ClassDiagramView::new()),
-        TabKind::Classifier => Box::new(
-            crate::classifier_preview_view::ClassifierPreviewView::new(tab.key.clone()),
-        ),
-        TabKind::Source => Box::new(crate::source_view::SourceView::new(tab.key.clone())),
+        TabKind::Diagram => Box::new(crate::class_diagram_view::ClassDiagramView::new(
+            tab.key.clone(),
+            tab.title.clone(),
+        )),
+        TabKind::Classifier => {
+            Box::new(crate::classifier_preview_view::ClassifierPreviewView::new(
+                tab.key.clone(),
+                tab.node_kind,
+            ))
+        }
+        TabKind::Source => Box::new(crate::source_view::SourceView::new(
+            tab.key.clone(),
+            tab.node_kind,
+        )),
     }
 }
 
@@ -326,153 +314,51 @@ mod tests {
     }
 
     #[test]
-    fn make_view_dispatches_on_tab_kind() {
-        let dv = make_view(&tab(TabKind::Diagram, TreeKind::Diagram));
-        assert!(dv.wants_tooldock(), "diagram view drives the tool dock");
-        let cv = make_view(&tab(TabKind::Classifier, TreeKind::Class));
-        assert!(!cv.wants_tooldock(), "preview view has no tool dock");
-    }
-
-    #[test]
-    fn make_view_handles_source_kind() {
-        let sv = make_view(&tab(TabKind::Source, TreeKind::Class));
-        assert!(!sv.wants_tooldock(), "source view has no tool dock");
-    }
-
-    #[test]
-    fn only_the_diagram_view_wants_the_view_bar() {
-        // The bar's actions are only routed by `ClassDiagramView::handle`, so
-        // showing it over any other tab desyncs bar<->canvas.
-        let dv = make_view(&tab(TabKind::Diagram, TreeKind::Diagram));
-        assert!(dv.wants_view_bar(), "diagram view routes the view bar");
-        let cv = make_view(&tab(TabKind::Classifier, TreeKind::Class));
-        assert!(
-            !cv.wants_view_bar(),
-            "preview view never reads the view bar"
+    fn concrete_views_declare_the_existing_body_chrome() {
+        let diagram = crate::class_diagram_view::ClassDiagramView::new("d".into(), "D".into());
+        let classifier = crate::classifier_preview_view::ClassifierPreviewView::new(
+            "order".into(),
+            TreeKind::Class,
         );
-        let sv = make_view(&tab(TabKind::Source, TreeKind::Class));
-        assert!(!sv.wants_view_bar(), "source view never reads the view bar");
-    }
-
-    #[test]
-    fn the_diagram_base_tab_keeps_the_theme_accent() {
-        // `None` = "no opinion", which leaves the DSL default on
-        // `DocTabs::draw_accent` in place.
-        assert!(tab_accent(Some(&tab(TabKind::Diagram, TreeKind::Diagram))).is_none());
-        assert!(tab_accent(None).is_none());
-    }
-
-    #[test]
-    fn a_classifier_tab_takes_its_subjects_node_kind_swatch() {
-        use crate::accent::bucket_color;
-        use crate::node_style::AccentBucket;
+        let source = crate::source_view::SourceView::new("order".into(), TreeKind::Class);
 
         assert_eq!(
-            tab_accent(Some(&tab(TabKind::Classifier, TreeKind::Enum))),
-            Some(bucket_color(AccentBucket::Enum))
-        );
-        assert_eq!(
-            tab_accent(Some(&tab(TabKind::Classifier, TreeKind::Interface))),
-            Some(bucket_color(AccentBucket::Interface))
-        );
-        // A plain class has no swatch on the canvas either, so its tab falls
-        // back to the theme accent rather than to the neutral slate.
-        assert!(tab_accent(Some(&tab(TabKind::Classifier, TreeKind::Class))).is_none());
-    }
-
-    #[test]
-    fn a_source_tab_is_neutral_whatever_its_subject_is() {
-        use crate::accent::bucket_color;
-        use crate::node_style::AccentBucket;
-
-        let slate = Some(bucket_color(AccentBucket::None));
-        // Raw text, not a rendered model view -- the subject's kind must not
-        // leak into the accent, or a source tab and a preview tab on the same
-        // element would read as the same thing.
-        assert_eq!(
-            tab_accent(Some(&tab(TabKind::Source, TreeKind::Enum))),
-            slate
-        );
-        assert_eq!(
-            tab_accent(Some(&tab(TabKind::Source, TreeKind::Class))),
-            slate
-        );
-    }
-
-    #[test]
-    fn no_active_tab_hides_every_piece_of_body_chrome() {
-        // Every doc tab is closable, so "zero tabs" is reachable at runtime.
-        // With no active tab the shell skips the `DocView` delegate entirely,
-        // so a visible bar would desync from the canvas on the next click.
-        assert_eq!(
-            body_chrome(None),
-            BodyChrome {
-                tool_dock: false,
-                view_bar: false,
-                right_dock: None,
-            }
-        );
-    }
-
-    #[test]
-    fn body_chrome_follows_the_active_view() {
-        assert_eq!(
-            body_chrome(Some(&tab(TabKind::Diagram, TreeKind::Diagram))),
+            diagram.chrome(),
             BodyChrome {
                 tool_dock: true,
                 view_bar: true,
                 right_dock: Some(Icon::SlidersHorizontal),
             }
         );
-        assert_eq!(
-            body_chrome(Some(&tab(TabKind::Classifier, TreeKind::Class))),
-            BodyChrome {
-                tool_dock: false,
-                view_bar: false,
-                right_dock: Some(Icon::SlidersHorizontal),
-            }
-        );
-        assert_eq!(
-            body_chrome(Some(&tab(TabKind::Source, TreeKind::Class))),
-            BodyChrome {
-                tool_dock: false,
-                view_bar: false,
-                right_dock: Some(Icon::SlidersHorizontal),
-            }
-        );
-    }
-
-    #[test]
-    fn every_open_tab_kind_declares_the_inspector_right_dock() {
-        // All three concrete views drive the one shared `inspector` widget
-        // today, so all three wear the same glyph. The seam earns its keep on
-        // the `None` path (no open tab -> no toggle) and on views yet written.
-        for (kind, node_kind) in [
-            (TabKind::Diagram, TreeKind::Diagram),
-            (TabKind::Classifier, TreeKind::Class),
-            (TabKind::Source, TreeKind::Class),
-        ] {
+        for chrome in [classifier.chrome(), source.chrome()] {
             assert_eq!(
-                body_chrome(Some(&tab(kind, node_kind))).right_dock,
-                Some(Icon::SlidersHorizontal),
-                "a {kind:?} tab must declare the inspector dock"
+                chrome,
+                BodyChrome {
+                    tool_dock: false,
+                    view_bar: false,
+                    right_dock: Some(Icon::SlidersHorizontal),
+                }
             );
         }
     }
 
     #[test]
-    fn an_open_request_needs_both_the_flag_and_a_declared_dock() {
-        let asked = ViewOutcome {
-            open_right_dock: true,
-            ..Default::default()
-        };
-        let quiet = ViewOutcome::default();
-        let diagram = tab(TabKind::Diagram, TreeKind::Diagram);
-        assert!(right_dock_open_requested(&asked, Some(&diagram)));
-        // No flag: never opens. This is the common case -- nothing sets it yet.
-        assert!(!right_dock_open_requested(&quiet, Some(&diagram)));
-        // No active tab: `body_chrome(None).right_dock` is `None`, so the
-        // request is ignored rather than opening a panel with no view behind it.
-        assert!(!right_dock_open_requested(&asked, None));
+    fn accents_come_from_self_identifying_views() {
+        let classifier = crate::classifier_preview_view::ClassifierPreviewView::new(
+            "status".into(),
+            TreeKind::Enum,
+        );
+        let source = crate::source_view::SourceView::new("status".into(), TreeKind::Enum);
+
+        assert_eq!(
+            classifier.tab_accent(),
+            crate::accent::tree_kind_color(TreeKind::Enum)
+        );
+        assert_eq!(
+            source.tab_accent(),
+            Some(crate::accent::bucket_color(
+                crate::node_style::AccentBucket::None,
+            ))
+        );
     }
 }

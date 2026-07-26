@@ -5,27 +5,35 @@
 //! canvas is occluded by the opaque slot, the tool dock by
 //! `wants_tooldock() == false`, the inspector's element picker explicitly.
 
-use makepad_widgets::*;
-use waml::model::Model;
-
-use crate::doc_tabs::DocTab;
-use crate::doc_view::{BodyWidgets, DocView, ViewOutcome};
+use crate::doc_view::{BodyChrome, BodyWidgets, DocView, ViewData, ViewOutcome};
 use crate::icons::Icon;
 use crate::inspector::Subject;
+use crate::tree::TreeKind;
+use makepad_widgets::*;
 
 pub struct SourceView {
-    /// The subject key whose source this tab shows.
     key: String,
+    node_kind: TreeKind,
 }
 
 impl SourceView {
-    pub fn new(key: String) -> SourceView {
-        SourceView { key }
+    pub fn new(key: String, node_kind: TreeKind) -> SourceView {
+        SourceView { key, node_kind }
+    }
+
+    fn markdown<'a>(&self, data: ViewData<'a>) -> std::borrow::Cow<'a, str> {
+        crate::load::source_for(data.bundle, &self.key)
+            .map(std::borrow::Cow::Borrowed)
+            .unwrap_or_else(|| std::borrow::Cow::Owned(format!("*No source for `{}`*", self.key)))
     }
 }
 
 impl DocView for SourceView {
-    fn sync(&mut self, cx: &mut Cx, body: &BodyWidgets, model: &Model) {
+    fn sync(&mut self, cx: &mut Cx, body: &BodyWidgets, data: ViewData<'_>) {
+        body.show_source(cx);
+        let markdown = self.markdown(data);
+        body.set_source_markdown(cx, markdown.as_ref());
+        let model = data.model;
         if let Some(mut inspector) = body
             .inspector(cx)
             .borrow_mut::<crate::inspector_panel::Inspector>()
@@ -41,7 +49,7 @@ impl DocView for SourceView {
         _cx: &mut Cx,
         _body: &BodyWidgets,
         _actions: &Actions,
-        _model: &Model,
+        _data: ViewData<'_>,
     ) -> ViewOutcome {
         ViewOutcome::default()
     }
@@ -49,25 +57,75 @@ impl DocView for SourceView {
     /// Neutral slate, deliberately not the subject's node-kind swatch: a source
     /// tab shows raw text rather than a rendered model view, and the flat grey
     /// says so next to the coloured preview tabs.
-    fn tab_accent(&self, tab: &DocTab) -> Option<Vec4> {
-        let _ = tab;
+    fn chrome(&self) -> BodyChrome {
+        BodyChrome {
+            tool_dock: false,
+            view_bar: false,
+            right_dock: Some(Icon::SlidersHorizontal),
+        }
+    }
+
+    fn tab_accent(&self) -> Option<Vec4> {
+        let _ = self.node_kind;
         Some(crate::accent::bucket_color(
             crate::node_style::AccentBucket::None,
         ))
     }
+}
 
-    fn wants_tooldock(&self) -> bool {
-        false
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use waml::model::Model;
+
+    fn data<'a>(model: &'a Model, bundle: &'a [(String, String)]) -> ViewData<'a> {
+        ViewData {
+            model,
+            bundle,
+            revision: 7,
+        }
     }
 
-    /// The shared `inspector` widget: a source tab still points it at the
-    /// subject classifier (picker hidden), so its caption toggle wears the
-    /// properties sliders glyph.
-    fn right_dock(&self) -> Option<Icon> {
-        Some(Icon::SlidersHorizontal)
+    #[test]
+    fn source_markdown_reads_the_raw_bundle() {
+        let model = Model::default();
+        let bundle = vec![(
+            "shop/order.md".to_string(),
+            "# Order\nraw source".to_string(),
+        )];
+        let view = SourceView::new("shop/order".into(), TreeKind::Class);
+
+        assert_eq!(view.markdown(data(&model, &bundle)), "# Order\nraw source");
     }
 
-    fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
-        self
+    #[test]
+    fn missing_source_keeps_the_existing_italic_fallback() {
+        let model = Model::default();
+        let bundle = Vec::new();
+        let view = SourceView::new("missing".into(), TreeKind::Class);
+
+        assert_eq!(
+            view.markdown(data(&model, &bundle)),
+            "*No source for `missing`*"
+        );
+    }
+}
+
+#[cfg(test)]
+mod ownership_contract_tests {
+    use super::*;
+    use crate::doc_view::DocView;
+    use crate::tree::TreeKind;
+
+    #[test]
+    fn source_view_is_constructed_with_all_tab_identity() {
+        let view = SourceView::new("shop/order".into(), TreeKind::Enum);
+
+        assert_eq!(
+            view.tab_accent(),
+            Some(crate::accent::bucket_color(
+                crate::node_style::AccentBucket::None,
+            ))
+        );
     }
 }

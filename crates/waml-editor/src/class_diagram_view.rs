@@ -6,7 +6,8 @@ use std::collections::HashSet;
 use waml::model::Model;
 
 use crate::canvas::ConstraintVisibility;
-use crate::doc_view::{BodyWidgets, DocView, PopupRequest, ViewOutcome};
+use crate::doc_view::{BodyChrome, BodyWidgets, DocView, PopupRequest, ViewData, ViewOutcome};
+use crate::editor_session::SessionChange;
 use crate::icons::Icon;
 use crate::inspector::{diagram_elements, subject_from, Subject};
 use crate::popup::base::{PopupItem, PopupResult};
@@ -58,39 +59,42 @@ fn show_hidden_borders_for(action: &crate::view_bar::ViewBarAction) -> Option<bo
     }
 }
 
-#[derive(Default)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum DiagramRefresh {
+    PreserveCamera,
+    None,
+}
+
+fn refresh_for(change: SessionChange) -> DiagramRefresh {
+    if change.model_changed {
+        DiagramRefresh::PreserveCamera
+    } else {
+        DiagramRefresh::None
+    }
+}
+
 pub struct ClassDiagramView {
-    /// The base tab's current diagram identity, pushed by the shell before
-    /// every `sync`/`handle` (see `App::sync_active_tab`'s `set_active` call).
-    active_key: String,
-    active_title: String,
+    key: String,
+    title: String,
     /// Node keys whose card body is expanded. Per-tab live state, moved off
     /// the shell in Task 3. Cleared when the diagram changes.
     expanded: HashSet<String>,
 }
 
 impl ClassDiagramView {
-    pub fn new() -> ClassDiagramView {
-        ClassDiagramView::default()
+    pub fn new(key: String, title: String) -> ClassDiagramView {
+        ClassDiagramView {
+            key,
+            title,
+            expanded: HashSet::new(),
+        }
     }
 
-    /// The shell resolves the base tab's key/title and pushes them here before
-    /// `sync`/`handle` run -- the view has no other way to know which diagram
-    /// it is currently showing.
-    pub fn set_active(&mut self, key: String, title: String) {
-        self.active_key = key;
-        self.active_title = title;
-    }
-
-    /// Re-solve the active diagram into the canvas, holding the camera. The
-    /// shell calls this after applying an authored layout op (drag-to-place) so
-    /// the placed node moves without the view re-framing. Mirrors the
-    /// `ToggleExpand` re-solve tail (`update_scene`, not `set_scene`).
-    pub fn resolve_active(&self, cx: &mut Cx, body: &BodyWidgets, model: &Model) {
-        if let Some(diagram) = model.diagrams.iter().find(|d| d.key == self.active_key) {
-            let (scene, diags) = build_scene(model, diagram, &self.expanded);
-            for d in &diags {
-                log!("diagnostic: {d:?}");
+    fn update_scene(&self, cx: &mut Cx, body: &BodyWidgets, model: &Model) {
+        if let Some(diagram) = model.diagrams.iter().find(|d| d.key == self.key) {
+            let (scene, diagnostics) = build_scene(model, diagram, &self.expanded);
+            for diagnostic in &diagnostics {
+                log!("diagnostic: {diagnostic:?}");
             }
             if let Some(mut canvas) = body
                 .canvas(cx)
@@ -122,11 +126,13 @@ impl ClassDiagramView {
 }
 
 impl DocView for ClassDiagramView {
-    fn sync(&mut self, cx: &mut Cx, body: &BodyWidgets, model: &Model) {
+    fn sync(&mut self, cx: &mut Cx, body: &BodyWidgets, data: ViewData<'_>) {
+        body.show_canvas(cx);
+        let model = data.model;
         let built = model
             .diagrams
             .iter()
-            .find(|d| d.key == self.active_key)
+            .find(|d| d.key == self.key)
             .map(|d| build_scene(model, d, &self.expanded));
         if let Some((scene, diags)) = built {
             for d in &diags {
@@ -139,13 +145,13 @@ impl DocView for ClassDiagramView {
             {
                 canvas.set_scene(cx, scene);
             }
-            let active_key = self.active_key.clone();
-            let active_title = self.active_title.clone();
-            self.sync_inspector_elements(cx, body, model, &active_key, &active_title, &node_keys);
+            let key = self.key.clone();
+            let title = self.title.clone();
+            self.sync_inspector_elements(cx, body, model, &key, &title, &node_keys);
         }
         // Nothing is selected yet on a fresh sync (tab activation, model
         // reload), so the diagram itself is the subject.
-        let diagram_subject = Subject::Diagram(self.active_key.clone());
+        let diagram_subject = Subject::Diagram(self.key.clone());
         if let Some(mut inspector) = body
             .inspector(cx)
             .borrow_mut::<crate::inspector_panel::Inspector>()
@@ -185,8 +191,9 @@ impl DocView for ClassDiagramView {
         cx: &mut Cx,
         body: &BodyWidgets,
         actions: &Actions,
-        model: &Model,
+        data: ViewData<'_>,
     ) -> ViewOutcome {
+        let model = data.model;
         let mut out = ViewOutcome::default();
 
         // Keep the view bar's fit-to-selection button in step with the canvas
@@ -353,7 +360,7 @@ impl DocView for ClassDiagramView {
             Some(crate::canvas::ClassDiagramSurfaceAction::NodeDeselect) => {
                 // Deselecting on the canvas falls back to the diagram, never to
                 // an empty panel.
-                let diagram_subject = Subject::Diagram(self.active_key.clone());
+                let diagram_subject = Subject::Diagram(self.key.clone());
                 if let Some(mut inspector) = body
                     .inspector(cx)
                     .borrow_mut::<crate::inspector_panel::Inspector>()
@@ -368,7 +375,7 @@ impl DocView for ClassDiagramView {
                 }
                 // Re-solve the current diagram with the updated set; update_scene
                 // holds the camera and re-resolves the selection by key.
-                if let Some(diagram) = model.diagrams.iter().find(|d| d.key == self.active_key) {
+                if let Some(diagram) = model.diagrams.iter().find(|d| d.key == self.key) {
                     let (scene, diags) = build_scene(model, diagram, &self.expanded);
                     for d in &diags {
                         log!("diagnostic: {d:?}");
@@ -396,7 +403,7 @@ impl DocView for ClassDiagramView {
                 // both the conflict verdict (redden the zones the solver would
                 // reject) and the candidate layout itself, which the canvas
                 // animates to on hover -- so previewing costs no extra solve.
-                if let Some(diagram) = model.diagrams.iter().find(|d| d.key == self.active_key) {
+                if let Some(diagram) = model.diagrams.iter().find(|d| d.key == self.key) {
                     let subject = strip_md_key(&subject_key);
                     let reference = strip_md_key(&reference_key);
                     let mut red = Vec::new();
@@ -475,10 +482,11 @@ impl DocView for ClassDiagramView {
         &mut self,
         cx: &mut Cx,
         body: &BodyWidgets,
-        model: &Model,
+        data: ViewData<'_>,
         tag: LiveId,
         result: PopupResult,
     ) -> ViewOutcome {
+        let model = data.model;
         // Element-picker: any close clears the box's active state; a node
         // commit repoints the inspector (inspector-local -- no tab, no canvas
         // move).
@@ -511,7 +519,7 @@ impl DocView for ClassDiagramView {
             if let Some(p) = placement {
                 let strip_md = |s: &str| s.strip_suffix(".md").unwrap_or(s).to_string();
                 out.ops.push(waml::ops::Op::PlaceSet {
-                    diagram: strip_md(&self.active_key),
+                    diagram: strip_md(&self.key),
                     subject_title: p.subject_title,
                     subject_slug: strip_md(&p.subject_key),
                     reference_title: p.reference_title,
@@ -529,7 +537,7 @@ impl DocView for ClassDiagramView {
         &mut self,
         cx: &mut Cx,
         body: &BodyWidgets,
-        _model: &Model,
+        _data: ViewData<'_>,
         tag: LiveId,
         id: Option<LiveId>,
     ) -> ViewOutcome {
@@ -547,30 +555,79 @@ impl DocView for ClassDiagramView {
         ViewOutcome::default()
     }
 
-    fn wants_tooldock(&self) -> bool {
-        true
+    fn after_session_change(
+        &mut self,
+        cx: &mut Cx,
+        body: &BodyWidgets,
+        data: ViewData<'_>,
+        change: SessionChange,
+    ) {
+        match refresh_for(change) {
+            DiagramRefresh::PreserveCamera => {
+                self.update_scene(cx, body, data.model);
+            }
+            DiagramRefresh::None => {}
+        }
     }
 
-    fn wants_view_bar(&self) -> bool {
-        true
-    }
-
-    /// The shared `inspector` widget: this view feeds it the diagram's element
-    /// picker, so its caption toggle wears the properties sliders glyph.
-    fn right_dock(&self) -> Option<Icon> {
-        Some(Icon::SlidersHorizontal)
-    }
-
-    fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
-        self
+    fn chrome(&self) -> BodyChrome {
+        BodyChrome {
+            tool_dock: true,
+            view_bar: true,
+            right_dock: Some(Icon::SlidersHorizontal),
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{constraint_vis_for, show_constraints_for, show_hidden_borders_for};
+    use super::{
+        constraint_vis_for, refresh_for, show_constraints_for, show_hidden_borders_for,
+        DiagramRefresh,
+    };
     use crate::canvas::ConstraintVisibility;
     use crate::view_bar::{ViewBarAction, ViewOption};
+
+    #[test]
+    fn diagram_view_is_constructed_with_immutable_identity() {
+        use super::ClassDiagramView;
+        use crate::doc_view::DocView;
+
+        let view = ClassDiagramView::new("orders".into(), "Orders".into());
+
+        assert_eq!(
+            view.chrome(),
+            crate::doc_view::BodyChrome {
+                tool_dock: true,
+                view_bar: true,
+                right_dock: Some(crate::icons::Icon::SlidersHorizontal),
+            }
+        );
+    }
+
+    #[test]
+    fn model_change_selects_the_camera_preserving_refresh() {
+        assert_eq!(
+            refresh_for(crate::editor_session::SessionChange {
+                revision: 2,
+                model_changed: true,
+                source_changed: true,
+                navigation_changed: true,
+                conflicts_changed: true,
+            }),
+            DiagramRefresh::PreserveCamera
+        );
+        assert_eq!(
+            refresh_for(crate::editor_session::SessionChange {
+                revision: 3,
+                model_changed: false,
+                source_changed: true,
+                navigation_changed: false,
+                conflicts_changed: false,
+            }),
+            DiagramRefresh::None
+        );
+    }
 
     #[test]
     fn constraints_toggle_drives_the_veil_mode() {
