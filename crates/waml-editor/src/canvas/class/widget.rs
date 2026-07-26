@@ -2587,12 +2587,16 @@ impl ClassDiagramSurface {
     }
 
     /// Swap the scene for a same-diagram re-solve (e.g. an expand toggle). Unlike
-    /// `set_scene`, this holds the camera and pending initial-fit state untouched
-    /// and re-resolves the selection by key, so the inspector highlight survives
-    /// even though the node's index may have shifted.
+    /// `set_scene`, this holds an already-settled camera, retargets any pending
+    /// first fit to the replacement bounds, and re-resolves the selection by key,
+    /// so the inspector highlight survives even though the node's index may have
+    /// shifted.
     pub fn update_scene(&mut self, cx: &mut Cx, scene: Scene) {
         self.scene = scene;
-        self.viewport.retain_for_scene_update();
+        let effects = self
+            .viewport
+            .retain_for_scene_update(bounding_box(&self.scene));
+        self.apply_viewport_effects(cx, effects);
         self.selected = selection_index(&self.scene.nodes, self.selected_key.as_deref());
         if self.selected.is_none() {
             self.selected_key = None;

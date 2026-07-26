@@ -191,7 +191,22 @@ impl ViewportController {
         true
     }
 
-    pub(crate) fn retain_for_scene_update(&mut self) {}
+    pub(crate) fn retain_for_scene_update(
+        &mut self,
+        replacement_bounds: Option<waml::solve::Rect>,
+    ) -> ViewportEffects {
+        self.initial_fit = match (self.initial_fit, replacement_bounds) {
+            (InitialFit::None, _) | (_, None) => InitialFit::None,
+            (InitialFit::Scene(_), Some(bounds)) => InitialFit::Scene(bounds),
+            (InitialFit::Focus(_), Some(bounds)) => InitialFit::Focus(bounds),
+        };
+        self.tween = None;
+        self.tween_last_time = 0.0;
+        ViewportEffects {
+            redraw: false,
+            camera_timer: TimerCommand::Stop,
+        }
+    }
 
     pub(crate) fn begin_pan(&mut self, abs: DVec2) {
         self.pan = Some(PanOrigin {
@@ -574,5 +589,85 @@ mod tests {
             approx(mid.local_to_world(view.x * 0.5, view.y * 0.5), anchor);
         }
         assert_eq!(lerp_camera(from, to, view, 1.0), to);
+    }
+
+    #[test]
+    fn scene_update_cancels_a_glide_before_a_late_timer_tick() {
+        let mut viewport = ViewportController::default();
+        viewport.set_view_rect(ViewRect {
+            pos: dvec2(0.0, 0.0),
+            size: dvec2(800.0, 600.0),
+        });
+        viewport.glide_to(Camera {
+            pan_x: 200.0,
+            pan_y: 100.0,
+            zoom: 2.0,
+        });
+        viewport.tick_camera(10.0);
+        let camera_at_update = viewport.camera();
+
+        let effects = viewport.retain_for_scene_update(Some(Rect {
+            x: 500.0,
+            y: 400.0,
+            w: 200.0,
+            h: 100.0,
+        }));
+        assert_eq!(effects.camera_timer, TimerCommand::Stop);
+
+        let late_tick = viewport.tick_camera(20.0);
+        assert_eq!(late_tick.camera_timer, TimerCommand::Stop);
+        assert_eq!(viewport.camera(), camera_at_update);
+    }
+
+    #[test]
+    fn scene_update_retargets_a_pending_initial_fit() {
+        let mut viewport = ViewportController::default();
+        viewport.set_view_rect(ViewRect {
+            pos: dvec2(0.0, 0.0),
+            size: dvec2(800.0, 600.0),
+        });
+        let scene_a = Rect {
+            x: 0.0,
+            y: 0.0,
+            w: 100.0,
+            h: 100.0,
+        };
+        let scene_b = Rect {
+            x: 1000.0,
+            y: 700.0,
+            w: 400.0,
+            h: 300.0,
+        };
+        viewport.request_initial_fit(InitialFit::Scene(scene_a));
+
+        viewport.retain_for_scene_update(Some(scene_b));
+        assert!(viewport.apply_initial_fit());
+        assert_eq!(viewport.camera(), fit_scene_camera(scene_b, 800.0, 600.0),);
+    }
+
+    #[test]
+    fn scene_update_preserves_a_settled_camera_without_scheduling_a_fit() {
+        let mut viewport = ViewportController::default();
+        viewport.set_view_rect(ViewRect {
+            pos: dvec2(0.0, 0.0),
+            size: dvec2(800.0, 600.0),
+        });
+        let settled = Camera {
+            pan_x: 30.0,
+            pan_y: -20.0,
+            zoom: 1.5,
+        };
+        viewport.set_transient_camera(settled);
+
+        let effects = viewport.retain_for_scene_update(Some(Rect {
+            x: 500.0,
+            y: 400.0,
+            w: 200.0,
+            h: 100.0,
+        }));
+
+        assert_eq!(effects.camera_timer, TimerCommand::Stop);
+        assert!(!viewport.apply_initial_fit());
+        assert_eq!(viewport.camera(), settled);
     }
 }
