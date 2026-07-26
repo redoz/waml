@@ -1,20 +1,10 @@
-//! Start screen (launcher): shown when the app launches with no OKF directory.
-//! A centered card with two panes -- a recent-projects list (left) and actions
-//! (right): New project, Open project.
-//!
-//! Task 1 of the layout refactor: the hand-rolled immediate-mode card (absolute
-//! rects + manual hit-testing) is rebuilt on the makepad layout engine. The card
-//! shell is a `script_mod!` `View` tree and the recents list is a `FlatList`
-//! whose rows are real flow-layout widgets. This slice proves the FlatList
-//! draw-drive wiring (copied from the fork's `old/studio/src/run_list.rs`
-//! consumer) with placeholder styling; the real row widget (Task 2) and click
-//! routing / real buttons (Task 3) land later. The `StartScreen` widget now
-//! derefs a `View` (the `inspector_panel.rs` hybrid pattern).
+//! Start screen shown when the app has no open model. A compact action/recent
+//! column sits directly in the editor canvas over a responsive, subdued WAML
+//! wordmark. Recents use a capped `FlatList` with real flow-layout row widgets.
 
 use crate::action_link::ActionLinkWidgetRefExt;
-use crate::recent_row::RecentRowViewWidgetRefExt;
+use crate::recent_row::{RecentRowView, RecentRowViewWidgetRefExt};
 use makepad_widgets::*;
-use waml::solve::sizing::{self, Font};
 
 script_mod! {
     use mod.prelude.widgets_internal.*
@@ -22,26 +12,6 @@ script_mod! {
     use mod.widgets.*
     use mod.text.*
     use mod.fonts
-
-    // Soft ambient lift beneath the card. NOT drawn this task (wiring it needs
-    // the card's post-layout rect *and* correct z-order behind the card, which
-    // is deferred to Task 3) -- but kept intact per the refactor plan. DO NOT
-    // DELETE.
-    mod.draw.CardShadow = mod.draw.DrawColor{
-        tint: uniform(#x1a2c44)
-        pixel: fn() {
-            let p = self.pos * self.rect_size
-            let c = self.rect_size * 0.5
-            let half = c - vec2(56.0, 56.0)
-            let d = length(max(abs(p - c) - half, vec2(0.0, 0.0)))
-            // The draw pipeline blends premultiplied, so premultiply the tint by
-            // the alpha -- otherwise a dim tint ADDS onto the bright backdrop and
-            // reads as a white bloom instead of a shadow.
-            let a = (1.0 - clamp(d / 56.0, 0.0, 1.0))
-            let a2 = a * a * a * 0.20
-            return vec4(self.tint.x * a2, self.tint.y * a2, self.tint.z * a2, a2)
-        }
-    }
 
     mod.widgets.StartScreenBase = #(StartScreen::register_widget(vm))
 
@@ -62,105 +32,48 @@ script_mod! {
                 return mix(self.hi, self.lo, clamp(d, 0.0, 1.0))
             }
         }
-        // Center the card in the window; the card's `Fit` height means a short
-        // recents list never strands it in dead space (replaces the old
-        // `(rect.size - CARD_W) * 0.5` centering + `card_h` math).
-        align: Align{x: 0.5, y: 0.5}
+        flow: Overlay
 
-        // The centered dialog card. Fixed width (was `CARD_W`), height fits its
-        // content. Carries the standard Atlas AccentFrame material, inlined the same
-        // way `inspector_panel.rs` inlines it onto a `View`'s `draw_bg`.
-        card := View {
-            width: 720.0
-            height: Fit
-            flow: Down
-            show_bg: true
-            padding: Inset{left: 20.0, right: 20.0, top: 20.0, bottom: 20.0}
-            spacing: 14.0
-            draw_bg +: {
-                color: atlas.surface
-                border_hi: uniform(atlas.frame_hi)
-                border_lo: uniform(atlas.frame_lo)
-                pixel: fn() {
-                    let inset = 1.5
-                    let sdf = Sdf2d.viewport(self.pos * self.rect_size)
-                    sdf.rect(inset, inset, self.rect_size.x - inset * 2.0, self.rect_size.y - inset * 2.0)
-                    sdf.fill_keep(self.color)
-                    let dir = vec2(0.5, 0.8660254)
-                    let span = 1.3660254
-                    let t = clamp((self.pos.x * dir.x + self.pos.y * dir.y) / span, 0.0, 1.0)
-                    sdf.stroke(mix(self.border_hi, self.border_lo, t), inset)
-                    return sdf.result
-                }
-            }
-
-            // Header: wordmark + subtitle, vertically centered by `align` (no
-            // more `+ 20.0` / `+ 54.0` y-offsets).
-            header := View {
-                width: Fill
-                height: Fit
-                flow: Right
-                // Bottom-align so the subtitle sits on the logo's baseline
-                // rather than the logo's vertical center.
-                align: Align{y: 1.0}
-                spacing: 8.0
-                // The splash wordmark, as the interactive `LogoMark` widget in
-                // `auto` mode: it free-runs its `mode` colour pulse, and a click
-                // crossfades to the next variant. `mode` picks the start variant
-                // -- see logo.rs:
-                //   1 accent · 2 Close Encounters · 3 bucket-palette
-                //   4 molten · 5 neon · 6 electric
-                logo := LogoMark {
-                    width: 77.0
-                    height: 44.0
-                    auto: true
-                    // Initial splash variant; click the logo to crossfade to the
-                    // next one (1..6, wrapping). Rust drives the `mode` uniform.
-                    mode: 2.0
-                    draw_bg: mod.draw.LogoMark{}
-                }
-                sub := Label {
-                    text: "Create or open a model to get started"
-                    // Baseline-seating bottom margin is set from Rust in
-                    // `draw_walk` (derived from this font's descent), so no magic
-                    // pixel constant lives here and it retracks any font_size
-                    // change automatically. See `seat_subtitle_baseline`.
-                    draw_text +: {
-                        color: atlas.text_dim
-                        text_style: fonts.text_label
-                    }
-                }
-            }
-
-            // Header divider hairline. A thin solid-fill View (sharp `sdf.rect`
-            // fill, per the fork's 0-radius `sdf.box` flood gotcha).
-            rule := View {
-                width: Fill
-                height: 1.5
+        // Signature layer: the real six-segment WAML mark, kept deliberately
+        // quiet so foreground actions remain legible. A plain View does not
+        // run LogoMark's interactive Rust widget, so `fade` stays fixed.
+        background_layer := View {
+            width: Fill
+            height: Fill
+            align: Align{x: 0.5, y: 0.5}
+            backdrop_logo := View {
+                width: 0.0
+                height: 0.0
                 show_bg: true
-                draw_bg +: {
-                    // Header hairline: the accent blue at full opacity.
-                    // `frame_lo` (0x80/50%) / 0xBF read too faint; no exact
-                    // token, so literal.
-                    color: #x1496dcff
-                    pixel: fn() {
-                        let sdf = Sdf2d.viewport(self.pos * self.rect_size)
-                        sdf.rect(0.0, 0.0, self.rect_size.x, self.rect_size.y)
-                        sdf.fill(self.color)
-                        return sdf.result
-                    }
+                draw_bg: mod.draw.LogoMark {
+                    fade: 0.07
                 }
             }
+        }
 
-            body := View {
-                width: Fill
+        // Compact in-canvas launcher. The background remains visible through
+        // every child: there is no dialog surface, frame, or divider.
+        foreground_host := ScrollYView {
+            width: Fill
+            height: Fill
+            align: Align{x: 0.5, y: 0.5}
+
+            content := View {
+                width: 0.0
                 height: Fit
-                flow: Right
-                spacing: 20.0
+                flow: Down
+                spacing: 18.0
 
-                // Left: eyebrow + the recents FlatList. `Fill` width so the
-                // right actions column takes its fixed 260 and this consumes slack.
-                recents_col := View {
+                actions := View {
+                    width: Fill
+                    height: Fit
+                    flow: Down
+                    spacing: 4.0
+                    link_new := mod.widgets.ActionLink { text: "Create a new model" kind: 0.0 }
+                    link_open := mod.widgets.ActionLink { text: "Open a model" kind: 1.0 }
+                }
+
+                recents := View {
                     width: Fill
                     height: Fit
                     flow: Down
@@ -172,71 +85,16 @@ script_mod! {
                             text_style: fonts.text_eyebrow
                         }
                     }
-                    // Bordered frame around the recents list. Stroke-only (no
-                    // fill) so the card surface shows through; sharp `sdf.rect`
-                    // per the 0-radius `sdf.box` flood gotcha. The 1px padding
-                    // keeps rows off the stroke. The draw loop finds the inner
-                    // FlatList via `as_flat_list()` during traversal, so this
-                    // extra nesting does not touch the id path.
-                    list_frame := View {
+                    list_host := View {
                         width: Fill
-                        // Height is set from Rust in `draw_walk` to exactly five
-                        // `RecentRowView::ROW_HEIGHT` rows plus this box's Inset
-                        // padding, so the box fits five rows and scrolls beyond.
                         height: Fit
-                        show_bg: true
-                        // Inset the FlatList off the border so rows (and their
-                        // hover wash) breathe inside the box.
-                        padding: Inset{left: 5.0, right: 5.0, top: 5.0, bottom: 5.0}
-                        draw_bg +: {
-                            // List box border: accent blue at 50% alpha, softer
-                            // than the 100% header divider so the inner frame
-                            // recedes.
-                            color: atlas.frame_lo
-                            pixel: fn() {
-                                let inset = 0.5
-                                let sdf = Sdf2d.viewport(self.pos * self.rect_size)
-                                sdf.rect(inset, inset, self.rect_size.x - inset * 2.0, self.rect_size.y - inset * 2.0)
-                                sdf.stroke(self.color, 1.0)
-                                return sdf.result
-                            }
-                        }
-
-                        // The dynamic recents list. Rows are created from the `Row`
-                        // template at draw time (see `draw_walk`). `Fit` height so it
-                        // sizes to its rows inside the `Fit` card.
                         recents_list := FlatList {
                             width: Fill
                             height: Fill
                             flow: Down
-
-                            // Task 2 row template: the real `RecentRowView` widget
-                            // (marker + stacked title/path + right-anchored stamp).
                             Row := mod.widgets.RecentRowView { }
                         }
                     }
-                }
-
-                // Right: eyebrow + two action buttons. Fixed width (was
-                // `RIGHT_PANE_W`).
-                actions_col := View {
-                    width: 260.0
-                    height: Fit
-                    flow: Down
-                    spacing: 4.0
-                    start_eyebrow := Label {
-                        text: "START"
-                        draw_text +: {
-                            color: atlas.accent
-                            text_style: fonts.text_eyebrow
-                        }
-                    }
-                    // VS-style borderless action links: an accent icon + prose
-                    // label, hover wash, no button chrome. Each emits its own
-                    // `ActionLinkAction::Clicked` that `handle_actions` maps to a
-                    // `StartScreenAction`. `Fit` height (no fixed button rows).
-                    link_new := mod.widgets.ActionLink { text: "Create a new model" kind: 0.0 }
-                    link_open := mod.widgets.ActionLink { text: "Open a model" kind: 1.0 }
                 }
             }
         }
@@ -254,6 +112,34 @@ pub(crate) struct RecentRow {
     pub pinned: bool,
 }
 
+const MAX_RECENTS: usize = 5;
+const LOGO_ASPECT: f64 = 1.749;
+const LOGO_MARGIN: f64 = 48.0;
+const FOREGROUND_WIDTH: f64 = 440.0;
+const FOREGROUND_MARGIN: f64 = 24.0;
+
+fn cap_recent_rows(mut rows: Vec<RecentRow>) -> Vec<RecentRow> {
+    rows.truncate(MAX_RECENTS);
+    rows
+}
+
+fn backdrop_logo_size(available: DVec2) -> DVec2 {
+    let max_width = (available.x - LOGO_MARGIN * 2.0).max(0.0);
+    let max_height = (available.y - LOGO_MARGIN * 2.0).max(0.0);
+    let width = max_width.min(max_height * LOGO_ASPECT);
+    dvec2(width, width / LOGO_ASPECT)
+}
+
+fn recent_list_height(row_count: usize) -> f64 {
+    row_count.clamp(1, MAX_RECENTS) as f64 * RecentRowView::ROW_HEIGHT
+}
+
+fn foreground_width(available_width: f64) -> f64 {
+    (available_width - FOREGROUND_MARGIN * 2.0)
+        .max(0.0)
+        .min(FOREGROUND_WIDTH)
+}
+
 #[derive(Clone, Debug, Default)]
 pub enum StartScreenAction {
     #[default]
@@ -268,7 +154,7 @@ pub enum StartScreenAction {
 
 #[derive(Script, ScriptHook, Widget)]
 pub struct StartScreen {
-    /// The container: the card shell + FlatList declared in the DSL tree above.
+    /// The overlay composition + FlatList declared in the DSL tree above.
     #[deref]
     view: View,
 
@@ -280,22 +166,6 @@ pub struct StartScreen {
     // false -> the screen starts hidden; `App` reveals it via `set_visible`.
     #[rust]
     visible: bool,
-}
-
-impl StartScreen {
-    /// Seat the header subtitle's baseline on the wordmark's. The header row
-    /// bottom-aligns its boxes (`align: Align{y: 1.0}`), but the Label box extends
-    /// its descent below the baseline while the wordmark is bottom-tight, so the
-    /// subtitle floats a descent's-worth too high. Push the Label box down by
-    /// exactly that descent, read from the font at the Label's own `font_size` --
-    /// no pixel constant, and it retracks any font_size change in the DSL.
-    fn seat_subtitle_baseline(&mut self, cx: &mut Cx2d) {
-        if let Some(mut sub) = self.view.label(cx, ids!(sub)).borrow_mut() {
-            let pt = sub.draw_text.text_style.font_size as f64;
-            let descent = sizing::descent(pt * sizing::PT_TO_LPX, Font::Sans);
-            sub.walk.margin.bottom = -descent;
-        }
-    }
 }
 
 impl Widget for StartScreen {
@@ -314,12 +184,17 @@ impl Widget for StartScreen {
             // Nothing drawn -- `main_column` (painted first) shows through.
             return DrawStep::done();
         }
-        self.seat_subtitle_baseline(cx);
-        // Fix the list box to exactly five rows plus its own Inset-5 top/bottom
-        // padding, so the recents box always shows five rows and scrolls beyond.
-        let box_h = 5.0 * crate::recent_row::RecentRowView::ROW_HEIGHT + 2.0 * 5.0;
-        if let Some(mut frame) = self.view.view(cx, ids!(list_frame)).borrow_mut() {
-            frame.walk.height = Size::Fixed(box_h);
+        let available = cx.peek_walk_turtle(walk).size;
+        let logo_size = backdrop_logo_size(available);
+        if let Some(mut logo) = self.view.view(cx, ids!(backdrop_logo)).borrow_mut() {
+            logo.walk.width = Size::Fixed(logo_size.x);
+            logo.walk.height = Size::Fixed(logo_size.y);
+        }
+        if let Some(mut content) = self.view.view(cx, ids!(content)).borrow_mut() {
+            content.walk.width = Size::Fixed(foreground_width(available.x));
+        }
+        if let Some(mut host) = self.view.view(cx, ids!(list_host)).borrow_mut() {
+            host.walk.height = Size::Fixed(recent_list_height(self.rows.len()));
         }
         // The run_list.rs interpose idiom: walk the tree, and when the FlatList
         // step surfaces, populate one child widget per recent row from the `Row`
@@ -409,7 +284,7 @@ impl WidgetMatchEvent for StartScreen {
 impl StartScreen {
     /// Replace the rendered recents. `App` calls this before showing the screen.
     pub fn set_recents(&mut self, cx: &mut Cx, rows: Vec<RecentRow>) {
-        self.rows = rows;
+        self.rows = cap_recent_rows(rows);
         self.view.redraw(cx);
     }
 
@@ -488,5 +363,54 @@ mod tests {
         assert_eq!(row_index_for(&rows, LiveId::from_str("/nope")), None);
         // The empty-state placeholder id must never map to a real row.
         assert_eq!(row_index_for(&rows, LiveId::from_str("empty")), None);
+    }
+
+    #[test]
+    fn recent_rows_are_capped_at_five() {
+        let rows = (0..7).map(|i| row(&format!("/{i}"))).collect();
+        let capped = cap_recent_rows(rows);
+        assert_eq!(capped.len(), 5);
+        assert_eq!(capped[4].path, "/4");
+    }
+
+    #[test]
+    fn backdrop_logo_is_nearly_full_width_and_preserves_aspect() {
+        let size = backdrop_logo_size(dvec2(1536.0, 958.0));
+        assert_eq!(size.x, 1440.0);
+        assert!((size.x / size.y - LOGO_ASPECT).abs() < 0.0001);
+    }
+
+    #[test]
+    fn backdrop_logo_shrinks_to_fit_short_viewports() {
+        let size = backdrop_logo_size(dvec2(1200.0, 500.0));
+        assert!(size.x <= 1104.0);
+        assert!(size.y <= 404.0);
+        assert!((size.x / size.y - LOGO_ASPECT).abs() < 0.0001);
+    }
+
+    #[test]
+    fn empty_recent_list_reserves_one_placeholder_row() {
+        assert_eq!(recent_list_height(0), RecentRowView::ROW_HEIGHT);
+    }
+
+    #[test]
+    fn recent_list_reserves_one_height_per_row() {
+        assert_eq!(recent_list_height(3), 3.0 * RecentRowView::ROW_HEIGHT);
+    }
+
+    #[test]
+    fn recent_list_never_reserves_more_than_five_rows() {
+        assert_eq!(recent_list_height(8), 5.0 * RecentRowView::ROW_HEIGHT);
+    }
+
+    #[test]
+    fn foreground_uses_compact_width_when_space_allows() {
+        assert_eq!(foreground_width(1280.0), 440.0);
+    }
+
+    #[test]
+    fn foreground_keeps_safe_margins_in_narrow_viewports() {
+        assert_eq!(foreground_width(400.0), 352.0);
+        assert_eq!(foreground_width(20.0), 0.0);
     }
 }

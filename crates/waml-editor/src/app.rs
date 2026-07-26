@@ -560,8 +560,9 @@ pub struct App {
     open_name: String,
     #[rust]
     tabs: OpenTabs,
-    /// Recents last rendered into the start screen, so an `OpenRecent(i)`
-    /// action resolves to a path without re-reading disk or index drift.
+    /// Complete recent-config backing list. `StartScreen` renders a capped copy
+    /// of its first five entries, so `OpenRecent(i)` and `TogglePin(i)` resolve
+    /// here without re-reading disk or introducing index drift.
     #[rust]
     start_recents: Vec<crate::config::Recent>,
     /// Which screen is live (editor vs start), so a theme live-edit reload
@@ -1578,9 +1579,9 @@ impl App {
         let rows: Vec<crate::start_screen::RecentRow> = self
             .start_recents
             .iter()
-            // All recents feed the list; the box (Task 3) bounds the visible
-            // count to five and scrolls beyond, so pins past five stay reachable.
-            // Click/toggle indices still map 1:1 (rows[i] == start_recents[i]).
+            // Keep the complete config list in `start_recents`; `StartScreen`
+            // caps only its rendered copy to the first five. Screen indices
+            // therefore still map 1:1 to this backing list.
             .map(|r| crate::start_screen::RecentRow {
                 title: r.title().to_string(),
                 path: r.path().display().to_string(),

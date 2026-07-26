@@ -15,8 +15,8 @@
 //! hybrid pattern (same as `inspector_panel.rs`), with granular per-line
 //! setters the parent calls per row. Containment is tested against the row's
 //! *live, clipped* area, and only for a row the current pass actually drew, so
-//! a row `FlatList` scrolled out of the five-row box cannot latch hover off a
-//! stale rect; hover is likewise dropped on window leave and whenever the row
+//! a recycled `FlatList` row cannot latch hover off a stale rect; hover is
+//! likewise dropped on window leave and whenever the row
 //! is re-seated (`set_pinned`/`set_clickable`), since a `TogglePin` re-sort
 //! moves the row out from under a pointer that never moves again.
 //!
@@ -39,12 +39,11 @@ script_mod! {
 
     mod.widgets.RecentRowView = set_type_default() do mod.widgets.RecentRowViewBase{
         width: Fill
-        height: Fit
+        height: 48.0
         flow: Right
         align: Align{y: 0.5}
-        // Tighter than before (was top/bottom 5) to reach VS's compact pitch.
-        padding: Inset{left: 12.0, right: 12.0, top: 3.0, bottom: 3.0}
-        spacing: 10.0
+        padding: Inset{left: 0.0, right: 0.0, top: 2.0, bottom: 2.0}
+        spacing: 8.0
         show_bg: true
 
         // Row hover wash (unchanged): a subtle premultiplied accent fill faded
@@ -391,15 +390,10 @@ impl RecentRowView {
             .is_some_and(|a| matches!(a.cast(), RecentRowViewAction::Clicked))
     }
 
-    /// Intrinsic drawn pitch of one row (the two-line title/path text stack
-    /// plus the 2x3 vertical padding). `StartScreen` sizes its list box to
-    /// `5 * ROW_HEIGHT + list padding` so exactly five rows fit; verify the fit
-    /// by screenshot after any font/padding change and retune if a 6th peeks
-    /// in or the 5th clips. Measured 61.0 by screenshot (2026-07-24): the
-    /// original 30.0 undersized the box (only ~2.5 rows fit) because it did
-    /// not account for the real two-line `text_label`/`text_menu` stack
-    /// height, only the 16px glyph anchor.
-    pub const ROW_HEIGHT: f64 = 61.0;
+    /// Drawn pitch of one compact two-line recent row. `StartScreen` derives
+    /// the transparent list host height from this value and the capped count.
+    /// Verify the pitch visually after font or padding changes.
+    pub const ROW_HEIGHT: f64 = 48.0;
 
     /// Drive the pinned state (pin glyph visibility + accent tint), redrawing
     /// only on a change.
@@ -489,7 +483,7 @@ mod tests {
     }
 
     fn rects() -> (Rect, Rect) {
-        // A row at y=100..161 with its 20x20 pin anchor at the right edge.
+        // Arbitrary geometry for containment behavior.
         let row = Rect {
             pos: dvec2(0.0, 100.0),
             size: dvec2(400.0, 61.0),
