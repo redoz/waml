@@ -3,8 +3,7 @@
 //! scroll/fold/selection for free. Each row's kind (see `TreeKind`) is shown as
 //! a HUD glyph icon overlaid at the left of the row via `DrawColor::draw_abs`
 //! (the SDF glyph set in `icons.rs`), in immediate mode right after `FileTree`
-//! draws that row. On a diagram-row click
-//! it emits `ProjectTreeAction::SelectDiagram(key)`.
+//! draws that row. Document-row clicks emit `ProjectTreeAction::OpenDocument`.
 //!
 //! Structure mirrors studio's `DesktopFileTree` / `FlatFileTree`, minus the
 //! filter page and git-status dots.
@@ -238,28 +237,24 @@ script_mod! {
 pub enum ProjectTreeAction {
     #[default]
     None,
-    SelectDiagram(String),
-    FocusClassifier(String),
+    OpenDocument {
+        key: String,
+        node_kind: TreeKind,
+        persistent: bool,
+    },
     /// The title trigger's open-request; `App` relays it to `PopupRoot` to
     /// show the scope-picker dropdown.
-    ScopeRequest {
-        anchor: Rect,
-    },
+    ScopeRequest { anchor: Rect },
     /// Search-field edit. Emitted by `emit_query` on every keystroke; `App`
     /// applies it to `NavState::query`.
     Query(String),
     /// Type-filter chip click; `App` relays it to `PopupRoot` to show the
     /// type-filter `SelectFlyout` (mirrors `ScopeRequest`). `anchor` is the
     /// chip's window rect so the flyout drops under it, sized to its width.
-    FilterRequest {
-        anchor: Rect,
-    },
+    FilterRequest { anchor: Rect },
     /// A secondary-button press over a classifier row. `App` selects the row
     /// (via `open_preview`) and opens the base node menu at `anchor`.
-    ContextMenu {
-        key: String,
-        anchor: DVec2,
-    },
+    ContextMenu { key: String, anchor: DVec2 },
 }
 
 /// Which projection the panel is showing, for the header note + empty state
@@ -329,13 +324,30 @@ fn note_band_height(tag: NavStateTag, collapsed: bool) -> f64 {
 }
 
 /// The four `TreeKind`s that previews treat as classifiers (they used to share
-/// `TreeKind::Class` before per-glyph rows split them out). Shared by the
-/// left-click focus path and the right-click context-menu path.
+/// `TreeKind::Class` before per-glyph rows split them out). Used by the
+/// right-click context-menu path; document actions recognize the same set plus
+/// diagrams.
 fn is_classifier_kind(kind: TreeKind) -> bool {
     matches!(
         kind,
         TreeKind::Class | TreeKind::Interface | TreeKind::Enum | TreeKind::DataType
     )
+}
+
+fn document_action(key: &str, node_kind: TreeKind, tap_count: u32) -> Option<ProjectTreeAction> {
+    matches!(
+        node_kind,
+        TreeKind::Diagram
+            | TreeKind::Class
+            | TreeKind::Interface
+            | TreeKind::Enum
+            | TreeKind::DataType
+    )
+    .then(|| ProjectTreeAction::OpenDocument {
+        key: key.to_owned(),
+        node_kind,
+        persistent: tap_count == 2,
+    })
 }
 
 #[derive(Script, ScriptHook, Widget)]
@@ -350,6 +362,8 @@ pub struct ProjectTree {
     id_to_key: HashMap<LiveId, String>,
     #[rust]
     id_to_kind: HashMap<LiveId, TreeKind>,
+    #[rust]
+    pending_tap_count: u32,
     #[live]
     icons: IconSet,
     // Tint for the row glyphs. Without this the glyphs render at DrawColor's dim
@@ -828,6 +842,9 @@ impl Widget for ProjectTree {
         // (`Pinned` <-> `Flag`) and only the caption bar's tree toggle moves it,
         // so there is no self-collapsing state to time out.
         match event.hits(cx, self.view.area()) {
+            Hit::FingerDown(fe) if fe.is_primary_hit() => {
+                self.pending_tap_count = fe.tap_count;
+            }
             Hit::FingerUp(fe) if fe.is_primary_hit() => {
                 let p = fe.abs - hit_off;
                 if self.title_rect.contains(p) {
@@ -886,16 +903,12 @@ impl Widget for ProjectTree {
             // expand both arrive from the caption bar's tree toggle -- so the
             // only actions read here are the `FileTree`'s row clicks.
             if let Some(id) = file_tree.file_clicked(actions) {
-                let kind = self.id_to_kind.get(&id).copied();
-                if let Some(key) = self.id_to_key.get(&id) {
-                    match kind {
-                        Some(TreeKind::Diagram) => {
-                            cx.widget_action(uid, ProjectTreeAction::SelectDiagram(key.clone()));
-                        }
-                        Some(k) if is_classifier_kind(k) => {
-                            cx.widget_action(uid, ProjectTreeAction::FocusClassifier(key.clone()));
-                        }
-                        _ => {}
+                let tap_count = std::mem::take(&mut self.pending_tap_count);
+                if let (Some(node_kind), Some(key)) =
+                    (self.id_to_kind.get(&id).copied(), self.id_to_key.get(&id))
+                {
+                    if let Some(action) = document_action(key, node_kind, tap_count) {
+                        cx.widget_action(uid, action);
                     }
                 }
             }
@@ -999,18 +1012,15 @@ impl ProjectTree {
         }
     }
 
-    pub fn selected_diagram(&self, actions: &Actions) -> Option<String> {
+    pub fn open_document(&self, actions: &Actions) -> Option<(String, TreeKind, bool)> {
         let item = actions.find_widget_action(self.widget_uid())?;
-        if let ProjectTreeAction::SelectDiagram(key) = item.cast() {
-            return Some(key);
-        }
-        None
-    }
-
-    pub fn focused_classifier(&self, actions: &Actions) -> Option<String> {
-        let item = actions.find_widget_action(self.widget_uid())?;
-        if let ProjectTreeAction::FocusClassifier(key) = item.cast() {
-            return Some(key);
+        if let ProjectTreeAction::OpenDocument {
+            key,
+            node_kind,
+            persistent,
+        } = item.cast()
+        {
+            return Some((key, node_kind, persistent));
         }
         None
     }
@@ -1106,6 +1116,31 @@ mod tests {
     use super::*;
     use crate::tree::{ProjectTree as ProjectTreeData, TreeKind, TreeNode};
     use makepad_widgets::LiveId;
+
+    #[test]
+    fn document_action_marks_only_second_tap_persistent() {
+        for kind in [TreeKind::Diagram, TreeKind::Class] {
+            assert!(matches!(
+                document_action("item", kind, 1),
+                Some(ProjectTreeAction::OpenDocument {
+                    persistent: false,
+                    ..
+                })
+            ));
+            assert!(matches!(
+                document_action("item", kind, 2),
+                Some(ProjectTreeAction::OpenDocument {
+                    persistent: true,
+                    ..
+                })
+            ));
+        }
+    }
+
+    #[test]
+    fn document_action_ignores_folders() {
+        assert!(document_action("pkg", TreeKind::Package, 2).is_none());
+    }
 
     #[test]
     fn id_maps_round_trip_key_and_kind() {

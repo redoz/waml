@@ -593,8 +593,8 @@ pub struct App {
     nav_filter_ids: Vec<(LiveId, Option<crate::tree::TreeKind>)>,
     /// One live view object per open tab, keyed by `DocTab::id`. Populated as
     /// tabs (diagram and classifier-preview alike) activate; pruned when a
-    /// tab closes (`relay_outcome`) or its base diagram is swapped
-    /// (`switch_diagram`).
+    /// tab closes (`relay_outcome`) or a preview is replaced
+    /// (`open_document`).
     #[rust]
     views: HashMap<LiveId, Box<dyn crate::doc_view::DocView>>,
     /// The key of the node whose context menu is currently open, stashed when
@@ -726,36 +726,77 @@ impl App {
         }
     }
 
-    /// Swap the base (first) tab's diagram and re-activate it. Shared by the
-    /// tree panel's diagram row and the caption-area diagram switcher (U7) --
-    /// both just need to name a diagram key, everything else is identical.
-    fn switch_diagram(&mut self, cx: &mut Cx, key: &str) {
-        let Some(diagram) = self.model.diagrams.iter().find(|d| d.key == key) else {
-            log!("switch_diagram: no diagram with key {key:?}");
+    /// Open or focus a document through the shared preview slot. All callers
+    /// use this path so replacement cleanup and view/chrome synchronization
+    /// stay identical for classifiers and diagrams.
+    fn open_document(
+        &mut self,
+        cx: &mut Cx,
+        key: &str,
+        node_kind: crate::tree::TreeKind,
+        persistent: bool,
+    ) {
+        let title = if node_kind == crate::tree::TreeKind::Diagram {
+            self.model
+                .diagrams
+                .iter()
+                .find(|diagram| diagram.key == key)
+                .map(|diagram| diagram.title.clone())
+        } else {
+            self.model
+                .nodes
+                .iter()
+                .find(|node| node.key == key)
+                .map(|node| {
+                    node.concept
+                        .title
+                        .clone()
+                        .unwrap_or_else(|| node.key.clone())
+                })
+        };
+        let Some(title) = title else {
             return;
         };
-        let base_id = self
-            .tabs
-            .set_diagram_base(diagram.key.clone(), diagram.title.clone());
-        // A new diagram is being shown in the base tab: drop the cached view
-        // so its expansion state (keyed by node key, which may not exist in
-        // the new diagram) starts fresh -- `sync_active_tab` below recreates
-        // it via `make_view`.
-        self.views.remove(&base_id);
-        self.tabs.activate(base_id);
-        self.refresh_doc_tabs(cx);
-        self.sync_active_tab(cx);
-        self.sync_diagram_switcher_current(cx);
-    }
 
-    /// Push the base tab's current diagram title into the switcher's trigger
-    /// chip. Called wherever the base tab's diagram changes.
-    fn sync_diagram_switcher_current(&mut self, cx: &mut Cx) {
-        let title = self
+        let old_preview = self
             .tabs
             .tabs
             .iter()
-            .find(|t| t.kind == TabKind::Diagram)
+            .find(|tab| tab.preview)
+            .map(|tab| tab.id);
+        let id = self.tabs.open_preview(key.to_owned(), title, node_kind);
+        if let Some(old) = old_preview {
+            if old != id {
+                self.views.remove(&old);
+            }
+        }
+        if persistent {
+            self.tabs.promote(id);
+        }
+        self.refresh_doc_tabs(cx);
+        self.sync_active_tab(cx);
+        if self
+            .tabs
+            .active_tab()
+            .is_some_and(|tab| tab.kind == TabKind::Diagram)
+        {
+            self.sync_diagram_switcher_current(cx);
+        }
+    }
+
+    /// Push the active diagram title into the switcher's trigger chip, falling
+    /// back to another open diagram when a classifier is active.
+    fn sync_diagram_switcher_current(&mut self, cx: &mut Cx) {
+        let title = self
+            .tabs
+            .active_tab()
+            .filter(|tab| tab.kind == TabKind::Diagram)
+            .or_else(|| {
+                self.tabs
+                    .tabs
+                    .iter()
+                    .find(|tab| tab.kind == TabKind::Diagram)
+            })
             .map(|t| t.title.clone())
             .unwrap_or_default();
         if let Some(mut switcher) = self
@@ -1393,12 +1434,12 @@ impl App {
         // toggle stays hidden.
         match crate::cli::select_diagram(&self.model, wanted_diagram) {
             Some(diagram) => {
-                // Seed the base tab; `self.views` was just cleared above, so
+                // Seed the diagram preview; `self.views` was just cleared above, so
                 // `sync_active_tab` lazily creates a fresh `ClassDiagramView`
                 // (no card expansion carried over) and drives the canvas,
                 // inspector, tree-row highlight, and tool dock through the
                 // normal registry-driven path.
-                self.tabs = OpenTabs::diagram_base(diagram.key.clone(), diagram.title.clone());
+                self.tabs = OpenTabs::diagram_preview(diagram.key.clone(), diagram.title.clone());
                 self.refresh_doc_tabs(cx);
                 self.sync_active_tab(cx);
             }
@@ -1436,7 +1477,7 @@ impl App {
         body.set_view_bar_visible(cx, chrome.view_bar);
         self.sync_right_dock_btn(cx, chrome.right_dock);
 
-        // Diagram switcher (U7): push the base tab's current diagram title into
+        // Diagram switcher (U7): push the active tab's current diagram title into
         // the trigger chip (empty when the model carries no diagram).
         self.sync_diagram_switcher_current(cx);
         true
@@ -2376,25 +2417,22 @@ impl MatchEvent for App {
             return;
         }
 
-        // Tree right-click: select the classifier (open/replace its preview
-        // tab, same as a left-click focus) and open the base-only node menu at
-        // the row.
+        // Tree right-click: select the classifier through the shared document
+        // path and open the base-only node menu at the row.
         let tree_context = self
             .ui
             .widget(cx, ids!(project_tree))
             .borrow_mut::<crate::tree_panel::ProjectTree>()
             .and_then(|panel| panel.context_menu_request(actions));
         if let Some((key, anchor)) = tree_context {
-            if let Some(node) = self.model.nodes.iter().find(|n| n.key == key) {
-                let title = node
-                    .concept
-                    .title
-                    .clone()
-                    .unwrap_or_else(|| node.key.clone());
-                self.tabs
-                    .open_preview(key.clone(), title, crate::tree::kind_of(&node.ty));
-                self.refresh_doc_tabs(cx);
-                self.sync_active_tab(cx);
+            let node_kind = self
+                .model
+                .nodes
+                .iter()
+                .find(|node| node.key == key)
+                .map(|node| crate::tree::kind_of(&node.ty));
+            if let Some(node_kind) = node_kind {
+                self.open_document(cx, &key, node_kind, false);
             }
             self.node_menu_key = Some(key);
             let bounds = self.window_bounds(cx);
@@ -2423,43 +2461,20 @@ impl MatchEvent for App {
             return;
         }
 
-        // Classifier focus: single-click a class row -> open/replace the
-        // single preview tab, focus-render that node in the canvas, and
-        // point the inspector at it.
-        let focused = self
+        // Tree document click: open/focus the shared preview and promote it
+        // when the tree classified the click as persistent.
+        let document = self
             .ui
             .widget(cx, ids!(project_tree))
             .borrow_mut::<crate::tree_panel::ProjectTree>()
-            .and_then(|panel| panel.focused_classifier(actions));
-        if let Some(key) = focused {
-            if let Some(node) = self.model.nodes.iter().find(|n| n.key == key) {
-                let title = node
-                    .concept
-                    .title
-                    .clone()
-                    .unwrap_or_else(|| node.key.clone());
-                self.tabs
-                    .open_preview(key, title, crate::tree::kind_of(&node.ty));
-                self.refresh_doc_tabs(cx);
-                self.sync_active_tab(cx);
-            }
+            .and_then(|panel| panel.open_document(actions));
+        if let Some((key, node_kind, persistent)) = document {
+            self.open_document(cx, &key, node_kind, persistent);
             return;
         }
 
-        // Diagram row: swap the permanent Diagram tab's content and activate it.
-        let selected = self
-            .ui
-            .widget(cx, ids!(project_tree))
-            .borrow_mut::<crate::tree_panel::ProjectTree>()
-            .and_then(|panel| panel.selected_diagram(actions));
-        if let Some(key) = selected {
-            self.switch_diagram(cx, &key);
-            return;
-        }
-
-        // Diagram switcher chip (caption area, U7): click cycles the base
-        // tab to the next `Model::diagrams` entry (wrapping), same
-        // swap-and-activate path as the tree panel's diagram row.
+        // Diagram switcher chip (caption area, U7): click cycles to the next
+        // `Model::diagrams` entry (wrapping) through the same document path.
         let switcher_clicked = self
             .ui
             .widget(cx, ids!(diagram_switcher))
@@ -2469,13 +2484,18 @@ impl MatchEvent for App {
             let keys: Vec<String> = self.model.diagrams.iter().map(|d| d.key.clone()).collect();
             let current = self
                 .tabs
-                .tabs
-                .iter()
-                .find(|t| t.kind == TabKind::Diagram)
+                .active_tab()
+                .filter(|tab| tab.kind == TabKind::Diagram)
+                .or_else(|| {
+                    self.tabs
+                        .tabs
+                        .iter()
+                        .find(|tab| tab.kind == TabKind::Diagram)
+                })
                 .map(|t| t.key.clone())
                 .unwrap_or_default();
             if let Some(next) = crate::diagram_switcher::next_diagram_key(&keys, &current) {
-                self.switch_diagram(cx, &next);
+                self.open_document(cx, &next, crate::tree::TreeKind::Diagram, false);
             }
             return;
         }
@@ -2832,16 +2852,14 @@ impl App {
             // Unused this migration (the project tree, shell chrome, still
             // drives previews). Placeholder relay for the forward-looking
             // channel; resolves title/kind off the model.
-            if let Some(node) = self.model.nodes.iter().find(|n| n.key == key) {
-                let title = node
-                    .concept
-                    .title
-                    .clone()
-                    .unwrap_or_else(|| node.key.clone());
-                self.tabs
-                    .open_preview(key, title, crate::tree::kind_of(&node.ty));
-                self.refresh_doc_tabs(cx);
-                self.sync_active_tab(cx);
+            let node_kind = self
+                .model
+                .nodes
+                .iter()
+                .find(|node| node.key == key)
+                .map(|node| crate::tree::kind_of(&node.ty));
+            if let Some(node_kind) = node_kind {
+                self.open_document(cx, &key, node_kind, false);
             }
             consumed = true;
         }
@@ -3142,7 +3160,8 @@ mod tests {
 
     #[test]
     fn document_switcher_items_preserve_order_and_tab_identity() {
-        let mut tabs = OpenTabs::diagram_base("d", "Diagram");
+        let mut tabs = OpenTabs::diagram_preview("d", "Diagram");
+        tabs.promote(tabs.active);
         let customer = tabs.open_preview("customer", "Customer", TreeKind::Class);
         tabs.promote(customer);
         let order = tabs.open_preview("order", "Order", TreeKind::Class);
