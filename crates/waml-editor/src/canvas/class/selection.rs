@@ -94,6 +94,7 @@ impl SelectionState {
         self.selected_key.as_deref()
     }
 
+    #[cfg(test)]
     pub(crate) fn selected_index(&self) -> Option<usize> {
         self.selected_index
     }

@@ -623,14 +623,8 @@ pub struct App {
 }
 
 impl App {
-    /// Registry-driven: look up (or create) the active tab's view, delegate
-    /// `sync`, and let it drive the shared body surface + tool dock
-    /// visibility. Both `TabKind`s otherwise go through the identical path --
-    /// their differing behavior lives in the view objects -- with one seam:
-    /// the View Source tab's markdown feed is pushed here in the shell rather
-    /// than from `SourceView::sync`, because `DocView::sync` receives `&Model`
-    /// but not the raw session bundle the source text is read from verbatim
-    /// (feeding it without a `DocView` trait change was out of scope).
+    /// Synchronize shell projections after the document host has completed a
+    /// transition. Document content and view-specific chrome stay host-owned.
     fn sync_document_shell(&mut self, cx: &mut Cx) {
         let selected = self.documents.active_tab().map(|tab| tab.key.clone());
         if let Some(mut tree) = self
@@ -976,24 +970,6 @@ impl App {
         self.sync_tree_gap(cx, layout.left_slot);
     }
 
-    /// Drive the caption's `[I]` toggle from the active view's declared right
-    /// dock: visible and wearing the view's glyph exactly when the view has
-    /// one, hidden otherwise -- including the no-active-tab case, where
-    /// `body_chrome(None)` reports `None`. The view declares *whether* and
-    /// *which glyph*; open/closed state, slot width and lit state stay the
-    /// app's (see `sync_dock_slots`).
-    ///
-    /// Declaring no dock also RECONCILES the panel itself, forcing it shut. The
-    /// toggle is the panel's only affordance now that the flag spine and pin
-    /// button are gone, so hiding the button over a still-`Pinned` column would
-    /// strand a 320px slab of the closed tab's stale subject with no way to
-    /// close it (close the last tab, or open a model with no diagrams). The
-    /// reconcile is one-way -- a declared dock never force-OPENS, so the user's
-    /// closed panel isn't reopened by a tab switch. `sync_dock_slots` picks the
-    /// new width up on the same event pass.
-    ///
-    /// The strip's top rule also overshoots by the button's width, so the same
-    /// verdict is pushed to `DocTabs` (see `doc_tabs::rule_x_end`).
     /// Push the launch-flag marks into `AgentMark`. Called at startup AND from
     /// `rehydrate`: the `T` theme toggle goes through `cx.request_live_edit()`
     /// -> `Apply::Reload`, which resets the widget's `#[rust]` state, so without
@@ -1285,12 +1261,12 @@ impl App {
     fn open_bundle(
         &mut self,
         cx: &mut Cx,
-        bundle: Vec<(String, String)>,
+        files: Vec<(String, String)>,
         model: waml::model::Model,
         display_name: String,
         wanted_diagram: Option<&str>,
     ) -> bool {
-        let change = self.session.replace(bundle, model);
+        let change = self.session.replace(files, model);
         debug_assert_eq!(change.revision, self.session.revision());
         // Retain the raw bundle so drag-to-place ops can re-author `## Layout`
         // in-memory: the diagram view emits `Op::PlaceSet`, the shell applies it
@@ -1318,11 +1294,7 @@ impl App {
         // toggle stays hidden.
         let initial_tabs = match crate::cli::select_diagram(self.session.model(), wanted_diagram) {
             Some(diagram) => {
-                // Seed the diagram preview; `self.views` was just cleared above, so
-                // `sync_active_tab` lazily creates a fresh `ClassDiagramView`
-                // (no card expansion carried over) and drives the canvas,
-                // inspector, tree-row highlight, and tool dock through the
-                // normal registry-driven path.
+                // Seed a fresh diagram preview through the document host.
                 OpenTabs::diagram_preview(diagram.key.clone(), diagram.title.clone())
             }
             None => {
@@ -1476,13 +1448,8 @@ impl App {
         // rebuilds from scratch).
         self.ui.widget(cx, ids!(menu_btn)).set_visible(cx, false);
         self.ui.widget(cx, ids!(tree_btn)).set_visible(cx, false);
-        // No open model means no active tab, and `body_chrome(None)` declares
-        // no right dock -- push that through the same seam rather than special-
-        // casing the button, so the start screen can't strand a stale `[I]`
-        // from the model that was just closed. (`show_start_screen` does not
-        // run `sync_active_tab`, which is where the push otherwise happens.)
-        let body = crate::doc_view::BodyWidgets::new(cx, &self.ui);
-        body.apply_chrome(cx, crate::doc_view::BodyChrome::HIDDEN);
+        // Replacing the host with no tabs applies hidden chrome through the
+        // same transition path used when the final document closes.
         // Clear the stale model title: the caption bar keeps drawing (logo +
         // name) even with no model open, so a leftover name reads as if the
         // closed model were still loaded.
@@ -2107,7 +2074,7 @@ mod tests {
         doc_switcher_items, logo_command_for, next_narrow, open_overlay_contains, place_rm_for,
         should_dismiss_narrow_dock, LogoCommand,
     };
-    use crate::doc_tabs::OpenTabs;
+    use crate::doc_tabs::{DocTab, OpenTabs, TabKind};
     use crate::dock::DockState;
     use crate::popup::conflict_list::ConflictListAction;
     use crate::tree::TreeKind;
@@ -2115,12 +2082,38 @@ mod tests {
 
     #[test]
     fn document_switcher_items_preserve_order_and_tab_identity() {
-        let mut tabs = OpenTabs::diagram_preview("d", "Diagram");
-        tabs.promote(tabs.active);
-        let customer = tabs.open_preview("customer", "Customer", TreeKind::Class);
-        tabs.promote(customer);
-        let order = tabs.open_preview("order", "Order", TreeKind::Class);
-        assert_eq!(tabs.active, order);
+        let diagram = LiveId::from_str("diagram");
+        let customer = LiveId::from_str("customer");
+        let order = LiveId::from_str("order");
+        let tabs = OpenTabs {
+            tabs: vec![
+                DocTab {
+                    id: diagram,
+                    key: "d".into(),
+                    title: "Diagram".into(),
+                    kind: TabKind::Diagram,
+                    node_kind: TreeKind::Diagram,
+                    preview: false,
+                },
+                DocTab {
+                    id: customer,
+                    key: "customer".into(),
+                    title: "Customer".into(),
+                    kind: TabKind::Classifier,
+                    node_kind: TreeKind::Class,
+                    preview: false,
+                },
+                DocTab {
+                    id: order,
+                    key: "order".into(),
+                    title: "Order".into(),
+                    kind: TabKind::Classifier,
+                    node_kind: TreeKind::Class,
+                    preview: true,
+                },
+            ],
+            active: order,
+        };
 
         let items = doc_switcher_items(&tabs.tabs);
         assert_eq!(

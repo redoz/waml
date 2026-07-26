@@ -135,9 +135,7 @@ fn recent_list_height(row_count: usize) -> f64 {
 }
 
 fn foreground_width(available_width: f64) -> f64 {
-    (available_width - FOREGROUND_MARGIN * 2.0)
-        .max(0.0)
-        .min(FOREGROUND_WIDTH)
+    (available_width - FOREGROUND_MARGIN * 2.0).clamp(0.0, FOREGROUND_WIDTH)
 }
 
 #[derive(Clone, Debug, Default)]

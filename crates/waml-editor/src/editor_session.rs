@@ -61,6 +61,7 @@ impl EditorSession {
         self.revision
     }
 
+    #[cfg(test)]
     pub fn is_dirty(&self) -> bool {
         self.dirty_revision.is_some()
     }

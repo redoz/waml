@@ -29,6 +29,8 @@ pub struct DocumentHost {
     views: HashMap<LiveId, Box<dyn DocView>>,
 }
 
+type RemovedViews = Vec<(LiveId, Box<dyn DocView>)>;
+
 fn make_view(tab: &DocTab) -> Box<dyn DocView> {
     match tab.kind {
         TabKind::Diagram => Box::new(crate::class_diagram_view::ClassDiagramView::new(
@@ -57,14 +59,14 @@ fn data(session: &EditorSession) -> ViewData<'_> {
 }
 
 impl DocumentHost {
-    fn replace_tabs_for_session(&mut self, tabs: OpenTabs) -> Vec<(LiveId, Box<dyn DocView>)> {
+    fn replace_tabs_for_session(&mut self, tabs: OpenTabs) -> RemovedViews {
         let removed = self.views.drain().collect();
         self.tabs = tabs;
         self.reconcile_registry();
         removed
     }
 
-    fn reconcile_registry(&mut self) -> Vec<(LiveId, Box<dyn DocView>)> {
+    fn reconcile_registry(&mut self) -> RemovedViews {
         let open: HashSet<LiveId> = self.tabs.tabs.iter().map(|tab| tab.id).collect();
         let stale: Vec<LiveId> = self
             .views
@@ -82,10 +84,7 @@ impl DocumentHost {
         removed
     }
 
-    fn apply_command(
-        &mut self,
-        command: DocumentCommand,
-    ) -> (bool, Vec<(LiveId, Box<dyn DocView>)>) {
+    fn apply_command(&mut self, command: DocumentCommand) -> (bool, RemovedViews) {
         let before = self.tabs.clone();
         match command {
             DocumentCommand::Open {
@@ -172,7 +171,7 @@ impl DocumentHost {
         ui: &WidgetRef,
         session: &EditorSession,
         old_active: LiveId,
-        mut removed: Vec<(LiveId, Box<dyn DocView>)>,
+        mut removed: RemovedViews,
     ) {
         let body = BodyWidgets::new(cx, ui);
         let new_active = self.tabs.active;
@@ -316,8 +315,10 @@ mod tests {
 
     #[test]
     fn preview_replacement_drops_the_replaced_live_view() {
-        let mut host = DocumentHost::default();
-        host.tabs = OpenTabs::diagram_preview("orders", "Orders");
+        let mut host = DocumentHost {
+            tabs: OpenTabs::diagram_preview("orders", "Orders"),
+            ..DocumentHost::default()
+        };
         let replaced = host.tabs.active;
         host.views.insert(
             replaced,
@@ -343,8 +344,10 @@ mod tests {
 
     #[test]
     fn close_reconciles_and_keeps_the_existing_right_then_left_fallback() {
-        let mut host = DocumentHost::default();
-        host.tabs = OpenTabs::diagram_preview("orders", "Orders");
+        let mut host = DocumentHost {
+            tabs: OpenTabs::diagram_preview("orders", "Orders"),
+            ..DocumentHost::default()
+        };
         let orders = host.tabs.active;
         host.tabs.promote(orders);
         let customer = host
@@ -365,8 +368,10 @@ mod tests {
     #[test]
     fn chrome_is_queried_from_the_registered_live_view() {
         let calls = Rc::new(Cell::new(0));
-        let mut host = DocumentHost::default();
-        host.tabs = OpenTabs::diagram_preview("orders", "Orders");
+        let mut host = DocumentHost {
+            tabs: OpenTabs::diagram_preview("orders", "Orders"),
+            ..DocumentHost::default()
+        };
         host.views.insert(
             host.tabs.active,
             Box::new(ProbeView {
@@ -391,8 +396,10 @@ mod tests {
 
     #[test]
     fn replacing_a_session_drops_views_even_when_tab_ids_repeat() {
-        let mut host = DocumentHost::default();
-        host.tabs = OpenTabs::diagram_preview("orders", "Old Orders");
+        let mut host = DocumentHost {
+            tabs: OpenTabs::diagram_preview("orders", "Old Orders"),
+            ..DocumentHost::default()
+        };
         let repeated = host.tabs.active;
         host.views.insert(
             repeated,

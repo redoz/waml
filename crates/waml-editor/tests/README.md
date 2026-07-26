@@ -57,6 +57,19 @@ retention, conflict focus and revalidation, and tab/scene changes during dwell
 or preview. Confirm no stale timer, dial, selection index, preview layout, or
 camera animation survives cancellation or a scene change.
 
+### Editor ownership parity
+
+Capture these fixed-size native screenshots before and after the ownership
+refactor: `start-screen`, `class-diagram`, `classifier-preview`, `source-view`,
+`tab-switching`, `popup`, `overlay`, and `docks-closed`.
+
+Interaction checklist: open/replace/promote/activate/close tabs; close fallback;
+diagram switch; source fallback; picker and placement-dial armed/closed order;
+conflict focus, delete, keep-open and dismiss; burger/logo/node/nav/doc-switcher
+popups; shortcuts/fonts/icons/colors overlays; wide/narrow left and right dock
+toggles; browser debounce save and refresh restore; native save remains
+non-durable.
+
 ## Headless render regression check — intentionally absent
 
 Task 9 investigated producing a headless PNG of the fixture for eyeball review
