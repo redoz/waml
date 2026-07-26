@@ -1,203 +1,251 @@
-# Narrow-viewport chrome
+# Responsive viewport chrome
 
 Status: designed, not implemented.
 
 ## Goal
 
-waml-editor's chrome is built for a 1280x840 desktop window and has no
-responsive behaviour of any kind: every caption and dock dimension is a fixed
-constant. On a phone-width viewport (~390px) three things are broken at once.
+`waml-editor` has one fixed desktop composition. Its 70x40 wordmark occupies a
+full-height column beside both caption rows, document tabs fade beyond the
+available strip instead of remaining reachable, and pinned docks reserve their
+full widths regardless of the viewport. At a phone-width viewport (~390px),
+the caption is cramped and the 280px tree plus 320px inspector can consume more
+than the entire canvas.
 
-1. The wordmark spans the full 66px caption band on the left, so it steals
-   ~92px from *both* caption rows -- including the tab row, which does not need
-   it.
-2. The tab strip does not scroll. Overflow simply fades out (`EDGE_FADE`, 48px
-   over 4 steps, `doc_tabs.rs:419`). A tab card measures ~165px (icon 15 +
-   `ICON_GAP` 6 + up to `MAX_TITLE_CHARS` 18 of 10px label + `TEXT_PAD` 12 +
-   `CLOSE_GAP` 10 + `CLOSE_W` 32), so a narrow viewport holds under two cards
-   and any further doc is not merely cramped -- it is unreachable.
-3. The docks are `Size::Fixed` slots driven by `ProjectTree::slot_width()` and
-   `Inspector::slot_width()` (`app.rs:834`). At 390px, one open dock buries the
-   canvas; both open leave it negative.
+Introduce two width-driven chrome modes:
 
-This spec introduces the editor's first breakpoint and reshapes the caption,
-the tab strip and the docks below it.
+- **Wide** keeps the multi-document tab strip and reserved dock columns.
+- **Narrow** replaces the strip with an active-document chip and draws docks
+  over the full-width canvas.
+
+Both modes use the same compact logo in the title row and the same two-row,
+full-width caption. Resizing changes presentation only: it never changes the
+set of open documents or loses panel state.
 
 ## Decisions
 
-- **Width threshold, not platform.** Narrow mode keys off viewport width alone,
-  so a desktop window dragged narrow enters it. Platform-gating (wasm + touch)
-  was rejected: a layout you can only observe on a phone is a layout you cannot
-  iterate on.
-- **Caption *and* docks in one pass.** The dock fix lands in
-  `sync_dock_slots` -- the same function the caption's `tree_gap` sync already
-  calls -- so splitting the work means editing it twice.
-- **Tabs collapse to a chip + switcher, not a one-tab cap.** Capping narrow to
-  a single open doc was the starting proposal and is rejected: the set of open
-  documents would change meaning with window width, so dragging a desktop
-  window narrow would have to close documents that then do not return when it
-  is widened. That reads as a bug. A strip that can hold exactly one card is
-  also not a tab strip; it is a title.
-- **Docks overlay, mutually exclusive.** The canvas is the thing the user is
-  looking at, so it keeps full width at all times. Full-viewport drawer panels
-  and clamped-but-still-reserved slots were both rejected (the latter on
-  arithmetic: a 40% clamp leaves ~78px of canvas at 390px).
+- **Two modes only.** Narrow and wide share one breakpoint state. Separate
+  caption and dock breakpoints were rejected because their combinations would
+  create implicit third and fourth modes.
+- **Width threshold, not platform.** A desktop window dragged narrow must show
+  the same layout as a phone-width web viewport so the design is observable and
+  testable without device gating.
+- **One logo instance.** The old full-height wordmark column is removed. A
+  single 44x25 `LogoMark` lives in `title_row` in both modes, avoiding duplicate
+  menu, heat-meter, and drag-query wiring.
+- **Caption and docks change together.** The breakpoint is reconciled on the
+  path that already runs `sync_dock_slots`, giving the entire chrome one
+  relayout trigger.
+- **Tabs collapse to a chip plus switcher.** Narrow mode does not close or cap
+  open documents. The active document remains directly closable and all open
+  documents remain reachable through a popup.
+- **Narrow docks overlay and are mutually exclusive.** The canvas retains the
+  full viewport width. Wide mode continues to allow both reserved docks.
+- **Existing `DockState` remains authoritative.** Responsive layout does not
+  add parallel tree-open or inspector-open booleans.
 
 ## Design
 
 ### Breakpoint
 
-`App` gains a `narrow: bool` derived from viewport width, recomputed on the
-path that already runs `sync_dock_slots` so there is exactly one relayout
-trigger.
+`App` gains a `narrow: bool`, recomputed from the viewport width during
+`sync_dock_slots`.
 
-Threshold **640px entering, 680px leaving**. The 640 comes from the desktop
-caption's fixed chrome cost -- logo ~92 + `TREE_BTN_W` 32 + `INSPECTOR_BTN_W`
-32 + `WINDOW_BUTTONS_W` 138 = 294px -- against the ~330px two tab cards need:
-the layout stops working under ~624px. The 40px of hysteresis is not cosmetic.
-Without it, a window resting on the boundary re-forks the entire chrome every
-frame.
+- Enter narrow below 640px.
+- Leave narrow above 680px.
+- Preserve the current mode from 640px through 680px.
 
-### Caption layout
+The 40px hysteresis prevents a window resting near the boundary from reforking
+the full chrome every frame. One shared mode is deliberately conservative:
+although moving the logo frees tab width, reserved docks still leave too little
+canvas below the threshold.
 
-The band stays 66px and keeps both rows. Only the horizontal composition
-changes.
+When the mode changes, `App` requests one full relayout and dismisses a
+document switcher opened under the previous composition because its anchor is
+no longer valid.
 
-Makepad cannot re-parent a widget at runtime, so the logo is **two `LogoMark`
-instances with one visible at a time**:
+### Caption hierarchy
 
-- `wordmark` -- the existing full-band instance, hidden on narrow.
-- a new instance mounted as `title_row`'s first child at 44x25, shown on
-  narrow. 44/25 holds the documented ~1.749 content aspect.
+The 66px caption remains two rows, but the entire caption becomes one
+full-width column:
 
-Both instances need their own `WindowDragQuery` arm and `logo_action` wiring.
-That duplication is the price of the no-reparent constraint and should be
-called out in the DSL comment so it is not later "cleaned up" into one.
+```text
+title_row visual: logo(44) | menu_btn(30) | model_name(Fill) | window_buttons
+tab_row:   tree_btn(30) | tree_gap | doc_tabs(Fill) | inspector_btn(30)
+```
 
-Nesting the narrow logo inside `title_row` is safe. The caption comment block
-(`app.rs:56-66`) reads as though interactive caption widgets must be direct
-children, but `tree_btn` is already nested in `tab_row` and works, because the
-rule is really "must be client-ized in the `WindowDragQuery` handler so its
-rect is not an OS drag region". The narrow logo joins on those terms. A short
-logo left as a direct caption child would not help regardless: in a `flow:
-Right` band it still reserves its column for the full height, which is exactly
-the space the tab row is trying to reclaim.
+The old direct-child `wordmark` view is removed. `caption_col` becomes the
+caption bar's full-width child. `agent_mark` remains the first DSL child at
+zero width so its absolute wash paints underneath the row; `logo` follows as
+the first visible-width child. Its 44x25 box preserves the mark's documented
+~1.749 aspect ratio.
 
-Narrow row composition:
+The existing `LogoMark` behavior stays single-sourced:
 
-- `title_row`: `logo(44) | agent_mark(0w) | menu_btn(30) | model_name(Fill)`
-- `tab_row`: `[T](30) | tree_gap | chip(Fill) | [I](30)`
+- `WindowDragQuery` client-izes its one drawn rect.
+- `logo_action` opens the app menu.
+- the FPS heat meter updates the same widget.
 
-`tab_row` now begins at x=0, giving the chip ~318px on a 390px viewport.
+Because the logo now sits in the upper row, its menu anchors below the logo
+like the burger menu instead of assuming a full-band logo and clamping from
+that geometry. The caption DSL comments must describe the actual nesting and
+client-area rule; the obsolete claim that the logo and burger must remain
+direct caption children is removed.
 
-### The top rule
+`tree_btn` is the first child of `tab_row`, so it floats at the viewport's left
+edge underneath the logo rather than inheriting a full-height logo offset.
+`inspector_btn` remains the last child and stays flush right.
 
-`doc_tabs::rule_x_end` adds `WINDOW_BUTTONS_W` (138) to the rule's right
-overshoot unconditionally. On narrow that overshoot must be 0.
+### Wide tab row
 
-Note while touching this: `windows_buttons` is declared `visible: false`
-(`app.rs:236`) and no code path sets it true, so the 138px reservation may
-already be wrong on the web build independently of this work. Establish which
-before changing the constant's use -- this spec only requires the narrow case
-to be correct, and should not silently alter desktop.
+Wide mode retains the normal multi-document `DocTabs` rendering.
 
-### Chip and switcher
+`tree_gap` remains derived from the reserved left slot:
 
-On narrow, `DocTabs` draws **only the active document's card**, `Fill` up to a
-320px cap, keeping its icon, title and close button. Because one card owns the
-whole strip, `MAX_TITLE_CHARS` goes *up* on narrow rather than down.
+```text
+max(0, left_slot_width - TREE_BTN_W)
+```
 
-- Tap the card body -> switcher opens.
-- Tap the card's `x` -> close the active document.
+This keeps `[T]` fixed at x=0 while aligning the first tab card with the
+canvas's left edge when the tree is open. When the tree is closed, the gap is
+zero and the existing `TAB_LEFT_INSET` separates the first card from `[T]`.
 
-Keeping close on the chip is what lets `PopupItem` stay unchanged: no per-row
-secondary action is needed in the switcher, so no new field on the shared popup
-item type.
+The top rule now extends left from the strip to x=0 because no wordmark occupies
+the lower row. Its right endpoint continues to use the current conditional
+inspector-button overshoot. The earlier concern about an unconditional
+`WINDOW_BUTTONS_W` overshoot is obsolete in the current code and is outside
+this work.
 
-The switcher is the existing `MenuPopup`, not a new surface: opened with one
-row per open document (icon + title), the active row marked via
-`open_marking`, anchored at the chip's bottom-left. Scrolling for long document
-lists already exists in `LinearGeom` (`set_max_height`, `scroll`,
-`thumb_rect`). Because the burger already owns a `MenuPopup`, the switcher's
-`PopupResult` is disambiguated by stashing which menu opened it -- the pattern
-the node context menu already uses.
+### Narrow document chip and switcher
 
-### Overlay docks
+In narrow mode, `DocTabs` draws only the active document as one chip. It fills
+the available strip up to a 320px cap and keeps the active tab's icon, title,
+preview styling, and close button. Narrow title truncation may use a larger
+character limit because one card owns the strip.
 
-On narrow, `sync_dock_slots` writes `Size::Fixed(0.0)` to both `left_slot` and
-`right_slot`. Each panel instead draws `draw_abs` at its own `slot_width()`,
-spanning caption-bottom to statusbar-top: the tree from x=0, the inspector
-flush against the right edge. The canvas underneath keeps full width.
+- Pressing the chip body emits a new switcher request carrying its
+  bottom-left anchor.
+- Pressing `x` emits the existing `DocTabsAction::Close(active_id)`.
+- With no active document, no chip is drawn and no switcher request is emitted.
 
-Opening one dock closes the other.
+`App` handles the request by constructing one existing `PopupItem` per open
+document and opening the shared `PopupRoot` under a dedicated
+`doc_switcher` tag. Each row contains the document icon and title; the active
+row is marked through `open_marking`. Existing `MenuPopup` maximum-height,
+scroll, and thumb behavior handles long lists. A committed row activates the
+selected tab through the same refresh and active-view synchronization path as
+a wide tab click.
 
-Dismissal: a tap on the canvas outside an open dock closes it. Containment must
-be tracked off `MouseMove`, **not** `Hit::FingerHover` -- both panels have child
-widgets that claim the hover first, which is the failure the scrim
-hover-arbiter fix already caught once.
+No secondary close action is added to `PopupItem`; closing remains on the chip.
 
-### The lit-state seam
+### Dock state and layout
 
-`[T]` and `[I]` currently derive their lit state from `lw > 0.5` / `rw > 0.5`
-(`app.rs:856`, `app.rs:877`), chosen deliberately so the glyph cannot disagree
-with the layout. Under overlay docks those widths are 0 while the panel is
-open, so that derivation breaks.
+`ProjectTree::dock_state()` and `Inspector::dock_state()` are the open/closed
+source of truth. `DockState::Pinned` means open and `DockState::Flag` means
+closed for caption-toggle behavior.
 
-Lit state moves to an explicit panel-open flag, and that flag becomes the
-shared source of truth for **both** modes -- wide mode's slot width is then
-derived from it rather than the reverse. Keeping two different sources of truth
-per mode would reintroduce exactly the disagreement the original comment was
-guarding against.
+In wide mode:
+
+- `left_slot` reserves `ProjectTree::slot_width()`.
+- `right_slot` reserves `Inspector::slot_width()`.
+- both panels may be open.
+
+In narrow mode:
+
+- both reservation slots are `Size::Fixed(0.0)`;
+- a pinned tree draws absolutely from the left edge at its normal 280px width;
+- a pinned inspector draws absolutely from the right edge at its normal 320px
+  width;
+- panel width is capped to the available viewport;
+- each panel spans from caption bottom to statusbar top.
+
+The existing panel state survives a mode change. Narrowing while both wide
+docks are open keeps the tree and closes the inspector, making mutual
+exclusion deterministic. Widening an open narrow panel turns it back into a
+reserved column without changing its state.
+
+`[T]` and `[I]` derive their lit state directly from `DockState`, while wide
+slot widths and narrow overlay visibility are separately derived from that same
+state. Slot width is no longer used as a proxy for whether an overlay is open.
+
+### Narrow dock interactions
+
+Opening `[T]` in narrow mode closes the inspector before toggling the tree.
+Opening `[I]` closes the tree before toggling the inspector. A view-side request
+to open the inspector follows the same mutual-exclusion rule.
+
+A primary press on the canvas outside the open overlay closes it. Whether the
+pointer lies inside the panel is maintained from raw mouse movement, not
+`Hit::FingerHover`, because panel children may claim hover before the panel.
+The overlay must consume hits within its own bounds so canvas gestures do not
+fall through.
+
+Wide mode retains today's independent dock toggles and permits both panels to
+remain open.
+
+## Edge cases
+
+- The start screen keeps the logo available; editor-only caption controls
+  remain hidden through their existing visibility paths.
+- No active document produces no narrow chip or empty switcher.
+- A mode transition dismisses an open document switcher.
+- A viewport narrower than a dock clamps the overlay to the viewport width.
+- A right dock that is unavailable for the active view remains closed and its
+  toggle remains hidden through `sync_right_dock_btn`.
+- Resizing never opens, closes, promotes, or removes documents.
 
 ## Non-goals
 
-- Statusbar, tool dock and popup sizing are not audited for narrow. The popups
-  already carry their own clamp logic and there is no evidence yet that they
-  break.
-- No touch-specific gestures. Narrow mode is a layout fork; the touch input
-  work is separate and already landed.
-- Horizontal tab-strip scrolling is not built. The chip replaces the need for
-  it on narrow, and wide mode keeps today's fade behaviour.
-- No change to how documents open, close or persist. Narrow changes how they
-  are *reached*, not what is open.
+- Statusbar, tool dock, and unrelated popup sizing are not audited.
+- No touch-specific gestures are introduced.
+- Wide-mode horizontal tab scrolling is not built; it keeps the existing fade.
+- Document opening, closing, preview promotion, and persistence semantics do
+  not change.
+- The desktop window-button implementation is not changed.
 
 ## Risks
 
-- **Two logo instances drift.** Two `LogoMark`s with separate drag-query arms
-  can fall out of sync in hover, click routing or styling. Mitigated by the DSL
-  comment and by driving both from the same `logo_action` handler.
-- **Overlay hit routing versus `PopupRoot`.** A `draw_abs` panel over the canvas
-  must not let clicks fall through, and `PopupRoot` has already needed an
-  explicit underlay-swallow fix once. If overlay routing fights the popup
-  authority, the fallback is full-viewport drawer panels, which remove the
-  partial-width case entirely.
-- **Hysteresis masking a layout bug.** A chrome that re-forks at a threshold can
-  hide an error that only appears mid-transition. Verification must include
-  dragging *through* the boundary, not only sampling each side.
-- **`WINDOW_BUTTONS_W` may already be wrong.** See "The top rule". Investigating
-  it could widen scope; if it proves wrong on web, fix it separately rather
-  than folding it in here.
+- **Absolute dock hit routing.** A panel drawn over the canvas must consume hits
+  inside its bounds without competing with `PopupRoot`. If partial-width
+  overlays prove incompatible with the overlay authority, the fallback is a
+  full-viewport drawer.
+- **Breakpoint transition with two open docks.** Wide mode permits a state
+  narrow mode cannot display. The tree-wins rule must execute once on entry,
+  not every frame.
+- **Nested caption controls.** The logo and burger now live inside
+  `title_row`. Every interactive caption child must remain client-ized in
+  `WindowDragQuery`.
+- **Hysteresis masking transition defects.** Interactive verification must drag
+  through both boundaries, not only sample one width on each side.
 
 ## Verification
 
 Unit:
 
-- breakpoint transitions, including hysteresis (enter at <640, leave at >680,
-  no flap between).
-- switcher item construction from the open-document set, active row marked.
-- `rule_x_end` overshoot is 0 on narrow, unchanged on wide.
-- lit-state flag drives both slot width (wide) and glyph state (both modes).
+- breakpoint transitions enter below 640px, leave above 680px, and preserve
+  state throughout the hysteresis band;
+- wide and narrow reservation widths derive correctly from the same
+  `DockState`;
+- entering narrow with both docks open keeps the tree and closes the inspector;
+- opening either narrow dock closes the other;
+- switcher item construction preserves open-document order and marks the active
+  row;
+- a narrow chip requests the switcher from its body and closes only from `x`;
+- the top rule reaches x=0 in both modes and keeps the conditional right edge.
 
-Interactive, at a forced 390px window, via the established pid-scoped
+Interactive at a forced 390px window, using the established pid-scoped
 synthetic-click recipe:
 
-- chip opens the switcher; selecting a row switches document.
-- chip `x` closes the active document.
-- `[T]` opens the tree over the canvas; `[I]` closes it and opens the
-  inspector.
-- canvas tap outside an open dock dismisses it.
-- drag the window from 900px to 380px and back; chrome forks cleanly in both
-  directions and nothing is left mid-state.
+- the logo menu, burger, `[T]`, chip, chip close button, and `[I]` remain
+  clickable caption client areas;
+- the chip opens the switcher and selecting a row switches documents;
+- chip `x` closes the active document;
+- `[T]` opens the tree over the canvas;
+- `[I]` closes the tree and opens the inspector;
+- a canvas press outside an open panel dismisses it;
+- clicks inside a panel do not reach the canvas;
+- dragging the window from 900px to 380px and back forks cleanly at both
+  thresholds and preserves documents.
 
-Web: playwright headless probe for console panics after the layout fork, since
-the fork adds a code path the wasm build reaches first.
+Capture a native-pixel screenshot of the 390px running window with
+`scripts/capture-window.ps1`. Run the web build under a headless Playwright
+probe and check the console for panics after exercising the layout fork.
