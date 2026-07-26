@@ -39,19 +39,171 @@ const injectFixture = async () => {
     };
 };
 
+const createRuntimeHarness = (html, options = {}) => {
+    const source = runtimeSource(html);
+    const segments = options.segments ?? Array.from(
+        { length: 6 },
+        () => ({ style: { opacity: "" } }),
+    );
+    let observerCallback;
+    let animationFrameCallback;
+    let timeoutCallback;
+    let timeoutDelay;
+    let transitionEndCallback;
+    const observer = {
+        disconnectCalls: 0,
+        observeCalls: [],
+        disconnect() {
+            this.disconnectCalls += 1;
+        },
+        observe(target, observerOptions) {
+            this.observeCalls.push({ target, options: observerOptions });
+        },
+    };
+    class FakeMutationObserver {
+        constructor(callback) {
+            observerCallback = callback;
+            return observer;
+        }
+    }
+    class FakeReadableStream {
+        constructor(streamSource) {
+            this.source = streamSource;
+        }
+    }
+    class FakeResponse {
+        constructor(body, init = {}) {
+            this.body = body;
+            Object.assign(this, init);
+        }
+    }
+    const classes = new Set(["canvas_loader"]);
+    const loader = {
+        classList: {
+            add(name) { classes.add(name); },
+            contains(name) { return classes.has(name); },
+        },
+        phase: "loading",
+        removeCalls: 0,
+        addEventListener(type, callback) {
+            if (type === "transitionend") {
+                transitionEndCallback = callback;
+            }
+        },
+        remove() {
+            this.removeCalls += 1;
+        },
+        setAttribute(name, value) {
+            if (options.phaseBookkeepingThrows && name === "data-phase") {
+                throw options.phaseBookkeepingThrows;
+            }
+            if (name === "data-phase") {
+                this.phase = value;
+            }
+        },
+    };
+    const status = { textContent: "Loading…" };
+    const document = {
+        body: {
+            appended: [],
+            appendChild(node) {
+                this.appended.push(node);
+                return node;
+            },
+        },
+        documentElement: {},
+        visibilityState: "hidden",
+        addEventListener() {},
+        createElement() {
+            return { addEventListener() {}, appendChild() {} };
+        },
+        querySelector(selector) {
+            if (selector === ".canvas_loader") { return loader; }
+            if (selector === ".waml_loader_status") { return status; }
+            return null;
+        },
+        querySelectorAll(selector) {
+            return selector === ".waml_loader_segment" ? segments : [];
+        },
+    };
+    const context = {
+        Date,
+        Promise,
+        Response: FakeResponse,
+        ReadableStream: FakeReadableStream,
+        MutationObserver: FakeMutationObserver,
+        clearInterval() {},
+        clearTimeout() {},
+        document,
+        encodeURIComponent,
+        fetch: options.fetch ?? (async () => ({ ok: false })),
+        location: { hash: "", pathname: "/", replace() {} },
+        setInterval() {},
+        setTimeout(callback, delay) {
+            timeoutCallback = callback;
+            timeoutDelay = delay;
+        },
+        requestAnimationFrame(callback) {
+            animationFrameCallback = callback;
+        },
+        window: null,
+        WebAssembly: {
+            compileStreaming: options.compileStreaming ?? (() => Promise.resolve({})),
+        },
+    };
+    context.window = context;
+    vm.runInNewContext(source, context);
+    return {
+        context,
+        document,
+        loader,
+        observer,
+        segments,
+        status,
+        get animationFrameCallback() { return animationFrameCallback; },
+        get observerCallback() { return observerCallback; },
+        get timeoutCallback() { return timeoutCallback; },
+        get timeoutDelay() { return timeoutDelay; },
+        get transitionEndCallback() { return transitionEndCallback; },
+    };
+};
+
+test("injector isolates loader markup and background from Makepad CSS", async (t) => {
+    const { artifactDir, html } = await injectFixture();
+    t.after(() => rm(artifactDir, { recursive: true, force: true }));
+
+    const loaderMarkup = html.match(
+        /<div class='canvas_loader'[\s\S]*?<\/div>/,
+    )?.[0];
+    assert.ok(loaderMarkup, "generated artifact should contain loader markup");
+    assert.doesNotMatch(
+        loaderMarkup.replace(/^<div\b[^>]*>/, ""),
+        /<div\b/,
+        "Makepad's later .canvas_loader div rule must not match nested loader elements",
+    );
+    assert.match(
+        loaderMarkup,
+        /<span class='waml_loader_status' role='status' aria-live='polite'>Loading…<\/span>/,
+    );
+    assert.match(
+        html,
+        /\.canvas_loader\[data-phase\]\s*{[\s\S]*?background-color:\s*#16181c;/,
+        "two-class-level specificity must beat Makepad's later .canvas_loader background",
+    );
+    for (const copy of ["Loading…", "Compiling…", "Starting…", "Couldn’t start WAML"]) {
+        assert.match(runtimeSource(html), new RegExp(copy));
+    }
+});
+
 test("injector renders six sequential loader segments", async (t) => {
     const { artifactDir, html } = await injectFixture();
     t.after(() => rm(artifactDir, { recursive: true, force: true }));
+
     assert.equal((html.match(/class='waml_loader_segment'/g) ?? []).length, 6);
     for (let index = 0; index < 6; index += 1) {
         assert.match(html, new RegExp(`--segment-index: ${index}`));
     }
     assert.doesNotMatch(html, /waml_loader_clip|waml_loader_reveal/);
-    assert.match(html, /Math\.max\(progress, Math\.min\(1, p\)\)/);
-    assert.match(
-        html,
-        /Math\.max\(\s*0,\s*Math\.min\(\s*1,\s*progress \* segments\.length - index\s*\)\s*\)/,
-    );
     assert.match(html, /opacity 250ms ease/);
     assert.match(
         html,
@@ -78,211 +230,213 @@ test("injector is idempotent when run twice on the same artifact", async (t) => 
     assert.equal((html.match(/<script data-waml-runtime-shell>/g) ?? []).length, 1);
 });
 
-test("runtime crossfades the removed loader once and cleans it up", async (t) => {
+test("runtime reveals segment opacities sequentially without regressing", async (t) => {
     const { artifactDir, html } = await injectFixture();
     t.after(() => rm(artifactDir, { recursive: true, force: true }));
 
-    const source = runtimeSource(html);
-    let observerCallback;
-    let animationFrameCallback;
-    let transitionEndCallback;
-    const observer = {
-        disconnectCalls: 0,
-        observeCalls: [],
-        disconnect() {
-            this.disconnectCalls += 1;
+    const responseChunks = [
+        [60, 90, 150],
+        [60],
+    ];
+    const harness = createRuntimeHarness(html, {
+        fetch: async () => {
+            const chunks = responseChunks.shift();
+            return {
+                ok: true,
+                body: {
+                    getReader() {
+                        return {
+                            read() {
+                                const byteLength = chunks.shift();
+                                return Promise.resolve(
+                                    byteLength === undefined
+                                        ? { done: true }
+                                        : { done: false, value: { byteLength } },
+                                );
+                            },
+                            cancel() {},
+                        };
+                    },
+                },
+                headers: {},
+                status: 200,
+                statusText: "OK",
+            };
         },
-        observe(target, options) {
-            this.observeCalls.push({ target, options });
-        },
-    };
-    class FakeMutationObserver {
-        constructor(callback) {
-            observerCallback = callback;
-            return observer;
-        }
-    }
-    const classes = new Set(["canvas_loader"]);
-    const loader = {
-        classList: {
-            add(name) { classes.add(name); },
-            contains(name) { return classes.has(name); },
-        },
-        removeCalls: 0,
-        addEventListener(type, callback) {
-            if (type === "transitionend") {
-                transitionEndCallback = callback;
-            }
-        },
-        remove() {
-            this.removeCalls += 1;
-        },
-        setAttribute() {},
-    };
-    const document = {
-        body: {
-            appended: [],
-            appendChild(node) {
-                this.appended.push(node);
-                return node;
-            },
-        },
-        documentElement: {},
-        visibilityState: "hidden",
-        addEventListener() {},
-        createElement() {
-            return { addEventListener() {}, appendChild() {} };
-        },
-        querySelector(selector) {
-            return selector === ".canvas_loader" ? loader : null;
-        },
-        querySelectorAll() { return []; },
-    };
-    const context = {
-        Date,
-        Promise,
-        Response: class {},
-        ReadableStream: class {},
-        MutationObserver: FakeMutationObserver,
-        clearInterval() {},
-        clearTimeout() {},
-        document,
-        encodeURIComponent,
-        fetch: async () => ({ ok: false }),
-        location: { hash: "", pathname: "/", replace() {} },
-        setInterval() {},
-        setTimeout() {},
-        requestAnimationFrame(callback) {
-            animationFrameCallback = callback;
-        },
-        window: null,
-        WebAssembly: {
-            compileStreaming() {
-                return Promise.resolve({});
-            },
-        },
-    };
-    context.window = context;
-    vm.runInNewContext(source, context);
+    });
+    const opacities = () => harness.segments.map((segment) => segment.style.opacity);
+    const controller = { close() {}, enqueue() {} };
 
-    assert.equal(observer.observeCalls.length, 1);
-    assert.equal(observer.observeCalls[0].target, document.documentElement);
+    const firstResponse = await harness.context.fetch("waml-editor.wasm");
+    await firstResponse.body.source.pull(controller);
+    assert.deepEqual(opacities(), ["0.600", "0.000", "0.000", "0.000", "0.000", "0.000"]);
+    await firstResponse.body.source.pull(controller);
+    assert.deepEqual(opacities(), ["1.000", "0.500", "0.000", "0.000", "0.000", "0.000"]);
+    await firstResponse.body.source.pull(controller);
+    assert.deepEqual(opacities(), ["1.000", "1.000", "1.000", "0.000", "0.000", "0.000"]);
+
+    const secondResponse = await harness.context.fetch("second.wasm");
+    await secondResponse.body.source.pull(controller);
     assert.deepEqual(
-        { ...observer.observeCalls[0].options },
+        opacities(),
+        ["1.000", "1.000", "1.000", "0.000", "0.000", "0.000"],
+        "a later lower progress report must not dim illuminated segments",
+    );
+});
+
+test("runtime filters transition cleanup and makes both cleanup paths idempotent", async (t) => {
+    const { artifactDir, html } = await injectFixture();
+    t.after(() => rm(artifactDir, { recursive: true, force: true }));
+
+    const transitionFirst = createRuntimeHarness(html);
+    assert.equal(transitionFirst.observer.observeCalls.length, 1);
+    assert.equal(
+        transitionFirst.observer.observeCalls[0].target,
+        transitionFirst.document.documentElement,
+    );
+    assert.deepEqual(
+        { ...transitionFirst.observer.observeCalls[0].options },
         { childList: true, subtree: true },
     );
 
-    observerCallback([{ removedNodes: [loader] }]);
-    assert.equal(document.body.appended.at(-1), loader);
-    assert.equal(loader.classList.contains("waml_loader_fading"), true);
+    transitionFirst.observerCallback([{ removedNodes: [transitionFirst.loader] }]);
+    assert.equal(transitionFirst.document.body.appended.at(-1), transitionFirst.loader);
+    assert.equal(transitionFirst.loader.classList.contains("waml_loader_fading"), true);
+    assert.equal(transitionFirst.timeoutDelay, 400);
 
-    animationFrameCallback();
-    assert.equal(loader.classList.contains("waml_loader_fade_out"), true);
+    transitionFirst.animationFrameCallback();
+    assert.equal(transitionFirst.loader.classList.contains("waml_loader_fade_out"), true);
 
-    observerCallback([{ removedNodes: [loader] }]);
-    assert.equal(document.body.appended.length, 1);
+    transitionFirst.observerCallback([{ removedNodes: [transitionFirst.loader] }]);
+    assert.equal(transitionFirst.document.body.appended.length, 1);
 
-    transitionEndCallback();
-    assert.equal(loader.removeCalls, 1);
-    assert.equal(observer.disconnectCalls, 1);
+    transitionFirst.transitionEndCallback({
+        target: { parentNode: transitionFirst.loader },
+        propertyName: "opacity",
+    });
+    transitionFirst.transitionEndCallback({
+        target: transitionFirst.loader,
+        propertyName: "transform",
+    });
+    assert.equal(transitionFirst.loader.removeCalls, 0);
+    assert.equal(transitionFirst.observer.disconnectCalls, 0);
+
+    transitionFirst.transitionEndCallback({
+        target: transitionFirst.loader,
+        propertyName: "opacity",
+    });
+    transitionFirst.timeoutCallback();
+    assert.equal(transitionFirst.loader.removeCalls, 1);
+    assert.equal(transitionFirst.observer.disconnectCalls, 1);
+
+    const fallbackFirst = createRuntimeHarness(html);
+    fallbackFirst.observerCallback([{ removedNodes: [fallbackFirst.loader] }]);
+    fallbackFirst.timeoutCallback();
+    fallbackFirst.transitionEndCallback({
+        target: fallbackFirst.loader,
+        propertyName: "opacity",
+    });
+    assert.equal(fallbackFirst.loader.removeCalls, 1);
+    assert.equal(fallbackFirst.observer.disconnectCalls, 1);
 });
 
-test("injector reports compile outcomes without replacing compiler values", async (t) => {
+test("compile observation preserves receiver, promise, outcomes, and sync throws", async (t) => {
     const { artifactDir, html } = await injectFixture();
     t.after(() => rm(artifactDir, { recursive: true, force: true }));
 
-    const source = runtimeSource(html);
-    assert.match(source, /Compiling…/);
-    assert.match(source, /Starting…/);
-    assert.match(source, /Couldn’t start WAML/);
-    assert.match(source, /nativeCompileStreaming\.apply\(WebAssembly, arguments\)/);
-    assert.match(source, /function \(module\) {\s*setPhase\('starting'\);\s*return module;/);
-    assert.match(source, /function \(error\) {\s*setPhase\('error'\);\s*throw error;/);
-    assert.match(html, /@keyframes waml_loader_chase/);
-    assert.match(html, /prefers-reduced-motion: reduce/);
-
-    const loader = {
-        phase: "loading",
-        setAttribute(name, value) {
-            if (name === "data-phase") {
-                this.phase = value;
-            }
-        },
-    };
-    const status = { textContent: "Loading…" };
     const compileAttempts = [];
-    const document = {
-        body: { appendChild() {} },
-        documentElement: {},
-        visibilityState: "hidden",
-        addEventListener() {},
-        createElement() {
-            return { addEventListener() {}, appendChild() {} };
+    const calls = [];
+    const harness = createRuntimeHarness(html, {
+        compileStreaming(...args) {
+            calls.push({ receiver: this, args });
+            const attempt = compileAttempts.shift();
+            if (attempt.throw) { throw attempt.throw; }
+            return attempt.promise;
         },
-        querySelector(selector) {
-            if (selector === ".canvas_loader") { return loader; }
-            if (selector === ".waml_loader_status") { return status; }
-            return null;
-        },
-        querySelectorAll() { return []; },
-    };
-    const context = {
-        Date,
-        Promise,
-        Response: class {},
-        ReadableStream: class {},
-        MutationObserver: class {
-            disconnect() {}
-            observe() {}
-        },
-        clearInterval() {},
-        clearTimeout() {},
-        document,
-        encodeURIComponent,
-        fetch: async () => ({ ok: false }),
-        location: { hash: "", pathname: "/", replace() {} },
-        setInterval() {},
-        setTimeout() {},
-        window: null,
-        WebAssembly: {
-            compileStreaming() {
-                const attempt = compileAttempts.shift();
-                if (attempt.throw) { throw attempt.throw; }
-                return attempt.promise;
-            },
-        },
-    };
-    context.window = context;
-    vm.runInNewContext(source, context);
+    });
+    const receiver = { sentinel: "receiver" };
+    const input = { sentinel: "input" };
+    const init = { sentinel: "init" };
 
     let resolveCompile;
     const compiledModule = { compiled: true };
-    compileAttempts.push({
-        promise: new Promise((resolve) => { resolveCompile = resolve; }),
-    });
-    const returned = context.WebAssembly.compileStreaming("module.wasm");
+    const nativeResolved = new Promise((resolve) => { resolveCompile = resolve; });
+    compileAttempts.push({ promise: nativeResolved });
+    const returnedResolved = harness.context.WebAssembly.compileStreaming.call(
+        receiver,
+        input,
+        init,
+    );
+    assert.equal(returnedResolved, nativeResolved);
+    assert.equal(calls[0].receiver, receiver);
+    assert.deepEqual(calls[0].args, [input, init]);
     resolveCompile(compiledModule);
-    assert.equal(await returned, compiledModule);
-    assert.equal(loader.phase, "starting");
-    assert.equal(status.textContent, "Starting…");
+    assert.equal(await returnedResolved, compiledModule);
+    assert.equal(harness.loader.phase, "starting");
+    assert.equal(harness.status.textContent, "Starting…");
 
     let rejectCompile;
     const failure = new Error("compile failed");
-    compileAttempts.push({
-        promise: new Promise((resolve, reject) => { rejectCompile = reject; }),
-    });
-    const rejected = context.WebAssembly.compileStreaming("broken.wasm");
+    const nativeRejected = new Promise((resolve, reject) => { rejectCompile = reject; });
+    compileAttempts.push({ promise: nativeRejected });
+    const returnedRejected = harness.context.WebAssembly.compileStreaming("broken.wasm");
+    assert.equal(returnedRejected, nativeRejected);
     rejectCompile(failure);
-    await assert.rejects(rejected, (error) => error === failure);
-    assert.equal(loader.phase, "error");
-    assert.equal(status.textContent, "Couldn’t start WAML");
+    await assert.rejects(returnedRejected, (error) => error === failure);
+    assert.equal(harness.loader.phase, "error");
+    assert.equal(harness.status.textContent, "Couldn’t start WAML");
 
     const synchronousFailure = new Error("compile threw");
     compileAttempts.push({ throw: synchronousFailure });
     assert.throws(
-        () => context.WebAssembly.compileStreaming("throwing.wasm"),
+        () => harness.context.WebAssembly.compileStreaming("throwing.wasm"),
         (error) => error === synchronousFailure,
     );
-    assert.equal(loader.phase, "error");
-    assert.equal(status.textContent, "Couldn’t start WAML");
+});
+
+test("phase bookkeeping failures cannot alter compiler outcomes or leak rejections", async (t) => {
+    const { artifactDir, html } = await injectFixture();
+    t.after(() => rm(artifactDir, { recursive: true, force: true }));
+
+    const bookkeepingFailure = new Error("phase bookkeeping failed");
+    const compileAttempts = [];
+    const unhandled = [];
+    const onUnhandled = (reason, promise) => {
+        unhandled.push({ reason, promise });
+    };
+    process.on("unhandledRejection", onUnhandled);
+    t.after(() => process.off("unhandledRejection", onUnhandled));
+
+    const harness = createRuntimeHarness(html, {
+        phaseBookkeepingThrows: bookkeepingFailure,
+        compileStreaming() {
+            const attempt = compileAttempts.shift();
+            if (attempt.throw) { throw attempt.throw; }
+            return attempt.promise;
+        },
+    });
+
+    const compiledModule = { compiled: true };
+    const nativeResolved = Promise.resolve(compiledModule);
+    compileAttempts.push({ promise: nativeResolved });
+    const returnedResolved = harness.context.WebAssembly.compileStreaming("module.wasm");
+    assert.equal(returnedResolved, nativeResolved);
+    assert.equal(await returnedResolved, compiledModule);
+
+    const nativeFailure = new Error("native rejection");
+    const nativeRejected = Promise.reject(nativeFailure);
+    compileAttempts.push({ promise: nativeRejected });
+    const returnedRejected = harness.context.WebAssembly.compileStreaming("broken.wasm");
+    assert.equal(returnedRejected, nativeRejected);
+    await assert.rejects(returnedRejected, (error) => error === nativeFailure);
+
+    const synchronousFailure = new Error("native synchronous throw");
+    compileAttempts.push({ throw: synchronousFailure });
+    assert.throws(
+        () => harness.context.WebAssembly.compileStreaming("throwing.wasm"),
+        (error) => error === synchronousFailure,
+    );
+
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.deepEqual(unhandled, []);
 });

@@ -91,13 +91,13 @@ const progressSegments = polygons
 
 const LOADER_BODY = `
         <div class='canvas_loader' data-phase='loading'>
-            <div class='waml_loader_content'>
+            <span class='waml_loader_content'>
                 <svg class='waml_loader_mark' viewBox='${VIEW_BOX}' aria-label='Loading WAML'>
                     <g opacity='0.16'>${ghostSegments}</g>
                     <g>${progressSegments}</g>
                 </svg>
-                <div class='waml_loader_status' role='status' aria-live='polite'>Loading…</div>
-            </div>
+                <span class='waml_loader_status' role='status' aria-live='polite'>Loading…</span>
+            </span>
         </div>`;
 
 // Anchor on cargo-makepad's loader markup. Matched loosely on the class so a
@@ -112,15 +112,15 @@ html = html.replace(loaderRe, LOADER_BODY.trim());
 
 const LOADER_CSS = `
         <style data-${MARKER}>
-            .canvas_loader {
+            .canvas_loader[data-phase] {
                 display: flex;
                 align-items: center;
                 justify-content: center;
                 background-color: #16181c;
             }
             /* makepad's own ".canvas_loader div" rule (the grey status strip)
-               no longer matches anything: the child it styled is gone, replaced
-               by this svg. Sizing here is therefore standalone, not an override. */
+               cannot match the span content or status elements. Sizing here is
+               therefore standalone, not an override. */
             .canvas_loader .waml_loader_mark {
                 width: min(38vw, 260px);
                 height: auto;
@@ -288,13 +288,19 @@ const RUNTIME_JS = `
                         document.body.appendChild(node);
 
                         var cleaned = false;
-                        var cleanup = function () {
+                        var cleanup = function (event) {
+                            if (
+                                event &&
+                                (event.target !== node || event.propertyName !== 'opacity')
+                            ) {
+                                return;
+                            }
                             if (cleaned) { return; }
                             cleaned = true;
                             node.remove();
                             loaderObserver.disconnect();
                         };
-                        node.addEventListener('transitionend', cleanup, { once: true });
+                        node.addEventListener('transitionend', cleanup);
                         window.setTimeout(cleanup, 400);
                         window.requestAnimationFrame(function () {
                             node.classList.add('waml_loader_fade_out');
@@ -357,24 +363,30 @@ const RUNTIME_JS = `
             };
 
             var nativeCompileStreaming = WebAssembly.compileStreaming;
+            var safelySetPhase = function (nextPhase) {
+                try {
+                    setPhase(nextPhase);
+                } catch (_) {
+                    // Phase reporting must never replace the compiler outcome.
+                }
+            };
             WebAssembly.compileStreaming = function () {
                 var compiled;
                 try {
-                    compiled = nativeCompileStreaming.apply(WebAssembly, arguments);
+                    compiled = nativeCompileStreaming.apply(this, arguments);
                 } catch (error) {
-                    setPhase('error');
+                    safelySetPhase('error');
                     throw error;
                 }
-                return Promise.resolve(compiled).then(
-                    function (module) {
-                        setPhase('starting');
-                        return module;
+                compiled.then(
+                    function () {
+                        safelySetPhase('starting');
                     },
-                    function (error) {
-                        setPhase('error');
-                        throw error;
+                    function () {
+                        safelySetPhase('error');
                     }
                 );
+                return compiled;
             };
 
             // -- update check ------------------------------------------------
