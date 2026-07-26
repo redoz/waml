@@ -632,13 +632,17 @@ pub struct App {
     agent_row_w: f64,
 }
 
+fn reconcile_open_views<V>(views: &mut HashMap<LiveId, V>, tabs: &OpenTabs) {
+    let open: HashSet<LiveId> = tabs.tabs.iter().map(|tab| tab.id).collect();
+    views.retain(|id, _| open.contains(id));
+}
+
 impl App {
     /// Drop view objects for tabs that are no longer open. Keeps per-tab live
     /// state (a diagram's `expanded`, a preview's key) alive across tab
     /// switches but reclaims it when the tab closes.
     fn reconcile_views(&mut self) {
-        let open: HashSet<LiveId> = self.tabs.tabs.iter().map(|t| t.id).collect();
-        self.views.retain(|id, _| open.contains(id));
+        reconcile_open_views(&mut self.views, &self.tabs);
     }
 
     /// Registry-driven: look up (or create) the active tab's view, delegate
@@ -758,16 +762,7 @@ impl App {
             return;
         };
 
-        let old_preview = self
-            .tabs
-            .tabs
-            .iter()
-            .find(|tab| tab.preview)
-            .map(|tab| tab.id);
         let id = self.tabs.open_preview(key.to_owned(), title, node_kind);
-        if let Some(old) = replaced_preview_id(old_preview, &self.tabs) {
-            self.views.remove(&old);
-        }
         if persistent {
             self.tabs.promote(id);
         }
@@ -1800,10 +1795,6 @@ fn doc_switcher_items(open: &OpenTabs) -> Vec<crate::popup::base::PopupItem> {
             enabled: true,
         })
         .collect()
-}
-
-fn replaced_preview_id(old_preview: Option<LiveId>, open: &OpenTabs) -> Option<LiveId> {
-    old_preview.filter(|old| !open.tabs.iter().any(|tab| tab.id == *old))
 }
 
 /// The logo-radial commands `App` acts on. `Cancel` is intentionally absent:
@@ -3152,13 +3143,14 @@ impl AppMain for App {
 mod tests {
     use super::{
         doc_switcher_items, logo_command_for, next_narrow, open_overlay_contains, place_rm_for,
-        replaced_preview_id, should_dismiss_narrow_dock, LogoCommand,
+        reconcile_open_views, should_dismiss_narrow_dock, LogoCommand,
     };
     use crate::doc_tabs::OpenTabs;
     use crate::dock::DockState;
     use crate::popup::conflict_list::ConflictListAction;
     use crate::tree::TreeKind;
     use makepad_widgets::*;
+    use std::collections::HashMap;
 
     #[test]
     fn document_switcher_items_preserve_order_and_tab_identity() {
@@ -3185,25 +3177,31 @@ mod tests {
     }
 
     #[test]
-    fn preview_cleanup_keeps_a_separate_preview_when_focusing_a_persisted_tab() {
+    fn view_reconciliation_keeps_all_still_open_tabs_when_focus_changes() {
         let mut tabs = OpenTabs::diagram_preview("orders", "Orders");
         let orders = tabs.active;
         tabs.promote(orders);
         let customer = tabs.open_preview("customer", "Customer", TreeKind::Class);
+        let mut views = HashMap::from([(orders, "orders view"), (customer, "customer view")]);
 
         tabs.open_preview("orders", "Orders", TreeKind::Diagram);
+        reconcile_open_views(&mut views, &tabs);
 
-        assert_eq!(replaced_preview_id(Some(customer), &tabs), None);
+        assert_eq!(views.len(), 2);
+        assert_eq!(views.get(&orders), Some(&"orders view"));
+        assert_eq!(views.get(&customer), Some(&"customer view"));
     }
 
     #[test]
-    fn preview_cleanup_identifies_a_preview_that_was_replaced() {
+    fn view_reconciliation_removes_only_views_without_an_open_tab() {
         let mut tabs = OpenTabs::diagram_preview("orders", "Orders");
         let orders = tabs.active;
+        let mut views = HashMap::from([(orders, "orders view")]);
 
         tabs.open_preview("customer", "Customer", TreeKind::Class);
+        reconcile_open_views(&mut views, &tabs);
 
-        assert_eq!(replaced_preview_id(Some(orders), &tabs), Some(orders));
+        assert!(views.is_empty());
     }
 
     #[test]
