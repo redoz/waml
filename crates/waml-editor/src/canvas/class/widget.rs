@@ -6,6 +6,10 @@
 //! Structure/hit-handling mirror the fork's `widgets/src/map/view.rs`.
 
 use crate::camera::Camera;
+use crate::canvas::geometry::{
+    corner_fillet, elbow_radius, intersect_rect, marker_geometry, segment_quad, snap_bar_to_device,
+    ELBOW_MIN_DEVICE_PX,
+};
 use crate::frame::SurfaceExt;
 use crate::inspector::Subject;
 use crate::popup::base::PopupItem;
@@ -1166,120 +1170,11 @@ fn veil_ramp(dir: waml::syntax::Direction) -> ([f32; 2], [f32; 2]) {
     }
 }
 
-/// Axis-aligned intersection of two screen rects (empty size if disjoint). Pure.
-fn intersect_rect(a: Rect, b: Rect) -> Rect {
-    let x0 = a.pos.x.max(b.pos.x);
-    let y0 = a.pos.y.max(b.pos.y);
-    let x1 = (a.pos.x + a.size.x).min(b.pos.x + b.size.x);
-    let y1 = (a.pos.y + a.size.y).min(b.pos.y + b.size.y);
-    Rect {
-        pos: dvec2(x0, y0),
-        size: dvec2((x1 - x0).max(0.0), (y1 - y0).max(0.0)),
-    }
-}
-
-/// The axis-aligned quad that draws one routed segment as an `EdgeLine`.
-/// `EdgeLine` fills the quad, so an axis-aligned segment's degenerate
-/// (zero-extent) axis must be inflated to `thickness`. That inflation is
-/// centered on the routed centerline (the min corner shifts back half the
-/// growth) so the bar sits on the true coordinate instead of thickness/2 off
-/// it -- otherwise consecutive segments miss at every elbow of a routed
-/// polyline. Pure, for a GPU-free test.
-fn segment_quad(a: DVec2, b: DVec2, thickness: f64) -> Rect {
-    let mut min = dvec2(a.x.min(b.x), a.y.min(b.y));
-    let mut size = dvec2((a.x - b.x).abs(), (a.y - b.y).abs());
-    if size.x < thickness {
-        min.x -= (thickness - size.x) / 2.0;
-        size.x = thickness;
-    }
-    if size.y < thickness {
-        min.y -= (thickness - size.y) / 2.0;
-        size.y = thickness;
-    }
-    Rect { pos: min, size }
-}
-
-/// Snap an edge bar to the device pixel grid so every bar renders with identical
-/// coverage regardless of where its centerline lands in world space. Without
-/// this, `thickness * zoom` puts a bar's thin axis on an arbitrary sub-pixel
-/// boundary when zoomed out; the rasterizer then splits that coverage unevenly
-/// across two device rows, so some bars look thinner/dimmer than their
-/// neighbours. Rounding the edges to whole device pixels (and flooring the size
-/// to a 1px minimum) gives each bar the same crisp footprint. `dpi` is
-/// `cx.current_dpi_factor()`; the geometry is logical, so we round in device
-/// space and convert back. Pure, for a GPU-free test.
-fn snap_bar_to_device(rect: Rect, dpi: f64) -> Rect {
-    let snap = |v: f64| (v * dpi).round() / dpi;
-    let size = |v: f64| ((v * dpi).round().max(1.0)) / dpi;
-    Rect {
-        pos: dvec2(snap(rect.pos.x), snap(rect.pos.y)),
-        size: dvec2(size(rect.size.x), size(rect.size.y)),
-    }
-}
-
-/// Minimum fillet radius, in DEVICE pixels, below which an edge bend keeps its
-/// hard corner instead of rounding. A curved AA stroke can't be device-pixel
-/// snapped like the straight bars, so a sub-few-pixel arc reads thin and offset
-/// against them; this floor confines fillets to radii where that error is
-/// invisible (see the draw loop).
-const ELBOW_MIN_DEVICE_PX: f64 = 6.0;
-
-/// A rounded corner (fillet) for one interior bend of a routed edge, built as ONE
-/// combined SDF: the pen unions two short bar stubs with the quarter-arc band, so
-/// the arc-to-bar joints are interior to a single filled shape (solid, no AA) and
-/// antialiasing lands only on the outer boundary. Screen-space; `bar_in`/`bar_out`
-/// (packed `[x, y, w, h]`), `gate`, `center`/`radius` are all in the returned
-/// `quad`'s LOCAL pixel frame (matching the shader's `self.pos * self.rect_size`).
-/// The stubs and the arc share the SNAPPED bar centerlines + half-width, so the
-/// arc reads the same thickness as the bars and lands exactly on them.
-struct CornerFillet {
-    quad: Rect,
-    /// Incoming bar stub, quad-local `[x, y, w, h]`; overlaps the straight bar and
-    /// butts the arc at the incoming tangent.
-    bar_in: [f32; 4],
-    /// Outgoing bar stub, quad-local `[x, y, w, h]`.
-    bar_out: [f32; 4],
-    /// Axis-aligned quadrant `[x, y, w, h]` (quad-local) that intersects the annulus
-    /// down to the quarter facing the vertex -- its two edges are the bend's
-    /// bounding rays, so the band flat-caps exactly on the bar tangents.
-    gate: [f32; 4],
-    /// Arc center in `quad`-local pixel space.
-    center: DVec2,
-    radius: f64,
-    /// Arc band half-width (= snapped bar thickness / 2), so the band matches the
-    /// bars it joins.
-    hw: f64,
-}
-
-/// The fillet radius for the bend at vertex `v` (incoming from `a`, outgoing to
-/// `b`), all in screen space. Returns 0 unless this is a genuine orthogonal
-/// (90-degree) bend with room to round: a straight run, a reversal, a
-/// non-orthogonal bend, or a segment shorter than the radius all yield 0 (a hard
-/// corner, unchanged). Capped at half each incident segment so the trimmed bars
-/// never invert. Pure, for a GPU-free test.
-fn elbow_radius(a: DVec2, v: DVec2, b: DVec2, r_base: f64) -> f64 {
-    let din = dvec2(v.x - a.x, v.y - a.y);
-    let dout = dvec2(b.x - v.x, b.y - v.y);
-    let lin = (din.x * din.x + din.y * din.y).sqrt();
-    let lout = (dout.x * dout.x + dout.y * dout.y).sqrt();
-    if lin < 1e-6 || lout < 1e-6 {
-        return 0.0;
-    }
-    // Perpendicular only: unit dot ~ 0. Collinear (straight, dot ~ 1) or a
-    // reversal (dot ~ -1) or any other angle keeps the hard corner.
-    let dot = (din.x * dout.x + din.y * dout.y) / (lin * lout);
-    if dot.abs() > 1e-3 {
-        return 0.0;
-    }
-    r_base.min(lin * 0.5).min(lout * 0.5)
-}
-
 /// Overlap length (in the bar's own units) of each corner stub back onto its
 /// straight bar. The stub is drawn UN-snapped inside the combined pen but shares
 /// the straight bar's snapped centerline + thickness, so its coverage coincides
 /// with the straight bar over this overlap -- the butt reads as one continuous
 /// bar, no lateral jog. One thickness is plenty to seat the join.
-const CORNER_STUB_OVERLAP: f64 = 1.0;
 
 /// How far (as a fraction of the arc-band half-width) each stub reaches PAST its
 /// tangent into the arc band, so the stub interpenetrates the band instead of
@@ -1287,7 +1182,6 @@ const CORNER_STUB_OVERLAP: f64 = 1.0;
 /// zero-crossing exactly on the tangent and `fill` antialiases it to a hairline
 /// seam; half the half-width buries the crossing while the straight stub's bulge
 /// past the arc's outer curve stays well under a pixel.
-const CORNER_STUB_SEAL: f64 = 0.5;
 
 /// Build the combined-SDF corner fillet for the orthogonal bend `a -> v -> b`
 /// (screen space), or `None` if this bend isn't rounded (see [`elbow_radius`]).
@@ -1306,127 +1200,10 @@ const CORNER_STUB_SEAL: f64 = 0.5;
 /// run from each tangent back along their bar by [`CORNER_STUB_OVERLAP`] so the
 /// combined shape butts the straight bars off the curve. Pure, for a GPU-free
 /// test.
-fn corner_fillet(
-    a: DVec2,
-    v: DVec2,
-    b: DVec2,
-    in_bar: Rect,
-    out_bar: Rect,
-    r: f64,
-) -> Option<CornerFillet> {
-    if r <= 0.0 {
-        return None;
-    }
-    let din = dvec2(v.x - a.x, v.y - a.y);
-    let dout = dvec2(b.x - v.x, b.y - v.y);
-    let lin = (din.x * din.x + din.y * din.y).sqrt();
-    let lout = (dout.x * dout.x + dout.y * dout.y).sqrt();
-    if lin < 1e-6 || lout < 1e-6 {
-        return None;
-    }
-    let din = dvec2(din.x / lin, din.y / lin);
-    let dout = dvec2(dout.x / lout, dout.y / lout);
-    // Snapped centerlines: the incoming bar constrains the coordinate PERPENDICULAR
-    // to its run (its thin axis' center); the outgoing bar constrains the other.
-    // Their crossing is the effective (snapped) vertex the arc pivots around. The
-    // snapped thickness is that thin dimension.
-    let (v_prime, t_snap) = if din.y.abs() < 1e-6 {
-        // Incoming horizontal -> its snapped center pins y; outgoing vertical pins x.
-        let cy = in_bar.pos.y + in_bar.size.y * 0.5;
-        let cx = out_bar.pos.x + out_bar.size.x * 0.5;
-        (dvec2(cx, cy), in_bar.size.y)
-    } else {
-        // Incoming vertical -> pins x; outgoing horizontal pins y.
-        let cx = in_bar.pos.x + in_bar.size.x * 0.5;
-        let cy = out_bar.pos.y + out_bar.size.y * 0.5;
-        (dvec2(cx, cy), in_bar.size.x)
-    };
-    let hw = t_snap * 0.5;
-    // Tangent points + arc center off the SNAPPED vertex.
-    let p1 = dvec2(v_prime.x - din.x * r, v_prime.y - din.y * r);
-    let p2 = dvec2(v_prime.x + dout.x * r, v_prime.y + dout.y * r);
-    let c = dvec2(
-        v_prime.x - din.x * r + dout.x * r,
-        v_prime.y - din.y * r + dout.y * r,
-    );
-    // Stub far ends, overlapping each straight bar off the curve.
-    let m = t_snap * CORNER_STUB_OVERLAP;
-    let q1 = dvec2(p1.x - din.x * m, p1.y - din.y * m);
-    let q2 = dvec2(p2.x + dout.x * m, p2.y + dout.y * m);
-    // Arc-side stub ends, pushed a short way PAST each tangent INTO the arc band.
-    // A stub that merely butts the tangent shares its zero-crossing with the arc's
-    // flat cap there, so `fill`'s antialiasing renders that shared edge at partial
-    // coverage -- the sub-pixel hairline seam. Interpenetrating the band by `seal`
-    // keeps the union solid (both distances negative) across the tangent, so the
-    // seam is buried; `seal` is small enough that the straight stub barely bulges
-    // past the arc's outer curve (offset ~ seal^2 / 2(r+hw), well under a pixel).
-    let seal = hw * CORNER_STUB_SEAL;
-    let p1s = dvec2(p1.x + din.x * seal, p1.y + din.y * seal);
-    let p2s = dvec2(p2.x - dout.x * seal, p2.y - dout.y * seal);
-    // Quad bounds everything the pen touches: arc center, effective vertex (bounds
-    // the arc's outer bulge), and both stub far ends, inflated by the half-width.
-    let mut lo = dvec2(c.x.min(v_prime.x), c.y.min(v_prime.y));
-    let mut hi = dvec2(c.x.max(v_prime.x), c.y.max(v_prime.y));
-    for p in [q1, q2] {
-        lo = dvec2(lo.x.min(p.x), lo.y.min(p.y));
-        hi = dvec2(hi.x.max(p.x), hi.y.max(p.y));
-    }
-    lo = dvec2(lo.x - hw, lo.y - hw);
-    hi = dvec2(hi.x + hw, hi.y + hw);
-    let quad = Rect {
-        pos: lo,
-        size: dvec2(hi.x - lo.x, hi.y - lo.y),
-    };
-    // Stub rects: `segment_quad` inflates the degenerate axis to `t_snap` centered
-    // on the shared centerline (Q..P sit on it), so each stub is the exact bar
-    // cross-section. Emit quad-local `[x, y, w, h]`.
-    let local = |seg: Rect| {
-        [
-            (seg.pos.x - lo.x) as f32,
-            (seg.pos.y - lo.y) as f32,
-            seg.size.x as f32,
-            seg.size.y as f32,
-        ]
-    };
-    // Gate quadrant: anchored at the arc center, extending toward the vertex along
-    // whichever axis sign points at it. `big` spans the whole quad so the far edges
-    // never clip the band. Intersecting the annulus with this keeps only the quarter
-    // between the two axis-aligned tangents.
-    let center_local = dvec2(c.x - lo.x, c.y - lo.y);
-    let big = quad.size.x + quad.size.y;
-    let gate_x = if v_prime.x >= c.x {
-        center_local.x
-    } else {
-        center_local.x - big
-    };
-    let gate_y = if v_prime.y >= c.y {
-        center_local.y
-    } else {
-        center_local.y - big
-    };
-    Some(CornerFillet {
-        quad,
-        bar_in: local(segment_quad(q1, p1s, t_snap)),
-        bar_out: local(segment_quad(p2s, q2, t_snap)),
-        gate: [gate_x as f32, gate_y as f32, big as f32, big as f32],
-        center: center_local,
-        radius: r,
-        hw,
-    })
-}
 
 /// A resolved terminal glyph ready to draw: the axis-aligned quad to place it
 /// in, the four packed path vertices in that quad's local pixel space, and the
 /// branchless `hollow`/`filled` interior flags the `EdgeMarker` shader reads.
-struct MarkerDraw {
-    quad: Rect,
-    /// Packed (v0.xy, v1.xy) in local pixel space.
-    v01: [f32; 4],
-    /// Packed (v2.xy, v3.xy) in local pixel space.
-    v23: [f32; 4],
-    hollow: f32,
-    filled: f32,
-}
 
 /// Turn a [`Marker`] at an endpoint into drawable geometry, oriented so the glyph
 /// points along `dir_raw` (the terminal segment direction, toward the node). The
@@ -1435,65 +1212,6 @@ struct MarkerDraw {
 /// local pixel space to match the shader's `self.pos * self.rect_size` frame.
 /// Returns `None` for `Marker::None` or a degenerate (zero-length) direction.
 /// Pure, for a GPU-free test.
-fn marker_geometry(marker: Marker, ep: DVec2, dir_raw: DVec2, size: f64) -> Option<MarkerDraw> {
-    if marker == Marker::None {
-        return None;
-    }
-    let len = (dir_raw.x * dir_raw.x + dir_raw.y * dir_raw.y).sqrt();
-    if len < 1e-6 {
-        return None;
-    }
-    let d = dvec2(dir_raw.x / len, dir_raw.y / len); // unit, pointing into the node
-    let n = dvec2(-d.y, d.x); // perpendicular
-    let l = size;
-    let w = size * 0.62; // half-width
-
-    // The quad is a square centered on the endpoint, sized to hold the deepest
-    // glyph: the diamond reaches back `2*l` along `-d`, plus `w` sideways.
-    let half = 2.0 * l + w + 2.0;
-    let quad = Rect {
-        pos: dvec2(ep.x - half, ep.y - half),
-        size: dvec2(half * 2.0, half * 2.0),
-    };
-    let o = quad.pos;
-    let lp = |p: DVec2| [(p.x - o.x) as f32, (p.y - o.y) as f32];
-
-    let base = dvec2(ep.x - d.x * l, ep.y - d.y * l);
-    let bl = dvec2(base.x + n.x * w, base.y + n.y * w);
-    let br = dvec2(base.x - n.x * w, base.y - n.y * w);
-
-    let (v0, v1, v2, v3, hollow, filled) = match marker {
-        // Apex on the endpoint, base back along -d. v3 == apex closes cleanly.
-        Marker::HollowTriangle => (ep, bl, br, ep, 1.0, 0.0),
-        // Near tip on the endpoint, far tip back at 2*l, sides at l ± w.
-        Marker::FilledDiamond | Marker::HollowDiamond => {
-            let far = dvec2(ep.x - d.x * 2.0 * l, ep.y - d.y * 2.0 * l);
-            let sa = dvec2(ep.x - d.x * l + n.x * w, ep.y - d.y * l + n.y * w);
-            let sb = dvec2(ep.x - d.x * l - n.x * w, ep.y - d.y * l - n.y * w);
-            let filled = if marker == Marker::FilledDiamond {
-                1.0
-            } else {
-                0.0
-            };
-            (ep, sa, far, sb, 1.0 - filled, filled)
-        }
-        // Open "V": base_left -> apex -> base_right -> apex. No closing base line;
-        // interior is transparent (both flags 0) so only the stroke shows.
-        Marker::OpenArrow => (bl, ep, br, ep, 0.0, 0.0),
-        Marker::None => return None,
-    };
-    let a = lp(v0);
-    let b = lp(v1);
-    let c = lp(v2);
-    let e = lp(v3);
-    Some(MarkerDraw {
-        quad,
-        v01: [a[0], a[1], b[0], b[1]],
-        v23: [c[0], c[1], e[0], e[1]],
-        hollow,
-        filled,
-    })
-}
 
 /// Screen position of a routed world point under `camera`, offset into the
 /// canvas `rect`. Mirrors the edge segment loop's world->local->rect math.
@@ -3342,6 +3060,8 @@ fn font_raster_size(target_size: f32) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    const CORNER_STUB_SEAL: f64 = 0.5;
     use waml::solve::Rect as WorldRect;
 
     #[test]

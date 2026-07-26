@@ -1,4 +1,5 @@
 mod class;
+mod geometry;
 
 pub(crate) use class::script_mod;
 pub(crate) use class::{
