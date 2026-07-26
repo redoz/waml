@@ -36,7 +36,10 @@ fn draw_label(
         .edge_label
         .layout(cx, 0.0, 0.0, None, false, Align::default(), &label.text)
         .size_in_lpxs;
-    let text_size = dvec2(measured.width as f64, measured.height as f64);
+    let text_size = scaled_text_size(
+        dvec2(measured.width as f64, measured.height as f64),
+        draws.edge_label.font_scale as f64,
+    );
     let text_pos = aligned_text_pos(anchor, text_size, label.align);
     fill_rect(
         cx,
@@ -59,6 +62,10 @@ fn aligned_text_pos(anchor: DVec2, size: DVec2, align: LabelAlign) -> DVec2 {
     }
 }
 
+fn scaled_text_size(measured: DVec2, font_scale: f64) -> DVec2 {
+    measured * font_scale
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -79,6 +86,18 @@ mod tests {
         assert_eq!(
             aligned_text_pos(anchor, size, LabelAlign::Below),
             dvec2(88.0, 100.0)
+        );
+    }
+
+    #[test]
+    fn measured_text_size_scales_before_alignment() {
+        let anchor = dvec2(100.0, 100.0);
+        let measured = dvec2(40.0, 20.0);
+        let scaled = scaled_text_size(measured, 0.5);
+        assert_eq!(scaled, dvec2(20.0, 10.0));
+        assert_eq!(
+            aligned_text_pos(anchor, scaled, LabelAlign::Left),
+            dvec2(80.0, 100.0)
         );
     }
 }
