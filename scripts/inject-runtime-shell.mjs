@@ -150,11 +150,22 @@ const LOADER_CSS = `
             .canvas_loader[data-phase='error'] .waml_loader_segment {
                 opacity: 1;
             }
+            .canvas_loader.waml_loader_fading {
+                pointer-events: none;
+                opacity: 1;
+                transition: opacity 250ms ease;
+            }
+            .canvas_loader.waml_loader_fade_out {
+                opacity: 0;
+            }
             @media (prefers-reduced-motion: reduce) {
                 .canvas_loader[data-phase='compiling'] .waml_loader_segment,
                 .canvas_loader[data-phase='starting'] .waml_loader_segment {
                     animation: none;
                     opacity: 1;
+                }
+                .canvas_loader.waml_loader_fading {
+                    transition-duration: 1ms;
                 }
             }
             .canvas_loader .waml_loader_status {
@@ -256,6 +267,44 @@ const RUNTIME_JS = `
             document.addEventListener('DOMContentLoaded', function () {
                 applyProgress();
                 applyPhase();
+            });
+
+            // makepad removes the loader only after its presented-frame checks.
+            // Reattach that same node synchronously, then fade it over the
+            // already-rendered canvas on the next animation frame.
+            var fadeHandled = false;
+            var loaderObserver = new MutationObserver(function (records) {
+                records.forEach(function (record) {
+                    record.removedNodes.forEach(function (node) {
+                        if (
+                            fadeHandled ||
+                            !node.classList ||
+                            !node.classList.contains('canvas_loader')
+                        ) {
+                            return;
+                        }
+                        fadeHandled = true;
+                        node.classList.add('waml_loader_fading');
+                        document.body.appendChild(node);
+
+                        var cleaned = false;
+                        var cleanup = function () {
+                            if (cleaned) { return; }
+                            cleaned = true;
+                            node.remove();
+                            loaderObserver.disconnect();
+                        };
+                        node.addEventListener('transitionend', cleanup, { once: true });
+                        window.setTimeout(cleanup, 400);
+                        window.requestAnimationFrame(function () {
+                            node.classList.add('waml_loader_fade_out');
+                        });
+                    });
+                });
+            });
+            loaderObserver.observe(document.documentElement, {
+                childList: true,
+                subtree: true
             });
 
             var nativeFetch = window.fetch.bind(window);

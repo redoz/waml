@@ -52,6 +52,139 @@ test("injector renders six sequential loader segments", async (t) => {
         html,
         /Math\.max\(\s*0,\s*Math\.min\(\s*1,\s*progress \* segments\.length - index\s*\)\s*\)/,
     );
+    assert.match(html, /opacity 250ms ease/);
+    assert.match(
+        html,
+        /\.canvas_loader\.waml_loader_fade_out\s*{\s*opacity:\s*0;/,
+    );
+    assert.match(
+        html,
+        /prefers-reduced-motion:\s*reduce[\s\S]*transition-duration:\s*1ms;/,
+    );
+});
+
+test("injector is idempotent when run twice on the same artifact", async (t) => {
+    const { artifactDir } = await injectFixture();
+    t.after(() => rm(artifactDir, { recursive: true, force: true }));
+
+    await execFileAsync(process.execPath, [
+        "scripts/inject-runtime-shell.mjs",
+        artifactDir,
+        "test-build",
+    ]);
+    const html = await readFile(join(artifactDir, "index.html"), "utf8");
+
+    assert.equal((html.match(/<style data-waml-runtime-shell>/g) ?? []).length, 1);
+    assert.equal((html.match(/<script data-waml-runtime-shell>/g) ?? []).length, 1);
+});
+
+test("runtime crossfades the removed loader once and cleans it up", async (t) => {
+    const { artifactDir, html } = await injectFixture();
+    t.after(() => rm(artifactDir, { recursive: true, force: true }));
+
+    const source = runtimeSource(html);
+    let observerCallback;
+    let animationFrameCallback;
+    let transitionEndCallback;
+    const observer = {
+        disconnectCalls: 0,
+        observeCalls: [],
+        disconnect() {
+            this.disconnectCalls += 1;
+        },
+        observe(target, options) {
+            this.observeCalls.push({ target, options });
+        },
+    };
+    class FakeMutationObserver {
+        constructor(callback) {
+            observerCallback = callback;
+            return observer;
+        }
+    }
+    const classes = new Set(["canvas_loader"]);
+    const loader = {
+        classList: {
+            add(name) { classes.add(name); },
+            contains(name) { return classes.has(name); },
+        },
+        removeCalls: 0,
+        addEventListener(type, callback) {
+            if (type === "transitionend") {
+                transitionEndCallback = callback;
+            }
+        },
+        remove() {
+            this.removeCalls += 1;
+        },
+        setAttribute() {},
+    };
+    const document = {
+        body: {
+            appended: [],
+            appendChild(node) {
+                this.appended.push(node);
+                return node;
+            },
+        },
+        documentElement: {},
+        visibilityState: "hidden",
+        addEventListener() {},
+        createElement() {
+            return { addEventListener() {}, appendChild() {} };
+        },
+        querySelector(selector) {
+            return selector === ".canvas_loader" ? loader : null;
+        },
+        querySelectorAll() { return []; },
+    };
+    const context = {
+        Date,
+        Promise,
+        Response: class {},
+        ReadableStream: class {},
+        MutationObserver: FakeMutationObserver,
+        clearInterval() {},
+        clearTimeout() {},
+        document,
+        encodeURIComponent,
+        fetch: async () => ({ ok: false }),
+        location: { hash: "", pathname: "/", replace() {} },
+        setInterval() {},
+        setTimeout() {},
+        requestAnimationFrame(callback) {
+            animationFrameCallback = callback;
+        },
+        window: null,
+        WebAssembly: {
+            compileStreaming() {
+                return Promise.resolve({});
+            },
+        },
+    };
+    context.window = context;
+    vm.runInNewContext(source, context);
+
+    assert.equal(observer.observeCalls.length, 1);
+    assert.equal(observer.observeCalls[0].target, document.documentElement);
+    assert.deepEqual(
+        { ...observer.observeCalls[0].options },
+        { childList: true, subtree: true },
+    );
+
+    observerCallback([{ removedNodes: [loader] }]);
+    assert.equal(document.body.appended.at(-1), loader);
+    assert.equal(loader.classList.contains("waml_loader_fading"), true);
+
+    animationFrameCallback();
+    assert.equal(loader.classList.contains("waml_loader_fade_out"), true);
+
+    observerCallback([{ removedNodes: [loader] }]);
+    assert.equal(document.body.appended.length, 1);
+
+    transitionEndCallback();
+    assert.equal(loader.removeCalls, 1);
+    assert.equal(observer.disconnectCalls, 1);
 });
 
 test("injector reports compile outcomes without replacing compiler values", async (t) => {
@@ -80,6 +213,7 @@ test("injector reports compile outcomes without replacing compiler values", asyn
     const compileAttempts = [];
     const document = {
         body: { appendChild() {} },
+        documentElement: {},
         visibilityState: "hidden",
         addEventListener() {},
         createElement() {
@@ -97,7 +231,10 @@ test("injector reports compile outcomes without replacing compiler values", asyn
         Promise,
         Response: class {},
         ReadableStream: class {},
-        MutationObserver: class {},
+        MutationObserver: class {
+            disconnect() {}
+            observe() {}
+        },
         clearInterval() {},
         clearTimeout() {},
         document,
