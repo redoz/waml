@@ -23,7 +23,10 @@ pub enum MenuOpen {
     /// Press-open (marking): the press landed at this point (tap-vs-drag origin).
     Press(DVec2),
     /// Direct latched popup open (click-to-pick).
-    Popup,
+    Popup {
+        open_marking: Option<LiveId>,
+        max_height: Option<f64>,
+    },
 }
 
 /// How to open the wedge.
@@ -100,6 +103,10 @@ enum ActiveKind {
     Radial,
     Select,
     Conflict,
+}
+
+fn active_tag_is(active: Option<(ActiveKind, LiveId)>, tag: LiveId) -> bool {
+    active.is_some_and(|(_, active_tag)| active_tag == tag)
 }
 
 /// The routing decision for one already-handled event.
@@ -255,6 +262,10 @@ impl PopupRoot {
         }
     }
 
+    pub fn is_open_for(&self, tag: LiveId) -> bool {
+        active_tag_is(self.active, tag)
+    }
+
     pub fn show_at(&mut self, cx: &mut Cx, spec: PopupSpec) {
         // Supersede: reset the prior surface and emit its Dismissed close.
         self.dismiss_active(cx);
@@ -269,12 +280,23 @@ impl PopupRoot {
                 // Overlay backing: clamp the card on-screen. Width is unknown
                 // until draw measures the label, so clamp with the safety-cap
                 // width; height is exact from the row count.
-                let size = dvec2(MENU_MAX_W, PAD_V * 2.0 + items.len() as f64 * ROW_H);
+                let full_height = PAD_V * 2.0 + items.len() as f64 * ROW_H;
+                let menu_height = match &open {
+                    MenuOpen::Popup {
+                        max_height: Some(max),
+                        ..
+                    } => full_height.min(*max),
+                    _ => full_height,
+                };
+                let size = dvec2(MENU_MAX_W, menu_height);
                 let placed = Presenter::place(anchor, size, bounds);
                 if let Some(mut m) = self.body.widget(cx, ids!(menu)).borrow_mut::<MenuPopup>() {
                     match open {
                         MenuOpen::Press(press) => m.open_marking(cx, placed, press, items),
-                        MenuOpen::Popup => m.open_popup(cx, placed, items),
+                        MenuOpen::Popup {
+                            open_marking,
+                            max_height,
+                        } => m.open_popup(cx, placed, items, open_marking, max_height),
                     }
                 }
                 self.active = Some((ActiveKind::Menu, tag));
@@ -561,5 +583,13 @@ mod tests {
     fn a_consumed_event_keeps_it_open() {
         let step = decide(PopupVerdict::Consumed, true);
         assert_eq!(step, RouteStep::Keep);
+    }
+
+    #[test]
+    fn active_tag_query_distinguishes_the_open_surface_owner() {
+        let active = Some((ActiveKind::Menu, live_id!(doc_switcher)));
+        assert!(active_tag_is(active, live_id!(doc_switcher)));
+        assert!(!active_tag_is(active, live_id!(logo)));
+        assert!(!active_tag_is(None, live_id!(doc_switcher)));
     }
 }

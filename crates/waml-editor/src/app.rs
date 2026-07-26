@@ -2120,7 +2120,10 @@ impl MatchEvent for App {
                         anchor,
                         bounds,
                         items,
-                        open: MenuOpen::Popup,
+                        open: MenuOpen::Popup {
+                            open_marking: None,
+                            max_height: None,
+                        },
                     },
                 );
             }
@@ -2234,7 +2237,10 @@ impl MatchEvent for App {
                             vec![],
                             crate::popup::node_menu::base_items(),
                         ),
-                        open: MenuOpen::Popup,
+                        open: MenuOpen::Popup {
+                            open_marking: None,
+                            max_height: None,
+                        },
                     },
                 );
             }
@@ -2373,7 +2379,10 @@ impl MatchEvent for App {
                         anchor,
                         bounds,
                         items: logo_menu_items(),
-                        open: MenuOpen::Popup,
+                        open: MenuOpen::Popup {
+                            open_marking: None,
+                            max_height: None,
+                        },
                     },
                 );
             }
@@ -2559,7 +2568,10 @@ impl App {
                                     context,
                                     crate::popup::node_menu::base_items(),
                                 ),
-                                open: MenuOpen::Popup,
+                                open: MenuOpen::Popup {
+                                    open_marking: None,
+                                    max_height: None,
+                                },
                             },
                         );
                     }

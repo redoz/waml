@@ -36,17 +36,26 @@ pub const MENU_GAP: f64 = -4.0;
 /// Horizontal inset of the card from the anchor button's left edge (lpx), so
 /// the drop-down sits a touch right of the glyph rather than flush under it.
 pub const MENU_INDENT_X: f64 = 2.0;
-/// Caption-bar height (matches `window.caption_bar_height_override` in the App
-/// DSL). The card top is clamped to this so it clears the caption's clip band.
-pub const CAPTION_H: f64 = 66.0;
 /// Cursor travel (lpx) from the press point before a held press is
 /// treated as a marking drag rather than a tap (mirrors `Radial`'s threshold).
 pub const DRAG_THRESHOLD: f64 = 6.0;
 /// Scrollbar thumb width (lpx). Only drawn when the list is taller than its
-/// clamped panel (`SelectFlyout`; the menu never sets a `max_height`).
+/// clamped panel (`SelectFlyout`; unbounded menus leave `max_height` unset).
 pub const SCROLLBAR_W: f64 = 4.0;
 /// Inset of the scrollbar thumb from the panel's right frame edge (lpx).
 pub const SCROLLBAR_INSET: f64 = 3.0;
+
+fn row_is_marked(
+    hovered: Option<usize>,
+    open_marking: Option<LiveId>,
+    index: usize,
+    item_id: LiveId,
+) -> bool {
+    match hovered {
+        Some(hovered) => hovered == index,
+        None => open_marking == Some(item_id),
+    }
+}
 /// Shortest the thumb ever gets so it stays grabbable on a very long list (lpx).
 pub const SCROLLBAR_MIN_THUMB: f64 = 24.0;
 
@@ -287,6 +296,25 @@ mod tests {
     }
 
     #[test]
+    fn opening_mark_shows_only_until_hover_selects_another_row() {
+        let active = live_id!(active_doc);
+        assert!(row_is_marked(None, Some(active), 1, active));
+        assert!(!row_is_marked(None, Some(active), 0, live_id!(other_doc)));
+        assert!(!row_is_marked(Some(0), Some(active), 1, active));
+        assert!(row_is_marked(Some(0), Some(active), 0, live_id!(other_doc)));
+    }
+
+    #[test]
+    fn bounded_menu_geometry_exposes_scroll_and_a_thumb() {
+        let mut g = LinearGeom::new(ANCHOR, 30);
+        g.set_width(TEST_W);
+        g.set_max_height(Some(320.0));
+        assert_eq!(g.panel_height(), 320.0);
+        assert!(g.max_scroll() > 0.0);
+        assert!(g.thumb_rect().is_some());
+    }
+
+    #[test]
     fn set_width_drives_panel_and_hit_edges() {
         let mut g = LinearGeom::new(ANCHOR, 3);
         g.set_width(140.0);
@@ -318,6 +346,7 @@ script_mod! {
         // .20) -- a menu floats furthest off its ground of any surface here.
         draw_frame: mod.draw.AccentFrame{ color: atlas.field_bg depth_y: 12.0 depth_blur: 30.0 depth_a: 0.20 }
         draw_hover: mod.draw.DrawColor{ color: atlas.selection }
+        draw_scrollbar: mod.draw.DrawColor{ color: atlas.accent }
         // Row glyphs come from the shared project-tree SDF set (`IconSet`, the
         // same material the tool dock draws). Each is a single-color DrawColor
         // tinted per row from these holders -- no RGBA crosses Rust (the tool
@@ -364,6 +393,9 @@ pub struct MenuPopup {
     #[redraw]
     #[live]
     draw_hover: DrawColor,
+    #[redraw]
+    #[live]
+    draw_scrollbar: DrawColor,
     /// Color-only holders (never drawn): a row glyph's `color` is copied from
     /// one of these per draw, so the tint RGBA stays in the DSL.
     #[redraw]
@@ -393,6 +425,10 @@ pub struct MenuPopup {
     mark: MarkingCore,
     #[rust]
     geom: LinearGeom,
+    #[rust]
+    open_marking: Option<LiveId>,
+    #[rust]
+    thumb_drag: Option<f64>,
 }
 
 impl Widget for MenuPopup {
@@ -434,13 +470,25 @@ impl MenuPopup {
         items: Vec<PopupItem>,
     ) {
         self.geom = LinearGeom::new(anchor, items.len());
+        self.open_marking = None;
+        self.thumb_drag = None;
         self.mark.begin_marking(press, items, DRAG_THRESHOLD);
         self.draw_frame.redraw(cx);
     }
 
     /// Logo click-open: latched popup mode dropping from `anchor`.
-    pub fn open_popup(&mut self, cx: &mut Cx, anchor: DVec2, items: Vec<PopupItem>) {
+    pub fn open_popup(
+        &mut self,
+        cx: &mut Cx,
+        anchor: DVec2,
+        items: Vec<PopupItem>,
+        open_marking: Option<LiveId>,
+        max_height: Option<f64>,
+    ) {
         self.geom = LinearGeom::new(anchor, items.len());
+        self.geom.set_max_height(max_height);
+        self.open_marking = open_marking;
+        self.thumb_drag = None;
         self.mark.begin_popup(items, DRAG_THRESHOLD);
         self.draw_frame.redraw(cx);
     }
@@ -474,8 +522,14 @@ impl MenuPopup {
         // detaches the card from the wordmark it drops from.
         self.draw_frame.set_uniform(cx, live_id!(zoom), &[0.6]);
         self.draw_frame.draw_surface_abs(cx, panel);
+        let clip = Rect {
+            pos: dvec2(panel.pos.x, panel.pos.y + PAD_V),
+            size: dvec2(panel.size.x, self.geom.viewport_height()),
+        };
+        cx.push_clip_rect(clip);
         for (i, it) in items.iter().enumerate() {
             let row = self.geom.row_rect(i);
+            let marked = row_is_marked(hovered, self.open_marking, i, it.id);
             let cy = row.pos.y + row.size.y * 0.5;
             // Separator above every row after the first, inset off both frame
             // edges (a full-bleed hairline touching the stroke reads as a boxy
@@ -495,7 +549,7 @@ impl MenuPopup {
                     self.draw_divider.draw_abs(cx, div);
                 }
             }
-            if hovered == Some(i) && it.enabled {
+            if marked && it.enabled {
                 // Hover highlight, full row height but inset `PAD_H` off the
                 // frame edges so the card keeps an even internal margin.
                 let hi = Rect {
@@ -513,7 +567,7 @@ impl MenuPopup {
             };
             let tint = if it.danger {
                 self.draw_icon_danger.color
-            } else if hovered == Some(i) && it.enabled {
+            } else if marked && it.enabled {
                 self.draw_icon_accent.color
             } else {
                 self.draw_icon_idle.color
@@ -527,6 +581,10 @@ impl MenuPopup {
             self.draw_label
                 .draw_abs(cx, dvec2(row.pos.x + LABEL_X, cy - 6.0), &it.label);
         }
+        cx.pop_clip_rect();
+        if let Some(thumb) = self.geom.thumb_rect() {
+            self.draw_scrollbar.draw_abs(cx, thumb);
+        }
     }
 }
 
@@ -536,21 +594,47 @@ impl Popup for MenuPopup {
             return PopupVerdict::Consumed;
         }
         let verdict = match event {
+            Event::Scroll(e) if self.geom.panel_rect().contains(e.abs) => {
+                let prev = self.geom.scroll();
+                self.geom.set_scroll(prev + e.scroll.y);
+                e.handled_x.set(true);
+                e.handled_y.set(true);
+                if self.geom.scroll() != prev {
+                    self.draw_frame.redraw(cx);
+                }
+                PopupVerdict::Consumed
+            }
             Event::MouseMove(e) => {
-                self.mark.pointer_move(e.abs, self.geom.row_at(e.abs));
+                if let Some(grab) = self.thumb_drag {
+                    self.geom
+                        .set_scroll(self.geom.scroll_for_thumb_y(e.abs.y - grab));
+                } else {
+                    self.mark.pointer_move(e.abs, self.geom.row_at(e.abs));
+                }
                 self.draw_frame.redraw(cx);
                 PopupVerdict::Consumed
             }
             // Marking release (primary let up after press-drag) OR a popup
             // press-hold release: MarkingCore distinguishes via its own state.
             Event::MouseUp(e) if e.button.is_primary() => {
-                map_outcome(self.mark.release(self.geom.row_at(e.abs)))
+                if self.thumb_drag.take().is_some() {
+                    PopupVerdict::Consumed
+                } else {
+                    map_outcome(self.mark.release(self.geom.row_at(e.abs)))
+                }
             }
             // Popup mode: a primary press ON the card arms the row (press-hold);
             // a press OFF the card is the outside-click -> Ignored (PopupRoot
             // dismisses). This is the single outside-click seam; MarkingCore
             // never self-closes on outside.
             Event::MouseDown(e) if e.button.is_primary() && self.mark.is_popup() => {
+                if let Some(thumb) = self.geom.thumb_rect() {
+                    if thumb.contains(e.abs) {
+                        self.thumb_drag = Some(e.abs.y - thumb.pos.y);
+                        e.handled.set(self.draw_frame.area());
+                        return PopupVerdict::Consumed;
+                    }
+                }
                 if self.geom.panel_rect().contains(e.abs) {
                     self.mark.press(e.abs, self.geom.row_at(e.abs));
                     self.draw_frame.redraw(cx);
@@ -568,6 +652,8 @@ impl Popup for MenuPopup {
     }
 
     fn reset(&mut self) {
+        self.thumb_drag = None;
+        self.open_marking = None;
         self.mark.close();
     }
 }
