@@ -245,7 +245,7 @@ function toDisplayDto(display: Partial<DiagramDisplay>): DisplayDto {
     showAttributeMultiplicity: d.showAttributeMultiplicity,
     ...(d.maxAttributes !== undefined ? { maxAttributes: d.maxAttributes } : {}),
     showRoles: d.showRoles,
-    showCardinality: d.showCardinality,
+    cardinality: d.cardinality,
     showLabels: d.showLabels,
     showStereotype: d.showStereotype,
     ...(d.stereotypeFilter !== undefined ? { stereotypeFilter: d.stereotypeFilter } : {}),

@@ -13,7 +13,7 @@ describe("resolveDisplay", () => {
       showAttributeVisibility: true,
       showAttributeMultiplicity: true,
       showRoles: true,
-      showCardinality: true,
+      cardinality: "explicit",
       showLabels: true,
       showStereotype: true,
       stereotypeColors: {},

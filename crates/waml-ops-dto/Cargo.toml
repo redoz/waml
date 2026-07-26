@@ -7,7 +7,7 @@ license.workspace = true
 description = "Serde wire contract (OpDto) for WAML ops, shared by CLI and WASM."
 
 [dependencies]
-waml = { path = "../waml" }
+waml = { path = "../waml", features = ["serde"] }
 serde = { workspace = true }
 tsify-next = { version = "0.5.6", features = ["js"], optional = true }
 wasm-bindgen = { version = "0.2", optional = true }

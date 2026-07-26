@@ -62,7 +62,7 @@ export interface DiagramDisplay {
     showAttributeMultiplicity?: boolean;
     maxAttributes?: number;
     showRoles?: boolean;
-    showCardinality?: boolean;
+    cardinality?: CardinalityVisibility;
     showLabels?: boolean;
     showStereotype?: boolean;
     /**
@@ -91,7 +91,7 @@ export interface DisplayDto {
     showAttributeMultiplicity: boolean;
     maxAttributes?: number | undefined;
     showRoles: boolean;
-    showCardinality: boolean;
+    cardinality: CardinalityVisibility;
     showLabels: boolean;
     showStereotype: boolean;
     stereotypeFilter?: string[] | undefined;
@@ -501,6 +501,8 @@ export interface SolvedGroup {
     title: string | undefined;
     depth: number;
 }
+
+export type CardinalityVisibility = "off" | "explicit" | "all";
 
 export type DiagCode = "duplicate-slug" | "frontmatter-not-clean" | "unknown-type" | "malformed-attribute" | "malformed-relationship" | "malformed-flow-bullet" | "duplicate-flow-node" | "unresolved-target" | "droppable-content" | "malformed-layout" | "unresolved-layout-ref" | "layout-cycle" | "layout-conflict" | "malformed-message" | "malformed-lifeline" | "slot-unknown-attribute" | "instance-of-non-classifier" | "instance-of-unresolved";
 

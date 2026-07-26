@@ -10,9 +10,9 @@ use crate::syntax::{Document, ErrorNode, LayoutItem, Line, Section};
 use std::collections::{HashMap, HashSet};
 
 use crate::model::{
-    ActivityNode, Attribute, BehaviorKind, Diagram, DiagramDisplay, DiagramGroup, Edge,
-    ElementType, FlowDoc, FlowEdge, FlowEdgeKind, FlowFlavor, Model, Node, SeqChild, SeqEdge,
-    SeqNode, SequenceDoc,
+    ActivityNode, Attribute, BehaviorKind, CardinalityVisibility, Diagram, DiagramDisplay,
+    DiagramGroup, Edge, ElementType, FlowDoc, FlowEdge, FlowEdgeKind, FlowFlavor, Model, Node,
+    SeqChild, SeqEdge, SeqNode, SequenceDoc,
 };
 
 struct Head {
@@ -1388,7 +1388,12 @@ fn build_diagrams(
             show_attribute_multiplicity: fm.get_bool("showAttributeMultiplicity"),
             max_attributes,
             show_roles: fm.get_bool("showRoles"),
-            show_cardinality: fm.get_bool("showCardinality"),
+            cardinality: fm.get_str("cardinality").and_then(|value| match value {
+                "off" => Some(CardinalityVisibility::Off),
+                "explicit" => Some(CardinalityVisibility::Explicit),
+                "all" => Some(CardinalityVisibility::All),
+                _ => None,
+            }),
             show_labels: fm.get_bool("showLabels"),
             show_stereotype: fm.get_bool("showStereotype"),
             stereotype_filter,
@@ -1411,7 +1416,7 @@ fn build_diagrams(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::RelationshipKind;
+    use crate::model::{CardinalityVisibility, RelationshipKind};
 
     fn diagram_bundle(fm_body: &str) -> Vec<(String, String)> {
         vec![(
@@ -1425,7 +1430,7 @@ mod tests {
         let b = diagram_bundle(
             "description: \"Notes\"\nshowAttributes: false\nattributeDetail: name-only\n\
              showAttributeVisibility: false\nshowAttributeMultiplicity: false\nmaxAttributes: 6\n\
-             showRoles: false\nshowCardinality: false\nshowLabels: true\nshowStereotype: false\n\
+             showRoles: false\ncardinality: off\nshowLabels: true\nshowStereotype: false\n\
              stereotypeFilter: [entity, valueObject]\nstereotypeColors: [\"entity:#ffedd5\"]\n",
         );
         let m = build_model(&b);
@@ -1438,7 +1443,7 @@ mod tests {
         assert_eq!(x.show_attribute_multiplicity, Some(false));
         assert_eq!(x.max_attributes, Some(6));
         assert_eq!(x.show_roles, Some(false));
-        assert_eq!(x.show_cardinality, Some(false));
+        assert_eq!(x.cardinality, Some(CardinalityVisibility::Off));
         assert_eq!(x.show_labels, Some(true));
         assert_eq!(x.show_stereotype, Some(false));
         assert_eq!(
@@ -1446,6 +1451,15 @@ mod tests {
             Some(vec!["entity".to_string(), "valueObject".to_string()])
         );
         assert_eq!(x.stereotype_colors, vec!["entity:#ffedd5".to_string()]);
+    }
+
+    #[test]
+    fn diagram_cardinality_mode_parses() {
+        let m = build_model(&diagram_bundle("cardinality: all\n"));
+        assert_eq!(
+            m.diagrams[0].display.cardinality,
+            Some(CardinalityVisibility::All)
+        );
     }
 
     #[test]

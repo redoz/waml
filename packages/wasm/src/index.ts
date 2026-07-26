@@ -55,6 +55,7 @@ export type {
   Bundle,
   Link,
   Citation,
+  CardinalityVisibility,
   FmValue,
   ConceptRole,
   OpDto,

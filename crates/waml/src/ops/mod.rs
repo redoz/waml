@@ -1,5 +1,7 @@
 use crate::frontmatter::{FmValue, Frontmatter};
-use crate::model::{Attribute, ElementType, RelEnd, RelationshipKind, TypeRef, Visibility};
+use crate::model::{
+    Attribute, CardinalityVisibility, ElementType, RelEnd, RelationshipKind, TypeRef, Visibility,
+};
 use crate::multiplicity::Multiplicity;
 use crate::okf;
 use crate::parse::parse_document;
@@ -53,7 +55,7 @@ pub struct DiagramDisplaySet {
     pub show_attribute_multiplicity: bool,
     pub max_attributes: Option<u32>,
     pub show_roles: bool,
-    pub show_cardinality: bool,
+    pub cardinality: CardinalityVisibility,
     pub show_labels: bool,
     pub show_stereotype: bool,
     pub stereotype_filter: Option<Vec<String>>,
@@ -900,7 +902,7 @@ const DISPLAY_KEYS: &[&str] = &[
     "showAttributeMultiplicity",
     "maxAttributes",
     "showRoles",
-    "showCardinality",
+    "cardinality",
     "showLabels",
     "showStereotype",
     "stereotypeFilter",
@@ -964,8 +966,15 @@ fn op_diagram_set(
             );
             fm_set(
                 &mut doc.frontmatter,
-                "showCardinality",
-                FmValue::Bool(ds.show_cardinality),
+                "cardinality",
+                FmValue::Str(
+                    match ds.cardinality {
+                        CardinalityVisibility::Off => "off",
+                        CardinalityVisibility::Explicit => "explicit",
+                        CardinalityVisibility::All => "all",
+                    }
+                    .into(),
+                ),
             );
             fm_set(
                 &mut doc.frontmatter,
@@ -1120,8 +1129,7 @@ pub use selector::{parse_selector, render_selector, RelBy, Selector};
 mod tests {
     use super::*;
     use crate::grammar::parse_ends;
-    use crate::model::ElementType;
-    use crate::model::RelationshipKind;
+    use crate::model::{CardinalityVisibility, ElementType, RelationshipKind};
     use crate::multiplicity::Multiplicity;
     use crate::ops::selector::{RelBy, Selector};
 
@@ -1942,7 +1950,7 @@ mod tests {
             show_attribute_multiplicity: false,
             max_attributes: Some(6),
             show_roles: false,
-            show_cardinality: false,
+            cardinality: CardinalityVisibility::Off,
             show_labels: true,
             show_stereotype: false,
             stereotype_filter: Some(vec!["entity".into()]),
@@ -1965,6 +1973,25 @@ mod tests {
         assert!(out[0].1.contains("title: Order lifecycle"));
         assert!(out[0].1.contains("# Order lifecycle"), "H1 kept in sync");
         assert!(out[0].1.contains("description: Notes for reviewers"));
+    }
+
+    #[test]
+    fn diagram_set_writes_cardinality_mode() {
+        let out = apply(
+            &diagram_doc(),
+            &[Op::DiagramSet {
+                key: "dia".into(),
+                title: None,
+                description: None,
+                display: Some(DiagramDisplaySet {
+                    cardinality: CardinalityVisibility::Explicit,
+                    ..full_display()
+                }),
+            }],
+        )
+        .unwrap();
+        assert!(out[0].1.contains("cardinality: explicit"));
+        assert!(!out[0].1.contains("showCardinality"));
     }
 
     #[test]

@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 use waml::grammar::{parse_ends, render_ends};
-use waml::model::{ElementType, RelEnd, RelationshipKind, Visibility};
+use waml::model::{CardinalityVisibility, ElementType, RelEnd, RelationshipKind, Visibility};
 use waml::multiplicity::Multiplicity;
 use waml::ops::{DiagramDisplaySet, NameSpec, Op, RelBy, Selector};
 
@@ -231,7 +231,7 @@ pub struct DisplayDto {
     #[serde(default)]
     pub max_attributes: Option<u32>,
     pub show_roles: bool,
-    pub show_cardinality: bool,
+    pub cardinality: CardinalityVisibility,
     pub show_labels: bool,
     pub show_stereotype: bool,
     #[serde(default)]
@@ -248,7 +248,7 @@ fn display_dto_to_set(d: &DisplayDto) -> DiagramDisplaySet {
         show_attribute_multiplicity: d.show_attribute_multiplicity,
         max_attributes: d.max_attributes,
         show_roles: d.show_roles,
-        show_cardinality: d.show_cardinality,
+        cardinality: d.cardinality,
         show_labels: d.show_labels,
         show_stereotype: d.show_stereotype,
         stereotype_filter: d.stereotype_filter.clone(),
@@ -264,7 +264,7 @@ fn display_set_to_dto(ds: &DiagramDisplaySet) -> DisplayDto {
         show_attribute_multiplicity: ds.show_attribute_multiplicity,
         max_attributes: ds.max_attributes,
         show_roles: ds.show_roles,
-        show_cardinality: ds.show_cardinality,
+        cardinality: ds.cardinality,
         show_labels: ds.show_labels,
         show_stereotype: ds.show_stereotype,
         stereotype_filter: ds.stereotype_filter.clone(),
@@ -989,7 +989,7 @@ mod tests {
                     show_attribute_multiplicity: false,
                     max_attributes: Some(6),
                     show_roles: false,
-                    show_cardinality: false,
+                    cardinality: CardinalityVisibility::Off,
                     show_labels: true,
                     show_stereotype: false,
                     stereotype_filter: Some(vec!["entity".into()]),
@@ -1052,7 +1052,7 @@ mod tests {
                 show_attribute_multiplicity: true,
                 max_attributes: None,
                 show_roles: true,
-                show_cardinality: true,
+                cardinality: CardinalityVisibility::Explicit,
                 show_labels: true,
                 show_stereotype: true,
                 stereotype_filter: None,

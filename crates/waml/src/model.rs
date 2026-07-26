@@ -16,6 +16,18 @@ pub enum Visibility {
     Package,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(rename_all = "lowercase"))]
+#[cfg_attr(feature = "wasm", derive(tsify_next::Tsify))]
+#[cfg_attr(feature = "wasm", tsify(into_wasm_abi, from_wasm_abi))]
+pub enum CardinalityVisibility {
+    Off,
+    #[default]
+    Explicit,
+    All,
+}
+
 #[cfg(feature = "serde")]
 impl From<Visibility> for String {
     fn from(v: Visibility) -> String {
@@ -966,7 +978,7 @@ pub struct DiagramDisplay {
     #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none"))]
     pub show_roles: Option<bool>,
     #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none"))]
-    pub show_cardinality: Option<bool>,
+    pub cardinality: Option<CardinalityVisibility>,
     #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none"))]
     pub show_labels: Option<bool>,
     #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none"))]
