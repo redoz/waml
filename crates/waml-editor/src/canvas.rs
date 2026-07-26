@@ -943,6 +943,9 @@ const PREVIEW_SECS: f64 = 0.22;
 /// Seconds a view-bar camera glide takes to settle. Same feel as the preview
 /// tween — long enough to read the motion, short enough not to lag the click.
 const CAMERA_SECS: f64 = 0.22;
+const FONT_RASTER_SIZES: &[f32] = &[
+    32.0, 40.0, 50.0, 63.0, 79.0, 99.0, 124.0, 155.0, 194.0, 243.0, 304.0,
+];
 /// Interval the glide clock ticks at: a little under half a 60Hz frame, so the
 /// paint loop always has a wake-up pending and the tween is paced by vsync
 /// rather than by how fast the loop happens to be spinning up.
@@ -2012,7 +2015,10 @@ impl Widget for GraphCanvas {
                 } else {
                     title_ink
                 };
-                self.draw_text.text_style.font_size = (12.0 * zoom) as f32;
+                let size = (12.0 * zoom) as f32;
+                let font_size = font_raster_size(size);
+                self.draw_text.text_style.font_size = font_size;
+                self.draw_text.font_scale = size / font_size;
                 self.draw_text.draw_abs(
                     cx,
                     dvec2(screen.pos.x + 6.0 * zoom, screen.pos.y + 4.0 * zoom),
@@ -2532,6 +2538,7 @@ impl GraphCanvas {
             );
         }
         self.draw_mono_bold.text_style.font_size = 12.0;
+        self.draw_mono_bold.font_scale = 1.0;
         self.draw_mono_bold
             .draw_abs(cx, dvec2(gs.pos.x + 6.0, gs.pos.y + 6.0), &a_key);
 
@@ -2540,6 +2547,7 @@ impl GraphCanvas {
         if let Some(ti) = self.drag_target {
             let b_key = self.scene.nodes[ti].key.clone();
             self.draw_mono_dim.text_style.font_size = 12.0;
+            self.draw_mono_dim.font_scale = 1.0;
             if let Some(d) = place.dir {
                 let line = format!("{a_key} {} {b_key}", dir_word(d));
                 self.draw_mono_dim
@@ -2913,21 +2921,27 @@ impl GraphCanvas {
         for pt in &placed.texts {
             let pos = dvec2(screen.pos.x + pt.x * zoom, screen.pos.y + pt.y * zoom);
             let size = (pt.style.size_pt * zoom) as f32; // TextStyle.font_size is f32
+            let font_size = font_raster_size(size);
+            let font_scale = size / font_size;
             match (pt.style.weight, pt.style.color) {
                 (Weight::Bold, _) => {
-                    self.draw_mono_bold.text_style.font_size = size;
+                    self.draw_mono_bold.text_style.font_size = font_size;
+                    self.draw_mono_bold.font_scale = font_scale;
                     self.draw_mono_bold.draw_abs(cx, pos, &pt.text);
                 }
                 (Weight::Regular, Token::Accent) => {
-                    self.draw_mono_accent.text_style.font_size = size;
+                    self.draw_mono_accent.text_style.font_size = font_size;
+                    self.draw_mono_accent.font_scale = font_scale;
                     self.draw_mono_accent.draw_abs(cx, pos, &pt.text);
                 }
                 (Weight::Regular, Token::Amber) => {
-                    self.draw_mono_amber.text_style.font_size = size;
+                    self.draw_mono_amber.text_style.font_size = font_size;
+                    self.draw_mono_amber.font_scale = font_scale;
                     self.draw_mono_amber.draw_abs(cx, pos, &pt.text);
                 }
                 (Weight::Regular, _) => {
-                    self.draw_mono_dim.text_style.font_size = size;
+                    self.draw_mono_dim.text_style.font_size = font_size;
+                    self.draw_mono_dim.font_scale = font_scale;
                     self.draw_mono_dim.draw_abs(cx, pos, &pt.text);
                 }
             }
@@ -3301,10 +3315,50 @@ impl GraphCanvas {
     }
 }
 
+fn font_raster_size(target_size: f32) -> f32 {
+    if target_size <= FONT_RASTER_SIZES[0] {
+        return target_size.max(4.0);
+    }
+
+    FONT_RASTER_SIZES
+        .iter()
+        .copied()
+        .min_by(|a, b| {
+            (target_size - *a)
+                .abs()
+                .total_cmp(&(target_size - *b).abs())
+                .then_with(|| b.total_cmp(a))
+        })
+        .unwrap_or(target_size)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use waml::solve::Rect as WorldRect;
+
+    #[test]
+    fn font_raster_size_keeps_small_text_exact() {
+        assert_eq!(font_raster_size(4.0), 4.0);
+        assert_eq!(font_raster_size(17.25), 17.25);
+        assert_eq!(font_raster_size(32.0), 32.0);
+    }
+
+    #[test]
+    fn font_raster_size_selects_the_nearest_ladder_rung() {
+        assert_eq!(font_raster_size(33.0), 32.0);
+        assert_eq!(font_raster_size(39.0), 40.0);
+        assert_eq!(font_raster_size(61.0), 63.0);
+        assert_eq!(font_raster_size(100.0), 99.0);
+    }
+
+    #[test]
+    fn font_raster_size_resolves_midpoints_upward_and_caps_at_the_largest_rung() {
+        assert_eq!(font_raster_size(36.0), 40.0);
+        assert_eq!(font_raster_size(44.0), 40.0);
+        assert_eq!(font_raster_size(45.0), 50.0);
+        assert_eq!(font_raster_size(400.0), 304.0);
+    }
 
     #[test]
     fn pinch_factor_is_the_spread_ratio() {
