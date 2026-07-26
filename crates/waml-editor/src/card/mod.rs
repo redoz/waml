@@ -384,7 +384,7 @@ pub struct StyleSheet {
     pub colon: TextStyle,
     pub ty: TextStyle,
     pub cardinality: TextStyle,
-    /// The `▾ N more` / `▴ show less` overflow footer row.
+    /// The `+ N more` / `- show less` overflow footer row.
     pub footer: TextStyle,
     /// Padding around the whole card.
     pub card_pad: Edges,
@@ -610,9 +610,9 @@ pub fn class_shape(node: &crate::scene::SceneNode, sheet: &StyleSheet) -> Shape 
     // Overflow footer row: its own accent-mono control line.
     if overflow {
         let label = if node.expanded {
-            "\u{25b4} show less".to_string()
+            "- show less".to_string()
         } else {
-            format!("\u{25be} {} more", total - MAX_BODY_ROWS)
+            format!("+ {} more", total - MAX_BODY_ROWS)
         };
         rows.push(Shape::Box {
             dir: Dir::Row,
@@ -991,7 +991,7 @@ mod tests {
             assert!(!s.contains(&format!("f{i}")), "f{i} should be hidden");
         }
         // Footer counts the hidden members (7 - 4 = 3).
-        assert!(s.contains(&"\u{25be} 3 more".to_string()));
+        assert!(s.contains(&"+ 3 more".to_string()));
         let placed = measure(&class_shape(&n, &mono_sheet()));
         assert!(placed.blocks.iter().any(|b| b.block == Block::Footer));
     }
@@ -1004,7 +1004,7 @@ mod tests {
         for i in 0..7 {
             assert!(s.contains(&format!("f{i}")), "f{i} should be shown");
         }
-        assert!(s.contains(&"\u{25b4} show less".to_string()));
+        assert!(s.contains(&"- show less".to_string()));
     }
 
     #[test]
@@ -1046,6 +1046,6 @@ mod tests {
         assert!(s.contains(&"op0".to_string()));
         assert!(!s.contains(&"op1".to_string()) && !s.contains(&"op2".to_string()));
         // 6 members - 4 cap = 2 hidden.
-        assert!(s.contains(&"\u{25be} 2 more".to_string()));
+        assert!(s.contains(&"+ 2 more".to_string()));
     }
 }

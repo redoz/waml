@@ -54,7 +54,7 @@ pub struct SceneNode {
     pub emphasized: bool,
     pub collapsed: bool,
     /// Ephemeral view-state: whether the card shows all members (true) or is
-    /// capped at `card::MAX_BODY_ROWS` with a `▾ N more` footer (false). Set from
+    /// capped at `card::MAX_BODY_ROWS` with a `+ N more` footer (false). Set from
     /// `App`'s expanded key-set in `build_scene`; never derived from the model.
     /// Defaults `false` (collapsed) everywhere the model projects a node.
     pub expanded: bool,
