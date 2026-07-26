@@ -29,6 +29,34 @@ scroll wheel; drag the splitter bar to resize the panes. This interactive run is
 the **verification of record** for both the renderer and the tree panel — there
 is no automated headless render check (see below).
 
+### Class-diagram surface regression pass
+
+Build and launch the executable from the worktree-local target directory, then
+capture only the PID returned by that launch:
+
+```powershell
+rtk cargo build -p waml-editor --target-dir target
+$editor = Start-Process -FilePath target\debug\waml-editor.exe `
+  -ArgumentList crates/waml-editor/tests/fixtures/mini -PassThru
+rtk pwsh -File scripts/capture-window.ps1 -Out C:\tmp\class-surface-after-mini.png `
+  -ProcessId $editor.Id
+```
+
+Repeat with the `groups` and `sixkind` fixtures to record these seven comparison
+states: `mini`, `groups`, `groups-hidden`, `sixkind-overview`,
+`sixkind-zoomed-out`, `sixkind-zoomed-in`, and `sixkind-focus`. Compare each
+against its matching baseline at native resolution. Check group and nested-group
+bounds, routed edges and terminal adornments, large/expanded cards, selection,
+constraint/conflict focus, hidden borders, and both font raster levels.
+
+The screenshots are not a substitute for temporal interaction verification.
+In one native session, exercise pan, wheel zoom, pinch, scene/selection fits,
+selection/deselection, expansion, inspector selection, context menu, the full
+drag/dwell/retarget/preview/commit/cancel flow, scene refresh with camera
+retention, conflict focus and revalidation, and tab/scene changes during dwell
+or preview. Confirm no stale timer, dial, selection index, preview layout, or
+camera animation survives cancellation or a scene change.
+
 ## Headless render regression check — intentionally absent
 
 Task 9 investigated producing a headless PNG of the fixture for eyeball review

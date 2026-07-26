@@ -464,8 +464,7 @@ impl Widget for ClassDiagramSurface {
         }
         if let Event::KeyDown(ke) = event {
             if ke.key_code == KeyCode::Escape && self.placement.snapshot().dragged_key.is_some() {
-                let effects = self.placement.cancel(&mut self.scene, &mut self.viewport);
-                self.viewport.suppress_release();
+                let effects = self.cancel_active_placement();
                 self.apply_interaction_effects(cx, effects);
                 return;
             }
@@ -646,26 +645,33 @@ fn reconciliation_policy(update: &SceneUpdate) -> ReconciliationPolicy {
 }
 
 impl ClassDiagramSurface {
-    fn reset_placement_for_scene_change(&mut self, cx: &mut Cx) {
-        let effects = self
-            .placement
-            .cancel_for_scene_change(&mut self.scene, &mut self.viewport);
-        self.viewport.suppress_release();
-        self.apply_interaction_effects(cx, effects);
+    fn cancel_active_placement(&mut self) -> InteractionEffects {
+        let effects = self.placement.cancel(&mut self.scene, &mut self.viewport);
+        self.viewport.end_pan();
+        effects
     }
 
-    fn reconcile_scene(&mut self, cx: &mut Cx, scene: Scene, update: SceneUpdate) {
-        let policy = reconciliation_policy(&update);
-        if policy.clear_placement {
-            self.reset_placement_for_scene_change(cx);
-        }
+    fn prepare_scene_reconciliation(
+        &mut self,
+        scene: &Scene,
+        update: &SceneUpdate,
+    ) -> (InteractionEffects, ViewportEffects) {
+        let policy = reconciliation_policy(update);
+        let interaction_effects = if policy.clear_placement {
+            let effects = self
+                .placement
+                .cancel_for_scene_change(&mut self.scene, &mut self.viewport);
+            self.viewport.end_pan();
+            effects
+        } else {
+            InteractionEffects::default()
+        };
 
-        let cancel_effects = self.viewport.cancel_glide();
-        self.apply_viewport_effects(cx, cancel_effects);
-        let bounds = bounding_box(&scene);
+        let mut viewport_effects = self.viewport.cancel_glide();
+        let bounds = bounding_box(scene);
         self.selection.reconcile(&scene.nodes, policy.selection);
 
-        match (&update, policy.camera) {
+        match (update, policy.camera) {
             (SceneUpdate::Replace, CameraPolicy::Refit) => {
                 self.viewport.request_initial_fit(match bounds {
                     Some(bounds) => InitialFit::Scene(bounds),
@@ -682,12 +688,19 @@ impl ClassDiagramSurface {
                 self.viewport.request_initial_fit(focus);
             }
             (SceneUpdate::PreserveViewport, CameraPolicy::Retain) => {
-                let effects = self.viewport.retain_for_scene_update(bounds);
-                self.apply_viewport_effects(cx, effects);
+                viewport_effects = self.viewport.retain_for_scene_update(bounds);
             }
             _ => unreachable!("reconciliation policy must match its scene update"),
         }
 
+        (interaction_effects, viewport_effects)
+    }
+
+    fn reconcile_scene(&mut self, cx: &mut Cx, scene: Scene, update: SceneUpdate) {
+        let (interaction_effects, viewport_effects) =
+            self.prepare_scene_reconciliation(&scene, &update);
+        self.apply_interaction_effects(cx, interaction_effects);
+        self.apply_viewport_effects(cx, viewport_effects);
         self.scene = scene;
         self.draw_bg.redraw(cx);
     }
@@ -835,7 +848,7 @@ impl ClassDiagramSurface {
         let spread = a.abs.distance(&b.abs);
         let mid = (a.abs + b.abs) * 0.5;
         if self.placement.snapshot().dragged_key.is_some() {
-            let effects = self.placement.cancel(&mut self.scene, &mut self.viewport);
+            let effects = self.cancel_active_placement();
             self.apply_interaction_effects(cx, effects);
         }
         self.viewport.suppress_release();
@@ -1236,6 +1249,65 @@ mod tests {
                     selection: SelectionPolicy::Clear,
                     camera: CameraPolicy::Refit,
                 },
+            );
+        }
+
+        #[test]
+        fn replacement_resets_surface_state_and_stops_all_clocks() {
+            let mut vm = crate::script_gate::boot_test_vm();
+            let mut surface = surface_with_live_dial(&mut vm);
+            surface
+                .selection
+                .select("old-subject", &surface.scene.nodes);
+            surface
+                .selection
+                .set_conflict_focus_keys(Some(vec!["old-subject".into(), "old-reference".into()]));
+
+            let replacement = Scene::default();
+            let (interaction_effects, viewport_effects) =
+                surface.prepare_scene_reconciliation(&replacement, &SceneUpdate::Replace);
+
+            assert_eq!(surface.placement.snapshot(), Default::default());
+            let selection = surface.selection.snapshot();
+            assert_eq!(selection.selected_key, None);
+            assert_eq!(selection.selected_index, None);
+            assert_eq!(selection.conflict_focus_keys, None);
+            assert_eq!(interaction_effects.dwell_timer, TimerCommand::Stop);
+            assert_eq!(interaction_effects.preview_frame, FrameCommand::Stop);
+            assert_eq!(viewport_effects.camera_timer, ViewportTimerCommand::Stop);
+
+            let replacement_bounds = WorldRect {
+                x: 10.0,
+                y: 20.0,
+                w: 80.0,
+                h: 60.0,
+            };
+            surface
+                .viewport
+                .retain_for_scene_update(Some(replacement_bounds));
+            surface.viewport.set_view_rect(Rect {
+                pos: dvec2(0.0, 0.0),
+                size: dvec2(800.0, 600.0),
+            });
+            assert!(
+                surface.viewport.apply_initial_fit(),
+                "an empty replacement must leave a pending scene fit"
+            );
+        }
+
+        #[test]
+        fn placement_cancel_ends_the_viewport_pan() {
+            let mut vm = crate::script_gate::boot_test_vm();
+            let mut surface = surface_with_live_dial(&mut vm);
+            surface.viewport.begin_pan(dvec2(10.0, 10.0));
+
+            let effects = surface.cancel_active_placement();
+
+            assert_eq!(effects.dwell_timer, TimerCommand::Stop);
+            assert_eq!(effects.preview_frame, FrameCommand::Stop);
+            assert!(
+                !surface.viewport.pan_to(dvec2(30.0, 30.0)),
+                "a cancelled placement must not leave a live viewport pan"
             );
         }
 
