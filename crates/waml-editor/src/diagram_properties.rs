@@ -1,0 +1,649 @@
+use crate::diagram_display::ResolvedDiagramDisplay;
+use crate::icon_button::IconButtonWidgetRefExt;
+use crate::icons::Icon;
+use crate::property_controls::{SegmentItem, SegmentedControl, ToggleControl};
+use makepad_widgets::*;
+use waml::model::CardinalityVisibility;
+use waml::ops::DiagramDisplaySet;
+
+script_mod! {
+    use mod.prelude.widgets_internal.*
+    use mod.atlas
+    use mod.widgets.*
+    use mod.text.*
+    use mod.fonts
+
+    mod.widgets.DiagramPropertyField = mod.widgets.TextInput {
+        width: Fill
+        height: 30.0
+        margin: Inset{left: 0.0, right: 0.0, top: 0.0, bottom: 0.0}
+        padding: Inset{left: 9.0, right: 9.0, top: 5.0, bottom: 5.0}
+        draw_bg +: {
+            color: atlas.field_bg
+            color_hover: atlas.field_bg
+            color_focus: atlas.field_bg
+            color_down: atlas.field_bg
+            color_empty: atlas.field_bg
+            color_disabled: atlas.surface
+            border_color: atlas.surface_border
+            border_color_hover: atlas.frame_lo
+            border_color_focus: atlas.accent
+            border_color_down: atlas.accent
+            border_color_empty: atlas.surface_border
+            border_color_disabled: atlas.surface_border
+        }
+        draw_text +: {
+            color: atlas.text
+            color_empty: atlas.text_dim
+            color_disabled: atlas.text_dim
+            text_style: fonts.text_body
+        }
+        draw_cursor +: { color: atlas.accent }
+        draw_selection +: { color: atlas.selection }
+    }
+
+    mod.widgets.DiagramPropertiesBase = #(DiagramProperties::register_widget(vm))
+    mod.widgets.DiagramProperties = set_type_default() do mod.widgets.DiagramPropertiesBase{
+        width: 320.0
+        height: Fit
+        flow: Down
+        spacing: 0.0
+        show_bg: true
+        draw_bg +: { color: atlas.surface }
+
+        header := View {
+            width: Fill
+            height: 44.0
+            flow: Right
+            align: Align{y: 0.5}
+            padding: Inset{left: 14.0, right: 8.0, top: 0.0, bottom: 0.0}
+
+            heading := Label {
+                text: "Diagram properties"
+                draw_text +: {
+                    color: atlas.text
+                    text_style: fonts.text_heading
+                }
+            }
+            header_spacer := View { width: Fill height: 1.0 }
+            close := IconButton { width: 30.0 height: 30.0 }
+        }
+
+        top_rule := View {
+            width: Fill
+            height: 1.0
+            show_bg: true
+            draw_bg +: { color: atlas.surface_border }
+        }
+
+        body := View {
+            width: Fill
+            height: Fit
+            flow: Down
+            spacing: 7.0
+            padding: Inset{left: 14.0, right: 14.0, top: 12.0, bottom: 16.0}
+
+            diagram_section := Label {
+                text: "DIAGRAM"
+                draw_text +: { color: atlas.text_dim text_style: fonts.text_eyebrow }
+            }
+            title_label := Label {
+                text: "Title"
+                draw_text +: { color: atlas.text text_style: fonts.text_label }
+            }
+            title_input := DiagramPropertyField { empty_text: "Diagram title" }
+            description_label := Label {
+                text: "Description"
+                margin: Inset{top: 2.0}
+                draw_text +: { color: atlas.text text_style: fonts.text_label }
+            }
+            description_input := DiagramPropertyField {
+                height: 54.0
+                is_multiline: true
+                empty_text: "Optional description"
+            }
+
+            classifiers_section := Label {
+                text: "CLASSIFIERS"
+                margin: Inset{top: 8.0}
+                draw_text +: { color: atlas.text_dim text_style: fonts.text_eyebrow }
+            }
+            classifiers_consequence := Label {
+                text: "Controls classifier card content."
+                draw_text +: { color: atlas.text_dim text_style: fonts.text_label }
+            }
+            attributes_row := View {
+                width: Fill height: 28.0 flow: Right align: Align{y: 0.5}
+                attributes_label := Label {
+                    text: "Attributes"
+                    draw_text +: { color: atlas.text text_style: fonts.text_body }
+                }
+                attributes_spacer := View { width: Fill height: 1.0 }
+                attributes_toggle := ToggleControl {}
+            }
+            types_row := View {
+                width: Fill height: 28.0 flow: Right align: Align{y: 0.5}
+                types_label := Label {
+                    text: "Types"
+                    draw_text +: { color: atlas.text text_style: fonts.text_body }
+                }
+                types_spacer := View { width: Fill height: 1.0 }
+                types_toggle := ToggleControl {}
+            }
+            visibility_row := View {
+                width: Fill height: 28.0 flow: Right align: Align{y: 0.5}
+                visibility_label := Label {
+                    text: "Visibility"
+                    draw_text +: { color: atlas.text text_style: fonts.text_body }
+                }
+                visibility_spacer := View { width: Fill height: 1.0 }
+                visibility_toggle := ToggleControl {}
+            }
+            max_attributes_row := View {
+                width: Fill height: 32.0 flow: Right align: Align{y: 0.5}
+                max_attributes_label := Label {
+                    text: "Maximum attributes"
+                    draw_text +: { color: atlas.text text_style: fonts.text_body }
+                }
+                max_attributes_spacer := View { width: Fill height: 1.0 }
+                max_attributes_input := DiagramPropertyField {
+                    width: 72.0
+                    is_numeric_only: true
+                    empty_text: "All"
+                }
+            }
+            stereotypes_row := View {
+                width: Fill height: 28.0 flow: Right align: Align{y: 0.5}
+                stereotypes_label := Label {
+                    text: "Stereotypes"
+                    draw_text +: { color: atlas.text text_style: fonts.text_body }
+                }
+                stereotypes_spacer := View { width: Fill height: 1.0 }
+                stereotypes_toggle := ToggleControl {}
+            }
+
+            cardinality_section := Label {
+                text: "CARDINALITY"
+                margin: Inset{top: 8.0}
+                draw_text +: { color: atlas.text_dim text_style: fonts.text_eyebrow }
+            }
+            cardinality_consequence := Label {
+                text: "Controls relationship end annotations."
+                draw_text +: { color: atlas.text_dim text_style: fonts.text_label }
+            }
+            cardinality_control := SegmentedControl {}
+
+            relationships_section := Label {
+                text: "RELATIONSHIPS"
+                margin: Inset{top: 8.0}
+                draw_text +: { color: atlas.text_dim text_style: fonts.text_eyebrow }
+            }
+            relationships_consequence := Label {
+                text: "Controls edge annotations."
+                draw_text +: { color: atlas.text_dim text_style: fonts.text_label }
+            }
+            roles_row := View {
+                width: Fill height: 28.0 flow: Right align: Align{y: 0.5}
+                roles_label := Label {
+                    text: "Roles"
+                    draw_text +: { color: atlas.text text_style: fonts.text_body }
+                }
+                roles_spacer := View { width: Fill height: 1.0 }
+                roles_toggle := ToggleControl {}
+            }
+            labels_row := View {
+                width: Fill height: 28.0 flow: Right align: Align{y: 0.5}
+                labels_label := Label {
+                    text: "Labels"
+                    draw_text +: { color: atlas.text text_style: fonts.text_body }
+                }
+                labels_spacer := View { width: Fill height: 1.0 }
+                labels_toggle := ToggleControl {}
+            }
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum DiagramPropertiesAction {
+    DisplayChanged(DiagramDisplaySet),
+    IdentityChanged {
+        title: String,
+        description: Option<String>,
+    },
+    Close,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum PropertyChange {
+    ShowAttributes(bool),
+    ShowType(bool),
+    ShowAttributeVisibility(bool),
+    MaxAttributes(Option<u32>),
+    ShowRoles(bool),
+    Cardinality(CardinalityVisibility),
+    ShowLabels(bool),
+    ShowStereotype(bool),
+    Title(String),
+    Description(Option<String>),
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct DiagramPropertiesState {
+    title: String,
+    description: Option<String>,
+    display: ResolvedDiagramDisplay,
+}
+
+impl DiagramPropertiesState {
+    pub fn new(
+        title: String,
+        description: Option<String>,
+        display: ResolvedDiagramDisplay,
+    ) -> Self {
+        Self {
+            title,
+            description,
+            display,
+        }
+    }
+
+    pub fn apply(&mut self, change: PropertyChange) -> DiagramPropertiesAction {
+        match change {
+            PropertyChange::ShowAttributes(value) => self.display.show_attributes = value,
+            PropertyChange::ShowType(value) => self.display.show_type = value,
+            PropertyChange::ShowAttributeVisibility(value) => {
+                self.display.show_attribute_visibility = value
+            }
+            PropertyChange::MaxAttributes(value) => self.display.max_attributes = value,
+            PropertyChange::ShowRoles(value) => self.display.show_roles = value,
+            PropertyChange::Cardinality(value) => self.display.cardinality = value,
+            PropertyChange::ShowLabels(value) => self.display.show_labels = value,
+            PropertyChange::ShowStereotype(value) => self.display.show_stereotype = value,
+            PropertyChange::Title(value) => {
+                self.title = value;
+                return self.identity_action();
+            }
+            PropertyChange::Description(value) => {
+                self.description = value;
+                return self.identity_action();
+            }
+        }
+        DiagramPropertiesAction::DisplayChanged(self.display_set())
+    }
+
+    fn identity_action(&self) -> DiagramPropertiesAction {
+        DiagramPropertiesAction::IdentityChanged {
+            title: self.title.clone(),
+            description: self.description.clone(),
+        }
+    }
+
+    fn display_set(&self) -> DiagramDisplaySet {
+        DiagramDisplaySet {
+            show_attributes: self.display.show_attributes,
+            show_type: self.display.show_type,
+            show_attribute_visibility: self.display.show_attribute_visibility,
+            show_attribute_multiplicity: self.display.show_attribute_multiplicity,
+            max_attributes: self.display.max_attributes,
+            show_roles: self.display.show_roles,
+            cardinality: self.display.cardinality,
+            show_labels: self.display.show_labels,
+            show_stereotype: self.display.show_stereotype,
+            stereotype_filter: self.display.stereotype_filter.clone(),
+            stereotype_colors: self.display.stereotype_colors.clone(),
+        }
+    }
+}
+
+fn cardinality_id(value: CardinalityVisibility) -> LiveId {
+    match value {
+        CardinalityVisibility::Off => live_id!(cardinality_off),
+        CardinalityVisibility::Explicit => live_id!(cardinality_explicit),
+        CardinalityVisibility::All => live_id!(cardinality_all),
+    }
+}
+
+fn cardinality_from_id(id: LiveId) -> Option<CardinalityVisibility> {
+    if id == live_id!(cardinality_off) {
+        Some(CardinalityVisibility::Off)
+    } else if id == live_id!(cardinality_explicit) {
+        Some(CardinalityVisibility::Explicit)
+    } else if id == live_id!(cardinality_all) {
+        Some(CardinalityVisibility::All)
+    } else {
+        None
+    }
+}
+
+fn max_attributes_from_text(text: &str) -> Option<Option<u32>> {
+    let text = text.trim();
+    if text.is_empty() {
+        Some(None)
+    } else {
+        text.parse().ok().map(Some)
+    }
+}
+
+#[derive(Script, ScriptHook, Widget)]
+pub struct DiagramProperties {
+    #[deref]
+    view: View,
+    #[rust]
+    state: Option<DiagramPropertiesState>,
+}
+
+impl DiagramProperties {
+    pub fn set_diagram(
+        &mut self,
+        cx: &mut Cx,
+        title: &str,
+        description: Option<&str>,
+        display: &ResolvedDiagramDisplay,
+    ) {
+        let next = DiagramPropertiesState::new(
+            title.to_string(),
+            description.map(str::to_string),
+            display.clone(),
+        );
+        if self.state.as_ref() != Some(&next) {
+            self.state = Some(next);
+            self.view.redraw(cx);
+        }
+    }
+
+    pub fn action(&self, actions: &Actions) -> Option<DiagramPropertiesAction> {
+        let action = actions.find_widget_action(self.widget_uid())?;
+        action
+            .action
+            .downcast_ref::<DiagramPropertiesAction>()
+            .cloned()
+    }
+
+    fn emit_change(&mut self, cx: &mut Cx, change: PropertyChange) {
+        if let Some(state) = &mut self.state {
+            let action = state.apply(change);
+            cx.widget_action(self.widget_uid(), action);
+            self.view.redraw(cx);
+        }
+    }
+
+    fn sync_controls(&mut self, cx: &mut Cx) {
+        let Some(state) = self.state.as_ref() else {
+            return;
+        };
+
+        let title_input = self.view.text_input(cx, ids!(title_input));
+        if title_input.text() != state.title {
+            title_input.set_text(cx, &state.title);
+        }
+        let description = state.description.as_deref().unwrap_or("");
+        let description_input = self.view.text_input(cx, ids!(description_input));
+        if description_input.text() != description {
+            description_input.set_text(cx, description);
+        }
+        let max_attributes = state
+            .display
+            .max_attributes
+            .map(|value| value.to_string())
+            .unwrap_or_default();
+        let max_input = self.view.text_input(cx, ids!(max_attributes_input));
+        if max_input.text() != max_attributes {
+            max_input.set_text(cx, &max_attributes);
+        }
+
+        for (path, value, enabled) in [
+            (ids!(attributes_toggle), state.display.show_attributes, true),
+            (
+                ids!(types_toggle),
+                state.display.show_type,
+                state.display.show_attributes,
+            ),
+            (
+                ids!(visibility_toggle),
+                state.display.show_attribute_visibility,
+                state.display.show_attributes,
+            ),
+            (
+                ids!(stereotypes_toggle),
+                state.display.show_stereotype,
+                true,
+            ),
+            (ids!(roles_toggle), state.display.show_roles, true),
+            (ids!(labels_toggle), state.display.show_labels, true),
+        ] {
+            let widget = self.view.widget(cx, path);
+            if let Some(mut control) = widget.borrow_mut::<ToggleControl>() {
+                control.set_value(cx, value);
+                control.set_enabled(cx, enabled);
+            };
+        }
+        self.view
+            .widget(cx, ids!(max_attributes_input))
+            .set_disabled(cx, !state.display.show_attributes);
+
+        let segmented = self.view.widget(cx, ids!(cardinality_control));
+        if let Some(mut control) = segmented.borrow_mut::<SegmentedControl>() {
+            control.set_items(
+                cx,
+                vec![
+                    SegmentItem::new(live_id!(cardinality_off), "Off"),
+                    SegmentItem::new(live_id!(cardinality_explicit), "Explicit"),
+                    SegmentItem::new(live_id!(cardinality_all), "All"),
+                ],
+            );
+            control.set_selected(cx, cardinality_id(state.display.cardinality));
+        }
+        self.view
+            .widget(cx, ids!(close))
+            .as_icon_button()
+            .set_icon(cx, Icon::CircleX);
+    }
+}
+
+impl Widget for DiagramProperties {
+    fn handle_event(&mut self, cx: &mut Cx, event: &Event, scope: &mut Scope) {
+        self.view.handle_event(cx, event, scope);
+        self.widget_match_event(cx, event, scope);
+    }
+
+    fn draw_walk(&mut self, cx: &mut Cx2d, scope: &mut Scope, walk: Walk) -> DrawStep {
+        self.sync_controls(cx);
+        self.view.draw_walk(cx, scope, walk)
+    }
+}
+
+impl WidgetMatchEvent for DiagramProperties {
+    fn handle_actions(&mut self, cx: &mut Cx, actions: &Actions, _scope: &mut Scope) {
+        if self
+            .view
+            .widget(cx, ids!(close))
+            .as_icon_button()
+            .clicked(actions)
+        {
+            cx.widget_action(self.widget_uid(), DiagramPropertiesAction::Close);
+        }
+
+        if let Some(title) = self.view.text_input(cx, ids!(title_input)).changed(actions) {
+            self.emit_change(cx, PropertyChange::Title(title));
+        }
+        if let Some(description) = self
+            .view
+            .text_input(cx, ids!(description_input))
+            .changed(actions)
+        {
+            self.emit_change(
+                cx,
+                PropertyChange::Description(if description.trim().is_empty() {
+                    None
+                } else {
+                    Some(description)
+                }),
+            );
+        }
+        if let Some(text) = self
+            .view
+            .text_input(cx, ids!(max_attributes_input))
+            .changed(actions)
+        {
+            if let Some(value) = max_attributes_from_text(&text) {
+                self.emit_change(cx, PropertyChange::MaxAttributes(value));
+            }
+        }
+
+        for (path, to_change) in [
+            (
+                ids!(attributes_toggle),
+                PropertyChange::ShowAttributes as fn(bool) -> PropertyChange,
+            ),
+            (ids!(types_toggle), PropertyChange::ShowType),
+            (
+                ids!(visibility_toggle),
+                PropertyChange::ShowAttributeVisibility,
+            ),
+            (ids!(stereotypes_toggle), PropertyChange::ShowStereotype),
+            (ids!(roles_toggle), PropertyChange::ShowRoles),
+            (ids!(labels_toggle), PropertyChange::ShowLabels),
+        ] {
+            let changed = self
+                .view
+                .widget(cx, path)
+                .borrow::<ToggleControl>()
+                .and_then(|control| control.changed(actions));
+            if let Some(value) = changed {
+                self.emit_change(cx, to_change(value));
+            }
+        }
+
+        let cardinality = self
+            .view
+            .widget(cx, ids!(cardinality_control))
+            .borrow::<SegmentedControl>()
+            .and_then(|control| control.changed(actions))
+            .and_then(cardinality_from_id);
+        if let Some(value) = cardinality {
+            self.emit_change(cx, PropertyChange::Cardinality(value));
+        }
+    }
+}
+
+impl DiagramPropertiesRef {
+    pub fn set_diagram(
+        &self,
+        cx: &mut Cx,
+        title: &str,
+        description: Option<&str>,
+        display: &ResolvedDiagramDisplay,
+    ) {
+        if let Some(mut inner) = self.borrow_mut() {
+            inner.set_diagram(cx, title, description, display);
+        }
+    }
+
+    pub fn action(&self, actions: &Actions) -> Option<DiagramPropertiesAction> {
+        self.borrow().and_then(|inner| inner.action(actions))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{DiagramPropertiesAction, DiagramPropertiesState, PropertyChange};
+    use crate::diagram_display::ResolvedDiagramDisplay;
+    use makepad_widgets::{live_id, LiveId};
+    use waml::model::CardinalityVisibility;
+    use waml::ops::DiagramDisplaySet;
+
+    fn resolved_display() -> ResolvedDiagramDisplay {
+        ResolvedDiagramDisplay {
+            show_attributes: true,
+            show_type: true,
+            show_attribute_visibility: false,
+            show_attribute_multiplicity: false,
+            max_attributes: Some(7),
+            show_roles: false,
+            cardinality: CardinalityVisibility::Explicit,
+            show_labels: true,
+            show_stereotype: false,
+            stereotype_filter: Some(vec!["entity".into()]),
+            stereotype_colors: vec!["entity=#1496dc".into()],
+        }
+    }
+
+    #[test]
+    fn changing_one_property_emits_the_complete_display() {
+        let mut state =
+            DiagramPropertiesState::new("Orders".into(), Some("Flow".into()), resolved_display());
+
+        let action = state.apply(PropertyChange::ShowType(false));
+
+        assert_eq!(
+            action,
+            DiagramPropertiesAction::DisplayChanged(DiagramDisplaySet {
+                show_attributes: true,
+                show_type: false,
+                show_attribute_visibility: false,
+                show_attribute_multiplicity: false,
+                max_attributes: Some(7),
+                show_roles: false,
+                cardinality: CardinalityVisibility::Explicit,
+                show_labels: true,
+                show_stereotype: false,
+                stereotype_filter: Some(vec!["entity".into()]),
+                stereotype_colors: vec!["entity=#1496dc".into()],
+            })
+        );
+    }
+
+    #[test]
+    fn changing_cardinality_emits_the_selected_enum() {
+        let mut state = DiagramPropertiesState::new("Orders".into(), None, resolved_display());
+
+        let action = state.apply(PropertyChange::Cardinality(CardinalityVisibility::All));
+
+        let DiagramPropertiesAction::DisplayChanged(display) = action else {
+            panic!("cardinality changes must emit a display payload");
+        };
+        assert_eq!(display.cardinality, CardinalityVisibility::All);
+    }
+
+    #[test]
+    fn changing_identity_emits_both_editable_fields() {
+        let mut state =
+            DiagramPropertiesState::new("Orders".into(), Some("Flow".into()), resolved_display());
+
+        let action = state.apply(PropertyChange::Description(None));
+
+        assert_eq!(
+            action,
+            DiagramPropertiesAction::IdentityChanged {
+                title: "Orders".into(),
+                description: None,
+            }
+        );
+    }
+
+    #[test]
+    fn cardinality_segment_ids_map_to_the_shared_enum() {
+        assert_eq!(
+            super::cardinality_from_id(live_id!(cardinality_off)),
+            Some(CardinalityVisibility::Off)
+        );
+        assert_eq!(
+            super::cardinality_from_id(live_id!(cardinality_explicit)),
+            Some(CardinalityVisibility::Explicit)
+        );
+        assert_eq!(
+            super::cardinality_from_id(live_id!(cardinality_all)),
+            Some(CardinalityVisibility::All)
+        );
+        assert_eq!(super::cardinality_from_id(live_id!(unknown)), None);
+    }
+
+    #[test]
+    fn maximum_attributes_parses_blank_as_unlimited() {
+        assert_eq!(super::max_attributes_from_text(""), Some(None));
+        assert_eq!(super::max_attributes_from_text("  "), Some(None));
+        assert_eq!(super::max_attributes_from_text("12"), Some(Some(12)));
+        assert_eq!(super::max_attributes_from_text("many"), None);
+    }
+}
