@@ -6,16 +6,19 @@
 //! Structure/hit-handling mirror the fork's `widgets/src/map/view.rs`.
 
 use super::{
+    interaction::ClassInteraction,
+    placement::PlacementInteraction,
     selection::{ConstraintVisibility, SelectionPolicy, SelectionState},
-    SceneUpdate,
+    zone_placed, DialPlacement, FrameCommand, InteractionEffects, SceneUpdate, SurfaceIntent,
+    TimerCommand, Zone,
 };
 use crate::canvas::geometry::{
     corner_fillet, elbow_radius, intersect_rect, marker_geometry, segment_quad, snap_bar_to_device,
     ELBOW_MIN_DEVICE_PX,
 };
 use crate::canvas::viewport::{
-    ease_out, Camera, InitialFit, TimerCommand, TouchPair, ViewportController, ViewportEffects,
-    MIN_ZOOM,
+    Camera, InitialFit, TimerCommand as ViewportTimerCommand, TouchPair, ViewportController,
+    ViewportEffects,
 };
 use crate::frame::SurfaceExt;
 use crate::inspector::Subject;
@@ -384,58 +387,12 @@ pub struct ClassDiagramSurface {
     #[rust]
     viewport: ViewportController,
     #[rust]
-    drag_start_abs: Option<DVec2>,
-    /// SPIKE (drag-place, throwaway): index of the node being dragged to author
-    /// a placement, or `None` when the press is a pan/click. Set on FingerDown
-    /// over a node, cleared on FingerUp.
+    interaction: ClassInteraction,
     #[rust]
-    drag_node: Option<usize>,
-    /// World-space offset from the dragged node's origin to the grab point, so
-    /// the ghost tracks the cursor without jumping.
-    #[rust]
-    drag_grab: (f64, f64),
-    /// Whether the node-drag moved past the click slop (a real placement drag,
-    /// not a click-select).
-    #[rust]
-    drag_moved: bool,
-    /// Live drag readout, recomputed each FingerMove: ghost world rect, the
-    /// compass target node, the hovered zone, and the inferred placement.
-    #[rust]
-    drag_ghost: Option<waml::solve::Rect>,
-    /// Index of the node the cursor is currently over (its compass target),
-    /// picked by body containment with a light ring-hysteresis so crossing into
-    /// a zone doesn't drop the target. `None` when the cursor is over empty
-    /// canvas.
-    #[rust]
-    drag_target: Option<usize>,
-    /// Which of the dial's eight wedges the cursor is on, or `None` (hub
-    /// dead-zone / no target).
-    #[rust]
-    compass_zone: Option<Zone>,
-    /// Screen point the drag dial is centred on, frozen where the cursor was
-    /// when the dwell armed -- so the wedges never move while the preview slides
-    /// the whole diagram around underneath them. The dial itself is the shared
-    /// `RadialPopup`, opened by the shell; the canvas keeps the centre only to
-    /// know a dial is up and to notice the cursor leaving its reach.
-    #[rust]
-    dial_center: Option<DVec2>,
-    /// Who the open dial is about, by name -- see `DialPair`.
-    #[rust]
-    dial_pair: Option<DialPair>,
-    /// Candidate layout per zone (node key -> world rect), pushed by the view
-    /// after the arm-time speculative solve. Hovering a wedge then costs no
-    /// solve at all -- it just picks a target to tween toward.
-    #[rust]
-    zone_layouts: Vec<(Zone, std::collections::BTreeMap<String, waml::solve::Rect>)>,
-    /// The live hover preview, or `None` when the cursor is in the hub / no
-    /// dial is up.
-    #[rust]
-    preview: Option<Preview>,
-    /// Animation clock for `preview`'s tween.
+    placement: PlacementInteraction,
+    /// Makepad handle for the controller-owned preview animation.
     #[rust]
     preview_frame: NextFrame,
-    #[rust]
-    preview_last_time: f64,
     /// Animation clock for viewport glides. An *interval*, not a `NextFrame`: a
     /// next-frame chain only re-arms once the paint loop has already painted, so
     /// after an idle click it inherits the loop's wake-up ramp and delivers ~5
@@ -443,171 +400,12 @@ pub struct ClassDiagramSurface {
     /// schedule and paces the glide evenly.
     #[rust]
     cam_timer: Timer,
-    /// Last cursor position seen during a drag. The preview camera re-derives
-    /// itself from this every tick so the dragged node keeps sitting under the
-    /// pointer while the layout moves.
-    #[rust]
-    cursor_abs: DVec2,
-    /// Node the cursor is dwelling over, waiting for `dwell_timer` to arm its
-    /// compass. Distinct from `drag_target` (the *armed* one) so the compass
-    /// doesn't flip to a sibling the cursor only grazed.
-    #[rust]
-    dwell_cand: Option<usize>,
-    /// The pending dwell timeout; fires to promote `dwell_cand` -> `drag_target`.
+    /// Makepad handle for the controller-owned dwell timeout.
     #[rust]
     dwell_timer: Timer,
     #[rust]
-    drag_place: Placed,
-    /// Per-zone conflict verdict pushed by the view (`set_conflict_zones`) after
-    /// a speculative solve: zones the solver would reject if dropped now.
-    /// Cleared whenever the armed target changes or the drag ends, so a stale
-    /// verdict never paints.
-    #[rust]
-    conflict_zones: Vec<Zone>,
-    #[rust]
     selection: SelectionState,
 }
-
-/// A live hover preview: the canvas tweens out of the committed layout into the
-/// candidate one a dial wedge would author, and holds there while the cursor
-/// rests on that wedge. Purely visual -- nothing is written to the model until
-/// the drop, and `baseline` restores the committed layout on unlatch.
-struct Preview {
-    /// The wedge being previewed. Sweeping to a sibling retargets the tween from
-    /// wherever it currently is rather than restarting from `baseline`.
-    zone: Zone,
-    /// Tween source / target world rects, per node index.
-    from: Vec<waml::solve::Rect>,
-    to: Vec<waml::solve::Rect>,
-    /// The committed layout, restored verbatim when the preview unlatches.
-    baseline: Vec<waml::solve::Rect>,
-    baseline_edges: Vec<Vec<(f64, f64)>>,
-    /// Node indices each edge connects, resolved once at latch by matching the
-    /// edge's endpoint rects against the baseline node rects. `None` for an edge
-    /// whose ends don't resolve; those keep their committed polyline.
-    edge_ends: Vec<Option<(usize, usize)>>,
-    /// Eased tween progress, 0 (baseline) to 1 (settled on the candidate).
-    t: f64,
-    zoom_from: f64,
-    zoom_to: f64,
-    /// Camera to restore on unlatch.
-    cam_baseline: Camera,
-    /// True once the preview is tweening BACK to `baseline` -- the return-to-
-    /// neutral animation played when the cursor lands in the hub. While set the
-    /// camera eases to `cam_baseline` instead of tracking the cursor, and the
-    /// tick loop tears the preview down when it lands.
-    closing: bool,
-    /// Camera at the instant the return tween began: the `from` for the eased
-    /// pan/zoom back to `cam_baseline`. Unused while latching forward.
-    cam_from: Camera,
-    /// Frozen screen centre + world size of the reference node, for the
-    /// translucent copy left behind where B used to be.
-    ghost_b_center: DVec2,
-    ghost_b_size: DVec2,
-    ghost_b_key: String,
-}
-
-/// Linear blend of two rects, for the per-node tween.
-fn lerp_rect(a: waml::solve::Rect, b: waml::solve::Rect, t: f64) -> waml::solve::Rect {
-    waml::solve::Rect {
-        x: a.x + (b.x - a.x) * t,
-        y: a.y + (b.y - a.y) * t,
-        w: a.w + (b.w - a.w) * t,
-        h: a.h + (b.h - a.h) * t,
-    }
-}
-
-/// Zoom that fits `a` and `b` (world rects) into a `view` with `pad` px inset,
-/// clamped so a preview never magnifies past 1:1 and never zooms further in than
-/// a quarter-step past where the drag started. Pure.
-fn preview_zoom(
-    a: waml::solve::Rect,
-    b: waml::solve::Rect,
-    view: DVec2,
-    pad: f64,
-    start: f64,
-) -> f64 {
-    let min_x = a.x.min(b.x);
-    let min_y = a.y.min(b.y);
-    let max_x = (a.x + a.w).max(b.x + b.w);
-    let max_y = (a.y + a.h).max(b.y + b.h);
-    let (w, h) = ((max_x - min_x).max(1.0), (max_y - min_y).max(1.0));
-    let fit = ((view.x - 2.0 * pad).max(1.0) / w).min((view.y - 2.0 * pad).max(1.0) / h);
-    let ceiling = (start * 1.25).min(1.0);
-    fit.clamp(MIN_ZOOM, ceiling.max(MIN_ZOOM))
-}
-
-/// A primary press counts as a *click* (not a pan) only if the pointer stayed
-/// within this many screen pixels of the down point. Anything further is a
-/// drag, which pans and never selects.
-const SELECT_SLOP: f64 = 4.0;
-
-/// Whether a primary press that went down at `down` and lifted at `up` is a
-/// click rather than a pan: it moved less than `SELECT_SLOP` screen pixels.
-/// Pure (screen-space distance), so the click/drag threshold is unit-testable
-/// without a GPU.
-fn is_click(down: DVec2, up: DVec2) -> bool {
-    (up - down).length() < SELECT_SLOP
-}
-
-/// Index of the topmost node whose on-screen rect contains `abs`, or `None`.
-/// Topmost = last-drawn, so we scan in reverse. Pure (takes world rects +
-/// camera), matching the draw-time transform in `draw_walk`.
-pub fn node_at(
-    node_rects: &[waml::solve::Rect],
-    camera: &Camera,
-    view: Rect,
-    abs: DVec2,
-) -> Option<usize> {
-    for (i, nr) in node_rects.iter().enumerate().rev() {
-        let (lx, ly) = camera.world_to_local(nr.x, nr.y);
-        let screen = Rect {
-            pos: dvec2(view.pos.x + lx, view.pos.y + ly),
-            size: dvec2(nr.w * camera.zoom, nr.h * camera.zoom),
-        };
-        if screen.contains(abs) {
-            return Some(i);
-        }
-    }
-    None
-}
-
-/// SPIKE (drag-place): the single placement a compass zone authors relative to
-/// its target. An edge zone maps to a cardinal `Direction`, a corner zone to a
-/// diagonal. `None` = no zone hovered (drop = cancel). `Direction` reuses the
-/// DSL's own vocabulary so the readout maps 1:1 onto `A above left of B`.
-#[derive(Clone, Copy, Default, PartialEq)]
-pub struct Placed {
-    pub dir: Option<waml::syntax::Direction>,
-}
-
-/// SPIKE (drag-place): the eight compass drop zones ringing a target node --
-/// the ring cells of a 3x3 grid (the center cell is the node body itself, dead,
-/// so it has no variant). A VS-style dock diamond: edge zones author one axis,
-/// corner zones author both. Maps to a `Placed` via `zone_placed`.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum Zone {
-    Left,
-    Right,
-    Top,
-    Bottom,
-    TopLeft,
-    TopRight,
-    BottomLeft,
-    BottomRight,
-}
-
-/// All eight zones, in render/scan order.
-pub const COMPASS_ZONES: [Zone; 8] = [
-    Zone::Left,
-    Zone::Right,
-    Zone::Top,
-    Zone::Bottom,
-    Zone::TopLeft,
-    Zone::TopRight,
-    Zone::BottomLeft,
-    Zone::BottomRight,
-];
 
 /// The relations that should be drawn under a visibility mode + sticky selection
 /// (spec §1). `None` ⇒ empty; `Selected` ⇒ relations touching `selected_key` as
@@ -788,93 +586,12 @@ fn reframe_to_selected<'a>(
     }
 }
 
-/// Once armed, the dial stays up while the cursor is within this radius of the
-/// dial centre. Past it the canvas asks the shell to dismiss the dial (and
-/// unlatches any preview), freeing the drag to dwell on another target.
-const DIAL_REACH: f64 = crate::popup::radial::DISC_RADIUS + 72.0;
-/// Seconds a preview tween takes to settle into its candidate layout.
-const PREVIEW_SECS: f64 = 0.22;
 const FONT_RASTER_SIZES: &[f32] = &[
     32.0, 40.0, 50.0, 63.0, 79.0, 99.0, 124.0, 155.0, 194.0, 243.0, 304.0,
 ];
-/// Dwell (seconds) the cursor must rest over a node before its compass arms.
-/// Stops the target flipping to a sibling when the cursor merely grazes a
-/// border on the way past.
-const DWELL_SECS: f64 = 0.18;
 /// How far (screen px) a veil hatch reaches from its anchor edge before fully
 /// fading. Keeps a half-plane veil from flooding the canvas (spec §2).
 const VEIL_REACH: f64 = 420.0;
-
-/// The dial's wedges in `RadialLayout::full(8)` index order -- clockwise from 12
-/// o'clock, so wedge `i` is `DIAL_ZONES[i]` and its direction points the way the
-/// wedge does. The dial itself is the shared `RadialPopup`, opened by the shell;
-/// this table is the contract between its wedge order and a placement.
-pub const DIAL_ZONES: [Zone; 8] = [
-    Zone::Top,
-    Zone::TopRight,
-    Zone::Right,
-    Zone::BottomRight,
-    Zone::Bottom,
-    Zone::BottomLeft,
-    Zone::Left,
-    Zone::TopLeft,
-];
-
-/// The `PopupItem` id a dial wedge commits, and its inverse. Ids (not slot
-/// indices) cross the popup seam, so the surface stays order-agnostic.
-pub fn zone_id(z: Zone) -> LiveId {
-    match z {
-        Zone::Top => live_id!(place_top),
-        Zone::TopRight => live_id!(place_top_right),
-        Zone::Right => live_id!(place_right),
-        Zone::BottomRight => live_id!(place_bottom_right),
-        Zone::Bottom => live_id!(place_bottom),
-        Zone::BottomLeft => live_id!(place_bottom_left),
-        Zone::Left => live_id!(place_left),
-        Zone::TopLeft => live_id!(place_top_left),
-    }
-}
-
-/// The zone a committed/armed dial id names, or `None` for a foreign id.
-pub fn zone_of_id(id: LiveId) -> Option<Zone> {
-    DIAL_ZONES.into_iter().find(|&z| zone_id(z) == id)
-}
-
-/// The directional-arrow glyph a dial wedge shows. The arrow points the way the
-/// wedge would push the dragged node relative to the target -- dropping A on B's
-/// top-left zone (`A above left of B`) shows an up-left arrow. The arrow *is* the
-/// wedge's meaning, so the wedge carries no text.
-pub fn zone_arrow(z: Zone) -> crate::icons::Icon {
-    use crate::icons::Icon::*;
-    match z {
-        Zone::Top => ArrowUp,
-        Zone::TopRight => ArrowUpRight,
-        Zone::Right => ArrowRight,
-        Zone::BottomRight => ArrowDownRight,
-        Zone::Bottom => ArrowDown,
-        Zone::BottomLeft => ArrowDownLeft,
-        Zone::Left => ArrowLeft,
-        Zone::TopLeft => ArrowUpLeft,
-    }
-}
-
-/// The placement a compass `Zone` authors relative to the target: an edge zone
-/// is a cardinal, a corner zone a single diagonal. Dropping A on B's *top-left*
-/// zone reads `A above left of B`. Pure.
-pub fn zone_placed(z: Zone) -> Placed {
-    use waml::syntax::Direction::*;
-    let dir = match z {
-        Zone::Left => LeftOf,
-        Zone::Right => RightOf,
-        Zone::Top => Above,
-        Zone::Bottom => Below,
-        Zone::TopLeft => AboveLeft,
-        Zone::TopRight => AboveRight,
-        Zone::BottomLeft => BelowLeft,
-        Zone::BottomRight => BelowRight,
-    };
-    Placed { dir: Some(dir) }
-}
 
 /// The DSL keyword for a `Direction`, for the live readout.
 fn dir_word(d: waml::syntax::Direction) -> &'static str {
@@ -889,21 +606,6 @@ fn dir_word(d: waml::syntax::Direction) -> &'static str {
         BelowLeft => "below left of",
         BelowRight => "below right of",
     }
-}
-
-/// Screen-space rect of `node`'s overflow footer band, or `None` when the card
-/// has no footer (member count at or under `card::MAX_BODY_ROWS`). Measures the
-/// same box-tree `draw_card` draws, so the hit-band matches the drawn control.
-/// Pure (takes the node + its on-screen rect + zoom), so it is unit-testable
-/// without a GPU, mirroring `node_at` / `is_click`.
-pub fn footer_screen_rect(node: &crate::scene::SceneNode, screen: Rect, zoom: f64) -> Option<Rect> {
-    use crate::card::{self, Block};
-    let placed = card::measure(&card::class_shape(node, &card::mono_sheet()));
-    let f = placed.blocks.iter().find(|b| b.block == Block::Footer)?;
-    Some(Rect {
-        pos: dvec2(screen.pos.x + f.x * zoom, screen.pos.y + f.y * zoom),
-        size: dvec2(f.w * zoom, f.h * zoom),
-    })
 }
 
 /// Screen-space fill rect for a veil: the keep-out region anchored to the
@@ -1055,35 +757,8 @@ fn edge_point_to_screen(camera: &Camera, rect_pos: DVec2, p: (f64, f64)) -> DVec
     dvec2(rect_pos.x + lx, rect_pos.y + ly)
 }
 
-/// The subject/reference pair the open dial was armed on, kept by name so a
-/// wedge commit can still identify them. It has to outlive the drag: the commit
-/// arrives as a popup result, which the shell drains from the action queue
-/// *after* the same event pass already tore the drag down in `FingerUp` -- so
-/// reading the live `drag_node`/`drag_target` indices at that point would always
-/// come back empty. Overwritten by the next arm.
-#[derive(Clone, Debug)]
-struct DialPair {
-    subject_key: String,
-    subject_title: String,
-    reference_key: String,
-    reference_title: String,
-}
-
-/// The `## Layout` placement a committed dial wedge authors: the dragged
-/// (subject) node relative to the drop target (reference), both by `SceneNode`
-/// key + title. `directions` is 1 (edge) or 2 (corner). The shell supplies the
-/// active diagram id and performs the write-back + re-solve.
-#[derive(Clone, Debug)]
-pub struct DialPlacement {
-    pub subject_key: String,
-    pub subject_title: String,
-    pub reference_key: String,
-    pub reference_title: String,
-    pub directions: Vec<waml::syntax::Direction>,
-}
-
 /// Canvas -> App action (same convention as `ToolDockAction`).
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub enum ClassDiagramSurfaceAction {
     #[default]
     None,
@@ -1115,95 +790,53 @@ pub enum ClassDiagramSurfaceAction {
     DialDismiss,
 }
 
+impl From<SurfaceIntent> for ClassDiagramSurfaceAction {
+    fn from(intent: SurfaceIntent) -> Self {
+        match intent {
+            SurfaceIntent::NodeMenu { abs, key } => Self::NodeMenu { abs, key },
+            SurfaceIntent::NodeSelect { key } => Self::NodeSelect { key },
+            SurfaceIntent::NodeDeselect => Self::NodeDeselect,
+            SurfaceIntent::ToggleExpand { key } => Self::ToggleExpand { key },
+            SurfaceIntent::CompassArmed {
+                subject_key,
+                reference_key,
+                center,
+            } => Self::CompassArmed {
+                subject_key,
+                reference_key,
+                center,
+            },
+            SurfaceIntent::DialDismiss => Self::DialDismiss,
+        }
+    }
+}
+
 impl Widget for ClassDiagramSurface {
     fn handle_event(&mut self, cx: &mut Cx, event: &Event, _scope: &mut Scope) {
         if let Some(te) = self.cam_timer.is_event(event) {
             let effects = self.viewport.tick_camera(te.time.unwrap_or(0.0));
             self.apply_viewport_effects(cx, effects);
         }
-        // SPIKE: Escape cancels an in-progress placement drag (snap back, no log).
         if let Event::KeyDown(ke) = event {
-            if ke.key_code == KeyCode::Escape && self.drag_node.is_some() {
-                self.cancel_drag(cx);
+            if ke.key_code == KeyCode::Escape && self.placement.snapshot().dragged_key.is_some() {
+                let effects = self.placement.cancel(&mut self.scene, &mut self.viewport);
+                self.viewport.suppress_release();
+                self.apply_interaction_effects(cx, effects);
                 return;
             }
         }
-        // SPIKE: dwell fired -> arm the compass on the node the cursor rested on.
-        // The hovered zone stays whatever the last FingerMove computed (likely
-        // `None`, cursor over the dead body center); the next move lights a handle.
         if self.dwell_timer.is_event(event).is_some() {
-            if self.drag_node.is_some() {
-                if let Some(c) = self.dwell_cand.take() {
-                    self.drag_target = Some(c);
-                    if let (Some(ni), Some(ri)) = (self.drag_node, self.drag_target) {
-                        let uid = self.widget_uid();
-                        let subject_key = self.scene.nodes[ni].key.clone();
-                        let reference_key = self.scene.nodes[ri].key.clone();
-                        self.dial_pair = Some(DialPair {
-                            subject_key: subject_key.clone(),
-                            subject_title: self.scene.nodes[ni].title.clone(),
-                            reference_key: reference_key.clone(),
-                            reference_title: self.scene.nodes[ri].title.clone(),
-                        });
-                        self.conflict_zones.clear();
-                        self.zone_layouts.clear();
-                        // The dial pops where the cursor is resting -- press-hold
-                        // radial behaviour -- and stays frozen there for the life
-                        // of the arm. The shell opens it (the real `RadialPopup`);
-                        // the canvas only remembers the centre.
-                        self.dial_center = Some(self.cursor_abs);
-                        cx.widget_action(
-                            uid,
-                            ClassDiagramSurfaceAction::CompassArmed {
-                                subject_key,
-                                reference_key,
-                                center: self.cursor_abs,
-                            },
-                        );
-                    }
-                    self.draw_bg.redraw(cx);
-                }
-            }
+            let center = self.placement.cursor_abs;
+            let effects = self.placement.dwell_elapsed(&self.scene, center);
+            self.apply_interaction_effects(cx, effects);
             return;
         }
-        // Preview tween clock: advance `t`, re-apply the layout + camera, and
-        // re-arm until it settles. Same dt pattern as the panels' peek timers.
         if let Some(ne) = self.preview_frame.is_event(event) {
-            let dt = if self.preview_last_time == 0.0 {
-                0.0
-            } else {
-                ne.time - self.preview_last_time
-            };
-            self.preview_last_time = ne.time;
-            let tweening = match &mut self.preview {
-                Some(p) => {
-                    p.t = (p.t + dt / PREVIEW_SECS).min(1.0);
-                    p.t < 1.0
-                }
-                None => false,
-            };
-            if self.preview.is_some() {
-                self.apply_preview(cx);
-            }
-            // A finished *closing* preview is the return tween landing: tear it
-            // down (baseline verbatim + clear) now that it has eased home.
-            let closing_done = !tweening && self.preview.as_ref().is_some_and(|p| p.closing);
-            if closing_done {
-                self.unlatch_preview(cx);
-            }
-            // (The dial's own bloom is animated by `RadialPopup`, which drives
-            // its own next-frame clock -- this one only serves the tween.)
-            if tweening {
-                self.preview_frame = cx.new_next_frame();
-            } else {
-                self.preview_last_time = 0.0;
-            }
+            let effects = self
+                .placement
+                .tick_preview(ne.time, &mut self.scene, &mut self.viewport);
+            self.apply_interaction_effects(cx, effects);
         }
-        // Pinch-zoom. A two-finger gesture never reaches `hits()` as a pair --
-        // it would arrive as two independent drags fighting over the camera --
-        // so the canvas reads `TouchUpdate` itself and swallows the event for
-        // as long as the gesture lasts. A lone finger falls straight through
-        // (on web it is emulated as the mouse before this widget ever sees it).
         if let Event::TouchUpdate(tu) = event {
             if self.handle_pinch(cx, tu) {
                 return;
@@ -1211,237 +844,55 @@ impl Widget for ClassDiagramSurface {
         }
         match event.hits_with_capture_overload(cx, self.draw_bg.area(), false) {
             Hit::FingerDown(fe) if fe.mouse_button() == Some(MouseButton::SECONDARY) => {
-                let rects: Vec<waml::solve::Rect> =
-                    self.scene.nodes.iter().map(|n| n.rect).collect();
-                let viewport = self.viewport.snapshot();
-                if let Some(node) = node_at(&rects, &viewport.camera, viewport.view_rect, fe.abs) {
-                    let key = self.scene.nodes[node].key.clone();
-                    let uid = self.widget_uid();
-                    cx.widget_action(
-                        uid,
-                        ClassDiagramSurfaceAction::NodeMenu { abs: fe.abs, key },
-                    );
-                }
+                let effects =
+                    self.interaction
+                        .secondary_down(fe.abs, &self.scene, self.viewport.snapshot());
+                self.apply_interaction_effects(cx, effects);
             }
             Hit::FingerDown(fe) if fe.is_primary_hit() => {
-                // The press owns the camera from here (pan, or a placement drag
-                // whose preview drives it) -- drop any glide where it stands, so
-                // the pan origin isn't captured off a moving target.
                 let effects = self.viewport.cancel_glide();
                 self.apply_viewport_effects(cx, effects);
-                self.drag_start_abs = Some(fe.abs);
-                self.viewport.begin_pan(fe.abs);
-                // SPIKE: a press that lands on a node starts a *potential* placement
-                // drag (a click still selects on FingerUp; only movement drags).
-                let rects: Vec<waml::solve::Rect> =
-                    self.scene.nodes.iter().map(|n| n.rect).collect();
-                let viewport = self.viewport.snapshot();
-                if let Some(i) = node_at(&rects, &viewport.camera, viewport.view_rect, fe.abs) {
-                    let (wx, wy) = viewport.camera.local_to_world(
-                        fe.abs.x - viewport.view_rect.pos.x,
-                        fe.abs.y - viewport.view_rect.pos.y,
-                    );
-                    self.drag_node = Some(i);
-                    self.drag_grab = (wx - rects[i].x, wy - rects[i].y);
-                    self.drag_moved = false;
-                }
+                let effects = self.interaction.primary_down(
+                    fe.abs,
+                    &self.scene,
+                    &mut self.viewport,
+                    &mut self.placement,
+                );
+                self.apply_interaction_effects(cx, effects);
                 cx.set_cursor(MouseCursor::Grabbing);
             }
             Hit::FingerMove(fe) => {
-                self.cursor_abs = fe.abs;
-                if let Some(ni) = self.drag_node {
-                    // SPIKE: node-drag -> author a placement via a dock compass.
-                    // Ghost tracks the cursor; the node whose body the cursor is
-                    // over is the target; the compass zone (edge/corner) picks
-                    // the placement axes.
-                    if let Some(start) = self.drag_start_abs {
-                        if !is_click(start, fe.abs) && !self.drag_moved {
-                            self.drag_moved = true;
-                            // Grabbing a card to move it makes it the selection,
-                            // so the constraint veil reframes onto the card in
-                            // flight and its keep-out tracks live -- Selected mode
-                            // only draws the selection's relations, so an
-                            // unselected drag would show no hatch for what you're
-                            // actually moving. Pure clicks keep their
-                            // select-on-release semantics (handled in FingerUp).
-                            let key = self.scene.nodes[ni].key.clone();
-                            if self.selection.select(&key, &self.scene.nodes) {
-                                let uid = self.widget_uid();
-                                cx.widget_action(
-                                    uid,
-                                    ClassDiagramSurfaceAction::NodeSelect { key },
-                                );
-                            }
-                        }
-                    }
-                    let viewport = self.viewport.snapshot();
-                    let (wx, wy) = viewport.camera.local_to_world(
-                        fe.abs.x - viewport.view_rect.pos.x,
-                        fe.abs.y - viewport.view_rect.pos.y,
-                    );
-                    let base = self.scene.nodes[ni].rect;
-                    let ghost = waml::solve::Rect {
-                        x: wx - self.drag_grab.0,
-                        y: wy - self.drag_grab.1,
-                        w: base.w,
-                        h: base.h,
-                    };
-                    let rects: Vec<waml::solve::Rect> =
-                        self.scene.nodes.iter().map(|n| n.rect).collect();
-                    let cursor = fe.abs;
-                    // While a dial is up the layout is being animated underneath
-                    // it, so body hit-testing would re-target off nodes that are
-                    // only where they are *speculatively*. The dial owns the
-                    // cursor until it closes; the canvas only keeps A under the
-                    // pointer, and gives up when the cursor leaves its reach.
-                    if let Some(center) = self.dial_center {
-                        if (cursor - center).length() > DIAL_REACH {
-                            // Out of reach: tear our half down and ask the shell
-                            // to dismiss the surface (see `DialDismiss`).
-                            self.close_dial(cx);
-                            let uid = self.widget_uid();
-                            cx.widget_action(uid, ClassDiagramSurfaceAction::DialDismiss);
-                        } else {
-                            // The wedge under the cursor is the dial's business,
-                            // not ours: `RadialPopup` resolves it and the shell
-                            // feeds the choice back through `preview_zone`.
-                            if self.preview.is_some() {
-                                // A sticks to the cursor: re-derive the camera
-                                // rather than re-deriving the ghost.
-                                self.apply_preview_camera();
-                                self.drag_ghost = Some(self.scene.nodes[ni].rect);
-                            } else {
-                                self.drag_ghost = Some(ghost);
-                            }
-                            self.draw_bg.redraw(cx);
-                            return;
-                        }
-                    }
-                    // Target selection with a dwell so the dial doesn't pop on a
-                    // node the cursor merely grazes. `hovered` = the node body
-                    // under the cursor (never the dragged node itself).
-                    let hovered = node_at(&rects, &viewport.camera, viewport.view_rect, cursor)
-                        .filter(|&t| t != ni);
-                    match hovered {
-                        Some(h) if self.drag_target == Some(h) => {
-                            // Back over the already-armed target: drop any pending
-                            // dwell (e.g. we were dwelling a sibling, then returned).
-                            if self.dwell_cand.take().is_some() {
-                                cx.stop_timer(self.dwell_timer);
-                            }
-                        }
-                        Some(h) => {
-                            // Over a different node: (re)start its dwell. It arms
-                            // only if the cursor stays put for `DWELL_SECS`.
-                            if self.dwell_cand != Some(h) {
-                                cx.stop_timer(self.dwell_timer);
-                                self.dwell_cand = Some(h);
-                                self.dwell_timer = cx.start_timeout(DWELL_SECS);
-                            }
-                        }
-                        None => {
-                            // Over empty canvas: cancel any pending dwell. (An
-                            // armed target always has a dial up, which is handled
-                            // above and returns, so nothing to disarm here.)
-                            if self.dwell_cand.take().is_some() {
-                                cx.stop_timer(self.dwell_timer);
-                            }
-                        }
-                    }
-                    self.compass_zone = None;
-                    self.drag_place = Placed::default();
-                    self.drag_ghost = Some(ghost);
-                    self.draw_bg.redraw(cx);
-                } else if let Some(start) = self.drag_start_abs {
-                    let _ = start;
-                    if self.viewport.pan_to(fe.abs) {
-                        self.draw_bg.redraw(cx);
-                    }
-                }
+                let effects = self.interaction.pointer_move(
+                    fe.abs,
+                    &mut self.scene,
+                    &mut self.viewport,
+                    &mut self.selection,
+                    &mut self.placement,
+                );
+                self.apply_interaction_effects(cx, effects);
             }
             Hit::FingerUp(fe) if fe.is_primary_hit() => {
-                // A short press (< SELECT_SLOP px from the down point) is a
-                // click, not a pan: hit-test the release point and select the
-                // node under it, or deselect on empty canvas. A longer press was
-                // a pan -- the camera already moved via FingerMove; do nothing.
-                if let Some(down) = self.drag_start_abs.take() {
-                    if is_click(down, fe.abs) {
-                        let rects: Vec<waml::solve::Rect> =
-                            self.scene.nodes.iter().map(|n| n.rect).collect();
-                        let uid = self.widget_uid();
-                        let viewport = self.viewport.snapshot();
-                        match node_at(&rects, &viewport.camera, viewport.view_rect, fe.abs) {
-                            Some(i) => {
-                                // Clone the node so the footer measure + redraw
-                                // don't hold an immutable borrow of the scene.
-                                let node = self.scene.nodes[i].clone();
-                                let (lx, ly) =
-                                    viewport.camera.world_to_local(node.rect.x, node.rect.y);
-                                let screen = Rect {
-                                    pos: dvec2(
-                                        viewport.view_rect.pos.x + lx,
-                                        viewport.view_rect.pos.y + ly,
-                                    ),
-                                    size: dvec2(
-                                        node.rect.w * viewport.camera.zoom,
-                                        node.rect.h * viewport.camera.zoom,
-                                    ),
-                                };
-                                let footer_hit =
-                                    footer_screen_rect(&node, screen, viewport.camera.zoom)
-                                        .map(|fr| fr.contains(fe.abs))
-                                        .unwrap_or(false);
-                                if footer_hit {
-                                    // Consumed: toggle expansion, no selection change.
-                                    cx.widget_action(
-                                        uid,
-                                        ClassDiagramSurfaceAction::ToggleExpand {
-                                            key: node.key.clone(),
-                                        },
-                                    );
-                                } else {
-                                    self.selection.select(&node.key, &self.scene.nodes);
-                                    cx.widget_action(
-                                        uid,
-                                        ClassDiagramSurfaceAction::NodeSelect {
-                                            key: node.key.clone(),
-                                        },
-                                    );
-                                }
-                            }
-                            None => {
-                                self.selection.clear();
-                                cx.widget_action(uid, ClassDiagramSurfaceAction::NodeDeselect);
-                            }
-                        }
-                        self.draw_bg.redraw(cx);
-                    }
-                    // A drop on a wedge is NOT authored here: the dial is a real
-                    // `RadialPopup`, and its own marking release commits (the
-                    // shell turns that into the `AuthorPlacement`). `PopupRoot`
-                    // routes the `MouseUp` before this widget ever sees the
-                    // `FingerUp`, so all that is left here is tearing the drag
-                    // down.
-                }
-                self.close_dial(cx);
-                self.viewport.end_pan();
-                self.drag_node = None;
-                self.drag_moved = false;
-                self.drag_ghost = None;
-                self.dwell_cand = None;
-                cx.stop_timer(self.dwell_timer);
-                self.draw_bg.redraw(cx);
+                let effects = self.interaction.pointer_up(
+                    fe.abs,
+                    true,
+                    &mut self.scene,
+                    &mut self.viewport,
+                    &mut self.selection,
+                    &mut self.placement,
+                );
+                self.apply_interaction_effects(cx, effects);
                 cx.set_cursor(MouseCursor::Grab);
             }
-            Hit::FingerUp(_) => {
-                self.drag_start_abs = None;
-                self.viewport.end_pan();
-                self.close_dial(cx);
-                self.drag_node = None;
-                self.drag_moved = false;
-                self.drag_ghost = None;
-                self.dwell_cand = None;
-                cx.stop_timer(self.dwell_timer);
+            Hit::FingerUp(fe) => {
+                let effects = self.interaction.pointer_up(
+                    fe.abs,
+                    false,
+                    &mut self.scene,
+                    &mut self.viewport,
+                    &mut self.selection,
+                    &mut self.placement,
+                );
+                self.apply_interaction_effects(cx, effects);
                 cx.set_cursor(MouseCursor::Grab);
             }
             Hit::FingerHoverIn(_) => cx.set_cursor(MouseCursor::Grab),
@@ -1863,7 +1314,7 @@ impl Widget for ClassDiagramSurface {
         }
 
         // SPIKE (drag-place): live placement overlay on top of everything.
-        if self.drag_moved {
+        if self.placement.snapshot().drag_moved {
             self.draw_drag_overlay(cx, rect);
         }
 
@@ -1907,11 +1358,11 @@ fn reconciliation_policy(update: &SceneUpdate) -> ReconciliationPolicy {
 
 impl ClassDiagramSurface {
     fn reset_placement_for_scene_change(&mut self, cx: &mut Cx) {
-        self.cancel_drag(cx);
-        self.dial_pair = None;
-        self.zone_layouts.clear();
-        self.conflict_zones.clear();
-        cx.stop_timer(self.dwell_timer);
+        let effects = self
+            .placement
+            .cancel_for_scene_change(&mut self.scene, &mut self.viewport);
+        self.viewport.suppress_release();
+        self.apply_interaction_effects(cx, effects);
     }
 
     fn reconcile_scene(&mut self, cx: &mut Cx, scene: Scene, update: SceneUpdate) {
@@ -1955,14 +1406,16 @@ impl ClassDiagramSurface {
     /// On-screen rect of scene node `i` under the current camera. Mirrors the
     /// draw-time transform in `draw_walk` / `node_at`.
     fn node_screen_rect(&self, i: usize) -> Rect {
-        // While a card is in flight it lives at its transient `drag_ghost`
+        // While a card is in flight it lives at the placement controller's transient ghost
         // position, not its committed scene rect (which stays at the origin
         // slot until drop). Anchor overlays -- the keep-out veil above all --
         // to the ghost so the hatching tracks the card live instead of
         // snapping only when the drag lands.
-        let r = match (self.drag_node, self.drag_ghost) {
-            (Some(ni), Some(ghost)) if ni == i => ghost,
-            _ => self.scene.nodes[i].rect,
+        let placement = self.placement.snapshot();
+        let r = if placement.dragged_key.as_deref() == Some(self.scene.nodes[i].key.as_str()) {
+            placement.ghost.unwrap_or(self.scene.nodes[i].rect)
+        } else {
+            self.scene.nodes[i].rect
         };
         let viewport = self.viewport.snapshot();
         let (lx, ly) = viewport.camera.world_to_local(r.x, r.y);
@@ -1970,12 +1423,6 @@ impl ClassDiagramSurface {
             pos: dvec2(viewport.view_rect.pos.x + lx, viewport.view_rect.pos.y + ly),
             size: dvec2(r.w * viewport.camera.zoom, r.h * viewport.camera.zoom),
         }
-    }
-
-    /// Screen-space center of scene node `i` -- where its compass anchors.
-    fn node_screen_center(&self, i: usize) -> DVec2 {
-        let s = self.node_screen_rect(i);
-        dvec2(s.pos.x + s.size.x * 0.5, s.pos.y + s.size.y * 0.5)
     }
 
     /// Draw one placement relation's veil: a hatched grey keep-out anchored to the
@@ -2060,10 +1507,21 @@ impl ClassDiagramSurface {
         // exactly as the accepted layout would. The candidate is `A <dir> B`
         // with A the dragged selection, so it anchors to the reference B just as
         // the committed relation would (`reframe_to_selected` is a no-op here).
-        if let (Some(p), Some(_a), Some(b)) = (&self.preview, self.drag_node, self.drag_target) {
-            if let Some(dir) = zone_placed(p.zone).dir {
+        let placement = self.placement.snapshot();
+        if let (Some(zone), Some(reference_key), Some(_)) = (
+            placement.compass_zone,
+            placement.armed_target_key.as_deref(),
+            placement.preview_ghost.as_ref(),
+        ) {
+            if let (Some(dir), Some(reference_index)) = (
+                zone_placed(zone).dir,
+                self.scene
+                    .nodes
+                    .iter()
+                    .position(|node| node.key == reference_key),
+            ) {
                 // The placement being authored: active (accent hatch).
-                chosen.push((b, dir, true));
+                chosen.push((reference_index, dir, true));
             }
         }
 
@@ -2077,11 +1535,21 @@ impl ClassDiagramSurface {
     /// node (eight zones, the hovered one lit), the dragged ghost, and a DSL
     /// readout. All screen-space.
     fn draw_drag_overlay(&mut self, cx: &mut Cx2d, view: Rect) {
-        let (Some(ni), Some(ghost)) = (self.drag_node, self.drag_ghost) else {
+        let placement = self.placement.snapshot();
+        let (Some(dragged_key), Some(ghost)) = (placement.dragged_key.as_deref(), placement.ghost)
+        else {
+            return;
+        };
+        let Some(ni) = self
+            .scene
+            .nodes
+            .iter()
+            .position(|node| node.key == dragged_key)
+        else {
             return;
         };
         let a_key = self.scene.nodes[ni].key.clone();
-        let place = self.drag_place;
+        let place = placement.placed;
         let (vx, vy) = (view.pos.x, view.pos.y);
 
         let to_screen = |r: waml::solve::Rect| -> Rect {
@@ -2098,7 +1566,7 @@ impl ClassDiagramSurface {
         // Origin marker: grey-wash the source slot + outline so it reads as
         // "left behind" -- you can see which node is in flight. Suppressed under
         // a preview, where A hasn't left anything behind: it IS the fixed point.
-        if self.preview.is_none() {
+        if placement.preview_ghost.is_none() {
             let grey_wash = vec4(0.52, 0.57, 0.64, 0.40);
             self.fill_rect(cx, os.pos.x, os.pos.y, os.size.x, os.size.y, grey_wash);
             let grey = vec4(0.62, 0.67, 0.74, 0.85);
@@ -2116,7 +1584,7 @@ impl ClassDiagramSurface {
         // dragged node's identity so you can tell *what* is in flight. Under a
         // preview the real node is already drawn there (the camera pins it to
         // the cursor), so ring it instead of stacking a second copy on top.
-        if self.preview.is_some() {
+        if placement.preview_ghost.is_some() {
             let acc = vec4(0.37, 0.63, 1.0, 0.9);
             let t = 2.0;
             self.fill_rect(cx, gs.pos.x, gs.pos.y, gs.size.x, t, acc);
@@ -2140,8 +1608,7 @@ impl ClassDiagramSurface {
 
         // DSL readout, top-left of the view: the statement(s) the current zone
         // would author. Empty when no zone is hovered (drop = cancel).
-        if let Some(ti) = self.drag_target {
-            let b_key = self.scene.nodes[ti].key.clone();
+        if let Some(b_key) = placement.armed_target_key {
             self.draw_mono_dim.text_style.font_size = 12.0;
             self.draw_mono_dim.font_scale = 1.0;
             if let Some(d) = place.dir {
@@ -2150,277 +1617,6 @@ impl ClassDiagramSurface {
                     .draw_abs(cx, dvec2(vx + 12.0, vy + 10.0), &line);
             }
         }
-    }
-
-    /// Latch (or retarget) the hover preview onto `zone`'s candidate layout.
-    /// Retargeting tweens from wherever the current animation stands, so
-    /// sweeping the dial reads as one continuous motion rather than a series of
-    /// restarts. A zone whose candidate layout hasn't landed yet is a no-op --
-    /// `set_zone_layouts` picks it up when the solve arrives.
-    fn latch_preview(&mut self, cx: &mut Cx, zone: Zone) {
-        // Already heading there -- let the in-flight tween finish rather than
-        // restarting it (the cursor jitters inside a wedge; the layout shouldn't).
-        // A *closing* preview always re-latches, even onto its own former zone:
-        // sweeping back out of the hub must catch the return tween and reverse it.
-        if self
-            .preview
-            .as_ref()
-            .is_some_and(|p| p.zone == zone && !p.closing)
-        {
-            return;
-        }
-        let (Some(ni), Some(ri)) = (self.drag_node, self.drag_target) else {
-            return;
-        };
-        let Some(layout) = self
-            .zone_layouts
-            .iter()
-            .find(|(z, _)| *z == zone)
-            .map(|(_, m)| m.clone())
-        else {
-            return;
-        };
-        let current: Vec<waml::solve::Rect> = self.scene.nodes.iter().map(|n| n.rect).collect();
-        let to: Vec<waml::solve::Rect> = self
-            .scene
-            .nodes
-            .iter()
-            .enumerate()
-            .map(|(i, n)| layout.get(&n.key).copied().unwrap_or(current[i]))
-            .collect();
-        let carried = self.preview.as_ref().map(|p| {
-            (
-                p.baseline.clone(),
-                p.baseline_edges.clone(),
-                p.edge_ends.clone(),
-                p.cam_baseline,
-                p.ghost_b_center,
-                p.ghost_b_size,
-                p.ghost_b_key.clone(),
-            )
-        });
-        let (baseline, baseline_edges, edge_ends, cam_baseline, gb_center, gb_size, gb_key) =
-            match carried {
-                Some(c) => c,
-                None => {
-                    // First latch of this dial: snapshot everything the unlatch
-                    // has to put back, and resolve each edge to the node indices
-                    // it spans (by baseline rect position) so the preview can
-                    // redraw it straight while the layout is in motion.
-                    let edges: Vec<Vec<(f64, f64)>> =
-                        self.scene.edges.iter().map(|e| e.points.clone()).collect();
-                    let ends: Vec<Option<(usize, usize)>> = self
-                        .scene
-                        .edges
-                        .iter()
-                        .map(|e| {
-                            let find = |r: waml::solve::Rect| {
-                                current.iter().position(|c| {
-                                    (c.x - r.x).abs() < 0.5 && (c.y - r.y).abs() < 0.5
-                                })
-                            };
-                            Some((find(e.source)?, find(e.target)?))
-                        })
-                        .collect();
-                    let b = self.scene.nodes[ri].rect;
-                    (
-                        current.clone(),
-                        edges,
-                        ends,
-                        self.viewport.camera(),
-                        self.node_screen_center(ri),
-                        dvec2(b.w, b.h),
-                        self.scene.nodes[ri].key.clone(),
-                    )
-                }
-            };
-        let zoom_to = preview_zoom(
-            to[ni],
-            to[ri],
-            self.viewport.snapshot().view_rect.size,
-            72.0,
-            cam_baseline.zoom,
-        );
-        self.preview = Some(Preview {
-            zone,
-            from: current,
-            to,
-            baseline,
-            baseline_edges,
-            edge_ends,
-            t: 0.0,
-            zoom_from: self.viewport.camera().zoom,
-            zoom_to,
-            cam_baseline,
-            closing: false,
-            cam_from: self.viewport.camera(),
-            ghost_b_center: gb_center,
-            ghost_b_size: gb_size,
-            ghost_b_key: gb_key,
-        });
-        self.preview_last_time = 0.0;
-        self.preview_frame = cx.new_next_frame();
-        self.apply_preview(cx);
-    }
-
-    /// Drop the preview and put the committed layout, edges and camera back,
-    /// instantly. This is the teardown: it fires when the dial closes (drop /
-    /// leave-reach / cancel), where the committed re-solve is about to replace
-    /// the layout anyway, and as the final step of the animated return once its
-    /// tween lands.
-    fn unlatch_preview(&mut self, cx: &mut Cx) {
-        let Some(p) = self.preview.take() else {
-            return;
-        };
-        for (n, r) in self.scene.nodes.iter_mut().zip(p.baseline.iter()) {
-            n.rect = *r;
-        }
-        for (e, pts) in self.scene.edges.iter_mut().zip(p.baseline_edges.iter()) {
-            e.points = pts.clone();
-        }
-        self.viewport.set_transient_camera(p.cam_baseline);
-        self.preview_last_time = 0.0;
-        if let Some(ni) = self.drag_node {
-            self.drag_ghost = Some(self.scene.nodes[ni].rect);
-        }
-        self.draw_bg.redraw(cx);
-    }
-
-    /// Begin the return-to-neutral tween. Rather than snapping the committed
-    /// layout back the instant the cursor lands in the hub, retarget the live
-    /// preview from wherever it stands to `baseline` and ease it home on the same
-    /// curve the forward latch used; the tick loop tears it down (via
-    /// `unlatch_preview`) once it lands. A no-op if no preview is up, or one is
-    /// already closing -- so the repeated hub moves of a resting cursor don't
-    /// restart the animation.
-    fn unlatch_preview_animated(&mut self, cx: &mut Cx) {
-        let cam_now = self.viewport.camera();
-        let Some(p) = self.preview.as_mut() else {
-            return;
-        };
-        if p.closing {
-            return;
-        }
-        // Freeze the current interpolated rects as the tween source, aim at the
-        // committed baseline, and flip to the eased-camera return path.
-        let e = ease_out(p.t);
-        let current: Vec<waml::solve::Rect> = p
-            .from
-            .iter()
-            .zip(p.to.iter())
-            .map(|(a, b)| lerp_rect(*a, *b, e))
-            .collect();
-        p.from = current;
-        p.to = p.baseline.clone();
-        p.zoom_from = cam_now.zoom;
-        p.zoom_to = p.cam_baseline.zoom;
-        p.cam_from = cam_now;
-        p.t = 0.0;
-        p.closing = true;
-        self.preview_last_time = 0.0;
-        self.preview_frame = cx.new_next_frame();
-        self.apply_preview(cx);
-    }
-
-    /// Write the current tween frame into the scene: interpolated node rects,
-    /// straight stand-in edges, and the cursor-anchored camera.
-    fn apply_preview(&mut self, cx: &mut Cx) {
-        let Some(p) = &self.preview else {
-            return;
-        };
-        let e = ease_out(p.t);
-        let closing = p.closing;
-        let rects: Vec<waml::solve::Rect> = p
-            .from
-            .iter()
-            .zip(p.to.iter())
-            .map(|(a, b)| lerp_rect(*a, *b, e))
-            .collect();
-        let ends = p.edge_ends.clone();
-        for (n, r) in self.scene.nodes.iter_mut().zip(rects.iter()) {
-            n.rect = *r;
-        }
-        for (edge, end) in self.scene.edges.iter_mut().zip(ends.iter()) {
-            if let Some((a, b)) = *end {
-                let (ra, rb) = (rects[a], rects[b]);
-                edge.source = ra;
-                edge.target = rb;
-                // Straight centre-to-centre while in motion. Re-routing
-                // orthogonally costs a full route pass per frame; the real
-                // routes come back with the committed solve after the drop.
-                edge.points = vec![
-                    (ra.x + ra.w * 0.5, ra.y + ra.h * 0.5),
-                    (rb.x + rb.w * 0.5, rb.y + rb.h * 0.5),
-                ];
-            }
-        }
-        if closing {
-            self.apply_preview_return_camera();
-        } else {
-            self.apply_preview_camera();
-        }
-        if let Some(ni) = self.drag_node {
-            self.drag_ghost = Some(self.scene.nodes[ni].rect);
-        }
-        self.draw_bg.redraw(cx);
-    }
-
-    /// Camera for the return tween: ease pan + zoom from `cam_from` back to
-    /// `cam_baseline` (the committed view) rather than pinning the dragged node
-    /// to the cursor. The whole diagram, A included, slides home to where it
-    /// committed.
-    fn apply_preview_return_camera(&mut self) {
-        let Some(p) = &self.preview else {
-            return;
-        };
-        let e = ease_out(p.t);
-        self.viewport.set_transient_camera(Camera {
-            pan_x: p.cam_from.pan_x + (p.cam_baseline.pan_x - p.cam_from.pan_x) * e,
-            pan_y: p.cam_from.pan_y + (p.cam_baseline.pan_y - p.cam_from.pan_y) * e,
-            zoom: p.cam_from.zoom + (p.cam_baseline.zoom - p.cam_from.zoom) * e,
-        });
-    }
-
-    /// Re-derive the camera so the dragged node's *previewed* rect lands exactly
-    /// under the cursor: A stays in your hand while the world rearranges around
-    /// it. Zoom eases toward the fit that keeps A and B both on screen.
-    fn apply_preview_camera(&mut self) {
-        let (Some(p), Some(ni)) = (&self.preview, self.drag_node) else {
-            return;
-        };
-        let zoom = p.zoom_from + (p.zoom_to - p.zoom_from) * ease_out(p.t);
-        let a = self.scene.nodes[ni].rect;
-        let local = self.cursor_abs - self.viewport.snapshot().view_rect.pos;
-        self.viewport.set_transient_camera(Camera {
-            zoom,
-            pan_x: a.x - local.x / zoom + self.drag_grab.0,
-            pan_y: a.y - local.y / zoom + self.drag_grab.1,
-        });
-    }
-
-    /// Close the dial: unlatch the preview, forget the frozen centre and the
-    /// candidate layouts, and disarm the target so the drag is free to dwell on
-    /// another node.
-    fn close_dial(&mut self, cx: &mut Cx) {
-        self.unlatch_preview(cx);
-        self.dial_center = None;
-        self.zone_layouts.clear();
-        self.conflict_zones.clear();
-        self.drag_target = None;
-        self.compass_zone = None;
-        self.drag_place = Placed::default();
-    }
-
-    /// SPIKE: clear all placement-drag state and repaint (Escape / abort).
-    fn cancel_drag(&mut self, cx: &mut Cx) {
-        self.close_dial(cx);
-        self.drag_node = None;
-        self.drag_moved = false;
-        self.drag_ghost = None;
-        self.dwell_cand = None;
-        cx.stop_timer(self.dwell_timer);
-        self.drag_start_abs = None;
-        self.draw_bg.redraw(cx);
     }
 
     /// SPIKE helper: fill a screen-space rect with `color` (skips degenerate
@@ -2637,29 +1833,20 @@ impl ClassDiagramSurface {
         cx: &mut Cx,
         layouts: Vec<(Zone, std::collections::BTreeMap<String, waml::solve::Rect>)>,
     ) {
-        self.zone_layouts = layouts;
-        if let Some(z) = self.compass_zone {
-            self.latch_preview(cx, z);
-        }
-        self.draw_bg.redraw(cx);
+        let effects =
+            self.placement
+                .set_candidate_layouts(layouts, &mut self.scene, &mut self.viewport);
+        self.apply_interaction_effects(cx, effects);
     }
 
     /// The dial armed `zone` (or `None`: the hub / nothing armed). Drives the
     /// live layout preview. The canvas no longer hit-tests the wedges itself --
     /// the `RadialPopup` owns that, and the shell relays its arm changes here.
     pub fn preview_zone(&mut self, cx: &mut Cx, zone: Option<Zone>) {
-        if zone == self.compass_zone {
-            return;
-        }
-        self.compass_zone = zone;
-        self.drag_place = zone.map(zone_placed).unwrap_or_default();
-        match zone {
-            Some(z) => self.latch_preview(cx, z),
-            // Sweeping onto the hub (the cancel target) eases the layout back to
-            // the committed baseline rather than snapping it.
-            None => self.unlatch_preview_animated(cx),
-        }
-        self.draw_bg.redraw(cx);
+        let effects = self
+            .placement
+            .preview_zone(zone, &mut self.scene, &mut self.viewport);
+        self.apply_interaction_effects(cx, effects);
     }
 
     /// The placement `zone` would author for the live drag: the dragged
@@ -2667,20 +1854,13 @@ impl ClassDiagramSurface {
     /// `None` when no drag/target is live. Read by the shell when the dial
     /// commits, so the committed wedge -- not the last-armed one -- decides.
     pub fn placement_for(&self, zone: Zone) -> Option<DialPlacement> {
-        let pair = self.dial_pair.as_ref()?;
-        let dir = zone_placed(zone).dir?;
-        Some(DialPlacement {
-            subject_key: pair.subject_key.clone(),
-            subject_title: pair.subject_title.clone(),
-            reference_key: pair.reference_key.clone(),
-            reference_title: pair.reference_title.clone(),
-            directions: vec![dir],
-        })
+        self.placement.placement_for(zone)
     }
 
     pub fn set_conflict_zones(&mut self, cx: &mut Cx, zones: Vec<Zone>) {
-        self.conflict_zones = zones;
-        self.draw_bg.redraw(cx);
+        if self.placement.set_conflict_zones(zones) {
+            self.draw_bg.redraw(cx);
+        }
     }
 
     /// Number of unsatisfiable constraints in the current scene (toolbar counter).
@@ -2738,10 +1918,11 @@ impl ClassDiagramSurface {
         let (a, b) = (live[0], live[1]);
         let spread = a.abs.distance(&b.abs);
         let mid = (a.abs + b.abs) * 0.5;
-        if self.drag_node.is_some() {
-            self.cancel_drag(cx);
+        if self.placement.snapshot().dragged_key.is_some() {
+            let effects = self.placement.cancel(&mut self.scene, &mut self.viewport);
+            self.apply_interaction_effects(cx, effects);
         }
-        self.drag_start_abs = None;
+        self.viewport.suppress_release();
         let effects = self.viewport.apply_pinch_sample(TouchPair {
             a: a.uid,
             b: b.uid,
@@ -2828,14 +2009,41 @@ impl ClassDiagramSurface {
 
     fn apply_viewport_effects(&mut self, cx: &mut Cx, effects: ViewportEffects) {
         match effects.camera_timer {
-            TimerCommand::Keep => {}
-            TimerCommand::StartInterval(seconds) => {
+            ViewportTimerCommand::Keep => {}
+            ViewportTimerCommand::StartInterval(seconds) => {
                 self.cam_timer = cx.start_interval(seconds);
             }
-            TimerCommand::Stop => cx.stop_timer(self.cam_timer),
+            ViewportTimerCommand::Stop => cx.stop_timer(self.cam_timer),
         }
         if effects.redraw {
             self.draw_bg.redraw(cx);
+        }
+    }
+
+    fn apply_interaction_effects(&mut self, cx: &mut Cx, effects: InteractionEffects) {
+        match effects.dwell_timer {
+            TimerCommand::Keep => {}
+            TimerCommand::StartTimeout(seconds) => {
+                self.dwell_timer = cx.start_timeout(seconds);
+            }
+            TimerCommand::RestartTimeout(seconds) => {
+                cx.stop_timer(self.dwell_timer);
+                self.dwell_timer = cx.start_timeout(seconds);
+            }
+            TimerCommand::Stop => cx.stop_timer(self.dwell_timer),
+        }
+        match effects.preview_frame {
+            FrameCommand::Keep | FrameCommand::Stop => {}
+            FrameCommand::Request => {
+                self.preview_frame = cx.new_next_frame();
+            }
+        }
+        if effects.redraw {
+            self.draw_bg.redraw(cx);
+        }
+        if let Some(intent) = effects.intent {
+            let action = ClassDiagramSurfaceAction::from(intent);
+            cx.widget_action(self.widget_uid(), action);
         }
     }
 }
@@ -2860,8 +2068,67 @@ fn font_raster_size(target_size: f32) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::canvas::class::placement::{
+        lerp_rect, preview_zoom, zone_id, zone_of_id, DIAL_ZONES,
+    };
+    use crate::canvas::viewport::ease_out;
 
     use waml::solve::Rect as WorldRect;
+
+    #[test]
+    fn every_surface_intent_maps_one_to_one_to_a_widget_action() {
+        let cases = [
+            (
+                SurfaceIntent::NodeMenu {
+                    abs: dvec2(12.0, 34.0),
+                    key: "menu-key".into(),
+                },
+                ClassDiagramSurfaceAction::NodeMenu {
+                    abs: dvec2(12.0, 34.0),
+                    key: "menu-key".into(),
+                },
+            ),
+            (
+                SurfaceIntent::NodeSelect {
+                    key: "selected-key".into(),
+                },
+                ClassDiagramSurfaceAction::NodeSelect {
+                    key: "selected-key".into(),
+                },
+            ),
+            (
+                SurfaceIntent::NodeDeselect,
+                ClassDiagramSurfaceAction::NodeDeselect,
+            ),
+            (
+                SurfaceIntent::ToggleExpand {
+                    key: "expanded-key".into(),
+                },
+                ClassDiagramSurfaceAction::ToggleExpand {
+                    key: "expanded-key".into(),
+                },
+            ),
+            (
+                SurfaceIntent::CompassArmed {
+                    subject_key: "subject".into(),
+                    reference_key: "reference".into(),
+                    center: dvec2(400.0, 300.0),
+                },
+                ClassDiagramSurfaceAction::CompassArmed {
+                    subject_key: "subject".into(),
+                    reference_key: "reference".into(),
+                    center: dvec2(400.0, 300.0),
+                },
+            ),
+            (
+                SurfaceIntent::DialDismiss,
+                ClassDiagramSurfaceAction::DialDismiss,
+            ),
+        ];
+        for (intent, expected) in cases {
+            assert_eq!(ClassDiagramSurfaceAction::from(intent), expected);
+        }
+    }
 
     #[test]
     fn font_raster_size_keeps_small_text_exact() {
@@ -3236,148 +2503,6 @@ mod tests {
     }
 
     #[test]
-    fn node_at_hits_the_topmost_node_under_the_point() {
-        let rects = vec![
-            WorldRect {
-                x: 0.0,
-                y: 0.0,
-                w: 100.0,
-                h: 60.0,
-            },
-            WorldRect {
-                x: 200.0,
-                y: 0.0,
-                w: 100.0,
-                h: 60.0,
-            },
-        ];
-        let camera = Camera {
-            pan_x: 0.0,
-            pan_y: 0.0,
-            zoom: 1.0,
-        };
-        let view = Rect {
-            pos: dvec2(0.0, 0.0),
-            size: dvec2(800.0, 600.0),
-        };
-        assert_eq!(node_at(&rects, &camera, view, dvec2(50.0, 30.0)), Some(0));
-        assert_eq!(node_at(&rects, &camera, view, dvec2(250.0, 30.0)), Some(1));
-        assert_eq!(node_at(&rects, &camera, view, dvec2(150.0, 30.0)), None);
-    }
-
-    #[test]
-    fn is_click_splits_on_the_slop_threshold() {
-        let down = dvec2(100.0, 100.0);
-        // A near-stationary release (well under 4px) is a click.
-        assert!(is_click(down, dvec2(102.0, 101.0)));
-        // A release just inside the slop radius is still a click.
-        assert!(is_click(down, dvec2(100.0 + 3.9, 100.0)));
-        // A drag past the slop radius is a pan, not a click.
-        assert!(!is_click(down, dvec2(110.0, 100.0)));
-        assert!(!is_click(down, dvec2(100.0 + 4.0, 100.0)));
-    }
-
-    #[test]
-    fn a_sub_slop_click_selects_the_node_under_the_point() {
-        // Two nodes side by side, each carrying its classifier key. The release
-        // logic is is_click() gating node_at(), then indexing the key -- the
-        // exact composition the FingerUp handler runs.
-        let rects = vec![
-            WorldRect {
-                x: 0.0,
-                y: 0.0,
-                w: 100.0,
-                h: 60.0,
-            },
-            WorldRect {
-                x: 200.0,
-                y: 0.0,
-                w: 100.0,
-                h: 60.0,
-            },
-        ];
-        let keys = ["uml.A", "uml.B"];
-        let camera = Camera {
-            pan_x: 0.0,
-            pan_y: 0.0,
-            zoom: 1.0,
-        };
-        let view = Rect {
-            pos: dvec2(0.0, 0.0),
-            size: dvec2(800.0, 600.0),
-        };
-        let resolve = |down: DVec2, up: DVec2| -> Option<&'static str> {
-            if !is_click(down, up) {
-                return None; // a drag pans and never selects
-            }
-            node_at(&rects, &camera, view, up).map(|i| keys[i])
-        };
-
-        // Sub-slop up over node 1 selects it (emits its key).
-        let down = dvec2(250.0, 30.0);
-        assert_eq!(resolve(down, dvec2(251.0, 31.0)), Some("uml.B"));
-        // Over-slop up (a pan) selects nothing even though it ends over a node.
-        assert_eq!(resolve(down, dvec2(280.0, 30.0)), None);
-    }
-
-    fn many_attr_node(key: &str, n: usize) -> crate::scene::SceneNode {
-        use crate::inspector::AttrRow;
-        use waml::model::{ElementType, UmlMetaclass};
-        crate::scene::SceneNode {
-            key: key.to_string(),
-            title: "N".to_string(),
-            element_type: ElementType::Uml(UmlMetaclass::Class),
-            stereotypes: vec![],
-            attributes: (0..n)
-                .map(|i| AttrRow {
-                    name: format!("f{i}"),
-                    ty: "Int".to_string(),
-                    multiplicity: String::new(),
-                    visibility: "+".to_string(),
-                })
-                .collect(),
-            operations: vec![],
-            header: crate::scene::HeaderStyle::Plain,
-            ports: false,
-            rect: WorldRect {
-                x: 0.0,
-                y: 0.0,
-                w: 0.0,
-                h: 0.0,
-            },
-            emphasized: false,
-            collapsed: false,
-            expanded: false,
-        }
-    }
-
-    #[test]
-    fn footer_rect_present_for_an_over_cap_node_and_absent_otherwise() {
-        let screen = Rect {
-            pos: dvec2(0.0, 0.0),
-            size: dvec2(200.0, 200.0),
-        };
-        let over = many_attr_node("big", 7);
-        let under = many_attr_node("small", 2);
-        assert!(footer_screen_rect(&over, screen, 1.0).is_some());
-        assert!(footer_screen_rect(&under, screen, 1.0).is_none());
-    }
-
-    #[test]
-    fn a_point_in_the_footer_band_is_inside_the_footer_rect() {
-        let screen = Rect {
-            pos: dvec2(10.0, 20.0),
-            size: dvec2(200.0, 200.0),
-        };
-        let node = many_attr_node("big", 7);
-        let fr = footer_screen_rect(&node, screen, 1.0).unwrap();
-        let mid = dvec2(fr.pos.x + fr.size.x * 0.5, fr.pos.y + fr.size.y * 0.5);
-        assert!(fr.contains(mid));
-        // A point well above the footer (in the header) is not in the footer.
-        assert!(!fr.contains(dvec2(mid.x, screen.pos.y + 1.0)));
-    }
-
-    #[test]
     fn visibility_gates_which_relations_draw() {
         use crate::scene::SceneRelation;
         use waml::syntax::Direction;
@@ -3502,17 +2627,45 @@ mod tests {
         use super::*;
 
         fn surface_with_live_dial(vm: &mut ScriptVm) -> ClassDiagramSurface {
+            use waml::model::{ElementType, UmlMetaclass};
+
             let mut surface = ClassDiagramSurface::script_new(vm);
-            surface.dial_pair = Some(DialPair {
-                subject_key: "old-subject".into(),
-                subject_title: "Old subject".into(),
-                reference_key: "old-reference".into(),
-                reference_title: "Old reference".into(),
-            });
+            let node = |key: &str, title: &str, x: f64| crate::scene::SceneNode {
+                key: key.into(),
+                title: title.into(),
+                element_type: ElementType::Uml(UmlMetaclass::Class),
+                stereotypes: Vec::new(),
+                attributes: Vec::new(),
+                operations: Vec::new(),
+                header: crate::scene::HeaderStyle::Plain,
+                ports: false,
+                rect: WorldRect {
+                    x,
+                    y: 0.0,
+                    w: 80.0,
+                    h: 60.0,
+                },
+                emphasized: false,
+                collapsed: false,
+                expanded: false,
+            };
+            surface.scene.nodes = vec![
+                node("old-subject", "Old subject", 0.0),
+                node("old-reference", "Old reference", 120.0),
+            ];
+            surface
+                .placement
+                .begin_drag("old-subject", dvec2(10.0, 10.0), (10.0, 10.0));
+            surface
+                .placement
+                .hover_target(Some("old-reference"), &surface.scene);
+            surface
+                .placement
+                .dwell_elapsed(&surface.scene, dvec2(100.0, 100.0));
             surface
         }
 
-        fn assert_scene_update_invalidates_old_dial_pair(update: SceneUpdate) {
+        fn assert_scene_update_invalidates_old_dial_identity(update: SceneUpdate) {
             let mut vm = crate::script_gate::boot_test_vm();
             let mut surface = surface_with_live_dial(&mut vm);
 
@@ -3567,12 +2720,12 @@ mod tests {
         }
 
         #[test]
-        fn every_scene_update_invalidates_the_old_dial_pair() {
-            assert_scene_update_invalidates_old_dial_pair(SceneUpdate::Replace);
-            assert_scene_update_invalidates_old_dial_pair(SceneUpdate::Focus {
+        fn every_scene_update_invalidates_the_old_dial_identity() {
+            assert_scene_update_invalidates_old_dial_identity(SceneUpdate::Replace);
+            assert_scene_update_invalidates_old_dial_identity(SceneUpdate::Focus {
                 key: "ignored-by-public-set-focus".into(),
             });
-            assert_scene_update_invalidates_old_dial_pair(SceneUpdate::PreserveViewport);
+            assert_scene_update_invalidates_old_dial_identity(SceneUpdate::PreserveViewport);
         }
     }
 }

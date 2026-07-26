@@ -134,6 +134,7 @@ pub(crate) struct ViewportController {
     view_rect: ViewRect,
     initial_fit: InitialFit,
     pan: Option<PanOrigin>,
+    release_down_abs: Option<DVec2>,
     pinch: Option<TouchPair>,
     tween: Option<CameraTween>,
     tween_last_time: f64,
@@ -146,6 +147,7 @@ impl Default for ViewportController {
             view_rect: ViewRect::default(),
             initial_fit: InitialFit::None,
             pan: None,
+            release_down_abs: None,
             pinch: None,
             tween: None,
             tween_last_time: 0.0,
@@ -223,6 +225,15 @@ impl ViewportController {
             pan_x: self.camera.pan_x,
             pan_y: self.camera.pan_y,
         });
+        self.release_down_abs = Some(abs);
+    }
+
+    pub(crate) fn pan_down_abs(&self) -> Option<DVec2> {
+        self.release_down_abs
+    }
+
+    pub(crate) fn suppress_release(&mut self) {
+        self.release_down_abs = None;
     }
 
     pub(crate) fn pan_to(&mut self, abs: DVec2) -> bool {
@@ -238,6 +249,7 @@ impl ViewportController {
 
     pub(crate) fn end_pan(&mut self) {
         self.pan = None;
+        self.release_down_abs = None;
     }
 
     pub(crate) fn apply_scroll_zoom(&mut self, abs: DVec2, factor: f64) -> ViewportEffects {
@@ -501,6 +513,16 @@ mod tests {
         viewport.pan_to(dvec2(360.0, 230.0));
         assert_eq!(viewport.camera().pan_x, -60.0);
         assert_eq!(viewport.camera().pan_y, -30.0);
+    }
+
+    #[test]
+    fn suppressing_release_keeps_the_existing_pan_origin() {
+        let mut viewport = ViewportController::default();
+        viewport.begin_pan(dvec2(100.0, 100.0));
+        viewport.suppress_release();
+        assert_eq!(viewport.pan_down_abs(), None);
+        assert!(viewport.pan_to(dvec2(120.0, 100.0)));
+        assert_eq!(viewport.camera().pan_x, -20.0);
     }
 
     #[test]
