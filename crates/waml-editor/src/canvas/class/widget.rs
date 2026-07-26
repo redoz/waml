@@ -1908,6 +1908,7 @@ fn reconciliation_policy(update: &SceneUpdate) -> ReconciliationPolicy {
 impl ClassDiagramSurface {
     fn reset_placement_for_scene_change(&mut self, cx: &mut Cx) {
         self.cancel_drag(cx);
+        self.dial_pair = None;
         self.zone_layouts.clear();
         self.conflict_zones.clear();
         cx.stop_timer(self.dwell_timer);
@@ -3500,6 +3501,38 @@ mod tests {
     mod reconciliation {
         use super::*;
 
+        fn surface_with_live_dial(vm: &mut ScriptVm) -> ClassDiagramSurface {
+            let mut surface = ClassDiagramSurface::script_new(vm);
+            surface.dial_pair = Some(DialPair {
+                subject_key: "old-subject".into(),
+                subject_title: "Old subject".into(),
+                reference_key: "old-reference".into(),
+                reference_title: "Old reference".into(),
+            });
+            surface
+        }
+
+        fn assert_scene_update_invalidates_old_dial_pair(update: SceneUpdate) {
+            let mut vm = crate::script_gate::boot_test_vm();
+            let mut surface = surface_with_live_dial(&mut vm);
+
+            let live = surface
+                .placement_for(Zone::Top)
+                .expect("an ordinary live dial must still resolve its placement");
+            assert_eq!(live.subject_key, "old-subject");
+            assert_eq!(live.reference_key, "old-reference");
+
+            match update {
+                SceneUpdate::Replace => surface.set_scene(vm.cx_mut(), Scene::default()),
+                SceneUpdate::Focus { .. } => surface.set_focus(vm.cx_mut(), Scene::default()),
+                SceneUpdate::PreserveViewport => {
+                    surface.update_scene(vm.cx_mut(), Scene::default())
+                }
+            }
+
+            assert!(surface.placement_for(Zone::Top).is_none());
+        }
+
         #[test]
         fn replace_clears_selection_and_refits() {
             assert_eq!(
@@ -3531,6 +3564,15 @@ mod tests {
                     camera: CameraPolicy::Retain,
                 },
             );
+        }
+
+        #[test]
+        fn every_scene_update_invalidates_the_old_dial_pair() {
+            assert_scene_update_invalidates_old_dial_pair(SceneUpdate::Replace);
+            assert_scene_update_invalidates_old_dial_pair(SceneUpdate::Focus {
+                key: "ignored-by-public-set-focus".into(),
+            });
+            assert_scene_update_invalidates_old_dial_pair(SceneUpdate::PreserveViewport);
         }
     }
 }
