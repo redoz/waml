@@ -9,6 +9,7 @@
 use crate::icons::IconSet;
 use crate::tree::TreeKind;
 use makepad_widgets::*;
+use std::ops::Range;
 
 script_mod! {
     use mod.prelude.widgets_internal.*
@@ -418,7 +419,31 @@ const EDGE_FADE_STEPS: usize = 4;
 /// card puts the tab's left flank on the canvas's -- no step in the chrome.
 /// `App::sync_tree_gap` picks between the two (see `lead_inset`).
 pub const TAB_LEFT_INSET: f64 = 10.0;
-const MAX_TITLE_CHARS: usize = 18;
+const WIDE_MAX_TITLE_CHARS: usize = 18;
+const NARROW_MAX_TITLE_CHARS: usize = 36;
+const NARROW_CHIP_MAX_W: f64 = 320.0;
+
+fn visible_tab_range(tabs: &[DocTab], active: LiveId, narrow: bool) -> Range<usize> {
+    if !narrow {
+        return 0..tabs.len();
+    }
+    tabs.iter()
+        .position(|tab| tab.id == active)
+        .map(|index| index..index + 1)
+        .unwrap_or(0..0)
+}
+
+fn tab_width(narrow: bool, natural: f64, available: f64) -> f64 {
+    if narrow {
+        available.clamp(0.0, NARROW_CHIP_MAX_W)
+    } else {
+        natural
+    }
+}
+
+fn rule_x_start(strip_left: f64, left_overshoot: f64) -> f64 {
+    (strip_left - left_overshoot).round()
+}
 
 /// One divider hairline: 1px wide, `frac` of `row`'s height, centred on its
 /// vertical midline and snapped to whole device pixels. A free fn taking the
@@ -437,16 +462,16 @@ fn draw_divider_line(draw: &mut DrawColor, cx: &mut Cx2d, x: f64, row: Rect, fra
     );
 }
 
-fn truncate_title(s: &str) -> String {
-    if s.chars().count() <= MAX_TITLE_CHARS {
+fn truncate_title(s: &str, max_chars: usize) -> String {
+    if s.chars().count() <= max_chars {
         return s.to_string();
     }
-    let mut out: String = s.chars().take(MAX_TITLE_CHARS.saturating_sub(1)).collect();
+    let mut out: String = s.chars().take(max_chars.saturating_sub(1)).collect();
     out.push('…');
     out
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub enum DocTabsAction {
     #[default]
     None,
@@ -456,6 +481,23 @@ pub enum DocTabsAction {
     /// the next classifier click (same "promote" the inline-edit commit does).
     Promote(LiveId),
     Close(LiveId),
+    OpenSwitcher {
+        anchor: DVec2,
+    },
+}
+
+fn release_action(narrow: bool, tab: &DocTab, tab_rect: Rect, close_hit: bool) -> DocTabsAction {
+    if close_hit {
+        DocTabsAction::Close(tab.id)
+    } else if narrow {
+        DocTabsAction::OpenSwitcher {
+            anchor: dvec2(tab_rect.pos.x, tab_rect.pos.y + tab_rect.size.y),
+        }
+    } else if tab.preview {
+        DocTabsAction::Promote(tab.id)
+    } else {
+        DocTabsAction::Activate(tab.id)
+    }
 }
 
 #[derive(Script, ScriptHook, Widget)]
@@ -527,6 +569,8 @@ pub struct DocTabs {
     tabs: Vec<DocTab>,
     #[rust]
     active: LiveId,
+    #[rust]
+    narrow: bool,
     #[rust]
     tab_rects: Vec<(LiveId, Rect)>,
     #[rust]
@@ -622,24 +666,20 @@ impl Widget for DocTabs {
             Hit::FingerUp(fe) if fe.is_primary_hit() => {
                 self.pressed = LiveId::default();
                 self.draw_bg.redraw(cx);
-                for (id, rect) in self.close_rects.iter().rev() {
-                    if rect.contains(fe.abs) {
-                        cx.widget_action(uid, DocTabsAction::Close(*id));
-                        return;
+                let close_id = self.close_at(fe.abs);
+                if close_id != LiveId::default() {
+                    if let Some(tab) = self.tabs.iter().find(|tab| tab.id == close_id) {
+                        cx.widget_action(
+                            uid,
+                            release_action(self.narrow, tab, self.tab_rect(close_id), true),
+                        );
                     }
+                    return;
                 }
-                for (id, rect) in self.tab_rects.iter().rev() {
-                    if rect.contains(fe.abs) {
-                        // Clicking a preview tab pins it (Zed-style); any other
-                        // tab just activates.
-                        let is_preview = self.tabs.iter().any(|t| t.id == *id && t.preview);
-                        if is_preview {
-                            cx.widget_action(uid, DocTabsAction::Promote(*id));
-                        } else {
-                            cx.widget_action(uid, DocTabsAction::Activate(*id));
-                        }
-                        return;
-                    }
+                let id = self.tab_at(fe.abs);
+                if let Some(tab) = self.tabs.iter().find(|tab| tab.id == id) {
+                    let rect = self.tab_rect(id);
+                    cx.widget_action(uid, release_action(self.narrow, tab, rect, false));
                 }
             }
             Hit::FingerHoverIn(fe) | Hit::FingerHoverOver(fe) => {
@@ -697,7 +737,7 @@ impl Widget for DocTabs {
         // `tab_row` set `clip_x: false` (see `app.rs`).
         let base = self.draw_edge.color;
         let y = rect.pos.y.round();
-        let x0 = (rect.pos.x - self.left_overshoot).round();
+        let x0 = rule_x_start(rect.pos.x, self.left_overshoot);
         let x_end = rule_x_end(rect.pos.x + rect.size.x, self.right_dock_btn);
         let solid_end = x_end - EDGE_FADE;
         self.draw_edge.color = base;
@@ -732,10 +772,18 @@ impl Widget for DocTabs {
         self.tab_rects.clear();
         self.close_rects.clear();
 
+        let visible = visible_tab_range(&self.tabs, self.active, self.narrow);
+        let visible_start = visible.start;
+        let visible_len = visible.len();
         let mut x = rect.pos.x + self.lead_inset;
-        for (i, tab) in self.tabs.iter().enumerate() {
+        for (i, tab) in self.tabs[visible].iter().enumerate() {
             // Every doc tab is closable now, including the Diagram base.
-            let title = truncate_title(&tab.title);
+            let max_chars = if self.narrow {
+                NARROW_MAX_TITLE_CHARS
+            } else {
+                WIDE_MAX_TITLE_CHARS
+            };
+            let title = truncate_title(&tab.title, max_chars);
             // Content-size each tab to its label so the close x sits snug to
             // the title instead of stranded at a fixed-width right edge.
             // Measured off the ACTIVE style for every tab, so a tab neither
@@ -750,7 +798,9 @@ impl Widget for DocTabs {
             // Every tab leads with a kind glyph, so its content width folds in
             // the icon box + gap ahead of the label.
             let lead = TEXT_PAD + ICON_SIZE + ICON_GAP;
-            let w = lead + text_w + CLOSE_GAP + CLOSE_W;
+            let natural_w = lead + text_w + CLOSE_GAP + CLOSE_W;
+            let available = rect.pos.x + rect.size.x - x;
+            let w = tab_width(self.narrow, natural_w, available);
             // The card fills the whole row now -- no top margin, no float. The
             // tabs' own edges are the strip's edges, which is what lets the
             // active fill run into the document body without a seam.
@@ -801,7 +851,7 @@ impl Widget for DocTabs {
                 // branch above emits no divider at all.
                 let next_active = self
                     .tabs
-                    .get(i + 1)
+                    .get(visible_start + i + 1)
                     .map(|t| t.id == self.active)
                     .unwrap_or(true);
                 if !next_active {
@@ -831,7 +881,7 @@ impl Widget for DocTabs {
                     EDGE_DIVIDER_FRAC,
                 );
             }
-            if i + 1 == self.tabs.len() {
+            if i + 1 == visible_len {
                 draw_divider_line(
                     &mut self.draw_divider,
                     cx,
@@ -928,6 +978,16 @@ impl DocTabs {
         LiveId::default()
     }
 
+    /// The rect captured for `id` during the most recent draw, or the default
+    /// rect when the tab is not currently visible.
+    fn tab_rect(&self, id: LiveId) -> Rect {
+        self.tab_rects
+            .iter()
+            .find(|(tab_id, _)| *tab_id == id)
+            .map(|(_, rect)| *rect)
+            .unwrap_or_default()
+    }
+
     /// The tab whose close hit-area contains `abs`, or `LiveId::default()`.
     fn close_at(&self, abs: DVec2) -> LiveId {
         for (id, rect) in self.close_rects.iter().rev() {
@@ -942,6 +1002,16 @@ impl DocTabs {
         self.tabs = open.tabs.clone();
         self.active = open.active;
         self.draw_bg.redraw(cx);
+    }
+
+    pub fn set_narrow(&mut self, cx: &mut Cx, narrow: bool) {
+        if self.narrow != narrow {
+            self.narrow = narrow;
+            self.hovered = LiveId::default();
+            self.close_hovered = LiveId::default();
+            self.pressed = LiveId::default();
+            cx.redraw_all();
+        }
     }
 
     /// Show/hide the strip. Mirrors `StartScreen::set_visible`: while hidden the
@@ -1007,6 +1077,59 @@ impl DocTabs {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn narrow_range_contains_only_the_active_tab_or_nothing() {
+        let mut open = OpenTabs::diagram_base("d", "Diagram");
+        let active = open.open_preview("customer", "Customer", TreeKind::Class);
+        let range = visible_tab_range(&open.tabs, active, true);
+        assert_eq!(&open.tabs[range], &open.tabs[1..2]);
+        assert_eq!(visible_tab_range(&open.tabs, live_id!(missing), true), 0..0);
+        assert_eq!(visible_tab_range(&open.tabs, active, false), 0..2);
+    }
+
+    #[test]
+    fn narrow_body_requests_switcher_but_close_stays_close() {
+        let tab = DocTab {
+            id: live_id!(customer),
+            key: "customer".into(),
+            title: "Customer".into(),
+            kind: TabKind::Classifier,
+            node_kind: TreeKind::Class,
+            preview: true,
+        };
+        let rect = Rect {
+            pos: dvec2(32.0, 34.0),
+            size: dvec2(250.0, 32.0),
+        };
+        assert_eq!(
+            release_action(true, &tab, rect, false),
+            DocTabsAction::OpenSwitcher {
+                anchor: dvec2(32.0, 66.0)
+            }
+        );
+        assert_eq!(
+            release_action(true, &tab, rect, true),
+            DocTabsAction::Close(tab.id)
+        );
+        assert_eq!(
+            release_action(false, &tab, rect, false),
+            DocTabsAction::Promote(tab.id)
+        );
+    }
+
+    #[test]
+    fn narrow_chip_fills_available_width_up_to_320() {
+        assert_eq!(tab_width(true, 140.0, 250.0), 250.0);
+        assert_eq!(tab_width(true, 140.0, 500.0), 320.0);
+        assert_eq!(tab_width(false, 140.0, 500.0), 140.0);
+    }
+
+    #[test]
+    fn top_rule_starts_at_zero_in_wide_and_narrow_geometry() {
+        assert_eq!(rule_x_start(280.0, 280.0), 0.0);
+        assert_eq!(rule_x_start(32.0, 32.0), 0.0);
+    }
 
     #[test]
     fn diagram_base_seeds_a_single_active_permanent_tab() {
