@@ -58,9 +58,7 @@ writeFileSync(
 //
 // The mark is the six-segment WAML logo, read from the same waml.svg the rest
 // of the project uses. Two stacked copies: a dim ghost, and a full-colour one
-// revealed left-to-right by a clip rect tracking download progress. The segment
-// colours are already ordered left-to-right, so the sweep reads as the logo
-// drawing itself in.
+// whose segments illuminate left-to-right as their portions download.
 // ---------------------------------------------------------------------------
 
 const logoSvg = readFileSync("waml.svg", "utf8");
@@ -71,22 +69,35 @@ if (!groupMatch) {
 }
 // Ids are duplicated across the two copies below, so strip them rather than
 // emit an invalid document.
-const segments = groupMatch[0].replace(/\s+id="[^"]*"/g, "");
+const polygons = [...groupMatch[0].matchAll(/<polygon\b[^>]*\/>/g)].map(
+  ([polygon]) => polygon.replace(/\s+id="[^"]*"/g, ""),
+);
+if (polygons.length !== 6) {
+  console.error(
+    `inject-runtime-shell: expected 6 logo segments, found ${polygons.length}`,
+  );
+  process.exit(1);
+}
 const VIEW_BOX = "-13.2521 -38.848 68.4573 40.848";
-const VIEW_X = -13.2521;
-const VIEW_W = 68.4573;
+const ghostSegments = polygons.join("");
+const progressSegments = polygons
+  .map((polygon, index) =>
+    polygon.replace(
+      "<polygon",
+      `<polygon class='waml_loader_segment' style='--segment-index: ${index}'`,
+    ),
+  )
+  .join("");
 
 const LOADER_BODY = `
-        <div class='canvas_loader'>
-            <svg class='waml_loader_mark' viewBox='${VIEW_BOX}' aria-label='Loading WAML'>
-                <defs>
-                    <clipPath id='waml_loader_clip'>
-                        <rect id='waml_loader_reveal' x='${VIEW_X}' y='-38.848' width='0' height='40.848'/>
-                    </clipPath>
-                </defs>
-                <g opacity='0.16'>${segments}</g>
-                <g clip-path='url(#waml_loader_clip)'>${segments}</g>
-            </svg>
+        <div class='canvas_loader' data-phase='loading'>
+            <div class='waml_loader_content'>
+                <svg class='waml_loader_mark' viewBox='${VIEW_BOX}' aria-label='Loading WAML'>
+                    <g opacity='0.16'>${ghostSegments}</g>
+                    <g>${progressSegments}</g>
+                </svg>
+                <div class='waml_loader_status' role='status' aria-live='polite'>Loading…</div>
+            </div>
         </div>`;
 
 // Anchor on cargo-makepad's loader markup. Matched loosely on the class so a
@@ -117,8 +128,21 @@ const LOADER_CSS = `
                 padding: 0;
                 overflow: visible;
             }
-            #waml_loader_reveal {
-                transition: width 180ms linear;
+            .canvas_loader .waml_loader_content {
+                display: flex;
+                flex-direction: column;
+                align-items: center;
+                gap: 18px;
+            }
+            .canvas_loader .waml_loader_segment {
+                opacity: 0;
+                transition: opacity 140ms linear;
+            }
+            .canvas_loader .waml_loader_status {
+                color: #8f96a3;
+                font-family: system-ui, sans-serif;
+                font-size: 13px;
+                letter-spacing: 0.02em;
             }
             .waml_update_toast {
                 position: fixed;
@@ -172,9 +196,14 @@ const RUNTIME_JS = `
             // compileStreaming rejects anything that is not application/wasm.
             var progress = 0;
             var applyProgress = function () {
-                var rect = document.getElementById('waml_loader_reveal');
-                if (rect) {
-                    rect.setAttribute('width', (${VIEW_W} * progress).toFixed(3));
+                var segments = document.querySelectorAll('.waml_loader_segment');
+                for (var index = 0; index < segments.length; index += 1) {
+                    var segment = segments[index];
+                    var level = Math.max(
+                        0,
+                        Math.min(1, progress * segments.length - index)
+                    );
+                    segment.style.opacity = level.toFixed(3);
                 }
             };
             var setProgress = function (p) {
