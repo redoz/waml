@@ -153,12 +153,13 @@ pub fn parse_attribute_line(line: &str) -> Result<Attribute, LineError> {
         .and_then(|m| Visibility::from_marker(m.as_str().chars().next()?));
     let name = caps[2].to_string();
     let mut rest = caps[3].trim().to_string();
-    let mut multiplicity = Multiplicity::default();
+    let mut multiplicity = None;
     if let Some(mm) = MULT_TAIL_RE.captures(&rest) {
         // A trailing `{…}` token must hold a valid multiplicity; anything else
         // (malformed braces) makes the whole line not an attribute.
-        multiplicity =
-            Multiplicity::parse(&mm[2]).ok_or_else(|| err("malformed attribute line"))?;
+        multiplicity = Some(
+            Multiplicity::parse(&mm[2]).ok_or_else(|| err("malformed attribute line"))?,
+        );
         rest = mm[1].trim().to_string();
     }
     let ty = if let Some(link) = LINK_RE.captures(&rest) {
@@ -573,11 +574,11 @@ pub fn render_attribute_line(a: &Attribute) -> String {
         Some(slug) => format!("[{}]({})", a.ty.name, emit_href(slug)),
         None => a.ty.name.clone(),
     };
-    let mult = if a.multiplicity.as_str() == "1" {
-        String::new()
-    } else {
-        format!(" {{{}}}", a.multiplicity.as_str())
-    };
+    let mult = a
+        .multiplicity
+        .as_ref()
+        .map(|m| format!(" {{{}}}", m.as_str()))
+        .unwrap_or_default();
     format!("- {vis}{}: {ty}{mult}", a.name)
 }
 
@@ -1263,8 +1264,37 @@ mod tests {
                 ref_: Some("order-status".to_string())
             }
         );
-        assert_eq!(a.multiplicity.as_str(), "0..1");
+        assert_eq!(a.multiplicity.as_ref().map(Multiplicity::as_str), Some("0..1"));
         assert_eq!(a.visibility, None);
+    }
+
+    #[test]
+    fn omitted_attribute_multiplicity_stays_absent() {
+        let a = parse_attribute_line("- id: OrderId").unwrap();
+        assert_eq!(a.multiplicity, None);
+        assert_eq!(render_attribute_line(&a), "- id: OrderId");
+    }
+
+    #[test]
+    fn explicit_default_attribute_multiplicity_round_trips() {
+        let line = "- id: OrderId {1}";
+        let a = parse_attribute_line(line).unwrap();
+        assert_eq!(
+            a.multiplicity.as_ref().map(Multiplicity::as_str),
+            Some("1")
+        );
+        assert_eq!(render_attribute_line(&a), line);
+    }
+
+    #[test]
+    fn malformed_attribute_multiplicity_remains_a_raw_error_line() {
+        let (doc, diags) = crate::parse::parse("# X\n\n## Attributes\n- id: OrderId {bananas}\n");
+        let crate::syntax::Section::Attributes(lines) = &doc.sections[0] else {
+            panic!("attributes")
+        };
+        assert!(matches!(&lines[0], Line::Error(e) if e.raw == "- id: OrderId {bananas}"));
+        assert!(!diags.is_empty());
+        assert!(crate::serialize::serialize_document(&doc).contains("- id: OrderId {bananas}"));
     }
 
     #[test]
@@ -1322,7 +1352,7 @@ mod tests {
                 ref_: None
             }
         );
-        assert_eq!(a.multiplicity.as_str(), "1");
+        assert_eq!(a.multiplicity, None);
     }
 
     #[test]
@@ -1392,7 +1422,7 @@ mod tests {
                 name: "OrderId".to_string(),
                 ref_: None,
             },
-            multiplicity: Multiplicity::default(),
+            multiplicity: None,
             visibility: None,
             description: None,
         };

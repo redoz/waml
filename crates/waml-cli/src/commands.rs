@@ -296,7 +296,7 @@ mod tests {
 
     #[test]
     fn formats_a_clean_file_and_detects_change() {
-        // A default `{1}` is dropped by canonical form, so the file changes.
+        // An authored default `{1}` is preserved by canonical form.
         let files = vec![(
             "x/a.md".to_string(),
             "---\ntype: uml.Class\ntitle: A\n---\n# A\n\n## Attributes\n- id: AId {1}\n"
@@ -306,8 +306,7 @@ mod tests {
         assert_eq!(plan.len(), 1);
         assert!(!plan[0].skipped);
         assert!(plan[0].changed);
-        assert!(plan[0].formatted.contains("- id: AId\n"));
-        assert!(!plan[0].formatted.contains("{1}"));
+        assert!(plan[0].formatted.contains("- id: AId {1}\n"));
     }
 
     #[test]

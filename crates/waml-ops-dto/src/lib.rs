@@ -278,12 +278,6 @@ fn check_v(v: u32, op: &str) -> Result<(), String> {
     }
     Ok(())
 }
-fn mult_req(s: &Option<String>) -> Result<Multiplicity, String> {
-    match s {
-        None => Ok(Multiplicity::default()),
-        Some(m) => Multiplicity::parse(m).ok_or_else(|| format!("bad multiplicity '{m}'")),
-    }
-}
 fn mult_opt(s: &Option<String>) -> Result<Option<Multiplicity>, String> {
     s.as_ref()
         .map(|m| Multiplicity::parse(m).ok_or_else(|| format!("bad multiplicity '{m}'")))
@@ -404,7 +398,7 @@ impl OpDto {
                     node: node.clone(),
                     name: name.clone(),
                     ty_token: ty.clone(),
-                    multiplicity: mult_req(mult)?,
+                    multiplicity: mult_opt(mult)?,
                     visibility: vis_opt(vis)?,
                 })
             }
@@ -631,7 +625,7 @@ impl OpDto {
                 node: node.clone(),
                 name: name.clone(),
                 ty: ty_token.clone(),
-                mult: Some(multiplicity.as_str().to_string()),
+                mult: multiplicity.as_ref().map(|m| m.as_str().to_string()),
                 vis: visibility.map(|x| x.marker().to_string()),
             },
             Op::AttrSet {
@@ -824,7 +818,7 @@ mod tests {
                     (node.as_str(), name.as_str(), ty_token.as_str()),
                     ("order", "total", "Money")
                 );
-                assert_eq!(multiplicity.as_str(), "0..1");
+                assert_eq!(multiplicity.as_ref().map(Multiplicity::as_str), Some("0..1"));
             }
             _ => panic!("wrong op"),
         }
@@ -855,7 +849,7 @@ mod tests {
             node: "order".into(),
             name: "total".into(),
             ty_token: "Money".into(),
-            multiplicity: waml::multiplicity::Multiplicity::parse("0..1").unwrap(),
+            multiplicity: Some(waml::multiplicity::Multiplicity::parse("0..1").unwrap()),
             visibility: None,
         };
         let line = serde_json::to_string(&OpDto::from_op(&op)).unwrap();
@@ -903,7 +897,7 @@ mod tests {
                 node: "order".into(),
                 name: "total".into(),
                 ty_token: "Money".into(),
-                multiplicity: Multiplicity::parse("0..1").unwrap(),
+                multiplicity: Some(Multiplicity::parse("0..1").unwrap()),
                 visibility: Some(waml::model::Visibility::Private),
             },
             Op::AttrSet {

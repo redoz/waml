@@ -162,7 +162,7 @@ mod tests {
     }
 
     #[test]
-    fn serialize_omits_default_multiplicity() {
+    fn serialize_preserves_implicit_attribute_multiplicity() {
         let out = serialize_document(&parse_document(ORDER));
         assert!(out.contains("- id: OrderId\n"));
         assert!(out.contains("- status: [OrderStatus](./order-status.md) {0..1}"));

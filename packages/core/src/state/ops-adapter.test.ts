@@ -110,7 +110,7 @@ describe("attribute array diff", () => {
   it("addition → attr.add, round-trips", () => {
     const next: Attribute[] = [...attrs(), { name: "placedAt", type: { name: "Timestamp" }, multiplicity: "1" }];
     const ops = attrDiffOps("order", attrs(), next);
-    expect(ops).toEqual([{ op: "attr.add", node: "order", name: "placedAt", ty: "Timestamp" }]);
+    expect(ops).toEqual([{ op: "attr.add", node: "order", name: "placedAt", ty: "Timestamp", mult: "1" }]);
     const n = apply(BASE, ops).nodes.find((x) => x.key === "m/order")!;
     expect(n.attributes.some((a) => a.name === "placedAt")).toBe(true);
   });
@@ -126,7 +126,7 @@ describe("attribute array diff", () => {
   it("changed field on a kept attribute → attr.set with only that field, round-trips", () => {
     const next = attrs().map((a) => (a.name === "total" ? { ...a, type: { name: "Cash" } } : a));
     const ops = attrDiffOps("order", attrs(), next);
-    expect(ops).toEqual([{ op: "attr.set", node: "order", name: "total", ty: "Cash" }]);
+    expect(ops).toEqual([{ op: "attr.set", node: "order", name: "total", ty: "Cash", mult: "0..1" }]);
     const n = apply(BASE, ops).nodes.find((x) => x.key === "m/order")!;
     expect(n.attributes.find((a) => a.name === "total")!.type.name).toBe("Cash");
   });
@@ -135,7 +135,7 @@ describe("attribute array diff", () => {
     const next = attrs().map((a) => (a.name === "id" ? { ...a, name: "orderId" } : a));
     const ops = attrDiffOps("order", attrs(), next);
     expect(ops).toEqual([
-      { op: "attr.set", node: "order", name: "id", rename: "orderId", ty: "OrderId", mult: "1" },
+      { op: "attr.set", node: "order", name: "id", rename: "orderId", ty: "OrderId" },
     ]);
     const n = apply(BASE, ops).nodes.find((x) => x.key === "m/order")!;
     expect(n.attributes.some((a) => a.name === "orderId")).toBe(true);
@@ -215,7 +215,7 @@ describe("updateNodeOps composite", () => {
     const ops = updateNodeOps(orderNode(), { concept: { ...orderNode().concept, title: "PO" }, attributes: next });
     expect(ops).toEqual([
       { op: "node.set", slug: "m/order", title: "PO" },
-      { op: "attr.add", node: "m/order", name: "note", ty: "String" },
+      { op: "attr.add", node: "m/order", name: "note", ty: "String", mult: "1" },
     ]);
   });
 });

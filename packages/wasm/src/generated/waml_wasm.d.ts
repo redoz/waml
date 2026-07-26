@@ -345,7 +345,7 @@ export type MessageVerb = "calls" | "sends" | "replies" | "creates" | "destroys"
 export interface Attribute {
     name: string;
     type: TypeRef;
-    multiplicity: string;
+    multiplicity?: string;
     visibility?: "+" | "-" | "#" | "~";
     description?: string;
 }
@@ -472,6 +472,12 @@ export interface RelEnd {
     navigable?: boolean;
 }
 
+export interface Route {
+    points: [number, number][];
+    source: string;
+    target: string;
+}
+
 export interface Size {
     w: number;
     h: number;
@@ -486,6 +492,7 @@ export interface Solved {
     nodes: Record<string, Rect>;
     groups: SolvedGroup[];
     flags: Record<string, FlagSet>;
+    routes?: Route[];
 }
 
 export interface SolvedGroup {

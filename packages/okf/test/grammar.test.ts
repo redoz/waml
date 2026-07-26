@@ -13,9 +13,9 @@ describe("isValidMultiplicity", () => {
 
 describe("parseAttributeLine", () => {
   const resolve = (slug: string) => (slug === "money" ? "money" : undefined);
-  it("bare token with default multiplicity", () => {
+  it("bare token leaves multiplicity implicit", () => {
     expect(parseAttributeLine("- placedAt: Timestamp", resolve))
-      .toEqual({ name: "placedAt", type: { name: "Timestamp" }, multiplicity: "1" });
+      .toEqual({ name: "placedAt", type: { name: "Timestamp" } });
   });
   it("linked type with multiplicity", () => {
     expect(parseAttributeLine("- total: [Money](./money.md) {1}", resolve))
@@ -30,7 +30,7 @@ describe("parseAttributeLine", () => {
       .toEqual({ name: "id", type: { name: "OrderId" }, multiplicity: "1", visibility: "+" });
   });
   it("tolerates CRLF", () => {
-    expect(parseAttributeLine("- a: B\r", resolve)).toEqual({ name: "a", type: { name: "B" }, multiplicity: "1" });
+    expect(parseAttributeLine("- a: B\r", resolve)).toEqual({ name: "a", type: { name: "B" } });
   });
   it("rejects non-attribute lines", () => {
     expect(parseAttributeLine("- just prose", resolve)).toBeNull();
@@ -59,12 +59,12 @@ describe("attribute multiplicity delimiter is {…} (not [ … ])", () => {
     expect(parseAttributeLine("- x: Foo{", resolve)).toBeNull();
     expect(parseAttributeLine("- x: Foo}", resolve)).toBeNull();
   });
-  it("renders multiplicity with braces; omits the default 1", () => {
+  it("renders every authored multiplicity with braces", () => {
     const slugFor = (key: string) => (key === "money" ? "money" : undefined);
     expect(renderAttributeLine({ name: "tags", type: { name: "String" }, multiplicity: "0..*" }, slugFor))
       .toBe("- tags: String {0..*}");
     expect(renderAttributeLine({ name: "total", type: { name: "Money", ref: "money" }, multiplicity: "1" }, slugFor))
-      .toBe("- total: [Money](./money.md)");
+      .toBe("- total: [Money](./money.md) {1}");
   });
 });
 
@@ -130,7 +130,7 @@ describe("render round-trip", () => {
   it("attribute line", () => {
     const slugFor = (key: string) => (key === "money" ? "money" : undefined);
     expect(renderAttributeLine({ name: "total", type: { name: "Money", ref: "money" }, multiplicity: "1" }, slugFor))
-      .toBe("- total: [Money](./money.md)");
+      .toBe("- total: [Money](./money.md) {1}");
     expect(renderAttributeLine({ name: "addr", type: { name: "Address" }, multiplicity: "0..1", visibility: "-" }, slugFor))
       .toBe("- - addr: Address {0..1}");
   });

@@ -1,6 +1,7 @@
 use std::path::PathBuf;
 
 use clap::{Args, Parser, Subcommand, ValueEnum};
+use waml::multiplicity::Multiplicity;
 
 use crate::ops_dto::OpDto;
 
@@ -674,7 +675,10 @@ fn run_show(slug: &str, q: &QueryArgs) -> i32 {
                     "  - {}: {} {{{}}}",
                     a.name,
                     a.ty.name,
-                    a.multiplicity.as_str()
+                    a.multiplicity
+                        .as_ref()
+                        .map(Multiplicity::as_str)
+                        .unwrap_or("1")
                 );
             }
             for v in &node.values {
@@ -694,7 +698,7 @@ fn run_show(slug: &str, q: &QueryArgs) -> i32 {
             let dto = serde_json::json!({
                 "slug": slug, "title": node.concept.title.as_deref().unwrap_or("Untitled"), "type": node.ty.as_str(),
                 "attributes": node.attributes.iter().map(|a| serde_json::json!({
-                    "name": a.name, "type": a.ty.name, "ref": a.ty.ref_, "multiplicity": a.multiplicity.as_str()
+                    "name": a.name, "type": a.ty.name, "ref": a.ty.ref_, "multiplicity": a.multiplicity.as_ref().map(Multiplicity::as_str)
                 })).collect::<Vec<_>>(),
                 "values": node.values,
                 "referrers": refs,

@@ -67,7 +67,7 @@ pub enum Op {
         node: String,
         name: String,
         ty_token: String,
-        multiplicity: Multiplicity,
+        multiplicity: Option<Multiplicity>,
         visibility: Option<Visibility>,
     },
     AttrSet {
@@ -597,7 +597,7 @@ fn op_attr_add(
     node: &str,
     name: &str,
     ty_token: &str,
-    multiplicity: &Multiplicity,
+    multiplicity: &Option<Multiplicity>,
     visibility: Option<Visibility>,
 ) -> Result<(), OpError> {
     let ty = resolve_type(work, ty_token);
@@ -658,9 +658,7 @@ fn op_attr_set(
         if let Some(t) = ty {
             a.ty = t;
         }
-        if let Some(m) = multiplicity {
-            a.multiplicity = m.clone();
-        }
+        a.multiplicity = multiplicity.clone();
         if let Some(v) = visibility {
             a.visibility = Some(v);
         }
@@ -1132,7 +1130,7 @@ mod tests {
             node: node.into(),
             name: name.into(),
             ty_token: ty.into(),
-            multiplicity: Multiplicity::default(),
+            multiplicity: None,
             visibility: None,
         }
     }
@@ -1242,6 +1240,29 @@ mod tests {
             .find(|a| a.name == "id")
             .expect("id attribute present");
         assert_eq!(id.visibility, Some(crate::model::Visibility::Private));
+    }
+
+    #[test]
+    fn attr_set_without_multiplicity_clears_an_authored_default() {
+        let b = vec![(
+            "a/order.md".to_string(),
+            "---\ntype: uml.Class\ntitle: Order\n---\n# Order\n\n## Attributes\n- id: OrderId {1}\n"
+                .to_string(),
+        )];
+        let out = apply(
+            &b,
+            &[Op::AttrSet {
+                node: "order".into(),
+                name: "id".into(),
+                ty_token: Some("String".into()),
+                multiplicity: None,
+                visibility: None,
+                rename: None,
+            }],
+        )
+        .unwrap();
+        assert!(out[0].1.contains("- id: String\n"));
+        assert!(!out[0].1.contains("{1}"));
     }
 
     #[test]

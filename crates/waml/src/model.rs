@@ -76,8 +76,12 @@ pub struct Attribute {
     pub name: String,
     #[cfg_attr(feature = "serde", serde(rename = "type"))]
     pub ty: TypeRef,
+    #[cfg_attr(
+        feature = "serde",
+        serde(default, skip_serializing_if = "Option::is_none")
+    )]
     #[cfg_attr(feature = "wasm", tsify(type = "string"))]
-    pub multiplicity: Multiplicity,
+    pub multiplicity: Option<Multiplicity>,
     #[cfg_attr(
         feature = "serde",
         serde(default, skip_serializing_if = "Option::is_none")
@@ -89,6 +93,12 @@ pub struct Attribute {
         serde(default, skip_serializing_if = "Option::is_none")
     )]
     pub description: Option<String>,
+}
+
+impl Attribute {
+    pub fn effective_multiplicity(&self) -> Multiplicity {
+        self.multiplicity.clone().unwrap_or_default()
+    }
 }
 
 /// A slot value on an `InstanceSpecification` (design spec §3.2): a named value
@@ -1263,17 +1273,17 @@ mod tests {
     }
 
     #[test]
-    fn attribute_defaults_multiplicity_to_one() {
+    fn attribute_without_authored_multiplicity_is_effectively_one() {
         let a = Attribute {
             name: "id".to_string(),
             ty: TypeRef {
                 name: "OrderId".to_string(),
                 ref_: None,
             },
-            multiplicity: Multiplicity::default(),
+            multiplicity: None,
             visibility: None,
             description: None,
         };
-        assert_eq!(a.multiplicity.as_str(), "1");
+        assert_eq!(a.effective_multiplicity().as_str(), "1");
     }
 }

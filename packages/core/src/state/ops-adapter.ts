@@ -157,7 +157,7 @@ function attrAddOp(node: string, a: Attribute): Extract<OpDto, { op: "attr.add" 
     node,
     name: a.name,
     ty: a.type.name,
-    ...(a.multiplicity && a.multiplicity !== "1" ? { mult: a.multiplicity } : {}),
+    ...(a.multiplicity !== undefined ? { mult: a.multiplicity } : {}),
     ...(visMarker(a.visibility) ? { vis: visMarker(a.visibility) } : {}),
   };
 }
@@ -166,8 +166,10 @@ function attrAddOp(node: string, a: Attribute): Extract<OpDto, { op: "attr.add" 
 function attrFieldChanges(prev: Attribute, next: Attribute): { ty?: string; mult?: string; vis?: string } {
   const out: { ty?: string; mult?: string; vis?: string } = {};
   if (next.type.name !== prev.type.name) out.ty = next.type.name;
-  if ((next.multiplicity ?? "1") !== (prev.multiplicity ?? "1")) out.mult = next.multiplicity ?? "1";
   if (visMarker(next.visibility) !== visMarker(prev.visibility)) out.vis = visMarker(next.visibility);
+  // attr.set is a complete authored-multiplicity update: undefined clears an
+  // authored value, while every defined value (including "1") remains explicit.
+  if (next.multiplicity !== prev.multiplicity || Object.keys(out).length) out.mult = next.multiplicity;
   return out;
 }
 
@@ -197,7 +199,7 @@ export function attrDiffOps(node: string, prev: Attribute[], next: Attribute[]):
       name: r.name,
       rename: a.name,
       ty: a.type.name,
-      mult: a.multiplicity ?? "1",
+      ...(a.multiplicity !== undefined ? { mult: a.multiplicity } : {}),
       ...(visMarker(a.visibility) ? { vis: visMarker(a.visibility) } : {}),
     });
   }

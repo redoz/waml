@@ -27,7 +27,7 @@ export function parseAttributeLine(line: string, resolveSlug: (slug: string) => 
   const m = ATTR_RE.exec(stripCr(line).trim());
   if (!m) return null;
   let rest = m[3].trim();
-  let multiplicity = "1";
+  let multiplicity: string | undefined;
   // Multiplicity is a trailing `{…}` token whose contents are a valid multiplicity.
   // A `{…}` with any other contents is malformed — not silently accepted.
   const mm = /^(.*?)\s+\{([^{}]*)\}$/.exec(rest);
@@ -45,7 +45,7 @@ export function parseAttributeLine(line: string, resolveSlug: (slug: string) => 
     if (!rest || /[[\](){}]/.test(rest)) return null; // stray link/bracket/brace punctuation → not an attribute
     type = { name: rest };
   }
-  const attr: Attribute = { name: m[2], type, multiplicity };
+  const attr: Attribute = { name: m[2], type, ...(multiplicity !== undefined ? { multiplicity } : {}) };
   if (m[1]) attr.visibility = m[1] as Visibility;
   return attr;
 }
@@ -106,7 +106,7 @@ export function renderAttributeLine(a: Attribute, slugForRef: (key: string) => s
   const slug = a.type.ref ? slugForRef(a.type.ref) : undefined;
   const type = slug ? `[${a.type.name}](./${slug}.md)` : a.type.name;
   const vis = a.visibility ? `${a.visibility} ` : "";
-  const mult = a.multiplicity && a.multiplicity !== "1" ? ` {${a.multiplicity}}` : "";
+  const mult = a.multiplicity !== undefined ? ` {${a.multiplicity}}` : "";
   return `- ${vis}${a.name}: ${type}${mult}`;
 }
 

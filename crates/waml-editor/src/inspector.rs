@@ -4,6 +4,7 @@
 //! split.
 
 use waml::model::{DiagramGroup, ElementType, Model, RelationshipKind};
+use waml::multiplicity::Multiplicity;
 
 /// What the inspector is currently pointed at. `None` renders the empty state.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -314,7 +315,12 @@ fn build_classifier_view(model: &Model, key: &str) -> Option<InspectorView> {
         .map(|a| AttrRow {
             name: a.name.clone(),
             ty: a.ty.name.clone(),
-            multiplicity: a.multiplicity.as_str().to_string(),
+            multiplicity: a
+                .multiplicity
+                .as_ref()
+                .map(Multiplicity::as_str)
+                .unwrap_or("")
+                .to_string(),
             visibility: a
                 .visibility
                 .map(|v| v.marker().to_string())
