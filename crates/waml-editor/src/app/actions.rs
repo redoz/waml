@@ -1,9 +1,5 @@
-#![cfg_attr(not(test), allow(dead_code, unused_imports))]
-
-use super::App;
-use crate::document_host::DocumentCommand;
-use crate::popup::root::{MenuOpen, PopupRoot, PopupSpec, RadialOpen};
-use makepad_widgets::*;
+use super::*;
+use crate::popup::root::RadialOpen;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum ActionFlow {
@@ -75,6 +71,761 @@ const EXCLUSIVE_ORDER: [ExclusiveHandler; 15] = [
 ];
 
 impl App {
+    pub(super) fn handle_action_batch(&mut self, cx: &mut Cx, actions: &Actions) {
+        for observer in OBSERVER_ORDER {
+            match observer {
+                ObserverHandler::CaptionAndDocks => self.observe_caption_and_docks(cx, actions),
+                ObserverHandler::PopupResults => self.observe_popup_results(cx, actions),
+                ObserverHandler::ConflictList => self.observe_conflict_list(cx, actions),
+            }
+        }
+
+        for handler in EXCLUSIVE_ORDER {
+            let flow = match handler {
+                ExclusiveHandler::NavigationScope => self.handle_navigation_scope(cx, actions),
+                ExclusiveHandler::NavigationQuery => self.handle_navigation_query(cx, actions),
+                ExclusiveHandler::NavigationFilter => self.handle_navigation_filter(cx, actions),
+                ExclusiveHandler::TreeContextMenu => self.handle_tree_context_menu(cx, actions),
+                ExclusiveHandler::TreeDocumentOpen => self.handle_tree_document_open(cx, actions),
+                ExclusiveHandler::DiagramSwitcher => self.handle_diagram_switcher(cx, actions),
+                ExclusiveHandler::ConflictBadge => self.handle_conflict_badge(cx, actions),
+                ExclusiveHandler::ActiveDocumentView => {
+                    self.handle_active_document_view(cx, actions)
+                }
+                ExclusiveHandler::LogoMenu => self.handle_logo_menu(cx, actions),
+                ExclusiveHandler::StartScreen => self.handle_start_screen_action(cx, actions),
+                ExclusiveHandler::ShortcutsOverlay => self.handle_shortcuts_overlay(cx, actions),
+                ExclusiveHandler::FontsOverlay => self.handle_fonts_overlay(cx, actions),
+                ExclusiveHandler::IconsOverlay => self.handle_icons_overlay(cx, actions),
+                ExclusiveHandler::ColorsOverlay => self.handle_colors_overlay(cx, actions),
+                ExclusiveHandler::DocumentTabs => self.handle_document_tabs(cx, actions),
+            };
+            if flow == ActionFlow::Consumed {
+                return;
+            }
+        }
+    }
+
+    fn observe_caption_and_docks(&mut self, cx: &mut Cx, actions: &Actions) {
+        if let Some(press) = self
+            .ui
+            .widget(cx, ids!(menu_btn))
+            .as_icon_button()
+            .pressed(actions)
+        {
+            let button = self.ui.widget(cx, ids!(menu_btn)).as_icon_button().rect(cx);
+            let anchor = dvec2(
+                button.pos.x + crate::popup::menu::MENU_INDENT_X,
+                button.pos.y + button.size.y + crate::popup::menu::MENU_GAP,
+            );
+            let bounds = self.window_bounds(cx);
+            if let Some(mut popup) = self
+                .ui
+                .widget(cx, ids!(popup_root))
+                .borrow_mut::<PopupRoot>()
+            {
+                popup.show_at(
+                    cx,
+                    PopupSpec::Menu {
+                        tag: live_id!(burger),
+                        anchor,
+                        bounds,
+                        items: burger_menu_items(),
+                        open: MenuOpen::Press(press),
+                    },
+                );
+            }
+            self.ui
+                .widget(cx, ids!(menu_btn))
+                .as_icon_button()
+                .set_active(cx, true);
+        }
+
+        if self
+            .ui
+            .widget(cx, ids!(tree_btn))
+            .as_icon_button()
+            .clicked(actions)
+        {
+            if self.narrow {
+                let (tree, inspector) = self.dock_states(cx);
+                let (tree, inspector) =
+                    crate::dock::narrow_toggle_states(tree, inspector, crate::dock::DockEdge::Left);
+                self.apply_dock_states(cx, tree, inspector);
+            } else if let Some(mut panel) = self
+                .ui
+                .widget(cx, ids!(project_tree))
+                .borrow_mut::<crate::tree_panel::ProjectTree>()
+            {
+                panel.toggle_dock(cx);
+            }
+        }
+
+        if self
+            .ui
+            .widget(cx, ids!(inspector_btn))
+            .as_icon_button()
+            .clicked(actions)
+        {
+            if self.narrow {
+                let (tree, inspector) = self.dock_states(cx);
+                let (tree, inspector) = crate::dock::narrow_toggle_states(
+                    tree,
+                    inspector,
+                    crate::dock::DockEdge::Right,
+                );
+                self.apply_dock_states(cx, tree, inspector);
+            } else if let Some(mut panel) = self
+                .ui
+                .widget(cx, ids!(inspector))
+                .borrow_mut::<crate::inspector_panel::Inspector>()
+            {
+                panel.toggle_dock(cx);
+            }
+        }
+    }
+
+    fn observe_popup_results(&mut self, cx: &mut Cx, actions: &Actions) {
+        let popup_root = self.ui.widget(cx, ids!(popup_root));
+        let Some(popup) = popup_root.borrow::<PopupRoot>() else {
+            return;
+        };
+        let logo_closed = popup.closed(actions, live_id!(logo));
+        let burger_closed = popup.closed(actions, live_id!(burger));
+        let doc_switcher_closed = popup.closed(actions, live_id!(doc_switcher));
+        let node_closed = popup.closed(actions, live_id!(node_menu));
+        let mut picker_closed = popup.closed(actions, live_id!(element_picker));
+        let nav_scope_closed = popup.closed(actions, live_id!(nav_scope));
+        let nav_filter_closed = popup.closed(actions, live_id!(nav_filter));
+        let mut dial_closed = popup.closed(actions, live_id!(place_dial));
+        let mut dial_armed = popup.armed(actions, live_id!(place_dial));
+        drop(popup);
+
+        if burger_closed.is_some() {
+            self.ui
+                .widget(cx, ids!(menu_btn))
+                .as_icon_button()
+                .set_active(cx, false);
+        }
+        if let Some(PopupResult::Invoked(id)) = doc_switcher_closed {
+            self.documents
+                .transition(cx, &self.ui, &self.session, DocumentCommand::Activate(id));
+            self.sync_document_shell(cx);
+        }
+        if let Some(PopupResult::Invoked(id)) = burger_closed {
+            if id == live_id!(new_model) {
+                log!("New model: not yet implemented (template picker is a later slice)");
+            } else if id == live_id!(open_model) {
+                self.open_model_via_picker(cx);
+            } else if id == live_id!(close_model) {
+                self.show_start_screen(cx);
+            }
+        }
+        if let Some(PopupResult::Invoked(id)) = logo_closed {
+            if let Some(command) = logo_command_for(id) {
+                match command {
+                    LogoCommand::Properties => log!("logo command: Properties (stub)"),
+                    LogoCommand::About => {
+                        cx.open_url("https://github.com/redoz/waml", OpenUrlInPlace::No)
+                    }
+                    LogoCommand::Fonts => self.open_page_overlay(cx, LogoCommand::Fonts),
+                    LogoCommand::Icons => self.open_page_overlay(cx, LogoCommand::Icons),
+                    LogoCommand::Colors => self.open_page_overlay(cx, LogoCommand::Colors),
+                    LogoCommand::Exit => cx.quit(),
+                }
+            }
+        }
+        if let Some(PopupResult::Invoked(id)) = node_closed {
+            if let Some(command) = crate::popup::node_menu::command_for(id) {
+                let key = self.node_menu_key.clone().unwrap_or_default();
+                match command {
+                    crate::popup::node_menu::NodeMenuCommand::ViewSource => {
+                        if let Some(node) = self
+                            .session
+                            .model()
+                            .nodes
+                            .iter()
+                            .find(|node| node.key == key)
+                        {
+                            let title = node
+                                .concept
+                                .title
+                                .clone()
+                                .unwrap_or_else(|| node.key.clone());
+                            self.documents.transition(
+                                cx,
+                                &self.ui,
+                                &self.session,
+                                DocumentCommand::OpenSource {
+                                    key: key.clone(),
+                                    title,
+                                },
+                            );
+                            self.sync_document_shell(cx);
+                        }
+                    }
+                    crate::popup::node_menu::NodeMenuCommand::FindInDiagrams => {
+                        log!("find in diagrams: {key}");
+                    }
+                }
+            }
+        }
+        if let Some(PopupResult::Invoked(id)) = nav_scope_closed {
+            if let Some((_, key)) = self.nav_scope_ids.iter().find(|(item, _)| *item == id) {
+                self.nav_state.scope = key.clone();
+                self.refresh_nav(cx, true);
+            }
+        }
+        if let Some(PopupResult::Invoked(id)) = nav_filter_closed {
+            if let Some((_, filter)) = self.nav_filter_ids.iter().find(|(item, _)| *item == id) {
+                self.nav_state.filter = *filter;
+                self.refresh_nav(cx, false);
+            }
+        }
+
+        for relay in DOCUMENT_POPUP_RELAY_ORDER {
+            let outcome = match relay {
+                PopupRelay::ElementPickerClosed => picker_closed.take().and_then(|result| {
+                    self.documents.on_active_popup_result(
+                        cx,
+                        &self.ui,
+                        &self.session,
+                        live_id!(element_picker),
+                        result,
+                    )
+                }),
+                PopupRelay::PlaceDialArmed => dial_armed.take().and_then(|id| {
+                    self.documents.on_active_popup_armed(
+                        cx,
+                        &self.ui,
+                        &self.session,
+                        live_id!(place_dial),
+                        id,
+                    )
+                }),
+                PopupRelay::PlaceDialClosed => dial_closed.take().and_then(|result| {
+                    self.documents.on_active_popup_result(
+                        cx,
+                        &self.ui,
+                        &self.session,
+                        live_id!(place_dial),
+                        result,
+                    )
+                }),
+            };
+            if let Some(outcome) = outcome {
+                let _ = self.apply_view_outcome(cx, outcome);
+            }
+        }
+    }
+
+    fn observe_conflict_list(&mut self, cx: &mut Cx, actions: &Actions) {
+        let conflict_action = self
+            .ui
+            .widget(cx, ids!(popup_root))
+            .borrow::<PopupRoot>()
+            .and_then(|popup| popup.conflict_action(cx, actions));
+
+        match conflict_action {
+            Some(crate::popup::conflict_list::ConflictListAction::Focus { subject, reference }) => {
+                if let Some(mut canvas) = self
+                    .ui
+                    .widget(cx, ids!(canvas))
+                    .borrow_mut::<crate::canvas::ClassDiagramSurface>()
+                {
+                    canvas.set_conflict_focus_keys(cx, Some(vec![subject, reference]));
+                }
+            }
+            Some(action @ crate::popup::conflict_list::ConflictListAction::Delete { .. }) => {
+                let diagram = self
+                    .documents
+                    .active_tab()
+                    .map(|tab| tab.key.clone())
+                    .unwrap_or_default();
+                if let Some(op) = place_rm_for(&diagram, &action) {
+                    if self
+                        .apply_session_ops(cx, &[op], "place.rm failed")
+                        .is_some()
+                    {
+                        let conflicts = self
+                            .ui
+                            .widget(cx, ids!(canvas))
+                            .borrow::<crate::canvas::ClassDiagramSurface>()
+                            .map(|canvas| canvas.conflicts())
+                            .unwrap_or_default();
+                        if conflicts.is_empty() {
+                            if let Some(mut popup) = self
+                                .ui
+                                .widget(cx, ids!(popup_root))
+                                .borrow_mut::<PopupRoot>()
+                            {
+                                popup.close(cx);
+                            }
+                        } else {
+                            self.open_conflict_list(cx, conflicts);
+                        }
+                    }
+                }
+            }
+            Some(crate::popup::conflict_list::ConflictListAction::None) | None => {}
+        }
+    }
+
+    fn handle_navigation_scope(&mut self, cx: &mut Cx, actions: &Actions) -> ActionFlow {
+        let request = self
+            .ui
+            .widget(cx, ids!(project_tree))
+            .borrow_mut::<crate::tree_panel::ProjectTree>()
+            .and_then(|panel| panel.scope_request(actions));
+        let Some(anchor_rect) = request else {
+            return ActionFlow::Continue;
+        };
+
+        self.nav_scope_ids.clear();
+        let items = crate::nav::packages(self.session.model())
+            .into_iter()
+            .map(|row| {
+                let id = LiveId::from_str(&format!("scope:{}", row.key));
+                self.nav_scope_ids.push((id, row.key.clone()));
+                crate::popup::base::PopupItem {
+                    id,
+                    label: format!("{}{}", "  ".repeat(row.depth), row.title),
+                    icon: Some(crate::icons::Icon::Folder),
+                    danger: false,
+                    enabled: true,
+                }
+            })
+            .collect();
+        let anchor = dvec2(
+            anchor_rect.pos.x,
+            anchor_rect.pos.y + anchor_rect.size.y + crate::popup::menu::MENU_GAP,
+        );
+        let bounds = self.window_bounds(cx);
+        if let Some(mut popup) = self
+            .ui
+            .widget(cx, ids!(popup_root))
+            .borrow_mut::<PopupRoot>()
+        {
+            popup.show_at(
+                cx,
+                PopupSpec::Menu {
+                    tag: live_id!(nav_scope),
+                    anchor,
+                    bounds,
+                    items,
+                    open: MenuOpen::Popup {
+                        open_marking: None,
+                        max_height: None,
+                    },
+                },
+            );
+        }
+        ActionFlow::Consumed
+    }
+
+    fn handle_navigation_query(&mut self, cx: &mut Cx, actions: &Actions) -> ActionFlow {
+        let query = self
+            .ui
+            .widget(cx, ids!(project_tree))
+            .borrow_mut::<crate::tree_panel::ProjectTree>()
+            .and_then(|panel| panel.query_changed(actions));
+        let Some(query) = query else {
+            return ActionFlow::Continue;
+        };
+        self.nav_state.query = query;
+        self.refresh_nav(cx, false);
+        ActionFlow::Consumed
+    }
+
+    fn handle_navigation_filter(&mut self, cx: &mut Cx, actions: &Actions) -> ActionFlow {
+        let request = self
+            .ui
+            .widget(cx, ids!(project_tree))
+            .borrow_mut::<crate::tree_panel::ProjectTree>()
+            .and_then(|panel| panel.filter_request(actions));
+        let Some(anchor_rect) = request else {
+            return ActionFlow::Continue;
+        };
+
+        self.nav_filter_ids.clear();
+        let mut items = Vec::new();
+        for filter in std::iter::once(None).chain(self.nav_kinds.iter().copied().map(Some)) {
+            let id = match filter {
+                None => live_id!(filter_all),
+                Some(kind) => LiveId::from_str(&format!("filter:{kind:?}")),
+            };
+            self.nav_filter_ids.push((id, filter));
+            let lead = match filter {
+                None => SelectLead::Icon(crate::icons::Icon::Funnel),
+                Some(kind) => crate::icons::IconSet::icon_for(kind)
+                    .map(SelectLead::Icon)
+                    .unwrap_or(SelectLead::None),
+            };
+            items.push(SelectItem {
+                id,
+                lead,
+                label: crate::nav::chip_label(filter).to_string(),
+                selected: filter == self.nav_state.filter,
+                enabled: true,
+            });
+        }
+        let anchor = dvec2(
+            anchor_rect.pos.x,
+            anchor_rect.pos.y + anchor_rect.size.y + crate::popup::select::SELECT_GAP,
+        );
+        let bounds = self.window_bounds(cx);
+        if let Some(mut popup) = self
+            .ui
+            .widget(cx, ids!(popup_root))
+            .borrow_mut::<PopupRoot>()
+        {
+            popup.show_at(
+                cx,
+                PopupSpec::Select {
+                    tag: live_id!(nav_filter),
+                    anchor,
+                    min_width: anchor_rect.size.x,
+                    bounds,
+                    items,
+                },
+            );
+        }
+        ActionFlow::Consumed
+    }
+
+    fn handle_tree_context_menu(&mut self, cx: &mut Cx, actions: &Actions) -> ActionFlow {
+        let request = self
+            .ui
+            .widget(cx, ids!(project_tree))
+            .borrow_mut::<crate::tree_panel::ProjectTree>()
+            .and_then(|panel| panel.context_menu_request(actions));
+        let Some((key, anchor)) = request else {
+            return ActionFlow::Continue;
+        };
+
+        let node_kind = self
+            .session
+            .model()
+            .nodes
+            .iter()
+            .find(|node| node.key == key)
+            .map(|node| crate::tree::kind_of(&node.ty));
+        if let Some(node_kind) = node_kind {
+            self.transition_document(cx, &key, node_kind, false);
+        }
+        self.node_menu_key = Some(key);
+        let bounds = self.window_bounds(cx);
+        if let Some(mut popup) = self
+            .ui
+            .widget(cx, ids!(popup_root))
+            .borrow_mut::<PopupRoot>()
+        {
+            popup.show_at(
+                cx,
+                PopupSpec::Menu {
+                    tag: live_id!(node_menu),
+                    anchor,
+                    bounds,
+                    items: crate::popup::node_menu::compose(
+                        vec![],
+                        crate::popup::node_menu::base_items(),
+                    ),
+                    open: MenuOpen::Popup {
+                        open_marking: None,
+                        max_height: None,
+                    },
+                },
+            );
+        }
+        ActionFlow::Consumed
+    }
+
+    fn handle_tree_document_open(&mut self, cx: &mut Cx, actions: &Actions) -> ActionFlow {
+        let document = self
+            .ui
+            .widget(cx, ids!(project_tree))
+            .borrow_mut::<crate::tree_panel::ProjectTree>()
+            .and_then(|panel| panel.open_document(actions));
+        let Some((key, node_kind, persistent)) = document else {
+            return ActionFlow::Continue;
+        };
+        self.transition_document(cx, &key, node_kind, persistent);
+        ActionFlow::Consumed
+    }
+
+    fn handle_diagram_switcher(&mut self, cx: &mut Cx, actions: &Actions) -> ActionFlow {
+        let clicked = self
+            .ui
+            .widget(cx, ids!(diagram_switcher))
+            .borrow_mut::<crate::diagram_switcher::DiagramSwitcher>()
+            .and_then(|switcher| switcher.switcher_action(actions));
+        if !matches!(
+            clicked,
+            Some(crate::diagram_switcher::DiagramSwitcherAction::Clicked)
+        ) {
+            return ActionFlow::Continue;
+        }
+
+        let keys = self
+            .session
+            .model()
+            .diagrams
+            .iter()
+            .map(|diagram| diagram.key.clone())
+            .collect::<Vec<_>>();
+        let current = self
+            .documents
+            .active_tab()
+            .filter(|tab| tab.kind == TabKind::Diagram)
+            .or_else(|| {
+                self.documents
+                    .tabs()
+                    .iter()
+                    .find(|tab| tab.kind == TabKind::Diagram)
+            })
+            .map(|tab| tab.key.clone())
+            .unwrap_or_default();
+        if let Some(next) = crate::diagram_switcher::next_diagram_key(&keys, &current) {
+            self.transition_document(cx, &next, crate::tree::TreeKind::Diagram, false);
+        }
+        ActionFlow::Consumed
+    }
+
+    fn handle_conflict_badge(&mut self, cx: &mut Cx, actions: &Actions) -> ActionFlow {
+        let clicked = self
+            .ui
+            .widget(cx, ids!(conflict_badge))
+            .borrow::<crate::conflict_badge::ConflictBadge>()
+            .is_some_and(|badge| badge.clicked(actions));
+        if !clicked {
+            return ActionFlow::Continue;
+        }
+        let conflicts = self
+            .ui
+            .widget(cx, ids!(canvas))
+            .borrow::<crate::canvas::ClassDiagramSurface>()
+            .map(|canvas| canvas.conflicts())
+            .unwrap_or_default();
+        if !conflicts.is_empty() {
+            self.open_conflict_list(cx, conflicts);
+        }
+        ActionFlow::Consumed
+    }
+
+    fn handle_active_document_view(&mut self, cx: &mut Cx, actions: &Actions) -> ActionFlow {
+        let Some(outcome) = self
+            .documents
+            .handle_active(cx, &self.ui, actions, &self.session)
+        else {
+            return ActionFlow::Continue;
+        };
+        self.apply_view_outcome(cx, outcome)
+    }
+
+    fn handle_logo_menu(&mut self, cx: &mut Cx, actions: &Actions) -> ActionFlow {
+        let logo = self
+            .ui
+            .widget(cx, ids!(logo))
+            .borrow::<crate::logo::LogoMark>()
+            .and_then(|logo| logo.logo_action(actions).map(|_| logo.drawn_rect()));
+        let Some(logo_rect) = logo else {
+            return ActionFlow::Continue;
+        };
+
+        let anchor = dvec2(
+            logo_rect.pos.x,
+            logo_rect.pos.y + logo_rect.size.y + crate::popup::menu::MENU_GAP,
+        );
+        let bounds = self.window_bounds(cx);
+        if let Some(mut popup) = self
+            .ui
+            .widget(cx, ids!(popup_root))
+            .borrow_mut::<PopupRoot>()
+        {
+            popup.show_at(
+                cx,
+                PopupSpec::Menu {
+                    tag: live_id!(logo),
+                    anchor,
+                    bounds,
+                    items: logo_menu_items(),
+                    open: MenuOpen::Popup {
+                        open_marking: None,
+                        max_height: None,
+                    },
+                },
+            );
+        }
+        ActionFlow::Consumed
+    }
+
+    fn handle_start_screen_action(&mut self, cx: &mut Cx, actions: &Actions) -> ActionFlow {
+        let action = self
+            .ui
+            .widget(cx, ids!(start_screen))
+            .borrow_mut::<crate::start_screen::StartScreen>()
+            .and_then(|screen| screen.screen_action(actions));
+        let Some(action) = action else {
+            return ActionFlow::Continue;
+        };
+
+        match action {
+            crate::start_screen::StartScreenAction::OpenRecent(index) => {
+                if let Some(recent) = self.start_recents.get(index).cloned() {
+                    if self.open_dir(cx, recent.path(), None) {
+                        self.show_editor(cx);
+                    }
+                }
+            }
+            crate::start_screen::StartScreenAction::TogglePin(index) => {
+                if let Some(recent) = self.start_recents.get(index).cloned() {
+                    crate::config::set_pinned(recent.path(), !recent.pinned());
+                    self.show_start_screen(cx);
+                }
+            }
+            crate::start_screen::StartScreenAction::NewProject => {
+                log!("New project: not yet implemented (template picker is a later slice)");
+            }
+            crate::start_screen::StartScreenAction::OpenProject => {
+                self.open_model_via_picker(cx);
+            }
+            crate::start_screen::StartScreenAction::None => {}
+        }
+        ActionFlow::Consumed
+    }
+
+    fn handle_shortcuts_overlay(&mut self, cx: &mut Cx, actions: &Actions) -> ActionFlow {
+        let dismissed = self
+            .ui
+            .widget(cx, ids!(shortcuts_overlay))
+            .borrow_mut::<crate::shortcuts_overlay::ShortcutsOverlay>()
+            .and_then(|overlay| overlay.overlay_action(actions));
+        if matches!(
+            dismissed,
+            Some(crate::shortcuts_overlay::ShortcutsOverlayAction::Dismissed)
+        ) {
+            self.toggle_shortcuts_overlay(cx);
+            ActionFlow::Consumed
+        } else {
+            ActionFlow::Continue
+        }
+    }
+
+    fn handle_fonts_overlay(&mut self, cx: &mut Cx, actions: &Actions) -> ActionFlow {
+        let dismissed = self
+            .ui
+            .widget(cx, ids!(fonts_overlay))
+            .borrow_mut::<crate::fonts_overlay::FontsOverlay>()
+            .and_then(|overlay| overlay.overlay_action(actions));
+        if matches!(
+            dismissed,
+            Some(crate::fonts_overlay::FontsOverlayAction::Dismissed)
+        ) {
+            self.close_page_overlays(cx);
+            ActionFlow::Consumed
+        } else {
+            ActionFlow::Continue
+        }
+    }
+
+    fn handle_icons_overlay(&mut self, cx: &mut Cx, actions: &Actions) -> ActionFlow {
+        let dismissed = self
+            .ui
+            .widget(cx, ids!(icons_overlay))
+            .borrow_mut::<crate::icons_overlay::IconsOverlay>()
+            .and_then(|overlay| overlay.overlay_action(actions));
+        if matches!(
+            dismissed,
+            Some(crate::icons_overlay::IconsOverlayAction::Dismissed)
+        ) {
+            self.close_page_overlays(cx);
+            ActionFlow::Consumed
+        } else {
+            ActionFlow::Continue
+        }
+    }
+
+    fn handle_colors_overlay(&mut self, cx: &mut Cx, actions: &Actions) -> ActionFlow {
+        let dismissed = self
+            .ui
+            .widget(cx, ids!(colors_overlay))
+            .borrow_mut::<crate::colors_overlay::ColorsOverlay>()
+            .and_then(|overlay| overlay.overlay_action(actions));
+        if matches!(
+            dismissed,
+            Some(crate::colors_overlay::ColorsOverlayAction::Dismissed)
+        ) {
+            self.close_page_overlays(cx);
+            ActionFlow::Consumed
+        } else {
+            ActionFlow::Continue
+        }
+    }
+
+    fn handle_document_tabs(&mut self, cx: &mut Cx, actions: &Actions) -> ActionFlow {
+        let action = self
+            .ui
+            .widget(cx, ids!(doc_tabs))
+            .borrow_mut::<crate::doc_tabs::DocTabs>()
+            .and_then(|tabs| tabs.tab_action(actions));
+        let Some(action) = action else {
+            return ActionFlow::Continue;
+        };
+
+        match action {
+            crate::doc_tabs::DocTabsAction::OpenSwitcher { anchor } => {
+                if self.documents.active_tab().is_some() {
+                    let items = doc_switcher_items(self.documents.tabs());
+                    let bounds = self.window_bounds(cx);
+                    if let Some(mut popup) = self
+                        .ui
+                        .widget(cx, ids!(popup_root))
+                        .borrow_mut::<PopupRoot>()
+                    {
+                        popup.show_at(
+                            cx,
+                            PopupSpec::Menu {
+                                tag: live_id!(doc_switcher),
+                                anchor,
+                                bounds,
+                                items,
+                                open: MenuOpen::Popup {
+                                    open_marking: Some(self.documents.active_id()),
+                                    max_height: Some(DOC_SWITCHER_MAX_H),
+                                },
+                            },
+                        );
+                    }
+                }
+            }
+            crate::doc_tabs::DocTabsAction::Activate(id) => {
+                self.documents.transition(
+                    cx,
+                    &self.ui,
+                    &self.session,
+                    DocumentCommand::Activate(id),
+                );
+                self.sync_document_shell(cx);
+            }
+            crate::doc_tabs::DocTabsAction::Promote(id) => {
+                self.documents.transition(
+                    cx,
+                    &self.ui,
+                    &self.session,
+                    DocumentCommand::Promote(id),
+                );
+                self.sync_document_shell(cx);
+            }
+            crate::doc_tabs::DocTabsAction::Close(id) => {
+                self.documents
+                    .transition(cx, &self.ui, &self.session, DocumentCommand::Close(id));
+                self.sync_document_shell(cx);
+            }
+            crate::doc_tabs::DocTabsAction::None => {}
+        }
+        ActionFlow::Consumed
+    }
+
     pub(super) fn apply_session_ops(
         &mut self,
         cx: &mut Cx,
