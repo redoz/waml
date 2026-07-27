@@ -628,7 +628,7 @@ pub fn validate_from_source(bundle: &crate::source::SourceBundle) -> Vec<Diagnos
         // content is legitimate, so the preamble `droppable-content` scan — which
         // assumes prose before the first section is dropped on serialize — does
         // not apply to them.
-        let is_index = crate::okf::role_of(path) == crate::okf::ConceptRole::Index;
+        let is_index = crate::okf::is_index_path(path);
         if is_index {
             syn.retain(|d| d.code != DiagCode::DroppableContent);
         }
@@ -648,7 +648,7 @@ pub fn validate(bundle: &[(String, String)]) -> Vec<Diagnostic> {
     let mut docs = Vec::new();
     for (path, text) in bundle {
         let (doc, mut syn) = crate::parse::parse(text);
-        let is_index = crate::okf::role_of(path) == crate::okf::ConceptRole::Index;
+        let is_index = crate::okf::is_index_path(path);
         if is_index {
             syn.retain(|d| d.code != DiagCode::DroppableContent);
         }

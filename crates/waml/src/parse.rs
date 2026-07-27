@@ -527,20 +527,20 @@ fn parse_bundle(bundle: &SourceBundle) -> Vec<ParsedDoc> {
     bundle
         .documents()
         .iter()
-        .map(|source| {
+        .filter_map(|source| {
             let path = source.path().as_str();
             let text = source.text();
+            let concept = crate::okf::project_document(source)?;
             let doc = parse_document(text);
             let ty = ElementType::parse(doc.frontmatter.get_str("type").unwrap_or("uml.Class"));
-            let concept = crate::okf::project_document(source);
-            ParsedDoc {
+            Some(ParsedDoc {
                 path: path.to_owned(),
                 slug: doc_slug(path),
                 id: crate::okf::id_of(path),
                 ty,
                 doc,
                 concept,
-            }
+            })
         })
         .collect()
 }
@@ -754,7 +754,7 @@ impl<'a> IndexSource<'a> {
 
     fn project(self, path: &str) -> crate::okf::Concept {
         match self {
-            IndexSource::Document(document) => crate::okf::project_document(document),
+            IndexSource::Document(document) => crate::okf::project_reserved_document(document),
             IndexSource::Text(text) => crate::okf::project(path, text),
         }
     }

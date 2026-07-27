@@ -65,65 +65,51 @@ pub fn render_index(
 /// Rebuild every directory's index.md from the current model's package forest.
 /// Title/description now live on `concept` (single source); read them there.
 pub fn reindex_source(bundle: &SourceBundle) -> SourceBundle {
-    let model = crate::parse::build_model_from_source(bundle);
-    // key -> (title, is_package, blurb-source description)
-    let mut meta = std::collections::HashMap::new();
-    for n in &model.nodes {
-        meta.insert(
-            n.key.clone(),
-            (
-                n.concept.title.clone().unwrap_or_else(|| n.key.clone()),
-                false,
-                n.concept.description.clone(),
-            ),
-        );
-    }
-    for d in &model.diagrams {
-        meta.insert(d.key.clone(), (d.title.clone(), false, None));
-    }
-    for p in &model.packages {
-        let title = p.concept.title.clone().unwrap_or_else(|| p.key.clone());
-        meta.insert(p.key.clone(), (title, true, None));
-    }
+    let parsed = crate::okf::Bundle::parse(bundle).expect("validated source bundle parses as OKF");
     // Keep existing index allocations until their replacement text is known:
     // `upsert` preserves the Arc when the rendered index is byte-identical.
     let mut out = bundle.clone();
     let mut retained_indexes = std::collections::BTreeSet::new();
-    for pkg in &model.packages {
-        let entries: Vec<IndexEntry> = pkg
-            .members
-            .iter()
-            .filter_map(|k| {
-                meta.get(k).map(|(title, is_pkg, desc)| IndexEntry {
-                    key: k.clone(),
-                    title: title.clone(),
-                    is_package: *is_pkg,
-                    blurb: desc
-                        .as_ref()
-                        .map(|d| d.lines().next().unwrap_or("").to_string()),
+    for index in parsed.indexes() {
+        let directory = index.directory.as_str().trim_start_matches('/');
+        let entries: Vec<IndexEntry> =
+            index
+                .members
+                .iter()
+                .filter_map(|member| {
+                    if member.starts_with('/') {
+                        let child = parsed.index(member)?;
+                        Some(IndexEntry {
+                            key: member.clone(),
+                            title: child.title.clone().unwrap_or_else(|| {
+                                member.rsplit('/').next().unwrap_or(member).into()
+                            }),
+                            is_package: true,
+                            blurb: None,
+                        })
+                    } else {
+                        let concept = parsed.concept(member)?;
+                        Some(IndexEntry {
+                            key: member.clone(),
+                            title: concept.title.clone().unwrap_or_else(|| {
+                                member.rsplit('/').next().unwrap_or(member).into()
+                            }),
+                            is_package: false,
+                            blurb: concept.description.as_ref().map(|description| {
+                                description.lines().next().unwrap_or("").to_string()
+                            }),
+                        })
+                    }
                 })
-            })
-            .collect();
-        let path = if pkg.key.is_empty() {
-            "index.md".to_string()
-        } else {
-            format!("{}/index.md", pkg.key)
-        };
+                .collect();
+        let path = index.directory.index_path();
         retained_indexes.insert(path.clone());
-        // Root's name is the model path (root index.md H1); nested packages carry
-        // it on concept.title. Preserve either verbatim instead of resetting to
-        // the dir basename.
-        let title: Option<&str> = if pkg.key.is_empty() {
-            (!model.path.is_empty()).then_some(model.path.as_str())
-        } else {
-            pkg.concept.title.as_deref()
-        };
         out.upsert(
             BundlePath::parse(path).expect("generated index path is valid"),
             render_index(
-                &pkg.key,
-                title,
-                pkg.concept.description.as_deref(),
+                directory,
+                index.title.as_deref(),
+                index.description.as_deref(),
                 &entries,
             ),
         );
@@ -140,6 +126,7 @@ pub fn reindex_source(bundle: &SourceBundle) -> SourceBundle {
     out
 }
 
+#[deprecated(note = "use SourceBundle with reindex_source")]
 pub fn reindex_bundle(bundle: &[(String, String)]) -> Vec<(String, String)> {
     let source =
         SourceBundle::try_from_pairs(bundle.iter().cloned()).expect("bundle paths must be valid");
@@ -169,6 +156,7 @@ mod tests {
                 "order.md",
                 "---\ntype: uml.Class\ntitle: Order\n---\n# Order\n",
             ),
+            ("log.md", "# Log\n"),
         ])
         .unwrap();
 
@@ -176,6 +164,7 @@ mod tests {
 
         assert!(source.shares_text_with(&reconciled, "index.md"));
         assert!(source.shares_text_with(&reconciled, "order.md"));
+        assert!(source.shares_text_with(&reconciled, "log.md"));
     }
 
     #[test]

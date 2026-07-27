@@ -19,6 +19,49 @@ fn bundle() -> Vec<(String, String)> {
 }
 
 #[test]
+fn okf_bundle_json_has_separate_semantic_collections_and_string_bodies() {
+    let empty = serde_json::to_value(waml::okf::Bundle::default()).unwrap();
+    assert_eq!(
+        empty,
+        serde_json::json!({
+            "concepts": [],
+            "indexes": [],
+            "logs": [],
+            "directories": []
+        })
+    );
+
+    let source = waml::source::SourceBundle::try_from_pairs([
+        ("index.md", "# Root\n"),
+        ("note.md", "---\ntype: Note\n---\n# Note\n"),
+        ("log.md", "# Log\n"),
+    ])
+    .unwrap();
+    let parsed = waml::okf::Bundle::parse(&source).unwrap();
+    let value = serde_json::to_value(parsed).unwrap();
+
+    assert!(value["concepts"][0]["body"].is_string());
+    assert!(value["indexes"][0]["body"].is_string());
+    assert!(value["logs"][0]["body"].is_string());
+    assert!(value["concepts"][0].get("role").is_none());
+}
+
+#[test]
+fn directory_address_deserialization_enforces_rooted_invariants() {
+    assert!(serde_json::from_str::<waml::okf::DirectoryAddress>(r#""/sales/orders""#).is_ok());
+    for invalid in [
+        r#""sales""#,
+        r#""/sales/../orders""#,
+        r#""/sales/index.md""#,
+    ] {
+        assert!(
+            serde_json::from_str::<waml::okf::DirectoryAddress>(invalid).is_err(),
+            "{invalid}"
+        );
+    }
+}
+
+#[test]
 fn model_json_matches_ts_field_names() {
     let model = build_model(&bundle());
     let v = serde_json::to_value(&model).unwrap();
