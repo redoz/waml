@@ -1311,20 +1311,63 @@ mod tests {
         }
 
         #[test]
-        fn disabling_interaction_preserves_settled_camera_and_selection() {
+        fn real_touch_events_mutate_only_an_enabled_surface() {
             let mut vm = crate::script_gate::boot_test_vm();
             let mut surface = surface_with_live_dial(&mut vm);
+            surface.viewport.set_view_rect(Rect {
+                pos: dvec2(0.0, 0.0),
+                size: dvec2(800.0, 600.0),
+            });
             surface
                 .selection
                 .select("old-subject", &surface.scene.nodes);
-            surface.viewport.apply_scroll_zoom(dvec2(320.0, 240.0), 1.5);
             let camera_before = surface.viewport.snapshot().camera;
             let selected_before = surface.selection.selected_key().map(str::to_owned);
 
             surface.set_interaction_enabled(vm.cx_mut(), false);
+            dispatch_touch_update(
+                &mut surface,
+                &mut vm,
+                vec![
+                    touch(1, TouchState::Start, 100.0, 100.0),
+                    touch(2, TouchState::Start, 200.0, 100.0),
+                ],
+            );
+            dispatch_touch_update(
+                &mut surface,
+                &mut vm,
+                vec![
+                    touch(1, TouchState::Move, 50.0, 100.0),
+                    touch(2, TouchState::Move, 250.0, 100.0),
+                ],
+            );
 
             assert!(!surface.interaction_enabled);
             assert_eq!(surface.viewport.snapshot().camera, camera_before);
+            assert_eq!(
+                surface.selection.selected_key().map(str::to_owned),
+                selected_before
+            );
+
+            surface.set_interaction_enabled(vm.cx_mut(), true);
+            dispatch_touch_update(
+                &mut surface,
+                &mut vm,
+                vec![
+                    touch(1, TouchState::Start, 100.0, 100.0),
+                    touch(2, TouchState::Start, 200.0, 100.0),
+                ],
+            );
+            dispatch_touch_update(
+                &mut surface,
+                &mut vm,
+                vec![
+                    touch(1, TouchState::Move, 50.0, 100.0),
+                    touch(2, TouchState::Move, 250.0, 100.0),
+                ],
+            );
+
+            assert_ne!(surface.viewport.snapshot().camera, camera_before);
             assert_eq!(
                 surface.selection.selected_key().map(str::to_owned),
                 selected_before

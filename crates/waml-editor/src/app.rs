@@ -1332,6 +1332,7 @@ impl App {
         cx.stop_timer(self.save_timer);
         let change = self.session.replace(files, model);
         debug_assert_eq!(change.revision, self.session.revision());
+        self.set_save_error(cx, None);
         // Retain the raw bundle so drag-to-place ops can re-author `## Layout`
         // in-memory: the diagram view emits `Op::PlaceSet`, the shell applies it
         // against this bundle and rebuilds the model (see `handle_actions`).
@@ -2178,6 +2179,21 @@ mod tests {
             unreachable!()
         };
         assert!(quit.handled.get());
+    }
+
+    #[test]
+    fn successful_bundle_open_clears_the_visible_save_error() {
+        let source = include_str!("app.rs");
+        let open_bundle = source
+            .split_once("    fn open_bundle(")
+            .and_then(|(_, rest)| rest.split_once("    fn "))
+            .map(|(body, _)| body)
+            .expect("App::open_bundle body");
+
+        assert!(
+            open_bundle.contains("self.set_save_error(cx, None);"),
+            "a newly-opened bundle must clear any save error from the prior document"
+        );
     }
 
     #[test]
