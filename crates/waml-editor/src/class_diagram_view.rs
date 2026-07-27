@@ -110,7 +110,6 @@ impl ClassDiagramMode {
 
 pub struct ClassDiagramView {
     key: String,
-    title: String,
     /// Node keys whose card body is expanded. Per-tab live state, moved off
     /// the shell in Task 3. Cleared when the diagram changes.
     expanded: HashSet<String>,
@@ -118,10 +117,9 @@ pub struct ClassDiagramView {
 }
 
 impl ClassDiagramView {
-    pub fn new(key: String, title: String) -> ClassDiagramView {
+    pub fn new(key: String) -> ClassDiagramView {
         ClassDiagramView {
             key,
-            title,
             expanded: HashSet::new(),
             mode: ClassDiagramMode::default(),
         }
@@ -185,8 +183,17 @@ impl ClassDiagramView {
         body.set_conflict_badge_visible(cx, self.mode.canvas_chrome_visible());
     }
 
+    fn clear_properties_focus(cx: &mut Cx) {
+        cx.set_key_focus(Area::Empty);
+        cx.hide_text_ime();
+    }
+
     fn return_to_canvas(&mut self, cx: &mut Cx, body: &BodyWidgets) {
+        let leaving_properties = self.mode.properties_visible();
         self.mode.deactivate();
+        if leaving_properties {
+            Self::clear_properties_focus(cx);
+        }
         self.show_mode(cx, body);
     }
 
@@ -256,12 +263,11 @@ impl DocView for ClassDiagramView {
         body.show_canvas(cx);
         let model = data.model;
         self.sync_properties(cx, body, model);
-        let built = model
-            .diagrams
-            .iter()
-            .find(|d| d.key == self.key)
-            .map(|d| build_scene(model, d, resolve_display(&d.display), &self.expanded));
-        if let Some((scene, diags)) = built {
+        let built = model.diagrams.iter().find(|d| d.key == self.key).map(|d| {
+            let (scene, diags) = build_scene(model, d, resolve_display(&d.display), &self.expanded);
+            (scene, diags, d.title.clone())
+        });
+        if let Some((scene, diags, title)) = built {
             for d in &diags {
                 log!("diagnostic: {d:?}");
             }
@@ -272,9 +278,7 @@ impl DocView for ClassDiagramView {
             {
                 canvas.set_scene(cx, scene);
             }
-            let key = self.key.clone();
-            let title = self.title.clone();
-            self.sync_inspector_elements(cx, body, model, &key, &title, &node_keys);
+            self.sync_inspector_elements(cx, body, model, &self.key, &title, &node_keys);
         }
         // Nothing is selected yet on a fresh sync (tab activation, model
         // reload), so the diagram itself is the subject.
@@ -336,6 +340,9 @@ impl DocView for ClassDiagramView {
                 .collect();
             if !properties_actions.is_empty() {
                 let outcome = self.properties_actions_outcome(properties_actions);
+                if !self.mode.properties_visible() {
+                    Self::clear_properties_focus(cx);
+                }
                 self.show_mode(cx, body);
                 return outcome;
             }
@@ -350,6 +357,7 @@ impl DocView for ClassDiagramView {
                 .and_then(|dock| dock.dock_action(actions))
             {
                 if self.apply_tool_action(action) {
+                    Self::clear_properties_focus(cx);
                     self.show_mode(cx, body);
                 }
             }
@@ -773,8 +781,112 @@ mod tests {
     use crate::diagram_properties::DiagramPropertiesAction;
     use crate::tool_dock::{Tool, ToolDockAction};
     use crate::view_bar::{ViewBarAction, ViewOption};
+    use makepad_widgets::{
+        live_id, Area, Cx, DrawList, LiveId, RectArea, ScriptApply, ScriptNew, ScriptVm,
+        ScriptVmCx, Trigger, Walk, Widget, WidgetNode, WidgetRef, WidgetUid,
+    };
+    use std::path::Path;
     use waml::model::CardinalityVisibility;
     use waml::ops::{DiagramDisplaySet, Op};
+
+    struct TestBody {
+        uid: WidgetUid,
+        children: Vec<(LiveId, WidgetRef)>,
+    }
+
+    impl ScriptApply for TestBody {}
+
+    impl WidgetNode for TestBody {
+        fn widget_uid(&self) -> WidgetUid {
+            self.uid
+        }
+
+        fn walk(&mut self, _cx: &mut Cx) -> Walk {
+            Walk::default()
+        }
+
+        fn area(&self) -> Area {
+            Area::Empty
+        }
+
+        fn redraw(&mut self, _cx: &mut Cx) {}
+
+        fn children(&self, visit: &mut dyn FnMut(LiveId, WidgetRef)) {
+            for (id, child) in &self.children {
+                visit(*id, child.clone());
+            }
+        }
+    }
+
+    impl Widget for TestBody {}
+
+    struct FocusedTextField {
+        uid: WidgetUid,
+        area: Area,
+    }
+
+    impl ScriptApply for FocusedTextField {}
+
+    impl WidgetNode for FocusedTextField {
+        fn widget_uid(&self) -> WidgetUid {
+            self.uid
+        }
+
+        fn walk(&mut self, _cx: &mut Cx) -> Walk {
+            Walk::default()
+        }
+
+        fn area(&self) -> Area {
+            self.area
+        }
+
+        fn redraw(&mut self, _cx: &mut Cx) {}
+    }
+
+    impl Widget for FocusedTextField {}
+
+    fn test_body(vm: &mut ScriptVm) -> WidgetRef {
+        WidgetRef::new_with_inner(Box::new(TestBody {
+            uid: WidgetUid::new(),
+            children: vec![
+                (
+                    live_id!(inspector),
+                    WidgetRef::new_with_inner(Box::new(
+                        crate::inspector_panel::Inspector::script_new(vm),
+                    )),
+                ),
+                (
+                    live_id!(diagram_properties),
+                    WidgetRef::new_with_inner(Box::new(
+                        crate::diagram_properties::DiagramProperties::script_new(vm),
+                    )),
+                ),
+            ],
+        }))
+    }
+
+    fn focused_text_field(cx: &mut Cx) -> WidgetRef {
+        let draw_list = DrawList::new(cx);
+        let area = Area::Rect(RectArea {
+            draw_list_id: draw_list.id(),
+            rect_id: 0,
+            redraw_id: cx.redraw_id(),
+        });
+        WidgetRef::new_with_inner(Box::new(FocusedTextField {
+            uid: WidgetUid::new(),
+            area,
+        }))
+    }
+
+    fn advance_focus(cx: &mut Cx) {
+        cx.send_trigger(Area::Empty, Trigger::default());
+        cx.handle_triggers();
+    }
+
+    fn mini_model() -> waml::model::Model {
+        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/mini");
+        crate::load::load_model(&dir).expect("mini fixture must load")
+    }
 
     #[test]
     fn properties_mode_toggles_and_resets_on_deactivation() {
@@ -798,7 +910,7 @@ mod tests {
 
     #[test]
     fn diagram_properties_tool_toggles_the_view_instead_of_being_a_no_op() {
-        let mut view = ClassDiagramView::new("orders".into(), "Orders".into());
+        let mut view = ClassDiagramView::new("orders".into());
 
         assert!(view.apply_tool_action(ToolDockAction::Triggered(Tool::DiagramProps)));
         assert_eq!(view.mode, ClassDiagramMode::Properties);
@@ -806,12 +918,11 @@ mod tests {
 
     #[test]
     fn a_properties_change_returns_exactly_one_diagram_set() {
-        let view = ClassDiagramView::new("orders".into(), "Orders".into());
+        let view = ClassDiagramView::new("orders".into());
         let display = DiagramDisplaySet {
             show_attributes: true,
             show_type: false,
             show_attribute_visibility: true,
-            show_attribute_multiplicity: true,
             max_attributes: Some(4),
             show_roles: true,
             cardinality: CardinalityVisibility::Explicit,
@@ -841,7 +952,7 @@ mod tests {
         use super::ClassDiagramView;
         use crate::doc_view::DocView;
 
-        let view = ClassDiagramView::new("orders".into(), "Orders".into());
+        let view = ClassDiagramView::new("orders".into());
 
         assert_eq!(
             view.chrome(),
@@ -856,7 +967,7 @@ mod tests {
 
     #[test]
     fn clearing_description_emits_an_explicit_clear_diagram_set() {
-        let view = ClassDiagramView::new("orders".into(), "Orders".into());
+        let view = ClassDiagramView::new("orders".into());
 
         let outcome = view.properties_outcome(DiagramPropertiesAction::IdentityChanged {
             title: "Orders".into(),
@@ -901,13 +1012,12 @@ mod tests {
 
     #[test]
     fn property_action_batch_keeps_every_edit_before_closing() {
-        let mut view = ClassDiagramView::new("orders".into(), "Orders".into());
+        let mut view = ClassDiagramView::new("orders".into());
         view.mode = ClassDiagramMode::Properties;
         let display = DiagramDisplaySet {
             show_attributes: false,
             show_type: true,
             show_attribute_visibility: true,
-            show_attribute_multiplicity: true,
             max_attributes: None,
             show_roles: false,
             cardinality: CardinalityVisibility::All,
@@ -946,6 +1056,88 @@ mod tests {
             ]
         );
         assert_eq!(view.mode, ClassDiagramMode::Canvas);
+    }
+
+    #[test]
+    fn leaving_properties_clears_focused_text_field_but_canvas_deactivation_does_not() {
+        use crate::doc_view::DocView;
+
+        let mut vm = crate::script_gate::boot_test_vm();
+        let ui = test_body(&mut vm);
+        let cx = vm.cx_mut();
+        let body = crate::doc_view::BodyWidgets::new(cx, &ui);
+        let field = focused_text_field(cx);
+        let field_area = field.area();
+        let mut view = ClassDiagramView::new("orders".into());
+
+        cx.set_key_focus(field_area);
+        advance_focus(cx);
+        assert_eq!(
+            cx.key_focus(),
+            field_area,
+            "the descendant field is focused"
+        );
+
+        view.mode = ClassDiagramMode::Properties;
+        view.on_escape(cx, &body);
+        advance_focus(cx);
+        assert_eq!(
+            cx.key_focus(),
+            Area::Empty,
+            "Escape leaves no hidden field focused"
+        );
+
+        cx.set_key_focus(field_area);
+        advance_focus(cx);
+        view.mode = ClassDiagramMode::Canvas;
+        view.on_deactivate(cx, &body);
+        advance_focus(cx);
+        assert_eq!(
+            cx.key_focus(),
+            field_area,
+            "a Canvas-to-Canvas deactivation must not clear unrelated focus"
+        );
+    }
+
+    #[test]
+    fn renamed_diagram_uses_current_model_title_after_reactivate_and_sync() {
+        use crate::doc_view::DocView;
+
+        let mut vm = crate::script_gate::boot_test_vm();
+        let ui = test_body(&mut vm);
+        let cx = vm.cx_mut();
+        let body = crate::doc_view::BodyWidgets::new(cx, &ui);
+        let mut model = mini_model();
+        let mut view = ClassDiagramView::new("orders-diagram".into());
+        let data = crate::doc_view::ViewData {
+            model: &model,
+            bundle: &[],
+            revision: 1,
+        };
+
+        view.sync(cx, &body, data);
+        model.diagrams[0].title = "Order flow".into();
+        view.on_deactivate(cx, &body);
+        view.on_activate(cx, &body);
+        view.sync(
+            cx,
+            &body,
+            crate::doc_view::ViewData {
+                model: &model,
+                bundle: &[],
+                revision: 2,
+            },
+        );
+
+        let inspector_widget = body.inspector(cx);
+        let inspector = inspector_widget
+            .borrow::<crate::inspector_panel::Inspector>()
+            .expect("native test body installs an inspector");
+        assert_eq!(
+            inspector.elements_for_test()[0].label,
+            "Order flow",
+            "the diagram row must be rebuilt from the renamed model"
+        );
     }
 
     #[test]

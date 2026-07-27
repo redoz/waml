@@ -269,6 +269,26 @@ describe("updateDiagramOps", () => {
     expect(updateDiagramOps(baseDiagram, { description: "Notes" })).toEqual([{ op: "diagram.set", key: "d", desc: "Notes" }]);
   });
 
+  it("emits clearDesc for an explicit description clear", () => {
+    const described = { ...baseDiagram, description: "Notes" };
+
+    expect(updateDiagramOps(described, { description: null })).toEqual([
+      { op: "diagram.set", key: "d", clearDesc: true },
+    ]);
+  });
+
+  it("does not emit an op when an already-absent description is cleared", () => {
+    expect(updateDiagramOps(baseDiagram, { description: null })).toEqual([]);
+  });
+
+  it("normalizes the existing empty-field clear path to clearDesc", () => {
+    const described = { ...baseDiagram, description: "Notes" };
+
+    expect(updateDiagramOps(described, { description: "" })).toEqual([
+      { op: "diagram.set", key: "d", clearDesc: true },
+    ]);
+  });
+
   it("emits [] when nothing changed", () => {
     expect(updateDiagramOps(baseDiagram, { title: "D" })).toEqual([]);
   });

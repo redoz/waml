@@ -231,7 +231,9 @@ impl App {
                     LogoCommand::Fonts => self.open_page_overlay(cx, LogoCommand::Fonts),
                     LogoCommand::Icons => self.open_page_overlay(cx, LogoCommand::Icons),
                     LogoCommand::Colors => self.open_page_overlay(cx, LogoCommand::Colors),
-                    LogoCommand::Exit => cx.quit(),
+                    LogoCommand::Exit => {
+                        cx.request_quit(QuitReason::Menu);
+                    }
                 }
             }
         }
@@ -966,6 +968,58 @@ impl App {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::popup::root::PopupRootAction;
+    use std::cell::RefCell;
+    use std::rc::Rc;
+
+    #[derive(Debug, Default, PartialEq, Eq)]
+    struct QuitProbe {
+        reasons: Vec<QuitReason>,
+        cancelled_after_failed_save: usize,
+    }
+
+    #[test]
+    fn logo_exit_popup_action_requests_a_cancelable_menu_quit() {
+        let probe = Rc::new(RefCell::new(QuitProbe::default()));
+        let event_probe = probe.clone();
+        let mut cx = Cx::new(Box::new(move |_cx, event| {
+            if let Event::QuitRequested(request) = event {
+                event_probe.borrow_mut().reasons.push(request.reason);
+                let failed_save = Err("disk full".to_string());
+                event_probe.borrow_mut().cancelled_after_failed_save +=
+                    usize::from(prevent_quit_after_failed_save(event, &failed_save));
+                assert!(request.handled.get());
+            }
+        }));
+
+        let popup_root = cx.with_vm(PopupRoot::script_new_with_default);
+        let popup_root = WidgetRef::new_with_inner(Box::new(popup_root));
+        let popup_uid = popup_root.widget_uid();
+        let mut ui = cx.with_vm(View::script_new_with_default);
+        ui.children.push((live_id!(popup_root), popup_root));
+
+        let mut app = cx.with_vm(App::script_new_with_default);
+        app.ui = WidgetRef::new_with_inner(Box::new(ui));
+        let actions: ActionsBuf = vec![Box::new(WidgetAction {
+            data: None,
+            action: Box::new(PopupRootAction::Closed {
+                tag: live_id!(logo),
+                result: PopupResult::Invoked(live_id!(exit)),
+            }),
+            widget_uid: popup_uid,
+            group: None,
+        })];
+
+        app.observe_popup_results(&mut cx, &actions);
+
+        assert_eq!(
+            *probe.borrow(),
+            QuitProbe {
+                reasons: vec![QuitReason::Menu],
+                cancelled_after_failed_save: 1,
+            }
+        );
+    }
 
     #[test]
     fn non_exclusive_observers_keep_the_existing_order() {

@@ -843,6 +843,11 @@ impl Widget for Inspector {
 }
 
 impl Inspector {
+    #[cfg(test)]
+    pub(crate) fn elements_for_test(&self) -> &[ElementRow] {
+        &self.elements
+    }
+
     /// Push the current projection into the declared `body` column widgets
     /// (kind, stereotypes, the three headings, the interim attribute/relationship
     /// text, and the description). Hides a heading + its rows when that section

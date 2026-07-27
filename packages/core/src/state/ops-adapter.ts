@@ -41,6 +41,10 @@ import type { OpDto, DisplayDto } from "@waml/wasm";
 export type { OpDto };
 
 type EdgeName = string | { ref: string };
+export type DiagramPatch = Omit<Partial<Diagram>, "description"> & {
+  /** `null` removes an authored description; omission leaves it unchanged. */
+  description?: string | null;
+};
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 
@@ -253,11 +257,17 @@ function toDisplayDto(display: Partial<DiagramDisplay>): DisplayDto {
   };
 }
 
-/** Scalar title/description + whole-block display. Emits a single diagram.set or []. */
-export function updateDiagramOps(prev: Diagram, patch: Partial<Diagram>): OpDto[] {
+/** Scalar title/description + whole-block display. `null` and the existing
+ * empty-field UI value clear an authored description; omission leaves it unchanged.
+ * Emits a single diagram.set or []. */
+export function updateDiagramOps(prev: Diagram, patch: DiagramPatch): OpDto[] {
   const set: Omit<Extract<OpDto, { op: "diagram.set" }>, "op" | "key"> = {};
   if (patch.title !== undefined && patch.title !== prev.title) set.title = patch.title;
-  if (patch.description !== undefined && patch.description !== prev.description) set.desc = patch.description;
+  if (patch.description === null || patch.description === "") {
+    if (prev.description !== undefined) set.clearDesc = true;
+  } else if (patch.description !== undefined && patch.description !== prev.description) {
+    set.desc = patch.description;
+  }
   if (patch.display !== undefined) set.display = toDisplayDto(patch.display);
   return Object.keys(set).length ? [{ op: "diagram.set", key: prev.key, ...set }] : [];
 }

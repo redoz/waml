@@ -312,7 +312,7 @@ mod tests {
 
     #[test]
     fn concrete_views_declare_the_existing_chrome() {
-        let diagram = crate::class_diagram_view::ClassDiagramView::new("d".into(), "D".into());
+        let diagram = crate::class_diagram_view::ClassDiagramView::new("d".into());
         let classifier = crate::classifier_preview_view::ClassifierPreviewView::new(
             "order".into(),
             TreeKind::Class,

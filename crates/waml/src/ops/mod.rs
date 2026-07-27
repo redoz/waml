@@ -93,7 +93,6 @@ pub struct DiagramDisplaySet {
     pub show_attributes: bool,
     pub show_type: bool,
     pub show_attribute_visibility: bool,
-    pub show_attribute_multiplicity: bool,
     pub max_attributes: Option<u32>,
     pub show_roles: bool,
     pub cardinality: CardinalityVisibility,
@@ -2029,7 +2028,6 @@ mod tests {
             show_attributes: false,
             show_type: false,
             show_attribute_visibility: false,
-            show_attribute_multiplicity: false,
             max_attributes: Some(6),
             show_roles: false,
             cardinality: CardinalityVisibility::Off,
@@ -2145,7 +2143,6 @@ mod tests {
                     description: None,
                     clear_description: false,
                     display: Some(DiagramDisplaySet {
-                        show_attribute_multiplicity: !expected_gate,
                         cardinality,
                         ..full_display()
                     }),

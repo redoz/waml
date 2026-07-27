@@ -38,6 +38,7 @@ import {
   sortPackageOps,
   retitlePackageOps,
   pkgInsertOps,
+  type DiagramPatch,
 } from "./ops-adapter";
 import { slugify } from "@waml/okf";
 
@@ -281,7 +282,7 @@ export function createModelStore(initial?: Bundle, opts: CreateStoreOptions = {}
     addDiagramFromMembers(title: string, _members: string[]): Diagram {
       return { key: `d-${title}`, title, profile: "uml-domain", members: [] };
     },
-    updateDiagram(key: string, patch: Partial<Diagram>): void {
+    updateDiagram(key: string, patch: DiagramPatch): void {
       // graph().diagrams holds only REAL diagram docs; the implicit "All" diagram
       // is synthesized downstream (effectiveDiagrams) and never appears here, so
       // the !prev guard makes edits on it a silent no-op (documented limitation).

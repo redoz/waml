@@ -225,7 +225,9 @@ pub enum OpDto {
     },
 }
 
-/// A fully-specified display block on the wire. Mirrors `waml::ops::DiagramDisplaySet`.
+/// A fully-specified display block on the wire. The legacy multiplicity boolean
+/// remains here for compatibility and is derived from `cardinality` when crossing
+/// the internal `DiagramDisplaySet` boundary.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "wasm", derive(tsify_next::Tsify))]
 #[cfg_attr(feature = "wasm", tsify(into_wasm_abi, from_wasm_abi))]
@@ -252,7 +254,6 @@ fn display_dto_to_set(d: &DisplayDto) -> DiagramDisplaySet {
         show_attributes: d.show_attributes,
         show_type: d.show_type,
         show_attribute_visibility: d.show_attribute_visibility,
-        show_attribute_multiplicity: d.cardinality.legacy_attribute_gate(),
         max_attributes: d.max_attributes,
         show_roles: d.show_roles,
         cardinality: d.cardinality,
@@ -1077,7 +1078,6 @@ mod tests {
                     show_attributes: false,
                     show_type: false,
                     show_attribute_visibility: false,
-                    show_attribute_multiplicity: false,
                     max_attributes: Some(6),
                     show_roles: false,
                     cardinality: CardinalityVisibility::Off,
@@ -1149,6 +1149,22 @@ mod tests {
     }
 
     #[test]
+    fn typescript_clear_description_payload_removes_the_authored_value() {
+        let dto: OpDto =
+            serde_json::from_str(r#"{"op":"diagram.set","key":"dia","clearDesc":true}"#).unwrap();
+        let bundle = vec![(
+            "dia.md".to_string(),
+            "---\ntype: Diagram\ntitle: D\nprofile: uml-domain\ndescription: Notes\n---\n# D\n"
+                .to_string(),
+        )];
+
+        let updated = waml::ops::apply(&bundle, &[dto.to_op().unwrap()]).unwrap();
+        let model = waml::parse::build_model(&updated);
+
+        assert_eq!(model.diagrams[0].description, None);
+    }
+
+    #[test]
     fn legacy_diagram_set_wire_defaults_to_not_clearing_description() {
         let dto: OpDto = serde_json::from_str(r#"{"op":"diagram.set","v":1,"key":"dia"}"#).unwrap();
 
@@ -1175,7 +1191,6 @@ mod tests {
                 show_attributes: true,
                 show_type: true,
                 show_attribute_visibility: true,
-                show_attribute_multiplicity: true,
                 max_attributes: None,
                 show_roles: true,
                 cardinality: CardinalityVisibility::Explicit,
@@ -1196,7 +1211,7 @@ mod tests {
     }
 
     #[test]
-    fn display_dto_normalizes_legacy_attribute_gate_from_cardinality() {
+    fn display_dto_keeps_the_legacy_gate_at_the_wire_boundary() {
         let dto = DisplayDto {
             show_attributes: true,
             show_type: true,
@@ -1213,9 +1228,10 @@ mod tests {
 
         let display = display_dto_to_set(&dto);
         assert_eq!(display.cardinality, CardinalityVisibility::Off);
+        let normalized = display_set_to_dto(&display);
         assert!(
-            !display.show_attribute_multiplicity,
-            "the enum must be the wire contract's source of truth"
+            !normalized.show_attribute_multiplicity,
+            "the internal enum must derive the legacy wire compatibility field"
         );
     }
 }

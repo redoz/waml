@@ -35,7 +35,6 @@ fn make_view(tab: &DocTab) -> Box<dyn DocView> {
     match tab.kind {
         TabKind::Diagram => Box::new(crate::class_diagram_view::ClassDiagramView::new(
             tab.key.clone(),
-            tab.title.clone(),
         )),
         TabKind::Classifier => {
             Box::new(crate::classifier_preview_view::ClassifierPreviewView::new(
