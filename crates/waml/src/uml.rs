@@ -1,5 +1,9 @@
 //! Selective UML projection over the domain-agnostic OKF bundle.
 
+pub mod ops;
+pub use crate::ops::{DiagramDisplaySet, FieldEdit, NameSpec, Selector};
+pub use ops::{Batch, Op};
+
 pub type Projection = crate::model::Model;
 
 pub(crate) fn recognizes_type(element_type: &crate::model::ElementType) -> bool {

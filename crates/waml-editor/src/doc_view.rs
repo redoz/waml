@@ -11,8 +11,8 @@
 #![allow(dead_code)]
 
 use makepad_widgets::*;
+use waml::edit::PendingEdit;
 use waml::model::Model;
-use waml::ops::Op;
 use waml::source::SourceBundle;
 
 use crate::editor_session::SessionChange;
@@ -162,7 +162,7 @@ impl BodyWidgets {
 /// place that applies ops, opens tabs, and places popups (spec §3).
 #[derive(Default)]
 pub struct ViewOutcome {
-    pub ops: Vec<Op>,
+    pub edit: Option<PendingEdit>,
     /// Ask the shell to open an element preview by key (spec §5). Unused this
     /// A cross-tree popup the shell must place via `popup_root`.
     pub popup: Option<PopupRequest>,
@@ -304,7 +304,7 @@ mod tests {
     #[test]
     fn view_outcome_default_is_all_empty() {
         let o = ViewOutcome::default();
-        assert!(o.ops.is_empty());
+        assert!(o.edit.is_none());
         assert!(o.popup.is_none());
         assert!(o.promote_subject.is_none());
         assert!(!o.close_active);

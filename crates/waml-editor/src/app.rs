@@ -1868,10 +1868,10 @@ pub fn logo_command_for(id: LiveId) -> Option<LogoCommand> {
 fn place_rm_for(
     diagram: &str,
     action: &crate::popup::conflict_list::ConflictListAction,
-) -> Option<waml::ops::Op> {
+) -> Option<waml::uml::Op> {
     match action {
         crate::popup::conflict_list::ConflictListAction::Delete { subject, reference } => {
-            Some(waml::ops::Op::PlaceRm {
+            Some(waml::uml::Op::PlacementRemove {
                 diagram: diagram.to_string(),
                 subject_slug: subject.clone(),
                 reference_slug: reference.clone(),
@@ -2505,7 +2505,7 @@ mod tests {
         let op = place_rm_for("dia", &action);
         assert_eq!(
             op,
-            Some(waml::ops::Op::PlaceRm {
+            Some(waml::uml::Op::PlacementRemove {
                 diagram: "dia".to_string(),
                 subject_slug: "order".to_string(),
                 reference_slug: "payment-gateway".to_string(),
@@ -2542,7 +2542,7 @@ mod tests {
             reference: "payment-gateway".to_string(),
         };
         let op = place_rm_for("dia", &action).expect("Delete maps to an Op");
-        let out = waml::ops::apply(&bundle, &[op]).unwrap();
+        let out = waml::ops::apply(&bundle, &[op.into()]).unwrap();
         assert!(
             !out[0].1.contains("left of"),
             "the deleted placement is gone: {}",

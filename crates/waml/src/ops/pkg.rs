@@ -19,7 +19,7 @@ pub(crate) fn op_pkg_move(
     to_dir: &str,
 ) -> Result<(), OpError> {
     let idx = find_doc(work, slug, "pkg.move")?;
-    let dest = join(to_dir, slug);
+    let dest = join(to_dir, &super::slug_of(slug));
     if work
         .documents()
         .iter()

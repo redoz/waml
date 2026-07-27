@@ -17,6 +17,9 @@ use regex::Regex;
 use crate::frontmatter::{parse_frontmatter_spanned, Frontmatter};
 use crate::source::{SourceBundle, SourceDocument, SourceSlice};
 
+pub mod ops;
+pub use ops::{Batch, Op};
+
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct DirectoryAddress(String);

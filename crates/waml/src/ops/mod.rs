@@ -231,16 +231,18 @@ pub fn apply(bundle: &[(String, String)], ops: &[Op]) -> Result<Bundle, OpError>
 }
 
 pub fn apply_source(bundle: &SourceBundle, ops: &[Op]) -> Result<SourceBundle, OpError> {
-    let mut work = bundle.clone();
-    for (i, op) in ops.iter().enumerate() {
-        apply_one(&mut work, op).map_err(|mut e| {
-            e.index = i;
-            e
-        })?;
+    let mut steps = Vec::with_capacity(ops.len());
+    for (index, op) in ops.iter().cloned().enumerate() {
+        steps.push(crate::compat::Step::try_from(op).map_err(|mut error| {
+            error.index = index;
+            error
+        })?);
     }
-    Ok(work)
+    let batch = crate::compat::Batch::new(steps);
+    crate::compat::apply(bundle, &batch)
 }
 
+#[allow(dead_code)]
 fn apply_one(work: &mut SourceBundle, op: &Op) -> Result<(), OpError> {
     match op {
         Op::AttrAdd {
@@ -665,7 +667,7 @@ pub fn referrers_source(work: &SourceBundle, slug: &str) -> Vec<String> {
     out
 }
 
-fn op_attr_add(
+pub(crate) fn op_attr_add(
     work: &mut SourceBundle,
     node: &str,
     name: &str,
@@ -698,7 +700,7 @@ fn op_attr_add(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn op_attr_set(
+pub(crate) fn op_attr_set(
     work: &mut SourceBundle,
     node: &str,
     name: &str,
@@ -746,7 +748,7 @@ fn op_attr_set(
     })
 }
 
-fn op_attr_rm(work: &mut SourceBundle, node: &str, name: &str) -> Result<(), OpError> {
+pub(crate) fn op_attr_rm(work: &mut SourceBundle, node: &str, name: &str) -> Result<(), OpError> {
     edit_doc(work, node, "attr.rm", |doc| {
         let attrs = attrs_mut(doc);
         let before = attrs.len();
@@ -761,7 +763,11 @@ fn op_attr_rm(work: &mut SourceBundle, node: &str, name: &str) -> Result<(), OpE
     })
 }
 
-fn op_value_add(work: &mut SourceBundle, node: &str, literal: &str) -> Result<(), OpError> {
+pub(crate) fn op_value_add(
+    work: &mut SourceBundle,
+    node: &str,
+    literal: &str,
+) -> Result<(), OpError> {
     edit_doc(work, node, "value.add", |doc| {
         let values = values_mut(doc);
         if values.iter().filter_map(Line::parsed).any(|v| v == literal) {
@@ -775,7 +781,11 @@ fn op_value_add(work: &mut SourceBundle, node: &str, literal: &str) -> Result<()
     })
 }
 
-fn op_value_rm(work: &mut SourceBundle, node: &str, literal: &str) -> Result<(), OpError> {
+pub(crate) fn op_value_rm(
+    work: &mut SourceBundle,
+    node: &str,
+    literal: &str,
+) -> Result<(), OpError> {
     edit_doc(work, node, "value.rm", |doc| {
         let values = values_mut(doc);
         let before = values.len();
@@ -790,7 +800,7 @@ fn op_value_rm(work: &mut SourceBundle, node: &str, literal: &str) -> Result<(),
     })
 }
 
-fn op_rel_add(
+pub(crate) fn op_rel_add(
     work: &mut SourceBundle,
     source: &str,
     kind: RelationshipKind,
@@ -840,7 +850,7 @@ fn op_rel_add(
     })
 }
 
-fn op_rel_set(
+pub(crate) fn op_rel_set(
     work: &mut SourceBundle,
     selector: &Selector,
     ends: &Option<(RelEnd, RelEnd)>,
@@ -877,7 +887,7 @@ fn op_rel_set(
     })
 }
 
-fn op_rel_rm(work: &mut SourceBundle, selector: &Selector) -> Result<(), OpError> {
+pub(crate) fn op_rel_rm(work: &mut SourceBundle, selector: &Selector) -> Result<(), OpError> {
     let (source, by) = rel_target(selector, "rel.rm")?;
     let (source, by) = (source.to_string(), resolve_rel_by(work, by));
     let disp = render_selector(selector);
@@ -895,7 +905,7 @@ fn op_rel_rm(work: &mut SourceBundle, selector: &Selector) -> Result<(), OpError
 }
 
 #[allow(clippy::too_many_arguments)]
-fn op_node_new(
+pub(crate) fn op_node_new(
     work: &mut SourceBundle,
     slug: &str,
     dir: &str,
@@ -942,7 +952,7 @@ fn op_node_new(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn op_node_set(
+pub(crate) fn op_node_set(
     work: &mut SourceBundle,
     slug: &str,
     title: &Option<String>,
@@ -989,7 +999,7 @@ const DISPLAY_KEYS: &[&str] = &[
     "stereotypeColors",
 ];
 
-fn op_diagram_set(
+pub(crate) fn op_diagram_set(
     work: &mut SourceBundle,
     key: &str,
     title: &Option<String>,
@@ -1139,7 +1149,7 @@ fn placement_matches(stmt: &LayoutStatement, subject: &str, reference: &str) -> 
             || (a == Some(reference) && b == Some(subject)))
 }
 
-fn op_place_set(
+pub(crate) fn op_place_set(
     work: &mut SourceBundle,
     diagram: &str,
     subject_title: &str,
@@ -1177,7 +1187,7 @@ fn op_place_set(
     })
 }
 
-fn op_place_rm(
+pub(crate) fn op_place_rm(
     work: &mut SourceBundle,
     diagram: &str,
     subject_slug: &str,
@@ -1195,7 +1205,11 @@ fn op_place_rm(
     })
 }
 
-fn op_node_rm(work: &mut SourceBundle, slug: &str, cascade: bool) -> Result<(), OpError> {
+pub(crate) fn op_node_rm(
+    work: &mut SourceBundle,
+    slug: &str,
+    cascade: bool,
+) -> Result<(), OpError> {
     let i = find_doc(work, slug, "node.rm")?;
     if !cascade {
         let refs = referrers_source(work, slug);

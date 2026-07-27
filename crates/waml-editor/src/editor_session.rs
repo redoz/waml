@@ -1,11 +1,12 @@
-use waml::ops::{Op, OpError};
+use waml::edit::{EditBatch, EditContext, EditError};
 use waml::source::SourceBundle;
 use waml::uml::Projection;
 
 #[derive(Default)]
 pub struct EditorSession {
-    bundle: SourceBundle,
-    persisted_bundle: SourceBundle,
+    source: SourceBundle,
+    persisted_source: SourceBundle,
+    okf: waml::okf::Bundle,
     uml_projection: Projection,
     revision: u64,
     dirty_revision: Option<u64>,
@@ -14,8 +15,9 @@ pub struct EditorSession {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct SessionChange {
     pub revision: u64,
-    pub model_changed: bool,
     pub source_changed: bool,
+    pub okf_changed: bool,
+    pub uml_changed: bool,
     pub navigation_changed: bool,
     pub conflicts_changed: bool,
 }
@@ -24,8 +26,9 @@ impl SessionChange {
     fn full(revision: u64) -> SessionChange {
         SessionChange {
             revision,
-            model_changed: true,
             source_changed: true,
+            okf_changed: true,
+            uml_changed: true,
             navigation_changed: true,
             conflicts_changed: true,
         }
@@ -34,30 +37,54 @@ impl SessionChange {
 
 impl EditorSession {
     pub fn replace(&mut self, bundle: SourceBundle, uml_projection: Projection) -> SessionChange {
-        self.persisted_bundle = bundle.clone();
-        self.bundle = bundle;
+        self.okf = waml::okf::Bundle::parse(&bundle)
+            .expect("validated SourceBundle must produce an OKF bundle");
+        self.persisted_source = bundle.clone();
+        self.source = bundle;
         self.uml_projection = uml_projection;
         self.revision = self.revision.wrapping_add(1);
         self.dirty_revision = None;
         SessionChange::full(self.revision)
     }
 
-    pub fn apply_ops(&mut self, ops: &[Op]) -> Result<SessionChange, OpError> {
-        let bundle = waml::ops::apply_source(&self.bundle, ops)?;
-        let uml_projection = waml::parse::build_model_from_source(&bundle);
-        self.bundle = bundle;
-        self.uml_projection = uml_projection;
+    pub fn apply<B: EditBatch>(&mut self, batch: B) -> Result<SessionChange, EditError> {
+        let candidate_source = batch.lower(EditContext {
+            source: &self.source,
+            okf: &self.okf,
+            uml: &self.uml_projection,
+        })?;
+        let candidate_okf =
+            waml::okf::Bundle::parse(&candidate_source).map_err(|error| EditError {
+                index: 0,
+                op: "okf.parse".into(),
+                selector: None,
+                reason: error.to_string(),
+            })?;
+        let candidate_uml = waml::uml::project(&candidate_okf);
+
+        self.source = candidate_source;
+        self.okf = candidate_okf;
+        self.uml_projection = candidate_uml;
         self.revision = self.revision.wrapping_add(1);
         self.dirty_revision = Some(self.revision);
         Ok(SessionChange::full(self.revision))
     }
 
+    pub fn source(&self) -> &SourceBundle {
+        &self.source
+    }
+
     pub fn bundle(&self) -> &SourceBundle {
-        &self.bundle
+        self.source()
     }
 
     pub fn persisted_bundle(&self) -> &SourceBundle {
-        &self.persisted_bundle
+        &self.persisted_source
+    }
+
+    #[allow(dead_code)] // consumed by Task 7's OKF-backed navigator
+    pub fn okf(&self) -> &waml::okf::Bundle {
+        &self.okf
     }
 
     pub fn uml_projection(&self) -> &Projection {
@@ -78,7 +105,7 @@ impl EditorSession {
 
     pub fn mark_saved(&mut self, revision: u64) {
         if self.dirty_revision == Some(revision) {
-            self.persisted_bundle.clone_from(&self.bundle);
+            self.persisted_source.clone_from(&self.source);
             self.dirty_revision = None;
         }
     }
@@ -88,6 +115,7 @@ impl EditorSession {
 mod tests {
     use super::*;
     use waml::syntax::Direction;
+    use waml::uml::Op;
 
     fn source(pairs: Vec<(String, String)>) -> SourceBundle {
         SourceBundle::try_from_pairs(pairs).unwrap()
@@ -103,7 +131,7 @@ mod tests {
     }
 
     fn place_set() -> Op {
-        Op::PlaceSet {
+        Op::PlacementSet {
             diagram: "dia".into(),
             subject_title: "Order".into(),
             subject_slug: "order".into(),
@@ -114,7 +142,7 @@ mod tests {
     }
 
     fn place_rm() -> Op {
-        Op::PlaceRm {
+        Op::PlacementRemove {
             diagram: "dia".into(),
             subject_slug: "order".into(),
             reference_slug: "customer".into(),
@@ -158,7 +186,7 @@ mod tests {
         let mut session = EditorSession::default();
         session.replace(bundle, model);
 
-        let change = session.apply_ops(&[place_set()]).unwrap();
+        let change = session.apply(waml::uml::Batch(vec![place_set()])).unwrap();
 
         assert_eq!(change, SessionChange::full(2));
         assert_eq!(session.revision(), 2);
@@ -183,14 +211,14 @@ mod tests {
         session.replace(bundle, model);
 
         session
-            .apply_ops(&[Op::NodeSet {
-                slug: "a".into(),
+            .apply(waml::uml::Batch(vec![Op::ClassifierSet {
+                id: "a".into(),
                 title: Some("Changed A".into()),
                 description: None,
                 stereotype: None,
                 abstract_: None,
                 ty: None,
-            }])
+            }]))
             .unwrap();
 
         assert!(!session
@@ -211,10 +239,10 @@ mod tests {
         let before_model = session.model().clone();
         let before_revision = session.revision();
 
-        let result = session.apply_ops(&[Op::AttrRm {
+        let result = session.apply(waml::uml::Batch(vec![Op::AttributeRemove {
             node: "missing".into(),
             name: "also-missing".into(),
-        }]);
+        }]));
 
         assert!(result.is_err());
         assert_eq!(session.bundle(), &before_bundle);
@@ -222,6 +250,64 @@ mod tests {
         assert_eq!(session.model(), &before_model);
         assert_eq!(session.revision(), before_revision);
         assert!(!session.is_dirty());
+    }
+
+    #[test]
+    fn ordered_mixed_batch_commits_once_with_one_final_projection() {
+        let bundle = source(vec![
+            (
+                "sales/order.md".into(),
+                "---\ntype: uml.Class\ntitle: Order\n---\n# Order\n".into(),
+            ),
+            (
+                "sales/customer.md".into(),
+                "---\ntype: uml.Class\ntitle: Customer\n---\n# Customer\n".into(),
+            ),
+            (
+                "sales/orders-diagram.md".into(),
+                "---\ntype: Diagram\ntitle: Orders\nprofile: uml-domain\n---\n# Orders\n\n## Layout\n"
+                    .into(),
+            ),
+        ]);
+        let projection = waml::parse::build_model_from_source(&bundle);
+        let mut session = EditorSession::default();
+        session.replace(bundle, projection);
+        let revision = session.revision();
+
+        let change = session
+            .apply(waml::compat::Batch::new(vec![
+                waml::compat::Step::Okf(waml::okf::Op::IndexRetitle {
+                    directory: waml::okf::DirectoryAddress::parse("/sales").unwrap(),
+                    title: "Sales".into(),
+                }),
+                waml::compat::Step::Uml(Op::ClassifierRename {
+                    from: "sales/order".into(),
+                    to: "purchase-order".into(),
+                }),
+                waml::compat::Step::Uml(Op::PlacementSet {
+                    diagram: "sales/orders-diagram".into(),
+                    subject_title: "Purchase Order".into(),
+                    subject_slug: "sales/purchase-order".into(),
+                    reference_title: "Customer".into(),
+                    reference_slug: "sales/customer".into(),
+                    directions: vec![Direction::RightOf],
+                }),
+            ]))
+            .unwrap();
+
+        assert_eq!(change.revision, revision + 1);
+        assert!(session.okf().index("/sales").unwrap().authored);
+        assert!(session
+            .uml_projection()
+            .contains_concept("sales/purchase-order"));
+        assert!(session
+            .bundle()
+            .documents()
+            .iter()
+            .find(|document| document.path().as_str() == "sales/orders-diagram.md")
+            .unwrap()
+            .text()
+            .contains("right of"));
     }
 
     #[test]
@@ -244,16 +330,16 @@ mod tests {
         let persisted = session.persisted_bundle().clone();
         let model = session.model().clone();
 
-        let result = session.apply_ops(&[
-            Op::PkgRetitle {
-                path: "sales".into(),
+        let result = session.apply(waml::compat::Batch::new(vec![
+            waml::compat::Step::Okf(waml::okf::Op::IndexRetitle {
+                directory: waml::okf::DirectoryAddress::parse("/sales").unwrap(),
                 title: "Sales Domain".into(),
-            },
-            Op::NodeRename {
+            }),
+            waml::compat::Step::Uml(Op::ClassifierRename {
                 from: "sales/order".into(),
                 to: "customer".into(),
-            },
-        ]);
+            }),
+        ]));
 
         assert!(result.is_err());
         assert_eq!(session.revision(), revision);
@@ -274,7 +360,7 @@ mod tests {
         let mut session = EditorSession::default();
         session.replace(bundle, model);
         let old = session.revision();
-        session.apply_ops(&[place_set()]).unwrap();
+        session.apply(waml::uml::Batch(vec![place_set()])).unwrap();
 
         session.mark_saved(old);
         assert!(session.is_dirty());
@@ -294,9 +380,9 @@ mod tests {
         let mut session = EditorSession::default();
         session.replace(bundle, model);
 
-        let set = session.apply_ops(&[place_set()]).unwrap();
+        let set = session.apply(waml::uml::Batch(vec![place_set()])).unwrap();
         assert!(session.bundle().documents()[0].text().contains("left of"));
-        let remove = session.apply_ops(&[place_rm()]).unwrap();
+        let remove = session.apply(waml::uml::Batch(vec![place_rm()])).unwrap();
 
         assert_eq!(set.revision + 1, remove.revision);
         assert!(!session.bundle().documents()[0].text().contains("left of"));

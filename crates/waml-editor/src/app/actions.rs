@@ -346,7 +346,11 @@ impl App {
                     .unwrap_or_default();
                 if let Some(op) = place_rm_for(&diagram, &action) {
                     if self
-                        .apply_session_ops(cx, &[op], "place.rm failed")
+                        .apply_session_edit(
+                            cx,
+                            waml::edit::PendingEdit::new(waml::uml::Batch(vec![op])),
+                            "place.rm failed",
+                        )
                         .is_some()
                     {
                         let conflicts = self
@@ -828,20 +832,17 @@ impl App {
         ActionFlow::Consumed
     }
 
-    pub(super) fn apply_session_ops(
+    pub(super) fn apply_session_edit(
         &mut self,
         cx: &mut Cx,
-        ops: &[waml::ops::Op],
+        edit: waml::edit::PendingEdit,
         error_label: &str,
     ) -> Option<crate::editor_session::SessionChange> {
-        if ops.is_empty() {
-            return None;
-        }
-        match self.session.apply_ops(ops) {
+        match self.session.apply(edit) {
             Ok(change) => {
                 self.documents
                     .after_session_change(cx, &self.ui, &self.session, change);
-                if change.model_changed {
+                if change.uml_changed {
                     self.sync_document_shell(cx);
                 }
                 if change.navigation_changed {
@@ -935,7 +936,9 @@ impl App {
         outcome: crate::doc_view::ViewOutcome,
     ) -> ActionFlow {
         let mut flow = ActionFlow::Continue;
-        self.apply_session_ops(cx, &outcome.ops, "place.set failed");
+        if let Some(edit) = outcome.edit {
+            self.apply_session_edit(cx, edit, "view edit failed");
+        }
 
         if let Some(request) = outcome.popup {
             self.present_view_popup(cx, request);

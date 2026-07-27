@@ -224,7 +224,7 @@ impl DocumentHost {
         session: &EditorSession,
         change: SessionChange,
     ) {
-        if change.model_changed {
+        if change.uml_changed {
             self.tabs.reconcile_titles(session.model());
         }
         let body = BodyWidgets::new(cx, ui);

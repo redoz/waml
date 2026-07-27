@@ -14,7 +14,7 @@ use crate::icons::Icon;
 use crate::inspector::{diagram_elements, subject_from, Subject};
 use crate::popup::base::{PopupItem, PopupResult};
 use crate::scene::build_scene;
-use waml::ops::Op;
+use waml::uml::Op;
 
 /// Strip a defensive `.md` tail from a node/diagram key.
 fn strip_md_key(s: &str) -> String {
@@ -69,7 +69,7 @@ enum DiagramRefresh {
 }
 
 fn refresh_for(change: SessionChange) -> DiagramRefresh {
-    if change.model_changed {
+    if change.uml_changed {
         DiagramRefresh::PreserveCamera
     } else {
         DiagramRefresh::None
@@ -137,39 +137,38 @@ impl ClassDiagramView {
         }
     }
 
-    fn properties_outcome(&self, action: DiagramPropertiesAction) -> ViewOutcome {
-        let (title, description, clear_description, display) = match action {
-            DiagramPropertiesAction::DisplayChanged(display) => (None, None, false, Some(display)),
-            DiagramPropertiesAction::IdentityChanged { title, description } => {
-                let clear_description = description.is_none();
-                (Some(title), description, clear_description, None)
-            }
-            DiagramPropertiesAction::Close => return ViewOutcome::default(),
-        };
-        ViewOutcome {
-            ops: vec![Op::DiagramSet {
-                key: self.key.clone(),
-                title,
-                description,
-                clear_description,
-                display,
-            }],
-            ..Default::default()
-        }
-    }
-
     fn properties_actions_outcome(
         &mut self,
         actions: impl IntoIterator<Item = DiagramPropertiesAction>,
     ) -> ViewOutcome {
         let mut outcome = ViewOutcome::default();
+        let mut ops = Vec::new();
         let mut close = false;
         for action in actions {
             if action == DiagramPropertiesAction::Close {
                 close = true;
             } else {
-                outcome.ops.extend(self.properties_outcome(action).ops);
+                let (title, description, clear_description, display) = match action {
+                    DiagramPropertiesAction::DisplayChanged(display) => {
+                        (None, None, false, Some(display))
+                    }
+                    DiagramPropertiesAction::IdentityChanged { title, description } => {
+                        let clear_description = description.is_none();
+                        (Some(title), description, clear_description, None)
+                    }
+                    DiagramPropertiesAction::Close => unreachable!(),
+                };
+                ops.push(Op::DiagramSet {
+                    key: self.key.clone(),
+                    title,
+                    description,
+                    clear_description,
+                    display,
+                });
             }
+        }
+        if !ops.is_empty() {
+            outcome.edit = Some(waml::edit::PendingEdit::new(waml::uml::Batch(ops)));
         }
         if close {
             self.mode.deactivate();
@@ -697,14 +696,16 @@ impl DocView for ClassDiagramView {
             });
             if let Some(p) = placement {
                 let strip_md = |s: &str| s.strip_suffix(".md").unwrap_or(s).to_string();
-                out.ops.push(waml::ops::Op::PlaceSet {
-                    diagram: strip_md(&self.key),
-                    subject_title: p.subject_title,
-                    subject_slug: strip_md(&p.subject_key),
-                    reference_title: p.reference_title,
-                    reference_slug: strip_md(&p.reference_key),
-                    directions: p.directions,
-                });
+                out.edit = Some(waml::edit::PendingEdit::new(waml::uml::Batch(vec![
+                    waml::uml::Op::PlacementSet {
+                        diagram: strip_md(&self.key),
+                        subject_title: p.subject_title,
+                        subject_slug: strip_md(&p.subject_key),
+                        reference_title: p.reference_title,
+                        reference_slug: strip_md(&p.reference_key),
+                        directions: p.directions,
+                    },
+                ])));
             }
         }
         // node_menu currently only `log!`s on commit -- kept in the shell for
@@ -779,6 +780,7 @@ mod tests {
     };
     use crate::canvas::ConstraintVisibility;
     use crate::diagram_properties::DiagramPropertiesAction;
+    use crate::doc_view::ViewOutcome;
     use crate::tool_dock::{Tool, ToolDockAction};
     use crate::view_bar::{ViewBarAction, ViewOption};
     use makepad_widgets::{
@@ -787,7 +789,7 @@ mod tests {
     };
     use std::path::Path;
     use waml::model::CardinalityVisibility;
-    use waml::ops::{DiagramDisplaySet, Op};
+    use waml::ops::DiagramDisplaySet;
 
     struct TestBody {
         uid: WidgetUid,
@@ -888,6 +890,28 @@ mod tests {
         crate::load::load_model(&dir).expect("mini fixture must load")
     }
 
+    fn apply_outcome(outcome: ViewOutcome) -> String {
+        use waml::edit::{EditBatch, EditContext};
+
+        let source = waml::source::SourceBundle::try_from_pairs([(
+            "orders.md",
+            "---\ntype: Diagram\ntitle: Old\nprofile: uml-domain\ndescription: Old description\n---\n# Old\n",
+        )])
+        .unwrap();
+        let okf = waml::okf::Bundle::parse(&source).unwrap();
+        let uml = waml::uml::project(&okf);
+        let changed = outcome
+            .edit
+            .expect("outcome contains an edit")
+            .lower(EditContext {
+                source: &source,
+                okf: &okf,
+                uml: &uml,
+            })
+            .unwrap();
+        changed.documents()[0].text().to_string()
+    }
+
     #[test]
     fn properties_mode_toggles_and_resets_on_deactivation() {
         let mut mode = ClassDiagramMode::Canvas;
@@ -918,7 +942,7 @@ mod tests {
 
     #[test]
     fn a_properties_change_returns_exactly_one_diagram_set() {
-        let view = ClassDiagramView::new("orders".into());
+        let mut view = ClassDiagramView::new("orders".into());
         let display = DiagramDisplaySet {
             show_attributes: true,
             show_type: false,
@@ -932,19 +956,12 @@ mod tests {
             stereotype_colors: vec![],
         };
 
-        let outcome =
-            view.properties_outcome(DiagramPropertiesAction::DisplayChanged(display.clone()));
+        let outcome = view
+            .properties_actions_outcome([DiagramPropertiesAction::DisplayChanged(display.clone())]);
 
-        assert_eq!(
-            outcome.ops,
-            vec![Op::DiagramSet {
-                key: "orders".into(),
-                title: None,
-                description: None,
-                clear_description: false,
-                display: Some(display),
-            }]
-        );
+        let text = apply_outcome(outcome);
+        assert!(text.contains("showType: false"), "{text}");
+        assert_eq!(text.matches("showType:").count(), 1);
     }
 
     #[test]
@@ -967,23 +984,16 @@ mod tests {
 
     #[test]
     fn clearing_description_emits_an_explicit_clear_diagram_set() {
-        let view = ClassDiagramView::new("orders".into());
+        let mut view = ClassDiagramView::new("orders".into());
 
-        let outcome = view.properties_outcome(DiagramPropertiesAction::IdentityChanged {
+        let outcome = view.properties_actions_outcome([DiagramPropertiesAction::IdentityChanged {
             title: "Orders".into(),
             description: None,
-        });
+        }]);
 
-        assert_eq!(
-            outcome.ops,
-            vec![Op::DiagramSet {
-                key: "orders".into(),
-                title: Some("Orders".into()),
-                description: None,
-                clear_description: true,
-                display: None,
-            }]
-        );
+        let text = apply_outcome(outcome);
+        assert!(text.contains("title: Orders"), "{text}");
+        assert!(!text.contains("description:"), "{text}");
     }
 
     #[test]
@@ -991,8 +1001,9 @@ mod tests {
         assert_eq!(
             refresh_for(crate::editor_session::SessionChange {
                 revision: 2,
-                model_changed: true,
                 source_changed: true,
+                okf_changed: true,
+                uml_changed: true,
                 navigation_changed: true,
                 conflicts_changed: true,
             }),
@@ -1001,8 +1012,9 @@ mod tests {
         assert_eq!(
             refresh_for(crate::editor_session::SessionChange {
                 revision: 3,
-                model_changed: false,
                 source_changed: true,
+                okf_changed: false,
+                uml_changed: false,
                 navigation_changed: false,
                 conflicts_changed: false,
             }),
@@ -1036,25 +1048,10 @@ mod tests {
             DiagramPropertiesAction::DisplayChanged(display.clone()),
         ]);
 
-        assert_eq!(
-            outcome.ops,
-            vec![
-                Op::DiagramSet {
-                    key: "orders".into(),
-                    title: Some("Order flow".into()),
-                    description: None,
-                    clear_description: true,
-                    display: None,
-                },
-                Op::DiagramSet {
-                    key: "orders".into(),
-                    title: None,
-                    description: None,
-                    clear_description: false,
-                    display: Some(display),
-                },
-            ]
-        );
+        let text = apply_outcome(outcome);
+        assert!(text.contains("title: Order flow"), "{text}");
+        assert!(text.contains("showAttributes: false"), "{text}");
+        assert!(!text.contains("description:"), "{text}");
         assert_eq!(view.mode, ClassDiagramMode::Canvas);
     }
 
