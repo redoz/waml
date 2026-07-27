@@ -92,6 +92,19 @@ enum ToggleControlAction {
     Changed(bool),
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct ControlAccess {
+    register_nav_stop: bool,
+    retain_focus: bool,
+}
+
+fn control_access(enabled: bool, focused: bool) -> ControlAccess {
+    ControlAccess {
+        register_nav_stop: enabled,
+        retain_focus: enabled && focused,
+    }
+}
+
 #[derive(Script, ScriptHook, Widget)]
 pub struct ToggleControl {
     #[uid]
@@ -140,6 +153,13 @@ impl ToggleControl {
 
     pub fn set_enabled(&mut self, cx: &mut Cx, enabled: bool) {
         if self.enabled != enabled {
+            let access = control_access(enabled, self.focused);
+            if !access.retain_focus
+                && (self.focused || cx.has_key_focus(self.draw_track_off.area()))
+            {
+                cx.set_key_focus(Area::Empty);
+            }
+            self.focused = access.retain_focus;
             self.enabled = enabled;
             self.draw_track_off.redraw(cx);
         }
@@ -165,8 +185,13 @@ impl ToggleControl {
 impl Widget for ToggleControl {
     fn handle_event(&mut self, cx: &mut Cx, event: &Event, _scope: &mut Scope) {
         match event.hits(cx, self.draw_track_off.area()) {
-            Hit::KeyFocus(_) => {
+            Hit::KeyFocus(_) if self.enabled => {
                 self.focused = true;
+                self.draw_track_off.redraw(cx);
+            }
+            Hit::KeyFocus(_) => {
+                self.focused = false;
+                cx.set_key_focus(Area::Empty);
                 self.draw_track_off.redraw(cx);
             }
             Hit::KeyFocusLost(_) => {
@@ -184,7 +209,7 @@ impl Widget for ToggleControl {
                 self.hovered = false;
                 self.draw_track_off.redraw(cx);
             }
-            Hit::FingerDown(fe) if fe.is_primary_hit() => {
+            Hit::FingerDown(fe) if self.enabled && fe.is_primary_hit() => {
                 cx.set_key_focus(self.draw_track_off.area());
             }
             Hit::FingerUp(fe) if fe.is_primary_hit() && fe.is_over => self.toggle(cx),
@@ -227,6 +252,13 @@ impl Widget for ToggleControl {
         );
         if self.focused {
             draw_outline(cx, &mut self.draw_focus, rect, 1.5);
+        }
+        if control_access(self.enabled, self.focused).register_nav_stop {
+            cx.add_nav_stop(
+                self.draw_track_off.area(),
+                NavRole::TextInput,
+                Inset::default(),
+            );
         }
         DrawStep::done()
     }
@@ -305,6 +337,11 @@ impl SegmentedControl {
 
     pub fn set_enabled(&mut self, cx: &mut Cx, enabled: bool) {
         if self.enabled != enabled {
+            let access = control_access(enabled, self.focused);
+            if !access.retain_focus && (self.focused || cx.has_key_focus(self.draw_bg.area())) {
+                cx.set_key_focus(Area::Empty);
+            }
+            self.focused = access.retain_focus;
             self.enabled = enabled;
             self.draw_bg.redraw(cx);
         }
@@ -344,8 +381,13 @@ impl SegmentedControl {
 impl Widget for SegmentedControl {
     fn handle_event(&mut self, cx: &mut Cx, event: &Event, _scope: &mut Scope) {
         match event.hits(cx, self.draw_bg.area()) {
-            Hit::KeyFocus(_) => {
+            Hit::KeyFocus(_) if self.enabled => {
                 self.focused = true;
+                self.draw_bg.redraw(cx);
+            }
+            Hit::KeyFocus(_) => {
+                self.focused = false;
+                cx.set_key_focus(Area::Empty);
                 self.draw_bg.redraw(cx);
             }
             Hit::KeyFocusLost(_) => {
@@ -367,7 +409,7 @@ impl Widget for SegmentedControl {
                 self.hovered = None;
                 self.draw_bg.redraw(cx);
             }
-            Hit::FingerDown(fe) if fe.is_primary_hit() => {
+            Hit::FingerDown(fe) if self.enabled && fe.is_primary_hit() => {
                 cx.set_key_focus(self.draw_bg.area());
             }
             Hit::FingerUp(fe) if fe.is_primary_hit() && fe.is_over => {
@@ -445,6 +487,9 @@ impl Widget for SegmentedControl {
         if self.focused {
             draw_outline(cx, &mut self.draw_focus, rect, 1.5);
         }
+        if control_access(self.enabled, self.focused).register_nav_stop {
+            cx.add_nav_stop(self.draw_bg.area(), NavRole::TextInput, Inset::default());
+        }
         DrawStep::done()
     }
 }
@@ -495,5 +540,21 @@ mod tests {
         assert_eq!(state.selected(), Off);
         state.select_previous();
         assert_eq!(state.selected(), All);
+    }
+
+    #[test]
+    fn enabled_controls_are_tab_stops_and_retain_focus() {
+        let access = super::control_access(true, true);
+
+        assert!(access.register_nav_stop);
+        assert!(access.retain_focus);
+    }
+
+    #[test]
+    fn disabled_controls_are_skipped_and_drop_focus() {
+        let access = super::control_access(false, true);
+
+        assert!(!access.register_nav_stop);
+        assert!(!access.retain_focus);
     }
 }
