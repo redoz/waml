@@ -11,5 +11,4 @@ stereotype: document
 - depends [Native Editor](./native-editor.md)
 
 ## Notes
-- Contains WebAssembly, JavaScript glue, and required resources for browser delivery.
-- [Native Web Delivery](./native-web-delivery.md) owns the publication pipeline that produces this artifact.
+- [Native Web Delivery](./native-web-delivery.md)
