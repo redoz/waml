@@ -128,6 +128,18 @@ mod tests {
     }
 
     #[test]
+    fn replacement_keeps_current_and_persisted_text_equal() {
+        let bundle = vec![("notes.md".into(), "# Notes\n".into())];
+        let model = waml::parse::build_model(&bundle);
+        let mut session = EditorSession::default();
+
+        session.replace(bundle.clone(), model);
+
+        assert_eq!(session.bundle(), bundle.as_slice());
+        assert_eq!(session.persisted_bundle(), bundle.as_slice());
+    }
+
+    #[test]
     fn successful_ops_increment_once_and_mark_the_revision_dirty() {
         let bundle = diagram_bundle("");
         let model = waml::parse::build_model(&bundle);
@@ -161,6 +173,45 @@ mod tests {
         assert_eq!(session.bundle(), before_bundle.as_slice());
         assert_eq!(session.model(), &before_model);
         assert_eq!(session.revision(), before_revision);
+        assert!(!session.is_dirty());
+    }
+
+    #[test]
+    fn late_batch_failure_rolls_back_every_session_field() {
+        let bundle = vec![
+            (
+                "sales/order.md".into(),
+                "---\ntype: uml.Class\ntitle: Order\n---\n# Order\n".into(),
+            ),
+            (
+                "sales/customer.md".into(),
+                "---\ntype: uml.Class\ntitle: Customer\n---\n# Customer\n".into(),
+            ),
+        ];
+        let model = waml::parse::build_model(&bundle);
+        let mut session = EditorSession::default();
+        session.replace(bundle, model);
+        let revision = session.revision();
+        let source = session.bundle().to_vec();
+        let persisted = session.persisted_bundle().to_vec();
+        let model = session.model().clone();
+
+        let result = session.apply_ops(&[
+            Op::PkgRetitle {
+                path: "sales".into(),
+                title: "Sales Domain".into(),
+            },
+            Op::NodeRename {
+                from: "sales/order".into(),
+                to: "customer".into(),
+            },
+        ]);
+
+        assert!(result.is_err());
+        assert_eq!(session.revision(), revision);
+        assert_eq!(session.bundle(), source);
+        assert_eq!(session.persisted_bundle(), persisted);
+        assert_eq!(session.model(), &model);
         assert!(!session.is_dirty());
     }
 

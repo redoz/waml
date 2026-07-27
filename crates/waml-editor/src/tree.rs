@@ -353,4 +353,35 @@ mod tests {
         assert_eq!(root.children[0].key, "d1");
         assert_eq!(root.children[1].key, "d2");
     }
+
+    #[test]
+    fn authored_index_order_drives_nested_tree_rows() {
+        let model = waml::parse::build_model(&[
+            ("index.md".into(), "# Root\n\n* [Sales](sales/)\n".into()),
+            (
+                "sales/index.md".into(),
+                "# Sales\n\n* [Order](./order.md)\n* [Customer](./customer.md)\n".into(),
+            ),
+            (
+                "sales/customer.md".into(),
+                "---\ntype: uml.Class\ntitle: Customer\n---\n# Customer\n".into(),
+            ),
+            (
+                "sales/order.md".into(),
+                "---\ntype: uml.Class\ntitle: Order\n---\n# Order\n".into(),
+            ),
+        ]);
+
+        let tree = build_tree(&model, "bundle");
+        let sales = &tree.roots[0].children[0];
+        assert_eq!(sales.key, "sales");
+        assert_eq!(
+            sales
+                .children
+                .iter()
+                .map(|row| row.key.as_str())
+                .collect::<Vec<_>>(),
+            vec!["sales/order", "sales/customer"]
+        );
+    }
 }

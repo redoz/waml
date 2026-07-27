@@ -1561,6 +1561,37 @@ mod tests {
     }
 
     #[test]
+    fn arbitrary_and_missing_type_documents_before_selective_projection() {
+        let model = build_model(&[
+            ("plain.md".into(), "# Plain\n".into()),
+            (
+                "vendor.md".into(),
+                "---\ntype: vendor.Runbook\n---\n# Runbook\n".into(),
+            ),
+            (
+                "future.md".into(),
+                "---\ntype: uml.FutureThing\n---\n# Future\n".into(),
+            ),
+        ]);
+
+        assert_eq!(model.nodes.len(), 3);
+        assert!(matches!(
+            model
+                .nodes
+                .iter()
+                .find(|node| node.key == "plain")
+                .unwrap()
+                .ty,
+            ElementType::Uml(crate::model::UmlMetaclass::Class)
+        ));
+        assert!(model
+            .nodes
+            .iter()
+            .filter(|node| node.key != "plain")
+            .all(|node| matches!(node.ty, ElementType::Unknown(_))));
+    }
+
+    #[test]
     fn build_model_discovers_nested_packages_from_directories() {
         let b = vec![
             (

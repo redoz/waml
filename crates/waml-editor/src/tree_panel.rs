@@ -1251,6 +1251,11 @@ mod tests {
     }
 
     #[test]
+    fn document_action_ignores_unknown_rows() {
+        assert!(document_action("future", TreeKind::Unknown, 2).is_none());
+    }
+
+    #[test]
     fn id_maps_round_trip_key_and_kind() {
         let tree = ProjectTreeData {
             roots: vec![TreeNode {

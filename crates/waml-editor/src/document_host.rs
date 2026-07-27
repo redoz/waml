@@ -355,6 +355,34 @@ mod tests {
     }
 
     #[test]
+    fn opening_diagram_and_classifier_rows_uses_the_kind_factory() {
+        let mut host = DocumentHost::default();
+
+        host.apply_command(DocumentCommand::Open {
+            key: "orders".into(),
+            title: "Orders".into(),
+            node_kind: TreeKind::Diagram,
+            persistent: true,
+        });
+        host.apply_command(DocumentCommand::Open {
+            key: "customer".into(),
+            title: "Customer".into(),
+            node_kind: TreeKind::Class,
+            persistent: false,
+        });
+
+        assert_eq!(host.tabs.tabs.len(), 2);
+        assert_eq!(host.tabs.tabs[0].kind, TabKind::Diagram);
+        assert_eq!(host.tabs.tabs[1].kind, TabKind::Classifier);
+        assert_eq!(host.views.len(), 2);
+        assert!(host
+            .tabs
+            .tabs
+            .iter()
+            .all(|tab| host.views.contains_key(&tab.id)));
+    }
+
+    #[test]
     fn close_reconciles_and_keeps_the_existing_right_then_left_fallback() {
         let mut host = DocumentHost {
             tabs: OpenTabs::diagram_preview("orders", "Orders"),

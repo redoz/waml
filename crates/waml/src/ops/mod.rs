@@ -1203,6 +1203,27 @@ mod tests {
     }
 
     #[test]
+    fn retitle_changes_index_content_without_changing_child_paths() {
+        let before = vec![(
+            "sales/order.md".into(),
+            "---\ntype: uml.Class\ntitle: Order\n---\n# Order\n".into(),
+        )];
+        let after = apply(
+            &before,
+            &[Op::PkgRetitle {
+                path: "sales".into(),
+                title: "Sales Domain".into(),
+            }],
+        )
+        .unwrap();
+
+        assert!(after
+            .iter()
+            .any(|(path, text)| path == "sales/index.md" && text.contains("# Sales Domain")));
+        assert!(after.iter().any(|(path, _)| path == "sales/order.md"));
+    }
+
+    #[test]
     fn attr_add_appends_a_bare_attribute() {
         let b = vec![(
             "shop/order.md".to_string(),
