@@ -110,3 +110,73 @@ DONE
 ## Remaining concerns
 
 - None.
+
+## Fix round 1 — cross-language cardinality alignment
+
+Independent review found that the native split between attribute and
+relationship cardinality had not been carried through every TypeScript path.
+This round closes that gap:
+
+- `packages/core/src/state/overlay.ts` now preserves `showCardinality` from the
+  Rust model display alongside the attribute `cardinality` enum.
+- `DiagramPropertiesBody.svelte` exposes attribute cardinality as the visible
+  On / Explicit / Off control and relationship cardinality as an independent
+  switch.
+- `AttributeRow.svelte` and `ClassifierBox.svelte` render attribute
+  cardinality from the enum: Off hides it, Explicit omits the implicit default
+  `1`, and All renders `1`.
+- `edges.ts` and `RelEdge.svelte` use only `showCardinality` for relationship
+  end labels and render authored multiplicities only. They no longer synthesize
+  `{1}`.
+
+### Fix-round RED evidence
+
+- `rtk pnpm --filter @waml/core exec vitest run src/state/overlay.test.ts`
+  - Failed because the projected display returned `showCardinality:
+    undefined` instead of `false`.
+- `rtk pnpm --filter @waml/web exec vitest run
+  src/components/canvas/DiagramPropertiesBody.test.ts
+  src/components/canvas/edges.test.ts`
+  - The panel tests failed because the three attribute modes and independent
+    relationship switch were absent.
+- `rtk pnpm --filter @waml/web exec vitest run
+  src/components/canvas/nodes/AttributeRow.test.ts
+  src/components/canvas/nodes/ClassifierBox.test.ts`
+  - Three focused assertions failed against the legacy boolean renderer:
+    Off still rendered a multiplicity and All did not render `{1}`.
+
+The first focused edge-test launch could not resolve the existing
+`@waml/core/state/model` package export because this worktree had no generated
+`packages/core/dist` tree. `rtk pnpm --filter @waml/core build` generated the
+normal workspace artifacts; the unchanged import then resolved and the focused
+suite passed.
+
+### Fix-round verification
+
+- `rtk pnpm --filter @waml/core test`
+  - PASS: 112 tests.
+- `rtk pnpm --filter @waml/web test`
+  - PASS: 309 tests.
+- `rtk pnpm --filter @waml/web build`
+  - PASS: Svelte check reported 0 errors and 0 warnings; Vite production build
+    completed. Vite retained its existing runtime WASM URL and chunk-size
+    warnings.
+- Focused web cardinality suites
+  - PASS: 39 panel/edge tests and 20 attribute-row/classifier tests.
+- `rtk cargo test -p waml-editor diagram_properties`
+  - PASS: 9 tests.
+- `rtk cargo test -p waml-editor
+  properties_mode_hides_canvas_chrome_and_gates_canvas_actions`
+  - PASS: 1 test.
+- `rtk cargo clippy -p waml-editor --all-targets -- -D warnings`
+  - PASS: exit 0, 0 clippy errors; Cargo printed the existing two
+    duplicate-package selection warnings.
+
+The optional native structural addition was not made: the existing
+properties-mode state regression already verifies tool-dock visibility and
+action gating, while the PrintWindow capture verifies the live hierarchy
+without introducing a brittle source-text or pixel assertion.
+
+### Fix-round remaining concerns
+
+- None.
