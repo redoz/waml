@@ -3,7 +3,7 @@
 //! placements + a hull size; `class_shape` builds the tree from a `SceneNode`
 //! and one `StyleSheet`. The renderer in `canvas.rs` just walks the placements.
 //!
-//! taffy is native-only and lives only in this crate — `waml`/`waml-wasm` never
+//! taffy is native-only and lives only in this crate — `waml` never
 //! depend on it.
 
 use waml::solve::sizing::{self, PT_TO_LPX};

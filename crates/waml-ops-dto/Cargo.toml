@@ -4,17 +4,14 @@ version = "0.0.0"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
-description = "Serde wire contract (OpDto) for WAML ops, shared by CLI and WASM."
+description = "Serde wire contract (OpDto) consumed by the WAML CLI."
 
 [dependencies]
 waml = { path = "../waml", features = ["serde"] }
 serde = { workspace = true }
-tsify-next = { version = "0.5.6", features = ["js"], optional = true }
-wasm-bindgen = { version = "0.2", optional = true }
 
 [features]
 default = []
-wasm = ["dep:tsify-next", "dep:wasm-bindgen"]
 
 [dev-dependencies]
 serde_json = { workspace = true }

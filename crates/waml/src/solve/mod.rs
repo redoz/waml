@@ -24,8 +24,6 @@ mod wire {
 
     #[derive(Debug, Clone, Copy, PartialEq)]
     #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-    #[cfg_attr(feature = "wasm", derive(tsify_next::Tsify))]
-    #[cfg_attr(feature = "wasm", tsify(into_wasm_abi, from_wasm_abi))]
     pub struct Size {
         pub w: f64,
         pub h: f64,
@@ -33,8 +31,6 @@ mod wire {
 
     #[derive(Debug, Clone, Copy, PartialEq)]
     #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-    #[cfg_attr(feature = "wasm", derive(tsify_next::Tsify))]
-    #[cfg_attr(feature = "wasm", tsify(into_wasm_abi, from_wasm_abi))]
     pub struct Rect {
         pub x: f64,
         pub y: f64,
@@ -44,8 +40,6 @@ mod wire {
 
     #[derive(Debug, Clone, Copy, PartialEq)]
     #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-    #[cfg_attr(feature = "wasm", derive(tsify_next::Tsify))]
-    #[cfg_attr(feature = "wasm", tsify(into_wasm_abi, from_wasm_abi))]
     pub struct SolveConfig {
         pub margin_px: [f64; 4],
         pub chip: Size,
@@ -53,8 +47,6 @@ mod wire {
 
     #[derive(Debug, Clone, Copy, Default, PartialEq)]
     #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-    #[cfg_attr(feature = "wasm", derive(tsify_next::Tsify))]
-    #[cfg_attr(feature = "wasm", tsify(into_wasm_abi, from_wasm_abi))]
     pub struct FlagSet {
         pub emphasized: bool,
         pub collapsed: bool,
@@ -62,8 +54,6 @@ mod wire {
 
     #[derive(Debug, Clone, PartialEq)]
     #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-    #[cfg_attr(feature = "wasm", derive(tsify_next::Tsify))]
-    #[cfg_attr(feature = "wasm", tsify(into_wasm_abi, from_wasm_abi))]
     pub struct SolvedGroup {
         pub rect: Rect,
         pub shape: Shape,
@@ -73,8 +63,6 @@ mod wire {
 
     #[derive(Debug, Clone, PartialEq)]
     #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-    #[cfg_attr(feature = "wasm", derive(tsify_next::Tsify))]
-    #[cfg_attr(feature = "wasm", tsify(into_wasm_abi, from_wasm_abi))]
     pub struct Route {
         pub points: Vec<(f64, f64)>,
         pub source: String,
@@ -83,21 +71,9 @@ mod wire {
 
     #[derive(Debug, Clone, PartialEq)]
     #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-    #[cfg_attr(feature = "wasm", derive(tsify_next::Tsify))]
-    #[cfg_attr(feature = "wasm", tsify(into_wasm_abi, from_wasm_abi))]
     pub struct Solved {
-        #[cfg_attr(feature = "wasm", tsify(type = "Record<string, Rect>"))]
-        #[cfg_attr(
-            all(feature = "wasm", target_family = "wasm"),
-            serde(serialize_with = "wasm_bindgen_utils::serialize_btreemap_as_object")
-        )]
         pub nodes: BTreeMap<String, Rect>,
         pub groups: Vec<SolvedGroup>,
-        #[cfg_attr(feature = "wasm", tsify(type = "Record<string, FlagSet>"))]
-        #[cfg_attr(
-            all(feature = "wasm", target_family = "wasm"),
-            serde(serialize_with = "wasm_bindgen_utils::serialize_btreemap_as_object")
-        )]
         pub flags: BTreeMap<String, FlagSet>,
         #[cfg_attr(feature = "serde", serde(default))]
         pub routes: Vec<Route>,

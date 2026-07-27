@@ -1,6 +1,5 @@
 #![cfg(feature = "serde")]
-//! Pins the JSON shape of `Model` to the TS field names in
-//! `packages/okf/src/types.ts`. If a rename drifts, this fails.
+//! Pins the retained Rust JSON shape of `Model`.
 use waml::diagnostic::{DiagCode, Diagnostic, Severity};
 use waml::model::{AssocName, BehaviorKind, ElementType, Model, Node, UmlMetaclass, Visibility};
 use waml::multiplicity::Multiplicity;

@@ -19,8 +19,6 @@ use crate::frontmatter::{parse_frontmatter, Frontmatter};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "serde", serde(rename_all = "lowercase"))]
-#[cfg_attr(feature = "wasm", derive(tsify_next::Tsify))]
-#[cfg_attr(feature = "wasm", tsify(into_wasm_abi, from_wasm_abi))]
 pub enum ConceptRole {
     #[default]
     Concept,
@@ -31,8 +29,6 @@ pub enum ConceptRole {
 /// An untyped OKF link (`[text](href)`) drawn from a concept's body (OKF §5.3).
 #[derive(Debug, Clone, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-#[cfg_attr(feature = "wasm", derive(tsify_next::Tsify))]
-#[cfg_attr(feature = "wasm", tsify(into_wasm_abi, from_wasm_abi))]
 pub struct Link {
     pub text: String,
     pub href: String,
@@ -42,8 +38,6 @@ pub struct Link {
 /// `# Citations` heading (OKF §8).
 #[derive(Debug, Clone, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-#[cfg_attr(feature = "wasm", derive(tsify_next::Tsify))]
-#[cfg_attr(feature = "wasm", tsify(into_wasm_abi, from_wasm_abi))]
 pub struct Citation {
     pub text: String,
     pub href: String,
@@ -55,8 +49,6 @@ pub struct Citation {
 /// frontmatter survives in [`Concept::extra`].
 #[derive(Debug, Clone, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-#[cfg_attr(feature = "wasm", derive(tsify_next::Tsify))]
-#[cfg_attr(feature = "wasm", tsify(into_wasm_abi, from_wasm_abi))]
 pub struct Concept {
     /// Concept ID = full path minus the `.md` suffix (OKF §2).
     pub id: String,
@@ -110,15 +102,12 @@ pub struct Concept {
         feature = "serde",
         serde(default, skip_serializing_if = "frontmatter_is_empty")
     )]
-    #[cfg_attr(feature = "wasm", tsify(type = "Record<string, FmValue>"))]
     pub extra: Frontmatter,
 }
 
 /// Every document projects to exactly one `Concept`; a `Bundle` stays flat.
 #[derive(Debug, Clone, Default, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-#[cfg_attr(feature = "wasm", derive(tsify_next::Tsify))]
-#[cfg_attr(feature = "wasm", tsify(into_wasm_abi, from_wasm_abi))]
 pub struct Bundle {
     pub concepts: Vec<Concept>,
 }

@@ -80,7 +80,8 @@ shows. CAD shows the full over-constrained set and offers to delete one — that
 stmt)? Difference-constraint cycles: is the "ring" the full negative cycle, or just the two edges
 that closed it? Decide what "the conflicting set" means for the user.
 
-**Risk/effort.** Medium-high — touches the `waml` solver core (careful, shared with web via wasm).
+**Risk/effort.** Medium-high — touches the `waml` solver core shared by the
+native editor and CLI.
 But strongly TDD-able (contradictory fixtures, assert the marked set). Highest correctness payoff.
 
 ---
@@ -169,7 +170,7 @@ Should the glyph also encode override(amber)/conflict(red) state, or is that the
 Interaction with hover-trace emphasis (thread 1)?
 
 **Risk/effort.** Low-medium, pure canvas/art. Needs a visual-companion / mockup pass with redoz@
-(inherently visual — offer the browser companion when brainstorming this one).
+(inherently visual — prepare a visual mockup when brainstorming this one).
 
 ---
 

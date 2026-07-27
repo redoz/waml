@@ -1,6 +1,7 @@
 # Rust codebase review
 
-Reviewed 2026-07-26. Scope: the Rust workspace only (`crates/*`); the Svelte/TypeScript front end was explicitly excluded.
+Reviewed 2026-07-26. Scope: the Rust workspace (`crates/*`); the independent
+VS Code client was excluded.
 
 ## Executive judgment
 
@@ -28,24 +29,6 @@ Recommendation:
 3. Keep the opened directory and an on-disk revision/fingerprint; reject or reconcile external changes instead of overwriting them.
 4. Make `save_backend` return a result and retain dirty state on failure. Surface the failure in the UI.
 5. Add an integration test: open a temporary bundle, apply an operation, save, reload from disk, and compare the semantic model.
-
-## P0 — The only general quality gate is disabled, while publishing still runs on every push to `main`
-
-Evidence:
-
-- `.github/workflows/ci.yml:3` says CI is temporarily disabled.
-- Its only trigger is `workflow_dispatch`; push and pull-request triggers are commented out.
-- That workflow contains the relevant cross-platform `cargo test --workspace` job.
-- `.github/workflows/pages.yml` still builds and deploys the editor on every push to `main`.
-
-Local tests being healthy today does not substitute for a gate. The repository can publish a commit that never ran the Rust tests, Clippy, or the Windows matrix. The comment already records that cross-platform parser bugs have reached `main` before.
-
-Recommendation:
-
-1. Restore pull-request and `main` push triggers immediately. If the combined Rust/Node workflow is flaky, split it; do not disable the Rust gate with it.
-2. Require the Rust check before merging and make deployment depend on the tested commit.
-3. Run at least `cargo test --workspace` and `cargo clippy --workspace --all-targets --all-features -- -D warnings` on Linux and Windows.
-4. Add `cargo fmt --check` explicitly rather than relying on incidental cleanliness.
 
 ## P1 — `App` is the transaction manager, persistence coordinator, router, view registry, and global UI controller
 
@@ -136,20 +119,6 @@ Then split semantic builders by substrate (`class`, `package`, `activity`, `sequ
 
 Only pursue incremental rebuilds after the single-pass representation exists and profiling shows a need. A clean full rebuild is preferable to a clever invalidation graph built over duplicated parsing.
 
-## P1 — The deployed Makepad tool revision contradicts the manifest pin and its own maintenance comment
-
-Evidence:
-
-- `crates/waml-editor/Cargo.toml` pins `makepad-widgets` to revision `ec009e50`.
-- `.github/workflows/pages.yml` installs `cargo-makepad` at revision `9147a9a0`.
-- The workflow comment says this is “Pinned to the same makepad rev as `crates/waml-editor/Cargo.toml`” and says the tool and framework share an ABI.
-
-Either the revisions are intentionally different, in which case the comment and upgrade procedure are false, or they are unintentionally different, in which case the production build uses an untested tool/framework pairing. Both make the next upgrade hazardous.
-
-Recommendation:
-
-Define the Makepad revision once and have both dependency resolution and build tooling consume it, or add a small CI script that verifies the two pins. If tool and framework genuinely require different commits, name both explicitly and document the compatibility pair rather than saying they are the same revision.
-
 ## P2 — Adding an operation requires synchronized edits across multiple exhaustive representations
 
 Evidence:
@@ -179,7 +148,7 @@ This makes refactoring expensive because callers can bind to implementation-shap
 
 Recommendation:
 
-Inventory actual consumers (`waml-cli`, `waml-wasm`, and `waml-editor`), define a small facade of supported types and workflows, and make the remaining modules private or `pub(crate)`. Give the crate a real version once the facade is named. Keep syntax/lossless editing APIs public only if they are deliberately supported as a separate layer.
+Inventory actual consumers (`waml-cli` and `waml-editor`), define a small facade of supported types and workflows, and make the remaining modules private or `pub(crate)`. Give the crate a real version once the facade is named. Keep syntax/lossless editing APIs public only if they are deliberately supported as a separate layer.
 
 ## What should not be “fixed”
 
@@ -192,7 +161,7 @@ Inventory actual consumers (`waml-cli`, `waml-wasm`, and `waml-editor`), define 
 ## Suggested sequence
 
 1. Make native editing honestly read-only or durably saved.
-2. Restore required Rust CI and gate deployment/merge.
+2. Restore required Rust CI and gate merges.
 3. Correct and centralize the Makepad compatibility pins.
 4. Introduce `EditorSession::apply_ops` and route every edit through it.
 5. Establish the canvas/controller/rendering boundaries.

@@ -1,16 +1,15 @@
 #!/usr/bin/env bash
-# Full build from a clean checkout: install deps, compile the Rust core to
-# inlined wasm, then build every workspace package. Run from anywhere.
+# Full native Rust and VS Code build from a clean checkout. Run from anywhere.
 #
-#   ./build.sh            install + wasm + build
-#   ./build.sh --test     also run `pnpm -r test` at the end
-#   ./build.sh --lint     also run `pnpm lint`
+#   ./build.sh            install + build
+#   ./build.sh --test     also run Rust and VS Code tests
+#   ./build.sh --lint     also run Rust clippy and VS Code lint
 set -euo pipefail
 cd "$(dirname "$0")"
 
 need() { command -v "$1" >/dev/null 2>&1 || { echo "error: '$1' not found on PATH ($2)" >&2; exit 1; }; }
 need pnpm      "https://pnpm.io/installation"
-need wasm-pack "cargo install wasm-pack"
+need cargo     "https://rustup.rs"
 
 run_test=0; run_lint=0
 for arg in "$@"; do
@@ -24,13 +23,13 @@ done
 echo "==> pnpm install"
 pnpm install --frozen-lockfile
 
-echo "==> build wasm"
-pnpm build:wasm
+echo "==> Rust build"
+cargo build --workspace
 
-echo "==> build packages"
+echo "==> VS Code build"
 pnpm build
 
-[ "$run_lint" = 1 ] && { echo "==> lint"; pnpm lint; }
-[ "$run_test" = 1 ] && { echo "==> test"; pnpm -r test; }
+[ "$run_test" = 1 ] && { echo "==> Rust test"; cargo test --workspace; echo "==> VS Code test"; pnpm test; }
+[ "$run_lint" = 1 ] && { echo "==> Rust clippy"; cargo clippy --workspace --all-targets --all-features -- -D warnings; echo "==> VS Code lint"; pnpm lint; }
 
 echo "==> done"

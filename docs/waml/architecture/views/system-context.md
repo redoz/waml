@@ -1,7 +1,7 @@
 ---
 type: Diagram
 title: System Context
-description: Structural view of the people, bundles, editor, browser environment, and web delivery artifact in the current product.
+description: Structural view of authors, bundles, native editor, CLI/LSP, and VS Code integration.
 profile: uml-domain
 ---
 
@@ -12,12 +12,12 @@ profile: uml-domain
 - [Editor](./../concepts/workflows/editor.md)
 - [OKF Bundle](./../concepts/model/okf-bundle.md)
 - [Local Bundle](./../concepts/runtime/local-bundle.md)
-- [Share Recipient](./../concepts/runtime/share-recipient.md)
 - [Native Editor](./../concepts/runtime/native-editor.md)
-- [Browser](./../concepts/runtime/browser.md)
-- [GitHub Pages](./../concepts/runtime/github-pages.md)
-- [WASM Web Artifact](./../concepts/runtime/wasm-web-artifact.md)
 
 ## Reading guide
 
-Begin with the [Exchange and Sharing](./../concepts/workflows/exchange-and-sharing.md) workflow for the people and bundle boundary. Then read [Native Web Delivery](./../concepts/runtime/native-web-delivery.md) for the browser-delivery boundary.
+Begin with [Authoring and Validation](./authoring-and-validation.md) for the
+bundle and diagnostics boundary. Then read [Editing Round Trip](./editing-round-trip.md)
+for native semantic edits. The Rust CLI provides `waml lsp --stdio`; the
+independent VS Code extension starts that server through
+`vscode-languageclient`.

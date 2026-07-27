@@ -6,7 +6,7 @@ static ACRONYM: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"([A-Z]+)([A-Z][a
 static NON_ALNUM: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"[^a-z0-9]+").unwrap());
 static EDGE_DASH: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^-+|-+$").unwrap());
 
-/// Slugify a title. Mirrors packages/okf/src/slug.ts.
+/// Slugify a title for a bundle-relative document path.
 pub fn slugify(text: &str, fallback: &str) -> String {
     let s = CAMEL.replace_all(text, "$1-$2");
     let s = ACRONYM.replace_all(&s, "$1-$2");

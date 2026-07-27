@@ -13,8 +13,6 @@ fn is_false(value: &bool) -> bool {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-#[cfg_attr(feature = "wasm", derive(tsify_next::Tsify))]
-#[cfg_attr(feature = "wasm", tsify(into_wasm_abi, from_wasm_abi))]
 #[serde(tag = "op")]
 pub enum OpDto {
     #[serde(rename = "node.new")]
@@ -85,7 +83,6 @@ pub enum OpDto {
         #[serde(default)]
         ty: Option<String>,
         #[serde(default, skip_serializing_if = "FieldEdit::is_unchanged")]
-        #[cfg_attr(feature = "wasm", tsify(type = "string | null"))]
         mult: FieldEdit<String>,
         #[serde(default)]
         vis: Option<String>,
@@ -229,8 +226,6 @@ pub enum OpDto {
 /// remains here for compatibility and is derived from `cardinality` when crossing
 /// the internal `DiagramDisplaySet` boundary.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[cfg_attr(feature = "wasm", derive(tsify_next::Tsify))]
-#[cfg_attr(feature = "wasm", tsify(into_wasm_abi, from_wasm_abi))]
 #[serde(rename_all = "camelCase")]
 pub struct DisplayDto {
     pub show_attributes: bool,

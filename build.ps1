@@ -1,10 +1,9 @@
 #!/usr/bin/env pwsh
-# Full build from a clean checkout: install deps, compile the Rust core to
-# inlined wasm, then build every workspace package. Run from anywhere.
+# Full native Rust and VS Code build from a clean checkout. Run from anywhere.
 #
-#   ./build.ps1            install + wasm + build
-#   ./build.ps1 -Test      also run `pnpm -r test` at the end
-#   ./build.ps1 -Lint      also run `pnpm lint`
+#   ./build.ps1            install + build
+#   ./build.ps1 -Test      also run Rust and VS Code tests
+#   ./build.ps1 -Lint      also run Rust clippy and VS Code lint
 [CmdletBinding()]
 param(
     [switch]$Test,
@@ -19,7 +18,7 @@ function Need($cmd, $hint) {
     }
 }
 Need pnpm      "https://pnpm.io/installation"
-Need wasm-pack "cargo install wasm-pack"
+Need cargo     "https://rustup.rs"
 
 function Run($label, [scriptblock]$block) {
     Write-Host "==> $label"
@@ -27,10 +26,16 @@ function Run($label, [scriptblock]$block) {
     if ($LASTEXITCODE -ne 0) { Write-Error "$label failed (exit $LASTEXITCODE)" }
 }
 
-Run "pnpm install"    { pnpm install --frozen-lockfile }
-Run "build wasm"      { pnpm build:wasm }
-Run "build packages"  { pnpm build }
-if ($Lint) { Run "lint" { pnpm lint } }
-if ($Test) { Run "test" { pnpm -r test } }
+Run "pnpm install"   { pnpm install --frozen-lockfile }
+Run "Rust build"     { cargo build --workspace }
+Run "VS Code build"  { pnpm build }
+if ($Test) {
+    Run "Rust test" { cargo test --workspace }
+    Run "VS Code test" { pnpm test }
+}
+if ($Lint) {
+    Run "Rust clippy" { cargo clippy --workspace --all-targets --all-features -- -D warnings }
+    Run "VS Code lint" { pnpm lint }
+}
 
 Write-Host "==> done"

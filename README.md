@@ -1,18 +1,25 @@
-# OKF Canvas
+# WAML
 
 > Fork of [OWOX Model Canvas](https://github.com/OWOX/owox-model-canvas) (© OWOX, Inc.). Not affiliated with or endorsed by OWOX. See [NOTICE](NOTICE) for attribution and changes.
 
-In-browser canvas for sketching data models, reading/writing [Open Knowledge Format](https://github.com/GoogleCloudPlatform/knowledge-catalog) Markdown.
+Native editor and language tooling for [Open Knowledge Format](https://github.com/GoogleCloudPlatform/knowledge-catalog) Markdown and WAML/UML projections.
 
 ## Develop
 
 ```bash
-pnpm install
-pnpm --filter @waml/okf build   # web consumes okf's built dist — build okf first
-pnpm --filter @waml/web dev     # Vite dev server on :5173
+cargo build --workspace
+cargo test --workspace
+pnpm install --frozen-lockfile
+pnpm build
+pnpm test
 ```
 
-pnpm monorepo: `packages/okf`, `packages/core`, `packages/web` (the SvelteFlow canvas), `packages/wasm`, `packages/vscode`, plus a Rust workspace under `crates/` for the WAML language core/CLI/LSP.
+Run the native editor with `scripts/run-native.ps1` on Windows or
+`scripts/run-native.sh` on Unix-like systems.
+
+The Rust workspace contains `waml`, `waml-cli`, `waml-ops-dto`, and
+`waml-editor`. The pnpm workspace contains only `packages/vscode`, which
+launches the Rust `waml lsp --stdio` server through `vscode-languageclient`.
 
 ## License
 

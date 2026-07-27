@@ -43,30 +43,22 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: wasm32-unknown-unknown
+          components: rustfmt, clippy
 
       - name: Rust cache
         uses: Swatinem/rust-cache@v2
 
-      - name: Install wasm-pack
-        uses: jetli/wasm-pack-action@v0.4.0
+      - name: Cargo fmt
+        run: cargo fmt --check
 
-      # The Rust crates are the source of truth for parse/model/validate/ops.
       - name: Cargo test
         run: cargo test --workspace
 
-      # Regenerate the inlined wasm module so a stale commit can't hide a drift
-      # between the Rust core and the checked-in packages/wasm/src/generated files.
-      - name: Build wasm
-        run: pnpm build:wasm
+      - name: Cargo clippy
+        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
 
-      - name: Lint
-        run: pnpm lint
-
-      # Build first: web tests import @waml/okf, which resolves to its
-      # compiled dist/. Without this the test job can't resolve the package.
-      - name: Build
+      - name: VS Code build
         run: pnpm build
 
-      - name: Test
-        run: pnpm -r test
+      - name: VS Code test
+        run: pnpm test

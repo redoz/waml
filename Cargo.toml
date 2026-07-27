@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/waml", "crates/waml-cli", "crates/waml-ops-dto", "crates/waml-wasm", "crates/waml-editor"]
+members = ["crates/waml", "crates/waml-cli", "crates/waml-ops-dto", "crates/waml-editor"]
 
 [workspace.package]
 edition = "2021"
@@ -10,7 +10,6 @@ license = "Apache-2.0"
 [workspace.dependencies]
 regex = "1"
 pulldown-cmark = { version = "0.12", default-features = false }
-# Pure-Rust deflate, so it cross-compiles to wasm32 with no C toolchain.
 miniz_oxide = "0.8"
 ttf-parser = "0.25"
 clap = { version = "4", features = ["derive"] }

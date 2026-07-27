@@ -2,5 +2,4 @@ dist
 node_modules
 coverage
 pnpm-lock.yaml
-packages/okf/test/fixtures
-packages/web/public
+packages/vscode/dist

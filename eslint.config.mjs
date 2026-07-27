@@ -10,28 +10,15 @@ export default tseslint.config(
       "**/node_modules/**",
       "**/.claude/**",
       "**/.superpowers/**",
-      // Sibling git-worktree checkouts (other branches' working copies) live
-      // physically under the repo root; never lint into them.
       ".worktrees/**",
-      "packages/okf/test/fixtures/**",
-      "packages/web/public/**",
-      // Vendored wasm-bindgen glue (browser globals, machine-generated).
-      "packages/wasm/src/generated/**",
-      "**/pkg/**",
-      // Cargo build output. `cargo makepad wasm build` drops makepad's own JS
-      // glue under target/makepad-wasm-app/, which is machine-generated and
-      // written against browser/worker globals eslint does not know about.
       "target/**",
     ],
   },
   js.configs.recommended,
   ...tseslint.configs.recommended,
 
-  // Repo-wide rule tuning
   {
     rules: {
-      // Intentional at boundaries (React Flow data). Kept visible as a
-      // warning to tighten over time, not block the build.
       "@typescript-eslint/no-explicit-any": "warn",
       "@typescript-eslint/no-unused-vars": [
         "error",
@@ -40,37 +27,16 @@ export default tseslint.config(
     },
   },
 
-  // Browser Svelte app (plain-TS modules; .svelte files are checked by svelte-check)
   {
-    files: ["packages/web/**/*.ts"],
-    languageOptions: { globals: { ...globals.browser } },
-  },
-
-  // Node code (shared lib)
-  {
-    files: ["packages/okf/**/*.ts"],
+    files: ["packages/vscode/**/*.ts"],
     languageOptions: { globals: { ...globals.node } },
   },
 
-  // Node build scripts.
   {
-    files: ["scripts/**/*.mjs"],
-    languageOptions: { globals: { ...globals.node } },
-  },
-
-  // Framework-free core (browser-coupled: localStorage, document, location, …)
-  {
-    files: ["packages/core/**/*.{ts,tsx}"],
-    languageOptions: { globals: { ...globals.browser } },
-  },
-
-  // Tests: fixtures and boundary mocks legitimately need `any`
-  {
-    files: ["**/*.test.{ts,tsx}", "**/test/**/*.{ts,tsx}"],
+    files: ["packages/vscode/**/*.test.ts"],
     languageOptions: { globals: { ...globals.node } },
     rules: { "@typescript-eslint/no-explicit-any": "off" },
   },
 
-  // Turn off stylistic rules that Prettier owns — keep last.
   prettier,
 );
