@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 use waml::grammar::{parse_ends, render_ends};
 use waml::model::{CardinalityVisibility, ElementType, RelEnd, RelationshipKind, Visibility};
 use waml::multiplicity::Multiplicity;
-use waml::ops::{DiagramDisplaySet, NameSpec, Op, RelBy, Selector};
+use waml::ops::{DiagramDisplaySet, FieldEdit, NameSpec, Op, RelBy, Selector};
 
 fn one() -> u32 {
     1
@@ -84,8 +84,9 @@ pub enum OpDto {
         name: String,
         #[serde(default)]
         ty: Option<String>,
-        #[serde(default)]
-        mult: Option<String>,
+        #[serde(default, skip_serializing_if = "FieldEdit::is_unchanged")]
+        #[cfg_attr(feature = "wasm", tsify(type = "string | null"))]
+        mult: FieldEdit<String>,
         #[serde(default)]
         vis: Option<String>,
         #[serde(default)]
@@ -251,7 +252,7 @@ fn display_dto_to_set(d: &DisplayDto) -> DiagramDisplaySet {
         show_attributes: d.show_attributes,
         show_type: d.show_type,
         show_attribute_visibility: d.show_attribute_visibility,
-        show_attribute_multiplicity: d.show_attribute_multiplicity,
+        show_attribute_multiplicity: d.cardinality.legacy_attribute_gate(),
         max_attributes: d.max_attributes,
         show_roles: d.show_roles,
         cardinality: d.cardinality,
@@ -267,7 +268,7 @@ fn display_set_to_dto(ds: &DiagramDisplaySet) -> DisplayDto {
         show_attributes: ds.show_attributes,
         show_type: ds.show_type,
         show_attribute_visibility: ds.show_attribute_visibility,
-        show_attribute_multiplicity: ds.show_attribute_multiplicity,
+        show_attribute_multiplicity: ds.cardinality.legacy_attribute_gate(),
         max_attributes: ds.max_attributes,
         show_roles: ds.show_roles,
         cardinality: ds.cardinality,
@@ -288,6 +289,15 @@ fn mult_opt(s: &Option<String>) -> Result<Option<Multiplicity>, String> {
     s.as_ref()
         .map(|m| Multiplicity::parse(m).ok_or_else(|| format!("bad multiplicity '{m}'")))
         .transpose()
+}
+fn mult_edit(value: &FieldEdit<String>) -> Result<FieldEdit<Multiplicity>, String> {
+    match value {
+        FieldEdit::Unchanged => Ok(FieldEdit::Unchanged),
+        FieldEdit::Clear => Ok(FieldEdit::Clear),
+        FieldEdit::Set(value) => Multiplicity::parse(value)
+            .map(FieldEdit::Set)
+            .ok_or_else(|| format!("bad multiplicity '{value}'")),
+    }
 }
 fn vis_opt(s: &Option<String>) -> Result<Option<Visibility>, String> {
     match s {
@@ -422,7 +432,7 @@ impl OpDto {
                     node: node.clone(),
                     name: name.clone(),
                     ty_token: ty.clone(),
-                    multiplicity: mult_opt(mult)?,
+                    multiplicity: mult_edit(mult)?,
                     visibility: vis_opt(vis)?,
                     rename: rename.clone(),
                 })
@@ -648,7 +658,11 @@ impl OpDto {
                 node: node.clone(),
                 name: name.clone(),
                 ty: ty_token.clone(),
-                mult: multiplicity.as_ref().map(|m| m.as_str().to_string()),
+                mult: match multiplicity {
+                    FieldEdit::Unchanged => FieldEdit::Unchanged,
+                    FieldEdit::Clear => FieldEdit::Clear,
+                    FieldEdit::Set(value) => FieldEdit::Set(value.as_str().to_string()),
+                },
                 vis: visibility.map(|x| x.marker().to_string()),
                 rename: rename.clone(),
             },
@@ -804,7 +818,7 @@ fn sel_parts(sel: &Selector) -> (String, Option<String>, Option<String>, Option<
 #[cfg(test)]
 mod tests {
     use super::*;
-    use waml::ops::Op;
+    use waml::ops::{FieldEdit, Op};
 
     fn round_trip(line: &str) -> Op {
         let dto: OpDto = serde_json::from_str(line).unwrap();
@@ -834,6 +848,68 @@ mod tests {
                 );
             }
             _ => panic!("wrong op"),
+        }
+    }
+
+    #[test]
+    fn attr_set_omitted_mult_preserves_authored_multiplicity() {
+        let op = round_trip(r#"{"op":"attr.set","node":"order","name":"total","ty":"Cash"}"#);
+
+        assert!(matches!(
+            op,
+            Op::AttrSet {
+                multiplicity: FieldEdit::Unchanged,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn attr_set_null_mult_explicitly_clears_authored_multiplicity() {
+        let op = round_trip(r#"{"op":"attr.set","node":"order","name":"total","mult":null}"#);
+
+        assert!(matches!(
+            op,
+            Op::AttrSet {
+                multiplicity: FieldEdit::Clear,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn attr_set_wire_round_trip_preserves_all_multiplicity_intents() {
+        for intent in [
+            FieldEdit::Unchanged,
+            FieldEdit::Clear,
+            FieldEdit::Set(Multiplicity::parse("0..1").unwrap()),
+        ] {
+            let op = Op::AttrSet {
+                node: "order".into(),
+                name: "total".into(),
+                ty_token: None,
+                multiplicity: intent,
+                visibility: None,
+                rename: None,
+            };
+            let value = serde_json::to_value(OpDto::from_op(&op)).unwrap();
+            match &op {
+                Op::AttrSet {
+                    multiplicity: FieldEdit::Unchanged,
+                    ..
+                } => assert!(value.get("mult").is_none()),
+                Op::AttrSet {
+                    multiplicity: FieldEdit::Clear,
+                    ..
+                } => assert!(value.get("mult").is_some_and(serde_json::Value::is_null)),
+                Op::AttrSet {
+                    multiplicity: FieldEdit::Set(_),
+                    ..
+                } => assert_eq!(value.get("mult").and_then(|v| v.as_str()), Some("0..1")),
+                _ => unreachable!(),
+            }
+            let dto: OpDto = serde_json::from_value(value).unwrap();
+            assert_eq!(dto.to_op().unwrap(), op);
         }
     }
 
@@ -917,7 +993,7 @@ mod tests {
                 node: "order".into(),
                 name: "total".into(),
                 ty_token: Some("Cash".into()),
-                multiplicity: Some(Multiplicity::default()),
+                multiplicity: FieldEdit::Set(Multiplicity::default()),
                 visibility: None,
                 rename: Some("amount".into()),
             },
@@ -1116,6 +1192,30 @@ mod tests {
             back.to_op().unwrap(),
             op,
             "absent maxAttributes/stereotypeFilter must round-trip as None: {line}"
+        );
+    }
+
+    #[test]
+    fn display_dto_normalizes_legacy_attribute_gate_from_cardinality() {
+        let dto = DisplayDto {
+            show_attributes: true,
+            show_type: true,
+            show_attribute_visibility: true,
+            show_attribute_multiplicity: true,
+            max_attributes: None,
+            show_roles: true,
+            cardinality: CardinalityVisibility::Off,
+            show_labels: true,
+            show_stereotype: true,
+            stereotype_filter: None,
+            stereotype_colors: vec![],
+        };
+
+        let display = display_dto_to_set(&dto);
+        assert_eq!(display.cardinality, CardinalityVisibility::Off);
+        assert!(
+            !display.show_attribute_multiplicity,
+            "the enum must be the wire contract's source of truth"
         );
     }
 }

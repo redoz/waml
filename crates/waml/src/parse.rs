@@ -1387,6 +1387,18 @@ fn build_diagrams(
         let stereotype_filter = fm
             .get("stereotypeFilter")
             .map(|_| fm.get_string_list("stereotypeFilter"));
+        let legacy_attribute_gate = fm.get_bool("showAttributeMultiplicity");
+        let cardinality = fm
+            .get_str("cardinality")
+            .and_then(|value| match value {
+                "off" => Some(CardinalityVisibility::Off),
+                "explicit" => Some(CardinalityVisibility::Explicit),
+                "all" => Some(CardinalityVisibility::All),
+                _ => None,
+            })
+            .or_else(|| {
+                legacy_attribute_gate.map(CardinalityVisibility::from_legacy_attribute_gate)
+            });
 
         let display = DiagramDisplay {
             show_attributes: fm.get_bool("showAttributes"),
@@ -1396,15 +1408,11 @@ fn build_diagrams(
                 .get_bool("showType")
                 .or_else(|| fm.get_str("attributeDetail").map(|s| s == "name-type")),
             show_attribute_visibility: fm.get_bool("showAttributeVisibility"),
-            show_attribute_multiplicity: fm.get_bool("showAttributeMultiplicity"),
+            show_attribute_multiplicity: cardinality
+                .map(CardinalityVisibility::legacy_attribute_gate),
             max_attributes,
             show_roles: fm.get_bool("showRoles"),
-            cardinality: fm.get_str("cardinality").and_then(|value| match value {
-                "off" => Some(CardinalityVisibility::Off),
-                "explicit" => Some(CardinalityVisibility::Explicit),
-                "all" => Some(CardinalityVisibility::All),
-                _ => None,
-            }),
+            cardinality,
             show_labels: fm.get_bool("showLabels"),
             show_stereotype: fm.get_bool("showStereotype"),
             stereotype_filter,
@@ -1470,6 +1478,33 @@ mod tests {
         assert_eq!(
             m.diagrams[0].display.cardinality,
             Some(CardinalityVisibility::All)
+        );
+    }
+
+    #[test]
+    fn diagram_cardinality_normalizes_the_legacy_attribute_gate() {
+        let authored = build_model(&diagram_bundle(
+            "showAttributeMultiplicity: true\ncardinality: off\n",
+        ));
+        assert_eq!(
+            authored.diagrams[0].display.cardinality,
+            Some(CardinalityVisibility::Off)
+        );
+        assert_eq!(
+            authored.diagrams[0].display.show_attribute_multiplicity,
+            Some(false),
+            "the enum is authoritative when both keys are present"
+        );
+
+        let legacy = build_model(&diagram_bundle("showAttributeMultiplicity: false\n"));
+        assert_eq!(
+            legacy.diagrams[0].display.cardinality,
+            Some(CardinalityVisibility::Off),
+            "legacy documents must derive the equivalent enum mode"
+        );
+        assert_eq!(
+            legacy.diagrams[0].display.show_attribute_multiplicity,
+            Some(false)
         );
     }
 

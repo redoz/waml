@@ -53,8 +53,8 @@ pub fn edge_end_labels(edge: &SceneEdge, display: &ResolvedDiagramDisplay) -> Ve
     }
 
     if display.show_labels {
-        if let Some(name) = edge.name.as_ref().map(relationship_name) {
-            if let Some(&(x, y)) = edge.points.get(edge.points.len() / 2) {
+        if let Some(name) = edge.name.as_ref().and_then(relationship_name) {
+            if let Some((x, y)) = polyline_midpoint(&edge.points) {
                 labels.push(EdgeLabel {
                     text: name.to_string(),
                     anchor: (x, y - TERMINAL_OFFSET),
@@ -66,10 +66,38 @@ pub fn edge_end_labels(edge: &SceneEdge, display: &ResolvedDiagramDisplay) -> Ve
     labels
 }
 
-fn relationship_name(name: &AssocName) -> &str {
+fn relationship_name(name: &AssocName) -> Option<&str> {
     match name {
-        AssocName::Label(name) | AssocName::Assoc(name) => name,
+        AssocName::Label(name) => Some(name),
+        AssocName::Assoc(_) => None,
     }
+}
+
+fn polyline_midpoint(points: &[(f64, f64)]) -> Option<(f64, f64)> {
+    let first = *points.first()?;
+    let total: f64 = points
+        .windows(2)
+        .map(|segment| (segment[1].0 - segment[0].0).hypot(segment[1].1 - segment[0].1))
+        .sum();
+    if total <= f64::EPSILON {
+        return Some(first);
+    }
+
+    let mut remaining = total / 2.0;
+    for segment in points.windows(2) {
+        let dx = segment[1].0 - segment[0].0;
+        let dy = segment[1].1 - segment[0].1;
+        let length = dx.hypot(dy);
+        if length <= f64::EPSILON {
+            continue;
+        }
+        if remaining <= length {
+            let fraction = remaining / length;
+            return Some((segment[0].0 + dx * fraction, segment[0].1 + dy * fraction));
+        }
+        remaining -= length;
+    }
+    points.last().copied()
 }
 
 fn terminal_segment(edge: &SceneEdge, end: End) -> ((f64, f64), (f64, f64)) {
@@ -168,5 +196,44 @@ mod tests {
         assert!(labels[0].anchor.0 > 20.0);
         assert_eq!(labels[1].align, LabelAlign::Left);
         assert!(labels[1].anchor.0 < 100.0);
+    }
+
+    #[test]
+    fn association_reference_is_not_painted_as_relationship_name() {
+        let mut edge = edge(vec![(20.0, 10.0), (100.0, 10.0)]);
+        edge.name = Some(AssocName::Assoc("employment".into()));
+        let mut display = display(CardinalityVisibility::Off);
+        display.show_roles = false;
+        display.show_labels = true;
+
+        assert!(edge_end_labels(&edge, &display).is_empty());
+    }
+
+    #[test]
+    fn straight_relationship_name_uses_segment_midpoint() {
+        let mut edge = edge(vec![(0.0, 0.0), (100.0, 0.0)]);
+        edge.name = Some(AssocName::Label("places".into()));
+        let mut display = display(CardinalityVisibility::Off);
+        display.show_roles = false;
+        display.show_labels = true;
+
+        let labels = edge_end_labels(&edge, &display);
+
+        assert_eq!(labels.len(), 1);
+        assert_eq!(labels[0].anchor, (50.0, -TERMINAL_OFFSET));
+    }
+
+    #[test]
+    fn bent_relationship_name_uses_polyline_arc_length_midpoint() {
+        let mut edge = edge(vec![(0.0, 0.0), (10.0, 0.0), (10.0, 90.0)]);
+        edge.name = Some(AssocName::Label("places".into()));
+        let mut display = display(CardinalityVisibility::Off);
+        display.show_roles = false;
+        display.show_labels = true;
+
+        let labels = edge_end_labels(&edge, &display);
+
+        assert_eq!(labels.len(), 1);
+        assert_eq!(labels[0].anchor, (10.0, 40.0 - TERMINAL_OFFSET));
     }
 }

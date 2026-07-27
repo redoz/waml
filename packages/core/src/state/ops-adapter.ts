@@ -163,13 +163,13 @@ function attrAddOp(node: string, a: Attribute): Extract<OpDto, { op: "attr.add" 
 }
 
 /** Fields of a kept attribute that changed (type token / multiplicity / visibility). */
-function attrFieldChanges(prev: Attribute, next: Attribute): { ty?: string; mult?: string; vis?: string } {
-  const out: { ty?: string; mult?: string; vis?: string } = {};
+function attrFieldChanges(prev: Attribute, next: Attribute): { ty?: string; mult?: string | null; vis?: string } {
+  const out: { ty?: string; mult?: string | null; vis?: string } = {};
   if (next.type.name !== prev.type.name) out.ty = next.type.name;
   if (visMarker(next.visibility) !== visMarker(prev.visibility)) out.vis = visMarker(next.visibility);
-  // attr.set is a complete authored-multiplicity update: undefined clears an
-  // authored value, while every defined value (including "1") remains explicit.
-  if (next.multiplicity !== prev.multiplicity || Object.keys(out).length) out.mult = next.multiplicity;
+  // Omitted means preserve. An explicit null clears authored multiplicity;
+  // every string value (including "1") remains explicit.
+  if (next.multiplicity !== prev.multiplicity) out.mult = next.multiplicity ?? null;
   return out;
 }
 
@@ -199,7 +199,7 @@ export function attrDiffOps(node: string, prev: Attribute[], next: Attribute[]):
       name: r.name,
       rename: a.name,
       ty: a.type.name,
-      ...(a.multiplicity !== undefined ? { mult: a.multiplicity } : {}),
+      mult: a.multiplicity ?? null,
       ...(visMarker(a.visibility) ? { vis: visMarker(a.visibility) } : {}),
     });
   }

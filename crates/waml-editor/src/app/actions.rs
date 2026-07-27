@@ -218,7 +218,7 @@ impl App {
             } else if id == live_id!(open_model) {
                 self.open_model_via_picker(cx);
             } else if id == live_id!(close_model) {
-                self.show_start_screen(cx);
+                self.close_model(cx);
             }
         }
         if let Some(PopupResult::Invoked(id)) = logo_closed {
@@ -839,6 +839,9 @@ impl App {
             Ok(change) => {
                 self.documents
                     .after_session_change(cx, &self.ui, &self.session, change);
+                if change.model_changed {
+                    self.sync_document_shell(cx);
+                }
                 if change.navigation_changed {
                     self.nav_kinds = crate::nav::kinds_in_model(self.session.model());
                     self.refresh_nav(cx, false);

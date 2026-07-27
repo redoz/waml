@@ -4,6 +4,7 @@ use waml::ops::{Op, OpError};
 #[derive(Default)]
 pub struct EditorSession {
     bundle: Vec<(String, String)>,
+    persisted_bundle: Vec<(String, String)>,
     model: Model,
     revision: u64,
     dirty_revision: Option<u64>,
@@ -32,6 +33,7 @@ impl SessionChange {
 
 impl EditorSession {
     pub fn replace(&mut self, bundle: Vec<(String, String)>, model: Model) -> SessionChange {
+        self.persisted_bundle = bundle.clone();
         self.bundle = bundle;
         self.model = model;
         self.revision = self.revision.wrapping_add(1);
@@ -53,6 +55,10 @@ impl EditorSession {
         &self.bundle
     }
 
+    pub fn persisted_bundle(&self) -> &[(String, String)] {
+        &self.persisted_bundle
+    }
+
     pub fn model(&self) -> &Model {
         &self.model
     }
@@ -67,6 +73,7 @@ impl EditorSession {
 
     pub fn mark_saved(&mut self, revision: u64) {
         if self.dirty_revision == Some(revision) {
+            self.persisted_bundle.clone_from(&self.bundle);
             self.dirty_revision = None;
         }
     }
@@ -115,6 +122,7 @@ mod tests {
 
         assert_eq!(change, SessionChange::full(1));
         assert_eq!(session.bundle(), bundle.as_slice());
+        assert_eq!(session.persisted_bundle(), bundle.as_slice());
         assert_eq!(session.revision(), 1);
         assert!(!session.is_dirty());
     }
@@ -170,6 +178,7 @@ mod tests {
 
         session.mark_saved(session.revision());
         assert!(!session.is_dirty());
+        assert_eq!(session.persisted_bundle(), session.bundle());
     }
 
     #[test]

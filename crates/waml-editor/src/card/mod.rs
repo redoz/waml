@@ -462,7 +462,11 @@ pub fn class_shape(node: &crate::scene::SceneNode, sheet: &StyleSheet) -> Shape 
     // Header column, unless hidden. Fill/Plain differ only in the renderer's
     // wash (same geometry), so both build the same box here.
     if node.header != HeaderStyle::Hidden {
-        let eyebrow = crate::scene::focus_eyebrow(&node.stereotypes, &node.element_type);
+        let eyebrow = crate::scene::focus_eyebrow(
+            &node.stereotypes,
+            &node.element_type,
+            node.stereotype_visible,
+        );
         let mut header_children = Vec::new();
         if let Some(label) = eyebrow {
             header_children.push(Shape::Text {
@@ -731,6 +735,7 @@ mod tests {
             title: title.to_string(),
             element_type: ElementType::Uml(UmlMetaclass::Class),
             stereotypes,
+            stereotype_visible: true,
             attributes,
             operations: Vec::new(),
             header: crate::scene::HeaderStyle::Plain,

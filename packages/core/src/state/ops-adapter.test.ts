@@ -126,16 +126,29 @@ describe("attribute array diff", () => {
   it("changed field on a kept attribute → attr.set with only that field, round-trips", () => {
     const next = attrs().map((a) => (a.name === "total" ? { ...a, type: { name: "Cash" } } : a));
     const ops = attrDiffOps("order", attrs(), next);
-    expect(ops).toEqual([{ op: "attr.set", node: "order", name: "total", ty: "Cash", mult: "0..1" }]);
+    expect(ops).toEqual([{ op: "attr.set", node: "order", name: "total", ty: "Cash" }]);
     const n = apply(BASE, ops).nodes.find((x) => x.key === "m/order")!;
     expect(n.attributes.find((a) => a.name === "total")!.type.name).toBe("Cash");
+    expect(n.attributes.find((a) => a.name === "total")!.multiplicity).toBe("0..1");
+  });
+
+  it("clearing authored multiplicity emits explicit null and round-trips", () => {
+    const next = attrs().map((a) => {
+      if (a.name !== "total") return a;
+      const { multiplicity: _, ...withoutMultiplicity } = a;
+      return withoutMultiplicity;
+    });
+    const ops = attrDiffOps("order", attrs(), next);
+    expect(ops).toEqual([{ op: "attr.set", node: "order", name: "total", mult: null }]);
+    const n = apply(BASE, ops).nodes.find((x) => x.key === "m/order")!;
+    expect(n.attributes.find((a) => a.name === "total")!.multiplicity).toBeUndefined();
   });
 
   it("rename (paired leftover) → attr.set with rename, round-trips", () => {
     const next = attrs().map((a) => (a.name === "id" ? { ...a, name: "orderId" } : a));
     const ops = attrDiffOps("order", attrs(), next);
     expect(ops).toEqual([
-      { op: "attr.set", node: "order", name: "id", rename: "orderId", ty: "OrderId" },
+      { op: "attr.set", node: "order", name: "id", rename: "orderId", ty: "OrderId", mult: null },
     ]);
     const n = apply(BASE, ops).nodes.find((x) => x.key === "m/order")!;
     expect(n.attributes.some((a) => a.name === "orderId")).toBe(true);
@@ -269,6 +282,18 @@ describe("updateDiagramOps", () => {
     expect(dto.stereotypeColors).toEqual(["entity:#ffedd5"]);
     expect("maxAttributes" in dto).toBe(false);
     expect("stereotypeFilter" in dto).toBe(false);
+  });
+
+  it("normalizes the legacy attribute gate from cardinality on the wire", () => {
+    const display = {
+      ...resolveDisplay(),
+      cardinality: "off" as const,
+      showAttributeMultiplicity: true,
+    };
+    const dto = (updateDiagramOps(baseDiagram, { display })[0] as {
+      display: { cardinality: string; showAttributeMultiplicity: boolean };
+    }).display;
+    expect(dto).toMatchObject({ cardinality: "off", showAttributeMultiplicity: false });
   });
 
   it("passes stereotypeFilter [] (show none) through as an empty array", () => {

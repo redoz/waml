@@ -44,6 +44,47 @@ pub enum NameSpec {
     Ref(String), // target slug
 }
 
+/// Intent for editing an optional authored field.
+///
+/// `Unchanged` preserves the current value, `Clear` removes it, and `Set`
+/// replaces it. On serde wire boundaries an omitted field defaults to
+/// `Unchanged`, an explicit `null` is `Clear`, and a value is `Set`.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub enum FieldEdit<T> {
+    #[default]
+    Unchanged,
+    Clear,
+    Set(T),
+}
+
+impl<T> FieldEdit<T> {
+    pub fn is_unchanged(&self) -> bool {
+        matches!(self, Self::Unchanged)
+    }
+}
+
+#[cfg(feature = "serde")]
+impl<T: serde::Serialize> serde::Serialize for FieldEdit<T> {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        match self {
+            Self::Unchanged | Self::Clear => serializer.serialize_none(),
+            Self::Set(value) => value.serialize(serializer),
+        }
+    }
+}
+
+#[cfg(feature = "serde")]
+impl<'de, T: serde::Deserialize<'de>> serde::Deserialize<'de> for FieldEdit<T> {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        Ok(
+            match <Option<T> as serde::Deserialize>::deserialize(deserializer)? {
+                Some(value) => Self::Set(value),
+                None => Self::Clear,
+            },
+        )
+    }
+}
+
 /// A fully-specified display block. The panel always holds a resolved
 /// display, so every non-nullable field is present; nullable fields use
 /// their own absent state (`None` ⇒ omit the key).
@@ -76,7 +117,7 @@ pub enum Op {
         node: String,
         name: String,
         ty_token: Option<String>,
-        multiplicity: Option<Multiplicity>,
+        multiplicity: FieldEdit<Multiplicity>,
         visibility: Option<Visibility>,
         rename: Option<String>,
     },
@@ -634,7 +675,7 @@ fn op_attr_set(
     node: &str,
     name: &str,
     ty_token: &Option<String>,
-    multiplicity: &Option<Multiplicity>,
+    multiplicity: &FieldEdit<Multiplicity>,
     visibility: Option<Visibility>,
     rename: &Option<String>,
 ) -> Result<(), OpError> {
@@ -662,7 +703,11 @@ fn op_attr_set(
         if let Some(t) = ty {
             a.ty = t;
         }
-        a.multiplicity = multiplicity.clone();
+        match multiplicity {
+            FieldEdit::Unchanged => {}
+            FieldEdit::Clear => a.multiplicity = None,
+            FieldEdit::Set(value) => a.multiplicity = Some(value.clone()),
+        }
         if let Some(v) = visibility {
             a.visibility = Some(v);
         }
@@ -919,6 +964,14 @@ fn op_diagram_set(
     clear_description: bool,
     display: &Option<DiagramDisplaySet>,
 ) -> Result<(), OpError> {
+    if description
+        .as_deref()
+        .is_some_and(|description| description.contains('\n') || description.contains('\r'))
+    {
+        return Err(
+            OpError::at("diagram.set", "description must be one line").with_sel(key.to_string())
+        );
+    }
     edit_doc(work, key, "diagram.set", |doc| {
         if let Some(t) = title {
             fm_set(&mut doc.frontmatter, "title", FmValue::Str(t.clone()));
@@ -957,7 +1010,7 @@ fn op_diagram_set(
             fm_set(
                 &mut doc.frontmatter,
                 "showAttributeMultiplicity",
-                FmValue::Bool(ds.show_attribute_multiplicity),
+                FmValue::Bool(ds.cardinality.legacy_attribute_gate()),
             );
             if let Some(max) = ds.max_attributes {
                 fm_set(
@@ -1233,7 +1286,7 @@ mod tests {
                 node: "order".into(),
                 name: "id".into(),
                 ty_token: Some("String".into()),
-                multiplicity: Some(Multiplicity::parse("0..1").unwrap()),
+                multiplicity: FieldEdit::Set(Multiplicity::parse("0..1").unwrap()),
                 visibility: Some(crate::model::Visibility::Private),
                 rename: None,
             }],
@@ -1258,7 +1311,29 @@ mod tests {
     }
 
     #[test]
-    fn attr_set_without_multiplicity_clears_an_authored_default() {
+    fn attr_set_omitting_multiplicity_preserves_authored_value() {
+        let b = vec![(
+            "a/order.md".to_string(),
+            "---\ntype: uml.Class\ntitle: Order\n---\n# Order\n\n## Attributes\n- id: OrderId {0..*}\n"
+                .to_string(),
+        )];
+        let out = apply(
+            &b,
+            &[Op::AttrSet {
+                node: "order".into(),
+                name: "id".into(),
+                ty_token: Some("String".into()),
+                multiplicity: FieldEdit::Unchanged,
+                visibility: None,
+                rename: None,
+            }],
+        )
+        .unwrap();
+        assert!(out[0].1.contains("- id: String {0..*}\n"));
+    }
+
+    #[test]
+    fn attr_set_explicitly_clears_authored_multiplicity() {
         let b = vec![(
             "a/order.md".to_string(),
             "---\ntype: uml.Class\ntitle: Order\n---\n# Order\n\n## Attributes\n- id: OrderId {1}\n"
@@ -1270,7 +1345,7 @@ mod tests {
                 node: "order".into(),
                 name: "id".into(),
                 ty_token: Some("String".into()),
-                multiplicity: None,
+                multiplicity: FieldEdit::Clear,
                 visibility: None,
                 rename: None,
             }],
@@ -1290,7 +1365,7 @@ mod tests {
                 node: "order".into(),
                 name: "id".into(),
                 ty_token: None,
-                multiplicity: None,
+                multiplicity: FieldEdit::Unchanged,
                 visibility: None,
                 rename: Some("orderId".into()),
             }],
@@ -1303,7 +1378,7 @@ mod tests {
                 node: "order".into(),
                 name: "id".into(),
                 ty_token: None,
-                multiplicity: None,
+                multiplicity: FieldEdit::Unchanged,
                 visibility: None,
                 rename: Some("total".into()),
             }],
@@ -1324,7 +1399,7 @@ mod tests {
                 node: "order".into(),
                 name: "ghost".into(),
                 ty_token: Some("X".into()),
-                multiplicity: None,
+                multiplicity: FieldEdit::Unchanged,
                 visibility: None,
                 rename: None,
             }],
@@ -1984,6 +2059,23 @@ mod tests {
     }
 
     #[test]
+    fn diagram_set_rejects_multiline_description_before_serializing() {
+        let err = apply(
+            &diagram_doc(),
+            &[Op::DiagramSet {
+                key: "dia".into(),
+                title: None,
+                description: Some("First line\nSecond line".into()),
+                clear_description: false,
+                display: None,
+            }],
+        )
+        .unwrap_err();
+
+        assert!(err.reason.contains("one line"), "{err:?}");
+    }
+
+    #[test]
     fn diagram_set_explicitly_clears_an_authored_description() {
         let described = apply(
             &diagram_doc(),
@@ -2036,6 +2128,39 @@ mod tests {
         .unwrap();
         assert!(out[0].1.contains("cardinality: explicit"));
         assert!(!out[0].1.contains("showCardinality"));
+    }
+
+    #[test]
+    fn diagram_set_legacy_attribute_gate_tracks_cardinality() {
+        for (cardinality, expected_gate) in [
+            (CardinalityVisibility::Off, false),
+            (CardinalityVisibility::Explicit, true),
+            (CardinalityVisibility::All, true),
+        ] {
+            let out = apply(
+                &diagram_doc(),
+                &[Op::DiagramSet {
+                    key: "dia".into(),
+                    title: None,
+                    description: None,
+                    clear_description: false,
+                    display: Some(DiagramDisplaySet {
+                        show_attribute_multiplicity: !expected_gate,
+                        cardinality,
+                        ..full_display()
+                    }),
+                }],
+            )
+            .unwrap();
+
+            assert!(
+                out[0]
+                    .1
+                    .contains(&format!("showAttributeMultiplicity: {expected_gate}")),
+                "{cardinality:?} must author the compatible legacy gate: {}",
+                out[0].1
+            );
+        }
     }
 
     #[test]

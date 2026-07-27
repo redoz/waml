@@ -43,35 +43,11 @@ script_mod! {
     }
 }
 
-#[cfg(test)]
-#[derive(Clone, Debug, PartialEq)]
-pub struct SegmentedState<T> {
-    items: Vec<T>,
-    selected: usize,
-}
-
-#[cfg(test)]
-impl<T: Clone + PartialEq> SegmentedState<T> {
-    pub fn new(items: Vec<T>, selected: T) -> Self {
-        assert!(
-            !items.is_empty(),
-            "segmented controls require at least one item"
-        );
-        let selected = items.iter().position(|item| item == &selected).unwrap_or(0);
-        Self { items, selected }
+fn segmented_offset_index(item_count: usize, current: usize, delta: isize) -> Option<usize> {
+    if item_count == 0 {
+        return None;
     }
-
-    pub fn selected(&self) -> T {
-        self.items[self.selected].clone()
-    }
-
-    pub fn select_next(&mut self) {
-        self.selected = (self.selected + 1) % self.items.len();
-    }
-
-    pub fn select_previous(&mut self) {
-        self.selected = (self.selected + self.items.len() - 1) % self.items.len();
-    }
+    Some((current as isize + delta).rem_euclid(item_count as isize) as usize)
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -362,9 +338,9 @@ impl SegmentedControl {
             .iter()
             .position(|item| item.id == self.selected)
             .unwrap_or(0);
-        let len = self.items.len() as isize;
-        let next = (current as isize + delta).rem_euclid(len) as usize;
-        self.select(cx, self.items[next].id);
+        if let Some(next) = segmented_offset_index(self.items.len(), current, delta) {
+            self.select(cx, self.items[next].id);
+        }
     }
 }
 
@@ -517,19 +493,20 @@ fn draw_outline(cx: &mut Cx2d, draw: &mut DrawColor, rect: Rect, width: f64) {
 
 #[cfg(test)]
 mod tests {
-    use super::SegmentedState;
+    use super::segmented_offset_index;
     use waml::model::CardinalityVisibility::{All, Explicit, Off};
 
     #[test]
     fn cardinality_segments_cycle_in_display_order() {
-        let mut state = SegmentedState::new(vec![Off, Explicit, All], Explicit);
+        let items = [Off, Explicit, All];
+        let mut selected = 1;
 
-        state.select_next();
-        assert_eq!(state.selected(), All);
-        state.select_next();
-        assert_eq!(state.selected(), Off);
-        state.select_previous();
-        assert_eq!(state.selected(), All);
+        selected = segmented_offset_index(items.len(), selected, 1).unwrap();
+        assert_eq!(items[selected], All);
+        selected = segmented_offset_index(items.len(), selected, 1).unwrap();
+        assert_eq!(items[selected], Off);
+        selected = segmented_offset_index(items.len(), selected, -1).unwrap();
+        assert_eq!(items[selected], All);
     }
 
     #[test]

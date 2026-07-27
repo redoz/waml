@@ -2,6 +2,7 @@ use std::path::PathBuf;
 
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use waml::multiplicity::Multiplicity;
+use waml::ops::FieldEdit;
 
 use crate::ops_dto::OpDto;
 
@@ -224,6 +225,8 @@ enum AttrCmd {
         r#type: Option<String>,
         #[arg(long)]
         mult: Option<String>,
+        #[arg(long, conflicts_with = "mult")]
+        clear_mult: bool,
         #[arg(long)]
         vis: Option<String>,
         #[arg(long)]
@@ -458,6 +461,7 @@ fn attr_dto(a: AttrCmd) -> OpDto {
             name,
             r#type,
             mult,
+            clear_mult,
             vis,
             rename,
         } => OpDto::AttrSet {
@@ -465,7 +469,11 @@ fn attr_dto(a: AttrCmd) -> OpDto {
             node,
             name,
             ty: r#type,
-            mult,
+            mult: if clear_mult {
+                FieldEdit::Clear
+            } else {
+                mult.map_or(FieldEdit::Unchanged, FieldEdit::Set)
+            },
             vis,
             rename,
         },
@@ -845,6 +853,30 @@ mod tests {
         ])
         .unwrap();
         assert!(matches!(cli.command, Command::Attr { .. }));
+    }
+
+    #[test]
+    fn type_only_attr_set_omits_multiplicity_intent() {
+        let cli = Cli::try_parse_from(["waml", "attr", "set", "order", "total", "--type", "Cash"])
+            .unwrap();
+        let Command::Attr { action, .. } = cli.command else {
+            panic!("expected attr command");
+        };
+        let value = serde_json::to_value(attr_dto(action)).unwrap();
+
+        assert!(value.get("mult").is_none());
+    }
+
+    #[test]
+    fn clear_mult_attr_set_emits_explicit_null() {
+        let cli =
+            Cli::try_parse_from(["waml", "attr", "set", "order", "total", "--clear-mult"]).unwrap();
+        let Command::Attr { action, .. } = cli.command else {
+            panic!("expected attr command");
+        };
+        let value = serde_json::to_value(attr_dto(action)).unwrap();
+
+        assert!(value.get("mult").is_some_and(serde_json::Value::is_null));
     }
 
     #[test]

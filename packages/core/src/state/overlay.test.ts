@@ -241,6 +241,20 @@ describe("toModelGraph diagram display/description", () => {
     expect(g.diagrams[0].display).toEqual({ showAttributes: false, maxAttributes: 6, stereotypeColors: { entity: "#ffedd5" } });
   });
 
+  it("copies the cardinality enum from the Rust model display", () => {
+    const g = toModelGraph(
+      modelWith({
+        key: "d",
+        title: "D",
+        profile: "uml-domain",
+        groups: [],
+        display: { cardinality: "all" },
+      }),
+      emptyOverlay(),
+    );
+    expect(g.diagrams[0].display?.cardinality).toBe("all");
+  });
+
   it("splits stereotypeColors on the first colon (hex keeps its own colons? no — hex has none)", () => {
     const g = toModelGraph(
       modelWith({ key: "d", title: "D", profile: "uml-domain", groups: [], display: { stereotypeColors: ["entity:#ffedd5"] } }),

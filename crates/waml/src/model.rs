@@ -28,6 +28,24 @@ pub enum CardinalityVisibility {
     All,
 }
 
+impl CardinalityVisibility {
+    /// Convert the pre-cardinality attribute-multiplicity gate into the nearest
+    /// enum policy. A legacy `true` can express only explicit authored values.
+    pub fn from_legacy_attribute_gate(show: bool) -> Self {
+        if show {
+            Self::Explicit
+        } else {
+            Self::Off
+        }
+    }
+
+    /// Compatibility value for consumers that still understand only the old
+    /// boolean gate. `All` must remain visible rather than degrade to `Off`.
+    pub fn legacy_attribute_gate(self) -> bool {
+        !matches!(self, Self::Off)
+    }
+}
+
 #[cfg(feature = "serde")]
 impl From<Visibility> for String {
     fn from(v: Visibility) -> String {

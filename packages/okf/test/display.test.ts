@@ -26,6 +26,21 @@ describe("resolveDisplay", () => {
     expect(r.stereotypeFilter).toBeUndefined();
   });
 
+  it("uses cardinality as authority with the legacy boolean as fallback", () => {
+    expect(resolveDisplay({ cardinality: "off", showAttributeMultiplicity: true })).toMatchObject({
+      cardinality: "off",
+      showAttributeMultiplicity: false,
+    });
+    expect(resolveDisplay({ cardinality: "all", showAttributeMultiplicity: false })).toMatchObject({
+      cardinality: "all",
+      showAttributeMultiplicity: true,
+    });
+    expect(resolveDisplay({ showAttributeMultiplicity: false })).toMatchObject({
+      cardinality: "off",
+      showAttributeMultiplicity: false,
+    });
+  });
+
   it("overlays new fields, keeping stereotypeColors a record", () => {
     const r = resolveDisplay({ maxAttributes: 6, stereotypeFilter: ["entity"], stereotypeColors: { entity: "#fff" } });
     expect(r.maxAttributes).toBe(6);

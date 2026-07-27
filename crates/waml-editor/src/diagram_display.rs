@@ -24,16 +24,22 @@ impl Default for ResolvedDiagramDisplay {
 }
 
 pub fn resolve_display(display: &DiagramDisplay) -> ResolvedDiagramDisplay {
+    let cardinality = display
+        .cardinality
+        .or_else(|| {
+            display
+                .show_attribute_multiplicity
+                .map(CardinalityVisibility::from_legacy_attribute_gate)
+        })
+        .unwrap_or_default();
     ResolvedDiagramDisplay {
         show_attributes: display.show_attributes.unwrap_or(true),
         show_type: display.show_type.unwrap_or(true),
         show_attribute_visibility: display.show_attribute_visibility.unwrap_or(true),
-        show_attribute_multiplicity: display.show_attribute_multiplicity.unwrap_or(true),
+        show_attribute_multiplicity: cardinality.legacy_attribute_gate(),
         max_attributes: display.max_attributes,
         show_roles: display.show_roles.unwrap_or(true),
-        cardinality: display
-            .cardinality
-            .unwrap_or(CardinalityVisibility::Explicit),
+        cardinality,
         show_labels: display.show_labels.unwrap_or(true),
         show_stereotype: display.show_stereotype.unwrap_or(true),
         stereotype_filter: display.stereotype_filter.clone(),
@@ -55,7 +61,7 @@ mod tests {
     }
 
     #[test]
-    fn display_preserves_authored_values() {
+    fn display_preserves_authored_values_with_cardinality_authority() {
         let partial = DiagramDisplay {
             show_attributes: Some(false),
             show_attribute_multiplicity: Some(false),
@@ -64,7 +70,31 @@ mod tests {
         };
         let resolved = resolve_display(&partial);
         assert!(!resolved.show_attributes);
-        assert!(!resolved.show_attribute_multiplicity);
         assert_eq!(resolved.cardinality, CardinalityVisibility::All);
+        assert!(
+            resolved.show_attribute_multiplicity,
+            "All is authoritative over the contradictory legacy false gate"
+        );
+    }
+
+    #[test]
+    fn cardinality_is_authoritative_with_a_legacy_boolean_fallback() {
+        let contradictory = DiagramDisplay {
+            show_attribute_multiplicity: Some(true),
+            cardinality: Some(CardinalityVisibility::Off),
+            ..Default::default()
+        };
+        let resolved = resolve_display(&contradictory);
+        assert_eq!(resolved.cardinality, CardinalityVisibility::Off);
+        assert!(!resolved.show_attribute_multiplicity);
+
+        let legacy = DiagramDisplay {
+            show_attribute_multiplicity: Some(false),
+            cardinality: None,
+            ..Default::default()
+        };
+        let resolved = resolve_display(&legacy);
+        assert_eq!(resolved.cardinality, CardinalityVisibility::Off);
+        assert!(!resolved.show_attribute_multiplicity);
     }
 }

@@ -292,6 +292,40 @@ impl OpenTabs {
         }
     }
 
+    /// Refresh display titles from a rebuilt model while preserving stable tab
+    /// ids, ordering, preview state, and activation.
+    pub fn reconcile_titles(&mut self, model: &waml::model::Model) -> bool {
+        let mut changed = false;
+        for tab in &mut self.tabs {
+            let diagram_title = || {
+                model
+                    .diagrams
+                    .iter()
+                    .find(|diagram| diagram.key == tab.key)
+                    .map(|diagram| diagram.title.as_str())
+            };
+            let classifier_title = || {
+                model
+                    .nodes
+                    .iter()
+                    .find(|node| node.key == tab.key)
+                    .map(|node| node.concept.title.as_deref().unwrap_or(node.key.as_str()))
+            };
+            let title = match tab.kind {
+                TabKind::Diagram => diagram_title(),
+                TabKind::Classifier => classifier_title(),
+                TabKind::Source => diagram_title().or_else(classifier_title),
+            };
+            if let Some(title) = title {
+                if tab.title != title {
+                    tab.title = title.to_string();
+                    changed = true;
+                }
+            }
+        }
+        changed
+    }
+
     pub fn active_tab(&self) -> Option<&DocTab> {
         self.tabs.iter().find(|t| t.id == self.active)
     }
@@ -1100,6 +1134,23 @@ mod tests {
         assert_eq!(open.tabs.len(), 1);
         assert_eq!(open.tabs[0].kind, TabKind::Diagram);
         assert!(open.tabs[0].preview);
+    }
+
+    #[test]
+    fn reconciling_model_titles_renames_tabs_without_changing_identity() {
+        let mut open = OpenTabs::diagram_preview("orders", "Old orders");
+        let active = open.active;
+        let model = waml::parse::build_model(&[(
+            "orders.md".into(),
+            "---\ntype: Diagram\ntitle: New orders\nprofile: uml-domain\n---\n# New orders\n"
+                .into(),
+        )]);
+
+        assert!(open.reconcile_titles(&model));
+        assert_eq!(open.tabs[0].title, "New orders");
+        assert_eq!(open.tabs[0].id, active);
+        assert_eq!(open.active, active);
+        assert!(!open.reconcile_titles(&model));
     }
 
     #[test]

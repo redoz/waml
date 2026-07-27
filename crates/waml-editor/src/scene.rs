@@ -38,6 +38,10 @@ pub struct SceneNode {
     /// `node_style::stereotype_label` (which handles «interface» etc.); this is
     /// the node's own `stereotype:` front-matter list.
     pub stereotypes: Vec<String>,
+    /// Explicit policy gate for both authored and metaclass-derived stereotype
+    /// eyebrows. An empty `stereotypes` list alone cannot represent "hidden",
+    /// because interfaces and other metaclasses have a fallback eyebrow.
+    pub stereotype_visible: bool,
     /// Attribute compartment rows (visibility marker + name + type token),
     /// projected via `inspector::build_view` so the canvas renderer and the
     /// inspector panel share one member projection. Empty for nodes with no
@@ -193,8 +197,14 @@ fn displayed_stereotypes(stereotypes: &[String], display: &ResolvedDiagramDispla
 /// declared stereotypes if any, else the metaclass-derived label. Shared by the
 /// focus-card sizer (`build_focus_scene`) and its renderer (`draw_focus_card`)
 /// so both measure and draw the same line.
-pub fn focus_eyebrow(stereotypes: &[String], ty: &ElementType) -> Option<String> {
-    if !stereotypes.is_empty() {
+pub fn focus_eyebrow(
+    stereotypes: &[String],
+    ty: &ElementType,
+    stereotype_visible: bool,
+) -> Option<String> {
+    if !stereotype_visible {
+        None
+    } else if !stereotypes.is_empty() {
         Some(stereotypes.join(", "))
     } else {
         crate::node_style::stereotype_label(ty).map(str::to_string)
@@ -226,6 +236,7 @@ pub fn project_scene_node_with_display(
             .unwrap_or_else(|| node.key.clone()),
         element_type: node.ty.clone(),
         stereotypes: displayed_stereotypes(&node.stereotypes, display),
+        stereotype_visible: display.show_stereotype,
         attributes: attribute_rows(model, &node.key, display),
         operations: Vec::new(),
         header: HeaderStyle::Plain,
@@ -530,6 +541,7 @@ pub fn build_scene(
                 title: key.clone(),
                 element_type: ElementType::Unknown(String::new()),
                 stereotypes: Vec::new(),
+                stereotype_visible: display.show_stereotype,
                 attributes: Vec::new(),
                 operations: Vec::new(),
                 header: HeaderStyle::Plain,
@@ -629,6 +641,7 @@ pub fn build_focus_scene(model: &Model, key: &str) -> Scene {
         title,
         element_type: node.ty.clone(),
         stereotypes: displayed_stereotypes(&node.stereotypes, &display),
+        stereotype_visible: display.show_stereotype,
         attributes,
         operations: Vec::new(),
         header: HeaderStyle::Plain,
@@ -798,6 +811,11 @@ mod tests {
         load::load_model(&dir).unwrap()
     }
 
+    fn sixkind() -> Model {
+        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/sixkind");
+        load::load_model(&dir).unwrap()
+    }
+
     fn test_display() -> ResolvedDiagramDisplay {
         ResolvedDiagramDisplay::default()
     }
@@ -907,6 +925,34 @@ mod tests {
 
         assert!(order.stereotypes.is_empty());
         assert!(!text.contains(&"«AGGREGATEROOT»".to_string()));
+    }
+
+    #[test]
+    fn display_hides_interface_metaclass_eyebrow() {
+        let model = sixkind();
+        let mut display = test_display();
+        display.show_stereotype = false;
+        let (scene, _) = build_scene(
+            &model,
+            &model.diagrams[0],
+            display,
+            &std::collections::HashSet::new(),
+        );
+        let interface = scene
+            .nodes
+            .iter()
+            .find(|node| node.key == "drivable")
+            .unwrap();
+        let text: Vec<_> = crate::card::measure(&crate::card::class_shape(
+            interface,
+            &crate::card::mono_sheet(),
+        ))
+        .texts
+        .into_iter()
+        .map(|text| text.text)
+        .collect();
+
+        assert!(!text.contains(&"«INTERFACE»".to_string()));
     }
 
     /// The `groups` fixture is what the canvas's group-render gating is judged

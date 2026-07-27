@@ -143,6 +143,7 @@ mod tests {
                 title: (*key).to_string(),
                 element_type: ElementType::Uml(UmlMetaclass::Class),
                 stereotypes: Vec::new(),
+                stereotype_visible: true,
                 attributes: Vec::new(),
                 operations: Vec::new(),
                 header: crate::scene::HeaderStyle::Plain,

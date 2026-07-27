@@ -541,6 +541,34 @@ fn next_narrow(narrow: bool, viewport_w: f64) -> bool {
 /// into one is worth more than persisting each of them promptly.
 const SAVE_DEBOUNCE_SECS: f64 = 3.0;
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum BackingTransitionError {
+    Save(String),
+    Load(String),
+}
+
+/// Flush the current document before loading its replacement. Keeping this
+/// ordering explicit prevents a reopen of the same directory from observing
+/// stale pre-save source.
+fn replace_after_save<T, S, L>(save: S, load: L) -> Result<T, BackingTransitionError>
+where
+    S: FnOnce() -> Result<(), String>,
+    L: FnOnce() -> Result<T, String>,
+{
+    save().map_err(BackingTransitionError::Save)?;
+    load().map_err(BackingTransitionError::Load)
+}
+
+fn close_after_save<T, S>(state: &mut T, save: S) -> Result<(), String>
+where
+    T: Default,
+    S: FnOnce(&T) -> Result<(), String>,
+{
+    save(state)?;
+    *state = T::default();
+    Ok(())
+}
+
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 struct SaveFeedback {
     save_error: Option<String>,
@@ -1255,7 +1283,11 @@ impl App {
         let Some(root) = self.open_dir.as_deref() else {
             return Err("native bundle has no opened directory".to_string());
         };
-        crate::native_save::save_bundle_atomic(root, self.session.bundle())
+        crate::native_save::save_bundle_atomic(
+            root,
+            self.session.persisted_bundle(),
+            self.session.bundle(),
+        )
             .map_err(|error| format!("failed to save OKF dir {root:?}: {error}"))
     }
 
@@ -1306,15 +1338,35 @@ impl App {
     /// Read `dir` off disk and populate the editor. Returns `false` (having
     /// `log!`d) only when the model fails to load, so the caller keeps the
     /// start screen up.
+    #[cfg(not(target_arch = "wasm32"))]
     fn open_dir(&mut self, cx: &mut Cx, dir: &Path, wanted_diagram: Option<&str>) -> bool {
-        let (bundle, model) = match load::load_bundle_and_model(dir) {
-            Ok(pair) => pair,
-            Err(e) => {
-                log!("failed to load OKF dir {:?}: {e}", dir);
+        let next_root = dir.to_path_buf();
+        let transition = replace_after_save(
+            || self.save(cx),
+            || {
+                load::load_bundle_and_model(&next_root)
+                    .map_err(|error| format!("failed to load OKF dir {next_root:?}: {error}"))
+            },
+        );
+        let (bundle, model) = match transition {
+            Ok(loaded) => loaded,
+            Err(BackingTransitionError::Save(error)) => {
+                self.save_feedback.finish_save(&Err(error.clone()));
+                self.schedule_save(cx);
+                self.sync_save_error(cx);
+                log!("{error}");
+                return false;
+            }
+            Err(BackingTransitionError::Load(error)) => {
+                // Any old edits were successfully flushed before the new load
+                // was attempted, so the retained backing is now clean.
+                self.save_feedback.finish_save(&Ok(()));
+                self.sync_save_error(cx);
+                log!("{error}");
                 return false;
             }
         };
-        self.open_dir = Some(dir.to_path_buf());
+        self.open_dir = Some(next_root);
         // Folder basename backs the display name when the bundle has no root
         // name of its own. `..` / drive-root degenerate to an empty basename;
         // "bundle" is the last-ditch label.
@@ -1334,6 +1386,11 @@ impl App {
         };
         crate::config::push_recent(dir, root_name);
         self.open_bundle(cx, bundle, model, display_name, wanted_diagram)
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    fn open_dir(&mut self, _cx: &mut Cx, _dir: &Path, _wanted_diagram: Option<&str>) -> bool {
+        false
     }
 
     /// Populate the editor from an already-read bundle (tree, canvas, tabs,
@@ -1504,6 +1561,53 @@ impl App {
         self.tree_gap_w = -1.0;
         self.rule_overshoot = -1.0;
         self.sync_dock_slots(cx);
+    }
+
+    /// Flush the current backing before closing it. A failed flush leaves the
+    /// editor, source snapshots, and retry timer intact.
+    fn close_model(&mut self, cx: &mut Cx) -> bool {
+        #[cfg(not(target_arch = "wasm32"))]
+        let result = {
+            let root = self.open_dir.as_deref();
+            close_after_save(&mut self.session, |session| {
+                if !session.is_dirty() {
+                    return Ok(());
+                }
+                let root =
+                    root.ok_or_else(|| "native bundle has no opened directory".to_string())?;
+                crate::native_save::save_bundle_atomic(
+                    root,
+                    session.persisted_bundle(),
+                    session.bundle(),
+                )
+                .map_err(|error| format!("failed to save OKF dir {root:?}: {error}"))
+            })
+        };
+
+        #[cfg(target_arch = "wasm32")]
+        let result = close_after_save(&mut self.session, |session| {
+            if session.is_dirty() {
+                cx.browser_update_url(
+                    &format!("#{}", waml::share::encode(session.bundle())),
+                    true,
+                );
+            }
+            Ok(())
+        });
+
+        self.save_feedback.finish_save(&result);
+        if let Err(error) = &result {
+            log!("failed to close open document: {error}");
+            self.schedule_save(cx);
+            self.sync_save_error(cx);
+            return false;
+        }
+
+        cx.stop_timer(self.save_timer);
+        self.open_dir = None;
+        self.sync_save_error(cx);
+        self.show_start_screen(cx);
+        true
     }
 
     /// Load recents into the start screen and reveal it, hiding the editor.
@@ -2175,15 +2279,17 @@ impl AppMain for App {
 #[cfg(test)]
 mod tests {
     use super::{
+        close_after_save,
         doc_switcher_items, logo_command_for, next_narrow, open_overlay_contains, place_rm_for,
         prevent_quit_after_failed_save, should_dismiss_narrow_dock, should_flush_save, LogoCommand,
-        SaveFeedback,
+        replace_after_save, BackingTransitionError, SaveFeedback,
     };
     use crate::doc_tabs::{DocTab, OpenTabs, TabKind};
     use crate::dock::DockState;
     use crate::popup::conflict_list::ConflictListAction;
     use crate::tree::TreeKind;
     use makepad_widgets::*;
+    use std::cell::RefCell;
 
     #[test]
     fn shutdown_and_quit_request_are_final_save_events() {
@@ -2215,6 +2321,68 @@ mod tests {
         state.opened_replacement_bundle();
 
         assert_eq!(state.save_error(), None);
+    }
+
+    #[test]
+    fn replacement_saves_old_document_before_loading_new_document() {
+        let calls = RefCell::new(Vec::new());
+
+        let loaded = replace_after_save(
+            || {
+                calls.borrow_mut().push("save");
+                Ok(())
+            },
+            || {
+                calls.borrow_mut().push("load");
+                Ok("new document")
+            },
+        )
+        .unwrap();
+
+        assert_eq!(calls.into_inner(), vec!["save", "load"]);
+        assert_eq!(loaded, "new document");
+    }
+
+    #[test]
+    fn failed_save_blocks_replacement_load() {
+        let error = replace_after_save(
+            || Err("external edit conflict".into()),
+            || -> Result<(), String> { panic!("replacement must not load after a failed save") },
+        )
+        .unwrap_err();
+
+        assert_eq!(
+            error,
+            BackingTransitionError::Save("external edit conflict".into())
+        );
+    }
+
+    #[test]
+    fn failed_save_blocks_close_and_keeps_document_state() {
+        let mut state = vec!["edited"];
+        let before = state.clone();
+
+        assert_eq!(
+            close_after_save(&mut state, |_| Err("disk full".into())),
+            Err("disk full".into())
+        );
+        assert_eq!(state, before);
+    }
+
+    #[test]
+    fn successful_save_allows_close_and_clears_document_state() {
+        let mut state = vec!["edited"];
+        let mut saved = false;
+
+        close_after_save(&mut state, |current| {
+            assert_eq!(current, &vec!["edited"]);
+            saved = true;
+            Ok(())
+        })
+        .unwrap();
+
+        assert!(saved);
+        assert!(state.is_empty());
     }
 
     #[test]

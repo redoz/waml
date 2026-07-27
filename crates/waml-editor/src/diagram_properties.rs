@@ -104,7 +104,7 @@ script_mod! {
                 draw_selection +: { color: atlas.selection }
             }
             description_label := Label {
-                text: "Description"
+                text: "Description (one line)"
                 margin: Inset{top: 2.0}
                 draw_text +: { color: atlas.text text_style: fonts.text_label }
             }
@@ -112,8 +112,8 @@ script_mod! {
                 width: Fill
                 height: 42.0
                 padding: Inset{left: 9.0, right: 9.0, top: 5.0, bottom: 5.0}
-                is_multiline: true
-                empty_text: "Optional description"
+                is_multiline: false
+                empty_text: "Optional, one line"
                 draw_bg +: {
                     color: atlas.field_bg
                     color_hover: atlas.field_bg
@@ -308,6 +308,28 @@ pub struct DiagramPropertiesState {
     display: ResolvedDiagramDisplay,
 }
 
+fn normalize_description(value: Option<String>) -> Option<String> {
+    value.and_then(|value| {
+        let mut normalized = String::with_capacity(value.len());
+        let mut previous_was_cr = false;
+        for character in value.chars() {
+            match character {
+                '\r' => {
+                    normalized.push(' ');
+                    previous_was_cr = true;
+                }
+                '\n' if previous_was_cr => previous_was_cr = false,
+                '\n' => normalized.push(' '),
+                _ => {
+                    normalized.push(character);
+                    previous_was_cr = false;
+                }
+            }
+        }
+        (!normalized.trim().is_empty()).then_some(normalized)
+    })
+}
+
 impl DiagramPropertiesState {
     pub fn new(
         title: String,
@@ -338,7 +360,7 @@ impl DiagramPropertiesState {
                 return self.identity_action();
             }
             PropertyChange::Description(value) => {
-                self.description = value;
+                self.description = normalize_description(value);
                 return self.identity_action();
             }
         }
@@ -678,6 +700,23 @@ mod tests {
             DiagramPropertiesAction::IdentityChanged {
                 title: "Orders".into(),
                 description: None,
+            }
+        );
+    }
+
+    #[test]
+    fn description_change_is_normalized_to_one_plain_line() {
+        let mut state = DiagramPropertiesState::new("Orders".into(), None, resolved_display());
+
+        let action = state.apply(PropertyChange::Description(Some(
+            "First line\r\nSecond line\nThird line".into(),
+        )));
+
+        assert_eq!(
+            action,
+            DiagramPropertiesAction::IdentityChanged {
+                title: "Orders".into(),
+                description: Some("First line Second line Third line".into()),
             }
         );
     }

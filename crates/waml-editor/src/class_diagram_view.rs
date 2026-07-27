@@ -217,6 +217,7 @@ impl ClassDiagramView {
                 resolve_display(&diagram.display),
                 &self.expanded,
             );
+            let node_keys: Vec<String> = scene.nodes.iter().map(|node| node.key.clone()).collect();
             for diagnostic in &diagnostics {
                 log!("diagnostic: {diagnostic:?}");
             }
@@ -226,6 +227,14 @@ impl ClassDiagramView {
             {
                 canvas.update_scene(cx, scene);
             }
+            self.sync_inspector_elements(
+                cx,
+                body,
+                model,
+                &diagram.key,
+                &diagram.title,
+                &node_keys,
+            );
         }
     }
 

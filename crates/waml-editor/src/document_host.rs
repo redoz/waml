@@ -225,6 +225,9 @@ impl DocumentHost {
         session: &EditorSession,
         change: SessionChange,
     ) {
+        if change.model_changed {
+            self.tabs.reconcile_titles(session.model());
+        }
         let body = BodyWidgets::new(cx, ui);
         if let Some(view) = self.views.get_mut(&self.tabs.active) {
             view.after_session_change(cx, &body, data(session), change);
