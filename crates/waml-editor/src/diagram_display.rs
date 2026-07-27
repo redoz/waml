@@ -5,9 +5,10 @@ pub struct ResolvedDiagramDisplay {
     pub show_attributes: bool,
     pub show_type: bool,
     pub show_attribute_visibility: bool,
+    pub cardinality: CardinalityVisibility,
     pub max_attributes: Option<u32>,
     pub show_roles: bool,
-    pub cardinality: CardinalityVisibility,
+    pub show_cardinality: bool,
     pub show_labels: bool,
     pub show_stereotype: bool,
     pub stereotype_filter: Option<Vec<String>>,
@@ -33,9 +34,10 @@ pub fn resolve_display(display: &DiagramDisplay) -> ResolvedDiagramDisplay {
         show_attributes: display.show_attributes.unwrap_or(true),
         show_type: display.show_type.unwrap_or(true),
         show_attribute_visibility: display.show_attribute_visibility.unwrap_or(true),
+        cardinality,
         max_attributes: display.max_attributes,
         show_roles: display.show_roles.unwrap_or(true),
-        cardinality,
+        show_cardinality: display.show_cardinality.unwrap_or(true),
         show_labels: display.show_labels.unwrap_or(true),
         show_stereotype: display.show_stereotype.unwrap_or(true),
         stereotype_filter: display.stereotype_filter.clone(),
@@ -49,11 +51,24 @@ mod tests {
     use waml::model::{CardinalityVisibility, DiagramDisplay};
 
     #[test]
-    fn display_defaults_to_explicit_cardinality() {
-        assert_eq!(
-            resolve_display(&DiagramDisplay::default()).cardinality,
-            CardinalityVisibility::Explicit
-        );
+    fn display_defaults_to_explicit_attribute_and_visible_relationship_cardinality() {
+        let resolved = resolve_display(&DiagramDisplay::default());
+        assert_eq!(resolved.cardinality, CardinalityVisibility::Explicit);
+        assert!(resolved.show_cardinality);
+    }
+
+    #[test]
+    fn attribute_and_relationship_cardinality_resolve_independently() {
+        let partial = DiagramDisplay {
+            cardinality: Some(CardinalityVisibility::Off),
+            show_cardinality: Some(true),
+            ..Default::default()
+        };
+
+        let resolved = resolve_display(&partial);
+
+        assert_eq!(resolved.cardinality, CardinalityVisibility::Off);
+        assert!(resolved.show_cardinality);
     }
 
     #[test]
@@ -86,5 +101,9 @@ mod tests {
         };
         let resolved = resolve_display(&legacy);
         assert_eq!(resolved.cardinality, CardinalityVisibility::Off);
+        assert!(
+            resolved.show_cardinality,
+            "the legacy attribute-only gate must not hide relationship cardinality"
+        );
     }
 }

@@ -651,9 +651,10 @@ const DISPLAY_KEYS: &[&str] = &[
     "attributeDetail",
     "showAttributeVisibility",
     "showAttributeMultiplicity",
+    "cardinality",
     "maxAttributes",
     "showRoles",
-    "cardinality",
+    "showCardinality",
     "showLabels",
     "showStereotype",
     "stereotypeFilter",
@@ -716,6 +717,18 @@ pub(crate) fn op_diagram_set(
                 "showAttributeMultiplicity",
                 FmValue::Bool(ds.cardinality.legacy_attribute_gate()),
             );
+            fm_set(
+                &mut doc.frontmatter,
+                "cardinality",
+                FmValue::Str(
+                    match ds.cardinality {
+                        CardinalityVisibility::Off => "off",
+                        CardinalityVisibility::Explicit => "explicit",
+                        CardinalityVisibility::All => "all",
+                    }
+                    .into(),
+                ),
+            );
             if let Some(max) = ds.max_attributes {
                 fm_set(
                     &mut doc.frontmatter,
@@ -730,15 +743,8 @@ pub(crate) fn op_diagram_set(
             );
             fm_set(
                 &mut doc.frontmatter,
-                "cardinality",
-                FmValue::Str(
-                    match ds.cardinality {
-                        CardinalityVisibility::Off => "off",
-                        CardinalityVisibility::Explicit => "explicit",
-                        CardinalityVisibility::All => "all",
-                    }
-                    .into(),
-                ),
+                "showCardinality",
+                FmValue::Bool(ds.show_cardinality),
             );
             fm_set(
                 &mut doc.frontmatter,

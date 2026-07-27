@@ -12,6 +12,10 @@ fn one() -> u32 {
     1
 }
 
+fn default_true() -> bool {
+    true
+}
+
 fn is_false(value: &bool) -> bool {
     !*value
 }
@@ -246,9 +250,9 @@ pub enum OpDto {
     },
 }
 
-/// A fully-specified display block on the wire. The legacy multiplicity boolean
-/// remains here for compatibility and is derived from `cardinality` when crossing
-/// the internal `DiagramDisplaySet` boundary.
+/// A fully-specified display block on the wire. Attribute cardinality uses the
+/// enum plus its derived legacy gate; relationship cardinality remains an
+/// independent boolean.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DisplayDto {
@@ -260,6 +264,8 @@ pub struct DisplayDto {
     pub max_attributes: Option<u32>,
     pub show_roles: bool,
     pub cardinality: CardinalityVisibility,
+    #[serde(default = "default_true")]
+    pub show_cardinality: bool,
     pub show_labels: bool,
     pub show_stereotype: bool,
     #[serde(default)]
@@ -276,6 +282,7 @@ fn display_dto_to_set(d: &DisplayDto) -> DiagramDisplaySet {
         max_attributes: d.max_attributes,
         show_roles: d.show_roles,
         cardinality: d.cardinality,
+        show_cardinality: d.show_cardinality,
         show_labels: d.show_labels,
         show_stereotype: d.show_stereotype,
         stereotype_filter: d.stereotype_filter.clone(),
@@ -292,6 +299,7 @@ fn display_set_to_dto(ds: &DiagramDisplaySet) -> DisplayDto {
         max_attributes: ds.max_attributes,
         show_roles: ds.show_roles,
         cardinality: ds.cardinality,
+        show_cardinality: ds.show_cardinality,
         show_labels: ds.show_labels,
         show_stereotype: ds.show_stereotype,
         stereotype_filter: ds.stereotype_filter.clone(),
@@ -1298,6 +1306,7 @@ mod tests {
                     max_attributes: Some(6),
                     show_roles: false,
                     cardinality: CardinalityVisibility::Off,
+                    show_cardinality: true,
                     show_labels: true,
                     show_stereotype: false,
                     stereotype_filter: Some(vec!["entity".into()]),
@@ -1422,6 +1431,7 @@ mod tests {
                 max_attributes: None,
                 show_roles: true,
                 cardinality: CardinalityVisibility::Explicit,
+                show_cardinality: true,
                 show_labels: true,
                 show_stereotype: true,
                 stereotype_filter: None,
@@ -1449,6 +1459,7 @@ mod tests {
             max_attributes: None,
             show_roles: true,
             cardinality: CardinalityVisibility::Off,
+            show_cardinality: true,
             show_labels: true,
             show_stereotype: true,
             stereotype_filter: None,
@@ -1457,10 +1468,12 @@ mod tests {
 
         let display = display_dto_to_set(&dto);
         assert_eq!(display.cardinality, CardinalityVisibility::Off);
+        assert!(display.show_cardinality);
         let normalized = display_set_to_dto(&display);
         assert!(
             !normalized.show_attribute_multiplicity,
             "the internal enum must derive the legacy wire compatibility field"
         );
+        assert!(normalized.show_cardinality);
     }
 }

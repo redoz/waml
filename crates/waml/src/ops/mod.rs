@@ -85,9 +85,10 @@ pub struct DiagramDisplaySet {
     pub show_attributes: bool,
     pub show_type: bool,
     pub show_attribute_visibility: bool,
+    pub cardinality: CardinalityVisibility,
     pub max_attributes: Option<u32>,
     pub show_roles: bool,
-    pub cardinality: CardinalityVisibility,
+    pub show_cardinality: bool,
     pub show_labels: bool,
     pub show_stereotype: bool,
     pub stereotype_filter: Option<Vec<String>>,
@@ -1123,9 +1124,10 @@ mod tests {
             show_attributes: false,
             show_type: false,
             show_attribute_visibility: false,
+            cardinality: CardinalityVisibility::Off,
             max_attributes: Some(6),
             show_roles: false,
-            cardinality: CardinalityVisibility::Off,
+            show_cardinality: true,
             show_labels: true,
             show_stereotype: false,
             stereotype_filter: Some(vec!["entity".into()]),
@@ -1214,13 +1216,14 @@ mod tests {
                 clear_description: false,
                 display: Some(DiagramDisplaySet {
                     cardinality: CardinalityVisibility::Explicit,
+                    show_cardinality: false,
                     ..full_display()
                 }),
             }],
         )
         .unwrap();
         assert!(out[0].1.contains("cardinality: explicit"));
-        assert!(!out[0].1.contains("showCardinality"));
+        assert!(out[0].1.contains("showCardinality: false"));
     }
 
     #[test]

@@ -1,9 +1,6 @@
 //! Pure relationship-label policy and terminal geometry for the native canvas.
 
-use crate::{
-    diagram_display::ResolvedDiagramDisplay,
-    scene::{attribute_cardinality_text, SceneEdge},
-};
+use crate::{diagram_display::ResolvedDiagramDisplay, scene::SceneEdge};
 use waml::{adornment::End, model::AssocName};
 
 const TERMINAL_OFFSET: f64 = 12.0;
@@ -33,8 +30,15 @@ pub fn edge_end_labels(edge: &SceneEdge, display: &ResolvedDiagramDisplay) -> Ve
                 End::From => &edge.from_end,
                 End::To => &edge.to_end,
             };
-            let cardinality =
-                attribute_cardinality_text(end_data.multiplicity.as_ref(), display.cardinality);
+            let cardinality = display
+                .show_cardinality
+                .then(|| {
+                    end_data
+                        .multiplicity
+                        .as_ref()
+                        .map(|multiplicity| format!("{{{}}}", multiplicity.as_str()))
+                })
+                .flatten();
             let role = display
                 .show_roles
                 .then_some(end_data.role.as_deref())
@@ -204,6 +208,7 @@ mod tests {
         edge.name = Some(AssocName::Assoc("employment".into()));
         let mut display = display(CardinalityVisibility::Off);
         display.show_roles = false;
+        display.show_cardinality = false;
         display.show_labels = true;
 
         assert!(edge_end_labels(&edge, &display).is_empty());
@@ -215,6 +220,7 @@ mod tests {
         edge.name = Some(AssocName::Label("places".into()));
         let mut display = display(CardinalityVisibility::Off);
         display.show_roles = false;
+        display.show_cardinality = false;
         display.show_labels = true;
 
         let labels = edge_end_labels(&edge, &display);
@@ -229,6 +235,7 @@ mod tests {
         edge.name = Some(AssocName::Label("places".into()));
         let mut display = display(CardinalityVisibility::Off);
         display.show_roles = false;
+        display.show_cardinality = false;
         display.show_labels = true;
 
         let labels = edge_end_labels(&edge, &display);

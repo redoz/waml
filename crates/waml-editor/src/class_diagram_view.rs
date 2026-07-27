@@ -103,6 +103,10 @@ impl ClassDiagramMode {
         self == Self::Canvas
     }
 
+    fn tool_dock_visible(self) -> bool {
+        self == Self::Canvas
+    }
+
     fn accepts_canvas_actions(self) -> bool {
         self == Self::Canvas
     }
@@ -178,6 +182,7 @@ impl ClassDiagramView {
 
     fn show_mode(&self, cx: &mut Cx, body: &BodyWidgets) {
         body.set_diagram_properties_visible(cx, self.mode.properties_visible());
+        body.set_tool_dock_visible(cx, self.mode.tool_dock_visible());
         body.set_view_bar_visible(cx, self.mode.canvas_chrome_visible());
         body.set_conflict_badge_visible(cx, self.mode.canvas_chrome_visible());
     }
@@ -346,20 +351,9 @@ impl DocView for ClassDiagramView {
                 return outcome;
             }
 
-            // The tool dock remains visible so its Diagram Properties button
-            // can toggle back to the canvas. All other canvas-owned widgets are
-            // hidden, and their queued actions are swallowed while this mode is
-            // active so they cannot mutate the preserved camera or selection.
-            if let Some(action) = body
-                .tool_dock(cx)
-                .borrow_mut::<crate::tool_dock::ToolDock>()
-                .and_then(|dock| dock.dock_action(actions))
-            {
-                if self.apply_tool_action(action) {
-                    Self::clear_properties_focus(cx);
-                    self.show_mode(cx, body);
-                }
-            }
+            // Properties mode owns the center surface. All canvas chrome,
+            // including the tool dock, is hidden and its queued actions are
+            // deliberately ignored until the panel's Close action restores it.
             return out;
         }
         debug_assert!(self.mode.accepts_canvas_actions());
@@ -928,8 +922,10 @@ mod tests {
     fn properties_mode_hides_canvas_chrome_and_gates_canvas_actions() {
         assert!(ClassDiagramMode::Canvas.canvas_chrome_visible());
         assert!(ClassDiagramMode::Canvas.accepts_canvas_actions());
+        assert!(ClassDiagramMode::Canvas.tool_dock_visible());
         assert!(!ClassDiagramMode::Properties.canvas_chrome_visible());
         assert!(!ClassDiagramMode::Properties.accepts_canvas_actions());
+        assert!(!ClassDiagramMode::Properties.tool_dock_visible());
     }
 
     #[test]
@@ -947,9 +943,10 @@ mod tests {
             show_attributes: true,
             show_type: false,
             show_attribute_visibility: true,
+            cardinality: CardinalityVisibility::Explicit,
             max_attributes: Some(4),
             show_roles: true,
-            cardinality: CardinalityVisibility::Explicit,
+            show_cardinality: true,
             show_labels: true,
             show_stereotype: false,
             stereotype_filter: None,
@@ -1030,9 +1027,10 @@ mod tests {
             show_attributes: false,
             show_type: true,
             show_attribute_visibility: true,
+            cardinality: CardinalityVisibility::All,
             max_attributes: None,
             show_roles: false,
-            cardinality: CardinalityVisibility::All,
+            show_cardinality: false,
             show_labels: true,
             show_stereotype: true,
             stereotype_filter: None,

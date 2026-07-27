@@ -81,9 +81,13 @@ mod edge_labels_tests {
     use waml::multiplicity::Multiplicity;
     use waml::solve::Rect;
 
-    fn display(cardinality: CardinalityVisibility) -> ResolvedDiagramDisplay {
+    fn display(
+        cardinality: CardinalityVisibility,
+        show_cardinality: bool,
+    ) -> ResolvedDiagramDisplay {
         ResolvedDiagramDisplay {
             cardinality,
+            show_cardinality,
             ..Default::default()
         }
     }
@@ -129,19 +133,26 @@ mod edge_labels_tests {
     }
 
     #[test]
-    fn edge_cardinality_uses_the_shared_three_state_policy() {
+    fn relationship_cardinality_is_independent_and_never_synthesized() {
         let edge = ended_edge(None, Multiplicity::parse("0..*"));
-        assert!(edge_end_labels(&edge, &display(CardinalityVisibility::Off)).is_empty());
         assert_eq!(
             texts(edge_end_labels(
                 &edge,
-                &display(CardinalityVisibility::Explicit)
+                &display(CardinalityVisibility::Off, true)
             )),
             vec!["{0..*}"]
         );
+        assert!(
+            edge_end_labels(&edge, &display(CardinalityVisibility::All, false)).is_empty(),
+            "the relationship toggle must be authoritative"
+        );
         assert_eq!(
-            texts(edge_end_labels(&edge, &display(CardinalityVisibility::All))),
-            vec!["{1}", "{0..*}"]
+            texts(edge_end_labels(
+                &edge,
+                &display(CardinalityVisibility::All, true)
+            )),
+            vec!["{0..*}"],
+            "enabling relationship cardinality must not synthesize an implicit one"
         );
     }
 
@@ -152,7 +163,7 @@ mod edge_labels_tests {
             RelEnd::default(),
             RelEnd::default(),
         );
-        assert!(edge_end_labels(&edge, &display(CardinalityVisibility::All)).is_empty());
+        assert!(edge_end_labels(&edge, &display(CardinalityVisibility::All, true)).is_empty());
     }
 
     #[test]
@@ -160,7 +171,7 @@ mod edge_labels_tests {
         let mut edge = ended_edge(None, None);
         edge.from_end.role = Some("orders".into());
         edge.name = Some(waml::model::AssocName::Label("places".into()));
-        let mut display = display(CardinalityVisibility::Off);
+        let mut display = display(CardinalityVisibility::Off, false);
         display.show_roles = false;
         display.show_labels = false;
         assert!(edge_end_labels(&edge, &display).is_empty());
@@ -179,7 +190,7 @@ mod edge_labels_tests {
     fn horizontal_terminal_labels_move_into_open_space() {
         let labels = edge_end_labels(
             &ended_edge(Multiplicity::parse("1"), Multiplicity::parse("0..*")),
-            &display(CardinalityVisibility::All),
+            &display(CardinalityVisibility::All, true),
         );
         assert_eq!(labels[0].align, LabelAlign::Right);
         assert!(labels[0].anchor.0 > 20.0);
@@ -191,7 +202,7 @@ mod edge_labels_tests {
     fn vertical_terminal_labels_move_into_open_space() {
         let mut edge = ended_edge(Multiplicity::parse("1"), Multiplicity::parse("0..*"));
         edge.points = vec![(10.0, 20.0), (10.0, 100.0)];
-        let labels = edge_end_labels(&edge, &display(CardinalityVisibility::All));
+        let labels = edge_end_labels(&edge, &display(CardinalityVisibility::All, true));
         assert_eq!(labels[0].align, LabelAlign::Below);
         assert!(labels[0].anchor.1 > 20.0);
         assert_eq!(labels[1].align, LabelAlign::Above);

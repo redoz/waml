@@ -58,10 +58,10 @@ script_mod! {
             height: Fit
             flow: Down
             spacing: 5.0
-            padding: Inset{left: 70.0, right: 14.0, top: 10.0, bottom: 10.0}
+            padding: Inset{left: 14.0, right: 14.0, top: 10.0, bottom: 10.0}
 
-            diagram_section := Label {
-                text: "DIAGRAM"
+            identity_section := Label {
+                text: "Identity"
                 draw_text +: { color: atlas.text_dim text_style: fonts.text_eyebrow }
             }
             title_label := Label {
@@ -104,7 +104,7 @@ script_mod! {
                 draw_selection +: { color: atlas.selection }
             }
             description_label := Label {
-                text: "Description (one line)"
+                text: "Note"
                 margin: Inset{top: 2.0}
                 draw_text +: { color: atlas.text text_style: fonts.text_label }
             }
@@ -113,7 +113,7 @@ script_mod! {
                 height: 42.0
                 padding: Inset{left: 9.0, right: 9.0, top: 5.0, bottom: 5.0}
                 is_multiline: false
-                empty_text: "Optional, one line"
+                empty_text: "Optional note"
                 draw_bg +: {
                     color: atlas.field_bg
                     color_hover: atlas.field_bg
@@ -145,19 +145,20 @@ script_mod! {
                 draw_selection +: { color: atlas.selection }
             }
 
-            classifiers_section := Label {
-                text: "CLASSIFIERS"
-                margin: Inset{top: 4.0}
-                draw_text +: { color: atlas.text_dim text_style: fonts.text_eyebrow }
+            attributes_rule := View {
+                width: Fill height: 1.0
+                margin: Inset{top: 8.0, bottom: 4.0}
+                show_bg: true
+                draw_bg +: { color: atlas.surface_border }
             }
-            classifiers_consequence := Label {
-                text: "Controls classifier card content."
-                draw_text +: { color: atlas.text_dim text_style: fonts.text_label }
+            attributes_section := Label {
+                text: "Attributes"
+                draw_text +: { color: atlas.text_dim text_style: fonts.text_eyebrow }
             }
             attributes_row := View {
                 width: Fill height: 28.0 flow: Right align: Align{y: 0.5}
                 attributes_label := Label {
-                    text: "Attributes"
+                    text: "Show attributes"
                     draw_text +: { color: atlas.text text_style: fonts.text_body }
                 }
                 attributes_spacer := View { width: Fill height: 1.0 }
@@ -166,7 +167,7 @@ script_mod! {
             types_row := View {
                 width: Fill height: 28.0 flow: Right align: Align{y: 0.5}
                 types_label := Label {
-                    text: "Types"
+                    text: "Show type"
                     draw_text +: { color: atlas.text text_style: fonts.text_body }
                 }
                 types_spacer := View { width: Fill height: 1.0 }
@@ -175,16 +176,25 @@ script_mod! {
             visibility_row := View {
                 width: Fill height: 28.0 flow: Right align: Align{y: 0.5}
                 visibility_label := Label {
-                    text: "Visibility"
+                    text: "Show visibility"
                     draw_text +: { color: atlas.text text_style: fonts.text_body }
                 }
                 visibility_spacer := View { width: Fill height: 1.0 }
                 visibility_toggle := ToggleControl {}
             }
+            attribute_cardinality_row := View {
+                width: Fill height: 32.0 flow: Right align: Align{y: 0.5}
+                attribute_cardinality_label := Label {
+                    text: "Cardinality"
+                    draw_text +: { color: atlas.text text_style: fonts.text_body }
+                }
+                attribute_cardinality_spacer := View { width: Fill height: 1.0 }
+                cardinality_control := SegmentedControl {}
+            }
             max_attributes_row := View {
                 width: Fill height: 32.0 flow: Right align: Align{y: 0.5}
                 max_attributes_label := Label {
-                    text: "Maximum attributes"
+                    text: "Max attributes"
                     draw_text +: { color: atlas.text text_style: fonts.text_body }
                 }
                 max_attributes_spacer := View { width: Fill height: 1.0 }
@@ -225,53 +235,62 @@ script_mod! {
                     draw_selection +: { color: atlas.selection }
                 }
             }
-            stereotypes_row := View {
-                width: Fill height: 28.0 flow: Right align: Align{y: 0.5}
-                stereotypes_label := Label {
-                    text: "Stereotypes"
-                    draw_text +: { color: atlas.text text_style: fonts.text_body }
-                }
-                stereotypes_spacer := View { width: Fill height: 1.0 }
-                stereotypes_toggle := ToggleControl {}
+            relationships_rule := View {
+                width: Fill height: 1.0
+                margin: Inset{top: 8.0, bottom: 4.0}
+                show_bg: true
+                draw_bg +: { color: atlas.surface_border }
             }
-
-            cardinality_section := Label {
-                text: "CARDINALITY"
-                margin: Inset{top: 4.0}
-                draw_text +: { color: atlas.text_dim text_style: fonts.text_eyebrow }
-            }
-            cardinality_consequence := Label {
-                text: "Controls relationship end annotations."
-                draw_text +: { color: atlas.text_dim text_style: fonts.text_label }
-            }
-            cardinality_control := SegmentedControl {}
-
             relationships_section := Label {
-                text: "RELATIONSHIPS"
-                margin: Inset{top: 4.0}
+                text: "Relationships"
                 draw_text +: { color: atlas.text_dim text_style: fonts.text_eyebrow }
-            }
-            relationships_consequence := Label {
-                text: "Controls edge annotations."
-                draw_text +: { color: atlas.text_dim text_style: fonts.text_label }
             }
             roles_row := View {
                 width: Fill height: 28.0 flow: Right align: Align{y: 0.5}
                 roles_label := Label {
-                    text: "Roles"
+                    text: "Show roles"
                     draw_text +: { color: atlas.text text_style: fonts.text_body }
                 }
                 roles_spacer := View { width: Fill height: 1.0 }
                 roles_toggle := ToggleControl {}
             }
+            relationship_cardinality_row := View {
+                width: Fill height: 28.0 flow: Right align: Align{y: 0.5}
+                relationship_cardinality_label := Label {
+                    text: "Show cardinality"
+                    draw_text +: { color: atlas.text text_style: fonts.text_body }
+                }
+                relationship_cardinality_spacer := View { width: Fill height: 1.0 }
+                cardinality_toggle := ToggleControl {}
+            }
             labels_row := View {
                 width: Fill height: 28.0 flow: Right align: Align{y: 0.5}
                 labels_label := Label {
-                    text: "Labels"
+                    text: "Show labels"
                     draw_text +: { color: atlas.text text_style: fonts.text_body }
                 }
                 labels_spacer := View { width: Fill height: 1.0 }
                 labels_toggle := ToggleControl {}
+            }
+
+            stereotypes_rule := View {
+                width: Fill height: 1.0
+                margin: Inset{top: 8.0, bottom: 4.0}
+                show_bg: true
+                draw_bg +: { color: atlas.surface_border }
+            }
+            stereotypes_section := Label {
+                text: "Stereotypes"
+                draw_text +: { color: atlas.text_dim text_style: fonts.text_eyebrow }
+            }
+            stereotypes_row := View {
+                width: Fill height: 28.0 flow: Right align: Align{y: 0.5}
+                stereotypes_label := Label {
+                    text: "Show stereotype"
+                    draw_text +: { color: atlas.text text_style: fonts.text_body }
+                }
+                stereotypes_spacer := View { width: Fill height: 1.0 }
+                stereotypes_toggle := ToggleControl {}
             }
         }
     }
@@ -295,6 +314,7 @@ pub enum PropertyChange {
     MaxAttributes(Option<u32>),
     ShowRoles(bool),
     Cardinality(CardinalityVisibility),
+    ShowCardinality(bool),
     ShowLabels(bool),
     ShowStereotype(bool),
     Title(String),
@@ -353,6 +373,7 @@ impl DiagramPropertiesState {
             PropertyChange::MaxAttributes(value) => self.display.max_attributes = value,
             PropertyChange::ShowRoles(value) => self.display.show_roles = value,
             PropertyChange::Cardinality(value) => self.display.cardinality = value,
+            PropertyChange::ShowCardinality(value) => self.display.show_cardinality = value,
             PropertyChange::ShowLabels(value) => self.display.show_labels = value,
             PropertyChange::ShowStereotype(value) => self.display.show_stereotype = value,
             PropertyChange::Title(value) => {
@@ -379,9 +400,10 @@ impl DiagramPropertiesState {
             show_attributes: self.display.show_attributes,
             show_type: self.display.show_type,
             show_attribute_visibility: self.display.show_attribute_visibility,
+            cardinality: self.display.cardinality,
             max_attributes: self.display.max_attributes,
             show_roles: self.display.show_roles,
-            cardinality: self.display.cardinality,
+            show_cardinality: self.display.show_cardinality,
             show_labels: self.display.show_labels,
             show_stereotype: self.display.show_stereotype,
             stereotype_filter: self.display.stereotype_filter.clone(),
@@ -408,6 +430,14 @@ fn cardinality_from_id(id: LiveId) -> Option<CardinalityVisibility> {
     } else {
         None
     }
+}
+
+fn cardinality_segments() -> Vec<SegmentItem> {
+    vec![
+        SegmentItem::new(live_id!(cardinality_all), "On"),
+        SegmentItem::new(live_id!(cardinality_explicit), "Explicit"),
+        SegmentItem::new(live_id!(cardinality_off), "Off"),
+    ]
 }
 
 fn max_attributes_from_text(text: &str) -> Option<Option<u32>> {
@@ -495,6 +525,11 @@ impl DiagramProperties {
                 true,
             ),
             (ids!(roles_toggle), state.display.show_roles, true),
+            (
+                ids!(cardinality_toggle),
+                state.display.show_cardinality,
+                true,
+            ),
             (ids!(labels_toggle), state.display.show_labels, true),
         ] {
             let widget = self.view.widget(cx, path);
@@ -509,14 +544,7 @@ impl DiagramProperties {
 
         let segmented = self.view.widget(cx, ids!(cardinality_control));
         if let Some(mut control) = segmented.borrow_mut::<SegmentedControl>() {
-            control.set_items(
-                cx,
-                vec![
-                    SegmentItem::new(live_id!(cardinality_off), "Off"),
-                    SegmentItem::new(live_id!(cardinality_explicit), "Explicit"),
-                    SegmentItem::new(live_id!(cardinality_all), "All"),
-                ],
-            );
+            control.set_items(cx, cardinality_segments());
             control.set_selected(cx, cardinality_id(state.display.cardinality));
         }
         self.view
@@ -588,6 +616,7 @@ impl WidgetMatchEvent for DiagramProperties {
             ),
             (ids!(stereotypes_toggle), PropertyChange::ShowStereotype),
             (ids!(roles_toggle), PropertyChange::ShowRoles),
+            (ids!(cardinality_toggle), PropertyChange::ShowCardinality),
             (ids!(labels_toggle), PropertyChange::ShowLabels),
         ] {
             let changed = self
@@ -639,9 +668,10 @@ mod tests {
             show_attributes: true,
             show_type: true,
             show_attribute_visibility: false,
+            cardinality: CardinalityVisibility::Explicit,
             max_attributes: Some(7),
             show_roles: false,
-            cardinality: CardinalityVisibility::Explicit,
+            show_cardinality: true,
             show_labels: true,
             show_stereotype: false,
             stereotype_filter: Some(vec!["entity".into()]),
@@ -662,9 +692,10 @@ mod tests {
                 show_attributes: true,
                 show_type: false,
                 show_attribute_visibility: false,
+                cardinality: CardinalityVisibility::Explicit,
                 max_attributes: Some(7),
                 show_roles: false,
-                cardinality: CardinalityVisibility::Explicit,
+                show_cardinality: true,
                 show_labels: true,
                 show_stereotype: false,
                 stereotype_filter: Some(vec!["entity".into()]),
@@ -683,6 +714,23 @@ mod tests {
             panic!("cardinality changes must emit a display payload");
         };
         assert_eq!(display.cardinality, CardinalityVisibility::All);
+        assert!(
+            display.show_cardinality,
+            "changing attribute cardinality must preserve relationship cardinality"
+        );
+    }
+
+    #[test]
+    fn changing_relationship_cardinality_preserves_the_attribute_mode() {
+        let mut state = DiagramPropertiesState::new("Orders".into(), None, resolved_display());
+
+        let action = state.apply(PropertyChange::ShowCardinality(false));
+
+        let DiagramPropertiesAction::DisplayChanged(display) = action else {
+            panic!("relationship cardinality changes must emit a display payload");
+        };
+        assert!(!display.show_cardinality);
+        assert_eq!(display.cardinality, CardinalityVisibility::Explicit);
     }
 
     #[test]
@@ -733,6 +781,22 @@ mod tests {
             Some(CardinalityVisibility::All)
         );
         assert_eq!(super::cardinality_from_id(live_id!(unknown)), None);
+    }
+
+    #[test]
+    fn attribute_cardinality_segments_use_the_visible_on_explicit_off_order() {
+        let items = super::cardinality_segments();
+        assert_eq!(
+            items
+                .iter()
+                .map(|item| (item.id, item.label.as_str()))
+                .collect::<Vec<_>>(),
+            vec![
+                (live_id!(cardinality_all), "On"),
+                (live_id!(cardinality_explicit), "Explicit"),
+                (live_id!(cardinality_off), "Off"),
+            ]
+        );
     }
 
     #[test]
