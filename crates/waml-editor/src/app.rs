@@ -59,6 +59,7 @@ script_mod! {
     use mod.widgets.ColorsOverlay
     use mod.widgets.ToolDock
     use mod.widgets.ViewBar
+    use mod.widgets.DiagramProperties
     use mod.widgets.ConflictBadge
     use mod.widgets.SelectionToolbar
     use mod.widgets.Statusbar
@@ -340,7 +341,7 @@ script_mod! {
                                 // hide the whole diagram render on a Source tab
                                 // (ClassDiagramSurface has no `visible` field of its own and
                                 // draws every frame unconditionally). Diagram + Preview
-                                // tabs keep it shown; `sync_active_tab` toggles it off
+                                // tabs keep it shown; the active `DocView` toggles it off
                                 // only for a Source tab, mutually exclusive with
                                 // `source_view` below.
                                 canvas_wrap := View{
@@ -348,6 +349,15 @@ script_mod! {
                                     height: Fill
                                     flow: Overlay
                                     canvas := ClassDiagramSurface{
+                                        width: Fill
+                                        height: Fill
+                                    }
+                                }
+                                diagram_properties_wrap := View {
+                                    width: Fill
+                                    height: Fill
+                                    visible: false
+                                    diagram_properties := DiagramProperties {
                                         width: Fill
                                         height: Fill
                                     }
@@ -1844,6 +1854,8 @@ impl AppMain for App {
         // unqueryable node (invisible glyph, `set_icon`/`clicked` no-op). Its own
         // deps (`icons`, `atlas`) are already registered above.
         crate::icon_button::script_mod(vm);
+        crate::property_controls::script_mod(vm);
+        crate::diagram_properties::script_mod(vm);
         crate::tree_panel::script_mod(vm);
         // `select_box` must register before `inspector_panel`: the inspector's
         // `element_bar` mounts `SelectBox` as a child, and the DSL resolves
@@ -1960,6 +1972,12 @@ impl AppMain for App {
             }
         }
         self.match_event(cx, event);
+
+        // Escape always returns an active diagram tab from its properties page
+        // to the canvas, including while one of the property fields has focus.
+        if matches!(event, Event::KeyDown(ke) if ke.key_code == KeyCode::Escape) {
+            self.documents.on_active_escape(cx, &self.ui);
+        }
 
         // Debounced save: the document has sat unchanged for a beat, so persist
         // it through whichever backing this build has.

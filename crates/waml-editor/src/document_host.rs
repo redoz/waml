@@ -243,6 +243,13 @@ impl DocumentHost {
             .map(|view| view.handle(cx, &body, actions, data(session)))
     }
 
+    pub fn on_active_escape(&mut self, cx: &mut Cx, ui: &WidgetRef) {
+        let body = BodyWidgets::new(cx, ui);
+        if let Some(view) = self.views.get_mut(&self.tabs.active) {
+            view.on_escape(cx, &body);
+        }
+    }
+
     pub fn on_active_popup_result(
         &mut self,
         cx: &mut Cx,

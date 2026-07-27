@@ -7,12 +7,14 @@ use waml::model::Model;
 
 use crate::canvas::ConstraintVisibility;
 use crate::diagram_display::resolve_display;
+use crate::diagram_properties::{DiagramProperties, DiagramPropertiesAction};
 use crate::doc_view::{BodyChrome, BodyWidgets, DocView, PopupRequest, ViewData, ViewOutcome};
 use crate::editor_session::SessionChange;
 use crate::icons::Icon;
 use crate::inspector::{diagram_elements, subject_from, Subject};
 use crate::popup::base::{PopupItem, PopupResult};
 use crate::scene::build_scene;
+use waml::ops::Op;
 
 /// Strip a defensive `.md` tail from a node/diagram key.
 fn strip_md_key(s: &str) -> String {
@@ -74,12 +76,37 @@ fn refresh_for(change: SessionChange) -> DiagramRefresh {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+enum ClassDiagramMode {
+    #[default]
+    Canvas,
+    Properties,
+}
+
+impl ClassDiagramMode {
+    fn toggle_properties(&mut self) {
+        *self = match self {
+            Self::Canvas => Self::Properties,
+            Self::Properties => Self::Canvas,
+        };
+    }
+
+    fn deactivate(&mut self) {
+        *self = Self::Canvas;
+    }
+
+    fn properties_visible(self) -> bool {
+        self == Self::Properties
+    }
+}
+
 pub struct ClassDiagramView {
     key: String,
     title: String,
     /// Node keys whose card body is expanded. Per-tab live state, moved off
     /// the shell in Task 3. Cleared when the diagram changes.
     expanded: HashSet<String>,
+    mode: ClassDiagramMode,
 }
 
 impl ClassDiagramView {
@@ -88,10 +115,73 @@ impl ClassDiagramView {
             key,
             title,
             expanded: HashSet::new(),
+            mode: ClassDiagramMode::default(),
+        }
+    }
+
+    fn apply_tool_action(&mut self, action: crate::tool_dock::ToolDockAction) -> bool {
+        if matches!(
+            action,
+            crate::tool_dock::ToolDockAction::Triggered(crate::tool_dock::Tool::DiagramProps)
+        ) {
+            self.mode.toggle_properties();
+            true
+        } else {
+            false
+        }
+    }
+
+    fn properties_outcome(&self, action: DiagramPropertiesAction) -> ViewOutcome {
+        let (title, description, display) = match action {
+            DiagramPropertiesAction::DisplayChanged(display) => (None, None, Some(display)),
+            DiagramPropertiesAction::IdentityChanged { title, description } => {
+                (Some(title), description, None)
+            }
+            DiagramPropertiesAction::Close => return ViewOutcome::default(),
+        };
+        ViewOutcome {
+            ops: vec![Op::DiagramSet {
+                key: self.key.clone(),
+                title,
+                description,
+                display,
+            }],
+            ..Default::default()
+        }
+    }
+
+    fn show_mode(&self, cx: &mut Cx, body: &BodyWidgets) {
+        body.set_diagram_properties_visible(cx, self.mode.properties_visible());
+    }
+
+    fn return_to_canvas(&mut self, cx: &mut Cx, body: &BodyWidgets) {
+        self.mode.deactivate();
+        self.show_mode(cx, body);
+    }
+
+    fn sync_properties(&self, cx: &mut Cx, body: &BodyWidgets, model: &Model) {
+        let Some(diagram) = model
+            .diagrams
+            .iter()
+            .find(|diagram| diagram.key == self.key)
+        else {
+            return;
+        };
+        if let Some(mut properties) = body
+            .diagram_properties(cx)
+            .borrow_mut::<DiagramProperties>()
+        {
+            properties.set_diagram(
+                cx,
+                &diagram.title,
+                diagram.description.as_deref(),
+                &resolve_display(&diagram.display),
+            );
         }
     }
 
     fn update_scene(&self, cx: &mut Cx, body: &BodyWidgets, model: &Model) {
+        self.sync_properties(cx, body, model);
         if let Some(diagram) = model.diagrams.iter().find(|d| d.key == self.key) {
             let (scene, diagnostics) = build_scene(
                 model,
@@ -135,6 +225,7 @@ impl DocView for ClassDiagramView {
     fn sync(&mut self, cx: &mut Cx, body: &BodyWidgets, data: ViewData<'_>) {
         body.show_canvas(cx);
         let model = data.model;
+        self.sync_properties(cx, body, model);
         let built = model
             .diagrams
             .iter()
@@ -190,6 +281,7 @@ impl DocView for ClassDiagramView {
                 bar.set_show_hidden_borders(cx, hidden);
             }
         }
+        self.show_mode(cx, body);
     }
 
     fn handle(
@@ -201,6 +293,20 @@ impl DocView for ClassDiagramView {
     ) -> ViewOutcome {
         let model = data.model;
         let mut out = ViewOutcome::default();
+
+        if self.mode.properties_visible() {
+            let properties_action = body
+                .diagram_properties(cx)
+                .borrow::<DiagramProperties>()
+                .and_then(|properties| properties.action(actions));
+            if let Some(action) = properties_action {
+                if action == DiagramPropertiesAction::Close {
+                    self.return_to_canvas(cx, body);
+                    return out;
+                }
+                return self.properties_outcome(action);
+            }
+        }
 
         // Keep the view bar's fit-to-selection button in step with the canvas
         // selection. `ClassDiagramSurface` mutates `selected_key` in `handle_event`,
@@ -263,12 +369,17 @@ impl DocView for ClassDiagramView {
         }
 
         // Tool dock: mode clicks update their own highlight; ModeChanged
-        // re-snaps the statusbar. Other actions stay mock `log!` no-ops.
+        // re-snaps the statusbar. DiagramProps swaps this tab's center surface;
+        // the remaining one-shot action stays a mock `log!` no-op.
         if let Some(action) = body
             .tool_dock(cx)
             .borrow_mut::<crate::tool_dock::ToolDock>()
             .and_then(|dock| dock.dock_action(actions))
         {
+            if self.apply_tool_action(action.clone()) {
+                self.show_mode(cx, body);
+                return out;
+            }
             match action {
                 crate::tool_dock::ToolDockAction::ModeChanged(_) => out.statusbar_dirty = true,
                 other => log!("tool dock: {other:?}"),
@@ -588,16 +699,83 @@ impl DocView for ClassDiagramView {
             right_dock: Some(Icon::SlidersHorizontal),
         }
     }
+
+    fn on_activate(&mut self, cx: &mut Cx, body: &BodyWidgets) {
+        self.show_mode(cx, body);
+    }
+
+    fn on_deactivate(&mut self, cx: &mut Cx, body: &BodyWidgets) {
+        self.return_to_canvas(cx, body);
+    }
+
+    fn on_escape(&mut self, cx: &mut Cx, body: &BodyWidgets) {
+        self.return_to_canvas(cx, body);
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::{
         constraint_vis_for, refresh_for, show_constraints_for, show_hidden_borders_for,
-        DiagramRefresh,
+        ClassDiagramMode, ClassDiagramView, DiagramRefresh,
     };
     use crate::canvas::ConstraintVisibility;
+    use crate::diagram_properties::DiagramPropertiesAction;
+    use crate::tool_dock::{Tool, ToolDockAction};
     use crate::view_bar::{ViewBarAction, ViewOption};
+    use waml::model::CardinalityVisibility;
+    use waml::ops::{DiagramDisplaySet, Op};
+
+    #[test]
+    fn properties_mode_toggles_and_resets_on_deactivation() {
+        let mut mode = ClassDiagramMode::Canvas;
+        mode.toggle_properties();
+        assert_eq!(mode, ClassDiagramMode::Properties);
+        mode.toggle_properties();
+        assert_eq!(mode, ClassDiagramMode::Canvas);
+        mode.toggle_properties();
+        mode.deactivate();
+        assert_eq!(mode, ClassDiagramMode::Canvas);
+    }
+
+    #[test]
+    fn diagram_properties_tool_toggles_the_view_instead_of_being_a_no_op() {
+        let mut view = ClassDiagramView::new("orders".into(), "Orders".into());
+
+        assert!(view.apply_tool_action(ToolDockAction::Triggered(Tool::DiagramProps)));
+        assert_eq!(view.mode, ClassDiagramMode::Properties);
+    }
+
+    #[test]
+    fn a_properties_change_returns_exactly_one_diagram_set() {
+        let view = ClassDiagramView::new("orders".into(), "Orders".into());
+        let display = DiagramDisplaySet {
+            show_attributes: true,
+            show_type: false,
+            show_attribute_visibility: true,
+            show_attribute_multiplicity: true,
+            max_attributes: Some(4),
+            show_roles: true,
+            cardinality: CardinalityVisibility::Explicit,
+            show_labels: true,
+            show_stereotype: false,
+            stereotype_filter: None,
+            stereotype_colors: vec![],
+        };
+
+        let outcome =
+            view.properties_outcome(DiagramPropertiesAction::DisplayChanged(display.clone()));
+
+        assert_eq!(
+            outcome.ops,
+            vec![Op::DiagramSet {
+                key: "orders".into(),
+                title: None,
+                description: None,
+                display: Some(display),
+            }]
+        );
+    }
 
     #[test]
     fn diagram_view_is_constructed_with_immutable_identity() {

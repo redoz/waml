@@ -53,6 +53,21 @@ impl BodyWidgets {
     pub fn view_bar(&self, cx: &mut Cx) -> WidgetRef {
         self.ui.widget(cx, ids!(view_bar))
     }
+    pub fn diagram_properties(&self, cx: &mut Cx) -> WidgetRef {
+        self.ui.widget(cx, ids!(diagram_properties))
+    }
+
+    /// Swap the shared center surface between the diagram canvas and the
+    /// diagram-properties page. This only changes wrapper visibility: the
+    /// canvas scene, selection, and camera remain untouched.
+    pub fn set_diagram_properties_visible(&self, cx: &mut Cx, visible: bool) {
+        self.ui
+            .widget(cx, ids!(canvas_wrap))
+            .set_visible(cx, !visible);
+        self.ui
+            .widget(cx, ids!(diagram_properties_wrap))
+            .set_visible(cx, visible);
+    }
 
     /// Show/hide the left tool dock wrapper (`tool_dock_wrap`). Body of the
     /// shell's old `set_diagram_toolbars`.
@@ -226,6 +241,10 @@ pub trait DocView {
     }
 
     fn on_deactivate(&mut self, cx: &mut Cx, body: &BodyWidgets) {
+        let _ = (cx, body);
+    }
+
+    fn on_escape(&mut self, cx: &mut Cx, body: &BodyWidgets) {
         let _ = (cx, body);
     }
 }

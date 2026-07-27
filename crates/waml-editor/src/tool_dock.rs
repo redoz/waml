@@ -1,9 +1,9 @@
 //! Left tool dock (UX mock): a vertical icon strip mirroring the web
 //! frontend's toolbox. `Select`/`Add`/`Connect` are the exclusive active
 //! tools (mouse click or hotkey V/N/C); `DiagramProps`/`Clear` are one-shot
-//! action buttons (no persistent state). No tool behavior is wired into the
-//! canvas yet -- selecting a tool only changes the dock's own highlight
-//! (breadth mock, not polish).
+//! action buttons (no persistent dock state). `DiagramProps` toggles the
+//! active diagram tab's properties page; selecting a mode still only changes
+//! the dock's own highlight (breadth mock, not polish).
 //!
 //! Each entry is a shared [`IconButton`] child, so a dock button reads
 //! identically to every other icon button in the app (caption Save/Menu, the
@@ -159,7 +159,8 @@ pub enum ToolDockAction {
     /// the mode from `self` instead, so this field is intentionally unread here.
     ModeChanged(#[allow(dead_code)] Tool),
     /// A one-shot action button was clicked. The `Tool` payload is kept for the
-    /// `log!` in `app.rs` (Debug-only) while these buttons stay mock no-ops.
+    /// active document view: DiagramProps toggles its properties page, while
+    /// Clear remains a mock no-op.
     Triggered(#[allow(dead_code)] Tool),
 }
 
