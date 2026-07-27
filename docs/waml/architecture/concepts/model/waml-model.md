@@ -12,4 +12,5 @@ stereotype: model
 - composes [Model Element](./model-element.md): 1 model to 0..* elements
 
 ## Notes
-- Provides resolved meaning for model elements while remaining distinct from the authored bundle it depends on.
+- Provides resolved meaning for model elements while remaining distinct from the authored documents it depends on.
+- Derived views select a focused presentation of the model; omitting elements from a view does not change the model or its relationships.

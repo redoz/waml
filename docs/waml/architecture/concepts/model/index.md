@@ -1,6 +1,6 @@
 # Model concepts
 
-* [OKF Bundle](./okf-bundle.md) - A distributable collection of authored WAML documents.
+* [OKF Bundle](./okf-bundle.md) - A hierarchical collection of Markdown documents exchanged as one bundle.
 * [Authored Document](./authored-document.md) - A human-maintained document that contributes authored WAML content.
 * [WAML Model](./waml-model.md) - A resolved semantic model derived from an OKF Bundle.
 * [Model Element](./model-element.md) - An abstract resolved item within a WAML Model.

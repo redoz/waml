@@ -11,4 +11,5 @@ stereotype: view
 - depends [WAML Model](./waml-model.md)
 
 ## Notes
-- Presents behavior from a WAML Model without replacing the model's resolved meaning.
+- Presents a focused behavioral view derived from a WAML Model.
+- A Sequence presents an ordered interaction, while an Activity or State Machine presents a directed flow.

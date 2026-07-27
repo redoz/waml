@@ -11,4 +11,4 @@ stereotype: view
 - depends [WAML Model](./waml-model.md)
 
 ## Notes
-- Selects and presents structure from a WAML Model without replacing its resolved meaning.
+- A structural or context view over selected members of a WAML Model.
