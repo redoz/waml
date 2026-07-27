@@ -828,7 +828,10 @@ mod tests {
                     (node.as_str(), name.as_str(), ty_token.as_str()),
                     ("order", "total", "Money")
                 );
-                assert_eq!(multiplicity.as_ref().map(Multiplicity::as_str), Some("0..1"));
+                assert_eq!(
+                    multiplicity.as_ref().map(Multiplicity::as_str),
+                    Some("0..1")
+                );
             }
             _ => panic!("wrong op"),
         }

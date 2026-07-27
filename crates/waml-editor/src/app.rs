@@ -13,7 +13,7 @@ use crate::popup::base::PopupResult;
 use crate::popup::root::{MenuOpen, PopupRoot, PopupSpec};
 use crate::popup::select::{SelectItem, SelectLead};
 use makepad_widgets::*;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 fn open_overlay_contains(
     point: DVec2,
@@ -553,6 +553,9 @@ pub struct App {
     ui: WidgetRef,
     #[rust]
     session: EditorSession,
+    /// Filesystem root backing `bundle` in native builds.
+    #[rust]
+    open_dir: Option<PathBuf>,
     /// Debounce for `mark_dirty` -> `save`; see `SAVE_DEBOUNCE_SECS`.
     #[rust]
     save_timer: Timer,
@@ -1175,13 +1178,21 @@ impl App {
         true
     }
 
-    /// Native backing: writing the session bundle back over the opened OKF directory.
-    /// Not implemented -- the editor has never written a document to disk (see
-    /// the note on the `bundle` field), so drag-to-place edits are still
-    /// in-memory only on desktop. The seam is here for it.
+    /// Native backing: atomically replace each authored file in the opened OKF
+    /// directory. The helper validates bundle paths before performing writes.
     #[cfg(not(target_arch = "wasm32"))]
     fn save_backend(&mut self, _cx: &mut Cx) -> bool {
-        false
+        let Some(root) = self.open_dir.as_deref() else {
+            log!("cannot save native bundle without an opened directory");
+            return false;
+        };
+        match crate::native_save::save_bundle_atomic(root, self.session.bundle()) {
+            Ok(()) => true,
+            Err(error) => {
+                log!("failed to save OKF dir {:?}: {error}", root);
+                false
+            }
+        }
     }
 
     /// Push the canvas's current conflict count onto the toolbar badge.
@@ -1239,6 +1250,7 @@ impl App {
                 return false;
             }
         };
+        self.open_dir = Some(dir.to_path_buf());
         // Folder basename backs the display name when the bundle has no root
         // name of its own. `..` / drive-root degenerate to an empty basename;
         // "bundle" is the last-ditch label.

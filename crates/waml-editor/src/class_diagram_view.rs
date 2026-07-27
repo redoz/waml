@@ -7,7 +7,7 @@ use waml::model::Model;
 
 use crate::canvas::ConstraintVisibility;
 use crate::diagram_display::resolve_display;
-use crate::diagram_properties::{DiagramProperties, DiagramPropertiesAction};
+use crate::diagram_properties::{DiagramPropertiesAction, DiagramPropertiesWidgetRefExt};
 use crate::doc_view::{BodyChrome, BodyWidgets, DocView, PopupRequest, ViewData, ViewOutcome};
 use crate::editor_session::SessionChange;
 use crate::icons::Icon;
@@ -188,17 +188,14 @@ impl ClassDiagramView {
         else {
             return;
         };
-        if let Some(mut properties) = body
-            .diagram_properties(cx)
-            .borrow_mut::<DiagramProperties>()
-        {
-            properties.set_diagram(
+        body.diagram_properties(cx)
+            .as_diagram_properties()
+            .set_diagram(
                 cx,
                 &diagram.title,
                 diagram.description.as_deref(),
                 &resolve_display(&diagram.display),
             );
-        }
     }
 
     fn update_scene(&self, cx: &mut Cx, body: &BodyWidgets, model: &Model) {

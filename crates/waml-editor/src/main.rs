@@ -34,6 +34,8 @@ mod inspector;
 mod inspector_panel;
 mod load;
 mod logo;
+#[cfg(not(target_arch = "wasm32"))]
+mod native_save;
 mod nav;
 mod node_design_editor;
 mod node_style;

@@ -37,7 +37,7 @@ pub fn edge_end_labels(edge: &SceneEdge, display: &ResolvedDiagramDisplay) -> Ve
                 attribute_cardinality_text(end_data.multiplicity.as_ref(), display.cardinality);
             let role = display
                 .show_roles
-                .then(|| end_data.role.as_deref())
+                .then_some(end_data.role.as_deref())
                 .flatten();
             let text = match (role, cardinality) {
                 (Some(role), Some(cardinality)) => Some(format!("{role} {cardinality}")),

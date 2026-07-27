@@ -13,35 +13,6 @@ script_mod! {
     use mod.text.*
     use mod.fonts
 
-    mod.widgets.DiagramPropertyField = mod.widgets.TextInput {
-        width: Fill
-        height: 30.0
-        margin: Inset{left: 0.0, right: 0.0, top: 0.0, bottom: 0.0}
-        padding: Inset{left: 9.0, right: 9.0, top: 5.0, bottom: 5.0}
-        draw_bg +: {
-            color: atlas.field_bg
-            color_hover: atlas.field_bg
-            color_focus: atlas.field_bg
-            color_down: atlas.field_bg
-            color_empty: atlas.field_bg
-            color_disabled: atlas.surface
-            border_color: atlas.surface_border
-            border_color_hover: atlas.frame_lo
-            border_color_focus: atlas.accent
-            border_color_down: atlas.accent
-            border_color_empty: atlas.surface_border
-            border_color_disabled: atlas.surface_border
-        }
-        draw_text +: {
-            color: atlas.text
-            color_empty: atlas.text_dim
-            color_disabled: atlas.text_dim
-            text_style: fonts.text_body
-        }
-        draw_cursor +: { color: atlas.accent }
-        draw_selection +: { color: atlas.selection }
-    }
-
     mod.widgets.DiagramPropertiesBase = #(DiagramProperties::register_widget(vm))
     mod.widgets.DiagramProperties = set_type_default() do mod.widgets.DiagramPropertiesBase{
         width: 320.0
@@ -49,7 +20,13 @@ script_mod! {
         flow: Down
         spacing: 0.0
         show_bg: true
-        draw_bg +: { color: atlas.surface }
+        scroll_bars: ScrollBars{scroll_bar_y: ScrollBar{}}
+        draw_bg +: {
+            color: atlas.surface
+            pixel: fn() {
+                return vec4(self.color.rgb * self.color.a, self.color.a)
+            }
+        }
 
         header := View {
             width: Fill
@@ -80,8 +57,8 @@ script_mod! {
             width: Fill
             height: Fit
             flow: Down
-            spacing: 7.0
-            padding: Inset{left: 14.0, right: 14.0, top: 12.0, bottom: 16.0}
+            spacing: 5.0
+            padding: Inset{left: 70.0, right: 14.0, top: 10.0, bottom: 10.0}
 
             diagram_section := Label {
                 text: "DIAGRAM"
@@ -91,21 +68,86 @@ script_mod! {
                 text: "Title"
                 draw_text +: { color: atlas.text text_style: fonts.text_label }
             }
-            title_input := DiagramPropertyField { empty_text: "Diagram title" }
+            title_input := TextInput {
+                width: Fill
+                height: 30.0
+                padding: Inset{left: 9.0, right: 9.0, top: 5.0, bottom: 5.0}
+                empty_text: "Diagram title"
+                draw_bg +: {
+                    color: atlas.field_bg
+                    color_hover: atlas.field_bg
+                    color_focus: atlas.field_bg
+                    color_down: atlas.field_bg
+                    color_empty: atlas.field_bg
+                    color_disabled: atlas.surface
+                    border_color: atlas.surface_border
+                    border_color_hover: atlas.frame_lo
+                    border_color_focus: atlas.accent
+                    border_color_down: atlas.accent
+                    border_color_empty: atlas.surface_border
+                    border_color_disabled: atlas.surface_border
+                    border_radius: 3.0
+                    border_size: 1.0
+                }
+                draw_text +: {
+                    color: atlas.text
+                    color_hover: atlas.text
+                    color_focus: atlas.text
+                    color_down: atlas.text
+                    color_empty: atlas.text_dim
+                    color_empty_hover: atlas.text_dim
+                    color_empty_focus: atlas.text_dim
+                    color_disabled: atlas.text_dim
+                    text_style: fonts.text_body
+                }
+                draw_cursor +: { color: atlas.accent }
+                draw_selection +: { color: atlas.selection }
+            }
             description_label := Label {
                 text: "Description"
                 margin: Inset{top: 2.0}
                 draw_text +: { color: atlas.text text_style: fonts.text_label }
             }
-            description_input := DiagramPropertyField {
-                height: 54.0
+            description_input := TextInput {
+                width: Fill
+                height: 42.0
+                padding: Inset{left: 9.0, right: 9.0, top: 5.0, bottom: 5.0}
                 is_multiline: true
                 empty_text: "Optional description"
+                draw_bg +: {
+                    color: atlas.field_bg
+                    color_hover: atlas.field_bg
+                    color_focus: atlas.field_bg
+                    color_down: atlas.field_bg
+                    color_empty: atlas.field_bg
+                    color_disabled: atlas.surface
+                    border_color: atlas.surface_border
+                    border_color_hover: atlas.frame_lo
+                    border_color_focus: atlas.accent
+                    border_color_down: atlas.accent
+                    border_color_empty: atlas.surface_border
+                    border_color_disabled: atlas.surface_border
+                    border_radius: 3.0
+                    border_size: 1.0
+                }
+                draw_text +: {
+                    color: atlas.text
+                    color_hover: atlas.text
+                    color_focus: atlas.text
+                    color_down: atlas.text
+                    color_empty: atlas.text_dim
+                    color_empty_hover: atlas.text_dim
+                    color_empty_focus: atlas.text_dim
+                    color_disabled: atlas.text_dim
+                    text_style: fonts.text_body
+                }
+                draw_cursor +: { color: atlas.accent }
+                draw_selection +: { color: atlas.selection }
             }
 
             classifiers_section := Label {
                 text: "CLASSIFIERS"
-                margin: Inset{top: 8.0}
+                margin: Inset{top: 4.0}
                 draw_text +: { color: atlas.text_dim text_style: fonts.text_eyebrow }
             }
             classifiers_consequence := Label {
@@ -146,10 +188,41 @@ script_mod! {
                     draw_text +: { color: atlas.text text_style: fonts.text_body }
                 }
                 max_attributes_spacer := View { width: Fill height: 1.0 }
-                max_attributes_input := DiagramPropertyField {
+                max_attributes_input := TextInput {
                     width: 72.0
+                    height: 30.0
+                    padding: Inset{left: 9.0, right: 9.0, top: 5.0, bottom: 5.0}
                     is_numeric_only: true
                     empty_text: "All"
+                    draw_bg +: {
+                        color: atlas.field_bg
+                        color_hover: atlas.field_bg
+                        color_focus: atlas.field_bg
+                        color_down: atlas.field_bg
+                        color_empty: atlas.field_bg
+                        color_disabled: atlas.surface
+                        border_color: atlas.surface_border
+                        border_color_hover: atlas.frame_lo
+                        border_color_focus: atlas.accent
+                        border_color_down: atlas.accent
+                        border_color_empty: atlas.surface_border
+                        border_color_disabled: atlas.surface_border
+                        border_radius: 3.0
+                        border_size: 1.0
+                    }
+                    draw_text +: {
+                        color: atlas.text
+                        color_hover: atlas.text
+                        color_focus: atlas.text
+                        color_down: atlas.text
+                        color_empty: atlas.text_dim
+                        color_empty_hover: atlas.text_dim
+                        color_empty_focus: atlas.text_dim
+                        color_disabled: atlas.text_dim
+                        text_style: fonts.text_body
+                    }
+                    draw_cursor +: { color: atlas.accent }
+                    draw_selection +: { color: atlas.selection }
                 }
             }
             stereotypes_row := View {
@@ -164,7 +237,7 @@ script_mod! {
 
             cardinality_section := Label {
                 text: "CARDINALITY"
-                margin: Inset{top: 8.0}
+                margin: Inset{top: 4.0}
                 draw_text +: { color: atlas.text_dim text_style: fonts.text_eyebrow }
             }
             cardinality_consequence := Label {
@@ -175,7 +248,7 @@ script_mod! {
 
             relationships_section := Label {
                 text: "RELATIONSHIPS"
-                margin: Inset{top: 8.0}
+                margin: Inset{top: 4.0}
                 draw_text +: { color: atlas.text_dim text_style: fonts.text_eyebrow }
             }
             relationships_consequence := Label {
@@ -352,14 +425,6 @@ impl DiagramProperties {
         }
     }
 
-    pub fn action(&self, actions: &Actions) -> Option<DiagramPropertiesAction> {
-        let action = actions.find_widget_action(self.widget_uid())?;
-        action
-            .action
-            .downcast_ref::<DiagramPropertiesAction>()
-            .cloned()
-    }
-
     fn emit_change(&mut self, cx: &mut Cx, change: PropertyChange) {
         if let Some(state) = &mut self.state {
             let action = state.apply(change);
@@ -372,7 +437,6 @@ impl DiagramProperties {
         let Some(state) = self.state.as_ref() else {
             return;
         };
-
         let title_input = self.view.text_input(cx, ids!(title_input));
         if title_input.text() != state.title {
             title_input.set_text(cx, &state.title);
@@ -538,10 +602,6 @@ impl DiagramPropertiesRef {
         if let Some(mut inner) = self.borrow_mut() {
             inner.set_diagram(cx, title, description, display);
         }
-    }
-
-    pub fn action(&self, actions: &Actions) -> Option<DiagramPropertiesAction> {
-        self.borrow().and_then(|inner| inner.action(actions))
     }
 }
 

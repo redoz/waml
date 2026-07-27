@@ -156,16 +156,21 @@ fn attribute_rows(
         .take(max.unwrap_or(usize::MAX))
         .map(|(row, attribute)| crate::inspector::AttrRow {
             name: row.name,
-            ty: display.show_type.then_some(row.ty).unwrap_or_default(),
+            ty: if display.show_type {
+                row.ty
+            } else {
+                String::new()
+            },
             multiplicity: attribute_cardinality_text(
                 attribute.multiplicity.as_ref(),
                 display.cardinality,
             )
             .unwrap_or_default(),
-            visibility: display
-                .show_attribute_visibility
-                .then_some(row.visibility)
-                .unwrap_or_default(),
+            visibility: if display.show_attribute_visibility {
+                row.visibility
+            } else {
+                String::new()
+            },
         })
         .collect()
 }

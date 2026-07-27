@@ -157,9 +157,8 @@ pub fn parse_attribute_line(line: &str) -> Result<Attribute, LineError> {
     if let Some(mm) = MULT_TAIL_RE.captures(&rest) {
         // A trailing `{…}` token must hold a valid multiplicity; anything else
         // (malformed braces) makes the whole line not an attribute.
-        multiplicity = Some(
-            Multiplicity::parse(&mm[2]).ok_or_else(|| err("malformed attribute line"))?,
-        );
+        multiplicity =
+            Some(Multiplicity::parse(&mm[2]).ok_or_else(|| err("malformed attribute line"))?);
         rest = mm[1].trim().to_string();
     }
     let ty = if let Some(link) = LINK_RE.captures(&rest) {
@@ -1264,7 +1263,10 @@ mod tests {
                 ref_: Some("order-status".to_string())
             }
         );
-        assert_eq!(a.multiplicity.as_ref().map(Multiplicity::as_str), Some("0..1"));
+        assert_eq!(
+            a.multiplicity.as_ref().map(Multiplicity::as_str),
+            Some("0..1")
+        );
         assert_eq!(a.visibility, None);
     }
 
@@ -1279,10 +1281,7 @@ mod tests {
     fn explicit_default_attribute_multiplicity_round_trips() {
         let line = "- id: OrderId {1}";
         let a = parse_attribute_line(line).unwrap();
-        assert_eq!(
-            a.multiplicity.as_ref().map(Multiplicity::as_str),
-            Some("1")
-        );
+        assert_eq!(a.multiplicity.as_ref().map(Multiplicity::as_str), Some("1"));
         assert_eq!(render_attribute_line(&a), line);
     }
 

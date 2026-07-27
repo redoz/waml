@@ -43,12 +43,14 @@ script_mod! {
     }
 }
 
+#[cfg(test)]
 #[derive(Clone, Debug, PartialEq)]
 pub struct SegmentedState<T> {
     items: Vec<T>,
     selected: usize,
 }
 
+#[cfg(test)]
 impl<T: Clone + PartialEq> SegmentedState<T> {
     pub fn new(items: Vec<T>, selected: T) -> Self {
         assert!(
@@ -331,18 +333,6 @@ impl SegmentedControl {
     pub fn set_selected(&mut self, cx: &mut Cx, id: LiveId) {
         if self.selected != id && self.items.iter().any(|item| item.id == id) {
             self.selected = id;
-            self.draw_bg.redraw(cx);
-        }
-    }
-
-    pub fn set_enabled(&mut self, cx: &mut Cx, enabled: bool) {
-        if self.enabled != enabled {
-            let access = control_access(enabled, self.focused);
-            if !access.retain_focus && (self.focused || cx.has_key_focus(self.draw_bg.area())) {
-                cx.set_key_focus(Area::Empty);
-            }
-            self.focused = access.retain_focus;
-            self.enabled = enabled;
             self.draw_bg.redraw(cx);
         }
     }
