@@ -49,7 +49,9 @@ The design must:
 5. remove cross-domain document-kind dispatch from the editor host;
 6. split OKF and UML operation ownership without building a plugin system;
 7. preserve one atomic, source-authoritative edit transaction; and
-8. avoid retaining multiple complete copies of the bundle's Markdown.
+8. avoid retaining multiple complete copies of the bundle's Markdown; and
+9. retire the legacy Svelte web product and its web-only TypeScript/WASM stack
+   while preserving the independent VS Code extension.
 
 ## OKF terminology
 
@@ -99,6 +101,41 @@ match.
 
 **Build a plugin/provider registry.** Two statically known domains do not
 justify runtime registration, discovery, or plugin lifecycle machinery.
+
+## Legacy web frontend retirement
+
+The native editor is now the product UI. Carrying the older Svelte application
+through the OKF/UML split would preserve a second application architecture, a
+second editor state model, generated Rust-to-TypeScript wire types, and a WASM
+build pipeline solely to keep a frontend that is no longer a supported product.
+
+Delete the complete web application stack rather than only its Svelte leaf:
+
+```text
+packages/web       Svelte product UI
+packages/core      web editor state, navigation, persistence, and adapters
+packages/okf       TypeScript OKF grammar and domain types
+packages/wasm      TypeScript wrapper and generated WASM bindings
+crates/waml-wasm   Rust WASM/JavaScript bridge
+```
+
+Remove the web-only build, deployment, asset-branding, runtime-shell, WASM
+generation, and TypeScript template-generation scripts and dependencies. Remove
+the `wasm`/tsify features from `waml` and `waml-ops-dto`; semantic serde remains
+for Rust JSON/CLI consumers.
+
+Keep:
+
+- `packages/vscode`, its TypeScript compiler/test dependencies, and its
+  `vscode-languageclient` integration;
+- `waml-cli` and the Rust LSP server used by that extension;
+- `waml-ops-dto`, because the CLI consumes its serde DTO vocabulary; and
+- historical completed specs/plans as records of the retired frontend.
+
+After the deletion, TypeScript exists only in the VS Code extension. The root
+pnpm workspace and scripts are reduced to building and testing that extension.
+Active README, build, CI, deployment, and backlog documentation must not direct
+contributors to the removed web/WASM packages.
 
 ## Core OKF Knowledge Bundle
 
@@ -518,21 +555,24 @@ is not part of this feature.
 1. Add characterization tests for current source-bundle identity, package/index
    operations, operation atomicity, unknown-document projection, and navigator
    behavior.
-2. Introduce shared `SourceDocument`/`SourceBundle` and copy-on-write persisted
-   snapshots without changing behavior.
-3. Split `Concept`, `Index`, and `Log`; introduce OKF Directory and rooted Index
+2. Retire the Svelte/web-only TypeScript and WASM stack, reduce the pnpm
+   workspace to the VS Code extension, and update active repository guidance.
+3. Introduce shared `SourceDocument`/`SourceBundle` and copy-on-write persisted
+   snapshots without changing native behavior.
+4. Split `Concept`, `Index`, and `Log`; introduce OKF Directory and rooted Index
    lookup; move hierarchy/index reconciliation out of UML `Model`.
-4. Add the `uml` projection facade; stop projecting unclaimed Concepts and
+5. Add the `uml` projection facade; stop projecting unclaimed Concepts and
    structural directories into UML nodes/packages.
-5. Split OKF and UML operation types/Lowerers, add sealed `EditBatch`, and route
+6. Split OKF and UML operation types/Lowerers, add sealed `EditBatch`, and route
    all edits through the one generic session transaction.
-6. Replace semantic `TreeKind`/`TabKind` dispatch with provider-produced
+7. Replace semantic `TreeKind`/`TabKind` dispatch with provider-produced
    navigator presentation and prepared `OpenDocument` values.
-7. Add `GenericOkfView`, Markdown-neutral shared surface naming, mixed-Bundle
+8. Add `GenericOkfView`, Markdown-neutral shared surface naming, mixed-Bundle
    navigation, and OKF-only startup selection.
-8. Update serde/WASM/DTO consumers and compatibility re-exports affected by the
-   core type and operation split.
-9. Run focused, workspace-wide, and native visual verification.
+9. Update serde/CLI/LSP/DTO consumers and compatibility re-exports affected by
+   the core type and operation split.
+10. Run focused, workspace-wide, VS Code extension, and native visual
+    verification.
 
 Each stage must compile and pass its focused tests before the next begins.
 
@@ -590,15 +630,17 @@ Each stage must compile and pass its focused tests before the next begins.
 - focused `waml` and `waml-editor` tests after each migration stage
 - `cargo test --workspace`
 - `cargo clippy --workspace --all-targets --all-features -- -D warnings`
-- affected package tests for WASM/DTO compatibility
+- affected CLI/LSP/DTO compatibility tests
+- VS Code extension build and tests
 - native screenshots of a UML diagram, UML classifier preview, Generic OKF
   document, mixed navigator, OKF-only startup, source view, and tab switching
 
 ## Scope and non-goals
 
 Initial user-facing support targets the native editor and shared Rust
-projections. CLI, LSP, VS Code, and Svelte web behavior changes only where
-required for core API/wire compatibility.
+projections. CLI, LSP, and VS Code behavior changes only where required for
+core Rust API/serde compatibility. The Svelte web product and its supporting
+TypeScript/WASM packages are intentionally removed.
 
 This feature does not include:
 
@@ -612,6 +654,10 @@ This feature does not include:
 - undo/redo;
 - incremental projection rebuilds; or
 - new diagram types for Generic OKF.
+
+Maintaining JavaScript, TypeScript, WASM, or browser-product compatibility is
+also not a goal. The VS Code extension is the sole retained TypeScript surface
+and communicates with the Rust LSP server rather than the removed WASM bridge.
 
 ## Success criteria
 
@@ -628,3 +674,7 @@ This feature does not include:
   representations rather than copied per projection.
 - Existing UML editing, diagrams, persistence, tabs, and chrome continue to
   behave as before.
+- The legacy Svelte product, web-only TypeScript packages, Rust WASM bridge,
+  generated bindings, and web build/deployment pipeline are absent.
+- The VS Code extension remains buildable and continues to launch the Rust LSP
+  server.
