@@ -227,14 +227,7 @@ impl ClassDiagramView {
             {
                 canvas.update_scene(cx, scene);
             }
-            self.sync_inspector_elements(
-                cx,
-                body,
-                model,
-                &diagram.key,
-                &diagram.title,
-                &node_keys,
-            );
+            self.sync_inspector_elements(cx, body, model, &diagram.key, &diagram.title, &node_keys);
         }
     }
 

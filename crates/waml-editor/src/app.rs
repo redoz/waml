@@ -1288,7 +1288,7 @@ impl App {
             self.session.persisted_bundle(),
             self.session.bundle(),
         )
-            .map_err(|error| format!("failed to save OKF dir {root:?}: {error}"))
+        .map_err(|error| format!("failed to save OKF dir {root:?}: {error}"))
     }
 
     /// Push the canvas's current conflict count onto the toolbar badge.
@@ -1587,10 +1587,7 @@ impl App {
         #[cfg(target_arch = "wasm32")]
         let result = close_after_save(&mut self.session, |session| {
             if session.is_dirty() {
-                cx.browser_update_url(
-                    &format!("#{}", waml::share::encode(session.bundle())),
-                    true,
-                );
+                cx.browser_update_url(&format!("#{}", waml::share::encode(session.bundle())), true);
             }
             Ok(())
         });
@@ -2279,10 +2276,10 @@ impl AppMain for App {
 #[cfg(test)]
 mod tests {
     use super::{
-        close_after_save,
-        doc_switcher_items, logo_command_for, next_narrow, open_overlay_contains, place_rm_for,
-        prevent_quit_after_failed_save, should_dismiss_narrow_dock, should_flush_save, LogoCommand,
-        replace_after_save, BackingTransitionError, SaveFeedback,
+        close_after_save, doc_switcher_items, logo_command_for, next_narrow, open_overlay_contains,
+        place_rm_for, prevent_quit_after_failed_save, replace_after_save,
+        should_dismiss_narrow_dock, should_flush_save, BackingTransitionError, LogoCommand,
+        SaveFeedback,
     };
     use crate::doc_tabs::{DocTab, OpenTabs, TabKind};
     use crate::dock::DockState;
