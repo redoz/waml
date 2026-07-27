@@ -132,10 +132,11 @@ impl ClassDiagramView {
     }
 
     fn properties_outcome(&self, action: DiagramPropertiesAction) -> ViewOutcome {
-        let (title, description, display) = match action {
-            DiagramPropertiesAction::DisplayChanged(display) => (None, None, Some(display)),
+        let (title, description, clear_description, display) = match action {
+            DiagramPropertiesAction::DisplayChanged(display) => (None, None, false, Some(display)),
             DiagramPropertiesAction::IdentityChanged { title, description } => {
-                (Some(title), description, None)
+                let clear_description = description.is_none();
+                (Some(title), description, clear_description, None)
             }
             DiagramPropertiesAction::Close => return ViewOutcome::default(),
         };
@@ -144,10 +145,30 @@ impl ClassDiagramView {
                 key: self.key.clone(),
                 title,
                 description,
+                clear_description,
                 display,
             }],
             ..Default::default()
         }
+    }
+
+    fn properties_actions_outcome(
+        &mut self,
+        actions: impl IntoIterator<Item = DiagramPropertiesAction>,
+    ) -> ViewOutcome {
+        let mut outcome = ViewOutcome::default();
+        let mut close = false;
+        for action in actions {
+            if action == DiagramPropertiesAction::Close {
+                close = true;
+            } else {
+                outcome.ops.extend(self.properties_outcome(action).ops);
+            }
+        }
+        if close {
+            self.mode.deactivate();
+        }
+        outcome
     }
 
     fn show_mode(&self, cx: &mut Cx, body: &BodyWidgets) {
@@ -295,16 +316,19 @@ impl DocView for ClassDiagramView {
         let mut out = ViewOutcome::default();
 
         if self.mode.properties_visible() {
-            let properties_action = body
-                .diagram_properties(cx)
-                .borrow::<DiagramProperties>()
-                .and_then(|properties| properties.action(actions));
-            if let Some(action) = properties_action {
-                if action == DiagramPropertiesAction::Close {
-                    self.return_to_canvas(cx, body);
-                    return out;
-                }
-                return self.properties_outcome(action);
+            let properties_uid = body.diagram_properties(cx).widget_uid();
+            let properties_actions: Vec<DiagramPropertiesAction> = actions
+                .filter_widget_actions(properties_uid)
+                .filter_map(|item| {
+                    item.action
+                        .downcast_ref::<DiagramPropertiesAction>()
+                        .cloned()
+                })
+                .collect();
+            if !properties_actions.is_empty() {
+                let outcome = self.properties_actions_outcome(properties_actions);
+                self.show_mode(cx, body);
+                return outcome;
             }
         }
 
@@ -772,6 +796,7 @@ mod tests {
                 key: "orders".into(),
                 title: None,
                 description: None,
+                clear_description: false,
                 display: Some(display),
             }]
         );
@@ -791,6 +816,27 @@ mod tests {
                 view_bar: true,
                 right_dock: Some(crate::icons::Icon::SlidersHorizontal),
             }
+        );
+    }
+
+    #[test]
+    fn clearing_description_emits_an_explicit_clear_diagram_set() {
+        let view = ClassDiagramView::new("orders".into(), "Orders".into());
+
+        let outcome = view.properties_outcome(DiagramPropertiesAction::IdentityChanged {
+            title: "Orders".into(),
+            description: None,
+        });
+
+        assert_eq!(
+            outcome.ops,
+            vec![Op::DiagramSet {
+                key: "orders".into(),
+                title: Some("Orders".into()),
+                description: None,
+                clear_description: true,
+                display: None,
+            }]
         );
     }
 
@@ -816,6 +862,55 @@ mod tests {
             }),
             DiagramRefresh::None
         );
+    }
+
+    #[test]
+    fn property_action_batch_keeps_every_edit_before_closing() {
+        let mut view = ClassDiagramView::new("orders".into(), "Orders".into());
+        view.mode = ClassDiagramMode::Properties;
+        let display = DiagramDisplaySet {
+            show_attributes: false,
+            show_type: true,
+            show_attribute_visibility: true,
+            show_attribute_multiplicity: true,
+            max_attributes: None,
+            show_roles: false,
+            cardinality: CardinalityVisibility::All,
+            show_labels: true,
+            show_stereotype: true,
+            stereotype_filter: None,
+            stereotype_colors: vec![],
+        };
+
+        let outcome = view.properties_actions_outcome([
+            DiagramPropertiesAction::IdentityChanged {
+                title: "Order flow".into(),
+                description: None,
+            },
+            DiagramPropertiesAction::Close,
+            DiagramPropertiesAction::DisplayChanged(display.clone()),
+        ]);
+
+        assert_eq!(
+            outcome.ops,
+            vec![
+                Op::DiagramSet {
+                    key: "orders".into(),
+                    title: Some("Order flow".into()),
+                    description: None,
+                    clear_description: true,
+                    display: None,
+                },
+                Op::DiagramSet {
+                    key: "orders".into(),
+                    title: None,
+                    description: None,
+                    clear_description: false,
+                    display: Some(display),
+                },
+            ]
+        );
+        assert_eq!(view.mode, ClassDiagramMode::Canvas);
     }
 
     #[test]

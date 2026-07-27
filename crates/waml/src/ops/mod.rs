@@ -165,6 +165,7 @@ pub enum Op {
         key: String,                        // diagram doc id (full-path or bare slug)
         title: Option<String>,              // None = leave unchanged
         description: Option<String>,        // None = leave unchanged
+        clear_description: bool,            // true = remove authored description
         display: Option<DiagramDisplaySet>, // None = leave display untouched
     },
     PlaceSet {
@@ -277,8 +278,9 @@ fn apply_one(work: &mut Bundle, op: &Op) -> Result<(), OpError> {
             key,
             title,
             description,
+            clear_description,
             display,
-        } => op_diagram_set(work, key, title, description, display),
+        } => op_diagram_set(work, key, title, description, *clear_description, display),
         Op::PlaceSet {
             diagram,
             subject_title,
@@ -914,6 +916,7 @@ fn op_diagram_set(
     key: &str,
     title: &Option<String>,
     description: &Option<String>,
+    clear_description: bool,
     display: &Option<DiagramDisplaySet>,
 ) -> Result<(), OpError> {
     edit_doc(work, key, "diagram.set", |doc| {
@@ -921,7 +924,11 @@ fn op_diagram_set(
             fm_set(&mut doc.frontmatter, "title", FmValue::Str(t.clone()));
             doc.title = t.clone();
         }
-        if let Some(d) = description {
+        if clear_description {
+            doc.frontmatter
+                .entries
+                .retain(|(key, _)| key != "description");
+        } else if let Some(d) = description {
             fm_set(&mut doc.frontmatter, "description", FmValue::Str(d.clone()));
         }
         if let Some(ds) = display {
@@ -1966,6 +1973,7 @@ mod tests {
                 key: "dia".into(),
                 title: Some("Order lifecycle".into()),
                 description: Some("Notes for reviewers".into()),
+                clear_description: false,
                 display: None,
             }],
         )
@@ -1976,6 +1984,41 @@ mod tests {
     }
 
     #[test]
+    fn diagram_set_explicitly_clears_an_authored_description() {
+        let described = apply(
+            &diagram_doc(),
+            &[Op::DiagramSet {
+                key: "dia".into(),
+                title: None,
+                description: Some("Notes for reviewers".into()),
+                clear_description: false,
+                display: None,
+            }],
+        )
+        .unwrap();
+
+        let cleared = apply(
+            &described,
+            &[Op::DiagramSet {
+                key: "dia".into(),
+                title: None,
+                description: None,
+                clear_description: true,
+                display: None,
+            }],
+        )
+        .unwrap();
+
+        assert!(
+            !cleared[0].1.contains("description:"),
+            "explicit clear must remove the frontmatter key: {}",
+            cleared[0].1
+        );
+        let model = crate::parse::build_model(&cleared);
+        assert_eq!(model.diagrams[0].description, None);
+    }
+
+    #[test]
     fn diagram_set_writes_cardinality_mode() {
         let out = apply(
             &diagram_doc(),
@@ -1983,6 +2026,7 @@ mod tests {
                 key: "dia".into(),
                 title: None,
                 description: None,
+                clear_description: false,
                 display: Some(DiagramDisplaySet {
                     cardinality: CardinalityVisibility::Explicit,
                     ..full_display()
@@ -2002,6 +2046,7 @@ mod tests {
                 key: "dia".into(),
                 title: None,
                 description: None,
+                clear_description: false,
                 display: Some(full_display()),
             }],
         )
@@ -2018,6 +2063,7 @@ mod tests {
                 key: "dia".into(),
                 title: None,
                 description: None,
+                clear_description: false,
                 display: Some(DiagramDisplaySet {
                     max_attributes: None,
                     stereotype_filter: None,
@@ -2052,6 +2098,7 @@ mod tests {
                 key: "ghost".into(),
                 title: Some("X".into()),
                 description: None,
+                clear_description: false,
                 display: None,
             }],
         )
@@ -2067,6 +2114,7 @@ mod tests {
                 key: "dia".into(),
                 title: None,
                 description: None,
+                clear_description: false,
                 display: None,
             }],
         )
@@ -2088,6 +2136,7 @@ mod tests {
                 key: "shop/dia".into(),
                 title: Some("D2".into()),
                 description: None,
+                clear_description: false,
                 display: None,
             }],
         )

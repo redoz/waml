@@ -8,6 +8,10 @@ fn one() -> u32 {
     1
 }
 
+fn is_false(value: &bool) -> bool {
+    !*value
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 #[cfg_attr(feature = "wasm", derive(tsify_next::Tsify))]
 #[cfg_attr(feature = "wasm", tsify(into_wasm_abi, from_wasm_abi))]
@@ -213,6 +217,8 @@ pub enum OpDto {
         title: Option<String>,
         #[serde(default)]
         desc: Option<String>,
+        #[serde(default, rename = "clearDesc", skip_serializing_if = "is_false")]
+        clear_desc: bool,
         #[serde(default)]
         display: Option<DisplayDto>,
     },
@@ -546,6 +552,7 @@ impl OpDto {
                 key,
                 title,
                 desc,
+                clear_desc,
                 display,
             } => {
                 check_v(*v, "diagram.set")?;
@@ -553,6 +560,7 @@ impl OpDto {
                     key: key.clone(),
                     title: title.clone(),
                     description: desc.clone(),
+                    clear_description: *clear_desc,
                     display: display.as_ref().map(display_dto_to_set),
                 })
             }
@@ -748,12 +756,14 @@ impl OpDto {
                 key,
                 title,
                 description,
+                clear_description,
                 display,
             } => OpDto::DiagramSet {
                 v: 1,
                 key: key.clone(),
                 title: title.clone(),
                 desc: description.clone(),
+                clear_desc: *clear_description,
                 display: display.as_ref().map(display_set_to_dto),
             },
             Op::PlaceSet { .. } => {
@@ -976,12 +986,14 @@ mod tests {
                 key: "dia".into(),
                 title: Some("D".into()),
                 description: None,
+                clear_description: false,
                 display: None,
             },
             Op::DiagramSet {
                 key: "dia".into(),
                 title: None,
                 description: Some("notes".into()),
+                clear_description: false,
                 display: Some(DiagramDisplaySet {
                     show_attributes: false,
                     show_type: false,
@@ -1030,6 +1042,7 @@ mod tests {
             key: "dia".into(),
             title: Some("D".into()),
             description: None,
+            clear_description: false,
             display: None,
         });
         let line = serde_json::to_string(&dto).unwrap();
@@ -1040,11 +1053,45 @@ mod tests {
     }
 
     #[test]
+    fn diagram_set_clear_description_survives_a_wire_round_trip() {
+        let op = Op::DiagramSet {
+            key: "dia".into(),
+            title: None,
+            description: None,
+            clear_description: true,
+            display: None,
+        };
+
+        let line = serde_json::to_string(&OpDto::from_op(&op)).unwrap();
+        let back: OpDto = serde_json::from_str(&line).unwrap();
+
+        assert_eq!(back.to_op().unwrap(), op);
+        assert!(line.contains("\"clearDesc\":true"), "wire payload: {line}");
+    }
+
+    #[test]
+    fn legacy_diagram_set_wire_defaults_to_not_clearing_description() {
+        let dto: OpDto = serde_json::from_str(r#"{"op":"diagram.set","v":1,"key":"dia"}"#).unwrap();
+
+        assert_eq!(
+            dto.to_op().unwrap(),
+            Op::DiagramSet {
+                key: "dia".into(),
+                title: None,
+                description: None,
+                clear_description: false,
+                display: None,
+            }
+        );
+    }
+
+    #[test]
     fn diagram_set_display_dto_round_trips_absent_nullable_fields() {
         let op = Op::DiagramSet {
             key: "dia".into(),
             title: None,
             description: None,
+            clear_description: false,
             display: Some(DiagramDisplaySet {
                 show_attributes: true,
                 show_type: true,
