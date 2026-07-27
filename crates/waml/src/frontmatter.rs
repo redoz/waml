@@ -401,10 +401,7 @@ mod tests {
 
         let rendered = render_frontmatter(&fm);
 
-        assert_eq!(
-            rendered,
-            r#"description: "First\nSecond\nThird\nFourth""#
-        );
+        assert_eq!(rendered, r#"description: "First\nSecond\nThird\nFourth""#);
         let (parsed, _) = parse_frontmatter(&format!("---\n{rendered}\n---\n"));
         assert_eq!(
             parsed.get_str("description"),
@@ -415,10 +412,7 @@ mod tests {
     #[test]
     fn quoted_escape_decoder_distinguishes_newline_from_literal_backslash_n() {
         let fm = Frontmatter {
-            entries: vec![(
-                "description".into(),
-                FmValue::Str(r"Line\nLiteral".into()),
-            )],
+            entries: vec![("description".into(), FmValue::Str(r"Line\nLiteral".into()))],
         };
 
         let rendered = render_frontmatter(&fm);

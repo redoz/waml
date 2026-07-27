@@ -66,6 +66,7 @@ pub enum PopupSpec {
         min_width: f64,
         bounds: Rect,
         items: Vec<SelectItem>,
+        compact_frame: bool,
     },
     Conflict {
         tag: LiveId,
@@ -328,6 +329,7 @@ impl PopupRoot {
                 min_width,
                 bounds,
                 items,
+                compact_frame,
             } => {
                 // Clamp on-screen. Width is unknown until draw measures the
                 // label, so clamp with the widest possible width — the cap, or
@@ -354,7 +356,13 @@ impl PopupRoot {
                     // the control in `draw` (width isn't known until the labels
                     // are measured) and clamps into the window there. Only the
                     // vertical placement is taken from `place`.
-                    s.open_select(cx, dvec2(anchor.x, placed.y), min_width, items);
+                    s.open_select(
+                        cx,
+                        dvec2(anchor.x, placed.y),
+                        min_width,
+                        items,
+                        compact_frame,
+                    );
                 }
                 self.active = Some((ActiveKind::Select, tag));
             }
@@ -503,26 +511,27 @@ impl PopupRoot {
         }
     }
 
-    /// Read a close for `tag` from the action queue (the opener's filter).
+    /// Read a close from the action queue. The shell handles its own tags and
+    /// relays the same tagged result to the active document.
     /// Scans ALL of our actions, not just the first: one event can emit an
     /// `Armed` and a `Closed` together (a commit reports its last hover first).
-    pub fn closed(&self, actions: &Actions, tag: LiveId) -> Option<PopupResult> {
+    pub fn closed_event(&self, actions: &Actions) -> Option<(LiveId, PopupResult)> {
         actions
             .filter_widget_actions(self.widget_uid())
             .find_map(|item| match item.cast() {
-                PopupRootAction::Closed { tag: t, result } if t == tag => Some(result),
+                PopupRootAction::Closed { tag, result } => Some((tag, result)),
                 _ => None,
             })
     }
 
-    /// Read an arm-change for `tag` from the action queue. The outer `Option`
-    /// is "was there a change"; the inner one is the armed id (`None` = the
-    /// pointer left every item).
-    pub fn armed(&self, actions: &Actions, tag: LiveId) -> Option<Option<LiveId>> {
+    /// Read an arm-change from the action queue. The outer `Option` is "was
+    /// there a change"; the inner one is the armed id (`None` = the pointer
+    /// left every item).
+    pub fn armed_event(&self, actions: &Actions) -> Option<(LiveId, Option<LiveId>)> {
         actions
             .filter_widget_actions(self.widget_uid())
             .find_map(|item| match item.cast() {
-                PopupRootAction::Armed { tag: t, id } if t == tag => Some(id),
+                PopupRootAction::Armed { tag, id } => Some((tag, id)),
                 _ => None,
             })
     }

@@ -296,6 +296,15 @@ pub struct SegmentedControl {
 }
 
 impl SegmentedControl {
+    #[cfg(test)]
+    pub(crate) fn label_font_sizes(&self) -> [f32; 3] {
+        [
+            self.draw_label.text_style.font_size,
+            self.draw_label_selected.text_style.font_size,
+            self.draw_label_disabled.text_style.font_size,
+        ]
+    }
+
     pub fn set_items(&mut self, cx: &mut Cx, items: Vec<SegmentItem>) {
         if self.items != items {
             self.items = items;
@@ -342,6 +351,10 @@ impl SegmentedControl {
             self.select(cx, self.items[next].id);
         }
     }
+}
+
+fn segmented_label_y(segment: Rect, text_px: f32) -> f64 {
+    segment.pos.y + (segment.size.y - f64::from(text_px)) * 0.5
 }
 
 impl Widget for SegmentedControl {
@@ -444,7 +457,7 @@ impl Widget for SegmentedControl {
                 cx,
                 dvec2(
                     segment.pos.x + 9.0,
-                    segment.pos.y + segment.size.y * 0.5 - 6.0,
+                    segmented_label_y(segment, text.text_style.font_size),
                 ),
                 &item.label,
             );
@@ -493,7 +506,8 @@ fn draw_outline(cx: &mut Cx2d, draw: &mut DrawColor, rect: Rect, width: f64) {
 
 #[cfg(test)]
 mod tests {
-    use super::segmented_offset_index;
+    use super::{segmented_label_y, segmented_offset_index};
+    use makepad_widgets::{dvec2, Rect};
     use waml::model::CardinalityVisibility::{All, Explicit, Off};
 
     #[test]
@@ -507,6 +521,16 @@ mod tests {
         assert_eq!(items[selected], Off);
         selected = segmented_offset_index(items.len(), selected, -1).unwrap();
         assert_eq!(items[selected], All);
+    }
+
+    #[test]
+    fn compact_segment_labels_are_vertically_centered_from_their_font_size() {
+        let segment = Rect {
+            pos: dvec2(0.0, 0.0),
+            size: dvec2(90.0, 26.0),
+        };
+
+        assert_eq!(segmented_label_y(segment, 10.0), 8.0);
     }
 
     #[test]

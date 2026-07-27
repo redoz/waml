@@ -21,6 +21,8 @@ pub const SELECT_MAX_W: f64 = 320.0;
 /// Left offset where a row label starts, past the leading `SelectLead` gutter
 /// (lpx). Matches `menu::LABEL_X` so the badge/icon share the menu's 14px inset.
 pub const LEAD_GUTTER: f64 = 42.0;
+/// Label inset for rows without a badge/icon.
+pub const NO_LEAD_GUTTER: f64 = 12.0;
 /// Trailing margin right of the widest label before the frame edge (lpx).
 pub const PAD_R: f64 = 18.0;
 /// Gap between the control's bottom edge and the card top (lpx). Tight, flush
@@ -33,9 +35,28 @@ pub const SELECT_MAX_H: f64 = 420.0;
 /// so the card fits the window before the hard cap even applies.
 pub const SELECT_BOTTOM_MARGIN: f64 = 16.0;
 
+fn select_frame_zoom(compact: bool) -> f32 {
+    if compact {
+        0.3
+    } else {
+        0.6
+    }
+}
+
+fn select_label_gutter(lead: &SelectLead) -> f64 {
+    match lead {
+        SelectLead::None => NO_LEAD_GUTTER,
+        SelectLead::Icon(_) | SelectLead::Badge { .. } => LEAD_GUTTER,
+    }
+}
+
+fn select_content_hug(label_width: f64, lead: &SelectLead) -> f64 {
+    select_label_gutter(lead) + label_width + PAD_R
+}
+
 /// A leading visual for one row. Closed set; extend with a new arm when a new
 /// row shape appears (YAGNI over an open-ended draw callback).
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum SelectLead {
     None,
     /// Edge rows lead with `Icon(Icon::Spline)`.
@@ -49,7 +70,7 @@ pub enum SelectLead {
 
 /// One selectable row. `id` is opaque to the surface — the opener resolves it on
 /// commit (same contract as `PopupItem.id`).
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct SelectItem {
     pub id: LiveId,
     pub lead: SelectLead,
@@ -202,6 +223,8 @@ pub struct SelectFlyout {
     /// not dragging.
     #[rust]
     thumb_drag: Option<f64>,
+    #[rust]
+    compact_frame: bool,
 }
 
 impl Widget for SelectFlyout {
@@ -235,6 +258,7 @@ impl SelectFlyout {
         anchor: DVec2,
         min_width: f64,
         items: Vec<SelectItem>,
+        compact_frame: bool,
     ) {
         use crate::popup::menu::DRAG_THRESHOLD;
         // Parallel commit vector: MarkingCore only needs {id, enabled}.
@@ -255,6 +279,7 @@ impl SelectFlyout {
         // centres on this in `draw`.
         self.control_center_x = anchor.x + min_width * 0.5;
         self.thumb_drag = None;
+        self.compact_frame = compact_frame;
         self.mark.begin_popup(marks, DRAG_THRESHOLD);
         self.draw_frame.redraw(cx);
     }
@@ -268,13 +293,12 @@ impl SelectFlyout {
 
         // Width: hug the widest measured label (makepad's own text engine, same
         // as MenuPopup), floored by min_width, capped by SELECT_MAX_W.
-        let mut widest = 0.0_f64;
+        let mut hug = 0.0_f64;
         for it in &self.items {
             if let Some(run) = self.draw_label.prepare_single_line_run(cx, &it.label) {
-                widest = widest.max(run.width_in_lpxs as f64);
+                hug = hug.max(select_content_hug(run.width_in_lpxs as f64, &it.lead));
             }
         }
-        let hug = LEAD_GUTTER + widest + PAD_R;
         self.geom
             .set_width(select_width(hug, self.min_width, SELECT_MAX_W));
 
@@ -298,7 +322,8 @@ impl SelectFlyout {
         self.geom.set_scroll(self.geom.scroll());
 
         let panel = self.geom.panel_rect();
-        self.draw_frame.set_uniform(cx, live_id!(zoom), &[0.6]);
+        self.draw_frame
+            .set_uniform(cx, live_id!(zoom), &[select_frame_zoom(self.compact_frame)]);
         self.draw_frame.draw_surface_abs(cx, panel);
 
         // Read tint holders before borrowing `self.icons`.
@@ -368,8 +393,11 @@ impl SelectFlyout {
             }
 
             // Label.
-            self.draw_label
-                .draw_abs(cx, dvec2(row.pos.x + LEAD_GUTTER, cy - 6.0), &it.label);
+            self.draw_label.draw_abs(
+                cx,
+                dvec2(row.pos.x + select_label_gutter(&it.lead), cy - 6.0),
+                &it.label,
+            );
 
             // Trailing check mark on the selected row.
             if it.selected {
@@ -485,6 +513,21 @@ fn map_outcome(o: MarkOutcome) -> PopupVerdict {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn compact_select_flyout_uses_a_thinner_frame() {
+        assert_eq!(select_frame_zoom(false), 0.6);
+        assert_eq!(select_frame_zoom(true), 0.3);
+    }
+
+    #[test]
+    fn rows_without_a_lead_reclaim_the_icon_gutter_before_the_check() {
+        assert_eq!(select_label_gutter(&SelectLead::None), NO_LEAD_GUTTER);
+        assert_eq!(
+            select_content_hug(18.0, &SelectLead::None),
+            NO_LEAD_GUTTER + 18.0 + PAD_R
+        );
+    }
 
     #[test]
     fn hug_wins_when_widest() {

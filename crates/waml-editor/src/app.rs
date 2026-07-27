@@ -2034,12 +2034,13 @@ impl AppMain for App {
         // deps (`icons`, `atlas`) are already registered above.
         crate::icon_button::script_mod(vm);
         crate::property_controls::script_mod(vm);
+        // Diagram Properties mounts the shared SelectBox for Max attributes,
+        // so register it before the panel's DSL is evaluated.
+        crate::select_box::script_mod(vm);
         crate::diagram_properties::script_mod(vm);
         crate::tree_panel::script_mod(vm);
-        // `select_box` must register before `inspector_panel`: the inspector's
-        // `element_bar` mounts `SelectBox` as a child, and the DSL resolves
-        // `mod.widgets.*` eagerly at `use`-time, not lazily.
-        crate::select_box::script_mod(vm);
+        // `select_box` is already registered above for Diagram Properties; the
+        // inspector's element bar reuses the same widget type.
         // The inspector body's declared child widgets must register before
         // `inspector_panel`: it mounts `SectionHeading` (and, in later tasks,
         // `AttrRowView` / `RefCardView`) as DSL children, and the DSL

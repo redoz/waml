@@ -53,6 +53,22 @@ script_mod! {
                 return sdf.result
             }
         }
+        draw_field: mod.draw.DrawColor {
+            color: atlas.surface_border
+            pixel: fn() {
+                let inset = 0.5
+                let sdf = Sdf2d.viewport(self.pos * self.rect_size)
+                sdf.box(
+                    inset
+                    inset
+                    self.rect_size.x - inset * 2.0
+                    self.rect_size.y - inset * 2.0
+                    3.0
+                )
+                sdf.stroke(self.color, 1.0)
+                return sdf.result
+            }
+        }
         draw_badge: mod.draw.DrawColor{ color: atlas.bucket_slate }
         draw_badge_text +: {
             color: #xffffff
@@ -80,6 +96,11 @@ pub struct SelectBox {
     draw_active: DrawColor,
     #[redraw]
     #[live]
+    draw_field: DrawColor,
+    #[live(false)]
+    show_field: bool,
+    #[redraw]
+    #[live]
     draw_badge: DrawColor,
     #[redraw]
     #[live]
@@ -101,7 +122,15 @@ pub struct SelectBox {
     #[rust]
     selected: Option<usize>,
     #[rust]
+    display_label: Option<String>,
+    #[rust]
     open: bool,
+    #[rust(true)]
+    enabled: bool,
+}
+
+fn select_label_y(rect: Rect, text_px: f32) -> f64 {
+    rect.pos.y + (rect.size.y - f64::from(text_px)) * 0.5
 }
 
 impl Widget for SelectBox {
@@ -109,7 +138,7 @@ impl Widget for SelectBox {
         self.view.handle_event(cx, event, scope);
         let uid = self.widget_uid();
         if let Hit::FingerUp(fe) = event.hits(cx, self.view.area()) {
-            if fe.is_primary_hit() {
+            if self.enabled && fe.is_primary_hit() {
                 // A hit on `view.area()` already means the press landed on the
                 // box — NO `box_rect.contains` guard (that rect is pre-alignment;
                 // the panel is right-aligned → event abs never matches → dead
@@ -138,6 +167,10 @@ impl Widget for SelectBox {
         let rect = self.view.area().rect(cx);
         let cy = rect.pos.y + rect.size.y * 0.5;
 
+        if self.show_field {
+            self.draw_field.draw_abs(cx, rect);
+        }
+
         // Flat web-header look: no boxed field frame -- the leading kind icon,
         // bold name, and trailing caret carry the affordance over the bare panel.
         // (The open-state accent ring below still draws when the list is open.)
@@ -145,7 +178,16 @@ impl Widget for SelectBox {
         // Selected row's lead + label (or nothing selected → placeholder blank).
         let idle = self.draw_icon_idle.color;
         let mut label_x = rect.pos.x + 12.0;
-        if let Some(sel) = self.selected.and_then(|i| self.items.get(i)).cloned() {
+        if let Some(label) = self.display_label.clone() {
+            self.draw_label.draw_abs(
+                cx,
+                dvec2(
+                    label_x,
+                    select_label_y(rect, self.draw_label.text_style.font_size),
+                ),
+                &label,
+            );
+        } else if let Some(sel) = self.selected.and_then(|i| self.items.get(i)).cloned() {
             match &sel.lead {
                 SelectLead::None => {}
                 SelectLead::Icon(icon) => {
@@ -173,8 +215,14 @@ impl Widget for SelectBox {
                     label_x = rect.pos.x + 36.0;
                 }
             }
-            self.draw_label
-                .draw_abs(cx, dvec2(label_x, cy - 9.5), &sel.label);
+            self.draw_label.draw_abs(
+                cx,
+                dvec2(
+                    label_x,
+                    select_label_y(rect, self.draw_label.text_style.font_size),
+                ),
+                &sel.label,
+            );
         }
 
         // Trailing caret (chevrons-up-down = the standard combo affordance).
@@ -214,14 +262,40 @@ fn decide_closed(
 }
 
 impl SelectBox {
+    #[cfg(test)]
+    pub(crate) fn shows_field(&self) -> bool {
+        self.show_field
+    }
+
     pub fn set_items(&mut self, cx: &mut Cx, items: Vec<SelectItem>) {
-        self.items = items;
-        self.view.redraw(cx);
+        if self.items != items {
+            self.items = items;
+            self.view.redraw(cx);
+        }
     }
 
     pub fn set_selected(&mut self, cx: &mut Cx, selected: Option<usize>) {
-        self.selected = selected;
-        self.view.redraw(cx);
+        if self.selected != selected {
+            self.selected = selected;
+            self.view.redraw(cx);
+        }
+    }
+
+    pub fn set_display_label(&mut self, cx: &mut Cx, display_label: Option<String>) {
+        if self.display_label != display_label {
+            self.display_label = display_label;
+            self.view.redraw(cx);
+        }
+    }
+
+    pub fn set_enabled(&mut self, cx: &mut Cx, enabled: bool) {
+        if self.enabled != enabled {
+            self.enabled = enabled;
+            if !enabled {
+                self.open = false;
+            }
+            self.view.redraw(cx);
+        }
     }
 
     /// `App` reads this to relay the open. `None` unless the box asked to open.
@@ -246,6 +320,9 @@ impl SelectBox {
         let (open, selected, picked) = decide_closed(&result, self.selected, idx_of);
         self.open = open;
         self.selected = selected;
+        if picked.is_some() && selected.is_some() {
+            self.display_label = None;
+        }
         self.view.redraw(cx);
         picked
     }
@@ -258,6 +335,16 @@ impl SelectBox {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn compact_select_labels_are_vertically_centered_from_their_font_size() {
+        let rect = Rect {
+            pos: dvec2(0.0, 0.0),
+            size: dvec2(72.0, 26.0),
+        };
+
+        assert_eq!(select_label_y(rect, 10.0), 8.0);
+    }
 
     #[test]
     fn dismiss_clears_open_and_keeps_selection() {

@@ -99,14 +99,6 @@ impl ClassDiagramMode {
         self == Self::Properties
     }
 
-    fn canvas_chrome_visible(self) -> bool {
-        self == Self::Canvas
-    }
-
-    fn tool_dock_visible(self) -> bool {
-        self == Self::Canvas
-    }
-
     fn accepts_canvas_actions(self) -> bool {
         self == Self::Canvas
     }
@@ -156,9 +148,9 @@ impl ClassDiagramView {
                     DiagramPropertiesAction::DisplayChanged(display) => {
                         (None, None, false, Some(display))
                     }
-                    DiagramPropertiesAction::IdentityChanged { title, description } => {
+                    DiagramPropertiesAction::DescriptionChanged(description) => {
                         let clear_description = description.is_none();
-                        (Some(title), description, clear_description, None)
+                        (None, description, clear_description, None)
                     }
                     DiagramPropertiesAction::Close => unreachable!(),
                 };
@@ -182,9 +174,7 @@ impl ClassDiagramView {
 
     fn show_mode(&self, cx: &mut Cx, body: &BodyWidgets) {
         body.set_diagram_properties_visible(cx, self.mode.properties_visible());
-        body.set_tool_dock_visible(cx, self.mode.tool_dock_visible());
-        body.set_view_bar_visible(cx, self.mode.canvas_chrome_visible());
-        body.set_conflict_badge_visible(cx, self.mode.canvas_chrome_visible());
+        body.apply_chrome(cx, self.chrome());
     }
 
     fn clear_properties_focus(cx: &mut Cx) {
@@ -213,7 +203,6 @@ impl ClassDiagramView {
             .as_diagram_properties()
             .set_diagram(
                 cx,
-                &diagram.title,
                 diagram.description.as_deref(),
                 &resolve_display(&diagram.display),
             );
@@ -350,6 +339,20 @@ impl DocView for ClassDiagramView {
                 self.show_mode(cx, body);
                 return outcome;
             }
+            if let Some((anchor_rect, min_width, items)) = body
+                .diagram_properties(cx)
+                .as_diagram_properties()
+                .max_attributes_open_request(cx, actions)
+            {
+                out.popup = Some(PopupRequest::Select {
+                    tag: live_id!(max_attributes_picker),
+                    anchor_rect,
+                    min_width,
+                    items,
+                    compact_frame: true,
+                });
+                return out;
+            }
 
             // Properties mode owns the center surface. All canvas chrome,
             // including the tool dock, is hidden and its queued actions are
@@ -386,10 +389,12 @@ impl DocView for ClassDiagramView {
             .borrow_mut::<crate::inspector_panel::Inspector>()
             .and_then(|inspector| inspector.take_open_request(cx, actions))
         {
-            out.popup = Some(PopupRequest::ElementPicker {
+            out.popup = Some(PopupRequest::Select {
+                tag: live_id!(element_picker),
                 anchor_rect,
                 min_width,
                 items,
+                compact_frame: false,
             });
             return out;
         }
@@ -659,6 +664,15 @@ impl DocView for ClassDiagramView {
         result: PopupResult,
     ) -> ViewOutcome {
         let model = data.uml;
+        if tag == live_id!(max_attributes_picker) {
+            let action = body
+                .diagram_properties(cx)
+                .as_diagram_properties()
+                .max_attributes_closed(cx, result);
+            return action
+                .map(|action| self.properties_actions_outcome([action]))
+                .unwrap_or_default();
+        }
         // Element-picker: any close clears the box's active state; a node
         // commit repoints the inspector (inspector-local -- no tab, no canvas
         // move).
@@ -745,11 +759,15 @@ impl DocView for ClassDiagramView {
     }
 
     fn chrome(&self) -> BodyChrome {
-        BodyChrome {
-            tool_dock: true,
-            view_bar: true,
-            canvas_overlays: true,
-            right_dock: Some(Icon::SlidersHorizontal),
+        if self.mode.properties_visible() {
+            BodyChrome::HIDDEN
+        } else {
+            BodyChrome {
+                tool_dock: true,
+                view_bar: true,
+                canvas_overlays: true,
+                right_dock: Some(Icon::SlidersHorizontal),
+            }
         }
     }
 
@@ -774,7 +792,7 @@ mod tests {
     };
     use crate::canvas::ConstraintVisibility;
     use crate::diagram_properties::DiagramPropertiesAction;
-    use crate::doc_view::ViewOutcome;
+    use crate::doc_view::{BodyChrome, DocView, ViewOutcome};
     use crate::tool_dock::{Tool, ToolDockAction};
     use crate::view_bar::{ViewBarAction, ViewOption};
     use makepad_widgets::{
@@ -920,12 +938,8 @@ mod tests {
 
     #[test]
     fn properties_mode_hides_canvas_chrome_and_gates_canvas_actions() {
-        assert!(ClassDiagramMode::Canvas.canvas_chrome_visible());
         assert!(ClassDiagramMode::Canvas.accepts_canvas_actions());
-        assert!(ClassDiagramMode::Canvas.tool_dock_visible());
-        assert!(!ClassDiagramMode::Properties.canvas_chrome_visible());
         assert!(!ClassDiagramMode::Properties.accepts_canvas_actions());
-        assert!(!ClassDiagramMode::Properties.tool_dock_visible());
     }
 
     #[test]
@@ -934,6 +948,14 @@ mod tests {
 
         assert!(view.apply_tool_action(ToolDockAction::Triggered(Tool::DiagramProps)));
         assert_eq!(view.mode, ClassDiagramMode::Properties);
+    }
+
+    #[test]
+    fn properties_mode_hides_the_inspector_toggle_and_canvas_chrome() {
+        let mut view = ClassDiagramView::new("orders".into());
+        view.apply_tool_action(ToolDockAction::Triggered(Tool::DiagramProps));
+
+        assert_eq!(view.chrome(), BodyChrome::HIDDEN);
     }
 
     #[test]
@@ -980,16 +1002,14 @@ mod tests {
     }
 
     #[test]
-    fn clearing_description_emits_an_explicit_clear_diagram_set() {
+    fn clearing_description_does_not_write_the_diagram_title() {
         let mut view = ClassDiagramView::new("orders".into());
 
-        let outcome = view.properties_actions_outcome([DiagramPropertiesAction::IdentityChanged {
-            title: "Orders".into(),
-            description: None,
-        }]);
+        let outcome =
+            view.properties_actions_outcome([DiagramPropertiesAction::DescriptionChanged(None)]);
 
         let text = apply_outcome(outcome);
-        assert!(text.contains("title: Orders"), "{text}");
+        assert!(text.contains("title: Old"), "{text}");
         assert!(!text.contains("description:"), "{text}");
     }
 
@@ -1038,16 +1058,13 @@ mod tests {
         };
 
         let outcome = view.properties_actions_outcome([
-            DiagramPropertiesAction::IdentityChanged {
-                title: "Order flow".into(),
-                description: None,
-            },
+            DiagramPropertiesAction::DescriptionChanged(None),
             DiagramPropertiesAction::Close,
             DiagramPropertiesAction::DisplayChanged(display.clone()),
         ]);
 
         let text = apply_outcome(outcome);
-        assert!(text.contains("title: Order flow"), "{text}");
+        assert!(text.contains("title: Old"), "{text}");
         assert!(text.contains("showAttributes: false"), "{text}");
         assert!(!text.contains("description:"), "{text}");
         assert_eq!(view.mode, ClassDiagramMode::Canvas);

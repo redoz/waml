@@ -176,11 +176,14 @@ pub enum PopupRequest {
         key: String,
         context: Vec<PopupItem>,
     },
-    /// Inspector element-picker flyout.
-    ElementPicker {
+    /// A document-owned select flyout. The tag is opaque to the shell and is
+    /// relayed back to the active document when the popup closes.
+    Select {
+        tag: LiveId,
         anchor_rect: Rect,
         min_width: f64,
         items: Vec<SelectItem>,
+        compact_frame: bool,
     },
     /// The drag-to-place dial: the shared radial, popped centred on `center`
     /// mid-drag and released with the primary button (the drag that opened it

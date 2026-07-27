@@ -22,16 +22,11 @@ const OBSERVER_ORDER: [ObserverHandler; 3] = [
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum PopupRelay {
-    ElementPickerClosed,
-    PlaceDialArmed,
-    PlaceDialClosed,
+    Armed,
+    Closed,
 }
 
-const DOCUMENT_POPUP_RELAY_ORDER: [PopupRelay; 3] = [
-    PopupRelay::ElementPickerClosed,
-    PopupRelay::PlaceDialArmed,
-    PopupRelay::PlaceDialClosed,
-];
+const DOCUMENT_POPUP_RELAY_ORDER: [PopupRelay; 2] = [PopupRelay::Armed, PopupRelay::Closed];
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum ExclusiveHandler {
@@ -190,15 +185,19 @@ impl App {
         let Some(popup) = popup_root.borrow::<PopupRoot>() else {
             return;
         };
-        let logo_closed = popup.closed(actions, live_id!(logo));
-        let burger_closed = popup.closed(actions, live_id!(burger));
-        let doc_switcher_closed = popup.closed(actions, live_id!(doc_switcher));
-        let node_closed = popup.closed(actions, live_id!(node_menu));
-        let mut picker_closed = popup.closed(actions, live_id!(element_picker));
-        let nav_scope_closed = popup.closed(actions, live_id!(nav_scope));
-        let nav_filter_closed = popup.closed(actions, live_id!(nav_filter));
-        let mut dial_closed = popup.closed(actions, live_id!(place_dial));
-        let mut dial_armed = popup.armed(actions, live_id!(place_dial));
+        let mut document_closed = popup.closed_event(actions);
+        let result_for = |wanted: LiveId| {
+            document_closed
+                .as_ref()
+                .and_then(|(tag, result)| (*tag == wanted).then(|| result.clone()))
+        };
+        let logo_closed = result_for(live_id!(logo));
+        let burger_closed = result_for(live_id!(burger));
+        let doc_switcher_closed = result_for(live_id!(doc_switcher));
+        let node_closed = result_for(live_id!(node_menu));
+        let nav_scope_closed = result_for(live_id!(nav_scope));
+        let nav_filter_closed = result_for(live_id!(nav_filter));
+        let mut document_armed = popup.armed_event(actions);
         drop(popup);
 
         if burger_closed.is_some() {
@@ -278,32 +277,13 @@ impl App {
 
         for relay in DOCUMENT_POPUP_RELAY_ORDER {
             let outcome = match relay {
-                PopupRelay::ElementPickerClosed => picker_closed.take().and_then(|result| {
-                    self.documents.on_active_popup_result(
-                        cx,
-                        &self.ui,
-                        &self.session,
-                        live_id!(element_picker),
-                        result,
-                    )
+                PopupRelay::Armed => document_armed.take().and_then(|(tag, id)| {
+                    self.documents
+                        .on_active_popup_armed(cx, &self.ui, &self.session, tag, id)
                 }),
-                PopupRelay::PlaceDialArmed => dial_armed.take().and_then(|id| {
-                    self.documents.on_active_popup_armed(
-                        cx,
-                        &self.ui,
-                        &self.session,
-                        live_id!(place_dial),
-                        id,
-                    )
-                }),
-                PopupRelay::PlaceDialClosed => dial_closed.take().and_then(|result| {
-                    self.documents.on_active_popup_result(
-                        cx,
-                        &self.ui,
-                        &self.session,
-                        live_id!(place_dial),
-                        result,
-                    )
+                PopupRelay::Closed => document_closed.take().and_then(|(tag, result)| {
+                    self.documents
+                        .on_active_popup_result(cx, &self.ui, &self.session, tag, result)
                 }),
             };
             if let Some(outcome) = outcome {
@@ -484,6 +464,7 @@ impl App {
                     min_width: anchor_rect.size.x,
                     bounds,
                     items,
+                    compact_frame: false,
                 },
             );
         }
@@ -893,10 +874,12 @@ impl App {
                         },
                     );
                 }
-                crate::doc_view::PopupRequest::ElementPicker {
+                crate::doc_view::PopupRequest::Select {
+                    tag,
                     anchor_rect,
                     min_width,
                     items,
+                    compact_frame,
                 } => {
                     let anchor = dvec2(
                         anchor_rect.pos.x,
@@ -905,11 +888,12 @@ impl App {
                     popup.show_at(
                         cx,
                         PopupSpec::Select {
-                            tag: live_id!(element_picker),
+                            tag,
                             anchor,
                             min_width,
                             bounds,
                             items,
+                            compact_frame,
                         },
                     );
                 }
@@ -1064,12 +1048,22 @@ mod tests {
     fn placement_dial_armed_is_relayed_before_closed() {
         let armed = DOCUMENT_POPUP_RELAY_ORDER
             .iter()
-            .position(|handler| *handler == PopupRelay::PlaceDialArmed)
+            .position(|handler| *handler == PopupRelay::Armed)
             .unwrap();
         let closed = DOCUMENT_POPUP_RELAY_ORDER
             .iter()
-            .position(|handler| *handler == PopupRelay::PlaceDialClosed)
+            .position(|handler| *handler == PopupRelay::Closed)
             .unwrap();
         assert!(armed < closed);
+    }
+
+    #[test]
+    fn document_select_popups_share_one_shell_request_path() {
+        let source = include_str!("actions.rs");
+        let production = source.split("#[cfg(test)]").next().unwrap();
+
+        assert_eq!(production.matches("PopupRequest::Select {").count(), 1);
+        assert!(!production.contains("PopupRequest::MaxAttributesPicker"));
+        assert!(!production.contains("PopupRequest::ElementPicker"));
     }
 }
