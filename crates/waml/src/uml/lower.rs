@@ -669,14 +669,6 @@ pub(crate) fn op_diagram_set(
     clear_description: bool,
     display: &Option<DiagramDisplaySet>,
 ) -> Result<(), EditError> {
-    if description
-        .as_deref()
-        .is_some_and(|description| description.contains('\n') || description.contains('\r'))
-    {
-        return Err(
-            EditError::at("diagram.set", "description must be one line").with_sel(key.to_string())
-        );
-    }
     edit_doc(work, key, "diagram.set", |doc| {
         if let Some(t) = title {
             fm_set(&mut doc.frontmatter, "title", FmValue::Str(t.clone()));

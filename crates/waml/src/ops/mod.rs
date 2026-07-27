@@ -1154,8 +1154,8 @@ mod tests {
     }
 
     #[test]
-    fn diagram_set_rejects_multiline_description_before_serializing() {
-        let err = apply(
+    fn diagram_set_round_trips_multiline_description_through_reopen() {
+        let out = apply(
             &diagram_doc(),
             &[Op::DiagramSet {
                 key: "dia".into(),
@@ -1165,9 +1165,20 @@ mod tests {
                 display: None,
             }],
         )
-        .unwrap_err();
+        .unwrap();
 
-        assert!(err.reason.contains("one line"), "{err:?}");
+        assert!(
+            out[0]
+                .1
+                .contains(r#"description: "First line\nSecond line""#),
+            "serialized diagram must escape the embedded line break: {}",
+            out[0].1
+        );
+        let reopened = crate::parse::build_model(&out);
+        assert_eq!(
+            reopened.diagrams[0].description.as_deref(),
+            Some("First line\nSecond line")
+        );
     }
 
     #[test]

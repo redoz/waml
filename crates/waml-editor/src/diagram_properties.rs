@@ -335,11 +335,11 @@ fn normalize_description(value: Option<String>) -> Option<String> {
         for character in value.chars() {
             match character {
                 '\r' => {
-                    normalized.push(' ');
+                    normalized.push('\n');
                     previous_was_cr = true;
                 }
                 '\n' if previous_was_cr => previous_was_cr = false,
-                '\n' => normalized.push(' '),
+                '\n' => normalized.push('\n'),
                 _ => {
                     normalized.push(character);
                     previous_was_cr = false;
@@ -750,18 +750,20 @@ mod tests {
     }
 
     #[test]
-    fn description_change_is_normalized_to_one_plain_line() {
+    fn description_change_preserves_lines_and_normalizes_them_to_lf() {
         let mut state = DiagramPropertiesState::new("Orders".into(), None, resolved_display());
 
         let action = state.apply(PropertyChange::Description(Some(
-            "First line\r\nSecond line\nThird line".into(),
+            "First line\r\nSecond line\rThird line\nFourth line".into(),
         )));
 
         assert_eq!(
             action,
             DiagramPropertiesAction::IdentityChanged {
                 title: "Orders".into(),
-                description: Some("First line Second line Third line".into()),
+                description: Some(
+                    "First line\nSecond line\nThird line\nFourth line".into()
+                ),
             }
         );
     }
