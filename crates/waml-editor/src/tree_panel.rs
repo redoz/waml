@@ -841,7 +841,7 @@ impl Widget for ProjectTree {
         // No peek-hover / auto-collapse handling here: the tree is binary
         // (`Pinned` <-> `Flag`) and only the caption bar's tree toggle moves it,
         // so there is no self-collapsing state to time out.
-        match event.hits(cx, self.view.area()) {
+        match tree_panel_hit(event, cx, self.view.area()) {
             Hit::FingerDown(fe) if fe.is_primary_hit() => {
                 self.pending_tap_count = fe.tap_count;
             }
@@ -1111,11 +1111,69 @@ impl ProjectTree {
     }
 }
 
+fn tree_panel_hit(event: &Event, cx: &mut Cx, area: Area) -> Hit {
+    event.hits_with_capture_overload(cx, area, true)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::tree::{ProjectTree as ProjectTreeData, TreeKind, TreeNode};
     use makepad_widgets::LiveId;
+    use std::cell::Cell;
+
+    fn overlapping_area(cx: &mut Cx, rect: Rect) -> (DrawList, Area) {
+        let draw_list = cx.draw_lists.alloc();
+        let draw_list_id = draw_list.id();
+        let redraw_id = cx.redraw_id;
+        let rect_id = cx.draw_lists[draw_list_id].rect_areas.len();
+        cx.draw_lists[draw_list_id].redraw_id = redraw_id;
+        cx.draw_lists[draw_list_id].rect_areas.push(CxRectArea {
+            rect,
+            draw_clip: (
+                dvec2(f64::NEG_INFINITY, f64::NEG_INFINITY),
+                dvec2(f64::INFINITY, f64::INFINITY),
+            ),
+        });
+        (
+            draw_list,
+            Area::Rect(RectArea {
+                draw_list_id,
+                rect_id,
+                redraw_id,
+            }),
+        )
+    }
+
+    #[test]
+    fn tree_panel_observes_child_consumed_primary_down() {
+        let mut cx = Cx::new(Box::new(|_, _| {}));
+        let rect = Rect {
+            pos: dvec2(0.0, 0.0),
+            size: dvec2(100.0, 100.0),
+        };
+        let (_child_draw_list, child_area) = overlapping_area(&mut cx, rect);
+        let (_panel_draw_list, panel_area) = overlapping_area(&mut cx, rect);
+        let event = Event::MouseDown(MouseDownEvent {
+            abs: dvec2(10.0, 10.0),
+            button: MouseButton::PRIMARY,
+            window_id: WindowId(0, 0),
+            modifiers: KeyModifiers::default(),
+            handled: Cell::new(Area::default()),
+            time: 0.0,
+        });
+
+        assert!(child_area.is_valid(&cx));
+        assert_eq!(child_area.clipped_rect(&cx), rect);
+        assert!(matches!(
+            event.hits(&mut cx, child_area),
+            Hit::FingerDown(_)
+        ));
+        assert!(matches!(
+            tree_panel_hit(&event, &mut cx, panel_area),
+            Hit::FingerDown(_)
+        ));
+    }
 
     #[test]
     fn document_action_marks_only_second_tap_persistent() {

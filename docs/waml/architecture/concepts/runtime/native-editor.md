@@ -12,3 +12,8 @@ description: A product responsibility that provides WAML editing in native and w
 
 ## Notes
 - [Native Web Delivery](./native-web-delivery.md)
+- Project-tree document entries use preview tabs: a single click opens or
+  focuses the shared preview, while a double click opens or focuses the same
+  tab and makes it persistent. Double-clicking an already-open preview promotes
+  it in place; persistent tabs are not duplicated or demoted. Folder expansion
+  is unchanged.
