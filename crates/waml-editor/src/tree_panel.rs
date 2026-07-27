@@ -846,8 +846,7 @@ impl Widget for ProjectTree {
                 self.pending_tap_count = fe.tap_count;
             }
             Hit::FingerUp(fe) if fe.is_primary_hit() => {
-                let p = fe.abs - hit_off;
-                if self.title_rect.contains(p) {
+                if header_release_hits(&fe, hit_off, self.title_rect) {
                     let anchor = Rect {
                         pos: self.title_rect.pos + hit_off,
                         size: self.title_rect.size,
@@ -855,13 +854,13 @@ impl Widget for ProjectTree {
                     cx.widget_action(uid, ProjectTreeAction::ScopeRequest { anchor });
                     return;
                 }
-                if self.search_rect.contains(p) {
+                if header_release_hits(&fe, hit_off, self.search_rect) {
                     self.editing_search = true;
                     cx.set_key_focus(self.view.area());
                     self.view.redraw(cx);
                     return;
                 }
-                if self.chip_rect.contains(p) {
+                if header_release_hits(&fe, hit_off, self.chip_rect) {
                     let anchor = Rect {
                         pos: self.chip_rect.pos + hit_off,
                         size: self.chip_rect.size,
@@ -1115,6 +1114,10 @@ fn tree_panel_hit(event: &Event, cx: &mut Cx, area: Area) -> Hit {
     event.hits_with_capture_overload(cx, area, true)
 }
 
+fn header_release_hits(fe: &FingerUpEvent, hit_off: DVec2, target: Rect) -> bool {
+    target.contains(fe.abs_start - hit_off) && target.contains(fe.abs - hit_off)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1173,6 +1176,53 @@ mod tests {
             tree_panel_hit(&event, &mut cx, panel_area),
             Hit::FingerDown(_)
         ));
+    }
+
+    #[test]
+    fn tree_row_press_released_over_header_does_not_activate_header() {
+        let mut cx = Cx::new(Box::new(|_, _| {}));
+        let panel_rect = Rect {
+            pos: dvec2(0.0, 0.0),
+            size: dvec2(100.0, 100.0),
+        };
+        let row_rect = Rect {
+            pos: dvec2(0.0, 40.0),
+            size: dvec2(100.0, 30.0),
+        };
+        let header_rect = Rect {
+            pos: dvec2(0.0, 0.0),
+            size: dvec2(100.0, 20.0),
+        };
+        let (_child_draw_list, child_area) = overlapping_area(&mut cx, row_rect);
+        let (_panel_draw_list, panel_area) = overlapping_area(&mut cx, panel_rect);
+        let down = Event::MouseDown(MouseDownEvent {
+            abs: dvec2(10.0, 50.0),
+            button: MouseButton::PRIMARY,
+            window_id: WindowId(0, 0),
+            modifiers: KeyModifiers::default(),
+            handled: Cell::new(Area::default()),
+            time: 0.0,
+        });
+
+        assert!(matches!(down.hits(&mut cx, child_area), Hit::FingerDown(_)));
+        assert!(matches!(
+            tree_panel_hit(&down, &mut cx, panel_area),
+            Hit::FingerDown(_)
+        ));
+
+        let up = Event::MouseUp(MouseUpEvent {
+            abs: dvec2(10.0, 10.0),
+            button: MouseButton::PRIMARY,
+            window_id: WindowId(0, 0),
+            modifiers: KeyModifiers::default(),
+            time: 0.1,
+        });
+        let Hit::FingerUp(fe) = tree_panel_hit(&up, &mut cx, panel_area) else {
+            panic!("captured panel must receive the release");
+        };
+
+        assert_eq!(fe.abs_start, dvec2(10.0, 50.0));
+        assert!(!header_release_hits(&fe, dvec2(0.0, 0.0), header_rect));
     }
 
     #[test]
