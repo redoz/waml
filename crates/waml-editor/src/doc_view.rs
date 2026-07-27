@@ -13,6 +13,7 @@
 use makepad_widgets::*;
 use waml::model::Model;
 use waml::ops::Op;
+use waml::source::SourceBundle;
 
 use crate::editor_session::SessionChange;
 use crate::icon_button::IconButtonWidgetRefExt;
@@ -203,7 +204,7 @@ pub enum PopupRequest {
 #[derive(Clone, Copy)]
 pub struct ViewData<'a> {
     pub model: &'a Model,
-    pub bundle: &'a [(String, String)],
+    pub bundle: &'a SourceBundle,
     pub revision: u64,
 }
 

@@ -12,7 +12,8 @@ use std::sync::LazyLock;
 use pulldown_cmark::{Event, HeadingLevel, Options, Parser, Tag, TagEnd};
 use regex::Regex;
 
-use crate::frontmatter::{parse_frontmatter, Frontmatter};
+use crate::frontmatter::{parse_frontmatter_spanned, Frontmatter};
+use crate::source::{SourceBundle, SourceDocument, SourceSlice};
 
 /// Reserved-file role. Every document lands in the bundle regardless of role;
 /// `index.md`/`log.md` are flagged so consumers can treat them specially.
@@ -81,7 +82,7 @@ pub struct Concept {
     )]
     pub timestamp: Option<String>,
     /// The full markdown body (everything after the frontmatter), verbatim.
-    pub body: String,
+    pub body: SourceSlice,
     #[cfg_attr(
         feature = "serde",
         serde(default, skip_serializing_if = "Vec::is_empty")
@@ -250,13 +251,17 @@ fn extract_citations(text: &str) -> Vec<Citation> {
 /// Project one document (its bundle `path` and raw `src` markdown) into a
 /// lossless [`Concept`]. Known frontmatter fields promote to their dedicated
 /// slots; unknown keys survive in [`Concept::extra`]; the body is verbatim.
-pub fn project(path: &str, src: &str) -> Concept {
-    let (fm, body) = parse_frontmatter(src);
+pub fn project_document(document: &SourceDocument) -> Concept {
+    let parsed = parse_frontmatter_spanned(document.text());
+    let fm = parsed.frontmatter;
+    let body = document
+        .slice(parsed.body_range)
+        .expect("frontmatter parser returns source boundaries");
 
     let title = fm
         .get_str("title")
         .map(String::from)
-        .or_else(|| first_h1(&body));
+        .or_else(|| first_h1(body.as_str()));
     let description = fm.get_str("description").map(String::from);
     let resource = fm.get_str("resource").map(String::from);
     let timestamp = fm.get_str("timestamp").map(String::from);
@@ -272,7 +277,51 @@ pub fn project(path: &str, src: &str) -> Concept {
             .collect(),
     };
 
-    let (prose, citations_section) = split_citations(&body);
+    let (prose, citations_section) = split_citations(body.as_str());
+    let links = extract_links(prose);
+    let citations = extract_citations(citations_section);
+
+    Concept {
+        id: document
+            .path()
+            .concept_id()
+            .expect("validated source paths end in .md")
+            .to_owned(),
+        ty,
+        title,
+        description,
+        resource,
+        tags,
+        timestamp,
+        body,
+        links,
+        citations,
+        role: role_of(document.path().as_str()),
+        extra,
+    }
+}
+
+pub fn project(path: &str, src: &str) -> Concept {
+    let (fm, body) = crate::frontmatter::parse_frontmatter(src);
+    let body: SourceSlice = body.into();
+    let title = fm
+        .get_str("title")
+        .map(String::from)
+        .or_else(|| first_h1(body.as_str()));
+    let description = fm.get_str("description").map(String::from);
+    let resource = fm.get_str("resource").map(String::from);
+    let timestamp = fm.get_str("timestamp").map(String::from);
+    let tags = fm.get_string_list("tags");
+    let ty = fm.get_str("type").unwrap_or("").to_string();
+    let extra = Frontmatter {
+        entries: fm
+            .entries
+            .iter()
+            .filter(|(key, _)| !KNOWN_KEYS.contains(&key.as_str()))
+            .cloned()
+            .collect(),
+    };
+    let (prose, citations_section) = split_citations(body.as_str());
     let links = extract_links(prose);
     let citations = extract_citations(citations_section);
 
@@ -294,11 +343,17 @@ pub fn project(path: &str, src: &str) -> Concept {
 
 /// Project an entire bundle. EVERY document lands as a `Concept`, regardless of
 /// its `type` (UML or not) or reserved role.
+pub fn build_bundle_from_source(bundle: &SourceBundle) -> Bundle {
+    Bundle {
+        concepts: bundle.documents().iter().map(project_document).collect(),
+    }
+}
+
 pub fn build_bundle(bundle: &[(String, String)]) -> Bundle {
     Bundle {
         concepts: bundle
             .iter()
-            .map(|(path, src)| project(path, src))
+            .map(|(path, source)| project(path, source))
             .collect(),
     }
 }

@@ -1,7 +1,8 @@
-use super::{find_doc, slug_of, Bundle, OpError};
+use super::{find_doc, slug_of, OpError};
 use crate::okf;
 use crate::parse::parse_document;
 use crate::serialize::serialize_document;
+use crate::source::SourceBundle;
 use crate::syntax::{Document, Line, NameRef, Operand, OperandRef, ParsedName, Section};
 
 /// Swap the basename of `path` to `to.md`, preserving any directory prefix.
@@ -124,33 +125,47 @@ fn rename_in_operand(op: &mut Operand, from: &str, to: &str) -> bool {
     changed
 }
 
-pub(crate) fn op_node_rename(work: &mut Bundle, from: &str, to: &str) -> Result<(), OpError> {
+pub(crate) fn op_node_rename(work: &mut SourceBundle, from: &str, to: &str) -> Result<(), OpError> {
     // `from` may be a full bundle-path id (the parse/graph layer's node key)
     // or a bare basename; `to` is always a bare local name in the renamed
     // doc's own directory. Repointing compares against stored hrefs, which
     // are bare same-directory-relative slugs — resolve `from` down to that
     // form before rewriting referrers.
     let idx = find_doc(work, from, "node.rename")?;
-    let from_basename = slug_of(&work[idx].0);
-    let dest_path = replace_basename(&work[idx].0, to);
+    let source_path = work
+        .document_at(idx)
+        .expect("resolved document index")
+        .path()
+        .as_str();
+    let from_basename = slug_of(source_path);
+    let dest_path = replace_basename(source_path, to);
     let dest_id = okf::id_of(&dest_path);
     if work
+        .documents()
         .iter()
         .enumerate()
-        .any(|(i, (p, _))| i != idx && okf::id_of(p) == dest_id)
+        .any(|(i, document)| i != idx && okf::id_of(document.path().as_str()) == dest_id)
     {
         return Err(OpError::at(
             "node.rename",
             format!("target slug '{to}' already exists"),
         ));
     }
-    for (_, text) in work.iter_mut() {
-        let mut doc = parse_document(text);
+    for index in 0..work.len() {
+        let mut doc = parse_document(
+            work.document_at(index)
+                .expect("document index in bounds")
+                .text(),
+        );
         if rename_in_doc(&mut doc, &from_basename, to) {
-            *text = serialize_document(&doc);
+            *work
+                .document_at_mut(index)
+                .expect("document index in bounds")
+                .text_mut() = serialize_document(&doc);
         }
     }
-    work[idx].0 = dest_path;
+    work.rename_document(idx, dest_path)
+        .map_err(|error| OpError::at("node.rename", error.to_string()))?;
     Ok(())
 }
 

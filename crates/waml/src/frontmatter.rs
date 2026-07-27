@@ -116,10 +116,20 @@ fn parse_value(s: &str) -> FmValue {
     }
 }
 
-pub fn parse_frontmatter(text: &str) -> (Frontmatter, String) {
+pub struct ParsedFrontmatter {
+    pub frontmatter: Frontmatter,
+    pub body_range: std::ops::Range<usize>,
+}
+
+pub fn parse_frontmatter_spanned(text: &str) -> ParsedFrontmatter {
     let caps = match BLOCK_RE.captures(text) {
         Some(c) => c,
-        None => return (Frontmatter::default(), text.to_string()),
+        None => {
+            return ParsedFrontmatter {
+                frontmatter: Frontmatter::default(),
+                body_range: 0..text.len(),
+            };
+        }
     };
     let mut entries = Vec::new();
     for raw in caps[1].split('\n') {
@@ -135,7 +145,15 @@ pub fn parse_frontmatter(text: &str) -> (Frontmatter, String) {
         }
         entries.push((key, parse_value(rest)));
     }
-    (Frontmatter { entries }, caps[2].to_string())
+    ParsedFrontmatter {
+        frontmatter: Frontmatter { entries },
+        body_range: caps.get(2).expect("body capture exists").range(),
+    }
+}
+
+pub fn parse_frontmatter(text: &str) -> (Frontmatter, String) {
+    let parsed = parse_frontmatter_spanned(text);
+    (parsed.frontmatter, text[parsed.body_range].to_owned())
 }
 
 /// Render any `FmValue` in its canonical form. Total over parsed input: a
@@ -219,6 +237,22 @@ mod tests {
         let (fm, body) = parse_frontmatter("# Just markdown");
         assert!(fm.entries.is_empty());
         assert_eq!(body, "# Just markdown");
+    }
+
+    #[test]
+    fn spanned_frontmatter_points_into_the_original_body() {
+        let text = "---\ntype: uml.Class\n---\n# Café\n";
+        let parsed = parse_frontmatter_spanned(text);
+        assert_eq!(parsed.frontmatter.get_str("type"), Some("uml.Class"));
+        assert_eq!(&text[parsed.body_range], "# Café\n");
+    }
+
+    #[test]
+    fn spanned_frontmatter_uses_the_whole_document_when_absent() {
+        let text = "# Just markdown";
+        let parsed = parse_frontmatter_spanned(text);
+        assert!(parsed.frontmatter.entries.is_empty());
+        assert_eq!(parsed.body_range, 0..text.len());
     }
 
     #[test]

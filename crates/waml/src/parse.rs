@@ -5,6 +5,7 @@ use crate::frontmatter::parse_frontmatter;
 use crate::grammar::{
     bullet_range, parse_attribute_line, parse_relationship_line, parse_slot_line, parse_value_line,
 };
+use crate::source::SourceBundle;
 use crate::syntax::{Document, ErrorNode, LayoutItem, Line, Section};
 
 use std::collections::{HashMap, HashSet};
@@ -522,7 +523,29 @@ struct ParsedDoc {
     concept: crate::okf::Concept,
 }
 
-fn parse_bundle(bundle: &[(String, String)]) -> Vec<ParsedDoc> {
+fn parse_bundle(bundle: &SourceBundle) -> Vec<ParsedDoc> {
+    bundle
+        .documents()
+        .iter()
+        .map(|source| {
+            let path = source.path().as_str();
+            let text = source.text();
+            let doc = parse_document(text);
+            let ty = ElementType::parse(doc.frontmatter.get_str("type").unwrap_or("uml.Class"));
+            let concept = crate::okf::project_document(source);
+            ParsedDoc {
+                path: path.to_owned(),
+                slug: doc_slug(path),
+                id: crate::okf::id_of(path),
+                ty,
+                doc,
+                concept,
+            }
+        })
+        .collect()
+}
+
+fn parse_bundle_pairs(bundle: &[(String, String)]) -> Vec<ParsedDoc> {
     bundle
         .iter()
         .map(|(path, text)| {
@@ -715,9 +738,31 @@ fn parse_index(dir: &str, text: &str) -> IndexDoc {
 /// `indexes` = raw `index.md` text keyed by its directory; reconciles member
 /// order + package description, and the root entry sets `model_path` (its H1).
 /// Returns `(model_path, packages)`.
+#[derive(Clone, Copy)]
+enum IndexSource<'a> {
+    Document(&'a crate::source::SourceDocument),
+    Text(&'a str),
+}
+
+impl<'a> IndexSource<'a> {
+    fn text(self) -> &'a str {
+        match self {
+            IndexSource::Document(document) => document.text(),
+            IndexSource::Text(text) => text,
+        }
+    }
+
+    fn project(self, path: &str) -> crate::okf::Concept {
+        match self {
+            IndexSource::Document(document) => crate::okf::project_document(document),
+            IndexSource::Text(text) => crate::okf::project(path, text),
+        }
+    }
+}
+
 fn build_packages(
     docs: &[(String, String, String)],
-    indexes: &std::collections::BTreeMap<String, String>,
+    indexes: &std::collections::BTreeMap<String, IndexSource<'_>>,
 ) -> (String, Vec<Node>) {
     use std::collections::{BTreeMap, BTreeSet};
     // Every directory that contains a doc, plus all ancestor dirs, is a package.
@@ -779,9 +824,9 @@ fn build_packages(
             // Reconcile against a real index.md when present: listed survivors
             // keep their order, unlisted discovered members are appended A–Z,
             // listed-but-absent entries are silently dropped. Otherwise A–Z.
-            let (members, intro, index_src) = match indexes.get(d) {
-                Some(text) => {
-                    let idx = parse_index(d, text);
+            let (members, intro) = match indexes.get(d).copied() {
+                Some(source) => {
+                    let idx = parse_index(d, source.text());
                     let mut ordered: Vec<String> = vec![];
                     for k in &idx.order {
                         if discovered.contains(k) && !ordered.contains(k) {
@@ -793,16 +838,20 @@ fn build_packages(
                             ordered.push(k.clone());
                         }
                     }
-                    (ordered, idx.intro, text.clone())
+                    (ordered, idx.intro)
                 }
                 // No index.md: synthesize one so `concept` is always populated.
-                None => (discovered, None, format!("# {title}\n")),
+                None => (discovered, None),
             };
 
             // Title/description now live on `concept` (single source). Pin the
             // package title to its directory segment and route the index intro
             // into `concept.description`.
-            let mut concept = crate::okf::project(&index_path, &index_src);
+            let mut concept = indexes
+                .get(d)
+                .copied()
+                .map(|source| source.project(&index_path))
+                .unwrap_or_else(|| crate::okf::project(&index_path, &format!("# {title}\n")));
             concept.title = (!title.is_empty()).then(|| title.clone());
             concept.description = intro;
 
@@ -825,13 +874,15 @@ fn build_packages(
     // Model path = the ROOT index.md's H1 title (else "").
     let path = indexes
         .get("")
-        .map(|text| parse_index("", text).h1)
+        .map(|source| parse_index("", source.text()).h1)
         .unwrap_or_default();
     (path, packages)
 }
 
-pub fn build_model(bundle: &[(String, String)]) -> Model {
-    let parsed = parse_bundle(bundle);
+fn build_model_from_parsed(
+    parsed: Vec<ParsedDoc>,
+    indexes: &std::collections::BTreeMap<String, IndexSource<'_>>,
+) -> Model {
     // `index.md`/`log.md` are reserved package files, never classifiers.
     // Behavior docs (`uml.Activity`/`StateMachine`/`Sequence`) are the document
     // AND view for their own substrate — they never become classifier nodes.
@@ -853,13 +904,7 @@ pub fn build_model(bundle: &[(String, String)]) -> Model {
         .filter(|p| p.slug != "index" && p.slug != "log")
         .map(|p| (p.path.clone(), p.id.clone(), doc_title(p)))
         .collect();
-    // Raw index.md text keyed by directory, for member/description reconciliation.
-    let indexes: std::collections::BTreeMap<String, String> = bundle
-        .iter()
-        .filter(|(path, _)| doc_slug(path) == "index")
-        .map(|(path, text)| (dir_of(path), text.clone()))
-        .collect();
-    let (path, packages) = build_packages(&docs, &indexes);
+    let (path, packages) = build_packages(&docs, indexes);
 
     let (flows, activity_nodes, flow_edges) = build_flows(&parsed, &keyset);
     let interactions = build_interactions(&parsed, &keyset);
@@ -875,6 +920,32 @@ pub fn build_model(bundle: &[(String, String)]) -> Model {
         flow_edges,
         interactions,
     }
+}
+
+pub fn build_model_from_source(bundle: &SourceBundle) -> Model {
+    let parsed = parse_bundle(bundle);
+    let indexes = bundle
+        .documents()
+        .iter()
+        .filter(|document| doc_slug(document.path().as_str()) == "index")
+        .map(|document| {
+            (
+                dir_of(document.path().as_str()),
+                IndexSource::Document(document),
+            )
+        })
+        .collect();
+    build_model_from_parsed(parsed, &indexes)
+}
+
+pub fn build_model(bundle: &[(String, String)]) -> Model {
+    let parsed = parse_bundle_pairs(bundle);
+    let indexes = bundle
+        .iter()
+        .filter(|(path, _)| doc_slug(path) == "index")
+        .map(|(path, text)| (dir_of(path), IndexSource::Text(text)))
+        .collect();
+    build_model_from_parsed(parsed, &indexes)
 }
 
 /// Resolve a frontmatter `describes: [T](./t.md)` link against the classifier keyset.
@@ -1436,6 +1507,45 @@ fn build_diagrams(
 mod tests {
     use super::*;
     use crate::model::{CardinalityVisibility, RelationshipKind};
+    use std::sync::Arc;
+
+    #[test]
+    fn legacy_tuple_model_accepts_non_bundle_paths() {
+        for path in ["stdin", r"C:\workspace\order.md"] {
+            let model = build_model(&[(
+                path.to_string(),
+                "---\ntype: uml.Class\ntitle: Order\n---\n# Order\n".into(),
+            )]);
+            assert_eq!(model.nodes.len(), 1, "{path}");
+        }
+    }
+
+    #[test]
+    fn package_body_shares_the_authored_index_source() {
+        let source = SourceBundle::try_from_pairs([
+            ("index.md", "# Root\n\nIntro\n"),
+            (
+                "order.md",
+                "---\ntype: uml.Class\ntitle: Order\n---\n# Order\n",
+            ),
+        ])
+        .unwrap();
+
+        let model = build_model_from_source(&source);
+        let index = source
+            .document(&crate::source::BundlePath::parse("index.md").unwrap())
+            .unwrap();
+        let root = model
+            .packages
+            .iter()
+            .find(|package| package.key.is_empty())
+            .unwrap();
+
+        assert!(Arc::ptr_eq(
+            index.text_arc(),
+            root.concept.body.source_arc()
+        ));
+    }
 
     fn diagram_bundle(fm_body: &str) -> Vec<(String, String)> {
         vec![(

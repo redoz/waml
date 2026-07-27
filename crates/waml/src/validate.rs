@@ -616,10 +616,12 @@ pub fn link(docs: &[(String, ElementType, Document)]) -> Vec<Diagnostic> {
     diags
 }
 
-pub fn validate(bundle: &[(String, String)]) -> Vec<Diagnostic> {
+pub fn validate_from_source(bundle: &crate::source::SourceBundle) -> Vec<Diagnostic> {
     let mut diags = Vec::new();
     let mut docs = Vec::new();
-    for (path, text) in bundle {
+    for source in bundle.documents() {
+        let path = source.path().as_str();
+        let text = source.text();
         let (doc, mut syn) = crate::parse::parse(text);
         // Index documents are navigation-only: their body is an H1, an optional
         // description, and a link list (exactly what `reindex` emits). That
@@ -631,7 +633,27 @@ pub fn validate(bundle: &[(String, String)]) -> Vec<Diagnostic> {
             syn.retain(|d| d.code != DiagCode::DroppableContent);
         }
         for d in &mut syn {
-            d.file = path.clone();
+            d.file = path.to_owned();
+        }
+        diags.append(&mut syn);
+        let ty = ElementType::parse(doc.frontmatter.get_str("type").unwrap_or("uml.Class"));
+        docs.push((path.to_owned(), ty, doc));
+    }
+    diags.extend(link(&docs));
+    diags
+}
+
+pub fn validate(bundle: &[(String, String)]) -> Vec<Diagnostic> {
+    let mut diags = Vec::new();
+    let mut docs = Vec::new();
+    for (path, text) in bundle {
+        let (doc, mut syn) = crate::parse::parse(text);
+        let is_index = crate::okf::role_of(path) == crate::okf::ConceptRole::Index;
+        if is_index {
+            syn.retain(|d| d.code != DiagCode::DroppableContent);
+        }
+        for diagnostic in &mut syn {
+            diagnostic.file = path.clone();
         }
         diags.append(&mut syn);
         let ty = ElementType::parse(doc.frontmatter.get_str("type").unwrap_or("uml.Class"));
@@ -645,6 +667,17 @@ pub fn validate(bundle: &[(String, String)]) -> Vec<Diagnostic> {
 mod tests {
     use super::*;
     use crate::diagnostic::Severity;
+
+    #[test]
+    fn legacy_tuple_validation_accepts_non_bundle_paths() {
+        for path in ["stdin", r"C:\workspace\order.md"] {
+            let diagnostics = validate(&[(
+                path.to_string(),
+                "---\ntype: uml.Class\ntitle: Order\n---\n# Order\n\n## Relationships\n- depends [Ghost](./ghost.md)\n".into(),
+            )]);
+            assert_eq!(diagnostics[0].file, path);
+        }
+    }
 
     #[test]
     fn unresolved_relationship_target_carries_a_span() {
@@ -857,10 +890,8 @@ mod tests {
     }
 
     #[test]
-    fn flags_duplicate_slug() {
-        // Two docs projecting to the *same* full id (identical bundle-relative
-        // path) still collide.
-        let b = vec![
+    fn duplicate_normalized_paths_are_rejected_before_validation() {
+        let b: Vec<(String, String)> = vec![
             (
                 "a/order.md".into(),
                 "---\ntype: uml.Class\ntitle: Order\n---\n# Order\n".into(),
@@ -870,12 +901,10 @@ mod tests {
                 "---\ntype: uml.Class\ntitle: Order2\n---\n# Order2\n".into(),
             ),
         ];
-        let d = validate(&b);
+        let error = crate::source::SourceBundle::try_from_pairs(b).unwrap_err();
         assert_eq!(
-            d.iter()
-                .filter(|x| x.code == DiagCode::DuplicateSlug)
-                .count(),
-            2
+            error,
+            crate::source::SourceError::DuplicatePath("a/order.md".into())
         );
     }
 

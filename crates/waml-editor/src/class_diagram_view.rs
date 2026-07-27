@@ -1109,9 +1109,10 @@ mod tests {
         let body = crate::doc_view::BodyWidgets::new(cx, &ui);
         let mut model = mini_model();
         let mut view = ClassDiagramView::new("orders-diagram".into());
+        let bundle = waml::source::SourceBundle::default();
         let data = crate::doc_view::ViewData {
             model: &model,
-            bundle: &[],
+            bundle: &bundle,
             revision: 1,
         };
 
@@ -1124,7 +1125,7 @@ mod tests {
             &body,
             crate::doc_view::ViewData {
                 model: &model,
-                bundle: &[],
+                bundle: &bundle,
                 revision: 2,
             },
         );

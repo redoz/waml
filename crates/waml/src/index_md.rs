@@ -1,4 +1,4 @@
-use crate::parse::build_model;
+use crate::source::{BundlePath, SourceBundle};
 
 pub struct IndexEntry {
     pub key: String,
@@ -64,8 +64,8 @@ pub fn render_index(
 
 /// Rebuild every directory's index.md from the current model's package forest.
 /// Title/description now live on `concept` (single source); read them there.
-pub fn reindex_bundle(bundle: &[(String, String)]) -> Vec<(String, String)> {
-    let model = build_model(bundle);
+pub fn reindex_source(bundle: &SourceBundle) -> SourceBundle {
+    let model = crate::parse::build_model_from_source(bundle);
     // key -> (title, is_package, blurb-source description)
     let mut meta = std::collections::HashMap::new();
     for n in &model.nodes {
@@ -85,17 +85,10 @@ pub fn reindex_bundle(bundle: &[(String, String)]) -> Vec<(String, String)> {
         let title = p.concept.title.clone().unwrap_or_else(|| p.key.clone());
         meta.insert(p.key.clone(), (title, true, None));
     }
-    // start from concept/diagram docs (drop existing index.md), then append fresh indexes
-    let mut out: Vec<(String, String)> = bundle
-        .iter()
-        .filter(|(p, _)| {
-            !p.rsplit(['/', '\\'])
-                .next()
-                .unwrap_or(p)
-                .eq_ignore_ascii_case("index.md")
-        })
-        .cloned()
-        .collect();
+    // Keep existing index allocations until their replacement text is known:
+    // `upsert` preserves the Arc when the rendered index is byte-identical.
+    let mut out = bundle.clone();
+    let mut retained_indexes = std::collections::BTreeSet::new();
     for pkg in &model.packages {
         let entries: Vec<IndexEntry> = pkg
             .members
@@ -116,6 +109,7 @@ pub fn reindex_bundle(bundle: &[(String, String)]) -> Vec<(String, String)> {
         } else {
             format!("{}/index.md", pkg.key)
         };
+        retained_indexes.insert(path.clone());
         // Root's name is the model path (root index.md H1); nested packages carry
         // it on concept.title. Preserve either verbatim instead of resetting to
         // the dir basename.
@@ -124,22 +118,65 @@ pub fn reindex_bundle(bundle: &[(String, String)]) -> Vec<(String, String)> {
         } else {
             pkg.concept.title.as_deref()
         };
-        out.push((
-            path,
+        out.upsert(
+            BundlePath::parse(path).expect("generated index path is valid"),
             render_index(
                 &pkg.key,
                 title,
                 pkg.concept.description.as_deref(),
                 &entries,
             ),
-        ));
+        );
     }
+    out.retain_documents(|document| {
+        let path = document.path().as_str();
+        let is_index = path
+            .rsplit('/')
+            .next()
+            .unwrap_or(path)
+            .eq_ignore_ascii_case("index.md");
+        !is_index || retained_indexes.contains(path)
+    });
     out
+}
+
+pub fn reindex_bundle(bundle: &[(String, String)]) -> Vec<(String, String)> {
+    let source =
+        SourceBundle::try_from_pairs(bundle.iter().cloned()).expect("bundle paths must be valid");
+    reindex_source(&source).to_pairs()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn unchanged_reconciled_indexes_keep_their_source_allocation() {
+        let index = render_index(
+            "",
+            Some("Root"),
+            None,
+            &[IndexEntry {
+                key: "order".into(),
+                title: "Order".into(),
+                is_package: false,
+                blurb: None,
+            }],
+        );
+        let source = SourceBundle::try_from_pairs([
+            ("index.md", index.as_str()),
+            (
+                "order.md",
+                "---\ntype: uml.Class\ntitle: Order\n---\n# Order\n",
+            ),
+        ])
+        .unwrap();
+
+        let reconciled = reindex_source(&source);
+
+        assert!(source.shares_text_with(&reconciled, "index.md"));
+        assert!(source.shares_text_with(&reconciled, "order.md"));
+    }
 
     #[test]
     fn render_index_emits_intro_and_listing() {

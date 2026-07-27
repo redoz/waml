@@ -16,6 +16,7 @@ pub mod serialize;
 pub mod share;
 pub mod slug;
 pub mod solve;
+pub mod source;
 pub mod syntax;
 pub mod validate;
 

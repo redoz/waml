@@ -1,9 +1,6 @@
 //! Encode a whole OKF bundle into a URL fragment, and decode it back.
 //!
-//! The web build of the editor has no filesystem, so a shared link *is* the
-//! document: `https://redoz.github.io/waml/#w1.<payload>`. The fragment never
-//! leaves the browser (user agents do not send it to the server), so a link is
-//! self-contained and costs the host nothing.
+//! Retained compatibility framing for self-contained bundle fragments.
 //!
 //! Format, versioned by the `w1.` prefix so a later revision can change the
 //! framing without silently misreading old links:
@@ -22,6 +19,7 @@
 //! This is deliberately *not* compatible with the fragment format of the React
 //! application this project once resembled; the two have long since diverged.
 
+use crate::source::SourceBundle;
 use miniz_oxide::deflate::compress_to_vec;
 use miniz_oxide::inflate::decompress_to_vec_with_limit;
 
@@ -51,6 +49,8 @@ pub enum ShareError {
     Truncated,
     /// A path or body was not valid UTF-8.
     NotUtf8,
+    /// A decoded path violates current bundle path invariants.
+    InvalidSource,
 }
 
 impl std::fmt::Display for ShareError {
@@ -61,6 +61,7 @@ impl std::fmt::Display for ShareError {
             Self::BadDeflate => "share link payload is not valid deflate data",
             Self::Truncated => "share link payload is truncated",
             Self::NotUtf8 => "share link payload is not valid UTF-8",
+            Self::InvalidSource => "share link contains an invalid bundle path",
         };
         f.write_str(msg)
     }
@@ -70,10 +71,12 @@ impl std::error::Error for ShareError {}
 
 /// Encode `bundle` (as produced by the editor's `read_bundle`) into a fragment
 /// body, *without* a leading `#`.
-pub fn encode(bundle: &[(String, String)]) -> String {
+pub fn encode_source(bundle: &SourceBundle) -> String {
     let mut payload = Vec::new();
     payload.extend_from_slice(&(bundle.len() as u32).to_le_bytes());
-    for (path, body) in bundle {
+    for document in bundle.documents() {
+        let path = document.path().as_str();
+        let body = document.text();
         payload.extend_from_slice(&(path.len() as u32).to_le_bytes());
         payload.extend_from_slice(path.as_bytes());
         payload.extend_from_slice(&(body.len() as u32).to_le_bytes());
@@ -83,9 +86,15 @@ pub fn encode(bundle: &[(String, String)]) -> String {
     format!("{PREFIX}{}", base64url_encode(&compressed))
 }
 
+pub fn encode(bundle: &[(String, String)]) -> String {
+    let source =
+        SourceBundle::try_from_pairs(bundle.iter().cloned()).expect("bundle paths must be valid");
+    encode_source(&source)
+}
+
 /// Decode a fragment back into a bundle. A leading `#` is accepted and ignored,
 /// so callers can hand over `location.hash` verbatim.
-pub fn decode(fragment: &str) -> Result<Vec<(String, String)>, ShareError> {
+pub fn decode_source(fragment: &str) -> Result<SourceBundle, ShareError> {
     let body = fragment.strip_prefix('#').unwrap_or(fragment);
     let b64 = body.strip_prefix(PREFIX).ok_or(ShareError::NotAShareLink)?;
     let compressed = base64url_decode(b64)?;
@@ -101,7 +110,11 @@ pub fn decode(fragment: &str) -> Result<Vec<(String, String)>, ShareError> {
         let body = read_str(&payload, &mut cursor)?;
         out.push((path, body));
     }
-    Ok(out)
+    SourceBundle::try_from_pairs(out).map_err(|_| ShareError::InvalidSource)
+}
+
+pub fn decode(fragment: &str) -> Result<Vec<(String, String)>, ShareError> {
+    decode_source(fragment).map(|bundle| bundle.to_pairs())
 }
 
 /// True when `fragment` looks like a share link. Lets a caller distinguish

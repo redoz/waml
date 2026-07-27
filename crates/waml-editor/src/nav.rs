@@ -252,7 +252,7 @@ mod tests {
             resource: None,
             tags: vec![],
             timestamp: None,
-            body: String::new(),
+            body: String::new().into(),
             links: vec![],
             citations: vec![],
             role: Default::default(),

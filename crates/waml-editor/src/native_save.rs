@@ -3,11 +3,12 @@ use std::fs::{self, OpenOptions};
 use std::io::{self, Write};
 use std::path::{Component, Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
+use waml::source::SourceBundle;
 
 pub(crate) fn save_bundle_atomic(
     root: &Path,
-    baseline: &[(String, String)],
-    current: &[(String, String)],
+    baseline: &SourceBundle,
+    current: &SourceBundle,
 ) -> io::Result<()> {
     let root = root.canonicalize()?;
     if !root.is_dir() {
@@ -19,21 +20,22 @@ pub(crate) fn save_bundle_atomic(
 
     let baseline_by_path = index_bundle(baseline, "baseline")?;
     let current_by_path = index_bundle(current, "current")?;
-    for (relative, _) in baseline {
-        if !current_by_path.contains_key(&bundle_path_key(Path::new(relative))) {
+    for document in baseline.documents() {
+        let relative = Path::new(document.path().as_str());
+        if !current_by_path.contains_key(&bundle_path_key(relative)) {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
                 format!(
                     "removing bundle files is not supported by atomic save: {:?}",
-                    Path::new(relative)
+                    relative
                 ),
             ));
         }
     }
     let mut resolved_targets = BTreeSet::new();
     let mut validated_targets = Vec::with_capacity(current.len());
-    for (relative, _) in current {
-        let relative = Path::new(relative);
+    for document in current.documents() {
+        let relative = Path::new(document.path().as_str());
         let target = root.join(relative);
         let parent = target
             .parent()
@@ -55,10 +57,11 @@ pub(crate) fn save_bundle_atomic(
     // Plan every dirty target using only reads. Clean paths participate in
     // containment and alias validation above, but their contents are not read or
     // rewritten, so an unrelated external edit survives this save.
-    for ((relative, desired), (target, parent)) in current.iter().zip(validated_targets) {
-        let relative = Path::new(relative);
+    for (document, (target, parent)) in current.documents().iter().zip(validated_targets) {
+        let relative = Path::new(document.path().as_str());
+        let desired = document.text();
         let baseline = baseline_by_path.get(&bundle_path_key(relative)).copied();
-        if baseline == Some(desired.as_str()) {
+        if baseline == Some(desired) {
             continue;
         }
         if disk_state(&root, &target, baseline, desired)? == DiskState::NeedsWrite {
@@ -117,15 +120,15 @@ struct PlannedWrite<'a> {
 }
 
 fn index_bundle<'a>(
-    bundle: &'a [(String, String)],
+    bundle: &'a SourceBundle,
     bundle_name: &str,
 ) -> io::Result<BTreeMap<String, &'a str>> {
     let mut indexed = BTreeMap::new();
-    for (relative, contents) in bundle {
-        let relative = Path::new(relative);
+    for document in bundle.documents() {
+        let relative = Path::new(document.path().as_str());
         validate_relative_path(relative)?;
         if indexed
-            .insert(bundle_path_key(relative), contents.as_str())
+            .insert(bundle_path_key(relative), document.text())
             .is_some()
         {
             return Err(io::Error::new(
@@ -334,10 +337,26 @@ fn replace_file(temp: &Path, target: &Path) -> io::Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::save_bundle_atomic;
+    use super::save_bundle_atomic as save_source_bundle_atomic;
     use std::path::{Path, PathBuf};
     use std::sync::atomic::{AtomicU32, Ordering};
     use std::time::{SystemTime, UNIX_EPOCH};
+    use waml::source::SourceBundle;
+
+    fn save_bundle_atomic(
+        root: &Path,
+        baseline: &[(String, String)],
+        current: &[(String, String)],
+    ) -> std::io::Result<()> {
+        let invalid_source = |error: waml::source::SourceError| {
+            std::io::Error::new(std::io::ErrorKind::InvalidInput, error.to_string())
+        };
+        let baseline =
+            SourceBundle::try_from_pairs(baseline.iter().cloned()).map_err(invalid_source)?;
+        let current =
+            SourceBundle::try_from_pairs(current.iter().cloned()).map_err(invalid_source)?;
+        save_source_bundle_atomic(root, &baseline, &current)
+    }
 
     struct TempDir(PathBuf);
 

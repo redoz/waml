@@ -6,6 +6,7 @@ use crate::multiplicity::Multiplicity;
 use crate::okf;
 use crate::parse::parse_document;
 use crate::serialize::serialize_document;
+use crate::source::SourceBundle;
 use crate::syntax::{
     Direction, Document, LayoutItem, LayoutStatement, Line, NameRef, Operand, OperandRef,
     ParsedName, ParsedRel, Section,
@@ -224,7 +225,13 @@ pub enum Op {
 }
 
 pub fn apply(bundle: &[(String, String)], ops: &[Op]) -> Result<Bundle, OpError> {
-    let mut work: Bundle = bundle.to_vec();
+    let source = SourceBundle::try_from_pairs(bundle.iter().cloned())
+        .map_err(|error| OpError::at("bundle", error.to_string()))?;
+    apply_source(&source, ops).map(|bundle| bundle.to_pairs())
+}
+
+pub fn apply_source(bundle: &SourceBundle, ops: &[Op]) -> Result<SourceBundle, OpError> {
+    let mut work = bundle.clone();
     for (i, op) in ops.iter().enumerate() {
         apply_one(&mut work, op).map_err(|mut e| {
             e.index = i;
@@ -234,7 +241,7 @@ pub fn apply(bundle: &[(String, String)], ops: &[Op]) -> Result<Bundle, OpError>
     Ok(work)
 }
 
-fn apply_one(work: &mut Bundle, op: &Op) -> Result<(), OpError> {
+fn apply_one(work: &mut SourceBundle, op: &Op) -> Result<(), OpError> {
     match op {
         Op::AttrAdd {
             node,
@@ -358,14 +365,19 @@ pub(crate) fn slug_of(path: &str) -> String {
 /// back to a unique-basename match across the bundle (mirrors
 /// `solve::resolve`'s `NameRef::Bare` handling). Ambiguous basenames are left
 /// unresolved rather than guessing.
-pub(crate) fn resolve_index(work: &Bundle, target: &str) -> Option<usize> {
-    if let Some(i) = work.iter().position(|(p, _)| okf::id_of(p) == target) {
+pub(crate) fn resolve_index(work: &SourceBundle, target: &str) -> Option<usize> {
+    if let Some(i) = work
+        .documents()
+        .iter()
+        .position(|document| okf::id_of(document.path().as_str()) == target)
+    {
         return Some(i);
     }
     let mut matches = work
+        .documents()
         .iter()
         .enumerate()
-        .filter(|(_, (p, _))| slug_of(p) == target);
+        .filter(|(_, document)| slug_of(document.path().as_str()) == target);
     match (matches.next(), matches.next()) {
         (Some((i, _)), None) => Some(i),
         _ => None,
@@ -375,25 +387,34 @@ pub(crate) fn resolve_index(work: &Bundle, target: &str) -> Option<usize> {
 /// The bare basename actually embedded in this bundle's same-directory
 /// relative hrefs (`./slug.md`) for a resolved target. An unresolved token
 /// (a forward reference to a not-yet-existing doc) passes through unchanged.
-pub(crate) fn stored_slug(work: &Bundle, target: &str) -> String {
+pub(crate) fn stored_slug(work: &SourceBundle, target: &str) -> String {
     resolve_index(work, target)
-        .map(|i| slug_of(&work[i].0))
+        .and_then(|i| work.document_at(i))
+        .map(|document| slug_of(document.path().as_str()))
         .unwrap_or_else(|| target.to_string())
 }
 
-pub(crate) fn find_doc(work: &Bundle, target: &str, op: &str) -> Result<usize, OpError> {
+pub(crate) fn find_doc(work: &SourceBundle, target: &str, op: &str) -> Result<usize, OpError> {
     resolve_index(work, target).ok_or_else(|| OpError::at(op, format!("no document '{target}'")))
 }
 
 /// Parse the target file, mutate via `f`, re-serialize canonically.
-pub(crate) fn edit_doc<F>(work: &mut Bundle, slug: &str, op: &str, f: F) -> Result<(), OpError>
+pub(crate) fn edit_doc<F>(
+    work: &mut SourceBundle,
+    slug: &str,
+    op: &str,
+    f: F,
+) -> Result<(), OpError>
 where
     F: FnOnce(&mut Document) -> Result<(), OpError>,
 {
     let i = find_doc(work, slug, op)?;
-    let mut doc = parse_document(&work[i].1);
+    let mut doc = parse_document(work.document_at(i).expect("resolved document index").text());
     f(&mut doc)?;
-    work[i].1 = serialize_document(&doc);
+    *work
+        .document_at_mut(i)
+        .expect("resolved document index")
+        .text_mut() = serialize_document(&doc);
     Ok(())
 }
 
@@ -448,17 +469,17 @@ pub(crate) fn values_mut(doc: &mut Document) -> &mut Vec<Line<String>> {
 
 /// Forward-ref-safe: a token matching an existing doc slug links to it (using
 /// that doc's title); otherwise it is a bare type token. Mirrors build_model.
-pub(crate) fn resolve_type(work: &Bundle, token: &str) -> TypeRef {
+pub(crate) fn resolve_type(work: &SourceBundle, token: &str) -> TypeRef {
     if let Some(i) = resolve_index(work, token) {
-        let (path, text) = &work[i];
-        let title = parse_document(text)
+        let document = work.document_at(i).expect("resolved document index");
+        let title = parse_document(document.text())
             .frontmatter
             .get_str("title")
             .map(String::from)
             .unwrap_or_else(|| token.to_string());
         TypeRef {
             name: title,
-            ref_: Some(slug_of(path)),
+            ref_: Some(slug_of(document.path().as_str())),
         }
     } else {
         TypeRef {
@@ -489,10 +510,10 @@ pub(crate) fn rels_mut(doc: &mut Document) -> &mut Vec<Line<ParsedRel>> {
 
 /// Look up a document's `title` by slug, falling back to the slug itself
 /// (forward-ref-safe, mirrors `resolve_type`).
-pub(crate) fn resolve_title(work: &Bundle, slug: &str) -> String {
+pub(crate) fn resolve_title(work: &SourceBundle, slug: &str) -> String {
     resolve_index(work, slug)
         .and_then(|i| {
-            parse_document(&work[i].1)
+            parse_document(work.document_at(i)?.text())
                 .frontmatter
                 .get_str("title")
                 .map(String::from)
@@ -502,7 +523,7 @@ pub(crate) fn resolve_title(work: &Bundle, slug: &str) -> String {
 
 /// Resolve an op's `NameSpec` into the `ParsedName` stored on the document
 /// (a `Ref`'s title is resolved against the bundle at apply time).
-fn build_name(work: &Bundle, spec: &Option<NameSpec>) -> Option<ParsedName> {
+fn build_name(work: &SourceBundle, spec: &Option<NameSpec>) -> Option<ParsedName> {
     match spec {
         None => None,
         Some(NameSpec::Label(l)) => Some(ParsedName::Label(l.clone())),
@@ -516,7 +537,7 @@ fn build_name(work: &Bundle, spec: &Option<NameSpec>) -> Option<ParsedName> {
 /// `RelBy::Endpoint.target` may be a full bundle-path id (the parse/graph
 /// layer's edge key); `ParsedRel.target_slug` is always the bare
 /// same-directory-relative href token. Resolve before matching.
-fn resolve_rel_by(work: &Bundle, by: &RelBy) -> RelBy {
+fn resolve_rel_by(work: &SourceBundle, by: &RelBy) -> RelBy {
     match by {
         RelBy::Endpoint { kind, target } => RelBy::Endpoint {
             kind: *kind,
@@ -568,19 +589,27 @@ fn str_list(items: &[String]) -> FmValue {
 /// Slugs of every document that references `slug` (rel target, attribute
 /// type-ref, `as [Ref]` name, diagram member). Sorted, deduped.
 pub fn referrers(work: &Bundle, slug: &str) -> Vec<String> {
+    let Ok(source) = SourceBundle::try_from_pairs(work.iter().cloned()) else {
+        return Vec::new();
+    };
+    referrers_source(&source, slug)
+}
+
+pub fn referrers_source(work: &SourceBundle, slug: &str) -> Vec<String> {
     // Referring docs store bare same-directory-relative hrefs (`./slug.md`),
     // not full ids — translate `slug` (which may be a full bundle-path id,
     // per `resolve_index`) down to that bare form before matching stored refs.
     let target_idx = resolve_index(work, slug);
     let target = target_idx
-        .map(|i| slug_of(&work[i].0))
+        .and_then(|i| work.document_at(i))
+        .map(|document| slug_of(document.path().as_str()))
         .unwrap_or_else(|| slug.to_string());
     let mut out = Vec::new();
-    for (i, (p, text)) in work.iter().enumerate() {
+    for (i, document) in work.documents().iter().enumerate() {
         if Some(i) == target_idx {
             continue;
         }
-        let doc = parse_document(text);
+        let doc = parse_document(document.text());
         let hit = doc.sections.iter().any(|sec| match sec {
             Section::Attributes(attrs) => attrs
                 .iter()
@@ -628,7 +657,7 @@ pub fn referrers(work: &Bundle, slug: &str) -> Vec<String> {
             _ => false,
         });
         if hit {
-            out.push(slug_of(p));
+            out.push(slug_of(document.path().as_str()));
         }
     }
     out.sort();
@@ -637,7 +666,7 @@ pub fn referrers(work: &Bundle, slug: &str) -> Vec<String> {
 }
 
 fn op_attr_add(
-    work: &mut Bundle,
+    work: &mut SourceBundle,
     node: &str,
     name: &str,
     ty_token: &str,
@@ -670,7 +699,7 @@ fn op_attr_add(
 
 #[allow(clippy::too_many_arguments)]
 fn op_attr_set(
-    work: &mut Bundle,
+    work: &mut SourceBundle,
     node: &str,
     name: &str,
     ty_token: &Option<String>,
@@ -717,7 +746,7 @@ fn op_attr_set(
     })
 }
 
-fn op_attr_rm(work: &mut Bundle, node: &str, name: &str) -> Result<(), OpError> {
+fn op_attr_rm(work: &mut SourceBundle, node: &str, name: &str) -> Result<(), OpError> {
     edit_doc(work, node, "attr.rm", |doc| {
         let attrs = attrs_mut(doc);
         let before = attrs.len();
@@ -732,7 +761,7 @@ fn op_attr_rm(work: &mut Bundle, node: &str, name: &str) -> Result<(), OpError> 
     })
 }
 
-fn op_value_add(work: &mut Bundle, node: &str, literal: &str) -> Result<(), OpError> {
+fn op_value_add(work: &mut SourceBundle, node: &str, literal: &str) -> Result<(), OpError> {
     edit_doc(work, node, "value.add", |doc| {
         let values = values_mut(doc);
         if values.iter().filter_map(Line::parsed).any(|v| v == literal) {
@@ -746,7 +775,7 @@ fn op_value_add(work: &mut Bundle, node: &str, literal: &str) -> Result<(), OpEr
     })
 }
 
-fn op_value_rm(work: &mut Bundle, node: &str, literal: &str) -> Result<(), OpError> {
+fn op_value_rm(work: &mut SourceBundle, node: &str, literal: &str) -> Result<(), OpError> {
     edit_doc(work, node, "value.rm", |doc| {
         let values = values_mut(doc);
         let before = values.len();
@@ -762,7 +791,7 @@ fn op_value_rm(work: &mut Bundle, node: &str, literal: &str) -> Result<(), OpErr
 }
 
 fn op_rel_add(
-    work: &mut Bundle,
+    work: &mut SourceBundle,
     source: &str,
     kind: RelationshipKind,
     target: &str,
@@ -812,7 +841,7 @@ fn op_rel_add(
 }
 
 fn op_rel_set(
-    work: &mut Bundle,
+    work: &mut SourceBundle,
     selector: &Selector,
     ends: &Option<(RelEnd, RelEnd)>,
     name: &Option<NameSpec>,
@@ -848,7 +877,7 @@ fn op_rel_set(
     })
 }
 
-fn op_rel_rm(work: &mut Bundle, selector: &Selector) -> Result<(), OpError> {
+fn op_rel_rm(work: &mut SourceBundle, selector: &Selector) -> Result<(), OpError> {
     let (source, by) = rel_target(selector, "rel.rm")?;
     let (source, by) = (source.to_string(), resolve_rel_by(work, by));
     let disp = render_selector(selector);
@@ -867,7 +896,7 @@ fn op_rel_rm(work: &mut Bundle, selector: &Selector) -> Result<(), OpError> {
 
 #[allow(clippy::too_many_arguments)]
 fn op_node_new(
-    work: &mut Bundle,
+    work: &mut SourceBundle,
     slug: &str,
     dir: &str,
     ty: &ElementType,
@@ -881,7 +910,11 @@ fn op_node_new(
     } else {
         format!("{dir}/{slug}.md")
     };
-    if work.iter().any(|(p, _)| okf::id_of(p) == okf::id_of(&path)) {
+    if work
+        .documents()
+        .iter()
+        .any(|document| okf::id_of(document.path().as_str()) == okf::id_of(&path))
+    {
         return Err(OpError::at(
             "node.new",
             format!("document '{slug}' already exists"),
@@ -903,13 +936,14 @@ fn op_node_new(
         title: title.to_string(),
         sections: Vec::new(),
     };
-    work.push((path, serialize_document(&doc)));
+    work.push_document(path, serialize_document(&doc))
+        .map_err(|error| OpError::at("node.new", error.to_string()))?;
     Ok(())
 }
 
 #[allow(clippy::too_many_arguments)]
 fn op_node_set(
-    work: &mut Bundle,
+    work: &mut SourceBundle,
     slug: &str,
     title: &Option<String>,
     description: &Option<String>,
@@ -956,7 +990,7 @@ const DISPLAY_KEYS: &[&str] = &[
 ];
 
 fn op_diagram_set(
-    work: &mut Bundle,
+    work: &mut SourceBundle,
     key: &str,
     title: &Option<String>,
     description: &Option<String>,
@@ -1106,7 +1140,7 @@ fn placement_matches(stmt: &LayoutStatement, subject: &str, reference: &str) -> 
 }
 
 fn op_place_set(
-    work: &mut Bundle,
+    work: &mut SourceBundle,
     diagram: &str,
     subject_title: &str,
     subject_slug: &str,
@@ -1144,7 +1178,7 @@ fn op_place_set(
 }
 
 fn op_place_rm(
-    work: &mut Bundle,
+    work: &mut SourceBundle,
     diagram: &str,
     subject_slug: &str,
     reference_slug: &str,
@@ -1161,10 +1195,10 @@ fn op_place_rm(
     })
 }
 
-fn op_node_rm(work: &mut Bundle, slug: &str, cascade: bool) -> Result<(), OpError> {
+fn op_node_rm(work: &mut SourceBundle, slug: &str, cascade: bool) -> Result<(), OpError> {
     let i = find_doc(work, slug, "node.rm")?;
     if !cascade {
-        let refs = referrers(work, slug);
+        let refs = referrers_source(work, slug);
         if !refs.is_empty() {
             return Err(OpError::at(
                 "node.rm",
@@ -1175,7 +1209,7 @@ fn op_node_rm(work: &mut Bundle, slug: &str, cascade: bool) -> Result<(), OpErro
             ));
         }
     }
-    work.remove(i);
+    work.remove_document(i);
     Ok(())
 }
 

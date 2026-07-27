@@ -1270,7 +1270,7 @@ impl App {
     #[cfg(target_arch = "wasm32")]
     fn save_backend(&mut self, cx: &mut Cx) -> Result<(), String> {
         cx.browser_update_url(
-            &format!("#{}", waml::share::encode(self.session.bundle())),
+            &format!("#{}", waml::share::encode_source(self.session.bundle())),
             true,
         );
         Ok(())
@@ -1404,7 +1404,7 @@ impl App {
     fn open_bundle(
         &mut self,
         cx: &mut Cx,
-        files: Vec<(String, String)>,
+        files: waml::source::SourceBundle,
         model: waml::model::Model,
         display_name: String,
         wanted_diagram: Option<&str>,
@@ -1587,7 +1587,10 @@ impl App {
         #[cfg(target_arch = "wasm32")]
         let result = close_after_save(&mut self.session, |session| {
             if session.is_dirty() {
-                cx.browser_update_url(&format!("#{}", waml::share::encode(session.bundle())), true);
+                cx.browser_update_url(
+                    &format!("#{}", waml::share::encode_source(session.bundle())),
+                    true,
+                );
             }
             Ok(())
         });
@@ -1988,9 +1991,9 @@ impl MatchEvent for App {
             self.show_start_screen(cx);
             return;
         }
-        match waml::share::decode(&fragment) {
+        match waml::share::decode_source(&fragment) {
             Ok(bundle) => {
-                let model = waml::parse::build_model(&bundle);
+                let model = waml::parse::build_model_from_source(&bundle);
                 self.open_bundle(cx, bundle, model, "shared".to_string(), None);
                 self.show_editor(cx);
             }

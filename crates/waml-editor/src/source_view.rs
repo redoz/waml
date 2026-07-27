@@ -78,8 +78,9 @@ impl DocView for SourceView {
 mod tests {
     use super::*;
     use waml::model::Model;
+    use waml::source::SourceBundle;
 
-    fn data<'a>(model: &'a Model, bundle: &'a [(String, String)]) -> ViewData<'a> {
+    fn data<'a>(model: &'a Model, bundle: &'a SourceBundle) -> ViewData<'a> {
         ViewData {
             model,
             bundle,
@@ -90,10 +91,11 @@ mod tests {
     #[test]
     fn source_markdown_reads_the_raw_bundle() {
         let model = Model::default();
-        let bundle = vec![(
+        let bundle = SourceBundle::try_from_pairs([(
             "shop/order.md".to_string(),
             "# Order\nraw source".to_string(),
-        )];
+        )])
+        .unwrap();
         let view = SourceView::new("shop/order".into(), TreeKind::Class);
 
         assert_eq!(view.markdown(data(&model, &bundle)), "# Order\nraw source");
@@ -102,7 +104,7 @@ mod tests {
     #[test]
     fn missing_source_keeps_the_existing_italic_fallback() {
         let model = Model::default();
-        let bundle = Vec::new();
+        let bundle = SourceBundle::default();
         let view = SourceView::new("missing".into(), TreeKind::Class);
 
         assert_eq!(
