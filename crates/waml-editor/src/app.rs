@@ -483,6 +483,7 @@ script_mod! {
                             }
                         }
                     }
+                    statusbar := Statusbar{}
                     }
                     shortcuts_overlay := ShortcutsOverlay{
                         width: Fill
@@ -542,6 +543,16 @@ const SAVE_DEBOUNCE_SECS: f64 = 3.0;
 
 fn should_flush_save(event: &Event) -> bool {
     matches!(event, Event::Shutdown | Event::QuitRequested(_))
+}
+
+fn prevent_quit_after_failed_save(event: &Event, result: &Result<(), String>) -> bool {
+    if result.is_err() {
+        if let Event::QuitRequested(quit) = event {
+            quit.handle();
+            return true;
+        }
+    }
+    false
 }
 
 /// Footprint of the caption's right-dock toggle `[I]`: the `inspector_btn` DSL
@@ -1170,13 +1181,29 @@ impl App {
         Ok(())
     }
 
-    fn save_or_retry(&mut self, cx: &mut Cx, retry_on_error: bool) {
-        if let Err(error) = self.save(cx) {
-            log!("failed to save open document: {error}");
-            if retry_on_error && self.session.is_dirty() {
-                self.schedule_save(cx);
+    fn set_save_error(&mut self, cx: &mut Cx, error: Option<&str>) {
+        if let Some(mut statusbar) = self
+            .ui
+            .widget(cx, ids!(statusbar))
+            .borrow_mut::<crate::statusbar::Statusbar>()
+        {
+            statusbar.set_save_error(cx, error);
+        }
+    }
+
+    fn save_or_retry(&mut self, cx: &mut Cx, retry_on_error: bool) -> Result<(), String> {
+        let result = self.save(cx);
+        match &result {
+            Ok(()) => self.set_save_error(cx, None),
+            Err(error) => {
+                log!("failed to save open document: {error}");
+                self.set_save_error(cx, Some(error));
+                if retry_on_error && self.session.is_dirty() {
+                    self.schedule_save(cx);
+                }
             }
         }
+        result
     }
 
     /// Browser backing: the URL fragment is the whole filesystem.
@@ -2009,9 +2036,14 @@ impl AppMain for App {
         // Debounced save: the document has sat unchanged for a beat, so persist
         // it through whichever backing this build has.
         if should_flush_save(event) {
-            self.save_or_retry(cx, false);
+            // A graceful quit can be cancelled, so keep the app alive and retry
+            // after surfacing an error. Shutdown cannot be cancelled and remains
+            // a final best-effort write for forced/platform teardown paths.
+            let retry_on_error = matches!(event, Event::QuitRequested(_));
+            let result = self.save_or_retry(cx, retry_on_error);
+            prevent_quit_after_failed_save(event, &result);
         } else if self.save_timer.is_event(event).is_some() {
-            self.save_or_retry(cx, true);
+            let _ = self.save_or_retry(cx, true);
         }
 
         // Single popup seam: light-dismiss + active-surface routing + emission.
@@ -2119,7 +2151,7 @@ impl AppMain for App {
 mod tests {
     use super::{
         doc_switcher_items, logo_command_for, next_narrow, open_overlay_contains, place_rm_for,
-        should_dismiss_narrow_dock, should_flush_save, LogoCommand,
+        prevent_quit_after_failed_save, should_dismiss_narrow_dock, should_flush_save, LogoCommand,
     };
     use crate::doc_tabs::{DocTab, OpenTabs, TabKind};
     use crate::dock::DockState;
@@ -2134,6 +2166,18 @@ mod tests {
             QuitRequestedEvent::new(QuitReason::Menu)
         )));
         assert!(!should_flush_save(&Event::Startup));
+    }
+
+    #[test]
+    fn failed_final_save_retains_dirty_and_prevents_quit() {
+        let result = Err("disk full".to_string());
+
+        let quit = Event::QuitRequested(QuitRequestedEvent::new(QuitReason::Menu));
+        assert!(prevent_quit_after_failed_save(&quit, &result));
+        let Event::QuitRequested(quit) = quit else {
+            unreachable!()
+        };
+        assert!(quit.handled.get());
     }
 
     #[test]

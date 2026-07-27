@@ -408,6 +408,23 @@ pub struct ClassDiagramSurface {
     dwell_timer: Timer,
     #[rust]
     selection: SelectionState,
+    #[live(true)]
+    interaction_enabled: bool,
+}
+
+fn should_handle_surface_event(interaction_enabled: bool, event: &Event) -> bool {
+    interaction_enabled
+        || !matches!(
+            event,
+            Event::MouseDown(_)
+                | Event::MouseMove(_)
+                | Event::MouseUp(_)
+                | Event::MouseLeave(_)
+                | Event::TouchUpdate(_)
+                | Event::LongPress(_)
+                | Event::Scroll(_)
+                | Event::KeyDown(_)
+        )
 }
 
 /// Canvas -> App action (same convention as `ToolDockAction`).
@@ -466,6 +483,9 @@ impl From<SurfaceIntent> for ClassDiagramSurfaceAction {
 
 impl Widget for ClassDiagramSurface {
     fn handle_event(&mut self, cx: &mut Cx, event: &Event, _scope: &mut Scope) {
+        if !should_handle_surface_event(self.interaction_enabled, event) {
+            return;
+        }
         if let Some(te) = self.cam_timer.is_event(event) {
             let effects = self.viewport.tick_camera(te.time.unwrap_or(0.0));
             self.apply_viewport_effects(cx, effects);
@@ -657,6 +677,22 @@ fn reconciliation_policy(update: &SceneUpdate) -> ReconciliationPolicy {
 }
 
 impl ClassDiagramSurface {
+    /// Enable or disable every raw camera/selection/placement interaction.
+    /// Disabling cancels in-flight animation and placement without changing
+    /// the settled camera or current selection.
+    pub fn set_interaction_enabled(&mut self, cx: &mut Cx, enabled: bool) {
+        if self.interaction_enabled == enabled {
+            return;
+        }
+        self.interaction_enabled = enabled;
+        if !enabled {
+            let viewport_effects = self.viewport.cancel_glide();
+            self.apply_viewport_effects(cx, viewport_effects);
+            let placement_effects = self.cancel_active_placement();
+            self.apply_interaction_effects(cx, placement_effects);
+        }
+    }
+
     fn cancel_active_placement(&mut self) -> InteractionEffects {
         let effects = self.placement.cancel(&mut self.scene, &mut self.viewport);
         self.viewport.end_pan();
@@ -1189,6 +1225,27 @@ mod tests {
         assert_eq!(body, "self.set_scene(cx, Scene::default());");
     }
 
+    #[test]
+    fn hidden_surface_rejects_real_raw_scroll_input() {
+        use makepad_widgets::event::{ScrollEvent, ScrollPhase};
+        use std::cell::Cell;
+
+        let scroll = Event::Scroll(ScrollEvent {
+            window_id: WindowId(0, 0),
+            scroll: dvec2(0.0, 120.0),
+            abs: dvec2(640.0, 420.0),
+            modifiers: KeyModifiers::default(),
+            handled_x: Cell::new(false),
+            handled_y: Cell::new(false),
+            is_mouse: true,
+            time: 0.0,
+            phase: ScrollPhase::Changed,
+        });
+
+        assert!(should_handle_surface_event(true, &scroll));
+        assert!(!should_handle_surface_event(false, &scroll));
+    }
+
     mod reconciliation {
         use super::*;
         use std::cell::Cell;
@@ -1251,6 +1308,27 @@ mod tests {
             }
 
             assert!(surface.placement_for(Zone::Top).is_none());
+        }
+
+        #[test]
+        fn disabling_interaction_preserves_settled_camera_and_selection() {
+            let mut vm = crate::script_gate::boot_test_vm();
+            let mut surface = surface_with_live_dial(&mut vm);
+            surface
+                .selection
+                .select("old-subject", &surface.scene.nodes);
+            surface.viewport.apply_scroll_zoom(dvec2(320.0, 240.0), 1.5);
+            let camera_before = surface.viewport.snapshot().camera;
+            let selected_before = surface.selection.selected_key().map(str::to_owned);
+
+            surface.set_interaction_enabled(vm.cx_mut(), false);
+
+            assert!(!surface.interaction_enabled);
+            assert_eq!(surface.viewport.snapshot().camera, camera_before);
+            assert_eq!(
+                surface.selection.selected_key().map(str::to_owned),
+                selected_before
+            );
         }
 
         #[test]

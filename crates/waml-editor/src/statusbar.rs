@@ -39,6 +39,19 @@ pub fn status_line(
     format!("{diagram_name}    {node_count} {noun}    Zoom {zoom_pct}%    Tool: {tool_label}")
 }
 
+pub fn save_status_line(
+    diagram_name: &str,
+    node_count: usize,
+    zoom_pct: i32,
+    tool_label: &str,
+    save_error: Option<&str>,
+) -> String {
+    match save_error {
+        Some(error) => format!("Save failed: {error}"),
+        None => status_line(diagram_name, node_count, zoom_pct, tool_label),
+    }
+}
+
 #[derive(Script, ScriptHook, Widget)]
 pub struct Statusbar {
     #[uid]
@@ -65,6 +78,8 @@ pub struct Statusbar {
     zoom_pct: i32,
     #[rust]
     tool_label: String,
+    #[rust]
+    save_error: Option<String>,
 }
 
 impl Widget for Statusbar {
@@ -75,11 +90,12 @@ impl Widget for Statusbar {
     fn draw_walk(&mut self, cx: &mut Cx2d, _scope: &mut Scope, walk: Walk) -> DrawStep {
         let rect = cx.walk_turtle(walk);
         self.draw_bg.draw_abs(cx, rect);
-        let line = status_line(
+        let line = save_status_line(
             &self.diagram_name,
             self.node_count,
             self.zoom_pct,
             &self.tool_label,
+            self.save_error.as_deref(),
         );
         let text_y = rect.pos.y + rect.size.y * 0.5 - 6.0;
         self.draw_text
@@ -103,6 +119,11 @@ impl Statusbar {
         self.tool_label = tool_label.to_string();
         self.draw_bg.redraw(cx);
     }
+
+    pub fn set_save_error(&mut self, cx: &mut Cx, error: Option<&str>) {
+        self.save_error = error.map(str::to_owned);
+        self.draw_bg.redraw(cx);
+    }
 }
 
 #[cfg(test)]
@@ -122,6 +143,14 @@ mod tests {
         assert_eq!(
             status_line("Orders", 1, 150, "Add"),
             "Orders    1 node    Zoom 150%    Tool: Add"
+        );
+    }
+
+    #[test]
+    fn save_error_replaces_normal_status_with_a_visible_failure() {
+        assert_eq!(
+            save_status_line("Orders", 3, 100, "Select", Some("disk full")),
+            "Save failed: disk full"
         );
     }
 }

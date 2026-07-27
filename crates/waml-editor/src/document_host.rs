@@ -162,6 +162,8 @@ impl DocumentHost {
         let active = self.tabs.active;
         if let Some(view) = self.views.get_mut(&active) {
             view.sync(cx, &body, data(session));
+        } else {
+            body.set_canvas_interaction_enabled(cx, false);
         }
     }
 

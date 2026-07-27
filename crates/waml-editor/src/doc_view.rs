@@ -64,9 +64,19 @@ impl BodyWidgets {
         self.ui
             .widget(cx, ids!(canvas_wrap))
             .set_visible(cx, !visible);
+        self.set_canvas_interaction_enabled(cx, !visible);
         self.ui
             .widget(cx, ids!(diagram_properties_wrap))
             .set_visible(cx, visible);
+    }
+
+    pub fn set_canvas_interaction_enabled(&self, cx: &mut Cx, enabled: bool) {
+        if let Some(mut canvas) = self
+            .canvas(cx)
+            .borrow_mut::<crate::canvas::ClassDiagramSurface>()
+        {
+            canvas.set_interaction_enabled(cx, enabled);
+        }
     }
 
     /// Show/hide the left tool dock wrapper (`tool_dock_wrap`). Body of the
@@ -90,11 +100,13 @@ impl BodyWidgets {
     pub fn show_canvas(&self, cx: &mut Cx) {
         self.source_view(cx).set_visible(cx, false);
         self.ui.widget(cx, ids!(canvas_wrap)).set_visible(cx, true);
+        self.set_canvas_interaction_enabled(cx, true);
     }
 
     pub fn show_source(&self, cx: &mut Cx) {
         self.source_view(cx).set_visible(cx, true);
         self.ui.widget(cx, ids!(canvas_wrap)).set_visible(cx, false);
+        self.set_canvas_interaction_enabled(cx, false);
     }
 
     pub fn set_source_markdown(&self, cx: &mut Cx, markdown: &str) {
