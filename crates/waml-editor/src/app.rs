@@ -415,7 +415,7 @@ script_mod! {
                                 // It shares the bottom-center slot with the
                                 // selection pill below, but the two are never
                                 // co-visible: the bar is diagram-only
-                                // (`DocView::wants_view_bar`) and the pill is only
+                                // (`DocView::chrome`) and the pill is only
                                 // populated by `ClassifierPreviewView`, so both sit
                                 // at the same 12px bottom offset.
                                 view_bar_wrap := View{
@@ -539,6 +539,10 @@ fn next_narrow(narrow: bool, viewport_w: f64) -> bool {
 /// a save is a full deflate of the bundle, so coalescing a run of related edits
 /// into one is worth more than persisting each of them promptly.
 const SAVE_DEBOUNCE_SECS: f64 = 3.0;
+
+fn should_flush_save(event: &Event) -> bool {
+    matches!(event, Event::Shutdown | Event::QuitRequested(_))
+}
 
 /// Footprint of the caption's right-dock toggle `[I]`: the `inspector_btn` DSL
 /// `width` (30, the burger's size) plus its 2px right margin. The right-hand
@@ -1140,6 +1144,10 @@ impl App {
     /// that re-authors placement as it moves -- coalesces into a single save
     /// when it settles instead of one per frame.
     fn mark_dirty(&mut self, cx: &mut Cx) {
+        self.schedule_save(cx);
+    }
+
+    fn schedule_save(&mut self, cx: &mut Cx) {
         cx.stop_timer(self.save_timer);
         self.save_timer = cx.start_timeout(SAVE_DEBOUNCE_SECS);
     }
@@ -1149,13 +1157,25 @@ impl App {
     /// The editor has one document model and two very different backings, so
     /// this is the seam where that difference lives; callers only ever say the
     /// document changed (`mark_dirty`), never how to store it.
-    fn save(&mut self, cx: &mut Cx) {
+    fn save(&mut self, cx: &mut Cx) -> Result<(), String> {
+        if !self.session.is_dirty() {
+            return Ok(());
+        }
         if self.session.bundle().is_empty() {
-            return;
+            return Err("cannot save an empty bundle".to_string());
         }
         let revision = self.session.revision();
-        if self.save_backend(cx) {
-            self.session.mark_saved(revision);
+        self.save_backend(cx)?;
+        self.session.mark_saved(revision);
+        Ok(())
+    }
+
+    fn save_or_retry(&mut self, cx: &mut Cx, retry_on_error: bool) {
+        if let Err(error) = self.save(cx) {
+            log!("failed to save open document: {error}");
+            if retry_on_error && self.session.is_dirty() {
+                self.schedule_save(cx);
+            }
         }
     }
 
@@ -1170,29 +1190,23 @@ impl App {
     /// `replace`, not push: an edit is not a navigation, and one history entry
     /// per save would make Back mean "undo some edits, sometimes".
     #[cfg(target_arch = "wasm32")]
-    fn save_backend(&mut self, cx: &mut Cx) -> bool {
+    fn save_backend(&mut self, cx: &mut Cx) -> Result<(), String> {
         cx.browser_update_url(
             &format!("#{}", waml::share::encode(self.session.bundle())),
             true,
         );
-        true
+        Ok(())
     }
 
     /// Native backing: atomically replace each authored file in the opened OKF
     /// directory. The helper validates bundle paths before performing writes.
     #[cfg(not(target_arch = "wasm32"))]
-    fn save_backend(&mut self, _cx: &mut Cx) -> bool {
+    fn save_backend(&mut self, _cx: &mut Cx) -> Result<(), String> {
         let Some(root) = self.open_dir.as_deref() else {
-            log!("cannot save native bundle without an opened directory");
-            return false;
+            return Err("native bundle has no opened directory".to_string());
         };
-        match crate::native_save::save_bundle_atomic(root, self.session.bundle()) {
-            Ok(()) => true,
-            Err(error) => {
-                log!("failed to save OKF dir {:?}: {error}", root);
-                false
-            }
-        }
+        crate::native_save::save_bundle_atomic(root, self.session.bundle())
+            .map_err(|error| format!("failed to save OKF dir {root:?}: {error}"))
     }
 
     /// Push the canvas's current conflict count onto the toolbar badge.
@@ -1288,6 +1302,7 @@ impl App {
         display_name: String,
         wanted_diagram: Option<&str>,
     ) -> bool {
+        cx.stop_timer(self.save_timer);
         let change = self.session.replace(files, model);
         debug_assert_eq!(change.revision, self.session.revision());
         // Retain the raw bundle so drag-to-place ops can re-author `## Layout`
@@ -1993,8 +2008,10 @@ impl AppMain for App {
 
         // Debounced save: the document has sat unchanged for a beat, so persist
         // it through whichever backing this build has.
-        if self.save_timer.is_event(event).is_some() {
-            self.save(cx);
+        if should_flush_save(event) {
+            self.save_or_retry(cx, false);
+        } else if self.save_timer.is_event(event).is_some() {
+            self.save_or_retry(cx, true);
         }
 
         // Single popup seam: light-dismiss + active-surface routing + emission.
@@ -2102,13 +2119,22 @@ impl AppMain for App {
 mod tests {
     use super::{
         doc_switcher_items, logo_command_for, next_narrow, open_overlay_contains, place_rm_for,
-        should_dismiss_narrow_dock, LogoCommand,
+        should_dismiss_narrow_dock, should_flush_save, LogoCommand,
     };
     use crate::doc_tabs::{DocTab, OpenTabs, TabKind};
     use crate::dock::DockState;
     use crate::popup::conflict_list::ConflictListAction;
     use crate::tree::TreeKind;
     use makepad_widgets::*;
+
+    #[test]
+    fn shutdown_and_quit_request_are_final_save_events() {
+        assert!(should_flush_save(&Event::Shutdown));
+        assert!(should_flush_save(&Event::QuitRequested(
+            QuitRequestedEvent::new(QuitReason::Menu)
+        )));
+        assert!(!should_flush_save(&Event::Startup));
+    }
 
     #[test]
     fn document_switcher_items_preserve_order_and_tab_identity() {

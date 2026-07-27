@@ -98,6 +98,14 @@ impl ClassDiagramMode {
     fn properties_visible(self) -> bool {
         self == Self::Properties
     }
+
+    fn canvas_chrome_visible(self) -> bool {
+        self == Self::Canvas
+    }
+
+    fn accepts_canvas_actions(self) -> bool {
+        self == Self::Canvas
+    }
 }
 
 pub struct ClassDiagramView {
@@ -173,6 +181,8 @@ impl ClassDiagramView {
 
     fn show_mode(&self, cx: &mut Cx, body: &BodyWidgets) {
         body.set_diagram_properties_visible(cx, self.mode.properties_visible());
+        body.set_view_bar_visible(cx, self.mode.canvas_chrome_visible());
+        body.set_conflict_badge_visible(cx, self.mode.canvas_chrome_visible());
     }
 
     fn return_to_canvas(&mut self, cx: &mut Cx, body: &BodyWidgets) {
@@ -327,7 +337,23 @@ impl DocView for ClassDiagramView {
                 self.show_mode(cx, body);
                 return outcome;
             }
+
+            // The tool dock remains visible so its Diagram Properties button
+            // can toggle back to the canvas. All other canvas-owned widgets are
+            // hidden, and their queued actions are swallowed while this mode is
+            // active so they cannot mutate the preserved camera or selection.
+            if let Some(action) = body
+                .tool_dock(cx)
+                .borrow_mut::<crate::tool_dock::ToolDock>()
+                .and_then(|dock| dock.dock_action(actions))
+            {
+                if self.apply_tool_action(action) {
+                    self.show_mode(cx, body);
+                }
+            }
+            return out;
         }
+        debug_assert!(self.mode.accepts_canvas_actions());
 
         // Keep the view bar's fit-to-selection button in step with the canvas
         // selection. `ClassDiagramSurface` mutates `selected_key` in `handle_event`,
@@ -717,6 +743,7 @@ impl DocView for ClassDiagramView {
         BodyChrome {
             tool_dock: true,
             view_bar: true,
+            canvas_overlays: true,
             right_dock: Some(Icon::SlidersHorizontal),
         }
     }
@@ -757,6 +784,14 @@ mod tests {
         mode.toggle_properties();
         mode.deactivate();
         assert_eq!(mode, ClassDiagramMode::Canvas);
+    }
+
+    #[test]
+    fn properties_mode_hides_canvas_chrome_and_gates_canvas_actions() {
+        assert!(ClassDiagramMode::Canvas.canvas_chrome_visible());
+        assert!(ClassDiagramMode::Canvas.accepts_canvas_actions());
+        assert!(!ClassDiagramMode::Properties.canvas_chrome_visible());
+        assert!(!ClassDiagramMode::Properties.accepts_canvas_actions());
     }
 
     #[test]
@@ -811,6 +846,7 @@ mod tests {
             crate::doc_view::BodyChrome {
                 tool_dock: true,
                 view_bar: true,
+                canvas_overlays: true,
                 right_dock: Some(crate::icons::Icon::SlidersHorizontal),
             }
         );

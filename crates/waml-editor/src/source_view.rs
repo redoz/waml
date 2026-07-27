@@ -61,6 +61,7 @@ impl DocView for SourceView {
         BodyChrome {
             tool_dock: false,
             view_bar: false,
+            canvas_overlays: false,
             right_dock: Some(Icon::SlidersHorizontal),
         }
     }

@@ -107,6 +107,7 @@ impl BodyWidgets {
     pub fn apply_chrome(&self, cx: &mut Cx, chrome: BodyChrome) {
         self.set_tool_dock_visible(cx, chrome.tool_dock);
         self.set_view_bar_visible(cx, chrome.view_bar);
+        self.set_conflict_badge_visible(cx, chrome.canvas_overlays);
 
         let button = self.ui.widget(cx, ids!(inspector_btn));
         if button.visible() != chrome.right_dock.is_some() {
@@ -132,6 +133,15 @@ impl BodyWidgets {
                 panel.close_dock(cx);
             }
         }
+    }
+
+    /// Show/hide the canvas conflict badge wrapper. The badge retains its own
+    /// count-driven visibility while hidden, so returning to the canvas
+    /// restores the correct state without recomputing it.
+    pub fn set_conflict_badge_visible(&self, cx: &mut Cx, show: bool) {
+        self.ui
+            .widget(cx, ids!(conflict_badge_wrap))
+            .set_visible(cx, show);
     }
 }
 
@@ -256,6 +266,8 @@ pub struct BodyChrome {
     pub tool_dock: bool,
     /// The bottom-centre view bar (`view_bar_wrap`).
     pub view_bar: bool,
+    /// Canvas-only overlays such as the conflict badge.
+    pub canvas_overlays: bool,
     /// The right-hand docked panel the active view drives, and the glyph its
     /// caption toggle wears (`None` = no dock, so the toggle is hidden).
     pub right_dock: Option<Icon>,
@@ -265,6 +277,7 @@ impl BodyChrome {
     pub const HIDDEN: BodyChrome = BodyChrome {
         tool_dock: false,
         view_bar: false,
+        canvas_overlays: false,
         right_dock: None,
     };
 }
@@ -299,6 +312,7 @@ mod tests {
             BodyChrome {
                 tool_dock: true,
                 view_bar: true,
+                canvas_overlays: true,
                 right_dock: Some(Icon::SlidersHorizontal),
             }
         );
@@ -308,6 +322,7 @@ mod tests {
                 BodyChrome {
                     tool_dock: false,
                     view_bar: false,
+                    canvas_overlays: false,
                     right_dock: Some(Icon::SlidersHorizontal),
                 }
             );

@@ -310,6 +310,7 @@ mod tests {
             BodyChrome {
                 tool_dock: true,
                 view_bar: false,
+                canvas_overlays: false,
                 right_dock: None,
             }
         }
@@ -392,6 +393,7 @@ mod tests {
             BodyChrome {
                 tool_dock: true,
                 view_bar: false,
+                canvas_overlays: false,
                 right_dock: None,
             }
         );
