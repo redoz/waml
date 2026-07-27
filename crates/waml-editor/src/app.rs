@@ -541,6 +541,28 @@ fn next_narrow(narrow: bool, viewport_w: f64) -> bool {
 /// into one is worth more than persisting each of them promptly.
 const SAVE_DEBOUNCE_SECS: f64 = 3.0;
 
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+struct SaveFeedback {
+    save_error: Option<String>,
+}
+
+impl SaveFeedback {
+    fn finish_save(&mut self, result: &Result<(), String>) {
+        match result {
+            Ok(()) => self.save_error = None,
+            Err(error) => self.save_error = Some(error.clone()),
+        }
+    }
+
+    fn save_error(&self) -> Option<&str> {
+        self.save_error.as_deref()
+    }
+
+    fn opened_replacement_bundle(&mut self) {
+        *self = Self::default();
+    }
+}
+
 fn should_flush_save(event: &Event) -> bool {
     matches!(event, Event::Shutdown | Event::QuitRequested(_))
 }
@@ -574,6 +596,8 @@ pub struct App {
     /// Debounce for `mark_dirty` -> `save`; see `SAVE_DEBOUNCE_SECS`.
     #[rust]
     save_timer: Timer,
+    #[rust]
+    save_feedback: SaveFeedback,
     /// Basename of the currently-open bundle directory. The bundle's display
     /// name falls back to this when the model carries no root name (`model.path`
     /// is empty -- no root `index.md` H1 / frontmatter title), so an unnamed
@@ -1181,28 +1205,27 @@ impl App {
         Ok(())
     }
 
-    fn set_save_error(&mut self, cx: &mut Cx, error: Option<&str>) {
+    fn sync_save_error(&mut self, cx: &mut Cx) {
+        let error = self.save_feedback.save_error().map(str::to_owned);
         if let Some(mut statusbar) = self
             .ui
             .widget(cx, ids!(statusbar))
             .borrow_mut::<crate::statusbar::Statusbar>()
         {
-            statusbar.set_save_error(cx, error);
+            statusbar.set_save_error(cx, error.as_deref());
         }
     }
 
     fn save_or_retry(&mut self, cx: &mut Cx, retry_on_error: bool) -> Result<(), String> {
         let result = self.save(cx);
-        match &result {
-            Ok(()) => self.set_save_error(cx, None),
-            Err(error) => {
-                log!("failed to save open document: {error}");
-                self.set_save_error(cx, Some(error));
-                if retry_on_error && self.session.is_dirty() {
-                    self.schedule_save(cx);
-                }
+        if let Err(error) = &result {
+            log!("failed to save open document: {error}");
+            if retry_on_error && self.session.is_dirty() {
+                self.schedule_save(cx);
             }
         }
+        self.save_feedback.finish_save(&result);
+        self.sync_save_error(cx);
         result
     }
 
@@ -1332,7 +1355,8 @@ impl App {
         cx.stop_timer(self.save_timer);
         let change = self.session.replace(files, model);
         debug_assert_eq!(change.revision, self.session.revision());
-        self.set_save_error(cx, None);
+        self.save_feedback.opened_replacement_bundle();
+        self.sync_save_error(cx);
         // Retain the raw bundle so drag-to-place ops can re-author `## Layout`
         // in-memory: the diagram view emits `Op::PlaceSet`, the shell applies it
         // against this bundle and rebuilds the model (see `handle_actions`).
@@ -2153,6 +2177,7 @@ mod tests {
     use super::{
         doc_switcher_items, logo_command_for, next_narrow, open_overlay_contains, place_rm_for,
         prevent_quit_after_failed_save, should_dismiss_narrow_dock, should_flush_save, LogoCommand,
+        SaveFeedback,
     };
     use crate::doc_tabs::{DocTab, OpenTabs, TabKind};
     use crate::dock::DockState;
@@ -2183,17 +2208,13 @@ mod tests {
 
     #[test]
     fn successful_bundle_open_clears_the_visible_save_error() {
-        let source = include_str!("app.rs");
-        let open_bundle = source
-            .split_once("    fn open_bundle(")
-            .and_then(|(_, rest)| rest.split_once("    fn "))
-            .map(|(body, _)| body)
-            .expect("App::open_bundle body");
+        let mut state = SaveFeedback::default();
+        state.finish_save(&Err("disk full".into()));
+        assert_eq!(state.save_error(), Some("disk full"));
 
-        assert!(
-            open_bundle.contains("self.set_save_error(cx, None);"),
-            "a newly-opened bundle must clear any save error from the prior document"
-        );
+        state.opened_replacement_bundle();
+
+        assert_eq!(state.save_error(), None);
     }
 
     #[test]
