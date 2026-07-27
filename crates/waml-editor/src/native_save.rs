@@ -31,17 +31,9 @@ pub(crate) fn save_bundle_atomic(
         }
     }
     let mut resolved_targets = BTreeSet::new();
-    let mut planned = Vec::new();
-
-    // Plan every dirty target using only reads. A clean path is deliberately not
-    // inspected or rewritten, so an unrelated external edit survives this save.
-    for (relative, desired) in current {
+    let mut validated_targets = Vec::with_capacity(current.len());
+    for (relative, _) in current {
         let relative = Path::new(relative);
-        let baseline = baseline_by_path.get(&bundle_path_key(relative)).copied();
-        if baseline == Some(desired.as_str()) {
-            continue;
-        }
-
         let target = root.join(relative);
         let parent = target
             .parent()
@@ -56,7 +48,19 @@ pub(crate) fn save_bundle_atomic(
                 format!("bundle contains paths resolving to the same target: {target:?}"),
             ));
         }
+        validated_targets.push((target, parent));
+    }
 
+    let mut planned = Vec::new();
+    // Plan every dirty target using only reads. Clean paths participate in
+    // containment and alias validation above, but their contents are not read or
+    // rewritten, so an unrelated external edit survives this save.
+    for ((relative, desired), (target, parent)) in current.iter().zip(validated_targets) {
+        let relative = Path::new(relative);
+        let baseline = baseline_by_path.get(&bundle_path_key(relative)).copied();
+        if baseline == Some(desired.as_str()) {
+            continue;
+        }
         if disk_state(&root, &target, baseline, desired)? == DiskState::NeedsWrite {
             planned.push(PlannedWrite {
                 target,
@@ -601,6 +605,32 @@ mod tests {
         assert_eq!(error.kind(), std::io::ErrorKind::InvalidInput);
         assert!(!root.path().join("safe").exists());
         assert!(!outside.path().join("missing").exists());
+    }
+
+    #[test]
+    fn clean_and_dirty_aliases_are_rejected_before_mutating_shared_target() {
+        let root = TempDir::new();
+        let real = root.path().join("real");
+        std::fs::create_dir(&real).unwrap();
+        let target = real.join("diagram.md");
+        std::fs::write(&target, "loaded").unwrap();
+        if !make_dir_link(&real, &root.path().join("linked")) {
+            return;
+        }
+
+        let baseline = vec![
+            ("linked/diagram.md".into(), "loaded".into()),
+            ("real/diagram.md".into(), "loaded".into()),
+        ];
+        let current = vec![
+            ("linked/diagram.md".into(), "editor edit".into()),
+            ("real/diagram.md".into(), "loaded".into()),
+        ];
+
+        let error = save_bundle_atomic(root.path(), &baseline, &current).unwrap_err();
+
+        assert_eq!(error.kind(), std::io::ErrorKind::InvalidInput);
+        assert_eq!(std::fs::read_to_string(target).unwrap(), "loaded");
     }
 
     #[cfg(windows)]
