@@ -62,7 +62,7 @@ fn collect(root: &Path, dir: &Path, out: &mut Vec<(String, String)>) -> std::io:
 /// app path now uses `load_bundle_and_model` (it retains the bundle for
 /// drag-to-place write-back); tests that only need a `Model` still use this.
 #[cfg(test)]
-pub fn load_model(dir: &Path) -> Result<waml::model::Model, LoadError> {
+pub fn load_model(dir: &Path) -> Result<waml::uml::Projection, LoadError> {
     let bundle = read_bundle(dir)?;
     Ok(waml::parse::build_model_from_source(&bundle))
 }
@@ -70,10 +70,12 @@ pub fn load_model(dir: &Path) -> Result<waml::model::Model, LoadError> {
 /// Load an OKF directory, retaining the raw bundle alongside the resolved
 /// `Model`. The App keeps the bundle so drag-to-place can author `## Layout`
 /// statements in-memory via `waml::ops::apply` and rebuild the model.
-pub fn load_bundle_and_model(dir: &Path) -> Result<(SourceBundle, waml::model::Model), LoadError> {
+pub fn load_bundle_and_model(
+    dir: &Path,
+) -> Result<(SourceBundle, waml::uml::Projection), LoadError> {
     let bundle = read_bundle(dir)?;
-    let model = waml::parse::build_model_from_source(&bundle);
-    Ok((bundle, model))
+    let uml_projection = waml::parse::build_model_from_source(&bundle);
+    Ok((bundle, uml_projection))
 }
 
 /// Return the raw markdown of the bundle file whose OKF id equals `key`. A

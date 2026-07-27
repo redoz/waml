@@ -370,10 +370,6 @@ fn reserved_filename(path: &str) -> Option<&str> {
     }
 }
 
-pub(crate) fn is_index_path(path: &str) -> bool {
-    reserved_filename(&path.replace('\\', "/")) == Some("index.md")
-}
-
 /// Split a body into `(prose_without_citations, citations_section_or_empty)` on
 /// the first level-1 `# Citations` heading (OKF §8).
 fn split_citations(body: &str) -> (&str, &str) {
@@ -490,10 +486,6 @@ pub fn project_document(document: &SourceDocument) -> Option<Concept> {
     reserved_filename(document.path().as_str())
         .is_none()
         .then(|| project_source_document(document))
-}
-
-pub(crate) fn project_reserved_document(document: &SourceDocument) -> Concept {
-    project_source_document(document)
 }
 
 pub fn project(path: &str, src: &str) -> Concept {

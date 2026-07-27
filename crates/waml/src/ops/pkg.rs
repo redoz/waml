@@ -1,6 +1,5 @@
 use super::{find_doc, OpError};
 use crate::index_md::{render_index, IndexEntry};
-use crate::parse::build_model_from_source;
 use crate::source::{BundlePath, SourceBundle};
 
 fn join(dir: &str, slug: &str) -> String {
@@ -130,27 +129,18 @@ pub(crate) fn op_pkg_delete(
 
 /// Title/description now live on `concept` (single source). Look up a member's
 /// display title across nodes, diagrams, and sub-packages.
-fn member_title(model: &crate::model::Model, k: &str) -> String {
-    model
-        .nodes
-        .iter()
-        .find(|n| n.key == k)
-        .and_then(|n| n.concept.title.clone())
-        .or_else(|| {
-            model
-                .diagrams
-                .iter()
-                .find(|d| d.key == k)
-                .map(|d| d.title.clone())
-        })
-        .or_else(|| {
-            model
-                .packages
-                .iter()
-                .find(|p| p.key == k)
-                .and_then(|p| p.concept.title.clone())
-        })
-        .unwrap_or_else(|| k.to_string())
+fn member_title(bundle: &crate::okf::Bundle, key: &str) -> String {
+    if key.starts_with('/') {
+        bundle
+            .index(key)
+            .and_then(|index| index.title.clone())
+            .unwrap_or_else(|| key.rsplit('/').next().unwrap_or(key).to_owned())
+    } else {
+        bundle
+            .concept(key)
+            .and_then(|concept| concept.title.clone())
+            .unwrap_or_else(|| key.rsplit('/').next().unwrap_or(key).to_owned())
+    }
 }
 
 /// How a rewritten index.md orders its members. `Sort` = A–Z by title; `Explicit`
@@ -173,21 +163,30 @@ fn write_package_index(
     order: MemberOrder<'_>,
     title_override: Option<&str>,
 ) -> Result<(), OpError> {
-    let model = build_model_from_source(work);
-    let pkg = model
-        .packages
-        .iter()
-        .find(|p| p.key == path)
+    let bundle = crate::okf::Bundle::parse(work)
+        .map_err(|error| OpError::at("pkg.index", error.to_string()))?;
+    let address = if path.is_empty() {
+        "/".to_owned()
+    } else {
+        format!("/{path}")
+    };
+    let index = bundle
+        .index(&address)
         .ok_or_else(|| OpError::at("pkg.index", format!("no package '{path}'")))?;
-    // desired order
     let mut keys: Vec<String> = match order {
         MemberOrder::Explicit(o) => {
             let mut v: Vec<String> = o
                 .iter()
-                .filter(|k| pkg.members.contains(k))
-                .cloned()
+                .filter_map(|key| {
+                    if index.members.contains(key) {
+                        Some(key.clone())
+                    } else {
+                        let rooted = format!("/{key}");
+                        index.members.contains(&rooted).then_some(rooted)
+                    }
+                })
                 .collect();
-            for m in &pkg.members {
+            for m in &index.members {
                 if !v.contains(m) {
                     v.push(m.clone());
                 }
@@ -195,66 +194,37 @@ fn write_package_index(
             v
         }
         MemberOrder::Sort => {
-            let mut v = pkg.members.clone();
-            v.sort_by_key(|k| member_title(&model, k).to_lowercase());
+            let mut v = index.members.clone();
+            v.sort_by_key(|key| member_title(&bundle, key).to_lowercase());
             v
         }
-        MemberOrder::Keep => pkg.members.clone(),
+        MemberOrder::Keep => index.members.clone(),
     };
     let entries: Vec<IndexEntry> = keys
         .drain(..)
-        .map(|k| {
-            let (title, is_pkg, blurb) = model
-                .nodes
-                .iter()
-                .find(|n| n.key == k)
-                .map(|n| {
-                    (
-                        n.concept.title.clone().unwrap_or_else(|| k.clone()),
-                        false,
-                        n.concept
-                            .description
-                            .as_ref()
-                            .map(|d| d.lines().next().unwrap_or("").to_string()),
-                    )
+        .map(|key| {
+            let is_package = key.starts_with('/');
+            let blurb = (!is_package)
+                .then(|| {
+                    bundle
+                        .concept(&key)
+                        .and_then(|concept| concept.description.as_deref())
+                        .map(|description| description.lines().next().unwrap_or("").to_owned())
                 })
-                .or_else(|| {
-                    model
-                        .diagrams
-                        .iter()
-                        .find(|d| d.key == k)
-                        .map(|d| (d.title.clone(), false, None))
-                })
-                .or_else(|| {
-                    model.packages.iter().find(|p| p.key == k).map(|p| {
-                        (
-                            p.concept.title.clone().unwrap_or_else(|| k.clone()),
-                            true,
-                            None,
-                        )
-                    })
-                })
-                .unwrap_or((k.clone(), false, None));
+                .flatten();
             IndexEntry {
-                key: k,
-                title,
-                is_package: is_pkg,
+                title: member_title(&bundle, &key),
+                key,
+                is_package,
                 blurb,
             }
         })
         .collect();
-    // Current title: root's name lives on model.path (the root index.md H1);
-    // other packages carry it on concept.title. An explicit override wins.
-    let current_title = if path.is_empty() {
-        (!model.path.is_empty()).then(|| model.path.clone())
-    } else {
-        pkg.concept.title.clone()
-    };
-    let title_for_index = title_override.map(str::to_string).or(current_title);
+    let title_for_index = title_override.map(str::to_string).or(index.title.clone());
     let text = render_index(
         path,
         title_for_index.as_deref(),
-        pkg.concept.description.as_deref(),
+        index.description.as_deref(),
         &entries,
     );
     // Root special-case is ONLY the index-file path arithmetic.

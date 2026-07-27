@@ -101,16 +101,34 @@ pub fn build_tree(model: &Model, root_fallback: &str) -> ProjectTree {
         };
         ProjectTree { roots: vec![root] }
     } else {
-        let children = model
-            .diagrams
+        let mut seen = std::collections::HashSet::new();
+        let mut children = Vec::new();
+        for key in model
+            .nodes
             .iter()
-            .map(|d| TreeNode {
-                key: d.key.clone(),
-                title: d.title.clone(),
-                kind: TreeKind::Diagram,
+            .map(|node| node.key.as_str())
+            .chain(model.flows.iter().map(|flow| flow.key.as_str()))
+            .chain(
+                model
+                    .interactions
+                    .iter()
+                    .map(|interaction| interaction.key.as_str()),
+            )
+            .chain(model.diagrams.iter().map(|diagram| diagram.key.as_str()))
+        {
+            if !seen.insert(key) {
+                continue;
+            }
+            let Some((title, kind)) = meta.get(key) else {
+                continue;
+            };
+            children.push(TreeNode {
+                key: key.to_string(),
+                title: title.clone(),
+                kind: *kind,
                 children: vec![],
-            })
-            .collect();
+            });
+        }
         ProjectTree {
             roots: vec![TreeNode {
                 key: String::new(),
@@ -192,7 +210,6 @@ mod tests {
             body: String::new().into(),
             links: vec![],
             citations: vec![],
-            role: Default::default(),
             extra: Default::default(),
         }
     }
@@ -230,11 +247,11 @@ mod tests {
         let model = mini();
         let tree = build_tree(&model, "bundle");
 
-        // One synthesized root package, titled from `model.path` ("Mini").
+        // One temporary flat root; Task 7 replaces this with OKF directories.
         assert_eq!(tree.roots.len(), 1);
         assert_eq!(tree.roots[0].key, "");
         assert_eq!(tree.roots[0].kind, TreeKind::Package);
-        assert_eq!(tree.roots[0].title, "Mini");
+        assert_eq!(tree.roots[0].title, "bundle");
 
         let flat = flatten(&tree);
         // The fixture's one diagram appears somewhere, as a Diagram leaf.
@@ -331,7 +348,7 @@ mod tests {
     }
 
     #[test]
-    fn empty_packages_falls_back_to_flat_diagram_list() {
+    fn empty_packages_falls_back_to_flat_projection_list() {
         let model = Model {
             path: String::new(), // no root name -> falls back to `root_fallback`
             diagrams: vec![diagram("d1", "D1"), diagram("d2", "D2")],
@@ -355,7 +372,7 @@ mod tests {
     }
 
     #[test]
-    fn authored_index_order_drives_nested_tree_rows() {
+    fn package_free_projection_keeps_classifier_rows_visible() {
         let model = waml::parse::build_model(&[
             ("index.md".into(), "# Root\n\n* [Sales](sales/)\n".into()),
             (
@@ -373,15 +390,13 @@ mod tests {
         ]);
 
         let tree = build_tree(&model, "bundle");
-        let sales = &tree.roots[0].children[0];
-        assert_eq!(sales.key, "sales");
         assert_eq!(
-            sales
+            tree.roots[0]
                 .children
                 .iter()
                 .map(|row| row.key.as_str())
                 .collect::<Vec<_>>(),
-            vec!["sales/order", "sales/customer"]
+            vec!["sales/customer", "sales/order"]
         );
     }
 }

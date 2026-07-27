@@ -2,7 +2,7 @@ use regex::Regex;
 use std::sync::LazyLock;
 
 static BLOCK_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"(?s)^---\n(.*?)\n---\n?(.*)$").unwrap());
+    LazyLock::new(|| Regex::new(r"(?s)^---\n(.*?)\n(?:---|\.\.\.)\n?(.*)$").unwrap());
 static NUM_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^-?\d+(\.\d+)?$").unwrap());
 
 #[derive(Debug, Clone, PartialEq)]

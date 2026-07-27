@@ -1,12 +1,12 @@
-use waml::model::Model;
 use waml::ops::{Op, OpError};
 use waml::source::SourceBundle;
+use waml::uml::Projection;
 
 #[derive(Default)]
 pub struct EditorSession {
     bundle: SourceBundle,
     persisted_bundle: SourceBundle,
-    model: Model,
+    uml_projection: Projection,
     revision: u64,
     dirty_revision: Option<u64>,
 }
@@ -33,10 +33,10 @@ impl SessionChange {
 }
 
 impl EditorSession {
-    pub fn replace(&mut self, bundle: SourceBundle, model: Model) -> SessionChange {
+    pub fn replace(&mut self, bundle: SourceBundle, uml_projection: Projection) -> SessionChange {
         self.persisted_bundle = bundle.clone();
         self.bundle = bundle;
-        self.model = model;
+        self.uml_projection = uml_projection;
         self.revision = self.revision.wrapping_add(1);
         self.dirty_revision = None;
         SessionChange::full(self.revision)
@@ -44,9 +44,9 @@ impl EditorSession {
 
     pub fn apply_ops(&mut self, ops: &[Op]) -> Result<SessionChange, OpError> {
         let bundle = waml::ops::apply_source(&self.bundle, ops)?;
-        let model = waml::parse::build_model_from_source(&bundle);
+        let uml_projection = waml::parse::build_model_from_source(&bundle);
         self.bundle = bundle;
-        self.model = model;
+        self.uml_projection = uml_projection;
         self.revision = self.revision.wrapping_add(1);
         self.dirty_revision = Some(self.revision);
         Ok(SessionChange::full(self.revision))
@@ -60,8 +60,12 @@ impl EditorSession {
         &self.persisted_bundle
     }
 
-    pub fn model(&self) -> &Model {
-        &self.model
+    pub fn uml_projection(&self) -> &Projection {
+        &self.uml_projection
+    }
+
+    pub fn model(&self) -> &Projection {
+        self.uml_projection()
     }
 
     pub fn revision(&self) -> u64 {

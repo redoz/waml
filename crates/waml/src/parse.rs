@@ -1,7 +1,7 @@
 use pulldown_cmark::{Event, HeadingLevel, Options, Parser, Tag, TagEnd};
 
 use crate::diagnostic::{DiagCode, Diagnostic};
-use crate::frontmatter::parse_frontmatter;
+use crate::frontmatter::{parse_frontmatter, FmValue, Frontmatter};
 use crate::grammar::{
     bullet_range, parse_attribute_line, parse_relationship_line, parse_slot_line, parse_value_line,
 };
@@ -304,6 +304,10 @@ pub fn diagnostics_of(doc: &Document) -> Vec<Diagnostic> {
 /// `## ` section. `file` is left `""` (the caller sets the path).
 fn scan_frontmatter_and_preamble(src: &str) -> Vec<Diagnostic> {
     let mut diags = Vec::new();
+    let parsed_frontmatter = crate::frontmatter::parse_frontmatter_spanned(src).frontmatter;
+    let claimed = crate::uml::recognizes_type(&ElementType::parse(
+        parsed_frontmatter.get_str("type").unwrap_or(""),
+    ));
     if src.trim_start().starts_with("---") && !has_metadata_block(src) {
         diags.push(Diagnostic::new(
             DiagCode::FrontmatterNotClean,
@@ -330,18 +334,23 @@ fn scan_frontmatter_and_preamble(src: &str) -> Vec<Diagnostic> {
             continue;
         }
         if in_fm {
-            if let Some(rest) = trimmed.strip_prefix("type:") {
+            let entry = trimmed
+                .split_once(':')
+                .map(|(key, value)| (key.trim(), value));
+            if let Some(("type", rest)) = entry {
                 let ty = rest.trim().trim_matches('"');
-                if ty != "Diagram" && matches!(ElementType::parse(ty), ElementType::Unknown(_)) {
+                if ty.starts_with("uml.")
+                    && matches!(ElementType::parse(ty), ElementType::Unknown(_))
+                {
                     diags.push(Diagnostic::warn(
                         DiagCode::UnknownType,
-                        format!("unknown type '{ty}' — rendered as a generic box"),
+                        format!("unsupported UML metaclass '{ty}'"),
                         "",
                         n,
                     ));
                 }
             }
-            if let Some(rest) = trimmed.strip_prefix("cardinality:") {
+            if let Some(("cardinality", rest)) = entry.filter(|_| claimed) {
                 let value = rest.trim().trim_matches('"');
                 if !matches!(value, "off" | "explicit" | "all") {
                     diags.push(Diagnostic::new(
@@ -502,6 +511,7 @@ pub fn split_bundle(text: &str) -> Vec<(String, String)> {
 }
 
 /// A classifier's filename slug (the node key): last path segment, `.md` stripped.
+#[allow(dead_code)]
 fn doc_slug(path: &str) -> String {
     let seg = path.rsplit(['/', '\\']).next().unwrap_or(path);
     seg.strip_suffix(".md").unwrap_or(seg).to_string()
@@ -523,28 +533,7 @@ struct ParsedDoc {
     concept: crate::okf::Concept,
 }
 
-fn parse_bundle(bundle: &SourceBundle) -> Vec<ParsedDoc> {
-    bundle
-        .documents()
-        .iter()
-        .filter_map(|source| {
-            let path = source.path().as_str();
-            let text = source.text();
-            let concept = crate::okf::project_document(source)?;
-            let doc = parse_document(text);
-            let ty = ElementType::parse(doc.frontmatter.get_str("type").unwrap_or("uml.Class"));
-            Some(ParsedDoc {
-                path: path.to_owned(),
-                slug: doc_slug(path),
-                id: crate::okf::id_of(path),
-                ty,
-                doc,
-                concept,
-            })
-        })
-        .collect()
-}
-
+#[allow(dead_code)]
 fn parse_bundle_pairs(bundle: &[(String, String)]) -> Vec<ParsedDoc> {
     bundle
         .iter()
@@ -559,6 +548,55 @@ fn parse_bundle_pairs(bundle: &[(String, String)]) -> Vec<ParsedDoc> {
                 ty,
                 doc,
                 concept,
+            }
+        })
+        .collect()
+}
+
+fn concept_frontmatter(concept: &crate::okf::Concept) -> Frontmatter {
+    let mut frontmatter = concept.extra.clone();
+    let mut push = |key: &str, value: Option<FmValue>| {
+        if let Some(value) = value {
+            frontmatter.entries.push((key.to_owned(), value));
+        }
+    };
+    push(
+        "type",
+        (!concept.ty.is_empty()).then(|| FmValue::Str(concept.ty.clone())),
+    );
+    push("title", concept.title.clone().map(FmValue::Str));
+    push("description", concept.description.clone().map(FmValue::Str));
+    push("resource", concept.resource.clone().map(FmValue::Str));
+    push(
+        "tags",
+        (!concept.tags.is_empty())
+            .then(|| FmValue::List(concept.tags.iter().cloned().map(FmValue::Str).collect())),
+    );
+    push("timestamp", concept.timestamp.clone().map(FmValue::Str));
+    frontmatter
+}
+
+fn parse_concepts(bundle: &crate::okf::Bundle) -> Vec<ParsedDoc> {
+    bundle
+        .concepts()
+        .iter()
+        .filter(|concept| crate::uml::recognizes(concept))
+        .map(|concept| {
+            let path = format!("{}.md", concept.id);
+            let mut doc = parse_document(concept.body.as_str());
+            doc.frontmatter = concept_frontmatter(concept);
+            ParsedDoc {
+                path,
+                slug: concept
+                    .id
+                    .rsplit('/')
+                    .next()
+                    .unwrap_or(&concept.id)
+                    .to_owned(),
+                id: concept.id.clone(),
+                ty: ElementType::parse(&concept.ty),
+                doc,
+                concept: concept.clone(),
             }
         })
         .collect()
@@ -656,6 +694,7 @@ fn doc_title(p: &ParsedDoc) -> String {
 }
 
 /// Directory of a bundle path ("" for root). Forward-slash normalized.
+#[allow(dead_code)]
 fn dir_of(path: &str) -> String {
     let p = path.replace('\\', "/");
     match p.rfind('/') {
@@ -666,6 +705,7 @@ fn dir_of(path: &str) -> String {
 
 /// Parsed shape of an `index.md` (frontmatter, if any, is stripped by
 /// `parse_index`; its `title` becomes the name when present).
+#[allow(dead_code)]
 struct IndexDoc {
     intro: Option<String>,
     order: Vec<String>,
@@ -682,6 +722,7 @@ struct IndexDoc {
 /// (not the last), so an index that uses `#` for section groupings before the
 /// first bullet still names the package after its real title -- not whichever
 /// section header happened to sit just above the first bullet.
+#[allow(dead_code)]
 fn parse_index(dir: &str, text: &str) -> IndexDoc {
     let (fm, body) = parse_frontmatter(text);
     let fm_title = fm
@@ -739,27 +780,27 @@ fn parse_index(dir: &str, text: &str) -> IndexDoc {
 /// order + package description, and the root entry sets `model_path` (its H1).
 /// Returns `(model_path, packages)`.
 #[derive(Clone, Copy)]
+#[allow(dead_code)]
 enum IndexSource<'a> {
-    Document(&'a crate::source::SourceDocument),
     Text(&'a str),
 }
 
+#[allow(dead_code)]
 impl<'a> IndexSource<'a> {
     fn text(self) -> &'a str {
         match self {
-            IndexSource::Document(document) => document.text(),
             IndexSource::Text(text) => text,
         }
     }
 
     fn project(self, path: &str) -> crate::okf::Concept {
         match self {
-            IndexSource::Document(document) => crate::okf::project_reserved_document(document),
             IndexSource::Text(text) => crate::okf::project(path, text),
         }
     }
 }
 
+#[allow(dead_code)]
 fn build_packages(
     docs: &[(String, String, String)],
     indexes: &std::collections::BTreeMap<String, IndexSource<'_>>,
@@ -879,42 +920,33 @@ fn build_packages(
     (path, packages)
 }
 
-fn build_model_from_parsed(
-    parsed: Vec<ParsedDoc>,
-    indexes: &std::collections::BTreeMap<String, IndexSource<'_>>,
-) -> Model {
-    // `index.md`/`log.md` are reserved package files, never classifiers.
-    // Behavior docs (`uml.Activity`/`StateMachine`/`Sequence`) are the document
-    // AND view for their own substrate — they never become classifier nodes.
+fn project_parsed(parsed: &[ParsedDoc]) -> Model {
     let classifiers: Vec<&ParsedDoc> = parsed
         .iter()
-        .filter(|p| !p.ty.is_view() && p.slug != "index" && p.slug != "log")
+        .filter(|parsed| !parsed.ty.is_view() && parsed.slug != "index" && parsed.slug != "log")
         .collect();
-    let keyset: HashSet<&str> = classifiers.iter().map(|p| p.id.as_str()).collect();
-
-    let mut nodes: Vec<Node> = classifiers.iter().map(|p| build_node(p, &keyset)).collect();
-    let mut edges: Vec<Edge> = build_edges(&classifiers, &keyset);
-    let (diagrams, inst_nodes, inst_edges) = build_diagrams(&parsed, &keyset);
-    nodes.extend(inst_nodes);
-    edges.extend(inst_edges);
-
-    // Discover the package forest from directory structure (index/log excluded).
-    let docs: Vec<(String, String, String)> = parsed
+    let keyset: HashSet<&str> = classifiers
         .iter()
-        .filter(|p| p.slug != "index" && p.slug != "log")
-        .map(|p| (p.path.clone(), p.id.clone(), doc_title(p)))
+        .map(|parsed| parsed.id.as_str())
         .collect();
-    let (path, packages) = build_packages(&docs, indexes);
 
-    let (flows, activity_nodes, flow_edges) = build_flows(&parsed, &keyset);
-    let interactions = build_interactions(&parsed, &keyset);
+    let mut nodes: Vec<Node> = classifiers
+        .iter()
+        .map(|parsed| build_node(parsed, &keyset))
+        .collect();
+    let mut edges = build_edges(&classifiers, &keyset);
+    let (diagrams, instance_nodes, instance_edges) = build_diagrams(parsed, &keyset);
+    nodes.extend(instance_nodes);
+    edges.extend(instance_edges);
+    let (flows, activity_nodes, flow_edges) = build_flows(parsed, &keyset);
+    let interactions = build_interactions(parsed, &keyset);
 
     Model {
         nodes,
         edges,
         diagrams,
-        path,
-        packages,
+        path: String::new(),
+        packages: Vec::new(),
         flows,
         activity_nodes,
         flow_edges,
@@ -922,30 +954,53 @@ fn build_model_from_parsed(
     }
 }
 
-pub fn build_model_from_source(bundle: &SourceBundle) -> Model {
-    let parsed = parse_bundle(bundle);
-    let indexes = bundle
-        .documents()
+#[allow(dead_code)]
+fn build_model_from_parsed(
+    parsed: Vec<ParsedDoc>,
+    indexes: &std::collections::BTreeMap<String, IndexSource<'_>>,
+) -> Model {
+    let mut model = project_parsed(&parsed);
+    // Legacy tuple callers retain structural packages until Task 9.
+    let docs: Vec<(String, String, String)> = parsed
         .iter()
-        .filter(|document| doc_slug(document.path().as_str()) == "index")
-        .map(|document| {
-            (
-                dir_of(document.path().as_str()),
-                IndexSource::Document(document),
-            )
-        })
+        .filter(|p| p.slug != "index" && p.slug != "log")
+        .map(|p| (p.path.clone(), p.id.clone(), doc_title(p)))
         .collect();
-    build_model_from_parsed(parsed, &indexes)
+    let (path, packages) = build_packages(&docs, indexes);
+    model.path = path;
+    model.packages = packages;
+    model
+}
+
+pub fn build_model_from_source(bundle: &SourceBundle) -> crate::uml::Projection {
+    let bundle = crate::okf::Bundle::parse(bundle).expect("validated source bundle parses as OKF");
+    crate::uml::project(&bundle)
+}
+
+pub(crate) fn project_okf(bundle: &crate::okf::Bundle) -> crate::uml::Projection {
+    let parsed = parse_concepts(bundle);
+    project_parsed(&parsed)
 }
 
 pub fn build_model(bundle: &[(String, String)]) -> Model {
-    let parsed = parse_bundle_pairs(bundle);
-    let indexes = bundle
-        .iter()
-        .filter(|(path, _)| doc_slug(path) == "index")
-        .map(|(path, text)| (dir_of(path), IndexSource::Text(text)))
-        .collect();
-    build_model_from_parsed(parsed, &indexes)
+    let normalized = bundle.iter().enumerate().map(|(index, (path, text))| {
+        let path = if crate::source::BundlePath::parse(path.clone()).is_ok() {
+            path.clone()
+        } else {
+            let basename = path
+                .replace('\\', "/")
+                .rsplit('/')
+                .next()
+                .unwrap_or("document")
+                .to_string();
+            let basename = basename.strip_suffix(".md").unwrap_or(&basename);
+            format!("__compat/{index}/{basename}.md")
+        };
+        (path, text.clone())
+    });
+    let source =
+        SourceBundle::try_from_pairs(normalized).expect("bundle paths must be valid and unique");
+    build_model_from_source(&source)
 }
 
 /// Resolve a frontmatter `describes: [T](./t.md)` link against the classifier keyset.
@@ -1507,7 +1562,6 @@ fn build_diagrams(
 mod tests {
     use super::*;
     use crate::model::{CardinalityVisibility, RelationshipKind};
-    use std::sync::Arc;
 
     #[test]
     fn legacy_tuple_model_accepts_non_bundle_paths() {
@@ -1518,33 +1572,6 @@ mod tests {
             )]);
             assert_eq!(model.nodes.len(), 1, "{path}");
         }
-    }
-
-    #[test]
-    fn package_body_shares_the_authored_index_source() {
-        let source = SourceBundle::try_from_pairs([
-            ("index.md", "# Root\n\nIntro\n"),
-            (
-                "order.md",
-                "---\ntype: uml.Class\ntitle: Order\n---\n# Order\n",
-            ),
-        ])
-        .unwrap();
-
-        let model = build_model_from_source(&source);
-        let index = source
-            .document(&crate::source::BundlePath::parse("index.md").unwrap())
-            .unwrap();
-        let root = model
-            .packages
-            .iter()
-            .find(|package| package.key.is_empty())
-            .unwrap();
-
-        assert!(Arc::ptr_eq(
-            index.text_arc(),
-            root.concept.body.source_arc()
-        ));
     }
 
     fn diagram_bundle(fm_body: &str) -> Vec<(String, String)> {
@@ -1671,38 +1698,25 @@ mod tests {
     }
 
     #[test]
-    fn arbitrary_and_missing_type_documents_before_selective_projection() {
-        let model = build_model(&[
-            ("plain.md".into(), "# Plain\n".into()),
-            (
-                "vendor.md".into(),
-                "---\ntype: vendor.Runbook\n---\n# Runbook\n".into(),
-            ),
-            (
-                "future.md".into(),
-                "---\ntype: uml.FutureThing\n---\n# Future\n".into(),
-            ),
-        ]);
+    fn arbitrary_and_missing_type_documents_stay_outside_selective_projection() {
+        let source = SourceBundle::try_from_pairs([
+            ("plain.md", "# Plain\n"),
+            ("vendor.md", "---\ntype: vendor.Runbook\n---\n# Runbook\n"),
+            ("future.md", "---\ntype: uml.FutureThing\n---\n# Future\n"),
+        ])
+        .unwrap();
+        let bundle = crate::okf::Bundle::parse(&source).unwrap();
+        let projection = crate::uml::project(&bundle);
 
-        assert_eq!(model.nodes.len(), 3);
-        assert!(matches!(
-            model
-                .nodes
-                .iter()
-                .find(|node| node.key == "plain")
-                .unwrap()
-                .ty,
-            ElementType::Uml(crate::model::UmlMetaclass::Class)
-        ));
-        assert!(model
-            .nodes
-            .iter()
-            .filter(|node| node.key != "plain")
-            .all(|node| matches!(node.ty, ElementType::Unknown(_))));
+        assert!(projection.nodes.is_empty());
+        assert!(projection.diagrams.is_empty());
+        assert!(bundle.concept("plain").is_some());
+        assert!(bundle.concept("vendor").is_some());
+        assert!(bundle.concept("future").is_some());
     }
 
     #[test]
-    fn build_model_discovers_nested_packages_from_directories() {
+    fn build_model_projects_nested_classifiers_without_structural_packages() {
         let b = vec![
             (
                 "sales/order.md".to_string(),
@@ -1720,24 +1734,8 @@ mod tests {
         let m = build_model(&b);
         // classifiers remain flat in `nodes`
         assert_eq!(m.nodes.len(), 3);
-        // packages: root "", "sales", "sales/orders", "billing"
-        let keys: std::collections::HashSet<_> =
-            m.packages.iter().map(|p| p.key.as_str()).collect();
-        assert!(
-            keys.contains("")
-                && keys.contains("sales")
-                && keys.contains("sales/orders")
-                && keys.contains("billing")
-        );
-        let root = m.packages.iter().find(|p| p.key.is_empty()).unwrap();
-        assert_eq!(
-            root.members,
-            vec!["billing".to_string(), "sales".to_string()]
-        ); // A–Z sub-packages
-        let sales = m.packages.iter().find(|p| p.key == "sales").unwrap();
-        // members = child classifier "order" + sub-package "sales/orders", A–Z by title/name
-        assert!(sales.members.contains(&"sales/order".to_string()));
-        assert!(sales.members.contains(&"sales/orders".to_string()));
+        assert!(m.packages.is_empty());
+        assert!(m.path.is_empty());
     }
 
     #[test]
@@ -1757,7 +1755,7 @@ mod tests {
             ),
         ];
         let m = build_model(&b);
-        assert_eq!(m.path, "Ocuro Domain Model");
+        assert!(m.path.is_empty());
     }
 
     #[test]
@@ -1775,7 +1773,7 @@ mod tests {
             ),
         ];
         let m = build_model(&b);
-        assert_eq!(m.path, "Real Name");
+        assert!(m.path.is_empty());
     }
 
     #[test]
@@ -1790,27 +1788,14 @@ mod tests {
             ("index.md".to_string(), "# acme-model\n\n* [sales](sales/)\n".to_string()),
         ];
         let m = build_model(&b);
-        assert_eq!(m.path, "acme-model");
+        assert!(m.path.is_empty());
         // index.md docs are not classifiers
         assert!(m.nodes.iter().all(|n| n.key != "index"));
-        let sales = m.packages.iter().find(|p| p.key == "sales").unwrap();
-        assert_eq!(
-            sales.concept.description.as_deref(),
-            Some("Sales bounded context.")
-        );
-        // listed order first (customer, order), then unlisted appended (invoice)
-        assert_eq!(
-            sales.members,
-            vec![
-                "sales/customer".to_string(),
-                "sales/order".to_string(),
-                "sales/invoice".to_string()
-            ]
-        );
+        assert!(m.packages.is_empty());
     }
 
     #[test]
-    fn build_model_flat_bundle_yields_single_root_package() {
+    fn build_model_flat_bundle_has_no_structural_package() {
         let b = vec![
             (
                 "order.md".to_string(),
@@ -1822,13 +1807,7 @@ mod tests {
             ),
         ];
         let m = build_model(&b);
-        assert_eq!(m.packages.len(), 1);
-        let root = &m.packages[0];
-        assert_eq!(root.key, "");
-        assert_eq!(
-            root.members,
-            vec!["customer".to_string(), "order".to_string()]
-        );
+        assert!(m.packages.is_empty());
     }
 
     const ORDER: &str = "---\ntype: uml.Class\nstereotype: [aggregateRoot, entity]\ntitle: Order\n---\n# Order\n\n## Attributes\n- id: OrderId\n- status: [OrderStatus](./order-status.md) {0..1}\n\n## Relationships\n- composes [OrderLine](./order-line.md): 1 to 1..* lines\n\n## Provenance\nHand-authored. Keep me.\n";
@@ -1877,8 +1856,8 @@ mod tests {
     }
 
     #[test]
-    fn parse_reports_unknown_type_on_frontmatter_line() {
-        let src = "---\ntype: bpmn.Task\ntitle: X\n---\n# X\n";
+    fn parse_reports_unknown_uml_metaclass_on_frontmatter_line() {
+        let src = "---\ntype: uml.FutureThing\ntitle: X\n---\n# X\n";
         let (_doc, diags) = parse(src);
         let d = diags
             .iter()
@@ -1886,6 +1865,23 @@ mod tests {
             .unwrap();
         assert_eq!(d.line, 2);
         assert_eq!(d.severity, crate::diagnostic::Severity::Warning);
+    }
+
+    #[test]
+    fn parse_accepts_arbitrary_okf_type_without_uml_diagnostics() {
+        for source in [
+            "---\ntype: bpmn.Task\ntitle: X\n---\n# X\n",
+            "---\ntype: Playbook\ntitle: X\n---\n# X\n",
+            "# Untyped\n",
+        ] {
+            let (_, diagnostics) = parse(source);
+            assert!(
+                diagnostics
+                    .iter()
+                    .all(|diagnostic| diagnostic.code != DiagCode::UnknownType),
+                "{diagnostics:?}"
+            );
+        }
     }
 
     #[test]

@@ -205,7 +205,7 @@ pub fn link(docs: &[(String, ElementType, Document)]) -> Vec<Diagnostic> {
     for (path, ty, _doc) in docs {
         let slug = crate::okf::id_of(path);
         *slug_count.entry(slug.clone()).or_insert(0) += 1;
-        if !ty.is_view() {
+        if crate::uml::recognizes_type(ty) && !ty.is_view() {
             keyset.insert(slug);
         }
     }
@@ -623,21 +623,23 @@ pub fn validate_from_source(bundle: &crate::source::SourceBundle) -> Vec<Diagnos
         let path = source.path().as_str();
         let text = source.text();
         let (doc, mut syn) = crate::parse::parse(text);
-        // Index documents are navigation-only: their body is an H1, an optional
-        // description, and a link list (exactly what `reindex` emits). That
-        // content is legitimate, so the preamble `droppable-content` scan — which
-        // assumes prose before the first section is dropped on serialize — does
-        // not apply to them.
-        let is_index = crate::okf::is_index_path(path);
-        if is_index {
-            syn.retain(|d| d.code != DiagCode::DroppableContent);
+        let ty = ElementType::parse(doc.frontmatter.get_str("type").unwrap_or(""));
+        let claimed = crate::uml::recognizes_type(&ty);
+        if !claimed {
+            syn.retain(|diagnostic| {
+                matches!(
+                    diagnostic.code,
+                    DiagCode::FrontmatterNotClean | DiagCode::UnknownType
+                )
+            });
         }
         for d in &mut syn {
             d.file = path.to_owned();
         }
         diags.append(&mut syn);
-        let ty = ElementType::parse(doc.frontmatter.get_str("type").unwrap_or("uml.Class"));
-        docs.push((path.to_owned(), ty, doc));
+        if claimed {
+            docs.push((path.to_owned(), ty, doc));
+        }
     }
     diags.extend(link(&docs));
     diags
@@ -648,16 +650,23 @@ pub fn validate(bundle: &[(String, String)]) -> Vec<Diagnostic> {
     let mut docs = Vec::new();
     for (path, text) in bundle {
         let (doc, mut syn) = crate::parse::parse(text);
-        let is_index = crate::okf::is_index_path(path);
-        if is_index {
-            syn.retain(|d| d.code != DiagCode::DroppableContent);
+        let ty = ElementType::parse(doc.frontmatter.get_str("type").unwrap_or(""));
+        let claimed = crate::uml::recognizes_type(&ty);
+        if !claimed {
+            syn.retain(|diagnostic| {
+                matches!(
+                    diagnostic.code,
+                    DiagCode::FrontmatterNotClean | DiagCode::UnknownType
+                )
+            });
         }
         for diagnostic in &mut syn {
             diagnostic.file = path.clone();
         }
         diags.append(&mut syn);
-        let ty = ElementType::parse(doc.frontmatter.get_str("type").unwrap_or("uml.Class"));
-        docs.push((path.clone(), ty, doc));
+        if claimed {
+            docs.push((path.clone(), ty, doc));
+        }
     }
     diags.extend(link(&docs));
     diags
@@ -933,15 +942,72 @@ mod tests {
     }
 
     #[test]
-    fn warns_on_unknown_type() {
+    fn warns_on_unknown_uml_metaclass() {
         let b = vec![(
             "a/x.md".into(),
-            "---\ntype: bpmn.Task\ntitle: X\n---\n# X\n".into(),
+            "---\ntype: uml.FutureThing\ntitle: X\n---\n# X\n".into(),
         )];
         let d = validate(&b);
         let w = d.iter().find(|x| x.code == DiagCode::UnknownType).unwrap();
         assert_eq!(w.severity, crate::diagnostic::Severity::Warning);
         assert_eq!(w.line, 2);
+    }
+
+    #[test]
+    fn arbitrary_and_missing_types_are_valid_okf() {
+        for source in [
+            "---\ntype: bpmn.Task\ntitle: X\n---\n# X\n",
+            "---\ntype: Playbook\ntitle: X\n---\n# X\n",
+            "# Untyped prose\n\nAnything goes here.\n",
+        ] {
+            let diagnostics = validate(&[("a/x.md".into(), source.into())]);
+            assert!(diagnostics.is_empty(), "{diagnostics:?}");
+        }
+    }
+
+    #[test]
+    fn unclaimed_okf_sections_are_not_validated_as_uml() {
+        let diagnostics = validate(&[(
+            "vendor.md".into(),
+            "---\ntype: vendor.Custom\n---\n# Vendor\n\n## Attributes\n- arbitrary prose without UML syntax\n\n## Layout\nAnything.\n"
+                .into(),
+        )]);
+        assert!(diagnostics.is_empty(), "{diagnostics:?}");
+    }
+
+    #[test]
+    fn unclaimed_okf_frontmatter_may_reuse_uml_field_names() {
+        let diagnostics = validate(&[(
+            "vendor.md".into(),
+            "---\ntype: vendor.Custom\ncardinality: vendor-specific\n---\n# Vendor\n".into(),
+        )]);
+        assert!(diagnostics.is_empty(), "{diagnostics:?}");
+    }
+
+    #[test]
+    fn unclaimed_okf_concepts_do_not_satisfy_uml_references() {
+        let diagnostics = validate(&[
+            (
+                "order.md".into(),
+                "---\ntype: uml.Class\n---\n# Order\n\n## Relationships\n- depends [Vendor](./vendor.md)\n".into(),
+            ),
+            (
+                "vendor.md".into(),
+                "---\ntype: vendor.Custom\n---\n# Vendor\n".into(),
+            ),
+            (
+                "diagram.md".into(),
+                "---\ntype: Diagram\ntitle: D\nprofile: uml-domain\n---\n# D\n\n## Members\n- [Vendor](./vendor.md)\n".into(),
+            ),
+        ]);
+
+        assert_eq!(
+            diagnostics
+                .iter()
+                .filter(|diagnostic| diagnostic.code == DiagCode::UnresolvedTarget)
+                .count(),
+            2
+        );
     }
 
     #[test]

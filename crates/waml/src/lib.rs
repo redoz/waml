@@ -18,6 +18,7 @@ pub mod slug;
 pub mod solve;
 pub mod source;
 pub mod syntax;
+pub mod uml;
 pub mod validate;
 
 #[cfg(test)]

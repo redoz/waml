@@ -255,7 +255,6 @@ mod tests {
             body: String::new().into(),
             links: vec![],
             citations: vec![],
-            role: Default::default(),
             extra: Default::default(),
         }
     }

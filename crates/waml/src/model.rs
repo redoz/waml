@@ -967,11 +967,11 @@ pub struct Model {
     pub nodes: Vec<Node>,
     pub edges: Vec<Edge>,
     pub diagrams: Vec<Diagram>,
-    /// Bundle/root name (root `index.md` H1); "" when absent. Export label + root crumb.
+    /// Legacy tuple-adapter root name; normal UML projections leave this empty.
     #[cfg_attr(feature = "serde", serde(default))]
     pub path: String,
-    /// Discovered `uml.Package` nodes (root + nested). Kept out of `nodes` so
-    /// classifier consumers are unaffected.
+    /// Legacy tuple-adapter structural packages. Normal UML projections leave
+    /// this empty; authored `uml.Package` Concepts live in `nodes`.
     #[cfg_attr(
         feature = "serde",
         serde(default, skip_serializing_if = "Vec::is_empty")
@@ -1012,6 +1012,19 @@ pub struct Model {
 impl Model {
     pub fn node(&self, key: &str) -> Option<&Node> {
         self.nodes.iter().find(|n| n.key == key)
+    }
+
+    pub fn contains_concept(&self, concept_id: &str) -> bool {
+        self.nodes.iter().any(|node| node.key == concept_id)
+            || self
+                .diagrams
+                .iter()
+                .any(|diagram| diagram.key == concept_id)
+            || self.flows.iter().any(|flow| flow.key == concept_id)
+            || self
+                .interactions
+                .iter()
+                .any(|interaction| interaction.key == concept_id)
     }
 }
 

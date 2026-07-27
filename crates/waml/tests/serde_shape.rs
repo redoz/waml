@@ -62,6 +62,24 @@ fn directory_address_deserialization_enforces_rooted_invariants() {
 }
 
 #[test]
+fn selective_uml_projection_omits_unknowns_and_structural_packages() {
+    let source = waml::source::SourceBundle::try_from_pairs([
+        ("index.md", "# Root\n"),
+        ("order.md", "---\ntype: uml.Class\n---\n# Order\n"),
+        ("vendor.md", "---\ntype: vendor.Custom\n---\n# Vendor\n"),
+    ])
+    .unwrap();
+    let bundle = waml::okf::Bundle::parse(&source).unwrap();
+    let projection = waml::uml::project(&bundle);
+    let value = serde_json::to_value(&projection).unwrap();
+
+    assert_eq!(value["nodes"].as_array().unwrap().len(), 1);
+    assert_eq!(value["nodes"][0]["key"], "order");
+    assert!(value.get("packages").is_none());
+    assert_eq!(value["path"], "");
+}
+
+#[test]
 fn model_json_matches_ts_field_names() {
     let model = build_model(&bundle());
     let v = serde_json::to_value(&model).unwrap();
