@@ -15,8 +15,8 @@ script_mod! {
 
     mod.widgets.DiagramPropertiesBase = #(DiagramProperties::register_widget(vm))
     mod.widgets.DiagramProperties = set_type_default() do mod.widgets.DiagramPropertiesBase{
-        width: 320.0
-        height: Fit
+        width: Fill
+        height: Fill
         flow: Down
         spacing: 0.0
         show_bg: true
@@ -56,9 +56,15 @@ script_mod! {
         body := View {
             width: Fill
             height: Fit
+            flow: Right
+            align: Align{x: 0.0}
+            padding: Inset{left: 22.0, right: 22.0, top: 10.0, bottom: 10.0}
+
+            form := View {
+            width: Fill{max: 620.0}
+            height: Fit
             flow: Down
-            spacing: 5.0
-            padding: Inset{left: 14.0, right: 14.0, top: 10.0, bottom: 10.0}
+            spacing: 4.0
 
             identity_section := Label {
                 text: "Identity"
@@ -70,8 +76,8 @@ script_mod! {
             }
             title_input := TextInput {
                 width: Fill
-                height: 30.0
-                padding: Inset{left: 9.0, right: 9.0, top: 5.0, bottom: 5.0}
+                height: 28.0
+                padding: Inset{left: 9.0, right: 9.0, top: 4.0, bottom: 4.0}
                 empty_text: "Diagram title"
                 draw_bg +: {
                     color: atlas.field_bg
@@ -110,9 +116,9 @@ script_mod! {
             }
             description_input := TextInput {
                 width: Fill
-                height: 42.0
+                height: 88.0
                 padding: Inset{left: 9.0, right: 9.0, top: 5.0, bottom: 5.0}
-                is_multiline: false
+                is_multiline: true
                 empty_text: "Optional note"
                 draw_bg +: {
                     color: atlas.field_bg
@@ -147,7 +153,7 @@ script_mod! {
 
             attributes_rule := View {
                 width: Fill height: 1.0
-                margin: Inset{top: 8.0, bottom: 4.0}
+                margin: Inset{top: 7.0, bottom: 3.0}
                 show_bg: true
                 draw_bg +: { color: atlas.surface_border }
             }
@@ -156,52 +162,52 @@ script_mod! {
                 draw_text +: { color: atlas.text_dim text_style: fonts.text_eyebrow }
             }
             attributes_row := View {
-                width: Fill height: 28.0 flow: Right align: Align{y: 0.5}
+                width: Fill height: 26.0 flow: Right align: Align{y: 0.5}
                 attributes_label := Label {
                     text: "Show attributes"
-                    draw_text +: { color: atlas.text text_style: fonts.text_body }
+                    draw_text +: { color: atlas.text text_style: fonts.text_caption }
                 }
                 attributes_spacer := View { width: Fill height: 1.0 }
                 attributes_toggle := ToggleControl {}
             }
             types_row := View {
-                width: Fill height: 28.0 flow: Right align: Align{y: 0.5}
+                width: Fill height: 26.0 flow: Right align: Align{y: 0.5}
                 types_label := Label {
                     text: "Show type"
-                    draw_text +: { color: atlas.text text_style: fonts.text_body }
+                    draw_text +: { color: atlas.text text_style: fonts.text_caption }
                 }
                 types_spacer := View { width: Fill height: 1.0 }
                 types_toggle := ToggleControl {}
             }
             visibility_row := View {
-                width: Fill height: 28.0 flow: Right align: Align{y: 0.5}
+                width: Fill height: 26.0 flow: Right align: Align{y: 0.5}
                 visibility_label := Label {
                     text: "Show visibility"
-                    draw_text +: { color: atlas.text text_style: fonts.text_body }
+                    draw_text +: { color: atlas.text text_style: fonts.text_caption }
                 }
                 visibility_spacer := View { width: Fill height: 1.0 }
                 visibility_toggle := ToggleControl {}
             }
             attribute_cardinality_row := View {
-                width: Fill height: 32.0 flow: Right align: Align{y: 0.5}
+                width: Fill height: 26.0 flow: Right align: Align{y: 0.5}
                 attribute_cardinality_label := Label {
                     text: "Cardinality"
-                    draw_text +: { color: atlas.text text_style: fonts.text_body }
+                    draw_text +: { color: atlas.text text_style: fonts.text_caption }
                 }
                 attribute_cardinality_spacer := View { width: Fill height: 1.0 }
-                cardinality_control := SegmentedControl {}
+                cardinality_control := SegmentedControl { width: 280.0 height: 26.0 }
             }
             max_attributes_row := View {
-                width: Fill height: 32.0 flow: Right align: Align{y: 0.5}
+                width: Fill height: 26.0 flow: Right align: Align{y: 0.5}
                 max_attributes_label := Label {
                     text: "Max attributes"
-                    draw_text +: { color: atlas.text text_style: fonts.text_body }
+                    draw_text +: { color: atlas.text text_style: fonts.text_caption }
                 }
                 max_attributes_spacer := View { width: Fill height: 1.0 }
                 max_attributes_input := TextInput {
                     width: 72.0
-                    height: 30.0
-                    padding: Inset{left: 9.0, right: 9.0, top: 5.0, bottom: 5.0}
+                    height: 26.0
+                    padding: Inset{left: 9.0, right: 9.0, top: 3.0, bottom: 3.0}
                     is_numeric_only: true
                     empty_text: "All"
                     draw_bg +: {
@@ -237,7 +243,7 @@ script_mod! {
             }
             relationships_rule := View {
                 width: Fill height: 1.0
-                margin: Inset{top: 8.0, bottom: 4.0}
+                margin: Inset{top: 7.0, bottom: 3.0}
                 show_bg: true
                 draw_bg +: { color: atlas.surface_border }
             }
@@ -246,28 +252,28 @@ script_mod! {
                 draw_text +: { color: atlas.text_dim text_style: fonts.text_eyebrow }
             }
             roles_row := View {
-                width: Fill height: 28.0 flow: Right align: Align{y: 0.5}
+                width: Fill height: 26.0 flow: Right align: Align{y: 0.5}
                 roles_label := Label {
                     text: "Show roles"
-                    draw_text +: { color: atlas.text text_style: fonts.text_body }
+                    draw_text +: { color: atlas.text text_style: fonts.text_caption }
                 }
                 roles_spacer := View { width: Fill height: 1.0 }
                 roles_toggle := ToggleControl {}
             }
             relationship_cardinality_row := View {
-                width: Fill height: 28.0 flow: Right align: Align{y: 0.5}
+                width: Fill height: 26.0 flow: Right align: Align{y: 0.5}
                 relationship_cardinality_label := Label {
                     text: "Show cardinality"
-                    draw_text +: { color: atlas.text text_style: fonts.text_body }
+                    draw_text +: { color: atlas.text text_style: fonts.text_caption }
                 }
                 relationship_cardinality_spacer := View { width: Fill height: 1.0 }
                 cardinality_toggle := ToggleControl {}
             }
             labels_row := View {
-                width: Fill height: 28.0 flow: Right align: Align{y: 0.5}
+                width: Fill height: 26.0 flow: Right align: Align{y: 0.5}
                 labels_label := Label {
                     text: "Show labels"
-                    draw_text +: { color: atlas.text text_style: fonts.text_body }
+                    draw_text +: { color: atlas.text text_style: fonts.text_caption }
                 }
                 labels_spacer := View { width: Fill height: 1.0 }
                 labels_toggle := ToggleControl {}
@@ -275,7 +281,7 @@ script_mod! {
 
             stereotypes_rule := View {
                 width: Fill height: 1.0
-                margin: Inset{top: 8.0, bottom: 4.0}
+                margin: Inset{top: 7.0, bottom: 3.0}
                 show_bg: true
                 draw_bg +: { color: atlas.surface_border }
             }
@@ -284,13 +290,14 @@ script_mod! {
                 draw_text +: { color: atlas.text_dim text_style: fonts.text_eyebrow }
             }
             stereotypes_row := View {
-                width: Fill height: 28.0 flow: Right align: Align{y: 0.5}
+                width: Fill height: 26.0 flow: Right align: Align{y: 0.5}
                 stereotypes_label := Label {
                     text: "Show stereotype"
-                    draw_text +: { color: atlas.text text_style: fonts.text_body }
+                    draw_text +: { color: atlas.text text_style: fonts.text_caption }
                 }
                 stereotypes_spacer := View { width: Fill height: 1.0 }
                 stereotypes_toggle := ToggleControl {}
+            }
             }
         }
     }
@@ -657,9 +664,14 @@ impl DiagramPropertiesRef {
 
 #[cfg(test)]
 mod tests {
-    use super::{DiagramPropertiesAction, DiagramPropertiesState, PropertyChange};
+    use super::{
+        DiagramProperties, DiagramPropertiesAction, DiagramPropertiesState, PropertyChange,
+    };
     use crate::diagram_display::ResolvedDiagramDisplay;
-    use makepad_widgets::{live_id, LiveId};
+    use makepad_widgets::{
+        ids, live_id, script_eval, Apply, LiveId, Scope, ScriptApply, ScriptMod, ScriptNew,
+        ScriptVmCx, Size, TextInput, Widget, WidgetRef,
+    };
     use waml::model::CardinalityVisibility;
     use waml::ops::DiagramDisplaySet;
 
@@ -677,6 +689,72 @@ mod tests {
             stereotype_filter: Some(vec!["entity".into()]),
             stereotype_colors: vec!["entity=#1496dc".into()],
         }
+    }
+
+    fn scripted_properties() -> (makepad_widgets::ScriptVm<'static>, WidgetRef) {
+        let mut vm = crate::script_gate::boot_test_vm();
+        crate::theme_atlas::script_mod(&mut vm);
+        crate::fonts::script_mod(&mut vm);
+        crate::icons::script_mod(&mut vm);
+        crate::icon_button::script_mod(&mut vm);
+        crate::property_controls::script_mod(&mut vm);
+        crate::diagram_properties::script_mod(&mut vm);
+        let value = script_eval!(vm, { mod.widgets.DiagramProperties {} });
+        let mut widget = WidgetRef::script_new(&mut vm);
+        widget.script_apply(&mut vm, &Apply::New, &mut Scope::empty(), value);
+        (vm, widget)
+    }
+
+    #[test]
+    fn form_uses_bounded_fill_for_responsive_left_anchored_layout() {
+        let (mut vm, widget) = scripted_properties();
+        let properties = widget
+            .borrow::<DiagramProperties>()
+            .expect("DiagramProperties widget");
+        let cx = vm.cx_mut();
+
+        let walk = properties.view.widget(cx, ids!(form)).walk(cx);
+
+        match walk.width {
+            Size::Fill { max, .. } => assert_eq!(max, Some(620.0)),
+            other => panic!("form width must be bounded Fill, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn note_input_is_a_fixed_height_multiline_editor() {
+        let (mut vm, widget) = scripted_properties();
+        let properties = widget
+            .borrow::<DiagramProperties>()
+            .expect("DiagramProperties widget");
+        let cx = vm.cx_mut();
+        let input = properties.view.widget(cx, ids!(description_input));
+
+        assert!(
+            input
+                .borrow::<TextInput>()
+                .expect("description input")
+                .is_multiline()
+        );
+        assert!(matches!(input.walk(cx).height, Size::Fixed(88.0)));
+    }
+
+    #[test]
+    fn cardinality_control_is_compact() {
+        let (mut vm, widget) = scripted_properties();
+        let properties = widget
+            .borrow::<DiagramProperties>()
+            .expect("DiagramProperties widget");
+        let cx = vm.cx_mut();
+
+        assert!(matches!(
+            properties
+                .view
+                .widget(cx, ids!(cardinality_control))
+                .walk(cx)
+                .width,
+            Size::Fixed(280.0)
+        ));
     }
 
     #[test]
