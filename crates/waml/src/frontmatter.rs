@@ -92,6 +92,59 @@ impl Frontmatter {
     }
 }
 
+fn normalize_line_endings(value: &str) -> String {
+    let mut normalized = String::with_capacity(value.len());
+    let mut characters = value.chars().peekable();
+    while let Some(character) = characters.next() {
+        if character == '\r' {
+            if characters.peek() == Some(&'\n') {
+                characters.next();
+            }
+            normalized.push('\n');
+        } else {
+            normalized.push(character);
+        }
+    }
+    normalized
+}
+
+fn escape_quoted_string(value: &str) -> String {
+    let normalized = normalize_line_endings(value);
+    let mut escaped = String::with_capacity(normalized.len());
+    for character in normalized.chars() {
+        match character {
+            '\\' => escaped.push_str("\\\\"),
+            '"' => escaped.push_str("\\\""),
+            '\n' => escaped.push_str("\\n"),
+            _ => escaped.push(character),
+        }
+    }
+    escaped
+}
+
+fn decode_quoted_string(value: &str) -> String {
+    let mut decoded = String::with_capacity(value.len());
+    let mut characters = value.chars();
+    while let Some(character) = characters.next() {
+        if character != '\\' {
+            decoded.push(character);
+            continue;
+        }
+        match characters.next() {
+            Some('\\') => decoded.push('\\'),
+            Some('"') => decoded.push('"'),
+            Some('n') => decoded.push('\n'),
+            Some('r') => decoded.push('\r'),
+            Some(other) => {
+                decoded.push('\\');
+                decoded.push(other);
+            }
+            None => decoded.push('\\'),
+        }
+    }
+    normalize_line_endings(&decoded)
+}
+
 fn parse_value(s: &str) -> FmValue {
     if let Some(inner) = s.strip_prefix('[').and_then(|x| x.strip_suffix(']')) {
         let items = inner
@@ -102,7 +155,7 @@ fn parse_value(s: &str) -> FmValue {
         return FmValue::List(items);
     }
     if let Some(inner) = s.strip_prefix('"').and_then(|x| x.strip_suffix('"')) {
-        return FmValue::Str(inner.replace("\\\"", "\"").replace("\\\\", "\\"));
+        return FmValue::Str(decode_quoted_string(inner));
     }
     if NUM_RE.is_match(s) {
         if let Ok(n) = s.parse::<f64>() {
@@ -176,6 +229,7 @@ fn scalar_needs_quote(s: &str) -> bool {
         || s.contains('"')
         || s.contains('\\')
         || s.contains('\n')
+        || s.contains('\r')
 }
 
 fn render_value(v: &FmValue) -> String {
@@ -190,7 +244,7 @@ fn render_value(v: &FmValue) -> String {
         FmValue::Bool(b) => b.to_string(),
         FmValue::Str(s) => {
             if scalar_needs_quote(s) {
-                format!("\"{}\"", s.replace('\\', "\\\\").replace('"', "\\\""))
+                format!("\"{}\"", escape_quoted_string(s))
             } else {
                 s.clone()
             }
@@ -334,5 +388,42 @@ mod tests {
         let rendered = render_frontmatter(&fm);
         let (fm2, _) = parse_frontmatter(&format!("---\n{rendered}\n---\n"));
         assert_eq!(fm, fm2, "round-trip must preserve the nested structure");
+    }
+
+    #[test]
+    fn quoted_multiline_strings_round_trip_as_normalized_lf() {
+        let fm = Frontmatter {
+            entries: vec![(
+                "description".into(),
+                FmValue::Str("First\r\nSecond\rThird\nFourth".into()),
+            )],
+        };
+
+        let rendered = render_frontmatter(&fm);
+
+        assert_eq!(
+            rendered,
+            r#"description: "First\nSecond\nThird\nFourth""#
+        );
+        let (parsed, _) = parse_frontmatter(&format!("---\n{rendered}\n---\n"));
+        assert_eq!(
+            parsed.get_str("description"),
+            Some("First\nSecond\nThird\nFourth")
+        );
+    }
+
+    #[test]
+    fn quoted_escape_decoder_distinguishes_newline_from_literal_backslash_n() {
+        let fm = Frontmatter {
+            entries: vec![(
+                "description".into(),
+                FmValue::Str(r"Line\nLiteral".into()),
+            )],
+        };
+
+        let rendered = render_frontmatter(&fm);
+        let (parsed, _) = parse_frontmatter(&format!("---\n{rendered}\n---\n"));
+
+        assert_eq!(parsed, fm);
     }
 }
