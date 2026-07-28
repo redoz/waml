@@ -98,7 +98,7 @@ script_mod! {
                 when := Label {
                     text: ""
                     draw_text +: {
-                        color: atlas.text_dim
+                        color: atlas.text
                         text_style: fonts.text_micro
                     }
                 }
@@ -106,9 +106,9 @@ script_mod! {
 
             path := Label {
                 text: ""
-                margin: Inset{bottom: 4.0}
+                margin: Inset{left: -1.0, top: -3.0, bottom: 7.0}
                 draw_text +: {
-                    color: atlas.text_dim
+                    color: atlas.text
                     text_style: fonts.text_micro
                 }
             }

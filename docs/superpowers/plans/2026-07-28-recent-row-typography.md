@@ -13,6 +13,7 @@
 - Keep the Recent row at 48 px tall.
 - Render the title at 10 px and the relative time/path at 9 px.
 - Vertically center the time against the title.
+- Render time/path with `atlas.text` and position the path through its Turtle walk margin.
 - Leave shared typography tokens and row interactions unchanged.
 
 ---
@@ -71,7 +72,7 @@ textcol := View {
         when := Label {
             text: ""
             draw_text +: {
-                color: atlas.text_dim
+                color: atlas.text
                 text_style: fonts.text_micro
             }
         }
@@ -79,9 +80,9 @@ textcol := View {
 
     path := Label {
         text: ""
-        margin: Inset{bottom: 4.0}
+        margin: Inset{left: -1.0, top: -3.0, bottom: 7.0}
         draw_text +: {
-            color: atlas.text_dim
+            color: atlas.text
             text_style: fonts.text_micro
         }
     }

@@ -16,8 +16,8 @@ Make each start-screen Recent row feel smaller and better balanced while preserv
 - Render the title at 10 px.
 - Render both the relative time and path at 9 px.
 - Keep the title and relative time in the same horizontal title row with vertical centering, so their visual centerlines align.
-- Retain the title-over-path stack, but replace the negative inter-line spacing with non-negative spacing and explicit bottom breathing room so the path no longer sits against the row's lower edge.
-- Leave the package glyph, pin anchor, hover behavior, colors, and data flow unchanged.
+- Retain the title-over-path Turtle stack with zero container spacing, then use the path's walk margin (`left: -1`, `top: -3`, `bottom: 7`) to tighten the visual line gap, align its optical left edge, and reserve visible room below it.
+- Render time/path with `atlas.text` for sufficient contrast; leave the package glyph, pin anchor, hover behavior, and data flow unchanged.
 
 The centralized scale gains `text_compact_label` (IBM Plex Sans Medium, 10 px) and `text_micro` (IBM Plex Sans Regular, 9 px). The Fonts style-guide overlay exposes both roles. Existing role values and consumers remain unchanged.
 
@@ -26,7 +26,7 @@ The centralized scale gains `text_compact_label` (IBM Plex Sans Medium, 10 px) a
 - Use the existing chrome typography gate as the regression check against ad-hoc size overrides.
 - Update the Fonts-overlay coverage test from eight to ten roles using a red/green cycle.
 - Run the focused `waml-editor` Recent-row tests and the crate test suite.
-- Build and launch the editor from the isolated worktree, then capture the native window to verify the visual hierarchy, centerline alignment, and lower spacing at the actual HiDPI scale.
+- Build and launch the editor from the isolated worktree, then capture the native window to verify the visual hierarchy, contrast, centerline alignment, optical left edge, and lower spacing at the actual HiDPI scale.
 
 ## Scope
 
