@@ -1,8 +1,8 @@
 use std::{hash::Hash, sync::Arc};
 
 use waml_syntax::{
-    write_green_to, GreenElement, GreenFactory, GreenText, LineIndex, MarkdownDialect, SourceText,
-    SyntaxLanguage, TextError, TextRange, TextSize, TriviaKind,
+    write_green_to, GreenElement, GreenError, GreenFactory, GreenText, GreenTrivia, LineIndex,
+    MarkdownDialect, SourceText, SyntaxLanguage, TextError, TextRange, TextSize, TriviaKind,
 };
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -105,8 +105,12 @@ fn green_storage_is_lossless_checked_and_source_aware() {
             },
             [],
             [
-                factory.trivia(TriviaKind::Whitespace, GreenText::Static("  ")),
-                factory.trivia(TriviaKind::Newline, GreenText::Static("\r\n")),
+                factory
+                    .trivia(TriviaKind::Whitespace, GreenText::Static("  "))
+                    .unwrap(),
+                factory
+                    .trivia(TriviaKind::Newline, GreenText::Static("\r\n"))
+                    .unwrap(),
             ],
         )
         .unwrap();
@@ -148,7 +152,9 @@ fn green_writer_preserves_eof_leading_whitespace_and_dialect_marker() {
         .token(
             Kind::Ident,
             GreenText::Static(""),
-            [factory.trivia(TriviaKind::Whitespace, GreenText::Static("  "))],
+            [factory
+                .trivia(TriviaKind::Whitespace, GreenText::Static("  "))
+                .unwrap()],
             [],
         )
         .unwrap();
@@ -162,4 +168,75 @@ fn green_writer_preserves_eof_leading_whitespace_and_dialect_marker() {
         MarkdownDialect::CommonMarkCurrent,
         MarkdownDialect::CommonMarkCurrent
     );
+}
+
+#[test]
+fn green_construction_rejects_invalid_source_slices() {
+    let source = text("aé");
+    let factory = GreenFactory::<TestLanguage>::new();
+
+    let out_of_bounds = factory.token(
+        Kind::Ident,
+        GreenText::SourceSlice {
+            source: source.clone(),
+            range: range(0, 4),
+        },
+        [],
+        [],
+    );
+    assert!(matches!(
+        out_of_bounds,
+        Err(GreenError::Text(TextError::OutOfBounds {
+            range: invalid,
+            len
+        })) if invalid == range(0, 4) && len == size(3)
+    ));
+
+    let non_boundary = factory.trivia(
+        TriviaKind::Whitespace,
+        GreenText::SourceSlice {
+            source,
+            range: range(2, 3),
+        },
+    );
+    assert!(matches!(
+        non_boundary,
+        Err(GreenError::Text(TextError::NonUtf8Boundary { offset })) if offset == size(2)
+    ));
+
+    let bypassed_factory = factory.token(
+        Kind::Ident,
+        GreenText::Static("a"),
+        [GreenTrivia {
+            kind: TriviaKind::Whitespace,
+            text: GreenText::SourceSlice {
+                source: text("é"),
+                range: range(1, 2),
+            },
+        }],
+        [],
+    );
+    assert!(matches!(
+        bypassed_factory,
+        Err(GreenError::Text(TextError::NonUtf8Boundary { offset })) if offset == size(1)
+    ));
+}
+
+#[test]
+fn token_flags_expose_missing_and_bad_status() {
+    let factory = GreenFactory::<TestLanguage>::new();
+    let regular = factory
+        .token(Kind::Colon, GreenText::Static(":"), [], [])
+        .unwrap();
+    let missing = factory.missing_token(Kind::Colon);
+    let bad = factory
+        .bad_token(Kind::Bad, GreenText::Static("?"), Code::Invalid)
+        .unwrap();
+
+    assert!(!regular.flags().is_missing());
+    assert!(!regular.flags().is_bad());
+    assert!(missing.flags().is_missing());
+    assert!(!missing.flags().is_bad());
+    assert!(!bad.flags().is_missing());
+    assert!(bad.flags().is_bad());
 }

@@ -37,6 +37,19 @@ pub struct GreenTrivia {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct TokenFlags(u8);
 
+impl TokenFlags {
+    const MISSING: u8 = 1 << 0;
+    const BAD: u8 = 1 << 1;
+
+    pub fn is_missing(self) -> bool {
+        self.0 & Self::MISSING != 0
+    }
+
+    pub fn is_bad(self) -> bool {
+        self.0 & Self::BAD != 0
+    }
+}
+
 #[derive(Debug)]
 pub struct GreenNodeData<L: SyntaxLanguage> {
     kind: L::Kind,
@@ -76,6 +89,13 @@ impl fmt::Display for GreenError {
 impl std::error::Error for GreenError {}
 
 impl GreenText {
+    fn validate(&self) -> Result<(), TextError> {
+        if let Self::SourceSlice { source, range } = self {
+            source.slice(*range)?;
+        }
+        Ok(())
+    }
+
     fn width(&self) -> Result<TextSize, TextError> {
         match self {
             Self::Static(text) => TextSize::try_from_usize(text.len()),
@@ -97,6 +117,10 @@ impl GreenText {
     }
 }
 impl GreenTrivia {
+    fn validate(&self) -> Result<(), TextError> {
+        self.text.validate()
+    }
+
     fn width(&self) -> Result<TextSize, TextError> {
         self.text.width()
     }
@@ -180,8 +204,9 @@ impl<L: SyntaxLanguage> GreenFactory<L> {
     pub fn new() -> Self {
         Self(PhantomData)
     }
-    pub fn trivia(&self, kind: TriviaKind, text: GreenText) -> GreenTrivia {
-        GreenTrivia { kind, text }
+    pub fn trivia(&self, kind: TriviaKind, text: GreenText) -> Result<GreenTrivia, GreenError> {
+        text.validate()?;
+        Ok(GreenTrivia { kind, text })
     }
     pub fn token<I, J>(
         &self,
@@ -210,7 +235,7 @@ impl<L: SyntaxLanguage> GreenFactory<L> {
             Vec::new(),
             Vec::new(),
             Arc::from([]),
-            TokenFlags(1),
+            TokenFlags(TokenFlags::MISSING),
         )
         .expect("empty missing token has zero width")
     }
@@ -220,6 +245,7 @@ impl<L: SyntaxLanguage> GreenFactory<L> {
         text: GreenText,
         code: L::DiagnosticCode,
     ) -> Result<GreenToken<L>, GreenError> {
+        text.validate()?;
         if text.width()?.to_usize() == 0 {
             return Err(GreenError::EmptyBadToken);
         }
@@ -229,7 +255,7 @@ impl<L: SyntaxLanguage> GreenFactory<L> {
             Vec::new(),
             Vec::new(),
             Arc::from([code]),
-            TokenFlags(2),
+            TokenFlags(TokenFlags::BAD),
         )
     }
     pub fn node<I>(&self, kind: L::Kind, children: I) -> Result<GreenNode<L>, GreenError>
@@ -257,6 +283,10 @@ impl<L: SyntaxLanguage> GreenFactory<L> {
         annotations: Arc<[L::DiagnosticCode]>,
         flags: TokenFlags,
     ) -> Result<GreenToken<L>, GreenError> {
+        text.validate()?;
+        for trivia in leading.iter().chain(trailing.iter()) {
+            trivia.validate()?;
+        }
         let width = leading
             .iter()
             .chain(std::iter::once(&GreenTrivia {
