@@ -152,10 +152,22 @@ fn canonical_document(source: &str, structure: &MarkdownStructureMap) -> String 
         .first()
         .map(|(start, _)| *start)
         .unwrap_or(source.len());
-    let mut prefix = canonical_prefix(&source[..prefix_end])
-        .trim_end_matches('\n')
-        .to_owned();
-    prefix.push('\n');
+    let mut prefix =
+        if let Some((body_start, body_end)) = unowned_body_range(source, structure, &starts) {
+            let mut prefix = canonical_prefix(&source[..body_start])
+                .trim_end_matches(['\r', '\n'])
+                .to_owned();
+            prefix.push_str("\n\n");
+            prefix.push_str(&source[body_start..body_end]);
+            prefix
+        } else {
+            canonical_prefix(&source[..prefix_end])
+                .trim_end_matches('\n')
+                .to_owned()
+        };
+    if !prefix.ends_with('\n') {
+        prefix.push('\n');
+    }
     let mut sections = Vec::new();
     for (index, (start, title)) in starts.iter().enumerate() {
         let end = starts
@@ -691,26 +703,8 @@ fn protected_diff(
             })
         })
         .collect();
-    if let Some(heading) = structure.headings.iter().find(|heading| heading.level == 1) {
-        let heading_start = heading.range.start().to_usize();
-        let after_heading = source[heading_start..]
-            .find('\n')
-            .map(|relative| heading_start + relative + 1)
-            .unwrap_or_else(|| heading.range.end().to_usize());
-        let body_end = starts
-            .first()
-            .map(|(start, _)| *start)
-            .unwrap_or(source.len());
-        if after_heading < body_end {
-            let body = &source[after_heading..body_end];
-            let leading = body.len() - body.trim_start_matches(['\r', '\n']).len();
-            let trailing = body.len() - body.trim_end_matches(['\r', '\n']).len();
-            if leading + trailing < body.len() {
-                let start = after_heading + leading;
-                let end = body_end - trailing;
-                protected.push((start, &source[start..end]));
-            }
-        }
+    if let Some((start, end)) = unowned_body_range(source, structure, &starts) {
+        protected.push((start, &source[start..end]));
     }
     protected.sort_by_key(|(start, _)| *start);
     if protected.is_empty() {
@@ -744,6 +738,45 @@ fn protected_diff(
         )?);
     }
     Ok(edits)
+}
+
+fn unowned_body_range(
+    source: &str,
+    structure: &MarkdownStructureMap,
+    starts: &[(usize, &str)],
+) -> Option<(usize, usize)> {
+    let heading = structure
+        .headings
+        .iter()
+        .find(|heading| heading.level == 1)?;
+    let heading_start = heading.range.start().to_usize();
+    let after_heading = source[heading_start..]
+        .find('\n')
+        .map(|relative| heading_start + relative + 1)
+        .unwrap_or_else(|| heading.range.end().to_usize());
+    let section_start = starts
+        .first()
+        .map(|(start, _)| *start)
+        .unwrap_or(source.len());
+    if after_heading >= section_start {
+        return None;
+    }
+    let between = &source[after_heading..section_start];
+    let leading = between.len() - between.trim_start_matches(['\r', '\n']).len();
+    let content = between.trim_end_matches(['\r', '\n']);
+    if leading >= content.len() {
+        return None;
+    }
+    let start = after_heading + leading;
+    let content_end = after_heading + content.len();
+    let line_ending = if source[content_end..].starts_with("\r\n") {
+        2
+    } else if source[content_end..].starts_with('\n') {
+        1
+    } else {
+        0
+    };
+    Some((start, content_end + line_ending))
 }
 
 fn edit_for_gap(base: usize, source: &str, target: &str) -> Result<TextEdit, FormatError> {

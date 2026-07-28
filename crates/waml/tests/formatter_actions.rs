@@ -326,3 +326,40 @@ fn formatter_preserves_unowned_claimed_body_while_formatting_both_sides() {
     assert!(actual.contains("type: uml.Class"));
     assert!(actual.contains("## Values\n- Ready"));
 }
+
+#[test]
+fn formatter_preserves_multiline_crlf_unicode_body_between_owned_regions() {
+    let body = "Body 😀 stays.  \r\n\r\n- raw café item  \r\n> quoted `code`\r\n";
+    let source = format!(
+        "---\r\ntype:   uml.Class\r\n---\r\n# C\r\n\r\n{body}\r\n## Values\r\n\r\n- Ready\r\n"
+    );
+    let candidate = prepared("class.md", &source, 80);
+    let action = Formatter
+        .format(
+            ActionContext::from_prepared(&candidate).unwrap(),
+            document(&candidate, "class.md"),
+        )
+        .unwrap();
+    let body_start = source.find(body).unwrap();
+    let body_end = body_start + body.len();
+    assert!(action.changes[0].edits.iter().all(|edit| {
+        edit.range.end().to_usize() <= body_start || body_end <= edit.range.start().to_usize()
+    }));
+    let formatted = apply(&candidate, action);
+    let actual = formatted
+        .document(&BundlePath::parse("class.md").unwrap())
+        .unwrap()
+        .text();
+    assert!(actual.contains(body), "{actual:?}");
+    assert!(actual.starts_with("---\ntype: uml.Class\n---\n\n# C\n\n"));
+    assert!(actual.ends_with("\n## Values\n- Ready\n"));
+
+    let reparsed = prepared("class.md", actual, 81);
+    let second = Formatter
+        .format(
+            ActionContext::from_prepared(&reparsed).unwrap(),
+            document(&reparsed, "class.md"),
+        )
+        .unwrap();
+    assert!(second.changes[0].edits.is_empty(), "{second:?}");
+}
