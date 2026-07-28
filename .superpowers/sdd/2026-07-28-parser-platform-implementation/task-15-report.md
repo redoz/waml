@@ -46,3 +46,41 @@ placement/remove exact-source behavior. After implementation:
 
 TokenSave queries saved approximately 14,728 tokens in total
 (430 + 3,118 + 11,180).
+
+## Fix Round 1 — Remove Legacy Lowering Authority
+
+- Replaced the remaining `Document`/`Line` parse-mutate-serialize flow with
+  direct `waml_syntax` tree/range edits for frontmatter, H1 title, Attributes,
+  Values, Relationships, Layout, classifier creation/removal, and diagram
+  display fields.
+- Seeded cumulative state with revision-bound UML trees, then reparsed every
+  touched claimed island before the next operation.
+- Rebuilt title, claim, type-reference, selector, duplicate, placement, and
+  referrer queries from current source plus syntax nodes.
+- Removed the compatibility-only `uml::ops::lower_one` and DiagramSet
+  canonicalization branch. Compatibility UML steps now enter a one-operation
+  syntax-native `uml::Batch`; Task 16's one mixed cumulative cursor remains
+  unimplemented.
+- Added `uml_lowering_authority.rs`, which failed first on `parse_document` and
+  now rejects all live `parse_document`, `serialize_document`,
+  `crate::syntax::Document`, `Line<`, and `uml::ops::lower_one` references in
+  the Task 15/compat path.
+- Expanded ordered regressions to prove field, diagram, layout, malformed
+  recovery, raw Operations, trailing whitespace, and stable rollback behavior.
+
+Fresh verification:
+
+- `rtk cargo test -p waml --test uml_lowering_authority`: 1 passed.
+- `rtk cargo test -p waml --test uml_lowering_order`: 7 passed.
+- `rtk cargo test -p waml`: 537 passed across 20 suites.
+- `rtk cargo test -p waml-editor`: 727 passed across 5 suites.
+- `rtk cargo check --workspace --all-features`: passed.
+- `rtk cargo fmt --check`: passed.
+- `rtk git diff --check`: passed.
+- Direct prohibited-symbol scan: no matches.
+- `rtk cargo test --workspace --all-features` remains blocked only by the
+  independently reproducible pre-existing
+  `okf::tests::package_node_and_model_path` failure.
+
+Fix-round TokenSave queries saved approximately 18,924 additional tokens
+(7,734 + 11,190).
