@@ -737,6 +737,39 @@ pub fn placement_would_conflict(
     placement_preview(model, diagram, subject_slug, reference_slug, dir, expanded).0
 }
 
+fn placement_candidate(
+    model: &Model,
+    diagram: &Diagram,
+    subject_slug: &str,
+    reference_slug: &str,
+    dir: waml::layout::Direction,
+) -> Diagram {
+    use waml::layout::{LayoutStatement, NameRef, Operand, OperandRef};
+
+    let referring_path = format!("{}.md", diagram.key);
+    let link = |slug: &str| -> Operand {
+        let target_path = format!("{slug}.md");
+        Operand {
+            ref_: OperandRef::Name(NameRef::Link {
+                title: title_for(model, slug),
+                slug: waml::okf::relative_href(&referring_path, &target_path),
+            }),
+            axis: None,
+            hints: Vec::new(),
+        }
+    };
+
+    let mut scratch = diagram.clone();
+    scratch
+        .layout
+        .retain(|statement| !placement_is_pair(statement, diagram, subject_slug, reference_slug));
+    scratch.layout.push(LayoutStatement::Placement {
+        operands: vec![link(subject_slug), link(reference_slug)],
+        directions: vec![dir],
+    });
+    scratch
+}
+
 /// The same speculative solve as `placement_would_conflict`, but keeping the
 /// candidate layout it produced (node key -> world rect) instead of throwing it
 /// away. The drag-time hover preview animates the canvas into this layout, so
@@ -751,25 +784,7 @@ pub fn placement_preview(
     expanded: &std::collections::HashSet<String>,
 ) -> (bool, std::collections::BTreeMap<String, Rect>) {
     use waml::diagnostic::DiagCode;
-    use waml::layout::{LayoutStatement, NameRef, Operand, OperandRef};
-
-    let link = |slug: &str| Operand {
-        ref_: OperandRef::Name(NameRef::Link {
-            title: title_for(model, slug),
-            slug: slug.to_string(),
-        }),
-        axis: None,
-        hints: Vec::new(),
-    };
-
-    let mut scratch = diagram.clone();
-    scratch
-        .layout
-        .retain(|s| !placement_is_pair(s, diagram, subject_slug, reference_slug));
-    scratch.layout.push(LayoutStatement::Placement {
-        operands: vec![link(subject_slug), link(reference_slug)],
-        directions: vec![dir],
-    });
+    let scratch = placement_candidate(model, diagram, subject_slug, reference_slug, dir);
 
     // The scratch always carries at least this one placement, so it never takes
     // the stress-default path -- solve it through the constraint solver directly.
@@ -1189,6 +1204,73 @@ mod tests {
             ),
             "a reversed-pair re-drag overrides, so it must NOT be predicted conflicting"
         );
+    }
+
+    #[test]
+    fn nested_candidate_authors_relative_hrefs_and_preserves_unrelated_spelling() {
+        use waml::layout::{Direction, LayoutStatement, NameRef, Operand, OperandRef};
+
+        let link = |title: &str, slug: &str| Operand {
+            ref_: OperandRef::Name(NameRef::Link {
+                title: title.into(),
+                slug: slug.into(),
+            }),
+            axis: None,
+            hints: Vec::new(),
+        };
+        let diagram = Diagram {
+            key: "views/orders".into(),
+            title: "Orders".into(),
+            profile: "uml-domain".into(),
+            description: None,
+            groups: vec![],
+            layout: vec![
+                LayoutStatement::Standalone(link("Audit", "../shared/audit.md?mode=compact#card")),
+                LayoutStatement::Placement {
+                    operands: vec![
+                        link("Order", "../domain/order.md"),
+                        link("Customer", "../shared/customer.md"),
+                    ],
+                    directions: vec![Direction::LeftOf],
+                },
+            ],
+            display: Default::default(),
+        };
+
+        let candidate = placement_candidate(
+            &Model::default(),
+            &diagram,
+            "domain/order",
+            "shared/customer",
+            Direction::AboveLeft,
+        );
+
+        assert_eq!(candidate.layout.len(), 2);
+        assert!(matches!(
+            &candidate.layout[0],
+            LayoutStatement::Standalone(Operand {
+                ref_: OperandRef::Name(NameRef::Link { slug, .. }),
+                ..
+            }) if slug == "../shared/audit.md?mode=compact#card"
+        ));
+        let LayoutStatement::Placement {
+            operands,
+            directions,
+        } = &candidate.layout[1]
+        else {
+            panic!("replacement placement");
+        };
+        assert_eq!(directions, &[Direction::AboveLeft]);
+        assert!(matches!(
+            &operands[0].ref_,
+            OperandRef::Name(NameRef::Link { title, slug })
+                if title == "domain/order" && slug == "../domain/order.md"
+        ));
+        assert!(matches!(
+            &operands[1].ref_,
+            OperandRef::Name(NameRef::Link { title, slug })
+                if title == "shared/customer" && slug == "../shared/customer.md"
+        ));
     }
 
     #[test]
