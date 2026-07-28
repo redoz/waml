@@ -439,6 +439,7 @@ pub fn analyze(
         }
         snapshots.insert(id, Arc::new(SyntaxSnapshot::new(document.clone(), tree)));
     }
+    validate_declared_semantics(&context, &declared, &mut diagnostics);
     let projection = declared_projection(&context, &declared, &mut diagnostics);
     Ok(Analysis {
         claims,
@@ -461,6 +462,359 @@ fn validate_shared_context(context: &DomainAnalysisContext<'_>) -> Result<(), An
         });
     }
     Ok(())
+}
+
+fn declared_diagnostic(
+    context: &DomainAnalysisContext<'_>,
+    path: &str,
+    syntax: &SyntaxNode<UmlLanguage>,
+    code: crate::diagnostic::DiagCode,
+    message: String,
+    warning: bool,
+) -> Diagnostic {
+    let bundle_path = crate::source::BundlePath::parse(path).expect("analyzed path is valid");
+    let id = context
+        .catalog
+        .id_for_path(&bundle_path)
+        .expect("analyzed path is cataloged");
+    let document = context.catalog.document(id).expect("catalog document");
+    let range = syntax.range();
+    let line = document
+        .line_index()
+        .line_col(document.text(), range.start())
+        .expect("declared syntax range");
+    let diagnostic = if warning {
+        Diagnostic::warn(code, message, path, line.line as usize + 1)
+    } else {
+        Diagnostic::new(code, message, path, line.line as usize + 1)
+    };
+    diagnostic
+        .with_span((
+            line.byte_column as usize,
+            line.byte_column as usize + range.len().to_usize(),
+        ))
+        .with_provenance(id, document.revision(), range)
+}
+
+fn validate_declared_semantics(
+    context: &DomainAnalysisContext<'_>,
+    declared: &DeclaredBundle,
+    diagnostics: &mut Vec<Diagnostic>,
+) {
+    for concept in declared.concepts() {
+        let Some(okf) = context.okf.concept(&concept.concept_id) else {
+            continue;
+        };
+        if crate::model::ElementType::parse(&okf.ty)
+            != crate::model::ElementType::Uml(crate::model::UmlMetaclass::InstanceSpecification)
+        {
+            continue;
+        }
+        let path = context
+            .catalog
+            .documents()
+            .values()
+            .find(|document| crate::okf::id_of(document.path().as_str()) == concept.concept_id)
+            .map(|document| document.path().as_str())
+            .unwrap_or_default();
+        let mut classifier_attributes = BTreeSet::new();
+        for relationship in concept.relationships.iter() {
+            let (
+                crate::uml::DeclaredField::Valid { value: kind, .. },
+                crate::uml::DeclaredField::Valid { value: href, .. },
+            ) = (&relationship.kind, &relationship.target)
+            else {
+                continue;
+            };
+            if *kind != crate::model::RelationshipKind::InstanceOf {
+                continue;
+            }
+            let target = crate::okf::resolve_href(path, href);
+            let Some(target_okf) = context.okf.concept(&target) else {
+                diagnostics.push(declared_diagnostic(
+                    context,
+                    path,
+                    relationship.syntax.syntax(),
+                    crate::diagnostic::DiagCode::InstanceOfUnresolved,
+                    format!("'instance of' target '{href}' resolves to no document"),
+                    true,
+                ));
+                continue;
+            };
+            if !crate::model::ElementType::parse(&target_okf.ty).is_classifier() {
+                diagnostics.push(declared_diagnostic(
+                    context,
+                    path,
+                    relationship.syntax.syntax(),
+                    crate::diagnostic::DiagCode::InstanceOfNonClassifier,
+                    format!("'instance of' target '{target}' is not a classifier"),
+                    true,
+                ));
+                continue;
+            }
+            if let Some(classifier) = declared.concept(&target) {
+                classifier_attributes.extend(classifier.attributes.iter().filter_map(
+                    |attribute| match &attribute.name {
+                        crate::uml::DeclaredField::Valid { value, .. } => Some(value.clone()),
+                        _ => None,
+                    },
+                ));
+            }
+        }
+        if classifier_attributes.is_empty() {
+            continue;
+        }
+        for slot in concept.slots.iter() {
+            let crate::uml::DeclaredField::Valid { value: name, .. } = &slot.name else {
+                continue;
+            };
+            if !classifier_attributes.contains(name) {
+                diagnostics.push(declared_diagnostic(
+                    context,
+                    path,
+                    slot.syntax.syntax(),
+                    crate::diagnostic::DiagCode::SlotUnknownAttribute,
+                    format!("slot '{name}' names no classifier attribute"),
+                    true,
+                ));
+            }
+        }
+    }
+
+    let claimed = declared
+        .concepts()
+        .filter_map(|concept| {
+            let ty = context
+                .okf
+                .concept(&concept.concept_id)
+                .map(|okf| crate::model::ElementType::parse(&okf.ty))?;
+            (!ty.is_view()).then_some(concept.concept_id.clone())
+        })
+        .collect::<BTreeSet<_>>();
+    for concept in declared.concepts() {
+        if concept.layout.is_empty() {
+            continue;
+        }
+        let path = context
+            .catalog
+            .documents()
+            .values()
+            .find(|document| crate::okf::id_of(document.path().as_str()) == concept.concept_id)
+            .map(|document| document.path().as_str())
+            .unwrap_or_default();
+        let mut groups = BTreeSet::new();
+        for group in concept.member_groups.iter() {
+            collect_declared_group_names(group, &mut groups);
+        }
+        let mut horizontal = BTreeMap::<String, Vec<String>>::new();
+        let mut vertical = BTreeMap::<String, Vec<String>>::new();
+        let mut first_layout_syntax = None;
+        for layout in concept.layout.iter() {
+            let crate::uml::DeclaredField::Valid { value, syntax } = layout else {
+                continue;
+            };
+            first_layout_syntax.get_or_insert_with(|| syntax.clone());
+            for operand in declared_layout_operands(value) {
+                let mut unresolved = Vec::new();
+                collect_unresolved_layout_refs(operand, path, &claimed, &groups, &mut unresolved);
+                for name in unresolved {
+                    diagnostics.push(declared_diagnostic(
+                        context,
+                        path,
+                        syntax,
+                        crate::diagnostic::DiagCode::UnresolvedLayoutRef,
+                        format!("layout operand '{name}' resolves no member group"),
+                        true,
+                    ));
+                }
+            }
+            let crate::uml::DeclaredLayoutStatement::Placement {
+                operands,
+                directions,
+            } = value
+            else {
+                continue;
+            };
+            for (index, direction) in directions.iter().enumerate() {
+                let (
+                    crate::uml::DeclaredField::Valid {
+                        value: direction, ..
+                    },
+                    Some(crate::uml::DeclaredField::Valid { value: left, .. }),
+                    Some(crate::uml::DeclaredField::Valid { value: right, .. }),
+                ) = (direction, operands.get(index), operands.get(index + 1))
+                else {
+                    continue;
+                };
+                let (Some(left), Some(right)) = (
+                    layout_operand_key(left, path),
+                    layout_operand_key(right, path),
+                ) else {
+                    continue;
+                };
+                use crate::layout::Direction;
+                match direction {
+                    Direction::LeftOf => horizontal.entry(left).or_default().push(right),
+                    Direction::RightOf => horizontal.entry(right).or_default().push(left),
+                    Direction::Above => vertical.entry(left).or_default().push(right),
+                    Direction::Below => vertical.entry(right).or_default().push(left),
+                    Direction::AboveLeft => {
+                        horizontal
+                            .entry(left.clone())
+                            .or_default()
+                            .push(right.clone());
+                        vertical.entry(left).or_default().push(right);
+                    }
+                    Direction::AboveRight => {
+                        horizontal
+                            .entry(right.clone())
+                            .or_default()
+                            .push(left.clone());
+                        vertical.entry(left).or_default().push(right);
+                    }
+                    Direction::BelowLeft => {
+                        horizontal
+                            .entry(left.clone())
+                            .or_default()
+                            .push(right.clone());
+                        vertical.entry(right).or_default().push(left);
+                    }
+                    Direction::BelowRight => {
+                        horizontal
+                            .entry(right.clone())
+                            .or_default()
+                            .push(left.clone());
+                        vertical.entry(right).or_default().push(left);
+                    }
+                }
+            }
+        }
+        if directed_cycle(&horizontal) || directed_cycle(&vertical) {
+            if let Some(syntax) = first_layout_syntax {
+                diagnostics.push(declared_diagnostic(
+                    context,
+                    path,
+                    &syntax,
+                    crate::diagnostic::DiagCode::LayoutCycle,
+                    "layout placement constraints form a cycle (contradictory ordering)".into(),
+                    false,
+                ));
+            }
+        }
+    }
+}
+
+fn collect_declared_group_names(
+    group: &crate::uml::DeclaredMemberGroup,
+    names: &mut BTreeSet<String>,
+) {
+    if let crate::uml::DeclaredField::Valid { value, .. } = &group.name {
+        names.insert(value.clone());
+    }
+    for child in group.children.iter() {
+        collect_declared_group_names(child, names);
+    }
+}
+
+fn declared_layout_operands(
+    statement: &crate::uml::DeclaredLayoutStatement,
+) -> Vec<&crate::layout::Operand> {
+    match statement {
+        crate::uml::DeclaredLayoutStatement::Placement { operands, .. } => operands
+            .iter()
+            .filter_map(|operand| match operand {
+                crate::uml::DeclaredField::Valid { value, .. } => Some(value),
+                _ => None,
+            })
+            .collect(),
+        crate::uml::DeclaredLayoutStatement::Alignment { left, right } => [left, right]
+            .into_iter()
+            .filter_map(|anchored| match anchored {
+                crate::uml::DeclaredField::Valid { value, .. } => Some(&value.operand),
+                _ => None,
+            })
+            .collect(),
+        crate::uml::DeclaredLayoutStatement::Standalone(operand) => match operand {
+            crate::uml::DeclaredField::Valid { value, .. } => vec![value],
+            _ => Vec::new(),
+        },
+    }
+}
+
+fn collect_unresolved_layout_refs(
+    operand: &crate::layout::Operand,
+    path: &str,
+    claimed: &BTreeSet<String>,
+    groups: &BTreeSet<String>,
+    unresolved: &mut Vec<String>,
+) {
+    use crate::layout::{NameRef, OperandRef};
+    match &operand.ref_ {
+        OperandRef::Name(NameRef::Link { slug, .. }) => {
+            let href = if slug.starts_with('.') || slug.ends_with(".md") {
+                slug.clone()
+            } else {
+                format!("./{slug}.md")
+            };
+            if !claimed.contains(&crate::okf::resolve_href(path, &href)) {
+                unresolved.push(slug.clone());
+            }
+        }
+        OperandRef::Name(NameRef::Bare(name)) => {
+            let slug = crate::slug::slugify(name, "");
+            let exact = claimed.contains(&slug);
+            let basename_count = claimed
+                .iter()
+                .filter(|candidate| candidate.rsplit('/').next() == Some(slug.as_str()))
+                .count();
+            if !groups.contains(name) && !exact && basename_count != 1 {
+                unresolved.push(name.clone());
+            }
+        }
+        OperandRef::InlineGroup { items, .. } => {
+            for item in items {
+                collect_unresolved_layout_refs(item, path, claimed, groups, unresolved);
+            }
+        }
+        OperandRef::Paren(inner) => {
+            collect_unresolved_layout_refs(inner, path, claimed, groups, unresolved)
+        }
+    }
+}
+
+fn layout_operand_key(operand: &crate::layout::Operand, path: &str) -> Option<String> {
+    use crate::layout::{NameRef, OperandRef};
+    match &operand.ref_ {
+        OperandRef::Name(NameRef::Link { slug, .. }) => {
+            Some(crate::okf::resolve_href(path, &format!("./{slug}.md")))
+        }
+        OperandRef::Name(NameRef::Bare(name)) => Some(name.clone()),
+        OperandRef::Paren(inner) => layout_operand_key(inner, path),
+        OperandRef::InlineGroup { .. } => None,
+    }
+}
+
+fn directed_cycle(graph: &BTreeMap<String, Vec<String>>) -> bool {
+    fn visit(
+        node: &str,
+        graph: &BTreeMap<String, Vec<String>>,
+        state: &mut BTreeMap<String, u8>,
+    ) -> bool {
+        state.insert(node.to_owned(), 1);
+        for next in graph.get(node).into_iter().flatten() {
+            match state.get(next).copied().unwrap_or_default() {
+                1 => return true,
+                0 if visit(next, graph, state) => return true,
+                _ => {}
+            }
+        }
+        state.insert(node.to_owned(), 2);
+        false
+    }
+    let mut state = BTreeMap::new();
+    graph.keys().any(|node| {
+        state.get(node).copied().unwrap_or_default() == 0 && visit(node, graph, &mut state)
+    })
 }
 
 fn declared_projection(
@@ -791,6 +1145,9 @@ fn declared_projection(
             }
             let target = crate::okf::resolve_href(&path, href);
             if !claimed.contains(target.as_str()) {
+                if *kind == crate::model::RelationshipKind::InstanceOf {
+                    continue;
+                }
                 let range = relationship
                     .syntax
                     .target_token()
