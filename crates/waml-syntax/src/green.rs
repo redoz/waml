@@ -1,14 +1,24 @@
 use std::{fmt, marker::PhantomData, sync::Arc};
 
-use crate::{SourceText, SyntaxLanguage, TextError, TextRange, TextSize};
+use crate::{
+    annotation::SyntaxAnnotation, SourceText, SyntaxLanguage, TextError, TextRange, TextSize,
+};
 
 pub type GreenNode<L> = Arc<GreenNodeData<L>>;
 pub type GreenToken<L> = Arc<GreenTokenData<L>>;
 
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub enum GreenElement<L: SyntaxLanguage> {
     Node(GreenNode<L>),
     Token(GreenToken<L>),
+}
+impl<L: SyntaxLanguage> Clone for GreenElement<L> {
+    fn clone(&self) -> Self {
+        match self {
+            Self::Node(node) => Self::Node(node.clone()),
+            Self::Token(token) => Self::Token(token.clone()),
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -54,6 +64,7 @@ impl TokenFlags {
 pub struct GreenNodeData<L: SyntaxLanguage> {
     kind: L::Kind,
     children: Arc<[GreenElement<L>]>,
+    annotations: Arc<[SyntaxAnnotation]>,
     width: TextSize,
 }
 #[derive(Debug)]
@@ -157,6 +168,9 @@ impl<L: SyntaxLanguage> GreenNodeData<L> {
     }
     pub fn width(&self) -> TextSize {
         self.width
+    }
+    pub fn annotations(&self) -> &[SyntaxAnnotation] {
+        &self.annotations
     }
     pub fn is_source_independent(&self) -> bool {
         self.children
@@ -271,7 +285,25 @@ impl<L: SyntaxLanguage> GreenFactory<L> {
         Ok(Arc::new(GreenNodeData {
             kind,
             children,
+            annotations: Arc::from([]),
             width,
+        }))
+    }
+    pub(crate) fn node_with_annotations<I>(
+        &self,
+        kind: L::Kind,
+        children: I,
+        annotations: Arc<[SyntaxAnnotation]>,
+    ) -> Result<GreenNode<L>, GreenError>
+    where
+        I: IntoIterator<Item = GreenElement<L>>,
+    {
+        let node = self.node(kind, children)?;
+        Ok(Arc::new(GreenNodeData {
+            kind: node.kind,
+            children: node.children.clone(),
+            annotations,
+            width: node.width,
         }))
     }
     fn make_token(
