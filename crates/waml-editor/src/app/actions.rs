@@ -34,7 +34,7 @@ enum ExclusiveHandler {
     NavigationQuery,
     NavigationFilter,
     TreeContextMenu,
-    TreeDocumentOpen,
+    TreeNavigation,
     DiagramSwitcher,
     ConflictBadge,
     ActiveDocumentView,
@@ -52,7 +52,7 @@ const EXCLUSIVE_ORDER: [ExclusiveHandler; 15] = [
     ExclusiveHandler::NavigationQuery,
     ExclusiveHandler::NavigationFilter,
     ExclusiveHandler::TreeContextMenu,
-    ExclusiveHandler::TreeDocumentOpen,
+    ExclusiveHandler::TreeNavigation,
     ExclusiveHandler::DiagramSwitcher,
     ExclusiveHandler::ConflictBadge,
     ExclusiveHandler::ActiveDocumentView,
@@ -81,7 +81,7 @@ impl App {
                 ExclusiveHandler::NavigationQuery => self.handle_navigation_query(cx, actions),
                 ExclusiveHandler::NavigationFilter => self.handle_navigation_filter(cx, actions),
                 ExclusiveHandler::TreeContextMenu => self.handle_tree_context_menu(cx, actions),
-                ExclusiveHandler::TreeDocumentOpen => self.handle_tree_document_open(cx, actions),
+                ExclusiveHandler::TreeNavigation => self.handle_tree_navigation(cx, actions),
                 ExclusiveHandler::DiagramSwitcher => self.handle_diagram_switcher(cx, actions),
                 ExclusiveHandler::ConflictBadge => self.handle_conflict_badge(cx, actions),
                 ExclusiveHandler::ActiveDocumentView => {
@@ -509,17 +509,52 @@ impl App {
         ActionFlow::Consumed
     }
 
-    fn handle_tree_document_open(&mut self, cx: &mut Cx, actions: &Actions) -> ActionFlow {
-        let document = self
+    fn handle_tree_navigation(&mut self, cx: &mut Cx, actions: &Actions) -> ActionFlow {
+        let intent = self
             .ui
             .widget(cx, ids!(project_tree))
             .borrow_mut::<crate::tree_panel::ProjectTree>()
-            .and_then(|panel| panel.open_document(actions));
-        let Some((concept_id, persistent)) = document else {
+            .and_then(|panel| panel.navigation(actions));
+        let Some(intent) = intent else {
             return ActionFlow::Continue;
         };
-        self.transition_document(cx, &concept_id, persistent);
-        ActionFlow::Consumed
+        match intent {
+            crate::navigation::NavigationIntent::Resolved {
+                target:
+                    crate::navigation::NavigationTarget::Document {
+                        concept_id,
+                        fragment: _,
+                    },
+                disposition,
+            } => {
+                self.transition_document(
+                    cx,
+                    &concept_id,
+                    disposition == crate::navigation::OpenDisposition::Persistent,
+                );
+                ActionFlow::Consumed
+            }
+            crate::navigation::NavigationIntent::Resolved {
+                target: crate::navigation::NavigationTarget::Directory { address },
+                ..
+            } => {
+                let toggled = self
+                    .ui
+                    .widget(cx, ids!(project_tree))
+                    .borrow_mut::<crate::tree_panel::ProjectTree>()
+                    .is_some_and(|mut panel| panel.toggle_directory(cx, &address));
+                if toggled {
+                    ActionFlow::Consumed
+                } else {
+                    ActionFlow::Continue
+                }
+            }
+            crate::navigation::NavigationIntent::Resolved {
+                target: crate::navigation::NavigationTarget::ExternalUrl(_),
+                ..
+            }
+            | crate::navigation::NavigationIntent::MarkdownLink { .. } => ActionFlow::Continue,
+        }
     }
 
     fn handle_diagram_switcher(&mut self, cx: &mut Cx, actions: &Actions) -> ActionFlow {
@@ -1029,7 +1064,7 @@ mod tests {
                 ExclusiveHandler::NavigationQuery,
                 ExclusiveHandler::NavigationFilter,
                 ExclusiveHandler::TreeContextMenu,
-                ExclusiveHandler::TreeDocumentOpen,
+                ExclusiveHandler::TreeNavigation,
                 ExclusiveHandler::DiagramSwitcher,
                 ExclusiveHandler::ConflictBadge,
                 ExclusiveHandler::ActiveDocumentView,

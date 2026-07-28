@@ -3,7 +3,7 @@
 //! scroll/fold/selection for free. Each row's kind (see `TreeKind`) is shown as
 //! a HUD glyph icon overlaid at the left of the row via `DrawColor::draw_abs`
 //! (the SDF glyph set in `icons.rs`), in immediate mode right after `FileTree`
-//! draws that row. Document-row clicks emit `ProjectTreeAction::OpenDocument`.
+//! draws that row. Row clicks emit unified `ProjectTreeAction::Navigate` intent.
 //!
 //! Structure mirrors studio's `DesktopFileTree` / `FlatFileTree`, minus the
 //! filter page and git-status dots.
@@ -22,6 +22,7 @@ use crate::dock::{DockEvent, DockState};
 use crate::icons::Icon;
 use crate::icons::IconSet;
 use crate::nav::NavView;
+use crate::navigation::{NavigationIntent, NavigationTarget, OpenDisposition};
 use crate::tree::{ProjectTree as ProjectTreeData, TreeKind, TreeNode};
 use makepad_widgets::*;
 use std::collections::{HashMap, HashSet};
@@ -156,6 +157,7 @@ script_mod! {
             // ICON_LEFT_MARGIN + ICON_SIZE = 20px, so padding.left 24 sits the
             // label 4px past it.
             node_height: 27.0
+            auto_toggle_folders: false
 
             // Scrollbar handle is invisible in the shipped theme (color_outset
             // ~= our field_bg). Tint it so an overflowing tree visibly says
@@ -237,23 +239,27 @@ script_mod! {
 pub enum ProjectTreeAction {
     #[default]
     None,
-    OpenDocument {
-        concept_id: String,
-        persistent: bool,
-    },
+    Navigate(NavigationIntent),
     /// The title trigger's open-request; `App` relays it to `PopupRoot` to
     /// show the scope-picker dropdown.
-    ScopeRequest { anchor: Rect },
+    ScopeRequest {
+        anchor: Rect,
+    },
     /// Search-field edit. Emitted by `emit_query` on every keystroke; `App`
     /// applies it to `NavState::query`.
     Query(String),
     /// Type-filter chip click; `App` relays it to `PopupRoot` to show the
     /// type-filter `SelectFlyout` (mirrors `ScopeRequest`). `anchor` is the
     /// chip's window rect so the flyout drops under it, sized to its width.
-    FilterRequest { anchor: Rect },
+    FilterRequest {
+        anchor: Rect,
+    },
     /// A secondary-button press over a classifier row. `App` selects the row
     /// (via `open_preview`) and opens the base node menu at `anchor`.
-    ContextMenu { key: String, anchor: DVec2 },
+    ContextMenu {
+        key: String,
+        anchor: DVec2,
+    },
 }
 
 /// Which projection the panel is showing, for the header note + empty state
@@ -334,17 +340,34 @@ fn is_classifier_kind(kind: TreeKind) -> bool {
     )
 }
 
-fn document_action(
+fn row_navigation(
+    key: &str,
     concept_id: Option<&str>,
+    is_directory: bool,
     openable: bool,
     tap_count: u32,
-) -> Option<ProjectTreeAction> {
+) -> Option<NavigationIntent> {
+    if is_directory {
+        return Some(NavigationIntent::Resolved {
+            target: NavigationTarget::Directory {
+                address: key.to_owned(),
+            },
+            disposition: OpenDisposition::Preview,
+        });
+    }
     if !openable {
         return None;
     }
-    concept_id.map(|concept_id| ProjectTreeAction::OpenDocument {
-        concept_id: concept_id.to_owned(),
-        persistent: tap_count == 2,
+    concept_id.map(|concept_id| NavigationIntent::Resolved {
+        target: NavigationTarget::Document {
+            concept_id: concept_id.to_owned(),
+            fragment: None,
+        },
+        disposition: if tap_count == 2 {
+            OpenDisposition::Persistent
+        } else {
+            OpenDisposition::Preview
+        },
     })
 }
 
@@ -363,6 +386,9 @@ pub struct ProjectTree {
     #[rust]
     openable_ids: HashSet<LiveId>,
     #[rust]
+    directory_addresses: HashSet<String>,
+    #[rust]
+    open_directories: HashSet<String>,
     #[rust]
     pending_tap_count: u32,
     #[live]
@@ -498,6 +524,21 @@ fn folders_to_open(tag: NavStateTag, tree: &ProjectTreeData) -> Vec<String> {
     }
     let mut out = Vec::new();
     collect(&tree.roots, deep, &mut out);
+    out
+}
+
+fn directory_addresses(tree: &ProjectTreeData) -> Vec<String> {
+    fn collect(nodes: &[TreeNode], out: &mut Vec<String>) {
+        for node in nodes {
+            if node.is_directory {
+                out.push(node.key.clone());
+                collect(&node.children, out);
+            }
+        }
+    }
+
+    let mut out = Vec::new();
+    collect(&tree.roots, &mut out);
     out
 }
 
@@ -911,14 +952,21 @@ impl Widget for ProjectTree {
             // The panel owns no `IconButton` children any more -- collapse and
             // expand both arrive from the caption bar's tree toggle -- so the
             // only actions read here are the `FileTree`'s row clicks.
-            if let Some(id) = file_tree.file_clicked(actions) {
+            if let Some(id) = file_tree
+                .file_clicked(actions)
+                .or_else(|| file_tree.folder_clicked(actions))
+            {
                 let tap_count = std::mem::take(&mut self.pending_tap_count);
-                if let Some(action) = document_action(
-                    self.id_to_concept.get(&id).map(String::as_str),
-                    self.openable_ids.contains(&id),
-                    tap_count,
-                ) {
-                    cx.widget_action(uid, action);
+                if let Some(key) = self.id_to_key.get(&id) {
+                    if let Some(intent) = row_navigation(
+                        key,
+                        self.id_to_concept.get(&id).map(String::as_str),
+                        self.directory_addresses.contains(key),
+                        self.openable_ids.contains(&id),
+                        tap_count,
+                    ) {
+                        cx.widget_action(uid, ProjectTreeAction::Navigate(intent));
+                    }
                 }
             }
             if let Some((id, abs)) = file_tree.file_right_clicked(actions) {
@@ -994,17 +1042,28 @@ impl ProjectTree {
             NavView::Empty => (ProjectTreeData::default(), NavStateTag::Empty),
         };
         let (id_to_key, id_to_concept, openable_ids) = build_id_maps(&tree);
+        let directory_addresses = directory_addresses(&tree);
+        let open_directories = folders_to_open(tag, &tree)
+            .into_iter()
+            .collect::<HashSet<_>>();
         let file_tree = self.view.file_tree(cx, ids!(file_tree));
         // Open package folders so the panel isn't collapsed. Browse expands only
         // the top-level packages (under scope the roots are the scope's members,
         // not one wrapper); the search states expand every ancestor package so a
         // deeply nested match isn't hidden behind a collapsed sub-package.
-        for key in folders_to_open(tag, &tree) {
-            file_tree.set_folder_is_open(cx, LiveId::from_str(&key), true, Animate::No);
+        for address in &directory_addresses {
+            file_tree.set_folder_is_open(
+                cx,
+                LiveId::from_str(address),
+                open_directories.contains(address),
+                Animate::No,
+            );
         }
         self.id_to_key = id_to_key;
         self.id_to_concept = id_to_concept;
         self.openable_ids = openable_ids;
+        self.directory_addresses = directory_addresses.into_iter().collect();
+        self.open_directories = open_directories;
         self.tree = tree;
         self.nav_tag = tag;
         self.view.redraw(cx);
@@ -1020,16 +1079,32 @@ impl ProjectTree {
         }
     }
 
-    pub fn open_document(&self, actions: &Actions) -> Option<(String, bool)> {
+    pub fn navigation(&self, actions: &Actions) -> Option<NavigationIntent> {
         let item = actions.find_widget_action(self.widget_uid())?;
-        if let ProjectTreeAction::OpenDocument {
-            concept_id,
-            persistent,
-        } = item.cast()
-        {
-            return Some((concept_id, persistent));
+        if let ProjectTreeAction::Navigate(intent) = item.cast() {
+            return Some(intent);
         }
         None
+    }
+
+    pub fn toggle_directory(&mut self, cx: &mut Cx, address: &str) -> bool {
+        if !self.directory_addresses.contains(address) {
+            return false;
+        }
+        let now_open = if self.open_directories.remove(address) {
+            false
+        } else {
+            self.open_directories.insert(address.to_owned());
+            true
+        };
+        self.view.file_tree(cx, ids!(file_tree)).set_folder_is_open(
+            cx,
+            LiveId::from_str(address),
+            now_open,
+            Animate::Yes,
+        );
+        self.view.redraw(cx);
+        true
     }
 
     /// The current scope label shown in the header title. `App` pushes this
@@ -1158,6 +1233,45 @@ mod tests {
         )
     }
 
+    fn project_tree_test_context() -> (Cx, ProjectTree) {
+        let mut cx = Cx::new(Box::new(|_, _| {}));
+        // Makepad otherwise sends lookups on a rootless Cx through one static
+        // empty WidgetTree. Give this test Cx its own tree before any lookup.
+        cx.widget_tree_mark_dirty(WidgetUid(0));
+        let panel = cx.with_vm(ProjectTree::script_new_with_default);
+        (cx, panel)
+    }
+
+    fn mounted_project_tree_test_context() -> (Cx, ProjectTree, FileTreeRef) {
+        let mut cx = Cx::new(Box::new(|_, _| {}));
+        cx.widget_tree_mark_dirty(WidgetUid(0));
+        let mut panel = cx.with_vm(ProjectTree::script_new_with_default);
+        let file_tree =
+            WidgetRef::new_with_inner(Box::new(cx.with_vm(FileTree::script_new_with_default)));
+        let mut view = cx.with_vm(View::script_new_with_default);
+        view.children.push((live_id!(file_tree), file_tree.clone()));
+        panel.view = view;
+        let file_tree = panel.view.file_tree(&mut cx, ids!(file_tree));
+        (cx, panel, file_tree)
+    }
+
+    fn file_tree_folder_is_open(cx: &mut Cx, file_tree: &FileTreeRef, address: &str) -> bool {
+        let draw_event = DrawEvent::default();
+        let mut draw_cx = CxDraw::new(cx, &draw_event);
+        let mut cx_2d = Cx2d::new(&mut draw_cx);
+        cx_2d.begin_root_turtle(dvec2(0.0, 0.0), Layout::default());
+        let mut file_tree = file_tree.borrow_mut().unwrap();
+        let is_open = file_tree
+            .begin_folder(&mut cx_2d, LiveId::from_str(address), address)
+            .is_ok();
+        if is_open {
+            file_tree.end_folder();
+        }
+        drop(file_tree);
+        cx_2d.end_turtle();
+        is_open
+    }
+
     #[test]
     fn tree_panel_observes_child_consumed_primary_down() {
         let mut cx = Cx::new(Box::new(|_, _| {}));
@@ -1255,28 +1369,196 @@ mod tests {
         }
     }
 
-    #[test]
-    fn document_action_marks_only_second_tap_persistent() {
-        assert!(matches!(
-            document_action(Some("item"), true, 1),
-            Some(ProjectTreeAction::OpenDocument {
-                concept_id,
-                persistent: false,
-            }) if concept_id == "item"
-        ));
-        assert!(matches!(
-            document_action(Some("item"), true, 2),
-            Some(ProjectTreeAction::OpenDocument {
-                persistent: true,
-                ..
-            })
-        ));
+    fn resolved_document(
+        concept_id: &str,
+        disposition: crate::navigation::OpenDisposition,
+    ) -> crate::navigation::NavigationIntent {
+        crate::navigation::NavigationIntent::Resolved {
+            target: crate::navigation::NavigationTarget::Document {
+                concept_id: concept_id.into(),
+                fragment: None,
+            },
+            disposition,
+        }
     }
 
     #[test]
-    fn document_action_requires_provider_capability_and_concept() {
-        assert!(document_action(Some("directory"), false, 2).is_none());
-        assert!(document_action(None, true, 2).is_none());
+    fn row_navigation_uses_preview_then_persistent_for_documents() {
+        use crate::navigation::OpenDisposition;
+
+        assert_eq!(
+            row_navigation("sales/order", Some("sales/order"), false, true, 1),
+            Some(resolved_document("sales/order", OpenDisposition::Preview))
+        );
+        assert_eq!(
+            row_navigation("sales/order", Some("sales/order"), false, true, 2),
+            Some(resolved_document(
+                "sales/order",
+                OpenDisposition::Persistent
+            ))
+        );
+    }
+
+    #[test]
+    fn row_navigation_uses_the_row_key_for_directory_addresses() {
+        use crate::navigation::{NavigationIntent, NavigationTarget, OpenDisposition};
+
+        assert_eq!(
+            row_navigation("/sales", None, true, false, 1),
+            Some(NavigationIntent::Resolved {
+                target: NavigationTarget::Directory {
+                    address: "/sales".into(),
+                },
+                disposition: OpenDisposition::Preview,
+            })
+        );
+    }
+
+    #[test]
+    fn row_navigation_ignores_nonopenable_nondirectory_rows() {
+        assert_eq!(
+            row_navigation("unknown", Some("unknown"), false, false, 1),
+            None
+        );
+        assert_eq!(row_navigation("unknown", None, false, true, 1), None);
+    }
+
+    #[test]
+    fn navigation_reads_the_unified_tree_action() {
+        let (_cx, panel) = project_tree_test_context();
+        let intent = resolved_document("sales/order", OpenDisposition::Preview);
+        let actions: ActionsBuf = vec![Box::new(WidgetAction {
+            data: None,
+            action: Box::new(ProjectTreeAction::Navigate(intent.clone())),
+            widget_uid: panel.widget_uid(),
+            group: None,
+        })];
+
+        assert_eq!(panel.navigation(&actions), Some(intent));
+    }
+
+    #[test]
+    fn scripted_project_tree_disables_file_tree_folder_auto_toggle() {
+        let mut vm = crate::script_gate::boot_test_vm();
+        crate::theme_atlas::script_mod(&mut vm);
+        crate::fonts::script_mod(&mut vm);
+        crate::icons::script_mod(&mut vm);
+        crate::tree_panel::script_mod(&mut vm);
+
+        let file_tree = script_eval!(vm, {
+            (mod.widgets.ProjectTree {}).tree_scroll.file_tree
+        });
+        let file_tree = file_tree.as_object().expect("scripted FileTree object");
+        let auto_toggle = vm.map_mut_with(file_tree, |_vm, map| {
+            map.get(&live_id!(auto_toggle_folders).into())
+                .map(|entry| entry.value)
+        });
+
+        assert_eq!(auto_toggle.and_then(|value| value.as_bool()), Some(false));
+    }
+
+    #[test]
+    fn tree_breadcrumb_and_resolved_markdown_directory_intents_are_equal() {
+        use crate::navigation::{breadcrumb_for, resolve_link, NavigationIntent, OpenDisposition};
+
+        let source = waml::source::SourceBundle::try_from_pairs([
+            ("index.md", "# Root\n\n* [Sales](sales/)\n"),
+            ("sales/index.md", "# Sales\n\n* [Order](order.md)\n"),
+            ("sales/order.md", "# Order\n"),
+        ])
+        .unwrap();
+        let bundle = waml::okf::Bundle::parse(&source).unwrap();
+        let uml = waml::uml::project(&bundle);
+        let tree_intent = row_navigation("/sales", None, true, false, 1).unwrap();
+        let breadcrumb_target = breadcrumb_for(&bundle, &uml, "sales/order")
+            .unwrap()
+            .into_iter()
+            .find(|segment| segment.title == "Sales")
+            .unwrap()
+            .target;
+        let breadcrumb_intent = NavigationIntent::Resolved {
+            target: breadcrumb_target,
+            disposition: OpenDisposition::Preview,
+        };
+        let markdown_intent = NavigationIntent::Resolved {
+            target: resolve_link(&bundle, "sales/order", "/sales/").unwrap(),
+            disposition: OpenDisposition::Preview,
+        };
+
+        assert_eq!(tree_intent, breadcrumb_intent);
+        assert_eq!(tree_intent, markdown_intent);
+    }
+
+    #[test]
+    fn folder_clicked_emits_intent_without_mutation_then_one_command_closes_it() {
+        let (mut cx, mut panel, file_tree) = mounted_project_tree_test_context();
+        let tree = ProjectTreeData {
+            roots: vec![node("/sales", "Sales", TreeKind::Directory, vec![])],
+        };
+        panel.set_view(&mut cx, NavView::Browse(tree));
+        assert!(panel.open_directories.contains("/sales"));
+        assert!(file_tree_folder_is_open(&mut cx, &file_tree, "/sales"));
+
+        let actions: ActionsBuf = vec![Box::new(WidgetAction {
+            data: None,
+            action: Box::new(FileTreeAction::FolderClicked(LiveId::from_str("/sales"))),
+            widget_uid: file_tree.widget_uid(),
+            group: None,
+        })];
+        panel.handle_event(&mut cx, &Event::Actions(actions), &mut Scope::empty());
+
+        assert_eq!(
+            panel.navigation(&cx.new_actions),
+            Some(NavigationIntent::Resolved {
+                target: NavigationTarget::Directory {
+                    address: "/sales".into(),
+                },
+                disposition: OpenDisposition::Preview,
+            })
+        );
+        assert!(panel.open_directories.contains("/sales"));
+        assert!(file_tree_folder_is_open(&mut cx, &file_tree, "/sales"));
+
+        assert!(panel.toggle_directory(&mut cx, "/sales"));
+        assert!(!panel.open_directories.contains("/sales"));
+        assert!(!file_tree_folder_is_open(&mut cx, &file_tree, "/sales"));
+    }
+
+    #[test]
+    fn set_view_initializes_known_and_logically_open_directories() {
+        let (mut cx, mut panel) = project_tree_test_context();
+        let tree = ProjectTreeData {
+            roots: vec![node(
+                "/sales",
+                "Sales",
+                TreeKind::Directory,
+                vec![node(
+                    "/sales/archive",
+                    "Archive",
+                    TreeKind::Directory,
+                    vec![],
+                )],
+            )],
+        };
+
+        panel.set_view(&mut cx, NavView::Browse(tree));
+
+        assert_eq!(
+            panel.directory_addresses,
+            HashSet::from(["/sales".to_owned(), "/sales/archive".to_owned()])
+        );
+        assert_eq!(panel.open_directories, HashSet::from(["/sales".to_owned()]));
+    }
+
+    #[test]
+    fn unknown_directory_command_is_a_noop() {
+        let (mut cx, mut panel) = project_tree_test_context();
+        panel.directory_addresses.insert("/sales".into());
+        panel.open_directories.insert("/sales".into());
+        let before = panel.open_directories.clone();
+
+        assert!(!panel.toggle_directory(&mut cx, "/unknown"));
+        assert_eq!(panel.open_directories, before);
     }
 
     #[test]
