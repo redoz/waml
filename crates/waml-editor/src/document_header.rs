@@ -307,7 +307,7 @@ impl Widget for DocumentHeader {
 impl DocumentHeader {
     fn sync_content_layout(&mut self, cx: &mut Cx) {
         self.view.walk.height = Size::Fixed(self.state.visible_height());
-        self.view.redraw(cx);
+        cx.redraw_all();
     }
 
     pub fn set_segments(&mut self, cx: &mut Cx, segments: Vec<BreadcrumbSegment>) {
@@ -522,5 +522,20 @@ mod tests {
         assert!(!state.replace_segments(vec![current]));
         assert!(!state.replace_right_dock(Some(Icon::Package)));
         assert_eq!(state.segment_rects, rects);
+    }
+
+    #[test]
+    fn content_transition_requests_root_relayout() {
+        let mut cx = Cx::new(Box::new(|_, _| {}));
+        let mut header = cx.with_vm(DocumentHeader::script_new_with_default);
+        cx.new_draw_event = DrawEvent::default();
+
+        header.set_segments(&mut cx, vec![segment("Current", "current")]);
+
+        assert_eq!(header.visible_height(), DOCUMENT_HEADER_H);
+        assert!(
+            cx.new_draw_event.redraw_all,
+            "changing header height must invalidate the parent flow"
+        );
     }
 }
