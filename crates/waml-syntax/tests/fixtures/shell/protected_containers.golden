@@ -1,0 +1,8 @@
+N root Root 0..237
+N root/0 MarkdownRegion 0..231
+T root/0/0 RawTextToken 0..231 missing=false leading="" text="> # quote\n\n- ## unordered item\n\n1. # ordered item\n\n```md\n# fenced code\n```\n\n    ## indented code\n\n<section>\n# html block\n</section>\n\n| # table | value |\n| --- | --- |\n| ## cell | value |\n\n[^note]: # footnote\n\nTerm\n: ## definition\n\n" trailing=""
+N root/1 Heading 231..237
+T root/1/0 HeadingMarkerToken 231..232 missing=false leading="" text="#" trailing=""
+T root/1/1 HeadingText 232..236 missing=false leading=" " text="top" trailing=""
+T root/1/2 NewlineToken 236..237 missing=false leading="" text="\n" trailing=""
+T root/2 EndOfFileToken 237..237 missing=true leading="" text="" trailing=""

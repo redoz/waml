@@ -101,6 +101,12 @@ impl fmt::Display for GreenError {
 impl std::error::Error for GreenError {}
 
 impl GreenText {
+    pub fn write_to_string(&self) -> String {
+        let mut output = String::new();
+        self.write_to(&mut output)
+            .expect("String writes cannot fail");
+        output
+    }
     fn validate(&self) -> Result<(), TextError> {
         if let Self::SourceSlice { source, range } = self {
             source.slice(*range)?;
@@ -192,6 +198,9 @@ impl<L: SyntaxLanguage> GreenTokenData<L> {
     pub fn width(&self) -> TextSize {
         self.width
     }
+    pub fn text(&self) -> &GreenText {
+        &self.text
+    }
     pub fn annotations(&self) -> &[L::DiagnosticCode] {
         &self.annotations
     }
@@ -200,6 +209,12 @@ impl<L: SyntaxLanguage> GreenTokenData<L> {
     }
     pub fn flags(&self) -> TokenFlags {
         self.flags
+    }
+    pub fn leading_trivia(&self) -> &[GreenTrivia] {
+        &self.leading
+    }
+    pub fn trailing_trivia(&self) -> &[GreenTrivia] {
+        &self.trailing
     }
     pub fn is_source_independent(&self) -> bool {
         self.text.is_source_independent()
@@ -257,6 +272,23 @@ impl<L: SyntaxLanguage> GreenFactory<L> {
         )
         .expect("empty missing token has zero width")
     }
+    pub fn missing_token_with_leading<I>(
+        &self,
+        kind: L::Kind,
+        leading: I,
+    ) -> Result<GreenToken<L>, GreenError>
+    where
+        I: IntoIterator<Item = GreenTrivia>,
+    {
+        self.make_token(
+            kind,
+            GreenText::Static(""),
+            leading.into_iter().collect(),
+            Vec::new(),
+            Arc::from([]),
+            TokenFlags(TokenFlags::MISSING),
+        )
+    }
     pub fn bad_token(
         &self,
         kind: L::Kind,
@@ -271,6 +303,29 @@ impl<L: SyntaxLanguage> GreenFactory<L> {
             kind,
             text,
             Vec::new(),
+            Vec::new(),
+            Arc::from([code]),
+            TokenFlags(TokenFlags::BAD),
+        )
+    }
+    pub fn bad_token_with_leading<I>(
+        &self,
+        kind: L::Kind,
+        text: GreenText,
+        leading: I,
+        code: L::DiagnosticCode,
+    ) -> Result<GreenToken<L>, GreenError>
+    where
+        I: IntoIterator<Item = GreenTrivia>,
+    {
+        text.validate()?;
+        if text.width()?.to_usize() == 0 {
+            return Err(GreenError::EmptyBadToken);
+        }
+        self.make_token(
+            kind,
+            text,
+            leading.into_iter().collect(),
             Vec::new(),
             Arc::from([code]),
             TokenFlags(TokenFlags::BAD),

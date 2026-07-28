@@ -393,6 +393,18 @@ impl<L: SyntaxLanguage> SyntaxToken<L> {
     pub fn same_green(&self, o: &Self) -> bool {
         Arc::ptr_eq(&self.0.green, &o.0.green)
     }
+    pub fn flags(&self) -> crate::TokenFlags {
+        self.0.green.flags()
+    }
+    pub fn text(&self) -> &crate::GreenText {
+        self.0.green.text()
+    }
+    pub fn leading_trivia(&self) -> &[crate::GreenTrivia] {
+        self.0.green.leading_trivia()
+    }
+    pub fn trailing_trivia(&self) -> &[crate::GreenTrivia] {
+        self.0.green.trailing_trivia()
+    }
     pub fn syntax_annotations(&self) -> &[crate::SyntaxAnnotation] {
         self.0.green.syntax_annotations()
     }

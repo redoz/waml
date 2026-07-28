@@ -1,6 +1,38 @@
 use std::sync::Arc;
 
-use waml_syntax::{parse_okf_markdown, MarkdownDialect, SourceText};
+use waml_syntax::{
+    parse_okf_markdown, GreenElement, MarkdownDialect, OkfMarkdownLanguage, OkfMarkdownSyntaxKind,
+    OkfSyntaxDiagnosticCode, ShellParse, SourceText, SyntaxElement, SyntaxNode, TextSize,
+};
+
+struct Fixture {
+    name: &'static str,
+    source: &'static str,
+    golden: &'static str,
+}
+
+macro_rules! fixture {
+    ($name:literal) => {
+        Fixture {
+            name: $name,
+            source: include_str!(concat!("fixtures/shell/", $name, ".md")),
+            golden: include_str!(concat!("fixtures/shell/", $name, ".golden")),
+        }
+    };
+}
+
+const FIXTURES: &[Fixture] = &[
+    fixture!("clean_lf"),
+    fixture!("missing_type"),
+    fixture!("unknown_type"),
+    fixture!("malformed_clean"),
+    fixture!("unclosed_h2"),
+    fixture!("unclosed_false_positive"),
+    fixture!("later_thematic_rule"),
+    fixture!("protected_containers"),
+    fixture!("lower_headings"),
+    fixture!("html_comment"),
+];
 
 #[test]
 fn preserves_bom_crlf_unicode_frontmatter_and_top_level_headings() {
@@ -12,11 +44,15 @@ fn preserves_bom_crlf_unicode_frontmatter_and_top_level_headings() {
     assert_eq!(shell.structure.headings.len(), 2);
     assert_eq!(shell.structure.headings[0].level, 1);
     assert_eq!(shell.structure.headings[1].level, 2);
+    assert!(leaf_tokens(&shell.tree.root())
+        .iter()
+        .filter(|token| token.kind() == OkfMarkdownSyntaxKind::NewlineToken)
+        .all(|token| token.text().write_to_string() == "\r\n"));
 }
 
 #[test]
 fn malformed_and_unclosed_frontmatter_recovers_without_losing_bytes() {
-    let source = "---\r\ntype arbitrary\r\nname: \u{1d11e}\r\n# Recovered\r\n## Child\r\n";
+    let source = "---\r\ntype: arbitrary\r\nname: \u{1d11e}\r\n# Recovered\r\n## Child\r\n";
     let text = SourceText::from_shared(Arc::new(source.into())).unwrap();
     let shell = parse_okf_markdown(text, MarkdownDialect::CommonMarkCurrent).unwrap();
 
@@ -58,4 +94,299 @@ fn keeps_headings_in_protected_containers_raw() {
     assert_eq!(shell.tree.write_to_string(), source);
     assert_eq!(shell.structure.headings.len(), 1);
     assert_eq!(shell.structure.headings[0].level, 1);
+}
+
+#[test]
+fn unclosed_frontmatter_uses_plausible_h2_fallback() {
+    let source = "---\ntype: arbitrary\n## Section\n";
+    let shell = parse(source);
+    assert_eq!(shell.tree.write_to_string(), source);
+    assert_eq!(
+        shell.tree.root().child_at(0).unwrap().kind(),
+        OkfMarkdownSyntaxKind::Frontmatter
+    );
+    assert_eq!(shell.structure.headings.len(), 1);
+    assert_eq!(shell.structure.headings[0].level, 2);
+}
+
+#[test]
+fn unclosed_frontmatter_h2_fallback_rejects_implausible_candidates() {
+    let source = "---\ntype arbitrary\n## Section\n";
+    let shell = parse(source);
+    assert_eq!(shell.tree.write_to_string(), source);
+    assert!(shell.tree.diagnostics().is_empty());
+    assert_ne!(
+        shell.tree.root().child_at(0).unwrap().kind(),
+        OkfMarkdownSyntaxKind::Frontmatter
+    );
+}
+
+#[test]
+fn shell_tokens_apply_normative_trivia_ownership() {
+    let source = "---  \n type :  arbitrary  \n---\n#  Title  \n   ";
+    let shell = parse(source);
+    let tokens = leaf_tokens(&shell.tree.root());
+    let kinds: Vec<_> = tokens.iter().map(|token| token.kind()).collect();
+    assert!(kinds.contains(&OkfMarkdownSyntaxKind::NewlineToken));
+    let eof = tokens.last().unwrap();
+    assert_eq!(eof.kind(), OkfMarkdownSyntaxKind::EndOfFileToken);
+    assert!(eof.flags().is_missing());
+    assert_eq!(
+        eof.leading_trivia()
+            .iter()
+            .map(|t| t.text.write_to_string())
+            .collect::<String>(),
+        "   "
+    );
+    assert!(tokens
+        .iter()
+        .all(|token| token.trailing_trivia().is_empty()));
+    assert!(tokens
+        .iter()
+        .filter(|token| token.kind() == OkfMarkdownSyntaxKind::NewlineToken)
+        .any(|token| token
+            .leading_trivia()
+            .iter()
+            .map(|t| t.text.write_to_string())
+            .collect::<String>()
+            == "  "));
+}
+
+#[test]
+fn shell_fixtures_are_exact_bounded_progressing_and_golden() {
+    let mut actuals = Vec::new();
+    for fixture in FIXTURES {
+        let shell = parse(fixture.source);
+        assert_shell_invariants(fixture.name, fixture.source, &shell);
+        assert_fixture_shape(fixture.name, fixture.source, &shell);
+        actuals.push((fixture, golden(&shell)));
+    }
+    if std::env::var_os("WAML_DUMP_SHELL_GOLDENS").is_some() {
+        for (fixture, actual) in &actuals {
+            println!(
+                "@@GOLDEN:{}@@\n{}@@END:{}@@",
+                fixture.name, actual, fixture.name
+            );
+        }
+    }
+    for (fixture, actual) in actuals {
+        assert_eq!(actual, fixture.golden, "golden mismatch: {}", fixture.name);
+    }
+}
+
+fn assert_fixture_shape(name: &str, source: &str, shell: &ShellParse) {
+    let codes: Vec<_> = shell
+        .tree
+        .diagnostics()
+        .iter()
+        .map(|diagnostic| diagnostic.code)
+        .collect();
+    match name {
+        "clean_lf" | "missing_type" | "unknown_type" => {
+            assert!(
+                codes.is_empty(),
+                "clean arbitrary/missing/unknown type: {name}"
+            );
+        }
+        "malformed_clean" => assert_eq!(
+            codes,
+            vec![
+                OkfSyntaxDiagnosticCode::MalformedFrontmatterEntry,
+                OkfSyntaxDiagnosticCode::FrontmatterNotClean,
+            ]
+        ),
+        "unclosed_h2" => assert_eq!(
+            codes,
+            vec![
+                OkfSyntaxDiagnosticCode::MissingFrontmatterFence,
+                OkfSyntaxDiagnosticCode::FrontmatterNotClean,
+            ]
+        ),
+        "unclosed_false_positive" => assert!(codes.is_empty()),
+        "later_thematic_rule" => assert_eq!(shell.structure.headings.len(), 2),
+        "protected_containers" => {
+            assert_eq!(shell.structure.headings.len(), 1);
+            for marker in [
+                "# quote",
+                "## unordered item",
+                "# ordered item",
+                "# fenced code",
+                "## indented code",
+                "# html block",
+                "# table",
+                "## cell",
+                "# footnote",
+                "## definition",
+            ] {
+                let offset = TextSize::try_from_usize(source.find(marker).unwrap()).unwrap();
+                assert!(
+                    shell
+                        .structure
+                        .protected_ranges
+                        .iter()
+                        .any(|range| range.contains(offset)),
+                    "{marker} is protected"
+                );
+            }
+        }
+        "lower_headings" => assert_eq!(shell.structure.headings.len(), 1),
+        "html_comment" => assert_eq!(shell.structure.headings.len(), 1),
+        _ => unreachable!("fixture table is exhaustive"),
+    }
+}
+
+fn parse(source: &str) -> waml_syntax::ShellParse {
+    let text = SourceText::from_shared(Arc::new(source.into())).unwrap();
+    parse_okf_markdown(text, MarkdownDialect::CommonMarkCurrent).unwrap()
+}
+
+fn leaf_tokens(
+    node: &waml_syntax::SyntaxNode<waml_syntax::OkfMarkdownLanguage>,
+) -> Vec<waml_syntax::SyntaxToken<waml_syntax::OkfMarkdownLanguage>> {
+    fn visit(
+        node: &waml_syntax::SyntaxNode<waml_syntax::OkfMarkdownLanguage>,
+        out: &mut Vec<waml_syntax::SyntaxToken<waml_syntax::OkfMarkdownLanguage>>,
+    ) {
+        for child in node.children() {
+            match child {
+                SyntaxElement::Node(node) => visit(&node, out),
+                SyntaxElement::Token(token) => out.push(token),
+            }
+        }
+    }
+    let mut out = Vec::new();
+    visit(node, &mut out);
+    out
+}
+
+fn assert_shell_invariants(name: &str, source: &str, shell: &ShellParse) {
+    assert_eq!(shell.tree.write_to_string(), source, "roundtrip: {name}");
+    assert_eq!(
+        shell.tree.root().range().end().to_usize(),
+        source.len(),
+        "root range: {name}"
+    );
+    let leaves = leaf_tokens(&shell.tree.root());
+    assert!(!leaves.is_empty(), "parser progress: {name}");
+    let leaf_text = leaves
+        .iter()
+        .flat_map(|token| {
+            token
+                .leading_trivia()
+                .iter()
+                .map(|trivia| trivia.text.write_to_string())
+                .chain(std::iter::once(token.text().write_to_string()))
+                .chain(
+                    token
+                        .trailing_trivia()
+                        .iter()
+                        .map(|trivia| trivia.text.write_to_string()),
+                )
+        })
+        .collect::<String>();
+    assert_eq!(leaf_text, source, "leaf bytes exactly once: {name}");
+    assert!(
+        leaves
+            .iter()
+            .all(|token| token.range().end().to_usize() <= source.len()),
+        "leaf bounds: {name}"
+    );
+    assert_red_ranges(&shell.tree.root(), source.len(), name);
+    assert_node_widths(shell.tree.root_green(), name);
+    assert!(
+        shell
+            .structure
+            .headings
+            .iter()
+            .all(|h| h.range.end().to_usize() <= source.len()
+                && h.text_range.end().to_usize() <= source.len()),
+        "heading bounds: {name}"
+    );
+    assert!(
+        shell
+            .structure
+            .protected_ranges
+            .windows(2)
+            .all(|pair| pair[0].end() <= pair[1].start()),
+        "protected ranges sorted/non-overlapping: {name}"
+    );
+    assert!(
+        shell
+            .tree
+            .diagnostics()
+            .iter()
+            .all(|diagnostic| diagnostic.range.end().to_usize() <= source.len()),
+        "diagnostic bounds: {name}"
+    );
+}
+
+fn assert_red_ranges(node: &SyntaxNode<OkfMarkdownLanguage>, source_len: usize, name: &str) {
+    assert!(
+        node.range().end().to_usize() <= source_len,
+        "node bounds: {name}"
+    );
+    for child in node.children() {
+        if let SyntaxElement::Node(node) = child {
+            assert_red_ranges(&node, source_len, name);
+        }
+    }
+}
+
+fn assert_node_widths(node: &waml_syntax::GreenNode<OkfMarkdownLanguage>, name: &str) {
+    let sum: usize = node
+        .children()
+        .iter()
+        .map(|child| match child {
+            GreenElement::Node(node) => {
+                assert_node_widths(node, name);
+                node.width().to_usize()
+            }
+            GreenElement::Token(token) => token.width().to_usize(),
+        })
+        .sum();
+    assert_eq!(sum, node.width().to_usize(), "child widths: {name}");
+}
+
+fn golden(shell: &ShellParse) -> String {
+    fn escape(text: &str) -> String {
+        text.chars().flat_map(char::escape_default).collect()
+    }
+    fn walk(node: &SyntaxNode<OkfMarkdownLanguage>, path: &str, out: &mut String) {
+        out.push_str(&format!(
+            "N {path} {:?} {}..{}\n",
+            node.kind(),
+            node.range().start().to_usize(),
+            node.range().end().to_usize()
+        ));
+        for (index, child) in node.children().enumerate() {
+            let child_path = format!("{path}/{index}");
+            match child {
+                SyntaxElement::Node(node) => walk(&node, &child_path, out),
+                SyntaxElement::Token(token) => {
+                    let leading = token
+                        .leading_trivia()
+                        .iter()
+                        .map(|t| t.text.write_to_string())
+                        .collect::<String>();
+                    let trailing = token
+                        .trailing_trivia()
+                        .iter()
+                        .map(|t| t.text.write_to_string())
+                        .collect::<String>();
+                    out.push_str(&format!("T {child_path} {:?} {}..{} missing={} leading=\"{}\" text=\"{}\" trailing=\"{}\"\n", token.kind(), token.range().start().to_usize(), token.range().end().to_usize(), token.flags().is_missing(), escape(&leading), escape(&token.text().write_to_string()), escape(&trailing)));
+                }
+            }
+        }
+    }
+    let mut output = String::new();
+    walk(&shell.tree.root(), "root", &mut output);
+    for diagnostic in shell.tree.diagnostics() {
+        output.push_str(&format!(
+            "D {:?} {}..{}\n",
+            diagnostic.code,
+            diagnostic.range.start().to_usize(),
+            diagnostic.range.end().to_usize()
+        ));
+    }
+    output
 }

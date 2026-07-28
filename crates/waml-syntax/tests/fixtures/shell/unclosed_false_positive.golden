@@ -1,0 +1,8 @@
+N root Root 0..31
+N root/0 MarkdownRegion 0..20
+T root/0/0 RawTextToken 0..20 missing=false leading="" text="---\nordinary prose\n\n" trailing=""
+N root/1 Heading 20..31
+T root/1/0 HeadingMarkerToken 20..22 missing=false leading="" text="##" trailing=""
+T root/1/1 HeadingText 22..30 missing=false leading=" " text="Section" trailing=""
+T root/1/2 NewlineToken 30..31 missing=false leading="" text="\n" trailing=""
+T root/2 EndOfFileToken 31..31 missing=true leading="" text="" trailing=""

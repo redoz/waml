@@ -1,0 +1,25 @@
+N root Root 0..56
+N root/0 Frontmatter 0..37
+T root/0/0 FrontmatterOpenFence 0..3 missing=false leading="" text="---" trailing=""
+T root/0/1 NewlineToken 3..4 missing=false leading="" text="\n" trailing=""
+N root/0/2 FrontmatterEntry 4..20
+T root/0/2/0 FrontmatterKey 4..8 missing=false leading="" text="type" trailing=""
+T root/0/2/1 ColonToken 8..9 missing=false leading="" text=":" trailing=""
+T root/0/2/2 FrontmatterValue 9..19 missing=false leading=" " text="arbitrary" trailing=""
+T root/0/2/3 NewlineToken 19..20 missing=false leading="" text="\n" trailing=""
+N root/0/3 FrontmatterEntry 20..33
+T root/0/3/0 FrontmatterKey 20..25 missing=false leading="" text="title" trailing=""
+T root/0/3/1 ColonToken 25..26 missing=false leading="" text=":" trailing=""
+T root/0/3/2 FrontmatterValue 26..32 missing=false leading=" " text="Clean" trailing=""
+T root/0/3/3 NewlineToken 32..33 missing=false leading="" text="\n" trailing=""
+T root/0/4 FrontmatterCloseFence 33..36 missing=false leading="" text="---" trailing=""
+T root/0/5 NewlineToken 36..37 missing=false leading="" text="\n" trailing=""
+N root/1 Heading 37..45
+T root/1/0 HeadingMarkerToken 37..38 missing=false leading="" text="#" trailing=""
+T root/1/1 HeadingText 38..44 missing=false leading=" " text="Title" trailing=""
+T root/1/2 NewlineToken 44..45 missing=false leading="" text="\n" trailing=""
+N root/2 Heading 45..56
+T root/2/0 HeadingMarkerToken 45..47 missing=false leading="" text="##" trailing=""
+T root/2/1 HeadingText 47..55 missing=false leading=" " text="Section" trailing=""
+T root/2/2 NewlineToken 55..56 missing=false leading="" text="\n" trailing=""
+T root/3 EndOfFileToken 56..56 missing=true leading="" text="" trailing=""

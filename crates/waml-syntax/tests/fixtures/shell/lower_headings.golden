@@ -1,0 +1,8 @@
+N root Root 0..49
+N root/0 MarkdownRegion 0..43
+T root/0/0 RawTextToken 0..43 missing=false leading="" text="### Three\n#### Four\n##### Five\n###### Six\n\n" trailing=""
+N root/1 Heading 43..49
+T root/1/0 HeadingMarkerToken 43..44 missing=false leading="" text="#" trailing=""
+T root/1/1 HeadingText 44..48 missing=false leading=" " text="One" trailing=""
+T root/1/2 NewlineToken 48..49 missing=false leading="" text="\n" trailing=""
+T root/2 EndOfFileToken 49..49 missing=true leading="" text="" trailing=""
