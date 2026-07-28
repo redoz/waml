@@ -311,3 +311,254 @@ fn every_deferred_sequence_form_has_unsupported_code_and_exact_range() {
         }));
     }
 }
+
+#[test]
+fn behavior_occurrence_indices_are_invariant_across_absent_and_recovery_slots() {
+    let analysis = analyze([
+        (
+            "flow.md",
+            "---\ntype: uml.Activity\n---\n# Flow\n\n## Nodes\n### Plain\n- entry: `begin`\n- refines [Order](./order.md)\n- transitions to Done\n- on `go` when `ready` transitions to Done carries [Order](./order.md): `effect`\n- transitions to Done: broken\n### object [Order](./order.md)\n### final Done\n",
+        ),
+        (
+            "sequence.md",
+            "---\ntype: uml.Sequence\n---\n# Sequence\n\n## Lifelines\n- [Order](./order.md)\n- [Order](./order.md) as order\n- [Order](./order.md) trailing\n\n## Messages\n- order calls Order\n- order calls Order: `place()`\n- order calls Order: broken\n- alt\n  - else\n  - when `ready`\n  - when broken\n",
+        ),
+        ("order.md", "---\ntype: uml.Class\n---\n# Order\n"),
+    ]);
+
+    let flow_root = root(&analysis, "flow.md");
+    let nodes = typed::<uml::FlowNodeSyntax>(flow_root.clone());
+    for node in &nodes {
+        assert_eq!(
+            node.syntax()
+                .child_at(uml::FlowNodeSyntax::KIND_SLOT)
+                .unwrap()
+                .kind(),
+            uml::syntax::UmlSyntaxKind::FlowNodeKindSlot
+        );
+        assert_eq!(
+            node.syntax()
+                .child_at(uml::FlowNodeSyntax::IDENTITY_SLOT)
+                .unwrap()
+                .kind(),
+            uml::syntax::UmlSyntaxKind::FlowIdentity
+        );
+        assert_eq!(
+            node.syntax()
+                .child_at(uml::FlowNodeSyntax::RECOVERY_SLOT)
+                .unwrap()
+                .kind(),
+            uml::syntax::UmlSyntaxKind::BehaviorRecovery
+        );
+    }
+    assert!(nodes[0].kind_token().is_none());
+    assert_eq!(
+        nodes[1].kind_token().unwrap().text().write_to_string(),
+        "object"
+    );
+
+    let transitions = typed::<uml::FlowTransitionSyntax>(flow_root);
+    assert_eq!(transitions.len(), 3);
+    for transition in &transitions {
+        assert_eq!(transition.syntax().children().count(), 10);
+        assert_eq!(
+            transition
+                .syntax()
+                .child_at(uml::FlowTransitionSyntax::TARGET_SLOT)
+                .unwrap()
+                .kind(),
+            uml::syntax::UmlSyntaxKind::FlowTarget
+        );
+        assert_eq!(
+            transition
+                .syntax()
+                .child_at(uml::FlowTransitionSyntax::RECOVERY_SLOT)
+                .unwrap()
+                .kind(),
+            uml::syntax::UmlSyntaxKind::BehaviorRecovery
+        );
+        assert_eq!(
+            transition.target_token().unwrap().text().write_to_string(),
+            "Done"
+        );
+    }
+    assert!(transitions[0].trigger_token().is_none());
+    assert_eq!(
+        transitions[1]
+            .trigger_token()
+            .unwrap()
+            .text()
+            .write_to_string(),
+        "`go`"
+    );
+    assert_eq!(transitions[2].recovery().count(), 1);
+    let declared_flow = analysis.declared.concept("flow").unwrap();
+    assert!(matches!(
+        declared_flow.flow_nodes[0].transitions[0].trigger,
+        uml::DeclaredField::Absent
+    ));
+    assert!(matches!(
+        declared_flow.flow_nodes[0].transitions[0].guard,
+        uml::DeclaredField::Absent
+    ));
+    assert!(matches!(
+        declared_flow.flow_nodes[0].transitions[0].carries,
+        uml::DeclaredField::Absent
+    ));
+    assert!(matches!(
+        declared_flow.flow_nodes[0].transitions[0].effect,
+        uml::DeclaredField::Absent
+    ));
+    let internals = typed::<uml::FlowInternalSyntax>(root(&analysis, "flow.md"));
+    assert_eq!(internals.len(), 2);
+    for internal in &internals {
+        assert_eq!(internal.syntax().children().count(), 7);
+        assert_eq!(
+            internal
+                .syntax()
+                .child_at(uml::FlowInternalSyntax::RECOVERY_SLOT)
+                .unwrap()
+                .kind(),
+            uml::syntax::UmlSyntaxKind::BehaviorRecovery
+        );
+    }
+    assert_eq!(
+        internals[0].value_token().unwrap().text().write_to_string(),
+        "`begin`"
+    );
+    assert!(internals[1].link().is_some());
+
+    let sequence_root = root(&analysis, "sequence.md");
+    let lifelines = typed::<uml::LifelineSyntax>(sequence_root.clone());
+    for lifeline in &lifelines {
+        assert_eq!(lifeline.syntax().children().count(), 6);
+        assert_eq!(
+            lifeline
+                .syntax()
+                .child_at(uml::LifelineSyntax::LINK_SLOT)
+                .unwrap()
+                .kind(),
+            uml::syntax::UmlSyntaxKind::Link
+        );
+    }
+    assert!(lifelines[0].alias_token().is_none());
+    assert_eq!(
+        lifelines[1].alias_token().unwrap().text().write_to_string(),
+        "order"
+    );
+    assert_eq!(lifelines[2].recovery().count(), 1);
+
+    let messages = typed::<uml::MessageSyntax>(sequence_root.clone());
+    for message in &messages {
+        assert_eq!(message.syntax().children().count(), 8);
+        assert_eq!(
+            message
+                .syntax()
+                .child_at(uml::MessageSyntax::SIGNATURE_SLOT)
+                .unwrap()
+                .kind(),
+            uml::syntax::UmlSyntaxKind::MessageSignature
+        );
+    }
+    assert!(messages[0].signature_token().is_none());
+    assert_eq!(
+        messages[1]
+            .signature_token()
+            .unwrap()
+            .text()
+            .write_to_string(),
+        "`place()`"
+    );
+    assert_eq!(messages[2].recovery().count(), 1);
+
+    let fragments = typed::<uml::SequenceFragmentSyntax>(sequence_root.clone());
+    assert_eq!(fragments[0].syntax().children().count(), 4);
+    let operands = typed::<uml::SequenceOperandSyntax>(sequence_root);
+    for operand in &operands {
+        assert_eq!(operand.syntax().children().count(), 5);
+        assert_eq!(
+            operand
+                .syntax()
+                .child_at(uml::SequenceOperandSyntax::GUARD_SLOT)
+                .unwrap()
+                .kind(),
+            uml::syntax::UmlSyntaxKind::OperandGuard
+        );
+    }
+    assert!(operands[0].guard_token().is_none());
+    assert_eq!(
+        operands[1].guard_token().unwrap().text().write_to_string(),
+        "`ready`"
+    );
+    assert_eq!(operands[2].recovery().count(), 1);
+    let declared_sequence = analysis.declared.concept("sequence").unwrap();
+    assert!(matches!(
+        declared_sequence.lifelines[0].alias,
+        uml::DeclaredField::Absent
+    ));
+    assert!(matches!(
+        declared_sequence.messages[0].signature,
+        uml::DeclaredField::Absent
+    ));
+    assert!(matches!(
+        declared_sequence.sequence_operands[0].guard,
+        uml::DeclaredField::Absent
+    ));
+}
+
+#[test]
+fn missing_lifeline_link_is_incomplete_but_present_malformed_link_is_invalid() {
+    let authored =
+        "---\ntype: uml.Sequence\n---\n# Sequence\n\n## Lifelines\n-\n- broken\n\n## Messages\n";
+    let analysis = analyze([("sequence.md", authored)]);
+    let lifelines = &analysis.declared.concept("sequence").unwrap().lifelines;
+    assert_eq!(lifelines.len(), 2);
+
+    let missing_at = authored.find("## Lifelines\n-\n").unwrap() + "## Lifelines\n-".len();
+    for field in [&lifelines[0].target, &lifelines[0].title] {
+        match field {
+            uml::DeclaredField::Incomplete { syntax, expected } => {
+                assert_eq!(*expected, uml::ExpectedSyntax::LinkTarget);
+                assert_eq!(syntax.range().start().to_usize(), missing_at);
+                assert_eq!(syntax.range().end().to_usize(), missing_at);
+            }
+            _ => panic!("entirely missing lifeline link must be incomplete"),
+        }
+    }
+
+    let malformed_start = authored.find("broken").unwrap();
+    for field in [&lifelines[1].target, &lifelines[1].title] {
+        match field {
+            uml::DeclaredField::Invalid { syntax, .. } => {
+                assert_eq!(syntax.range().start().to_usize(), malformed_start);
+                assert_eq!(
+                    syntax.range().end().to_usize(),
+                    malformed_start + "broken".len()
+                );
+            }
+            _ => panic!("present malformed lifeline link must be invalid"),
+        }
+    }
+
+    let id = analysis
+        .syntax
+        .catalog()
+        .id_for_path(&waml::source::BundlePath::parse("sequence.md").unwrap())
+        .unwrap();
+    let diagnostics = analysis.syntax.document(id).unwrap().syntax().diagnostics();
+    let malformed = diagnostics
+        .iter()
+        .filter(|diagnostic| {
+            diagnostic.code == uml::syntax::UmlSyntaxDiagnosticCode::MalformedLifeline
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(malformed.len(), 2);
+    assert!(malformed.iter().any(|diagnostic| {
+        diagnostic.range.start().to_usize() == missing_at
+            && diagnostic.range.end().to_usize() == missing_at
+    }));
+    assert!(malformed.iter().any(|diagnostic| {
+        diagnostic.range.start().to_usize() == malformed_start
+            && diagnostic.range.end().to_usize() == malformed_start + "broken".len()
+    }));
+}

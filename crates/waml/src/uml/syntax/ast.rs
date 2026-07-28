@@ -71,6 +71,8 @@ pub struct FlowTransitionSyntax(pub(crate) SyntaxNode<UmlLanguage>);
 #[derive(Clone, Debug)]
 pub struct FlowBlockSyntax(pub(crate) SyntaxNode<UmlLanguage>);
 #[derive(Clone, Debug)]
+pub struct FlowInternalSyntax(pub(crate) SyntaxNode<UmlLanguage>);
+#[derive(Clone, Debug)]
 pub struct LifelineSyntax(pub(crate) SyntaxNode<UmlLanguage>);
 #[derive(Clone, Debug)]
 pub struct MessageSyntax(pub(crate) SyntaxNode<UmlLanguage>);
@@ -244,6 +246,7 @@ simple_ast!(FlagSyntax, Flag);
 simple_ast!(FlowNodeSyntax, FlowNode);
 simple_ast!(FlowTransitionSyntax, FlowTransition);
 simple_ast!(FlowBlockSyntax, FlowBlock);
+simple_ast!(FlowInternalSyntax, FlowInternal);
 simple_ast!(LifelineSyntax, Lifeline);
 simple_ast!(MessageSyntax, Message);
 simple_ast!(SequenceOperandSyntax, SequenceOperand);
@@ -251,40 +254,33 @@ simple_ast!(SequenceFragmentSyntax, SequenceFragment);
 simple_ast!(MessagesBlockSyntax, MessagesSection);
 
 macro_rules! behavior_syntax {
-    ($name:ident) => {
+    ($name:ident, $recovery:expr) => {
         impl $name {
             pub fn recovery(&self) -> impl Iterator<Item = SyntaxElement<UmlLanguage>> + '_ {
-                self.0.children().filter(|element| {
-                    matches!(
-                        element.kind(),
-                        UmlSyntaxKind::SkippedTokensSyntax | UmlSyntaxKind::BadToken
-                    )
-                })
+                recovery_at(&self.0, $recovery).into_iter()
             }
         }
     };
 }
-behavior_syntax!(FlowNodeSyntax);
-behavior_syntax!(FlowTransitionSyntax);
-behavior_syntax!(LifelineSyntax);
-behavior_syntax!(MessageSyntax);
-behavior_syntax!(SequenceOperandSyntax);
 
 impl FlowNodeSyntax {
+    pub const HEADING_SLOT: usize = 0;
+    pub const KIND_SLOT: usize = 1;
+    pub const IDENTITY_SLOT: usize = 2;
+    pub const RECOVERY_SLOT: usize = 3;
+    pub const NEWLINE_SLOT: usize = 4;
+    pub const BODY_START: usize = 5;
+
     pub fn kind_token(&self) -> Option<SyntaxToken<UmlLanguage>> {
-        descendant_token_of(&self.0, UmlSyntaxKind::NodeKindToken)
+        slot_token_at(&self.0, Self::KIND_SLOT, 0)
     }
     pub fn identity_token(&self) -> SyntaxToken<UmlLanguage> {
-        descendant_token_of(&self.0, UmlSyntaxKind::IdentityToken)
-            .or_else(|| {
-                self.object_link()
-                    .and_then(|link| direct_token_of(&link, UmlSyntaxKind::LinkTextToken))
-            })
+        slot_token_at(&self.0, Self::IDENTITY_SLOT, 0)
+            .or_else(|| self.object_link().and_then(|link| token_at(&link, 1)))
             .expect("flow node has fixed identity slot")
     }
     pub fn object_link(&self) -> Option<SyntaxNode<UmlLanguage>> {
-        direct_node(&self.0, UmlSyntaxKind::FlowIdentity)
-            .and_then(|identity| direct_node(&identity, UmlSyntaxKind::Link))
+        node_at(&self.0, Self::IDENTITY_SLOT).and_then(|identity| node_at(&identity, 0))
     }
     pub fn internal_blocks(&self) -> impl Iterator<Item = SyntaxNode<UmlLanguage>> + '_ {
         self.0
@@ -293,107 +289,182 @@ impl FlowNodeSyntax {
             .filter_map(SyntaxElement::into_node)
     }
 }
+behavior_syntax!(FlowNodeSyntax, FlowNodeSyntax::RECOVERY_SLOT);
+
 impl FlowTransitionSyntax {
+    pub const BULLET_SLOT: usize = 0;
+    pub const TRIGGER_SLOT: usize = 1;
+    pub const GUARD_SLOT: usize = 2;
+    pub const TRANSITIONS_KEYWORD_SLOT: usize = 3;
+    pub const TO_SLOT: usize = 4;
+    pub const TARGET_SLOT: usize = 5;
+    pub const CARRIES_SLOT: usize = 6;
+    pub const EFFECT_SLOT: usize = 7;
+    pub const RECOVERY_SLOT: usize = 8;
+    pub const NEWLINE_SLOT: usize = 9;
+
     pub fn trigger_token(&self) -> Option<SyntaxToken<UmlLanguage>> {
-        descendant_token_of(&self.0, UmlSyntaxKind::TriggerToken)
+        slot_token_at(&self.0, Self::TRIGGER_SLOT, 1)
     }
     pub fn guard_token(&self) -> Option<SyntaxToken<UmlLanguage>> {
-        descendant_token_of(&self.0, UmlSyntaxKind::GuardToken)
+        slot_token_at(&self.0, Self::GUARD_SLOT, 1)
     }
     pub fn target_token(&self) -> Option<SyntaxToken<UmlLanguage>> {
-        descendant_token_of(&self.0, UmlSyntaxKind::TargetToken).or_else(|| {
-            self.target_link()
-                .and_then(|link| direct_token_of(&link, UmlSyntaxKind::LinkTargetToken))
-        })
+        slot_token_at(&self.0, Self::TARGET_SLOT, 0)
+            .or_else(|| self.target_link().and_then(|link| token_at(&link, 4)))
     }
     pub fn target_link(&self) -> Option<SyntaxNode<UmlLanguage>> {
-        direct_node(&self.0, UmlSyntaxKind::FlowTarget)
-            .and_then(|target| direct_node(&target, UmlSyntaxKind::Link))
+        node_at(&self.0, Self::TARGET_SLOT).and_then(|target| node_at(&target, 0))
     }
     pub fn carries_link(&self) -> Option<SyntaxNode<UmlLanguage>> {
-        self.0
-            .children()
-            .filter(|element| element.kind() == UmlSyntaxKind::Link)
-            .filter_map(SyntaxElement::into_node)
-            .next()
+        node_at(&self.0, Self::CARRIES_SLOT)
+            .and_then(|carries| node_at(&carries, 1))
+            .filter(|link| token_at(link, 4).is_some())
     }
     pub fn effect_token(&self) -> Option<SyntaxToken<UmlLanguage>> {
-        descendant_token_of(&self.0, UmlSyntaxKind::EffectToken)
+        slot_token_at(&self.0, Self::EFFECT_SLOT, 1)
     }
     pub fn else_token(&self) -> Option<SyntaxToken<UmlLanguage>> {
-        direct_token_of(&self.0, UmlSyntaxKind::ElseToken)
+        slot_token_at(&self.0, Self::GUARD_SLOT, 0)
+            .filter(|token| token.kind() == UmlSyntaxKind::ElseToken)
     }
 }
+behavior_syntax!(FlowTransitionSyntax, FlowTransitionSyntax::RECOVERY_SLOT);
+
 impl FlowBlockSyntax {
+    pub fn nodes(&self) -> impl Iterator<Item = FlowNodeSyntax> + '_ {
+        self.0
+            .children()
+            .filter_map(SyntaxElement::into_node)
+            .filter_map(FlowNodeSyntax::cast)
+    }
+}
+impl FlowInternalSyntax {
+    pub const BULLET_SLOT: usize = 0;
+    pub const KEYWORD_SLOT: usize = 1;
+    pub const COLON_SLOT: usize = 2;
+    pub const VALUE_SLOT: usize = 3;
+    pub const LINK_SLOT: usize = 4;
+    pub const RECOVERY_SLOT: usize = 5;
+    pub const NEWLINE_SLOT: usize = 6;
+
     pub fn keyword_token(&self) -> Option<SyntaxToken<UmlLanguage>> {
-        direct_token_of(&self.0, UmlSyntaxKind::InternalKeywordToken)
+        token_at(&self.0, Self::KEYWORD_SLOT)
     }
     pub fn value_token(&self) -> Option<SyntaxToken<UmlLanguage>> {
-        descendant_token_of(&self.0, UmlSyntaxKind::ExpressionToken)
-            .or_else(|| descendant_token_of(&self.0, UmlSyntaxKind::IdentifierToken))
+        slot_token_at(&self.0, Self::VALUE_SLOT, 0)
     }
     pub fn link(&self) -> Option<SyntaxNode<UmlLanguage>> {
-        direct_node(&self.0, UmlSyntaxKind::Link)
+        node_at(&self.0, Self::LINK_SLOT).filter(|link| token_at(link, 4).is_some())
     }
 }
+behavior_syntax!(FlowInternalSyntax, FlowInternalSyntax::RECOVERY_SLOT);
 impl LifelineSyntax {
+    pub const BULLET_SLOT: usize = 0;
+    pub const LINK_SLOT: usize = 1;
+    pub const AS_SLOT: usize = 2;
+    pub const ALIAS_SLOT: usize = 3;
+    pub const RECOVERY_SLOT: usize = 4;
+    pub const NEWLINE_SLOT: usize = 5;
+
     pub fn link(&self) -> Option<SyntaxNode<UmlLanguage>> {
-        direct_node(&self.0, UmlSyntaxKind::Link)
+        node_at(&self.0, Self::LINK_SLOT)
     }
     pub fn alias_token(&self) -> Option<SyntaxToken<UmlLanguage>> {
-        descendant_token_of(&self.0, UmlSyntaxKind::AliasToken)
+        slot_token_at(&self.0, Self::ALIAS_SLOT, 0)
     }
 }
+behavior_syntax!(LifelineSyntax, LifelineSyntax::RECOVERY_SLOT);
+
 impl MessageSyntax {
+    pub const BULLET_SLOT: usize = 0;
+    pub const SOURCE_SLOT: usize = 1;
+    pub const VERB_SLOT: usize = 2;
+    pub const TARGET_SLOT: usize = 3;
+    pub const COLON_SLOT: usize = 4;
+    pub const SIGNATURE_SLOT: usize = 5;
+    pub const RECOVERY_SLOT: usize = 6;
+    pub const NEWLINE_SLOT: usize = 7;
+
     pub fn source_token(&self) -> SyntaxToken<UmlLanguage> {
-        descendant_token_of(&self.0, UmlSyntaxKind::SourceToken)
-            .expect("message has fixed source slot")
+        slot_token_at(&self.0, Self::SOURCE_SLOT, 0).expect("message has fixed source slot")
     }
     pub fn verb_token(&self) -> SyntaxToken<UmlLanguage> {
-        descendant_token_of(&self.0, UmlSyntaxKind::VerbToken).expect("message has fixed verb slot")
+        slot_token_at(&self.0, Self::VERB_SLOT, 0).expect("message has fixed verb slot")
     }
     pub fn target_token(&self) -> SyntaxToken<UmlLanguage> {
-        descendant_token_of(&self.0, UmlSyntaxKind::TargetToken)
-            .expect("message has fixed target slot")
+        slot_token_at(&self.0, Self::TARGET_SLOT, 0).expect("message has fixed target slot")
     }
     pub fn signature_token(&self) -> Option<SyntaxToken<UmlLanguage>> {
-        descendant_token_of(&self.0, UmlSyntaxKind::SignatureToken)
+        slot_token_at(&self.0, Self::SIGNATURE_SLOT, 0)
     }
 }
+behavior_syntax!(MessageSyntax, MessageSyntax::RECOVERY_SLOT);
+
 impl SequenceFragmentSyntax {
+    pub const BULLET_SLOT: usize = 0;
+    pub const KIND_SLOT: usize = 1;
+    pub const RECOVERY_SLOT: usize = 2;
+    pub const NEWLINE_SLOT: usize = 3;
+
     pub fn kind_token(&self) -> SyntaxToken<UmlLanguage> {
-        descendant_token_of(&self.0, UmlSyntaxKind::FragmentKindToken)
-            .expect("fragment has fixed kind slot")
+        slot_token_at(&self.0, Self::KIND_SLOT, 0).expect("fragment has fixed kind slot")
     }
 }
+behavior_syntax!(
+    SequenceFragmentSyntax,
+    SequenceFragmentSyntax::RECOVERY_SLOT
+);
+
 impl SequenceOperandSyntax {
+    pub const BULLET_SLOT: usize = 0;
+    pub const KEYWORD_SLOT: usize = 1;
+    pub const GUARD_SLOT: usize = 2;
+    pub const RECOVERY_SLOT: usize = 3;
+    pub const NEWLINE_SLOT: usize = 4;
+
     pub fn keyword_token(&self) -> SyntaxToken<UmlLanguage> {
-        direct_token_of(&self.0, UmlSyntaxKind::OperandKeywordToken)
-            .expect("operand has fixed keyword slot")
+        token_at(&self.0, Self::KEYWORD_SLOT).expect("operand has fixed keyword slot")
     }
     pub fn guard_token(&self) -> Option<SyntaxToken<UmlLanguage>> {
-        descendant_token_of(&self.0, UmlSyntaxKind::GuardToken)
+        slot_token_at(&self.0, Self::GUARD_SLOT, 0)
     }
 }
+behavior_syntax!(SequenceOperandSyntax, SequenceOperandSyntax::RECOVERY_SLOT);
 
-fn direct_token_of(
-    node: &SyntaxNode<UmlLanguage>,
-    kind: UmlSyntaxKind,
-) -> Option<SyntaxToken<UmlLanguage>> {
-    node.children()
-        .find(|element| element.kind() == kind)
-        .and_then(SyntaxElement::into_token)
+fn node_at(node: &SyntaxNode<UmlLanguage>, index: usize) -> Option<SyntaxNode<UmlLanguage>> {
+    node.child_at(index).and_then(SyntaxElement::into_node)
 }
 
-fn descendant_token_of(
+fn token_at(node: &SyntaxNode<UmlLanguage>, index: usize) -> Option<SyntaxToken<UmlLanguage>> {
+    node.child_at(index)
+        .and_then(SyntaxElement::into_token)
+        .filter(|token| !token.flags().is_missing())
+}
+
+fn slot_token_at(
     node: &SyntaxNode<UmlLanguage>,
-    kind: UmlSyntaxKind,
+    slot_index: usize,
+    token_index: usize,
 ) -> Option<SyntaxToken<UmlLanguage>> {
-    direct_token_of(node, kind).or_else(|| {
-        node.children()
-            .filter_map(SyntaxElement::into_node)
-            .find_map(|child| descendant_token_of(&child, kind))
-    })
+    node_at(node, slot_index).and_then(|slot| token_at(&slot, token_index))
+}
+
+fn recovery_at(
+    node: &SyntaxNode<UmlLanguage>,
+    slot_index: usize,
+) -> Option<SyntaxElement<UmlLanguage>> {
+    let recovery = node_at(node, slot_index)?;
+    let element = recovery.child_at(0)?;
+    match &element {
+        SyntaxElement::Node(node) if node.kind() == UmlSyntaxKind::SkippedTokensSyntax => {
+            Some(element)
+        }
+        SyntaxElement::Token(token) if token.flags().is_bad() && !token.flags().is_missing() => {
+            Some(element)
+        }
+        _ => None,
+    }
 }
 impl LayoutStatementSyntax {
     pub fn placement(&self) -> Option<LayoutPlacementSyntax> {

@@ -21,8 +21,8 @@ pub use declared::{
 };
 pub use syntax::{
     AnchoredSyntax, AxisSyntax, DiagramMembersSyntax, DirectionClauseSyntax, EdgeSyntax,
-    FlagSyntax, FlowBlockSyntax, FlowNodeSyntax, FlowTransitionSyntax, HintClauseSyntax,
-    HintSyntax, InlineInstanceSyntax, LayoutAlignmentSyntax, LayoutAtomSyntax,
+    FlagSyntax, FlowBlockSyntax, FlowInternalSyntax, FlowNodeSyntax, FlowTransitionSyntax,
+    HintClauseSyntax, HintSyntax, InlineInstanceSyntax, LayoutAlignmentSyntax, LayoutAtomSyntax,
     LayoutPlacementSyntax, LayoutSectionSyntax, LayoutStandaloneSyntax, LayoutStatementSyntax,
     LifelineSyntax, MarginSyntax, MemberGroupSyntax, MemberSyntax, MessageSyntax,
     MessagesBlockSyntax, NameRefSyntax, OperandRefSyntax, OperandSyntax, RelationshipEndSyntax,

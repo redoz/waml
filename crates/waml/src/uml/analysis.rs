@@ -1308,12 +1308,17 @@ fn invalid<T>(node: SyntaxNode<UmlLanguage>) -> crate::uml::DeclaredField<UmlLan
     }
 }
 fn has_recovery(node: &SyntaxNode<UmlLanguage>) -> bool {
-    node.children().any(|e| {
-        matches!(
-            e.kind(),
-            super::syntax::UmlSyntaxKind::BadToken
-                | super::syntax::UmlSyntaxKind::SkippedTokensSyntax
-        ) || e.into_node().is_some_and(|child| has_recovery(&child))
+    node.children().any(|e| match e {
+        SyntaxElement::Token(token) => {
+            token.kind() == super::syntax::UmlSyntaxKind::BadToken
+                && token.flags().is_bad()
+                && !token.flags().is_missing()
+        }
+        SyntaxElement::Node(child) => {
+            (child.kind() == super::syntax::UmlSyntaxKind::SkippedTokensSyntax
+                && child.range().start() != child.range().end())
+                || has_recovery(&child)
+        }
     })
 }
 fn first_recovery_node(node: &SyntaxNode<UmlLanguage>) -> Option<SyntaxNode<UmlLanguage>> {
@@ -1392,6 +1397,30 @@ fn declared_expression_slot(
         })
 }
 
+fn declared_optional_expression_slot(
+    slot: SyntaxNode<UmlLanguage>,
+    token_kind: super::syntax::UmlSyntaxKind,
+) -> crate::uml::DeclaredField<UmlLanguage, String> {
+    if let Some(value) = field_from_token(&slot, token_kind) {
+        return valid(slot, strip_expression(value));
+    }
+    if has_recovery(&slot) {
+        return invalid_recovery(slot);
+    }
+    let present = slot
+        .child_at(0)
+        .and_then(SyntaxElement::into_token)
+        .is_some_and(|token| !token.flags().is_missing());
+    if present {
+        crate::uml::DeclaredField::Incomplete {
+            syntax: slot,
+            expected: crate::uml::ExpectedSyntax::MessageTarget,
+        }
+    } else {
+        crate::uml::DeclaredField::Absent
+    }
+}
+
 fn declared_text_slot(
     slot: Option<SyntaxNode<UmlLanguage>>,
 ) -> crate::uml::DeclaredField<UmlLanguage, String> {
@@ -1452,7 +1481,9 @@ fn link_parts(node: &SyntaxNode<UmlLanguage>) -> Option<(String, String)> {
 }
 
 fn behavior_depth(node: &SyntaxNode<UmlLanguage>) -> usize {
-    token_in(node, super::syntax::UmlSyntaxKind::BulletToken)
+    node.child_at(0)
+        .and_then(SyntaxElement::into_token)
+        .filter(|token| token.kind() == super::syntax::UmlSyntaxKind::BulletToken)
         .map(|token| {
             token
                 .leading_trivia()
@@ -1470,17 +1501,22 @@ fn invalid_recovery<T>(node: SyntaxNode<UmlLanguage>) -> crate::uml::DeclaredFie
 
 fn has_direct_recovery(node: &SyntaxNode<UmlLanguage>) -> bool {
     node.children()
-        .any(|element| element.kind() == super::syntax::UmlSyntaxKind::SkippedTokensSyntax)
+        .filter_map(SyntaxElement::into_node)
+        .any(|child| {
+            child.kind() == super::syntax::UmlSyntaxKind::BehaviorRecovery && has_recovery(&child)
+        })
 }
 
 fn declared_flow_node(node: SyntaxNode<UmlLanguage>) -> crate::uml::DeclaredFlowNode {
     let syntax = super::syntax::FlowNodeSyntax(node.clone());
     let kind_slot = direct_child(&node, super::syntax::UmlSyntaxKind::FlowNodeKindSlot);
     let kind = match kind_slot {
-        Some(slot) => field_from_token(&slot, super::syntax::UmlSyntaxKind::NodeKindToken)
-            .and_then(|token| crate::model::FlowNodeKind::from_keyword(&token))
-            .map(|value| valid(slot.clone(), value))
-            .unwrap_or_else(|| invalid(slot)),
+        Some(slot) => match field_from_token(&slot, super::syntax::UmlSyntaxKind::NodeKindToken) {
+            Some(token) => crate::model::FlowNodeKind::from_keyword(&token)
+                .map(|value| valid(slot.clone(), value))
+                .unwrap_or_else(|| invalid(slot)),
+            None => valid(slot, crate::model::FlowNodeKind::Plain),
+        },
         None => valid(node.clone(), crate::model::FlowNodeKind::Plain),
     };
     let identity_slot = direct_child(&node, super::syntax::UmlSyntaxKind::FlowIdentity)
@@ -1574,9 +1610,10 @@ fn declared_flow_node(node: SyntaxNode<UmlLanguage>) -> crate::uml::DeclaredFlow
 }
 
 fn declared_flow_transition(node: SyntaxNode<UmlLanguage>) -> crate::uml::DeclaredFlowTransition {
+    let syntax = super::syntax::FlowTransitionSyntax(node.clone());
     let text_field = |kind, token_kind| {
         direct_child(&node, kind)
-            .map(|slot| declared_expression_slot(slot, token_kind))
+            .map(|slot| declared_optional_expression_slot(slot, token_kind))
             .unwrap_or(crate::uml::DeclaredField::Absent)
     };
     let target_slot = direct_child(&node, super::syntax::UmlSyntaxKind::FlowTarget)
@@ -1610,27 +1647,36 @@ fn declared_flow_transition(node: SyntaxNode<UmlLanguage>) -> crate::uml::Declar
                 expected: crate::uml::ExpectedSyntax::FlowTarget,
             })
     };
-    let carries = node
-        .children()
-        .filter_map(SyntaxElement::into_node)
-        .find(|child| child.kind() == super::syntax::UmlSyntaxKind::Link)
-        .map(|link| {
-            link_parts(&link)
-                .map(|(_, slug)| valid(link.clone(), slug))
-                .unwrap_or_else(|| invalid(link))
+    let carries = direct_child(&node, super::syntax::UmlSyntaxKind::FlowCarries)
+        .and_then(|slot| {
+            let link = direct_child(&slot, super::syntax::UmlSyntaxKind::Link)?;
+            if link.range().start() == link.range().end() {
+                None
+            } else {
+                Some(
+                    link_parts(&link)
+                        .map(|(_, slug)| valid(link.clone(), slug))
+                        .unwrap_or_else(|| invalid_recovery(link)),
+                )
+            }
         })
         .unwrap_or(crate::uml::DeclaredField::Absent);
+    let is_else = syntax.else_token().is_some();
     crate::uml::DeclaredFlowTransition {
-        syntax: super::syntax::FlowTransitionSyntax(node.clone()),
+        syntax,
         trigger: text_field(
             super::syntax::UmlSyntaxKind::FlowTrigger,
             super::syntax::UmlSyntaxKind::TriggerToken,
         ),
-        guard: text_field(
-            super::syntax::UmlSyntaxKind::FlowGuard,
-            super::syntax::UmlSyntaxKind::GuardToken,
-        ),
-        is_else: token_in(&node, super::syntax::UmlSyntaxKind::ElseToken).is_some(),
+        guard: if is_else {
+            crate::uml::DeclaredField::Absent
+        } else {
+            text_field(
+                super::syntax::UmlSyntaxKind::FlowGuard,
+                super::syntax::UmlSyntaxKind::GuardToken,
+            )
+        },
+        is_else,
         target,
         carries,
         effect: text_field(
@@ -1645,8 +1691,14 @@ fn declared_lifeline(node: SyntaxNode<UmlLanguage>) -> crate::uml::DeclaredLifel
     let link = direct_child(&node, super::syntax::UmlSyntaxKind::Link)
         .expect("lifeline has fixed link occurrence");
     let parts = link_parts(&link);
+    let missing_link = link.range().start() == link.range().end();
     let target = if has_recovery(&node) {
         invalid_recovery(node.clone())
+    } else if missing_link {
+        crate::uml::DeclaredField::Incomplete {
+            syntax: link.clone(),
+            expected: crate::uml::ExpectedSyntax::LinkTarget,
+        }
     } else {
         parts
             .as_ref()
@@ -1655,6 +1707,11 @@ fn declared_lifeline(node: SyntaxNode<UmlLanguage>) -> crate::uml::DeclaredLifel
     };
     let title = if has_recovery(&node) {
         invalid_recovery(node.clone())
+    } else if missing_link {
+        crate::uml::DeclaredField::Incomplete {
+            syntax: link.clone(),
+            expected: crate::uml::ExpectedSyntax::LinkTarget,
+        }
     } else {
         parts
             .map(|(title, _)| valid(link.clone(), title))
@@ -1665,9 +1722,19 @@ fn declared_lifeline(node: SyntaxNode<UmlLanguage>) -> crate::uml::DeclaredLifel
             field_from_token(&slot, super::syntax::UmlSyntaxKind::AliasToken)
                 .filter(|value| !value.is_empty())
                 .map(|value| valid(slot.clone(), value))
-                .unwrap_or_else(|| crate::uml::DeclaredField::Incomplete {
-                    syntax: slot,
-                    expected: crate::uml::ExpectedSyntax::MessageTarget,
+                .unwrap_or_else(|| {
+                    let as_present = node
+                        .child_at(super::syntax::LifelineSyntax::AS_SLOT)
+                        .and_then(SyntaxElement::into_token)
+                        .is_some_and(|token| !token.flags().is_missing());
+                    if as_present {
+                        crate::uml::DeclaredField::Incomplete {
+                            syntax: slot,
+                            expected: crate::uml::ExpectedSyntax::MessageTarget,
+                        }
+                    } else {
+                        crate::uml::DeclaredField::Absent
+                    }
                 })
         })
         .unwrap_or(crate::uml::DeclaredField::Absent);
@@ -1706,9 +1773,31 @@ fn declared_message(node: SyntaxNode<UmlLanguage>) -> crate::uml::DeclaredMessag
                 expected: crate::uml::ExpectedSyntax::MessageTarget,
             })
     };
-    let signature = direct_child(&node, super::syntax::UmlSyntaxKind::MessageSignature)
-        .map(|slot| declared_expression_slot(slot, super::syntax::UmlSyntaxKind::SignatureToken))
-        .unwrap_or(crate::uml::DeclaredField::Absent);
+    let signature_slot = direct_child(&node, super::syntax::UmlSyntaxKind::MessageSignature)
+        .expect("message has fixed signature occurrence");
+    let signature = if field_from_token(
+        &signature_slot,
+        super::syntax::UmlSyntaxKind::SignatureToken,
+    )
+    .is_some()
+    {
+        declared_expression_slot(signature_slot, super::syntax::UmlSyntaxKind::SignatureToken)
+    } else if node
+        .child_at(super::syntax::MessageSyntax::COLON_SLOT)
+        .and_then(SyntaxElement::into_token)
+        .is_some_and(|token| !token.flags().is_missing())
+    {
+        if has_recovery(&node) {
+            invalid_recovery(node.clone())
+        } else {
+            crate::uml::DeclaredField::Incomplete {
+                syntax: signature_slot,
+                expected: crate::uml::ExpectedSyntax::MessageTarget,
+            }
+        }
+    } else {
+        crate::uml::DeclaredField::Absent
+    };
     crate::uml::DeclaredMessage {
         syntax,
         from,
@@ -1744,6 +1833,8 @@ fn declared_sequence_operand(node: SyntaxNode<UmlLanguage>) -> crate::uml::Decla
         let keyword = field_from_token(&node, super::syntax::UmlSyntaxKind::OperandKeywordToken);
         let guard = if has_recovery(&node) {
             invalid_recovery(node.clone())
+        } else if keyword.as_deref() == Some("else") {
+            crate::uml::DeclaredField::Absent
         } else {
             direct_child(&node, super::syntax::UmlSyntaxKind::OperandGuard)
                 .map(|slot| {
