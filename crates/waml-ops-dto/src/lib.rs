@@ -1450,9 +1450,27 @@ mod tests {
         let source = SourceBundle::try_from_pairs(bundle).unwrap();
         let batch = to_batch(&[dto]).unwrap();
         let updated = waml::compat::apply(&source, &batch).unwrap();
-        let model = waml::parse::build_model(&updated.to_pairs());
+        let prepared = waml::analysis::prepare_candidate(updated, None, 0).unwrap();
+        let model = &prepared.uml().projection;
 
         assert_eq!(model.diagrams[0].description, None);
+    }
+
+    #[test]
+    fn wire_payload_never_exposes_invocation_revision_tokens() {
+        let dto: OpDto =
+            serde_json::from_str(r#"{"op":"attr.rm","v":1,"node":"order","name":"id"}"#).unwrap();
+        let value = serde_json::to_value(dto).unwrap();
+        let object = value.as_object().unwrap();
+
+        assert_eq!(
+            object.get("op").and_then(serde_json::Value::as_str),
+            Some("attr.rm")
+        );
+        assert_eq!(object.get("v").and_then(serde_json::Value::as_u64), Some(1));
+        assert!(!object.contains_key("revision"));
+        assert!(!object.contains_key("sessionRevision"));
+        assert!(!object.contains_key("documentRevision"));
     }
 
     #[test]

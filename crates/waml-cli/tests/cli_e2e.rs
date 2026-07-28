@@ -170,3 +170,144 @@ fn apply_late_collision_rolls_back_earlier_okf_change() {
     );
     assert!(!d.join("sales/index.md").exists());
 }
+
+#[test]
+fn check_accepts_generic_okf_without_uml_diagnostics() {
+    let d = tmp();
+    let generic = d.join("notes.md");
+    std::fs::write(
+        &generic,
+        "---\ntype: notes.Decision\ntitle: Keep Authored Markdown\n---\n# Keep Authored Markdown\n\nArbitrary prose.\n",
+    )
+    .unwrap();
+
+    let output = bin()
+        .arg("check")
+        .arg(&generic)
+        .args(["--format", "json"])
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    assert_eq!(String::from_utf8(output.stdout).unwrap().trim(), "[]");
+}
+
+#[test]
+fn check_reports_malformed_claimed_uml_from_parser_analysis() {
+    let d = tmp();
+    let malformed = d.join("order.md");
+    std::fs::write(
+        &malformed,
+        "---\ntype: uml.Class\ntitle: Order\n---\n# Order\n\n## Attributes\n- id:\n",
+    )
+    .unwrap();
+
+    let output = bin()
+        .arg("check")
+        .arg(&malformed)
+        .args(["--format", "json"])
+        .output()
+        .unwrap();
+    let diagnostics: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+
+    assert_eq!(output.status.code(), Some(1));
+    assert!(diagnostics.as_array().is_some_and(|items| {
+        items.iter().any(|diagnostic| {
+            diagnostic["severity"] == "error"
+                && diagnostic["file"]
+                    .as_str()
+                    .is_some_and(|path| path.ends_with("order.md"))
+                && diagnostic["span"].is_array()
+        })
+    }));
+}
+
+#[test]
+fn fmt_stdout_preserves_generic_okf_exactly() {
+    let d = tmp();
+    let generic = d.join("notes.md");
+    let authored =
+        "---\ntype: notes.Decision\ntitle: Keep Me\n---\n# Keep Me\n\n  Deliberate spacing.\n";
+    std::fs::write(&generic, authored).unwrap();
+
+    let output = bin()
+        .arg("fmt")
+        .arg(&generic)
+        .arg("--stdout")
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    assert_eq!(String::from_utf8(output.stdout).unwrap(), authored);
+    assert_eq!(std::fs::read_to_string(generic).unwrap(), authored);
+}
+
+#[test]
+fn fmt_canonical_output_is_idempotent() {
+    let d = tmp();
+    let class = d.join("order.md");
+    std::fs::write(
+        &class,
+        "---\ntype: uml.Class\ntitle:   Order\n---\n# Order\n\n## Attributes\n\n-  id :  OrderId [1]\n",
+    )
+    .unwrap();
+
+    let first = bin().arg("fmt").arg(&class).output().unwrap();
+    assert!(
+        first.status.success(),
+        "{}",
+        String::from_utf8_lossy(&first.stderr)
+    );
+    let once = std::fs::read_to_string(&class).unwrap();
+    let second = bin().arg("fmt").arg(&class).output().unwrap();
+    assert!(
+        second.status.success(),
+        "{}",
+        String::from_utf8_lossy(&second.stderr)
+    );
+
+    assert_eq!(std::fs::read_to_string(class).unwrap(), once);
+    assert!(second.stdout.is_empty());
+}
+
+#[test]
+fn apply_late_multi_file_failure_writes_nothing() {
+    let d = tmp();
+    std::fs::write(
+        d.join("alpha.md"),
+        "---\ntype: uml.Class\ntitle: Alpha\n---\n# Alpha\n",
+    )
+    .unwrap();
+    std::fs::write(
+        d.join("beta.md"),
+        "---\ntype: uml.Class\ntitle: Beta\n---\n# Beta\n",
+    )
+    .unwrap();
+    let alpha_before = std::fs::read_to_string(d.join("alpha.md")).unwrap();
+    let beta_before = std::fs::read_to_string(d.join("beta.md")).unwrap();
+    let ops = d.join("late-failure.ndjson");
+    std::fs::write(
+        &ops,
+        "{\"op\":\"node.set\",\"slug\":\"alpha\",\"title\":\"Changed Alpha\"}\n\
+         {\"op\":\"node.rename\",\"from\":\"beta\",\"to\":\"alpha\"}\n",
+    )
+    .unwrap();
+
+    let output = bin()
+        .arg("apply")
+        .arg(&ops)
+        .arg("--dir")
+        .arg(&d)
+        .output()
+        .unwrap();
+
+    assert_eq!(output.status.code(), Some(1));
+    assert_eq!(
+        std::fs::read_to_string(d.join("alpha.md")).unwrap(),
+        alpha_before
+    );
+    assert_eq!(
+        std::fs::read_to_string(d.join("beta.md")).unwrap(),
+        beta_before
+    );
+}

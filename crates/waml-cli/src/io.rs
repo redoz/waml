@@ -44,23 +44,8 @@ fn path_key(p: &Path) -> String {
     p.to_string_lossy().replace('\\', "/")
 }
 
-/// `check`: expand dirs to `*.md`, split blob files, read stdin as one blob.
-pub fn read_bundle(paths: &[PathBuf], stdin: bool) -> std::io::Result<Vec<(String, String)>> {
-    if stdin {
-        let mut buf = String::new();
-        std::io::stdin().read_to_string(&mut buf)?;
-        return Ok(expand_text("stdin", &buf));
-    }
-    let mut out = Vec::new();
-    for file in collect_md(paths)? {
-        let text = fs::read_to_string(&file)?;
-        out.extend(expand_text(&path_key(&file), &text));
-    }
-    Ok(out)
-}
-
-/// `share`: like [`read_bundle`], but keys every document by its path *relative
-/// to the bundle root* rather than as typed on the command line.
+/// Read a bundle with every document keyed by its path *relative to the bundle
+/// root* rather than as typed on the command line.
 ///
 /// The distinction matters because a bundle's paths are its OKF ids
 /// ([`waml::okf::id_of`]). Diagnostics-facing commands must echo the path the
@@ -76,7 +61,7 @@ pub fn read_bundle_rooted(
     if stdin {
         let mut buf = String::new();
         std::io::stdin().read_to_string(&mut buf)?;
-        return Ok(expand_text("stdin", &buf));
+        return Ok(expand_text("stdin.md", &buf));
     }
     let files = collect_md(paths)?;
     let root = bundle_root(paths, &files);
@@ -125,6 +110,32 @@ pub fn read_files(paths: &[PathBuf]) -> std::io::Result<Vec<(String, String)>> {
         out.push((path_key(&file), text));
     }
     Ok(out)
+}
+
+pub struct PhysicalBundle {
+    pub root: PathBuf,
+    pub files: Vec<(String, String)>,
+}
+
+/// Read physical Markdown files as one invocation-local bundle while retaining
+/// the root needed to map validated bundle paths back to filesystem paths.
+pub fn read_physical_bundle(paths: &[PathBuf]) -> std::io::Result<PhysicalBundle> {
+    let physical = collect_md(paths)?;
+    let root = bundle_root(paths, &physical)
+        .or_else(|| {
+            physical
+                .first()
+                .and_then(|path| path.parent())
+                .map(Path::to_path_buf)
+        })
+        .unwrap_or_default();
+    let mut files = Vec::with_capacity(physical.len());
+    for path in physical {
+        let relative = path.strip_prefix(&root).unwrap_or(&path);
+        files.push((path_key(relative), fs::read_to_string(path)?));
+    }
+    files.sort_by(|left, right| left.0.cmp(&right.0));
+    Ok(PhysicalBundle { root, files })
 }
 
 /// Read an NDJSON op-log: `(line_number, trimmed_line)` per non-blank line.
@@ -225,17 +236,13 @@ mod tests {
         assert_eq!(keys, ["customer.md", "order.md"]);
     }
 
-    /// `read_bundle` keeps the as-typed path on purpose: diagnostics have to
-    /// cite something the user can act on. Guard the two apart.
+    /// One-shot analysis requires validated bundle-relative paths even when a
+    /// single physical file was typed.
     #[test]
-    fn plain_read_still_keys_by_the_path_as_typed() {
+    fn rooted_read_of_one_file_uses_its_basename() {
         let dir = fixture("mini");
-        let bundle = read_bundle(&[dir.join("order.md")], false).unwrap();
-        assert!(
-            bundle[0].0.ends_with("fixtures/mini/order.md"),
-            "expected an as-typed path, got {}",
-            bundle[0].0
-        );
+        let bundle = read_bundle_rooted(&[dir.join("order.md")], false).unwrap();
+        assert_eq!(bundle[0].0, "order.md");
     }
 
     #[test]

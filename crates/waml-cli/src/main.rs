@@ -1,6 +1,8 @@
 use std::path::PathBuf;
 
 use clap::{Args, Parser, Subcommand, ValueEnum};
+use waml::analysis::{prepare_candidate, PreviousAnalyses};
+use waml::edit::{EditBatch, EditContext};
 use waml::multiplicity::Multiplicity;
 use waml::ops::FieldEdit;
 
@@ -303,14 +305,21 @@ fn main() {
             stdin,
             format,
         } => {
-            let bundle = match io::read_bundle(&paths, stdin) {
+            let bundle = match io::read_bundle_rooted(&paths, stdin) {
                 Ok(b) => b,
                 Err(e) => {
                     eprintln!("waml: {e}");
                     std::process::exit(2);
                 }
             };
-            let diags = waml::validate::validate(&bundle);
+            let prepared = match commands::prepare(&bundle) {
+                Ok(prepared) => prepared,
+                Err(error) => {
+                    eprintln!("waml: {error}");
+                    std::process::exit(2);
+                }
+            };
+            let diags = commands::diagnostics(&prepared);
             let out = match format {
                 Format::Human => commands::render_human(&diags),
                 Format::Json => commands::render_json(&diags),
@@ -345,14 +354,20 @@ fn main() {
             check,
             stdout,
         } => {
-            let files = match io::read_files(&paths) {
-                Ok(f) => f,
+            let bundle = match io::read_physical_bundle(&paths) {
+                Ok(bundle) => bundle,
                 Err(e) => {
                     eprintln!("waml: {e}");
                     std::process::exit(2);
                 }
             };
-            let plan = commands::plan_fmt(&files);
+            let plan = match commands::plan_fmt(&bundle.files) {
+                Ok(plan) => plan,
+                Err(error) => {
+                    eprintln!("waml: {error}");
+                    std::process::exit(2);
+                }
+            };
             let mut exit = 0;
             for r in &plan {
                 if r.skipped {
@@ -361,14 +376,15 @@ fn main() {
                     continue;
                 }
                 if stdout {
-                    println!("{}", r.formatted);
+                    print!("{}", r.formatted);
                 } else if check {
                     if r.changed {
                         eprintln!("waml: {} is not formatted", r.path);
                         exit = 1;
                     }
                 } else if r.changed {
-                    if let Err(e) = std::fs::write(&r.path, &r.formatted) {
+                    let destination = bundle.root.join(&r.path);
+                    if let Err(e) = std::fs::write(&destination, &r.formatted) {
                         eprintln!("waml: failed to write {}: {e}", r.path);
                         std::process::exit(2);
                     }
@@ -602,18 +618,36 @@ fn run_batch(common: &Common, batch: waml::compat::Batch) -> i32 {
             return 2;
         }
     };
-    let okf = match waml::okf::Bundle::parse(&source) {
-        Ok(okf) => okf,
+    let prepared = match prepare_candidate(source, None, 0) {
+        Ok(prepared) => prepared,
         Err(e) => {
             eprintln!("waml: {e}");
             return 2;
         }
     };
-    let _uml = waml::uml::project(&okf);
-    match waml::compat::apply(&source, &batch) {
+    match batch.lower(EditContext {
+        source: prepared.source(),
+        okf_analysis: prepared.okf(),
+        session_revision: prepared.revision(),
+        uml: prepared.uml(),
+    }) {
         Ok(changed) => {
-            let old = source.to_pairs();
-            let new = changed.to_pairs();
+            let validated = match prepare_candidate(
+                changed,
+                Some(PreviousAnalyses {
+                    okf: prepared.okf(),
+                    uml: prepared.uml(),
+                }),
+                1,
+            ) {
+                Ok(validated) => validated,
+                Err(error) => {
+                    eprintln!("waml: {error}");
+                    return 1;
+                }
+            };
+            let old = prepared.source().to_pairs();
+            let new = validated.source().to_pairs();
             if common.stdout {
                 print!("{}", to_blob(&new));
                 0
@@ -689,14 +723,21 @@ fn run_apply(ops_src: &str, common: &Common) -> i32 {
 }
 
 fn run_show(slug: &str, q: &QueryArgs) -> i32 {
-    let bundle = match io::read_files(std::slice::from_ref(&q.dir)) {
-        Ok(b) => b,
+    let bundle = match io::read_bundle_rooted(std::slice::from_ref(&q.dir), false) {
+        Ok(bundle) => bundle,
         Err(e) => {
             eprintln!("waml: {e}");
             return 2;
         }
     };
-    let model = waml::parse::build_model(&bundle);
+    let prepared = match commands::prepare(&bundle) {
+        Ok(prepared) => prepared,
+        Err(error) => {
+            eprintln!("waml: {error}");
+            return 2;
+        }
+    };
+    let model = &prepared.uml().projection;
     let Some(node) = model.node(slug) else {
         eprintln!("waml: no classifier '{slug}'");
         return 1;
@@ -751,14 +792,21 @@ fn run_show(slug: &str, q: &QueryArgs) -> i32 {
 }
 
 fn run_refs(slug: &str, q: &QueryArgs) -> i32 {
-    let bundle = match io::read_files(std::slice::from_ref(&q.dir)) {
-        Ok(b) => b,
+    let bundle = match io::read_bundle_rooted(std::slice::from_ref(&q.dir), false) {
+        Ok(bundle) => bundle,
         Err(e) => {
             eprintln!("waml: {e}");
             return 2;
         }
     };
-    let refs = waml::ops::referrers(&bundle, slug);
+    let prepared = match commands::prepare(&bundle) {
+        Ok(prepared) => prepared,
+        Err(error) => {
+            eprintln!("waml: {error}");
+            return 2;
+        }
+    };
+    let refs = waml::ops::referrers(&prepared.source().to_pairs(), slug);
     match q.format {
         Format::Human => {
             if refs.is_empty() {
@@ -814,14 +862,21 @@ fn run_bundle(
 }
 
 fn run_list(ty: &Option<String>, q: &QueryArgs) -> i32 {
-    let bundle = match io::read_files(std::slice::from_ref(&q.dir)) {
-        Ok(b) => b,
+    let bundle = match io::read_bundle_rooted(std::slice::from_ref(&q.dir), false) {
+        Ok(bundle) => bundle,
         Err(e) => {
             eprintln!("waml: {e}");
             return 2;
         }
     };
-    let model = waml::parse::build_model(&bundle);
+    let prepared = match commands::prepare(&bundle) {
+        Ok(prepared) => prepared,
+        Err(error) => {
+            eprintln!("waml: {error}");
+            return 2;
+        }
+    };
+    let model = &prepared.uml().projection;
     for n in &model.nodes {
         if ty.as_deref().map(|t| t == n.ty.as_str()).unwrap_or(true) {
             match q.format {
