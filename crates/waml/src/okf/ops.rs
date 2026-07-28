@@ -59,11 +59,6 @@ pub(crate) fn legacy_path(directory: &DirectoryAddress) -> String {
     directory.as_str().trim_start_matches('/').to_string()
 }
 
-pub(crate) fn lower_one(work: &mut SourceBundle, op: &Op) -> Result<(), EditError> {
-    let mut state = super::lower::OkfLoweringState::from_source(work);
-    lower_one_with_state(work, &mut state, op)
-}
-
 pub(crate) fn lower_one_with_state(
     work: &mut SourceBundle,
     state: &mut super::lower::OkfLoweringState,

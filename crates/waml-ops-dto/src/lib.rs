@@ -1163,6 +1163,60 @@ mod tests {
     }
 
     #[test]
+    fn dto_node_new_then_attr_add_uses_the_same_mixed_candidate() {
+        let source = SourceBundle::default();
+        let dtos: Vec<OpDto> = serde_json::from_value(serde_json::json!([
+            {
+                "op":"node.new",
+                "slug":"invoice",
+                "dir":"sales",
+                "ty":"uml.Class",
+                "title":"Invoice",
+                "stereotype":[],
+                "abstract":false
+            },
+            {
+                "op":"attr.add",
+                "node":"sales/invoice",
+                "name":"number",
+                "ty":"String"
+            }
+        ]))
+        .unwrap();
+
+        let changed = waml::compat::apply(&source, &to_batch(&dtos).unwrap()).unwrap();
+
+        assert!(changed
+            .documents()
+            .iter()
+            .any(|document| document.path().as_str() == "sales/invoice.md"
+                && document.text().contains("- number: String")));
+    }
+
+    #[test]
+    fn dto_okf_move_then_attr_add_rebinds_the_renamed_concept() {
+        let source = SourceBundle::try_from_pairs([(
+            "sales/order.md",
+            "---\r\ntype: uml.Class\r\ntitle: Order\r\n---\r\n\r\n# Order\r\n\r\n## Notes\r\nkeep Ω  \r\n",
+        )])
+        .unwrap();
+        let dtos: Vec<OpDto> = serde_json::from_value(serde_json::json!([
+            {"op":"pkg.move","slug":"sales/order","to_dir":"archive"},
+            {"op":"attr.add","node":"archive/order","name":"id","ty":"String"}
+        ]))
+        .unwrap();
+
+        let changed = waml::compat::apply(&source, &to_batch(&dtos).unwrap()).unwrap();
+        let document = changed
+            .documents()
+            .iter()
+            .find(|document| document.path().as_str() == "archive/order.md")
+            .unwrap();
+        assert!(document.text().contains("- id: String\r\n"));
+        assert!(document.text().contains("## Notes\r\nkeep Ω  \r\n"));
+    }
+
+    #[test]
     fn every_op_survives_a_wire_round_trip() {
         use waml::grammar::parse_ends;
         use waml::model::{ElementType, RelationshipKind};

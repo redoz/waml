@@ -225,11 +225,11 @@ pub fn apply(bundle: &[(String, String)], ops: &[Op]) -> Result<Bundle, OpError>
 pub fn apply_source(bundle: &SourceBundle, ops: &[Op]) -> Result<SourceBundle, OpError> {
     let mut steps = Vec::with_capacity(ops.len());
     for (index, op) in ops.iter().cloned().enumerate() {
-        let converted = crate::compat::steps_from_legacy(op).map_err(|mut error| {
+        let step = crate::compat::step_from_legacy(op).map_err(|mut error| {
             error.index = index;
             error
         })?;
-        steps.extend(converted);
+        steps.push(step);
     }
     let batch = crate::compat::Batch::new(steps);
     crate::compat::apply(bundle, &batch)
