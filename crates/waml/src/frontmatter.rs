@@ -2,8 +2,6 @@ use regex::Regex;
 use std::sync::LazyLock;
 use waml_syntax::{OkfMarkdownLanguage, OkfMarkdownSyntaxKind, SyntaxElement, SyntaxNode};
 
-static BLOCK_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"(?s)^---\n(.*?)\n(?:---|\.\.\.)\n?(.*)$").unwrap());
 static NUM_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^-?\d+(\.\d+)?$").unwrap());
 
 #[derive(Debug, Clone, PartialEq)]
@@ -205,46 +203,6 @@ pub(crate) fn parse_closed_syntax(node: &SyntaxNode<OkfMarkdownLanguage>) -> Opt
     Some(frontmatter)
 }
 
-pub struct ParsedFrontmatter {
-    pub frontmatter: Frontmatter,
-    pub body_range: std::ops::Range<usize>,
-}
-
-pub fn parse_frontmatter_spanned(text: &str) -> ParsedFrontmatter {
-    let caps = match BLOCK_RE.captures(text) {
-        Some(c) => c,
-        None => {
-            return ParsedFrontmatter {
-                frontmatter: Frontmatter::default(),
-                body_range: 0..text.len(),
-            };
-        }
-    };
-    let mut entries = Vec::new();
-    for raw in caps[1].split('\n') {
-        let line = raw.trim();
-        if line.is_empty() {
-            continue;
-        }
-        let Some(ci) = line.find(':') else { continue };
-        let key = line[..ci].trim().to_string();
-        let rest = line[ci + 1..].trim();
-        if rest.is_empty() {
-            continue; // nested-object frontmatter unsupported (UML-only, flat)
-        }
-        entries.push((key, parse_value(rest)));
-    }
-    ParsedFrontmatter {
-        frontmatter: Frontmatter { entries },
-        body_range: caps.get(2).expect("body capture exists").range(),
-    }
-}
-
-pub fn parse_frontmatter(text: &str) -> (Frontmatter, String) {
-    let parsed = parse_frontmatter_spanned(text);
-    (parsed.frontmatter, text[parsed.body_range].to_owned())
-}
-
 /// Render any `FmValue` in its canonical form. Total over parsed input: a
 /// `List` renders each item recursively (so a nested `List` renders in its
 /// own bracket form), so this never panics on anything `parse_value` can
@@ -309,52 +267,35 @@ mod tests {
     use super::*;
 
     #[test]
-    fn parses_scalars_lists_and_body() {
-        let text = "---\ntype: uml.Class\ntitle: Order\nstereotype: [aggregateRoot, entity]\nabstract: true\n---\n# Order\n\nbody text";
-        let (fm, body) = parse_frontmatter(text);
-        assert_eq!(fm.get_str("type"), Some("uml.Class"));
-        assert_eq!(fm.get_str("title"), Some("Order"));
+    fn parses_scalar_and_list_values() {
+        assert_eq!(parse_value("uml.Class"), FmValue::Str("uml.Class".into()));
+        assert_eq!(parse_value("true"), FmValue::Bool(true));
+        assert_eq!(parse_value("-3.5"), FmValue::Num(-3.5));
         assert_eq!(
-            fm.get_string_list("stereotype"),
-            vec!["aggregateRoot", "entity"]
+            parse_value("[aggregateRoot, entity]"),
+            FmValue::List(vec![
+                FmValue::Str("aggregateRoot".into()),
+                FmValue::Str("entity".into()),
+            ])
         );
-        assert_eq!(fm.get_bool("abstract"), Some(true));
-        assert_eq!(body, "# Order\n\nbody text");
+        assert_eq!(
+            parse_value("\"A \\\"placed\\\" order.\""),
+            FmValue::Str("A \"placed\" order.".into())
+        );
     }
 
     #[test]
-    fn no_frontmatter_returns_whole_text_as_body() {
-        let (fm, body) = parse_frontmatter("# Just markdown");
-        assert!(fm.entries.is_empty());
-        assert_eq!(body, "# Just markdown");
-    }
-
-    #[test]
-    fn spanned_frontmatter_points_into_the_original_body() {
-        let text = "---\ntype: uml.Class\n---\n# Café\n";
-        let parsed = parse_frontmatter_spanned(text);
-        assert_eq!(parsed.frontmatter.get_str("type"), Some("uml.Class"));
-        assert_eq!(&text[parsed.body_range], "# Café\n");
-    }
-
-    #[test]
-    fn spanned_frontmatter_uses_the_whole_document_when_absent() {
-        let text = "# Just markdown";
-        let parsed = parse_frontmatter_spanned(text);
-        assert!(parsed.frontmatter.entries.is_empty());
-        assert_eq!(parsed.body_range, 0..text.len());
-    }
-
-    #[test]
-    fn parses_quoted_string_with_escapes() {
-        let (fm, _) = parse_frontmatter("---\ndescription: \"A \\\"placed\\\" order.\"\n---\n");
-        assert_eq!(fm.get_str("description"), Some("A \"placed\" order."));
-    }
-
-    #[test]
-    fn render_round_trips_order() {
-        let text = "---\ntype: uml.Class\nstereotype: [a, b]\ntitle: Order\n---\nbody";
-        let (fm, _) = parse_frontmatter(text);
+    fn render_preserves_entry_order() {
+        let fm = Frontmatter {
+            entries: vec![
+                ("type".into(), FmValue::Str("uml.Class".into())),
+                (
+                    "stereotype".into(),
+                    FmValue::List(vec![FmValue::Str("a".into()), FmValue::Str("b".into())]),
+                ),
+                ("title".into(), FmValue::Str("Order".into())),
+            ],
+        };
         assert_eq!(
             render_frontmatter(&fm),
             "type: uml.Class\nstereotype: [a, b]\ntitle: Order"
@@ -363,10 +304,16 @@ mod tests {
 
     #[test]
     fn render_leaves_safe_scalars_unquoted() {
-        // Plain string scalars that can't be misread as another type render
-        // bare — no decorative quotes on `type`, `title`, prose, slashes, colons.
-        let text = "---\ntype: uml.Class\ntitle: New Package flow\ndescription: Re-roots docs under <parent>/<slug>/, then appends.\n---\n";
-        let (fm, _) = parse_frontmatter(text);
+        let fm = Frontmatter {
+            entries: vec![
+                ("type".into(), FmValue::Str("uml.Class".into())),
+                ("title".into(), FmValue::Str("New Package flow".into())),
+                (
+                    "description".into(),
+                    FmValue::Str("Re-roots docs under <parent>/<slug>/, then appends.".into()),
+                ),
+            ],
+        };
         assert_eq!(
             render_frontmatter(&fm),
             "type: uml.Class\ntitle: New Package flow\ndescription: Re-roots docs under <parent>/<slug>/, then appends.",
@@ -391,8 +338,12 @@ mod tests {
                 entries: vec![("k".into(), FmValue::Str(raw.to_string()))],
             };
             let rendered = render_frontmatter(&fm);
-            let (fm2, _) = parse_frontmatter(&format!("---\n{rendered}\n---\n"));
-            assert_eq!(fm, fm2, "must round-trip {raw:?}; rendered as {rendered}");
+            let rendered_value = rendered.strip_prefix("k: ").unwrap();
+            assert_eq!(
+                parse_value(rendered_value),
+                FmValue::Str(raw.to_string()),
+                "must round-trip {raw:?}; rendered as {rendered}"
+            );
         }
     }
 
@@ -410,20 +361,27 @@ mod tests {
             )],
         };
         assert_eq!(render_frontmatter(&fm), "stereotype: [entity, \"42\"]");
-        let (fm2, _) = parse_frontmatter(&format!("---\n{}\n---\n", render_frontmatter(&fm)));
-        assert_eq!(fm, fm2);
+        assert_eq!(
+            parse_value(
+                render_frontmatter(&fm)
+                    .strip_prefix("stereotype: ")
+                    .unwrap()
+            ),
+            fm.entries[0].1
+        );
     }
 
     #[test]
     fn render_does_not_panic_on_nested_list() {
-        // `x: [a, [b]]` parses to a nested List value (parse_value recurses on
-        // comma-split bracket items). render_frontmatter/scalar() must be total
-        // over parsed input — it must render this, not panic.
-        let text = "---\nx: [a, [b]]\n---\n";
-        let (fm, _) = parse_frontmatter(text);
+        let fm = Frontmatter {
+            entries: vec![("x".into(), parse_value("[a, [b]]"))],
+        };
         let rendered = render_frontmatter(&fm);
-        let (fm2, _) = parse_frontmatter(&format!("---\n{rendered}\n---\n"));
-        assert_eq!(fm, fm2, "round-trip must preserve the nested structure");
+        assert_eq!(
+            parse_value(rendered.strip_prefix("x: ").unwrap()),
+            fm.entries[0].1,
+            "round-trip must preserve the nested structure"
+        );
     }
 
     #[test]

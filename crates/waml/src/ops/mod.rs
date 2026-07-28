@@ -261,11 +261,11 @@ mod tests {
             .clone()
     }
 
-    fn layout_statement_count(source: &str) -> usize {
-        source
-            .lines()
-            .filter(|line| crate::layout::parse_layout_line(line).is_ok())
-            .count()
+    fn layout_statement_count(bundle: &Bundle) -> usize {
+        projection(bundle)
+            .diagrams
+            .first()
+            .map_or(0, |diagram| diagram.layout.len())
     }
 
     fn attr_add(node: &str, name: &str, ty: &str) -> Op {
@@ -1506,7 +1506,7 @@ mod tests {
             out[0].1
         );
         assert_eq!(
-            layout_statement_count(&out[0].1),
+            layout_statement_count(&out),
             1,
             "reversed-pair placement replaced, not stacked: {}",
             out[0].1
@@ -1601,7 +1601,7 @@ mod tests {
         // Two separate 2-operand placement bullets
         // (invariant: directions.len() == operands.len() - 1).
         assert_eq!(
-            layout_statement_count(&out[0].1),
+            layout_statement_count(&out),
             2,
             "corner drop authored two statements"
         );

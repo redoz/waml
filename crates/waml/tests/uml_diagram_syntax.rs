@@ -246,6 +246,11 @@ fn contradictory_linked_placements_reach_shared_solver_conflict_diagnostics() {
 
 #[test]
 fn complete_layout_matrix_matches_legacy_model_and_has_fixed_nested_slots() {
+    use waml::layout::{
+        Anchored, Axis, Direction, Edge, Flag, Hint, LayoutStatement, Margin, NameRef, Operand,
+        OperandRef, Shape,
+    };
+
     let lines = [
         "- top of A aligned with center of [A](./a.md)",
         "- column of A, (row of \"two words\", [A](./a.md)) as row with frame, emphasized and small margins right of A",
@@ -259,10 +264,67 @@ fn complete_layout_matrix_matches_legacy_model_and_has_fixed_nested_slots() {
         .iter()
         .find(|d| d.key == "d")
         .unwrap();
-    let expected = lines
-        .iter()
-        .map(|line| waml::layout::parse_layout_line(line).unwrap())
-        .collect::<Vec<_>>();
+    let bare = |name: &str| Operand {
+        ref_: OperandRef::Name(NameRef::Bare(name.into())),
+        axis: None,
+        hints: vec![],
+    };
+    let link = || Operand {
+        ref_: OperandRef::Name(NameRef::Link {
+            title: "A".into(),
+            slug: "a".into(),
+        }),
+        axis: None,
+        hints: vec![],
+    };
+    let expected = vec![
+        LayoutStatement::Alignment {
+            left: Anchored {
+                edge: Some(Edge::Top),
+                operand: bare("A"),
+            },
+            right: Anchored {
+                edge: Some(Edge::Center),
+                operand: link(),
+            },
+        },
+        LayoutStatement::Placement {
+            operands: vec![
+                Operand {
+                    ref_: OperandRef::InlineGroup {
+                        axis: Axis::Column,
+                        items: vec![
+                            bare("A"),
+                            Operand {
+                                ref_: OperandRef::Paren(Box::new(Operand {
+                                    ref_: OperandRef::InlineGroup {
+                                        axis: Axis::Row,
+                                        items: vec![bare("two words"), link()],
+                                    },
+                                    axis: None,
+                                    hints: vec![],
+                                })),
+                                axis: Some(Axis::Row),
+                                hints: vec![
+                                    Hint::Shape(Shape::Frame),
+                                    Hint::Flag(Flag::Emphasized),
+                                    Hint::Margin(Margin::Small),
+                                ],
+                            },
+                        ],
+                    },
+                    axis: None,
+                    hints: vec![],
+                },
+                bare("A"),
+            ],
+            directions: vec![Direction::RightOf],
+        },
+        LayoutStatement::Placement {
+            operands: vec![bare("A"), bare("A"), bare("A")],
+            directions: vec![Direction::AboveLeft, Direction::BelowRight],
+        },
+    ];
     assert_eq!(diagram.layout, expected);
 
     let id = analysis
