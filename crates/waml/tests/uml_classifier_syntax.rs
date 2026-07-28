@@ -358,7 +358,7 @@ fn member_groups_and_inline_instances_have_fixed_indented_slots() {
 #[test]
 fn declared_projection_resolves_only_claimed_targets_with_located_diagnostic() {
     let source = SourceBundle::try_from_pairs([
-        ("order.md", "---\ntype: uml.Class\n---\n# Order\n\n## Values\n- OPEN\n\n## Slots\n- state: \"open\"\n\n## Relationships\n- associates [Customer](./customer.md): 1 to 1\n- depends [Generic](./generic.md)\n"),
+        ("order.md", "---\ntype: uml.Class\nabstract: true\nstereotype: [entity, aggregate]\n---\n# Order\n\n## Values\n- OPEN\n\n## Slots\n- state: \"open\"\n\n## Relationships\n- associates [Customer](./customer.md): 1 to 1\n- composes [Customer](./customer.md)\n- depends [Generic](./generic.md)\n"),
         ("customer.md", "---\ntype: uml.Class\n---\n# Customer\n"),
         ("generic.md", "---\ntype: vendor.Custom\n---\n# Generic\n"),
     ]).unwrap();
@@ -366,6 +366,8 @@ fn declared_projection_resolves_only_claimed_targets_with_located_diagnostic() {
     let order = analysis.projection.node("order").unwrap();
     assert_eq!(order.values, ["OPEN"]);
     assert_eq!(order.slots[0].value, "\"open\"");
+    assert!(order.abstract_);
+    assert_eq!(order.stereotypes, ["entity", "aggregate"]);
     assert_eq!(analysis.projection.edges.len(), 1);
     let unresolved = analysis
         .diagnostics
@@ -373,6 +375,15 @@ fn declared_projection_resolves_only_claimed_targets_with_located_diagnostic() {
         .find(|d| d.code == waml::diagnostic::DiagCode::UnresolvedTarget)
         .unwrap();
     assert_eq!(unresolved.file, "order.md");
+    let range = unresolved.range.unwrap();
+    let text = source
+        .document(&waml::source::BundlePath::parse("order.md").unwrap())
+        .unwrap()
+        .text();
+    assert_eq!(
+        &text[range.start().to_usize()..range.end().to_usize()],
+        "./generic.md"
+    );
     assert!(
         unresolved.document.is_some()
             && unresolved.document_revision.is_some()

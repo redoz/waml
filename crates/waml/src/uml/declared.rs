@@ -62,6 +62,12 @@ pub struct DeclaredMember {
     pub syntax: MemberSyntax,
     pub target: DeclaredField<UmlLanguage, String>,
 }
+pub struct DeclaredMemberGroup {
+    pub syntax: super::syntax::MemberGroupSyntax,
+    pub name: DeclaredField<UmlLanguage, String>,
+    pub members: Arc<[DeclaredMember]>,
+    pub children: Arc<[DeclaredMemberGroup]>,
+}
 pub struct DeclaredInlineInstance {
     pub syntax: InlineInstanceSyntax,
     pub classifier: DeclaredField<UmlLanguage, String>,
@@ -75,6 +81,7 @@ pub struct DeclaredConcept {
     pub slots: Arc<[DeclaredSlot]>,
     pub relationships: Arc<[DeclaredRelationship]>,
     pub members: Arc<[DeclaredMember]>,
+    pub member_groups: Arc<[DeclaredMemberGroup]>,
     pub inline_instances: Arc<[DeclaredInlineInstance]>,
 }
 #[derive(Default)]

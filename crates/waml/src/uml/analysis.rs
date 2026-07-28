@@ -99,6 +99,7 @@ pub fn analyze(
         let slots = items(tree.root(), super::syntax::UmlSyntaxKind::Slot);
         let relationships = items(tree.root(), super::syntax::UmlSyntaxKind::Relationship);
         let members = items(tree.root(), super::syntax::UmlSyntaxKind::Member);
+        let member_groups = items(tree.root(), super::syntax::UmlSyntaxKind::MemberGroup);
         let inline_instances = items(tree.root(), super::syntax::UmlSyntaxKind::InlineInstance);
         let mut fields = Vec::new();
         for syntax in attributes {
@@ -211,6 +212,11 @@ pub fn analyze(
                     .map(declared_member)
                     .collect::<Vec<_>>()
                     .into(),
+                member_groups: member_groups
+                    .into_iter()
+                    .map(declared_member_group)
+                    .collect::<Vec<_>>()
+                    .into(),
                 inline_instances: inline_instances
                     .into_iter()
                     .map(declared_inline_instance)
@@ -312,6 +318,75 @@ fn declared_projection(
             .collect();
         let ty = crate::model::ElementType::parse(&okf.ty);
         if ty == crate::model::ElementType::Diagram {
+            let mut member_keys = Vec::new();
+            for member in concept.members.iter() {
+                let crate::uml::DeclaredField::Valid { value: href, .. } = &member.target else {
+                    continue;
+                };
+                let target = crate::okf::resolve_href(&path, href);
+                if claimed.contains(target.as_str()) {
+                    member_keys.push(target);
+                } else {
+                    let range = member
+                        .syntax
+                        .target_token()
+                        .expect("valid member target token")
+                        .range();
+                    let id = context
+                        .catalog
+                        .id_for_path(
+                            &crate::source::BundlePath::parse(path.clone())
+                                .expect("catalog path valid"),
+                        )
+                        .expect("catalog document");
+                    let document = context.catalog.document(id).expect("catalog document");
+                    let line = document
+                        .line_index()
+                        .line_col(document.text(), range.start())
+                        .expect("member range");
+                    diagnostics.push(
+                        Diagnostic::new(
+                            crate::diagnostic::DiagCode::UnresolvedTarget,
+                            format!("unresolved UML member '{href}'"),
+                            path.clone(),
+                            line.line as usize + 1,
+                        )
+                        .with_span((
+                            line.byte_column as usize,
+                            line.byte_column as usize + range.end().to_usize()
+                                - range.start().to_usize(),
+                        ))
+                        .with_provenance(id, document.revision(), range),
+                    );
+                }
+            }
+            let groups = if concept.member_groups.is_empty() {
+                vec![crate::model::DiagramGroup {
+                    name: String::new(),
+                    members: member_keys,
+                    children: vec![],
+                }]
+            } else {
+                concept
+                    .member_groups
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(index, g)| match &g.name {
+                        crate::uml::DeclaredField::Valid { value, .. } => {
+                            Some(crate::model::DiagramGroup {
+                                name: value.clone(),
+                                members: if index == 0 {
+                                    member_keys.clone()
+                                } else {
+                                    vec![]
+                                },
+                                children: vec![],
+                            })
+                        }
+                        _ => None,
+                    })
+                    .collect()
+            };
             model.diagrams.push(crate::model::Diagram {
                 key: concept.concept_id.clone(),
                 title: okf
@@ -320,7 +395,7 @@ fn declared_projection(
                     .unwrap_or_else(|| concept.concept_id.clone()),
                 profile: String::new(),
                 description: okf.description.clone(),
-                groups: vec![],
+                groups,
                 layout: vec![],
                 display: Default::default(),
             });
@@ -329,8 +404,8 @@ fn declared_projection(
                 concept: okf.clone(),
                 key: concept.concept_id.clone(),
                 ty,
-                stereotypes: vec![],
-                abstract_: false,
+                stereotypes: okf.extra.get_string_list("stereotype"),
+                abstract_: okf.extra.get_bool("abstract") == Some(true),
                 attributes,
                 values,
                 note_body: None,
@@ -350,9 +425,49 @@ fn declared_projection(
             else {
                 continue;
             };
+            let ends_valid = match kind {
+                crate::model::RelationshipKind::Aggregates
+                | crate::model::RelationshipKind::Composes => matches!(
+                    (&relationship.from_end, &relationship.to_end),
+                    (
+                        crate::uml::DeclaredField::Valid { .. },
+                        crate::uml::DeclaredField::Valid { .. }
+                    )
+                ),
+                crate::model::RelationshipKind::Associates => matches!(
+                    (&relationship.from_end, &relationship.to_end),
+                    (
+                        crate::uml::DeclaredField::Absent,
+                        crate::uml::DeclaredField::Absent
+                    ) | (
+                        crate::uml::DeclaredField::Valid { .. },
+                        crate::uml::DeclaredField::Valid { .. }
+                    )
+                ),
+                _ => matches!(
+                    (&relationship.from_end, &relationship.to_end),
+                    (
+                        crate::uml::DeclaredField::Absent,
+                        crate::uml::DeclaredField::Absent
+                    )
+                ),
+            };
+            if !ends_valid
+                || matches!(
+                    relationship.name,
+                    crate::uml::DeclaredField::Incomplete { .. }
+                        | crate::uml::DeclaredField::Invalid { .. }
+                )
+            {
+                continue;
+            }
             let target = crate::okf::resolve_href(&path, href);
             if !claimed.contains(target.as_str()) {
-                let range = syntax.range();
+                let range = relationship
+                    .syntax
+                    .target_token()
+                    .expect("valid declared target token")
+                    .range();
                 let id = context
                     .catalog
                     .id_for_path(
@@ -416,7 +531,11 @@ fn declared_projection(
             };
             let target = crate::okf::resolve_href(&path, classifier);
             if !claimed.contains(target.as_str()) {
-                let range = syntax.range();
+                let range = inline
+                    .syntax
+                    .classifier_token()
+                    .expect("valid declared classifier token")
+                    .range();
                 let id = context
                     .catalog
                     .id_for_path(
@@ -525,6 +644,7 @@ fn declared_value(node: SyntaxNode<UmlLanguage>) -> crate::uml::DeclaredValue {
     crate::uml::DeclaredValue {
         value: syntax
             .value_token()
+            .filter(|t| !t.flags().is_missing() && !t.text().write_to_string().is_empty())
             .map(|t| valid(node.clone(), t.text().write_to_string()))
             .unwrap_or_else(|| crate::uml::DeclaredField::Incomplete {
                 syntax: node.clone(),
@@ -537,6 +657,7 @@ fn declared_slot(node: SyntaxNode<UmlLanguage>) -> crate::uml::DeclaredSlot {
     let syntax = super::syntax::SlotSyntax(node.clone());
     let field = |token: Option<waml_syntax::SyntaxToken<UmlLanguage>>, expected| {
         token
+            .filter(|t| !t.flags().is_missing() && !t.text().write_to_string().is_empty())
             .map(|t| valid(node.clone(), t.text().write_to_string()))
             .unwrap_or_else(|| crate::uml::DeclaredField::Incomplete {
                 syntax: node.clone(),
@@ -558,6 +679,7 @@ fn declared_relationship(node: SyntaxNode<UmlLanguage>) -> crate::uml::DeclaredR
         .unwrap_or_else(|| invalid(node.clone()));
     let target = syntax
         .target_token()
+        .filter(|t| !t.flags().is_missing() && !t.text().write_to_string().is_empty())
         .map(|t| valid(node.clone(), t.text().write_to_string()))
         .unwrap_or_else(|| crate::uml::DeclaredField::Incomplete {
             syntax: node.clone(),
@@ -639,6 +761,7 @@ fn declared_member(node: SyntaxNode<UmlLanguage>) -> crate::uml::DeclaredMember 
     let syntax = super::syntax::MemberSyntax(node.clone());
     let target = syntax
         .target_token()
+        .filter(|t| !t.flags().is_missing() && !t.text().write_to_string().is_empty())
         .map(|t| valid(node.clone(), t.text().write_to_string()))
         .unwrap_or_else(|| crate::uml::DeclaredField::Incomplete {
             syntax: node.clone(),
@@ -646,10 +769,28 @@ fn declared_member(node: SyntaxNode<UmlLanguage>) -> crate::uml::DeclaredMember 
         });
     crate::uml::DeclaredMember { syntax, target }
 }
+fn declared_member_group(node: SyntaxNode<UmlLanguage>) -> crate::uml::DeclaredMemberGroup {
+    let syntax = super::syntax::MemberGroupSyntax(node.clone());
+    let name = syntax
+        .heading_token()
+        .filter(|t| !t.flags().is_missing() && !t.text().write_to_string().is_empty())
+        .map(|t| valid(node.clone(), t.text().write_to_string()))
+        .unwrap_or_else(|| crate::uml::DeclaredField::Incomplete {
+            syntax: node,
+            expected: crate::uml::ExpectedSyntax::LinkTarget,
+        });
+    crate::uml::DeclaredMemberGroup {
+        syntax,
+        name,
+        members: Arc::from([]),
+        children: Arc::from([]),
+    }
+}
 fn declared_inline_instance(node: SyntaxNode<UmlLanguage>) -> crate::uml::DeclaredInlineInstance {
     let syntax = super::syntax::InlineInstanceSyntax(node.clone());
     let classifier = syntax
         .classifier_token()
+        .filter(|t| !t.flags().is_missing() && !t.text().write_to_string().is_empty())
         .map(|t| valid(node.clone(), t.text().write_to_string()))
         .unwrap_or_else(|| crate::uml::DeclaredField::Incomplete {
             syntax: node.clone(),

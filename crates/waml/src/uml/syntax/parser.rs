@@ -29,6 +29,10 @@ pub fn parse(text: SourceText, structure: &MarkdownStructureMap) -> Arc<SyntaxTr
         let mut section = vec![raw(&factory, &text, start, heading_end)];
         for (line_start, line_end) in lines_between(source, heading_end, end) {
             if section_kind == UmlSyntaxKind::MembersSection
+                && structure
+                    .headings
+                    .iter()
+                    .any(|heading| heading.range.start().to_usize() == line_start)
                 && is_member_group_heading(source, line_start, line_end)
             {
                 section.push(GreenElement::Node(
