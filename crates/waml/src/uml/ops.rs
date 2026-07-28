@@ -133,7 +133,7 @@ fn require_claimed(
 
 pub(crate) fn lower_one_with_state(
     work: &mut SourceBundle,
-    state: &super::lower::UmlLoweringState,
+    state: &mut super::lower::UmlLoweringState,
     op: &Op,
 ) -> Result<(), EditError> {
     match op {
@@ -145,7 +145,7 @@ pub(crate) fn lower_one_with_state(
             visibility,
         } => {
             require_claimed(state, work, node, "attr.add")?;
-            super::lower::op_attr_add(work, node, name, ty_token, multiplicity, *visibility)
+            super::lower::op_attr_add(work, state, node, name, ty_token, multiplicity, *visibility)
         }
         Op::AttributeSet {
             node,
@@ -158,6 +158,7 @@ pub(crate) fn lower_one_with_state(
             require_claimed(state, work, node, "attr.set")?;
             super::lower::op_attr_set(
                 work,
+                state,
                 node,
                 name,
                 ty_token,
@@ -168,15 +169,15 @@ pub(crate) fn lower_one_with_state(
         }
         Op::AttributeRemove { node, name } => {
             require_claimed(state, work, node, "attr.rm")?;
-            super::lower::op_attr_rm(work, node, name)
+            super::lower::op_attr_rm(work, state, node, name)
         }
         Op::ValueAdd { node, literal } => {
             require_claimed(state, work, node, "value.add")?;
-            super::lower::op_value_add(work, node, literal)
+            super::lower::op_value_add(work, state, node, literal)
         }
         Op::ValueRemove { node, literal } => {
             require_claimed(state, work, node, "value.rm")?;
-            super::lower::op_value_rm(work, node, literal)
+            super::lower::op_value_rm(work, state, node, literal)
         }
         Op::RelationshipAdd {
             source,
@@ -187,7 +188,7 @@ pub(crate) fn lower_one_with_state(
         } => {
             require_claimed(state, work, source, "rel.add")?;
             require_claimed(state, work, target, "rel.add")?;
-            super::lower::op_rel_add(work, source, *kind, target, name, ends)
+            super::lower::op_rel_add(work, state, source, *kind, target, name, ends)
         }
         Op::RelationshipSet {
             selector,
@@ -196,12 +197,12 @@ pub(crate) fn lower_one_with_state(
         } => {
             let selector = Selector::from(selector.clone());
             require_claimed(state, work, selector.source(), "rel.set")?;
-            super::lower::op_rel_set(work, &selector, ends, name)
+            super::lower::op_rel_set(work, state, &selector, ends, name)
         }
         Op::RelationshipRemove { selector } => {
             let selector = Selector::from(selector.clone());
             require_claimed(state, work, selector.source(), "rel.rm")?;
-            super::lower::op_rel_rm(work, &selector)
+            super::lower::op_rel_rm(work, state, &selector)
         }
         Op::ClassifierNew {
             slug,
@@ -235,11 +236,20 @@ pub(crate) fn lower_one_with_state(
             ty,
         } => {
             require_claimed(state, work, id, "node.set")?;
-            super::lower::op_node_set(work, id, title, description, stereotype, abstract_, ty)
+            super::lower::op_node_set(
+                work,
+                state,
+                id,
+                title,
+                description,
+                stereotype,
+                abstract_,
+                ty,
+            )
         }
         Op::ClassifierRemove { id, cascade } => {
             require_claimed(state, work, id, "node.rm")?;
-            super::lower::op_node_rm(work, id, *cascade)
+            super::lower::op_node_rm(work, state, id, *cascade)
         }
         Op::ClassifierRename { from, to } => {
             require_claimed(state, work, from, "node.rename")?;
@@ -253,7 +263,15 @@ pub(crate) fn lower_one_with_state(
             display,
         } => {
             require_claimed(state, work, key, "diagram.set")?;
-            super::lower::op_diagram_set(work, key, title, description, *clear_description, display)
+            super::lower::op_diagram_set(
+                work,
+                state,
+                key,
+                title,
+                description,
+                *clear_description,
+                display,
+            )
         }
         Op::PlacementSet {
             diagram,
@@ -266,6 +284,7 @@ pub(crate) fn lower_one_with_state(
             require_claimed(state, work, diagram, "place.set")?;
             super::lower::op_place_set(
                 work,
+                state,
                 diagram,
                 subject_title,
                 subject_slug,
@@ -280,28 +299,9 @@ pub(crate) fn lower_one_with_state(
             reference_slug,
         } => {
             require_claimed(state, work, diagram, "place.rm")?;
-            super::lower::op_place_rm(work, diagram, subject_slug, reference_slug)
+            super::lower::op_place_rm(work, state, diagram, subject_slug, reference_slug)
         }
     }
-}
-
-pub(crate) fn lower_one(work: &mut SourceBundle, op: &Op) -> Result<(), EditError> {
-    let state = super::lower::UmlLoweringState::from_candidate_compat(work);
-    lower_one_with_state(work, &state, op)?;
-    if let Op::DiagramSet { key, .. } = op {
-        let index = super::lower::find_doc(work, key, "diagram.set")?;
-        let normalized = work
-            .document_at(index)
-            .expect("resolved diagram")
-            .text()
-            .replace("\r\n", "\n");
-        *work
-            .document_at_mut(index)
-            .expect("resolved diagram")
-            .text_mut() =
-            crate::serialize::serialize_document(&crate::parse::parse_document(&normalized));
-    }
-    Ok(())
 }
 
 #[cfg(test)]

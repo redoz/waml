@@ -1,23 +1,20 @@
 use std::collections::BTreeMap;
+use std::ops::Range;
 use std::sync::Arc;
 
 use super::selector::{render_selector, RelBy, Selector};
+use super::syntax::{AttributeSyntax, UmlLanguage, UmlSyntaxKind};
 use super::{DiagramDisplaySet, FieldEdit, NameSpec};
 use crate::edit::{EditContext, EditError};
-use crate::frontmatter::{FmValue, Frontmatter};
-use crate::model::{
-    Attribute, CardinalityVisibility, ElementType, RelEnd, RelationshipKind, TypeRef, Visibility,
-};
+use crate::model::{CardinalityVisibility, ElementType, RelEnd, RelationshipKind, Visibility};
 use crate::multiplicity::Multiplicity;
 use crate::okf;
-use crate::parse::parse_document;
-use crate::serialize::serialize_document;
 use crate::source::{BundlePath, SourceBundle};
-use crate::syntax::{
-    Direction, Document, LayoutItem, LayoutStatement, Line, NameRef, Operand, OperandRef,
-    ParsedName, ParsedRel, Section,
+use crate::syntax::Direction;
+use waml_syntax::{
+    parse_okf_markdown, AstNode, MarkdownDialect, OkfMarkdownSyntaxKind, ShellParse, SourceText,
+    SyntaxElement, SyntaxNode, SyntaxTree,
 };
-use waml_syntax::{parse_okf_markdown, MarkdownDialect, SourceText, SyntaxTree};
 
 pub(crate) struct UmlLoweringCursor<'a> {
     original: EditContext<'a>,
@@ -27,7 +24,7 @@ pub(crate) struct UmlLoweringCursor<'a> {
 
 pub(crate) struct UmlLoweringState {
     current_paths: BTreeMap<String, BundlePath>,
-    touched_islands: BTreeMap<BundlePath, Arc<SyntaxTree<super::syntax::UmlLanguage>>>,
+    touched_islands: BTreeMap<BundlePath, Arc<SyntaxTree<UmlLanguage>>>,
 }
 
 impl UmlLoweringState {
@@ -43,34 +40,21 @@ impl UmlLoweringState {
                     .map(|document| (id.to_owned(), document.path().clone()))
             })
             .collect();
-        Self {
-            current_paths,
-            touched_islands: BTreeMap::new(),
-        }
-    }
-
-    pub(crate) fn from_candidate_compat(source: &SourceBundle) -> Self {
-        let current_paths = source
+        let touched_islands = context
+            .uml
+            .syntax
             .documents()
-            .iter()
-            .filter_map(|document| {
-                let parsed = parse_document(document.text());
-                let ty = ElementType::parse(parsed.frontmatter.get_str("type").unwrap_or(""));
-                crate::uml::recognizes_type(&ty).then(|| {
-                    (
-                        document
-                            .path()
-                            .concept_id()
-                            .expect("concept path")
-                            .to_owned(),
-                        document.path().clone(),
-                    )
-                })
+            .values()
+            .map(|snapshot| {
+                (
+                    snapshot.document().path().clone(),
+                    snapshot.syntax().clone(),
+                )
             })
             .collect();
         Self {
             current_paths,
-            touched_islands: BTreeMap::new(),
+            touched_islands,
         }
     }
 
@@ -87,7 +71,7 @@ impl UmlLoweringState {
             || self
                 .current_paths
                 .iter()
-                .any(|(existing_id, existing_path)| existing_id != &id && existing_path == &path)
+                .any(|(other, existing)| other != &id && existing == &path)
         {
             return Err(EditError::at(
                 "uml.structure",
@@ -123,7 +107,7 @@ impl UmlLoweringState {
         if self
             .current_paths
             .iter()
-            .any(|(existing_id, existing_path)| existing_id != &to && existing_path == &path)
+            .any(|(other, existing)| other != &to && existing == &path)
         {
             self.current_paths.insert(from.to_owned(), old_path);
             return Err(EditError::at(
@@ -137,23 +121,45 @@ impl UmlLoweringState {
         Ok(())
     }
 
-    pub(crate) fn path(&self, id: &str) -> Option<&BundlePath> {
-        self.resolve_id(id)
-            .and_then(|resolved| self.current_paths.get(resolved))
+    pub(crate) fn path(&self, target: &str) -> Option<&BundlePath> {
+        self.resolve_id(target)
+            .and_then(|id| self.current_paths.get(id))
     }
 
     fn resolve_id(&self, target: &str) -> Option<&str> {
         if let Some((id, _)) = self.current_paths.get_key_value(target) {
-            return Some(id.as_str());
+            return Some(id);
         }
         let mut matches = self
             .current_paths
             .iter()
             .filter(|(_, path)| slug_of(path.as_str()) == target);
         match (matches.next(), matches.next()) {
-            (Some((id, _)), None) => Some(id.as_str()),
+            (Some((id, _)), None) => Some(id),
             _ => None,
         }
+    }
+
+    fn tree(
+        &mut self,
+        candidate: &SourceBundle,
+        target: &str,
+        op: &str,
+    ) -> Result<(BundlePath, Arc<SyntaxTree<UmlLanguage>>), EditError> {
+        let path = self
+            .path(target)
+            .cloned()
+            .ok_or_else(|| EditError::at(op, format!("no claimed concept '{target}'")))?;
+        if !self.touched_islands.contains_key(&path) {
+            self.reparse(candidate, &path, op)?;
+        }
+        Ok((
+            path.clone(),
+            self.touched_islands
+                .get(&path)
+                .expect("candidate island was parsed")
+                .clone(),
+        ))
     }
 
     fn reparse(
@@ -169,8 +175,10 @@ impl UmlLoweringState {
             .map_err(|error| EditError::at(op, error.to_string()))?;
         let shell = parse_okf_markdown(text.clone(), MarkdownDialect::CommonMarkCurrent)
             .map_err(|error| EditError::at(op, error.to_string()))?;
-        let tree = super::syntax::parser::parse(text, &shell.structure);
-        self.touched_islands.insert(path.clone(), tree);
+        self.touched_islands.insert(
+            path.clone(),
+            super::syntax::parser::parse(text, &shell.structure),
+        );
         Ok(())
     }
 }
@@ -223,21 +231,28 @@ pub(crate) fn apply_step(
     })?;
 
     match op {
-        super::Op::ClassifierNew { slug, .. } => {
-            let document = candidate
-                .documents()
-                .iter()
-                .find(|document| slug_of(document.path().as_str()) == slug.as_str())
-                .ok_or_else(|| {
-                    EditError::at("node.new", format!("inserted concept '{slug}' is absent"))
-                })?;
-            let id = document
-                .path()
-                .concept_id()
-                .expect("inserted classifier has concept path")
-                .to_owned();
+        super::Op::ClassifierNew {
+            slug, directory, ..
+        } => {
+            let directory = crate::okf::ops::legacy_path(directory);
+            let inserted_path = BundlePath::parse(if directory.is_empty() {
+                format!("{slug}.md")
+            } else {
+                format!("{directory}/{slug}.md")
+            })
+            .map_err(|error| EditError::at("node.new", error.to_string()))?;
+            let document = candidate.document(&inserted_path).ok_or_else(|| {
+                EditError::at("node.new", format!("inserted concept '{slug}' is absent"))
+            })?;
             state
-                .inserted_concept(id, document.path().clone())
+                .inserted_concept(
+                    document
+                        .path()
+                        .concept_id()
+                        .expect("classifier path")
+                        .to_owned(),
+                    document.path().clone(),
+                )
                 .map_err(|mut error| {
                     error.index = index;
                     error
@@ -257,13 +272,16 @@ pub(crate) fn apply_step(
                     .ok_or_else(|| {
                         EditError::at("node.rename", format!("renamed concept '{to}' is absent"))
                     })?;
-                let id = document
-                    .path()
-                    .concept_id()
-                    .expect("renamed classifier has concept path")
-                    .to_owned();
                 state
-                    .renamed_concept(&from, id, document.path().clone())
+                    .renamed_concept(
+                        &from,
+                        document
+                            .path()
+                            .concept_id()
+                            .expect("classifier path")
+                            .to_owned(),
+                        document.path().clone(),
+                    )
                     .map_err(|mut error| {
                         error.index = index;
                         error
@@ -297,6 +315,22 @@ pub(crate) fn apply_step(
     Ok(())
 }
 
+fn validate_context(context: &EditContext<'_>) -> Result<(), EditError> {
+    let catalog = &context.okf_analysis.catalog;
+    if catalog.session_revision() != context.session_revision
+        || context.uml.session_revision() != context.session_revision
+        || !Arc::ptr_eq(catalog, context.okf_analysis.shell.catalog())
+        || !Arc::ptr_eq(catalog, context.uml.syntax.catalog())
+        || catalog.documents().len() != context.source.len()
+    {
+        return Err(EditError::at(
+            "uml.context",
+            "analysis/catalog revision does not match source",
+        ));
+    }
+    Ok(())
+}
+
 fn op_name(op: &super::Op) -> &'static str {
     match op {
         super::Op::AttributeAdd { .. } => "attr.add",
@@ -317,42 +351,18 @@ fn op_name(op: &super::Op) -> &'static str {
     }
 }
 
-fn validate_context(context: &EditContext<'_>) -> Result<(), EditError> {
-    let catalog = &context.okf_analysis.catalog;
-    if catalog.session_revision() != context.session_revision
-        || context.uml.session_revision() != context.session_revision
-        || !Arc::ptr_eq(catalog, context.okf_analysis.shell.catalog())
-        || !Arc::ptr_eq(catalog, context.uml.syntax.catalog())
-        || catalog.documents().len() != context.source.len()
-    {
-        return Err(EditError::at(
-            "uml.context",
-            "analysis/catalog revision does not match source",
-        ));
-    }
-    Ok(())
-}
-
-// ---- shared helpers (reused by every later op) ----
-
 pub(crate) fn slug_of(path: &str) -> String {
-    let seg = path.rsplit(['/', '\\']).next().unwrap_or(path);
-    seg.strip_suffix(".md").unwrap_or(seg).to_string()
+    let segment = path.rsplit(['/', '\\']).next().unwrap_or(path);
+    segment.strip_suffix(".md").unwrap_or(segment).to_owned()
 }
 
-/// Resolve a caller-given target — a full bundle-path id (`okf::id_of`, what
-/// the parse/graph layer keys `Node`/`Edge`/`Diagram` by) or a bare basename
-/// — to the doc's index. Full-id match takes priority; a bare target falls
-/// back to a unique-basename match across the bundle (mirrors
-/// `solve::resolve`'s `NameRef::Bare` handling). Ambiguous basenames are left
-/// unresolved rather than guessing.
 pub(crate) fn resolve_index(work: &SourceBundle, target: &str) -> Option<usize> {
-    if let Some(i) = work
+    if let Some(index) = work
         .documents()
         .iter()
         .position(|document| okf::id_of(document.path().as_str()) == target)
     {
-        return Some(i);
+        return Some(index);
     }
     let mut matches = work
         .documents()
@@ -360,68 +370,13 @@ pub(crate) fn resolve_index(work: &SourceBundle, target: &str) -> Option<usize> 
         .enumerate()
         .filter(|(_, document)| slug_of(document.path().as_str()) == target);
     match (matches.next(), matches.next()) {
-        (Some((i, _)), None) => Some(i),
+        (Some((index, _)), None) => Some(index),
         _ => None,
     }
-}
-
-/// The bare basename actually embedded in this bundle's same-directory
-/// relative hrefs (`./slug.md`) for a resolved target. An unresolved token
-/// (a forward reference to a not-yet-existing doc) passes through unchanged.
-pub(crate) fn stored_slug(work: &SourceBundle, target: &str) -> String {
-    resolve_index(work, target)
-        .and_then(|i| work.document_at(i))
-        .map(|document| slug_of(document.path().as_str()))
-        .unwrap_or_else(|| target.to_string())
 }
 
 pub(crate) fn find_doc(work: &SourceBundle, target: &str, op: &str) -> Result<usize, EditError> {
     resolve_index(work, target).ok_or_else(|| EditError::at(op, format!("no document '{target}'")))
-}
-
-/// Parse the target file, mutate via `f`, re-serialize canonically.
-pub(crate) fn edit_doc<F>(
-    work: &mut SourceBundle,
-    slug: &str,
-    op: &str,
-    f: F,
-) -> Result<(), EditError>
-where
-    F: FnOnce(&mut Document) -> Result<(), EditError>,
-{
-    let i = find_doc(work, slug, op)?;
-    let original = work
-        .document_at(i)
-        .expect("resolved document index")
-        .text()
-        .to_owned();
-    let normalized = original.replace("\r\n", "\n");
-    let mut doc = parse_document(&normalized);
-    f(&mut doc)?;
-    let rendered = serialize_document(&doc);
-    let merged = merge_owned_edit(&original, &rendered, op)?;
-    *work
-        .document_at_mut(i)
-        .expect("resolved document index")
-        .text_mut() = merged;
-    Ok(())
-}
-
-fn merge_owned_edit(original: &str, rendered: &str, op: &str) -> Result<String, EditError> {
-    let section = match op {
-        "attr.add" | "attr.set" | "attr.rm" => Some("Attributes"),
-        "value.add" | "value.rm" => Some("Values"),
-        "rel.add" | "rel.set" | "rel.rm" => Some("Relationships"),
-        "place.set" | "place.rm" => Some("Layout"),
-        _ => None,
-    };
-    if let Some(section) = section {
-        return merge_section(original, rendered, section, op);
-    }
-    if matches!(op, "node.set" | "diagram.set") {
-        return merge_frontmatter_and_title(original, rendered, op);
-    }
-    Ok(rendered.to_owned())
 }
 
 fn line_ending(source: &str) -> &'static str {
@@ -432,316 +387,755 @@ fn line_ending(source: &str) -> &'static str {
     }
 }
 
-fn parse_structure(source: &str, op: &str) -> Result<waml_syntax::ShellParse, EditError> {
+fn shell(source: &str, op: &str) -> Result<ShellParse, EditError> {
     let text = SourceText::from_shared(Arc::new(source.to_owned()))
         .map_err(|error| EditError::at(op, error.to_string()))?;
     parse_okf_markdown(text, MarkdownDialect::CommonMarkCurrent)
         .map_err(|error| EditError::at(op, error.to_string()))
 }
 
-fn section_range(
-    source: &str,
-    section: &str,
+fn syntax_nodes(
+    node: &SyntaxNode<UmlLanguage>,
+    kind: UmlSyntaxKind,
+    output: &mut Vec<SyntaxNode<UmlLanguage>>,
+) {
+    for child in node.children().filter_map(SyntaxElement::into_node) {
+        if child.kind() == kind {
+            output.push(child.clone());
+        }
+        syntax_nodes(&child, kind, output);
+    }
+}
+
+fn nodes(tree: &SyntaxTree<UmlLanguage>, kind: UmlSyntaxKind) -> Vec<SyntaxNode<UmlLanguage>> {
+    let mut output = Vec::new();
+    syntax_nodes(&tree.root(), kind, &mut output);
+    output
+}
+
+fn node_range(node: &SyntaxNode<UmlLanguage>) -> Range<usize> {
+    node.range().start().to_usize()..node.range().end().to_usize()
+}
+
+fn replace_range(
+    work: &mut SourceBundle,
+    path: &BundlePath,
+    range: Range<usize>,
+    replacement: &str,
     op: &str,
-) -> Result<Option<std::ops::Range<usize>>, EditError> {
-    let shell = parse_structure(source, op)?;
-    let headings = &shell.structure.headings;
-    let Some((index, heading)) = headings.iter().enumerate().find(|(_, heading)| {
-        heading.level == 2
-            && source[heading.text_range.start().to_usize()..heading.text_range.end().to_usize()]
-                .trim()
-                == section
-    }) else {
-        return Ok(None);
-    };
-    let start = heading.range.start().to_usize();
-    let end = headings
+) -> Result<(), EditError> {
+    let index = work
+        .documents()
         .iter()
-        .skip(index + 1)
-        .find(|next| next.level <= 2)
-        .map(|next| next.range.start().to_usize())
-        .unwrap_or(source.len());
-    Ok(Some(start..end))
+        .position(|document| document.path() == path)
+        .ok_or_else(|| EditError::at(op, format!("no document '{}'", path.as_str())))?;
+    work.document_at_mut(index)
+        .expect("resolved document")
+        .text_mut()
+        .replace_range(range, replacement);
+    Ok(())
 }
 
-fn merge_section(
-    original: &str,
-    rendered: &str,
+fn replace_document(
+    work: &mut SourceBundle,
+    path: &BundlePath,
+    replacement: String,
+    op: &str,
+) -> Result<(), EditError> {
+    let index = work
+        .documents()
+        .iter()
+        .position(|document| document.path() == path)
+        .ok_or_else(|| EditError::at(op, format!("no document '{}'", path.as_str())))?;
+    *work
+        .document_at_mut(index)
+        .expect("resolved document")
+        .text_mut() = replacement;
+    Ok(())
+}
+
+fn section_kind(name: &str) -> UmlSyntaxKind {
+    match name {
+        "Attributes" => UmlSyntaxKind::AttributesSection,
+        "Values" => UmlSyntaxKind::ValuesSection,
+        "Relationships" => UmlSyntaxKind::RelationshipsSection,
+        "Layout" => UmlSyntaxKind::LayoutSection,
+        _ => unreachable!("known operation section"),
+    }
+}
+
+fn append_line(
+    work: &mut SourceBundle,
+    path: &BundlePath,
+    tree: &SyntaxTree<UmlLanguage>,
     section: &str,
+    line: &str,
     op: &str,
-) -> Result<String, EditError> {
-    let wanted = section_range(rendered, section, op)?
-        .map(|range| rendered[range].trim_end_matches(['\r', '\n']).to_owned())
-        .unwrap_or_default();
-    let newline = line_ending(original);
-    let wanted = wanted.replace('\n', newline);
-    let wanted_body_empty = wanted.lines().skip(1).all(|line| line.trim().is_empty());
-    let mut output = original.to_owned();
-    if let Some(range) = section_range(original, section, op)? {
-        if range.end == output.len() {
-            output.truncate(range.start);
-            while output.ends_with('\n') || output.ends_with('\r') {
-                output.pop();
-            }
-            if wanted_body_empty {
-                output.push_str(newline);
-            } else {
-                output.push_str(newline);
-                output.push_str(newline);
-                output.push_str(&wanted);
-                output.push_str(newline);
-            }
+) -> Result<(), EditError> {
+    let source = work.document(path).expect("claimed document").text();
+    let newline = line_ending(source);
+    let sections = nodes(tree, section_kind(section));
+    if let Some(section_node) = sections.first() {
+        let offset = section_node.range().end().to_usize();
+        let prefix = if offset > 0 && source[..offset].ends_with('\n') {
+            ""
         } else {
-            let replacement = if wanted_body_empty {
-                String::new()
-            } else {
-                format!("{wanted}{newline}{newline}")
-            };
-            output.replace_range(range, &replacement);
+            newline
+        };
+        replace_range(
+            work,
+            path,
+            offset..offset,
+            &format!("{prefix}{line}{newline}"),
+            op,
+        )
+    } else {
+        let mut replacement = String::new();
+        if !source.ends_with('\n') {
+            replacement.push_str(newline);
         }
-        return Ok(output);
+        if !source.ends_with(&format!("{newline}{newline}")) {
+            replacement.push_str(newline);
+        }
+        replacement.push_str("## ");
+        replacement.push_str(section);
+        replacement.push_str(newline);
+        replacement.push_str(line);
+        replacement.push_str(newline);
+        replace_range(work, path, source.len()..source.len(), &replacement, op)
     }
-    if wanted_body_empty {
-        return Ok(output);
-    }
-    while output.ends_with('\n') || output.ends_with('\r') {
-        output.pop();
-    }
-    output.push_str(newline);
-    output.push_str(newline);
-    output.push_str(&wanted);
-    output.push_str(newline);
-    Ok(output)
 }
 
-fn merge_frontmatter_and_title(
-    original: &str,
-    rendered: &str,
+fn remove_owned_node(
+    work: &mut SourceBundle,
+    path: &BundlePath,
+    tree: &SyntaxTree<UmlLanguage>,
+    section_name: &str,
+    node: &SyntaxNode<UmlLanguage>,
     op: &str,
-) -> Result<String, EditError> {
-    let newline = line_ending(original);
-    let normalized_original = original.replace("\r\n", "\n");
-    let normalized_rendered = rendered.replace("\r\n", "\n");
-    let old = parse_document(&normalized_original);
-    let new = parse_document(&normalized_rendered);
-    let old_entries: BTreeMap<_, _> = old.frontmatter.entries.iter().cloned().collect();
-    let new_entries: BTreeMap<_, _> = new.frontmatter.entries.iter().cloned().collect();
-    let mut output = normalized_original;
-    for key in old_entries
-        .keys()
-        .chain(new_entries.keys())
-        .collect::<std::collections::BTreeSet<_>>()
-    {
-        if old_entries.get(key) == new_entries.get(key) {
-            continue;
-        }
-        let prefix = format!("{key}:");
-        let close = output
-            .lines()
-            .scan(0usize, |offset, line| {
-                let start = *offset;
-                *offset += line.len() + 1;
-                Some((start, line))
-            })
-            .skip(1)
-            .find(|(_, line)| *line == "---")
-            .map(|(start, _)| start)
-            .ok_or_else(|| EditError::at(op, "claimed document has no clean frontmatter"))?;
-        let existing = output[..close]
-            .lines()
-            .scan(0usize, |offset, line| {
-                let start = *offset;
-                *offset += line.len() + 1;
-                Some((start, line))
-            })
-            .find(|(_, line)| line.starts_with(&prefix))
-            .map(|(start, line)| start..start + line.len() + 1);
-        let replacement = normalized_rendered
-            .lines()
-            .find(|line| line.starts_with(&prefix))
-            .map(|line| format!("{line}\n"))
-            .unwrap_or_default();
-        if let Some(range) = existing {
-            output.replace_range(range, &replacement);
-        } else if !replacement.is_empty() {
-            let close = output
-                .find("\n---\n")
-                .map(|offset| offset + 1)
-                .ok_or_else(|| EditError::at(op, "claimed document has no closing fence"))?;
-            output.insert_str(close, &replacement);
-        }
-    }
-    if old.title != new.title {
-        let shell = parse_structure(&output, op)?;
-        if let Some(heading) = shell
-            .structure
-            .headings
-            .iter()
-            .find(|heading| heading.level == 1)
-        {
-            let range = heading.text_range.start().to_usize()..heading.text_range.end().to_usize();
-            let authored = &output[range.clone()];
-            if let Some(relative) = authored.find(&old.title) {
-                let start = range.start + relative;
-                output.replace_range(start..start + old.title.len(), &new.title);
+) -> Result<(), EditError> {
+    let source = work.document(path).expect("claimed document").text();
+    let target = node_range(node);
+    if let Some(section) = nodes(tree, section_kind(section_name)).first() {
+        let section_range = node_range(section);
+        let section_text = &source[section_range.clone()];
+        let relative = target.start - section_range.start..target.end - section_range.start;
+        let mut remainder = section_text.to_owned();
+        remainder.replace_range(relative, "");
+        let body = remainder
+            .find('\n')
+            .map(|offset| &remainder[offset + 1..])
+            .unwrap_or("");
+        if body.trim().is_empty() {
+            let mut start = section_range.start;
+            while start > 0 && matches!(source.as_bytes()[start - 1], b'\r' | b'\n') {
+                start -= 1;
             }
+            let newline = line_ending(source);
+            return replace_range(
+                work,
+                path,
+                start..section_range.end,
+                if start == 0 { "" } else { newline },
+                op,
+            );
         }
     }
-    if original.ends_with('\n') && !output.ends_with('\n') {
-        output.push('\n');
+    replace_range(work, path, target, "", op)
+}
+
+fn frontmatter_entries(source: &str, op: &str) -> Result<Vec<(String, Range<usize>)>, EditError> {
+    let parsed = shell(source, op)?;
+    let mut entries = Vec::new();
+    for frontmatter in parsed
+        .tree
+        .root()
+        .children()
+        .filter_map(SyntaxElement::into_node)
+        .filter(|node| node.kind() == OkfMarkdownSyntaxKind::Frontmatter)
+    {
+        for node in frontmatter
+            .children()
+            .filter_map(SyntaxElement::into_node)
+            .filter(|node| node.kind() == OkfMarkdownSyntaxKind::FrontmatterEntry)
+        {
+            let key = node
+                .children()
+                .filter_map(SyntaxElement::into_token)
+                .find(|token| token.kind() == OkfMarkdownSyntaxKind::FrontmatterKey)
+                .map(|token| token.text().write_to_string().trim().to_owned())
+                .unwrap_or_default();
+            entries.push((
+                key,
+                node.range().start().to_usize()..node.range().end().to_usize(),
+            ));
+        }
     }
-    Ok(if newline == "\r\n" {
-        output.replace('\n', "\r\n")
+    Ok(entries)
+}
+
+fn frontmatter_value(source: &str, wanted: &str, op: &str) -> Result<Option<String>, EditError> {
+    for (key, range) in frontmatter_entries(source, op)? {
+        if key == wanted {
+            let line = source[range].trim_end_matches(['\r', '\n']);
+            return Ok(line
+                .split_once(':')
+                .map(|(_, value)| decode_scalar(value.trim())));
+        }
+    }
+    Ok(None)
+}
+
+fn decode_scalar(value: &str) -> String {
+    if value.len() >= 2 && value.starts_with('"') && value.ends_with('"') {
+        value[1..value.len() - 1]
+            .replace("\\\"", "\"")
+            .replace("\\\\", "\\")
     } else {
-        output
+        value.to_owned()
+    }
+}
+
+fn frontmatter_number(value: &str) -> bool {
+    let mut parts = value.split('.');
+    let whole = parts.next().unwrap_or_default();
+    let fraction = parts.next();
+    !whole.is_empty()
+        && whole.bytes().all(|byte| byte.is_ascii_digit())
+        && fraction.map_or(true, |digits| {
+            !digits.is_empty() && digits.bytes().all(|byte| byte.is_ascii_digit())
+        })
+        && parts.next().is_none()
+}
+
+fn scalar(value: &str) -> String {
+    let needs_quote = value.is_empty()
+        || value != value.trim()
+        || matches!(value, "true" | "false")
+        || frontmatter_number(value)
+        || (value.starts_with('[') && value.ends_with(']'))
+        || value.starts_with('"')
+        || value.contains('"')
+        || value.contains('\\')
+        || value.contains('\n');
+    if needs_quote {
+        format!("\"{}\"", value.replace('\\', "\\\\").replace('"', "\\\""))
+    } else {
+        value.to_owned()
+    }
+}
+
+fn string_list(values: &[String]) -> String {
+    format!(
+        "[{}]",
+        values
+            .iter()
+            .map(|value| scalar(value))
+            .collect::<Vec<_>>()
+            .join(", ")
+    )
+}
+
+fn set_frontmatter(
+    source: &mut String,
+    key: &str,
+    value: Option<&str>,
+    op: &str,
+) -> Result<(), EditError> {
+    if let Some((_, range)) = frontmatter_entries(source, op)?
+        .into_iter()
+        .find(|(existing, _)| existing == key)
+    {
+        let newline = line_ending(source);
+        let replacement = value
+            .map(|value| format!("{key}: {value}{newline}"))
+            .unwrap_or_default();
+        source.replace_range(range, &replacement);
+        return Ok(());
+    }
+    let Some(value) = value else {
+        return Ok(());
+    };
+    let parsed = shell(source, op)?;
+    let close = parsed
+        .tree
+        .root()
+        .children()
+        .filter_map(SyntaxElement::into_node)
+        .find(|node| node.kind() == OkfMarkdownSyntaxKind::Frontmatter)
+        .and_then(|node| {
+            node.children()
+                .filter_map(SyntaxElement::into_token)
+                .find(|token| {
+                    token.kind() == OkfMarkdownSyntaxKind::FrontmatterCloseFence
+                        && !token.flags().is_missing()
+                })
+        })
+        .ok_or_else(|| EditError::at(op, "claimed document has no clean frontmatter"))?;
+    let newline = line_ending(source);
+    source.insert_str(
+        close.range().start().to_usize(),
+        &format!("{key}: {value}{newline}"),
+    );
+    Ok(())
+}
+
+fn set_h1(source: &mut String, title: &str, op: &str) -> Result<(), EditError> {
+    let parsed = shell(source, op)?;
+    let heading = parsed
+        .structure
+        .headings
+        .iter()
+        .find(|heading| heading.level == 1)
+        .ok_or_else(|| EditError::at(op, "claimed document has no title heading"))?;
+    let range = heading.text_range.start().to_usize()..heading.text_range.end().to_usize();
+    let authored = &source[range.clone()];
+    let leading = authored.len() - authored.trim_start().len();
+    let trailing = authored.len() - authored.trim_end().len();
+    source.replace_range(range.start + leading..range.end - trailing, title);
+    Ok(())
+}
+
+fn document_title(work: &SourceBundle, target: &str, op: &str) -> String {
+    resolve_index(work, target)
+        .and_then(|index| work.document_at(index))
+        .and_then(|document| {
+            frontmatter_value(document.text(), "title", op)
+                .ok()
+                .flatten()
+                .or_else(|| {
+                    shell(document.text(), op).ok().and_then(|parsed| {
+                        parsed
+                            .structure
+                            .headings
+                            .iter()
+                            .find(|heading| heading.level == 1)
+                            .map(|heading| {
+                                document.text()[heading.text_range.start().to_usize()
+                                    ..heading.text_range.end().to_usize()]
+                                    .trim()
+                                    .to_owned()
+                            })
+                    })
+                })
+        })
+        .unwrap_or_else(|| target.to_owned())
+}
+
+fn stored_slug(work: &SourceBundle, target: &str) -> String {
+    resolve_index(work, target)
+        .and_then(|index| work.document_at(index))
+        .map(|document| slug_of(document.path().as_str()))
+        .unwrap_or_else(|| target.to_owned())
+}
+
+fn type_text(work: &SourceBundle, token: &str) -> String {
+    resolve_index(work, token)
+        .and_then(|index| work.document_at(index))
+        .map(|document| {
+            format!(
+                "[{}](./{}.md)",
+                document_title(work, token, "attr.type"),
+                slug_of(document.path().as_str())
+            )
+        })
+        .unwrap_or_else(|| token.to_owned())
+}
+
+#[derive(Clone)]
+struct AttributeLine {
+    visibility: Option<Visibility>,
+    name: String,
+    ty: String,
+    multiplicity: Option<String>,
+}
+
+fn parse_attribute(source: &str) -> Option<AttributeLine> {
+    let line = source.trim_end_matches(['\r', '\n']).strip_prefix("- ")?;
+    let (visibility, line) = match line.chars().next().and_then(Visibility::from_marker) {
+        Some(visibility) => (Some(visibility), line[1..].trim_start()),
+        None => (None, line),
+    };
+    let (name, rest) = line.split_once(':')?;
+    let rest = rest.trim();
+    let (ty, multiplicity) = if let Some(start) = rest.rfind(" {") {
+        if rest.ends_with('}') {
+            (
+                rest[..start].trim().to_owned(),
+                Some(rest[start + 2..rest.len() - 1].to_owned()),
+            )
+        } else {
+            (rest.to_owned(), None)
+        }
+    } else {
+        (rest.to_owned(), None)
+    };
+    Some(AttributeLine {
+        visibility,
+        name: name.trim().to_owned(),
+        ty,
+        multiplicity,
     })
 }
 
-/// Get the `## Attributes` list, creating an empty section if absent
-/// (canonical serialize re-orders sections, so append position is irrelevant).
-pub(crate) fn attrs_mut(doc: &mut Document) -> &mut Vec<Line<Attribute>> {
-    if !doc
-        .sections
+fn render_attribute(attribute: &AttributeLine) -> String {
+    let visibility = attribute
+        .visibility
+        .map(|value| format!("{} ", value.marker()))
+        .unwrap_or_default();
+    let multiplicity = attribute
+        .multiplicity
+        .as_ref()
+        .map(|value| format!(" {{{value}}}"))
+        .unwrap_or_default();
+    format!(
+        "- {visibility}{}: {}{multiplicity}",
+        attribute.name, attribute.ty
+    )
+}
+
+fn attribute_nodes(
+    source: &str,
+    tree: &SyntaxTree<UmlLanguage>,
+) -> Vec<(SyntaxNode<UmlLanguage>, AttributeLine)> {
+    nodes(tree, UmlSyntaxKind::Attribute)
+        .into_iter()
+        .filter_map(|node| {
+            let parsed = AttributeSyntax::cast(node.clone())?;
+            let mut value = parse_attribute(&source[node_range(&node)])?;
+            value.name = parsed.name_token().text().write_to_string();
+            Some((node, value))
+        })
+        .collect()
+}
+
+pub(crate) fn op_attr_add(
+    work: &mut SourceBundle,
+    state: &mut UmlLoweringState,
+    node: &str,
+    name: &str,
+    ty_token: &str,
+    multiplicity: &Option<Multiplicity>,
+    visibility: Option<Visibility>,
+) -> Result<(), EditError> {
+    let (path, tree) = state.tree(work, node, "attr.add")?;
+    let source = work.document(&path).expect("claimed document").text();
+    if attribute_nodes(source, &tree)
         .iter()
-        .any(|s| matches!(s, Section::Attributes(_)))
+        .any(|(_, attribute)| attribute.name == name)
     {
-        doc.sections.push(Section::Attributes(Vec::new()));
+        return Err(EditError::at(
+            "attr.add",
+            format!("attribute '{name}' already exists in {node}"),
+        ));
     }
-    doc.sections
-        .iter_mut()
-        .find_map(|s| match s {
-            Section::Attributes(a) => Some(a),
-            _ => None,
-        })
-        .expect("attributes section just ensured")
+    let line = render_attribute(&AttributeLine {
+        visibility,
+        name: name.to_owned(),
+        ty: type_text(work, ty_token),
+        multiplicity: multiplicity.as_ref().map(|value| value.as_str().to_owned()),
+    });
+    append_line(work, &path, &tree, "Attributes", &line, "attr.add")
 }
 
-/// Get the `## Layout` list, creating an empty section if absent
-/// (canonical serialize re-orders sections, so append position is irrelevant).
-pub(crate) fn layout_mut(doc: &mut Document) -> &mut Vec<Line<LayoutItem>> {
-    if !doc.sections.iter().any(|s| matches!(s, Section::Layout(_))) {
-        doc.sections.push(Section::Layout(Vec::new()));
-    }
-    doc.sections
-        .iter_mut()
-        .find_map(|s| match s {
-            Section::Layout(l) => Some(l),
-            _ => None,
-        })
-        .expect("layout section just ensured")
-}
-
-/// Get the `## Values` list, creating an empty section if absent
-/// (canonical serialize re-orders sections, so append position is irrelevant).
-pub(crate) fn values_mut(doc: &mut Document) -> &mut Vec<Line<String>> {
-    if !doc.sections.iter().any(|s| matches!(s, Section::Values(_))) {
-        doc.sections.push(Section::Values(Vec::new()));
-    }
-    doc.sections
-        .iter_mut()
-        .find_map(|s| match s {
-            Section::Values(v) => Some(v),
-            _ => None,
-        })
-        .expect("values section just ensured")
-}
-
-/// Forward-ref-safe: a token matching an existing doc slug links to it (using
-/// that doc's title); otherwise it is a bare type token. Mirrors build_model.
-pub(crate) fn resolve_type(work: &SourceBundle, token: &str) -> TypeRef {
-    if let Some(i) = resolve_index(work, token) {
-        let document = work.document_at(i).expect("resolved document index");
-        let title = parse_document(document.text())
-            .frontmatter
-            .get_str("title")
-            .map(String::from)
-            .unwrap_or_else(|| token.to_string());
-        TypeRef {
-            name: title,
-            ref_: Some(slug_of(document.path().as_str())),
-        }
-    } else {
-        TypeRef {
-            name: token.to_string(),
-            ref_: None,
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn op_attr_set(
+    work: &mut SourceBundle,
+    state: &mut UmlLoweringState,
+    node: &str,
+    name: &str,
+    ty_token: &Option<String>,
+    multiplicity: &FieldEdit<Multiplicity>,
+    visibility: Option<Visibility>,
+    rename: &Option<String>,
+) -> Result<(), EditError> {
+    let (path, tree) = state.tree(work, node, "attr.set")?;
+    let source = work.document(&path).expect("claimed document").text();
+    let attributes = attribute_nodes(source, &tree);
+    if let Some(new_name) = rename {
+        if new_name != name
+            && attributes
+                .iter()
+                .any(|(_, attribute)| attribute.name == *new_name)
+        {
+            return Err(EditError::at(
+                "attr.set",
+                format!("attribute '{new_name}' already exists in {node}"),
+            ));
         }
     }
+    let (syntax, mut attribute) = attributes
+        .into_iter()
+        .find(|(_, attribute)| attribute.name == name)
+        .ok_or_else(|| EditError::at("attr.set", format!("no attribute '{name}' in {node}")))?;
+    if let Some(token) = ty_token {
+        attribute.ty = type_text(work, token);
+    }
+    match multiplicity {
+        FieldEdit::Unchanged => {}
+        FieldEdit::Clear => attribute.multiplicity = None,
+        FieldEdit::Set(value) => attribute.multiplicity = Some(value.as_str().to_owned()),
+    }
+    if let Some(value) = visibility {
+        attribute.visibility = Some(value);
+    }
+    if let Some(value) = rename {
+        attribute.name = value.clone();
+    }
+    let newline = line_ending(source);
+    replace_range(
+        work,
+        &path,
+        node_range(&syntax),
+        &format!("{}{newline}", render_attribute(&attribute)),
+        "attr.set",
+    )
 }
 
-/// Get the `## Relationships` list, creating an empty section if absent
-/// (canonical serialize re-orders sections, so append position is irrelevant).
-pub(crate) fn rels_mut(doc: &mut Document) -> &mut Vec<Line<ParsedRel>> {
-    if !doc
-        .sections
+pub(crate) fn op_attr_rm(
+    work: &mut SourceBundle,
+    state: &mut UmlLoweringState,
+    node: &str,
+    name: &str,
+) -> Result<(), EditError> {
+    let (path, tree) = state.tree(work, node, "attr.rm")?;
+    let source = work.document(&path).expect("claimed document").text();
+    let syntax = attribute_nodes(source, &tree)
+        .into_iter()
+        .find(|(_, attribute)| attribute.name == name)
+        .map(|(syntax, _)| syntax)
+        .ok_or_else(|| EditError::at("attr.rm", format!("no attribute '{name}' in {node}")))?;
+    remove_owned_node(work, &path, &tree, "Attributes", &syntax, "attr.rm")
+}
+
+fn value_literal(source: &str) -> Option<String> {
+    source
+        .trim_end_matches(['\r', '\n'])
+        .strip_prefix("- ")
+        .map(str::trim)
+        .map(str::to_owned)
+}
+
+pub(crate) fn op_value_add(
+    work: &mut SourceBundle,
+    state: &mut UmlLoweringState,
+    node: &str,
+    literal: &str,
+) -> Result<(), EditError> {
+    let (path, tree) = state.tree(work, node, "value.add")?;
+    let source = work.document(&path).expect("claimed document").text();
+    if nodes(&tree, UmlSyntaxKind::Value)
         .iter()
-        .any(|s| matches!(s, Section::Relationships(_)))
+        .filter_map(|syntax| value_literal(&source[node_range(syntax)]))
+        .any(|value| value == literal)
     {
-        doc.sections.push(Section::Relationships(Vec::new()));
+        return Err(EditError::at(
+            "value.add",
+            format!("value '{literal}' already in {node}"),
+        ));
     }
-    doc.sections
-        .iter_mut()
-        .find_map(|s| match s {
-            Section::Relationships(r) => Some(r),
-            _ => None,
-        })
-        .expect("relationships section just ensured")
+    append_line(
+        work,
+        &path,
+        &tree,
+        "Values",
+        &format!("- {literal}"),
+        "value.add",
+    )
 }
 
-/// Look up a document's `title` by slug, falling back to the slug itself
-/// (forward-ref-safe, mirrors `resolve_type`).
-pub(crate) fn resolve_title(work: &SourceBundle, slug: &str) -> String {
-    resolve_index(work, slug)
-        .and_then(|i| {
-            parse_document(work.document_at(i)?.text())
-                .frontmatter
-                .get_str("title")
-                .map(String::from)
-        })
-        .unwrap_or_else(|| slug.to_string())
+pub(crate) fn op_value_rm(
+    work: &mut SourceBundle,
+    state: &mut UmlLoweringState,
+    node: &str,
+    literal: &str,
+) -> Result<(), EditError> {
+    let (path, tree) = state.tree(work, node, "value.rm")?;
+    let source = work.document(&path).expect("claimed document").text();
+    let syntax = nodes(&tree, UmlSyntaxKind::Value)
+        .into_iter()
+        .find(|syntax| value_literal(&source[node_range(syntax)]).as_deref() == Some(literal))
+        .ok_or_else(|| EditError::at("value.rm", format!("no value '{literal}' in {node}")))?;
+    remove_owned_node(work, &path, &tree, "Values", &syntax, "value.rm")
 }
 
-/// Resolve an op's `NameSpec` into the `ParsedName` stored on the document
-/// (a `Ref`'s title is resolved against the bundle at apply time).
-fn build_name(work: &SourceBundle, spec: &Option<NameSpec>) -> Option<ParsedName> {
-    match spec {
-        None => None,
-        Some(NameSpec::Label(l)) => Some(ParsedName::Label(l.clone())),
-        Some(NameSpec::Ref(slug)) => Some(ParsedName::Ref {
-            title: resolve_title(work, slug),
-            slug: stored_slug(work, slug),
+#[derive(Clone)]
+struct RelationshipLine {
+    kind: RelationshipKind,
+    target: String,
+    target_slug: String,
+    name: Option<String>,
+    ends: Option<String>,
+}
+
+fn relationship_kinds() -> &'static [RelationshipKind] {
+    &[
+        RelationshipKind::InstanceOf,
+        RelationshipKind::Associates,
+        RelationshipKind::Aggregates,
+        RelationshipKind::Composes,
+        RelationshipKind::Specializes,
+        RelationshipKind::Implements,
+        RelationshipKind::Depends,
+        RelationshipKind::Annotates,
+        RelationshipKind::Includes,
+        RelationshipKind::Extends,
+        RelationshipKind::Links,
+    ]
+}
+
+fn parse_relationship(source: &str) -> Option<RelationshipLine> {
+    let mut body = source.trim_end_matches(['\r', '\n']).strip_prefix("- ")?;
+    let kind = relationship_kinds()
+        .iter()
+        .copied()
+        .find(|kind| body.starts_with(&format!("{} ", kind.as_str())))?;
+    body = body[kind.as_str().len()..].trim_start();
+    let open = body.find('[')?;
+    let middle = body[open..].find("](")? + open;
+    let close = body[middle + 2..].find(')')? + middle + 2;
+    let target = body[open + 1..middle].to_owned();
+    let href = &body[middle + 2..close];
+    let target_slug = href
+        .trim_start_matches("./")
+        .strip_suffix(".md")
+        .unwrap_or(href)
+        .rsplit('/')
+        .next()
+        .unwrap_or(href)
+        .to_owned();
+    let tail = body[close + 1..].trim();
+    let (tail, ends) = tail
+        .split_once(':')
+        .map(|(name, ends)| (name.trim(), Some(ends.trim().to_owned())))
+        .unwrap_or((tail, None));
+    let name = tail.strip_prefix("as ").map(str::trim).map(str::to_owned);
+    Some(RelationshipLine {
+        kind,
+        target,
+        target_slug,
+        name,
+        ends,
+    })
+}
+
+fn render_end(end: &RelEnd) -> String {
+    let multiplicity = end
+        .multiplicity
+        .as_ref()
+        .map(Multiplicity::as_str)
+        .unwrap_or("1");
+    end.role
+        .as_ref()
+        .map(|role| format!("{multiplicity} {role}"))
+        .unwrap_or_else(|| multiplicity.to_owned())
+}
+
+fn render_name(work: &SourceBundle, name: &NameSpec) -> String {
+    match name {
+        NameSpec::Label(label) => format!("\"{label}\""),
+        NameSpec::Ref(target) => format!(
+            "[{}](./{}.md)",
+            document_title(work, target, "rel.name"),
+            stored_slug(work, target)
+        ),
+    }
+}
+
+fn render_relationship(relationship: &RelationshipLine) -> String {
+    let name = relationship
+        .name
+        .as_ref()
+        .map(|name| format!(" as {name}"))
+        .unwrap_or_default();
+    let ends = relationship
+        .ends
+        .as_ref()
+        .map(|ends| format!(": {ends}"))
+        .unwrap_or_default();
+    format!(
+        "- {} [{}](./{}.md){name}{ends}",
+        relationship.kind.as_str(),
+        relationship.target,
+        relationship.target_slug
+    )
+}
+
+fn relationship_matches(relationship: &RelationshipLine, by: &RelBy) -> bool {
+    match by {
+        RelBy::Endpoint { kind, target } => {
+            relationship.kind == *kind && relationship.target_slug == *target
+        }
+        RelBy::Named(name) => relationship.name.as_deref().is_some_and(|authored| {
+            authored.trim_matches('"') == name
+                || authored
+                    .strip_prefix('[')
+                    .and_then(|value| value.split_once(']'))
+                    .is_some_and(|(title, _)| title == name)
         }),
     }
 }
 
-/// `RelBy::Endpoint.target` may be a full bundle-path id (the parse/graph
-/// layer's edge key); `ParsedRel.target_slug` is always the bare
-/// same-directory-relative href token. Resolve before matching.
-fn resolve_rel_by(work: &SourceBundle, by: &RelBy) -> RelBy {
-    match by {
-        RelBy::Endpoint { kind, target } => RelBy::Endpoint {
-            kind: *kind,
-            target: stored_slug(work, target),
-        },
-        RelBy::Named(name) => RelBy::Named(name.clone()),
+pub(crate) fn op_rel_add(
+    work: &mut SourceBundle,
+    state: &mut UmlLoweringState,
+    source_id: &str,
+    kind: RelationshipKind,
+    target: &str,
+    name: &Option<NameSpec>,
+    ends: &Option<(RelEnd, RelEnd)>,
+) -> Result<(), EditError> {
+    if kind.is_ended() != ends.is_some() {
+        return Err(EditError::at(
+            "rel.add",
+            if kind.is_ended() {
+                format!("relationship '{}' requires ends", kind.as_str())
+            } else {
+                format!("relationship '{}' does not take ends", kind.as_str())
+            },
+        ));
     }
+    let (path, tree) = state.tree(work, source_id, "rel.add")?;
+    let source = work.document(&path).expect("claimed document").text();
+    let target_slug = stored_slug(work, target);
+    if nodes(&tree, UmlSyntaxKind::Relationship)
+        .iter()
+        .filter_map(|syntax| parse_relationship(&source[node_range(syntax)]))
+        .any(|relationship| relationship.kind == kind && relationship.target_slug == target_slug)
+    {
+        return Err(EditError::at(
+            "rel.add",
+            format!(
+                "relationship '{} {target}' already exists in {source_id}",
+                kind.as_str()
+            ),
+        ));
+    }
+    let relationship = RelationshipLine {
+        kind,
+        target: document_title(work, target, "rel.add"),
+        target_slug,
+        name: name.as_ref().map(|name| render_name(work, name)),
+        ends: ends
+            .as_ref()
+            .map(|(from, to)| format!("{} to {}", render_end(from), render_end(to))),
+    };
+    append_line(
+        work,
+        &path,
+        &tree,
+        "Relationships",
+        &render_relationship(&relationship),
+        "rel.add",
+    )
 }
 
-/// Does a parsed relationship match a selector's `RelBy` address?
-fn rel_matches(r: &ParsedRel, by: &RelBy) -> bool {
-    match by {
-        RelBy::Endpoint { kind, target } => r.kind == *kind && r.target_slug == *target,
-        RelBy::Named(name) => match &r.name {
-            Some(ParsedName::Label(l)) => l == name,
-            Some(ParsedName::Ref { title, .. }) => title == name,
-            None => false,
-        },
-    }
-}
-
-/// Extract `(source, by)` from a `Selector::Rel`, erroring for any other selector shape.
-fn rel_target<'a>(selector: &'a Selector, op: &str) -> Result<(&'a str, &'a RelBy), EditError> {
+fn relationship_target<'a>(
+    selector: &'a Selector,
+    op: &str,
+) -> Result<(&'a str, &'a RelBy), EditError> {
     match selector {
-        Selector::Rel { source, by } => Ok((source.as_str(), by)),
+        Selector::Rel { source, by } => Ok((source, by)),
         _ => Err(EditError::at(
             op,
             format!(
@@ -753,349 +1147,98 @@ fn rel_target<'a>(selector: &'a Selector, op: &str) -> Result<(&'a str, &'a RelB
     }
 }
 
-fn fm_set(fm: &mut Frontmatter, key: &str, val: FmValue) {
-    if let Some(e) = fm.entries.iter_mut().find(|(k, _)| k == key) {
-        e.1 = val;
-    } else {
-        fm.entries.push((key.to_string(), val));
-    }
-}
-
-fn str_list(items: &[String]) -> FmValue {
-    FmValue::List(items.iter().map(|s| FmValue::Str(s.clone())).collect())
-}
-
-/// Slugs of every document that references `slug` (rel target, attribute
-/// type-ref, `as [Ref]` name, diagram member). Sorted, deduped.
-pub fn referrers(work: &[(String, String)], slug: &str) -> Vec<String> {
-    let Ok(source) = SourceBundle::try_from_pairs(work.iter().cloned()) else {
-        return Vec::new();
-    };
-    referrers_source(&source, slug)
-}
-
-pub fn referrers_source(work: &SourceBundle, slug: &str) -> Vec<String> {
-    // Referring docs store bare same-directory-relative hrefs (`./slug.md`),
-    // not full ids — translate `slug` (which may be a full bundle-path id,
-    // per `resolve_index`) down to that bare form before matching stored refs.
-    let target_idx = resolve_index(work, slug);
-    let target = target_idx
-        .and_then(|i| work.document_at(i))
-        .map(|document| slug_of(document.path().as_str()))
-        .unwrap_or_else(|| slug.to_string());
-    let mut out = Vec::new();
-    for (i, document) in work.documents().iter().enumerate() {
-        if Some(i) == target_idx {
-            continue;
-        }
-        let doc = parse_document(document.text());
-        let hit = doc.sections.iter().any(|sec| match sec {
-            Section::Attributes(attrs) => attrs
-                .iter()
-                .filter_map(Line::parsed)
-                .any(|a| a.ty.ref_.as_deref() == Some(target.as_str())),
-            Section::Relationships(rels) => rels.iter().filter_map(Line::parsed).any(|r| {
-                r.target_slug == target
-                    || matches!(&r.name, Some(ParsedName::Ref { slug: rs, .. }) if rs == &target)
-            }),
-            Section::Members(block) => {
-                fn group_has(g: &crate::syntax::MemberGroup, slug: &str) -> bool {
-                    g.members.iter().filter_map(Line::parsed).any(|m| match m {
-                        crate::syntax::MemberItem::Member(ml) => ml.slug == slug,
-                        crate::syntax::MemberItem::Instance(inst) => inst.classifier.slug == slug,
-                    }) || g.children.iter().any(|c| group_has(c, slug))
-                }
-                block.groups.iter().any(|g| group_has(g, &target))
-            }
-            Section::Layout(stmts) => {
-                fn operand_refs(op: &crate::syntax::Operand, slug: &str) -> bool {
-                    use crate::syntax::{NameRef, OperandRef};
-                    match &op.ref_ {
-                        OperandRef::Name(NameRef::Link { slug: rs, .. }) => rs == slug,
-                        OperandRef::Name(NameRef::Bare(s)) => s == slug,
-                        OperandRef::InlineGroup { items, .. } => {
-                            items.iter().any(|it| operand_refs(it, slug))
-                        }
-                        OperandRef::Paren(inner) => operand_refs(inner, slug),
-                    }
-                }
-                stmts
-                    .iter()
-                    .filter_map(Line::parsed)
-                    .any(|it| match &it.stmt {
-                        crate::syntax::LayoutStatement::Standalone(op) => operand_refs(op, &target),
-                        crate::syntax::LayoutStatement::Placement { operands, .. } => {
-                            operands.iter().any(|op| operand_refs(op, &target))
-                        }
-                        crate::syntax::LayoutStatement::Alignment { left, right } => {
-                            operand_refs(&left.operand, &target)
-                                || operand_refs(&right.operand, &target)
-                        }
-                    })
-            }
-            _ => false,
-        });
-        if hit {
-            out.push(slug_of(document.path().as_str()));
-        }
-    }
-    out.sort();
-    out.dedup();
-    out
-}
-
-pub(crate) fn op_attr_add(
-    work: &mut SourceBundle,
-    node: &str,
-    name: &str,
-    ty_token: &str,
-    multiplicity: &Option<Multiplicity>,
-    visibility: Option<Visibility>,
-) -> Result<(), EditError> {
-    let ty = resolve_type(work, ty_token);
-    edit_doc(work, node, "attr.add", |doc| {
-        let attrs = attrs_mut(doc);
-        if attrs
-            .iter()
-            .filter_map(Line::parsed)
-            .any(|a| a.name == name)
-        {
-            return Err(EditError::at(
-                "attr.add",
-                format!("attribute '{name}' already exists in {node}"),
-            ));
-        }
-        attrs.push(Line::Parsed(Attribute {
-            name: name.to_string(),
-            ty,
-            multiplicity: multiplicity.clone(),
-            visibility,
-            description: None,
-        }));
-        Ok(())
-    })
-}
-
-#[allow(clippy::too_many_arguments)]
-pub(crate) fn op_attr_set(
-    work: &mut SourceBundle,
-    node: &str,
-    name: &str,
-    ty_token: &Option<String>,
-    multiplicity: &FieldEdit<Multiplicity>,
-    visibility: Option<Visibility>,
-    rename: &Option<String>,
-) -> Result<(), EditError> {
-    let ty = ty_token.as_ref().map(|t| resolve_type(work, t));
-    edit_doc(work, node, "attr.set", |doc| {
-        let attrs = attrs_mut(doc);
-        if let Some(new) = rename {
-            if new != name
-                && attrs
-                    .iter()
-                    .filter_map(Line::parsed)
-                    .any(|a| a.name == *new)
-            {
-                return Err(EditError::at(
-                    "attr.set",
-                    format!("attribute '{new}' already exists in {node}"),
-                ));
-            }
-        }
-        let a = attrs
-            .iter_mut()
-            .filter_map(Line::parsed_mut)
-            .find(|a| a.name == name)
-            .ok_or_else(|| EditError::at("attr.set", format!("no attribute '{name}' in {node}")))?;
-        if let Some(t) = ty {
-            a.ty = t;
-        }
-        match multiplicity {
-            FieldEdit::Unchanged => {}
-            FieldEdit::Clear => a.multiplicity = None,
-            FieldEdit::Set(value) => a.multiplicity = Some(value.clone()),
-        }
-        if let Some(v) = visibility {
-            a.visibility = Some(v);
-        }
-        if let Some(new) = rename {
-            a.name = new.clone();
-        }
-        Ok(())
-    })
-}
-
-pub(crate) fn op_attr_rm(work: &mut SourceBundle, node: &str, name: &str) -> Result<(), EditError> {
-    edit_doc(work, node, "attr.rm", |doc| {
-        let attrs = attrs_mut(doc);
-        let before = attrs.len();
-        attrs.retain(|a| a.parsed().map_or(true, |x| x.name != name));
-        if attrs.len() == before {
-            return Err(EditError::at(
-                "attr.rm",
-                format!("no attribute '{name}' in {node}"),
-            ));
-        }
-        Ok(())
-    })
-}
-
-pub(crate) fn op_value_add(
-    work: &mut SourceBundle,
-    node: &str,
-    literal: &str,
-) -> Result<(), EditError> {
-    edit_doc(work, node, "value.add", |doc| {
-        let values = values_mut(doc);
-        if values.iter().filter_map(Line::parsed).any(|v| v == literal) {
-            return Err(EditError::at(
-                "value.add",
-                format!("value '{literal}' already in {node}"),
-            ));
-        }
-        values.push(Line::Parsed(literal.to_string()));
-        Ok(())
-    })
-}
-
-pub(crate) fn op_value_rm(
-    work: &mut SourceBundle,
-    node: &str,
-    literal: &str,
-) -> Result<(), EditError> {
-    edit_doc(work, node, "value.rm", |doc| {
-        let values = values_mut(doc);
-        let before = values.len();
-        values.retain(|l| l.parsed().map_or(true, |v| v != literal));
-        if values.len() == before {
-            return Err(EditError::at(
-                "value.rm",
-                format!("no value '{literal}' in {node}"),
-            ));
-        }
-        Ok(())
-    })
-}
-
-pub(crate) fn op_rel_add(
-    work: &mut SourceBundle,
-    source: &str,
-    kind: RelationshipKind,
-    target: &str,
-    name: &Option<NameSpec>,
-    ends: &Option<(RelEnd, RelEnd)>,
-) -> Result<(), EditError> {
-    if kind.is_ended() != ends.is_some() {
-        let msg = if kind.is_ended() {
-            format!("relationship '{}' requires ends", kind.as_str())
-        } else {
-            format!("relationship '{}' does not take ends", kind.as_str())
-        };
-        return Err(EditError::at("rel.add", msg));
-    }
-    let target_title = resolve_title(work, target);
-    let target_ref = stored_slug(work, target);
-    let name = build_name(work, name);
-    let ends = ends.clone();
-    edit_doc(work, source, "rel.add", |doc| {
-        let rels = rels_mut(doc);
-        if rels
-            .iter()
-            .filter_map(Line::parsed)
-            .any(|r| r.kind == kind && r.target_slug == target_ref)
-        {
-            return Err(EditError::at(
-                "rel.add",
-                format!(
-                    "relationship '{} {target}' already exists in {source}",
-                    kind.as_str()
-                ),
-            ));
-        }
-        let (from_end, to_end) = ends.unwrap_or_default();
-        rels.push(Line::Parsed(ParsedRel {
-            kind,
-            target_title,
-            target_slug: target_ref,
-            name,
-            from_end,
-            to_end,
-            line: 0,
-            span: None,
-        }));
-        Ok(())
-    })
-}
-
 pub(crate) fn op_rel_set(
     work: &mut SourceBundle,
+    state: &mut UmlLoweringState,
     selector: &Selector,
     ends: &Option<(RelEnd, RelEnd)>,
     name: &Option<NameSpec>,
 ) -> Result<(), EditError> {
-    let (source, by) = rel_target(selector, "rel.set")?;
-    let (source, by) = (source.to_string(), resolve_rel_by(work, by));
-    let disp = render_selector(selector);
-    let new_ends = ends.clone();
-    let new_name = build_name(work, name);
-    edit_doc(work, &source, "rel.set", |doc| {
-        let rels = rels_mut(doc);
-        let r = rels
-            .iter_mut()
-            .filter_map(Line::parsed_mut)
-            .find(|r| rel_matches(r, &by))
-            .ok_or_else(|| {
-                EditError::at("rel.set", format!("no relationship '{disp}'")).with_sel(disp.clone())
-            })?;
-        if let Some((f, t)) = new_ends {
-            if !r.kind.is_ended() {
-                return Err(EditError::at(
-                    "rel.set",
-                    format!("'{}' does not take ends", r.kind.as_str()),
-                ));
-            }
-            r.from_end = f;
-            r.to_end = t;
+    let (source_id, by) = relationship_target(selector, "rel.set")?;
+    let resolved = match by {
+        RelBy::Endpoint { kind, target } => RelBy::Endpoint {
+            kind: *kind,
+            target: stored_slug(work, target),
+        },
+        RelBy::Named(name) => RelBy::Named(name.clone()),
+    };
+    let (path, tree) = state.tree(work, source_id, "rel.set")?;
+    let source = work.document(&path).expect("claimed document").text();
+    let (syntax, mut relationship) = nodes(&tree, UmlSyntaxKind::Relationship)
+        .into_iter()
+        .filter_map(|syntax| {
+            parse_relationship(&source[node_range(&syntax)]).map(|value| (syntax, value))
+        })
+        .find(|(_, relationship)| relationship_matches(relationship, &resolved))
+        .ok_or_else(|| {
+            let display = render_selector(selector);
+            EditError::at("rel.set", format!("no relationship '{display}'")).with_sel(display)
+        })?;
+    if let Some((from, to)) = ends {
+        if !relationship.kind.is_ended() {
+            return Err(EditError::at(
+                "rel.set",
+                format!("'{}' does not take ends", relationship.kind.as_str()),
+            ));
         }
-        if let Some(n) = new_name {
-            r.name = Some(n);
-        }
-        Ok(())
-    })
+        relationship.ends = Some(format!("{} to {}", render_end(from), render_end(to)));
+    }
+    if let Some(name) = name {
+        relationship.name = Some(render_name(work, name));
+    }
+    let newline = line_ending(source);
+    replace_range(
+        work,
+        &path,
+        node_range(&syntax),
+        &format!("{}{newline}", render_relationship(&relationship)),
+        "rel.set",
+    )
 }
 
-pub(crate) fn op_rel_rm(work: &mut SourceBundle, selector: &Selector) -> Result<(), EditError> {
-    let (source, by) = rel_target(selector, "rel.rm")?;
-    let (source, by) = (source.to_string(), resolve_rel_by(work, by));
-    let disp = render_selector(selector);
-    edit_doc(work, &source, "rel.rm", |doc| {
-        let rels = rels_mut(doc);
-        let before = rels.len();
-        rels.retain(|r| r.parsed().map_or(true, |x| !rel_matches(x, &by)));
-        if rels.len() == before {
-            return Err(
-                EditError::at("rel.rm", format!("no relationship '{disp}'")).with_sel(disp.clone())
-            );
-        }
-        Ok(())
-    })
+pub(crate) fn op_rel_rm(
+    work: &mut SourceBundle,
+    state: &mut UmlLoweringState,
+    selector: &Selector,
+) -> Result<(), EditError> {
+    let (source_id, by) = relationship_target(selector, "rel.rm")?;
+    let resolved = match by {
+        RelBy::Endpoint { kind, target } => RelBy::Endpoint {
+            kind: *kind,
+            target: stored_slug(work, target),
+        },
+        RelBy::Named(name) => RelBy::Named(name.clone()),
+    };
+    let (path, tree) = state.tree(work, source_id, "rel.rm")?;
+    let source = work.document(&path).expect("claimed document").text();
+    let syntax = nodes(&tree, UmlSyntaxKind::Relationship)
+        .into_iter()
+        .find(|syntax| {
+            parse_relationship(&source[node_range(syntax)])
+                .is_some_and(|relationship| relationship_matches(&relationship, &resolved))
+        })
+        .ok_or_else(|| {
+            let display = render_selector(selector);
+            EditError::at("rel.rm", format!("no relationship '{display}'")).with_sel(display)
+        })?;
+    remove_owned_node(work, &path, &tree, "Relationships", &syntax, "rel.rm")
 }
 
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn op_node_new(
     work: &mut SourceBundle,
     slug: &str,
-    dir: &str,
+    directory: &str,
     ty: &ElementType,
     title: &str,
     stereotype: &[String],
     description: &Option<String>,
     abstract_: bool,
 ) -> Result<(), EditError> {
-    let path = if dir.is_empty() {
+    let path = if directory.is_empty() {
         format!("{slug}.md")
     } else {
-        format!("{dir}/{slug}.md")
+        format!("{directory}/{slug}.md")
     };
     if work
         .documents()
@@ -1107,61 +1250,74 @@ pub(crate) fn op_node_new(
             format!("document '{slug}' already exists"),
         ));
     }
-    let mut entries: Vec<(String, FmValue)> = vec![("type".into(), FmValue::Str(ty.as_str()))];
+    let mut source = format!("---\ntype: {}\n", scalar(&ty.as_str()));
     if !stereotype.is_empty() {
-        entries.push(("stereotype".into(), str_list(stereotype)));
+        source.push_str(&format!("stereotype: {}\n", string_list(stereotype)));
     }
     if abstract_ {
-        entries.push(("abstract".into(), FmValue::Bool(true)));
+        source.push_str("abstract: true\n");
     }
-    entries.push(("title".into(), FmValue::Str(title.to_string())));
-    if let Some(d) = description {
-        entries.push(("description".into(), FmValue::Str(d.clone())));
+    source.push_str(&format!("title: {}\n", scalar(title)));
+    if let Some(description) = description {
+        source.push_str(&format!("description: {}\n", scalar(description)));
     }
-    let doc = Document {
-        frontmatter: Frontmatter { entries },
-        title: title.to_string(),
-        sections: Vec::new(),
-    };
-    work.push_document(path, serialize_document(&doc))
-        .map_err(|error| EditError::at("node.new", error.to_string()))?;
-    Ok(())
+    source.push_str(&format!("---\n\n# {title}\n"));
+    work.push_document(path, source)
+        .map_err(|error| EditError::at("node.new", error.to_string()))
 }
 
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn op_node_set(
     work: &mut SourceBundle,
-    slug: &str,
+    state: &mut UmlLoweringState,
+    id: &str,
     title: &Option<String>,
     description: &Option<String>,
     stereotype: &Option<Vec<String>>,
     abstract_: &Option<bool>,
     ty: &Option<ElementType>,
 ) -> Result<(), EditError> {
-    edit_doc(work, slug, "node.set", |doc| {
-        if let Some(t) = title {
-            fm_set(&mut doc.frontmatter, "title", FmValue::Str(t.clone()));
-            doc.title = t.clone();
-        }
-        if let Some(d) = description {
-            fm_set(&mut doc.frontmatter, "description", FmValue::Str(d.clone()));
-        }
-        if let Some(list) = stereotype {
-            fm_set(&mut doc.frontmatter, "stereotype", str_list(list));
-        }
-        if let Some(a) = abstract_ {
-            fm_set(&mut doc.frontmatter, "abstract", FmValue::Bool(*a));
-        }
-        if let Some(t) = ty {
-            fm_set(&mut doc.frontmatter, "type", FmValue::Str(t.as_str()));
-        }
-        Ok(())
-    })
+    let (path, _) = state.tree(work, id, "node.set")?;
+    let mut source = work
+        .document(&path)
+        .expect("claimed document")
+        .text()
+        .to_owned();
+    if let Some(value) = title {
+        set_frontmatter(&mut source, "title", Some(&scalar(value)), "node.set")?;
+        set_h1(&mut source, value, "node.set")?;
+    }
+    if let Some(value) = description {
+        set_frontmatter(&mut source, "description", Some(&scalar(value)), "node.set")?;
+    }
+    if let Some(values) = stereotype {
+        set_frontmatter(
+            &mut source,
+            "stereotype",
+            Some(&string_list(values)),
+            "node.set",
+        )?;
+    }
+    if let Some(value) = abstract_ {
+        set_frontmatter(
+            &mut source,
+            "abstract",
+            Some(if *value { "true" } else { "false" }),
+            "node.set",
+        )?;
+    }
+    if let Some(value) = ty {
+        set_frontmatter(
+            &mut source,
+            "type",
+            Some(&scalar(&value.as_str())),
+            "node.set",
+        )?;
+    }
+    replace_document(work, &path, source, "node.set")
 }
 
 const DISPLAY_KEYS: &[&str] = &[
-    // `attributeDetail` stays listed so a legacy key is stripped on the next
-    // whole-block rewrite, even though we only ever emit `showType` now.
     "showAttributes",
     "showType",
     "attributeDetail",
@@ -1179,153 +1335,124 @@ const DISPLAY_KEYS: &[&str] = &[
 
 pub(crate) fn op_diagram_set(
     work: &mut SourceBundle,
+    state: &mut UmlLoweringState,
     key: &str,
     title: &Option<String>,
     description: &Option<String>,
     clear_description: bool,
     display: &Option<DiagramDisplaySet>,
 ) -> Result<(), EditError> {
-    edit_doc(work, key, "diagram.set", |doc| {
-        if let Some(t) = title {
-            fm_set(&mut doc.frontmatter, "title", FmValue::Str(t.clone()));
-            doc.title = t.clone();
+    if description
+        .as_deref()
+        .is_some_and(|value| value.contains('\n') || value.contains('\r'))
+    {
+        return Err(
+            EditError::at("diagram.set", "description must be one line").with_sel(key.to_owned())
+        );
+    }
+    let (path, _) = state.tree(work, key, "diagram.set")?;
+    let mut source = work
+        .document(&path)
+        .expect("claimed document")
+        .text()
+        .to_owned();
+    if let Some(value) = title {
+        set_frontmatter(&mut source, "title", Some(&scalar(value)), "diagram.set")?;
+        set_h1(&mut source, value, "diagram.set")?;
+    }
+    if clear_description {
+        set_frontmatter(&mut source, "description", None, "diagram.set")?;
+    } else if let Some(value) = description {
+        set_frontmatter(
+            &mut source,
+            "description",
+            Some(&scalar(value)),
+            "diagram.set",
+        )?;
+    }
+    if let Some(display) = display {
+        for key in DISPLAY_KEYS {
+            set_frontmatter(&mut source, key, None, "diagram.set")?;
         }
-        if clear_description {
-            doc.frontmatter
-                .entries
-                .retain(|(key, _)| key != "description");
-        } else if let Some(d) = description {
-            fm_set(&mut doc.frontmatter, "description", FmValue::Str(d.clone()));
-        }
-        if let Some(ds) = display {
-            // Whole-block replace: drop every display key first so a field left
-            // absent on this DiagramSet (e.g. maxAttributes not present on `ds`)
-            // clears back to its tri-state-absent wire representation, then
-            // re-set exactly the keys this fully-resolved display carries.
-            doc.frontmatter
-                .entries
-                .retain(|(k, _)| !DISPLAY_KEYS.contains(&k.as_str()));
-            fm_set(
-                &mut doc.frontmatter,
-                "showAttributes",
-                FmValue::Bool(ds.show_attributes),
-            );
-            fm_set(
-                &mut doc.frontmatter,
-                "showType",
-                FmValue::Bool(ds.show_type),
-            );
-            fm_set(
-                &mut doc.frontmatter,
+        let values = [
+            ("showAttributes", display.show_attributes.to_string()),
+            ("showType", display.show_type.to_string()),
+            (
                 "showAttributeVisibility",
-                FmValue::Bool(ds.show_attribute_visibility),
-            );
-            fm_set(
-                &mut doc.frontmatter,
+                display.show_attribute_visibility.to_string(),
+            ),
+            (
                 "showAttributeMultiplicity",
-                FmValue::Bool(ds.cardinality.legacy_attribute_gate()),
-            );
-            fm_set(
-                &mut doc.frontmatter,
+                display.cardinality.legacy_attribute_gate().to_string(),
+            ),
+            ("showRoles", display.show_roles.to_string()),
+            ("showCardinality", display.show_cardinality.to_string()),
+            (
                 "cardinality",
-                FmValue::Str(
-                    match ds.cardinality {
-                        CardinalityVisibility::Off => "off",
-                        CardinalityVisibility::Explicit => "explicit",
-                        CardinalityVisibility::All => "all",
-                    }
-                    .into(),
-                ),
-            );
-            if let Some(max) = ds.max_attributes {
-                fm_set(
-                    &mut doc.frontmatter,
-                    "maxAttributes",
-                    FmValue::Num(max as f64),
-                );
-            }
-            fm_set(
-                &mut doc.frontmatter,
-                "showRoles",
-                FmValue::Bool(ds.show_roles),
-            );
-            fm_set(
-                &mut doc.frontmatter,
-                "showCardinality",
-                FmValue::Bool(ds.show_cardinality),
-            );
-            fm_set(
-                &mut doc.frontmatter,
-                "showLabels",
-                FmValue::Bool(ds.show_labels),
-            );
-            fm_set(
-                &mut doc.frontmatter,
-                "showStereotype",
-                FmValue::Bool(ds.show_stereotype),
-            );
-            if let Some(filter) = &ds.stereotype_filter {
-                fm_set(&mut doc.frontmatter, "stereotypeFilter", str_list(filter));
-            }
-            if !ds.stereotype_colors.is_empty() {
-                fm_set(
-                    &mut doc.frontmatter,
-                    "stereotypeColors",
-                    str_list(&ds.stereotype_colors),
-                );
-            }
+                match display.cardinality {
+                    CardinalityVisibility::Off => "off",
+                    CardinalityVisibility::Explicit => "explicit",
+                    CardinalityVisibility::All => "all",
+                }
+                .to_owned(),
+            ),
+            ("showLabels", display.show_labels.to_string()),
+            ("showStereotype", display.show_stereotype.to_string()),
+        ];
+        for (key, value) in values {
+            set_frontmatter(&mut source, key, Some(&value), "diagram.set")?;
         }
-        Ok(())
-    })
+        if let Some(value) = display.max_attributes {
+            set_frontmatter(
+                &mut source,
+                "maxAttributes",
+                Some(&value.to_string()),
+                "diagram.set",
+            )?;
+        }
+        if let Some(values) = &display.stereotype_filter {
+            set_frontmatter(
+                &mut source,
+                "stereotypeFilter",
+                Some(&string_list(values)),
+                "diagram.set",
+            )?;
+        }
+        if !display.stereotype_colors.is_empty() {
+            set_frontmatter(
+                &mut source,
+                "stereotypeColors",
+                Some(&string_list(&display.stereotype_colors)),
+                "diagram.set",
+            )?;
+        }
+    }
+    replace_document(work, &path, source, "diagram.set")
 }
 
-/// A `[title](./slug.md)` operand with no axis/hints.
-fn link_operand(title: &str, slug: &str) -> Operand {
-    Operand {
-        ref_: OperandRef::Name(NameRef::Link {
-            title: title.to_string(),
-            slug: slug.to_string(),
-        }),
-        axis: None,
-        hints: vec![],
+fn direction_text(direction: Direction) -> &'static str {
+    match direction {
+        Direction::LeftOf => "left of",
+        Direction::RightOf => "right of",
+        Direction::Above => "above",
+        Direction::Below => "below",
+        Direction::AboveLeft => "above left of",
+        Direction::AboveRight => "above right of",
+        Direction::BelowLeft => "below left of",
+        Direction::BelowRight => "below right of",
     }
 }
 
-/// The bare slug an operand references (Link href stem or bare name), if any.
-fn operand_slug(op: &Operand) -> Option<&str> {
-    match &op.ref_ {
-        OperandRef::Name(NameRef::Link { slug, .. }) => Some(slug.as_str()),
-        OperandRef::Name(NameRef::Bare(s)) => Some(s.as_str()),
-        _ => None,
-    }
+fn placement_matches(source: &str, subject: &str, reference: &str) -> bool {
+    let subject = format!("./{subject}.md");
+    let reference = format!("./{reference}.md");
+    source.contains(&subject) && source.contains(&reference)
 }
 
-/// Horizontal axis = Left/Right; Vertical = Above/Below.
-///
-/// A 2-operand `[subject] <dir> [reference]` placement on the given axis.
-/// True when `stmt` is a 2-operand placement for the UNORDERED `{subject,
-/// reference}` pair, on ANY axis and in EITHER operand order. Placement is
-/// one-relation-per-pair: authoring a new direction rewrites whatever relation
-/// the pair already had (a pair can't hold both `left of` and `below` -- the
-/// solver center-aligns the cross axis, so two
-/// relations on one pair mutually conflict).
-fn placement_matches(stmt: &LayoutStatement, subject: &str, reference: &str) -> bool {
-    let LayoutStatement::Placement {
-        operands,
-        directions,
-    } = stmt
-    else {
-        return false;
-    };
-    let (a, b) = (operand_slug(&operands[0]), operand_slug(&operands[1]));
-    operands.len() == 2
-        && directions.len() == 1
-        && ((a == Some(subject) && b == Some(reference))
-            || (a == Some(reference) && b == Some(subject)))
-}
-
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn op_place_set(
     work: &mut SourceBundle,
+    state: &mut UmlLoweringState,
     diagram: &str,
     subject_title: &str,
     subject_slug: &str,
@@ -1333,71 +1460,163 @@ pub(crate) fn op_place_set(
     reference_slug: &str,
     directions: &[Direction],
 ) -> Result<(), EditError> {
-    let subject_title = subject_title.to_string();
-    let subject_slug = subject_slug.to_string();
-    let reference_title = reference_title.to_string();
-    let reference_slug = reference_slug.to_string();
-    let directions = directions.to_vec();
-    edit_doc(work, diagram, "place.set", |doc| {
-        let layout = layout_mut(doc);
-        // One relation per pair: drop ANY existing placement for this
-        // (subject, reference) pair on either axis, then author the new one(s).
-        // Re-dragging a node onto a target it already relates to REWRITES the
-        // relation rather than stacking a conflicting cross-axis one.
-        layout.retain(|line| match line.parsed() {
-            Some(item) => !placement_matches(&item.stmt, &subject_slug, &reference_slug),
-            None => true,
-        });
-        for dir in &directions {
-            let stmt = LayoutStatement::Placement {
-                operands: vec![
-                    link_operand(&subject_title, &subject_slug),
-                    link_operand(&reference_title, &reference_slug),
-                ],
-                directions: vec![*dir],
-            };
-            layout.push(Line::Parsed(LayoutItem { line: 0, stmt }));
-        }
-        Ok(())
-    })
+    let (path, tree) = state.tree(work, diagram, "place.set")?;
+    let source = work
+        .document(&path)
+        .expect("claimed document")
+        .text()
+        .to_owned();
+    let mut ranges: Vec<_> = nodes(&tree, UmlSyntaxKind::LayoutStatement)
+        .into_iter()
+        .map(|syntax| node_range(&syntax))
+        .filter(|range| placement_matches(&source[range.clone()], subject_slug, reference_slug))
+        .collect();
+    ranges.sort_by_key(|range| std::cmp::Reverse(range.start));
+    for range in ranges {
+        replace_range(work, &path, range, "", "place.set")?;
+    }
+    state.invalidate_text(&path);
+    state.reparse(work, &path, "place.set")?;
+    let mut tree = state
+        .touched_islands
+        .get(&path)
+        .expect("placement candidate reparsed")
+        .clone();
+    for direction in directions {
+        append_line(
+            work,
+            &path,
+            &tree,
+            "Layout",
+            &format!(
+                "- [{subject_title}](./{subject_slug}.md) {} [{reference_title}](./{reference_slug}.md)",
+                direction_text(*direction)
+            ),
+            "place.set",
+        )?;
+        state.invalidate_text(&path);
+        state.reparse(work, &path, "place.set")?;
+        tree = state
+            .touched_islands
+            .get(&path)
+            .expect("placement candidate reparsed")
+            .clone();
+    }
+    Ok(())
 }
 
 pub(crate) fn op_place_rm(
     work: &mut SourceBundle,
+    state: &mut UmlLoweringState,
     diagram: &str,
     subject_slug: &str,
     reference_slug: &str,
 ) -> Result<(), EditError> {
-    let subject_slug = subject_slug.to_string();
-    let reference_slug = reference_slug.to_string();
-    edit_doc(work, diagram, "place.rm", |doc| {
-        let layout = layout_mut(doc);
-        layout.retain(|line| match line.parsed() {
-            Some(item) => !placement_matches(&item.stmt, &subject_slug, &reference_slug),
-            None => true,
-        });
-        Ok(())
-    })
+    let (path, tree) = state.tree(work, diagram, "place.rm")?;
+    let source = work
+        .document(&path)
+        .expect("claimed document")
+        .text()
+        .to_owned();
+    let mut matches: Vec<_> = nodes(&tree, UmlSyntaxKind::LayoutStatement)
+        .into_iter()
+        .filter(|syntax| {
+            placement_matches(&source[node_range(syntax)], subject_slug, reference_slug)
+        })
+        .collect();
+    matches.sort_by_key(|syntax| std::cmp::Reverse(node_range(syntax).start));
+    for syntax in matches {
+        let current_tree = state.tree(work, diagram, "place.rm")?.1;
+        remove_owned_node(work, &path, &current_tree, "Layout", &syntax, "place.rm")?;
+        state.invalidate_text(&path);
+        state.reparse(work, &path, "place.rm")?;
+    }
+    Ok(())
 }
 
 pub(crate) fn op_node_rm(
     work: &mut SourceBundle,
-    slug: &str,
+    state: &mut UmlLoweringState,
+    id: &str,
     cascade: bool,
 ) -> Result<(), EditError> {
-    let i = find_doc(work, slug, "node.rm")?;
+    let path = state
+        .path(id)
+        .cloned()
+        .ok_or_else(|| EditError::at("node.rm", format!("no document '{id}'")))?;
     if !cascade {
-        let refs = referrers_source(work, slug);
-        if !refs.is_empty() {
+        let references = referrers_source(work, id);
+        if !references.is_empty() {
             return Err(EditError::at(
                 "node.rm",
                 format!(
-                    "'{slug}' referenced by: {} (use --cascade)",
-                    refs.join(", ")
+                    "'{id}' referenced by: {} (use --cascade)",
+                    references.join(", ")
                 ),
             ));
         }
     }
-    work.remove_document(i);
+    let index = work
+        .documents()
+        .iter()
+        .position(|document| document.path() == &path)
+        .expect("claimed path exists");
+    work.remove_document(index);
     Ok(())
+}
+
+pub fn referrers(work: &[(String, String)], slug: &str) -> Vec<String> {
+    let Ok(source) = SourceBundle::try_from_pairs(work.iter().cloned()) else {
+        return Vec::new();
+    };
+    referrers_source(&source, slug)
+}
+
+pub fn referrers_source(work: &SourceBundle, slug: &str) -> Vec<String> {
+    let target_index = resolve_index(work, slug);
+    let target = target_index
+        .and_then(|index| work.document_at(index))
+        .map(|document| slug_of(document.path().as_str()))
+        .unwrap_or_else(|| slug.to_owned());
+    let href = format!("./{target}.md");
+    let mut output = Vec::new();
+    for (index, document) in work.documents().iter().enumerate() {
+        if Some(index) == target_index {
+            continue;
+        }
+        let Ok(parsed) = shell(document.text(), "refs") else {
+            continue;
+        };
+        let text = match SourceText::from_shared(document.text_arc().clone()) {
+            Ok(text) => text,
+            Err(_) => continue,
+        };
+        let tree = super::syntax::parser::parse(text, &parsed.structure);
+        let referenced = [
+            UmlSyntaxKind::Attribute,
+            UmlSyntaxKind::Relationship,
+            UmlSyntaxKind::Member,
+            UmlSyntaxKind::InlineInstance,
+            UmlSyntaxKind::LayoutStatement,
+        ]
+        .into_iter()
+        .flat_map(|kind| nodes(&tree, kind))
+        .any(|syntax| {
+            let authored = &document.text()[node_range(&syntax)];
+            authored.contains(&href)
+                || (syntax.kind() == UmlSyntaxKind::LayoutStatement
+                    && authored
+                        .split(|character: char| {
+                            character.is_whitespace()
+                                || matches!(character, '[' | ']' | '(' | ')' | ',')
+                        })
+                        .any(|word| word == target))
+        });
+        if referenced {
+            output.push(slug_of(document.path().as_str()));
+        }
+    }
+    output.sort();
+    output.dedup();
+    output
 }

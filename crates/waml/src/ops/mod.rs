@@ -252,7 +252,6 @@ mod tests {
     use crate::multiplicity::Multiplicity;
     use crate::ops::selector::{RelBy, Selector};
     use crate::parse::parse_document;
-    use crate::serialize::serialize_document;
     use crate::syntax::{Line, Section};
     use crate::uml::lower::slug_of;
 
@@ -1350,12 +1349,12 @@ mod tests {
             }],
         )
         .unwrap();
-        // A no-op DiagramSet must match plain parse+serialize normalization —
-        // i.e. edit_doc's own round-trip introduces no extra drift.
-        let normalized = serialize_document(&parse_document(&diagram_doc()[0].1));
+        // A no-op syntax-native DiagramSet preserves all authored bytes. Domain
+        // lowering is not a hidden canonical-formatting boundary.
+        let original = &diagram_doc()[0].1;
         assert_eq!(
-            out[0].1, normalized,
-            "no-op DiagramSet leaves the doc unchanged beyond normal round-trip"
+            &out[0].1, original,
+            "no-op DiagramSet preserves authored source exactly"
         );
     }
 

@@ -236,11 +236,44 @@ pub(crate) fn steps_from_legacy(op: crate::ops::Op) -> Result<Vec<Step>, EditErr
 }
 
 pub fn apply(source: &SourceBundle, batch: &Batch) -> Result<SourceBundle, EditError> {
+    apply_at_revision(source, batch, 0)
+}
+
+fn apply_at_revision(
+    source: &SourceBundle,
+    batch: &Batch,
+    session_revision: u64,
+) -> Result<SourceBundle, EditError> {
     let mut candidate = source.clone();
     for (index, step) in batch.steps().iter().enumerate() {
         let result = match step {
             Step::Okf(op) => crate::okf::ops::lower_one(&mut candidate, op),
-            Step::Uml(op) => crate::uml::ops::lower_one(&mut candidate, op),
+            Step::Uml(op) => (|| {
+                let okf = crate::analysis::analyze_okf(&candidate, None, session_revision)
+                    .map_err(EditError::from)?;
+                let uml = crate::uml::analyze(
+                    crate::analysis::DomainAnalysisContext {
+                        source: &candidate,
+                        catalog: &okf.catalog,
+                        shell: &okf.shell,
+                        structures: &okf.structures,
+                        okf: &okf.bundle,
+                        session_revision,
+                    },
+                    None,
+                )
+                .map_err(EditError::from)?;
+                crate::edit::EditBatch::lower(
+                    &crate::uml::Batch(vec![op.clone()]),
+                    EditContext {
+                        source: &candidate,
+                        okf_analysis: &okf,
+                        session_revision,
+                        uml: &uml,
+                    },
+                )
+            })()
+            .map(|next| candidate = next),
         };
         result.map_err(|mut error| {
             error.index = index;
@@ -254,7 +287,7 @@ impl crate::edit::sealed::Sealed for Batch {}
 
 impl crate::edit::EditBatch for Batch {
     fn lower(&self, context: EditContext<'_>) -> Result<SourceBundle, EditError> {
-        apply(context.source, self)
+        apply_at_revision(context.source, self, context.session_revision)
     }
 }
 

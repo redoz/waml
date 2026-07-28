@@ -5,7 +5,7 @@ use waml::{
     okf::DirectoryAddress,
     source::SourceBundle,
     syntax::Direction,
-    uml::{self, FieldEdit},
+    uml::{self, selector::RelBy, FieldEdit, NameSpec, RelationshipSelector},
 };
 
 fn lower(source: &SourceBundle, ops: Vec<uml::Op>) -> Result<SourceBundle, waml::edit::EditError> {
@@ -198,5 +198,118 @@ fn late_invalid_selector_reports_stable_index_and_rolls_back() {
     assert_eq!(
         source.documents()[0].text(),
         "---\ntype: uml.Class\ntitle: Order\n---\n# Order\n"
+    );
+}
+
+#[test]
+fn typed_field_edits_preserve_recovery_and_raw_islands() {
+    let source = SourceBundle::try_from_pairs([
+        (
+            "order.md",
+            concat!(
+                "---\ntype: uml.Class\ntitle: Order\n---\n# Order\n\n",
+                "## Attributes\n- id: String\n- broken attribute\n\n",
+                "## Values\n- OPEN\nnot a value bullet\n\n",
+                "## Relationships\n- depends [Customer](./customer.md)\n",
+                "- depends [Broken](./broken.md\n\n",
+                "## Operations\nraw [Customer](./customer.md)   \n",
+            ),
+        ),
+        (
+            "customer.md",
+            "---\ntype: uml.Class\ntitle: Customer\n---\n# Customer\n",
+        ),
+    ])
+    .unwrap();
+    let changed = lower(
+        &source,
+        vec![
+            uml::Op::AttributeSet {
+                node: "order".into(),
+                name: "id".into(),
+                ty_token: Some("Uuid".into()),
+                multiplicity: FieldEdit::Unchanged,
+                visibility: None,
+                rename: None,
+            },
+            uml::Op::ValueRemove {
+                node: "order".into(),
+                literal: "OPEN".into(),
+            },
+            uml::Op::RelationshipSet {
+                selector: RelationshipSelector {
+                    source: "order".into(),
+                    by: RelBy::Endpoint {
+                        kind: waml::model::RelationshipKind::Depends,
+                        target: "customer".into(),
+                    },
+                },
+                ends: None,
+                name: Some(NameSpec::Label("customer".into())),
+            },
+        ],
+    )
+    .unwrap();
+    assert_eq!(
+        changed.document_by_concept_id("order").unwrap().text(),
+        concat!(
+            "---\ntype: uml.Class\ntitle: Order\n---\n# Order\n\n",
+            "## Attributes\n- id: Uuid\n- broken attribute\n\n",
+            "## Values\nnot a value bullet\n\n",
+            "## Relationships\n- depends [Customer](./customer.md) as \"customer\"\n",
+            "- depends [Broken](./broken.md\n\n",
+            "## Operations\nraw [Customer](./customer.md)   \n",
+        )
+    );
+}
+
+#[test]
+fn diagram_and_layout_edits_preserve_unowned_bytes() {
+    let source = SourceBundle::try_from_pairs([
+        ("a.md", "---\ntype: uml.Class\n---\n# A\n"),
+        ("b.md", "---\ntype: uml.Class\n---\n# B\n"),
+        (
+            "diagram.md",
+            concat!(
+                "---\ntype: Diagram\nprofile: uml-domain\ntitle: Old\n---\n# Old\n\n",
+                "## Layout\n- malformed layout ???\n\n",
+                "## Notes\nkeep  \n",
+            ),
+        ),
+    ])
+    .unwrap();
+    let changed = lower(
+        &source,
+        vec![
+            uml::Op::DiagramSet {
+                key: "diagram".into(),
+                title: Some("New".into()),
+                description: None,
+                clear_description: false,
+                display: None,
+            },
+            uml::Op::PlacementSet {
+                diagram: "diagram".into(),
+                subject_title: "A".into(),
+                subject_slug: "a".into(),
+                reference_title: "B".into(),
+                reference_slug: "b".into(),
+                directions: vec![Direction::Above],
+            },
+            uml::Op::PlacementRemove {
+                diagram: "diagram".into(),
+                subject_slug: "a".into(),
+                reference_slug: "b".into(),
+            },
+        ],
+    )
+    .unwrap();
+    assert_eq!(
+        changed.document_by_concept_id("diagram").unwrap().text(),
+        concat!(
+            "---\ntype: Diagram\nprofile: uml-domain\ntitle: New\n---\n# New\n\n",
+            "## Layout\n- malformed layout ???\n\n",
+            "## Notes\nkeep  \n",
+        )
     );
 }
