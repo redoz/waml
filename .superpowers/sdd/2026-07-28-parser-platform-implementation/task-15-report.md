@@ -84,3 +84,48 @@ Fresh verification:
 
 Fix-round TokenSave queries saved approximately 18,924 additional tokens
 (7,734 + 11,190).
+
+## Fix Round 2 — Deterministic Rename Destinations
+
+- Added one `destination_path` authority shared by mutation and cumulative
+  state. Bare destinations preserve the exact source directory; destinations
+  containing directories are validated as bundle-root-relative full IDs.
+- Removed the post-rename first-basename scan. State now captures the exact
+  pre-rename path, derives the exact destination before mutation, and rebinds
+  only through `SourceBundle::document(&BundlePath)`.
+- Scoped `./slug.md` rewrites to the exact source directory so duplicate
+  basenames elsewhere are untouched. Full-path moves derive the correct
+  relative destination href.
+- Preserved the active operation index for invalid/colliding destinations and
+  retained batch rollback behavior.
+- Added regressions for duplicate basenames, local basename renames, explicit
+  full destinations, cumulative follow-up operations, stable error indices,
+  and rollback.
+
+TDD evidence:
+
+- The duplicate/full-destination suite initially failed because state used the
+  first matching basename and explicit paths were interpreted locally.
+- A strengthened duplicate regression then failed on an unrelated directory's
+  self-reference; exact-directory reference scoping made it pass.
+- A full-path reference regression failed on `./invoice.md`; exact relative
+  href derivation made it pass as `../archive/invoice.md`.
+
+Fresh verification:
+
+- `rtk cargo test -p waml --test uml_lowering_order`: 10 passed.
+- `rtk cargo test -p waml uml::rename::tests`: 7 passed.
+- `rtk cargo test -p waml --test uml_lowering_authority`: 1 passed.
+- `rtk cargo test -p waml --test ops_golden`: 3 passed.
+- `rtk cargo test -p waml`: 540 passed across 20 suites.
+- `rtk cargo test -p waml-editor`: 727 passed across 5 suites.
+- `rtk cargo check --workspace --all-features`: passed with two duplicate
+  dependency warnings.
+- `rtk cargo fmt --all -- --check`: passed.
+- `rtk git diff --check`: passed.
+- Direct prohibited-symbol scan: no matches.
+
+Implementation commit: `f2626c2`.
+
+Fix-round TokenSave queries saved approximately 5,537 additional tokens
+(2,364 + 3,173).
