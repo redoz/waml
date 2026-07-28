@@ -74,3 +74,61 @@ added.
   dead-code warnings for compatibility accessors `EditorSession::source` and
   `persisted_bundle`.
 
+## Formal fix round 1
+
+Fix commit: `140e39d`
+
+The review found two real cutover regressions. Systematic root-cause tracing and
+strict TDD were used for both; TokenSave reported approximately 6,745 tokens
+saved during the initial fix-round exploration.
+
+### Red evidence
+
+- `diagram_projection_preserves_profile` failed with `left: ""`,
+  `right: "uml-domain"`. The shared analyzer explicitly installed an empty
+  profile instead of lowering canonical OKF frontmatter.
+- `diagram_projection_preserves_complete_two_link_placement` failed because the
+  projected diagram had no validated placement and its declared layout field
+  was `Invalid`. `parse_layout_anchored` returned `None` before parsing when the
+  first operand was a typed link token.
+- `contradictory_linked_placements_reach_shared_solver_conflict_diagnostics`
+  failed because no linked placements reached the solver, so no placement was
+  dropped and no `LayoutConflict` diagnostic was produced.
+- The real native picker test
+  `picker_selection_keeps_declared_recovery_rows_and_revision_bound_actions`
+  selected the invalid classifier but failed with zero inspector attribute rows
+  instead of one. The picker apply path rebuilt the subject from the validated
+  projection via legacy `set_subject`.
+
+### Fixes
+
+- The shared UML analyzer now lowers diagram `profile` from the OKF Concept's
+  canonical extra frontmatter.
+- Layout declaration parsing no longer treats a leading link operand as an
+  absent anchored operand. Complete linked placements retain both operands and
+  directions, and contradictory linked relations reach shared solver conflict
+  diagnostics.
+- Picker close and apply now carry the exact `&uml::Analysis` snapshot and call
+  `set_subject_analysis`, preserving declared invalid-present fields.
+- The picker integration test also proves missing-colon and invalid-multiplicity
+  repairs remain available from that snapshot and that a second action becomes
+  stale after the first commits.
+
+### Green evidence
+
+- `rtk cargo test -p waml --test uml_diagram_syntax` — 9 passed
+- All four previously failing editor parity fixtures — passed
+- Picker recovery integration test — passed
+- `rtk cargo test -p waml-editor editor_session::tests` — 18 passed
+- `rtk cargo test -p waml-editor document_host::tests` — 7 passed
+- `rtk cargo test -p waml-editor nav::tests` — 13 passed
+- `rtk cargo test -p waml` — 552 passed across 21 suites
+- `rtk cargo test -p waml-editor --all-features` — 735 passed across 5 suites
+- `rtk cargo check --workspace --all-targets` — passed
+- `rtk cargo fmt --all -- --check` — passed
+- `rtk git diff --check` — passed
+- Prohibited editor legacy-authority scan — no matches
+
+The workspace check retains only pre-existing dead-code notices in test/support
+code and duplicate Makepad dependency notices. No new warning remains from the
+fix.
