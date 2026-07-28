@@ -644,30 +644,48 @@ fn lower_member_group(
     claimed: &BTreeSet<&str>,
     owner: &str,
 ) -> Option<crate::model::DiagramGroup> {
-    let crate::uml::DeclaredField::Valid { value: name, .. } = &group.name else {
-        return None;
+    let name = match &group.name {
+        crate::uml::DeclaredField::Absent => String::new(),
+        crate::uml::DeclaredField::Valid { value, .. } => value.clone(),
+        crate::uml::DeclaredField::Incomplete { .. }
+        | crate::uml::DeclaredField::Invalid { .. } => return None,
     };
-    let mut members = group
+    enum Item<'a> {
+        Member(&'a crate::uml::DeclaredMember),
+        Inline(&'a crate::uml::DeclaredInlineInstance),
+    }
+    let mut items = group
         .members
         .iter()
-        .filter_map(|member| match &member.target {
-            crate::uml::DeclaredField::Valid { value, .. } => {
-                let target = crate::okf::resolve_href(path, value);
-                claimed.contains(target.as_str()).then_some(target)
-            }
-            _ => None,
+        .map(|member| (member.syntax.syntax().range().start(), Item::Member(member)))
+        .chain(
+            group
+                .inline_instances
+                .iter()
+                .map(|inline| (inline.syntax.syntax().range().start(), Item::Inline(inline))),
+        )
+        .collect::<Vec<_>>();
+    items.sort_by_key(|(start, _)| *start);
+    let members = items
+        .into_iter()
+        .filter_map(|(_, item)| match item {
+            Item::Member(member) => match &member.target {
+                crate::uml::DeclaredField::Valid { value, .. } => {
+                    let target = crate::okf::resolve_href(path, value);
+                    claimed.contains(target.as_str()).then_some(target)
+                }
+                _ => None,
+            },
+            Item::Inline(inline) => match inline_instance_validity(inline, path, claimed) {
+                InlineInstanceValidity::Valid(ValidInlineInstance { name, .. }) => {
+                    Some(format!("{owner}#{name}"))
+                }
+                InlineInstanceValidity::Invalid | InlineInstanceValidity::Unresolved { .. } => None,
+            },
         })
         .collect::<Vec<_>>();
-    members.extend(group.inline_instances.iter().filter_map(
-        |inline| match inline_instance_validity(inline, path, claimed) {
-            InlineInstanceValidity::Valid(ValidInlineInstance { name, .. }) => {
-                Some(format!("{owner}#{name}"))
-            }
-            InlineInstanceValidity::Invalid | InlineInstanceValidity::Unresolved { .. } => None,
-        },
-    ));
     Some(crate::model::DiagramGroup {
-        name: name.clone(),
+        name,
         members,
         children: group
             .children
@@ -956,14 +974,27 @@ fn declared_member(node: SyntaxNode<UmlLanguage>) -> crate::uml::DeclaredMember 
 }
 fn declared_member_group(node: SyntaxNode<UmlLanguage>) -> crate::uml::DeclaredMemberGroup {
     let syntax = super::syntax::MemberGroupSyntax(node.clone());
-    let name = syntax
-        .heading_token()
-        .filter(|t| !t.flags().is_missing() && !t.text().write_to_string().is_empty())
-        .map(|t| valid(node.clone(), t.text().write_to_string()))
-        .unwrap_or_else(|| crate::uml::DeclaredField::Incomplete {
+    let name = match syntax.heading_token() {
+        Some(token)
+            if !token.flags().is_missing() && !token.text().write_to_string().is_empty() =>
+        {
+            valid(node.clone(), token.text().write_to_string())
+        }
+        Some(_) => crate::uml::DeclaredField::Incomplete {
             syntax: node.clone(),
             expected: crate::uml::ExpectedSyntax::LinkTarget,
-        });
+        },
+        None if node
+            .children()
+            .all(|element| element.kind() != super::syntax::UmlSyntaxKind::HeadingMarkerToken) =>
+        {
+            crate::uml::DeclaredField::Absent
+        }
+        None => crate::uml::DeclaredField::Incomplete {
+            syntax: node.clone(),
+            expected: crate::uml::ExpectedSyntax::LinkTarget,
+        },
+    };
     crate::uml::DeclaredMemberGroup {
         syntax,
         name,

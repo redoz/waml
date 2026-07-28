@@ -413,6 +413,93 @@ fn invalid_group_inline_instance_never_creates_a_dangling_member() {
 }
 
 #[test]
+fn mixed_root_and_group_member_items_preserve_authored_order_and_provenance() {
+    use waml::uml::syntax::UmlSyntaxKind;
+
+    let authored = "---\ntype: Diagram\n---\n# Diagram\n\n## Members\n- [Root](./root.md)\n- instance of [Kind](./kind.md) as root-instance with state set to OPEN\n### Group\n- instance of [Kind](./kind.md) as first with state set to OPEN\n- [Middle](./middle.md)\n- instance of [Kind](./kind.md) as second with state set to CLOSED\n- [Last](./last.md)\n";
+    let source = SourceBundle::try_from_pairs([
+        ("diagram.md", authored),
+        ("root.md", "---\ntype: uml.Class\n---\n# Root\n"),
+        ("kind.md", "---\ntype: uml.Class\n---\n# Kind\n"),
+        ("middle.md", "---\ntype: uml.Class\n---\n# Middle\n"),
+        ("last.md", "---\ntype: uml.Class\n---\n# Last\n"),
+    ])
+    .unwrap();
+    let analysis = analyze(&source);
+    let concept = analysis.declared.concept("diagram").unwrap();
+
+    assert_eq!(concept.member_groups.len(), 2);
+    assert!(matches!(
+        concept.member_groups[0].name,
+        uml::DeclaredField::Absent
+    ));
+    assert!(
+        matches!(concept.member_groups[1].name, uml::DeclaredField::Valid { ref value, .. } if value == "Group")
+    );
+    assert_eq!(concept.member_groups[0].members.len(), 1);
+    assert_eq!(concept.member_groups[0].inline_instances.len(), 1);
+    assert_eq!(concept.member_groups[1].members.len(), 2);
+    assert_eq!(concept.member_groups[1].inline_instances.len(), 2);
+    let item_kinds = |index: usize| {
+        concept.member_groups[index]
+            .syntax
+            .syntax()
+            .children()
+            .filter_map(waml_syntax::SyntaxElement::into_node)
+            .map(|node| node.kind())
+            .filter(|kind| matches!(kind, UmlSyntaxKind::Member | UmlSyntaxKind::InlineInstance))
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(
+        item_kinds(0),
+        [UmlSyntaxKind::Member, UmlSyntaxKind::InlineInstance]
+    );
+    assert_eq!(
+        item_kinds(1),
+        [
+            UmlSyntaxKind::InlineInstance,
+            UmlSyntaxKind::Member,
+            UmlSyntaxKind::InlineInstance,
+            UmlSyntaxKind::Member,
+        ]
+    );
+
+    let diagram = &analysis.projection.diagrams[0];
+    assert_eq!(
+        diagram
+            .groups
+            .iter()
+            .map(|group| group.name.as_str())
+            .collect::<Vec<_>>(),
+        ["", "Group"]
+    );
+    assert_eq!(diagram.groups[0].members, ["root", "diagram#root-instance"]);
+    assert_eq!(
+        diagram.groups[1].members,
+        ["diagram#first", "middle", "diagram#second", "last"]
+    );
+
+    let path = waml::source::BundlePath::parse("diagram.md").unwrap();
+    let id = analysis.syntax.catalog().id_for_path(&path).unwrap();
+    let snapshot = analysis.syntax.document(id).unwrap();
+    assert_eq!(snapshot.syntax().write_to_string(), authored);
+    assert!(std::ptr::eq(
+        source.document(&path).unwrap().text(),
+        snapshot.document().text().shared().as_str()
+    ));
+    assert!(std::sync::Arc::ptr_eq(
+        snapshot.document().text().shared(),
+        analysis
+            .syntax
+            .catalog()
+            .document(id)
+            .unwrap()
+            .text()
+            .shared()
+    ));
+}
+
+#[test]
 fn multi_word_values_are_one_field_and_malformed_items_do_not_project() {
     let source = SourceBundle::try_from_pairs([("c.md", "---\ntype: uml.Class\n---\n# C\n\n## Values\n- Ready for use\n\n## Slots\n- missing value\n\n## Members\n- [Good](./good.md) stray\n"), ("good.md", "---\ntype: uml.Class\n---\n# Good\n")]).unwrap();
     let analysis = analyze(&source);

@@ -219,6 +219,29 @@ fn member_items(
     while !stack.is_empty() {
         close_one(f, &mut stack, &mut roots)
     }
+    if let Some(first_group) = roots.iter().position(|element| {
+        matches!(
+            element,
+            GreenElement::Node(node) if node.kind() == UmlSyntaxKind::MemberGroup
+        )
+    }) {
+        let has_root_items = roots[..first_group].iter().any(|element| {
+            matches!(
+                element,
+                GreenElement::Node(node)
+                    if matches!(
+                        node.kind(),
+                        UmlSyntaxKind::Member | UmlSyntaxKind::InlineInstance
+                    )
+            )
+        });
+        if has_root_items {
+            let explicit_groups = roots.split_off(first_group);
+            let implicit = GreenElement::Node(f.node(UmlSyntaxKind::MemberGroup, roots).unwrap());
+            roots = vec![implicit];
+            roots.extend(explicit_groups);
+        }
+    }
     roots
 }
 
