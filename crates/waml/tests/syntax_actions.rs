@@ -197,6 +197,50 @@ fn empty_action_is_a_noop_and_preserves_all_source_allocations() {
 }
 
 #[test]
+fn empty_document_change_preserves_source_catalog_and_document_identity() {
+    let source = source();
+    let analyses = build_analyses(&source, None, 12);
+    let a = id(&analyses, "a.md");
+    let catalog = analyses.okf.catalog.clone();
+    let document = catalog.document(a).unwrap().clone();
+    let action = bundle_action(12, vec![change(a, revision(&analyses, a), vec![])]);
+
+    let candidate = lower(&source, &analyses, 12, action).unwrap();
+
+    assert!(candidate.shares_text_with(&source, "a.md"));
+    assert!(Arc::ptr_eq(&catalog, &analyses.okf.catalog));
+    assert!(Arc::ptr_eq(
+        &document,
+        analyses.okf.catalog.document(a).unwrap()
+    ));
+    assert!(Arc::ptr_eq(
+        document.text().shared(),
+        analyses.okf.catalog.document(a).unwrap().text().shared()
+    ));
+}
+
+#[test]
+fn mixed_empty_and_edited_changes_detach_only_the_edited_document() {
+    let source = source();
+    let analyses = build_analyses(&source, None, 14);
+    let a = id(&analyses, "a.md");
+    let b = id(&analyses, "b.md");
+    let action = bundle_action(
+        14,
+        vec![
+            change(a, revision(&analyses, a), vec![]),
+            change(b, revision(&analyses, b), vec![edit(0, 1, "##")]),
+        ],
+    );
+
+    let candidate = lower(&source, &analyses, 14, action).unwrap();
+
+    assert!(candidate.shares_text_with(&source, "a.md"));
+    assert!(!candidate.shares_text_with(&source, "b.md"));
+    assert!(candidate.shares_text_with(&source, "notes.md"));
+}
+
+#[test]
 fn lowering_rejects_unknown_stale_out_of_bounds_and_non_utf8_edits() {
     let source = source();
     let analyses = build_analyses(&source, None, 5);

@@ -182,6 +182,9 @@ impl SyntaxChangeBatch {
 
         let mut candidate = context.source.clone();
         for change in self.action.changes.iter() {
+            if change.edits.is_empty() {
+                continue;
+            }
             let path = context
                 .catalog
                 .path_for_id(change.document)
