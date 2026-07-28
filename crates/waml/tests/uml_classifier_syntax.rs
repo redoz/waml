@@ -94,3 +94,51 @@ fn classifier_items_do_not_hide_authored_grammar_in_raw_markdown_tokens() {
     }
     typed_nodes_have_no_raw(root);
 }
+
+#[test]
+fn classifier_accessors_read_only_direct_fixed_slots() {
+    let source = SourceBundle::try_from_pairs([
+        ("class.md", "---\ntype: uml.Class\n---\n# Class\n\n## Values\n- READY\n\n## Slots\n- state: \"ready\"\n\n## Relationships\n- depends [Other](./other.md)\n\n## Members\n- [Other](./other.md)\n"),
+        ("other.md", "---\ntype: uml.Class\n---\n# Other\n"),
+    ]).unwrap();
+    let analysis = analyze(&source);
+    let id = analysis
+        .syntax
+        .catalog()
+        .id_for_path(&waml::source::BundlePath::parse("class.md").unwrap())
+        .unwrap();
+    let root = analysis.syntax.document(id).unwrap().syntax().root();
+    fn visit(node: waml_syntax::SyntaxNode<waml::uml::syntax::UmlLanguage>) {
+        use waml::uml::{MemberSyntax, RelationshipSyntax, SlotSyntax, ValueSyntax};
+        if let Some(value) = ValueSyntax::cast(node.clone()) {
+            assert_eq!(
+                value.value_token().unwrap().text().write_to_string(),
+                "READY"
+            );
+        }
+        if let Some(slot) = SlotSyntax::cast(node.clone()) {
+            assert_eq!(slot.name_token().unwrap().text().write_to_string(), "state");
+            assert!(!slot.colon_token().unwrap().flags().is_missing());
+        }
+        if let Some(rel) = RelationshipSyntax::cast(node.clone()) {
+            assert_eq!(
+                rel.kind_token().unwrap().text().write_to_string(),
+                "depends"
+            );
+            assert_eq!(rel.link().unwrap().children().count(), 6);
+        }
+        if let Some(member) = MemberSyntax::cast(node.clone()) {
+            assert_eq!(
+                member.target_token().unwrap().text().write_to_string(),
+                "./other.md"
+            );
+        }
+        for child in node
+            .children()
+            .filter_map(waml_syntax::SyntaxElement::into_node)
+        {
+            visit(child);
+        }
+    }
+    visit(root);
+}

@@ -155,11 +155,54 @@ macro_rules! raw_slot {
         }
     };
 }
-raw_slot!(ValueSyntax);
-raw_slot!(SlotSyntax);
-raw_slot!(RelationshipSyntax);
-raw_slot!(MemberSyntax);
-raw_slot!(InlineInstanceSyntax);
+macro_rules! direct_token {
+    ($name:ident, $method:ident, $kind:ident) => {
+        impl $name {
+            pub fn $method(&self) -> Option<SyntaxToken<UmlLanguage>> {
+                self.0
+                    .children()
+                    .find(|e| e.kind() == UmlSyntaxKind::$kind)
+                    .and_then(SyntaxElement::into_token)
+            }
+        }
+    };
+}
+direct_token!(ValueSyntax, value_token, IdentifierToken);
+direct_token!(SlotSyntax, name_token, IdentifierToken);
+direct_token!(SlotSyntax, colon_token, ColonToken);
+direct_token!(RelationshipSyntax, kind_token, RelationshipKindToken);
+macro_rules! direct_link {
+    ($name:ident) => {
+        impl $name {
+            pub fn link(&self) -> Option<SyntaxNode<UmlLanguage>> {
+                self.0
+                    .children()
+                    .find(|e| e.kind() == UmlSyntaxKind::Link)
+                    .and_then(SyntaxElement::into_node)
+            }
+        }
+    };
+}
+direct_link!(SlotSyntax);
+direct_link!(RelationshipSyntax);
+direct_link!(MemberSyntax);
+direct_link!(InlineInstanceSyntax);
+impl MemberSyntax {
+    pub fn target_token(&self) -> Option<SyntaxToken<UmlLanguage>> {
+        self.link()?
+            .children()
+            .find(|e| e.kind() == UmlSyntaxKind::LinkTargetToken)
+            .and_then(SyntaxElement::into_token)
+    }
+}
+impl InlineInstanceSyntax {
+    pub fn classifier_token(&self) -> Option<SyntaxToken<UmlLanguage>> {
+        self.link()?
+            .children()
+            .find(|e| e.kind() == UmlSyntaxKind::LinkTargetToken)
+            .and_then(SyntaxElement::into_token)
+    }
+}
 impl MemberGroupSyntax {
     pub fn heading_token(&self) -> Option<SyntaxToken<UmlLanguage>> {
         self.0
