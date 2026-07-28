@@ -103,8 +103,9 @@ fn rename_then_retitle_uses_the_new_path_and_preserves_crlf_body() {
         .document(&waml::source::BundlePath::parse("commerce/index.md").unwrap())
         .unwrap()
         .text();
-    assert!(index.starts_with("# Commerce\r\n\r\nIntro.\r\n\r\n## Notes\r\nKeep me.\r\n"));
-    assert!(index.ends_with("* [Order](./order.md)\r\n"));
+    assert!(index.starts_with("# Commerce\r\n\r\nIntro.\r\n\r\n"));
+    assert!(index.contains("* [Order](./order.md)\r\n\r\n## Notes\r\n"));
+    assert!(index.ends_with("## Notes\r\nKeep me.\r\n"));
     assert!(source.shares_text_with(&candidate, "untouched.md"));
 }
 
@@ -167,4 +168,53 @@ fn late_collision_reports_the_stable_step_and_leaves_input_unchanged() {
     assert_eq!(error.op, "pkg.rename");
     assert_eq!(source, original);
     assert!(source.shares_text_with(&original, "untouched.md"));
+}
+
+#[test]
+fn cumulative_index_edits_rewrite_only_the_confirmed_member_block() {
+    let unknown_section = "## Notes 😀\r\n\r\n\
+* [Keep café reference](./zebra.md)\r\n\
+* [External α](https://example.com/α)\r\n";
+    let source = SourceBundle::try_from_pairs([
+        (
+            "sales/index.md",
+            format!(
+                "# Sales\r\n\r\nIntro Ω.\r\n\r\n\
+* [Zebra](./zebra.md)\r\n\
+* [Alpha](./alpha.md)\r\n\r\n\
+{unknown_section}"
+            ),
+        ),
+        ("sales/zebra.md", "# Zebra\r\n".to_owned()),
+        ("sales/alpha.md", "# Alpha\r\n".to_owned()),
+    ])
+    .unwrap();
+    let operations = vec![
+        okf::Op::IndexReorder {
+            directory: directory("/sales"),
+            order: vec!["sales/zebra".into(), "sales/alpha".into()],
+        },
+        okf::Op::IndexRetitle {
+            directory: directory("/sales"),
+            title: "Café Sales".into(),
+        },
+        okf::Op::IndexSort {
+            directory: directory("/sales"),
+        },
+        okf::Op::IndexSort {
+            directory: directory("/sales"),
+        },
+    ];
+
+    let candidate = lower(&source, operations.clone()).unwrap();
+    let index_path = waml::source::BundlePath::parse("sales/index.md").unwrap();
+    let index = candidate.document(&index_path).unwrap().text();
+    assert!(index.starts_with("# Café Sales\r\n\r\nIntro Ω.\r\n\r\n"));
+    let generated_end = index.find("## Notes 😀").unwrap();
+    let generated = &index[..generated_end];
+    assert!(generated.find("./alpha.md").unwrap() < generated.find("./zebra.md").unwrap());
+    assert_eq!(&index[generated_end..], unknown_section);
+
+    let repeated = lower(&candidate, operations).unwrap();
+    assert_eq!(repeated.document(&index_path).unwrap().text(), index);
 }

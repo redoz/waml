@@ -553,37 +553,102 @@ fn authored_member_order(
     let Some(document) = work.document(&path) else {
         return Ok(Vec::new());
     };
-    let ranges = state
-        .shell(work, &path, "pkg.index")?
-        .structure
-        .list_item_lines
-        .clone();
+    let (ranges, _) = confirmed_member_block(work, state, &path, directory, valid)?;
     let mut ordered = Vec::new();
-    for range in ranges.iter() {
-        let line = &document.text()[range.start().to_usize()..range.end().to_usize()];
-        let Some(href) = markdown_href(line) else {
+    for range in ranges {
+        let line = &document.text()[range.clone()];
+        let Some(key) = member_key(directory, line) else {
             continue;
         };
-        let key = if href.ends_with('/') {
-            let child = href.trim_end_matches('/').trim_start_matches("./");
-            if directory.is_empty() {
-                format!("/{child}")
-            } else {
-                format!("/{directory}/{child}")
-            }
-        } else {
-            let relative = href.trim_start_matches("./").trim_end_matches(".md");
-            if directory.is_empty() {
-                relative.to_owned()
-            } else {
-                format!("{directory}/{relative}")
-            }
-        };
-        if valid.contains(&key) && !ordered.contains(&key) {
+        if !ordered.contains(&key) {
             ordered.push(key);
         }
     }
     Ok(ordered)
+}
+
+fn confirmed_member_block(
+    work: &SourceBundle,
+    state: &mut OkfLoweringState,
+    path: &BundlePath,
+    directory: &str,
+    valid: &[String],
+) -> Result<(Vec<std::ops::Range<usize>>, usize), EditError> {
+    let document = work
+        .document(path)
+        .ok_or_else(|| EditError::at("pkg.index", format!("no document '{}'", path.as_str())))?;
+    let source = document.text();
+    let shell = state.shell(work, path, "pkg.index")?;
+    let first_h1 = shell
+        .structure
+        .headings
+        .iter()
+        .find(|heading| heading.level == 1)
+        .map(|heading| heading.range.start());
+    let preamble_end = shell
+        .structure
+        .headings
+        .iter()
+        .find(|heading| {
+            heading.level <= 2 && first_h1.map_or(true, |h1| heading.range.start() > h1)
+        })
+        .map(|heading| heading.range.start().to_usize())
+        .unwrap_or(source.len());
+    let ranges: Vec<_> = shell
+        .structure
+        .list_item_lines
+        .iter()
+        .filter(|range| range.start().to_usize() < preamble_end)
+        .map(|range| range.start().to_usize()..range.end().to_usize())
+        .collect();
+
+    let mut blocks: Vec<Vec<std::ops::Range<usize>>> = Vec::new();
+    for range in ranges {
+        let continues = blocks
+            .last()
+            .and_then(|block| block.last())
+            .is_some_and(|previous| source[previous.end..range.start].trim().is_empty());
+        if continues {
+            blocks
+                .last_mut()
+                .expect("continued block exists")
+                .push(range);
+        } else {
+            blocks.push(vec![range]);
+        }
+    }
+    let mut confirmed = blocks.into_iter().filter(|block| {
+        block.iter().all(|range| {
+            member_key(directory, &source[range.clone()]).is_some_and(|key| valid.contains(&key))
+        })
+    });
+    let selected = confirmed.next().unwrap_or_default();
+    if confirmed.next().is_some() {
+        return Err(EditError::at(
+            "pkg.index",
+            "multiple shell-confirmed member-list blocks",
+        ));
+    }
+    Ok((selected, preamble_end))
+}
+
+fn member_key(directory: &str, line: &str) -> Option<String> {
+    let href = markdown_href(line)?;
+    if href.ends_with('/') {
+        let child = href.trim_end_matches('/').trim_start_matches("./");
+        Some(if directory.is_empty() {
+            format!("/{child}")
+        } else {
+            format!("/{directory}/{child}")
+        })
+    } else {
+        let relative = href.trim_start_matches("./").trim_end_matches(".md");
+        Some(if directory.is_empty() {
+            relative.to_owned()
+        } else {
+            format!("{directory}/{relative}")
+        })
+    }
 }
 
 fn markdown_href(line: &str) -> Option<&str> {
@@ -609,6 +674,9 @@ fn update_authored_index(
     } else {
         "\n"
     };
+    let valid: Vec<_> = entries.iter().map(|entry| entry.key.clone()).collect();
+    let (member_ranges, preamble_end) =
+        confirmed_member_block(work, state, index_path, directory, &valid)?;
     let shell = state.shell(work, index_path, "pkg.index")?;
     let h1 = shell
         .structure
@@ -623,12 +691,6 @@ fn update_authored_index(
             }
             start..end
         });
-    let list_ranges: Vec<_> = shell
-        .structure
-        .list_item_lines
-        .iter()
-        .map(|range| range.start().to_usize()..range.end().to_usize())
-        .collect();
     let mut edits: Vec<(std::ops::Range<usize>, String)> = Vec::new();
     if let Some(title) = title_override {
         match h1 {
@@ -637,15 +699,13 @@ fn update_authored_index(
         }
     }
     let listing = render_members(directory, entries, newline);
-    if let Some(first) = list_ranges.first() {
-        edits.push((first.clone(), listing));
-        for range in list_ranges.iter().skip(1) {
-            edits.push((range.clone(), String::new()));
-        }
+    if let (Some(first), Some(last)) = (member_ranges.first(), member_ranges.last()) {
+        edits.push((first.start..last.end, listing));
     } else if !listing.is_empty() {
-        let separator = if source.is_empty() || source.ends_with("\n\n") {
+        let prefix = &source[..preamble_end];
+        let separator = if prefix.is_empty() || prefix.ends_with("\n\n") {
             ""
-        } else if source.ends_with('\n') {
+        } else if prefix.ends_with('\n') {
             newline
         } else {
             if newline == "\r\n" {
@@ -654,7 +714,15 @@ fn update_authored_index(
                 "\n\n"
             }
         };
-        edits.push((source.len()..source.len(), format!("{separator}{listing}")));
+        let suffix = if preamble_end < source.len() {
+            newline
+        } else {
+            ""
+        };
+        edits.push((
+            preamble_end..preamble_end,
+            format!("{separator}{listing}{suffix}"),
+        ));
     }
     edits.sort_by_key(|(range, _)| (range.start, range.end));
     let text = work

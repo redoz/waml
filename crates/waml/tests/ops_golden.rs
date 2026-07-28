@@ -94,5 +94,6 @@ fn legacy_retitle_preserves_unknown_index_markdown_and_crlf() {
         .1;
     assert!(index.starts_with("# Sales Domain\r\n\r\nIntro.\r\n"));
     assert!(index.contains("## Notes\r\nKeep me.\r\n"));
-    assert!(index.ends_with("* [Order](./order.md)\r\n"));
+    assert!(index.contains("* [Order](./order.md)\r\n\r\n## Notes\r\n"));
+    assert!(index.ends_with("## Notes\r\nKeep me.\r\n"));
 }
