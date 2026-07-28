@@ -3,7 +3,9 @@
 mod annotation;
 mod ast;
 mod green;
+mod markdown;
 mod red;
+mod shell;
 mod text;
 
 pub use annotation::{annotate_occurrence, find_annotation, SyntaxAnnotation};
@@ -12,9 +14,14 @@ pub use green::{
     write_green_to, GreenElement, GreenError, GreenFactory, GreenNode, GreenNodeData, GreenText,
     GreenToken, GreenTokenData, GreenTrivia, TokenFlags, TriviaKind,
 };
+pub use markdown::{ConfirmedHeading, MarkdownStructureMap};
 pub use red::{
     RewriteError, SyntaxElement, SyntaxLocator, SyntaxNode, SyntaxPath, SyntaxSeverity,
     SyntaxToken, SyntaxTree, TreeDiagnostic, TreeInstanceId,
+};
+pub use shell::{
+    parse_okf_markdown, OkfMarkdownLanguage, OkfMarkdownSyntaxKind, OkfSyntaxDiagnosticCode,
+    ParseError, ShellParse,
 };
 pub use text::{
     LineColumn, LineIndex, MarkdownDialect, SourceText, TextError, TextRange, TextSize,
