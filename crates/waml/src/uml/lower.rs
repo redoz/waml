@@ -126,6 +126,10 @@ impl UmlLoweringState {
             .and_then(|id| self.current_paths.get(id))
     }
 
+    pub(crate) fn claimed_paths(&self) -> impl Iterator<Item = &BundlePath> {
+        self.current_paths.values()
+    }
+
     fn resolve_id(&self, target: &str) -> Option<&str> {
         if let Some((id, _)) = self.current_paths.get_key_value(target) {
             return Some(id);

@@ -253,7 +253,7 @@ pub(crate) fn lower_one_with_state(
         }
         Op::ClassifierRename { from, to } => {
             require_claimed(state, work, from, "node.rename")?;
-            super::rename::op_node_rename(work, from, to)
+            super::rename::op_node_rename(work, state, from, to)
         }
         Op::DiagramSet {
             key,

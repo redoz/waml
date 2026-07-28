@@ -1,4 +1,4 @@
-use super::lower::{find_doc, slug_of};
+use super::lower::{find_doc, UmlLoweringState};
 use crate::edit::EditError;
 use crate::source::{BundlePath, SourceBundle};
 use waml_syntax::{parse_okf_markdown, MarkdownDialect, SourceText, SyntaxElement, SyntaxNode};
@@ -21,24 +21,17 @@ pub(crate) fn destination_path(source: &BundlePath, to: &str) -> Result<BundlePa
 
 pub(crate) fn op_node_rename(
     work: &mut SourceBundle,
+    state: &UmlLoweringState,
     from: &str,
     to: &str,
 ) -> Result<(), EditError> {
-    // `from` may be a full bundle-path id (the parse/graph layer's node key)
-    // or a bare basename. Stored `./slug.md` references are directory-local,
-    // so only documents beside the exact source path may refer to it by that
-    // spelling.
     let idx = find_doc(work, from, "node.rename")?;
     let source_path = work
         .document_at(idx)
         .expect("resolved document index")
         .path()
         .clone();
-    let source_directory = directory_of(source_path.as_str());
-    let from_basename = slug_of(source_path.as_str());
     let dest_path = destination_path(&source_path, to)?;
-    let to_basename = slug_of(dest_path.as_str());
-    let destination_href = relative_href(&source_path, &dest_path);
     if work
         .documents()
         .iter()
@@ -50,14 +43,27 @@ pub(crate) fn op_node_rename(
             format!("target slug '{to}' already exists"),
         ));
     }
-    for index in 0..work.len() {
+    let claimed_paths: Vec<_> = state.claimed_paths().cloned().collect();
+    for referrer_path in claimed_paths {
+        let index = work
+            .documents()
+            .iter()
+            .position(|document| document.path() == &referrer_path)
+            .expect("claimed document path");
         let document = work.document_at(index).expect("document index in bounds");
-        if directory_of(document.path().as_str()) != source_directory {
-            continue;
-        }
         let source = document.text().to_owned();
-        let changed =
-            rename_typed_references(&source, &from_basename, &to_basename, &destination_href)?;
+        let post_rename_referrer = if referrer_path == source_path {
+            &dest_path
+        } else {
+            &referrer_path
+        };
+        let changed = rename_typed_references(
+            &source,
+            &referrer_path,
+            post_rename_referrer,
+            &source_path,
+            &dest_path,
+        )?;
         if changed != source {
             *work
                 .document_at_mut(index)
@@ -97,9 +103,10 @@ fn relative_href(source: &BundlePath, destination: &BundlePath) -> String {
 
 fn rename_typed_references(
     source: &str,
-    from: &str,
-    to: &str,
-    destination_href: &str,
+    referrer_before: &BundlePath,
+    referrer_after: &BundlePath,
+    target_before: &BundlePath,
+    target_after: &BundlePath,
 ) -> Result<String, EditError> {
     let text = SourceText::from_shared(std::sync::Arc::new(source.to_owned()))
         .map_err(|error| EditError::at("node.rename", error.to_string()))?;
@@ -107,7 +114,15 @@ fn rename_typed_references(
         .map_err(|error| EditError::at("node.rename", error.to_string()))?;
     let tree = super::syntax::parser::parse(text, &shell.structure);
     let mut edits = Vec::new();
-    collect_reference_edits(&tree.root(), source, from, to, destination_href, &mut edits);
+    collect_reference_edits(
+        &tree.root(),
+        source,
+        referrer_before,
+        referrer_after,
+        target_before,
+        target_after,
+        &mut edits,
+    );
     edits.sort_by_key(|(range, _)| std::cmp::Reverse(range.start));
     let mut output = source.to_owned();
     for (range, replacement) in edits {
@@ -119,70 +134,95 @@ fn rename_typed_references(
 fn collect_reference_edits(
     node: &SyntaxNode<super::syntax::UmlLanguage>,
     source: &str,
-    from: &str,
-    to: &str,
-    destination_href: &str,
+    referrer_before: &BundlePath,
+    referrer_after: &BundlePath,
+    target_before: &BundlePath,
+    target_after: &BundlePath,
     edits: &mut Vec<(std::ops::Range<usize>, String)>,
 ) {
     use super::syntax::UmlSyntaxKind;
-    if node.kind() == UmlSyntaxKind::AttributesSection {
+    if node.kind() == UmlSyntaxKind::Attribute {
         let range = node.range().start().to_usize()..node.range().end().to_usize();
         let authored = &source[range.clone()];
-        let needle = format!("](./{from}.md)");
-        let replacement = authored.replace(&needle, &format!("]({destination_href})"));
-        if replacement != authored {
-            edits.push((range, replacement));
-        }
-        return;
-    }
-    if matches!(
-        node.kind(),
-        UmlSyntaxKind::Link | UmlSyntaxKind::TypeReference
-    ) {
-        let range = node.range().start().to_usize()..node.range().end().to_usize();
-        let authored = &source[range.clone()];
-        let needle = format!("./{from}.md");
-        let replacement = authored.replace(&needle, destination_href);
-        if replacement != authored {
-            edits.push((range, replacement));
-        }
-        return;
-    }
-    if node.kind() == UmlSyntaxKind::LayoutStatement {
-        let range = node.range().start().to_usize()..node.range().end().to_usize();
-        let authored = &source[range.clone()];
-        let needle = format!("./{from}.md");
-        let mut replacement = authored.replace(&needle, destination_href);
-        let bare = regex::Regex::new(&format!(r"\b{}\b", regex::escape(from)))
-            .expect("escaped slug is valid regex");
-        replacement = bare.replace_all(&replacement, to).into_owned();
-        if replacement != authored {
-            edits.push((range, replacement));
+        if let Some(href_range) = markdown_href_range(authored) {
+            if let Some(replacement) = rewritten_href(
+                &authored[href_range.clone()],
+                referrer_before,
+                referrer_after,
+                target_before,
+                target_after,
+            ) {
+                let start = range.start + href_range.start;
+                edits.push((start..range.start + href_range.end, replacement));
+            }
         }
         return;
     }
     for child in node.children() {
         match child {
             SyntaxElement::Node(child) => {
-                collect_reference_edits(&child, source, from, to, destination_href, edits);
+                collect_reference_edits(
+                    &child,
+                    source,
+                    referrer_before,
+                    referrer_after,
+                    target_before,
+                    target_after,
+                    edits,
+                );
             }
             SyntaxElement::Token(token)
                 if matches!(
                     token.kind(),
-                    UmlSyntaxKind::LinkTargetToken | UmlSyntaxKind::LayoutLinkToken
+                    UmlSyntaxKind::LinkTargetToken
+                        | UmlSyntaxKind::TypeToken
+                        | UmlSyntaxKind::LayoutLinkToken
                 ) =>
             {
                 let range = token.range().start().to_usize()..token.range().end().to_usize();
                 let authored = &source[range.clone()];
-                let needle = format!("./{from}.md");
-                if authored.contains(&needle) {
-                    edits.push((range, authored.replace(&needle, destination_href)));
+                let href_range = if token.kind() == UmlSyntaxKind::LinkTargetToken {
+                    0..authored.len()
+                } else if let Some(range) = markdown_href_range(authored) {
+                    range
+                } else {
+                    continue;
+                };
+                if let Some(replacement) = rewritten_href(
+                    &authored[href_range.clone()],
+                    referrer_before,
+                    referrer_after,
+                    target_before,
+                    target_after,
+                ) {
+                    let start = range.start + href_range.start;
+                    edits.push((start..range.start + href_range.end, replacement));
                 }
             }
             SyntaxElement::Token(token) if token.kind() == UmlSyntaxKind::LayoutWordToken => {
                 let range = token.range().start().to_usize()..token.range().end().to_usize();
-                if source[range.clone()] == *from {
-                    edits.push((range, to.to_owned()));
+                let authored = &source[range.clone()];
+                let leading = authored.len() - authored.trim_start().len();
+                let trailing = authored.trim_end().len();
+                let word = &authored[leading..trailing];
+                let target =
+                    crate::okf::resolve_href(referrer_before.as_str(), &format!("./{word}.md"));
+                if target_before.concept_id() == Some(target.as_str()) {
+                    let destination = relative_href(referrer_after, target_after);
+                    let replacement = destination
+                        .strip_prefix("./")
+                        .and_then(|href| href.strip_suffix(".md"))
+                        .filter(|slug| !slug.contains('/'))
+                        .map(str::to_owned)
+                        .unwrap_or_else(|| format!("[{word}]({destination})"));
+                    edits.push((
+                        range,
+                        format!(
+                            "{}{replacement}{}",
+                            &authored[..leading],
+                            &authored[trailing..]
+                        ),
+                    ));
                 }
             }
             SyntaxElement::Token(_) => {}
@@ -190,9 +230,59 @@ fn collect_reference_edits(
     }
 }
 
+fn markdown_href_range(authored: &str) -> Option<std::ops::Range<usize>> {
+    let start = authored.find("](")? + 2;
+    let end = authored[start..].rfind(')')? + start;
+    (start <= end).then_some(start..end)
+}
+
+fn rewritten_href(
+    authored: &str,
+    referrer_before: &BundlePath,
+    referrer_after: &BundlePath,
+    target_before: &BundlePath,
+    target_after: &BundlePath,
+) -> Option<String> {
+    let trimmed_start = authored.len() - authored.trim_start().len();
+    let trimmed_end = authored.trim_end().len();
+    let trimmed = &authored[trimmed_start..trimmed_end];
+    let (opening, href, closing) = trimmed
+        .strip_prefix('<')
+        .and_then(|href| href.strip_suffix('>').map(|href| ("<", href, ">")))
+        .unwrap_or(("", trimmed, ""));
+    let suffix_start = href.find(['?', '#']).unwrap_or(href.len());
+    let (path, suffix) = href.split_at(suffix_start);
+    if path.is_empty()
+        || crate::okf::resolve_href(referrer_before.as_str(), path)
+            != target_before.concept_id().expect("classifier path")
+    {
+        return None;
+    }
+
+    let mut destination = relative_href(referrer_after, target_after);
+    if path.contains('\\') && !path.contains('/') {
+        destination = destination.replace('/', "\\");
+    }
+    if !path.starts_with("./")
+        && !path.starts_with(".\\")
+        && !path.starts_with("../")
+        && !path.starts_with("..\\")
+    {
+        destination = destination
+            .strip_prefix("./")
+            .unwrap_or(&destination)
+            .to_owned();
+    }
+    Some(format!(
+        "{}{opening}{destination}{suffix}{closing}{}",
+        &authored[..trimmed_start],
+        &authored[trimmed_end..]
+    ))
+}
+
 #[cfg(test)]
 mod tests {
-    use super::slug_of;
+    use super::super::lower::slug_of;
     use crate::ops::{apply, Op};
 
     fn bundle() -> Vec<(String, String)> {

@@ -422,6 +422,78 @@ fn rename_accepts_an_explicit_full_destination_id() {
 }
 
 #[test]
+fn rename_rewrites_exact_typed_hrefs_from_each_referrers_path() {
+    let source = SourceBundle::try_from_pairs([
+        (
+            "domain/order.md",
+            "---\ntype: uml.Class\ntitle: Order\n---\n# Order\n\n## Attributes\n- self: [Order](./order.md?scope=self#identity)\n",
+        ),
+        (
+            "domain/customer.md",
+            "---\r\ntype: uml.Class\r\ntitle: Café\r\n---\r\n# Café\r\n\r\n## Attributes\r\n- order: [Order](./order.md#summary)\r\n",
+        ),
+        (
+            "views/dashboard.md",
+            "---\ntype: uml.Class\ntitle: Dashboard\n---\n# Dashboard\n\n## Relationships\n- associates [Order](../domain/order.md?mode=compact#card): 1 to 1 order\n\n## Notes\n[protected](../domain/order.md?keep=yes#raw)\n",
+        ),
+        (
+            "views/deep/report.md",
+            "---\ntype: Diagram\ntitle: Report\nprofile: uml-domain\n---\n# Report\n\n## Members\n- [Order](..\\..\\domain\\order.md)\n",
+        ),
+        (
+            "other/order.md",
+            "---\ntype: uml.Class\ntitle: Other Order\n---\n# Other Order\n",
+        ),
+        (
+            "other/referrer.md",
+            "---\ntype: uml.Class\ntitle: Other Referrer\n---\n# Other Referrer\n\n## Attributes\n- order: [Other Order](./order.md?keep=1#same)\n",
+        ),
+    ])
+    .unwrap();
+
+    let changed = lower(
+        &source,
+        vec![
+            uml::Op::ClassifierRename {
+                from: "domain/order".into(),
+                to: "archive/models/invoice".into(),
+            },
+            uml::Op::AttributeAdd {
+                node: "archive/models/invoice".into(),
+                name: "number".into(),
+                ty_token: "String".into(),
+                multiplicity: None,
+                visibility: None,
+            },
+        ],
+    )
+    .unwrap();
+
+    let text = |path| {
+        changed
+            .document(&BundlePath::parse(path).unwrap())
+            .unwrap()
+            .text()
+    };
+    assert!(
+        text("archive/models/invoice.md")
+            .contains("- self: [Order](./invoice.md?scope=self#identity)"),
+        "{}",
+        text("archive/models/invoice.md")
+    );
+    assert!(text("archive/models/invoice.md").contains("- number: String"));
+    assert!(text("domain/customer.md")
+        .contains("- order: [Order](../archive/models/invoice.md#summary)\r\n"));
+    assert!(text("domain/customer.md").contains("title: Café\r\n"));
+    assert!(text("views/dashboard.md").contains(
+        "- associates [Order](../archive/models/invoice.md?mode=compact#card): 1 to 1 order"
+    ));
+    assert!(text("views/deep/report.md").contains("- [Order](..\\..\\archive\\models\\invoice.md)"));
+    assert!(text("views/dashboard.md").contains("[protected](../domain/order.md?keep=yes#raw)"));
+    assert!(text("other/referrer.md").contains("- order: [Other Order](./order.md?keep=1#same)"));
+}
+
+#[test]
 fn rename_collision_and_invalid_destination_keep_stable_index_and_rollback() {
     let source = SourceBundle::try_from_pairs([
         (
