@@ -28,6 +28,10 @@
   the syntax-node range, preserving source provenance after removal of the raw
   wrapper.
 - `rtk cargo test -p waml --test uml_classifier_syntax` — PASS (2 tests).
+- Added direct fixed-slot accessors for value, slot, relationship, member, and
+  inline-instance syntax. Link-target access follows the immediate fixed Link
+  child only; it does not perform a descendant search. The focused suite now
+  asserts the direct-token values and link leaf shape (3 tests).
 
 ## Remaining concerns
 
