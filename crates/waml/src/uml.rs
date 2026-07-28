@@ -1,14 +1,21 @@
 //! Selective UML projection over the domain-agnostic OKF bundle.
 
+pub mod analysis;
+pub mod declared;
 pub(crate) mod lower;
 pub mod ops;
 pub(crate) mod rename;
 pub mod selector;
+pub mod syntax;
 pub use crate::ops::{DiagramDisplaySet, FieldEdit, NameSpec};
 pub use ops::{Batch, Op};
 pub use selector::{RelationshipSelector, Selector};
 
 pub type Projection = crate::model::Model;
+pub use analysis::{analyze, Analysis};
+pub use declared::{
+    DeclaredAttribute, DeclaredBundle, DeclaredConcept, DeclaredField, ExpectedSyntax,
+};
 
 pub(crate) fn recognizes_type(element_type: &crate::model::ElementType) -> bool {
     matches!(

@@ -78,6 +78,9 @@ pub struct SyntaxSnapshot<L: SyntaxLanguage> {
     syntax: Arc<SyntaxTree<L>>,
 }
 impl<L: SyntaxLanguage> SyntaxSnapshot<L> {
+    pub(crate) fn new(document: Arc<DocumentVersion>, syntax: Arc<SyntaxTree<L>>) -> Self {
+        Self { document, syntax }
+    }
     pub fn document(&self) -> &Arc<DocumentVersion> {
         &self.document
     }
@@ -91,11 +94,23 @@ pub struct SyntaxSet<L: SyntaxLanguage> {
     documents: Arc<BTreeMap<DocumentId, Arc<SyntaxSnapshot<L>>>>,
 }
 impl<L: SyntaxLanguage> SyntaxSet<L> {
+    pub(crate) fn from_snapshots(
+        catalog: Arc<DocumentCatalog>,
+        documents: BTreeMap<DocumentId, Arc<SyntaxSnapshot<L>>>,
+    ) -> Self {
+        Self {
+            catalog,
+            documents: Arc::new(documents),
+        }
+    }
     pub fn catalog(&self) -> &Arc<DocumentCatalog> {
         &self.catalog
     }
     pub fn document(&self, id: DocumentId) -> Option<&Arc<SyntaxSnapshot<L>>> {
         self.documents.get(&id)
+    }
+    pub fn len(&self) -> usize {
+        self.documents.len()
     }
     pub(crate) fn documents(&self) -> &BTreeMap<DocumentId, Arc<SyntaxSnapshot<L>>> {
         &self.documents
