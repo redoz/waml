@@ -29,14 +29,7 @@ pub fn analyze(
     context: DomainAnalysisContext<'_>,
     _previous: Option<&Analysis>,
 ) -> Result<Analysis, AnalysisError> {
-    if context.session_revision != context.catalog.session_revision()
-        || !Arc::ptr_eq(context.catalog, context.shell.catalog())
-    {
-        return Err(AnalysisError::Specialization {
-            name: "uml",
-            reason: "UML analysis context does not share the shell catalog revision".into(),
-        });
-    }
+    validate_shared_context(&context)?;
     let claimed: Vec<_> = context
         .okf
         .concepts()
@@ -349,6 +342,18 @@ pub fn analyze(
         structures: context.structures.clone(),
         session_revision: context.session_revision,
     })
+}
+
+fn validate_shared_context(context: &DomainAnalysisContext<'_>) -> Result<(), AnalysisError> {
+    if context.session_revision != context.catalog.session_revision()
+        || !Arc::ptr_eq(context.catalog, context.shell.catalog())
+    {
+        return Err(AnalysisError::Specialization {
+            name: "uml",
+            reason: "UML analysis context does not share the shell catalog revision".into(),
+        });
+    }
+    Ok(())
 }
 
 fn declared_projection(

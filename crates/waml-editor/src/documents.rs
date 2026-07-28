@@ -33,7 +33,22 @@ pub fn reopen(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{
+        document::{DocumentCapabilities, DocumentPresentation, NavCategory},
+        icons::Icon,
+    };
     use waml::source::SourceBundle;
+
+    fn future_sibling_descriptor() -> DocumentDescriptor {
+        DocumentDescriptor {
+            presentation: DocumentPresentation {
+                icon: Icon::StickyNote,
+                accent: None,
+                category: NavCategory::OkfDocument,
+            },
+            capabilities: DocumentCapabilities::default(),
+        }
+    }
 
     #[test]
     fn uml_provider_precedes_generic_okf_provider() {
@@ -71,6 +86,25 @@ mod tests {
         assert_eq!(
             reopen(&bundle, &projection, &source_tab).unwrap().tab_id,
             source_tab.id
+        );
+    }
+
+    #[test]
+    fn sibling_descriptor_stays_outside_static_uml_generic_selection() {
+        let descriptor = future_sibling_descriptor();
+        assert_eq!(descriptor.presentation.category, NavCategory::OkfDocument);
+
+        let source = SourceBundle::try_from_pairs([(
+            "widget.md",
+            "---\ntype: future.Widget\n---\n# Widget\n",
+        )])
+        .unwrap();
+        let bundle = waml::okf::Bundle::parse(&source).unwrap();
+        let projection = waml::uml::project(&bundle);
+        assert!(crate::uml_documents::describe(&projection, "widget").is_none());
+        assert_eq!(
+            describe(&bundle, &projection, "widget").unwrap(),
+            crate::okf_documents::describe(&bundle, "widget").unwrap()
         );
     }
 }

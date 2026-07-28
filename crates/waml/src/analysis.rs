@@ -178,8 +178,8 @@ pub enum AnalysisError {
     },
     AmbiguousClaim {
         concept_id: String,
-        first: &'static str,
-        second: &'static str,
+        first: String,
+        second: String,
     },
     StructuralInvariant {
         stage: AnalysisStage,
@@ -193,6 +193,31 @@ impl fmt::Display for AnalysisError {
 }
 impl std::error::Error for AnalysisError {}
 
+pub fn validate_disjoint_claims<'a>(
+    claims: impl IntoIterator<Item = (&'a str, &'a ClaimSet)>,
+) -> Result<(), AnalysisError> {
+    let mut claimants: BTreeMap<&str, BTreeSet<&str>> = BTreeMap::new();
+    for (analyzer, claims) in claims {
+        for concept_id in claims.iter() {
+            claimants.entry(concept_id).or_default().insert(analyzer);
+        }
+    }
+    for (concept_id, analyzers) in claimants {
+        let mut analyzers = analyzers.into_iter();
+        let Some(first) = analyzers.next() else {
+            continue;
+        };
+        if let Some(second) = analyzers.next() {
+            return Err(AnalysisError::AmbiguousClaim {
+                concept_id: concept_id.to_owned(),
+                first: first.to_owned(),
+                second: second.to_owned(),
+            });
+        }
+    }
+    Ok(())
+}
+
 trait PreparationHooks {
     fn before(&mut self, stage: AnalysisStage) -> Result<(), AnalysisError>;
 }
@@ -201,6 +226,103 @@ impl PreparationHooks for NoopPreparationHooks {
     fn before(&mut self, _: AnalysisStage) -> Result<(), AnalysisError> {
         Ok(())
     }
+}
+
+/// Borrowed reuse inputs only; ownership and revision clocks stay with the host.
+///
+/// ```compile_fail
+/// use waml::analysis::PreviousAnalyses;
+/// fn advance_revision(previous: &mut PreviousAnalyses<'_>) {
+///     previous.revision += 1;
+/// }
+/// ```
+pub struct PreviousAnalyses<'a> {
+    pub okf: &'a OkfAnalysis,
+    pub uml: &'a crate::uml::Analysis,
+}
+
+/// Owned, immutable state produced by the static product composition root.
+///
+/// ```compile_fail
+/// use waml::analysis::PreparedCandidate;
+/// fn forge_revision(candidate: &mut PreparedCandidate) {
+///     candidate.revision = 99;
+/// }
+/// ```
+pub struct PreparedCandidate {
+    source: SourceBundle,
+    okf: OkfAnalysis,
+    uml: crate::uml::Analysis,
+    revision: u64,
+}
+
+impl PreparedCandidate {
+    pub fn source(&self) -> &SourceBundle {
+        &self.source
+    }
+
+    pub fn okf(&self) -> &OkfAnalysis {
+        &self.okf
+    }
+
+    pub fn uml(&self) -> &crate::uml::Analysis {
+        &self.uml
+    }
+
+    pub fn revision(&self) -> u64 {
+        self.revision
+    }
+
+    pub fn into_parts(self) -> (SourceBundle, OkfAnalysis, crate::uml::Analysis, u64) {
+        (self.source, self.okf, self.uml, self.revision)
+    }
+}
+
+pub fn prepare_candidate(
+    candidate_source: SourceBundle,
+    previous: Option<PreviousAnalyses<'_>>,
+    candidate_revision: u64,
+) -> Result<PreparedCandidate, AnalysisError> {
+    prepare_candidate_inner(
+        candidate_source,
+        previous,
+        candidate_revision,
+        &mut NoopPreparationHooks,
+    )
+}
+
+fn prepare_candidate_inner(
+    candidate_source: SourceBundle,
+    previous: Option<PreviousAnalyses<'_>>,
+    candidate_revision: u64,
+    hooks: &mut impl PreparationHooks,
+) -> Result<PreparedCandidate, AnalysisError> {
+    let okf = analyze_okf_inner(
+        &candidate_source,
+        previous.as_ref().map(|analyses| analyses.okf),
+        candidate_revision,
+        hooks,
+    )?;
+    hooks.before(AnalysisStage::Specialization("uml"))?;
+    let uml = crate::uml::analyze(
+        DomainAnalysisContext {
+            source: &candidate_source,
+            catalog: &okf.catalog,
+            shell: &okf.shell,
+            structures: &okf.structures,
+            okf: &okf.bundle,
+            session_revision: candidate_revision,
+        },
+        previous.as_ref().map(|analyses| analyses.uml),
+    )?;
+    hooks.before(AnalysisStage::Claims)?;
+    validate_disjoint_claims([("uml", &uml.claims)])?;
+    Ok(PreparedCandidate {
+        source: candidate_source,
+        okf,
+        uml,
+        revision: candidate_revision,
+    })
 }
 
 pub fn analyze_okf(
@@ -473,6 +595,140 @@ mod tests {
                 stage: AnalysisStage::Shell,
                 ..
             })
+        ));
+    }
+
+    struct PhaseHooks {
+        fail_at: Option<AnalysisStage>,
+        calls: Vec<AnalysisStage>,
+    }
+
+    impl PreparationHooks for PhaseHooks {
+        fn before(&mut self, stage: AnalysisStage) -> Result<(), AnalysisError> {
+            self.calls.push(stage);
+            let should_fail = matches!(
+                (self.fail_at, stage),
+                (Some(AnalysisStage::Shell), AnalysisStage::Shell)
+                    | (Some(AnalysisStage::Okf), AnalysisStage::Okf)
+                    | (
+                        Some(AnalysisStage::Specialization("uml")),
+                        AnalysisStage::Specialization("uml")
+                    )
+                    | (Some(AnalysisStage::Claims), AnalysisStage::Claims)
+            );
+            if should_fail {
+                return Err(AnalysisError::StructuralInvariant {
+                    stage,
+                    reason: "injected".into(),
+                });
+            }
+            Ok(())
+        }
+    }
+
+    fn phase_names(stages: &[AnalysisStage]) -> Vec<&'static str> {
+        stages
+            .iter()
+            .map(|stage| match stage {
+                AnalysisStage::Shell => "shell",
+                AnalysisStage::Okf => "okf",
+                AnalysisStage::Specialization("uml") => "uml",
+                AnalysisStage::Specialization(_) => "other-specialization",
+                AnalysisStage::Claims => "claims",
+            })
+            .collect()
+    }
+
+    #[test]
+    fn prepare_candidate_runs_static_phases_once() {
+        let source =
+            SourceBundle::try_from_pairs([("order.md", "---\ntype: uml.Class\n---\n# Order\n")])
+                .unwrap();
+        let mut hooks = PhaseHooks {
+            fail_at: None,
+            calls: Vec::new(),
+        };
+
+        let prepared = prepare_candidate_inner(source, None, 11, &mut hooks).unwrap();
+
+        assert_eq!(phase_names(&hooks.calls), ["shell", "okf", "uml", "claims"]);
+        assert_eq!(prepared.revision(), 11);
+        assert_eq!(prepared.okf().catalog.session_revision(), 11);
+        assert_eq!(prepared.uml().session_revision(), 11);
+        assert_eq!(prepared.uml().claims.iter().collect::<Vec<_>>(), ["order"]);
+        let (source, okf, uml, revision) = prepared.into_parts();
+        assert_eq!(source.documents().len(), 1);
+        assert_eq!(okf.catalog.session_revision(), 11);
+        assert_eq!(uml.session_revision(), 11);
+        assert_eq!(revision, 11);
+    }
+
+    #[test]
+    fn prepare_candidate_failure_is_non_mutating() {
+        let committed = prepare_candidate(
+            SourceBundle::try_from_pairs([("order.md", "---\ntype: uml.Class\n---\n# Order\n")])
+                .unwrap(),
+            None,
+            4,
+        )
+        .unwrap();
+        let committed_source = committed.source().documents()[0].text_arc().clone();
+        let committed_catalog = committed.okf().catalog.clone();
+        let committed_uml_catalog = committed.uml().syntax.catalog().clone();
+        let candidate_source = SourceBundle::try_from_pairs([
+            ("order.md", "---\ntype: uml.Class\n---\n# Changed Order\n"),
+            ("notes.md", "---\ntype: Notes\n---\n# Notes\n"),
+        ])
+        .unwrap();
+
+        for fail_at in [
+            AnalysisStage::Shell,
+            AnalysisStage::Okf,
+            AnalysisStage::Specialization("uml"),
+            AnalysisStage::Claims,
+        ] {
+            let mut hooks = PhaseHooks {
+                fail_at: Some(fail_at),
+                calls: Vec::new(),
+            };
+            let result = prepare_candidate_inner(
+                candidate_source.clone(),
+                Some(PreviousAnalyses {
+                    okf: committed.okf(),
+                    uml: committed.uml(),
+                }),
+                5,
+                &mut hooks,
+            );
+            assert!(matches!(
+                result,
+                Err(AnalysisError::StructuralInvariant { stage, .. })
+                    if phase_names(&[stage]) == phase_names(&[fail_at])
+            ));
+            assert!(Arc::ptr_eq(
+                committed.source().documents()[0].text_arc(),
+                &committed_source
+            ));
+            assert!(Arc::ptr_eq(&committed.okf().catalog, &committed_catalog));
+            assert!(Arc::ptr_eq(
+                committed.uml().syntax.catalog(),
+                &committed_uml_catalog
+            ));
+            assert_eq!(committed.revision(), 4);
+        }
+    }
+
+    #[test]
+    fn disjoint_claim_validation_sorts_concepts_and_analyzers() {
+        let uml = ClaimSet::from_concept_ids(["z".into(), "shared".into()]);
+        let future = ClaimSet::from_concept_ids(["a".into(), "shared".into()]);
+        assert!(matches!(
+            validate_disjoint_claims([("uml", &uml), ("future", &future)]),
+            Err(AnalysisError::AmbiguousClaim {
+                concept_id,
+                first,
+                second,
+            }) if concept_id == "shared" && first == "future" && second == "uml"
         ));
     }
 }

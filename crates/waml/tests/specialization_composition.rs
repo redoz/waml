@@ -1,0 +1,206 @@
+use std::{collections::BTreeMap, sync::Arc};
+
+use waml::{
+    analysis::{
+        prepare_candidate, validate_disjoint_claims, ClaimSet, DocumentCatalog, DocumentId,
+        DocumentVersion, DomainAnalysisContext,
+    },
+    source::{BundlePath, SourceBundle},
+};
+use waml_syntax::{
+    GreenElement, GreenFactory, GreenText, MarkdownDialect, SyntaxLanguage, SyntaxTree,
+};
+
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+enum FutureSyntaxKind {
+    Document,
+    RawText,
+}
+
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+enum FutureDiagnosticCode {}
+
+struct FutureLanguage;
+
+impl SyntaxLanguage for FutureLanguage {
+    type Kind = FutureSyntaxKind;
+    type DiagnosticCode = FutureDiagnosticCode;
+}
+
+#[derive(Debug, Eq, PartialEq)]
+struct FutureDeclared {
+    concept_id: String,
+    kind: String,
+}
+
+struct FutureAnalysis {
+    claims: ClaimSet,
+    catalog: Arc<DocumentCatalog>,
+    syntax: BTreeMap<DocumentId, (Arc<DocumentVersion>, Arc<SyntaxTree<FutureLanguage>>)>,
+    declared: Arc<[FutureDeclared]>,
+}
+
+fn analyze_future(context: DomainAnalysisContext<'_>) -> FutureAnalysis {
+    let factory = GreenFactory::<FutureLanguage>::new();
+    let claimed: Vec<_> = context
+        .okf
+        .concepts()
+        .iter()
+        .filter(|concept| concept.ty == "future.Widget")
+        .collect();
+    let claims = ClaimSet::from_concept_ids(claimed.iter().map(|concept| concept.id.to_owned()));
+    let mut syntax = BTreeMap::new();
+    let mut declared = Vec::new();
+
+    for concept in claimed {
+        let path = BundlePath::parse(&format!("{}.md", concept.id)).unwrap();
+        let id = context.catalog.id_for_path(&path).unwrap();
+        let document = context.catalog.document(id).unwrap().clone();
+        let raw = factory
+            .token(
+                FutureSyntaxKind::RawText,
+                GreenText::Owned(Arc::from(document.text().shared().as_str())),
+                [],
+                [],
+            )
+            .unwrap();
+        let root = factory
+            .node(FutureSyntaxKind::Document, [GreenElement::Token(raw)])
+            .unwrap();
+        let tree = Arc::new(SyntaxTree::new(
+            root,
+            Arc::from([]),
+            MarkdownDialect::CommonMarkCurrent,
+        ));
+        syntax.insert(id, (document, tree));
+        declared.push(FutureDeclared {
+            concept_id: concept.id.clone(),
+            kind: concept.ty.clone(),
+        });
+    }
+
+    FutureAnalysis {
+        claims,
+        catalog: context.catalog.clone(),
+        syntax,
+        declared: declared.into(),
+    }
+}
+
+fn mixed_source() -> SourceBundle {
+    SourceBundle::try_from_pairs([
+        (
+            "class.md",
+            "---\ntype: uml.Class\n---\n# Class\n\n## Attributes\n- id: String\n",
+        ),
+        (
+            "widget.md",
+            "---\ntype: future.Widget\n---\n# Widget\n\nFuture body.\n",
+        ),
+        ("arbitrary.md", "---\ntype: Runbook\n---\n# Arbitrary\n"),
+        ("missing.md", "---\ntitle: Missing\n---\n# Missing\n"),
+        (
+            "unknown-uml.md",
+            "---\ntype: uml.NotYetAType\n---\n# Unknown UML\n",
+        ),
+        ("index.md", "# Root\n\n* [Class](class.md)\n"),
+        ("log.md", "# Log\n\n- entry\n"),
+        ("nested/index.md", "# Nested\n\n* [Widget](../widget.md)\n"),
+    ])
+    .unwrap()
+}
+
+fn context<'a>(
+    source: &'a SourceBundle,
+    okf: &'a waml::analysis::OkfAnalysis,
+) -> DomainAnalysisContext<'a> {
+    DomainAnalysisContext {
+        source,
+        catalog: &okf.catalog,
+        shell: &okf.shell,
+        structures: &okf.structures,
+        okf: &okf.bundle,
+        session_revision: okf.catalog.session_revision(),
+    }
+}
+
+#[test]
+fn future_sibling_composes_without_expanding_okf_or_uml_kinds() {
+    let source = mixed_source();
+    let prepared = prepare_candidate(source, None, 7).unwrap();
+    let future = analyze_future(context(prepared.source(), prepared.okf()));
+
+    validate_disjoint_claims([("uml", &prepared.uml().claims), ("future", &future.claims)])
+        .unwrap();
+
+    assert_eq!(prepared.revision(), 7);
+    assert_eq!(prepared.uml().claims.iter().collect::<Vec<_>>(), ["class"]);
+    assert_eq!(future.claims.iter().collect::<Vec<_>>(), ["widget"]);
+    assert_eq!(
+        future.declared.as_ref(),
+        [FutureDeclared {
+            concept_id: "widget".into(),
+            kind: "future.Widget".into(),
+        }]
+    );
+    assert!(Arc::ptr_eq(&future.catalog, &prepared.okf().catalog));
+
+    let widget_id = prepared
+        .okf()
+        .catalog
+        .id_for_path(&BundlePath::parse("widget.md").unwrap())
+        .unwrap();
+    let (future_document, future_tree) = future.syntax.get(&widget_id).unwrap();
+    assert!(Arc::ptr_eq(
+        future_document,
+        prepared.okf().catalog.document(widget_id).unwrap()
+    ));
+    assert_eq!(
+        future_tree.write_to_string(),
+        prepared
+            .source()
+            .document(&BundlePath::parse("widget.md").unwrap())
+            .unwrap()
+            .text()
+    );
+
+    for generic in ["arbitrary", "missing", "unknown-uml"] {
+        assert!(!prepared.uml().claims.contains(generic));
+        assert!(!future.claims.contains(generic));
+        assert!(prepared.okf().bundle.concept(generic).is_some());
+        assert!(prepared.uml().declared.concept(generic).is_none());
+    }
+    assert_eq!(prepared.okf().bundle.indexes().len(), 2);
+    assert_eq!(prepared.okf().bundle.logs().len(), 1);
+    assert!(!prepared.okf().bundle.directories().is_empty());
+    assert!(prepared.uml().projection.packages.is_empty());
+}
+
+#[test]
+fn ambiguous_sibling_claims_fail_in_deterministic_concept_and_analyzer_order() {
+    let uml = ClaimSet::from_concept_ids(["zeta".into(), "shared".into()]);
+    let future = ClaimSet::from_concept_ids(["shared".into(), "alpha".into()]);
+
+    let error = validate_disjoint_claims([("uml", &uml), ("future", &future)]).unwrap_err();
+    assert!(matches!(
+        error,
+        waml::analysis::AnalysisError::AmbiguousClaim {
+            concept_id,
+            first,
+            second,
+        } if concept_id == "shared" && first == "future" && second == "uml"
+    ));
+}
+
+#[test]
+fn malformed_claimed_syntax_is_prepared_with_diagnostics() {
+    let source = SourceBundle::try_from_pairs([(
+        "broken.md",
+        "---\ntype: uml.Class\n---\n# Broken\n\n## Attributes\n- broken String [1..x]\n",
+    )])
+    .unwrap();
+
+    let prepared = prepare_candidate(source, None, 3).unwrap();
+    assert_eq!(prepared.revision(), 3);
+    assert!(!prepared.uml().diagnostics.is_empty());
+}

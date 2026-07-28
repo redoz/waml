@@ -389,6 +389,27 @@ mod tests {
     }
 
     #[test]
+    fn statically_prepared_sibling_needs_no_host_family_dispatch() {
+        let calls = Rc::new(Cell::new(0));
+        let mut sibling = prepared("future-widget", NavCategory::OkfDocument, calls.clone());
+        sibling.tab_id = LiveId::from_str("future-sibling-provider");
+        let mut host = DocumentHost::default();
+
+        host.apply_command(DocumentCommand::Open {
+            document: sibling,
+            persistent: true,
+        });
+
+        assert_eq!(
+            host.active_id(),
+            LiveId::from_str("future-sibling-provider")
+        );
+        assert_eq!(host.active_tab().unwrap().concept_id, "future-widget");
+        assert!(host.active_chrome().tool_dock);
+        assert_eq!(calls.get(), 1);
+    }
+
+    #[test]
     fn active_accent_comes_from_provider_presentation() {
         let mut host = DocumentHost::default();
         let accent = vec4(0.2, 0.4, 0.6, 1.0);
