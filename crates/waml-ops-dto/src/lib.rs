@@ -3,7 +3,7 @@ use waml::compat::{Batch, Step};
 use waml::grammar::{parse_ends, render_ends};
 use waml::model::{CardinalityVisibility, ElementType, RelEnd, RelationshipKind, Visibility};
 use waml::multiplicity::Multiplicity;
-use waml::ops::{DiagramDisplaySet, FieldEdit, NameSpec, RelBy, Selector};
+use waml::ops::{DiagramDisplaySet, FieldEdit, NameSpec, RelBy};
 use waml::source::SourceBundle;
 use waml::syntax::Direction;
 use waml::{okf, uml};
@@ -349,7 +349,7 @@ fn rel_sel(
     kind: &Option<String>,
     target: &Option<String>,
     as_sel: &Option<String>,
-) -> Result<Selector, String> {
+) -> Result<uml::RelationshipSelector, String> {
     let by = match (kind, target, as_sel) {
         (Some(k), Some(t), _) => RelBy::Endpoint {
             kind: kind_req(k)?,
@@ -358,7 +358,7 @@ fn rel_sel(
         (_, _, Some(n)) => RelBy::Named(n.clone()),
         _ => return Err("relationship selector needs kind+target or as".into()),
     };
-    Ok(Selector::Rel {
+    Ok(uml::RelationshipSelector {
         source: source.to_string(),
         by,
     })
@@ -922,28 +922,19 @@ impl OpDto {
     }
 }
 
-/// Decompose a `Selector::Rel` into wire fields for compatibility conversion.
+/// Decompose a relationship selector into wire fields for compatibility conversion.
 #[allow(dead_code)]
-fn sel_parts(sel: &Selector) -> (String, Option<String>, Option<String>, Option<String>) {
-    match sel {
-        Selector::Rel {
-            source,
-            by: RelBy::Endpoint { kind, target },
-        } => (
-            source.clone(),
+fn sel_parts(
+    sel: &uml::RelationshipSelector,
+) -> (String, Option<String>, Option<String>, Option<String>) {
+    match &sel.by {
+        RelBy::Endpoint { kind, target } => (
+            sel.source.clone(),
             Some(kind.as_str().to_string()),
             Some(target.clone()),
             None,
         ),
-        Selector::Rel {
-            source,
-            by: RelBy::Named(n),
-        } => (source.clone(), None, None, Some(n.clone())),
-        // node/attr/value selectors never reach a rel op; render source-only as a defensive default
-        Selector::Node(s) => (s.clone(), None, None, None),
-        Selector::Attr { node, .. } | Selector::Value { node, .. } => {
-            (node.clone(), None, None, None)
-        }
+        RelBy::Named(name) => (sel.source.clone(), None, None, Some(name.clone())),
     }
 }
 

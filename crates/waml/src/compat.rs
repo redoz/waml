@@ -92,11 +92,23 @@ impl TryFrom<crate::ops::Op> for Step {
                 ends,
                 name,
             } => Step::Uml(uml::Op::RelationshipSet {
-                selector,
+                selector: uml::RelationshipSelector::try_from(selector).map_err(|_| {
+                    EditError::at(
+                        "rel.set",
+                        "relationship operation requires a relationship selector",
+                    )
+                })?,
                 ends,
                 name,
             }),
-            Legacy::RelRm { selector } => Step::Uml(uml::Op::RelationshipRemove { selector }),
+            Legacy::RelRm { selector } => Step::Uml(uml::Op::RelationshipRemove {
+                selector: uml::RelationshipSelector::try_from(selector).map_err(|_| {
+                    EditError::at(
+                        "rel.rm",
+                        "relationship operation requires a relationship selector",
+                    )
+                })?,
+            }),
             Legacy::NodeNew {
                 slug,
                 dir,

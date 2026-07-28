@@ -6,7 +6,7 @@ pub(crate) mod rename;
 pub mod selector;
 pub use crate::ops::{DiagramDisplaySet, FieldEdit, NameSpec};
 pub use ops::{Batch, Op};
-pub use selector::Selector;
+pub use selector::{RelationshipSelector, Selector};
 
 pub type Projection = crate::model::Model;
 

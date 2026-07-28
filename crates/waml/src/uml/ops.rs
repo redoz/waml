@@ -1,4 +1,4 @@
-use super::{DiagramDisplaySet, FieldEdit, NameSpec, Selector};
+use super::{DiagramDisplaySet, FieldEdit, NameSpec, RelationshipSelector, Selector};
 use crate::edit::{EditBatch, EditContext, EditError};
 use crate::model::{ElementType, RelEnd, RelationshipKind, Visibility};
 use crate::multiplicity::Multiplicity;
@@ -43,12 +43,12 @@ pub enum Op {
         ends: Option<(RelEnd, RelEnd)>,
     },
     RelationshipSet {
-        selector: Selector,
+        selector: RelationshipSelector,
         ends: Option<(RelEnd, RelEnd)>,
         name: Option<NameSpec>,
     },
     RelationshipRemove {
-        selector: Selector,
+        selector: RelationshipSelector,
     },
     ClassifierNew {
         slug: String,
@@ -189,8 +189,14 @@ pub(crate) fn lower_one(work: &mut SourceBundle, op: &Op) -> Result<(), EditErro
             selector,
             ends,
             name,
-        } => super::lower::op_rel_set(work, selector, ends, name),
-        Op::RelationshipRemove { selector } => super::lower::op_rel_rm(work, selector),
+        } => {
+            let selector = Selector::from(selector.clone());
+            super::lower::op_rel_set(work, &selector, ends, name)
+        }
+        Op::RelationshipRemove { selector } => {
+            let selector = Selector::from(selector.clone());
+            super::lower::op_rel_rm(work, &selector)
+        }
         Op::ClassifierNew {
             slug,
             directory,

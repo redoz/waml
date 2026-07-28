@@ -60,6 +60,18 @@ impl Workspace {
     /// Per-file LSP diagnostics for the whole bundle. Non-WAML files get an
     /// empty vec (so the client clears any stale squiggles).
     pub fn diagnostics(&self) -> Vec<(String, Vec<lsp::Diagnostic>)> {
+        fn external_key(path: &str) -> String {
+            let suffix = path
+                .replace('\\', "/")
+                .trim_start_matches('/')
+                .split('/')
+                .filter(|segment| !segment.is_empty() && *segment != "." && *segment != "..")
+                .map(|segment| segment.replace(':', "_"))
+                .collect::<Vec<_>>()
+                .join("/");
+            format!("__external__/{suffix}")
+        }
+
         let entries: Vec<(String, String, String)> = self
             .docs
             .iter()
@@ -74,12 +86,7 @@ impl Workspace {
                             .ok()
                             .map(|path| path.to_string())
                     })
-                    .or_else(|| {
-                        Path::new(physical)
-                            .file_name()
-                            .map(|name| name.to_string_lossy().into_owned())
-                    })
-                    .unwrap_or_else(|| physical.clone());
+                    .unwrap_or_else(|| external_key(physical));
                 (physical.clone(), logical, text.clone())
             })
             .collect();
@@ -89,10 +96,24 @@ impl Workspace {
                 .map(|(_, logical, text)| (logical.clone(), text.clone())),
         ) {
             Ok(source) => source,
-            Err(_) => {
+            Err(error) => {
                 return entries
                     .into_iter()
-                    .map(|(physical, _, _)| (physical, Vec::new()))
+                    .map(|(physical, _, _)| {
+                        (
+                            physical,
+                            vec![lsp::Diagnostic {
+                                range: lsp::Range::default(),
+                                severity: Some(lsp::DiagnosticSeverity::ERROR),
+                                code: Some(lsp::NumberOrString::String(
+                                    "invalid-source-bundle".into(),
+                                )),
+                                source: Some("waml".into()),
+                                message: error.to_string(),
+                                ..Default::default()
+                            }],
+                        )
+                    })
                     .collect();
             }
         };
@@ -165,6 +186,25 @@ mod tests {
                 Some(lsp::NumberOrString::String(code)) if code == "unknown-type"
             )));
         }
+    }
+
+    #[test]
+    fn rootless_files_with_same_basename_keep_unique_validated_keys() {
+        let mut ws = Workspace::new();
+        for path in ["C:/one/order.md", "C:/two/order.md"] {
+            ws.overlay(
+                path.into(),
+                "---\ntype: uml.Class\n---\n# Order\n\n## Attributes\n- broken\n".into(),
+            );
+        }
+        let diagnostics = ws.diagnostics();
+        assert_eq!(diagnostics.len(), 2);
+        assert!(diagnostics
+            .iter()
+            .all(|(_, items)| items.iter().any(|item| matches!(
+                &item.code,
+                Some(lsp::NumberOrString::String(code)) if code == "malformed-attribute"
+            ))));
     }
 
     #[test]

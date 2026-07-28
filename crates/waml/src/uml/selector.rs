@@ -33,6 +33,32 @@ pub enum RelBy {
     },
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RelationshipSelector {
+    pub source: String,
+    pub by: RelBy,
+}
+
+impl TryFrom<Selector> for RelationshipSelector {
+    type Error = Selector;
+
+    fn try_from(selector: Selector) -> Result<Self, Self::Error> {
+        match selector {
+            Selector::Rel { source, by } => Ok(RelationshipSelector { source, by }),
+            other => Err(other),
+        }
+    }
+}
+
+impl From<RelationshipSelector> for Selector {
+    fn from(selector: RelationshipSelector) -> Self {
+        Selector::Rel {
+            source: selector.source,
+            by: selector.by,
+        }
+    }
+}
+
 // Leading `[Title](./slug.md)` anchor link, capturing the slug; then an
 // optional tail describing what's addressed relative to that node.
 static SEL_RE: LazyLock<Regex> =
