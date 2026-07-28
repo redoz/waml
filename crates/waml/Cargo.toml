@@ -12,6 +12,7 @@ pulldown-cmark.workspace = true
 miniz_oxide.workspace = true
 ttf-parser.workspace = true
 serde = { workspace = true, optional = true }
+waml-syntax = { path = "../waml-syntax" }
 
 [features]
 default = []

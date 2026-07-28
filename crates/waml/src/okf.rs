@@ -19,6 +19,7 @@ use crate::source::{SourceBundle, SourceDocument, SourceSlice};
 
 pub(crate) mod lower;
 pub mod ops;
+pub(crate) mod shell;
 pub use ops::{Batch, Op};
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -270,7 +271,7 @@ pub struct Bundle {
 
 impl Bundle {
     pub fn parse(source: &SourceBundle) -> Result<Self, BundleError> {
-        parse_bundle(source)
+        shell::derive(source)
     }
 
     pub fn concept(&self, id: &str) -> Option<&Concept> {
@@ -614,7 +615,7 @@ fn default_member_order(directory: &Directory, concepts: &[Concept]) -> Vec<Stri
     members.into_iter().map(|(_, id)| id).collect()
 }
 
-fn parse_bundle(source: &SourceBundle) -> Result<Bundle, BundleError> {
+pub(crate) fn parse_bundle(source: &SourceBundle) -> Result<Bundle, BundleError> {
     let mut addresses = BTreeSet::from([DirectoryAddress("/".into())]);
     for document in source.documents() {
         let mut address = DirectoryAddress::from_source_path(document.path().as_str());

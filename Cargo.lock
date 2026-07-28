@@ -2572,6 +2572,7 @@ dependencies = [
  "serde",
  "serde_json",
  "ttf-parser 0.25.1",
+ "waml-syntax",
 ]
 
 [[package]]

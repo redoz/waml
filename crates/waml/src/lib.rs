@@ -1,6 +1,7 @@
 //! Core library for WAML: a UML-profile authoring format layered on CommonMark.
 
 pub mod adornment;
+pub mod analysis;
 pub mod diagnostic;
 pub mod edit;
 pub mod frontmatter;
