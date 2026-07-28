@@ -319,6 +319,26 @@ impl RelationshipEndSyntax {
     }
 }
 impl InlineInstanceSyntax {
+    pub fn name_token(&self) -> Option<SyntaxToken<UmlLanguage>> {
+        let mut after_as = false;
+        for child in self.0.children() {
+            if child.kind() == UmlSyntaxKind::AsToken {
+                after_as = true;
+                continue;
+            }
+            if after_as && child.kind() == UmlSyntaxKind::IdentifierToken {
+                return child.into_token();
+            }
+        }
+        None
+    }
+    pub fn slots(&self) -> impl Iterator<Item = SlotSyntax> + '_ {
+        self.0
+            .children()
+            .filter(|e| e.kind() == UmlSyntaxKind::InlineSlot)
+            .filter_map(|e| e.into_node())
+            .map(SlotSyntax)
+    }
     pub fn classifier_token(&self) -> Option<SyntaxToken<UmlLanguage>> {
         self.link()?
             .children()
@@ -330,11 +350,7 @@ impl MemberGroupSyntax {
     pub fn heading_token(&self) -> Option<SyntaxToken<UmlLanguage>> {
         self.0
             .children()
-            .find_map(SyntaxElement::into_node)
-            .and_then(|n| {
-                n.children()
-                    .find(|e| e.kind() == UmlSyntaxKind::RawMarkdownToken)
-                    .and_then(SyntaxElement::into_token)
-            })
+            .find(|e| e.kind() == UmlSyntaxKind::IdentifierToken)
+            .and_then(|e| e.into_token())
     }
 }

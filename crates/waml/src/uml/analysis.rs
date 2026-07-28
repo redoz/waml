@@ -430,10 +430,62 @@ fn declared_inline_instance(node: SyntaxNode<UmlLanguage>) -> crate::uml::Declar
             syntax: node.clone(),
             expected: crate::uml::ExpectedSyntax::LinkTarget,
         });
+    let slots = syntax
+        .slots()
+        .map(|slot| {
+            let slot_node = slot.0.clone();
+            let name = slot
+                .0
+                .children()
+                .find(|e| e.kind() == super::syntax::UmlSyntaxKind::IdentifierToken)
+                .and_then(|e| e.into_token())
+                .map(|t| valid(slot_node.clone(), t.text().write_to_string()))
+                .unwrap_or_else(|| crate::uml::DeclaredField::Incomplete {
+                    syntax: slot_node.clone(),
+                    expected: crate::uml::ExpectedSyntax::LinkTarget,
+                });
+            let value = slot
+                .0
+                .children()
+                .filter(|e| {
+                    matches!(
+                        e.kind(),
+                        super::syntax::UmlSyntaxKind::IdentifierToken
+                            | super::syntax::UmlSyntaxKind::TypeToken
+                            | super::syntax::UmlSyntaxKind::Link
+                    )
+                })
+                .last()
+                .and_then(|e| match e {
+                    SyntaxElement::Token(t) => Some(t.text().write_to_string()),
+                    SyntaxElement::Node(n) => n
+                        .children()
+                        .find(|x| x.kind() == super::syntax::UmlSyntaxKind::LinkTargetToken)
+                        .and_then(|x| x.into_token())
+                        .map(|t| t.text().write_to_string()),
+                })
+                .map(|value| valid(slot_node.clone(), value))
+                .unwrap_or_else(|| crate::uml::DeclaredField::Incomplete {
+                    syntax: slot_node.clone(),
+                    expected: crate::uml::ExpectedSyntax::LinkTarget,
+                });
+            crate::uml::DeclaredSlot {
+                syntax: super::syntax::SlotSyntax(slot_node),
+                name,
+                value,
+            }
+        })
+        .collect::<Vec<_>>()
+        .into();
+    let name = syntax
+        .name_token()
+        .map(|t| valid(node.clone(), t.text().write_to_string()))
+        .unwrap_or_else(|| invalid(node.clone()));
     crate::uml::DeclaredInlineInstance {
         syntax,
         classifier,
-        name: invalid(node),
+        name,
+        slots,
     }
 }
 

@@ -311,3 +311,46 @@ fn relationship_recovery_keeps_required_slots_and_progresses_to_next_item() {
     ));
     assert!(!analysis.diagnostics.is_empty());
 }
+
+#[test]
+fn member_groups_and_inline_instances_have_fixed_indented_slots() {
+    let authored = "---\r\ntype: uml.Class\r\n---\r\n# Café\r\n\r\n## Members\r\n### People\r\n- [Customer](./customer.md)\r\n    - instance of [Customer](./customer.md) as primary with state set to \"open\" and owner set to [Owner](./owner.md)\r\n#### VIP\r\n- [Owner](./owner.md)\r\n- [Broken](./broken.md) stray\r\n- [Last](./last.md)\r\n";
+    let source = SourceBundle::try_from_pairs([
+        ("cafe.md", authored),
+        ("customer.md", "---\ntype: uml.Class\n---\n# Customer\n"),
+        ("owner.md", "---\ntype: uml.Class\n---\n# Owner\n"),
+        ("last.md", "---\ntype: uml.Class\n---\n# Last\n"),
+    ])
+    .unwrap();
+    let analysis = analyze(&source);
+    let concept = analysis.declared.concept("cafe").unwrap();
+    assert_eq!(
+        concept.members.len(),
+        4,
+        "bad member recovery cannot swallow Last"
+    );
+    assert_eq!(concept.inline_instances.len(), 1);
+    let inline = &concept.inline_instances[0];
+    assert_eq!(
+        inline.syntax.name_token().unwrap().text().write_to_string(),
+        "primary"
+    );
+    assert_eq!(inline.slots.len(), 2);
+    assert!(
+        matches!(inline.slots[0].value, uml::DeclaredField::Valid { ref value, .. } if value == "\"open\"")
+    );
+    let id = analysis
+        .syntax
+        .catalog()
+        .id_for_path(&waml::source::BundlePath::parse("cafe.md").unwrap())
+        .unwrap();
+    assert_eq!(
+        analysis
+            .syntax
+            .document(id)
+            .unwrap()
+            .syntax()
+            .write_to_string(),
+        authored
+    );
+}

@@ -35,7 +35,7 @@ pub fn parse(text: SourceText, structure: &MarkdownStructureMap) -> Arc<SyntaxTr
                     factory
                         .node(
                             UmlSyntaxKind::MemberGroup,
-                            [raw(&factory, &text, line_start, line_end)],
+                            [member_group(&factory, &text, source, line_start, line_end)],
                         )
                         .unwrap(),
                 ));
@@ -87,6 +87,65 @@ pub fn parse(text: SourceText, structure: &MarkdownStructureMap) -> Arc<SyntaxTr
     ));
     let root = factory.node(UmlSyntaxKind::Root, children).unwrap();
     Arc::new(SyntaxTree::new(root, diagnostics.into(), structure.dialect))
+}
+
+fn member_group(
+    f: &GreenFactory<UmlLanguage>,
+    text: &SourceText,
+    source: &str,
+    start: usize,
+    end: usize,
+) -> GreenElement<UmlLanguage> {
+    let line_end = source[start..end]
+        .find('\n')
+        .map(|n| start + n)
+        .unwrap_or(end);
+    let markers = source[start..line_end]
+        .as_bytes()
+        .iter()
+        .take_while(|c| **c == b'#')
+        .count();
+    let name_start = skip_ws(source, start + markers, line_end);
+    let name_end = source[start..line_end]
+        .trim_end_matches(['\r', ' ', '\t'])
+        .len()
+        + start;
+    GreenElement::Node(
+        f.node(
+            UmlSyntaxKind::MemberGroup,
+            [
+                token(
+                    f,
+                    text,
+                    start,
+                    start,
+                    start + markers,
+                    UmlSyntaxKind::HeadingMarkerToken,
+                ),
+                token(
+                    f,
+                    text,
+                    start + markers,
+                    name_start,
+                    name_end,
+                    UmlSyntaxKind::IdentifierToken,
+                ),
+                if line_end < end {
+                    token(
+                        f,
+                        text,
+                        name_end,
+                        name_end,
+                        end,
+                        UmlSyntaxKind::NewlineToken,
+                    )
+                } else {
+                    GreenElement::Token(f.missing_token(UmlSyntaxKind::NewlineToken))
+                },
+            ],
+        )
+        .unwrap(),
+    )
 }
 
 fn section_kind(source: &str, range: TextRange) -> Option<UmlSyntaxKind> {
@@ -160,6 +219,18 @@ fn simple_item(
             diags,
         ));
     }
+    if kind == UmlSyntaxKind::InlineInstance {
+        return Some(inline_instance(
+            f,
+            text,
+            source,
+            start,
+            end,
+            lead,
+            content_end,
+            diags,
+        ));
+    }
     let mut children = vec![token(
         f,
         text,
@@ -212,6 +283,224 @@ fn simple_item(
         ));
     }
     Some(f.node(kind, children).unwrap())
+}
+
+fn inline_instance(
+    f: &GreenFactory<UmlLanguage>,
+    text: &SourceText,
+    source: &str,
+    start: usize,
+    end: usize,
+    lead: usize,
+    content_end: usize,
+    diags: &mut Vec<TreeDiagnostic<UmlSyntaxDiagnosticCode>>,
+) -> waml_syntax::GreenNode<UmlLanguage> {
+    let mut c = vec![token(
+        f,
+        text,
+        start,
+        lead,
+        lead + 1,
+        UmlSyntaxKind::BulletToken,
+    )];
+    let mut p = skip_ws(source, lead + 1, content_end);
+    let mut keyword_leading = lead + 1;
+    for word in ["instance", "of"] {
+        let q = p + word.len();
+        if source[p..content_end].starts_with(word) {
+            c.push(token(
+                f,
+                text,
+                keyword_leading,
+                p,
+                q,
+                UmlSyntaxKind::FlowKeywordToken,
+            ));
+            keyword_leading = q;
+            p = skip_ws(source, q, content_end);
+        } else {
+            c.push(missing_token(
+                f,
+                text,
+                p,
+                p,
+                UmlSyntaxKind::FlowKeywordToken,
+            ));
+            diags.push(diag(
+                UmlSyntaxDiagnosticCode::UnexpectedToken,
+                p,
+                p,
+                "missing inline instance keyword",
+            ));
+        }
+    }
+    let (classifier, q) =
+        relationship_link(f, text, source, p, content_end, keyword_leading, diags);
+    c.push(classifier);
+    p = skip_ws(source, q, content_end);
+    if source[p..content_end].starts_with("as") {
+        let as_end = p + 2;
+        c.push(token(f, text, q, p, as_end, UmlSyntaxKind::AsToken));
+        keyword_leading = as_end;
+        p = skip_ws(source, as_end, content_end);
+    } else {
+        c.push(GreenElement::Token(f.missing_token(UmlSyntaxKind::AsToken)));
+        diags.push(diag(
+            UmlSyntaxDiagnosticCode::UnexpectedToken,
+            p,
+            p,
+            "missing 'as' in inline instance",
+        ));
+    }
+    let name_leading = keyword_leading;
+    let name_end = scan_name(source, p, content_end);
+    c.push(if p == name_end {
+        missing_token(f, text, name_leading, p, UmlSyntaxKind::IdentifierToken)
+    } else {
+        token(
+            f,
+            text,
+            name_leading,
+            p,
+            name_end,
+            UmlSyntaxKind::IdentifierToken,
+        )
+    });
+    p = name_end;
+    let before_with = p;
+    p = skip_ws(source, p, content_end);
+    if source[p..content_end].starts_with("with") {
+        c.push(token(
+            f,
+            text,
+            before_with,
+            p,
+            p + 4,
+            UmlSyntaxKind::WithToken,
+        ));
+        keyword_leading = p + 4;
+        p = skip_ws(source, p + 4, content_end);
+    }
+    while p < content_end {
+        let name_start = p;
+        let name_end = scan_name(source, p, content_end);
+        if name_start == name_end {
+            break;
+        }
+        let mut slot = vec![token(
+            f,
+            text,
+            keyword_leading,
+            name_start,
+            name_end,
+            UmlSyntaxKind::IdentifierToken,
+        )];
+        p = skip_ws(source, name_end, content_end);
+        if source[p..content_end].starts_with("set to") {
+            slot.push(token(
+                f,
+                text,
+                name_end,
+                p,
+                p + 6,
+                UmlSyntaxKind::SetToToken,
+            ));
+            keyword_leading = p + 6;
+            p = skip_ws(source, p + 6, content_end);
+        } else {
+            slot.push(GreenElement::Token(
+                f.missing_token(UmlSyntaxKind::SetToToken),
+            ));
+            diags.push(diag(
+                UmlSyntaxDiagnosticCode::UnexpectedToken,
+                p,
+                p,
+                "missing 'set to' in inline slot",
+            ));
+        }
+        let value_start = p;
+        if p < content_end && source.as_bytes()[p] == b'"' {
+            let q = source[p + 1..content_end]
+                .find('"')
+                .map(|n| p + n + 2)
+                .unwrap_or(content_end);
+            slot.push(token(
+                f,
+                text,
+                keyword_leading,
+                p,
+                q,
+                UmlSyntaxKind::TypeToken,
+            ));
+            p = q;
+        } else if p < content_end && source.as_bytes()[p] == b'[' {
+            let (link, q) =
+                relationship_link(f, text, source, p, content_end, keyword_leading, diags);
+            slot.push(link);
+            p = q;
+        } else {
+            let q = scan_name(source, p, content_end);
+            slot.push(if p == q {
+                missing_token(f, text, keyword_leading, p, UmlSyntaxKind::IdentifierToken)
+            } else {
+                token(
+                    f,
+                    text,
+                    keyword_leading,
+                    p,
+                    q,
+                    UmlSyntaxKind::IdentifierToken,
+                )
+            });
+            p = q;
+        }
+        c.push(GreenElement::Node(
+            f.node(UmlSyntaxKind::InlineSlot, slot).unwrap(),
+        ));
+        let join_leading = p;
+        p = skip_ws(source, p, content_end);
+        if source[p..content_end].starts_with("and") {
+            c.push(token(
+                f,
+                text,
+                join_leading,
+                p,
+                p + 3,
+                UmlSyntaxKind::IdentifierToken,
+            ));
+            keyword_leading = p + 3;
+            p = skip_ws(source, p + 3, content_end);
+        } else {
+            break;
+        }
+    }
+    if p < content_end {
+        c.push(GreenElement::Node(
+            f.node(
+                UmlSyntaxKind::SkippedTokensSyntax,
+                [GreenElement::Token(
+                    f.bad_token(
+                        UmlSyntaxKind::BadToken,
+                        slice(text, p, content_end),
+                        UmlSyntaxDiagnosticCode::UnexpectedToken,
+                    )
+                    .unwrap(),
+                )],
+            )
+            .unwrap(),
+        ));
+    }
+    if content_end < end {
+        c.push(token(
+            f,
+            text,
+            content_end,
+            content_end,
+            end,
+            UmlSyntaxKind::NewlineToken,
+        ));
+    }
+    f.node(UmlSyntaxKind::InlineInstance, c).unwrap()
 }
 
 fn relationship(

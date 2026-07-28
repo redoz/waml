@@ -66,6 +66,7 @@ pub struct DeclaredInlineInstance {
     pub syntax: InlineInstanceSyntax,
     pub classifier: DeclaredField<UmlLanguage, String>,
     pub name: DeclaredField<UmlLanguage, String>,
+    pub slots: Arc<[DeclaredSlot]>,
 }
 pub struct DeclaredConcept {
     pub concept_id: String,
