@@ -1,0 +1,19 @@
+{
+  "method": "parser-platform-post-okf",
+  "enforcement": "report-only",
+  "fixtures": [
+    "generic.md", "unknown-uml.md", "index.md", "log.md", "class.md", "enum.md",
+    "object.md", "diagram.md", "activity.md", "state-machine.md", "sequence.md", "malformed-crlf-unicode.md"
+  ],
+  "corpus_identity": {
+    "algorithm": "fnv1a-64",
+    "offset_basis": "cbf29ce484222325",
+    "prime": "00000100000001b3",
+    "path_separator": "00",
+    "source_separator": "ff"
+  },
+  "warmup_runs": 5,
+  "sample_runs": 30,
+  "measurement_fields": ["parse_nanoseconds_median", "parse_nanoseconds_p95", "parse_nanoseconds_mad", "peak_live_bytes", "allocated_bytes", "allocation_count"],
+  "hardware_fingerprint_fields": ["os", "arch", "rustc", "cpu_count"]
+}

@@ -3,6 +3,67 @@ use waml::serialize::serialize_document;
 
 const FIXTURE: &str = include_str!("fixtures/orders-domain.md");
 
+const PARSER_PLATFORM_FIXTURES: &[(&str, &str)] = &[
+    ("generic.md", include_str!("fixtures/parser-platform/generic.md")),
+    ("unknown-uml.md", include_str!("fixtures/parser-platform/unknown-uml.md")),
+    ("index.md", include_str!("fixtures/parser-platform/index.md")),
+    ("log.md", include_str!("fixtures/parser-platform/log.md")),
+    ("class.md", include_str!("fixtures/parser-platform/class.md")),
+    ("enum.md", include_str!("fixtures/parser-platform/enum.md")),
+    ("object.md", include_str!("fixtures/parser-platform/object.md")),
+    ("diagram.md", include_str!("fixtures/parser-platform/diagram.md")),
+    ("activity.md", include_str!("fixtures/parser-platform/activity.md")),
+    ("state-machine.md", include_str!("fixtures/parser-platform/state-machine.md")),
+    ("sequence.md", include_str!("fixtures/parser-platform/sequence.md")),
+    ("malformed-crlf-unicode.md", include_str!("fixtures/parser-platform/malformed-crlf-unicode.md")),
+];
+
+#[test]
+fn parser_platform_baseline_keeps_every_fixture_serializable() {
+    for (path, source) in PARSER_PLATFORM_FIXTURES {
+        let once = serialize_document(&parse_document(source));
+        let twice = serialize_document(&parse_document(&once));
+        assert_eq!(once, twice, "{path}: serialize fixpoint");
+    }
+}
+
+#[test]
+fn parser_platform_baseline_keeps_okf_membership_and_selective_uml_claims() {
+    use waml::source::SourceBundle;
+
+    let source = SourceBundle::try_from_pairs(
+        PARSER_PLATFORM_FIXTURES
+            .iter()
+            .map(|(path, text)| (*path, *text)),
+    )
+    .unwrap();
+    let okf = waml::okf::Bundle::parse(&source).unwrap();
+    let projection = waml::uml::project(&okf);
+
+    assert_eq!(okf.concepts().len(), 10, "index and log are reserved");
+    assert!(okf.index("/").unwrap().authored);
+    assert!(okf.log("/").is_some());
+    assert!(okf.concept("generic").is_some());
+    assert!(okf.concept("unknown-uml").is_some());
+    assert!(projection.contains_concept("class"));
+    assert!(projection.contains_concept("enum"));
+    assert!(!projection.contains_concept("object"));
+    assert!(!projection.contains_concept("generic"));
+    assert!(!projection.contains_concept("unknown-uml"));
+    assert_eq!(projection.diagrams.len(), 1);
+
+    let diagnostics = waml::validate::validate(&source.to_pairs());
+    assert!(diagnostics.iter().any(|diagnostic| {
+        (diagnostic.code.as_str(), diagnostic.severity, diagnostic.file.as_str(), diagnostic.line)
+            == ("unknown-type", waml::diagnostic::Severity::Warning, "unknown-uml.md", 2)
+    }));
+    assert!(diagnostics.iter().any(|diagnostic| {
+        diagnostic.code.as_str() == "frontmatter-not-clean"
+            && diagnostic.file == "malformed-crlf-unicode.md"
+            && diagnostic.line == 1
+    }));
+}
+
 #[test]
 fn orders_domain_builds_the_expected_model() {
     let bundle = split_bundle(FIXTURE);
