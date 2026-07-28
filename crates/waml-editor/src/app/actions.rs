@@ -242,25 +242,16 @@ impl App {
                 let key = self.node_menu_key.clone().unwrap_or_default();
                 match command {
                     crate::popup::node_menu::NodeMenuCommand::ViewSource => {
-                        if let Some(node) = self
-                            .session
-                            .model()
-                            .nodes
-                            .iter()
-                            .find(|node| node.key == key)
+                        if let Some(document) =
+                            crate::okf_documents::open_source(self.session.okf(), &key)
                         {
-                            let title = node
-                                .concept
-                                .title
-                                .clone()
-                                .unwrap_or_else(|| node.key.clone());
                             self.documents.transition(
                                 cx,
                                 &self.ui,
                                 &self.session,
-                                DocumentCommand::OpenSource {
-                                    key: key.clone(),
-                                    title,
+                                DocumentCommand::Open {
+                                    document,
+                                    persistent: false,
                                 },
                             );
                             self.sync_document_shell(cx);
@@ -342,7 +333,7 @@ impl App {
                 let diagram = self
                     .documents
                     .active_tab()
-                    .map(|tab| tab.key.clone())
+                    .map(|tab| tab.concept_id.clone())
                     .unwrap_or_default();
                 if let Some(op) = place_rm_for(&diagram, &action) {
                     if self
@@ -388,7 +379,7 @@ impl App {
         };
 
         self.nav_scope_ids.clear();
-        let items = crate::nav::packages(self.session.model())
+        let items = crate::nav::packages(self.session.okf(), self.session.uml_projection())
             .into_iter()
             .map(|row| {
                 let id = LiveId::from_str(&format!("scope:{}", row.key));
@@ -509,16 +500,7 @@ impl App {
             return ActionFlow::Continue;
         };
 
-        let node_kind = self
-            .session
-            .model()
-            .nodes
-            .iter()
-            .find(|node| node.key == key)
-            .map(|node| crate::tree::kind_of(&node.ty));
-        if let Some(node_kind) = node_kind {
-            self.transition_document(cx, &key, node_kind, false);
-        }
+        self.transition_document(cx, &key, false);
         self.node_menu_key = Some(key);
         let bounds = self.window_bounds(cx);
         if let Some(mut popup) = self
@@ -552,10 +534,10 @@ impl App {
             .widget(cx, ids!(project_tree))
             .borrow_mut::<crate::tree_panel::ProjectTree>()
             .and_then(|panel| panel.open_document(actions));
-        let Some((key, node_kind, persistent)) = document else {
+        let Some((concept_id, persistent)) = document else {
             return ActionFlow::Continue;
         };
-        self.transition_document(cx, &key, node_kind, persistent);
+        self.transition_document(cx, &concept_id, persistent);
         ActionFlow::Consumed
     }
 
@@ -582,17 +564,17 @@ impl App {
         let current = self
             .documents
             .active_tab()
-            .filter(|tab| tab.kind == TabKind::Diagram)
+            .filter(|tab| tab.presentation.category == NavCategory::Diagram)
             .or_else(|| {
                 self.documents
                     .tabs()
                     .iter()
-                    .find(|tab| tab.kind == TabKind::Diagram)
+                    .find(|tab| tab.presentation.category == NavCategory::Diagram)
             })
-            .map(|tab| tab.key.clone())
+            .map(|tab| tab.concept_id.clone())
             .unwrap_or_default();
         if let Some(next) = crate::diagram_switcher::next_diagram_key(&keys, &current) {
-            self.transition_document(cx, &next, crate::tree::TreeKind::Diagram, false);
+            self.transition_document(cx, &next, false);
         }
         ActionFlow::Consumed
     }
@@ -846,7 +828,10 @@ impl App {
                     self.sync_document_shell(cx);
                 }
                 if change.navigation_changed {
-                    self.nav_kinds = crate::nav::kinds_in_model(self.session.model());
+                    self.nav_kinds = crate::nav::kinds_in_model(
+                        self.session.okf(),
+                        self.session.uml_projection(),
+                    );
                     self.refresh_nav(cx, false);
                 }
                 if change.conflicts_changed {

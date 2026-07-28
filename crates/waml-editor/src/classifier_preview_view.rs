@@ -2,20 +2,20 @@
 //! without-picker, no tool dock). Real behavior lands in Task 4.
 
 use crate::doc_view::{BodyChrome, BodyWidgets, DocView, ViewData, ViewOutcome};
+use crate::document::NavCategory;
 use crate::icons::Icon;
 use crate::inspector::Subject;
 use crate::scene::build_focus_scene;
-use crate::tree::TreeKind;
 use makepad_widgets::*;
 
 pub struct ClassifierPreviewView {
     key: String,
-    node_kind: TreeKind,
+    category: NavCategory,
 }
 
 impl ClassifierPreviewView {
-    pub fn new(key: String, node_kind: TreeKind) -> ClassifierPreviewView {
-        ClassifierPreviewView { key, node_kind }
+    pub fn new(key: String, category: NavCategory) -> ClassifierPreviewView {
+        ClassifierPreviewView { key, category }
     }
 }
 
@@ -135,6 +135,6 @@ impl DocView for ClassifierPreviewView {
     }
 
     fn tab_accent(&self) -> Option<Vec4> {
-        crate::accent::tree_kind_color(self.node_kind)
+        crate::accent::tree_kind_color(self.category)
     }
 }

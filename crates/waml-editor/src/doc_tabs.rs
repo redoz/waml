@@ -6,8 +6,8 @@
 //! tracked positions, click regions captured during `draw_walk` and hit-tested
 //! against on `FingerUp`).
 
+use crate::document::DocumentPresentation;
 use crate::icons::IconSet;
-use crate::tree::TreeKind;
 use makepad_widgets::*;
 use std::ops::Range;
 
@@ -131,23 +131,12 @@ script_mod! {
     }
 }
 
-/// What a tab points at.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum TabKind {
-    Diagram,
-    Classifier,
-    Source,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct DocTab {
     pub id: LiveId,
-    pub key: String,
+    pub concept_id: String,
     pub title: String,
-    pub kind: TabKind,
-    /// The node's tree kind, used to pick the leading glyph (same icon set as
-    /// the project tree).
-    pub node_kind: TreeKind,
+    pub presentation: DocumentPresentation,
     /// A preview tab is replaced in place by the next document click; an
     /// inline-edit commit "pins" it (`promote`), after which it behaves like
     /// any other persisted tab.
@@ -156,7 +145,7 @@ pub struct DocTab {
 
 /// The open-tabs state. Classifiers, diagrams, and source tabs share one
 /// replaceable preview slot; promoting that slot makes it persistent.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct OpenTabs {
     pub tabs: Vec<DocTab>,
     pub active: LiveId,
@@ -175,9 +164,21 @@ impl Default for OpenTabs {
 
 impl OpenTabs {
     /// Seed with one active diagram preview.
+    #[cfg(test)]
     pub fn diagram_preview(key: impl Into<String>, title: impl Into<String>) -> OpenTabs {
         let mut tabs = OpenTabs::default();
-        tabs.open_preview(key, title, TreeKind::Diagram);
+        let key = key.into();
+        tabs.open_preview(DocTab {
+            id: crate::uml_documents::uml_document_tab_id(&key),
+            concept_id: key,
+            title: title.into(),
+            presentation: DocumentPresentation {
+                icon: crate::icons::Icon::Workflow,
+                accent: None,
+                category: crate::document::NavCategory::Diagram,
+            },
+            preview: true,
+        });
         tabs
     }
 
@@ -188,19 +189,8 @@ impl OpenTabs {
     /// A document single-click: replace the shared preview slot in place
     /// (never duplicates, never piles up), or append one if none exists yet.
     /// Always activates the resulting tab.
-    pub fn open_preview(
-        &mut self,
-        key: impl Into<String>,
-        title: impl Into<String>,
-        node_kind: TreeKind,
-    ) -> LiveId {
-        let key = key.into();
-        let title = title.into();
-        let (id, kind) = if node_kind == TreeKind::Diagram {
-            (diagram_tab_id(&key), TabKind::Diagram)
-        } else {
-            (classifier_tab_id(&key), TabKind::Classifier)
-        };
+    pub fn open_preview(&mut self, mut tab: DocTab) -> LiveId {
+        let id = tab.id;
         // Already open (preview or persisted): just focus it. Never duplicate --
         // document ids derive from their key, so a second tab would collide.
         if self.tabs.iter().any(|t| t.id == id) {
@@ -208,53 +198,12 @@ impl OpenTabs {
             return id;
         }
         if let Some(idx) = self.preview_index() {
-            self.tabs[idx] = DocTab {
-                id,
-                key,
-                title,
-                kind,
-                node_kind,
-                preview: true,
-            };
+            tab.preview = true;
+            self.tabs[idx] = tab;
         } else {
             // No preview slot: append at the end, after any persisted tabs
             // (matches editors that always open new tabs rightmost).
-            self.tabs.push(DocTab {
-                id,
-                key,
-                title,
-                kind,
-                node_kind,
-                preview: true,
-            });
-        }
-        self.active = id;
-        id
-    }
-
-    /// View Source: open (or focus) the single preview slot as a `Source` tab
-    /// for `key`. Mirrors `open_preview` -- never duplicates (id derives from
-    /// key), reuses the preview slot in place, always activates.
-    pub fn open_source(&mut self, key: impl Into<String>, title: impl Into<String>) -> LiveId {
-        let key = key.into();
-        let title = title.into();
-        let id = source_tab_id(&key);
-        if self.tabs.iter().any(|t| t.id == id) {
-            self.active = id;
-            return id;
-        }
-        let tab = DocTab {
-            id,
-            key,
-            title,
-            kind: TabKind::Source,
-            // No dedicated Source glyph; reuse the classifier glyph for the tab.
-            node_kind: TreeKind::Class,
-            preview: true,
-        };
-        if let Some(idx) = self.preview_index() {
-            self.tabs[idx] = tab;
-        } else {
+            tab.preview = true;
             self.tabs.push(tab);
         }
         self.active = id;
@@ -292,60 +241,9 @@ impl OpenTabs {
         }
     }
 
-    /// Refresh display titles from a rebuilt model while preserving stable tab
-    /// ids, ordering, preview state, and activation.
-    pub fn reconcile_titles(&mut self, model: &waml::model::Model) -> bool {
-        let mut changed = false;
-        for tab in &mut self.tabs {
-            let diagram_title = || {
-                model
-                    .diagrams
-                    .iter()
-                    .find(|diagram| diagram.key == tab.key)
-                    .map(|diagram| diagram.title.as_str())
-            };
-            let classifier_title = || {
-                model
-                    .nodes
-                    .iter()
-                    .find(|node| node.key == tab.key)
-                    .map(|node| node.concept.title.as_deref().unwrap_or(node.key.as_str()))
-            };
-            let title = match tab.kind {
-                TabKind::Diagram => diagram_title(),
-                TabKind::Classifier => classifier_title(),
-                TabKind::Source => diagram_title().or_else(classifier_title),
-            };
-            if let Some(title) = title {
-                if tab.title != title {
-                    tab.title = title.to_string();
-                    changed = true;
-                }
-            }
-        }
-        changed
-    }
-
     pub fn active_tab(&self) -> Option<&DocTab> {
         self.tabs.iter().find(|t| t.id == self.active)
     }
-}
-
-/// Stable per-diagram tab identity.
-pub fn diagram_tab_id(key: &str) -> LiveId {
-    LiveId::from_str(&format!("__doc_tab_diagram__{key}"))
-}
-
-/// A classifier tab's id is derived from its key so re-previewing the same
-/// classifier reuses the same id.
-pub fn classifier_tab_id(key: &str) -> LiveId {
-    LiveId::from_str(&format!("__doc_tab_classifier__{key}"))
-}
-
-/// A source tab's id is derived from its key so re-opening the same element's
-/// source reuses the same tab (mirrors `classifier_tab_id`).
-pub fn source_tab_id(key: &str) -> LiveId {
-    LiveId::from_str(&format!("__doc_tab_source__{key}"))
 }
 
 // ---------------------------------------------------------------------------
@@ -891,19 +789,17 @@ impl Widget for DocTabs {
             // Leading per-kind glyph, vertically centered in the card. Pixel-
             // rounded like the tree rows so the SDF strokes land on whole device
             // pixels.
-            if let Some(icon) = IconSet::icon_for(tab.node_kind) {
-                let ix = (x + TEXT_PAD).round();
-                let iy = (tab_rect.pos.y + (tab_rect.size.y - ICON_SIZE) / 2.0).round();
-                self.icons.draw(
-                    cx,
-                    icon,
-                    Rect {
-                        pos: dvec2(ix, iy),
-                        size: dvec2(ICON_SIZE, ICON_SIZE),
-                    },
-                    self.icon_color,
-                );
-            }
+            let ix = (x + TEXT_PAD).round();
+            let iy = (tab_rect.pos.y + (tab_rect.size.y - ICON_SIZE) / 2.0).round();
+            self.icons.draw(
+                cx,
+                tab.presentation.icon,
+                Rect {
+                    pos: dvec2(ix, iy),
+                    size: dvec2(ICON_SIZE, ICON_SIZE),
+                },
+                self.icon_color,
+            );
 
             // True vertical centring off the measured line box, replacing the
             // old hand-fudged half-height offset: the card is now the full row
@@ -1073,12 +969,34 @@ impl DocTabs {
 
 #[cfg(test)]
 mod tests {
+    use crate::icons::Icon;
+    use crate::tree::TreeKind;
+
+    fn tab(key: &str, title: &str, category: TreeKind) -> DocTab {
+        DocTab {
+            id: crate::uml_documents::uml_document_tab_id(key),
+            concept_id: key.to_string(),
+            title: title.to_string(),
+            presentation: DocumentPresentation {
+                icon: IconSet::icon_for(category).unwrap_or(Icon::StickyNote),
+                accent: None,
+                category,
+            },
+            preview: true,
+        }
+    }
+
+    fn source_tab(key: &str, title: &str) -> DocTab {
+        let mut tab = tab(key, title, TreeKind::OkfDocument);
+        tab.id = crate::okf_documents::source_document_tab_id(key);
+        tab
+    }
     use super::*;
 
     #[test]
     fn narrow_range_contains_only_the_active_tab_or_nothing() {
         let mut open = OpenTabs::diagram_preview("d", "Diagram");
-        let active = open.open_preview("customer", "Customer", TreeKind::Class);
+        let active = open.open_preview(tab("customer", "Customer", TreeKind::Class));
         let range = visible_tab_range(&open.tabs, active, true);
         assert_eq!(&open.tabs[range], &open.tabs[0..1]);
         assert_eq!(visible_tab_range(&open.tabs, live_id!(missing), true), 0..0);
@@ -1087,14 +1005,8 @@ mod tests {
 
     #[test]
     fn narrow_body_requests_switcher_but_close_stays_close() {
-        let tab = DocTab {
-            id: live_id!(customer),
-            key: "customer".into(),
-            title: "Customer".into(),
-            kind: TabKind::Classifier,
-            node_kind: TreeKind::Class,
-            preview: true,
-        };
+        let mut tab = tab("customer", "Customer", TreeKind::Class);
+        tab.id = live_id!(customer);
         let rect = Rect {
             pos: dvec2(32.0, 34.0),
             size: dvec2(250.0, 32.0),
@@ -1132,34 +1044,17 @@ mod tests {
     fn initial_diagram_is_a_preview() {
         let open = OpenTabs::diagram_preview("orders", "Orders");
         assert_eq!(open.tabs.len(), 1);
-        assert_eq!(open.tabs[0].kind, TabKind::Diagram);
+        assert_eq!(open.tabs[0].presentation.category, TreeKind::Diagram);
         assert!(open.tabs[0].preview);
-    }
-
-    #[test]
-    fn reconciling_model_titles_renames_tabs_without_changing_identity() {
-        let mut open = OpenTabs::diagram_preview("orders", "Old orders");
-        let active = open.active;
-        let model = waml::parse::build_model(&[(
-            "orders.md".into(),
-            "---\ntype: Diagram\ntitle: New orders\nprofile: uml-domain\n---\n# New orders\n"
-                .into(),
-        )]);
-
-        assert!(open.reconcile_titles(&model));
-        assert_eq!(open.tabs[0].title, "New orders");
-        assert_eq!(open.tabs[0].id, active);
-        assert_eq!(open.active, active);
-        assert!(!open.reconcile_titles(&model));
     }
 
     #[test]
     fn diagram_and_classifier_share_the_preview_slot() {
         let mut open = OpenTabs::diagram_preview("orders", "Orders");
-        let customer = open.open_preview("customer", "Customer", TreeKind::Class);
+        let customer = open.open_preview(tab("customer", "Customer", TreeKind::Class));
         assert_eq!(open.tabs.len(), 1);
         assert_eq!(open.active, customer);
-        assert_eq!(open.tabs[0].kind, TabKind::Classifier);
+        assert_eq!(open.tabs[0].presentation.category, TreeKind::Class);
         assert!(open.tabs[0].preview);
     }
 
@@ -1168,14 +1063,14 @@ mod tests {
         let mut open = OpenTabs::diagram_preview("orders", "Orders");
         let orders = open.active;
         open.promote(orders);
-        let billing = open.open_preview("billing", "Billing", TreeKind::Diagram);
+        let billing = open.open_preview(tab("billing", "Billing", TreeKind::Diagram));
         open.promote(billing);
 
         assert_ne!(orders, billing);
         assert_eq!(open.tabs.len(), 2);
         assert!(open.tabs.iter().all(|tab| !tab.preview));
 
-        open.open_preview("orders", "Orders", TreeKind::Diagram);
+        open.open_preview(tab("orders", "Orders", TreeKind::Diagram));
         assert_eq!(open.active, orders);
         assert_eq!(open.tabs.len(), 2);
     }
@@ -1183,14 +1078,14 @@ mod tests {
     #[test]
     fn open_preview_twice_replaces_the_single_preview_slot() {
         let mut open = OpenTabs::diagram_preview("d", "Diagram");
-        open.open_preview("customer", "Customer", TreeKind::Class);
+        open.open_preview(tab("customer", "Customer", TreeKind::Class));
         assert_eq!(open.tabs.len(), 1);
         assert!(open.tabs[0].preview);
         assert_eq!(open.active, open.tabs[0].id);
 
-        open.open_preview("order", "Order", TreeKind::Class);
+        open.open_preview(tab("order", "Order", TreeKind::Class));
         assert_eq!(open.tabs.len(), 1);
-        assert_eq!(open.tabs[0].key, "order");
+        assert_eq!(open.tabs[0].concept_id, "order");
         assert!(open.tabs[0].preview);
         assert_eq!(open.active, open.tabs[0].id);
     }
@@ -1198,27 +1093,27 @@ mod tests {
     #[test]
     fn promote_then_open_preview_keeps_the_promoted_tab_and_adds_a_fresh_preview() {
         let mut open = OpenTabs::diagram_preview("d", "Diagram");
-        let customer_id = open.open_preview("customer", "Customer", TreeKind::Class);
+        let customer_id = open.open_preview(tab("customer", "Customer", TreeKind::Class));
         open.promote(customer_id);
-        open.open_preview("order", "Order", TreeKind::Class);
+        open.open_preview(tab("order", "Order", TreeKind::Class));
 
         assert_eq!(open.tabs.len(), 2);
-        assert_eq!(open.tabs[0].key, "customer");
+        assert_eq!(open.tabs[0].concept_id, "customer");
         assert!(!open.tabs[0].preview, "promoted tab stays persisted");
-        assert_eq!(open.tabs[1].key, "order");
+        assert_eq!(open.tabs[1].concept_id, "order");
         assert!(open.tabs[1].preview);
     }
 
     #[test]
     fn reopening_a_promoted_tab_focuses_it_instead_of_duplicating() {
         let mut open = OpenTabs::diagram_preview("d", "Diagram");
-        let id = open.open_preview("customer", "Customer", TreeKind::Class);
+        let id = open.open_preview(tab("customer", "Customer", TreeKind::Class));
         open.promote(id);
-        open.open_preview("order", "Order", TreeKind::Class);
+        open.open_preview(tab("order", "Order", TreeKind::Class));
 
         // Clicking the same node again must re-focus the existing tab, not
         // append a colliding second tab (same key -> same id).
-        let reopened = open.open_preview("customer", "Customer", TreeKind::Class);
+        let reopened = open.open_preview(tab("customer", "Customer", TreeKind::Class));
         assert_eq!(reopened, id);
         assert_eq!(open.tabs.len(), 2);
         assert!(
@@ -1231,7 +1126,7 @@ mod tests {
     #[test]
     fn promote_is_idempotent() {
         let mut open = OpenTabs::diagram_preview("d", "Diagram");
-        let id = open.open_preview("customer", "Customer", TreeKind::Class);
+        let id = open.open_preview(tab("customer", "Customer", TreeKind::Class));
         open.promote(id);
         open.promote(id);
         assert!(!open.tabs[0].preview);
@@ -1241,11 +1136,11 @@ mod tests {
     fn close_activates_right_adjacent_then_left_then_first_tab() {
         let mut open = OpenTabs::diagram_preview("d", "Diagram");
         open.promote(open.active);
-        let a = open.open_preview("a", "A", TreeKind::Class);
+        let a = open.open_preview(tab("a", "A", TreeKind::Class));
         open.promote(a);
-        let b = open.open_preview("b", "B", TreeKind::Class);
+        let b = open.open_preview(tab("b", "B", TreeKind::Class));
         open.promote(b);
-        let c = open.open_preview("c", "C", TreeKind::Class);
+        let c = open.open_preview(tab("c", "C", TreeKind::Class));
         open.promote(c);
         // tabs: [d, a, b, c], active = c
 
@@ -1270,7 +1165,7 @@ mod tests {
     fn close_removes_a_promoted_diagram() {
         let mut open = OpenTabs::diagram_preview("d", "Diagram");
         open.promote(open.active);
-        let a = open.open_preview("a", "A", TreeKind::Class);
+        let a = open.open_preview(tab("a", "A", TreeKind::Class));
         open.promote(a);
         let diagram_id = open.tabs[0].id;
         open.close(diagram_id);
@@ -1299,9 +1194,9 @@ mod tests {
     #[test]
     fn open_source_uses_the_preview_slot_and_is_a_source_tab() {
         let mut open = OpenTabs::diagram_preview("d", "Diagram");
-        let id = open.open_source("customer", "Customer");
+        let id = open.open_preview(source_tab("customer", "Customer"));
         assert_eq!(open.tabs.len(), 1);
-        assert_eq!(open.tabs[0].kind, TabKind::Source);
+        assert_eq!(open.tabs[0].presentation.category, TreeKind::OkfDocument);
         assert!(open.tabs[0].preview);
         assert_eq!(open.tabs[0].title, "Customer");
         assert_eq!(open.active, id);
@@ -1310,8 +1205,8 @@ mod tests {
     #[test]
     fn open_source_twice_reuses_the_same_slot_and_focuses() {
         let mut open = OpenTabs::diagram_preview("d", "Diagram");
-        let a = open.open_source("a", "A");
-        let b = open.open_source("a", "A");
+        let a = open.open_preview(source_tab("a", "A"));
+        let b = open.open_preview(source_tab("a", "A"));
         assert_eq!(a, b);
         assert_eq!(open.tabs.len(), 1);
         assert_eq!(open.active, a);
@@ -1319,14 +1214,14 @@ mod tests {
 
     #[test]
     fn classifier_and_source_tabs_for_one_subject_have_distinct_stable_ids() {
-        let classifier = classifier_tab_id("customer");
-        let source = source_tab_id("customer");
+        let classifier = crate::uml_documents::uml_document_tab_id("customer");
+        let source = crate::okf_documents::source_document_tab_id("customer");
         assert_ne!(classifier, source);
 
         let mut open = OpenTabs::default();
-        let classifier_open = open.open_preview("customer", "Customer", TreeKind::Class);
+        let classifier_open = open.open_preview(tab("customer", "Customer", TreeKind::Class));
         open.promote(classifier_open);
-        let source_open = open.open_source("customer", "Customer");
+        let source_open = open.open_preview(source_tab("customer", "Customer"));
 
         assert_eq!(classifier_open, classifier);
         assert_eq!(source_open, source);
@@ -1349,10 +1244,10 @@ mod tests {
     #[test]
     fn open_source_replaces_an_existing_preview_in_place() {
         let mut open = OpenTabs::diagram_preview("d", "Diagram");
-        open.open_preview("customer", "Customer", TreeKind::Class);
-        let src = open.open_source("order", "Order");
+        open.open_preview(tab("customer", "Customer", TreeKind::Class));
+        let src = open.open_preview(source_tab("order", "Order"));
         assert_eq!(open.tabs.len(), 1);
         assert_eq!(open.tabs[0].id, src);
-        assert_eq!(open.tabs[0].kind, TabKind::Source);
+        assert_eq!(open.tabs[0].presentation.category, TreeKind::OkfDocument);
     }
 }

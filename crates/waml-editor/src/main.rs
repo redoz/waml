@@ -20,7 +20,9 @@ mod diagram_switcher;
 mod doc_tabs;
 mod doc_view;
 mod dock;
+mod document;
 mod document_host;
+mod documents;
 mod edge_labels;
 mod editor_session;
 mod fonts;
@@ -39,6 +41,7 @@ mod native_save;
 mod nav;
 mod node_design_editor;
 mod node_style;
+mod okf_documents;
 mod overlay_shell;
 mod popup;
 mod property_controls;
@@ -57,6 +60,7 @@ mod theme_atlas;
 mod tool_dock;
 mod tree;
 mod tree_panel;
+mod uml_documents;
 mod view_bar;
 
 #[cfg(test)]

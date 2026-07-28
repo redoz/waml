@@ -1,13 +1,10 @@
 //! The app-shell / document-view seam (spec 2026-07-23-diagram-view-seam-design).
 //!
 //! `BodyWidgets` names the one shared body draw surface the per-tab views push
-//! into; the `DocView` trait + `ViewOutcome` + `make_view` factory land in later
-//! tasks. Pure Rust — nothing here is a widget, so there is no `script_mod`.
+//! into. Pure Rust: nothing here is a widget, so there is no `script_mod`.
 
-// `DocView`, `ViewOutcome`, `PopupRequest`, and `make_view` land here ahead of
-// the wiring that drives them (Tasks 3-5 of the same plan); until then a bin
-// crate's dead-code lint would otherwise flag every item. Same convention as
-// `nav.rs` / `popup/base.rs`.
+// A bin crate's dead-code lint would otherwise flag seam members exercised by
+// unit tests and provider-owned views. Same convention as `nav.rs`.
 #![allow(dead_code)]
 
 use makepad_widgets::*;
@@ -295,7 +292,6 @@ impl BodyChrome {
     };
 }
 
-/// Create the view object for a tab, discriminating on `TabKind` (spec §5).
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -318,7 +314,7 @@ mod tests {
             "order".into(),
             TreeKind::Class,
         );
-        let source = crate::source_view::SourceView::new("order".into(), TreeKind::Class);
+        let source = crate::source_view::SourceView::new("order".into());
 
         assert_eq!(
             diagram.chrome(),
@@ -348,7 +344,7 @@ mod tests {
             "status".into(),
             TreeKind::Enum,
         );
-        let source = crate::source_view::SourceView::new("status".into(), TreeKind::Enum);
+        let source = crate::source_view::SourceView::new("status".into());
 
         assert_eq!(
             classifier.tab_accent(),

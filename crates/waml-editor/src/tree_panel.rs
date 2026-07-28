@@ -24,7 +24,7 @@ use crate::icons::IconSet;
 use crate::nav::NavView;
 use crate::tree::{ProjectTree as ProjectTreeData, TreeKind, TreeNode};
 use makepad_widgets::*;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 pub(crate) const PROJECT_TREE_W: f64 = 280.0;
 
@@ -238,8 +238,7 @@ pub enum ProjectTreeAction {
     #[default]
     None,
     OpenDocument {
-        key: String,
-        node_kind: TreeKind,
+        concept_id: String,
         persistent: bool,
     },
     /// The title trigger's open-request; `App` relays it to `PopupRoot` to
@@ -278,12 +277,12 @@ impl IconSet {
             TreeKind::Interface => Icon::SquareDashedTopSolid,
             TreeKind::Enum => Icon::List,
             TreeKind::DataType => Icon::Braces,
-            TreeKind::Package => Icon::Folder,
+            TreeKind::Directory => Icon::Folder,
+            TreeKind::OkfDocument => Icon::StickyNote,
             TreeKind::Diagram => Icon::Workflow,
             TreeKind::Behavior => Icon::Activity,
             TreeKind::Sequence => Icon::ArrowLeftRight,
             TreeKind::Note => Icon::StickyNote,
-            TreeKind::Unknown => return None,
         })
     }
 }
@@ -327,6 +326,7 @@ fn note_band_height(tag: NavStateTag, collapsed: bool) -> f64 {
 /// `TreeKind::Class` before per-glyph rows split them out). Used by the
 /// right-click context-menu path; document actions recognize the same set plus
 /// diagrams.
+#[cfg(test)]
 fn is_classifier_kind(kind: TreeKind) -> bool {
     matches!(
         kind,
@@ -334,18 +334,16 @@ fn is_classifier_kind(kind: TreeKind) -> bool {
     )
 }
 
-fn document_action(key: &str, node_kind: TreeKind, tap_count: u32) -> Option<ProjectTreeAction> {
-    matches!(
-        node_kind,
-        TreeKind::Diagram
-            | TreeKind::Class
-            | TreeKind::Interface
-            | TreeKind::Enum
-            | TreeKind::DataType
-    )
-    .then(|| ProjectTreeAction::OpenDocument {
-        key: key.to_owned(),
-        node_kind,
+fn document_action(
+    concept_id: Option<&str>,
+    openable: bool,
+    tap_count: u32,
+) -> Option<ProjectTreeAction> {
+    if !openable {
+        return None;
+    }
+    concept_id.map(|concept_id| ProjectTreeAction::OpenDocument {
+        concept_id: concept_id.to_owned(),
         persistent: tap_count == 2,
     })
 }
@@ -362,6 +360,12 @@ pub struct ProjectTree {
     id_to_key: HashMap<LiveId, String>,
     #[rust]
     id_to_kind: HashMap<LiveId, TreeKind>,
+    #[rust]
+    id_to_concept: HashMap<LiveId, String>,
+    #[rust]
+    openable_ids: HashSet<LiveId>,
+    #[rust]
+    classifier_context_ids: HashSet<LiveId>,
     #[rust]
     pending_tap_count: u32,
     #[live]
@@ -444,23 +448,60 @@ pub struct ProjectTree {
 
 /// Walk the tree once, building both id maps. Kept free-standing so it is unit
 /// testable without a `Cx`.
-fn build_id_maps(tree: &ProjectTreeData) -> (HashMap<LiveId, String>, HashMap<LiveId, TreeKind>) {
+fn build_id_maps(
+    tree: &ProjectTreeData,
+) -> (
+    HashMap<LiveId, String>,
+    HashMap<LiveId, TreeKind>,
+    HashMap<LiveId, String>,
+    HashSet<LiveId>,
+    HashSet<LiveId>,
+) {
     fn walk(
         nodes: &[TreeNode],
         keys: &mut HashMap<LiveId, String>,
         kinds: &mut HashMap<LiveId, TreeKind>,
+        concepts: &mut HashMap<LiveId, String>,
+        openable: &mut HashSet<LiveId>,
+        classifier_context: &mut HashSet<LiveId>,
     ) {
         for n in nodes {
             let id = LiveId::from_str(&n.key);
             keys.insert(id, n.key.clone());
             kinds.insert(id, n.kind);
-            walk(&n.children, keys, kinds);
+            if let Some(concept_id) = &n.concept_id {
+                concepts.insert(id, concept_id.clone());
+            }
+            if n.openable {
+                openable.insert(id);
+            }
+            if n.can_edit_classifier || n.can_delete_classifier {
+                classifier_context.insert(id);
+            }
+            walk(
+                &n.children,
+                keys,
+                kinds,
+                concepts,
+                openable,
+                classifier_context,
+            );
         }
     }
     let mut keys = HashMap::new();
     let mut kinds = HashMap::new();
-    walk(&tree.roots, &mut keys, &mut kinds);
-    (keys, kinds)
+    let mut concepts = HashMap::new();
+    let mut openable = HashSet::new();
+    let mut classifier_context = HashSet::new();
+    walk(
+        &tree.roots,
+        &mut keys,
+        &mut kinds,
+        &mut concepts,
+        &mut openable,
+        &mut classifier_context,
+    );
+    (keys, kinds, concepts, openable, classifier_context)
 }
 
 /// The package-folder keys `set_view` expands for `tag`, in depth-first order.
@@ -474,7 +515,7 @@ fn folders_to_open(tag: NavStateTag, tree: &ProjectTreeData) -> Vec<String> {
     let deep = matches!(tag, NavStateTag::Results | NavStateTag::Elsewhere);
     fn collect(nodes: &[TreeNode], deep: bool, out: &mut Vec<String>) {
         for n in nodes {
-            if matches!(n.kind, TreeKind::Package) {
+            if matches!(n.kind, TreeKind::Directory) {
                 out.push(n.key.clone());
                 if deep {
                     collect(&n.children, deep, out);
@@ -554,7 +595,7 @@ fn draw_nodes(
         let id = LiveId::from_str(&node.key);
         let row_top = cx.turtle().pos();
         let is_selected = selected == Some(node.key.as_str());
-        if matches!(node.kind, TreeKind::Package) {
+        if matches!(node.kind, TreeKind::Directory) {
             let opened = ft.begin_folder(cx, id, &node.title).is_ok();
             if is_selected {
                 draw_row_highlight(cx, draw_selection, row_top);
@@ -903,19 +944,17 @@ impl Widget for ProjectTree {
             // only actions read here are the `FileTree`'s row clicks.
             if let Some(id) = file_tree.file_clicked(actions) {
                 let tap_count = std::mem::take(&mut self.pending_tap_count);
-                if let (Some(node_kind), Some(key)) =
-                    (self.id_to_kind.get(&id).copied(), self.id_to_key.get(&id))
-                {
-                    if let Some(action) = document_action(key, node_kind, tap_count) {
-                        cx.widget_action(uid, action);
-                    }
+                if let Some(action) = document_action(
+                    self.id_to_concept.get(&id).map(String::as_str),
+                    self.openable_ids.contains(&id),
+                    tap_count,
+                ) {
+                    cx.widget_action(uid, action);
                 }
             }
             if let Some((id, abs)) = file_tree.file_right_clicked(actions) {
-                if let (Some(kind), Some(key)) =
-                    (self.id_to_kind.get(&id).copied(), self.id_to_key.get(&id))
-                {
-                    if is_classifier_kind(kind) {
+                if let Some(key) = self.id_to_key.get(&id) {
+                    if self.classifier_context_ids.contains(&id) {
                         cx.widget_action(
                             uid,
                             ProjectTreeAction::ContextMenu {
@@ -985,7 +1024,8 @@ impl ProjectTree {
             NavView::Elsewhere(t) => (t, NavStateTag::Elsewhere),
             NavView::Empty => (ProjectTreeData::default(), NavStateTag::Empty),
         };
-        let (id_to_key, id_to_kind) = build_id_maps(&tree);
+        let (id_to_key, id_to_kind, id_to_concept, openable_ids, classifier_context_ids) =
+            build_id_maps(&tree);
         let file_tree = self.view.file_tree(cx, ids!(file_tree));
         // Open package folders so the panel isn't collapsed. Browse expands only
         // the top-level packages (under scope the roots are the scope's members,
@@ -996,6 +1036,9 @@ impl ProjectTree {
         }
         self.id_to_key = id_to_key;
         self.id_to_kind = id_to_kind;
+        self.id_to_concept = id_to_concept;
+        self.openable_ids = openable_ids;
+        self.classifier_context_ids = classifier_context_ids;
         self.tree = tree;
         self.nav_tag = tag;
         self.view.redraw(cx);
@@ -1011,15 +1054,14 @@ impl ProjectTree {
         }
     }
 
-    pub fn open_document(&self, actions: &Actions) -> Option<(String, TreeKind, bool)> {
+    pub fn open_document(&self, actions: &Actions) -> Option<(String, bool)> {
         let item = actions.find_widget_action(self.widget_uid())?;
         if let ProjectTreeAction::OpenDocument {
-            key,
-            node_kind,
+            concept_id,
             persistent,
         } = item.cast()
         {
-            return Some((key, node_kind, persistent));
+            return Some((concept_id, persistent));
         }
         None
     }
@@ -1121,6 +1163,8 @@ fn header_release_hits(fe: &FingerUpEvent, hit_off: DVec2, target: Rect) -> bool
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::document::DocumentPresentation;
+    use crate::icons::Icon;
     use crate::tree::{ProjectTree as ProjectTreeData, TreeKind, TreeNode};
     use makepad_widgets::LiveId;
     use std::cell::Cell;
@@ -1225,64 +1269,68 @@ mod tests {
         assert!(!header_release_hits(&fe, dvec2(0.0, 0.0), header_rect));
     }
 
-    #[test]
-    fn document_action_marks_only_second_tap_persistent() {
-        for kind in [TreeKind::Diagram, TreeKind::Class] {
-            assert!(matches!(
-                document_action("item", kind, 1),
-                Some(ProjectTreeAction::OpenDocument {
-                    persistent: false,
-                    ..
-                })
-            ));
-            assert!(matches!(
-                document_action("item", kind, 2),
-                Some(ProjectTreeAction::OpenDocument {
-                    persistent: true,
-                    ..
-                })
-            ));
+    fn node(key: &str, title: &str, kind: TreeKind, children: Vec<TreeNode>) -> TreeNode {
+        let is_classifier = is_classifier_kind(kind);
+        TreeNode {
+            key: key.to_owned(),
+            title: title.to_owned(),
+            kind,
+            presentation: DocumentPresentation {
+                icon: Icon::StickyNote,
+                accent: None,
+                category: kind,
+            },
+            openable: kind != TreeKind::Directory,
+            concept_id: (kind != TreeKind::Directory).then(|| key.to_owned()),
+            can_edit_classifier: is_classifier,
+            can_delete_classifier: is_classifier,
+            children,
         }
     }
 
     #[test]
-    fn document_action_ignores_folders() {
-        assert!(document_action("pkg", TreeKind::Package, 2).is_none());
+    fn document_action_marks_only_second_tap_persistent() {
+        assert!(matches!(
+            document_action(Some("item"), true, 1),
+            Some(ProjectTreeAction::OpenDocument {
+                concept_id,
+                persistent: false,
+            }) if concept_id == "item"
+        ));
+        assert!(matches!(
+            document_action(Some("item"), true, 2),
+            Some(ProjectTreeAction::OpenDocument {
+                persistent: true,
+                ..
+            })
+        ));
     }
 
     #[test]
-    fn document_action_ignores_unknown_rows() {
-        assert!(document_action("future", TreeKind::Unknown, 2).is_none());
+    fn document_action_requires_provider_capability_and_concept() {
+        assert!(document_action(Some("directory"), false, 2).is_none());
+        assert!(document_action(None, true, 2).is_none());
     }
 
     #[test]
     fn id_maps_round_trip_key_and_kind() {
         let tree = ProjectTreeData {
-            roots: vec![TreeNode {
-                key: String::new(),
-                title: "bundle".to_string(),
-                kind: TreeKind::Package,
-                children: vec![
-                    TreeNode {
-                        key: "orders-diagram".to_string(),
-                        title: "Orders".to_string(),
-                        kind: TreeKind::Diagram,
-                        children: vec![],
-                    },
-                    TreeNode {
-                        key: "customer".to_string(),
-                        title: "Customer".to_string(),
-                        kind: TreeKind::Class,
-                        children: vec![],
-                    },
+            roots: vec![node(
+                "/",
+                "bundle",
+                TreeKind::Directory,
+                vec![
+                    node("orders-diagram", "Orders", TreeKind::Diagram, vec![]),
+                    node("customer", "Customer", TreeKind::Class, vec![]),
                 ],
-            }],
+            )],
         };
 
-        let (id_to_key, id_to_kind) = build_id_maps(&tree);
+        let (id_to_key, id_to_kind, id_to_concept, openable, classifier_context) =
+            build_id_maps(&tree);
 
         // Every node's key and kind recover through LiveId::from_str.
-        for key in ["", "orders-diagram", "customer"] {
+        for key in ["/", "orders-diagram", "customer"] {
             let id = LiveId::from_str(key);
             assert_eq!(id_to_key.get(&id).map(String::as_str), Some(key));
         }
@@ -1295,10 +1343,20 @@ mod tests {
             Some(TreeKind::Class)
         );
         assert_eq!(
-            id_to_kind.get(&LiveId::from_str("")).copied(),
-            Some(TreeKind::Package)
+            id_to_kind.get(&LiveId::from_str("/")).copied(),
+            Some(TreeKind::Directory)
         );
         assert_eq!(id_to_key.len(), 3);
+        assert_eq!(
+            id_to_concept
+                .get(&LiveId::from_str("customer"))
+                .map(String::as_str),
+            Some("customer")
+        );
+        assert!(openable.contains(&LiveId::from_str("orders-diagram")));
+        assert!(!openable.contains(&LiveId::from_str("/")));
+        assert!(classifier_context.contains(&LiveId::from_str("customer")));
+        assert!(!classifier_context.contains(&LiveId::from_str("orders-diagram")));
     }
 
     #[test]
@@ -1314,22 +1372,17 @@ mod tests {
     // match ("deep") that lives two package levels below the roots.
     fn nested_two_deep() -> ProjectTreeData {
         ProjectTreeData {
-            roots: vec![TreeNode {
-                key: "outer".to_string(),
-                title: "Outer".to_string(),
-                kind: TreeKind::Package,
-                children: vec![TreeNode {
-                    key: "inner".to_string(),
-                    title: "Inner".to_string(),
-                    kind: TreeKind::Package,
-                    children: vec![TreeNode {
-                        key: "deep".to_string(),
-                        title: "Deep".to_string(),
-                        kind: TreeKind::Class,
-                        children: vec![],
-                    }],
-                }],
-            }],
+            roots: vec![node(
+                "outer",
+                "Outer",
+                TreeKind::Directory,
+                vec![node(
+                    "inner",
+                    "Inner",
+                    TreeKind::Directory,
+                    vec![node("deep", "Deep", TreeKind::Class, vec![])],
+                )],
+            )],
         }
     }
 
@@ -1382,7 +1435,7 @@ mod icon_map_tests {
         );
         assert_eq!(IconSet::icon_for(TreeKind::Enum), Some(Icon::List));
         assert_eq!(IconSet::icon_for(TreeKind::DataType), Some(Icon::Braces));
-        assert_eq!(IconSet::icon_for(TreeKind::Package), Some(Icon::Folder));
+        assert_eq!(IconSet::icon_for(TreeKind::Directory), Some(Icon::Folder));
         assert_eq!(IconSet::icon_for(TreeKind::Diagram), Some(Icon::Workflow));
         assert_eq!(IconSet::icon_for(TreeKind::Behavior), Some(Icon::Activity));
         assert_eq!(
@@ -1390,6 +1443,9 @@ mod icon_map_tests {
             Some(Icon::ArrowLeftRight)
         );
         assert_eq!(IconSet::icon_for(TreeKind::Note), Some(Icon::StickyNote));
-        assert_eq!(IconSet::icon_for(TreeKind::Unknown), None);
+        assert_eq!(
+            IconSet::icon_for(TreeKind::OkfDocument),
+            Some(Icon::StickyNote)
+        );
     }
 }

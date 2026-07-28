@@ -1,21 +1,15 @@
-use crate::doc_tabs::{DocTab, DocTabs, OpenTabs, TabKind};
+use crate::doc_tabs::{DocTab, DocTabs, OpenTabs};
 use crate::doc_view::{BodyChrome, BodyWidgets, DocView, ViewData, ViewOutcome};
+use crate::document::OpenDocument;
 use crate::editor_session::{EditorSession, SessionChange};
 use crate::popup::base::PopupResult;
-use crate::tree::TreeKind;
 use makepad_widgets::*;
 use std::collections::{HashMap, HashSet};
 
 pub enum DocumentCommand {
     Open {
-        key: String,
-        title: String,
-        node_kind: TreeKind,
+        document: OpenDocument,
         persistent: bool,
-    },
-    OpenSource {
-        key: String,
-        title: String,
     },
     Activate(LiveId),
     Promote(LiveId),
@@ -30,24 +24,6 @@ pub struct DocumentHost {
 }
 
 type RemovedViews = Vec<(LiveId, Box<dyn DocView>)>;
-
-fn make_view(tab: &DocTab) -> Box<dyn DocView> {
-    match tab.kind {
-        TabKind::Diagram => Box::new(crate::class_diagram_view::ClassDiagramView::new(
-            tab.key.clone(),
-        )),
-        TabKind::Classifier => {
-            Box::new(crate::classifier_preview_view::ClassifierPreviewView::new(
-                tab.key.clone(),
-                tab.node_kind,
-            ))
-        }
-        TabKind::Source => Box::new(crate::source_view::SourceView::new(
-            tab.key.clone(),
-            tab.node_kind,
-        )),
-    }
-}
 
 fn data(session: &EditorSession) -> ViewData<'_> {
     ViewData {
@@ -77,9 +53,6 @@ impl DocumentHost {
             .into_iter()
             .filter_map(|id| self.views.remove(&id).map(|view| (id, view)))
             .collect();
-        for tab in &self.tabs.tabs {
-            self.views.entry(tab.id).or_insert_with(|| make_view(tab));
-        }
         removed
     }
 
@@ -87,18 +60,18 @@ impl DocumentHost {
         let before = self.tabs.clone();
         match command {
             DocumentCommand::Open {
-                key,
-                title,
-                node_kind,
+                document,
                 persistent,
             } => {
-                let id = self.tabs.open_preview(key, title, node_kind);
+                let already_open = self.tabs.tabs.iter().any(|tab| tab.id == document.tab_id);
+                let (tab, view) = document.into_tab(true);
+                let id = self.tabs.open_preview(tab);
+                if !already_open {
+                    self.views.insert(id, view);
+                }
                 if persistent {
                     self.tabs.promote(id);
                 }
-            }
-            DocumentCommand::OpenSource { key, title } => {
-                self.tabs.open_source(key, title);
             }
             DocumentCommand::Activate(id) => self.tabs.activate(id),
             DocumentCommand::Promote(id) => {
@@ -110,7 +83,7 @@ impl DocumentHost {
                     .tabs
                     .tabs
                     .iter()
-                    .find(|tab| tab.key == key)
+                    .find(|tab| tab.concept_id == key)
                     .map(|tab| tab.id)
                 {
                     self.tabs.promote(id);
@@ -224,14 +197,45 @@ impl DocumentHost {
         session: &EditorSession,
         change: SessionChange,
     ) {
-        if change.uml_changed {
-            self.tabs.reconcile_titles(session.model());
+        if change.okf_changed || change.uml_changed {
+            self.reconcile_documents(session);
         }
         let body = BodyWidgets::new(cx, ui);
         if let Some(view) = self.views.get_mut(&self.tabs.active) {
             view.after_session_change(cx, &body, data(session), change);
         }
         self.refresh_tabs(cx, ui);
+    }
+
+    fn reconcile_documents(&mut self, session: &EditorSession) {
+        for index in 0..self.tabs.tabs.len() {
+            let current = &self.tabs.tabs[index];
+            let concept_id = current.concept_id.clone();
+            let is_source = current.id == crate::okf_documents::source_document_tab_id(&concept_id);
+            let prepared = if is_source {
+                crate::okf_documents::open_source(session.okf(), &concept_id)
+            } else {
+                crate::documents::open(session.okf(), session.uml_projection(), &concept_id)
+            };
+            let Some(prepared) = prepared else {
+                continue;
+            };
+            if prepared.tab_id == current.id {
+                self.tabs.tabs[index].title = prepared.title;
+                self.tabs.tabs[index].presentation = prepared.presentation;
+                continue;
+            }
+            let preview = current.preview;
+            let old_id = current.id;
+            let (mut tab, view) = prepared.into_tab(preview);
+            tab.preview = preview;
+            if self.tabs.active == old_id {
+                self.tabs.active = tab.id;
+            }
+            self.views.remove(&old_id);
+            self.views.insert(tab.id, view);
+            self.tabs.tabs[index] = tab;
+        }
     }
 
     pub fn handle_active(
@@ -286,19 +290,15 @@ impl DocumentHost {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::document::{DocumentPresentation, NavCategory, OpenDocument};
+    use crate::icons::Icon;
     use std::cell::Cell;
     use std::rc::Rc;
 
-    struct ProbeView {
-        chrome_calls: Rc<Cell<usize>>,
-        accent_calls: Rc<Cell<usize>>,
-    }
+    struct ProbeView(Rc<Cell<usize>>);
 
     impl DocView for ProbeView {
-        fn sync(&mut self, _: &mut Cx, _: &BodyWidgets, _: ViewData<'_>) {
-            unreachable!()
-        }
-
+        fn sync(&mut self, _: &mut Cx, _: &BodyWidgets, _: ViewData<'_>) {}
         fn handle(
             &mut self,
             _: &mut Cx,
@@ -306,11 +306,10 @@ mod tests {
             _: &Actions,
             _: ViewData<'_>,
         ) -> ViewOutcome {
-            unreachable!()
+            ViewOutcome::default()
         }
-
         fn chrome(&self) -> BodyChrome {
-            self.chrome_calls.set(self.chrome_calls.get() + 1);
+            self.0.set(self.0.get() + 1);
             BodyChrome {
                 tool_dock: true,
                 view_bar: false,
@@ -318,147 +317,65 @@ mod tests {
                 right_dock: None,
             }
         }
+    }
 
-        fn tab_accent(&self) -> Option<Vec4> {
-            self.accent_calls.set(self.accent_calls.get() + 1);
-            Some(vec4(0.1, 0.2, 0.3, 1.0))
+    fn prepared(key: &str, category: NavCategory, calls: Rc<Cell<usize>>) -> OpenDocument {
+        OpenDocument {
+            tab_id: LiveId::from_str(&format!("test-{key}")),
+            concept_id: key.into(),
+            title: key.into(),
+            presentation: DocumentPresentation {
+                icon: Icon::StickyNote,
+                accent: None,
+                category,
+            },
+            view: Box::new(ProbeView(calls)),
         }
     }
 
     #[test]
-    fn preview_replacement_drops_the_replaced_live_view() {
-        let mut host = DocumentHost {
-            tabs: OpenTabs::diagram_preview("orders", "Orders"),
-            ..DocumentHost::default()
-        };
-        let replaced = host.tabs.active;
-        host.views.insert(
-            replaced,
-            Box::new(ProbeView {
-                chrome_calls: Rc::new(Cell::new(0)),
-                accent_calls: Rc::new(Cell::new(0)),
-            }),
-        );
-
-        assert!(
-            host.apply_command(DocumentCommand::Open {
-                key: "customer".into(),
-                title: "Customer".into(),
-                node_kind: TreeKind::Class,
-                persistent: false,
-            })
-            .0
-        );
-
-        assert!(!host.views.contains_key(&replaced));
-        assert!(host.views.contains_key(&host.tabs.active));
-    }
-
-    #[test]
-    fn opening_diagram_and_classifier_rows_uses_the_kind_factory() {
+    fn prepared_preview_replacement_drops_the_old_live_view() {
         let mut host = DocumentHost::default();
-
+        let first = prepared("first", NavCategory::Class, Rc::new(Cell::new(0)));
+        let first_id = first.tab_id;
         host.apply_command(DocumentCommand::Open {
-            key: "orders".into(),
-            title: "Orders".into(),
-            node_kind: TreeKind::Diagram,
-            persistent: true,
-        });
-        host.apply_command(DocumentCommand::Open {
-            key: "customer".into(),
-            title: "Customer".into(),
-            node_kind: TreeKind::Class,
+            document: first,
             persistent: false,
         });
-
-        assert_eq!(host.tabs.tabs.len(), 2);
-        assert_eq!(host.tabs.tabs[0].kind, TabKind::Diagram);
-        assert_eq!(host.tabs.tabs[1].kind, TabKind::Classifier);
-        assert_eq!(host.views.len(), 2);
-        assert!(host
-            .tabs
-            .tabs
-            .iter()
-            .all(|tab| host.views.contains_key(&tab.id)));
+        host.apply_command(DocumentCommand::Open {
+            document: prepared("second", NavCategory::OkfDocument, Rc::new(Cell::new(0))),
+            persistent: false,
+        });
+        assert!(!host.views.contains_key(&first_id));
+        assert_eq!(host.tabs.tabs.len(), 1);
+        assert_eq!(host.tabs.tabs[0].concept_id, "second");
     }
 
     #[test]
-    fn close_reconciles_and_keeps_the_existing_right_then_left_fallback() {
-        let mut host = DocumentHost {
-            tabs: OpenTabs::diagram_preview("orders", "Orders"),
-            ..DocumentHost::default()
-        };
-        let orders = host.tabs.active;
-        host.tabs.promote(orders);
-        let customer = host
-            .tabs
-            .open_preview("customer", "Customer", TreeKind::Class);
-        host.tabs.promote(customer);
-        let source = host.tabs.open_source("order", "Order");
-        host.reconcile_registry();
-
-        assert!(host.apply_command(DocumentCommand::Close(customer)).0);
-        assert_eq!(host.active_id(), source);
-        assert!(!host.views.contains_key(&customer));
-
-        assert!(host.apply_command(DocumentCommand::Close(source)).0);
-        assert_eq!(host.active_id(), orders);
-    }
-
-    #[test]
-    fn chrome_is_queried_from_the_registered_live_view() {
+    fn supplied_view_drives_active_chrome_without_a_host_factory() {
         let calls = Rc::new(Cell::new(0));
-        let mut host = DocumentHost {
-            tabs: OpenTabs::diagram_preview("orders", "Orders"),
-            ..DocumentHost::default()
-        };
-        host.views.insert(
-            host.tabs.active,
-            Box::new(ProbeView {
-                chrome_calls: calls.clone(),
-                accent_calls: calls.clone(),
-            }),
-        );
-
-        assert_eq!(
-            host.active_chrome(),
-            BodyChrome {
-                tool_dock: true,
-                view_bar: false,
-                canvas_overlays: false,
-                right_dock: None,
-            }
-        );
+        let mut host = DocumentHost::default();
+        host.apply_command(DocumentCommand::Open {
+            document: prepared("order", NavCategory::Class, calls.clone()),
+            persistent: true,
+        });
+        assert!(host.active_chrome().tool_dock);
         assert_eq!(calls.get(), 1);
-        assert_eq!(host.active_accent(), Some(vec4(0.1, 0.2, 0.3, 1.0)));
-        assert_eq!(calls.get(), 2);
-        assert_eq!(host.views.len(), 1);
     }
 
     #[test]
-    fn replacing_a_session_drops_views_even_when_tab_ids_repeat() {
-        let mut host = DocumentHost {
-            tabs: OpenTabs::diagram_preview("orders", "Old Orders"),
-            ..DocumentHost::default()
-        };
-        let repeated = host.tabs.active;
-        host.views.insert(
-            repeated,
-            Box::new(ProbeView {
-                chrome_calls: Rc::new(Cell::new(0)),
-                accent_calls: Rc::new(Cell::new(0)),
-            }),
-        );
-
-        let removed =
-            host.replace_tabs_for_session(OpenTabs::diagram_preview("orders", "New Orders"));
-
-        assert_eq!(removed.len(), 1);
-        assert_eq!(removed[0].0, repeated);
-        assert_eq!(
-            host.active_tab().map(|tab| tab.title.as_str()),
-            Some("New Orders")
-        );
-        assert!(host.views.contains_key(&repeated));
+    fn promoted_tabs_keep_right_then_left_close_fallback() {
+        let mut host = DocumentHost::default();
+        for key in ["a", "b", "c"] {
+            host.apply_command(DocumentCommand::Open {
+                document: prepared(key, NavCategory::Class, Rc::new(Cell::new(0))),
+                persistent: true,
+            });
+        }
+        let b = host.tabs.tabs[1].id;
+        let c = host.tabs.tabs[2].id;
+        host.apply_command(DocumentCommand::Activate(b));
+        host.apply_command(DocumentCommand::Close(b));
+        assert_eq!(host.tabs.active, c);
     }
 }

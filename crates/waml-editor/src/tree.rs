@@ -1,28 +1,22 @@
 //! The tree seam: flatten a `Model` into a `ProjectTree` for the panel.
 //! Nothing here touches makepad; the `LiveId` bridge lives in `tree_panel.rs`.
 
-use std::collections::HashMap;
-use waml::model::{BehaviorKind, ElementType, Model, UmlMetaclass};
+use crate::document::{DocumentPresentation, NavCategory};
+use crate::icons::Icon;
+use waml::model::{BehaviorKind, ElementType, UmlMetaclass};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum TreeKind {
-    Package,
-    Class,
-    Interface,
-    Enum,
-    DataType,
-    Diagram,
-    Behavior,
-    Sequence,
-    Note,
-    Unknown,
-}
+pub type TreeKind = NavCategory;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct TreeNode {
     pub key: String,
     pub title: String,
     pub kind: TreeKind,
+    pub presentation: DocumentPresentation,
+    pub openable: bool,
+    pub concept_id: Option<String>,
+    pub can_edit_classifier: bool,
+    pub can_delete_classifier: bool,
     pub children: Vec<TreeNode>,
 }
 
@@ -41,7 +35,7 @@ pub struct ProjectTree {
 /// the generic `Behavior` one.
 pub fn kind_of(ty: &ElementType) -> TreeKind {
     match ty {
-        ElementType::Uml(UmlMetaclass::Package) => TreeKind::Package,
+        ElementType::Uml(UmlMetaclass::Package) => TreeKind::Directory,
         ElementType::Uml(UmlMetaclass::Note) => TreeKind::Note,
         ElementType::Uml(UmlMetaclass::Interface) => TreeKind::Interface,
         ElementType::Uml(UmlMetaclass::Enum) => TreeKind::Enum,
@@ -56,347 +50,201 @@ pub fn kind_of(ty: &ElementType) -> TreeKind {
         ElementType::Behavior(BehaviorKind::Sequence) => TreeKind::Sequence,
         ElementType::Behavior(_) => TreeKind::Behavior,
         ElementType::Diagram => TreeKind::Diagram,
-        ElementType::Unknown(_) => TreeKind::Unknown,
+        ElementType::Unknown(_) => TreeKind::OkfDocument,
     }
 }
 
-/// Flatten `model`'s package forest into a `ProjectTree`. Never empty: an
-/// absent root package yields a flat diagram fallback. `root_fallback` names the
-/// root when the model carries no root name (`model.path` is empty) -- callers
-/// pass the open bundle's folder basename so an unnamed bundle reads as its
-/// folder.
-pub fn build_tree(model: &Model, root_fallback: &str) -> ProjectTree {
-    // Unified key -> (title, kind) over all five collections.
-    let mut meta: HashMap<String, (String, TreeKind)> = HashMap::new();
-    for n in &model.nodes {
-        let title = n.concept.title.clone().unwrap_or_else(|| n.key.clone());
-        meta.insert(n.key.clone(), (title, kind_of(&n.ty)));
-    }
-    for d in &model.diagrams {
-        meta.insert(d.key.clone(), (d.title.clone(), TreeKind::Diagram));
-    }
-    for p in &model.packages {
-        let title = p.concept.title.clone().unwrap_or_else(|| p.key.clone());
-        meta.insert(p.key.clone(), (title, TreeKind::Package));
-    }
-    for f in &model.flows {
-        meta.insert(f.key.clone(), (f.title.clone(), TreeKind::Behavior));
-    }
-    for s in &model.interactions {
-        meta.insert(s.key.clone(), (s.title.clone(), TreeKind::Behavior));
-    }
-
-    let root_title = if model.path.is_empty() {
-        root_fallback.to_string()
-    } else {
-        model.path.clone()
-    };
-
-    if let Some(root_pkg) = model.packages.iter().find(|p| p.key.is_empty()) {
-        let root = TreeNode {
-            key: String::new(),
-            title: root_title,
-            kind: TreeKind::Package,
-            children: build_children(&root_pkg.members, model, &meta),
-        };
-        ProjectTree { roots: vec![root] }
-    } else {
-        let mut seen = std::collections::HashSet::new();
-        let mut children = Vec::new();
-        for key in model
-            .nodes
+pub fn build_tree(
+    bundle: &waml::okf::Bundle,
+    uml: &waml::uml::Projection,
+    root_fallback: &str,
+) -> ProjectTree {
+    fn directory_node(
+        bundle: &waml::okf::Bundle,
+        uml: &waml::uml::Projection,
+        address: &waml::okf::DirectoryAddress,
+        root_fallback: &str,
+    ) -> Option<TreeNode> {
+        let directory = bundle
+            .directories()
             .iter()
-            .map(|node| node.key.as_str())
-            .chain(model.flows.iter().map(|flow| flow.key.as_str()))
-            .chain(
-                model
-                    .interactions
-                    .iter()
-                    .map(|interaction| interaction.key.as_str()),
-            )
-            .chain(model.diagrams.iter().map(|diagram| diagram.key.as_str()))
-        {
-            if !seen.insert(key) {
-                continue;
-            }
-            let Some((title, kind)) = meta.get(key) else {
-                continue;
-            };
-            children.push(TreeNode {
-                key: key.to_string(),
-                title: title.clone(),
-                kind: *kind,
-                children: vec![],
+            .find(|directory| &directory.address == address)?;
+        let index = bundle.index(address.as_str());
+        let title = index
+            .and_then(|index| index.title.clone())
+            .unwrap_or_else(|| {
+                if address.as_str() == "/" {
+                    root_fallback.to_string()
+                } else {
+                    address
+                        .as_str()
+                        .rsplit('/')
+                        .next()
+                        .unwrap_or(root_fallback)
+                        .to_string()
+                }
             });
-        }
-        ProjectTree {
-            roots: vec![TreeNode {
-                key: String::new(),
-                title: root_title,
-                kind: TreeKind::Package,
-                children,
-            }],
-        }
-    }
-}
-
-/// Resolve `members` in order through `meta`; recurse into sub-packages by
-/// looking their own `members` up on `model.packages`. Unresolved keys are
-/// dropped (`filter_map`), matching `reindex_bundle`'s behavior.
-fn build_children(
-    members: &[String],
-    model: &Model,
-    meta: &HashMap<String, (String, TreeKind)>,
-) -> Vec<TreeNode> {
-    members
-        .iter()
-        .filter_map(|k| {
-            let (title, kind) = meta.get(k)?;
-            let children = if *kind == TreeKind::Package {
-                model
-                    .packages
-                    .iter()
-                    .find(|p| &p.key == k)
-                    .map(|p| build_children(&p.members, model, meta))
-                    .unwrap_or_default()
-            } else {
-                vec![]
-            };
+        let presentation = DocumentPresentation {
+            icon: Icon::Folder,
+            accent: crate::accent::tree_kind_color(NavCategory::Directory),
+            category: NavCategory::Directory,
+        };
+        let concept_node = |concept_id: &str| {
+            let concept = bundle.concept(concept_id)?;
+            let presentation = crate::uml_documents::presentation(uml, concept_id)
+                .or_else(|| crate::okf_documents::presentation(bundle, concept_id))?;
+            let classifier = matches!(
+                presentation.category,
+                NavCategory::Class
+                    | NavCategory::Interface
+                    | NavCategory::Enum
+                    | NavCategory::DataType
+            );
             Some(TreeNode {
-                key: k.clone(),
-                title: title.clone(),
-                kind: *kind,
-                children,
+                key: concept_id.to_owned(),
+                title: concept.title.clone().unwrap_or_else(|| {
+                    concept_id
+                        .rsplit('/')
+                        .next()
+                        .unwrap_or(concept_id)
+                        .to_string()
+                }),
+                kind: presentation.category,
+                presentation,
+                openable: true,
+                concept_id: Some(concept_id.to_owned()),
+                can_edit_classifier: classifier,
+                can_delete_classifier: classifier,
+                children: Vec::new(),
             })
+        };
+        let mut children = Vec::new();
+        let mut seen = std::collections::HashSet::new();
+        if let Some(index) = index {
+            for member in &index.members {
+                if let Some(child) = directory
+                    .child_directories
+                    .iter()
+                    .find(|child| child.as_str() == member)
+                {
+                    if let Some(row) = directory_node(bundle, uml, child, root_fallback) {
+                        seen.insert(member.clone());
+                        children.push(row);
+                    }
+                } else if directory.concepts.iter().any(|concept| concept == member) {
+                    if let Some(row) = concept_node(member) {
+                        seen.insert(member.clone());
+                        children.push(row);
+                    }
+                }
+            }
+        }
+        for child in &directory.child_directories {
+            if seen.insert(child.as_str().to_owned()) {
+                if let Some(row) = directory_node(bundle, uml, child, root_fallback) {
+                    children.push(row);
+                }
+            }
+        }
+        for concept_id in &directory.concepts {
+            if seen.insert(concept_id.clone()) {
+                if let Some(row) = concept_node(concept_id) {
+                    children.push(row);
+                }
+            }
+        }
+        Some(TreeNode {
+            key: address.as_str().to_string(),
+            title,
+            kind: NavCategory::Directory,
+            presentation,
+            openable: false,
+            concept_id: None,
+            can_edit_classifier: false,
+            can_delete_classifier: false,
+            children,
         })
-        .collect()
+    }
+
+    let root = waml::okf::DirectoryAddress::parse("/").expect("root address is valid");
+    ProjectTree {
+        roots: directory_node(bundle, uml, &root, root_fallback)
+            .into_iter()
+            .collect(),
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::load;
-    use std::path::Path;
-    use waml::model::{ElementType, Model, Node, UmlMetaclass};
-    use waml::okf::Concept;
+    use waml::source::SourceBundle;
 
-    fn mini() -> Model {
-        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/mini");
-        load::load_model(&dir).unwrap()
-    }
-
-    // Depth-first flatten of (key, kind) pairs, for order-independent assertions.
-    fn flatten(tree: &ProjectTree) -> Vec<(String, TreeKind)> {
-        fn walk(nodes: &[TreeNode], out: &mut Vec<(String, TreeKind)>) {
-            for n in nodes {
-                out.push((n.key.clone(), n.kind));
-                walk(&n.children, out);
-            }
-        }
-        let mut out = Vec::new();
-        walk(&tree.roots, &mut out);
-        out
-    }
-
-    fn concept(title: &str) -> Concept {
-        Concept {
-            id: String::new(),
-            ty: String::new(),
-            title: Some(title.to_string()),
-            description: None,
-            resource: None,
-            tags: vec![],
-            timestamp: None,
-            body: String::new().into(),
-            links: vec![],
-            citations: vec![],
-            extra: Default::default(),
-        }
-    }
-
-    fn node(key: &str, ty: ElementType, title: &str, members: Vec<&str>) -> Node {
-        Node {
-            concept: concept(title),
-            key: key.to_string(),
-            ty,
-            stereotypes: vec![],
-            abstract_: false,
-            attributes: vec![],
-            values: vec![],
-            note_body: None,
-            annotates: vec![],
-            members: members.iter().map(|s| s.to_string()).collect(),
-            slots: vec![],
-        }
-    }
-
-    fn diagram(key: &str, title: &str) -> waml::model::Diagram {
-        waml::model::Diagram {
-            key: key.to_string(),
-            title: title.to_string(),
-            profile: "erd".to_string(),
-            description: None,
-            groups: vec![],
-            layout: vec![],
-            display: Default::default(),
-        }
+    fn mixed() -> (waml::okf::Bundle, waml::uml::Projection) {
+        let source = SourceBundle::try_from_pairs([
+            ("index.md", "# Root\n\n* [Sales](sales/)\n"),
+            (
+                "sales/index.md",
+                "# Sales\n\n* [Order](./order.md)\n* [Archive](archive/)\n* [Runbook](./runbook.md)\n",
+            ),
+            ("sales/archive/index.md", "# Archive\n"),
+            ("sales/order.md", "---\ntype: uml.Class\ntitle: Order\n---\n# Order\n"),
+            ("sales/runbook.md", "---\ntype: Runbook\ntitle: Runbook\n---\n# Runbook\n"),
+            ("sales/log.md", "# Log\n"),
+        ]).unwrap();
+        let bundle = waml::okf::Bundle::parse(&source).unwrap();
+        let projection = waml::uml::project(&bundle);
+        (bundle, projection)
     }
 
     #[test]
-    fn mini_fixture_has_single_labelled_root_with_the_diagram() {
-        let model = mini();
-        let tree = build_tree(&model, "bundle");
-
-        // One temporary flat root; Task 7 replaces this with OKF directories.
-        assert_eq!(tree.roots.len(), 1);
-        assert_eq!(tree.roots[0].key, "");
-        assert_eq!(tree.roots[0].kind, TreeKind::Package);
-        assert_eq!(tree.roots[0].title, "bundle");
-
-        let flat = flatten(&tree);
-        // The fixture's one diagram appears somewhere, as a Diagram leaf.
-        let dkey = model.diagrams[0].key.clone();
-        assert!(
-            flat.iter()
-                .any(|(k, kind)| *k == dkey && *kind == TreeKind::Diagram),
-            "diagram {dkey:?} missing from {flat:?}"
-        );
-        // Every resolved row has a known kind (no dangling => Unknown leaks).
-        assert!(flat.iter().all(|(_, kind)| *kind != TreeKind::Unknown));
-
-        // `uml.Interface` nodes (PaymentGateway) resolve to the finer
-        // `TreeKind::Interface`, not the coarse `Class` glyph.
-        let payment_gateway = model
-            .nodes
-            .iter()
-            .find(|n| n.concept.title.as_deref() == Some("PaymentGateway"))
-            .expect("mini fixture has a PaymentGateway node");
-        assert!(
-            flat.iter()
-                .any(|(k, kind)| *k == payment_gateway.key && *kind == TreeKind::Interface),
-            "PaymentGateway ({:?}) missing TreeKind::Interface in {flat:?}",
-            payment_gateway.key
-        );
-    }
-
-    #[test]
-    fn nested_packages_recurse_in_member_order() {
-        let model = Model {
-            path: "Root".to_string(),
-            packages: vec![
-                node(
-                    "",
-                    ElementType::Uml(UmlMetaclass::Package),
-                    "Root",
-                    vec!["sub"],
-                ),
-                node(
-                    "sub",
-                    ElementType::Uml(UmlMetaclass::Package),
-                    "Sub Pkg",
-                    vec!["cls"],
-                ),
-            ],
-            nodes: vec![node(
-                "cls",
-                ElementType::Uml(UmlMetaclass::Class),
-                "Cls",
-                vec![],
-            )],
-            ..Default::default()
-        };
-        let tree = build_tree(&model, "bundle");
-
-        assert_eq!(tree.roots.len(), 1);
+    fn navigator_uses_okf_directories_and_authored_index_order() {
+        let (bundle, projection) = mixed();
+        let tree = build_tree(&bundle, &projection, "Fallback");
         let root = &tree.roots[0];
+        assert_eq!((root.key.as_str(), root.title.as_str()), ("/", "Root"));
+        let sales = &root.children[0];
         assert_eq!(
-            (root.key.as_str(), root.title.as_str(), root.kind),
-            ("", "Root", TreeKind::Package)
+            (sales.key.as_str(), sales.title.as_str()),
+            ("/sales", "Sales")
         );
-
-        assert_eq!(root.children.len(), 1);
-        let sub = &root.children[0];
         assert_eq!(
-            (sub.key.as_str(), sub.title.as_str(), sub.kind),
-            ("sub", "Sub Pkg", TreeKind::Package)
-        );
-
-        assert_eq!(sub.children.len(), 1);
-        let cls = &sub.children[0];
-        assert_eq!(
-            (cls.key.as_str(), cls.title.as_str(), cls.kind),
-            ("cls", "Cls", TreeKind::Class)
-        );
-        assert!(cls.children.is_empty());
-    }
-
-    #[test]
-    fn dangling_member_key_is_skipped_not_crashed() {
-        let model = Model {
-            path: "Root".to_string(),
-            packages: vec![node(
-                "",
-                ElementType::Uml(UmlMetaclass::Package),
-                "Root",
-                vec!["ghost"], // resolves to nothing
-            )],
-            ..Default::default()
-        };
-        let tree = build_tree(&model, "bundle");
-        assert_eq!(tree.roots.len(), 1);
-        assert!(tree.roots[0].children.is_empty());
-    }
-
-    #[test]
-    fn empty_packages_falls_back_to_flat_projection_list() {
-        let model = Model {
-            path: String::new(), // no root name -> falls back to `root_fallback`
-            diagrams: vec![diagram("d1", "D1"), diagram("d2", "D2")],
-            ..Default::default()
-        };
-        let tree = build_tree(&model, "my-folder");
-
-        assert_eq!(tree.roots.len(), 1);
-        let root = &tree.roots[0];
-        assert_eq!(
-            (root.key.as_str(), root.title.as_str(), root.kind),
-            ("", "my-folder", TreeKind::Package)
-        );
-        assert_eq!(root.children.len(), 2);
-        assert!(root
-            .children
-            .iter()
-            .all(|c| c.kind == TreeKind::Diagram && c.children.is_empty()));
-        assert_eq!(root.children[0].key, "d1");
-        assert_eq!(root.children[1].key, "d2");
-    }
-
-    #[test]
-    fn package_free_projection_keeps_classifier_rows_visible() {
-        let model = waml::parse::build_model(&[
-            ("index.md".into(), "# Root\n\n* [Sales](sales/)\n".into()),
-            (
-                "sales/index.md".into(),
-                "# Sales\n\n* [Order](./order.md)\n* [Customer](./customer.md)\n".into(),
-            ),
-            (
-                "sales/customer.md".into(),
-                "---\ntype: uml.Class\ntitle: Customer\n---\n# Customer\n".into(),
-            ),
-            (
-                "sales/order.md".into(),
-                "---\ntype: uml.Class\ntitle: Order\n---\n# Order\n".into(),
-            ),
-        ]);
-
-        let tree = build_tree(&model, "bundle");
-        assert_eq!(
-            tree.roots[0]
+            sales
                 .children
                 .iter()
                 .map(|row| row.key.as_str())
                 .collect::<Vec<_>>(),
-            vec!["sales/customer", "sales/order"]
+            ["sales/order", "/sales/archive", "sales/runbook"]
+        );
+    }
+
+    #[test]
+    fn providers_decorate_claimed_and_generic_rows_with_capabilities() {
+        let (bundle, projection) = mixed();
+        let tree = build_tree(&bundle, &projection, "Fallback");
+        let rows = &tree.roots[0].children[0].children;
+        let order = rows.iter().find(|row| row.key == "sales/order").unwrap();
+        assert_eq!(order.kind, NavCategory::Class);
+        assert!(order.openable && order.can_edit_classifier);
+        assert_eq!(order.concept_id.as_deref(), Some("sales/order"));
+        let runbook = rows.iter().find(|row| row.key == "sales/runbook").unwrap();
+        assert_eq!(runbook.kind, NavCategory::OkfDocument);
+        assert!(runbook.openable);
+        assert!(!runbook.can_edit_classifier && !runbook.can_delete_classifier);
+    }
+
+    #[test]
+    fn kind_of_keeps_uml_presentation_granularity() {
+        assert_eq!(
+            kind_of(&ElementType::parse("uml.Interface")),
+            NavCategory::Interface
+        );
+        assert_eq!(
+            kind_of(&ElementType::parse("uml.Sequence")),
+            NavCategory::Sequence
+        );
+        assert_eq!(
+            kind_of(&ElementType::parse("vendor.Custom")),
+            NavCategory::OkfDocument
         );
     }
 }

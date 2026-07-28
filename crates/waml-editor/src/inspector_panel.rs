@@ -1337,12 +1337,9 @@ mod tests {
     // Unknown types have no HUD glyph, so the monogram badge is the correct
     // fallback -- the letter survives for them.
     #[test]
-    fn node_lead_falls_back_to_badge_for_unknown_type() {
+    fn node_lead_uses_generic_okf_icon_for_unclaimed_type() {
         let lead = node_lead(&ElementType::Unknown("Widget".into()), "W".into());
-        assert!(
-            matches!(lead, SelectLead::Badge { ref letter, .. } if letter == "W"),
-            "Unknown node should fall back to the monogram badge, got {lead:?}"
-        );
+        assert!(matches!(lead, SelectLead::Icon(Icon::StickyNote)));
     }
 
     #[test]

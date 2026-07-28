@@ -50,10 +50,10 @@ pub fn tree_kind_bucket(kind: TreeKind) -> AccentBucket {
         TreeKind::Interface => AccentBucket::Interface,
         TreeKind::Enum | TreeKind::DataType => AccentBucket::Enum,
         TreeKind::Note => AccentBucket::Note,
-        TreeKind::Package => AccentBucket::Package,
+        TreeKind::Directory => AccentBucket::Package,
+        TreeKind::OkfDocument => AccentBucket::Unknown,
         TreeKind::Behavior | TreeKind::Sequence => AccentBucket::Behavior,
         TreeKind::Class | TreeKind::Diagram => AccentBucket::None,
-        TreeKind::Unknown => AccentBucket::Unknown,
     }
 }
 
@@ -81,7 +81,7 @@ mod tests {
         );
         assert_eq!(tree_kind_bucket(TreeKind::Enum), AccentBucket::Enum);
         assert_eq!(tree_kind_bucket(TreeKind::DataType), AccentBucket::Enum);
-        assert_eq!(tree_kind_bucket(TreeKind::Package), AccentBucket::Package);
+        assert_eq!(tree_kind_bucket(TreeKind::Directory), AccentBucket::Package);
         assert_eq!(tree_kind_bucket(TreeKind::Behavior), AccentBucket::Behavior);
         assert_eq!(tree_kind_bucket(TreeKind::Sequence), AccentBucket::Behavior);
         assert_eq!(tree_kind_bucket(TreeKind::Note), AccentBucket::Note);
@@ -93,7 +93,7 @@ mod tests {
         // accent; only a kind with a bucket of its own overrides it.
         assert!(tree_kind_color(TreeKind::Class).is_none());
         assert!(tree_kind_color(TreeKind::Diagram).is_none());
-        assert!(tree_kind_color(TreeKind::Unknown).is_none());
+        assert!(tree_kind_color(TreeKind::OkfDocument).is_none());
         assert!(tree_kind_color(TreeKind::Enum).is_some());
     }
 

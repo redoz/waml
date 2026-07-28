@@ -9,16 +9,25 @@
 #![allow(dead_code)]
 
 use crate::tree::{build_tree, ProjectTree, TreeKind, TreeNode};
-use waml::model::Model;
 
-#[derive(Debug, Clone, Default, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct NavState {
-    /// Package key; `""` = whole-model scope.
+    /// Directory address; `"/"` = whole-bundle scope.
     pub scope: String,
     /// Search text; `""` = browse (never a search state).
     pub query: String,
     /// `None` = All.
     pub filter: Option<TreeKind>,
+}
+
+impl Default for NavState {
+    fn default() -> Self {
+        Self {
+            scope: "/".into(),
+            query: String::new(),
+            filter: None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -44,7 +53,8 @@ pub struct PackageRow {
 /// any kind-labelled UI). `Unknown` reads as "Other".
 pub fn kind_label(kind: TreeKind) -> &'static str {
     match kind {
-        TreeKind::Package => "Package",
+        TreeKind::Directory => "Directory",
+        TreeKind::OkfDocument => "OKF",
         TreeKind::Class => "Class",
         TreeKind::Interface => "Interface",
         TreeKind::Enum => "Enum",
@@ -53,7 +63,6 @@ pub fn kind_label(kind: TreeKind) -> &'static str {
         TreeKind::Behavior => "Behavior",
         TreeKind::Sequence => "Sequence",
         TreeKind::Note => "Note",
-        TreeKind::Unknown => "Other",
     }
 }
 
@@ -68,7 +77,8 @@ pub fn chip_label(filter: Option<TreeKind>) -> &'static str {
 /// Canonical kind order (matches `TreeKind`'s declaration), used to give
 /// `kinds_in_model` a stable, model-independent ordering.
 const KIND_ORDER: [TreeKind; 10] = [
-    TreeKind::Package,
+    TreeKind::Directory,
+    TreeKind::OkfDocument,
     TreeKind::Class,
     TreeKind::Interface,
     TreeKind::Enum,
@@ -77,14 +87,13 @@ const KIND_ORDER: [TreeKind; 10] = [
     TreeKind::Behavior,
     TreeKind::Sequence,
     TreeKind::Note,
-    TreeKind::Unknown,
 ];
 
 /// The distinct `TreeKind`s present anywhere in the model, in canonical order.
 /// Drives the type-filter chip's cycle; compute once on Model load, not per
 /// keystroke.
-pub fn kinds_in_model(model: &Model) -> Vec<TreeKind> {
-    let full = build_tree(model, "Untitled");
+pub fn kinds_in_model(bundle: &waml::okf::Bundle, uml: &waml::uml::Projection) -> Vec<TreeKind> {
+    let full = build_tree(bundle, uml, "Untitled");
     let mut present: Vec<TreeKind> = Vec::new();
     fn walk(nodes: &[TreeNode], present: &mut Vec<TreeKind>) {
         for n in nodes {
@@ -102,25 +111,21 @@ pub fn kinds_in_model(model: &Model) -> Vec<TreeKind> {
         .collect()
 }
 
-/// Nested package-only rows for the title dropdown, depth-indented. Row 0 is the
-/// synthetic root (whole-model scope, key `""`); real sub-packages follow. The
-/// `build_tree` root (key `""`) IS a package, so it is skipped here and replaced
-/// by the synthetic row, then its children are recursed for real packages.
-pub fn packages(model: &Model) -> Vec<PackageRow> {
-    let full = build_tree(model, "Untitled");
-    let root_title = if model.path.is_empty() {
-        "Untitled".to_string()
-    } else {
-        model.path.clone()
-    };
+/// Nested directory-only rows for the title dropdown, depth-indented.
+pub fn packages(bundle: &waml::okf::Bundle, uml: &waml::uml::Projection) -> Vec<PackageRow> {
+    let full = build_tree(bundle, uml, "Untitled");
+    let root_title = bundle
+        .index("/")
+        .and_then(|index| index.title.clone())
+        .unwrap_or_else(|| "Untitled".into());
     let mut out = vec![PackageRow {
-        key: String::new(),
+        key: "/".into(),
         title: root_title,
         depth: 0,
     }];
     fn walk(nodes: &[TreeNode], depth: usize, out: &mut Vec<PackageRow>) {
         for n in nodes {
-            if n.kind == TreeKind::Package {
+            if n.kind == TreeKind::Directory {
                 out.push(PackageRow {
                     key: n.key.clone(),
                     title: n.title.clone(),
@@ -137,7 +142,7 @@ pub fn packages(model: &Model) -> Vec<PackageRow> {
 }
 
 /// Find the node with `key` anywhere in `nodes` (depth-first). The `build_tree`
-/// root has key `""`, so `find_node(roots, "")` returns the synthetic root.
+/// root has key `"/"`.
 fn find_node<'a>(nodes: &'a [TreeNode], key: &str) -> Option<&'a TreeNode> {
     for n in nodes {
         if n.key == key {
@@ -202,8 +207,8 @@ fn query_prune(nodes: &[TreeNode], q: &str) -> Vec<TreeNode> {
         .collect()
 }
 
-pub fn view(model: &Model, state: &NavState) -> NavView {
-    let full = build_tree(model, "Untitled");
+pub fn view(bundle: &waml::okf::Bundle, uml: &waml::uml::Projection, state: &NavState) -> NavView {
+    let full = build_tree(bundle, uml, "Untitled");
     let scoped = scoped_roots(&full, &state.scope);
     let filtered = match state.filter {
         Some(k) => filter_kind(&scoped, k),
@@ -216,8 +221,8 @@ pub fn view(model: &Model, state: &NavState) -> NavView {
     if !in_scope.is_empty() {
         return NavView::Results(ProjectTree { roots: in_scope });
     }
-    // Nothing in scope: search the whole model (same depth-0 base as scope "").
-    let whole = scoped_roots(&full, "");
+    // Nothing in scope: search the whole bundle.
+    let whole = scoped_roots(&full, "/");
     let whole_filtered = match state.filter {
         Some(k) => filter_kind(&whole, k),
         None => whole,
@@ -233,122 +238,66 @@ pub fn view(model: &Model, state: &NavState) -> NavView {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::load;
-    use std::path::Path;
-    use waml::model::{ElementType, Model, Node, UmlMetaclass};
-    use waml::okf::Concept;
+    use waml::source::SourceBundle;
 
-    fn mini() -> Model {
-        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/mini");
-        load::load_model(&dir).unwrap()
-    }
-
-    fn concept(title: &str) -> Concept {
-        Concept {
-            id: String::new(),
-            ty: String::new(),
-            title: Some(title.to_string()),
-            description: None,
-            resource: None,
-            tags: vec![],
-            timestamp: None,
-            body: String::new().into(),
-            links: vec![],
-            citations: vec![],
-            extra: Default::default(),
-        }
-    }
-
-    fn node(key: &str, ty: ElementType, title: &str, members: Vec<&str>) -> Node {
-        Node {
-            concept: concept(title),
-            key: key.to_string(),
-            ty,
-            stereotypes: vec![],
-            abstract_: false,
-            attributes: vec![],
-            values: vec![],
-            note_body: None,
-            annotates: vec![],
-            members: members.iter().map(|s| s.to_string()).collect(),
-            slots: vec![],
-        }
-    }
-
-    /// A small hand-built model: root package -> [sub package -> [Cls class],
-    /// Iface interface]. Reused across nav tests.
-    fn built() -> Model {
-        Model {
-            path: "Root".to_string(),
-            packages: vec![
-                node(
-                    "",
-                    ElementType::Uml(UmlMetaclass::Package),
-                    "Root",
-                    vec!["sub", "iface"],
-                ),
-                node(
-                    "sub",
-                    ElementType::Uml(UmlMetaclass::Package),
-                    "Sub Pkg",
-                    vec!["cls"],
-                ),
-            ],
-            nodes: vec![
-                node(
-                    "cls",
-                    ElementType::Uml(UmlMetaclass::Class),
-                    "Customer",
-                    vec![],
-                ),
-                node(
-                    "iface",
-                    ElementType::Uml(UmlMetaclass::Interface),
-                    "Payments",
-                    vec![],
-                ),
-            ],
-            ..Default::default()
-        }
+    fn built() -> (waml::okf::Bundle, waml::uml::Projection) {
+        let source = SourceBundle::try_from_pairs([
+            (
+                "index.md",
+                "# Root\n\n* [Sub Pkg](sub/)\n* [Payments](iface.md)\n",
+            ),
+            ("sub/index.md", "# Sub Pkg\n\n* [Customer](cls.md)\n"),
+            (
+                "sub/cls.md",
+                "---\ntype: uml.Class\ntitle: Customer\n---\n# Customer\n",
+            ),
+            (
+                "iface.md",
+                "---\ntype: uml.Interface\ntitle: Payments\n---\n# Payments\n",
+            ),
+        ])
+        .unwrap();
+        let bundle = waml::okf::Bundle::parse(&source).unwrap();
+        let projection = waml::uml::project(&bundle);
+        (bundle, projection)
     }
 
     #[test]
     fn chip_label_is_all_when_unfiltered_else_the_kind() {
         assert_eq!(chip_label(None), "All");
         assert_eq!(chip_label(Some(TreeKind::Class)), "Class");
-        assert_eq!(chip_label(Some(TreeKind::Package)), "Package");
+        assert_eq!(chip_label(Some(TreeKind::Directory)), "Directory");
     }
 
     #[test]
     fn kinds_in_model_is_distinct_and_canonically_ordered() {
-        let kinds = kinds_in_model(&built());
+        let (bundle, projection) = built();
+        let kinds = kinds_in_model(&bundle, &projection);
         // Present: Package (root+sub), Class (cls), Interface (iface). Canonical
         // order puts Package before Class before Interface; no dupes.
         assert_eq!(
             kinds,
-            vec![TreeKind::Package, TreeKind::Class, TreeKind::Interface]
+            vec![TreeKind::Directory, TreeKind::Class, TreeKind::Interface]
         );
     }
 
     #[test]
-    fn kinds_in_model_covers_the_mini_fixture_without_unknown_leak() {
-        let kinds = kinds_in_model(&mini());
-        assert!(kinds.contains(&TreeKind::Package));
-        assert!(kinds.contains(&TreeKind::Diagram));
-        assert!(!kinds.contains(&TreeKind::Unknown));
-        // Canonical order: every entry's index in KIND_ORDER strictly increases.
+    fn kinds_are_canonically_ordered() {
+        let (bundle, projection) = built();
+        let kinds = kinds_in_model(&bundle, &projection);
         let idx = |k: &TreeKind| KIND_ORDER.iter().position(|x| x == k).unwrap();
         assert!(kinds.windows(2).all(|w| idx(&w[0]) < idx(&w[1])));
     }
 
     #[test]
     fn packages_lead_with_synthetic_root_then_nest_real_packages() {
-        let rows = packages(&built());
+        let (bundle, projection) = built();
+        let rows = packages(&bundle, &projection);
         // Row 0: synthetic whole-model root, key "", titled from model.path.
         assert_eq!(
             rows[0],
             PackageRow {
-                key: String::new(),
+                key: "/".to_string(),
                 title: "Root".to_string(),
                 depth: 0
             }
@@ -359,17 +308,15 @@ mod tests {
             rows.iter()
                 .map(|r| (r.key.as_str(), r.depth))
                 .collect::<Vec<_>>(),
-            vec![("", 0usize), ("sub", 1usize)]
+            vec![("/", 0usize), ("/sub", 1usize)]
         );
     }
 
     #[test]
-    fn packages_synthetic_root_falls_back_to_untitled_when_path_empty() {
-        let mut m = built();
-        m.path = String::new();
-        let rows = packages(&m);
-        assert_eq!(rows[0].title, "Untitled");
-        assert_eq!(rows[0].key, "");
+    fn packages_exclude_documents() {
+        let (bundle, projection) = built();
+        let rows = packages(&bundle, &projection);
+        assert!(!rows.iter().any(|row| row.key == "sub/cls"));
     }
 
     fn browse_roots(v: &NavView) -> &ProjectTree {
@@ -394,24 +341,26 @@ mod tests {
 
     #[test]
     fn empty_scope_roots_at_whole_model_without_the_synthetic_root_row() {
-        let v = view(&built(), &NavState::default());
+        let (bundle, projection) = built();
+        let v = view(&bundle, &projection, &NavState::default());
         let t = browse_roots(&v);
         // Whole-model members are at depth 0 — the "Root" package itself is NOT a
         // row (it is the dropdown's scope, not tree content).
         let keys: Vec<&str> = t.roots.iter().map(|r| r.key.as_str()).collect();
-        assert_eq!(keys, vec!["sub", "iface"]);
+        assert_eq!(keys, vec!["/sub", "iface"]);
     }
 
     #[test]
     fn scope_roots_at_the_packages_subtree() {
         let state = NavState {
-            scope: "sub".to_string(),
+            scope: "/sub".to_string(),
             ..Default::default()
         };
-        let v = view(&built(), &state);
+        let (bundle, projection) = built();
+        let v = view(&bundle, &projection, &state);
         let t = browse_roots(&v);
         // "sub"'s members at depth 0; "sub" itself is not shown.
-        assert_eq!(flat(t), vec![("cls".to_string(), TreeKind::Class)]);
+        assert_eq!(flat(t), vec![("sub/cls".to_string(), TreeKind::Class)]);
     }
 
     #[test]
@@ -420,15 +369,16 @@ mod tests {
             filter: Some(TreeKind::Class),
             ..Default::default()
         };
-        let v = view(&built(), &state);
+        let (bundle, projection) = built();
+        let v = view(&bundle, &projection, &state);
         let t = browse_roots(&v);
         // Only the Class survives, but its ancestor package "sub" is retained for
         // structure; the sibling Interface "iface" is pruned.
         assert_eq!(
             flat(t),
             vec![
-                ("sub".to_string(), TreeKind::Package),
-                ("cls".to_string(), TreeKind::Class)
+                ("/sub".to_string(), TreeKind::Directory),
+                ("sub/cls".to_string(), TreeKind::Class)
             ]
         );
     }
@@ -436,12 +386,13 @@ mod tests {
     #[test]
     fn type_filter_on_package_keeps_package_rows() {
         let state = NavState {
-            filter: Some(TreeKind::Package),
+            filter: Some(TreeKind::Directory),
             ..Default::default()
         };
-        let v = view(&built(), &state);
+        let (bundle, projection) = built();
+        let v = view(&bundle, &projection, &state);
         let t = browse_roots(&v);
-        assert_eq!(flat(t), vec![("sub".to_string(), TreeKind::Package)]);
+        assert_eq!(flat(t), vec![("/sub".to_string(), TreeKind::Directory)]);
     }
 
     #[test]
@@ -450,7 +401,8 @@ mod tests {
             query: "custom".to_string(),
             ..Default::default()
         };
-        let v = view(&built(), &state);
+        let (bundle, projection) = built();
+        let v = view(&bundle, &projection, &state);
         let t = match &v {
             NavView::Results(t) => t,
             other => panic!("expected Results, got {other:?}"),
@@ -459,8 +411,8 @@ mod tests {
         assert_eq!(
             flat(t),
             vec![
-                ("sub".to_string(), TreeKind::Package),
-                ("cls".to_string(), TreeKind::Class)
+                ("/sub".to_string(), TreeKind::Directory),
+                ("sub/cls".to_string(), TreeKind::Class)
             ]
         );
     }
@@ -471,7 +423,8 @@ mod tests {
             query: "PAYMENTS".to_string(),
             ..Default::default()
         };
-        match view(&built(), &state) {
+        let (bundle, projection) = built();
+        match view(&bundle, &projection, &state) {
             NavView::Results(t) => {
                 assert!(flat(&t).iter().any(|(k, _)| k == "iface"));
             }
@@ -484,11 +437,12 @@ mod tests {
         // Scope into "sub" (holds only "Customer"), search for the interface that
         // lives outside the scope.
         let state = NavState {
-            scope: "sub".to_string(),
+            scope: "/sub".to_string(),
             query: "payments".to_string(),
             ..Default::default()
         };
-        let v = view(&built(), &state);
+        let (bundle, projection) = built();
+        let v = view(&bundle, &projection, &state);
         let t = match &v {
             NavView::Elsewhere(t) => t,
             other => panic!("expected Elsewhere, got {other:?}"),
@@ -502,6 +456,7 @@ mod tests {
             query: "zzzznope".to_string(),
             ..Default::default()
         };
-        assert_eq!(view(&built(), &state), NavView::Empty);
+        let (bundle, projection) = built();
+        assert_eq!(view(&bundle, &projection, &state), NavView::Empty);
     }
 }

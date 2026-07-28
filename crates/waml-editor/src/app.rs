@@ -1,8 +1,9 @@
 mod actions;
 
-use crate::doc_tabs::{OpenTabs, TabKind};
+use crate::doc_tabs::OpenTabs;
 use crate::dock::DockState;
 use crate::dock::ResponsiveDockLayout;
+use crate::document::NavCategory;
 use crate::document_host::{DocumentCommand, DocumentHost};
 use crate::editor_session::EditorSession;
 use crate::fps_meter::FpsMeter;
@@ -706,7 +707,10 @@ impl App {
     /// Synchronize shell projections after the document host has completed a
     /// transition. Document content and view-specific chrome stay host-owned.
     fn sync_document_shell(&mut self, cx: &mut Cx) {
-        let selected = self.documents.active_tab().map(|tab| tab.key.clone());
+        let selected = self
+            .documents
+            .active_tab()
+            .map(|tab| tab.concept_id.clone());
         if let Some(mut tree) = self
             .ui
             .widget(cx, ids!(project_tree))
@@ -722,45 +726,20 @@ impl App {
     /// Open or focus a document through the shared preview slot. All callers
     /// use this path so replacement cleanup and view/chrome synchronization
     /// stay identical for classifiers and diagrams.
-    fn transition_document(
-        &mut self,
-        cx: &mut Cx,
-        key: &str,
-        node_kind: crate::tree::TreeKind,
-        persistent: bool,
-    ) -> bool {
-        let title = if node_kind == crate::tree::TreeKind::Diagram {
-            self.session
-                .model()
-                .diagrams
-                .iter()
-                .find(|diagram| diagram.key == key)
-                .map(|diagram| diagram.title.clone())
-        } else {
-            self.session
-                .model()
-                .nodes
-                .iter()
-                .find(|node| node.key == key)
-                .map(|node| {
-                    node.concept
-                        .title
-                        .clone()
-                        .unwrap_or_else(|| node.key.clone())
-                })
-        };
-        let Some(title) = title else {
+    fn transition_document(&mut self, cx: &mut Cx, concept_id: &str, persistent: bool) -> bool {
+        let Some(document) = crate::documents::open(
+            self.session.okf(),
+            self.session.uml_projection(),
+            concept_id,
+        ) else {
             return false;
         };
-
         let changed = self.documents.transition(
             cx,
             &self.ui,
             &self.session,
             DocumentCommand::Open {
-                key: key.to_owned(),
-                title,
-                node_kind,
+                document,
                 persistent,
             },
         );
@@ -774,12 +753,12 @@ impl App {
         let title = self
             .documents
             .active_tab()
-            .filter(|tab| tab.kind == TabKind::Diagram)
+            .filter(|tab| tab.presentation.category == NavCategory::Diagram)
             .or_else(|| {
                 self.documents
                     .tabs()
                     .iter()
-                    .find(|tab| tab.kind == TabKind::Diagram)
+                    .find(|tab| tab.presentation.category == NavCategory::Diagram)
             })
             .map(|t| t.title.clone())
             .unwrap_or_default();
@@ -1419,16 +1398,18 @@ impl App {
         // against this bundle and rebuilds the model (see `handle_actions`).
         // Fresh model: recompute the type-filter chip's cycle and reset scope /
         // search / filter to the whole-model browse state.
-        self.nav_kinds = crate::nav::kinds_in_model(self.session.model());
+        self.nav_kinds =
+            crate::nav::kinds_in_model(self.session.okf(), self.session.uml_projection());
         self.nav_state = NavState::default();
 
         self.open_name = display_name;
 
-        let root_name = if self.session.model().path.is_empty() {
-            self.open_name.as_str()
-        } else {
-            self.session.model().path.as_str()
-        };
+        let root_name = self
+            .session
+            .okf()
+            .index("/")
+            .and_then(|index| index.title.as_deref())
+            .unwrap_or(self.open_name.as_str());
         self.ui.label(cx, ids!(model_name)).set_text(cx, root_name);
 
         self.refresh_nav(cx, true);
@@ -1438,10 +1419,13 @@ impl App {
         // empty canvas and no active diagram tab. With no tab there is no view to
         // declare a right dock, so the inspector stays closed and its `[I]`
         // toggle stays hidden.
-        let initial_tabs = match crate::cli::select_diagram(self.session.model(), wanted_diagram) {
-            Some(diagram) => {
-                // Seed a fresh diagram preview through the document host.
-                OpenTabs::diagram_preview(diagram.key.clone(), diagram.title.clone())
+        self.documents
+            .replace_for_session(cx, &self.ui, &self.session, OpenTabs::default());
+        match crate::cli::select_diagram(self.session.model(), wanted_diagram)
+            .map(|diagram| diagram.key.clone())
+        {
+            Some(diagram_key) => {
+                self.transition_document(cx, &diagram_key, false);
             }
             None => {
                 log!(
@@ -1459,11 +1443,8 @@ impl App {
                 {
                     canvas.clear(cx);
                 }
-                OpenTabs::default()
             }
-        };
-        self.documents
-            .replace_for_session(cx, &self.ui, &self.session, initial_tabs);
+        }
         self.sync_document_shell(cx);
         true
     }
@@ -1705,10 +1686,14 @@ impl App {
     /// clear the search field when they reset `nav_state.query` (otherwise the
     /// field keeps showing the previous model's text over an unfiltered tree).
     fn refresh_nav(&mut self, cx: &mut Cx, scope_changed: bool) {
-        let view = crate::nav::view(self.session.model(), &self.nav_state);
+        let view = crate::nav::view(
+            self.session.okf(),
+            self.session.uml_projection(),
+            &self.nav_state,
+        );
         let chip = crate::nav::chip_label(self.nav_state.filter).to_string();
         let title = scope_changed.then(|| {
-            crate::nav::packages(self.session.model())
+            crate::nav::packages(self.session.okf(), self.session.uml_projection())
                 .into_iter()
                 .find(|r| r.key == self.nav_state.scope)
                 .map(|r| r.title)
@@ -1823,7 +1808,7 @@ fn doc_switcher_items(open: &[crate::doc_tabs::DocTab]) -> Vec<crate::popup::bas
         .map(|tab| crate::popup::base::PopupItem {
             id: tab.id,
             label: tab.title.clone(),
-            icon: crate::icons::IconSet::icon_for(tab.node_kind),
+            icon: Some(tab.presentation.icon),
             danger: false,
             enabled: true,
         })
@@ -2284,12 +2269,28 @@ mod tests {
         should_dismiss_narrow_dock, should_flush_save, BackingTransitionError, LogoCommand,
         SaveFeedback,
     };
-    use crate::doc_tabs::{DocTab, OpenTabs, TabKind};
+    use crate::doc_tabs::{DocTab, OpenTabs};
     use crate::dock::DockState;
+    use crate::document::DocumentPresentation;
+    use crate::icons::IconSet;
     use crate::popup::conflict_list::ConflictListAction;
     use crate::tree::TreeKind;
     use makepad_widgets::*;
     use std::cell::RefCell;
+
+    fn tab(id: LiveId, key: &str, title: &str, category: TreeKind, preview: bool) -> DocTab {
+        DocTab {
+            id,
+            concept_id: key.into(),
+            title: title.into(),
+            presentation: DocumentPresentation {
+                icon: IconSet::icon_for(category).unwrap(),
+                accent: None,
+                category,
+            },
+            preview,
+        }
+    }
 
     #[test]
     fn shutdown_and_quit_request_are_final_save_events() {
@@ -2392,30 +2393,9 @@ mod tests {
         let order = LiveId::from_str("order");
         let tabs = OpenTabs {
             tabs: vec![
-                DocTab {
-                    id: diagram,
-                    key: "d".into(),
-                    title: "Diagram".into(),
-                    kind: TabKind::Diagram,
-                    node_kind: TreeKind::Diagram,
-                    preview: false,
-                },
-                DocTab {
-                    id: customer,
-                    key: "customer".into(),
-                    title: "Customer".into(),
-                    kind: TabKind::Classifier,
-                    node_kind: TreeKind::Class,
-                    preview: false,
-                },
-                DocTab {
-                    id: order,
-                    key: "order".into(),
-                    title: "Order".into(),
-                    kind: TabKind::Classifier,
-                    node_kind: TreeKind::Class,
-                    preview: true,
-                },
+                tab(diagram, "d", "Diagram", TreeKind::Diagram, false),
+                tab(customer, "customer", "Customer", TreeKind::Class, false),
+                tab(order, "order", "Order", TreeKind::Class, true),
             ],
             active: order,
         };

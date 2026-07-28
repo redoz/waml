@@ -8,17 +8,15 @@
 use crate::doc_view::{BodyChrome, BodyWidgets, DocView, ViewData, ViewOutcome};
 use crate::icons::Icon;
 use crate::inspector::Subject;
-use crate::tree::TreeKind;
 use makepad_widgets::*;
 
 pub struct SourceView {
     key: String,
-    node_kind: TreeKind,
 }
 
 impl SourceView {
-    pub fn new(key: String, node_kind: TreeKind) -> SourceView {
-        SourceView { key, node_kind }
+    pub fn new(key: String) -> SourceView {
+        SourceView { key }
     }
 
     fn markdown<'a>(&self, data: ViewData<'a>) -> std::borrow::Cow<'a, str> {
@@ -67,7 +65,6 @@ impl DocView for SourceView {
     }
 
     fn tab_accent(&self) -> Option<Vec4> {
-        let _ = self.node_kind;
         Some(crate::accent::bucket_color(
             crate::node_style::AccentBucket::None,
         ))
@@ -96,7 +93,7 @@ mod tests {
             "# Order\nraw source".to_string(),
         )])
         .unwrap();
-        let view = SourceView::new("shop/order".into(), TreeKind::Class);
+        let view = SourceView::new("shop/order".into());
 
         assert_eq!(view.markdown(data(&model, &bundle)), "# Order\nraw source");
     }
@@ -105,7 +102,7 @@ mod tests {
     fn missing_source_keeps_the_existing_italic_fallback() {
         let model = Model::default();
         let bundle = SourceBundle::default();
-        let view = SourceView::new("missing".into(), TreeKind::Class);
+        let view = SourceView::new("missing".into());
 
         assert_eq!(
             view.markdown(data(&model, &bundle)),
@@ -118,11 +115,10 @@ mod tests {
 mod ownership_contract_tests {
     use super::*;
     use crate::doc_view::DocView;
-    use crate::tree::TreeKind;
 
     #[test]
     fn source_view_is_constructed_with_all_tab_identity() {
-        let view = SourceView::new("shop/order".into(), TreeKind::Enum);
+        let view = SourceView::new("shop/order".into());
 
         assert_eq!(
             view.tab_accent(),
