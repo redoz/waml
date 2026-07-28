@@ -16,7 +16,9 @@ import {
 
 let client: LanguageClient | undefined;
 
-export function activate(context: ExtensionContext): void {
+export async function activate(context: ExtensionContext): Promise<void> {
+  await deactivate();
+
   const ctx: ServerPathContext = {
     env: process.env,
     extensionPath: context.extensionPath,
@@ -55,11 +57,24 @@ export function activate(context: ExtensionContext): void {
   };
   const clientOptions: LanguageClientOptions = {
     documentSelector: [{ language: "markdown" }],
+    initializationOptions: undefined,
+    // Pin vscode-languageclient's bounded default crash-restart policy.
+    connectionOptions: { maxRestartCount: 4 },
   };
-  client = new LanguageClient("waml", "WAML", serverOptions, clientOptions);
-  client.start();
+  const nextClient = new LanguageClient("waml", "WAML", serverOptions, clientOptions);
+  client = nextClient;
+  try {
+    await nextClient.start();
+  } catch (error) {
+    if (client === nextClient) client = undefined;
+    await nextClient.stop();
+    const message = error instanceof Error ? error.message : String(error);
+    await window.showErrorMessage(`WAML language server failed to start. ${message}`);
+  }
 }
 
-export function deactivate(): Thenable<void> | undefined {
-  return client?.stop();
+export async function deactivate(): Promise<void> {
+  const activeClient = client;
+  client = undefined;
+  await activeClient?.stop();
 }

@@ -10,6 +10,7 @@
   "categories": ["Programming Languages", "Linters"],
   "activationEvents": ["onLanguage:markdown"],
   "main": "./dist/extension.js",
+  "files": ["dist/**/*.js", "dist/**/*.d.ts"],
   "contributes": {
     "configuration": {
       "title": "WAML",

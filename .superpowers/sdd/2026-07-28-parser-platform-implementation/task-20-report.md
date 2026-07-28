@@ -65,3 +65,50 @@ in total (`2,054 + 556`).
 - [x] Focused VS Code, LSP e2e, format, packaging, import, and diff gates run.
 - [ ] Full workspace gate green; blocked by the reproduced unrelated Rust OKF
       failure noted above.
+
+## Formal Fix Round 1
+
+### Review Findings Addressed
+
+- Replaced the launch/start/stop AST and regex characterizations with tests
+  that execute the exported `activate` and `deactivate` functions.
+- Kept AST inspection only for the explicit prohibited-import architecture
+  guard required by the brief.
+- Pinned `vscode-languageclient`'s default error policy with
+  `connectionOptions.maxRestartCount = 4`.
+- Executed the installed dependency's `DefaultErrorHandler` implementation in
+  the test to verify three protocol errors continue, the fourth shuts down,
+  four rapid crashes restart, and the fifth rapid crash does not restart.
+- Made activation await startup, report startup failure, dispose a failed
+  client, stop an existing client before repeat activation, and clear the
+  active client before shutdown so repeated deactivate calls are idempotent.
+- Added a real `npm pack --dry-run --json` test and restricted package contents
+  to compiled runtime JavaScript/declarations plus package metadata.
+
+### RED / GREEN Evidence
+
+- Lifecycle RED: 4 failures plus one unhandled rejection. The existing client
+  omitted an explicit restart bound, did not stop a client on repeat
+  activation, did not await/clean up a failed start, and stopped the same client
+  twice on repeated deactivation.
+- Lifecycle GREEN: all behavior tests pass after the minimal extension
+  lifecycle changes.
+- Packaging RED: the actual dry-run manifest contained
+  `src/serverPath.test.ts`.
+- Packaging GREEN: the actual manifest contains exactly five files:
+  `dist/extension.{js,d.ts}`, `dist/serverPath.{js,d.ts}`, and `package.json`.
+
+### Formal Fix Verification
+
+- `rtk pnpm --filter @waml/vscode test`: PASS, 14/14.
+- `rtk pnpm --filter @waml/vscode build`: PASS.
+- Independent `npm pack --dry-run --json`: PASS, five runtime files and no
+  source/tests.
+- `rtk cargo test -p waml-cli --test lsp_e2e`: PASS, 3/3.
+- `rtk cargo test -p waml-cli`: PASS, 66 tests across three suites.
+- `rtk cargo check --workspace --all-features`: PASS with pre-existing
+  duplicate-package/dead-code warnings.
+- `rtk cargo fmt --all -- --check`: PASS.
+- Prohibited production-import scan: PASS, no matches.
+- `rtk git diff --check`: PASS.
+- TokenSave saved approximately 502 tokens in this round.
