@@ -260,6 +260,8 @@ fn section_kind(source: &str, range: TextRange) -> Option<UmlSyntaxKind> {
         Some(UmlSyntaxKind::RelationshipsSection)
     } else if name.eq_ignore_ascii_case("Members") {
         Some(UmlSyntaxKind::MembersSection)
+    } else if name.eq_ignore_ascii_case("Layout") {
+        Some(UmlSyntaxKind::LayoutSection)
     } else {
         None
     }
@@ -296,6 +298,7 @@ fn simple_item(
                 UmlSyntaxKind::Member
             }
         }
+        UmlSyntaxKind::LayoutSection => UmlSyntaxKind::LayoutStatement,
         _ => return None,
     };
     if kind == UmlSyntaxKind::Relationship {
@@ -312,6 +315,18 @@ fn simple_item(
     }
     if kind == UmlSyntaxKind::InlineInstance {
         return Some(inline_instance(
+            f,
+            text,
+            source,
+            start,
+            end,
+            lead,
+            content_end,
+            diags,
+        ));
+    }
+    if kind == UmlSyntaxKind::LayoutStatement {
+        return Some(layout_statement(
             f,
             text,
             source,
@@ -409,6 +424,362 @@ fn simple_item(
         ));
     }
     Some(f.node(kind, children).unwrap())
+}
+
+fn layout_statement(
+    f: &GreenFactory<UmlLanguage>,
+    text: &SourceText,
+    source: &str,
+    start: usize,
+    end: usize,
+    lead: usize,
+    content_end: usize,
+    diags: &mut Vec<TreeDiagnostic<UmlSyntaxDiagnosticCode>>,
+) -> waml_syntax::GreenNode<UmlLanguage> {
+    let mut children = vec![token(
+        f,
+        text,
+        start,
+        lead,
+        lead + 1,
+        UmlSyntaxKind::BulletToken,
+    )];
+    // One entry per successfully lexed atom.  The green elements retain the
+    // exact authored bytes/trivia; the parallel spellings are used only to
+    // choose their fixed grammar slots below.
+    let mut atom_words: Vec<String> = Vec::new();
+    let mut has_bad_atom = false;
+    let mut at = lead + 1;
+    while at < content_end {
+        let token_start = at;
+        at = skip_ws(source, at, content_end);
+        if at == content_end {
+            break;
+        }
+        let ch = source[at..].chars().next().expect("layout scalar");
+        let (next, kind) = match ch {
+            '(' => (at + 1, UmlSyntaxKind::LayoutOpenParenToken),
+            ')' => (at + 1, UmlSyntaxKind::LayoutCloseParenToken),
+            ',' => (at + 1, UmlSyntaxKind::LayoutCommaToken),
+            '"' => match source[at + 1..content_end].find('"') {
+                Some(n) => (at + n + 2, UmlSyntaxKind::LayoutQuoteToken),
+                None => {
+                    diags.push(diag(
+                        UmlSyntaxDiagnosticCode::UnexpectedToken,
+                        at,
+                        content_end,
+                        "unterminated layout quote",
+                    ));
+                    (content_end, UmlSyntaxKind::BadToken)
+                }
+            },
+            '[' => match source[at..content_end].find(")") {
+                Some(n)
+                    if source[at..at + n + 1].contains("](./")
+                        && source[at..at + n + 1].ends_with(".md)") =>
+                {
+                    (at + n + 1, UmlSyntaxKind::LayoutLinkToken)
+                }
+                _ => {
+                    let n = source[at..content_end]
+                        .find(char::is_whitespace)
+                        .map(|n| at + n)
+                        .unwrap_or(content_end);
+                    diags.push(diag(
+                        UmlSyntaxDiagnosticCode::UnexpectedToken,
+                        at,
+                        n,
+                        "malformed layout link",
+                    ));
+                    (n, UmlSyntaxKind::BadToken)
+                }
+            },
+            _ => {
+                let n = source[at..content_end]
+                    .find(|c: char| c.is_whitespace() || matches!(c, '(' | ')' | ',' | '[' | '"'))
+                    .map(|n| at + n)
+                    .unwrap_or(content_end);
+                (n, UmlSyntaxKind::LayoutWordToken)
+            }
+        };
+        if kind == UmlSyntaxKind::BadToken {
+            has_bad_atom = true;
+            children.push(GreenElement::Node(
+                f.node(
+                    UmlSyntaxKind::SkippedTokensSyntax,
+                    [GreenElement::Token(
+                        f.bad_token(
+                            UmlSyntaxKind::BadToken,
+                            slice(text, token_start, next),
+                            UmlSyntaxDiagnosticCode::UnexpectedToken,
+                        )
+                        .unwrap(),
+                    )],
+                )
+                .unwrap(),
+            ));
+        } else {
+            children.push(token(f, text, token_start, token_start, next, kind));
+            atom_words.push(source[at..next].trim().to_ascii_lowercase());
+        }
+        at = next.max(at + ch.len_utf8());
+    }
+    // Assign the lexical atoms to their top-level grammar slots.  Nested
+    // operand grammar remains lossless: an operand owns the exact authored
+    // atoms, and consumers can descend through its direct fixed slots.
+    if children.len() > 1 && !has_bad_atom && !atom_words.is_empty() {
+        let atoms = children.split_off(1);
+        let aligned = atom_words
+            .windows(2)
+            .position(|words| words == ["aligned", "with"]);
+        let direction = atom_words
+            .iter()
+            .position(|word| matches!(word.as_str(), "above" | "below" | "left" | "right"));
+        let statement = if let Some(at) = aligned {
+            let mut atoms = atoms;
+            let right = atoms.split_off(at + 2);
+            let join = atoms.split_off(at);
+            f.node(
+                UmlSyntaxKind::LayoutAlignment,
+                [
+                    layout_anchored_node(f, atoms, &atom_words[..at]),
+                    GreenElement::Node(f.node(UmlSyntaxKind::DirectionClause, join).unwrap()),
+                    layout_anchored_node(f, right, &atom_words[at + 2..]),
+                ],
+            )
+            .unwrap()
+        } else if let Some(at) = direction {
+            let mut atoms = atoms;
+            let rest = atoms.split_off(at);
+            let direction_len = if matches!(
+                atom_words.get(at + 1).map(String::as_str),
+                Some("left") | Some("right")
+            ) && atom_words.get(at + 2).is_some_and(|word| word == "of")
+            {
+                3
+            } else if matches!(atom_words.get(at + 1).map(String::as_str), Some("of")) {
+                2
+            } else {
+                1
+            };
+            let mut rest = rest;
+            let right = rest.split_off(direction_len.min(rest.len()));
+            f.node(
+                UmlSyntaxKind::LayoutPlacement,
+                [
+                    layout_operand_node(f, atoms, &atom_words[..at]),
+                    GreenElement::Node(f.node(UmlSyntaxKind::DirectionClause, rest).unwrap()),
+                    layout_operand_node(f, right, &atom_words[at + direction_len..]),
+                ],
+            )
+            .unwrap()
+        } else {
+            f.node(
+                UmlSyntaxKind::LayoutStandalone,
+                [layout_operand_node(f, atoms, &atom_words)],
+            )
+            .unwrap()
+        };
+        children.push(GreenElement::Node(statement));
+    }
+    if children.len() == 1 {
+        children.push(GreenElement::Token(
+            f.missing_token(UmlSyntaxKind::LayoutWordToken),
+        ));
+        diags.push(diag(
+            UmlSyntaxDiagnosticCode::UnexpectedToken,
+            lead,
+            content_end,
+            "missing layout statement",
+        ));
+    }
+    if content_end < end {
+        children.push(token(
+            f,
+            text,
+            content_end,
+            content_end,
+            end,
+            UmlSyntaxKind::NewlineToken,
+        ));
+    }
+    f.node(UmlSyntaxKind::LayoutStatement, children).unwrap()
+}
+
+fn layout_operand_node(
+    f: &GreenFactory<UmlLanguage>,
+    atoms: Vec<GreenElement<UmlLanguage>>,
+    words: &[String],
+) -> GreenElement<UmlLanguage> {
+    let axis_at = words.iter().position(|word| word == "as");
+    let hint_at = words.iter().position(|word| word == "with");
+    let reference_end = axis_at.or(hint_at).unwrap_or(atoms.len());
+    let mut atoms = atoms;
+    let tail = atoms.split_off(reference_end);
+    let mut children = vec![layout_ref_node(f, atoms, &words[..reference_end])];
+    if let Some(axis_at) = axis_at {
+        let mut tail = tail;
+        let hint_offset = hint_at
+            .map(|at| at.saturating_sub(axis_at))
+            .unwrap_or(tail.len());
+        let hints = tail.split_off(hint_offset.min(tail.len()));
+        children.push(GreenElement::Node(
+            f.node(UmlSyntaxKind::Axis, tail).unwrap(),
+        ));
+        if !hints.is_empty() {
+            children.push(layout_hint_clause_node(
+                f,
+                hints,
+                &words[axis_at + hint_offset.min(words.len() - axis_at)..],
+            ));
+        }
+    } else if !tail.is_empty() {
+        children.push(layout_hint_clause_node(
+            f,
+            tail,
+            &words[hint_at.unwrap_or(words.len())..],
+        ));
+    }
+    GreenElement::Node(f.node(UmlSyntaxKind::Operand, children).unwrap())
+}
+
+fn layout_ref_node(
+    f: &GreenFactory<UmlLanguage>,
+    atoms: Vec<GreenElement<UmlLanguage>>,
+    words: &[String],
+) -> GreenElement<UmlLanguage> {
+    let children = if words.first().is_some_and(|word| word == "(")
+        && words.last().is_some_and(|word| word == ")")
+        && atoms.len() >= 2
+    {
+        vec![
+            atoms[0].clone(),
+            layout_operand_node(
+                f,
+                atoms[1..atoms.len() - 1].to_vec(),
+                &words[1..words.len() - 1],
+            ),
+            atoms[atoms.len() - 1].clone(),
+        ]
+    } else if matches!(
+        words.first().map(String::as_str),
+        Some("row") | Some("column")
+    ) && words.get(1).is_some_and(|word| word == "of")
+        && atoms.len() >= 3
+    {
+        let mut children = vec![
+            GreenElement::Node(f.node(UmlSyntaxKind::Axis, [atoms[0].clone()]).unwrap()),
+            atoms[1].clone(),
+        ];
+        let mut depth = 0_i32;
+        let mut start = 2;
+        for index in 2..=words.len() {
+            let boundary = if index == words.len() {
+                true
+            } else {
+                match words[index].as_str() {
+                    "(" => {
+                        depth += 1;
+                        false
+                    }
+                    ")" => {
+                        depth -= 1;
+                        false
+                    }
+                    "," if depth == 0 => true,
+                    _ => false,
+                }
+            };
+            if !boundary {
+                continue;
+            }
+            if start < index {
+                children.push(layout_operand_node(
+                    f,
+                    atoms[start..index].to_vec(),
+                    &words[start..index],
+                ));
+            }
+            if index < words.len() {
+                children.push(atoms[index].clone());
+                start = index + 1;
+            }
+        }
+        children
+    } else {
+        vec![GreenElement::Node(
+            f.node(UmlSyntaxKind::NameRef, atoms).unwrap(),
+        )]
+    };
+    GreenElement::Node(f.node(UmlSyntaxKind::OperandRef, children).unwrap())
+}
+
+fn layout_hint_clause_node(
+    f: &GreenFactory<UmlLanguage>,
+    atoms: Vec<GreenElement<UmlLanguage>>,
+    words: &[String],
+) -> GreenElement<UmlLanguage> {
+    let mut children = Vec::new();
+    let mut start = 0;
+    for end in 0..=words.len() {
+        let separator = end < words.len() && (words[end] == "and" || words[end] == ",");
+        if !separator && end != words.len() {
+            continue;
+        }
+        if start == 0 && words.first().is_some_and(|word| word == "with") {
+            if let Some(with) = atoms.first().cloned() {
+                children.push(with);
+            }
+            start = 1;
+        }
+        if start < end {
+            let kind = match words.get(start).map(String::as_str) {
+                Some("frame") | Some("box") | Some("shrink") => UmlSyntaxKind::Shape,
+                Some("emphasized") | Some("collapsed") => UmlSyntaxKind::Flag,
+                Some("no") | Some("small") | Some("medium") | Some("large") => {
+                    UmlSyntaxKind::Margin
+                }
+                _ => UmlSyntaxKind::Hint,
+            };
+            children.push(GreenElement::Node(
+                f.node(
+                    UmlSyntaxKind::Hint,
+                    [GreenElement::Node(
+                        f.node(kind, atoms[start..end].iter().cloned()).unwrap(),
+                    )],
+                )
+                .unwrap(),
+            ));
+        }
+        if separator {
+            children.push(atoms[end].clone());
+            start = end + 1;
+        }
+    }
+    GreenElement::Node(f.node(UmlSyntaxKind::HintClause, children).unwrap())
+}
+
+fn layout_anchored_node(
+    f: &GreenFactory<UmlLanguage>,
+    atoms: Vec<GreenElement<UmlLanguage>>,
+    words: &[String],
+) -> GreenElement<UmlLanguage> {
+    let edge = matches!(
+        words.first().map(String::as_str),
+        Some("top") | Some("bottom") | Some("left") | Some("right") | Some("center")
+    ) && words.get(1).is_some_and(|word| word == "of");
+    let children = if edge {
+        vec![
+            GreenElement::Node(
+                f.node(UmlSyntaxKind::Edge, atoms[..2].iter().cloned())
+                    .unwrap(),
+            ),
+            layout_operand_node(f, atoms[2..].to_vec(), &words[2..]),
+        ]
+    } else {
+        vec![layout_operand_node(f, atoms, words)]
+    };
+    GreenElement::Node(f.node(UmlSyntaxKind::Anchored, children).unwrap())
 }
 
 fn inline_instance(

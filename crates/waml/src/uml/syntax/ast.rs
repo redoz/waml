@@ -17,10 +17,64 @@ pub struct RelationshipSyntax(pub(crate) SyntaxNode<UmlLanguage>);
 pub struct RelationshipEndSyntax(pub(crate) SyntaxNode<UmlLanguage>);
 #[derive(Clone, Debug)]
 pub struct MemberSyntax(pub(crate) SyntaxNode<UmlLanguage>);
+/// A single bullet in a confirmed diagram `Members` section.  This is named
+/// separately from the older semantic `Member` model so parser consumers can
+/// express that they are operating on the lossless line syntax.
+pub type MemberLineSyntax = MemberSyntax;
 #[derive(Clone, Debug)]
 pub struct MemberGroupSyntax(pub(crate) SyntaxNode<UmlLanguage>);
+/// The confirmed `## Members` island.  Its direct children are the ordered
+/// `MemberGroupSyntax` forest; it is deliberately distinct from arbitrary
+/// Markdown headed "Members" outside the shell-confirmed section map.
+#[derive(Clone, Debug)]
+pub struct DiagramMembersSyntax(pub(crate) SyntaxNode<UmlLanguage>);
 #[derive(Clone, Debug)]
 pub struct InlineInstanceSyntax(pub(crate) SyntaxNode<UmlLanguage>);
+#[derive(Clone, Debug)]
+pub struct LayoutSectionSyntax(pub(crate) SyntaxNode<UmlLanguage>);
+#[derive(Clone, Debug)]
+pub struct LayoutStatementSyntax(pub(crate) SyntaxNode<UmlLanguage>);
+#[derive(Clone, Debug)]
+pub struct LayoutPlacementSyntax(pub(crate) SyntaxNode<UmlLanguage>);
+#[derive(Clone, Debug)]
+pub struct LayoutAlignmentSyntax(pub(crate) SyntaxNode<UmlLanguage>);
+#[derive(Clone, Debug)]
+pub struct LayoutStandaloneSyntax(pub(crate) SyntaxNode<UmlLanguage>);
+#[derive(Clone, Debug)]
+pub struct OperandSyntax(pub(crate) SyntaxNode<UmlLanguage>);
+#[derive(Clone, Debug)]
+pub struct AnchoredSyntax(pub(crate) SyntaxNode<UmlLanguage>);
+#[derive(Clone, Debug)]
+pub struct DirectionClauseSyntax(pub(crate) SyntaxNode<UmlLanguage>);
+#[derive(Clone, Debug)]
+pub struct HintClauseSyntax(pub(crate) SyntaxNode<UmlLanguage>);
+#[derive(Clone, Debug)]
+pub struct EdgeSyntax(pub(crate) SyntaxNode<UmlLanguage>);
+#[derive(Clone, Debug)]
+pub struct AxisSyntax(pub(crate) SyntaxNode<UmlLanguage>);
+#[derive(Clone, Debug)]
+pub struct OperandRefSyntax(pub(crate) SyntaxNode<UmlLanguage>);
+#[derive(Clone, Debug)]
+pub struct NameRefSyntax(pub(crate) SyntaxNode<UmlLanguage>);
+#[derive(Clone, Debug)]
+pub struct HintSyntax(pub(crate) SyntaxNode<UmlLanguage>);
+#[derive(Clone, Debug)]
+pub struct ShapeSyntax(pub(crate) SyntaxNode<UmlLanguage>);
+#[derive(Clone, Debug)]
+pub struct MarginSyntax(pub(crate) SyntaxNode<UmlLanguage>);
+#[derive(Clone, Debug)]
+pub struct FlagSyntax(pub(crate) SyntaxNode<UmlLanguage>);
+/// A typed leaf in a layout statement.  The source range belongs to this
+/// token directly, keeping diagnostics on links/quotes/delimiters precise.
+#[derive(Clone, Debug)]
+pub enum LayoutAtomSyntax {
+    Word(SyntaxToken<UmlLanguage>),
+    Link(SyntaxToken<UmlLanguage>),
+    Quote(SyntaxToken<UmlLanguage>),
+    OpenParen(SyntaxToken<UmlLanguage>),
+    CloseParen(SyntaxToken<UmlLanguage>),
+    Comma(SyntaxToken<UmlLanguage>),
+}
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum SlotValueKind {
     Bare,
@@ -152,7 +206,190 @@ simple_ast!(RelationshipSyntax, Relationship);
 simple_ast!(RelationshipEndSyntax, RelationshipEnd);
 simple_ast!(MemberSyntax, Member);
 simple_ast!(MemberGroupSyntax, MemberGroup);
+simple_ast!(DiagramMembersSyntax, MembersSection);
 simple_ast!(InlineInstanceSyntax, InlineInstance);
+simple_ast!(LayoutSectionSyntax, LayoutSection);
+simple_ast!(LayoutStatementSyntax, LayoutStatement);
+simple_ast!(LayoutPlacementSyntax, LayoutPlacement);
+simple_ast!(LayoutAlignmentSyntax, LayoutAlignment);
+simple_ast!(LayoutStandaloneSyntax, LayoutStandalone);
+simple_ast!(OperandSyntax, Operand);
+simple_ast!(AnchoredSyntax, Anchored);
+simple_ast!(DirectionClauseSyntax, DirectionClause);
+simple_ast!(HintClauseSyntax, HintClause);
+simple_ast!(EdgeSyntax, Edge);
+simple_ast!(AxisSyntax, Axis);
+simple_ast!(OperandRefSyntax, OperandRef);
+simple_ast!(NameRefSyntax, NameRef);
+simple_ast!(HintSyntax, Hint);
+simple_ast!(ShapeSyntax, Shape);
+simple_ast!(MarginSyntax, Margin);
+simple_ast!(FlagSyntax, Flag);
+impl LayoutStatementSyntax {
+    pub fn placement(&self) -> Option<LayoutPlacementSyntax> {
+        self.0
+            .children()
+            .find(|e| e.kind() == UmlSyntaxKind::LayoutPlacement)
+            .and_then(SyntaxElement::into_node)
+            .map(LayoutPlacementSyntax)
+    }
+    pub fn alignment(&self) -> Option<LayoutAlignmentSyntax> {
+        self.0
+            .children()
+            .find(|e| e.kind() == UmlSyntaxKind::LayoutAlignment)
+            .and_then(SyntaxElement::into_node)
+            .map(LayoutAlignmentSyntax)
+    }
+    pub fn standalone(&self) -> Option<LayoutStandaloneSyntax> {
+        self.0
+            .children()
+            .find(|e| e.kind() == UmlSyntaxKind::LayoutStandalone)
+            .and_then(SyntaxElement::into_node)
+            .map(LayoutStandaloneSyntax)
+    }
+    /// Direct, lossless layout atoms in authored order.  Consumers must not
+    /// descend through arbitrary Markdown nodes or reconstruct the bullet.
+    pub fn atoms(&self) -> impl Iterator<Item = SyntaxToken<UmlLanguage>> + '_ {
+        fn collect(node: &SyntaxNode<UmlLanguage>, out: &mut Vec<SyntaxToken<UmlLanguage>>) {
+            for element in node.children() {
+                if let Some(token) = element.clone().into_token() {
+                    if matches!(
+                        token.kind(),
+                        UmlSyntaxKind::LayoutWordToken
+                            | UmlSyntaxKind::LayoutLinkToken
+                            | UmlSyntaxKind::LayoutQuoteToken
+                            | UmlSyntaxKind::LayoutOpenParenToken
+                            | UmlSyntaxKind::LayoutCloseParenToken
+                            | UmlSyntaxKind::LayoutCommaToken
+                    ) {
+                        out.push(token);
+                    }
+                } else if let Some(child) = element.into_node() {
+                    collect(&child, out);
+                }
+            }
+        }
+        let mut atoms = Vec::new();
+        collect(&self.0, &mut atoms);
+        atoms.into_iter()
+    }
+    pub fn typed_atoms(&self) -> impl Iterator<Item = LayoutAtomSyntax> + '_ {
+        self.atoms().filter_map(|token| match token.kind() {
+            UmlSyntaxKind::LayoutWordToken => Some(LayoutAtomSyntax::Word(token)),
+            UmlSyntaxKind::LayoutLinkToken => Some(LayoutAtomSyntax::Link(token)),
+            UmlSyntaxKind::LayoutQuoteToken => Some(LayoutAtomSyntax::Quote(token)),
+            UmlSyntaxKind::LayoutOpenParenToken => Some(LayoutAtomSyntax::OpenParen(token)),
+            UmlSyntaxKind::LayoutCloseParenToken => Some(LayoutAtomSyntax::CloseParen(token)),
+            UmlSyntaxKind::LayoutCommaToken => Some(LayoutAtomSyntax::Comma(token)),
+            _ => None,
+        })
+    }
+}
+impl LayoutPlacementSyntax {
+    pub fn operands(&self) -> impl Iterator<Item = OperandSyntax> + '_ {
+        self.0
+            .children()
+            .filter(|e| e.kind() == UmlSyntaxKind::Operand)
+            .filter_map(SyntaxElement::into_node)
+            .map(OperandSyntax)
+    }
+    pub fn directions(&self) -> impl Iterator<Item = DirectionClauseSyntax> + '_ {
+        self.0
+            .children()
+            .filter(|e| e.kind() == UmlSyntaxKind::DirectionClause)
+            .filter_map(SyntaxElement::into_node)
+            .map(DirectionClauseSyntax)
+    }
+}
+impl LayoutAlignmentSyntax {
+    pub fn anchored(&self) -> impl Iterator<Item = AnchoredSyntax> + '_ {
+        self.0
+            .children()
+            .filter(|e| e.kind() == UmlSyntaxKind::Anchored)
+            .filter_map(SyntaxElement::into_node)
+            .map(AnchoredSyntax)
+    }
+    pub fn left(&self) -> Option<AnchoredSyntax> {
+        self.anchored().next()
+    }
+    pub fn right(&self) -> Option<AnchoredSyntax> {
+        self.anchored().nth(1)
+    }
+}
+impl LayoutStandaloneSyntax {
+    pub fn operand(&self) -> Option<OperandSyntax> {
+        self.0
+            .children()
+            .find(|e| e.kind() == UmlSyntaxKind::Operand)
+            .and_then(SyntaxElement::into_node)
+            .map(OperandSyntax)
+    }
+}
+impl OperandSyntax {
+    pub fn reference(&self) -> Option<OperandRefSyntax> {
+        direct_node(&self.0, UmlSyntaxKind::OperandRef).map(OperandRefSyntax)
+    }
+    pub fn axis(&self) -> Option<AxisSyntax> {
+        direct_node(&self.0, UmlSyntaxKind::Axis).map(AxisSyntax)
+    }
+    pub fn hint_clause(&self) -> Option<HintClauseSyntax> {
+        direct_node(&self.0, UmlSyntaxKind::HintClause).map(HintClauseSyntax)
+    }
+    pub fn hints(&self) -> impl Iterator<Item = HintSyntax> + '_ {
+        self.hint_clause().into_iter().flat_map(|clause| {
+            clause
+                .0
+                .children()
+                .filter(|element| element.kind() == UmlSyntaxKind::Hint)
+                .filter_map(SyntaxElement::into_node)
+                .map(HintSyntax)
+                .collect::<Vec<_>>()
+        })
+    }
+}
+impl AnchoredSyntax {
+    pub fn edge(&self) -> Option<EdgeSyntax> {
+        direct_node(&self.0, UmlSyntaxKind::Edge).map(EdgeSyntax)
+    }
+    pub fn operand(&self) -> Option<OperandSyntax> {
+        direct_node(&self.0, UmlSyntaxKind::Operand).map(OperandSyntax)
+    }
+}
+impl OperandRefSyntax {
+    pub fn name(&self) -> Option<NameRefSyntax> {
+        direct_node(&self.0, UmlSyntaxKind::NameRef).map(NameRefSyntax)
+    }
+    pub fn group_axis(&self) -> Option<AxisSyntax> {
+        direct_node(&self.0, UmlSyntaxKind::Axis).map(AxisSyntax)
+    }
+    pub fn items(&self) -> impl Iterator<Item = OperandSyntax> + '_ {
+        self.0
+            .children()
+            .filter(|element| element.kind() == UmlSyntaxKind::Operand)
+            .filter_map(SyntaxElement::into_node)
+            .map(OperandSyntax)
+    }
+}
+impl HintSyntax {
+    pub fn shape(&self) -> Option<ShapeSyntax> {
+        direct_node(&self.0, UmlSyntaxKind::Shape).map(ShapeSyntax)
+    }
+    pub fn margin(&self) -> Option<MarginSyntax> {
+        direct_node(&self.0, UmlSyntaxKind::Margin).map(MarginSyntax)
+    }
+    pub fn flag(&self) -> Option<FlagSyntax> {
+        direct_node(&self.0, UmlSyntaxKind::Flag).map(FlagSyntax)
+    }
+}
+
+fn direct_node(
+    node: &SyntaxNode<UmlLanguage>,
+    kind: UmlSyntaxKind,
+) -> Option<SyntaxNode<UmlLanguage>> {
+    node.children()
+        .find(|element| element.kind() == kind)
+        .and_then(SyntaxElement::into_node)
+}
 
 macro_rules! direct_token {
     ($name:ident, $method:ident, $kind:ident) => {

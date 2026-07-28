@@ -15,12 +15,16 @@ pub type Projection = crate::model::Model;
 pub use analysis::{analyze, Analysis};
 pub use declared::{
     DeclaredAttribute, DeclaredBundle, DeclaredConcept, DeclaredField, DeclaredInlineInstance,
-    DeclaredMember, DeclaredMemberGroup, DeclaredRelationship, DeclaredSlot, DeclaredValue,
-    ExpectedSyntax,
+    DeclaredLayoutStatement, DeclaredMember, DeclaredMemberGroup, DeclaredRelationship,
+    DeclaredSlot, DeclaredValue, ExpectedSyntax,
 };
 pub use syntax::{
-    InlineInstanceSyntax, MemberGroupSyntax, MemberSyntax, RelationshipEndSyntax,
-    RelationshipSyntax, SlotSyntax, SlotValueKind, ValueSyntax,
+    AnchoredSyntax, AxisSyntax, DiagramMembersSyntax, DirectionClauseSyntax, EdgeSyntax,
+    FlagSyntax, HintClauseSyntax, HintSyntax, InlineInstanceSyntax, LayoutAlignmentSyntax,
+    LayoutAtomSyntax, LayoutPlacementSyntax, LayoutSectionSyntax, LayoutStandaloneSyntax,
+    LayoutStatementSyntax, MarginSyntax, MemberGroupSyntax, MemberSyntax, NameRefSyntax,
+    OperandRefSyntax, OperandSyntax, RelationshipEndSyntax, RelationshipSyntax, ShapeSyntax,
+    SlotSyntax, SlotValueKind, ValueSyntax,
 };
 
 pub(crate) fn recognizes_type(element_type: &crate::model::ElementType) -> bool {

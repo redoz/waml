@@ -362,9 +362,10 @@ pub fn parse_layout_line(line: &str) -> Result<LayoutStatement, crate::grammar::
     })
 }
 
-/// The recursive-descent core (unchanged body of the former `parse_layout_line`).
-fn parse_layout_line_opt(line: &str) -> Option<LayoutStatement> {
-    let body = line.trim().strip_prefix("- ")?;
+/// Parse the layout body after its Markdown bullet.  UML's lossless parser
+/// supplies this from its direct layout atoms; this is intentionally separate
+/// from `parse_layout_line` so semantic lowering never invents Markdown.
+pub fn parse_layout_body(body: &str) -> Option<LayoutStatement> {
     let toks = lex_layout(body)?;
     if toks.is_empty() {
         return None;
@@ -380,10 +381,13 @@ fn parse_layout_line_opt(line: &str) -> Option<LayoutStatement> {
         pos: 0,
     };
     let op = parse_operand(&mut cur)?;
-    if !cur.done() {
-        return None;
-    }
-    Some(LayoutStatement::Standalone(op))
+    cur.done().then_some(LayoutStatement::Standalone(op))
+}
+
+/// The recursive-descent core (unchanged body of the former `parse_layout_line`).
+fn parse_layout_line_opt(line: &str) -> Option<LayoutStatement> {
+    let body = line.trim().strip_prefix("- ")?;
+    parse_layout_body(body)
 }
 
 fn parse_operand(cur: &mut Cur) -> Option<Operand> {

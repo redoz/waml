@@ -19,6 +19,7 @@ pub enum ExpectedSyntax {
     FlowTarget,
     MessageTarget,
 }
+#[derive(Clone)]
 pub enum DeclaredField<L: SyntaxLanguage, T> {
     Absent,
     Valid {
@@ -75,6 +76,17 @@ pub struct DeclaredInlineInstance {
     pub name: DeclaredField<UmlLanguage, String>,
     pub slots: Arc<[DeclaredSlot]>,
 }
+pub enum DeclaredLayoutStatement {
+    Placement {
+        operands: Arc<[DeclaredField<UmlLanguage, crate::syntax::Operand>]>,
+        directions: Arc<[DeclaredField<UmlLanguage, crate::syntax::Direction>]>,
+    },
+    Alignment {
+        left: DeclaredField<UmlLanguage, crate::syntax::Anchored>,
+        right: DeclaredField<UmlLanguage, crate::syntax::Anchored>,
+    },
+    Standalone(DeclaredField<UmlLanguage, crate::syntax::Operand>),
+}
 pub struct DeclaredConcept {
     pub concept_id: String,
     pub attributes: Arc<[DeclaredAttribute]>,
@@ -84,6 +96,7 @@ pub struct DeclaredConcept {
     pub members: Arc<[DeclaredMember]>,
     pub member_groups: Arc<[DeclaredMemberGroup]>,
     pub inline_instances: Arc<[DeclaredInlineInstance]>,
+    pub layout: Arc<[DeclaredField<UmlLanguage, DeclaredLayoutStatement>]>,
 }
 #[derive(Default)]
 pub struct DeclaredBundle {
