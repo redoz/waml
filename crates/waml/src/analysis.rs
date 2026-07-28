@@ -68,6 +68,9 @@ impl DocumentCatalog {
     pub fn path_for_id(&self, id: DocumentId) -> Option<&BundlePath> {
         self.document(id).map(|document| document.path())
     }
+    pub(crate) fn documents(&self) -> &BTreeMap<DocumentId, Arc<DocumentVersion>> {
+        &self.documents
+    }
 }
 
 pub struct SyntaxSnapshot<L: SyntaxLanguage> {
@@ -93,6 +96,9 @@ impl<L: SyntaxLanguage> SyntaxSet<L> {
     }
     pub fn document(&self, id: DocumentId) -> Option<&Arc<SyntaxSnapshot<L>>> {
         self.documents.get(&id)
+    }
+    pub(crate) fn documents(&self) -> &BTreeMap<DocumentId, Arc<SyntaxSnapshot<L>>> {
+        &self.documents
     }
 }
 
@@ -270,14 +276,16 @@ fn analyze_okf_inner(
         );
     }
     hooks.before(AnalysisStage::Okf)?;
-    let bundle = okf::shell::derive(source).map_err(AnalysisError::Okf)?;
+    let shell = SyntaxSet {
+        catalog: candidate.clone(),
+        documents: Arc::new(shell_documents),
+    };
+    let structures = Arc::new(structures);
+    let bundle = okf::shell::derive(&candidate, &shell, &structures)?;
     Ok(OkfAnalysis {
         catalog: candidate.clone(),
-        shell: SyntaxSet {
-            catalog: candidate,
-            documents: Arc::new(shell_documents),
-        },
-        structures: Arc::new(structures),
+        shell,
+        structures,
         bundle,
     })
 }
@@ -304,6 +312,10 @@ fn version(
 fn shell_error(path: BundlePath, source: ParseError) -> AnalysisError {
     match source {
         ParseError::SourceTooLarge { bytes } => AnalysisError::SourceTooLarge { path, bytes },
+        ParseError::StructuralInvariant { reason } => AnalysisError::StructuralInvariant {
+            stage: AnalysisStage::Shell,
+            reason: format!("{}: {reason}", path.as_str()).into(),
+        },
         source => AnalysisError::Shell { path, source },
     }
 }
@@ -311,27 +323,141 @@ fn shell_error(path: BundlePath, source: ParseError) -> AnalysisError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    #[test]
-    fn candidate_failure_is_non_mutating() {
-        struct Failing;
-        impl PreparationHooks for Failing {
-            fn before(&mut self, stage: AnalysisStage) -> Result<(), AnalysisError> {
-                Err(AnalysisError::StructuralInvariant {
+
+    #[derive(Clone, Copy)]
+    enum FailAt {
+        Shell,
+        Okf,
+    }
+
+    struct RecordingHooks {
+        fail_at: FailAt,
+        calls: Vec<AnalysisStage>,
+    }
+
+    impl PreparationHooks for RecordingHooks {
+        fn before(&mut self, stage: AnalysisStage) -> Result<(), AnalysisError> {
+            self.calls.push(stage);
+            let fail = matches!(
+                (self.fail_at, stage),
+                (FailAt::Shell, AnalysisStage::Shell) | (FailAt::Okf, AnalysisStage::Okf)
+            );
+            if fail {
+                return Err(AnalysisError::StructuralInvariant {
                     stage,
                     reason: "injected".into(),
-                })
+                });
             }
+            Ok(())
         }
-        let source = SourceBundle::try_from_pairs([("one.md", "# one")]).unwrap();
-        assert!(analyze_okf_inner(&source, None, 1, &mut Failing).is_err());
-        assert_eq!(
-            analyze_okf(&source, None, 1)
-                .unwrap()
-                .catalog
-                .document(DocumentId(0))
-                .unwrap()
-                .revision(),
-            DocumentRevision(1)
+    }
+
+    #[test]
+    fn candidate_failure_is_non_mutating() {
+        let committed_source = SourceBundle::try_from_pairs([("one.md", "# one")]).unwrap();
+        let committed = analyze_okf(&committed_source, None, 1).unwrap();
+        let committed_catalog = committed.catalog.clone();
+        let committed_bundle = committed.bundle.clone();
+        let candidate_source =
+            SourceBundle::try_from_pairs([("one.md", "# changed"), ("two.md", "# two")]).unwrap();
+
+        for (fail_at, expected_calls) in [
+            (FailAt::Shell, vec!["Shell"]),
+            (FailAt::Okf, vec!["Shell", "Okf"]),
+        ] {
+            let mut hooks = RecordingHooks {
+                fail_at,
+                calls: Vec::new(),
+            };
+            assert!(matches!(
+                analyze_okf_inner(&candidate_source, Some(&committed), 2, &mut hooks),
+                Err(AnalysisError::StructuralInvariant { .. })
+            ));
+            let calls: Vec<_> = hooks
+                .calls
+                .iter()
+                .map(|stage| match stage {
+                    AnalysisStage::Shell => "Shell",
+                    AnalysisStage::Okf => "Okf",
+                    _ => "other",
+                })
+                .collect();
+            assert_eq!(calls, expected_calls);
+            assert!(Arc::ptr_eq(&committed.catalog, &committed_catalog));
+            assert_eq!(committed.bundle, committed_bundle);
+
+            let retried = analyze_okf(&candidate_source, Some(&committed), 2).unwrap();
+            assert_eq!(
+                retried.catalog.document(DocumentId(0)).unwrap().revision(),
+                DocumentRevision(2)
+            );
+            assert_eq!(
+                retried
+                    .catalog
+                    .id_for_path(&BundlePath::parse("two.md").unwrap()),
+                Some(DocumentId(1))
+            );
+        }
+    }
+
+    #[test]
+    fn parser_structural_failures_are_shell_invariants() {
+        let error = shell_error(
+            BundlePath::parse("broken.md").unwrap(),
+            ParseError::StructuralInvariant {
+                reason: "injected parser mismatch".into(),
+            },
         );
+        assert!(matches!(
+            error,
+            AnalysisError::StructuralInvariant {
+                stage: AnalysisStage::Shell,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn shell_projection_rejects_tree_source_mismatch() {
+        let source = SourceBundle::try_from_pairs([("one.md", "# one")]).unwrap();
+        let mut analysis = analyze_okf(&source, None, 1).unwrap();
+        let id = analysis
+            .catalog
+            .id_for_path(source.documents()[0].path())
+            .unwrap();
+        let other_text = SourceText::from_shared(Arc::new("# other".to_owned())).unwrap();
+        let other = parse_okf_markdown(other_text, MarkdownDialect::CommonMarkCurrent).unwrap();
+        let mut documents = (*analysis.shell.documents).clone();
+        documents.insert(
+            id,
+            Arc::new(SyntaxSnapshot {
+                document: analysis.catalog.document(id).unwrap().clone(),
+                syntax: other.tree,
+            }),
+        );
+        analysis.shell.documents = Arc::new(documents);
+
+        assert!(matches!(
+            okf::shell::derive(&analysis.catalog, &analysis.shell, &analysis.structures),
+            Err(AnalysisError::StructuralInvariant {
+                stage: AnalysisStage::Shell,
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn shell_projection_rejects_missing_structure_map() {
+        let source = SourceBundle::try_from_pairs([("one.md", "# one")]).unwrap();
+        let mut analysis = analyze_okf(&source, None, 1).unwrap();
+        analysis.structures = Arc::new(BTreeMap::new());
+
+        assert!(matches!(
+            okf::shell::derive(&analysis.catalog, &analysis.shell, &analysis.structures),
+            Err(AnalysisError::StructuralInvariant {
+                stage: AnalysisStage::Shell,
+                ..
+            })
+        ));
     }
 }

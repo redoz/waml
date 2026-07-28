@@ -145,7 +145,7 @@ fn decode_quoted_string(value: &str) -> String {
     normalize_line_endings(&decoded)
 }
 
-fn parse_value(s: &str) -> FmValue {
+pub(crate) fn parse_value(s: &str) -> FmValue {
     if let Some(inner) = s.strip_prefix('[').and_then(|x| x.strip_suffix(']')) {
         let items = inner
             .split(',')

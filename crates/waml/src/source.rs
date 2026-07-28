@@ -159,6 +159,23 @@ impl std::ops::Deref for SourceSlice {
 }
 
 impl SourceSlice {
+    pub(crate) fn from_shared_range(
+        source: Arc<String>,
+        range: Range<usize>,
+    ) -> Result<Self, SourceError> {
+        if range.start > range.end
+            || range.end > source.len()
+            || !source.is_char_boundary(range.start)
+            || !source.is_char_boundary(range.end)
+        {
+            return Err(SourceError::InvalidRange {
+                path: "<analysis>".into(),
+                range,
+            });
+        }
+        Ok(Self { source, range })
+    }
+
     pub fn as_str(&self) -> &str {
         &self.source[self.range.clone()]
     }

@@ -7,14 +7,9 @@
 //! tier depends on `okf`, never the reverse — so a later `okf-core` crate split
 //! stays mechanical.
 
-use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
-use std::sync::LazyLock;
 
-use pulldown_cmark::{Event, HeadingLevel, Options, Parser, Tag, TagEnd};
-use regex::Regex;
-
-use crate::frontmatter::{parse_frontmatter_spanned, Frontmatter};
+use crate::frontmatter::Frontmatter;
 use crate::source::{SourceBundle, SourceDocument, SourceSlice};
 
 pub(crate) mod lower;
@@ -136,6 +131,7 @@ pub enum BundleError {
         first_path: String,
         second_path: String,
     },
+    Analysis(String),
 }
 
 impl fmt::Display for BundleError {
@@ -153,6 +149,7 @@ impl fmt::Display for BundleError {
                 formatter,
                 "duplicate concept id '{id}' from '{first_path}' and '{second_path}'"
             ),
+            BundleError::Analysis(reason) => formatter.write_str(reason),
         }
     }
 }
@@ -271,7 +268,12 @@ pub struct Bundle {
 
 impl Bundle {
     pub fn parse(source: &SourceBundle) -> Result<Self, BundleError> {
-        shell::derive(source)
+        crate::analysis::analyze_okf(source, None, 0)
+            .map(|analysis| analysis.bundle)
+            .map_err(|error| match error {
+                crate::analysis::AnalysisError::Okf(source) => source,
+                other => BundleError::Analysis(other.to_string()),
+            })
     }
 
     pub fn concept(&self, id: &str) -> Option<&Concept> {
@@ -318,19 +320,6 @@ fn frontmatter_is_empty(fm: &Frontmatter) -> bool {
     fm.entries.is_empty()
 }
 
-/// Frontmatter keys that project onto dedicated `Concept` fields (everything
-/// else survives in `extra`).
-const KNOWN_KEYS: &[&str] = &[
-    "type",
-    "title",
-    "description",
-    "resource",
-    "tags",
-    "timestamp",
-];
-
-static LINK_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\[([^\]]*)\]\(([^)]+)\)").unwrap());
-
 /// The concept ID for a bundle path: full path with a trailing `.md` removed
 /// and backslashes normalized to `/` (OKF §2).
 pub fn id_of(path: &str) -> String {
@@ -367,368 +356,44 @@ pub fn resolve_href(referring_path: &str, href: &str) -> String {
     id_of(&joined)
 }
 
-fn reserved_filename(path: &str) -> Option<&str> {
-    match path.rsplit('/').next().unwrap_or(path) {
-        "index.md" => Some("index.md"),
-        "log.md" => Some("log.md"),
-        _ => None,
-    }
-}
-
-/// Split a body into `(prose_without_citations, citations_section_or_empty)` on
-/// the first level-1 `# Citations` heading (OKF §8).
-fn split_citations(body: &str) -> (&str, &str) {
-    let mut offset = 0usize;
-    for line in body.split_inclusive('\n') {
-        let trimmed = line.trim_end_matches(['\r', '\n']).trim();
-        if let Some(rest) = trimmed.strip_prefix("# ") {
-            if rest.trim().eq_ignore_ascii_case("citations") {
-                return (&body[..offset], &body[offset..]);
-            }
-        }
-        offset += line.len();
-    }
-    (body, "")
-}
-
-/// The document's first level-1 heading (H1) text, trimmed, or `None` when the
-/// body has no non-empty H1. Extraction mirrors `parse::parse`'s title logic
-/// (pulldown over the frontmatter-stripped body) byte-for-byte, so the enriched
-/// `concept.title` H1 fallback stays identical to the flat-field title fallback.
-fn first_h1(body: &str) -> Option<String> {
-    let mut title = String::new();
-    let mut in_h1 = false;
-    for ev in Parser::new_ext(body, Options::empty()) {
-        match ev {
-            Event::Start(Tag::Heading {
-                level: HeadingLevel::H1,
-                ..
-            }) => in_h1 = true,
-            Event::End(TagEnd::Heading(HeadingLevel::H1)) => in_h1 = false,
-            Event::Text(t) | Event::Code(t) if in_h1 => {
-                title.push_str(&t);
-            }
-            _ => {}
-        }
-    }
-    let trimmed = title.trim();
-    (!trimmed.is_empty()).then(|| trimmed.to_string())
-}
-
-fn extract_links(text: &str) -> Vec<Link> {
-    LINK_RE
-        .captures_iter(text)
-        .map(|c| Link {
-            text: c[1].to_string(),
-            href: c[2].to_string(),
-        })
-        .collect()
-}
-
-fn extract_citations(text: &str) -> Vec<Citation> {
-    LINK_RE
-        .captures_iter(text)
-        .map(|c| Citation {
-            text: c[1].to_string(),
-            href: c[2].to_string(),
-        })
-        .collect()
-}
-
-/// Project one document (its bundle `path` and raw `src` markdown) into a
-/// lossless [`Concept`]. Known frontmatter fields promote to their dedicated
-/// slots; unknown keys survive in [`Concept::extra`]; the body is verbatim.
-fn project_source_document(document: &SourceDocument) -> Concept {
-    let parsed = parse_frontmatter_spanned(document.text());
-    let fm = parsed.frontmatter;
-    let body = document
-        .slice(parsed.body_range)
-        .expect("frontmatter parser returns source boundaries");
-
-    let title = fm
-        .get_str("title")
-        .map(String::from)
-        .or_else(|| first_h1(body.as_str()));
-    let description = fm.get_str("description").map(String::from);
-    let resource = fm.get_str("resource").map(String::from);
-    let timestamp = fm.get_str("timestamp").map(String::from);
-    let tags = fm.get_string_list("tags");
-    let ty = fm.get_str("type").unwrap_or("").to_string();
-
-    let extra = Frontmatter {
-        entries: fm
-            .entries
-            .iter()
-            .filter(|(k, _)| !KNOWN_KEYS.contains(&k.as_str()))
-            .cloned()
-            .collect(),
-    };
-
-    let (prose, citations_section) = split_citations(body.as_str());
-    let links = extract_links(prose);
-    let citations = extract_citations(citations_section);
-
-    Concept {
-        id: document
-            .path()
-            .concept_id()
-            .expect("validated source paths end in .md")
-            .to_owned(),
-        ty,
-        title,
-        description,
-        resource,
-        tags,
-        timestamp,
-        body,
-        links,
-        citations,
-        extra,
-    }
-}
-
 pub fn project_document(document: &SourceDocument) -> Option<Concept> {
-    reserved_filename(document.path().as_str())
-        .is_none()
-        .then(|| project_source_document(document))
+    let filename = document
+        .path()
+        .as_str()
+        .rsplit('/')
+        .next()
+        .unwrap_or_default();
+    if matches!(filename, "index.md" | "log.md") {
+        return None;
+    }
+    let source = SourceBundle::try_from_pairs([(
+        document.path().as_str().to_owned(),
+        document.text().to_owned(),
+    )])
+    .expect("existing source document has a valid path");
+    Bundle::parse(&source)
+        .expect("one source document has no duplicate concept ID")
+        .concepts
+        .into_iter()
+        .next()
 }
 
 pub fn project(path: &str, src: &str) -> Concept {
-    let (fm, body) = crate::frontmatter::parse_frontmatter(src);
-    let body: SourceSlice = body.into();
-    let title = fm
-        .get_str("title")
-        .map(String::from)
-        .or_else(|| first_h1(body.as_str()));
-    let description = fm.get_str("description").map(String::from);
-    let resource = fm.get_str("resource").map(String::from);
-    let timestamp = fm.get_str("timestamp").map(String::from);
-    let tags = fm.get_string_list("tags");
-    let ty = fm.get_str("type").unwrap_or("").to_string();
-    let extra = Frontmatter {
-        entries: fm
-            .entries
-            .iter()
-            .filter(|(key, _)| !KNOWN_KEYS.contains(&key.as_str()))
-            .cloned()
-            .collect(),
+    let bundle_path = if path.ends_with(".md") {
+        path.to_owned()
+    } else {
+        format!("{path}.md")
     };
-    let (prose, citations_section) = split_citations(body.as_str());
-    let links = extract_links(prose);
-    let citations = extract_citations(citations_section);
-
-    Concept {
-        id: id_of(path),
-        ty,
-        title,
-        description,
-        resource,
-        tags,
-        timestamp,
-        body,
-        links,
-        citations,
-        extra,
-    }
-}
-
-struct AuthoredIndex {
-    index: Index,
-    authored_order: Vec<String>,
-}
-
-fn parse_authored_index(document: &SourceDocument, directory: DirectoryAddress) -> AuthoredIndex {
-    let parsed = parse_frontmatter_spanned(document.text());
-    let title_from_frontmatter = parsed
-        .frontmatter
-        .get_str("title")
-        .map(str::trim)
-        .filter(|title| !title.is_empty())
-        .map(str::to_owned);
-    let body = document
-        .slice(parsed.body_range)
-        .expect("frontmatter parser returns source boundaries");
-    let mut title = String::new();
-    let mut intro_lines = Vec::new();
-    let mut authored_order = Vec::new();
-    let mut seen_bullet = false;
-    let bullet = Regex::new(r"^\s*[*-]\s*\[[^\]]*\]\(([^)]+)\)(?:\s*-\s*(.*))?$").unwrap();
-    for line in body.lines() {
-        if let Some(captures) = bullet.captures(line) {
-            seen_bullet = true;
-            let url = captures.get(1).expect("captured index URL").as_str();
-            let member = if let Some(subdirectory) = url.strip_suffix('/') {
-                let name = subdirectory.trim_start_matches("./").trim_end_matches('/');
-                directory
-                    .join_directory(name)
-                    .map(|address| address.to_string())
-                    .unwrap_or_default()
-            } else {
-                resolve_href(document.path().as_ref(), url)
-            };
-            if !member.is_empty() {
-                authored_order.push(member);
-            }
-        } else if !seen_bullet {
-            let trimmed = line.trim();
-            if let Some(heading) = trimmed.strip_prefix("# ") {
-                if title.is_empty() {
-                    title = heading.trim().to_owned();
-                }
-            } else if !trimmed.is_empty() {
-                intro_lines.push(trimmed);
-            }
-        }
-    }
-
-    AuthoredIndex {
-        index: Index {
-            directory,
-            title: title_from_frontmatter.or((!title.is_empty()).then_some(title)),
-            description: (!intro_lines.is_empty()).then(|| intro_lines.join(" ")),
-            members: Vec::new(),
-            body: Some(body),
-            authored: true,
-        },
-        authored_order,
-    }
-}
-
-fn default_member_order(directory: &Directory, concepts: &[Concept]) -> Vec<String> {
-    let mut members = Vec::new();
-    for child in &directory.child_directories {
-        let label = child.as_str().rsplit('/').next().unwrap_or(child.as_str());
-        members.push((label.to_lowercase(), child.to_string()));
-    }
-    for id in &directory.concepts {
-        let concept = concepts
-            .iter()
-            .find(|concept| concept.id == *id)
-            .expect("directory concept exists");
-        let label = concept
-            .title
-            .as_deref()
-            .unwrap_or_else(|| id.rsplit('/').next().unwrap_or(id));
-        members.push((label.to_lowercase(), id.clone()));
-    }
-    members.sort_by(|left, right| left.0.cmp(&right.0).then(left.1.cmp(&right.1)));
-    members.into_iter().map(|(_, id)| id).collect()
-}
-
-pub(crate) fn parse_bundle(source: &SourceBundle) -> Result<Bundle, BundleError> {
-    let mut addresses = BTreeSet::from([DirectoryAddress("/".into())]);
-    for document in source.documents() {
-        let mut address = DirectoryAddress::from_source_path(document.path().as_str());
-        loop {
-            addresses.insert(address.clone());
-            let Some(parent) = address.parent() else {
-                break;
-            };
-            address = parent;
-        }
-    }
-
-    let mut concepts = Vec::new();
-    let mut concept_paths = BTreeMap::new();
-    let mut authored_indexes = BTreeMap::new();
-    let mut logs = Vec::new();
-    for document in source.documents() {
-        let path = document.path().as_str();
-        let directory = DirectoryAddress::from_source_path(path);
-        match reserved_filename(path) {
-            Some("index.md") => {
-                authored_indexes
-                    .insert(directory.clone(), parse_authored_index(document, directory));
-            }
-            Some("log.md") => {
-                let parsed = parse_frontmatter_spanned(document.text());
-                logs.push(Log {
-                    directory,
-                    body: document
-                        .slice(parsed.body_range)
-                        .expect("frontmatter parser returns source boundaries"),
-                });
-            }
-            _ => {
-                let concept = project_source_document(document);
-                if let Some(first_path) = concept_paths.insert(concept.id.clone(), path.to_owned())
-                {
-                    return Err(BundleError::DuplicateConceptId {
-                        id: concept.id,
-                        first_path,
-                        second_path: path.to_owned(),
-                    });
-                }
-                concepts.push(concept);
-            }
-        }
-    }
-    concepts.sort_by(|left, right| left.id.cmp(&right.id));
-    logs.sort_by(|left, right| left.directory.cmp(&right.directory));
-
-    let mut directories: Vec<Directory> = addresses
-        .iter()
-        .map(|address| {
-            let mut child_directories: Vec<_> = addresses
-                .iter()
-                .filter(|candidate| candidate.parent().as_ref() == Some(address))
-                .cloned()
-                .collect();
-            child_directories.sort();
-            let mut direct_concepts: Vec<_> = concepts
-                .iter()
-                .filter(|concept| {
-                    DirectoryAddress::concept_parent(&concept.id).as_ref() == Ok(address)
-                })
-                .map(|concept| concept.id.clone())
-                .collect();
-            direct_concepts.sort();
-            Directory {
-                address: address.clone(),
-                parent: address.parent(),
-                child_directories,
-                concepts: direct_concepts,
-            }
-        })
-        .collect();
-    directories.sort_by(|left, right| left.address.cmp(&right.address));
-
-    let mut indexes = Vec::new();
-    for directory in &directories {
-        let default_order = default_member_order(directory, &concepts);
-        match authored_indexes.remove(&directory.address) {
-            Some(mut authored) => {
-                let mut members = Vec::new();
-                for member in authored.authored_order {
-                    if default_order.contains(&member) && !members.contains(&member) {
-                        members.push(member);
-                    }
-                }
-                for member in default_order {
-                    if !members.contains(&member) {
-                        members.push(member);
-                    }
-                }
-                authored.index.members = members;
-                indexes.push(authored.index);
-            }
-            None => indexes.push(Index {
-                directory: directory.address.clone(),
-                title: None,
-                description: None,
-                members: default_order,
-                body: None,
-                authored: false,
-            }),
-        }
-    }
-
-    Ok(Bundle {
-        concepts,
-        indexes,
-        logs,
-        directories,
-    })
+    let source = SourceBundle::try_from_pairs([(bundle_path, src.to_owned())])
+        .expect("OKF projection path must be bundle-relative");
+    let mut concept = Bundle::parse(&source)
+        .expect("one source document has no duplicate concept ID")
+        .concepts
+        .into_iter()
+        .next()
+        .expect("non-reserved projection produces one concept");
+    concept.id = id_of(path);
+    concept
 }
 
 #[cfg(test)]
