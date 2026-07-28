@@ -41,6 +41,7 @@ mod markdown_surface;
 #[cfg(not(target_arch = "wasm32"))]
 mod native_save;
 mod nav;
+mod navigation;
 mod node_design_editor;
 mod node_style;
 mod okf_documents;
