@@ -13,6 +13,9 @@ pub fn parse(text: SourceText, structure: &MarkdownStructureMap) -> Arc<SyntaxTr
     let mut diagnostics = Vec::new();
     let mut at = 0;
     for (index, heading) in structure.headings.iter().enumerate() {
+        if heading.level != 2 {
+            continue;
+        }
         let Some(section_kind) = section_kind(source, heading.text_range) else {
             continue;
         };
@@ -21,8 +24,8 @@ pub fn parse(text: SourceText, structure: &MarkdownStructureMap) -> Arc<SyntaxTr
             .headings
             .iter()
             .skip(index + 1)
-            .find(|next| next.level <= 2)
             .map(|next| next.range.start().to_usize())
+            .next()
             .unwrap_or(source.len());
         if at < start {
             children.push(raw(&factory, &text, at, start));
@@ -177,9 +180,9 @@ fn member_items(
     let mut stack: Vec<Pending> = Vec::new();
     for (start, end) in lines_between(source, from, to) {
         if let Some(heading) = structure
-            .headings
+            .nested_headings
             .iter()
-            .find(|h| h.range.start().to_usize() == start && (3..=6).contains(&h.level))
+            .find(|h| h.range.start().to_usize() == start)
         {
             while stack.last().is_some_and(|g| g.depth >= heading.level) {
                 close_one(f, &mut stack, &mut roots)
@@ -237,12 +240,6 @@ fn section_kind(source: &str, range: TextRange) -> Option<UmlSyntaxKind> {
     } else {
         None
     }
-}
-
-fn is_member_group_heading(source: &str, start: usize, end: usize) -> bool {
-    let line = source[start..end].trim();
-    let hashes = line.as_bytes().iter().take_while(|c| **c == b'#').count();
-    (3..=6).contains(&hashes) && line.as_bytes().get(hashes) == Some(&b' ')
 }
 
 fn simple_item(
@@ -524,7 +521,6 @@ fn inline_instance(
                 "missing 'set to' in inline slot",
             ));
         }
-        let value_start = p;
         if p < content_end && source.as_bytes()[p] == b'"' {
             let q = source[p + 1..content_end]
                 .find('"')
@@ -875,35 +871,32 @@ fn relationship_link(
         q,
         "malformed relationship link",
     ));
-    (
-        GreenElement::Node(
+    let mut link = vec![
+        GreenElement::Token(f.missing_token(UmlSyntaxKind::OpenBracketToken)),
+        GreenElement::Token(f.missing_token(UmlSyntaxKind::LinkTextToken)),
+        GreenElement::Token(f.missing_token(UmlSyntaxKind::CloseBracketToken)),
+        GreenElement::Token(f.missing_token(UmlSyntaxKind::OpenBracketToken)),
+        GreenElement::Token(f.missing_token(UmlSyntaxKind::LinkTargetToken)),
+        GreenElement::Token(f.missing_token(UmlSyntaxKind::CloseBracketToken)),
+    ];
+    if p < q {
+        link.push(GreenElement::Node(
             f.node(
-                UmlSyntaxKind::Link,
-                [
-                    GreenElement::Token(f.missing_token(UmlSyntaxKind::OpenBracketToken)),
-                    GreenElement::Token(f.missing_token(UmlSyntaxKind::LinkTextToken)),
-                    GreenElement::Token(f.missing_token(UmlSyntaxKind::CloseBracketToken)),
-                    GreenElement::Token(f.missing_token(UmlSyntaxKind::OpenBracketToken)),
-                    GreenElement::Token(f.missing_token(UmlSyntaxKind::LinkTargetToken)),
-                    GreenElement::Token(f.missing_token(UmlSyntaxKind::CloseBracketToken)),
-                    GreenElement::Node(
-                        f.node(
-                            UmlSyntaxKind::SkippedTokensSyntax,
-                            [GreenElement::Token(
-                                f.bad_token(
-                                    UmlSyntaxKind::BadToken,
-                                    slice(text, p, q),
-                                    UmlSyntaxDiagnosticCode::UnexpectedToken,
-                                )
-                                .unwrap(),
-                            )],
-                        )
-                        .unwrap(),
-                    ),
-                ],
+                UmlSyntaxKind::SkippedTokensSyntax,
+                [GreenElement::Token(
+                    f.bad_token(
+                        UmlSyntaxKind::BadToken,
+                        slice(text, p, q),
+                        UmlSyntaxDiagnosticCode::UnexpectedToken,
+                    )
+                    .unwrap(),
+                )],
             )
             .unwrap(),
-        ),
+        ));
+    }
+    (
+        GreenElement::Node(f.node(UmlSyntaxKind::Link, link).unwrap()),
         q,
     )
 }
@@ -1407,13 +1400,6 @@ fn line_end(source: &str, start: usize, limit: usize) -> usize {
         .find('\n')
         .map(|offset| start + offset + 1)
         .unwrap_or(limit)
-}
-fn is_attributes_heading(source: &str, range: TextRange) -> bool {
-    source[range.start().to_usize()..range.end().to_usize()]
-        .trim()
-        .trim_end_matches('#')
-        .trim()
-        .eq_ignore_ascii_case("Attributes")
 }
 fn opaque_line(structure: &MarkdownStructureMap, line_start: usize, line_end: usize) -> bool {
     structure

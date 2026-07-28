@@ -361,6 +361,58 @@ fn member_groups_and_inline_instances_have_fixed_indented_slots() {
 }
 
 #[test]
+fn only_h2_classifier_sections_parse_and_nested_values_remain_owned_or_opaque() {
+    let authored = "---\ntype: uml.Class\n---\n# Values\n- title body\n\n## Members\n### Values\n- [Good](./good.md)\n\n## Operations\n### Values\n- operation body\n";
+    let source = SourceBundle::try_from_pairs([
+        ("c.md", authored),
+        ("good.md", "---\ntype: uml.Class\n---\n# Good\n"),
+    ])
+    .unwrap();
+    let analysis = analyze(&source);
+    let concept = analysis.declared.concept("c").unwrap();
+    assert!(concept.values.is_empty());
+    assert_eq!(concept.member_groups.len(), 1);
+    assert!(
+        matches!(concept.member_groups[0].name, uml::DeclaredField::Valid { ref value, .. } if value == "Values")
+    );
+    assert_eq!(concept.member_groups[0].members.len(), 1);
+    let id = analysis
+        .syntax
+        .catalog()
+        .id_for_path(&waml::source::BundlePath::parse("c.md").unwrap())
+        .unwrap();
+    assert_eq!(
+        analysis
+            .syntax
+            .document(id)
+            .unwrap()
+            .syntax()
+            .write_to_string(),
+        authored
+    );
+}
+
+#[test]
+fn invalid_group_inline_instance_never_creates_a_dangling_member() {
+    let source = SourceBundle::try_from_pairs([
+        (
+            "diagram.md",
+            "---\ntype: Diagram\n---\n# Diagram\n\n## Members\n### Invalid\n- instance of [Good](./good.md) as bad with state OPEN\n",
+        ),
+        ("good.md", "---\ntype: uml.Class\n---\n# Good\n"),
+    ])
+    .unwrap();
+    let analysis = analyze(&source);
+    let concept = analysis.declared.concept("diagram").unwrap();
+    assert!(matches!(
+        concept.member_groups[0].inline_instances[0].slots[0].value,
+        uml::DeclaredField::Incomplete { .. }
+    ));
+    assert!(analysis.projection.node("diagram#bad").is_none());
+    assert!(analysis.projection.diagrams[0].groups[0].members.is_empty());
+}
+
+#[test]
 fn multi_word_values_are_one_field_and_malformed_items_do_not_project() {
     let source = SourceBundle::try_from_pairs([("c.md", "---\ntype: uml.Class\n---\n# C\n\n## Values\n- Ready for use\n\n## Slots\n- missing value\n\n## Members\n- [Good](./good.md) stray\n"), ("good.md", "---\ntype: uml.Class\n---\n# Good\n")]).unwrap();
     let analysis = analyze(&source);
@@ -370,7 +422,7 @@ fn multi_word_values_are_one_field_and_malformed_items_do_not_project() {
     );
     assert!(matches!(
         declared.slots[0].value,
-        uml::DeclaredField::Invalid { .. }
+        uml::DeclaredField::Incomplete { .. }
     ));
     assert!(matches!(
         declared.members[0].target,
@@ -385,12 +437,12 @@ fn multi_word_values_are_one_field_and_malformed_items_do_not_project() {
 
 #[test]
 fn delimiter_recovery_distinguishes_incomplete_from_invalid_and_never_projects() {
-    let source=SourceBundle::try_from_pairs([("c.md", "---\ntype: uml.Class\n---\n# C\n\n## Slots\n- missing value\n- quote: \"unterminated\n- link: [Broken](./broken.md\n- trailing: OPEN extra\n\n## Relationships\n- composes [Good](./good.md)\n- associates [Good](./good.md): 1 1\n- depends [Good](./good.md) trailing\n- depends [Broken](./broken.md\n- associates [Good](./good.md) as \"broken: 1 to 1\n\n## Members\n- [Good](./good.md) trailing\n- instance of [Good](./good.md) primary\n- instance of [Good](./good.md) as x with state OPEN\n- instance of [Good](./good.md) as q with state set to \"unterminated\n"), ("good.md", "---\ntype: uml.Class\n---\n# Good\n")]).unwrap();
+    let source=SourceBundle::try_from_pairs([("c.md", "---\ntype: uml.Class\n---\n# C\n\n## Slots\n- missing value\n- quote: \"unterminated\n- link: [Broken](./broken.md\n- trailing: OPEN extra\n- lone-quote: \"\n- empty-link: [Broken]()\n\n## Relationships\n- composes [Good](./good.md)\n- associates [Good](./good.md): 1 1\n- depends [Good](./good.md) trailing\n- depends [Broken](./broken.md\n- associates [Good](./good.md) as \"broken: 1 to 1\n- associates [Good](./good.md) as [Broken](): 1 to 1\n- depends\n\n## Members\n- [Good](./good.md) trailing\n- [Empty]()\n- instance of [Good](./good.md) primary\n- instance of [Good](./good.md) as x with state OPEN\n- instance of [Good](./good.md) as q with state set to \"unterminated\n- instance of [Good](./good.md) as r with state set to \"\n"), ("good.md", "---\ntype: uml.Class\n---\n# Good\n")]).unwrap();
     let analysis = analyze(&source);
     let d = analysis.declared.concept("c").unwrap();
     assert!(matches!(
         d.slots[0].value,
-        uml::DeclaredField::Invalid { .. }
+        uml::DeclaredField::Incomplete { .. }
     ));
     assert!(matches!(
         d.slots[1].value,
@@ -402,6 +454,14 @@ fn delimiter_recovery_distinguishes_incomplete_from_invalid_and_never_projects()
     ));
     assert!(matches!(
         d.slots[3].value,
+        uml::DeclaredField::Invalid { .. }
+    ));
+    assert!(matches!(
+        d.slots[4].value,
+        uml::DeclaredField::Invalid { .. }
+    ));
+    assert!(matches!(
+        d.slots[5].value,
         uml::DeclaredField::Invalid { .. }
     ));
     assert!(matches!(
@@ -418,33 +478,50 @@ fn delimiter_recovery_distinguishes_incomplete_from_invalid_and_never_projects()
     ));
     assert!(matches!(
         d.relationships[3].target,
-        uml::DeclaredField::Incomplete { .. } | uml::DeclaredField::Invalid { .. }
+        uml::DeclaredField::Invalid { .. }
     ));
     assert!(matches!(
         d.relationships[4].name,
         uml::DeclaredField::Invalid { .. }
     ));
     assert!(matches!(
+        d.relationships[5].name,
+        uml::DeclaredField::Invalid { .. }
+    ));
+    assert!(matches!(
+        d.relationships[6].target,
+        uml::DeclaredField::Incomplete { .. }
+    ));
+    assert!(matches!(
         d.members[0].target,
         uml::DeclaredField::Invalid { .. }
     ));
     assert!(matches!(
+        d.members[1].target,
+        uml::DeclaredField::Invalid { .. }
+    ));
+    assert!(matches!(
         d.inline_instances[0].name,
-        uml::DeclaredField::Incomplete { .. } | uml::DeclaredField::Invalid { .. }
+        uml::DeclaredField::Incomplete { .. }
     ));
     assert!(matches!(
         d.inline_instances[1].slots[0].value,
-        uml::DeclaredField::Incomplete { .. } | uml::DeclaredField::Invalid { .. }
+        uml::DeclaredField::Incomplete { .. }
     ));
     assert!(matches!(
         d.inline_instances[2].slots[0].value,
-        uml::DeclaredField::Incomplete { .. } | uml::DeclaredField::Invalid { .. }
+        uml::DeclaredField::Invalid { .. }
+    ));
+    assert!(matches!(
+        d.inline_instances[3].slots[0].value,
+        uml::DeclaredField::Invalid { .. }
     ));
     let node = analysis.projection.node("c").unwrap();
     assert!(node.slots.is_empty());
     assert!(analysis.projection.edges.is_empty());
     assert!(analysis.projection.node("c#x").is_none());
     assert!(analysis.projection.node("c#q").is_none());
+    assert!(analysis.projection.node("c#r").is_none());
 }
 
 #[test]

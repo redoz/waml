@@ -15,7 +15,12 @@ pub struct ConfirmedHeading {
 
 #[derive(Clone, Debug)]
 pub struct MarkdownStructureMap {
+    /// Shell section boundaries. Only container-free H1/H2 headings are
+    /// included so existing top-level consumers retain their contract.
     pub headings: Arc<[ConfirmedHeading]>,
+    /// Container-free H3-H6 headings. Embedded languages may use these as
+    /// shell-confirmed nested structure without promoting them to sections.
+    pub nested_headings: Arc<[ConfirmedHeading]>,
     pub protected_ranges: Arc<[TextRange]>,
     /// Exact source lines whose bullets CommonMark confirmed as top-level list
     /// items.
@@ -46,6 +51,7 @@ pub(crate) fn map(
     let _ = size(len)?;
     let frontmatter_end = initial_frontmatter_end(source);
     let mut headings = Vec::new();
+    let mut nested_headings = Vec::new();
     let mut protected = Vec::new();
     let mut list_item_lines = Vec::new();
     let mut tab_indented_item_lines = Vec::new();
@@ -100,11 +106,16 @@ pub(crate) fn map(
                         if expected == heading_level(level) && containers.is_empty() {
                             let heading_end = heading_end.max(end).min(len);
                             let text_start = heading_text_start(source, heading_start, heading_end);
-                            headings.push(ConfirmedHeading {
+                            let heading = ConfirmedHeading {
                                 level: expected,
                                 range: range(heading_start, heading_end)?,
                                 text_range: range(text_start, heading_end)?,
-                            });
+                            };
+                            if expected <= 2 {
+                                headings.push(heading);
+                            } else {
+                                nested_headings.push(heading);
+                            }
                         }
                     }
                 }
@@ -126,12 +137,14 @@ pub(crate) fn map(
     let normalized = normalize(protected);
     let opaque = normalize(opaque);
     headings.sort_by_key(|h| h.range.start());
+    nested_headings.sort_by_key(|h| h.range.start());
     list_item_lines.sort_by_key(|range| (range.start(), range.end()));
     list_item_lines.dedup();
     tab_indented_item_lines.sort_by_key(|range| (range.start(), range.end()));
     tab_indented_item_lines.dedup();
     Ok(MarkdownStructureMap {
         headings: headings.into(),
+        nested_headings: nested_headings.into(),
         protected_ranges: normalized.into(),
         list_item_lines: list_item_lines.into(),
         tab_indented_item_lines: tab_indented_item_lines.into(),

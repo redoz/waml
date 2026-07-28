@@ -292,7 +292,19 @@ fn assert_fixture_shape(name: &str, source: &str, shell: &ShellParse) {
                 );
             }
         }
-        "lower_headings" => assert_eq!(shell.structure.headings.len(), 1),
+        "lower_headings" => {
+            assert_eq!(shell.structure.headings.len(), 1);
+            assert_eq!(shell.structure.nested_headings.len(), 4);
+            assert_eq!(
+                shell
+                    .structure
+                    .nested_headings
+                    .iter()
+                    .map(|heading| heading.level)
+                    .collect::<Vec<_>>(),
+                [3, 4, 5, 6]
+            );
+        }
         "html_comment" => assert_eq!(shell.structure.headings.len(), 1),
         "heading_eof_spaces"
         | "closed_frontmatter_eof_spaces"
@@ -405,6 +417,15 @@ fn assert_shell_invariants(name: &str, source: &str, shell: &ShellParse) {
             .all(|h| h.range.end().to_usize() <= source.len()
                 && h.text_range.end().to_usize() <= source.len()),
         "heading bounds: {name}"
+    );
+    assert!(
+        shell
+            .structure
+            .nested_headings
+            .iter()
+            .all(|h| h.range.end().to_usize() <= source.len()
+                && h.text_range.end().to_usize() <= source.len()),
+        "nested heading bounds: {name}"
     );
     assert!(
         shell
