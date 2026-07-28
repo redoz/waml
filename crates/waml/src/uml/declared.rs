@@ -66,6 +66,7 @@ pub struct DeclaredMemberGroup {
     pub syntax: super::syntax::MemberGroupSyntax,
     pub name: DeclaredField<UmlLanguage, String>,
     pub members: Arc<[DeclaredMember]>,
+    pub inline_instances: Arc<[DeclaredInlineInstance]>,
     pub children: Arc<[DeclaredMemberGroup]>,
 }
 pub struct DeclaredInlineInstance {

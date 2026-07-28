@@ -99,7 +99,11 @@ pub fn analyze(
         let slots = items(tree.root(), super::syntax::UmlSyntaxKind::Slot);
         let relationships = items(tree.root(), super::syntax::UmlSyntaxKind::Relationship);
         let members = items(tree.root(), super::syntax::UmlSyntaxKind::Member);
-        let member_groups = items(tree.root(), super::syntax::UmlSyntaxKind::MemberGroup);
+        let member_groups = direct_section_items(
+            tree.root(),
+            super::syntax::UmlSyntaxKind::MembersSection,
+            super::syntax::UmlSyntaxKind::MemberGroup,
+        );
         let inline_instances = items(tree.root(), super::syntax::UmlSyntaxKind::InlineInstance);
         let mut fields = Vec::new();
         for syntax in attributes {
@@ -370,20 +374,8 @@ fn declared_projection(
                 concept
                     .member_groups
                     .iter()
-                    .enumerate()
-                    .filter_map(|(index, g)| match &g.name {
-                        crate::uml::DeclaredField::Valid { value, .. } => {
-                            Some(crate::model::DiagramGroup {
-                                name: value.clone(),
-                                members: if index == 0 {
-                                    member_keys.clone()
-                                } else {
-                                    vec![]
-                                },
-                                children: vec![],
-                            })
-                        }
-                        _ => None,
+                    .filter_map(|group| {
+                        lower_member_group(group, &path, &claimed, &concept.concept_id)
                     })
                     .collect()
             };
@@ -611,6 +603,50 @@ fn declared_projection(
     model
 }
 
+fn lower_member_group(
+    group: &crate::uml::DeclaredMemberGroup,
+    path: &str,
+    claimed: &BTreeSet<&str>,
+    owner: &str,
+) -> Option<crate::model::DiagramGroup> {
+    let crate::uml::DeclaredField::Valid { value: name, .. } = &group.name else {
+        return None;
+    };
+    let mut members = group
+        .members
+        .iter()
+        .filter_map(|member| match &member.target {
+            crate::uml::DeclaredField::Valid { value, .. } => {
+                let target = crate::okf::resolve_href(path, value);
+                claimed.contains(target.as_str()).then_some(target)
+            }
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    members.extend(group.inline_instances.iter().filter_map(|inline| {
+        match (&inline.name, &inline.classifier) {
+            (
+                crate::uml::DeclaredField::Valid { value: name, .. },
+                crate::uml::DeclaredField::Valid {
+                    value: classifier, ..
+                },
+            ) if claimed.contains(crate::okf::resolve_href(path, classifier).as_str()) => {
+                Some(format!("{owner}#{name}"))
+            }
+            _ => None,
+        }
+    }));
+    Some(crate::model::DiagramGroup {
+        name: name.clone(),
+        members,
+        children: group
+            .children
+            .iter()
+            .filter_map(|child| lower_member_group(child, path, claimed, owner))
+            .collect(),
+    })
+}
+
 fn items(
     node: SyntaxNode<UmlLanguage>,
     kind: super::syntax::UmlSyntaxKind,
@@ -627,6 +663,26 @@ fn items(
     }
     found
 }
+fn direct_section_items(
+    node: SyntaxNode<UmlLanguage>,
+    section: super::syntax::UmlSyntaxKind,
+    kind: super::syntax::UmlSyntaxKind,
+) -> Vec<SyntaxNode<UmlLanguage>> {
+    for child in node.children().filter_map(SyntaxElement::into_node) {
+        if child.kind() == section {
+            return child
+                .children()
+                .filter_map(SyntaxElement::into_node)
+                .filter(|node| node.kind() == kind)
+                .collect();
+        }
+        let found = direct_section_items(child, section, kind);
+        if !found.is_empty() {
+            return found;
+        }
+    }
+    Vec::new()
+}
 fn valid<T>(node: SyntaxNode<UmlLanguage>, value: T) -> crate::uml::DeclaredField<UmlLanguage, T> {
     crate::uml::DeclaredField::Valid {
         value,
@@ -638,6 +694,15 @@ fn invalid<T>(node: SyntaxNode<UmlLanguage>) -> crate::uml::DeclaredField<UmlLan
         syntax: node,
         diagnostics: Arc::from([crate::diagnostic::DiagCode::DroppableContent]),
     }
+}
+fn has_recovery(node: &SyntaxNode<UmlLanguage>) -> bool {
+    node.children().any(|e| {
+        matches!(
+            e.kind(),
+            super::syntax::UmlSyntaxKind::BadToken
+                | super::syntax::UmlSyntaxKind::SkippedTokensSyntax
+        )
+    })
 }
 fn declared_value(node: SyntaxNode<UmlLanguage>) -> crate::uml::DeclaredValue {
     let syntax = super::syntax::ValueSyntax(node.clone());
@@ -664,6 +729,13 @@ fn declared_slot(node: SyntaxNode<UmlLanguage>) -> crate::uml::DeclaredSlot {
                 expected,
             })
     };
+    if syntax.colon_token().is_none_or(|t| t.flags().is_missing()) || has_recovery(&node) {
+        return crate::uml::DeclaredSlot {
+            name: invalid(node.clone()),
+            value: invalid(node.clone()),
+            syntax,
+        };
+    }
     crate::uml::DeclaredSlot {
         name: field(syntax.name_token(), crate::uml::ExpectedSyntax::ColonToken),
         value: field(syntax.value_token(), crate::uml::ExpectedSyntax::LinkTarget),
@@ -672,7 +744,7 @@ fn declared_slot(node: SyntaxNode<UmlLanguage>) -> crate::uml::DeclaredSlot {
 }
 fn declared_relationship(node: SyntaxNode<UmlLanguage>) -> crate::uml::DeclaredRelationship {
     let syntax = super::syntax::RelationshipSyntax(node.clone());
-    let kind = syntax
+    let mut kind = syntax
         .kind_token()
         .and_then(|t| crate::model::RelationshipKind::parse(&t.text().write_to_string()))
         .map(|value| valid(node.clone(), value))
@@ -748,6 +820,9 @@ fn declared_relationship(node: SyntaxNode<UmlLanguage>) -> crate::uml::DeclaredR
         }
         _ => {}
     }
+    if has_recovery(&node) {
+        kind = invalid(node.clone());
+    }
     crate::uml::DeclaredRelationship {
         syntax,
         kind,
@@ -759,14 +834,18 @@ fn declared_relationship(node: SyntaxNode<UmlLanguage>) -> crate::uml::DeclaredR
 }
 fn declared_member(node: SyntaxNode<UmlLanguage>) -> crate::uml::DeclaredMember {
     let syntax = super::syntax::MemberSyntax(node.clone());
-    let target = syntax
-        .target_token()
-        .filter(|t| !t.flags().is_missing() && !t.text().write_to_string().is_empty())
-        .map(|t| valid(node.clone(), t.text().write_to_string()))
-        .unwrap_or_else(|| crate::uml::DeclaredField::Incomplete {
-            syntax: node.clone(),
-            expected: crate::uml::ExpectedSyntax::LinkTarget,
-        });
+    let target = if has_recovery(&node) {
+        invalid(node.clone())
+    } else {
+        syntax
+            .target_token()
+            .filter(|t| !t.flags().is_missing() && !t.text().write_to_string().is_empty())
+            .map(|t| valid(node.clone(), t.text().write_to_string()))
+            .unwrap_or_else(|| crate::uml::DeclaredField::Incomplete {
+                syntax: node.clone(),
+                expected: crate::uml::ExpectedSyntax::LinkTarget,
+            })
+    };
     crate::uml::DeclaredMember { syntax, target }
 }
 fn declared_member_group(node: SyntaxNode<UmlLanguage>) -> crate::uml::DeclaredMemberGroup {
@@ -776,14 +855,33 @@ fn declared_member_group(node: SyntaxNode<UmlLanguage>) -> crate::uml::DeclaredM
         .filter(|t| !t.flags().is_missing() && !t.text().write_to_string().is_empty())
         .map(|t| valid(node.clone(), t.text().write_to_string()))
         .unwrap_or_else(|| crate::uml::DeclaredField::Incomplete {
-            syntax: node,
+            syntax: node.clone(),
             expected: crate::uml::ExpectedSyntax::LinkTarget,
         });
     crate::uml::DeclaredMemberGroup {
         syntax,
         name,
-        members: Arc::from([]),
-        children: Arc::from([]),
+        members: node
+            .children()
+            .filter_map(SyntaxElement::into_node)
+            .filter(|n| n.kind() == super::syntax::UmlSyntaxKind::Member)
+            .map(declared_member)
+            .collect::<Vec<_>>()
+            .into(),
+        inline_instances: node
+            .children()
+            .filter_map(SyntaxElement::into_node)
+            .filter(|n| n.kind() == super::syntax::UmlSyntaxKind::InlineInstance)
+            .map(declared_inline_instance)
+            .collect::<Vec<_>>()
+            .into(),
+        children: node
+            .children()
+            .filter_map(SyntaxElement::into_node)
+            .filter(|n| n.kind() == super::syntax::UmlSyntaxKind::MemberGroup)
+            .map(declared_member_group)
+            .collect::<Vec<_>>()
+            .into(),
     }
 }
 fn declared_inline_instance(node: SyntaxNode<UmlLanguage>) -> crate::uml::DeclaredInlineInstance {

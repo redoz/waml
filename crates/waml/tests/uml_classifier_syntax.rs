@@ -324,6 +324,11 @@ fn member_groups_and_inline_instances_have_fixed_indented_slots() {
     .unwrap();
     let analysis = analyze(&source);
     let concept = analysis.declared.concept("cafe").unwrap();
+    assert_eq!(concept.member_groups.len(), 1);
+    assert_eq!(concept.member_groups[0].children.len(), 1);
+    assert_eq!(concept.member_groups[0].members.len(), 1);
+    assert_eq!(concept.member_groups[0].inline_instances.len(), 1);
+    assert_eq!(concept.member_groups[0].children[0].members.len(), 3);
     assert_eq!(
         concept.members.len(),
         4,
@@ -353,6 +358,29 @@ fn member_groups_and_inline_instances_have_fixed_indented_slots() {
             .write_to_string(),
         authored
     );
+}
+
+#[test]
+fn multi_word_values_are_one_field_and_malformed_items_do_not_project() {
+    let source = SourceBundle::try_from_pairs([("c.md", "---\ntype: uml.Class\n---\n# C\n\n## Values\n- Ready for use\n\n## Slots\n- missing value\n\n## Members\n- [Good](./good.md) stray\n"), ("good.md", "---\ntype: uml.Class\n---\n# Good\n")]).unwrap();
+    let analysis = analyze(&source);
+    let declared = analysis.declared.concept("c").unwrap();
+    assert!(
+        matches!(declared.values[0].value, uml::DeclaredField::Valid { ref value, .. } if value=="Ready for use")
+    );
+    assert!(matches!(
+        declared.slots[0].value,
+        uml::DeclaredField::Invalid { .. }
+    ));
+    assert!(matches!(
+        declared.members[0].target,
+        uml::DeclaredField::Invalid { .. }
+    ));
+    assert_eq!(
+        analysis.projection.node("c").unwrap().values,
+        ["Ready for use"]
+    );
+    assert!(analysis.projection.node("c").unwrap().slots.is_empty());
 }
 
 #[test]

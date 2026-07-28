@@ -19,7 +19,9 @@ pub fn parse(text: SourceText, structure: &MarkdownStructureMap) -> Arc<SyntaxTr
         let start = heading.range.start().to_usize();
         let end = structure
             .headings
-            .get(index + 1)
+            .iter()
+            .skip(index + 1)
+            .find(|next| next.level <= 2)
             .map(|next| next.range.start().to_usize())
             .unwrap_or(source.len());
         if at < start {
@@ -27,24 +29,23 @@ pub fn parse(text: SourceText, structure: &MarkdownStructureMap) -> Arc<SyntaxTr
         }
         let heading_end = line_end(source, start, end);
         let mut section = vec![raw(&factory, &text, start, heading_end)];
+        if section_kind == UmlSyntaxKind::MembersSection {
+            section.extend(member_items(
+                &factory,
+                &text,
+                source,
+                heading_end,
+                end,
+                structure,
+                &mut diagnostics,
+            ));
+            children.push(GreenElement::Node(
+                factory.node(section_kind, section).unwrap(),
+            ));
+            at = end;
+            continue;
+        }
         for (line_start, line_end) in lines_between(source, heading_end, end) {
-            if section_kind == UmlSyntaxKind::MembersSection
-                && structure
-                    .headings
-                    .iter()
-                    .any(|heading| heading.range.start().to_usize() == line_start)
-                && is_member_group_heading(source, line_start, line_end)
-            {
-                section.push(GreenElement::Node(
-                    factory
-                        .node(
-                            UmlSyntaxKind::MemberGroup,
-                            [member_group(&factory, &text, source, line_start, line_end)],
-                        )
-                        .unwrap(),
-                ));
-                continue;
-            }
             let item_line = confirmed_list_item_line(structure, line_start)
                 || tab_indented_item_line(structure, line_start);
             if opaque_line(structure, line_start, line_end) && !item_line {
@@ -93,13 +94,13 @@ pub fn parse(text: SourceText, structure: &MarkdownStructureMap) -> Arc<SyntaxTr
     Arc::new(SyntaxTree::new(root, diagnostics.into(), structure.dialect))
 }
 
-fn member_group(
+fn member_group_children(
     f: &GreenFactory<UmlLanguage>,
     text: &SourceText,
     source: &str,
     start: usize,
     end: usize,
-) -> GreenElement<UmlLanguage> {
+) -> Vec<GreenElement<UmlLanguage>> {
     let line_end = source[start..end]
         .find('\n')
         .map(|n| start + n)
@@ -114,42 +115,108 @@ fn member_group(
         .trim_end_matches(['\r', ' ', '\t'])
         .len()
         + start;
-    GreenElement::Node(
-        f.node(
-            UmlSyntaxKind::MemberGroup,
-            [
-                token(
-                    f,
-                    text,
-                    start,
-                    start,
-                    start + markers,
-                    UmlSyntaxKind::HeadingMarkerToken,
-                ),
-                token(
-                    f,
-                    text,
-                    start + markers,
-                    name_start,
-                    name_end,
-                    UmlSyntaxKind::IdentifierToken,
-                ),
-                if line_end < end {
-                    token(
-                        f,
-                        text,
-                        name_end,
-                        name_end,
-                        end,
-                        UmlSyntaxKind::NewlineToken,
-                    )
-                } else {
-                    GreenElement::Token(f.missing_token(UmlSyntaxKind::NewlineToken))
-                },
-            ],
-        )
-        .unwrap(),
-    )
+    vec![
+        token(
+            f,
+            text,
+            start,
+            start,
+            start + markers,
+            UmlSyntaxKind::HeadingMarkerToken,
+        ),
+        token(
+            f,
+            text,
+            start + markers,
+            name_start,
+            name_end,
+            UmlSyntaxKind::IdentifierToken,
+        ),
+        if line_end < end {
+            token(
+                f,
+                text,
+                name_end,
+                name_end,
+                end,
+                UmlSyntaxKind::NewlineToken,
+            )
+        } else {
+            GreenElement::Token(f.missing_token(UmlSyntaxKind::NewlineToken))
+        },
+    ]
+}
+
+fn member_items(
+    f: &GreenFactory<UmlLanguage>,
+    text: &SourceText,
+    source: &str,
+    from: usize,
+    to: usize,
+    structure: &MarkdownStructureMap,
+    diags: &mut Vec<TreeDiagnostic<UmlSyntaxDiagnosticCode>>,
+) -> Vec<GreenElement<UmlLanguage>> {
+    struct Pending {
+        depth: u8,
+        children: Vec<GreenElement<UmlLanguage>>,
+    }
+    fn close_one(
+        f: &GreenFactory<UmlLanguage>,
+        stack: &mut Vec<Pending>,
+        roots: &mut Vec<GreenElement<UmlLanguage>>,
+    ) {
+        let group = stack.pop().expect("group stack");
+        let node = GreenElement::Node(f.node(UmlSyntaxKind::MemberGroup, group.children).unwrap());
+        if let Some(parent) = stack.last_mut() {
+            parent.children.push(node)
+        } else {
+            roots.push(node)
+        }
+    }
+    let mut roots = Vec::new();
+    let mut stack: Vec<Pending> = Vec::new();
+    for (start, end) in lines_between(source, from, to) {
+        if let Some(heading) = structure
+            .headings
+            .iter()
+            .find(|h| h.range.start().to_usize() == start && (3..=6).contains(&h.level))
+        {
+            while stack.last().is_some_and(|g| g.depth >= heading.level) {
+                close_one(f, &mut stack, &mut roots)
+            }
+            stack.push(Pending {
+                depth: heading.level,
+                children: member_group_children(f, text, source, start, end),
+            });
+            continue;
+        }
+        let item_line =
+            confirmed_list_item_line(structure, start) || tab_indented_item_line(structure, start);
+        let element = if opaque_line(structure, start, end) && !item_line {
+            raw(f, text, start, end)
+        } else if let Some(item) = simple_item(
+            f,
+            text,
+            source,
+            start,
+            end,
+            UmlSyntaxKind::MembersSection,
+            diags,
+        ) {
+            GreenElement::Node(item)
+        } else {
+            raw(f, text, start, end)
+        };
+        if let Some(group) = stack.last_mut() {
+            group.children.push(element)
+        } else {
+            roots.push(element)
+        }
+    }
+    while !stack.is_empty() {
+        close_one(f, &mut stack, &mut roots)
+    }
+    roots
 }
 
 fn section_kind(source: &str, range: TextRange) -> Option<UmlSyntaxKind> {
@@ -254,6 +321,41 @@ fn simple_item(
             content_end,
             "missing classifier item content",
         ));
+    } else if kind == UmlSyntaxKind::Value {
+        children.push(token(
+            f,
+            text,
+            lead + 1,
+            body,
+            content_end,
+            UmlSyntaxKind::IdentifierToken,
+        ));
+    } else if kind == UmlSyntaxKind::Member {
+        let (link, next) = relationship_link(f, text, source, body, content_end, lead + 1, diags);
+        children.push(link);
+        let trailing = skip_ws(source, next, content_end);
+        if trailing < content_end {
+            children.push(GreenElement::Node(
+                f.node(
+                    UmlSyntaxKind::SkippedTokensSyntax,
+                    [GreenElement::Token(
+                        f.bad_token(
+                            UmlSyntaxKind::BadToken,
+                            slice(text, next, content_end),
+                            UmlSyntaxDiagnosticCode::UnexpectedToken,
+                        )
+                        .unwrap(),
+                    )],
+                )
+                .unwrap(),
+            ));
+            diags.push(diag(
+                UmlSyntaxDiagnosticCode::UnexpectedToken,
+                trailing,
+                content_end,
+                "unexpected member content",
+            ));
+        }
     } else {
         children.extend(classifier_tokens(
             f,

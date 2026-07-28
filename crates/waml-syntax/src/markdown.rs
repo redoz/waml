@@ -64,7 +64,7 @@ pub(crate) fn map(
             Event::Start(tag) => match tag {
                 Tag::Heading { level, .. } => {
                     let level = heading_level(level);
-                    if containers.is_empty() && level <= 2 {
+                    if containers.is_empty() {
                         pending = Some((level, start, end));
                     }
                 }
