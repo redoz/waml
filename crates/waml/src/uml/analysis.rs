@@ -489,11 +489,47 @@ fn declared_projection(
                 (
                     crate::uml::DeclaredField::Valid { value: name, .. },
                     crate::uml::DeclaredField::Valid { value, .. },
-                ) => Some(crate::model::Slot {
-                    name: name.clone(),
-                    value: value.clone(),
-                    ref_: None,
-                }),
+                ) => {
+                    let (value, ref_) = match s.syntax.value_kind() {
+                        super::syntax::SlotValueKind::Quoted => (
+                            value
+                                .strip_prefix('"')
+                                .and_then(|value| value.strip_suffix('"'))
+                                .unwrap_or(value)
+                                .to_owned(),
+                            None,
+                        ),
+                        super::syntax::SlotValueKind::Link => {
+                            let range = s.syntax.syntax().range();
+                            let authored = context
+                                .source
+                                .document(
+                                    &crate::source::BundlePath::parse(path.clone())
+                                        .expect("analyzed path"),
+                                )
+                                .map(|document| {
+                                    &document.text()
+                                        [range.start().to_usize()..range.end().to_usize()]
+                                })
+                                .unwrap_or(value);
+                            let link = parse_link_in_text(authored);
+                            (
+                                link.as_ref()
+                                    .map(|link| link.title.clone())
+                                    .unwrap_or_else(|| value.clone()),
+                                link.and_then(|link| resolve_slug(&path, &link.slug, &claimed)),
+                            )
+                        }
+                        super::syntax::SlotValueKind::Bare => (value.clone(), None),
+                        super::syntax::SlotValueKind::Missing
+                        | super::syntax::SlotValueKind::Invalid => (value.clone(), None),
+                    };
+                    Some(crate::model::Slot {
+                        name: name.clone(),
+                        value,
+                        ref_,
+                    })
+                }
                 _ => None,
             })
             .collect();
@@ -588,7 +624,7 @@ fn declared_projection(
                                     directions,
                                 },
                             ..
-                        } => Some(crate::syntax::LayoutStatement::Placement {
+                        } => Some(crate::layout::LayoutStatement::Placement {
                             operands: operands
                                 .iter()
                                 .filter_map(|field| match field {
@@ -611,7 +647,7 @@ fn declared_projection(
                         crate::uml::DeclaredField::Valid {
                             value: crate::uml::DeclaredLayoutStatement::Alignment { left, right },
                             ..
-                        } => Some(crate::syntax::LayoutStatement::Alignment {
+                        } => Some(crate::layout::LayoutStatement::Alignment {
                             left: match left {
                                 crate::uml::DeclaredField::Valid { value, .. } => value.clone(),
                                 _ => return None,
@@ -626,14 +662,58 @@ fn declared_projection(
                             ..
                         } => match operand {
                             crate::uml::DeclaredField::Valid { value, .. } => {
-                                Some(crate::syntax::LayoutStatement::Standalone(value.clone()))
+                                Some(crate::layout::LayoutStatement::Standalone(value.clone()))
                             }
                             _ => None,
                         },
                         _ => None,
                     })
                     .collect(),
-                display: Default::default(),
+                display: {
+                    let frontmatter = &okf.extra;
+                    let max_attributes = match frontmatter.get("maxAttributes") {
+                        Some(crate::frontmatter::FmValue::Num(value)) if *value > 0.0 => {
+                            Some(*value as u32)
+                        }
+                        _ => None,
+                    };
+                    let legacy_attribute_gate = frontmatter.get_bool("showAttributeMultiplicity");
+                    let cardinality = frontmatter
+                        .get_str("cardinality")
+                        .and_then(|value| match value {
+                            "off" => Some(crate::model::CardinalityVisibility::Off),
+                            "explicit" => Some(crate::model::CardinalityVisibility::Explicit),
+                            "all" => Some(crate::model::CardinalityVisibility::All),
+                            _ => None,
+                        })
+                        .or_else(|| {
+                            legacy_attribute_gate.map(
+                                crate::model::CardinalityVisibility::from_legacy_attribute_gate,
+                            )
+                        });
+                    crate::model::DiagramDisplay {
+                        show_attributes: frontmatter.get_bool("showAttributes"),
+                        show_type: frontmatter.get_bool("showType").or_else(|| {
+                            frontmatter
+                                .get_str("attributeDetail")
+                                .map(|value| value == "name-type")
+                        }),
+                        show_attribute_visibility: frontmatter.get_bool("showAttributeVisibility"),
+                        show_attribute_multiplicity: cardinality.map(
+                            crate::model::CardinalityVisibility::legacy_attribute_gate,
+                        ),
+                        cardinality,
+                        max_attributes,
+                        show_roles: frontmatter.get_bool("showRoles"),
+                        show_cardinality: frontmatter.get_bool("showCardinality"),
+                        show_labels: frontmatter.get_bool("showLabels"),
+                        show_stereotype: frontmatter.get_bool("showStereotype"),
+                        stereotype_filter: frontmatter
+                            .get("stereotypeFilter")
+                            .map(|_| frontmatter.get_string_list("stereotypeFilter")),
+                        stereotype_colors: frontmatter.get_string_list("stereotypeColors"),
+                    }
+                },
             });
         } else {
             model.nodes.push(crate::model::Node {
@@ -803,7 +883,7 @@ fn declared_projection(
                         crate::uml::DeclaredField::Valid { value, .. },
                     ) => Some(crate::model::Slot {
                         name: name.clone(),
-                        value: value.clone(),
+                        value: normalize_slot_value(value),
                         ref_: None,
                     }),
                     _ => None,
@@ -850,8 +930,38 @@ fn resolve_describes(
 ) -> Option<String> {
     okf.extra
         .get_str("describes")
-        .and_then(crate::grammar::parse_link_ref)
+        .and_then(parse_link_ref)
         .and_then(|link| resolve_slug(path, &link.slug, claimed))
+}
+
+fn parse_link_ref(value: &str) -> Option<crate::layout::LinkRef> {
+    let value = value.trim();
+    let title_end = value.find("](")?;
+    let title = value.strip_prefix('[')?.get(..title_end - 1)?;
+    let href = value.get(title_end + 2..)?.strip_suffix(')')?;
+    let slug = href
+        .strip_prefix("./")?
+        .strip_suffix(".md")
+        .unwrap_or(href.strip_prefix("./")?)
+        .to_owned();
+    Some(crate::layout::LinkRef {
+        title: title.to_owned(),
+        slug,
+    })
+}
+
+fn normalize_slot_value(value: &str) -> String {
+    value
+        .strip_prefix('"')
+        .and_then(|value| value.strip_suffix('"'))
+        .unwrap_or(value)
+        .to_owned()
+}
+
+fn parse_link_in_text(value: &str) -> Option<crate::layout::LinkRef> {
+    let start = value.find('[')?;
+    let relative_end = value[start..].find(')')?;
+    parse_link_ref(&value[start..=start + relative_end])
 }
 
 fn behavior_diagnostic(
@@ -1002,7 +1112,7 @@ fn lower_flow_behavior(
                 continue;
             };
             let (to, to_ref) = match target {
-                crate::syntax::FlowTargetRef::Local(name) => {
+                crate::layout::FlowTargetRef::Local(name) => {
                     if !local.contains_key(name) {
                         behavior_diagnostic(
                             context,
@@ -1016,7 +1126,7 @@ fn lower_flow_behavior(
                     }
                     (format!("{}#{}", concept.concept_id, name), None)
                 }
-                crate::syntax::FlowTargetRef::Link(link) => {
+                crate::layout::FlowTargetRef::Link(link) => {
                     let Some(target) = resolve_slug(path, &link.slug, claimed) else {
                         behavior_diagnostic(
                             context,
@@ -1726,7 +1836,7 @@ fn declared_flow_transition(node: SyntaxNode<UmlLanguage>) -> crate::uml::Declar
             .map(|(title, slug)| {
                 valid(
                     target_slot.clone(),
-                    crate::syntax::FlowTargetRef::Link(crate::syntax::LinkRef { title, slug }),
+                    crate::layout::FlowTargetRef::Link(crate::layout::LinkRef { title, slug }),
                 )
             })
             .unwrap_or_else(|| invalid(target_slot.clone()))
@@ -1736,7 +1846,7 @@ fn declared_flow_transition(node: SyntaxNode<UmlLanguage>) -> crate::uml::Declar
             .map(|value| {
                 valid(
                     target_slot.clone(),
-                    crate::syntax::FlowTargetRef::Local(value),
+                    crate::layout::FlowTargetRef::Local(value),
                 )
             })
             .unwrap_or_else(|| crate::uml::DeclaredField::Incomplete {
@@ -2172,7 +2282,7 @@ fn declared_layout(
         };
     }
     match parse_layout_atoms(&atoms) {
-        Some(crate::syntax::LayoutStatement::Placement {
+        Some(crate::layout::LayoutStatement::Placement {
             operands,
             directions,
         }) => {
@@ -2202,7 +2312,7 @@ fn declared_layout(
                 },
             )
         }
-        Some(crate::syntax::LayoutStatement::Alignment { left, right }) => {
+        Some(crate::layout::LayoutStatement::Alignment { left, right }) => {
             let Some(alignment) = syntax.alignment() else {
                 return invalid(node);
             };
@@ -2218,7 +2328,7 @@ fn declared_layout(
                 },
             )
         }
-        Some(crate::syntax::LayoutStatement::Standalone(operand)) => {
+        Some(crate::layout::LayoutStatement::Standalone(operand)) => {
             let Some(slot) = syntax
                 .standalone()
                 .and_then(|standalone| standalone.operand())
@@ -2287,7 +2397,7 @@ impl<'a> LayoutCursor<'a> {
 
 fn parse_layout_atoms(
     atoms: &[super::syntax::LayoutAtomSyntax],
-) -> Option<crate::syntax::LayoutStatement> {
+) -> Option<crate::layout::LayoutStatement> {
     let mut cur = LayoutCursor { atoms, pos: 0 };
     let first = parse_layout_anchored(&mut cur)?;
     if cur.eat_word("aligned") {
@@ -2297,7 +2407,7 @@ fn parse_layout_atoms(
         let right = parse_layout_anchored(&mut cur)?;
         return cur
             .done()
-            .then_some(crate::syntax::LayoutStatement::Alignment { left: first, right });
+            .then_some(crate::layout::LayoutStatement::Alignment { left: first, right });
     }
     let first = match first.edge {
         Some(_) => return None,
@@ -2306,7 +2416,7 @@ fn parse_layout_atoms(
     let Some(direction) = parse_layout_direction(&mut cur) else {
         return cur
             .done()
-            .then_some(crate::syntax::LayoutStatement::Standalone(first));
+            .then_some(crate::layout::LayoutStatement::Standalone(first));
     };
     let mut operands = vec![first, parse_layout_operand(&mut cur)?];
     let mut directions = vec![direction];
@@ -2315,50 +2425,50 @@ fn parse_layout_atoms(
         operands.push(parse_layout_operand(&mut cur)?);
     }
     cur.done()
-        .then_some(crate::syntax::LayoutStatement::Placement {
+        .then_some(crate::layout::LayoutStatement::Placement {
             operands,
             directions,
         })
 }
 
-fn parse_layout_anchored(cur: &mut LayoutCursor<'_>) -> Option<crate::syntax::Anchored> {
+fn parse_layout_anchored(cur: &mut LayoutCursor<'_>) -> Option<crate::layout::Anchored> {
     let edge = match cur.word().map(|word| word.to_ascii_lowercase()).as_deref() {
-        Some("top") => Some(crate::syntax::Edge::Top),
-        Some("bottom") => Some(crate::syntax::Edge::Bottom),
-        Some("left") => Some(crate::syntax::Edge::Left),
-        Some("right") => Some(crate::syntax::Edge::Right),
-        Some("center") => Some(crate::syntax::Edge::Center),
+        Some("top") => Some(crate::layout::Edge::Top),
+        Some("bottom") => Some(crate::layout::Edge::Bottom),
+        Some("left") => Some(crate::layout::Edge::Left),
+        Some("right") => Some(crate::layout::Edge::Right),
+        Some("center") => Some(crate::layout::Edge::Center),
         _ => None,
     };
     if let Some(edge) = edge {
         cur.bump();
         if cur.eat_word("of") {
-            return Some(crate::syntax::Anchored {
+            return Some(crate::layout::Anchored {
                 edge: Some(edge),
                 operand: parse_layout_operand(cur)?,
             });
         }
         cur.pos -= 1;
     }
-    Some(crate::syntax::Anchored {
+    Some(crate::layout::Anchored {
         edge: None,
         operand: parse_layout_operand(cur)?,
     })
 }
 
-fn parse_layout_direction(cur: &mut LayoutCursor<'_>) -> Option<crate::syntax::Direction> {
+fn parse_layout_direction(cur: &mut LayoutCursor<'_>) -> Option<crate::layout::Direction> {
     let word = cur.word()?.to_ascii_lowercase();
     match word.as_str() {
         "above" | "below" => {
             cur.bump();
             let diagonal = cur.word().map(|word| word.to_ascii_lowercase());
             let direction = match (word.as_str(), diagonal.as_deref()) {
-                ("above", Some("left")) => crate::syntax::Direction::AboveLeft,
-                ("above", Some("right")) => crate::syntax::Direction::AboveRight,
-                ("below", Some("left")) => crate::syntax::Direction::BelowLeft,
-                ("below", Some("right")) => crate::syntax::Direction::BelowRight,
-                ("above", _) => return Some(crate::syntax::Direction::Above),
-                _ => return Some(crate::syntax::Direction::Below),
+                ("above", Some("left")) => crate::layout::Direction::AboveLeft,
+                ("above", Some("right")) => crate::layout::Direction::AboveRight,
+                ("below", Some("left")) => crate::layout::Direction::BelowLeft,
+                ("below", Some("right")) => crate::layout::Direction::BelowRight,
+                ("above", _) => return Some(crate::layout::Direction::Above),
+                _ => return Some(crate::layout::Direction::Below),
             };
             cur.bump();
             if cur.eat_word("of") {
@@ -2373,16 +2483,16 @@ fn parse_layout_direction(cur: &mut LayoutCursor<'_>) -> Option<crate::syntax::D
                 return None;
             }
             Some(if word == "left" {
-                crate::syntax::Direction::LeftOf
+                crate::layout::Direction::LeftOf
             } else {
-                crate::syntax::Direction::RightOf
+                crate::layout::Direction::RightOf
             })
         }
         _ => None,
     }
 }
 
-fn parse_layout_operand(cur: &mut LayoutCursor<'_>) -> Option<crate::syntax::Operand> {
+fn parse_layout_operand(cur: &mut LayoutCursor<'_>) -> Option<crate::layout::Operand> {
     let ref_ = parse_layout_ref(cur)?;
     let axis = if cur.eat_word("as") {
         Some(parse_layout_axis(cur)?)
@@ -2394,20 +2504,20 @@ fn parse_layout_operand(cur: &mut LayoutCursor<'_>) -> Option<crate::syntax::Ope
     } else {
         vec![]
     };
-    Some(crate::syntax::Operand { ref_, axis, hints })
+    Some(crate::layout::Operand { ref_, axis, hints })
 }
 
-fn parse_layout_axis(cur: &mut LayoutCursor<'_>) -> Option<crate::syntax::Axis> {
+fn parse_layout_axis(cur: &mut LayoutCursor<'_>) -> Option<crate::layout::Axis> {
     let word = cur.word()?.to_ascii_lowercase();
     cur.bump();
     match word.as_str() {
-        "row" => Some(crate::syntax::Axis::Row),
-        "column" => Some(crate::syntax::Axis::Column),
+        "row" => Some(crate::layout::Axis::Row),
+        "column" => Some(crate::layout::Axis::Column),
         _ => None,
     }
 }
 
-fn parse_layout_hints(cur: &mut LayoutCursor<'_>) -> Option<Vec<crate::syntax::Hint>> {
+fn parse_layout_hints(cur: &mut LayoutCursor<'_>) -> Option<Vec<crate::layout::Hint>> {
     let mut hints = vec![parse_layout_hint(cur)?];
     while cur.eat_comma() || cur.eat_word("and") {
         hints.push(parse_layout_hint(cur)?);
@@ -2415,8 +2525,8 @@ fn parse_layout_hints(cur: &mut LayoutCursor<'_>) -> Option<Vec<crate::syntax::H
     Some(hints)
 }
 
-fn parse_layout_hint(cur: &mut LayoutCursor<'_>) -> Option<crate::syntax::Hint> {
-    use crate::syntax::{Flag, Hint, Margin, Shape};
+fn parse_layout_hint(cur: &mut LayoutCursor<'_>) -> Option<crate::layout::Hint> {
+    use crate::layout::{Flag, Hint, Margin, Shape};
     let word = cur.word()?.to_ascii_lowercase();
     cur.bump();
     match word.as_str() {
@@ -2438,9 +2548,9 @@ fn parse_layout_hint(cur: &mut LayoutCursor<'_>) -> Option<crate::syntax::Hint> 
     }
 }
 
-fn parse_layout_ref(cur: &mut LayoutCursor<'_>) -> Option<crate::syntax::OperandRef> {
+fn parse_layout_ref(cur: &mut LayoutCursor<'_>) -> Option<crate::layout::OperandRef> {
     use super::syntax::LayoutAtomSyntax::{Link, OpenParen, Quote, Word};
-    use crate::syntax::{Axis, NameRef, OperandRef};
+    use crate::layout::{Axis, NameRef, OperandRef};
     match cur.bump()? {
         OpenParen(_) => {
             let operand = parse_layout_operand(cur)?;

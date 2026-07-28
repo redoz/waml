@@ -7,7 +7,7 @@ use std::collections::BTreeMap;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct Placed {
-    pub dir: Option<waml::syntax::Direction>,
+    pub dir: Option<waml::layout::Direction>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -76,7 +76,7 @@ pub fn zone_arrow(zone: Zone) -> crate::icons::Icon {
 }
 
 pub fn zone_placed(zone: Zone) -> Placed {
-    use waml::syntax::Direction::*;
+    use waml::layout::Direction::*;
     let dir = match zone {
         Zone::Left => LeftOf,
         Zone::Right => RightOf,
@@ -104,7 +104,7 @@ pub struct DialPlacement {
     pub subject_title: String,
     pub reference_key: String,
     pub reference_title: String,
-    pub directions: Vec<waml::syntax::Direction>,
+    pub directions: Vec<waml::layout::Direction>,
 }
 
 struct Preview {
@@ -1128,7 +1128,7 @@ mod tests {
         let authored = placement.placement_for(Zone::Right).unwrap();
         assert_eq!(authored.subject_key, "a");
         assert_eq!(authored.reference_key, "b");
-        assert_eq!(authored.directions, vec![waml::syntax::Direction::RightOf]);
+        assert_eq!(authored.directions, vec![waml::layout::Direction::RightOf]);
     }
 
     #[test]

@@ -5,7 +5,7 @@ use std::path::Component;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use waml::parse::split_bundle;
+use waml::source::split_bundle;
 
 /// Turn one file's text into `(path, content)` docs: split on `<!-- path -->`
 /// markers if present, otherwise a single doc keyed by `display_path`.

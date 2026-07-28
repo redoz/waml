@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
+use waml::layout::*;
 use waml::model::{Diagram, DiagramDisplay, DiagramGroup};
 use waml::solve::{pretty, solve_diagram, Size, SizeMap, SolveConfig};
-use waml::syntax::*;
 
 fn bare(name: &str) -> Operand {
     Operand {

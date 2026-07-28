@@ -1098,8 +1098,8 @@ mod tests {
         }
     }
 
+    use crate::layout::{Axis, Margin, Shape};
     use crate::solve::{BoxKind, FlagSet, SolveConfig};
-    use crate::syntax::{Axis, Margin, Shape};
 
     fn nrect(x: f64, y: f64, w: f64, h: f64) -> Rect {
         Rect { x, y, w, h }

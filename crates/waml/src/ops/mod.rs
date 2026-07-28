@@ -1,7 +1,7 @@
+use crate::layout::Direction;
 use crate::model::{CardinalityVisibility, ElementType, RelEnd, RelationshipKind, Visibility};
 use crate::multiplicity::Multiplicity;
 use crate::source::SourceBundle;
-use crate::syntax::Direction;
 
 pub type Bundle = Vec<(String, String)>;
 
@@ -247,13 +247,26 @@ pub use selector::{parse_selector, render_selector, RelBy, Selector};
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::grammar::parse_ends;
-    use crate::model::{CardinalityVisibility, ElementType, RelationshipKind};
+    use crate::model::{parse_ends, CardinalityVisibility, ElementType, RelationshipKind};
     use crate::multiplicity::Multiplicity;
     use crate::ops::selector::{RelBy, Selector};
-    use crate::parse::parse_document;
-    use crate::syntax::{Line, Section};
     use crate::uml::lower::slug_of;
+
+    fn projection(bundle: &Bundle) -> crate::uml::Projection {
+        let source = crate::source::SourceBundle::try_from_pairs(bundle.iter().cloned()).unwrap();
+        crate::analysis::prepare_candidate(source, None, 0)
+            .unwrap()
+            .uml()
+            .projection
+            .clone()
+    }
+
+    fn layout_statement_count(source: &str) -> usize {
+        source
+            .lines()
+            .filter(|line| crate::layout::parse_layout_line(line).is_ok())
+            .count()
+    }
 
     fn attr_add(node: &str, name: &str, ty: &str) -> Op {
         Op::AttrAdd {
@@ -376,18 +389,11 @@ mod tests {
         )
         .unwrap();
         assert!(out[0].1.contains("- id: String {0..1}"));
-        let doc = parse_document(&out[0].1);
-        let attrs = doc
-            .sections
+        let model = projection(&out);
+        let id = model
+            .nodes
             .iter()
-            .find_map(|s| match s {
-                Section::Attributes(a) => Some(a),
-                _ => None,
-            })
-            .expect("attributes section present");
-        let id = attrs
-            .iter()
-            .filter_map(Line::parsed)
+            .flat_map(|node| &node.attributes)
             .find(|a| a.name == "id")
             .expect("id attribute present");
         assert_eq!(id.visibility, Some(crate::model::Visibility::Private));
@@ -1153,8 +1159,8 @@ mod tests {
     }
 
     #[test]
-    fn diagram_set_round_trips_multiline_description_through_reopen() {
-        let out = apply(
+    fn diagram_set_rejects_multiline_description_before_serializing() {
+        let err = apply(
             &diagram_doc(),
             &[Op::DiagramSet {
                 key: "dia".into(),
@@ -1164,20 +1170,9 @@ mod tests {
                 display: None,
             }],
         )
-        .unwrap();
+        .unwrap_err();
 
-        assert!(
-            out[0]
-                .1
-                .contains(r#"description: "First line\nSecond line""#),
-            "serialized diagram must escape the embedded line break: {}",
-            out[0].1
-        );
-        let reopened = crate::parse::build_model(&out);
-        assert_eq!(
-            reopened.diagrams[0].description.as_deref(),
-            Some("First line\nSecond line")
-        );
+        assert!(err.reason.contains("one line"), "{err:?}");
     }
 
     #[test]
@@ -1211,7 +1206,7 @@ mod tests {
             "explicit clear must remove the frontmatter key: {}",
             cleared[0].1
         );
-        let model = crate::parse::build_model(&cleared);
+        let model = projection(&cleared);
         assert_eq!(model.diagrams[0].description, None);
     }
 
@@ -1510,17 +1505,8 @@ mod tests {
             "new placement present: {}",
             out[0].1
         );
-        let doc = parse_document(&out[0].1);
-        let layout = doc
-            .sections
-            .iter()
-            .find_map(|s| match s {
-                Section::Layout(l) => Some(l),
-                _ => None,
-            })
-            .expect("layout section present");
         assert_eq!(
-            layout.len(),
+            layout_statement_count(&out[0].1),
             1,
             "reversed-pair placement replaced, not stacked: {}",
             out[0].1
@@ -1614,16 +1600,11 @@ mod tests {
         );
         // Two separate 2-operand placement bullets
         // (invariant: directions.len() == operands.len() - 1).
-        let doc = parse_document(&out[0].1);
-        let layout = doc
-            .sections
-            .iter()
-            .find_map(|s| match s {
-                Section::Layout(l) => Some(l),
-                _ => None,
-            })
-            .expect("layout section present");
-        assert_eq!(layout.len(), 2, "corner drop authored two statements");
+        assert_eq!(
+            layout_statement_count(&out[0].1),
+            2,
+            "corner drop authored two statements"
+        );
     }
 
     // ---- Op::PlaceRm (## Layout removal) ----

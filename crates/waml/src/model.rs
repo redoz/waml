@@ -220,6 +220,48 @@ pub struct RelEnd {
     pub navigable: Option<bool>,
 }
 
+pub fn parse_ends(raw: &str) -> Option<(RelEnd, RelEnd)> {
+    fn parse_end(raw: &str) -> Option<RelEnd> {
+        let mut parts = raw.split_whitespace();
+        let multiplicity = crate::multiplicity::Multiplicity::parse(parts.next()?)?;
+        let role = parts.next().map(str::to_owned);
+        if parts.next().is_some()
+            || role.as_deref().is_some_and(|role| {
+                let mut chars = role.chars();
+                !chars.next().is_some_and(|c| c.is_ascii_alphabetic())
+                    || !chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
+            })
+        {
+            return None;
+        }
+        Some(RelEnd {
+            multiplicity: Some(multiplicity),
+            role,
+            navigable: None,
+        })
+    }
+
+    let mut parts = raw.split(" to ");
+    let from = parse_end(parts.next()?)?;
+    let to = parse_end(parts.next()?)?;
+    (parts.next().is_none()).then_some((from, to))
+}
+
+pub fn render_ends(from: &RelEnd, to: &RelEnd) -> String {
+    fn render_end(end: &RelEnd) -> String {
+        let multiplicity = end
+            .multiplicity
+            .as_ref()
+            .map(crate::multiplicity::Multiplicity::as_str)
+            .unwrap_or("1");
+        end.role.as_ref().map_or_else(
+            || multiplicity.to_owned(),
+            |role| format!("{multiplicity} {role}"),
+        )
+    }
+    format!("{} to {}", render_end(from), render_end(to))
+}
+
 /// A relationship's optional `as …` name: a plain label, or a link to a
 /// `uml.Association` document (an association class), stored by its resolved slug.
 ///
@@ -914,7 +956,7 @@ pub struct Diagram {
     pub groups: Vec<DiagramGroup>,
     // `layout` carries the raw layout AST (`syntax::LayoutStatement`). Serialized
     // end to end (Phase 2) so the frontend can read the layout relations.
-    pub layout: Vec<crate::syntax::LayoutStatement>,
+    pub layout: Vec<crate::layout::LayoutStatement>,
     #[cfg_attr(
         feature = "serde",
         serde(default, skip_serializing_if = "DiagramDisplay::is_empty")

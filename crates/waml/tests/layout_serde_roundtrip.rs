@@ -3,7 +3,14 @@
 //! serde_json; the crate's own `serde` feature must be on for the derives).
 #![cfg(feature = "serde")]
 
-use waml::parse::build_model;
+fn projection(bundle: Vec<(String, String)>) -> waml::uml::Projection {
+    let source = waml::source::SourceBundle::try_from_pairs(bundle).unwrap();
+    waml::analysis::prepare_candidate(source, None, 0)
+        .unwrap()
+        .uml()
+        .projection
+        .clone()
+}
 
 fn bundle() -> Vec<(String, String)> {
     vec![
@@ -18,7 +25,7 @@ fn bundle() -> Vec<(String, String)> {
 
 #[test]
 fn diagram_layout_survives_serde_roundtrip() {
-    let model = build_model(&bundle());
+    let model = projection(bundle());
     let diagram = &model.diagrams[0];
     assert!(
         !diagram.layout.is_empty(),

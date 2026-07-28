@@ -419,10 +419,16 @@ fn percentile(samples: &mut [u128], numerator: usize, denominator: usize) -> u12
     samples[(samples.len() - 1) * numerator / denominator]
 }
 
+fn analyze_once(source: &str) {
+    let bundle =
+        waml::source::SourceBundle::try_from_pairs([("benchmark.md", source.to_owned())]).unwrap();
+    let _ = waml::analysis::prepare_candidate(bundle, None, 0);
+}
+
 fn measure(method: &Method, fixtures: &[(String, String)]) -> Result<Observation, String> {
     for _ in 0..method.warmup_runs {
         for (_, source) in fixtures {
-            let _ = waml::parse::parse_document(source);
+            analyze_once(source);
         }
     }
     let mut samples = Vec::with_capacity(method.sample_runs);
@@ -433,7 +439,7 @@ fn measure(method: &Method, fixtures: &[(String, String)]) -> Result<Observation
     for _ in 0..method.sample_runs {
         let started = Instant::now();
         for (_, source) in fixtures {
-            let _ = waml::parse::parse_document(source);
+            analyze_once(source);
         }
         samples.push(started.elapsed().as_nanos());
     }

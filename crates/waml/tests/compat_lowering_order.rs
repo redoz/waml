@@ -1,10 +1,10 @@
 use waml::{
     compat::{Batch, Step},
     edit::{EditBatch, EditContext},
+    layout::Direction,
     model::ElementType,
     okf::{self, DirectoryAddress},
     source::{BundlePath, SourceBundle},
-    syntax::Direction,
     uml,
 };
 

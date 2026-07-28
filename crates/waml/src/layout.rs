@@ -1,9 +1,148 @@
 //! Tokenizer, recursive-descent parser, and renderer for the `## Layout`
 //! diagram-arrangement language. See docs/waml-spec.md (Diagram documents).
 
-use crate::syntax::*;
 use regex::Regex;
 use std::sync::LazyLock;
+
+#[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub enum LayoutStatement {
+    Placement {
+        operands: Vec<Operand>,
+        directions: Vec<Direction>,
+    },
+    Alignment {
+        left: Anchored,
+        right: Anchored,
+    },
+    Standalone(Operand),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub enum Direction {
+    LeftOf,
+    RightOf,
+    Above,
+    Below,
+    AboveLeft,
+    AboveRight,
+    BelowLeft,
+    BelowRight,
+}
+
+impl Direction {
+    pub fn opposite(self) -> Direction {
+        use Direction::*;
+        match self {
+            LeftOf => RightOf,
+            RightOf => LeftOf,
+            Above => Below,
+            Below => Above,
+            AboveLeft => BelowRight,
+            BelowRight => AboveLeft,
+            AboveRight => BelowLeft,
+            BelowLeft => AboveRight,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct Anchored {
+    pub edge: Option<Edge>,
+    pub operand: Operand,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub enum Edge {
+    Top,
+    Bottom,
+    Left,
+    Right,
+    Center,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct Operand {
+    pub ref_: OperandRef,
+    pub axis: Option<Axis>,
+    pub hints: Vec<Hint>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub enum Axis {
+    Row,
+    Column,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub enum OperandRef {
+    Name(NameRef),
+    InlineGroup { axis: Axis, items: Vec<Operand> },
+    Paren(Box<Operand>),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub enum NameRef {
+    Link { title: String, slug: String },
+    Bare(String),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub enum Hint {
+    Shape(Shape),
+    Margin(Margin),
+    Flag(Flag),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub enum Shape {
+    Frame,
+    Box,
+    Shrink,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub enum Margin {
+    No,
+    Small,
+    Medium,
+    Large,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub enum Flag {
+    Emphasized,
+    Collapsed,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct LinkRef {
+    pub title: String,
+    pub slug: String,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum FlowTargetRef {
+    Local(String),
+    Link(LinkRef),
+}
+
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub struct LayoutParseError {
+    pub range: (usize, usize),
+    pub message: String,
+}
 
 /// Render one `## Layout` statement back to its `- …` bullet text.
 pub fn render_layout_line(stmt: &LayoutStatement) -> String {
@@ -355,11 +494,18 @@ fn try_parse_placement(toks: &[Tok]) -> Option<LayoutStatement> {
 
 /// Parse one `## Layout` bullet (leading `- ` required). Returns `Err` if the
 /// bullet is malformed or has unconsumed trailing tokens.
-pub fn parse_layout_line(line: &str) -> Result<LayoutStatement, crate::grammar::LineError> {
-    parse_layout_line_opt(line).ok_or_else(|| crate::grammar::LineError {
-        range: crate::grammar::bullet_range(line),
+pub fn parse_layout_line(line: &str) -> Result<LayoutStatement, LayoutParseError> {
+    parse_layout_line_opt(line).ok_or_else(|| LayoutParseError {
+        range: bullet_range(line),
         message: "malformed layout statement".to_string(),
     })
+}
+
+fn bullet_range(line: &str) -> (usize, usize) {
+    let start = line
+        .find(|character: char| !character.is_whitespace())
+        .unwrap_or(0);
+    (start, line.len())
 }
 
 /// Parse the layout body after its Markdown bullet.  UML's lossless parser
@@ -634,7 +780,7 @@ mod tests {
 
     #[test]
     fn parses_standalone_bare_and_link() {
-        use crate::syntax::*;
+        use crate::layout::*;
         assert_eq!(
             parse_layout_line("- Orders"),
             Ok(LayoutStatement::Standalone(Operand {
@@ -671,7 +817,7 @@ mod tests {
 
     #[test]
     fn parses_as_axis_and_with_hints() {
-        use crate::syntax::*;
+        use crate::layout::*;
         let stmt = parse_layout_line("- Users as column with frame and large margin").unwrap();
         let LayoutStatement::Standalone(op) = stmt else {
             panic!("expected standalone")
@@ -685,7 +831,7 @@ mod tests {
 
     #[test]
     fn parses_all_hint_kinds_and_margins_word() {
-        use crate::syntax::*;
+        use crate::layout::*;
         let stmt =
             parse_layout_line("- Order with box, no margins, emphasized, collapsed").unwrap();
         let LayoutStatement::Standalone(op) = stmt else {
@@ -709,7 +855,7 @@ mod tests {
 
     #[test]
     fn parses_quoted_standalone_operand() {
-        use crate::syntax::*;
+        use crate::layout::*;
         let stmt = parse_layout_line("- \"My Group\"").unwrap();
         let LayoutStatement::Standalone(op) = stmt else {
             panic!("expected standalone")
@@ -727,7 +873,7 @@ mod tests {
 
     #[test]
     fn parses_inline_group_and_greedy_with_binding() {
-        use crate::syntax::*;
+        use crate::layout::*;
         // `with` binds to Account (nearest operand), NOT the whole column.
         let stmt = parse_layout_line("- column of Customer, Account with large margin").unwrap();
         let LayoutStatement::Standalone(op) = stmt else {
@@ -744,7 +890,7 @@ mod tests {
 
     #[test]
     fn parens_rebind_with_to_the_whole_group() {
-        use crate::syntax::*;
+        use crate::layout::*;
         let stmt = parse_layout_line("- (column of Customer, Account) with large margin").unwrap();
         let LayoutStatement::Standalone(op) = stmt else {
             panic!()
@@ -759,7 +905,7 @@ mod tests {
 
     #[test]
     fn parses_nested_inline_groups() {
-        use crate::syntax::*;
+        use crate::layout::*;
         let stmt = parse_layout_line("- row of (column of Customer, Account), Orders").unwrap();
         let LayoutStatement::Standalone(op) = stmt else {
             panic!()
@@ -774,7 +920,7 @@ mod tests {
 
     #[test]
     fn parses_single_and_chained_placement() {
-        use crate::syntax::*;
+        use crate::layout::*;
         let stmt = parse_layout_line("- Users left of Orders").unwrap();
         let LayoutStatement::Placement {
             operands,
@@ -800,7 +946,7 @@ mod tests {
 
     #[test]
     fn parses_all_four_directions() {
-        use crate::syntax::*;
+        use crate::layout::*;
         for (text, dir) in [
             ("- A left of B", Direction::LeftOf),
             ("- A right of B", Direction::RightOf),
@@ -817,7 +963,7 @@ mod tests {
 
     #[test]
     fn diagonals_parse_and_serialize_round_trip() {
-        use crate::syntax::{Direction, LayoutStatement};
+        use crate::layout::{Direction, LayoutStatement};
         for (text, dir) in [
             ("- A above left of B", Direction::AboveLeft),
             ("- A above right of B", Direction::AboveRight),
@@ -851,7 +997,7 @@ mod tests {
 
     #[test]
     fn bare_above_below_still_parse_as_cardinals() {
-        use crate::syntax::{Direction, LayoutStatement};
+        use crate::layout::{Direction, LayoutStatement};
         for (text, dir) in [
             ("- A above B", Direction::Above),
             ("- A below B", Direction::Below),
@@ -866,7 +1012,7 @@ mod tests {
 
     #[test]
     fn placement_binds_with_to_operand_then_direction() {
-        use crate::syntax::*;
+        use crate::layout::*;
         // greedy `with` on the first operand, then a trailing relation
         let stmt = parse_layout_line("- Users with frame left of Orders").unwrap();
         let LayoutStatement::Placement {
@@ -882,7 +1028,7 @@ mod tests {
 
     #[test]
     fn parses_anchored_alignment() {
-        use crate::syntax::*;
+        use crate::layout::*;
         let stmt = parse_layout_line("- top of VIP aligned with top of Orders").unwrap();
         let LayoutStatement::Alignment { left, right } = stmt else {
             panic!("expected alignment")
@@ -897,7 +1043,7 @@ mod tests {
 
     #[test]
     fn parses_bare_center_to_center_alignment() {
-        use crate::syntax::*;
+        use crate::layout::*;
         let stmt = parse_layout_line("- X aligned with Y").unwrap();
         let LayoutStatement::Alignment { left, right } = stmt else {
             panic!()
@@ -908,7 +1054,7 @@ mod tests {
 
     #[test]
     fn edge_left_is_not_read_as_placement_direction() {
-        use crate::syntax::*;
+        use crate::layout::*;
         let stmt = parse_layout_line("- left of X aligned with right of Y").unwrap();
         let LayoutStatement::Alignment { left, right } = stmt else {
             panic!("expected alignment, not placement")

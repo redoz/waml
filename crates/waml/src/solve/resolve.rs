@@ -3,11 +3,11 @@
 use super::{Box, BoxId, BoxKind, Constraint, FlagSet, Scene};
 use crate::diagnostic::DiagCode;
 use crate::diagnostic::Diagnostic;
-use crate::model::{Diagram, DiagramGroup};
-use crate::slug::slugify;
-use crate::syntax::{
+use crate::layout::{
     Edge, Flag, Hint, LayoutStatement, Margin, NameRef, Operand, OperandRef, Shape,
 };
+use crate::model::{Diagram, DiagramGroup};
+use crate::slug::slugify;
 use std::collections::{BTreeMap, BTreeSet};
 
 /// Last `/`-separated segment of a full-path node key (`"tables/order"` ->
@@ -303,7 +303,7 @@ mod tests {
     use crate::model::{Diagram, DiagramGroup};
     use crate::solve::{BoxId, BoxKind};
 
-    fn diagram(groups: Vec<DiagramGroup>, layout: Vec<crate::syntax::LayoutStatement>) -> Diagram {
+    fn diagram(groups: Vec<DiagramGroup>, layout: Vec<crate::layout::LayoutStatement>) -> Diagram {
         Diagram {
             key: "orders".into(),
             title: "Orders".into(),
@@ -362,8 +362,8 @@ mod tests {
 
     #[test]
     fn resolves_refs_treatment_and_warns_unknown() {
+        use crate::layout::*;
         use crate::solve::Constraint;
-        use crate::syntax::*;
 
         fn bare(name: &str) -> Operand {
             Operand {
@@ -432,8 +432,8 @@ mod tests {
 
     #[test]
     fn resolves_bare_node_by_slug_and_inline_group() {
+        use crate::layout::*;
         use crate::solve::Constraint;
-        use crate::syntax::*;
         fn bare(name: &str) -> Operand {
             Operand {
                 ref_: OperandRef::Name(NameRef::Bare(name.into())),
@@ -532,7 +532,7 @@ mod tests {
 
     #[test]
     fn inline_group_over_grouped_members_warns_and_emits_no_frame() {
-        use crate::syntax::*;
+        use crate::layout::*;
         fn bare(name: &str) -> Operand {
             Operand {
                 ref_: OperandRef::Name(NameRef::Bare(name.into())),
@@ -569,7 +569,7 @@ mod tests {
 
     #[test]
     fn link_ref_resolves_against_referring_diagrams_directory() {
-        use crate::syntax::*;
+        use crate::layout::*;
         // `diagram.key` is full-path (`tables/dia`); members are full-path
         // (`tables/order`) per Task 2. A Layout `[Order](./order.md)` link's raw
         // captured stem is `order` — it must resolve against the diagram's own
@@ -609,7 +609,7 @@ mod tests {
 
     #[test]
     fn bare_name_resolves_by_unique_basename_across_full_path_keys() {
-        use crate::syntax::*;
+        use crate::layout::*;
         // A bare informal name reference carries no directory of its own; it
         // must still resolve to a full-path member by basename when unambiguous.
         let d = diagram(
@@ -639,7 +639,7 @@ mod tests {
 
     #[test]
     fn bare_name_with_ambiguous_basename_stays_unresolved() {
-        use crate::syntax::*;
+        use crate::layout::*;
         // Two full-path members share a basename (`tables/order`, `shop/order`)
         // — a bare "Order" reference must NOT silently pick one; it warns.
         let d = diagram(

@@ -81,7 +81,7 @@ pub struct DeclaredFlowTransition {
     pub trigger: DeclaredField<UmlLanguage, String>,
     pub guard: DeclaredField<UmlLanguage, String>,
     pub is_else: bool,
-    pub target: DeclaredField<UmlLanguage, crate::syntax::FlowTargetRef>,
+    pub target: DeclaredField<UmlLanguage, crate::layout::FlowTargetRef>,
     pub carries: DeclaredField<UmlLanguage, String>,
     pub effect: DeclaredField<UmlLanguage, String>,
 }
@@ -121,14 +121,14 @@ pub struct DeclaredSequenceOperand {
 }
 pub enum DeclaredLayoutStatement {
     Placement {
-        operands: Arc<[DeclaredField<UmlLanguage, crate::syntax::Operand>]>,
-        directions: Arc<[DeclaredField<UmlLanguage, crate::syntax::Direction>]>,
+        operands: Arc<[DeclaredField<UmlLanguage, crate::layout::Operand>]>,
+        directions: Arc<[DeclaredField<UmlLanguage, crate::layout::Direction>]>,
     },
     Alignment {
-        left: DeclaredField<UmlLanguage, crate::syntax::Anchored>,
-        right: DeclaredField<UmlLanguage, crate::syntax::Anchored>,
+        left: DeclaredField<UmlLanguage, crate::layout::Anchored>,
+        right: DeclaredField<UmlLanguage, crate::layout::Anchored>,
     },
-    Standalone(DeclaredField<UmlLanguage, crate::syntax::Operand>),
+    Standalone(DeclaredField<UmlLanguage, crate::layout::Operand>),
 }
 pub struct DeclaredConcept {
     pub concept_id: String,

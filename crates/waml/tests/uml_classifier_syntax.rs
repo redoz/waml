@@ -689,7 +689,7 @@ fn declared_projection_resolves_only_claimed_targets_with_located_diagnostic() {
     let analysis = analyze(&source);
     let order = analysis.projection.node("order").unwrap();
     assert_eq!(order.values, ["OPEN"]);
-    assert_eq!(order.slots[0].value, "\"open\"");
+    assert_eq!(order.slots[0].value, "open");
     assert!(order.abstract_);
     assert_eq!(order.stereotypes, ["entity", "aggregate"]);
     assert_eq!(analysis.projection.edges.len(), 1);

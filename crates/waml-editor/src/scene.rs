@@ -97,7 +97,7 @@ pub struct SceneEdge {
 pub struct SceneRelation {
     pub subject: String,
     pub reference: String,
-    pub dir: waml::syntax::Direction,
+    pub dir: waml::layout::Direction,
 }
 
 /// A placement the solver could not honor, projected from `DroppedPlacement`
@@ -280,8 +280,8 @@ fn drawable_edges(model: &Model) -> Vec<&waml::model::Edge> {
 /// The slug a placement operand refers to (`[Title](./slug.md)` or a bare
 /// name). `None` for inline-group / paren operands, which the relation
 /// projection skips.
-fn operand_slug(op: &waml::syntax::Operand) -> Option<&str> {
-    use waml::syntax::{NameRef, OperandRef};
+fn operand_slug(op: &waml::layout::Operand) -> Option<&str> {
+    use waml::layout::{NameRef, OperandRef};
     match &op.ref_ {
         OperandRef::Name(NameRef::Link { slug, .. }) => Some(slug.as_str()),
         OperandRef::Name(NameRef::Bare(s)) => Some(s.as_str()),
@@ -293,7 +293,7 @@ fn operand_slug(op: &waml::syntax::Operand) -> Option<&str> {
 /// triples (subject_slug, reference_slug, dir). Mirrors `ops::placement_matches`'
 /// shape: only 2-operand, 1-direction placements qualify.
 fn project_relations(diagram: &Diagram) -> Vec<SceneRelation> {
-    use waml::syntax::LayoutStatement;
+    use waml::layout::LayoutStatement;
     let mut out = Vec::new();
     for stmt in &diagram.layout {
         if let LayoutStatement::Placement {
@@ -360,8 +360,8 @@ fn project_conflicts(dropped: &[waml::solve::DroppedPlacement]) -> Vec<SceneConf
 }
 
 /// DSL keyword for a placement direction (matches the `## Layout` surface form).
-pub fn dir_keyword(d: waml::syntax::Direction) -> &'static str {
-    use waml::syntax::Direction::*;
+pub fn dir_keyword(d: waml::layout::Direction) -> &'static str {
+    use waml::layout::Direction::*;
     match d {
         LeftOf => "left of",
         RightOf => "right of",
@@ -688,8 +688,8 @@ fn title_for(model: &Model, slug: &str) -> String {
 /// as a 2-operand single-direction relation, in EITHER operand order (mirrors
 /// `ops::placement_matches`). Pair-symmetric so a reversed-pair re-drag replaces
 /// the existing relation rather than stacking a conflicting one.
-fn placement_is_pair(stmt: &waml::syntax::LayoutStatement, subject: &str, reference: &str) -> bool {
-    use waml::syntax::LayoutStatement;
+fn placement_is_pair(stmt: &waml::layout::LayoutStatement, subject: &str, reference: &str) -> bool {
+    use waml::layout::LayoutStatement;
     if let LayoutStatement::Placement {
         operands,
         directions,
@@ -719,7 +719,7 @@ pub fn placement_would_conflict(
     diagram: &Diagram,
     subject_slug: &str,
     reference_slug: &str,
-    dir: waml::syntax::Direction,
+    dir: waml::layout::Direction,
     expanded: &std::collections::HashSet<String>,
 ) -> bool {
     placement_preview(model, diagram, subject_slug, reference_slug, dir, expanded).0
@@ -735,11 +735,11 @@ pub fn placement_preview(
     diagram: &Diagram,
     subject_slug: &str,
     reference_slug: &str,
-    dir: waml::syntax::Direction,
+    dir: waml::layout::Direction,
     expanded: &std::collections::HashSet<String>,
 ) -> (bool, std::collections::BTreeMap<String, Rect>) {
     use waml::diagnostic::DiagCode;
-    use waml::syntax::{LayoutStatement, NameRef, Operand, OperandRef};
+    use waml::layout::{LayoutStatement, NameRef, Operand, OperandRef};
 
     let link = |slug: &str| Operand {
         ref_: OperandRef::Name(NameRef::Link {
@@ -963,7 +963,7 @@ mod tests {
     #[test]
     fn groups_fixture_solves_a_frame_and_a_default_group() {
         use waml::diagnostic::DiagCode;
-        use waml::syntax::Shape;
+        use waml::layout::Shape;
         let model = groups();
         let (scene, diags) = build_scene(
             &model,
@@ -1013,7 +1013,7 @@ mod tests {
             test_display(),
             &std::collections::HashSet::new(),
         );
-        use waml::syntax::Direction;
+        use waml::layout::Direction;
         // orders-diagram.md's ## Layout: `Order left of Customer` +
         // `PaymentGateway below Order`.
         let has = |subj: &str, refr: &str, dir: Direction| {
@@ -1059,7 +1059,7 @@ mod tests {
 
     #[test]
     fn contradiction_surfaces_in_scene_conflicts() {
-        use waml::syntax::{Direction, LayoutStatement, NameRef, Operand, OperandRef};
+        use waml::layout::{Direction, LayoutStatement, NameRef, Operand, OperandRef};
         // mini authors `Order left of Customer`. Add the reversed pair
         // `Customer left of Order`: a different ordered pair, so both coexist and the
         // solver cannot satisfy them. The dropped placement + its contradiction set
@@ -1123,7 +1123,7 @@ mod tests {
 
     #[test]
     fn oracle_flags_a_contradictory_placement() {
-        use waml::syntax::{Direction, LayoutStatement, NameRef, Operand, OperandRef};
+        use waml::layout::{Direction, LayoutStatement, NameRef, Operand, OperandRef};
         // A genuine TRANSITIVE contradiction the override rule can't dissolve.
         // Seed a horizontal chain: mini already has `order left of customer`; add
         // `customer left of payment-gateway`. Dragging `payment-gateway left of
@@ -1172,7 +1172,7 @@ mod tests {
                 diagram,
                 "customer",
                 "order",
-                waml::syntax::Direction::LeftOf,
+                waml::layout::Direction::LeftOf,
                 &std::collections::HashSet::new(),
             ),
             "a reversed-pair re-drag overrides, so it must NOT be predicted conflicting"
@@ -1195,7 +1195,7 @@ mod tests {
                 diagram,
                 "order",
                 "customer",
-                waml::syntax::Direction::AboveLeft,
+                waml::layout::Direction::AboveLeft,
                 &std::collections::HashSet::new(),
             ),
             "a non-contradictory diagonal must NOT be predicted conflicting"
@@ -1561,7 +1561,7 @@ mod tests {
 
     #[test]
     fn conflict_statement_reads_as_dsl() {
-        use waml::syntax::Direction;
+        use waml::layout::Direction;
         let c = SceneConflict {
             dropped: SceneRelation {
                 subject: "order".into(),
@@ -1591,7 +1591,7 @@ mod tests {
 
     #[test]
     fn conflict_participants_lists_every_involved_node() {
-        use waml::syntax::Direction;
+        use waml::layout::Direction;
         let c = SceneConflict {
             dropped: SceneRelation {
                 subject: "order".into(),

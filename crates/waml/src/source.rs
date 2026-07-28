@@ -3,6 +3,37 @@ use std::fmt;
 use std::ops::Range;
 use std::sync::Arc;
 
+static BUNDLE_MARKER_RE: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+    regex::Regex::new(r"(?m)^<!--\s*(.+?\.md)\s*-->[ \t]*\n").expect("valid bundle marker regex")
+});
+
+/// Decode the CLI concatenated-document transport envelope.
+///
+/// This helper performs no WAML parsing and creates no syntax authority.
+pub fn split_bundle(text: &str) -> Vec<(String, String)> {
+    let marks: Vec<_> = BUNDLE_MARKER_RE
+        .captures_iter(text)
+        .map(|capture| {
+            let whole = capture.get(0).expect("whole match");
+            (whole.start(), whole.end(), capture[1].to_owned())
+        })
+        .collect();
+    if marks.is_empty() {
+        return vec![("pasted/doc.md".to_owned(), text.to_owned())];
+    }
+    marks
+        .iter()
+        .enumerate()
+        .map(|(index, (_, content_start, path))| {
+            let end = marks
+                .get(index + 1)
+                .map(|(marker_start, _, _)| *marker_start)
+                .unwrap_or(text.len());
+            (path.clone(), text[*content_start..end].to_owned())
+        })
+        .collect()
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum SourceError {
     InvalidPath(String),

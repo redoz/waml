@@ -1,10 +1,10 @@
 use super::{DiagramDisplaySet, FieldEdit, NameSpec, RelationshipSelector, Selector};
 use crate::edit::{EditBatch, EditContext, EditError};
+use crate::layout::Direction;
 use crate::model::{ElementType, RelEnd, RelationshipKind, Visibility};
 use crate::multiplicity::Multiplicity;
 use crate::okf::DirectoryAddress;
 use crate::source::SourceBundle;
-use crate::syntax::Direction;
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Op {

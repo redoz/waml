@@ -1,10 +1,10 @@
 use waml::{
     analysis::{analyze_okf, DomainAnalysisContext},
     edit::{EditBatch, EditContext},
+    layout::Direction,
     model::ElementType,
     okf::DirectoryAddress,
     source::{BundlePath, SourceBundle},
-    syntax::Direction,
     uml::{self, selector::RelBy, FieldEdit, NameSpec, RelationshipSelector},
 };
 

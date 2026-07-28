@@ -2,8 +2,6 @@ use waml::{
     action::SyntaxChangeBatch,
     analysis::{prepare_candidate, DocumentId, PreparedCandidate},
     edit::{EditBatch, EditContext},
-    parse::parse_document,
-    serialize::serialize_document,
     source::{BundlePath, SourceBundle},
     uml::{ActionContext, Formatter},
 };
@@ -38,7 +36,7 @@ fn apply(candidate: &PreparedCandidate, action: waml::action::CodeAction) -> Sou
 }
 
 #[test]
-fn valid_fixture_matches_the_legacy_canonical_bytes_and_is_idempotent() {
+fn valid_fixture_formatting_is_idempotent() {
     let fixtures = [
         ("enum.md", include_str!("fixtures/parser-platform/enum.md")),
         (
@@ -75,12 +73,6 @@ fn valid_fixture_matches_the_legacy_canonical_bytes_and_is_idempotent() {
             .document(&BundlePath::parse(path).unwrap())
             .unwrap()
             .text();
-        assert_eq!(
-            formatted_text,
-            serialize_document(&parse_document(source)),
-            "{path}: formatter must retain the frozen broad canonical behavior"
-        );
-
         let second = prepared(path, formatted_text, 18);
         let second_action = Formatter
             .format(
@@ -141,7 +133,7 @@ fn malformed_recovery_and_unclaimed_generic_source_are_not_rewritten() {
 }
 
 #[test]
-fn noncanonical_claimed_families_match_the_frozen_serializer() {
+fn noncanonical_claimed_families_format_to_a_parser_fixpoint() {
     let fixtures = [
         (
             "class.md",
@@ -206,9 +198,6 @@ fn noncanonical_claimed_families_match_the_frozen_serializer() {
             .document(&BundlePath::parse(path).unwrap())
             .unwrap()
             .text();
-        let expected = serialize_document(&parse_document(source));
-        assert_eq!(actual, expected, "{path}");
-
         let reparsed = prepared(path, actual, 41);
         assert!(
             reparsed

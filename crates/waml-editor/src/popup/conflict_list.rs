@@ -391,7 +391,7 @@ impl Popup for ConflictList {
 mod tests {
     use super::*;
     use crate::scene::SceneRelation;
-    use waml::syntax::Direction;
+    use waml::layout::Direction;
 
     fn rel(subject: &str, reference: &str) -> SceneRelation {
         SceneRelation {

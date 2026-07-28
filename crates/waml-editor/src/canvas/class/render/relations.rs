@@ -32,9 +32,9 @@ pub(super) fn relations_for_visibility<'a>(
 fn reframe_to_selected<'a>(
     subject: &'a str,
     reference: &'a str,
-    direction: waml::syntax::Direction,
+    direction: waml::layout::Direction,
     pov: Option<&str>,
-) -> (&'a str, &'a str, waml::syntax::Direction) {
+) -> (&'a str, &'a str, waml::layout::Direction) {
     if pov == Some(reference) && pov != Some(subject) {
         (reference, subject, direction.opposite())
     } else {
@@ -42,8 +42,8 @@ fn reframe_to_selected<'a>(
     }
 }
 
-fn veil_band(reference: Rect, direction: waml::syntax::Direction, reach: f64) -> Rect {
-    use waml::syntax::Direction::*;
+fn veil_band(reference: Rect, direction: waml::layout::Direction, reach: f64) -> Rect {
+    use waml::layout::Direction::*;
     let (x, width) = match direction {
         LeftOf | AboveLeft | BelowLeft => (reference.pos.x, reach),
         RightOf | AboveRight | BelowRight => (reference.pos.x + reference.size.x - reach, reach),
@@ -63,10 +63,10 @@ fn veil_band(reference: Rect, direction: waml::syntax::Direction, reach: f64) ->
 fn cross_fade_params(
     band: Rect,
     reference: Rect,
-    direction: waml::syntax::Direction,
+    direction: waml::layout::Direction,
     reach: f64,
 ) -> ([f32; 2], [f32; 2], [f32; 2]) {
-    use waml::syntax::Direction::*;
+    use waml::layout::Direction::*;
     let flat = (0.5f32, 2.0f32, 1.0f32);
     let axis = |origin: f64, span: f64, ref_center: f64, ref_half: f64| {
         if span <= 0.0 {
@@ -102,8 +102,8 @@ fn cross_fade_params(
     ([x.0, y.0], [x.1, y.1], [x.2, y.2])
 }
 
-fn veil_ramp(direction: waml::syntax::Direction) -> ([f32; 2], [f32; 2]) {
-    use waml::syntax::Direction::*;
+fn veil_ramp(direction: waml::layout::Direction) -> ([f32; 2], [f32; 2]) {
+    use waml::layout::Direction::*;
     match direction {
         LeftOf => ([1.0, 0.0], [0.0, -9.0]),
         RightOf => ([-1.0, 0.0], [1.0, -9.0]),
@@ -121,7 +121,7 @@ fn draw_veil_for(
     snapshot: &RenderSnapshot<'_>,
     draws: &mut ClassDrawResources<'_>,
     reference_index: usize,
-    direction: waml::syntax::Direction,
+    direction: waml::layout::Direction,
     active: bool,
 ) {
     let reference = node_screen_rect(
@@ -165,7 +165,7 @@ pub(super) fn draw_relations(
     draws: &mut ClassDrawResources<'_>,
 ) {
     let selected_key = snapshot.selection.selected_key.as_deref();
-    let mut chosen: Vec<(usize, waml::syntax::Direction, bool)> = relations_for_visibility(
+    let mut chosen: Vec<(usize, waml::layout::Direction, bool)> = relations_for_visibility(
         &snapshot.scene.relations,
         snapshot.selection.constraint_visibility,
         selected_key,
@@ -220,7 +220,7 @@ mod tests {
 
     #[test]
     fn veil_band_anchors_and_clamps_per_direction() {
-        use waml::syntax::Direction::*;
+        use waml::layout::Direction::*;
         let reference = Rect {
             pos: dvec2(200.0, 100.0),
             size: dvec2(180.0, 80.0),
@@ -251,7 +251,7 @@ mod tests {
 
     #[test]
     fn cross_fade_centres_on_the_reference_on_the_unlocked_axis() {
-        use waml::syntax::Direction::*;
+        use waml::layout::Direction::*;
         let reference = Rect {
             pos: dvec2(200.0, 100.0),
             size: dvec2(180.0, 80.0),
@@ -275,7 +275,7 @@ mod tests {
     #[test]
     fn visibility_gates_which_relations_draw() {
         use crate::scene::SceneRelation;
-        use waml::syntax::Direction;
+        use waml::layout::Direction;
         let relations = vec![
             SceneRelation {
                 subject: "order".into(),
@@ -314,7 +314,7 @@ mod tests {
 
     #[test]
     fn reframe_puts_the_selected_node_in_the_clear() {
-        use waml::syntax::Direction;
+        use waml::layout::Direction;
         assert_eq!(
             reframe_to_selected("a", "b", Direction::LeftOf, Some("a")),
             ("a", "b", Direction::LeftOf)

@@ -5,7 +5,7 @@ use super::{
     Box, BoxId, BoxKind, Constraint, Rect, Scene, Size, SizeMap, SolveConfig, Solved, SolvedGroup,
 };
 use crate::diagnostic::{DiagCode, Diagnostic};
-use crate::syntax::{Axis, Direction, Edge, Margin, Shape};
+use crate::layout::{Axis, Direction, Edge, Margin, Shape};
 use std::collections::{BTreeMap, BTreeSet};
 
 /// Minimum facing-border gap between two edge-connected boxes, so the connector
@@ -677,7 +677,7 @@ pub(super) fn solve_with_rects(
 mod tests {
     use super::super::{pretty, FlagSet};
     use super::*;
-    use crate::syntax::{Margin, Shape};
+    use crate::layout::{Margin, Shape};
 
     fn leaf(k: &str) -> Box {
         Box {
@@ -919,7 +919,7 @@ mod tests {
     fn group(
         id: u32,
         children: Vec<BoxId>,
-        axis: Option<crate::syntax::Axis>,
+        axis: Option<crate::layout::Axis>,
         shape: Shape,
         title: &str,
     ) -> Box {
@@ -938,7 +938,7 @@ mod tests {
 
     #[test]
     fn column_group_with_frame_wraps_members_with_margin() {
-        use crate::syntax::Axis;
+        use crate::layout::Axis;
         let scene = Scene {
             boxes: vec![
                 leaf("a"),
@@ -969,7 +969,7 @@ mod tests {
 
     #[test]
     fn non_sibling_constraint_warns() {
-        use crate::syntax::Axis;
+        use crate::layout::Axis;
         // `a` lives inside group Users; relating it to top-level `c` is not a sibling relation.
         let scene = Scene {
             boxes: vec![
@@ -1032,7 +1032,7 @@ mod tests {
 
     #[test]
     fn solve_with_rects_keys_group_frames_by_boxid() {
-        use crate::syntax::Axis;
+        use crate::layout::Axis;
         let scene = Scene {
             boxes: vec![
                 leaf("a"),
@@ -1115,7 +1115,7 @@ mod tests {
 
     #[test]
     fn group_flow_connected_siblings_spread() {
-        use crate::syntax::Axis;
+        use crate::layout::Axis;
         // Two column-flow siblings inside a frame, connected by an edge. The
         // group-axis-flow Place chain floors the vertical gap at MIN_ASSOC.
         let scene = Scene {
@@ -1148,7 +1148,7 @@ mod tests {
 
     #[test]
     fn min_assoc_layout_is_deterministic() {
-        use crate::syntax::Axis;
+        use crate::layout::Axis;
         let scene = Scene {
             boxes: vec![
                 leaf("a"),

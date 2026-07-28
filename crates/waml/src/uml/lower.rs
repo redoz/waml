@@ -6,11 +6,11 @@ use super::selector::{render_selector, RelBy, Selector};
 use super::syntax::{AttributeSyntax, UmlLanguage, UmlSyntaxKind};
 use super::{DiagramDisplaySet, FieldEdit, NameSpec};
 use crate::edit::{EditContext, EditError};
+use crate::layout::Direction;
 use crate::model::{CardinalityVisibility, ElementType, RelEnd, RelationshipKind, Visibility};
 use crate::multiplicity::Multiplicity;
 use crate::okf;
 use crate::source::{BundlePath, SourceBundle};
-use crate::syntax::Direction;
 use waml_syntax::{
     parse_okf_markdown, AstNode, MarkdownDialect, OkfMarkdownSyntaxKind, ShellParse, SourceText,
     SyntaxElement, SyntaxNode, SyntaxTree,

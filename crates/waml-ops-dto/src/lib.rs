@@ -1,11 +1,13 @@
 use serde::{Deserialize, Serialize};
 use waml::compat::{Batch, Step};
-use waml::grammar::{parse_ends, render_ends};
-use waml::model::{CardinalityVisibility, ElementType, RelEnd, RelationshipKind, Visibility};
+use waml::layout::Direction;
+use waml::model::{
+    parse_ends, render_ends, CardinalityVisibility, ElementType, RelEnd, RelationshipKind,
+    Visibility,
+};
 use waml::multiplicity::Multiplicity;
 use waml::ops::{DiagramDisplaySet, FieldEdit, NameSpec, RelBy};
 use waml::source::SourceBundle;
-use waml::syntax::Direction;
 use waml::{okf, uml};
 
 fn one() -> u32 {
@@ -1218,7 +1220,7 @@ mod tests {
 
     #[test]
     fn every_op_survives_a_wire_round_trip() {
-        use waml::grammar::parse_ends;
+        use waml::model::parse_ends;
         use waml::model::{ElementType, RelationshipKind};
         use waml::multiplicity::Multiplicity;
         use waml::ops::{NameSpec, Op, RelBy, Selector};

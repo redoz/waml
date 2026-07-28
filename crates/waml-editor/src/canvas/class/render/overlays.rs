@@ -176,8 +176,8 @@ pub(super) fn draw_placement(
     }
 }
 
-fn dir_word(direction: waml::syntax::Direction) -> &'static str {
-    use waml::syntax::Direction::*;
+fn dir_word(direction: waml::layout::Direction) -> &'static str {
+    use waml::layout::Direction::*;
     match direction {
         LeftOf => "left of",
         RightOf => "right of",

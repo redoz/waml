@@ -186,7 +186,7 @@ mod tests {
     use std::sync::Arc;
     use waml::action::{ActionBasis, CodeAction, SyntaxChangeBatch};
     use waml::analysis::AnalysisStage;
-    use waml::syntax::Direction;
+    use waml::layout::Direction;
     use waml::uml::Op;
 
     fn source(pairs: Vec<(String, String)>) -> SourceBundle {

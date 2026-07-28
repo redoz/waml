@@ -1093,7 +1093,7 @@ mod tests {
 
     #[test]
     fn corner_zones_author_a_single_diagonal_direction() {
-        use waml::syntax::Direction::*;
+        use waml::layout::Direction::*;
         assert_eq!(zone_placed(Zone::TopLeft).dir, Some(AboveLeft));
         assert_eq!(zone_placed(Zone::TopRight).dir, Some(AboveRight));
         assert_eq!(zone_placed(Zone::BottomLeft).dir, Some(BelowLeft));
@@ -1102,7 +1102,7 @@ mod tests {
 
     #[test]
     fn edge_zones_author_a_single_cardinal_direction() {
-        use waml::syntax::Direction::*;
+        use waml::layout::Direction::*;
         assert_eq!(zone_placed(Zone::Left).dir, Some(LeftOf));
         assert_eq!(zone_placed(Zone::Right).dir, Some(RightOf));
         assert_eq!(zone_placed(Zone::Top).dir, Some(Above));

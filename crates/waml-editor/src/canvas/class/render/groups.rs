@@ -11,9 +11,9 @@ pub(super) enum GroupDraw {
     Skip,
 }
 
-fn group_draw_mode(shape: waml::syntax::Shape, show_hidden: bool) -> GroupDraw {
+fn group_draw_mode(shape: waml::layout::Shape, show_hidden: bool) -> GroupDraw {
     match (shape, show_hidden) {
-        (waml::syntax::Shape::Frame, _) => GroupDraw::Chrome,
+        (waml::layout::Shape::Frame, _) => GroupDraw::Chrome,
         (_, true) => GroupDraw::Dashed,
         (_, false) => GroupDraw::Skip,
     }
@@ -121,7 +121,7 @@ mod tests {
     use super::*;
     use waml::solve::Rect as WorldRect;
 
-    fn group(title: Option<&str>, shape: waml::syntax::Shape) -> waml::solve::SolvedGroup {
+    fn group(title: Option<&str>, shape: waml::layout::Shape) -> waml::solve::SolvedGroup {
         waml::solve::SolvedGroup {
             rect: WorldRect {
                 x: 0.0,
@@ -137,7 +137,7 @@ mod tests {
 
     #[test]
     fn only_frame_groups_draw_chrome() {
-        use waml::syntax::Shape;
+        use waml::layout::Shape;
         assert_eq!(group_draw_mode(Shape::Frame, false), GroupDraw::Chrome);
         assert_eq!(group_draw_mode(Shape::Frame, true), GroupDraw::Chrome);
         assert_eq!(group_draw_mode(Shape::Box, false), GroupDraw::Skip);
@@ -171,7 +171,7 @@ mod tests {
 
     #[test]
     fn the_plan_covers_every_group_in_scene_order() {
-        use waml::syntax::Shape;
+        use waml::layout::Shape;
         let groups = [
             group(Some("Users"), Shape::Frame),
             group(None, Shape::Box),
@@ -186,7 +186,7 @@ mod tests {
 
     #[test]
     fn the_untitled_counter_advances_over_groups_that_draw_no_title() {
-        use waml::syntax::Shape;
+        use waml::layout::Shape;
         let groups = [
             group(None, Shape::Frame),
             group(None, Shape::Box),

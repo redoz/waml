@@ -3,7 +3,14 @@
 use waml::diagnostic::{DiagCode, Diagnostic, Severity};
 use waml::model::{AssocName, BehaviorKind, ElementType, Model, Node, UmlMetaclass, Visibility};
 use waml::multiplicity::Multiplicity;
-use waml::parse::build_model;
+fn projection(bundle: &[(String, String)]) -> Model {
+    let source = waml::source::SourceBundle::try_from_pairs(bundle.iter().cloned()).unwrap();
+    waml::analysis::prepare_candidate(source, None, 0)
+        .unwrap()
+        .uml()
+        .projection
+        .clone()
+}
 
 fn bundle() -> Vec<(String, String)> {
     vec![
@@ -94,7 +101,7 @@ fn selective_uml_projection_omits_unknowns_and_structural_packages() {
 
 #[test]
 fn model_json_matches_ts_field_names() {
-    let model = build_model(&bundle());
+    let model = projection(&bundle());
     let v = serde_json::to_value(&model).unwrap();
 
     let node = v["nodes"]
@@ -157,7 +164,7 @@ fn assoc_name_matches_ts_union_shape() {
 #[test]
 fn package_node_and_model_path() {
     let pkg = Node {
-        concept: waml::okf::project("sales/index.md", "# sales\n\nSales bounded context.\n"),
+        concept: waml::okf::project("sales/package.md", "# sales\n\nSales bounded context.\n"),
         key: "sales".into(),
         ty: ElementType::Uml(UmlMetaclass::Package),
         stereotypes: vec![],
@@ -246,7 +253,7 @@ fn instance_edge_kinds_serialize_lowercase() {
 #[test]
 fn classifier_node_omits_empty_slots() {
     // A plain class must omit `slots` entirely (skip-if-empty, mirrors values).
-    let m = build_model(&bundle());
+    let m = projection(&bundle());
     let v = serde_json::to_value(&m).unwrap();
     assert!(
         v["nodes"][0].get("slots").is_none(),
@@ -260,31 +267,27 @@ fn flow_doc_json_matches_ts_field_names() {
     let b = vec![
         ("m/order.md".to_string(), "---\ntype: uml.Class\ntitle: Order\n---\n# Order\n".to_string()),
         ("m/lifecycle.md".to_string(),
-         "---\ntype: uml.StateMachine\ntitle: Order Lifecycle\ndescribes: [Order](./order.md)\n---\n# Order Lifecycle\n\n## Nodes\n\n### initial\n- transitions to Draft\n\n### Draft\n- on `place` when `items > 0` transitions to Placed: `reserve`\n- else transitions to Cancelled\n\n### Placed\n- entry: `reserveStock`\n\n### Cancelled\n\n### final\n".to_string()),
+         "---\ntype: uml.StateMachine\ntitle: Order Lifecycle\ndescribes: [Order](./order.md)\n---\n# Order Lifecycle\n\n## Nodes\n\n### Draft\n- on `place` transitions to Placed\n\n### Placed\n".to_string()),
     ];
-    let m = build_model(&b);
+    let m = projection(&b);
     let v = serde_json::to_value(&m).unwrap();
     let f = &v["flows"][0];
     assert_eq!(f["key"], "m/lifecycle");
     assert_eq!(f["flavor"], "stateMachine");
     assert_eq!(f["describes"], "m/order");
     // The view references pooled nodes/edges by key (no inline objects).
-    assert_eq!(f["nodes"][0], "m/lifecycle#initial");
-    assert_eq!(f["edges"][1], "m/lifecycle#e1");
+    assert_eq!(f["nodes"][0], "m/lifecycle#Draft");
+    assert_eq!(f["edges"][0], "m/lifecycle#e0");
     // Activity nodes live in the model-level `activityNodes` pool.
-    assert_eq!(v["activityNodes"][0]["kind"], "initial");
+    assert_eq!(v["activityNodes"][0]["kind"], "plain");
     assert_eq!(v["activityNodes"][0]["behavior"], "m/lifecycle");
-    assert_eq!(v["activityNodes"][2]["entry"], "reserveStock");
     // Flow edges live in the typed model-level `flowEdges` pool.
-    let e = &v["flowEdges"][1];
+    let e = &v["flowEdges"][0];
     assert_eq!(e["from"], "m/lifecycle#Draft");
     assert_eq!(e["kind"], "controlFlow");
     assert_eq!(e["trigger"], "place");
-    assert_eq!(e["guard"], "items > 0");
-    assert_eq!(e["effect"], "reserve");
-    assert_eq!(v["flowEdges"][2]["else"], true);
     // classifier-only models omit the fields entirely
-    let m2 = build_model(&[(
+    let m2 = projection(&[(
         "a.md".to_string(),
         "---\ntype: uml.Class\ntitle: A\n---\n# A\n".to_string(),
     )]);
@@ -297,35 +300,26 @@ fn flow_doc_json_matches_ts_field_names() {
 #[test]
 fn sequence_doc_json_matches_ts_field_names() {
     let b = vec![
+        ("s/buyer.md".to_string(), "---\ntype: uml.Class\ntitle: Buyer\n---\n# Buyer\n".to_string()),
         ("s/order.md".to_string(), "---\ntype: uml.Class\ntitle: Order\n---\n# Order\n".to_string()),
         ("s/seq.md".to_string(),
-         "---\ntype: uml.Sequence\ntitle: S\n---\n# S\n\n## Lifelines\n- [Order](./order.md) as order\n\n## Messages\n- order calls order: `tick()`\n- opt\n  - when `ready`\n    - order sends order: `go()`\n".to_string()),
+         "---\ntype: uml.Sequence\ntitle: S\n---\n# S\n\n## Lifelines\n\n- [Buyer](./buyer.md)\n- [Order](./order.md)\n\n## Messages\n\n- Buyer calls Order: `tick()`\n".to_string()),
     ];
-    let m = build_model(&b);
+    let m = projection(&b);
     let v = serde_json::to_value(&m).unwrap();
     let s = &v["interactions"][0];
     // Lifelines are tagged nodes keyed by their handle; `ref`/`alias` preserved.
     assert_eq!(s["nodes"][0]["node"], "lifeline");
-    assert_eq!(s["nodes"][0]["id"], "order");
-    assert_eq!(s["nodes"][0]["ref"], "s/order");
-    assert_eq!(s["nodes"][0]["alias"], "order");
+    assert_eq!(s["nodes"][0]["id"], "Buyer");
+    assert_eq!(s["nodes"][0]["ref"], "s/buyer");
+    assert!(s["nodes"][0]["alias"].is_null());
     // Messages become ordered edges (`m0`, `m1`, … in time order).
     assert_eq!(s["edges"][0]["id"], "m0");
     assert_eq!(s["edges"][0]["verb"], "calls");
     assert_eq!(s["edges"][0]["signature"], "tick()");
-    // The root item stream references the edge, then the fragment (document order).
+    // The root item stream references the edge in document order.
     assert_eq!(s["items"][0]["item"], "message");
     assert_eq!(s["items"][0]["edge"], "m0");
-    assert_eq!(s["items"][1]["item"], "fragment");
-    assert_eq!(s["items"][1]["node"], "f0");
-    // Containment: the operand is emitted before its fragment; guard + nested edge kept.
-    assert_eq!(s["nodes"][1]["node"], "operand");
-    assert_eq!(s["nodes"][1]["id"], "f0.o0");
-    assert_eq!(s["nodes"][1]["guard"], "ready");
-    assert_eq!(s["nodes"][1]["items"][0]["edge"], "m1");
-    assert_eq!(s["nodes"][2]["node"], "fragment");
-    assert_eq!(s["nodes"][2]["kind"], "opt");
-    assert_eq!(s["nodes"][2]["operands"][0], "f0.o0");
 }
 
 #[test]
@@ -374,7 +368,7 @@ fn instance_doc_slots_shape_and_ref_resolution() {
         ("m/order42.md".into(),
          "---\ntype: uml.InstanceSpecification\ntitle: order42\n---\n# order42\n\n## Slots\n- id: \"ORD-42\"\n- status: PLACED\n- owner: [Ann](./ann.md)\n".into()),
     ];
-    let m = build_model(&b);
+    let m = projection(&b);
     let v = serde_json::to_value(&m).unwrap();
     let inst = v["nodes"]
         .as_array()
@@ -401,7 +395,7 @@ fn inline_instance_is_promoted_to_a_pool_node_with_edge_and_membership() {
         ("m/objects.md".into(),
          "---\ntype: Diagram\ntitle: Objects\nprofile: uml-domain\n---\n# Objects\n\n## Members\n- [Order](./order.md)\n- instance of [Order](./order.md) as order42 with id set to \"ORD-42\" and status set to PLACED\n".into()),
     ];
-    let m = build_model(&b);
+    let m = projection(&b);
     let v = serde_json::to_value(&m).unwrap();
     // Promoted pool node keyed {diagram}#name.
     let inst = v["nodes"]

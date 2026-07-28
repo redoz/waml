@@ -102,7 +102,7 @@ fn diagram_members_and_layout_are_lossless_and_project_valid_placement() {
     assert_eq!(diagram.groups[0].members, ["a"]);
     assert!(matches!(
         diagram.layout.as_slice(),
-        [waml::syntax::LayoutStatement::Placement { .. }]
+        [waml::layout::LayoutStatement::Placement { .. }]
     ));
     let id = analysis
         .syntax
@@ -184,7 +184,7 @@ fn diagram_projection_preserves_complete_two_link_placement() {
         .find(|diagram| diagram.key == "orders-diagram")
         .unwrap();
 
-    let [waml::syntax::LayoutStatement::Placement {
+    let [waml::layout::LayoutStatement::Placement {
         operands,
         directions,
     }] = diagram.layout.as_slice()
@@ -198,16 +198,16 @@ fn diagram_projection_preserves_complete_two_link_placement() {
         };
         panic!("linked placement must remain a validated placement; declared={state}");
     };
-    assert_eq!(directions, &[waml::syntax::Direction::LeftOf]);
+    assert_eq!(directions, &[waml::layout::Direction::LeftOf]);
     assert_eq!(operands.len(), 2);
     assert!(matches!(
         &operands[0].ref_,
-        waml::syntax::OperandRef::Name(waml::syntax::NameRef::Link { slug, .. })
+        waml::layout::OperandRef::Name(waml::layout::NameRef::Link { slug, .. })
             if slug == "order"
     ));
     assert!(matches!(
         &operands[1].ref_,
-        waml::syntax::OperandRef::Name(waml::syntax::NameRef::Link { slug, .. })
+        waml::layout::OperandRef::Name(waml::layout::NameRef::Link { slug, .. })
             if slug == "customer"
     ));
 }

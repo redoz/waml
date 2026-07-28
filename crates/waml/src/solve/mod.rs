@@ -2,7 +2,7 @@
 //! See docs/superpowers/specs/2026-07-12-diagram-layout-solver-design.md.
 
 use crate::diagnostic::Diagnostic;
-use crate::syntax::{Axis, Direction, Edge, Margin, Shape};
+use crate::layout::{Axis, Direction, Edge, Margin, Shape};
 use std::collections::BTreeMap;
 
 pub mod geometry;
@@ -19,7 +19,7 @@ pub mod stress;
 // in this module's scope). Re-exported below so all existing `solve::X` paths
 // (including `super::X` imports in `resolve.rs`/`geometry.rs`) are unaffected.
 mod wire {
-    use crate::syntax::Shape;
+    use crate::layout::Shape;
     use std::collections::BTreeMap;
 
     #[derive(Debug, Clone, Copy, PartialEq)]

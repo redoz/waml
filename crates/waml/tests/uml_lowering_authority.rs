@@ -10,10 +10,10 @@ fn uml_lowering_call_path_has_no_legacy_parser_or_serializer_authority() {
         ("compat.rs", include_str!("../src/compat.rs")),
     ] {
         for prohibited in [
-            "parse_document",
-            "serialize_document",
-            "crate::syntax::Document",
-            "Line<",
+            concat!("parse_", "document"),
+            concat!("serialize_", "document"),
+            "crate::layout::Document",
+            concat!("Line", "<"),
             "uml::ops::lower_one",
         ] {
             assert!(

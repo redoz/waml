@@ -3,8 +3,6 @@
 //! the title set but no members, so the user starts from a blank, valid diagram.
 
 use crate::frontmatter::{FmValue, Frontmatter};
-use crate::serialize::serialize_document;
-use crate::syntax::Document;
 
 /// `(type, profile)` for a diagram kind token. Unknown tokens fall back to the
 /// class/domain form. Kept as a small table so adding a kind is one line.
@@ -18,7 +16,7 @@ fn kind_frontmatter(kind: &str) -> (&'static str, Option<&'static str>) {
 }
 
 /// Markdown for one empty diagram document of `kind`, titled `name`. No members;
-/// canonical formatting via `serialize_document`.
+/// canonical frontmatter followed by the document title.
 pub fn new_diagram_doc(kind: &str, name: &str) -> String {
     let (ty, profile) = kind_frontmatter(kind);
     let mut entries: Vec<(String, FmValue)> = vec![("type".into(), FmValue::Str(ty.to_string()))];
@@ -26,18 +24,14 @@ pub fn new_diagram_doc(kind: &str, name: &str) -> String {
         entries.push(("profile".into(), FmValue::Str(p.to_string())));
     }
     entries.push(("title".into(), FmValue::Str(name.to_string())));
-    let doc = Document {
-        frontmatter: Frontmatter { entries },
-        title: name.to_string(),
-        sections: Vec::new(),
-    };
-    serialize_document(&doc)
+    let frontmatter = crate::frontmatter::render_frontmatter(&Frontmatter { entries });
+    format!("---\n{frontmatter}\n---\n# {name}\n")
 }
 
 #[cfg(test)]
 mod tests {
     use super::new_diagram_doc;
-    use crate::parse::build_model;
+    use crate::{analysis::prepare_candidate, source::SourceBundle};
 
     #[test]
     fn class_kind_emits_diagram_type_and_uml_domain_profile() {
@@ -79,12 +73,13 @@ mod tests {
     }
 
     #[test]
-    fn seeded_diagram_is_a_valid_document_that_build_model_ingests() {
+    fn seeded_diagram_is_ingested_by_parser_platform_analysis() {
         // A seeded class diagram at some path must project without panicking and
         // parse as a diagram doc (empty members list is fine).
         let md = new_diagram_doc("class", "My Domain");
-        let bundle = vec![("pkg/my-domain.md".to_string(), md)];
-        let model = build_model(&bundle);
+        let source = SourceBundle::try_from_pairs([("pkg/my-domain.md", md)]).unwrap();
+        let prepared = prepare_candidate(source, None, 0).unwrap();
+        let model = &prepared.uml().projection;
         assert!(
             model.diagrams.iter().any(|d| d.title == "My Domain"),
             "diagram present: {:?}",
