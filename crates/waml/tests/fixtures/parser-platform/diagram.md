@@ -9,9 +9,7 @@ profile: uml-domain
 
 - [Café Order](./class.md)
 - [Status](./enum.md)
-- [Generic](./generic.md)
 
 ## Layout
 
-- Café Order right of Status
-- malformed layout
+- class right of enum

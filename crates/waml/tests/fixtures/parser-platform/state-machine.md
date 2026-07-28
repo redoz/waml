@@ -7,6 +7,6 @@ title: Order State
 ## Nodes
 
 ### Draft
-- on submit goes to Submitted
+- on `submit` transitions to Submitted
 
 ### Submitted

@@ -7,7 +7,7 @@ title: Café Order
 ## Attributes
 
 - id: OrderId
-- café: String [0..1]
+- label: String {0..1}
 
 ## Slots
 
@@ -19,8 +19,7 @@ title: Café Order
 
 ## Relationships
 
-- depends [Generic Playbook](./generic.md)
-- associates [Unknown](./unknown-uml.md)
+- depends [Status](./enum.md)
 
 ## Operations
 

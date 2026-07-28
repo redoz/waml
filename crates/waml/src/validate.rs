@@ -1438,4 +1438,121 @@ mod tests {
         assert_eq!(w.severity, Severity::Warning);
         assert_eq!(w.line, 13);
     }
+
+    #[test]
+    fn parser_platform_baseline_diagnostics_are_exact_per_fixture() {
+        use std::collections::BTreeMap;
+
+        let fixtures = [
+            (
+                "generic.md",
+                include_bytes!("../tests/fixtures/parser-platform/generic.md").as_slice(),
+            ),
+            (
+                "unknown-uml.md",
+                include_bytes!("../tests/fixtures/parser-platform/unknown-uml.md").as_slice(),
+            ),
+            (
+                "index.md",
+                include_bytes!("../tests/fixtures/parser-platform/index.md").as_slice(),
+            ),
+            (
+                "log.md",
+                include_bytes!("../tests/fixtures/parser-platform/log.md").as_slice(),
+            ),
+            (
+                "class.md",
+                include_bytes!("../tests/fixtures/parser-platform/class.md").as_slice(),
+            ),
+            (
+                "enum.md",
+                include_bytes!("../tests/fixtures/parser-platform/enum.md").as_slice(),
+            ),
+            (
+                "object.md",
+                include_bytes!("../tests/fixtures/parser-platform/object.md").as_slice(),
+            ),
+            (
+                "diagram.md",
+                include_bytes!("../tests/fixtures/parser-platform/diagram.md").as_slice(),
+            ),
+            (
+                "activity.md",
+                include_bytes!("../tests/fixtures/parser-platform/activity.md").as_slice(),
+            ),
+            (
+                "state-machine.md",
+                include_bytes!("../tests/fixtures/parser-platform/state-machine.md").as_slice(),
+            ),
+            (
+                "sequence.md",
+                include_bytes!("../tests/fixtures/parser-platform/sequence.md").as_slice(),
+            ),
+            (
+                "broken-frontmatter.md",
+                include_bytes!("../tests/fixtures/parser-platform/broken-frontmatter.md")
+                    .as_slice(),
+            ),
+            (
+                "malformed.md",
+                include_bytes!("../tests/fixtures/parser-platform/malformed.md").as_slice(),
+            ),
+            (
+                "malformed-crlf-unicode.md",
+                include_bytes!("../tests/fixtures/parser-platform/malformed-crlf-unicode.md")
+                    .as_slice(),
+            ),
+        ];
+        let source = crate::source::SourceBundle::try_from_pairs(
+            fixtures
+                .iter()
+                .map(|(path, bytes)| (*path, std::str::from_utf8(bytes).expect("fixture UTF-8"))),
+        )
+        .unwrap();
+        let mut actual: BTreeMap<&str, Vec<(&str, &str, usize, Option<(usize, usize)>)>> = fixtures
+            .iter()
+            .map(|(path, _)| (*path, Vec::new()))
+            .collect();
+        for diagnostic in validate_from_source(&source) {
+            actual.get_mut(diagnostic.file.as_str()).unwrap().push((
+                diagnostic.code.as_str(),
+                match diagnostic.severity {
+                    Severity::Error => "error",
+                    Severity::Warning => "warning",
+                },
+                diagnostic.line,
+                diagnostic.span,
+            ));
+        }
+
+        let mut expected: BTreeMap<&str, Vec<(&str, &str, usize, Option<(usize, usize)>)>> =
+            fixtures
+                .iter()
+                .map(|(path, _)| (*path, Vec::new()))
+                .collect();
+        expected.get_mut("broken-frontmatter.md").unwrap().push((
+            "frontmatter-not-clean",
+            "error",
+            1,
+            None,
+        ));
+        expected
+            .get_mut("unknown-uml.md")
+            .unwrap()
+            .push(("unknown-type", "warning", 2, None));
+        expected
+            .get_mut("malformed-crlf-unicode.md")
+            .unwrap()
+            .extend([
+                ("malformed-attribute", "error", 8, Some((0, 33))),
+                ("malformed-attribute", "error", 9, Some((0, 32))),
+                ("unresolved-target", "error", 12, Some((10, 29))),
+            ]);
+        expected.get_mut("malformed.md").unwrap().extend([
+            ("malformed-attribute", "error", 9, Some((0, 28))),
+            ("malformed-layout", "error", 17, Some((0, 12))),
+            ("unresolved-target", "error", 13, Some((10, 29))),
+        ]);
+        assert_eq!(actual, expected, "parser-platform fixture diagnostic field");
+    }
 }

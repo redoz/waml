@@ -1,10 +1,14 @@
 ---
-type: uml.Object
+type: uml.InstanceSpecification
 title: Draft Order
 ---
 # Draft Order
 
 ## Slots
 
-- status: Draft
+- id: ORD-1
 - label: café
+
+## Relationships
+
+- instance of [Café Order](./class.md)

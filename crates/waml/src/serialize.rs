@@ -253,4 +253,98 @@ mod tests {
             .contains("## Lifelines\n- [Customer](./customer.md)\n- [Order](./order.md) as order"));
         assert!(once.contains("- alt\n  - when `paid`\n    - order calls wh: `ship()`"));
     }
+
+    #[test]
+    fn parser_platform_baseline_canonical_serializer_hashes_are_exact_per_fixture() {
+        let fixtures = [
+            (
+                "generic.md",
+                include_str!("../tests/fixtures/parser-platform/generic.md"),
+            ),
+            (
+                "unknown-uml.md",
+                include_str!("../tests/fixtures/parser-platform/unknown-uml.md"),
+            ),
+            (
+                "index.md",
+                include_str!("../tests/fixtures/parser-platform/index.md"),
+            ),
+            (
+                "log.md",
+                include_str!("../tests/fixtures/parser-platform/log.md"),
+            ),
+            (
+                "class.md",
+                include_str!("../tests/fixtures/parser-platform/class.md"),
+            ),
+            (
+                "enum.md",
+                include_str!("../tests/fixtures/parser-platform/enum.md"),
+            ),
+            (
+                "object.md",
+                include_str!("../tests/fixtures/parser-platform/object.md"),
+            ),
+            (
+                "diagram.md",
+                include_str!("../tests/fixtures/parser-platform/diagram.md"),
+            ),
+            (
+                "activity.md",
+                include_str!("../tests/fixtures/parser-platform/activity.md"),
+            ),
+            (
+                "state-machine.md",
+                include_str!("../tests/fixtures/parser-platform/state-machine.md"),
+            ),
+            (
+                "sequence.md",
+                include_str!("../tests/fixtures/parser-platform/sequence.md"),
+            ),
+            (
+                "broken-frontmatter.md",
+                include_str!("../tests/fixtures/parser-platform/broken-frontmatter.md"),
+            ),
+            (
+                "malformed.md",
+                include_str!("../tests/fixtures/parser-platform/malformed.md"),
+            ),
+            (
+                "malformed-crlf-unicode.md",
+                include_str!("../tests/fixtures/parser-platform/malformed-crlf-unicode.md"),
+            ),
+        ];
+        let actual: Vec<_> = fixtures
+            .iter()
+            .map(|(path, source)| {
+                let canonical = serialize_document(&parse_document(source));
+                let mut hash = 0xcbf29ce484222325u64;
+                for byte in canonical.bytes() {
+                    hash ^= u64::from(byte);
+                    hash = hash.wrapping_mul(0x100000001b3);
+                }
+                (*path, format!("{hash:016x}"))
+            })
+            .collect();
+        assert_eq!(
+            actual,
+            vec![
+                ("generic.md", "2f8e691cce5fce3e".into()),
+                ("unknown-uml.md", "c2b9b60732abaebc".into()),
+                ("index.md", "d75b3755be47f8d4".into()),
+                ("log.md", "0321cf1507c3a8a4".into()),
+                ("class.md", "bd6db2bf9bb06f5e".into()),
+                ("enum.md", "1dd37d386f25804d".into()),
+                ("object.md", "d51dc6ef8d6fcaea".into()),
+                ("diagram.md", "c48829e23e8a688c".into()),
+                ("activity.md", "abc1a295295dbd8d".into()),
+                ("state-machine.md", "6480fba6c800e4c5".into()),
+                ("sequence.md", "a6f692f288222702".into()),
+                ("broken-frontmatter.md", "9d5851edaccb72dc".into()),
+                ("malformed.md", "5e13e903b4a4c9e5".into()),
+                ("malformed-crlf-unicode.md", "3fc7489b10e78bc5".into()),
+            ],
+            "parser-platform canonical serializer bytes"
+        );
+    }
 }

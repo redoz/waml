@@ -1,12 +1,12 @@
 ---
 type: uml.Class
 title: Astral 😀 café
-cardinality: invalid
+---
 # Broken
 
 ## Attributes
-- missing punctuation String
+- 😀 missing punctuation String
 - owner: [Bad Link](./missing.md
 
-## Layout
-- bad layout
+## Relationships
+- depends [Ghost](./ghost.md)

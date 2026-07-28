@@ -2414,4 +2414,101 @@ mod model_tests {
             "the `paid` operand carries the `ship()` message"
         );
     }
+
+    #[test]
+    fn parser_platform_baseline_parse_shapes_and_crlf_bytes_are_exact() {
+        let class_source = include_str!("../tests/fixtures/parser-platform/class.md");
+        let class = parse_document(class_source);
+        assert_eq!(class.title, "Café Order", "class.md title");
+        assert!(
+            class
+                .sections
+                .iter()
+                .any(|section| matches!(section, Section::Attributes(lines) if lines.len() == 2)),
+            "class.md Attributes count"
+        );
+        assert!(
+            class
+                .sections
+                .iter()
+                .any(|section| matches!(section, Section::Slots(lines) if lines.len() == 1)),
+            "class.md Slots count"
+        );
+        assert!(
+            class
+                .sections
+                .iter()
+                .any(|section| matches!(section, Section::Values(lines) if lines.len() == 1)),
+            "class.md Values count"
+        );
+        assert!(
+            class.sections.iter().any(
+                |section| matches!(section, Section::Relationships(lines) if lines.len() == 1)
+            ),
+            "class.md Relationships count"
+        );
+        assert!(
+            class.sections.iter().any(|section| {
+                matches!(
+                    section,
+                    Section::Unknown { title, raw }
+                        if title == "Operations"
+                            && raw.contains("This **raw Markdown**")
+                            && raw.contains("### Nested heading")
+                )
+            }),
+            "class.md Operations stays raw Markdown"
+        );
+
+        let bytes = include_bytes!("../tests/fixtures/parser-platform/malformed-crlf-unicode.md");
+        let crlf = bytes.windows(2).filter(|window| *window == b"\r\n").count();
+        let lf = bytes.iter().filter(|byte| **byte == b'\n').count();
+        assert_eq!(crlf, 10, "malformed-crlf-unicode.md CRLF line count");
+        assert_eq!(
+            lf - crlf,
+            2,
+            "malformed-crlf-unicode.md LF metadata delimiters"
+        );
+        let source = std::str::from_utf8(bytes).unwrap();
+        assert!(
+            source.contains("😀"),
+            "malformed-crlf-unicode.md astral scalar"
+        );
+        assert!(
+            source.contains("cafe\u{301}"),
+            "malformed-crlf-unicode.md combining mark"
+        );
+        let (document, diagnostics) = parse(source);
+        assert_eq!(
+            document.frontmatter.get_str("type"),
+            Some("uml.Class"),
+            "malformed-crlf-unicode.md legacy CRLF frontmatter projection"
+        );
+        assert_eq!(
+            diagnostics
+                .iter()
+                .map(|diagnostic| (
+                    diagnostic.code.as_str(),
+                    diagnostic.severity,
+                    diagnostic.line,
+                    diagnostic.span,
+                ))
+                .collect::<Vec<_>>(),
+            [
+                (
+                    "malformed-attribute",
+                    crate::diagnostic::Severity::Error,
+                    8,
+                    Some((0, 33)),
+                ),
+                (
+                    "malformed-attribute",
+                    crate::diagnostic::Severity::Error,
+                    9,
+                    Some((0, 32)),
+                ),
+            ],
+            "malformed-crlf-unicode.md diagnostic fields"
+        );
+    }
 }

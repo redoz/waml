@@ -388,4 +388,158 @@ mod tests {
         assert!(!session.bundle().documents()[0].text().contains("left of"));
         assert!(session.is_dirty());
     }
+
+    #[test]
+    fn parser_platform_baseline_lowerer_and_session_atomicity_are_exact() {
+        let fixtures = [
+            (
+                "generic.md",
+                include_str!("../../waml/tests/fixtures/parser-platform/generic.md"),
+            ),
+            (
+                "unknown-uml.md",
+                include_str!("../../waml/tests/fixtures/parser-platform/unknown-uml.md"),
+            ),
+            (
+                "index.md",
+                include_str!("../../waml/tests/fixtures/parser-platform/index.md"),
+            ),
+            (
+                "log.md",
+                include_str!("../../waml/tests/fixtures/parser-platform/log.md"),
+            ),
+            (
+                "class.md",
+                include_str!("../../waml/tests/fixtures/parser-platform/class.md"),
+            ),
+            (
+                "enum.md",
+                include_str!("../../waml/tests/fixtures/parser-platform/enum.md"),
+            ),
+            (
+                "object.md",
+                include_str!("../../waml/tests/fixtures/parser-platform/object.md"),
+            ),
+            (
+                "diagram.md",
+                include_str!("../../waml/tests/fixtures/parser-platform/diagram.md"),
+            ),
+            (
+                "activity.md",
+                include_str!("../../waml/tests/fixtures/parser-platform/activity.md"),
+            ),
+            (
+                "state-machine.md",
+                include_str!("../../waml/tests/fixtures/parser-platform/state-machine.md"),
+            ),
+            (
+                "sequence.md",
+                include_str!("../../waml/tests/fixtures/parser-platform/sequence.md"),
+            ),
+            (
+                "broken-frontmatter.md",
+                include_str!("../../waml/tests/fixtures/parser-platform/broken-frontmatter.md"),
+            ),
+            (
+                "malformed.md",
+                include_str!("../../waml/tests/fixtures/parser-platform/malformed.md"),
+            ),
+            (
+                "malformed-crlf-unicode.md",
+                include_str!("../../waml/tests/fixtures/parser-platform/malformed-crlf-unicode.md"),
+            ),
+        ];
+        let source = SourceBundle::try_from_pairs(fixtures).unwrap();
+        let projection = waml::uml::project(&waml::okf::Bundle::parse(&source).unwrap());
+        let mut session = EditorSession::default();
+        session.replace(source, projection);
+
+        let change = session
+            .apply(waml::compat::Batch::new(vec![
+                waml::compat::Step::Okf(waml::okf::Op::IndexRetitle {
+                    directory: waml::okf::DirectoryAddress::parse("/").unwrap(),
+                    title: "Parser Platform Baseline".into(),
+                }),
+                waml::compat::Step::Uml(Op::ClassifierSet {
+                    id: "class".into(),
+                    title: Some("Café Order Baseline".into()),
+                    description: None,
+                    stereotype: None,
+                    abstract_: None,
+                    ty: None,
+                }),
+            ]))
+            .unwrap();
+        assert_eq!(change.revision, 2, "class.md successful lowerer revision");
+        assert!(
+            session.is_dirty(),
+            "class.md successful lowerer dirty state"
+        );
+        let expected = waml::serialize::serialize_document(&waml::parse::parse_document(
+            include_str!("../../waml/tests/fixtures/parser-platform/class.md"),
+        ))
+        .replace("title: Café Order", "title: Café Order Baseline")
+        .replace("# Café Order", "# Café Order Baseline");
+        let changed = session
+            .bundle()
+            .documents()
+            .iter()
+            .find(|document| document.path().as_str() == "class.md")
+            .unwrap()
+            .text();
+        assert_eq!(changed, expected, "class.md exact UML Lowerer output");
+        let changed_index = session
+            .bundle()
+            .documents()
+            .iter()
+            .find(|document| document.path().as_str() == "index.md")
+            .unwrap()
+            .text();
+        let mut index_hash = 0xcbf29ce484222325u64;
+        for byte in changed_index.bytes() {
+            index_hash ^= u64::from(byte);
+            index_hash = index_hash.wrapping_mul(0x100000001b3);
+        }
+        assert_eq!(
+            format!("{index_hash:016x}"),
+            "660b50f247619dc4",
+            "index.md exact OKF Lowerer output"
+        );
+        assert!(
+            session
+                .bundle()
+                .shares_text_with(session.persisted_bundle(), "enum.md"),
+            "enum.md untouched by class.md lowerer"
+        );
+
+        let source_before_failure = session.bundle().clone();
+        let projection_before_failure = session.uml_projection().clone();
+        let revision_before_failure = session.revision();
+        let dirty_before_failure = session.is_dirty();
+        let result = session.apply(waml::uml::Batch(vec![Op::AttributeRemove {
+            node: "class".into(),
+            name: "missing".into(),
+        }]));
+        assert!(result.is_err(), "class.md failed lowerer result");
+        assert_eq!(
+            session.bundle(),
+            &source_before_failure,
+            "class.md failed lowerer source atomicity"
+        );
+        assert_eq!(
+            session.uml_projection(),
+            &projection_before_failure,
+            "class.md failed lowerer projection atomicity"
+        );
+        assert_eq!(
+            session.revision(),
+            revision_before_failure,
+            "class.md failed lowerer revision atomicity"
+        );
+        assert_eq!(
+            session.is_dirty(),
+            dirty_before_failure,
+            "class.md failed lowerer dirty atomicity"
+        );
+    }
 }

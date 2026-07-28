@@ -7,9 +7,9 @@ title: Fulfil
 ## Nodes
 
 ### Start
-- goes to Pack
+- transitions to Pack
 
 ### Pack
-- goes to Done
+- transitions to Done
 
 ### Done

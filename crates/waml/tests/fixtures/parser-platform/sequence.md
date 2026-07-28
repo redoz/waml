@@ -11,4 +11,4 @@ title: Checkout
 
 ## Messages
 
-- Buyer -> Order: submit
+- Buyer calls Order: `submit()`

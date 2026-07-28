@@ -3,14 +3,16 @@
   "enforcement": "report-only",
   "fixtures": [
     "generic.md", "unknown-uml.md", "index.md", "log.md", "class.md", "enum.md",
-    "object.md", "diagram.md", "activity.md", "state-machine.md", "sequence.md", "malformed-crlf-unicode.md"
+    "object.md", "diagram.md", "activity.md", "state-machine.md", "sequence.md",
+    "broken-frontmatter.md", "malformed.md", "malformed-crlf-unicode.md"
   ],
   "corpus_identity": {
     "algorithm": "fnv1a-64",
     "offset_basis": "cbf29ce484222325",
     "prime": "00000100000001b3",
     "path_separator": "00",
-    "source_separator": "ff"
+    "source_separator": "ff",
+    "expected": "bc26136a556e6fa3"
   },
   "warmup_runs": 5,
   "sample_runs": 30,
