@@ -67,6 +67,21 @@ struct PendingFragment {
     fragment: String,
 }
 
+#[cfg(test)]
+std::thread_local! {
+    static DIRECTORY_TOGGLE_INVOCATIONS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+#[cfg(test)]
+fn reset_directory_toggle_invocations() {
+    DIRECTORY_TOGGLE_INVOCATIONS.with(|invocations| invocations.set(0));
+}
+
+#[cfg(test)]
+fn directory_toggle_invocations() -> usize {
+    DIRECTORY_TOGGLE_INVOCATIONS.with(std::cell::Cell::get)
+}
+
 script_mod! {
     use mod.prelude.widgets.*
     use mod.atlas
@@ -789,6 +804,9 @@ impl App {
                 true
             }
             crate::navigation::NavigationTarget::Directory { address } => {
+                #[cfg(test)]
+                DIRECTORY_TOGGLE_INVOCATIONS
+                    .with(|invocations| invocations.set(invocations.get() + 1));
                 let toggled = self
                     .ui
                     .widget(cx, ids!(project_tree))
@@ -2444,8 +2462,9 @@ impl AppMain for App {
 #[cfg(test)]
 mod tests {
     use super::{
-        close_after_save, doc_switcher_items, logo_command_for, next_narrow, open_overlay_contains,
-        place_rm_for, prevent_quit_after_failed_save, project_document_header, replace_after_save,
+        close_after_save, directory_toggle_invocations, doc_switcher_items, logo_command_for,
+        next_narrow, open_overlay_contains, place_rm_for, prevent_quit_after_failed_save,
+        project_document_header, replace_after_save, reset_directory_toggle_invocations,
         should_dismiss_narrow_dock, should_flush_save, App, BackingTransitionError, LogoCommand,
         PendingFragment, SaveFeedback,
     };
@@ -2493,7 +2512,7 @@ mod tests {
             ),
             (
                 "sales/customer.md",
-                "---\ntype: Runbook\ntitle: Customer\n---\n# Customer\n",
+                "---\ntype: Runbook\ntitle: Customer\n---\n# Customer\n\n## History\nDetails\n",
             ),
         ])
         .unwrap();
@@ -2513,11 +2532,61 @@ mod tests {
         let statusbar = WidgetRef::new_with_inner(Box::new(
             cx.with_vm(crate::statusbar::Statusbar::script_new_with_default),
         ));
+        let document_header = WidgetRef::new_with_inner(Box::new(
+            cx.with_vm(crate::document_header::DocumentHeader::script_new_with_default),
+        ));
         let mut ui = cx.with_vm(View::script_new_with_default);
         ui.children.push((live_id!(project_tree), project_tree));
         ui.children.push((live_id!(statusbar), statusbar));
+        ui.children
+            .push((live_id!(document_header), document_header));
         app.ui = WidgetRef::new_with_inner(Box::new(ui));
         (cx, app)
+    }
+
+    fn widget_action(uid: WidgetUid, action: impl WidgetActionTrait + 'static) -> Action {
+        Box::new(WidgetAction {
+            data: None,
+            action: Box::new(action),
+            widget_uid: uid,
+            group: None,
+        })
+    }
+
+    fn mount_markdown_surface(cx: &mut Cx, app: &mut App) {
+        let markdown =
+            WidgetRef::new_with_inner(Box::new(cx.with_vm(Markdown::script_new_with_default)));
+        let mut surface = cx.with_vm(View::script_new_with_default);
+        surface.children.push((live_id!(md), markdown));
+        let surface = WidgetRef::new_with_inner(Box::new(surface));
+        app.ui
+            .borrow_mut::<View>()
+            .expect("test root view is mounted")
+            .children
+            .push((live_id!(markdown_surface), surface));
+        cx.widget_tree_mark_dirty(app.ui.widget_uid());
+    }
+
+    fn record_markdown_anchors(cx: &mut Cx, app: &App) {
+        let draw_event = DrawEvent {
+            redraw_all: true,
+            ..DrawEvent::default()
+        };
+        let pass = DrawPass::new_with_name(cx, "markdown-navigation-test");
+        let mut draw_list = DrawList2d::new(cx);
+        let mut draw_cx = CxDraw::new(cx, &draw_event);
+        draw_cx.begin_pass(&pass, None);
+        draw_list.begin_always(&mut draw_cx);
+        {
+            let mut cx_2d = Cx2d::new(&mut draw_cx);
+            cx_2d.begin_root_turtle(dvec2(800.0, 600.0), Layout::default());
+            app.ui
+                .widget(&cx_2d, ids!(markdown_surface.md))
+                .draw_walk_all(&mut cx_2d, &mut Scope::empty(), Walk::fill());
+            cx_2d.end_turtle();
+            draw_list.end(&mut cx_2d);
+        }
+        draw_cx.end_pass(&pass);
     }
 
     #[test]
@@ -2563,7 +2632,7 @@ mod tests {
         assert_eq!(browser.opened, vec!["https://example.com/blocked"]);
         assert_eq!(app.documents.active_id(), active);
         assert_eq!(app.nav_state, nav_state);
-        let statusbar = app.ui.widget(&mut cx, ids!(statusbar));
+        let statusbar = app.ui.widget(&cx, ids!(statusbar));
         let statusbar = statusbar
             .borrow::<crate::statusbar::Statusbar>()
             .expect("test statusbar is mounted");
@@ -2573,7 +2642,7 @@ mod tests {
         );
         drop(statusbar);
         app.ui
-            .widget(&mut cx, ids!(statusbar))
+            .widget(&cx, ids!(statusbar))
             .borrow_mut::<crate::statusbar::Statusbar>()
             .expect("test statusbar is mounted")
             .set_save_error(&mut cx, Some("disk full"));
@@ -2584,7 +2653,7 @@ mod tests {
             OpenDisposition::Preview,
             &mut browser,
         ));
-        let statusbar = app.ui.widget(&mut cx, ids!(statusbar));
+        let statusbar = app.ui.widget(&cx, ids!(statusbar));
         let statusbar = statusbar
             .borrow::<crate::statusbar::Statusbar>()
             .expect("test statusbar is mounted");
@@ -2674,7 +2743,7 @@ mod tests {
                 },
             ));
             assert_eq!(app.documents.active_id(), active);
-            let statusbar = app.ui.widget(&mut cx, ids!(statusbar));
+            let statusbar = app.ui.widget(&cx, ids!(statusbar));
             let statusbar = statusbar
                 .borrow::<crate::statusbar::Statusbar>()
                 .expect("test statusbar is mounted");
@@ -2705,7 +2774,7 @@ mod tests {
             &mut browser,
         ));
         assert_eq!(app.nav_state, NavState::default());
-        let project_tree = app.ui.widget(&mut cx, ids!(project_tree));
+        let project_tree = app.ui.widget(&cx, ids!(project_tree));
         let project_tree = project_tree
             .borrow::<crate::tree_panel::ProjectTree>()
             .expect("test project tree is mounted");
@@ -2714,26 +2783,13 @@ mod tests {
 
     #[test]
     fn navigation_directory_intents_share_one_app_owned_toggle_path() {
-        let intents = [
-            NavigationIntent::Resolved {
-                target: NavigationTarget::Directory {
-                    address: "/sales".into(),
-                },
-                disposition: OpenDisposition::Preview,
-            },
-            NavigationIntent::Resolved {
-                target: NavigationTarget::Directory {
-                    address: "/sales".into(),
-                },
-                disposition: OpenDisposition::Preview,
-            },
-            NavigationIntent::MarkdownLink {
-                current_concept_id: "sales/order".into(),
-                href: "./".into(),
-            },
-        ];
+        enum Ingress {
+            Tree,
+            Header,
+            Markdown,
+        }
 
-        for intent in intents {
+        for ingress in [Ingress::Tree, Ingress::Header, Ingress::Markdown] {
             let (mut cx, mut app) = navigation_app();
             let mut browser = FakeBrowser::default();
             assert!(app.navigate_with(
@@ -2747,16 +2803,50 @@ mod tests {
             ));
             app.nav_state.scope = "/sales".into();
             let active = app.documents.active_id();
+            reset_directory_toggle_invocations();
+            let action = match ingress {
+                Ingress::Tree => {
+                    let uid = app.ui.widget(&cx, ids!(project_tree)).widget_uid();
+                    widget_action(
+                        uid,
+                        crate::tree_panel::ProjectTreeAction::Navigate(
+                            NavigationIntent::Resolved {
+                                target: NavigationTarget::Directory {
+                                    address: "/sales".into(),
+                                },
+                                disposition: OpenDisposition::Preview,
+                            },
+                        ),
+                    )
+                }
+                Ingress::Header => {
+                    let uid = app.ui.widget(&cx, ids!(document_header)).widget_uid();
+                    widget_action(
+                        uid,
+                        crate::document_header::DocumentHeaderAction::Navigate(
+                            NavigationTarget::Directory {
+                                address: "/sales".into(),
+                            },
+                        ),
+                    )
+                }
+                Ingress::Markdown => {
+                    widget_action(WidgetUid(99), MarkdownAction::LinkNavigated("./".into()))
+                }
+            };
+            let actions: ActionsBuf = vec![action];
+            app.handle_action_batch(&mut cx, &actions);
 
-            assert!(app.handle_navigation_intent(&mut cx, intent));
+            assert_eq!(directory_toggle_invocations(), 1);
             assert_eq!(app.documents.active_id(), active);
             assert_eq!(app.nav_state.scope, "/sales");
         }
     }
 
     #[test]
-    fn navigation_cross_document_fragment_remains_pending_until_post_draw_application() {
+    fn navigation_draw_hook_scrolls_recorded_fragment_after_target_draw() {
         let (mut cx, mut app) = navigation_app();
+        mount_markdown_surface(&mut cx, &mut app);
         let mut browser = FakeBrowser::default();
 
         assert!(app.navigate_with(
@@ -2768,6 +2858,13 @@ mod tests {
             OpenDisposition::Preview,
             &mut browser,
         ));
+        assert!(
+            app.ui
+                .widget(&cx, ids!(markdown_surface.md))
+                .text()
+                .contains("## History"),
+            "the active document must reach the mounted renderer before draw"
+        );
         assert_eq!(
             app.pending_fragment,
             Some(PendingFragment {
@@ -2775,25 +2872,36 @@ mod tests {
                 fragment: "history".into(),
             })
         );
+        record_markdown_anchors(&mut cx, &app);
 
-        app.apply_pending_fragment(&mut cx);
+        AppMain::handle_event(
+            &mut app,
+            &mut cx,
+            &Event::Draw(DrawEvent {
+                redraw_all: true,
+                ..DrawEvent::default()
+            }),
+        );
+
+        assert!(
+            !app.ui
+                .widget(&cx, ids!(markdown_surface.md))
+                .area()
+                .is_empty(),
+            "the real renderer draw must record a mounted area"
+        );
         assert_eq!(app.pending_fragment, None);
-        let statusbar = app.ui.widget(&mut cx, ids!(statusbar));
+        let statusbar = app.ui.widget(&cx, ids!(statusbar));
         let statusbar = statusbar
             .borrow::<crate::statusbar::Statusbar>()
             .expect("test statusbar is mounted");
-        assert_eq!(
-            crate::statusbar::navigation_message(&statusbar),
-            Some("Section not found: history")
-        );
-        drop(statusbar);
-        app.apply_pending_fragment(&mut cx);
-        assert_eq!(app.pending_fragment, None);
+        assert_eq!(crate::statusbar::navigation_message(&statusbar), None);
     }
 
     #[test]
-    fn navigation_pending_fragment_waits_for_its_target_document() {
+    fn navigation_draw_hook_keeps_mismatch_then_reports_missing_once() {
         let (mut cx, mut app) = navigation_app();
+        mount_markdown_surface(&mut cx, &mut app);
         let mut browser = FakeBrowser::default();
         assert!(app.navigate_with(
             &mut cx,
@@ -2806,18 +2914,69 @@ mod tests {
         ));
         app.pending_fragment = Some(PendingFragment {
             concept_id: "sales/customer".into(),
-            fragment: "history".into(),
+            fragment: "missing".into(),
         });
 
-        app.apply_pending_fragment(&mut cx);
+        AppMain::handle_event(
+            &mut app,
+            &mut cx,
+            &Event::Draw(DrawEvent {
+                redraw_all: true,
+                ..DrawEvent::default()
+            }),
+        );
 
         assert_eq!(
             app.pending_fragment,
             Some(PendingFragment {
                 concept_id: "sales/customer".into(),
-                fragment: "history".into(),
+                fragment: "missing".into(),
             })
         );
+
+        assert!(app.navigate_with(
+            &mut cx,
+            NavigationTarget::Document {
+                concept_id: "sales/customer".into(),
+                fragment: Some("missing".into()),
+            },
+            OpenDisposition::Preview,
+            &mut browser,
+        ));
+        record_markdown_anchors(&mut cx, &app);
+        AppMain::handle_event(
+            &mut app,
+            &mut cx,
+            &Event::Draw(DrawEvent {
+                redraw_all: true,
+                ..DrawEvent::default()
+            }),
+        );
+        assert_eq!(app.pending_fragment, None);
+        let statusbar = app.ui.widget(&cx, ids!(statusbar));
+        let mut statusbar = statusbar
+            .borrow_mut::<crate::statusbar::Statusbar>()
+            .expect("test statusbar is mounted");
+        assert_eq!(
+            crate::statusbar::navigation_message(&statusbar),
+            Some("Section not found: missing")
+        );
+        statusbar.set_navigation_message(&mut cx, None);
+        drop(statusbar);
+
+        AppMain::handle_event(
+            &mut app,
+            &mut cx,
+            &Event::Draw(DrawEvent {
+                redraw_all: true,
+                ..DrawEvent::default()
+            }),
+        );
+        let statusbar = app.ui.widget(&cx, ids!(statusbar));
+        let statusbar = statusbar
+            .borrow::<crate::statusbar::Statusbar>()
+            .expect("test statusbar is mounted");
+        assert_eq!(crate::statusbar::navigation_message(&statusbar), None);
     }
 
     fn tab(id: LiveId, key: &str, title: &str, category: TreeKind, preview: bool) -> DocTab {
