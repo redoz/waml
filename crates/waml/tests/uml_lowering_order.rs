@@ -3,7 +3,7 @@ use waml::{
     edit::{EditBatch, EditContext},
     model::ElementType,
     okf::DirectoryAddress,
-    source::SourceBundle,
+    source::{BundlePath, SourceBundle},
     syntax::Direction,
     uml::{self, selector::RelBy, FieldEdit, NameSpec, RelationshipSelector},
 };
@@ -312,4 +312,155 @@ fn diagram_and_layout_edits_preserve_unowned_bytes() {
             "## Notes\nkeep  \n",
         )
     );
+}
+
+#[test]
+fn rename_rebinds_the_exact_path_when_basenames_are_duplicated() {
+    let source = SourceBundle::try_from_pairs([
+        (
+            "left/order.md",
+            "---\ntype: uml.Class\ntitle: Left Order\n---\n# Left Order\n",
+        ),
+        (
+            "right/order.md",
+            "---\ntype: uml.Class\ntitle: Right Order\n---\n# Right Order\n\n## Attributes\n- parent: [Right Order](./order.md)\n",
+        ),
+        (
+            "right/invoice.md",
+            "---\ntype: uml.Class\ntitle: Existing Invoice\n---\n# Existing Invoice\n",
+        ),
+    ])
+    .unwrap();
+    let changed = lower(
+        &source,
+        vec![
+            uml::Op::ClassifierRename {
+                from: "left/order".into(),
+                to: "invoice".into(),
+            },
+            uml::Op::AttributeAdd {
+                node: "left/invoice".into(),
+                name: "id".into(),
+                ty_token: "String".into(),
+                multiplicity: None,
+                visibility: None,
+            },
+        ],
+    )
+    .unwrap();
+    assert!(changed
+        .documents()
+        .iter()
+        .any(|document| document.path().as_str() == "left/invoice.md"
+            && document.text().contains("- id: String")));
+    assert_eq!(
+        changed
+            .documents()
+            .iter()
+            .find(|document| document.path().as_str() == "right/invoice.md")
+            .unwrap()
+            .text(),
+        source
+            .documents()
+            .iter()
+            .find(|document| document.path().as_str() == "right/invoice.md")
+            .unwrap()
+            .text()
+    );
+    assert!(changed
+        .document(&BundlePath::parse("right/order.md").unwrap())
+        .unwrap()
+        .text()
+        .contains("[Right Order](./order.md)"));
+}
+
+#[test]
+fn rename_accepts_an_explicit_full_destination_id() {
+    let source = SourceBundle::try_from_pairs([
+        (
+            "left/order.md",
+            "---\ntype: uml.Class\ntitle: Order\n---\n# Order\n",
+        ),
+        (
+            "left/customer.md",
+            "---\ntype: uml.Class\ntitle: Customer\n---\n# Customer\n\n## Attributes\n- order: [Order](./order.md)\n",
+        ),
+    ])
+    .unwrap();
+    let changed = lower(
+        &source,
+        vec![
+            uml::Op::ClassifierRename {
+                from: "left/order".into(),
+                to: "archive/invoice".into(),
+            },
+            uml::Op::AttributeAdd {
+                node: "archive/invoice".into(),
+                name: "id".into(),
+                ty_token: "String".into(),
+                multiplicity: None,
+                visibility: None,
+            },
+        ],
+    )
+    .unwrap();
+    let renamed = changed
+        .documents()
+        .iter()
+        .find(|document| document.path().as_str() == "archive/invoice.md")
+        .unwrap();
+    assert!(renamed.text().contains("- id: String"));
+    assert!(changed
+        .documents()
+        .iter()
+        .all(|document| document.path().as_str() != "left/archive/invoice.md"));
+    assert!(changed
+        .document(&BundlePath::parse("left/customer.md").unwrap())
+        .unwrap()
+        .text()
+        .contains("[Order](../archive/invoice.md)"));
+}
+
+#[test]
+fn rename_collision_and_invalid_destination_keep_stable_index_and_rollback() {
+    let source = SourceBundle::try_from_pairs([
+        (
+            "left/order.md",
+            "---\ntype: uml.Class\ntitle: Left\n---\n# Left\n",
+        ),
+        (
+            "right/order.md",
+            "---\ntype: uml.Class\ntitle: Right\n---\n# Right\n",
+        ),
+    ])
+    .unwrap();
+    for destination in ["right/order", "../escape"] {
+        let error = lower(
+            &source,
+            vec![
+                uml::Op::AttributeAdd {
+                    node: "left/order".into(),
+                    name: "id".into(),
+                    ty_token: "String".into(),
+                    multiplicity: None,
+                    visibility: None,
+                },
+                uml::Op::ClassifierRename {
+                    from: "left/order".into(),
+                    to: destination.into(),
+                },
+            ],
+        )
+        .unwrap_err();
+        assert_eq!(error.index, 1, "{destination}");
+        assert_eq!(
+            source
+                .documents()
+                .iter()
+                .find(|document| document.path().as_str() == "left/order.md")
+                .unwrap()
+                .text(),
+            "---\ntype: uml.Class\ntitle: Left\n---\n# Left\n"
+        );
+    }
 }

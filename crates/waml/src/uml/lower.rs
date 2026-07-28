@@ -217,8 +217,19 @@ pub(crate) fn apply_step(
         .iter()
         .map(|document| (document.path().clone(), document.text_arc().clone()))
         .collect();
-    let rename_from = match op {
-        super::Op::ClassifierRename { from, .. } => state.resolve_id(from).map(str::to_owned),
+    let rename = match op {
+        super::Op::ClassifierRename { from, to } => state
+            .resolve_id(from)
+            .map(str::to_owned)
+            .map(|id| {
+                let source = state.path(&id).expect("resolved classifier path");
+                super::rename::destination_path(source, to).map(|destination| (id, destination))
+            })
+            .transpose()
+            .map_err(|mut error| {
+                error.index = index;
+                error
+            })?,
         _ => None,
     };
     let remove_id = match op {
@@ -263,15 +274,16 @@ pub(crate) fn apply_step(
                 state.removed_concept(&id);
             }
         }
-        super::Op::ClassifierRename { to, .. } => {
-            if let Some(from) = rename_from {
-                let document = candidate
-                    .documents()
-                    .iter()
-                    .find(|document| slug_of(document.path().as_str()) == to.as_str())
-                    .ok_or_else(|| {
-                        EditError::at("node.rename", format!("renamed concept '{to}' is absent"))
-                    })?;
+        super::Op::ClassifierRename { .. } => {
+            if let Some((from, destination)) = rename {
+                let document = candidate.document(&destination).ok_or_else(|| {
+                    let mut error = EditError::at(
+                        "node.rename",
+                        format!("renamed concept '{}' is absent", destination.as_str()),
+                    );
+                    error.index = index;
+                    error
+                })?;
                 state
                     .renamed_concept(
                         &from,

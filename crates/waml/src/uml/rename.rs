@@ -1,15 +1,22 @@
 use super::lower::{find_doc, slug_of};
 use crate::edit::EditError;
-use crate::okf;
-use crate::source::SourceBundle;
+use crate::source::{BundlePath, SourceBundle};
 use waml_syntax::{parse_okf_markdown, MarkdownDialect, SourceText, SyntaxElement, SyntaxNode};
 
-/// Swap the basename of `path` to `to.md`, preserving any directory prefix.
-fn replace_basename(path: &str, to: &str) -> String {
-    match path.rfind(['/', '\\']) {
-        Some(i) => format!("{}/{}.md", &path[..i], to),
-        None => format!("{to}.md"),
-    }
+/// Resolve a rename destination from the exact source path. A bare `to`
+/// replaces only the basename in the source directory; a slash-containing
+/// `to` is an explicit bundle-root-relative concept id.
+pub(crate) fn destination_path(source: &BundlePath, to: &str) -> Result<BundlePath, EditError> {
+    let to = to.strip_suffix(".md").unwrap_or(to);
+    let destination = if to.contains(['/', '\\']) {
+        format!("{to}.md")
+    } else {
+        match source.as_str().rfind('/') {
+            Some(index) => format!("{}/{to}.md", &source.as_str()[..index]),
+            None => format!("{to}.md"),
+        }
+    };
+    BundlePath::parse(destination).map_err(|error| EditError::at("node.rename", error.to_string()))
 }
 
 pub(crate) fn op_node_rename(
@@ -18,24 +25,25 @@ pub(crate) fn op_node_rename(
     to: &str,
 ) -> Result<(), EditError> {
     // `from` may be a full bundle-path id (the parse/graph layer's node key)
-    // or a bare basename; `to` is always a bare local name in the renamed
-    // doc's own directory. Repointing compares against stored hrefs, which
-    // are bare same-directory-relative slugs — resolve `from` down to that
-    // form before rewriting referrers.
+    // or a bare basename. Stored `./slug.md` references are directory-local,
+    // so only documents beside the exact source path may refer to it by that
+    // spelling.
     let idx = find_doc(work, from, "node.rename")?;
     let source_path = work
         .document_at(idx)
         .expect("resolved document index")
         .path()
-        .as_str();
-    let from_basename = slug_of(source_path);
-    let dest_path = replace_basename(source_path, to);
-    let dest_id = okf::id_of(&dest_path);
+        .clone();
+    let source_directory = directory_of(source_path.as_str());
+    let from_basename = slug_of(source_path.as_str());
+    let dest_path = destination_path(&source_path, to)?;
+    let to_basename = slug_of(dest_path.as_str());
+    let destination_href = relative_href(&source_path, &dest_path);
     if work
         .documents()
         .iter()
         .enumerate()
-        .any(|(i, document)| i != idx && okf::id_of(document.path().as_str()) == dest_id)
+        .any(|(i, document)| i != idx && document.path() == &dest_path)
     {
         return Err(EditError::at(
             "node.rename",
@@ -43,12 +51,13 @@ pub(crate) fn op_node_rename(
         ));
     }
     for index in 0..work.len() {
-        let source = work
-            .document_at(index)
-            .expect("document index in bounds")
-            .text()
-            .to_owned();
-        let changed = rename_typed_references(&source, &from_basename, to)?;
+        let document = work.document_at(index).expect("document index in bounds");
+        if directory_of(document.path().as_str()) != source_directory {
+            continue;
+        }
+        let source = document.text().to_owned();
+        let changed =
+            rename_typed_references(&source, &from_basename, &to_basename, &destination_href)?;
         if changed != source {
             *work
                 .document_at_mut(index)
@@ -56,19 +65,49 @@ pub(crate) fn op_node_rename(
                 .text_mut() = changed;
         }
     }
-    work.rename_document(idx, dest_path)
+    work.rename_document(idx, dest_path.as_str().to_owned())
         .map_err(|error| EditError::at("node.rename", error.to_string()))?;
     Ok(())
 }
 
-fn rename_typed_references(source: &str, from: &str, to: &str) -> Result<String, EditError> {
+fn directory_of(path: &str) -> &str {
+    path.rsplit_once('/').map_or("", |(directory, _)| directory)
+}
+
+fn relative_href(source: &BundlePath, destination: &BundlePath) -> String {
+    let source_directory: Vec<_> = directory_of(source.as_str()).split('/').collect();
+    let source_directory = if source_directory == [""] {
+        &[][..]
+    } else {
+        &source_directory
+    };
+    let destination_segments: Vec<_> = destination.as_str().split('/').collect();
+    let shared = source_directory
+        .iter()
+        .zip(&destination_segments)
+        .take_while(|(left, right)| left == right)
+        .count();
+    let mut href = "../".repeat(source_directory.len() - shared);
+    href.push_str(&destination_segments[shared..].join("/"));
+    if !href.starts_with("../") {
+        href.insert_str(0, "./");
+    }
+    href
+}
+
+fn rename_typed_references(
+    source: &str,
+    from: &str,
+    to: &str,
+    destination_href: &str,
+) -> Result<String, EditError> {
     let text = SourceText::from_shared(std::sync::Arc::new(source.to_owned()))
         .map_err(|error| EditError::at("node.rename", error.to_string()))?;
     let shell = parse_okf_markdown(text.clone(), MarkdownDialect::CommonMarkCurrent)
         .map_err(|error| EditError::at("node.rename", error.to_string()))?;
     let tree = super::syntax::parser::parse(text, &shell.structure);
     let mut edits = Vec::new();
-    collect_reference_edits(&tree.root(), source, from, to, &mut edits);
+    collect_reference_edits(&tree.root(), source, from, to, destination_href, &mut edits);
     edits.sort_by_key(|(range, _)| std::cmp::Reverse(range.start));
     let mut output = source.to_owned();
     for (range, replacement) in edits {
@@ -82,6 +121,7 @@ fn collect_reference_edits(
     source: &str,
     from: &str,
     to: &str,
+    destination_href: &str,
     edits: &mut Vec<(std::ops::Range<usize>, String)>,
 ) {
     use super::syntax::UmlSyntaxKind;
@@ -89,7 +129,7 @@ fn collect_reference_edits(
         let range = node.range().start().to_usize()..node.range().end().to_usize();
         let authored = &source[range.clone()];
         let needle = format!("](./{from}.md)");
-        let replacement = authored.replace(&needle, &format!("](./{to}.md)"));
+        let replacement = authored.replace(&needle, &format!("]({destination_href})"));
         if replacement != authored {
             edits.push((range, replacement));
         }
@@ -102,7 +142,7 @@ fn collect_reference_edits(
         let range = node.range().start().to_usize()..node.range().end().to_usize();
         let authored = &source[range.clone()];
         let needle = format!("./{from}.md");
-        let replacement = authored.replace(&needle, &format!("./{to}.md"));
+        let replacement = authored.replace(&needle, destination_href);
         if replacement != authored {
             edits.push((range, replacement));
         }
@@ -112,7 +152,7 @@ fn collect_reference_edits(
         let range = node.range().start().to_usize()..node.range().end().to_usize();
         let authored = &source[range.clone()];
         let needle = format!("./{from}.md");
-        let mut replacement = authored.replace(&needle, &format!("./{to}.md"));
+        let mut replacement = authored.replace(&needle, destination_href);
         let bare = regex::Regex::new(&format!(r"\b{}\b", regex::escape(from)))
             .expect("escaped slug is valid regex");
         replacement = bare.replace_all(&replacement, to).into_owned();
@@ -124,7 +164,7 @@ fn collect_reference_edits(
     for child in node.children() {
         match child {
             SyntaxElement::Node(child) => {
-                collect_reference_edits(&child, source, from, to, edits);
+                collect_reference_edits(&child, source, from, to, destination_href, edits);
             }
             SyntaxElement::Token(token)
                 if matches!(
@@ -136,7 +176,7 @@ fn collect_reference_edits(
                 let authored = &source[range.clone()];
                 let needle = format!("./{from}.md");
                 if authored.contains(&needle) {
-                    edits.push((range, authored.replace(&needle, &format!("./{to}.md"))));
+                    edits.push((range, authored.replace(&needle, destination_href)));
                 }
             }
             SyntaxElement::Token(token) if token.kind() == UmlSyntaxKind::LayoutWordToken => {
