@@ -33,9 +33,21 @@
   child only; it does not perform a descendant search. The focused suite now
   asserts the direct-token values and link leaf shape (3 tests).
 
+## Latest foundation
+
+- Classifier declared lowering is syntax-only: values, slots, relationships,
+  members, and inline instances no longer call `grammar.rs` to reparse source.
+  The direct declared-field regression brings the focused suite to 4 tests.
+
 ## Remaining concerns
 
-This is not complete Task 7 parity yet: the new non-attribute productions are currently raw-content typed wrappers, rather than fully tokenized fixed slots; declared target resolution/located non-attribute diagnostics and projection construction still rely on the retained legacy projection. Member recovery does not yet enforce the full indentation grammar. Do not treat this commit as sufficient to close Task 7 without completing those requirements.
+This is not complete Task 7 parity yet: slot values still lack distinct
+quoted/bare/link syntax variants and precise missing/invalid state;
+relationship names/ends/multiplicities and skipped-token recovery are not fixed
+slots; member groups and inline clauses do not enforce indentation-aware
+structure; and the exhaustive CRLF/Unicode/range/progress matrix is absent.
+Target resolution, located diagnostics, and syntax-authoritative projection
+remain a later phase.
 
 ## Metrics
 
