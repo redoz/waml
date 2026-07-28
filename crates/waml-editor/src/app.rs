@@ -376,7 +376,12 @@ script_mod! {
                                     height: Fill
                                     visible: false
                                     show_bg: true
-                                    draw_bg.color: atlas.surface
+                                    draw_bg +: {
+                                        color: atlas.surface
+                                        pixel: fn() {
+                                            return vec4(self.color.rgb * self.color.a, self.color.a)
+                                        }
+                                    }
                                     flow: Down
                                     scroll_bars: ScrollBars{ scroll_bar_y: ScrollBar{} }
                                     md := Markdown{
@@ -744,6 +749,11 @@ impl App {
             },
         );
         self.sync_document_shell(cx);
+        // Re-submit the complete composed tree after the selection change.
+        // Makepad's immediate-mode `FileTree` otherwise retains only the rows
+        // visited before its clicked leaf on that redraw, making a trailing
+        // Generic OKF row disappear until the next query/filter event.
+        self.refresh_nav(cx, false);
         changed
     }
 

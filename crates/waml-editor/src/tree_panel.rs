@@ -363,7 +363,6 @@ pub struct ProjectTree {
     #[rust]
     openable_ids: HashSet<LiveId>,
     #[rust]
-    classifier_context_ids: HashSet<LiveId>,
     #[rust]
     pending_tap_count: u32,
     #[live]
@@ -450,7 +449,6 @@ type TreeIdMaps = (
     HashMap<LiveId, String>,
     HashMap<LiveId, String>,
     HashSet<LiveId>,
-    HashSet<LiveId>,
 );
 
 fn build_id_maps(tree: &ProjectTreeData) -> TreeIdMaps {
@@ -459,7 +457,6 @@ fn build_id_maps(tree: &ProjectTreeData) -> TreeIdMaps {
         keys: &mut HashMap<LiveId, String>,
         concepts: &mut HashMap<LiveId, String>,
         openable: &mut HashSet<LiveId>,
-        classifier_context: &mut HashSet<LiveId>,
     ) {
         for n in nodes {
             let id = LiveId::from_str(&n.key);
@@ -470,24 +467,14 @@ fn build_id_maps(tree: &ProjectTreeData) -> TreeIdMaps {
             if n.openable {
                 openable.insert(id);
             }
-            if n.can_edit_classifier || n.can_delete_classifier {
-                classifier_context.insert(id);
-            }
-            walk(&n.children, keys, concepts, openable, classifier_context);
+            walk(&n.children, keys, concepts, openable);
         }
     }
     let mut keys = HashMap::new();
     let mut concepts = HashMap::new();
     let mut openable = HashSet::new();
-    let mut classifier_context = HashSet::new();
-    walk(
-        &tree.roots,
-        &mut keys,
-        &mut concepts,
-        &mut openable,
-        &mut classifier_context,
-    );
-    (keys, concepts, openable, classifier_context)
+    walk(&tree.roots, &mut keys, &mut concepts, &mut openable);
+    (keys, concepts, openable)
 }
 
 /// The package-folder keys `set_view` expands for `tag`, in depth-first order.
@@ -936,7 +923,7 @@ impl Widget for ProjectTree {
             }
             if let Some((id, abs)) = file_tree.file_right_clicked(actions) {
                 if let Some(key) = self.id_to_key.get(&id) {
-                    if self.classifier_context_ids.contains(&id) {
+                    if self.openable_ids.contains(&id) {
                         cx.widget_action(
                             uid,
                             ProjectTreeAction::ContextMenu {
@@ -1006,7 +993,7 @@ impl ProjectTree {
             NavView::Elsewhere(t) => (t, NavStateTag::Elsewhere),
             NavView::Empty => (ProjectTreeData::default(), NavStateTag::Empty),
         };
-        let (id_to_key, id_to_concept, openable_ids, classifier_context_ids) = build_id_maps(&tree);
+        let (id_to_key, id_to_concept, openable_ids) = build_id_maps(&tree);
         let file_tree = self.view.file_tree(cx, ids!(file_tree));
         // Open package folders so the panel isn't collapsed. Browse expands only
         // the top-level packages (under scope the roots are the scope's members,
@@ -1018,7 +1005,6 @@ impl ProjectTree {
         self.id_to_key = id_to_key;
         self.id_to_concept = id_to_concept;
         self.openable_ids = openable_ids;
-        self.classifier_context_ids = classifier_context_ids;
         self.tree = tree;
         self.nav_tag = tag;
         self.view.redraw(cx);
@@ -1303,18 +1289,19 @@ mod tests {
                 vec![
                     node("orders-diagram", "Orders", TreeKind::Diagram, vec![]),
                     node("customer", "Customer", TreeKind::Class, vec![]),
+                    node("runbook", "Runbook", TreeKind::OkfDocument, vec![]),
                 ],
             )],
         };
 
-        let (id_to_key, id_to_concept, openable, classifier_context) = build_id_maps(&tree);
+        let (id_to_key, id_to_concept, openable) = build_id_maps(&tree);
 
         // Every node's key recovers through LiveId::from_str.
-        for key in ["/", "orders-diagram", "customer"] {
+        for key in ["/", "orders-diagram", "customer", "runbook"] {
             let id = LiveId::from_str(key);
             assert_eq!(id_to_key.get(&id).map(String::as_str), Some(key));
         }
-        assert_eq!(id_to_key.len(), 3);
+        assert_eq!(id_to_key.len(), 4);
         assert_eq!(
             id_to_concept
                 .get(&LiveId::from_str("customer"))
@@ -1322,9 +1309,8 @@ mod tests {
             Some("customer")
         );
         assert!(openable.contains(&LiveId::from_str("orders-diagram")));
+        assert!(openable.contains(&LiveId::from_str("runbook")));
         assert!(!openable.contains(&LiveId::from_str("/")));
-        assert!(classifier_context.contains(&LiveId::from_str("customer")));
-        assert!(!classifier_context.contains(&LiveId::from_str("orders-diagram")));
     }
 
     #[test]
