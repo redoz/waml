@@ -35,6 +35,7 @@ enum ExclusiveHandler {
     NavigationFilter,
     TreeContextMenu,
     TreeNavigation,
+    DocumentHeader,
     DiagramSwitcher,
     ConflictBadge,
     ActiveDocumentView,
@@ -47,12 +48,13 @@ enum ExclusiveHandler {
     DocumentTabs,
 }
 
-const EXCLUSIVE_ORDER: [ExclusiveHandler; 15] = [
+const EXCLUSIVE_ORDER: [ExclusiveHandler; 16] = [
     ExclusiveHandler::NavigationScope,
     ExclusiveHandler::NavigationQuery,
     ExclusiveHandler::NavigationFilter,
     ExclusiveHandler::TreeContextMenu,
     ExclusiveHandler::TreeNavigation,
+    ExclusiveHandler::DocumentHeader,
     ExclusiveHandler::DiagramSwitcher,
     ExclusiveHandler::ConflictBadge,
     ExclusiveHandler::ActiveDocumentView,
@@ -82,6 +84,9 @@ impl App {
                 ExclusiveHandler::NavigationFilter => self.handle_navigation_filter(cx, actions),
                 ExclusiveHandler::TreeContextMenu => self.handle_tree_context_menu(cx, actions),
                 ExclusiveHandler::TreeNavigation => self.handle_tree_navigation(cx, actions),
+                ExclusiveHandler::DocumentHeader => {
+                    self.handle_document_header_navigation(cx, actions)
+                }
                 ExclusiveHandler::DiagramSwitcher => self.handle_diagram_switcher(cx, actions),
                 ExclusiveHandler::ConflictBadge => self.handle_conflict_badge(cx, actions),
                 ExclusiveHandler::ActiveDocumentView => {
@@ -228,7 +233,15 @@ impl App {
                 match command {
                     LogoCommand::Properties => log!("logo command: Properties (stub)"),
                     LogoCommand::About => {
-                        cx.open_url("https://github.com/redoz/waml", OpenUrlInPlace::No)
+                        self.handle_navigation_intent(
+                            cx,
+                            crate::navigation::NavigationIntent::Resolved {
+                                target: crate::navigation::NavigationTarget::ExternalUrl(
+                                    "https://github.com/redoz/waml".into(),
+                                ),
+                                disposition: crate::navigation::OpenDisposition::Preview,
+                            },
+                        );
                     }
                     LogoCommand::Fonts => self.open_page_overlay(cx, LogoCommand::Fonts),
                     LogoCommand::Icons => self.open_page_overlay(cx, LogoCommand::Icons),
@@ -521,43 +534,27 @@ impl App {
         let Some(intent) = intent else {
             return ActionFlow::Continue;
         };
-        match intent {
+        self.handle_navigation_intent(cx, intent);
+        ActionFlow::Consumed
+    }
+
+    fn handle_document_header_navigation(&mut self, cx: &mut Cx, actions: &Actions) -> ActionFlow {
+        let action = self
+            .ui
+            .widget(cx, ids!(document_header))
+            .borrow::<crate::document_header::DocumentHeader>()
+            .and_then(|header| header.action(actions));
+        let Some(crate::document_header::DocumentHeaderAction::Navigate(target)) = action else {
+            return ActionFlow::Continue;
+        };
+        self.handle_navigation_intent(
+            cx,
             crate::navigation::NavigationIntent::Resolved {
-                target:
-                    crate::navigation::NavigationTarget::Document {
-                        concept_id,
-                        fragment: _,
-                    },
-                disposition,
-            } => {
-                self.transition_document(
-                    cx,
-                    &concept_id,
-                    disposition == crate::navigation::OpenDisposition::Persistent,
-                );
-                ActionFlow::Consumed
-            }
-            crate::navigation::NavigationIntent::Resolved {
-                target: crate::navigation::NavigationTarget::Directory { address },
-                ..
-            } => {
-                let toggled = self
-                    .ui
-                    .widget(cx, ids!(project_tree))
-                    .borrow_mut::<crate::tree_panel::ProjectTree>()
-                    .is_some_and(|mut panel| panel.toggle_directory(cx, &address));
-                if toggled {
-                    ActionFlow::Consumed
-                } else {
-                    ActionFlow::Continue
-                }
-            }
-            crate::navigation::NavigationIntent::Resolved {
-                target: crate::navigation::NavigationTarget::ExternalUrl(_),
-                ..
-            }
-            | crate::navigation::NavigationIntent::MarkdownLink { .. } => ActionFlow::Continue,
-        }
+                target,
+                disposition: crate::navigation::OpenDisposition::Preview,
+            },
+        );
+        ActionFlow::Consumed
     }
 
     fn handle_diagram_switcher(&mut self, cx: &mut Cx, actions: &Actions) -> ActionFlow {
@@ -962,6 +959,11 @@ impl App {
             self.apply_session_edit(cx, edit, "view edit failed");
         }
 
+        if let Some(intent) = outcome.navigation {
+            self.handle_navigation_intent(cx, intent);
+            flow = ActionFlow::Consumed;
+        }
+
         if let Some(request) = outcome.popup {
             self.present_view_popup(cx, request);
             flow = ActionFlow::Consumed;
@@ -1068,6 +1070,7 @@ mod tests {
                 ExclusiveHandler::NavigationFilter,
                 ExclusiveHandler::TreeContextMenu,
                 ExclusiveHandler::TreeNavigation,
+                ExclusiveHandler::DocumentHeader,
                 ExclusiveHandler::DiagramSwitcher,
                 ExclusiveHandler::ConflictBadge,
                 ExclusiveHandler::ActiveDocumentView,

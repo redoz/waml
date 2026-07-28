@@ -39,6 +39,7 @@ pub fn status_line(
     format!("{diagram_name}    {node_count} {noun}    Zoom {zoom_pct}%    Tool: {tool_label}")
 }
 
+#[cfg(test)]
 pub fn save_status_line(
     diagram_name: &str,
     node_count: usize,
@@ -46,9 +47,29 @@ pub fn save_status_line(
     tool_label: &str,
     save_error: Option<&str>,
 ) -> String {
+    status_line_with_feedback(
+        diagram_name,
+        node_count,
+        zoom_pct,
+        tool_label,
+        save_error,
+        None,
+    )
+}
+
+pub fn status_line_with_feedback(
+    diagram_name: &str,
+    node_count: usize,
+    zoom_pct: i32,
+    tool_label: &str,
+    save_error: Option<&str>,
+    navigation_message: Option<&str>,
+) -> String {
     match save_error {
         Some(error) => format!("Save failed: {error}"),
-        None => status_line(diagram_name, node_count, zoom_pct, tool_label),
+        None => navigation_message
+            .map(str::to_owned)
+            .unwrap_or_else(|| status_line(diagram_name, node_count, zoom_pct, tool_label)),
     }
 }
 
@@ -80,6 +101,8 @@ pub struct Statusbar {
     tool_label: String,
     #[rust]
     save_error: Option<String>,
+    #[rust]
+    navigation_message: Option<String>,
 }
 
 impl Widget for Statusbar {
@@ -90,12 +113,13 @@ impl Widget for Statusbar {
     fn draw_walk(&mut self, cx: &mut Cx2d, _scope: &mut Scope, walk: Walk) -> DrawStep {
         let rect = cx.walk_turtle(walk);
         self.draw_bg.draw_abs(cx, rect);
-        let line = save_status_line(
+        let line = status_line_with_feedback(
             &self.diagram_name,
             self.node_count,
             self.zoom_pct,
             &self.tool_label,
             self.save_error.as_deref(),
+            self.navigation_message.as_deref(),
         );
         let text_y = rect.pos.y + rect.size.y * 0.5 - 6.0;
         self.draw_text
@@ -124,6 +148,21 @@ impl Statusbar {
         self.save_error = error.map(str::to_owned);
         self.draw_bg.redraw(cx);
     }
+
+    pub fn set_navigation_message(&mut self, cx: &mut Cx, message: Option<&str>) {
+        self.navigation_message = message.map(str::to_owned);
+        self.draw_bg.redraw(cx);
+    }
+}
+
+#[cfg(test)]
+pub(crate) fn navigation_message(statusbar: &Statusbar) -> Option<&str> {
+    statusbar.navigation_message.as_deref()
+}
+
+#[cfg(test)]
+pub(crate) fn save_error(statusbar: &Statusbar) -> Option<&str> {
+    statusbar.save_error.as_deref()
 }
 
 #[cfg(test)]
@@ -150,6 +189,39 @@ mod tests {
     fn save_error_replaces_normal_status_with_a_visible_failure() {
         assert_eq!(
             save_status_line("Orders", 3, 100, "Select", Some("disk full")),
+            "Save failed: disk full"
+        );
+    }
+
+    #[test]
+    fn navigation_message_replaces_normal_status_with_exact_feedback() {
+        let cases = [
+            "Invalid link: http://",
+            "Unsupported link scheme: mailto",
+            "Link leaves this bundle",
+            "Document not found: sales/missing",
+            "Section not found: missing",
+            "Could not open link: blocked",
+        ];
+        for message in cases {
+            assert_eq!(
+                status_line_with_feedback("Orders", 3, 100, "Select", None, Some(message),),
+                message
+            );
+        }
+    }
+
+    #[test]
+    fn save_error_has_priority_over_navigation_feedback() {
+        assert_eq!(
+            status_line_with_feedback(
+                "Orders",
+                3,
+                100,
+                "Select",
+                Some("disk full"),
+                Some("Section not found: missing"),
+            ),
             "Save failed: disk full"
         );
     }

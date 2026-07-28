@@ -10,6 +10,7 @@ use crate::fps_meter::FpsMeter;
 use crate::icon_button::IconButtonWidgetRefExt;
 use crate::load;
 use crate::nav::NavState;
+use crate::platform_browser::{ExternalUrlAdapter, PlatformBrowser};
 use crate::popup::base::PopupResult;
 use crate::popup::root::{MenuOpen, PopupRoot, PopupSpec};
 use crate::popup::select::{SelectItem, SelectLead};
@@ -58,6 +59,12 @@ fn project_document_header(
         Vec::new()
     };
     (segments, chrome.right_dock)
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct PendingFragment {
+    concept_id: String,
+    fragment: String,
 }
 
 script_mod! {
@@ -688,9 +695,145 @@ pub struct App {
     /// change (same guard shape as `dock_layout`).
     #[rust]
     agent_row_w: f64,
+    #[rust]
+    pending_fragment: Option<PendingFragment>,
 }
 
 impl App {
+    fn set_navigation_message(&mut self, cx: &mut Cx, message: Option<&str>) {
+        if let Some(mut statusbar) = self
+            .ui
+            .widget(cx, ids!(statusbar))
+            .borrow_mut::<crate::statusbar::Statusbar>()
+        {
+            statusbar.set_navigation_message(cx, message);
+        }
+    }
+
+    fn handle_navigation_intent(
+        &mut self,
+        cx: &mut Cx,
+        intent: crate::navigation::NavigationIntent,
+    ) -> bool {
+        let (target, disposition) = match intent {
+            crate::navigation::NavigationIntent::Resolved {
+                target,
+                disposition,
+            } => (target, disposition),
+            crate::navigation::NavigationIntent::MarkdownLink {
+                current_concept_id,
+                href,
+            } => {
+                let target = match crate::navigation::resolve_link(
+                    self.session.okf(),
+                    &current_concept_id,
+                    &href,
+                ) {
+                    Ok(target) => target,
+                    Err(error) => {
+                        self.set_navigation_message(cx, Some(&error.status_message()));
+                        return false;
+                    }
+                };
+                (target, crate::navigation::OpenDisposition::Preview)
+            }
+        };
+        self.navigate_with(cx, target, disposition, &mut PlatformBrowser)
+    }
+
+    fn navigate_with<B: ExternalUrlAdapter>(
+        &mut self,
+        cx: &mut Cx,
+        target: crate::navigation::NavigationTarget,
+        disposition: crate::navigation::OpenDisposition,
+        browser: &mut B,
+    ) -> bool {
+        match target {
+            crate::navigation::NavigationTarget::Document {
+                concept_id,
+                fragment,
+            } => {
+                if self.session.okf().concept(&concept_id).is_none() {
+                    self.set_navigation_message(
+                        cx,
+                        Some(&format!("Document not found: {concept_id}")),
+                    );
+                    return false;
+                }
+                self.pending_fragment = fragment.map(|fragment| PendingFragment {
+                    concept_id: concept_id.clone(),
+                    fragment,
+                });
+                self.transition_document(
+                    cx,
+                    &concept_id,
+                    disposition == crate::navigation::OpenDisposition::Persistent,
+                );
+                cx.redraw_all();
+                self.set_navigation_message(cx, None);
+                true
+            }
+            crate::navigation::NavigationTarget::Directory { address } if address == "/" => {
+                self.nav_state.scope = "/".into();
+                self.nav_state.query.clear();
+                self.nav_state.filter = None;
+                if let Some(mut tree) = self
+                    .ui
+                    .widget(cx, ids!(project_tree))
+                    .borrow_mut::<crate::tree_panel::ProjectTree>()
+                {
+                    tree.open_dock(cx);
+                }
+                self.refresh_nav(cx, true);
+                self.set_navigation_message(cx, None);
+                true
+            }
+            crate::navigation::NavigationTarget::Directory { address } => {
+                let toggled = self
+                    .ui
+                    .widget(cx, ids!(project_tree))
+                    .borrow_mut::<crate::tree_panel::ProjectTree>()
+                    .is_some_and(|mut tree| tree.toggle_directory(cx, &address));
+                if toggled {
+                    self.set_navigation_message(cx, None);
+                }
+                toggled
+            }
+            crate::navigation::NavigationTarget::ExternalUrl(url) => match browser.open(cx, &url) {
+                Ok(()) => {
+                    self.set_navigation_message(cx, None);
+                    true
+                }
+                Err(error) => {
+                    self.set_navigation_message(cx, Some(&format!("Could not open link: {error}")));
+                    false
+                }
+            },
+        }
+    }
+
+    fn apply_pending_fragment(&mut self, cx: &mut Cx) {
+        let Some(pending) = self.pending_fragment.as_ref() else {
+            return;
+        };
+        if self
+            .documents
+            .active_tab()
+            .map_or(true, |tab| tab.concept_id != pending.concept_id)
+        {
+            return;
+        }
+        let fragment = pending.fragment.clone();
+        let found = crate::doc_view::BodyWidgets::new(cx, &self.ui)
+            .scroll_markdown_to_fragment(cx, &fragment);
+        self.pending_fragment = None;
+        if found {
+            self.set_navigation_message(cx, None);
+        } else {
+            self.set_navigation_message(cx, Some(&format!("Section not found: {fragment}")));
+        }
+    }
+
     /// Synchronize shell projections after the document host has completed a
     /// transition. Document content and view-specific chrome stay host-owned.
     fn sync_document_shell(&mut self, cx: &mut Cx) {
@@ -2213,7 +2356,9 @@ impl AppMain for App {
         self.route_narrow_dock_pointer(cx, event, popup_was_open);
 
         self.ui.handle_event(cx, event, &mut Scope::empty());
-
+        if matches!(event, Event::Draw(_)) {
+            self.apply_pending_fragment(cx);
+        }
         // The Window widget marks the entire caption bar (minus the window
         // min/max/close buttons) as an OS window-drag region, which swallows
         // pointer events over the doc-tab strip living there -- tab clicks and
@@ -2301,19 +2446,379 @@ mod tests {
     use super::{
         close_after_save, doc_switcher_items, logo_command_for, next_narrow, open_overlay_contains,
         place_rm_for, prevent_quit_after_failed_save, project_document_header, replace_after_save,
-        should_dismiss_narrow_dock, should_flush_save, BackingTransitionError, LogoCommand,
-        SaveFeedback,
+        should_dismiss_narrow_dock, should_flush_save, App, BackingTransitionError, LogoCommand,
+        PendingFragment, SaveFeedback,
     };
     use crate::doc_tabs::{DocTab, OpenTabs};
     use crate::doc_view::DocumentHeaderChrome;
     use crate::dock::DockState;
     use crate::document::DocumentPresentation;
     use crate::icons::{Icon, IconSet};
-    use crate::navigation::{BreadcrumbSegment, NavigationTarget};
+    use crate::nav::NavState;
+    use crate::navigation::{
+        BreadcrumbSegment, NavigationIntent, NavigationTarget, OpenDisposition,
+    };
+    use crate::platform_browser::ExternalUrlAdapter;
     use crate::popup::conflict_list::ConflictListAction;
     use crate::tree::TreeKind;
     use makepad_widgets::*;
     use std::cell::RefCell;
+
+    #[derive(Default)]
+    struct FakeBrowser {
+        opened: Vec<String>,
+        error: Option<String>,
+    }
+
+    impl ExternalUrlAdapter for FakeBrowser {
+        fn open(&mut self, _cx: &mut Cx, url: &str) -> Result<(), String> {
+            self.opened.push(url.into());
+            self.error.clone().map_or(Ok(()), Err)
+        }
+    }
+
+    fn navigation_app() -> (Cx, App) {
+        let mut cx = Cx::new(Box::new(|_, _| {}));
+        cx.widget_tree_mark_dirty(WidgetUid(0));
+        let mut app = cx.with_vm(App::script_new_with_default);
+        let source = waml::source::SourceBundle::try_from_pairs([
+            ("index.md", "# Root\n\n* [Sales](sales/)\n"),
+            (
+                "sales/index.md",
+                "# Sales\n\n* [Order](order.md)\n* [Customer](customer.md)\n",
+            ),
+            (
+                "sales/order.md",
+                "---\ntype: Runbook\ntitle: Order\n---\n# Order\n",
+            ),
+            (
+                "sales/customer.md",
+                "---\ntype: Runbook\ntitle: Customer\n---\n# Customer\n",
+            ),
+        ])
+        .unwrap();
+        let okf = waml::okf::Bundle::parse(&source).unwrap();
+        let uml = waml::uml::project(&okf);
+        app.session.replace(source, uml);
+        let mut project_tree = cx.with_vm(crate::tree_panel::ProjectTree::script_new_with_default);
+        project_tree.set_view(
+            &mut cx,
+            crate::nav::view(
+                app.session.okf(),
+                app.session.uml_projection(),
+                &NavState::default(),
+            ),
+        );
+        let project_tree = WidgetRef::new_with_inner(Box::new(project_tree));
+        let statusbar = WidgetRef::new_with_inner(Box::new(
+            cx.with_vm(crate::statusbar::Statusbar::script_new_with_default),
+        ));
+        let mut ui = cx.with_vm(View::script_new_with_default);
+        ui.children.push((live_id!(project_tree), project_tree));
+        ui.children.push((live_id!(statusbar), statusbar));
+        app.ui = WidgetRef::new_with_inner(Box::new(ui));
+        (cx, app)
+    }
+
+    #[test]
+    fn navigation_external_target_invokes_only_the_browser_adapter_once() {
+        let (mut cx, mut app) = navigation_app();
+        let mut browser = FakeBrowser::default();
+
+        assert!(app.navigate_with(
+            &mut cx,
+            NavigationTarget::ExternalUrl("https://example.com/docs".into()),
+            OpenDisposition::Preview,
+            &mut browser,
+        ));
+        assert_eq!(browser.opened, vec!["https://example.com/docs"]);
+        assert!(app.documents.tabs().is_empty());
+        assert_eq!(app.nav_state, NavState::default());
+    }
+
+    #[test]
+    fn navigation_browser_failure_preserves_document_and_directory_state() {
+        let (mut cx, mut app) = navigation_app();
+        let mut browser = FakeBrowser::default();
+        assert!(app.navigate_with(
+            &mut cx,
+            NavigationTarget::Document {
+                concept_id: "sales/order".into(),
+                fragment: None,
+            },
+            OpenDisposition::Persistent,
+            &mut browser,
+        ));
+        app.nav_state.scope = "/sales".into();
+        let active = app.documents.active_id();
+        let nav_state = app.nav_state.clone();
+        browser.error = Some("blocked".into());
+
+        assert!(!app.navigate_with(
+            &mut cx,
+            NavigationTarget::ExternalUrl("https://example.com/blocked".into()),
+            OpenDisposition::Preview,
+            &mut browser,
+        ));
+        assert_eq!(browser.opened, vec!["https://example.com/blocked"]);
+        assert_eq!(app.documents.active_id(), active);
+        assert_eq!(app.nav_state, nav_state);
+        let statusbar = app.ui.widget(&mut cx, ids!(statusbar));
+        let statusbar = statusbar
+            .borrow::<crate::statusbar::Statusbar>()
+            .expect("test statusbar is mounted");
+        assert_eq!(
+            crate::statusbar::navigation_message(&statusbar),
+            Some("Could not open link: blocked")
+        );
+        drop(statusbar);
+        app.ui
+            .widget(&mut cx, ids!(statusbar))
+            .borrow_mut::<crate::statusbar::Statusbar>()
+            .expect("test statusbar is mounted")
+            .set_save_error(&mut cx, Some("disk full"));
+        browser.error = None;
+        assert!(app.navigate_with(
+            &mut cx,
+            NavigationTarget::ExternalUrl("https://example.com/retry".into()),
+            OpenDisposition::Preview,
+            &mut browser,
+        ));
+        let statusbar = app.ui.widget(&mut cx, ids!(statusbar));
+        let statusbar = statusbar
+            .borrow::<crate::statusbar::Statusbar>()
+            .expect("test statusbar is mounted");
+        assert_eq!(crate::statusbar::navigation_message(&statusbar), None);
+        assert_eq!(crate::statusbar::save_error(&statusbar), Some("disk full"));
+    }
+
+    #[test]
+    fn navigation_document_preview_persistence_and_repeat_activation_are_stable() {
+        let (mut cx, mut app) = navigation_app();
+        let mut browser = FakeBrowser::default();
+        let order = NavigationTarget::Document {
+            concept_id: "sales/order".into(),
+            fragment: None,
+        };
+
+        assert!(app.navigate_with(
+            &mut cx,
+            order.clone(),
+            OpenDisposition::Preview,
+            &mut browser,
+        ));
+        assert_eq!(app.documents.tabs().len(), 1);
+        assert!(app.documents.tabs()[0].preview);
+
+        assert!(app.navigate_with(
+            &mut cx,
+            order.clone(),
+            OpenDisposition::Persistent,
+            &mut browser,
+        ));
+        assert_eq!(app.documents.tabs().len(), 1);
+        assert!(!app.documents.tabs()[0].preview);
+
+        assert!(app.navigate_with(&mut cx, order, OpenDisposition::Persistent, &mut browser,));
+        assert_eq!(app.documents.tabs().len(), 1);
+        assert!(!app.documents.tabs()[0].preview);
+    }
+
+    #[test]
+    fn navigation_markdown_resolves_only_at_the_app_boundary() {
+        let (mut cx, mut app) = navigation_app();
+
+        assert!(app.handle_navigation_intent(
+            &mut cx,
+            NavigationIntent::MarkdownLink {
+                current_concept_id: "sales/order".into(),
+                href: "./customer.md".into(),
+            },
+        ));
+        assert_eq!(
+            app.documents
+                .active_tab()
+                .map(|tab| tab.concept_id.as_str()),
+            Some("sales/customer")
+        );
+        assert!(app.documents.tabs()[0].preview);
+    }
+
+    #[test]
+    fn navigation_markdown_failures_preserve_document_and_report_exact_status() {
+        let (mut cx, mut app) = navigation_app();
+        let mut browser = FakeBrowser::default();
+        assert!(app.navigate_with(
+            &mut cx,
+            NavigationTarget::Document {
+                concept_id: "sales/order".into(),
+                fragment: None,
+            },
+            OpenDisposition::Persistent,
+            &mut browser,
+        ));
+        let active = app.documents.active_id();
+        let cases = [
+            ("http://", "Invalid link: http://"),
+            ("mailto:a@example.com", "Unsupported link scheme: mailto"),
+            ("../../../escape.md", "Link leaves this bundle"),
+            ("./missing.md", "Document not found: sales/missing"),
+        ];
+
+        for (href, expected) in cases {
+            assert!(!app.handle_navigation_intent(
+                &mut cx,
+                NavigationIntent::MarkdownLink {
+                    current_concept_id: "sales/order".into(),
+                    href: href.into(),
+                },
+            ));
+            assert_eq!(app.documents.active_id(), active);
+            let statusbar = app.ui.widget(&mut cx, ids!(statusbar));
+            let statusbar = statusbar
+                .borrow::<crate::statusbar::Statusbar>()
+                .expect("test statusbar is mounted");
+            assert_eq!(
+                crate::statusbar::navigation_message(&statusbar),
+                Some(expected),
+                "{href}"
+            );
+        }
+    }
+
+    #[test]
+    fn navigation_root_restores_scope_and_clears_query_and_filter() {
+        let (mut cx, mut app) = navigation_app();
+        let mut browser = FakeBrowser::default();
+        app.nav_state = NavState {
+            scope: "/sales".into(),
+            query: "order".into(),
+            filter: Some(TreeKind::Class),
+        };
+
+        assert!(app.navigate_with(
+            &mut cx,
+            NavigationTarget::Directory {
+                address: "/".into(),
+            },
+            OpenDisposition::Preview,
+            &mut browser,
+        ));
+        assert_eq!(app.nav_state, NavState::default());
+        let project_tree = app.ui.widget(&mut cx, ids!(project_tree));
+        let project_tree = project_tree
+            .borrow::<crate::tree_panel::ProjectTree>()
+            .expect("test project tree is mounted");
+        assert_eq!(project_tree.dock_state(), DockState::Pinned);
+    }
+
+    #[test]
+    fn navigation_directory_intents_share_one_app_owned_toggle_path() {
+        let intents = [
+            NavigationIntent::Resolved {
+                target: NavigationTarget::Directory {
+                    address: "/sales".into(),
+                },
+                disposition: OpenDisposition::Preview,
+            },
+            NavigationIntent::Resolved {
+                target: NavigationTarget::Directory {
+                    address: "/sales".into(),
+                },
+                disposition: OpenDisposition::Preview,
+            },
+            NavigationIntent::MarkdownLink {
+                current_concept_id: "sales/order".into(),
+                href: "./".into(),
+            },
+        ];
+
+        for intent in intents {
+            let (mut cx, mut app) = navigation_app();
+            let mut browser = FakeBrowser::default();
+            assert!(app.navigate_with(
+                &mut cx,
+                NavigationTarget::Document {
+                    concept_id: "sales/order".into(),
+                    fragment: None,
+                },
+                OpenDisposition::Persistent,
+                &mut browser,
+            ));
+            app.nav_state.scope = "/sales".into();
+            let active = app.documents.active_id();
+
+            assert!(app.handle_navigation_intent(&mut cx, intent));
+            assert_eq!(app.documents.active_id(), active);
+            assert_eq!(app.nav_state.scope, "/sales");
+        }
+    }
+
+    #[test]
+    fn navigation_cross_document_fragment_remains_pending_until_post_draw_application() {
+        let (mut cx, mut app) = navigation_app();
+        let mut browser = FakeBrowser::default();
+
+        assert!(app.navigate_with(
+            &mut cx,
+            NavigationTarget::Document {
+                concept_id: "sales/customer".into(),
+                fragment: Some("history".into()),
+            },
+            OpenDisposition::Preview,
+            &mut browser,
+        ));
+        assert_eq!(
+            app.pending_fragment,
+            Some(PendingFragment {
+                concept_id: "sales/customer".into(),
+                fragment: "history".into(),
+            })
+        );
+
+        app.apply_pending_fragment(&mut cx);
+        assert_eq!(app.pending_fragment, None);
+        let statusbar = app.ui.widget(&mut cx, ids!(statusbar));
+        let statusbar = statusbar
+            .borrow::<crate::statusbar::Statusbar>()
+            .expect("test statusbar is mounted");
+        assert_eq!(
+            crate::statusbar::navigation_message(&statusbar),
+            Some("Section not found: history")
+        );
+        drop(statusbar);
+        app.apply_pending_fragment(&mut cx);
+        assert_eq!(app.pending_fragment, None);
+    }
+
+    #[test]
+    fn navigation_pending_fragment_waits_for_its_target_document() {
+        let (mut cx, mut app) = navigation_app();
+        let mut browser = FakeBrowser::default();
+        assert!(app.navigate_with(
+            &mut cx,
+            NavigationTarget::Document {
+                concept_id: "sales/order".into(),
+                fragment: None,
+            },
+            OpenDisposition::Preview,
+            &mut browser,
+        ));
+        app.pending_fragment = Some(PendingFragment {
+            concept_id: "sales/customer".into(),
+            fragment: "history".into(),
+        });
+
+        app.apply_pending_fragment(&mut cx);
+
+        assert_eq!(
+            app.pending_fragment,
+            Some(PendingFragment {
+                concept_id: "sales/customer".into(),
+                fragment: "history".into(),
+            })
+        );
+    }
 
     fn tab(id: LiveId, key: &str, title: &str, category: TreeKind, preview: bool) -> DocTab {
         DocTab {

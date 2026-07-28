@@ -47,6 +47,7 @@ mod node_design_editor;
 mod node_style;
 mod okf_documents;
 mod overlay_shell;
+mod platform_browser;
 mod popup;
 mod property_controls;
 mod recent_row;
