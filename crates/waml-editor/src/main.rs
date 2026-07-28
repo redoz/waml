@@ -21,6 +21,7 @@ mod doc_tabs;
 mod doc_view;
 mod dock;
 mod document;
+mod document_header;
 mod document_host;
 mod documents;
 mod edge_labels;
