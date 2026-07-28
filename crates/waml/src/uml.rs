@@ -26,7 +26,8 @@ pub use syntax::{
     LayoutPlacementSyntax, LayoutSectionSyntax, LayoutStandaloneSyntax, LayoutStatementSyntax,
     LifelineSyntax, MarginSyntax, MemberGroupSyntax, MemberSyntax, MessageSyntax,
     MessagesBlockSyntax, NameRefSyntax, OperandRefSyntax, OperandSyntax, RelationshipEndSyntax,
-    RelationshipSyntax, SequenceOperandSyntax, ShapeSyntax, SlotSyntax, SlotValueKind, ValueSyntax,
+    RelationshipSyntax, SequenceFragmentSyntax, SequenceOperandSyntax, ShapeSyntax, SlotSyntax,
+    SlotValueKind, ValueSyntax,
 };
 
 pub(crate) fn recognizes_type(element_type: &crate::model::ElementType) -> bool {

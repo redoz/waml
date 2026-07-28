@@ -8,8 +8,8 @@ pub use ast::{
     LayoutPlacementSyntax, LayoutSectionSyntax, LayoutStandaloneSyntax, LayoutStatementSyntax,
     LifelineSyntax, MarginSyntax, MemberGroupSyntax, MemberLineSyntax, MemberSyntax, MessageSyntax,
     MessagesBlockSyntax, MultiplicitySyntax, NameRefSyntax, OperandRefSyntax, OperandSyntax,
-    RelationshipEndSyntax, RelationshipSyntax, SequenceOperandSyntax, ShapeSyntax, SlotSyntax,
-    SlotValueKind, TypeReferenceSyntax, ValueSyntax,
+    RelationshipEndSyntax, RelationshipSyntax, SequenceFragmentSyntax, SequenceOperandSyntax,
+    ShapeSyntax, SlotSyntax, SlotValueKind, TypeReferenceSyntax, ValueSyntax,
 };
 pub use kind::{UmlSyntaxDiagnosticCode, UmlSyntaxKind};
 #[derive(Debug)]

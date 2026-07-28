@@ -104,16 +104,12 @@ pub fn parse(text: SourceText, structure: &MarkdownStructureMap) -> Arc<SyntaxTr
                     if line.trim().is_empty() {
                         section.push(raw(&factory, &text, line_start, line_end));
                     } else {
-                        section.push(behavior_item(
+                        section.push(lifeline_line(
                             &factory,
                             &text,
                             source,
                             line_start,
                             line_end,
-                            UmlSyntaxKind::Lifeline,
-                            crate::grammar::parse_lifeline_line(line).is_ok(),
-                            UmlSyntaxDiagnosticCode::MalformedLifeline,
-                            "malformed lifeline",
                             &mut diagnostics,
                         ));
                     }
@@ -355,7 +351,7 @@ fn flow_block(
         if let Some(heading) = nested {
             if heading.level == 3 {
                 close(&mut current, &mut roots, &mut have_node);
-                current.extend(behavior_tokens(f, text, source, start, end, false));
+                current.extend(flow_heading(f, text, source, start, end, diags));
                 have_node = true;
                 notes = false;
                 continue;
@@ -367,7 +363,7 @@ fn flow_block(
                     .trim()
                     .eq_ignore_ascii_case("notes")
             {
-                current.extend(behavior_tokens(f, text, source, start, end, false));
+                current.push(raw(f, text, start, end));
                 notes = true;
                 continue;
             }
@@ -389,53 +385,25 @@ fn flow_block(
             ));
             continue;
         }
-        let valid = if notes {
-            trimmed.trim_start().starts_with("- ")
-        } else {
-            crate::grammar::parse_flow_bullet(trimmed).is_ok()
-        };
-        if valid {
-            let kind = if !notes
-                && matches!(
-                    crate::grammar::parse_flow_bullet(trimmed),
-                    Ok(crate::syntax::FlowBullet::Transition(_))
-                ) {
-                UmlSyntaxKind::FlowTransition
-            } else {
-                UmlSyntaxKind::Value
-            };
-            current.push(GreenElement::Node(
-                f.node(kind, behavior_tokens(f, text, source, start, end, true))
-                    .unwrap(),
-            ));
+        if notes && trimmed.trim_start().starts_with("- ") {
+            current.push(flow_value_line(f, text, source, start, end));
+        } else if !notes {
+            current.push(flow_line(f, text, source, start, end, diags));
         } else {
             let message = if notes {
                 "malformed flow note"
             } else {
                 "malformed flow bullet"
             };
-            if !notes && trimmed.contains("transitions") {
-                current.push(recovery_typed(
-                    f,
-                    text,
-                    start,
-                    end,
-                    UmlSyntaxKind::FlowTransition,
-                    UmlSyntaxDiagnosticCode::MalformedFlow,
-                    message,
-                    diags,
-                ));
-            } else {
-                current.push(recovery_line(
-                    f,
-                    text,
-                    start,
-                    end,
-                    UmlSyntaxDiagnosticCode::MalformedFlow,
-                    message,
-                    diags,
-                ));
-            }
+            current.push(recovery_line(
+                f,
+                text,
+                start,
+                end,
+                UmlSyntaxDiagnosticCode::MalformedFlow,
+                message,
+                diags,
+            ));
         }
     }
     close(&mut current, &mut roots, &mut have_node);
@@ -464,50 +432,25 @@ fn sequence_items(
         }
         let leading = line.len() - line.trim_start_matches(' ').len();
         let malformed_indent = leading % 2 != 0 || line.starts_with('\t');
-        let body = line.trim_start();
-        let (kind, valid, code, message) =
-            if body == "- par" || body.contains(" coregion") || body.contains(" gate ") {
-                (
-                    UmlSyntaxKind::SkippedTokensSyntax,
-                    false,
-                    UmlSyntaxDiagnosticCode::UnsupportedSequenceForm,
-                    "unsupported sequence form",
-                )
-            } else if body == "- alt" || body == "- opt" || body == "- loop" {
-                (
-                    UmlSyntaxKind::SequenceFragment,
-                    true,
-                    UmlSyntaxDiagnosticCode::MalformedMessage,
-                    "",
-                )
-            } else if body.starts_with("- when ") || body == "- else" {
-                (
-                    UmlSyntaxKind::SequenceOperand,
-                    leading >= 2,
-                    UmlSyntaxDiagnosticCode::MalformedMessage,
-                    "sequence operand outside a fragment",
-                )
-            } else {
-                let parsed = crate::grammar::parse_message_line(body);
-                let self_message = parsed
-                    .as_ref()
-                    .is_ok_and(|message| message.from == message.to);
-                (
-                    UmlSyntaxKind::Message,
-                    parsed.is_ok() && !self_message,
-                    if self_message {
-                        UmlSyntaxDiagnosticCode::UnsupportedSequenceForm
-                    } else {
-                        UmlSyntaxDiagnosticCode::MalformedMessage
-                    },
-                    if self_message {
-                        "self messages are not supported"
-                    } else {
-                        "malformed message"
-                    },
-                )
-            };
-        if malformed_indent {
+        let significant_start = start + leading;
+        let content_end = start + line.len();
+        let body = line
+            .trim_start()
+            .strip_prefix("- ")
+            .unwrap_or(line.trim_start());
+        if unsupported_sequence_body(body) {
+            items.push(recovery_line_at(
+                f,
+                text,
+                start,
+                end,
+                significant_start,
+                content_end,
+                UmlSyntaxDiagnosticCode::UnsupportedSequenceForm,
+                "unsupported sequence form",
+                diags,
+            ));
+        } else if malformed_indent {
             items.push(recovery_line(
                 f,
                 text,
@@ -517,56 +460,138 @@ fn sequence_items(
                 "sequence indentation must use pairs of spaces",
                 diags,
             ));
-        } else if valid {
-            items.push(GreenElement::Node(
-                f.node(kind, behavior_tokens(f, text, source, start, end, true))
-                    .unwrap(),
-            ));
-        } else if kind == UmlSyntaxKind::Message {
-            items.push(recovery_typed(
-                f, text, start, end, kind, code, message, diags,
+        } else if matches!(body, "alt" | "opt" | "loop") {
+            items.push(sequence_fragment(f, text, source, start, end));
+        } else if body.starts_with("when ") || body == "else" {
+            items.push(sequence_operand(
+                f,
+                text,
+                source,
+                start,
+                end,
+                leading >= 2,
+                diags,
             ));
         } else {
-            items.push(recovery_line(f, text, start, end, code, message, diags));
+            let message = sequence_message(f, text, source, start, end, diags);
+            if message_self_target(&message) {
+                items.push(recovery_line_at(
+                    f,
+                    text,
+                    start,
+                    end,
+                    significant_start,
+                    content_end,
+                    UmlSyntaxDiagnosticCode::UnsupportedSequenceForm,
+                    "self messages are not supported",
+                    diags,
+                ));
+            } else {
+                items.push(message);
+            }
         }
     }
     items
 }
 
-fn behavior_item(
+fn lifeline_line(
     f: &GreenFactory<UmlLanguage>,
     text: &SourceText,
     source: &str,
     start: usize,
     end: usize,
-    kind: UmlSyntaxKind,
-    valid: bool,
-    code: UmlSyntaxDiagnosticCode,
-    message: &'static str,
     diags: &mut Vec<TreeDiagnostic<UmlSyntaxDiagnosticCode>>,
 ) -> GreenElement<UmlLanguage> {
-    if valid {
-        GreenElement::Node(
-            f.node(kind, behavior_tokens(f, text, source, start, end, true))
+    let (lead, content_end, newline) = behavior_bounds(source, start, end);
+    let has_bullet = source.get(lead..lead + 1) == Some("-");
+    let bullet_end = if has_bullet { lead + 1 } else { lead };
+    let mut children = vec![if has_bullet {
+        token(f, text, start, lead, bullet_end, UmlSyntaxKind::BulletToken)
+    } else {
+        let leading: Vec<_> = (start < lead)
+            .then(|| {
+                f.trivia(TriviaKind::Whitespace, slice(text, start, lead))
+                    .unwrap()
+            })
+            .into_iter()
+            .collect();
+        GreenElement::Token(
+            f.missing_token_with_leading(UmlSyntaxKind::BulletToken, leading)
                 .unwrap(),
         )
-    } else {
-        recovery_typed(f, text, start, end, kind, code, message, diags)
+    }];
+    let mut p = skip_ws(source, bullet_end, content_end);
+    let (link, next) = behavior_link(
+        f,
+        text,
+        source,
+        p,
+        content_end,
+        bullet_end,
+        UmlSyntaxDiagnosticCode::MalformedLifeline,
+        "malformed lifeline link",
+        diags,
+    );
+    children.push(link);
+    p = next;
+    if !has_bullet {
+        diags.push(diag(
+            UmlSyntaxDiagnosticCode::MalformedLifeline,
+            lead,
+            content_end,
+            "missing lifeline bullet",
+        ));
     }
-}
-
-fn recovery_typed(
-    f: &GreenFactory<UmlLanguage>,
-    text: &SourceText,
-    start: usize,
-    end: usize,
-    kind: UmlSyntaxKind,
-    code: UmlSyntaxDiagnosticCode,
-    message: &'static str,
-    diags: &mut Vec<TreeDiagnostic<UmlSyntaxDiagnosticCode>>,
-) -> GreenElement<UmlLanguage> {
-    let recovery = recovery_line(f, text, start, end, code, message, diags);
-    GreenElement::Node(f.node(kind, [recovery]).unwrap())
+    let as_start = skip_ws(source, p, content_end);
+    if keyword_at(source, as_start, content_end, "as") {
+        children.push(token(
+            f,
+            text,
+            p,
+            as_start,
+            as_start + 2,
+            UmlSyntaxKind::AsToken,
+        ));
+        let alias_start = skip_ws(source, as_start + 2, content_end);
+        let alias_end = scan_word(source, alias_start, content_end);
+        children.push(slot(
+            f,
+            UmlSyntaxKind::LifelineAlias,
+            if alias_start == alias_end {
+                GreenElement::Token(f.missing_token(UmlSyntaxKind::AliasToken))
+            } else {
+                token(
+                    f,
+                    text,
+                    as_start + 2,
+                    alias_start,
+                    alias_end,
+                    UmlSyntaxKind::AliasToken,
+                )
+            },
+        ));
+        p = alias_end;
+    } else {
+        p = as_start;
+    }
+    if p < content_end {
+        children.push(skipped(
+            f,
+            text,
+            p,
+            content_end,
+            UmlSyntaxDiagnosticCode::MalformedLifeline,
+        ));
+        diags.push(diag(
+            UmlSyntaxDiagnosticCode::MalformedLifeline,
+            lead,
+            content_end,
+            "malformed lifeline",
+        ));
+        p = content_end;
+    }
+    push_newline(f, text, &mut children, p, newline, end);
+    GreenElement::Node(f.node(UmlSyntaxKind::Lifeline, children).unwrap())
 }
 
 fn recovery_line(
@@ -578,7 +603,21 @@ fn recovery_line(
     message: &'static str,
     diags: &mut Vec<TreeDiagnostic<UmlSyntaxDiagnosticCode>>,
 ) -> GreenElement<UmlLanguage> {
-    diags.push(diag(code, start, end, message));
+    recovery_line_at(f, text, start, end, start, end, code, message, diags)
+}
+
+fn recovery_line_at(
+    f: &GreenFactory<UmlLanguage>,
+    text: &SourceText,
+    start: usize,
+    end: usize,
+    diagnostic_start: usize,
+    diagnostic_end: usize,
+    code: UmlSyntaxDiagnosticCode,
+    message: &'static str,
+    diags: &mut Vec<TreeDiagnostic<UmlSyntaxDiagnosticCode>>,
+) -> GreenElement<UmlLanguage> {
+    diags.push(diag(code, diagnostic_start, diagnostic_end, message));
     GreenElement::Node(
         f.node(
             UmlSyntaxKind::SkippedTokensSyntax,
@@ -591,122 +630,919 @@ fn recovery_line(
     )
 }
 
-fn behavior_tokens(
+fn flow_heading(
     f: &GreenFactory<UmlLanguage>,
     text: &SourceText,
     source: &str,
     start: usize,
     end: usize,
-    bullet: bool,
+    diags: &mut Vec<TreeDiagnostic<UmlSyntaxDiagnosticCode>>,
 ) -> Vec<GreenElement<UmlLanguage>> {
-    let newline_start = source[start..end]
-        .find('\n')
-        .map(|offset| start + offset)
-        .unwrap_or(end);
-    let content_end = source[start..newline_start].trim_end_matches('\r').len() + start;
-    let leading = skip_ws(source, start, content_end);
-    let mut children = Vec::new();
-    let mut at = leading;
-    if bullet && at < content_end && source.as_bytes()[at] == b'-' {
-        children.push(token(
+    let (lead, content_end, newline) = behavior_bounds(source, start, end);
+    let markers = source[lead..content_end]
+        .bytes()
+        .take_while(|byte| *byte == b'#')
+        .count();
+    let mut children = vec![token(
+        f,
+        text,
+        start,
+        lead,
+        lead + markers,
+        UmlSyntaxKind::HeadingMarkerToken,
+    )];
+    let body = skip_ws(source, lead + markers, content_end);
+    let first_end = scan_word(source, body, content_end);
+    let first = &source[body..first_end];
+    let (kind, identity_start) = if crate::model::FlowNodeKind::from_keyword(first).is_some() {
+        children.push(slot(
+            f,
+            UmlSyntaxKind::FlowNodeKindSlot,
+            token(
+                f,
+                text,
+                lead + markers,
+                body,
+                first_end,
+                UmlSyntaxKind::NodeKindToken,
+            ),
+        ));
+        (Some(first), skip_ws(source, first_end, content_end))
+    } else {
+        (None, body)
+    };
+    let mut p = identity_start;
+    if kind == Some("object") && p < content_end && source.as_bytes()[p] == b'[' {
+        let (link, next) = behavior_link(
             f,
             text,
-            start,
-            at,
-            at + 1,
-            UmlSyntaxKind::BulletToken,
-        ));
-        at += 1;
-    }
-    let mut word_index = 0usize;
-    let mut previous = "";
-    while at < content_end {
-        let word = skip_ws(source, at, content_end);
-        if word >= content_end {
-            break;
-        }
-        let word_end = source[word..content_end]
-            .find(char::is_whitespace)
-            .map(|offset| word + offset)
-            .unwrap_or(content_end);
-        let spelling = &source[word..word_end];
-        let message_verb = matches!(
-            previous,
-            "calls" | "sends" | "replies" | "creates" | "destroys"
+            source,
+            p,
+            content_end,
+            first_end,
+            UmlSyntaxDiagnosticCode::MalformedFlow,
+            "malformed object-node link",
+            diags,
         );
-        let kind = if spelling.starts_with('[')
-            || previous == "to"
-            || message_verb
-            || (bullet
-                && word_index == 0
-                && !matches!(
-                    spelling,
-                    "alt"
-                        | "opt"
-                        | "loop"
-                        | "when"
-                        | "else"
-                        | "on"
-                        | "transitions"
-                        | "entry:"
-                        | "do:"
-                        | "exit:"
-                        | "refines"
-                        | "partition:"
-                )) {
-            UmlSyntaxKind::TargetToken
-        } else if spelling.starts_with('`') {
-            UmlSyntaxKind::ExpressionToken
-        } else if matches!(
-            spelling,
-            "initial"
-                | "final"
-                | "decision"
-                | "merge"
-                | "fork"
-                | "join"
-                | "object"
-                | "entry:"
-                | "do:"
-                | "exit:"
-                | "refines"
-                | "partition:"
-                | "transitions"
-        ) {
-            UmlSyntaxKind::FlowKeywordToken
-        } else if matches!(
-            spelling,
-            "calls"
-                | "sends"
-                | "replies"
-                | "creates"
-                | "destroys"
-                | "alt"
-                | "opt"
-                | "loop"
-                | "when"
-                | "else"
-        ) {
-            UmlSyntaxKind::MessageKeywordToken
-        } else {
-            UmlSyntaxKind::IdentifierToken
-        };
-        children.push(token(f, text, at, word, word_end, kind));
-        previous = spelling;
-        word_index += 1;
-        at = word_end;
+        children.push(GreenElement::Node(
+            f.node(UmlSyntaxKind::FlowIdentity, [link]).unwrap(),
+        ));
+        p = next;
+    } else if p < content_end {
+        children.push(GreenElement::Node(
+            f.node(
+                UmlSyntaxKind::FlowIdentity,
+                [token(
+                    f,
+                    text,
+                    if kind.is_some() {
+                        first_end
+                    } else {
+                        lead + markers
+                    },
+                    p,
+                    content_end,
+                    UmlSyntaxKind::IdentityToken,
+                )],
+            )
+            .unwrap(),
+        ));
+        p = content_end;
+    } else {
+        children.push(GreenElement::Node(
+            f.node(
+                UmlSyntaxKind::FlowIdentity,
+                [GreenElement::Token(
+                    f.missing_token(UmlSyntaxKind::IdentityToken),
+                )],
+            )
+            .unwrap(),
+        ));
+        diags.push(diag(
+            UmlSyntaxDiagnosticCode::MalformedFlow,
+            body,
+            content_end,
+            "missing flow node identity",
+        ));
     }
-    if content_end < end {
-        children.push(token(
+    if p < content_end {
+        children.push(skipped(
+            f,
+            text,
+            p,
+            content_end,
+            UmlSyntaxDiagnosticCode::MalformedFlow,
+        ));
+        diags.push(diag(
+            UmlSyntaxDiagnosticCode::MalformedFlow,
+            p,
+            content_end,
+            "unexpected flow heading content",
+        ));
+        p = content_end;
+    }
+    push_newline(f, text, &mut children, p, newline, end);
+    children
+}
+
+fn flow_value_line(
+    f: &GreenFactory<UmlLanguage>,
+    text: &SourceText,
+    source: &str,
+    start: usize,
+    end: usize,
+) -> GreenElement<UmlLanguage> {
+    let (lead, content_end, newline) = behavior_bounds(source, start, end);
+    let mut children = vec![token(
+        f,
+        text,
+        start,
+        lead,
+        lead + 1,
+        UmlSyntaxKind::BulletToken,
+    )];
+    let value_start = skip_ws(source, lead + 1, content_end);
+    children.push(slot(
+        f,
+        UmlSyntaxKind::FlowNoteValue,
+        if value_start < content_end {
+            token(
+                f,
+                text,
+                lead + 1,
+                value_start,
+                content_end,
+                UmlSyntaxKind::IdentifierToken,
+            )
+        } else {
+            GreenElement::Token(f.missing_token(UmlSyntaxKind::IdentifierToken))
+        },
+    ));
+    push_newline(f, text, &mut children, content_end, newline, end);
+    GreenElement::Node(f.node(UmlSyntaxKind::Value, children).unwrap())
+}
+
+fn flow_line(
+    f: &GreenFactory<UmlLanguage>,
+    text: &SourceText,
+    source: &str,
+    start: usize,
+    end: usize,
+    diags: &mut Vec<TreeDiagnostic<UmlSyntaxDiagnosticCode>>,
+) -> GreenElement<UmlLanguage> {
+    let (_, content_end, _) = behavior_bounds(source, start, end);
+    let lead = skip_ws(source, start, content_end);
+    let body = skip_ws(source, (lead + 1).min(content_end), content_end);
+    let word_end = scan_word(source, body, content_end);
+    let word = &source[body..word_end];
+    if matches!(word, "entry:" | "do:" | "exit:" | "refines" | "partition:") {
+        flow_internal(f, text, source, start, end, diags)
+    } else {
+        flow_transition(f, text, source, start, end, diags)
+    }
+}
+
+fn flow_internal(
+    f: &GreenFactory<UmlLanguage>,
+    text: &SourceText,
+    source: &str,
+    start: usize,
+    end: usize,
+    diags: &mut Vec<TreeDiagnostic<UmlSyntaxDiagnosticCode>>,
+) -> GreenElement<UmlLanguage> {
+    let (lead, content_end, newline) = behavior_bounds(source, start, end);
+    let mut children = vec![token(
+        f,
+        text,
+        start,
+        lead,
+        lead + 1,
+        UmlSyntaxKind::BulletToken,
+    )];
+    let p = skip_ws(source, lead + 1, content_end);
+    let word_end = scan_word(source, p, content_end);
+    let word = &source[p..word_end];
+    let mut at = word_end;
+    let mut valid = true;
+    match word {
+        "entry:" | "do:" | "exit:" => {
+            let colon = word_end - 1;
+            children.push(token(
+                f,
+                text,
+                lead + 1,
+                p,
+                colon,
+                UmlSyntaxKind::InternalKeywordToken,
+            ));
+            children.push(token(
+                f,
+                text,
+                colon,
+                colon,
+                word_end,
+                UmlSyntaxKind::ColonToken,
+            ));
+            let value = skip_ws(source, word_end, content_end);
+            if let Some(expr_end) = scan_backtick(source, value, content_end) {
+                children.push(slot(
+                    f,
+                    UmlSyntaxKind::FlowInternalValue,
+                    token(
+                        f,
+                        text,
+                        word_end,
+                        value,
+                        expr_end,
+                        UmlSyntaxKind::ExpressionToken,
+                    ),
+                ));
+                at = expr_end;
+            } else {
+                children.push(slot(
+                    f,
+                    UmlSyntaxKind::FlowInternalValue,
+                    GreenElement::Token(f.missing_token(UmlSyntaxKind::ExpressionToken)),
+                ));
+                at = value;
+                valid = false;
+            }
+        }
+        "refines" => {
+            children.push(token(
+                f,
+                text,
+                lead + 1,
+                p,
+                word_end,
+                UmlSyntaxKind::InternalKeywordToken,
+            ));
+            let link_start = skip_ws(source, word_end, content_end);
+            let (link, next) = behavior_link(
+                f,
+                text,
+                source,
+                link_start,
+                content_end,
+                word_end,
+                UmlSyntaxDiagnosticCode::MalformedFlow,
+                "malformed refinement link",
+                diags,
+            );
+            children.push(link);
+            at = next;
+            valid = link_start < content_end && source.as_bytes()[link_start] == b'[';
+        }
+        "partition:" => {
+            let colon = word_end - 1;
+            children.push(token(
+                f,
+                text,
+                lead + 1,
+                p,
+                colon,
+                UmlSyntaxKind::InternalKeywordToken,
+            ));
+            children.push(token(
+                f,
+                text,
+                colon,
+                colon,
+                word_end,
+                UmlSyntaxKind::ColonToken,
+            ));
+            let value = skip_ws(source, word_end, content_end);
+            if value < content_end {
+                children.push(slot(
+                    f,
+                    UmlSyntaxKind::FlowInternalValue,
+                    token(
+                        f,
+                        text,
+                        word_end,
+                        value,
+                        content_end,
+                        UmlSyntaxKind::IdentifierToken,
+                    ),
+                ));
+                at = content_end;
+            } else {
+                children.push(slot(
+                    f,
+                    UmlSyntaxKind::FlowInternalValue,
+                    GreenElement::Token(f.missing_token(UmlSyntaxKind::IdentifierToken)),
+                ));
+                valid = false;
+            }
+        }
+        _ => {
+            children.push(GreenElement::Token(
+                f.missing_token(UmlSyntaxKind::InternalKeywordToken),
+            ));
+            at = p;
+            valid = false;
+        }
+    }
+    if at < content_end {
+        children.push(skipped(
             f,
             text,
             at,
             content_end,
+            UmlSyntaxDiagnosticCode::MalformedFlow,
+        ));
+        at = content_end;
+        valid = false;
+    }
+    if !valid {
+        diags.push(diag(
+            UmlSyntaxDiagnosticCode::MalformedFlow,
+            lead,
+            content_end,
+            "malformed flow bullet",
+        ));
+    }
+    push_newline(f, text, &mut children, at, newline, end);
+    GreenElement::Node(f.node(UmlSyntaxKind::FlowInternal, children).unwrap())
+}
+
+fn flow_transition(
+    f: &GreenFactory<UmlLanguage>,
+    text: &SourceText,
+    source: &str,
+    start: usize,
+    end: usize,
+    diags: &mut Vec<TreeDiagnostic<UmlSyntaxDiagnosticCode>>,
+) -> GreenElement<UmlLanguage> {
+    let (lead, content_end, newline) = behavior_bounds(source, start, end);
+    let mut children = vec![token(
+        f,
+        text,
+        start,
+        lead,
+        lead + 1,
+        UmlSyntaxKind::BulletToken,
+    )];
+    let mut owned = lead + 1;
+    let mut p = skip_ws(source, owned, content_end);
+    let mut valid = source.get(lead..lead + 1) == Some("-");
+    if keyword_at(source, p, content_end, "on") {
+        children.push(token(
+            f,
+            text,
+            lead + 1,
+            p,
+            p + 2,
+            UmlSyntaxKind::FlowKeywordToken,
+        ));
+        owned = p + 2;
+        let expr = skip_ws(source, p + 2, content_end);
+        if let Some(q) = scan_backtick(source, expr, content_end) {
+            children.push(slot(
+                f,
+                UmlSyntaxKind::FlowTrigger,
+                token(f, text, owned, expr, q, UmlSyntaxKind::TriggerToken),
+            ));
+            owned = q;
+            p = skip_ws(source, q, content_end);
+        } else {
+            children.push(slot(
+                f,
+                UmlSyntaxKind::FlowTrigger,
+                GreenElement::Token(f.missing_token(UmlSyntaxKind::TriggerToken)),
+            ));
+            p = expr;
+            valid = false;
+        }
+    }
+    if keyword_at(source, p, content_end, "when") {
+        children.push(token(
+            f,
+            text,
+            owned,
+            p,
+            p + 4,
+            UmlSyntaxKind::FlowKeywordToken,
+        ));
+        owned = p + 4;
+        let expr = skip_ws(source, p + 4, content_end);
+        if let Some(q) = scan_backtick(source, expr, content_end) {
+            children.push(slot(
+                f,
+                UmlSyntaxKind::FlowGuard,
+                token(f, text, owned, expr, q, UmlSyntaxKind::GuardToken),
+            ));
+            owned = q;
+            p = skip_ws(source, q, content_end);
+        } else {
+            children.push(slot(
+                f,
+                UmlSyntaxKind::FlowGuard,
+                GreenElement::Token(f.missing_token(UmlSyntaxKind::GuardToken)),
+            ));
+            p = expr;
+            valid = false;
+        }
+    } else if keyword_at(source, p, content_end, "else") {
+        children.push(token(f, text, owned, p, p + 4, UmlSyntaxKind::ElseToken));
+        owned = p + 4;
+        p = skip_ws(source, p + 4, content_end);
+    }
+    if keyword_at(source, p, content_end, "transitions") {
+        children.push(token(
+            f,
+            text,
+            owned,
+            p,
+            p + 11,
+            UmlSyntaxKind::FlowKeywordToken,
+        ));
+        owned = p + 11;
+        p = skip_ws(source, p + 11, content_end);
+    } else {
+        children.push(GreenElement::Token(
+            f.missing_token(UmlSyntaxKind::FlowKeywordToken),
+        ));
+        valid = false;
+    }
+    if keyword_at(source, p, content_end, "to") {
+        children.push(token(f, text, owned, p, p + 2, UmlSyntaxKind::ToToken));
+        owned = p + 2;
+        p = skip_ws(source, p + 2, content_end);
+    } else {
+        children.push(GreenElement::Token(f.missing_token(UmlSyntaxKind::ToToken)));
+        valid = false;
+    }
+    let target_end = find_clause(source, p, content_end, &[" carries ", ": "]);
+    let target_trimmed = trim_end_ws(source, p, target_end);
+    if p < target_trimmed && source.as_bytes()[p] == b'[' {
+        let (link, next) = behavior_link(
+            f,
+            text,
+            source,
+            p,
+            target_trimmed,
+            owned,
+            UmlSyntaxDiagnosticCode::MalformedFlow,
+            "malformed transition target",
+            diags,
+        );
+        children.push(slot(f, UmlSyntaxKind::FlowTarget, link));
+        owned = next;
+        p = next;
+    } else if p < target_trimmed {
+        children.push(slot(
+            f,
+            UmlSyntaxKind::FlowTarget,
+            token(
+                f,
+                text,
+                owned,
+                p,
+                target_trimmed,
+                UmlSyntaxKind::TargetToken,
+            ),
+        ));
+        owned = target_trimmed;
+        p = target_trimmed;
+    } else {
+        children.push(slot(
+            f,
+            UmlSyntaxKind::FlowTarget,
+            GreenElement::Token(f.missing_token(UmlSyntaxKind::TargetToken)),
+        ));
+        valid = false;
+    }
+    p = skip_ws(source, p, content_end);
+    if keyword_at(source, p, content_end, "carries") {
+        children.push(token(
+            f,
+            text,
+            owned,
+            p,
+            p + 7,
+            UmlSyntaxKind::FlowKeywordToken,
+        ));
+        owned = p + 7;
+        let link_start = skip_ws(source, p + 7, content_end);
+        let link_end = source[link_start..content_end]
+            .find(": ")
+            .map(|offset| link_start + offset)
+            .unwrap_or(content_end);
+        let (link, next) = behavior_link(
+            f,
+            text,
+            source,
+            link_start,
+            link_end,
+            owned,
+            UmlSyntaxDiagnosticCode::MalformedFlow,
+            "malformed carried-type link",
+            diags,
+        );
+        children.push(link);
+        owned = next;
+        valid &= link_start < link_end && source.as_bytes()[link_start] == b'[';
+        p = skip_ws(source, next, content_end);
+    }
+    if p < content_end && source.as_bytes()[p] == b':' {
+        children.push(token(f, text, owned, p, p + 1, UmlSyntaxKind::ColonToken));
+        owned = p + 1;
+        let expr = skip_ws(source, p + 1, content_end);
+        if let Some(q) = scan_backtick(source, expr, content_end) {
+            children.push(slot(
+                f,
+                UmlSyntaxKind::FlowEffect,
+                token(f, text, owned, expr, q, UmlSyntaxKind::EffectToken),
+            ));
+            owned = q;
+            p = q;
+        } else {
+            children.push(slot(
+                f,
+                UmlSyntaxKind::FlowEffect,
+                GreenElement::Token(f.missing_token(UmlSyntaxKind::EffectToken)),
+            ));
+            p = expr;
+            valid = false;
+        }
+    }
+    if p < content_end {
+        children.push(skipped(
+            f,
+            text,
+            owned,
+            content_end,
+            UmlSyntaxDiagnosticCode::MalformedFlow,
+        ));
+        owned = content_end;
+        p = content_end;
+        valid = false;
+    }
+    if !valid {
+        diags.push(diag(
+            UmlSyntaxDiagnosticCode::MalformedFlow,
+            lead,
+            content_end,
+            "malformed transition",
+        ));
+    }
+    push_newline(f, text, &mut children, owned, newline, end);
+    GreenElement::Node(f.node(UmlSyntaxKind::FlowTransition, children).unwrap())
+}
+
+fn sequence_fragment(
+    f: &GreenFactory<UmlLanguage>,
+    text: &SourceText,
+    source: &str,
+    start: usize,
+    end: usize,
+) -> GreenElement<UmlLanguage> {
+    let (lead, content_end, newline) = behavior_bounds(source, start, end);
+    let kind_start = skip_ws(source, lead + 1, content_end);
+    let mut children = vec![
+        token(f, text, start, lead, lead + 1, UmlSyntaxKind::BulletToken),
+        slot(
+            f,
+            UmlSyntaxKind::FragmentKind,
+            token(
+                f,
+                text,
+                lead + 1,
+                kind_start,
+                content_end,
+                UmlSyntaxKind::FragmentKindToken,
+            ),
+        ),
+    ];
+    push_newline(f, text, &mut children, content_end, newline, end);
+    GreenElement::Node(f.node(UmlSyntaxKind::SequenceFragment, children).unwrap())
+}
+
+fn sequence_operand(
+    f: &GreenFactory<UmlLanguage>,
+    text: &SourceText,
+    source: &str,
+    start: usize,
+    end: usize,
+    nested: bool,
+    diags: &mut Vec<TreeDiagnostic<UmlSyntaxDiagnosticCode>>,
+) -> GreenElement<UmlLanguage> {
+    let (lead, content_end, newline) = behavior_bounds(source, start, end);
+    let keyword = skip_ws(source, lead + 1, content_end);
+    let keyword_end = scan_word(source, keyword, content_end);
+    let mut children = vec![
+        token(f, text, start, lead, lead + 1, UmlSyntaxKind::BulletToken),
+        token(
+            f,
+            text,
+            lead + 1,
+            keyword,
+            keyword_end,
+            UmlSyntaxKind::OperandKeywordToken,
+        ),
+    ];
+    let mut p = keyword_end;
+    let mut valid = nested;
+    if &source[keyword..keyword_end] == "when" {
+        let guard = skip_ws(source, keyword_end, content_end);
+        if let Some(q) = scan_backtick(source, guard, content_end) {
+            children.push(slot(
+                f,
+                UmlSyntaxKind::OperandGuard,
+                token(f, text, keyword_end, guard, q, UmlSyntaxKind::GuardToken),
+            ));
+            p = q;
+        } else {
+            children.push(slot(
+                f,
+                UmlSyntaxKind::OperandGuard,
+                GreenElement::Token(f.missing_token(UmlSyntaxKind::GuardToken)),
+            ));
+            p = guard;
+            valid = false;
+        }
+    }
+    if p < content_end {
+        children.push(skipped(
+            f,
+            text,
+            p,
+            content_end,
+            UmlSyntaxDiagnosticCode::MalformedMessage,
+        ));
+        p = content_end;
+        valid = false;
+    }
+    if !valid {
+        diags.push(diag(
+            UmlSyntaxDiagnosticCode::MalformedMessage,
+            lead,
+            content_end,
+            "malformed sequence operand",
+        ));
+    }
+    push_newline(f, text, &mut children, p, newline, end);
+    GreenElement::Node(f.node(UmlSyntaxKind::SequenceOperand, children).unwrap())
+}
+
+fn sequence_message(
+    f: &GreenFactory<UmlLanguage>,
+    text: &SourceText,
+    source: &str,
+    start: usize,
+    end: usize,
+    diags: &mut Vec<TreeDiagnostic<UmlSyntaxDiagnosticCode>>,
+) -> GreenElement<UmlLanguage> {
+    let (lead, content_end, newline) = behavior_bounds(source, start, end);
+    let mut children = vec![token(
+        f,
+        text,
+        start,
+        lead,
+        lead + 1,
+        UmlSyntaxKind::BulletToken,
+    )];
+    let source_start = skip_ws(source, lead + 1, content_end);
+    let source_end = scan_word(source, source_start, content_end);
+    let mut valid = source_start < source_end;
+    children.push(slot(
+        f,
+        UmlSyntaxKind::MessageSource,
+        if valid {
+            token(
+                f,
+                text,
+                lead + 1,
+                source_start,
+                source_end,
+                UmlSyntaxKind::SourceToken,
+            )
+        } else {
+            GreenElement::Token(f.missing_token(UmlSyntaxKind::SourceToken))
+        },
+    ));
+    let verb_start = skip_ws(source, source_end, content_end);
+    let verb_end = scan_word(source, verb_start, content_end);
+    let verb_valid = crate::model::MessageVerb::parse(&source[verb_start..verb_end]).is_some();
+    children.push(slot(
+        f,
+        UmlSyntaxKind::MessageVerb,
+        if verb_valid {
+            token(
+                f,
+                text,
+                source_end,
+                verb_start,
+                verb_end,
+                UmlSyntaxKind::VerbToken,
+            )
+        } else {
+            valid = false;
+            GreenElement::Token(f.missing_token(UmlSyntaxKind::VerbToken))
+        },
+    ));
+    let target_start = skip_ws(
+        source,
+        if verb_valid { verb_end } else { verb_start },
+        content_end,
+    );
+    let target_end = source[target_start..content_end]
+        .find(':')
+        .map(|offset| target_start + offset)
+        .unwrap_or_else(|| scan_word(source, target_start, content_end));
+    let target_end = trim_end_ws(source, target_start, target_end);
+    children.push(slot(
+        f,
+        UmlSyntaxKind::MessageTarget,
+        if target_start < target_end {
+            token(
+                f,
+                text,
+                if verb_valid { verb_end } else { verb_start },
+                target_start,
+                target_end,
+                UmlSyntaxKind::TargetToken,
+            )
+        } else {
+            valid = false;
+            GreenElement::Token(f.missing_token(UmlSyntaxKind::TargetToken))
+        },
+    ));
+    let mut p = target_end;
+    p = skip_ws(source, p, content_end);
+    if p < content_end && source.as_bytes()[p] == b':' {
+        children.push(token(f, text, p, p, p + 1, UmlSyntaxKind::ColonToken));
+        let signature = skip_ws(source, p + 1, content_end);
+        if let Some(q) = scan_backtick(source, signature, content_end) {
+            children.push(slot(
+                f,
+                UmlSyntaxKind::MessageSignature,
+                token(f, text, p + 1, signature, q, UmlSyntaxKind::SignatureToken),
+            ));
+            p = q;
+        } else {
+            children.push(slot(
+                f,
+                UmlSyntaxKind::MessageSignature,
+                GreenElement::Token(f.missing_token(UmlSyntaxKind::SignatureToken)),
+            ));
+            p = signature;
+            valid = false;
+        }
+    }
+    if p < content_end {
+        children.push(skipped(
+            f,
+            text,
+            p,
+            content_end,
+            UmlSyntaxDiagnosticCode::MalformedMessage,
+        ));
+        p = content_end;
+        valid = false;
+    }
+    if !valid {
+        diags.push(diag(
+            UmlSyntaxDiagnosticCode::MalformedMessage,
+            lead,
+            content_end,
+            "malformed message",
+        ));
+    }
+    push_newline(f, text, &mut children, p, newline, end);
+    GreenElement::Node(f.node(UmlSyntaxKind::Message, children).unwrap())
+}
+
+fn message_self_target(element: &GreenElement<UmlLanguage>) -> bool {
+    let GreenElement::Node(node) = element else {
+        return false;
+    };
+    fn find(node: &waml_syntax::GreenNode<UmlLanguage>, kind: UmlSyntaxKind) -> Option<String> {
+        node.children().iter().find_map(|child| match child {
+            GreenElement::Token(token) if token.kind() == kind => {
+                Some(token.text().write_to_string())
+            }
+            GreenElement::Node(child) => find(child, kind),
+            GreenElement::Token(_) => None,
+        })
+    }
+    let source = find(node, UmlSyntaxKind::SourceToken);
+    let target = find(node, UmlSyntaxKind::TargetToken);
+    source.is_some() && source == target
+}
+
+fn unsupported_sequence_body(body: &str) -> bool {
+    let body = body.trim();
+    body == "par"
+        || body.starts_with("par ")
+        || body == "coregion"
+        || body.starts_with("coregion ")
+        || body.contains(" coregion ")
+        || body == "gate"
+        || body.starts_with("gate ")
+        || body.contains(" gate ")
+        || body.starts_with("->")
+        || body.ends_with("->")
+        || body.starts_with("found ")
+        || body.starts_with("lost ")
+}
+
+fn behavior_bounds(source: &str, start: usize, end: usize) -> (usize, usize, usize) {
+    let newline = source[start..end]
+        .find('\n')
+        .map(|offset| start + offset)
+        .unwrap_or(end);
+    let content_end = start
+        + source[start..newline]
+            .trim_end_matches(['\r', ' ', '\t'])
+            .len();
+    (skip_ws(source, start, content_end), content_end, newline)
+}
+
+fn scan_word(source: &str, mut p: usize, end: usize) -> usize {
+    while p < end && !source.as_bytes()[p].is_ascii_whitespace() {
+        p += 1;
+    }
+    p
+}
+
+fn keyword_at(source: &str, p: usize, end: usize, keyword: &str) -> bool {
+    source.get(p..p + keyword.len()) == Some(keyword)
+        && p + keyword.len() <= end
+        && (p + keyword.len() == end || source.as_bytes()[p + keyword.len()].is_ascii_whitespace())
+}
+
+fn scan_backtick(source: &str, p: usize, end: usize) -> Option<usize> {
+    (p < end && source.as_bytes()[p] == b'`')
+        .then(|| {
+            source[p + 1..end]
+                .find('`')
+                .map(|offset| p + 1 + offset + 1)
+        })
+        .flatten()
+}
+
+fn find_clause(source: &str, p: usize, end: usize, clauses: &[&str]) -> usize {
+    clauses
+        .iter()
+        .filter_map(|clause| source[p..end].find(clause).map(|offset| p + offset))
+        .min()
+        .unwrap_or(end)
+}
+
+fn trim_end_ws(source: &str, start: usize, mut end: usize) -> usize {
+    while end > start && source.as_bytes()[end - 1].is_ascii_whitespace() {
+        end -= 1;
+    }
+    end
+}
+
+fn skipped(
+    f: &GreenFactory<UmlLanguage>,
+    text: &SourceText,
+    start: usize,
+    end: usize,
+    code: UmlSyntaxDiagnosticCode,
+) -> GreenElement<UmlLanguage> {
+    GreenElement::Node(
+        f.node(
+            UmlSyntaxKind::SkippedTokensSyntax,
+            [GreenElement::Token(
+                f.bad_token(UmlSyntaxKind::BadToken, slice(text, start, end), code)
+                    .unwrap(),
+            )],
+        )
+        .unwrap(),
+    )
+}
+
+fn slot(
+    f: &GreenFactory<UmlLanguage>,
+    kind: UmlSyntaxKind,
+    child: GreenElement<UmlLanguage>,
+) -> GreenElement<UmlLanguage> {
+    GreenElement::Node(f.node(kind, [child]).unwrap())
+}
+
+fn push_newline(
+    f: &GreenFactory<UmlLanguage>,
+    text: &SourceText,
+    children: &mut Vec<GreenElement<UmlLanguage>>,
+    leading: usize,
+    newline: usize,
+    end: usize,
+) {
+    if newline < end {
+        children.push(token(
+            f,
+            text,
+            leading.min(newline),
+            newline,
             end,
             UmlSyntaxKind::NewlineToken,
         ));
     }
-    children
 }
 
 fn simple_item(
@@ -1904,6 +2740,30 @@ fn relationship(
     f.node(UmlSyntaxKind::Relationship, c).unwrap()
 }
 
+fn behavior_link(
+    f: &GreenFactory<UmlLanguage>,
+    text: &SourceText,
+    source: &str,
+    p: usize,
+    end: usize,
+    leading: usize,
+    code: UmlSyntaxDiagnosticCode,
+    message: &'static str,
+    diags: &mut Vec<TreeDiagnostic<UmlSyntaxDiagnosticCode>>,
+) -> (GreenElement<UmlLanguage>, usize) {
+    let before = diags.len();
+    let result = relationship_link(f, text, source, p, end, leading, diags);
+    let valid = p < end
+        && source.as_bytes()[p] == b'['
+        && source[p + 1..end].find("](").is_some()
+        && source[p + 1..end].find(')').is_some();
+    if !valid {
+        diags.truncate(before);
+        diags.push(diag(code, p, result.1, message));
+    }
+    result
+}
+
 fn relationship_link(
     f: &GreenFactory<UmlLanguage>,
     text: &SourceText,
@@ -1987,8 +2847,18 @@ fn relationship_link(
         q,
         "malformed relationship link",
     ));
+    let leading_trivia = if leading < p {
+        vec![f
+            .trivia(TriviaKind::Whitespace, slice(text, leading, p))
+            .unwrap()]
+    } else {
+        Vec::new()
+    };
     let mut link = vec![
-        GreenElement::Token(f.missing_token(UmlSyntaxKind::OpenBracketToken)),
+        GreenElement::Token(
+            f.missing_token_with_leading(UmlSyntaxKind::OpenBracketToken, leading_trivia)
+                .unwrap(),
+        ),
         GreenElement::Token(f.missing_token(UmlSyntaxKind::LinkTextToken)),
         GreenElement::Token(f.missing_token(UmlSyntaxKind::CloseBracketToken)),
         GreenElement::Token(f.missing_token(UmlSyntaxKind::OpenBracketToken)),

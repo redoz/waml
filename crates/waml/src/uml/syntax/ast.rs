@@ -77,6 +77,8 @@ pub struct MessageSyntax(pub(crate) SyntaxNode<UmlLanguage>);
 #[derive(Clone, Debug)]
 pub struct SequenceOperandSyntax(pub(crate) SyntaxNode<UmlLanguage>);
 #[derive(Clone, Debug)]
+pub struct SequenceFragmentSyntax(pub(crate) SyntaxNode<UmlLanguage>);
+#[derive(Clone, Debug)]
 pub struct MessagesBlockSyntax(pub(crate) SyntaxNode<UmlLanguage>);
 /// A typed leaf in a layout statement.  The source range belongs to this
 /// token directly, keeping diagnostics on links/quotes/delimiters precise.
@@ -245,14 +247,12 @@ simple_ast!(FlowBlockSyntax, FlowBlock);
 simple_ast!(LifelineSyntax, Lifeline);
 simple_ast!(MessageSyntax, Message);
 simple_ast!(SequenceOperandSyntax, SequenceOperand);
+simple_ast!(SequenceFragmentSyntax, SequenceFragment);
 simple_ast!(MessagesBlockSyntax, MessagesSection);
 
 macro_rules! behavior_syntax {
     ($name:ident) => {
         impl $name {
-            pub fn tokens(&self) -> impl Iterator<Item = SyntaxToken<UmlLanguage>> + '_ {
-                self.0.children().filter_map(SyntaxElement::into_token)
-            }
             pub fn recovery(&self) -> impl Iterator<Item = SyntaxElement<UmlLanguage>> + '_ {
                 self.0.children().filter(|element| {
                     matches!(
@@ -269,6 +269,132 @@ behavior_syntax!(FlowTransitionSyntax);
 behavior_syntax!(LifelineSyntax);
 behavior_syntax!(MessageSyntax);
 behavior_syntax!(SequenceOperandSyntax);
+
+impl FlowNodeSyntax {
+    pub fn kind_token(&self) -> Option<SyntaxToken<UmlLanguage>> {
+        descendant_token_of(&self.0, UmlSyntaxKind::NodeKindToken)
+    }
+    pub fn identity_token(&self) -> SyntaxToken<UmlLanguage> {
+        descendant_token_of(&self.0, UmlSyntaxKind::IdentityToken)
+            .or_else(|| {
+                self.object_link()
+                    .and_then(|link| direct_token_of(&link, UmlSyntaxKind::LinkTextToken))
+            })
+            .expect("flow node has fixed identity slot")
+    }
+    pub fn object_link(&self) -> Option<SyntaxNode<UmlLanguage>> {
+        direct_node(&self.0, UmlSyntaxKind::FlowIdentity)
+            .and_then(|identity| direct_node(&identity, UmlSyntaxKind::Link))
+    }
+    pub fn internal_blocks(&self) -> impl Iterator<Item = SyntaxNode<UmlLanguage>> + '_ {
+        self.0
+            .children()
+            .filter(|element| element.kind() == UmlSyntaxKind::FlowInternal)
+            .filter_map(SyntaxElement::into_node)
+    }
+}
+impl FlowTransitionSyntax {
+    pub fn trigger_token(&self) -> Option<SyntaxToken<UmlLanguage>> {
+        descendant_token_of(&self.0, UmlSyntaxKind::TriggerToken)
+    }
+    pub fn guard_token(&self) -> Option<SyntaxToken<UmlLanguage>> {
+        descendant_token_of(&self.0, UmlSyntaxKind::GuardToken)
+    }
+    pub fn target_token(&self) -> Option<SyntaxToken<UmlLanguage>> {
+        descendant_token_of(&self.0, UmlSyntaxKind::TargetToken).or_else(|| {
+            self.target_link()
+                .and_then(|link| direct_token_of(&link, UmlSyntaxKind::LinkTargetToken))
+        })
+    }
+    pub fn target_link(&self) -> Option<SyntaxNode<UmlLanguage>> {
+        direct_node(&self.0, UmlSyntaxKind::FlowTarget)
+            .and_then(|target| direct_node(&target, UmlSyntaxKind::Link))
+    }
+    pub fn carries_link(&self) -> Option<SyntaxNode<UmlLanguage>> {
+        self.0
+            .children()
+            .filter(|element| element.kind() == UmlSyntaxKind::Link)
+            .filter_map(SyntaxElement::into_node)
+            .next()
+    }
+    pub fn effect_token(&self) -> Option<SyntaxToken<UmlLanguage>> {
+        descendant_token_of(&self.0, UmlSyntaxKind::EffectToken)
+    }
+    pub fn else_token(&self) -> Option<SyntaxToken<UmlLanguage>> {
+        direct_token_of(&self.0, UmlSyntaxKind::ElseToken)
+    }
+}
+impl FlowBlockSyntax {
+    pub fn keyword_token(&self) -> Option<SyntaxToken<UmlLanguage>> {
+        direct_token_of(&self.0, UmlSyntaxKind::InternalKeywordToken)
+    }
+    pub fn value_token(&self) -> Option<SyntaxToken<UmlLanguage>> {
+        descendant_token_of(&self.0, UmlSyntaxKind::ExpressionToken)
+            .or_else(|| descendant_token_of(&self.0, UmlSyntaxKind::IdentifierToken))
+    }
+    pub fn link(&self) -> Option<SyntaxNode<UmlLanguage>> {
+        direct_node(&self.0, UmlSyntaxKind::Link)
+    }
+}
+impl LifelineSyntax {
+    pub fn link(&self) -> Option<SyntaxNode<UmlLanguage>> {
+        direct_node(&self.0, UmlSyntaxKind::Link)
+    }
+    pub fn alias_token(&self) -> Option<SyntaxToken<UmlLanguage>> {
+        descendant_token_of(&self.0, UmlSyntaxKind::AliasToken)
+    }
+}
+impl MessageSyntax {
+    pub fn source_token(&self) -> SyntaxToken<UmlLanguage> {
+        descendant_token_of(&self.0, UmlSyntaxKind::SourceToken)
+            .expect("message has fixed source slot")
+    }
+    pub fn verb_token(&self) -> SyntaxToken<UmlLanguage> {
+        descendant_token_of(&self.0, UmlSyntaxKind::VerbToken).expect("message has fixed verb slot")
+    }
+    pub fn target_token(&self) -> SyntaxToken<UmlLanguage> {
+        descendant_token_of(&self.0, UmlSyntaxKind::TargetToken)
+            .expect("message has fixed target slot")
+    }
+    pub fn signature_token(&self) -> Option<SyntaxToken<UmlLanguage>> {
+        descendant_token_of(&self.0, UmlSyntaxKind::SignatureToken)
+    }
+}
+impl SequenceFragmentSyntax {
+    pub fn kind_token(&self) -> SyntaxToken<UmlLanguage> {
+        descendant_token_of(&self.0, UmlSyntaxKind::FragmentKindToken)
+            .expect("fragment has fixed kind slot")
+    }
+}
+impl SequenceOperandSyntax {
+    pub fn keyword_token(&self) -> SyntaxToken<UmlLanguage> {
+        direct_token_of(&self.0, UmlSyntaxKind::OperandKeywordToken)
+            .expect("operand has fixed keyword slot")
+    }
+    pub fn guard_token(&self) -> Option<SyntaxToken<UmlLanguage>> {
+        descendant_token_of(&self.0, UmlSyntaxKind::GuardToken)
+    }
+}
+
+fn direct_token_of(
+    node: &SyntaxNode<UmlLanguage>,
+    kind: UmlSyntaxKind,
+) -> Option<SyntaxToken<UmlLanguage>> {
+    node.children()
+        .find(|element| element.kind() == kind)
+        .and_then(SyntaxElement::into_token)
+}
+
+fn descendant_token_of(
+    node: &SyntaxNode<UmlLanguage>,
+    kind: UmlSyntaxKind,
+) -> Option<SyntaxToken<UmlLanguage>> {
+    direct_token_of(node, kind).or_else(|| {
+        node.children()
+            .filter_map(SyntaxElement::into_node)
+            .find_map(|child| descendant_token_of(&child, kind))
+    })
+}
 impl LayoutStatementSyntax {
     pub fn placement(&self) -> Option<LayoutPlacementSyntax> {
         self.0
