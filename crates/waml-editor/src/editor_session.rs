@@ -1,15 +1,32 @@
+use waml::analysis::{
+    prepare_candidate, AnalysisError, OkfAnalysis, PreparedCandidate, PreviousAnalyses,
+};
 use waml::edit::{EditBatch, EditContext, EditError};
 use waml::source::SourceBundle;
-use waml::uml::Projection;
 
-#[derive(Default)]
 pub struct EditorSession {
     source: SourceBundle,
     persisted_source: SourceBundle,
-    okf: waml::okf::Bundle,
-    uml_projection: Projection,
+    okf_analysis: OkfAnalysis,
+    uml: waml::uml::Analysis,
     revision: u64,
     dirty_revision: Option<u64>,
+}
+
+impl Default for EditorSession {
+    fn default() -> Self {
+        let prepared = prepare_candidate(SourceBundle::default(), None, 0)
+            .expect("the empty source bundle must produce valid analyses");
+        let (source, okf_analysis, uml, revision) = prepared.into_parts();
+        Self {
+            persisted_source: source.clone(),
+            source,
+            okf_analysis,
+            uml,
+            revision,
+            dirty_revision: None,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -36,36 +53,58 @@ impl SessionChange {
 }
 
 impl EditorSession {
-    pub fn replace(&mut self, bundle: SourceBundle, uml_projection: Projection) -> SessionChange {
-        self.okf = waml::okf::Bundle::parse(&bundle)
-            .expect("validated SourceBundle must produce an OKF bundle");
-        self.persisted_source = bundle.clone();
-        self.source = bundle;
-        self.uml_projection = uml_projection;
-        self.revision = self.revision.wrapping_add(1);
+    pub fn replace(&mut self, source: SourceBundle) -> Result<SessionChange, EditError> {
+        let next_revision = self.revision.wrapping_add(1);
+        let prepared = prepare_candidate(source, None, next_revision)?;
+        let (source, okf_analysis, uml, revision) = prepared.into_parts();
+
+        self.persisted_source = source.clone();
+        self.source = source;
+        self.okf_analysis = okf_analysis;
+        self.uml = uml;
+        self.revision = revision;
         self.dirty_revision = None;
-        SessionChange::full(self.revision)
+        Ok(SessionChange::full(self.revision))
     }
 
     pub fn apply<B: EditBatch>(&mut self, batch: B) -> Result<SessionChange, EditError> {
+        self.apply_with_preparer(batch, prepare_candidate)
+    }
+
+    fn apply_with_preparer<B, F>(
+        &mut self,
+        batch: B,
+        prepare: F,
+    ) -> Result<SessionChange, EditError>
+    where
+        B: EditBatch,
+        F: for<'a> FnOnce(
+            SourceBundle,
+            Option<PreviousAnalyses<'a>>,
+            u64,
+        ) -> Result<PreparedCandidate, AnalysisError>,
+    {
         let candidate_source = batch.lower(EditContext {
             source: &self.source,
-            okf: &self.okf,
-            uml: &self.uml_projection,
+            okf_analysis: &self.okf_analysis,
+            session_revision: self.revision,
+            uml: &self.uml,
         })?;
-        let candidate_okf =
-            waml::okf::Bundle::parse(&candidate_source).map_err(|error| EditError {
-                index: 0,
-                op: "okf.parse".into(),
-                selector: None,
-                reason: error.to_string(),
-            })?;
-        let candidate_uml = waml::uml::project(&candidate_okf);
+        let next_revision = self.revision.wrapping_add(1);
+        let prepared = prepare(
+            candidate_source,
+            Some(PreviousAnalyses {
+                okf: &self.okf_analysis,
+                uml: &self.uml,
+            }),
+            next_revision,
+        )?;
+        let (source, okf_analysis, uml, revision) = prepared.into_parts();
 
-        self.source = candidate_source;
-        self.okf = candidate_okf;
-        self.uml_projection = candidate_uml;
-        self.revision = self.revision.wrapping_add(1);
+        self.source = source;
+        self.okf_analysis = okf_analysis;
+        self.uml = uml;
+        self.revision = revision;
         self.dirty_revision = Some(self.revision);
         Ok(SessionChange::full(self.revision))
     }
@@ -74,7 +113,8 @@ impl EditorSession {
         &self.source
     }
 
-    pub fn bundle(&self) -> &SourceBundle {
+    #[cfg(test)]
+    fn bundle(&self) -> &SourceBundle {
         self.source()
     }
 
@@ -82,16 +122,24 @@ impl EditorSession {
         &self.persisted_source
     }
 
-    #[allow(dead_code)] // consumed by Task 7's OKF-backed navigator
+    pub fn okf_analysis(&self) -> &OkfAnalysis {
+        &self.okf_analysis
+    }
+
     pub fn okf(&self) -> &waml::okf::Bundle {
-        &self.okf
+        &self.okf_analysis.bundle
     }
 
-    pub fn uml_projection(&self) -> &Projection {
-        &self.uml_projection
+    pub fn uml_analysis(&self) -> &waml::uml::Analysis {
+        &self.uml
     }
 
-    pub fn model(&self) -> &Projection {
+    pub fn uml_projection(&self) -> &waml::uml::Projection {
+        &self.uml.projection
+    }
+
+    #[cfg(test)]
+    fn model(&self) -> &waml::uml::Projection {
         self.uml_projection()
     }
 
@@ -114,6 +162,8 @@ impl EditorSession {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Arc;
+    use waml::action::{ActionBasis, CodeAction, SyntaxChangeBatch};
     use waml::syntax::Direction;
     use waml::uml::Op;
 
@@ -150,12 +200,60 @@ mod tests {
     }
 
     #[test]
-    fn replace_fully_invalidates_and_starts_clean() {
+    fn replacement_owns_one_revision_scoped_analysis_snapshot() {
         let bundle = diagram_bundle("");
-        let model = waml::parse::build_model_from_source(&bundle);
         let mut session = EditorSession::default();
 
-        let change = session.replace(bundle.clone(), model);
+        let change = session.replace(bundle.clone()).unwrap();
+
+        assert_eq!(change, SessionChange::full(1));
+        assert_eq!(session.okf_analysis().catalog.session_revision(), 1);
+        assert_eq!(
+            session.uml_analysis().syntax.catalog().session_revision(),
+            1
+        );
+        assert!(std::sync::Arc::ptr_eq(
+            &session.okf_analysis().catalog,
+            session.uml_analysis().syntax.catalog(),
+        ));
+        assert_eq!(session.okf_analysis().bundle, *session.okf());
+        assert_eq!(session.uml_analysis().projection, *session.uml_projection());
+        assert_eq!(session.source(), &bundle);
+        assert_eq!(session.persisted_bundle(), &bundle);
+        let path = waml::source::BundlePath::parse("dia.md").unwrap();
+        let document_id = session.okf_analysis().catalog.id_for_path(&path).unwrap();
+        let catalog_document = session
+            .okf_analysis()
+            .catalog
+            .document(document_id)
+            .unwrap();
+        assert!(Arc::ptr_eq(
+            session
+                .okf_analysis()
+                .shell
+                .document(document_id)
+                .unwrap()
+                .document(),
+            catalog_document
+        ));
+        assert!(Arc::ptr_eq(
+            session
+                .uml_analysis()
+                .syntax
+                .document(document_id)
+                .unwrap()
+                .document(),
+            catalog_document
+        ));
+        assert!(!session.is_dirty());
+    }
+
+    #[test]
+    fn replace_fully_invalidates_and_starts_clean() {
+        let bundle = diagram_bundle("");
+        let mut session = EditorSession::default();
+
+        let change = session.replace(bundle.clone()).unwrap();
 
         assert_eq!(change, SessionChange::full(1));
         assert_eq!(session.bundle(), &bundle);
@@ -170,10 +268,9 @@ mod tests {
     #[test]
     fn replacement_keeps_current_and_persisted_text_equal() {
         let bundle = source(vec![("notes.md".into(), "# Notes\n".into())]);
-        let model = waml::parse::build_model_from_source(&bundle);
         let mut session = EditorSession::default();
 
-        session.replace(bundle.clone(), model);
+        session.replace(bundle.clone()).unwrap();
 
         assert_eq!(session.bundle(), &bundle);
         assert_eq!(session.persisted_bundle(), &bundle);
@@ -182,9 +279,8 @@ mod tests {
     #[test]
     fn successful_ops_increment_once_and_mark_the_revision_dirty() {
         let bundle = diagram_bundle("");
-        let model = waml::parse::build_model_from_source(&bundle);
         let mut session = EditorSession::default();
-        session.replace(bundle, model);
+        session.replace(bundle).unwrap();
 
         let change = session.apply(waml::uml::Batch(vec![place_set()])).unwrap();
 
@@ -206,9 +302,8 @@ mod tests {
                 "---\ntype: uml.Class\ntitle: B\n---\n# B\n".into(),
             ),
         ]);
-        let model = waml::parse::build_model_from_source(&bundle);
         let mut session = EditorSession::default();
-        session.replace(bundle, model);
+        session.replace(bundle).unwrap();
 
         session
             .apply(waml::uml::Batch(vec![Op::ClassifierSet {
@@ -230,11 +325,225 @@ mod tests {
     }
 
     #[test]
+    fn every_preparation_failure_preserves_the_complete_committed_snapshot() {
+        for stage in [
+            waml::analysis::AnalysisStage::Shell,
+            waml::analysis::AnalysisStage::Okf,
+            waml::analysis::AnalysisStage::Specialization("uml"),
+            waml::analysis::AnalysisStage::Claims,
+        ] {
+            let bundle = source(vec![(
+                "a.md".into(),
+                "---\ntype: uml.Class\ntitle: A\n---\n# A\n".into(),
+            )]);
+            let mut session = EditorSession::default();
+            session.replace(bundle).unwrap();
+            let before_source = session.source().clone();
+            let before_persisted = session.persisted_bundle().clone();
+            let before_catalog = session.okf_analysis().catalog.clone();
+            let before_shell_catalog = session.okf_analysis().shell.catalog().clone();
+            let before_uml_catalog = session.uml_analysis().syntax.catalog().clone();
+            let before_projection = session.uml_projection().clone();
+            let before_revision = session.revision();
+            let before_dirty_revision = session.dirty_revision;
+            let document_id = session
+                .okf_analysis()
+                .catalog
+                .id_for_path(&waml::source::BundlePath::parse("a.md").unwrap())
+                .unwrap();
+            let before_document = session
+                .okf_analysis()
+                .catalog
+                .document(document_id)
+                .unwrap()
+                .clone();
+            let before_shell_tree = session
+                .okf_analysis()
+                .shell
+                .document(document_id)
+                .unwrap()
+                .syntax()
+                .clone();
+            let before_uml_tree = session
+                .uml_analysis()
+                .syntax
+                .document(document_id)
+                .unwrap()
+                .syntax()
+                .clone();
+
+            let result = session.apply_with_preparer(
+                waml::uml::Batch(vec![Op::ClassifierSet {
+                    id: "a".into(),
+                    title: Some("Changed".into()),
+                    description: None,
+                    stereotype: None,
+                    abstract_: None,
+                    ty: None,
+                }]),
+                |candidate, previous, revision| {
+                    let _prepared = prepare_candidate(candidate, previous, revision)?;
+                    Err(AnalysisError::StructuralInvariant {
+                        stage,
+                        reason: "injected after complete preparation".into(),
+                    })
+                },
+            );
+
+            assert!(result.is_err());
+            assert_eq!(session.source(), &before_source);
+            assert_eq!(session.persisted_bundle(), &before_persisted);
+            assert!(session.source().shares_text_with(&before_source, "a.md"));
+            assert!(Arc::ptr_eq(
+                &session.okf_analysis().catalog,
+                &before_catalog
+            ));
+            assert!(Arc::ptr_eq(
+                session.okf_analysis().shell.catalog(),
+                &before_shell_catalog
+            ));
+            assert!(Arc::ptr_eq(
+                session.uml_analysis().syntax.catalog(),
+                &before_uml_catalog
+            ));
+            assert!(Arc::ptr_eq(
+                session
+                    .okf_analysis()
+                    .catalog
+                    .document(document_id)
+                    .unwrap(),
+                &before_document
+            ));
+            assert!(Arc::ptr_eq(
+                session
+                    .okf_analysis()
+                    .shell
+                    .document(document_id)
+                    .unwrap()
+                    .syntax(),
+                &before_shell_tree
+            ));
+            assert!(Arc::ptr_eq(
+                session
+                    .uml_analysis()
+                    .syntax
+                    .document(document_id)
+                    .unwrap()
+                    .syntax(),
+                &before_uml_tree
+            ));
+            assert_eq!(session.uml_projection(), &before_projection);
+            assert_eq!(session.revision(), before_revision);
+            assert_eq!(session.dirty_revision, before_dirty_revision);
+
+            let retry = session
+                .apply(waml::uml::Batch(vec![Op::ClassifierSet {
+                    id: "a".into(),
+                    title: Some("Changed".into()),
+                    description: None,
+                    stereotype: None,
+                    abstract_: None,
+                    ty: None,
+                }]))
+                .unwrap();
+            assert_eq!(retry.revision, before_revision + 1);
+            assert_eq!(
+                session
+                    .okf_analysis()
+                    .catalog
+                    .id_for_path(&waml::source::BundlePath::parse("a.md").unwrap()),
+                Some(document_id)
+            );
+        }
+    }
+
+    #[test]
+    fn syntax_action_commits_once_and_the_same_action_is_stale_afterward() {
+        let bundle = source(vec![(
+            "class.md".into(),
+            include_str!("../tests/fixtures/parser-actions/class.md").into(),
+        )]);
+        let mut session = EditorSession::default();
+        session.replace(bundle).unwrap();
+        let path = waml::source::BundlePath::parse("class.md").unwrap();
+        let action = CodeAction {
+            title: "Validated no-op".into(),
+            basis: ActionBasis::Bundle {
+                session_revision: session.revision(),
+            },
+            changes: Arc::from([]),
+        };
+        let batch = SyntaxChangeBatch::new(action).unwrap();
+
+        let change = session.apply(batch.clone()).unwrap();
+
+        assert_eq!(change.revision, 2);
+        assert!(session
+            .source()
+            .document(&path)
+            .unwrap()
+            .text()
+            .contains("Order"));
+        assert!(session
+            .source()
+            .shares_text_with(session.persisted_bundle(), "class.md"));
+        let committed_source = session.source().clone();
+        let committed_catalog = session.okf_analysis().catalog.clone();
+        let committed_revision = session.revision();
+        let committed_dirty = session.dirty_revision;
+
+        let stale = session.apply(batch);
+
+        assert!(stale.is_err());
+        assert_eq!(session.source(), &committed_source);
+        assert!(session
+            .source()
+            .shares_text_with(&committed_source, "class.md"));
+        assert!(Arc::ptr_eq(
+            &session.okf_analysis().catalog,
+            &committed_catalog
+        ));
+        assert_eq!(session.revision(), committed_revision);
+        assert_eq!(session.dirty_revision, committed_dirty);
+    }
+
+    #[test]
+    fn recoverable_malformed_source_commits_with_diagnostics() {
+        let bundle = source(vec![(
+            "recoverable.md".into(),
+            include_str!("../tests/fixtures/parser-actions/recoverable.md").into(),
+        )]);
+        let mut session = EditorSession::default();
+        session.replace(bundle).unwrap();
+        let before_revision = session.revision();
+
+        let change = session
+            .apply(waml::uml::Batch(vec![Op::ClassifierSet {
+                id: "recoverable".into(),
+                title: Some("Still Recoverable".into()),
+                description: None,
+                stereotype: None,
+                abstract_: None,
+                ty: None,
+            }]))
+            .unwrap();
+
+        assert_eq!(change.revision, before_revision + 1);
+        assert!(session.is_dirty());
+        assert!(!session.uml_analysis().diagnostics.is_empty());
+        assert!(session
+            .source()
+            .document_by_concept_id("recoverable")
+            .unwrap()
+            .text()
+            .contains("Still Recoverable"));
+    }
+
+    #[test]
     fn failed_ops_leave_bundle_model_revision_and_dirty_state_unchanged() {
         let bundle = diagram_bundle("");
-        let model = waml::parse::build_model_from_source(&bundle);
         let mut session = EditorSession::default();
-        session.replace(bundle, model);
+        session.replace(bundle).unwrap();
         let before_bundle = session.bundle().clone();
         let before_model = session.model().clone();
         let before_revision = session.revision();
@@ -269,9 +578,8 @@ mod tests {
                     .into(),
             ),
         ]);
-        let projection = waml::parse::build_model_from_source(&bundle);
         let mut session = EditorSession::default();
-        session.replace(bundle, projection);
+        session.replace(bundle).unwrap();
         let revision = session.revision();
 
         let change = session
@@ -322,9 +630,8 @@ mod tests {
                 "---\ntype: uml.Class\ntitle: Customer\n---\n# Customer\n".into(),
             ),
         ]);
-        let model = waml::parse::build_model_from_source(&bundle);
         let mut session = EditorSession::default();
-        session.replace(bundle, model);
+        session.replace(bundle).unwrap();
         let revision = session.revision();
         let source = session.bundle().clone();
         let persisted = session.persisted_bundle().clone();
@@ -356,9 +663,8 @@ mod tests {
     #[test]
     fn saving_an_old_revision_cannot_clear_a_newer_dirty_revision() {
         let bundle = diagram_bundle("");
-        let model = waml::parse::build_model_from_source(&bundle);
         let mut session = EditorSession::default();
-        session.replace(bundle, model);
+        session.replace(bundle).unwrap();
         let old = session.revision();
         session.apply(waml::uml::Batch(vec![place_set()])).unwrap();
 
@@ -376,9 +682,8 @@ mod tests {
     #[test]
     fn place_set_and_place_rm_use_the_same_transaction() {
         let bundle = diagram_bundle("");
-        let model = waml::parse::build_model_from_source(&bundle);
         let mut session = EditorSession::default();
-        session.replace(bundle, model);
+        session.replace(bundle).unwrap();
 
         let set = session.apply(waml::uml::Batch(vec![place_set()])).unwrap();
         assert!(session.bundle().documents()[0].text().contains("left of"));
@@ -450,9 +755,8 @@ mod tests {
             ),
         ];
         let source = SourceBundle::try_from_pairs(fixtures).unwrap();
-        let projection = waml::uml::project(&waml::okf::Bundle::parse(&source).unwrap());
         let mut session = EditorSession::default();
-        session.replace(source, projection);
+        session.replace(source).unwrap();
 
         let change = session
             .apply(waml::compat::Batch::new(vec![

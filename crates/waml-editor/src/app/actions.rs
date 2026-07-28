@@ -572,7 +572,7 @@ impl App {
 
         let keys = self
             .session
-            .model()
+            .uml_projection()
             .diagrams
             .iter()
             .map(|diagram| diagram.key.clone())

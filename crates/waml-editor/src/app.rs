@@ -1375,7 +1375,7 @@ impl App {
         if !self.session.is_dirty() {
             return Ok(());
         }
-        if self.session.bundle().is_empty() {
+        if self.session.source().is_empty() {
             return Err("cannot save an empty bundle".to_string());
         }
         let revision = self.session.revision();
@@ -1421,7 +1421,7 @@ impl App {
     #[cfg(target_arch = "wasm32")]
     fn save_backend(&mut self, cx: &mut Cx) -> Result<(), String> {
         cx.browser_update_url(
-            &format!("#{}", waml::share::encode_source(self.session.bundle())),
+            &format!("#{}", waml::share::encode_source(self.session.source())),
             true,
         );
         Ok(())
@@ -1437,7 +1437,7 @@ impl App {
         crate::native_save::save_bundle_atomic(
             root,
             self.session.persisted_bundle(),
-            self.session.bundle(),
+            self.session.source(),
         )
         .map_err(|error| format!("failed to save OKF dir {root:?}: {error}"))
     }
@@ -1495,11 +1495,11 @@ impl App {
         let transition = replace_after_save(
             || self.save(cx),
             || {
-                load::load_bundle_and_model(&next_root)
+                load::read_bundle(&next_root)
                     .map_err(|error| format!("failed to load OKF dir {next_root:?}: {error}"))
             },
         );
-        let (bundle, model) = match transition {
+        let bundle = match transition {
             Ok(loaded) => loaded,
             Err(BackingTransitionError::Save(error)) => {
                 self.save_feedback.finish_save(&Err(error.clone()));
@@ -1517,7 +1517,6 @@ impl App {
                 return false;
             }
         };
-        self.open_dir = Some(next_root);
         // Folder basename backs the display name when the bundle has no root
         // name of its own. `..` / drive-root degenerate to an empty basename;
         // "bundle" is the last-ditch label.
@@ -1530,13 +1529,17 @@ impl App {
         // Record this open in the recents store (best-effort; see config.rs).
         // Recents are a filesystem affordance: only an open with a path behind
         // it can be reopened later, so this stays on the `open_dir` side.
-        let root_name = if model.path.is_empty() {
-            display_name.as_str()
+        if !self.open_bundle(cx, bundle, display_name, wanted_diagram) {
+            return false;
+        }
+        self.open_dir = Some(next_root);
+        let root_name = if self.session.uml_projection().path.is_empty() {
+            self.open_name.as_str()
         } else {
-            model.path.as_str()
+            self.session.uml_projection().path.as_str()
         };
         crate::config::push_recent(dir, root_name);
-        self.open_bundle(cx, bundle, model, display_name, wanted_diagram)
+        true
     }
 
     #[cfg(target_arch = "wasm32")]
@@ -1556,12 +1559,17 @@ impl App {
         &mut self,
         cx: &mut Cx,
         files: waml::source::SourceBundle,
-        model: waml::model::Model,
         display_name: String,
         wanted_diagram: Option<&str>,
     ) -> bool {
         cx.stop_timer(self.save_timer);
-        let change = self.session.replace(files, model);
+        let change = match self.session.replace(files) {
+            Ok(change) => change,
+            Err(error) => {
+                log!("failed to analyze replacement bundle: {error}");
+                return false;
+            }
+        };
         debug_assert_eq!(change.revision, self.session.revision());
         self.save_feedback.opened_replacement_bundle();
         self.sync_save_error(cx);
@@ -1693,10 +1701,10 @@ impl App {
             self.sync_dock_slots(cx);
             return;
         }
-        let root_name = if self.session.model().path.is_empty() {
+        let root_name = if self.session.uml_projection().path.is_empty() {
             self.open_name.as_str()
         } else {
-            self.session.model().path.as_str()
+            self.session.uml_projection().path.as_str()
         };
         self.ui.label(cx, ids!(model_name)).set_text(cx, root_name);
 
@@ -1732,7 +1740,7 @@ impl App {
                 crate::native_save::save_bundle_atomic(
                     root,
                     session.persisted_bundle(),
-                    session.bundle(),
+                    session.source(),
                 )
                 .map_err(|error| format!("failed to save OKF dir {root:?}: {error}"))
             })
@@ -1742,7 +1750,7 @@ impl App {
         let result = close_after_save(&mut self.session, |session| {
             if session.is_dirty() {
                 cx.browser_update_url(
-                    &format!("#{}", waml::share::encode_source(session.bundle())),
+                    &format!("#{}", waml::share::encode_source(session.source())),
                     true,
                 );
             }
@@ -2152,8 +2160,7 @@ impl MatchEvent for App {
         }
         match waml::share::decode_source(&fragment) {
             Ok(bundle) => {
-                let model = waml::parse::build_model_from_source(&bundle);
-                self.open_bundle(cx, bundle, model, "shared".to_string(), None);
+                self.open_bundle(cx, bundle, "shared".to_string(), None);
                 self.show_editor(cx);
             }
             Err(e) => {
@@ -4062,8 +4069,7 @@ mod tests {
                 .to_string(),
         )])
         .unwrap();
-        let okf = waml::okf::Bundle::parse(&source).unwrap();
-        let uml = waml::uml::project(&okf);
+        let prepared = waml::analysis::prepare_candidate(source.clone(), None, 1).unwrap();
         let action = ConflictListAction::Delete {
             subject: "order".to_string(),
             reference: "payment-gateway".to_string(),
@@ -4073,8 +4079,9 @@ mod tests {
             &waml::uml::Batch(vec![op]),
             waml::edit::EditContext {
                 source: &source,
-                okf: &okf,
-                uml: &uml,
+                okf_analysis: prepared.okf(),
+                session_revision: prepared.revision(),
+                uml: prepared.uml(),
             },
         )
         .unwrap();

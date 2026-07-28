@@ -923,15 +923,15 @@ mod tests {
             "---\ntype: Diagram\ntitle: Old\nprofile: uml-domain\ndescription: Old description\n---\n# Old\n",
         )])
         .unwrap();
-        let okf = waml::okf::Bundle::parse(&source).unwrap();
-        let uml = waml::uml::project(&okf);
+        let prepared = waml::analysis::prepare_candidate(source.clone(), None, 1).unwrap();
         let changed = outcome
             .edit
             .expect("outcome contains an edit")
             .lower(EditContext {
                 source: &source,
-                okf: &okf,
-                uml: &uml,
+                okf_analysis: prepared.okf(),
+                session_revision: prepared.revision(),
+                uml: prepared.uml(),
             })
             .unwrap();
         changed.documents()[0].text().to_string()

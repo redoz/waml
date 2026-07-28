@@ -28,8 +28,8 @@ type RemovedViews = Vec<(LiveId, Box<dyn DocView>)>;
 fn data(session: &EditorSession) -> ViewData<'_> {
     ViewData {
         source: session.source(),
-        okf: session.okf(),
-        uml: session.uml_projection(),
+        okf: &session.okf_analysis().bundle,
+        uml: &session.uml_analysis().projection,
         revision: session.revision(),
     }
 }

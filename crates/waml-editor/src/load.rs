@@ -1,4 +1,4 @@
-//! Load an OKF directory into a `waml::model::Model`.
+//! Load an OKF directory into its source-authoritative bundle.
 
 use std::path::Path;
 use waml::source::{SourceBundle, SourceError};
@@ -67,17 +67,6 @@ pub fn load_model(dir: &Path) -> Result<waml::uml::Projection, LoadError> {
     Ok(waml::parse::build_model_from_source(&bundle))
 }
 
-/// Load an OKF directory, retaining the raw bundle alongside the resolved
-/// `Model`. The App keeps the bundle so drag-to-place can author `## Layout`
-/// statements in-memory via `waml::ops::apply` and rebuild the model.
-pub fn load_bundle_and_model(
-    dir: &Path,
-) -> Result<(SourceBundle, waml::uml::Projection), LoadError> {
-    let bundle = read_bundle(dir)?;
-    let uml_projection = waml::parse::build_model_from_source(&bundle);
-    Ok((bundle, uml_projection))
-}
-
 /// Return the raw markdown of the bundle file whose OKF id equals `key`. A
 /// classifier's node key is exactly [`waml::okf::id_of`] of its source path
 /// (the forward-slash-normalized bundle-relative path minus the trailing
@@ -139,11 +128,18 @@ mod tests {
 
     #[test]
     fn mixed_fixture_loads_uml_and_generic_okf_concepts_together() {
-        let (source, uml) = load_bundle_and_model(&named_fixture_dir("mixed-okf")).unwrap();
-        let okf = waml::okf::Bundle::parse(&source).unwrap();
-        assert!(okf.concept("runbook").is_some());
-        assert!(uml.nodes.iter().any(|node| node.key == "order"));
-        assert!(uml
+        let source = read_bundle(&named_fixture_dir("mixed-okf")).unwrap();
+        let prepared = waml::analysis::prepare_candidate(source, None, 1).unwrap();
+        assert!(prepared.okf().bundle.concept("runbook").is_some());
+        assert!(prepared
+            .uml()
+            .projection
+            .nodes
+            .iter()
+            .any(|node| node.key == "order"));
+        assert!(prepared
+            .uml()
+            .projection
             .diagrams
             .iter()
             .any(|diagram| diagram.key == "orders-diagram"));
@@ -151,11 +147,11 @@ mod tests {
 
     #[test]
     fn okf_only_fixture_loads_with_an_empty_uml_projection() {
-        let (source, uml) = load_bundle_and_model(&named_fixture_dir("okf-only")).unwrap();
-        let okf = waml::okf::Bundle::parse(&source).unwrap();
-        assert!(okf.concept("notes").is_some());
-        assert!(uml.nodes.is_empty());
-        assert!(uml.diagrams.is_empty());
+        let source = read_bundle(&named_fixture_dir("okf-only")).unwrap();
+        let prepared = waml::analysis::prepare_candidate(source, None, 1).unwrap();
+        assert!(prepared.okf().bundle.concept("notes").is_some());
+        assert!(prepared.uml().projection.nodes.is_empty());
+        assert!(prepared.uml().projection.diagrams.is_empty());
     }
 
     /// The `sixkind` fixture is the visual-regression bench for terminal
