@@ -17,6 +17,7 @@ waml-syntax = { path = "../waml-syntax" }
 [features]
 default = []
 serde = ["dep:serde"]
+test-support = []
 
 [dev-dependencies]
 serde_json = { workspace = true }

@@ -164,6 +164,7 @@ mod tests {
     use super::*;
     use std::sync::Arc;
     use waml::action::{ActionBasis, CodeAction, SyntaxChangeBatch};
+    use waml::analysis::AnalysisStage;
     use waml::syntax::Direction;
     use waml::uml::Op;
 
@@ -454,6 +455,116 @@ mod tests {
                     .id_for_path(&waml::source::BundlePath::parse("a.md").unwrap()),
                 Some(document_id)
             );
+        }
+    }
+
+    #[test]
+    fn successful_transaction_prepares_each_real_phase_exactly_once() {
+        let bundle = source(vec![(
+            "a.md".into(),
+            "---\ntype: uml.Class\ntitle: A\n---\n# A\n".into(),
+        )]);
+        let mut session = EditorSession::default();
+        session.replace(bundle).unwrap();
+        let mut probe = waml::analysis::test_support::PreparationProbe::succeed();
+
+        let change = session
+            .apply_with_preparer(
+                waml::uml::Batch(vec![Op::ClassifierSet {
+                    id: "a".into(),
+                    title: Some("Changed".into()),
+                    description: None,
+                    stereotype: None,
+                    abstract_: None,
+                    ty: None,
+                }]),
+                |source, previous, revision| {
+                    waml::analysis::test_support::prepare_candidate_with_probe(
+                        source, previous, revision, &mut probe,
+                    )
+                },
+            )
+            .unwrap();
+
+        assert_eq!(change.revision, 2);
+        assert_eq!(probe.phase_names(), ["shell", "okf", "uml", "claims"]);
+    }
+
+    #[test]
+    fn failed_phase_stops_preparation_and_retry_has_no_hidden_duplicates() {
+        for (fail_at, failed_calls) in [
+            (AnalysisStage::Shell, &["shell"][..]),
+            (AnalysisStage::Okf, &["shell", "okf"][..]),
+            (
+                AnalysisStage::Specialization("uml"),
+                &["shell", "okf", "uml"][..],
+            ),
+            (
+                AnalysisStage::Claims,
+                &["shell", "okf", "uml", "claims"][..],
+            ),
+        ] {
+            let bundle = source(vec![(
+                "a.md".into(),
+                "---\ntype: uml.Class\ntitle: A\n---\n# A\n".into(),
+            )]);
+            let mut session = EditorSession::default();
+            session.replace(bundle).unwrap();
+            let before_revision = session.revision();
+            let before_catalog = session.okf_analysis().catalog.clone();
+            let mut failed_probe = waml::analysis::test_support::PreparationProbe::fail_at(fail_at);
+
+            let failed = session.apply_with_preparer(
+                waml::uml::Batch(vec![Op::ClassifierSet {
+                    id: "a".into(),
+                    title: Some("Changed".into()),
+                    description: None,
+                    stereotype: None,
+                    abstract_: None,
+                    ty: None,
+                }]),
+                |source, previous, revision| {
+                    waml::analysis::test_support::prepare_candidate_with_probe(
+                        source,
+                        previous,
+                        revision,
+                        &mut failed_probe,
+                    )
+                },
+            );
+
+            assert!(failed.is_err());
+            assert_eq!(failed_probe.phase_names(), failed_calls);
+            assert_eq!(session.revision(), before_revision);
+            assert!(Arc::ptr_eq(
+                &session.okf_analysis().catalog,
+                &before_catalog
+            ));
+
+            let mut retry_probe = waml::analysis::test_support::PreparationProbe::succeed();
+            let retry = session
+                .apply_with_preparer(
+                    waml::uml::Batch(vec![Op::ClassifierSet {
+                        id: "a".into(),
+                        title: Some("Changed".into()),
+                        description: None,
+                        stereotype: None,
+                        abstract_: None,
+                        ty: None,
+                    }]),
+                    |source, previous, revision| {
+                        waml::analysis::test_support::prepare_candidate_with_probe(
+                            source,
+                            previous,
+                            revision,
+                            &mut retry_probe,
+                        )
+                    },
+                )
+                .unwrap();
+
+            assert_eq!(retry.revision, before_revision + 1);
+            assert_eq!(retry_probe.phase_names(), ["shell", "okf", "uml", "claims"]);
         }
     }
 

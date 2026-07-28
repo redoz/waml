@@ -336,6 +336,85 @@ fn prepare_candidate_inner(
     })
 }
 
+#[cfg(feature = "test-support")]
+#[doc(hidden)]
+pub mod test_support {
+    use super::*;
+
+    pub struct PreparationProbe {
+        fail_at: Option<AnalysisStage>,
+        calls: Vec<AnalysisStage>,
+    }
+
+    impl PreparationProbe {
+        pub fn succeed() -> Self {
+            Self {
+                fail_at: None,
+                calls: Vec::new(),
+            }
+        }
+
+        pub fn fail_at(stage: AnalysisStage) -> Self {
+            Self {
+                fail_at: Some(stage),
+                calls: Vec::new(),
+            }
+        }
+
+        pub fn phase_names(&self) -> Vec<&'static str> {
+            self.calls.iter().map(phase_name).collect()
+        }
+    }
+
+    impl PreparationHooks for PreparationProbe {
+        fn before(&mut self, stage: AnalysisStage) -> Result<(), AnalysisError> {
+            self.calls.push(stage);
+            if self
+                .fail_at
+                .is_some_and(|fail_at| same_stage(fail_at, stage))
+            {
+                return Err(AnalysisError::StructuralInvariant {
+                    stage,
+                    reason: "test probe injected failure".into(),
+                });
+            }
+            Ok(())
+        }
+    }
+
+    pub fn prepare_candidate_with_probe(
+        candidate_source: SourceBundle,
+        previous: Option<PreviousAnalyses<'_>>,
+        candidate_revision: u64,
+        probe: &mut PreparationProbe,
+    ) -> Result<PreparedCandidate, AnalysisError> {
+        prepare_candidate_inner(candidate_source, previous, candidate_revision, probe)
+    }
+
+    fn phase_name(stage: &AnalysisStage) -> &'static str {
+        match stage {
+            AnalysisStage::Shell => "shell",
+            AnalysisStage::Okf => "okf",
+            AnalysisStage::Specialization("uml") => "uml",
+            AnalysisStage::Specialization(_) => "other-specialization",
+            AnalysisStage::Claims => "claims",
+        }
+    }
+
+    fn same_stage(left: AnalysisStage, right: AnalysisStage) -> bool {
+        matches!(
+            (left, right),
+            (AnalysisStage::Shell, AnalysisStage::Shell)
+                | (AnalysisStage::Okf, AnalysisStage::Okf)
+                | (
+                    AnalysisStage::Specialization("uml"),
+                    AnalysisStage::Specialization("uml")
+                )
+                | (AnalysisStage::Claims, AnalysisStage::Claims)
+        )
+    }
+}
+
 pub fn analyze_okf(
     source: &SourceBundle,
     previous: Option<&OkfAnalysis>,
