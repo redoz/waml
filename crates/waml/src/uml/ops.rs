@@ -104,25 +104,25 @@ impl crate::edit::sealed::Sealed for Batch {}
 
 impl EditBatch for Batch {
     fn lower(&self, context: EditContext<'_>) -> Result<SourceBundle, EditError> {
-        let mut candidate = context.source.clone();
+        let mut cursor = super::lower::UmlLoweringCursor::new(context);
         for (index, op) in self.0.iter().enumerate() {
-            lower_one(&mut candidate, op).map_err(|mut error| {
-                error.index = index;
-                error
-            })?;
+            cursor.apply(index, op)?;
         }
-        Ok(candidate)
+        Ok(cursor.finish())
     }
 }
 
-fn require_claimed(work: &SourceBundle, target: &str, op: &str) -> Result<(), EditError> {
-    let index = super::lower::resolve_index(work, target)
-        .ok_or_else(|| EditError::at(op, format!("no document '{target}'")))?;
-    let document = work.document_at(index).expect("resolved document index");
-    let parsed = crate::parse::parse_document(document.text());
-    let ty = ElementType::parse(parsed.frontmatter.get_str("type").unwrap_or(""));
-    if crate::uml::recognizes_type(&ty) {
-        Ok(())
+fn require_claimed(
+    state: &super::lower::UmlLoweringState,
+    work: &SourceBundle,
+    target: &str,
+    op: &str,
+) -> Result<(), EditError> {
+    if state.path(target).is_some() {
+        return Ok(());
+    }
+    if super::lower::resolve_index(work, target).is_none() {
+        Err(EditError::at(op, format!("no document '{target}'")))
     } else {
         Err(EditError::at(
             op,
@@ -131,7 +131,11 @@ fn require_claimed(work: &SourceBundle, target: &str, op: &str) -> Result<(), Ed
     }
 }
 
-pub(crate) fn lower_one(work: &mut SourceBundle, op: &Op) -> Result<(), EditError> {
+pub(crate) fn lower_one_with_state(
+    work: &mut SourceBundle,
+    state: &super::lower::UmlLoweringState,
+    op: &Op,
+) -> Result<(), EditError> {
     match op {
         Op::AttributeAdd {
             node,
@@ -140,7 +144,7 @@ pub(crate) fn lower_one(work: &mut SourceBundle, op: &Op) -> Result<(), EditErro
             multiplicity,
             visibility,
         } => {
-            require_claimed(work, node, "attr.add")?;
+            require_claimed(state, work, node, "attr.add")?;
             super::lower::op_attr_add(work, node, name, ty_token, multiplicity, *visibility)
         }
         Op::AttributeSet {
@@ -151,7 +155,7 @@ pub(crate) fn lower_one(work: &mut SourceBundle, op: &Op) -> Result<(), EditErro
             visibility,
             rename,
         } => {
-            require_claimed(work, node, "attr.set")?;
+            require_claimed(state, work, node, "attr.set")?;
             super::lower::op_attr_set(
                 work,
                 node,
@@ -163,15 +167,15 @@ pub(crate) fn lower_one(work: &mut SourceBundle, op: &Op) -> Result<(), EditErro
             )
         }
         Op::AttributeRemove { node, name } => {
-            require_claimed(work, node, "attr.rm")?;
+            require_claimed(state, work, node, "attr.rm")?;
             super::lower::op_attr_rm(work, node, name)
         }
         Op::ValueAdd { node, literal } => {
-            require_claimed(work, node, "value.add")?;
+            require_claimed(state, work, node, "value.add")?;
             super::lower::op_value_add(work, node, literal)
         }
         Op::ValueRemove { node, literal } => {
-            require_claimed(work, node, "value.rm")?;
+            require_claimed(state, work, node, "value.rm")?;
             super::lower::op_value_rm(work, node, literal)
         }
         Op::RelationshipAdd {
@@ -181,8 +185,8 @@ pub(crate) fn lower_one(work: &mut SourceBundle, op: &Op) -> Result<(), EditErro
             name,
             ends,
         } => {
-            require_claimed(work, source, "rel.add")?;
-            require_claimed(work, target, "rel.add")?;
+            require_claimed(state, work, source, "rel.add")?;
+            require_claimed(state, work, target, "rel.add")?;
             super::lower::op_rel_add(work, source, *kind, target, name, ends)
         }
         Op::RelationshipSet {
@@ -191,10 +195,12 @@ pub(crate) fn lower_one(work: &mut SourceBundle, op: &Op) -> Result<(), EditErro
             name,
         } => {
             let selector = Selector::from(selector.clone());
+            require_claimed(state, work, selector.source(), "rel.set")?;
             super::lower::op_rel_set(work, &selector, ends, name)
         }
         Op::RelationshipRemove { selector } => {
             let selector = Selector::from(selector.clone());
+            require_claimed(state, work, selector.source(), "rel.rm")?;
             super::lower::op_rel_rm(work, &selector)
         }
         Op::ClassifierNew {
@@ -228,15 +234,15 @@ pub(crate) fn lower_one(work: &mut SourceBundle, op: &Op) -> Result<(), EditErro
             abstract_,
             ty,
         } => {
-            require_claimed(work, id, "node.set")?;
+            require_claimed(state, work, id, "node.set")?;
             super::lower::op_node_set(work, id, title, description, stereotype, abstract_, ty)
         }
         Op::ClassifierRemove { id, cascade } => {
-            require_claimed(work, id, "node.rm")?;
+            require_claimed(state, work, id, "node.rm")?;
             super::lower::op_node_rm(work, id, *cascade)
         }
         Op::ClassifierRename { from, to } => {
-            require_claimed(work, from, "node.rename")?;
+            require_claimed(state, work, from, "node.rename")?;
             super::rename::op_node_rename(work, from, to)
         }
         Op::DiagramSet {
@@ -246,7 +252,7 @@ pub(crate) fn lower_one(work: &mut SourceBundle, op: &Op) -> Result<(), EditErro
             clear_description,
             display,
         } => {
-            require_claimed(work, key, "diagram.set")?;
+            require_claimed(state, work, key, "diagram.set")?;
             super::lower::op_diagram_set(work, key, title, description, *clear_description, display)
         }
         Op::PlacementSet {
@@ -257,7 +263,7 @@ pub(crate) fn lower_one(work: &mut SourceBundle, op: &Op) -> Result<(), EditErro
             reference_slug,
             directions,
         } => {
-            require_claimed(work, diagram, "place.set")?;
+            require_claimed(state, work, diagram, "place.set")?;
             super::lower::op_place_set(
                 work,
                 diagram,
@@ -273,10 +279,29 @@ pub(crate) fn lower_one(work: &mut SourceBundle, op: &Op) -> Result<(), EditErro
             subject_slug,
             reference_slug,
         } => {
-            require_claimed(work, diagram, "place.rm")?;
+            require_claimed(state, work, diagram, "place.rm")?;
             super::lower::op_place_rm(work, diagram, subject_slug, reference_slug)
         }
     }
+}
+
+pub(crate) fn lower_one(work: &mut SourceBundle, op: &Op) -> Result<(), EditError> {
+    let state = super::lower::UmlLoweringState::from_candidate_compat(work);
+    lower_one_with_state(work, &state, op)?;
+    if let Op::DiagramSet { key, .. } = op {
+        let index = super::lower::find_doc(work, key, "diagram.set")?;
+        let normalized = work
+            .document_at(index)
+            .expect("resolved diagram")
+            .text()
+            .replace("\r\n", "\n");
+        *work
+            .document_at_mut(index)
+            .expect("resolved diagram")
+            .text_mut() =
+            crate::serialize::serialize_document(&crate::parse::parse_document(&normalized));
+    }
+    Ok(())
 }
 
 #[cfg(test)]

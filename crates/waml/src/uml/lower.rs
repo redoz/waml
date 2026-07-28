@@ -1,6 +1,9 @@
+use std::collections::BTreeMap;
+use std::sync::Arc;
+
 use super::selector::{render_selector, RelBy, Selector};
 use super::{DiagramDisplaySet, FieldEdit, NameSpec};
-use crate::edit::EditError;
+use crate::edit::{EditContext, EditError};
 use crate::frontmatter::{FmValue, Frontmatter};
 use crate::model::{
     Attribute, CardinalityVisibility, ElementType, RelEnd, RelationshipKind, TypeRef, Visibility,
@@ -9,11 +12,326 @@ use crate::multiplicity::Multiplicity;
 use crate::okf;
 use crate::parse::parse_document;
 use crate::serialize::serialize_document;
-use crate::source::SourceBundle;
+use crate::source::{BundlePath, SourceBundle};
 use crate::syntax::{
     Direction, Document, LayoutItem, LayoutStatement, Line, NameRef, Operand, OperandRef,
     ParsedName, ParsedRel, Section,
 };
+use waml_syntax::{parse_okf_markdown, MarkdownDialect, SourceText, SyntaxTree};
+
+pub(crate) struct UmlLoweringCursor<'a> {
+    original: EditContext<'a>,
+    candidate: SourceBundle,
+    state: UmlLoweringState,
+}
+
+pub(crate) struct UmlLoweringState {
+    current_paths: BTreeMap<String, BundlePath>,
+    touched_islands: BTreeMap<BundlePath, Arc<SyntaxTree<super::syntax::UmlLanguage>>>,
+}
+
+impl UmlLoweringState {
+    pub(crate) fn from_context(context: &EditContext<'_>) -> Self {
+        let current_paths = context
+            .uml
+            .claims
+            .iter()
+            .filter_map(|id| {
+                context
+                    .source
+                    .document_by_concept_id(id)
+                    .map(|document| (id.to_owned(), document.path().clone()))
+            })
+            .collect();
+        Self {
+            current_paths,
+            touched_islands: BTreeMap::new(),
+        }
+    }
+
+    pub(crate) fn from_candidate_compat(source: &SourceBundle) -> Self {
+        let current_paths = source
+            .documents()
+            .iter()
+            .filter_map(|document| {
+                let parsed = parse_document(document.text());
+                let ty = ElementType::parse(parsed.frontmatter.get_str("type").unwrap_or(""));
+                crate::uml::recognizes_type(&ty).then(|| {
+                    (
+                        document
+                            .path()
+                            .concept_id()
+                            .expect("concept path")
+                            .to_owned(),
+                        document.path().clone(),
+                    )
+                })
+            })
+            .collect();
+        Self {
+            current_paths,
+            touched_islands: BTreeMap::new(),
+        }
+    }
+
+    pub(crate) fn invalidate_text(&mut self, path: &BundlePath) {
+        self.touched_islands.remove(path);
+    }
+
+    pub(crate) fn inserted_concept(
+        &mut self,
+        id: String,
+        path: BundlePath,
+    ) -> Result<(), EditError> {
+        if self.current_paths.contains_key(&id)
+            || self
+                .current_paths
+                .iter()
+                .any(|(existing_id, existing_path)| existing_id != &id && existing_path == &path)
+        {
+            return Err(EditError::at(
+                "uml.structure",
+                format!("concept '{id}' or path '{}' already exists", path.as_str()),
+            ));
+        }
+        self.invalidate_text(&path);
+        self.current_paths.insert(id, path);
+        Ok(())
+    }
+
+    pub(crate) fn removed_concept(&mut self, id: &str) {
+        if let Some(path) = self.current_paths.remove(id) {
+            self.invalidate_text(&path);
+        }
+    }
+
+    pub(crate) fn renamed_concept(
+        &mut self,
+        from: &str,
+        to: String,
+        path: BundlePath,
+    ) -> Result<(), EditError> {
+        if from != to && self.current_paths.contains_key(&to) {
+            return Err(EditError::at(
+                "uml.structure",
+                format!("concept '{to}' already exists"),
+            ));
+        }
+        let old_path = self.current_paths.remove(from).ok_or_else(|| {
+            EditError::at("uml.structure", format!("no claimed concept '{from}'"))
+        })?;
+        if self
+            .current_paths
+            .iter()
+            .any(|(existing_id, existing_path)| existing_id != &to && existing_path == &path)
+        {
+            self.current_paths.insert(from.to_owned(), old_path);
+            return Err(EditError::at(
+                "uml.structure",
+                format!("path '{}' already exists", path.as_str()),
+            ));
+        }
+        self.invalidate_text(&old_path);
+        self.invalidate_text(&path);
+        self.current_paths.insert(to, path);
+        Ok(())
+    }
+
+    pub(crate) fn path(&self, id: &str) -> Option<&BundlePath> {
+        self.resolve_id(id)
+            .and_then(|resolved| self.current_paths.get(resolved))
+    }
+
+    fn resolve_id(&self, target: &str) -> Option<&str> {
+        if let Some((id, _)) = self.current_paths.get_key_value(target) {
+            return Some(id.as_str());
+        }
+        let mut matches = self
+            .current_paths
+            .iter()
+            .filter(|(_, path)| slug_of(path.as_str()) == target);
+        match (matches.next(), matches.next()) {
+            (Some((id, _)), None) => Some(id.as_str()),
+            _ => None,
+        }
+    }
+
+    fn reparse(
+        &mut self,
+        candidate: &SourceBundle,
+        path: &BundlePath,
+        op: &str,
+    ) -> Result<(), EditError> {
+        let document = candidate
+            .document(path)
+            .ok_or_else(|| EditError::at(op, format!("no document '{}'", path.as_str())))?;
+        let text = SourceText::from_shared(document.text_arc().clone())
+            .map_err(|error| EditError::at(op, error.to_string()))?;
+        let shell = parse_okf_markdown(text.clone(), MarkdownDialect::CommonMarkCurrent)
+            .map_err(|error| EditError::at(op, error.to_string()))?;
+        let tree = super::syntax::parser::parse(text, &shell.structure);
+        self.touched_islands.insert(path.clone(), tree);
+        Ok(())
+    }
+}
+
+impl<'a> UmlLoweringCursor<'a> {
+    pub(crate) fn new(context: EditContext<'a>) -> Self {
+        let candidate = context.source.clone();
+        let state = UmlLoweringState::from_context(&context);
+        Self {
+            original: context,
+            candidate,
+            state,
+        }
+    }
+
+    pub(crate) fn apply(&mut self, index: usize, op: &super::Op) -> Result<(), EditError> {
+        if index == 0 {
+            validate_context(&self.original)?;
+        }
+        apply_step(&mut self.candidate, &mut self.state, index, op)
+    }
+
+    pub(crate) fn finish(self) -> SourceBundle {
+        self.candidate
+    }
+}
+
+pub(crate) fn apply_step(
+    candidate: &mut SourceBundle,
+    state: &mut UmlLoweringState,
+    index: usize,
+    op: &super::Op,
+) -> Result<(), EditError> {
+    let before: BTreeMap<_, _> = candidate
+        .documents()
+        .iter()
+        .map(|document| (document.path().clone(), document.text_arc().clone()))
+        .collect();
+    let rename_from = match op {
+        super::Op::ClassifierRename { from, .. } => state.resolve_id(from).map(str::to_owned),
+        _ => None,
+    };
+    let remove_id = match op {
+        super::Op::ClassifierRemove { id, .. } => state.resolve_id(id).map(str::to_owned),
+        _ => None,
+    };
+    super::ops::lower_one_with_state(candidate, state, op).map_err(|mut error| {
+        error.index = index;
+        error
+    })?;
+
+    match op {
+        super::Op::ClassifierNew { slug, .. } => {
+            let document = candidate
+                .documents()
+                .iter()
+                .find(|document| slug_of(document.path().as_str()) == slug.as_str())
+                .ok_or_else(|| {
+                    EditError::at("node.new", format!("inserted concept '{slug}' is absent"))
+                })?;
+            let id = document
+                .path()
+                .concept_id()
+                .expect("inserted classifier has concept path")
+                .to_owned();
+            state
+                .inserted_concept(id, document.path().clone())
+                .map_err(|mut error| {
+                    error.index = index;
+                    error
+                })?;
+        }
+        super::Op::ClassifierRemove { .. } => {
+            if let Some(id) = remove_id {
+                state.removed_concept(&id);
+            }
+        }
+        super::Op::ClassifierRename { to, .. } => {
+            if let Some(from) = rename_from {
+                let document = candidate
+                    .documents()
+                    .iter()
+                    .find(|document| slug_of(document.path().as_str()) == to.as_str())
+                    .ok_or_else(|| {
+                        EditError::at("node.rename", format!("renamed concept '{to}' is absent"))
+                    })?;
+                let id = document
+                    .path()
+                    .concept_id()
+                    .expect("renamed classifier has concept path")
+                    .to_owned();
+                state
+                    .renamed_concept(&from, id, document.path().clone())
+                    .map_err(|mut error| {
+                        error.index = index;
+                        error
+                    })?;
+            }
+        }
+        _ => {}
+    }
+
+    let changed: Vec<_> = candidate
+        .documents()
+        .iter()
+        .filter(|document| {
+            before
+                .get(document.path())
+                .map_or(true, |text| !Arc::ptr_eq(text, document.text_arc()))
+        })
+        .map(|document| document.path().clone())
+        .collect();
+    for path in changed {
+        state.invalidate_text(&path);
+        if state.current_paths.values().any(|claimed| claimed == &path) {
+            state
+                .reparse(candidate, &path, op_name(op))
+                .map_err(|mut error| {
+                    error.index = index;
+                    error
+                })?;
+        }
+    }
+    Ok(())
+}
+
+fn op_name(op: &super::Op) -> &'static str {
+    match op {
+        super::Op::AttributeAdd { .. } => "attr.add",
+        super::Op::AttributeSet { .. } => "attr.set",
+        super::Op::AttributeRemove { .. } => "attr.rm",
+        super::Op::ValueAdd { .. } => "value.add",
+        super::Op::ValueRemove { .. } => "value.rm",
+        super::Op::RelationshipAdd { .. } => "rel.add",
+        super::Op::RelationshipSet { .. } => "rel.set",
+        super::Op::RelationshipRemove { .. } => "rel.rm",
+        super::Op::ClassifierNew { .. } => "node.new",
+        super::Op::ClassifierSet { .. } => "node.set",
+        super::Op::ClassifierRemove { .. } => "node.rm",
+        super::Op::ClassifierRename { .. } => "node.rename",
+        super::Op::DiagramSet { .. } => "diagram.set",
+        super::Op::PlacementSet { .. } => "place.set",
+        super::Op::PlacementRemove { .. } => "place.rm",
+    }
+}
+
+fn validate_context(context: &EditContext<'_>) -> Result<(), EditError> {
+    let catalog = &context.okf_analysis.catalog;
+    if catalog.session_revision() != context.session_revision
+        || context.uml.session_revision() != context.session_revision
+        || !Arc::ptr_eq(catalog, context.okf_analysis.shell.catalog())
+        || !Arc::ptr_eq(catalog, context.uml.syntax.catalog())
+        || catalog.documents().len() != context.source.len()
+    {
+        return Err(EditError::at(
+            "uml.context",
+            "analysis/catalog revision does not match source",
+        ));
+    }
+    Ok(())
+}
 
 // ---- shared helpers (reused by every later op) ----
 
@@ -72,13 +390,211 @@ where
     F: FnOnce(&mut Document) -> Result<(), EditError>,
 {
     let i = find_doc(work, slug, op)?;
-    let mut doc = parse_document(work.document_at(i).expect("resolved document index").text());
+    let original = work
+        .document_at(i)
+        .expect("resolved document index")
+        .text()
+        .to_owned();
+    let normalized = original.replace("\r\n", "\n");
+    let mut doc = parse_document(&normalized);
     f(&mut doc)?;
+    let rendered = serialize_document(&doc);
+    let merged = merge_owned_edit(&original, &rendered, op)?;
     *work
         .document_at_mut(i)
         .expect("resolved document index")
-        .text_mut() = serialize_document(&doc);
+        .text_mut() = merged;
     Ok(())
+}
+
+fn merge_owned_edit(original: &str, rendered: &str, op: &str) -> Result<String, EditError> {
+    let section = match op {
+        "attr.add" | "attr.set" | "attr.rm" => Some("Attributes"),
+        "value.add" | "value.rm" => Some("Values"),
+        "rel.add" | "rel.set" | "rel.rm" => Some("Relationships"),
+        "place.set" | "place.rm" => Some("Layout"),
+        _ => None,
+    };
+    if let Some(section) = section {
+        return merge_section(original, rendered, section, op);
+    }
+    if matches!(op, "node.set" | "diagram.set") {
+        return merge_frontmatter_and_title(original, rendered, op);
+    }
+    Ok(rendered.to_owned())
+}
+
+fn line_ending(source: &str) -> &'static str {
+    if source.contains("\r\n") {
+        "\r\n"
+    } else {
+        "\n"
+    }
+}
+
+fn parse_structure(source: &str, op: &str) -> Result<waml_syntax::ShellParse, EditError> {
+    let text = SourceText::from_shared(Arc::new(source.to_owned()))
+        .map_err(|error| EditError::at(op, error.to_string()))?;
+    parse_okf_markdown(text, MarkdownDialect::CommonMarkCurrent)
+        .map_err(|error| EditError::at(op, error.to_string()))
+}
+
+fn section_range(
+    source: &str,
+    section: &str,
+    op: &str,
+) -> Result<Option<std::ops::Range<usize>>, EditError> {
+    let shell = parse_structure(source, op)?;
+    let headings = &shell.structure.headings;
+    let Some((index, heading)) = headings.iter().enumerate().find(|(_, heading)| {
+        heading.level == 2
+            && source[heading.text_range.start().to_usize()..heading.text_range.end().to_usize()]
+                .trim()
+                == section
+    }) else {
+        return Ok(None);
+    };
+    let start = heading.range.start().to_usize();
+    let end = headings
+        .iter()
+        .skip(index + 1)
+        .find(|next| next.level <= 2)
+        .map(|next| next.range.start().to_usize())
+        .unwrap_or(source.len());
+    Ok(Some(start..end))
+}
+
+fn merge_section(
+    original: &str,
+    rendered: &str,
+    section: &str,
+    op: &str,
+) -> Result<String, EditError> {
+    let wanted = section_range(rendered, section, op)?
+        .map(|range| rendered[range].trim_end_matches(['\r', '\n']).to_owned())
+        .unwrap_or_default();
+    let newline = line_ending(original);
+    let wanted = wanted.replace('\n', newline);
+    let wanted_body_empty = wanted.lines().skip(1).all(|line| line.trim().is_empty());
+    let mut output = original.to_owned();
+    if let Some(range) = section_range(original, section, op)? {
+        if range.end == output.len() {
+            output.truncate(range.start);
+            while output.ends_with('\n') || output.ends_with('\r') {
+                output.pop();
+            }
+            if wanted_body_empty {
+                output.push_str(newline);
+            } else {
+                output.push_str(newline);
+                output.push_str(newline);
+                output.push_str(&wanted);
+                output.push_str(newline);
+            }
+        } else {
+            let replacement = if wanted_body_empty {
+                String::new()
+            } else {
+                format!("{wanted}{newline}{newline}")
+            };
+            output.replace_range(range, &replacement);
+        }
+        return Ok(output);
+    }
+    if wanted_body_empty {
+        return Ok(output);
+    }
+    while output.ends_with('\n') || output.ends_with('\r') {
+        output.pop();
+    }
+    output.push_str(newline);
+    output.push_str(newline);
+    output.push_str(&wanted);
+    output.push_str(newline);
+    Ok(output)
+}
+
+fn merge_frontmatter_and_title(
+    original: &str,
+    rendered: &str,
+    op: &str,
+) -> Result<String, EditError> {
+    let newline = line_ending(original);
+    let normalized_original = original.replace("\r\n", "\n");
+    let normalized_rendered = rendered.replace("\r\n", "\n");
+    let old = parse_document(&normalized_original);
+    let new = parse_document(&normalized_rendered);
+    let old_entries: BTreeMap<_, _> = old.frontmatter.entries.iter().cloned().collect();
+    let new_entries: BTreeMap<_, _> = new.frontmatter.entries.iter().cloned().collect();
+    let mut output = normalized_original;
+    for key in old_entries
+        .keys()
+        .chain(new_entries.keys())
+        .collect::<std::collections::BTreeSet<_>>()
+    {
+        if old_entries.get(key) == new_entries.get(key) {
+            continue;
+        }
+        let prefix = format!("{key}:");
+        let close = output
+            .lines()
+            .scan(0usize, |offset, line| {
+                let start = *offset;
+                *offset += line.len() + 1;
+                Some((start, line))
+            })
+            .skip(1)
+            .find(|(_, line)| *line == "---")
+            .map(|(start, _)| start)
+            .ok_or_else(|| EditError::at(op, "claimed document has no clean frontmatter"))?;
+        let existing = output[..close]
+            .lines()
+            .scan(0usize, |offset, line| {
+                let start = *offset;
+                *offset += line.len() + 1;
+                Some((start, line))
+            })
+            .find(|(_, line)| line.starts_with(&prefix))
+            .map(|(start, line)| start..start + line.len() + 1);
+        let replacement = normalized_rendered
+            .lines()
+            .find(|line| line.starts_with(&prefix))
+            .map(|line| format!("{line}\n"))
+            .unwrap_or_default();
+        if let Some(range) = existing {
+            output.replace_range(range, &replacement);
+        } else if !replacement.is_empty() {
+            let close = output
+                .find("\n---\n")
+                .map(|offset| offset + 1)
+                .ok_or_else(|| EditError::at(op, "claimed document has no closing fence"))?;
+            output.insert_str(close, &replacement);
+        }
+    }
+    if old.title != new.title {
+        let shell = parse_structure(&output, op)?;
+        if let Some(heading) = shell
+            .structure
+            .headings
+            .iter()
+            .find(|heading| heading.level == 1)
+        {
+            let range = heading.text_range.start().to_usize()..heading.text_range.end().to_usize();
+            let authored = &output[range.clone()];
+            if let Some(relative) = authored.find(&old.title) {
+                let start = range.start + relative;
+                output.replace_range(start..start + old.title.len(), &new.title);
+            }
+        }
+    }
+    if original.ends_with('\n') && !output.ends_with('\n') {
+        output.push('\n');
+    }
+    Ok(if newline == "\r\n" {
+        output.replace('\n', "\r\n")
+    } else {
+        output
+    })
 }
 
 /// Get the `## Attributes` list, creating an empty section if absent

@@ -97,3 +97,38 @@ fn legacy_retitle_preserves_unknown_index_markdown_and_crlf() {
     assert!(index.contains("* [Order](./order.md)\r\n\r\n## Notes\r\n"));
     assert!(index.ends_with("## Notes\r\nKeep me.\r\n"));
 }
+
+#[test]
+fn uml_rename_preserves_unknown_and_malformed_text_byte_for_byte() {
+    let bundle = vec![
+        (
+            "order-line.md".to_owned(),
+            "---\ntype: uml.Class\ntitle: OrderLine\n---\n# OrderLine\n".to_owned(),
+        ),
+        (
+            "order.md".to_owned(),
+            concat!(
+                "---\ntype: uml.Class\ntitle: Order\n---\n# Order\n\n",
+                "## Relationships\n",
+                "- depends [OrderLine](./order-line.md)\n",
+                "- malformed [OrderLine](./order-line.md\n\n",
+                "## Operations\n",
+                "Example only: [OrderLine](./order-line.md)\n",
+            )
+            .to_owned(),
+        ),
+    ];
+
+    let out = apply(
+        &bundle,
+        &[Op::NodeRename {
+            from: "order-line".into(),
+            to: "line-item".into(),
+        }],
+    )
+    .unwrap();
+    let order = &out.iter().find(|(path, _)| path == "order.md").unwrap().1;
+    assert!(order.contains("- depends [OrderLine](./line-item.md)\n"));
+    assert!(order.contains("- malformed [OrderLine](./order-line.md\n"));
+    assert!(order.contains("Example only: [OrderLine](./order-line.md)\n"));
+}

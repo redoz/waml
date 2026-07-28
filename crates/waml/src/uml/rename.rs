@@ -1,10 +1,8 @@
 use super::lower::{find_doc, slug_of};
 use crate::edit::EditError;
 use crate::okf;
-use crate::parse::parse_document;
-use crate::serialize::serialize_document;
 use crate::source::SourceBundle;
-use crate::syntax::{Document, Line, NameRef, Operand, OperandRef, ParsedName, Section};
+use waml_syntax::{parse_okf_markdown, MarkdownDialect, SourceText, SyntaxElement, SyntaxNode};
 
 /// Swap the basename of `path` to `to.md`, preserving any directory prefix.
 fn replace_basename(path: &str, to: &str) -> String {
@@ -12,118 +10,6 @@ fn replace_basename(path: &str, to: &str) -> String {
         Some(i) => format!("{}/{}.md", &path[..i], to),
         None => format!("{to}.md"),
     }
-}
-
-/// Repoint every `from`-slug reference inside one document to `to`. Titles are
-/// left untouched. Returns whether anything changed.
-fn rename_in_doc(doc: &mut Document, from: &str, to: &str) -> bool {
-    let mut changed = false;
-    for sec in &mut doc.sections {
-        match sec {
-            Section::Attributes(attrs) => {
-                for a in attrs.iter_mut().filter_map(Line::parsed_mut) {
-                    if a.ty.ref_.as_deref() == Some(from) {
-                        a.ty.ref_ = Some(to.to_string());
-                        changed = true;
-                    }
-                }
-            }
-            Section::Relationships(rels) => {
-                for r in rels.iter_mut().filter_map(Line::parsed_mut) {
-                    if r.target_slug == from {
-                        r.target_slug = to.to_string();
-                        changed = true;
-                    }
-                    if let Some(ParsedName::Ref { slug, .. }) = &mut r.name {
-                        if slug == from {
-                            *slug = to.to_string();
-                            changed = true;
-                        }
-                    }
-                }
-            }
-            Section::Members(block) => {
-                fn rename_in_group(
-                    g: &mut crate::syntax::MemberGroup,
-                    from: &str,
-                    to: &str,
-                    changed: &mut bool,
-                ) {
-                    for m in g.members.iter_mut().filter_map(Line::parsed_mut) {
-                        match m {
-                            crate::syntax::MemberItem::Member(ml) => {
-                                if ml.slug == from {
-                                    ml.slug = to.to_string();
-                                    *changed = true;
-                                }
-                            }
-                            crate::syntax::MemberItem::Instance(inst) => {
-                                if inst.classifier.slug == from {
-                                    inst.classifier.slug = to.to_string();
-                                    *changed = true;
-                                }
-                            }
-                        }
-                    }
-                    for c in &mut g.children {
-                        rename_in_group(c, from, to, changed);
-                    }
-                }
-                for g in &mut block.groups {
-                    rename_in_group(g, from, to, &mut changed);
-                }
-            }
-            Section::Layout(stmts) => {
-                for it in stmts.iter_mut().filter_map(Line::parsed_mut) {
-                    match &mut it.stmt {
-                        crate::syntax::LayoutStatement::Standalone(op) => {
-                            changed |= rename_in_operand(op, from, to);
-                        }
-                        crate::syntax::LayoutStatement::Placement { operands, .. } => {
-                            for op in operands {
-                                changed |= rename_in_operand(op, from, to);
-                            }
-                        }
-                        crate::syntax::LayoutStatement::Alignment { left, right } => {
-                            changed |= rename_in_operand(&mut left.operand, from, to);
-                            changed |= rename_in_operand(&mut right.operand, from, to);
-                        }
-                    }
-                }
-            }
-            _ => {}
-        }
-    }
-    changed
-}
-
-/// Repoint a `from`-slug reference inside one layout operand to `to`, recursing
-/// through inline groups and parens. Returns whether anything changed.
-fn rename_in_operand(op: &mut Operand, from: &str, to: &str) -> bool {
-    let mut changed = false;
-    match &mut op.ref_ {
-        OperandRef::Name(NameRef::Link { slug, .. }) => {
-            if slug == from {
-                *slug = to.to_string();
-                changed = true;
-            }
-        }
-        OperandRef::Name(NameRef::Bare(s)) => {
-            if s == from {
-                *s = to.to_string();
-                changed = true;
-            }
-        }
-        OperandRef::InlineGroup { items, .. } => {
-            for item in items {
-                changed |= rename_in_operand(item, from, to);
-            }
-        }
-        OperandRef::Paren(inner) => {
-            changed |= rename_in_operand(inner, from, to);
-        }
-    }
-    changed
 }
 
 pub(crate) fn op_node_rename(
@@ -157,21 +43,111 @@ pub(crate) fn op_node_rename(
         ));
     }
     for index in 0..work.len() {
-        let mut doc = parse_document(
-            work.document_at(index)
-                .expect("document index in bounds")
-                .text(),
-        );
-        if rename_in_doc(&mut doc, &from_basename, to) {
+        let source = work
+            .document_at(index)
+            .expect("document index in bounds")
+            .text()
+            .to_owned();
+        let changed = rename_typed_references(&source, &from_basename, to)?;
+        if changed != source {
             *work
                 .document_at_mut(index)
                 .expect("document index in bounds")
-                .text_mut() = serialize_document(&doc);
+                .text_mut() = changed;
         }
     }
     work.rename_document(idx, dest_path)
         .map_err(|error| EditError::at("node.rename", error.to_string()))?;
     Ok(())
+}
+
+fn rename_typed_references(source: &str, from: &str, to: &str) -> Result<String, EditError> {
+    let text = SourceText::from_shared(std::sync::Arc::new(source.to_owned()))
+        .map_err(|error| EditError::at("node.rename", error.to_string()))?;
+    let shell = parse_okf_markdown(text.clone(), MarkdownDialect::CommonMarkCurrent)
+        .map_err(|error| EditError::at("node.rename", error.to_string()))?;
+    let tree = super::syntax::parser::parse(text, &shell.structure);
+    let mut edits = Vec::new();
+    collect_reference_edits(&tree.root(), source, from, to, &mut edits);
+    edits.sort_by_key(|(range, _)| std::cmp::Reverse(range.start));
+    let mut output = source.to_owned();
+    for (range, replacement) in edits {
+        output.replace_range(range, &replacement);
+    }
+    Ok(output)
+}
+
+fn collect_reference_edits(
+    node: &SyntaxNode<super::syntax::UmlLanguage>,
+    source: &str,
+    from: &str,
+    to: &str,
+    edits: &mut Vec<(std::ops::Range<usize>, String)>,
+) {
+    use super::syntax::UmlSyntaxKind;
+    if node.kind() == UmlSyntaxKind::AttributesSection {
+        let range = node.range().start().to_usize()..node.range().end().to_usize();
+        let authored = &source[range.clone()];
+        let needle = format!("](./{from}.md)");
+        let replacement = authored.replace(&needle, &format!("](./{to}.md)"));
+        if replacement != authored {
+            edits.push((range, replacement));
+        }
+        return;
+    }
+    if matches!(
+        node.kind(),
+        UmlSyntaxKind::Link | UmlSyntaxKind::TypeReference
+    ) {
+        let range = node.range().start().to_usize()..node.range().end().to_usize();
+        let authored = &source[range.clone()];
+        let needle = format!("./{from}.md");
+        let replacement = authored.replace(&needle, &format!("./{to}.md"));
+        if replacement != authored {
+            edits.push((range, replacement));
+        }
+        return;
+    }
+    if node.kind() == UmlSyntaxKind::LayoutStatement {
+        let range = node.range().start().to_usize()..node.range().end().to_usize();
+        let authored = &source[range.clone()];
+        let needle = format!("./{from}.md");
+        let mut replacement = authored.replace(&needle, &format!("./{to}.md"));
+        let bare = regex::Regex::new(&format!(r"\b{}\b", regex::escape(from)))
+            .expect("escaped slug is valid regex");
+        replacement = bare.replace_all(&replacement, to).into_owned();
+        if replacement != authored {
+            edits.push((range, replacement));
+        }
+        return;
+    }
+    for child in node.children() {
+        match child {
+            SyntaxElement::Node(child) => {
+                collect_reference_edits(&child, source, from, to, edits);
+            }
+            SyntaxElement::Token(token)
+                if matches!(
+                    token.kind(),
+                    UmlSyntaxKind::LinkTargetToken | UmlSyntaxKind::LayoutLinkToken
+                ) =>
+            {
+                let range = token.range().start().to_usize()..token.range().end().to_usize();
+                let authored = &source[range.clone()];
+                let needle = format!("./{from}.md");
+                if authored.contains(&needle) {
+                    edits.push((range, authored.replace(&needle, &format!("./{to}.md"))));
+                }
+            }
+            SyntaxElement::Token(token) if token.kind() == UmlSyntaxKind::LayoutWordToken => {
+                let range = token.range().start().to_usize()..token.range().end().to_usize();
+                if source[range.clone()] == *from {
+                    edits.push((range, to.to_owned()));
+                }
+            }
+            SyntaxElement::Token(_) => {}
+        }
+    }
 }
 
 #[cfg(test)]

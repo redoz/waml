@@ -33,6 +33,15 @@ pub enum RelBy {
     },
 }
 
+impl Selector {
+    pub(crate) fn source(&self) -> &str {
+        match self {
+            Self::Node(source) | Self::Rel { source, .. } => source,
+            Self::Attr { node, .. } | Self::Value { node, .. } => node,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RelationshipSelector {
     pub source: String,

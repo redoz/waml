@@ -951,11 +951,11 @@ mod tests {
             session.is_dirty(),
             "class.md successful lowerer dirty state"
         );
-        let expected = waml::serialize::serialize_document(&waml::parse::parse_document(
-            include_str!("../../waml/tests/fixtures/parser-platform/class.md"),
-        ))
-        .replace("title: Café Order", "title: Café Order Baseline")
-        .replace("# Café Order", "# Café Order Baseline");
+        // UML lowering edits only its typed title slots. The raw Operations
+        // island and its authored whitespace are not formatter-owned.
+        let expected = include_str!("../../waml/tests/fixtures/parser-platform/class.md")
+            .replace("title: Café Order", "title: Café Order Baseline")
+            .replace("# Café Order", "# Café Order Baseline");
         let changed = session
             .bundle()
             .documents()
@@ -964,6 +964,8 @@ mod tests {
             .unwrap()
             .text();
         assert_eq!(changed, expected, "class.md exact UML Lowerer output");
+        assert!(changed.contains("This **raw Markdown** is deliberately not semantic."));
+        assert!(changed.ends_with("Trailing whitespace stays here.   \n"));
         let changed_index = session
             .bundle()
             .documents()
