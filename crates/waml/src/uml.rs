@@ -2,13 +2,17 @@
 
 pub mod analysis;
 pub mod declared;
+mod format;
 pub(crate) mod lower;
 pub mod ops;
 pub(crate) mod rename;
+mod repair;
 pub mod selector;
 pub mod syntax;
 pub use crate::ops::{DiagramDisplaySet, FieldEdit, NameSpec};
+pub use format::{ActionContext, FormatError, Formatter};
 pub use ops::{Batch, Op};
+pub use repair::repair_actions;
 pub use selector::{RelationshipSelector, Selector};
 
 pub type Projection = crate::model::Model;

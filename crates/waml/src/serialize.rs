@@ -145,6 +145,13 @@ pub fn serialize_document(doc: &Document) -> String {
 mod tests {
     use super::*;
     use crate::parse::parse_document;
+    use crate::{
+        action::SyntaxChangeBatch,
+        analysis::prepare_candidate,
+        edit::{EditBatch, EditContext},
+        source::{BundlePath, SourceBundle},
+        uml::{ActionContext, Formatter},
+    };
 
     const ORDER: &str = "---\ntype: uml.Class\nstereotype: [aggregateRoot, entity]\ntitle: Order\n---\n# Order\n\n## Attributes\n- id: OrderId\n- status: [OrderStatus](./order-status.md) {0..1}\n\n## Relationships\n- composes [OrderLine](./order-line.md): 1 to 1..* lines\n\n## Provenance\nHand-authored. Keep me.\n";
 
@@ -153,6 +160,41 @@ mod tests {
         let once = serialize_document(&parse_document(ORDER));
         let twice = serialize_document(&parse_document(&once));
         assert_eq!(once, twice);
+    }
+
+    #[test]
+    fn syntax_formatter_matches_the_frozen_serializer_for_valid_enum_source() {
+        let source = "---\ntype: uml.Enum\ntitle: State\n---\n# State\n\n## Values\n\n- Open\n";
+        let prepared = prepare_candidate(
+            SourceBundle::try_from_pairs([("state.md", source)]).unwrap(),
+            None,
+            9,
+        )
+        .unwrap();
+        let document = prepared
+            .okf()
+            .catalog
+            .id_for_path(&BundlePath::parse("state.md").unwrap())
+            .unwrap();
+        let action = Formatter
+            .format(ActionContext::from_prepared(&prepared).unwrap(), document)
+            .unwrap();
+        let formatted = SyntaxChangeBatch::new(action)
+            .unwrap()
+            .lower(EditContext {
+                source: prepared.source(),
+                okf_analysis: prepared.okf(),
+                session_revision: prepared.revision(),
+                uml: prepared.uml(),
+            })
+            .unwrap();
+        assert_eq!(
+            formatted
+                .document(&BundlePath::parse("state.md").unwrap())
+                .unwrap()
+                .text(),
+            serialize_document(&parse_document(source))
+        );
     }
 
     #[test]
