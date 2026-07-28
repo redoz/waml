@@ -403,6 +403,91 @@ fn declared_projection(
                 bidirectional: false,
             });
         }
+        for inline in concept.inline_instances.iter() {
+            let (
+                crate::uml::DeclaredField::Valid {
+                    value: classifier,
+                    syntax,
+                },
+                crate::uml::DeclaredField::Valid { value: name, .. },
+            ) = (&inline.classifier, &inline.name)
+            else {
+                continue;
+            };
+            let target = crate::okf::resolve_href(&path, classifier);
+            if !claimed.contains(target.as_str()) {
+                let range = syntax.range();
+                let id = context
+                    .catalog
+                    .id_for_path(
+                        &crate::source::BundlePath::parse(path.clone())
+                            .expect("catalog path valid"),
+                    )
+                    .expect("catalog document");
+                let document = context.catalog.document(id).expect("catalog document");
+                let line = document
+                    .line_index()
+                    .line_col(document.text(), range.start())
+                    .expect("inline range");
+                diagnostics.push(
+                    Diagnostic::new(
+                        crate::diagnostic::DiagCode::UnresolvedTarget,
+                        format!("unresolved inline classifier '{classifier}'"),
+                        path.clone(),
+                        line.line as usize + 1,
+                    )
+                    .with_span((
+                        line.byte_column as usize,
+                        line.byte_column as usize
+                            + (range.end().to_usize() - range.start().to_usize()),
+                    ))
+                    .with_provenance(id, document.revision(), range),
+                );
+                continue;
+            }
+            let key = format!("{}#{}", concept.concept_id, name);
+            let mut instance_concept = okf.clone();
+            instance_concept.title = Some(name.clone());
+            let slots = inline
+                .slots
+                .iter()
+                .filter_map(|slot| match (&slot.name, &slot.value) {
+                    (
+                        crate::uml::DeclaredField::Valid { value: name, .. },
+                        crate::uml::DeclaredField::Valid { value, .. },
+                    ) => Some(crate::model::Slot {
+                        name: name.clone(),
+                        value: value.clone(),
+                        ref_: None,
+                    }),
+                    _ => None,
+                })
+                .collect();
+            model.nodes.push(crate::model::Node {
+                concept: instance_concept,
+                key: key.clone(),
+                ty: crate::model::ElementType::Uml(
+                    crate::model::UmlMetaclass::InstanceSpecification,
+                ),
+                stereotypes: vec![],
+                abstract_: false,
+                attributes: vec![],
+                values: vec![],
+                note_body: None,
+                annotates: vec![],
+                members: vec![],
+                slots,
+            });
+            model.edges.push(crate::model::Edge {
+                source: key,
+                target,
+                kind: crate::model::RelationshipKind::InstanceOf,
+                name: None,
+                from_end: Default::default(),
+                to_end: Default::default(),
+                bidirectional: false,
+            });
+        }
     }
     model
 }
