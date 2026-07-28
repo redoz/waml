@@ -504,6 +504,11 @@ fn layout_statement(
         };
         if kind == UmlSyntaxKind::BadToken {
             has_bad_atom = true;
+            children.push(GreenElement::Token(f.missing_token(match ch {
+                '[' => UmlSyntaxKind::LayoutLinkToken,
+                '"' => UmlSyntaxKind::LayoutQuoteToken,
+                _ => UmlSyntaxKind::LayoutWordToken,
+            })));
             children.push(GreenElement::Node(
                 f.node(
                     UmlSyntaxKind::SkippedTokensSyntax,
@@ -524,65 +529,86 @@ fn layout_statement(
         }
         at = next.max(at + ch.len_utf8());
     }
-    // Assign the lexical atoms to their top-level grammar slots.  Nested
-    // operand grammar remains lossless: an operand owns the exact authored
-    // atoms, and consumers can descend through its direct fixed slots.
+    // Parse the authored atoms into fixed grammar slots. The shape parser
+    // consumes atom indices only; the green elements below remain the sole
+    // owners of source bytes.
     if children.len() > 1 && !has_bad_atom && !atom_words.is_empty() {
         let atoms = children.split_off(1);
-        let aligned = atom_words
-            .windows(2)
-            .position(|words| words == ["aligned", "with"]);
-        let direction = atom_words
-            .iter()
-            .position(|word| matches!(word.as_str(), "above" | "below" | "left" | "right"));
-        let statement = if let Some(at) = aligned {
-            let mut atoms = atoms;
-            let right = atoms.split_off(at + 2);
-            let join = atoms.split_off(at);
-            f.node(
-                UmlSyntaxKind::LayoutAlignment,
-                [
-                    layout_anchored_node(f, atoms, &atom_words[..at]),
-                    GreenElement::Node(f.node(UmlSyntaxKind::DirectionClause, join).unwrap()),
-                    layout_anchored_node(f, right, &atom_words[at + 2..]),
-                ],
-            )
-            .unwrap()
-        } else if let Some(at) = direction {
-            let mut atoms = atoms;
-            let rest = atoms.split_off(at);
-            let direction_len = if matches!(
-                atom_words.get(at + 1).map(String::as_str),
-                Some("left") | Some("right")
-            ) && atom_words.get(at + 2).is_some_and(|word| word == "of")
-            {
-                3
-            } else if matches!(atom_words.get(at + 1).map(String::as_str), Some("of")) {
-                2
-            } else {
-                1
-            };
-            let mut rest = rest;
-            let right = rest.split_off(direction_len.min(rest.len()));
-            f.node(
-                UmlSyntaxKind::LayoutPlacement,
-                [
-                    layout_operand_node(f, atoms, &atom_words[..at]),
-                    GreenElement::Node(f.node(UmlSyntaxKind::DirectionClause, rest).unwrap()),
-                    layout_operand_node(f, right, &atom_words[at + direction_len..]),
-                ],
-            )
-            .unwrap()
-        } else {
-            f.node(
-                UmlSyntaxKind::LayoutStandalone,
-                [layout_operand_node(f, atoms, &atom_words)],
-            )
-            .unwrap()
-        };
-        children.push(GreenElement::Node(statement));
+        match parse_layout_shape(&atom_words) {
+            Ok(LayoutShape::Alignment { left, join, right }) => {
+                children.push(GreenElement::Node(
+                    f.node(
+                        UmlSyntaxKind::LayoutAlignment,
+                        [
+                            layout_anchored_node(
+                                f,
+                                atoms[left.clone()].to_vec(),
+                                &atom_words[left],
+                            ),
+                            GreenElement::Node(
+                                f.node(
+                                    UmlSyntaxKind::DirectionClause,
+                                    atoms[join.clone()].iter().cloned(),
+                                )
+                                .unwrap(),
+                            ),
+                            layout_anchored_node(
+                                f,
+                                atoms[right.clone()].to_vec(),
+                                &atom_words[right],
+                            ),
+                        ],
+                    )
+                    .unwrap(),
+                ));
+            }
+            Ok(LayoutShape::Placement {
+                operands,
+                directions,
+            }) => {
+                let mut slots = Vec::with_capacity(operands.len() + directions.len());
+                for (index, operand) in operands.iter().enumerate() {
+                    slots.push(layout_operand_node(
+                        f,
+                        atoms[operand.clone()].to_vec(),
+                        &atom_words[operand.clone()],
+                    ));
+                    if let Some(direction) = directions.get(index) {
+                        slots.push(GreenElement::Node(
+                            f.node(
+                                UmlSyntaxKind::DirectionClause,
+                                atoms[direction.clone()].iter().cloned(),
+                            )
+                            .unwrap(),
+                        ));
+                    }
+                }
+                children.push(GreenElement::Node(
+                    f.node(UmlSyntaxKind::LayoutPlacement, slots).unwrap(),
+                ));
+            }
+            Ok(LayoutShape::Standalone(operand)) => {
+                children.push(GreenElement::Node(
+                    f.node(
+                        UmlSyntaxKind::LayoutStandalone,
+                        [layout_operand_node(
+                            f,
+                            atoms[operand.clone()].to_vec(),
+                            &atom_words[operand],
+                        )],
+                    )
+                    .unwrap(),
+                ));
+            }
+            Err(error) => append_layout_recovery(f, &mut children, atoms, error),
+        }
     }
     if children.len() == 1 {
+        let bullet = children.pop().expect("layout bullet");
+        children.push(GreenElement::Node(
+            f.node(UmlSyntaxKind::SkippedTokensSyntax, [bullet])
+                .unwrap(),
+        ));
         children.push(GreenElement::Token(
             f.missing_token(UmlSyntaxKind::LayoutWordToken),
         ));
@@ -606,14 +632,288 @@ fn layout_statement(
     f.node(UmlSyntaxKind::LayoutStatement, children).unwrap()
 }
 
+#[derive(Clone, Debug)]
+enum LayoutShape {
+    Placement {
+        operands: Vec<std::ops::Range<usize>>,
+        directions: Vec<std::ops::Range<usize>>,
+    },
+    Alignment {
+        left: std::ops::Range<usize>,
+        join: std::ops::Range<usize>,
+        right: std::ops::Range<usize>,
+    },
+    Standalone(std::ops::Range<usize>),
+}
+
+#[derive(Clone, Copy, Debug)]
+struct LayoutShapeError {
+    recovery_from: usize,
+    missing_at: usize,
+    missing: UmlSyntaxKind,
+}
+
+struct LayoutShapeCursor<'a> {
+    words: &'a [String],
+    pos: usize,
+}
+
+impl<'a> LayoutShapeCursor<'a> {
+    fn word(&self) -> Option<&'a str> {
+        self.words.get(self.pos).map(String::as_str)
+    }
+
+    fn eat(&mut self, expected: &str) -> bool {
+        if self
+            .word()
+            .is_some_and(|word| word.eq_ignore_ascii_case(expected))
+        {
+            self.pos += 1;
+            true
+        } else {
+            false
+        }
+    }
+
+    fn error(
+        &self,
+        recovery_from: usize,
+        missing_at: usize,
+        missing: UmlSyntaxKind,
+    ) -> LayoutShapeError {
+        LayoutShapeError {
+            recovery_from,
+            missing_at,
+            missing,
+        }
+    }
+
+    fn operand(&mut self) -> Result<std::ops::Range<usize>, LayoutShapeError> {
+        let start = self.pos;
+        self.reference()?;
+        if self.eat("as") {
+            let axis_at = self.pos;
+            if !matches!(self.word(), Some("row") | Some("column")) {
+                return Err(self.error(
+                    start.max(axis_at.saturating_sub(1)),
+                    axis_at,
+                    UmlSyntaxKind::LayoutWordToken,
+                ));
+            }
+            self.pos += 1;
+        }
+        if self.eat("with") {
+            let with_at = self.pos - 1;
+            self.hint(with_at)?;
+            while matches!(self.word(), Some(",") | Some("and")) {
+                let separator = self.pos;
+                self.pos += 1;
+                if let Err(mut error) = self.hint(separator) {
+                    error.recovery_from = separator;
+                    return Err(error);
+                }
+            }
+        }
+        Ok(start..self.pos)
+    }
+
+    fn reference(&mut self) -> Result<(), LayoutShapeError> {
+        let start = self.pos;
+        let Some(word) = self.word() else {
+            return Err(self.error(
+                start.saturating_sub(1),
+                start,
+                UmlSyntaxKind::LayoutWordToken,
+            ));
+        };
+        if word == "(" {
+            self.pos += 1;
+            self.operand()?;
+            if !self.eat(")") {
+                return Err(self.error(start, self.pos, UmlSyntaxKind::LayoutCloseParenToken));
+            }
+            return Ok(());
+        }
+        if matches!(word, ")" | ",") {
+            return Err(self.error(start, start, UmlSyntaxKind::LayoutWordToken));
+        }
+        if matches!(word, "row" | "column") {
+            self.pos += 1;
+            if !self.eat("of") {
+                return Err(self.error(start, self.pos, UmlSyntaxKind::LayoutKeywordToken));
+            }
+            self.operand()?;
+            while self.eat(",") {
+                let separator = self.pos - 1;
+                if let Err(mut error) = self.operand() {
+                    error.recovery_from = separator;
+                    return Err(error);
+                }
+            }
+            return Ok(());
+        }
+        self.pos += 1;
+        Ok(())
+    }
+
+    fn hint(&mut self, recovery_from: usize) -> Result<(), LayoutShapeError> {
+        let Some(word) = self.word() else {
+            return Err(self.error(recovery_from, self.pos, UmlSyntaxKind::LayoutWordToken));
+        };
+        match word {
+            "frame" | "box" | "shrink" | "emphasized" | "collapsed" => {
+                self.pos += 1;
+                Ok(())
+            }
+            "no" | "small" | "medium" | "large" => {
+                self.pos += 1;
+                if self.eat("margin") || self.eat("margins") {
+                    Ok(())
+                } else {
+                    Err(self.error(recovery_from, self.pos, UmlSyntaxKind::LayoutKeywordToken))
+                }
+            }
+            _ => Err(self.error(recovery_from, self.pos, UmlSyntaxKind::LayoutWordToken)),
+        }
+    }
+
+    fn anchored(&mut self) -> Result<(std::ops::Range<usize>, bool), LayoutShapeError> {
+        let start = self.pos;
+        let has_edge = matches!(
+            self.word(),
+            Some("top") | Some("bottom") | Some("left") | Some("right") | Some("center")
+        ) && self
+            .words
+            .get(self.pos + 1)
+            .is_some_and(|word| word == "of");
+        if has_edge {
+            self.pos += 2;
+        }
+        self.operand()?;
+        Ok((start..self.pos, has_edge))
+    }
+
+    fn direction(&mut self) -> Result<Option<std::ops::Range<usize>>, LayoutShapeError> {
+        let start = self.pos;
+        match self.word() {
+            Some("above") | Some("below") => {
+                self.pos += 1;
+                if matches!(self.word(), Some("left") | Some("right")) {
+                    self.pos += 1;
+                    if !self.eat("of") {
+                        return Err(self.error(start, self.pos, UmlSyntaxKind::LayoutKeywordToken));
+                    }
+                }
+                Ok(Some(start..self.pos))
+            }
+            Some("left") | Some("right") => {
+                self.pos += 1;
+                if !self.eat("of") {
+                    return Err(self.error(start, self.pos, UmlSyntaxKind::LayoutKeywordToken));
+                }
+                Ok(Some(start..self.pos))
+            }
+            _ => Ok(None),
+        }
+    }
+}
+
+fn parse_layout_shape(words: &[String]) -> Result<LayoutShape, LayoutShapeError> {
+    let mut cursor = LayoutShapeCursor { words, pos: 0 };
+    let (first, first_has_edge) = cursor.anchored()?;
+    if cursor.eat("aligned") {
+        let join_start = cursor.pos - 1;
+        if !cursor.eat("with") {
+            return Err(cursor.error(join_start, cursor.pos, UmlSyntaxKind::LayoutKeywordToken));
+        }
+        let (right, _) = cursor.anchored()?;
+        if cursor.pos != words.len() {
+            return Err(cursor.error(cursor.pos, cursor.pos, UmlSyntaxKind::EndOfFileToken));
+        }
+        return Ok(LayoutShape::Alignment {
+            left: first,
+            join: join_start..join_start + 2,
+            right,
+        });
+    }
+    if first_has_edge {
+        return Err(cursor.error(0, cursor.pos, UmlSyntaxKind::LayoutKeywordToken));
+    }
+    let mut operands = vec![first];
+    let mut directions = Vec::new();
+    while let Some(direction) = cursor.direction()? {
+        let direction_start = direction.start;
+        directions.push(direction);
+        match cursor.operand() {
+            Ok(operand) => operands.push(operand),
+            Err(mut error) => {
+                if error.missing_at == words.len() {
+                    error.recovery_from = direction_start;
+                }
+                return Err(error);
+            }
+        }
+    }
+    if cursor.pos != words.len() {
+        return Err(cursor.error(cursor.pos, cursor.pos, UmlSyntaxKind::EndOfFileToken));
+    }
+    if directions.is_empty() {
+        Ok(LayoutShape::Standalone(operands.remove(0)))
+    } else {
+        Ok(LayoutShape::Placement {
+            operands,
+            directions,
+        })
+    }
+}
+
+fn append_layout_recovery(
+    f: &GreenFactory<UmlLanguage>,
+    children: &mut Vec<GreenElement<UmlLanguage>>,
+    atoms: Vec<GreenElement<UmlLanguage>>,
+    error: LayoutShapeError,
+) {
+    let from = error.recovery_from.min(atoms.len());
+    let at = error.missing_at.clamp(from, atoms.len());
+    children.extend(atoms[..from].iter().cloned());
+    if from < at {
+        children.push(GreenElement::Node(
+            f.node(
+                UmlSyntaxKind::SkippedTokensSyntax,
+                atoms[from..at].iter().cloned(),
+            )
+            .unwrap(),
+        ));
+    }
+    children.push(GreenElement::Token(f.missing_token(error.missing)));
+    if at < atoms.len() {
+        children.push(GreenElement::Node(
+            f.node(
+                UmlSyntaxKind::SkippedTokensSyntax,
+                atoms[at..].iter().cloned(),
+            )
+            .unwrap(),
+        ));
+    }
+}
+
 fn layout_operand_node(
     f: &GreenFactory<UmlLanguage>,
     atoms: Vec<GreenElement<UmlLanguage>>,
     words: &[String],
 ) -> GreenElement<UmlLanguage> {
-    let axis_at = words.iter().position(|word| word == "as");
-    let hint_at = words.iter().position(|word| word == "with");
-    let reference_end = axis_at.or(hint_at).unwrap_or(atoms.len());
+    let mut cursor = LayoutShapeCursor { words, pos: 0 };
+    cursor.reference().expect("validated layout reference");
+    let reference_end = cursor.pos;
+    let axis_at = words
+        .get(reference_end)
+        .is_some_and(|word| word == "as")
+        .then_some(reference_end);
+    let hint_at = words
+        .iter()
+        .enumerate()
+        .skip(reference_end)
+        .find_map(|(index, word)| (word == "with").then_some(index));
     let mut atoms = atoms;
     let tail = atoms.split_off(reference_end);
     let mut children = vec![layout_ref_node(f, atoms, &words[..reference_end])];
@@ -671,38 +971,18 @@ fn layout_ref_node(
             GreenElement::Node(f.node(UmlSyntaxKind::Axis, [atoms[0].clone()]).unwrap()),
             atoms[1].clone(),
         ];
-        let mut depth = 0_i32;
-        let mut start = 2;
-        for index in 2..=words.len() {
-            let boundary = if index == words.len() {
-                true
+        let mut cursor = LayoutShapeCursor { words, pos: 2 };
+        while cursor.pos < words.len() {
+            let item = cursor.operand().expect("validated inline group item");
+            children.push(layout_operand_node(
+                f,
+                atoms[item.clone()].to_vec(),
+                &words[item],
+            ));
+            if cursor.eat(",") {
+                children.push(atoms[cursor.pos - 1].clone());
             } else {
-                match words[index].as_str() {
-                    "(" => {
-                        depth += 1;
-                        false
-                    }
-                    ")" => {
-                        depth -= 1;
-                        false
-                    }
-                    "," if depth == 0 => true,
-                    _ => false,
-                }
-            };
-            if !boundary {
-                continue;
-            }
-            if start < index {
-                children.push(layout_operand_node(
-                    f,
-                    atoms[start..index].to_vec(),
-                    &words[start..index],
-                ));
-            }
-            if index < words.len() {
-                children.push(atoms[index].clone());
-                start = index + 1;
+                break;
             }
         }
         children

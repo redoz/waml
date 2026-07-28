@@ -833,6 +833,16 @@ fn has_recovery(node: &SyntaxNode<UmlLanguage>) -> bool {
         ) || e.into_node().is_some_and(|child| has_recovery(&child))
     })
 }
+fn first_recovery_node(node: &SyntaxNode<UmlLanguage>) -> Option<SyntaxNode<UmlLanguage>> {
+    node.children().find_map(|element| {
+        let child = element.into_node()?;
+        if child.kind() == super::syntax::UmlSyntaxKind::SkippedTokensSyntax {
+            Some(child)
+        } else {
+            first_recovery_node(&child)
+        }
+    })
+}
 fn has_missing_kind(node: &SyntaxNode<UmlLanguage>, kind: super::syntax::UmlSyntaxKind) -> bool {
     node.children().any(|e| {
         e.kind() == kind
@@ -1049,7 +1059,14 @@ fn declared_layout(
         };
         token.flags().is_missing() || token.text().write_to_string().trim().is_empty()
     });
-    if atoms.is_empty() || missing_atom || has_recovery(&node) {
+    if has_recovery(&node) {
+        let recovery = first_recovery_node(&node).expect("recovery predicate found a node");
+        return crate::uml::DeclaredField::Incomplete {
+            syntax: recovery,
+            expected: crate::uml::ExpectedSyntax::LayoutOperand,
+        };
+    }
+    if atoms.is_empty() || missing_atom {
         return crate::uml::DeclaredField::Incomplete {
             syntax: node,
             expected: crate::uml::ExpectedSyntax::LayoutOperand,
@@ -1060,73 +1077,60 @@ fn declared_layout(
             operands,
             directions,
         }) => {
-            let slots = syntax.placement();
-            let operand_slots = slots
-                .as_ref()
-                .map(|s| s.operands().map(|s| s.0).collect::<Vec<_>>())
-                .unwrap_or_default();
-            let direction_slots = slots
-                .as_ref()
-                .map(|s| s.directions().map(|s| s.0).collect::<Vec<_>>())
-                .unwrap_or_default();
+            let Some(slots) = syntax.placement() else {
+                return invalid(node);
+            };
+            let operand_slots = slots.operands().map(|slot| slot.0).collect::<Vec<_>>();
+            let direction_slots = slots.directions().map(|slot| slot.0).collect::<Vec<_>>();
+            if operand_slots.len() != operands.len() || direction_slots.len() != directions.len() {
+                return invalid(node);
+            }
             valid(
                 node.clone(),
                 crate::uml::DeclaredLayoutStatement::Placement {
                     operands: operands
                         .into_iter()
-                        .enumerate()
-                        .map(|(i, value)| {
-                            valid(
-                                operand_slots
-                                    .get(i)
-                                    .cloned()
-                                    .unwrap_or_else(|| node.clone()),
-                                value,
-                            )
-                        })
+                        .zip(operand_slots)
+                        .map(|(value, slot)| valid(slot, value))
                         .collect::<Vec<_>>()
                         .into(),
                     directions: directions
                         .into_iter()
-                        .enumerate()
-                        .map(|(i, value)| {
-                            valid(
-                                direction_slots
-                                    .get(i)
-                                    .cloned()
-                                    .unwrap_or_else(|| node.clone()),
-                                value,
-                            )
-                        })
+                        .zip(direction_slots)
+                        .map(|(value, slot)| valid(slot, value))
                         .collect::<Vec<_>>()
                         .into(),
                 },
             )
         }
         Some(crate::syntax::LayoutStatement::Alignment { left, right }) => {
-            let slots = syntax
-                .alignment()
-                .map(|s| s.anchored().map(|s| s.0).collect::<Vec<_>>())
-                .unwrap_or_default();
+            let Some(alignment) = syntax.alignment() else {
+                return invalid(node);
+            };
+            let slots = alignment.anchored().map(|slot| slot.0).collect::<Vec<_>>();
+            let [left_slot, right_slot] = slots.as_slice() else {
+                return invalid(node);
+            };
             valid(
                 node.clone(),
                 crate::uml::DeclaredLayoutStatement::Alignment {
-                    left: valid(slots.first().cloned().unwrap_or_else(|| node.clone()), left),
-                    right: valid(slots.get(1).cloned().unwrap_or_else(|| node.clone()), right),
+                    left: valid(left_slot.clone(), left),
+                    right: valid(right_slot.clone(), right),
                 },
             )
         }
-        Some(crate::syntax::LayoutStatement::Standalone(operand)) => valid(
-            node.clone(),
-            crate::uml::DeclaredLayoutStatement::Standalone(valid(
-                syntax
-                    .standalone()
-                    .and_then(|s| s.operand())
-                    .map(|s| s.0)
-                    .unwrap_or_else(|| node.clone()),
-                operand,
-            )),
-        ),
+        Some(crate::syntax::LayoutStatement::Standalone(operand)) => {
+            let Some(slot) = syntax
+                .standalone()
+                .and_then(|standalone| standalone.operand())
+            else {
+                return invalid(node);
+            };
+            valid(
+                node.clone(),
+                crate::uml::DeclaredLayoutStatement::Standalone(valid(slot.0, operand)),
+            )
+        }
         None => invalid(node),
     }
 }

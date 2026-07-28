@@ -51,6 +51,26 @@ fn descendants(
     found
 }
 
+fn descendant_tokens(
+    node: waml_syntax::SyntaxNode<waml::uml::syntax::UmlLanguage>,
+) -> Vec<waml_syntax::SyntaxToken<waml::uml::syntax::UmlLanguage>> {
+    let mut found = Vec::new();
+    fn visit(
+        node: waml_syntax::SyntaxNode<waml::uml::syntax::UmlLanguage>,
+        found: &mut Vec<waml_syntax::SyntaxToken<waml::uml::syntax::UmlLanguage>>,
+    ) {
+        for child in node.children() {
+            if let Some(token) = child.clone().into_token() {
+                found.push(token);
+            } else if let Some(node) = child.into_node() {
+                visit(node, found);
+            }
+        }
+    }
+    visit(node, &mut found);
+    found
+}
+
 fn diagram_source(layout: &str) -> SourceBundle {
     SourceBundle::try_from_pairs([
         (
@@ -155,6 +175,23 @@ fn complete_layout_matrix_matches_legacy_model_and_has_fixed_nested_slots() {
     assert!(descendants(root.clone(), UmlSyntaxKind::Axis).len() >= 3);
     assert!(descendants(root.clone(), UmlSyntaxKind::OperandRef).len() >= 9);
     assert!(descendants(root.clone(), UmlSyntaxKind::NameRef).len() >= 6);
+    let chained = descendants(root.clone(), UmlSyntaxKind::LayoutPlacement)
+        .into_iter()
+        .filter_map(uml::LayoutPlacementSyntax::cast)
+        .find(|placement| placement.directions().count() == 2)
+        .expect("multi-clause placement has both direct direction slots");
+    let operand_ranges = chained
+        .operands()
+        .map(|operand| operand.syntax().range())
+        .collect::<Vec<_>>();
+    let direction_ranges = chained
+        .directions()
+        .map(|direction| direction.syntax().range())
+        .collect::<Vec<_>>();
+    assert_eq!(operand_ranges.len(), 3);
+    assert_eq!(direction_ranges.len(), 2);
+    assert!(operand_ranges.windows(2).all(|pair| pair[0] != pair[1]));
+    assert!(direction_ranges.windows(2).all(|pair| pair[0] != pair[1]));
     let alignment = descendants(root.clone(), UmlSyntaxKind::LayoutAlignment)
         .into_iter()
         .next()
@@ -183,6 +220,135 @@ fn complete_layout_matrix_matches_legacy_model_and_has_fixed_nested_slots() {
             .unwrap()
             .text()
     );
+}
+
+#[test]
+fn declared_multi_clause_placement_uses_only_exact_occurrence_ranges() {
+    let source = diagram_source("- A above left of A below right of A\n");
+    let analysis = analyze(&source);
+    let statement = &analysis.declared.concept("d").unwrap().layout[0];
+    let uml::DeclaredField::Valid {
+        value:
+            uml::DeclaredLayoutStatement::Placement {
+                operands,
+                directions,
+            },
+        syntax,
+    } = statement
+    else {
+        panic!("expected valid placement");
+    };
+    assert_eq!(operands.len(), 3);
+    assert_eq!(directions.len(), 2);
+    for field in operands.iter() {
+        let range = match field {
+            uml::DeclaredField::Valid { syntax, .. } => syntax.range(),
+            _ => panic!("each accepted occurrence is valid"),
+        };
+        assert_ne!(
+            range,
+            syntax.range(),
+            "must not fall back to statement range"
+        );
+        assert!(range.start() >= syntax.range().start());
+        assert!(range.end() <= syntax.range().end());
+        assert!(range.end() > range.start());
+    }
+    for field in directions.iter() {
+        let range = match field {
+            uml::DeclaredField::Valid { syntax, .. } => syntax.range(),
+            _ => panic!("each accepted occurrence is valid"),
+        };
+        assert_ne!(
+            range,
+            syntax.range(),
+            "must not fall back to statement range"
+        );
+        assert!(range.start() >= syntax.range().start());
+        assert!(range.end() <= syntax.range().end());
+        assert!(range.end() > range.start());
+    }
+}
+
+#[test]
+fn every_malformed_layout_row_has_local_missing_and_non_empty_recovery() {
+    let cases = [
+        ("- \n", UmlSyntaxKind::LayoutWordToken),
+        ("- A left A\n", UmlSyntaxKind::LayoutKeywordToken),
+        ("- A above left A\n", UmlSyntaxKind::LayoutKeywordToken),
+        ("- A right of\n", UmlSyntaxKind::LayoutWordToken),
+        ("- A with frame,\n", UmlSyntaxKind::LayoutWordToken),
+        ("- A with unknown-hint\n", UmlSyntaxKind::LayoutWordToken),
+        ("- A as diagonal\n", UmlSyntaxKind::LayoutWordToken),
+        ("- top of A\n", UmlSyntaxKind::LayoutKeywordToken),
+        ("- A trailing unit\n", UmlSyntaxKind::EndOfFileToken),
+        ("- column of A,\n", UmlSyntaxKind::LayoutWordToken),
+        ("- (A\n", UmlSyntaxKind::LayoutCloseParenToken),
+        ("- [A](./a.md\n", UmlSyntaxKind::LayoutLinkToken),
+        ("- \"unterminated\n", UmlSyntaxKind::LayoutQuoteToken),
+    ];
+    for (row, missing_kind) in cases {
+        let source = diagram_source(row);
+        let analysis = analyze(&source);
+        let id = analysis
+            .syntax
+            .catalog()
+            .id_for_path(&waml::source::BundlePath::parse("d.md").unwrap())
+            .unwrap();
+        let syntax = analysis.syntax.document(id).unwrap().syntax();
+        assert_eq!(
+            syntax.write_to_string(),
+            source
+                .document(&waml::source::BundlePath::parse("d.md").unwrap())
+                .unwrap()
+                .text(),
+            "round trip for {row:?}"
+        );
+        let statement = descendants(syntax.root(), UmlSyntaxKind::LayoutStatement)
+            .into_iter()
+            .next()
+            .unwrap();
+        let recovery = descendants(statement.clone(), UmlSyntaxKind::SkippedTokensSyntax);
+        assert!(!recovery.is_empty(), "recovery for {row:?}");
+        assert!(
+            recovery
+                .iter()
+                .all(|node| node.range().end() > node.range().start()),
+            "non-empty recovery for {row:?}"
+        );
+        assert!(
+            recovery
+                .iter()
+                .all(|node| node.range() != statement.range()),
+            "bounded recovery for {row:?}"
+        );
+        let declared_range = match &analysis.declared.concept("d").unwrap().layout[0] {
+            uml::DeclaredField::Incomplete { syntax, .. }
+            | uml::DeclaredField::Invalid { syntax, .. } => syntax.range(),
+            uml::DeclaredField::Valid { .. } | uml::DeclaredField::Absent => {
+                panic!("malformed row must not be valid: {row:?}")
+            }
+        };
+        assert_eq!(
+            declared_range,
+            recovery[0].range(),
+            "declared malformed range is the first invalid unit for {row:?}"
+        );
+        let missing = descendant_tokens(statement.clone())
+            .into_iter()
+            .filter(|token| token.flags().is_missing())
+            .collect::<Vec<_>>();
+        assert!(
+            missing.iter().any(|token| token.kind() == missing_kind),
+            "expected missing {missing_kind:?} for {row:?}, got {missing:?}"
+        );
+        assert!(missing.iter().all(|token| {
+            token.range().start() >= statement.range().start()
+                && token.range().end() <= statement.range().end()
+                && token.range().start() == token.range().end()
+        }));
+        assert!(analysis.projection.diagrams[0].layout.is_empty());
+    }
 }
 
 #[test]
