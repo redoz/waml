@@ -10,7 +10,9 @@ use std::{
     collections::{BTreeMap, BTreeSet},
     sync::Arc,
 };
-use waml_syntax::{AstNode, MarkdownStructureMap, SyntaxElement, SyntaxNode};
+use waml_syntax::{
+    AstNode, MarkdownStructureMap, SyntaxElement, SyntaxNode, SyntaxToken, TextRange, TextSize,
+};
 pub struct Analysis {
     pub claims: ClaimSet,
     pub syntax: SyntaxSet<UmlLanguage>,
@@ -472,13 +474,23 @@ fn declared_diagnostic(
     message: String,
     warning: bool,
 ) -> Diagnostic {
+    declared_diagnostic_range(context, path, syntax.range(), code, message, warning)
+}
+
+fn declared_diagnostic_range(
+    context: &DomainAnalysisContext<'_>,
+    path: &str,
+    range: TextRange,
+    code: crate::diagnostic::DiagCode,
+    message: String,
+    warning: bool,
+) -> Diagnostic {
     let bundle_path = crate::source::BundlePath::parse(path).expect("analyzed path is valid");
     let id = context
         .catalog
         .id_for_path(&bundle_path)
         .expect("analyzed path is cataloged");
     let document = context.catalog.document(id).expect("catalog document");
-    let range = syntax.range();
     let line = document
         .line_index()
         .line_col(document.text(), range.start())
@@ -496,11 +508,100 @@ fn declared_diagnostic(
         .with_provenance(id, document.revision(), range)
 }
 
+fn trimmed_token_range(token: &SyntaxToken<UmlLanguage>) -> TextRange {
+    let authored = token.text().write_to_string();
+    let trimmed = authored.trim();
+    // Lossless tokens may own leading trivia in their red range while
+    // `text()` exposes only the significant spelling.
+    let leading = token
+        .range()
+        .len()
+        .to_usize()
+        .saturating_sub(authored.len())
+        + authored.len()
+        - authored.trim_start().len();
+    let start = (token.range().start()
+        + TextSize::try_from(leading).expect("token leading trivia fits TextSize"))
+    .expect("trimmed token start fits TextSize");
+    let end = (start + TextSize::try_from(trimmed.len()).expect("token spelling fits TextSize"))
+        .expect("trimmed token end fits TextSize");
+    TextRange::new(start, end).expect("trimmed token range is ordered")
+}
+
 fn validate_declared_semantics(
     context: &DomainAnalysisContext<'_>,
     declared: &DeclaredBundle,
     diagnostics: &mut Vec<Diagnostic>,
 ) {
+    for concept in declared.concepts() {
+        let Some(source_okf) = context.okf.concept(&concept.concept_id) else {
+            continue;
+        };
+        let source_ty = crate::model::ElementType::parse(&source_okf.ty);
+        let path = context
+            .catalog
+            .documents()
+            .values()
+            .find(|document| crate::okf::id_of(document.path().as_str()) == concept.concept_id)
+            .map(|document| document.path().as_str())
+            .unwrap_or_default();
+        for relationship in concept.relationships.iter() {
+            let (
+                crate::uml::DeclaredField::Valid { value: kind, .. },
+                crate::uml::DeclaredField::Valid { value: href, .. },
+            ) = (&relationship.kind, &relationship.target)
+            else {
+                continue;
+            };
+            let target = crate::okf::resolve_href(path, href);
+            let target_concept = declared.concept(&target);
+            if source_ty
+                == crate::model::ElementType::Uml(crate::model::UmlMetaclass::InstanceSpecification)
+                && *kind == crate::model::RelationshipKind::Links
+                && target_concept.is_none()
+            {
+                if let Some(token) = relationship.syntax.target_token() {
+                    diagnostics.push(declared_diagnostic_range(
+                        context,
+                        path,
+                        token.range(),
+                        crate::diagnostic::DiagCode::UnresolvedTarget,
+                        format!("unresolved UML target '{href}'"),
+                        true,
+                    ));
+                }
+            }
+            let ends_absent = matches!(
+                (&relationship.from_end, &relationship.to_end),
+                (
+                    crate::uml::DeclaredField::Absent,
+                    crate::uml::DeclaredField::Absent
+                )
+            );
+            let target_ty = target_concept
+                .and_then(|_| context.okf.concept(&target))
+                .map(|target| crate::model::ElementType::parse(&target.ty));
+            if *kind == crate::model::RelationshipKind::Associates
+                && ends_absent
+                && source_ty.is_classifier()
+                && target_ty.as_ref().is_some_and(|ty| ty.is_classifier())
+                && !is_communication_party(&source_ty)
+                && !target_ty.as_ref().is_some_and(is_communication_party)
+            {
+                if let Some(token) = relationship.syntax.target_token() {
+                    diagnostics.push(declared_diagnostic_range(
+                        context,
+                        path,
+                        token.range(),
+                        crate::diagnostic::DiagCode::MalformedRelationship,
+                        "'associates' between classifiers requires ': <near> to <far>' multiplicity ends (ends are optional only on an actor↔use-case communication link)".into(),
+                        false,
+                    ));
+                }
+            }
+        }
+    }
+
     for concept in declared.concepts() {
         let Some(okf) = context.okf.concept(&concept.concept_id) else {
             continue;
@@ -518,6 +619,7 @@ fn validate_declared_semantics(
             .map(|document| document.path().as_str())
             .unwrap_or_default();
         let mut classifier_attributes = BTreeSet::new();
+        let mut classifier_found = false;
         for relationship in concept.relationships.iter() {
             let (
                 crate::uml::DeclaredField::Valid { value: kind, .. },
@@ -531,10 +633,15 @@ fn validate_declared_semantics(
             }
             let target = crate::okf::resolve_href(path, href);
             let Some(target_okf) = context.okf.concept(&target) else {
-                diagnostics.push(declared_diagnostic(
+                let range = relationship
+                    .syntax
+                    .target_token()
+                    .map(|token| token.range())
+                    .unwrap_or_else(|| relationship.syntax.syntax().range());
+                diagnostics.push(declared_diagnostic_range(
                     context,
                     path,
-                    relationship.syntax.syntax(),
+                    range,
                     crate::diagnostic::DiagCode::InstanceOfUnresolved,
                     format!("'instance of' target '{href}' resolves to no document"),
                     true,
@@ -542,16 +649,21 @@ fn validate_declared_semantics(
                 continue;
             };
             if !crate::model::ElementType::parse(&target_okf.ty).is_classifier() {
-                diagnostics.push(declared_diagnostic(
+                diagnostics.push(declared_diagnostic_range(
                     context,
                     path,
-                    relationship.syntax.syntax(),
+                    relationship
+                        .syntax
+                        .target_token()
+                        .map(|token| token.range())
+                        .unwrap_or_else(|| relationship.syntax.syntax().range()),
                     crate::diagnostic::DiagCode::InstanceOfNonClassifier,
                     format!("'instance of' target '{target}' is not a classifier"),
                     true,
                 ));
                 continue;
             }
+            classifier_found = true;
             if let Some(classifier) = declared.concept(&target) {
                 classifier_attributes.extend(classifier.attributes.iter().filter_map(
                     |attribute| match &attribute.name {
@@ -561,7 +673,7 @@ fn validate_declared_semantics(
                 ));
             }
         }
-        if classifier_attributes.is_empty() {
+        if !classifier_found {
             continue;
         }
         for slot in concept.slots.iter() {
@@ -569,14 +681,103 @@ fn validate_declared_semantics(
                 continue;
             };
             if !classifier_attributes.contains(name) {
-                diagnostics.push(declared_diagnostic(
+                diagnostics.push(declared_diagnostic_range(
                     context,
                     path,
-                    slot.syntax.syntax(),
+                    slot.syntax
+                        .name_token()
+                        .map(|token| trimmed_token_range(&token))
+                        .unwrap_or_else(|| slot.syntax.syntax().range()),
                     crate::diagnostic::DiagCode::SlotUnknownAttribute,
                     format!("slot '{name}' names no classifier attribute"),
                     true,
                 ));
+            }
+        }
+    }
+
+    for concept in declared.concepts() {
+        let Some(okf) = context.okf.concept(&concept.concept_id) else {
+            continue;
+        };
+        if !crate::model::ElementType::parse(&okf.ty).is_view() {
+            continue;
+        }
+        let path = context
+            .catalog
+            .documents()
+            .values()
+            .find(|document| crate::okf::id_of(document.path().as_str()) == concept.concept_id)
+            .map(|document| document.path().as_str())
+            .unwrap_or_default();
+        for inline in concept.inline_instances.iter() {
+            let crate::uml::DeclaredField::Valid {
+                value: classifier, ..
+            } = &inline.classifier
+            else {
+                continue;
+            };
+            let target = crate::okf::resolve_href(path, classifier);
+            let Some(target_okf) = context.okf.concept(&target) else {
+                diagnostics.push(declared_diagnostic_range(
+                    context,
+                    path,
+                    inline
+                        .syntax
+                        .classifier_token()
+                        .map(|token| token.range())
+                        .unwrap_or_else(|| inline.syntax.syntax().range()),
+                    crate::diagnostic::DiagCode::InstanceOfUnresolved,
+                    format!("'instance of' target '{classifier}' resolves to no document"),
+                    true,
+                ));
+                continue;
+            };
+            if !crate::model::ElementType::parse(&target_okf.ty).is_classifier() {
+                diagnostics.push(declared_diagnostic_range(
+                    context,
+                    path,
+                    inline
+                        .syntax
+                        .classifier_token()
+                        .map(|token| token.range())
+                        .unwrap_or_else(|| inline.syntax.syntax().range()),
+                    crate::diagnostic::DiagCode::InstanceOfNonClassifier,
+                    format!("'instance of' target '{target}' is not a classifier"),
+                    true,
+                ));
+                continue;
+            }
+            let classifier_attributes = declared
+                .concept(&target)
+                .map(|classifier| {
+                    classifier
+                        .attributes
+                        .iter()
+                        .filter_map(|attribute| match &attribute.name {
+                            crate::uml::DeclaredField::Valid { value, .. } => Some(value.clone()),
+                            _ => None,
+                        })
+                        .collect::<BTreeSet<_>>()
+                })
+                .unwrap_or_default();
+            for slot in inline.slots.iter() {
+                let crate::uml::DeclaredField::Valid { value: name, .. } = &slot.name else {
+                    continue;
+                };
+                if !classifier_attributes.contains(name) {
+                    diagnostics.push(declared_diagnostic_range(
+                        context,
+                        path,
+                        slot.syntax
+                            .name_token()
+                            .map(|token| trimmed_token_range(&token))
+                            .unwrap_or_else(|| slot.syntax.syntax().range()),
+                        crate::diagnostic::DiagCode::SlotUnknownAttribute,
+                        format!("slot '{name}' names no classifier attribute"),
+                        true,
+                    ));
+                }
             }
         }
     }
@@ -608,12 +809,11 @@ fn validate_declared_semantics(
         }
         let mut horizontal = BTreeMap::<String, Vec<String>>::new();
         let mut vertical = BTreeMap::<String, Vec<String>>::new();
-        let mut first_layout_syntax = None;
+        let mut first_placement_syntax = None;
         for layout in concept.layout.iter() {
             let crate::uml::DeclaredField::Valid { value, syntax } = layout else {
                 continue;
             };
-            first_layout_syntax.get_or_insert_with(|| syntax.clone());
             for operand in declared_layout_operands(value) {
                 let mut unresolved = Vec::new();
                 collect_unresolved_layout_refs(operand, path, &claimed, &groups, &mut unresolved);
@@ -635,6 +835,13 @@ fn validate_declared_semantics(
             else {
                 continue;
             };
+            first_placement_syntax.get_or_insert_with(|| {
+                syntax
+                    .children()
+                    .find(|element| element.kind() == super::syntax::UmlSyntaxKind::LayoutPlacement)
+                    .and_then(SyntaxElement::into_node)
+                    .unwrap_or_else(|| syntax.clone())
+            });
             for (index, direction) in directions.iter().enumerate() {
                 let (
                     crate::uml::DeclaredField::Valid {
@@ -690,7 +897,7 @@ fn validate_declared_semantics(
             }
         }
         if directed_cycle(&horizontal) || directed_cycle(&vertical) {
-            if let Some(syntax) = first_layout_syntax {
+            if let Some(syntax) = first_placement_syntax {
                 diagnostics.push(declared_diagnostic(
                     context,
                     path,
@@ -702,6 +909,14 @@ fn validate_declared_semantics(
             }
         }
     }
+}
+
+fn is_communication_party(ty: &crate::model::ElementType) -> bool {
+    matches!(
+        ty,
+        crate::model::ElementType::Uml(crate::model::UmlMetaclass::Actor)
+            | crate::model::ElementType::Uml(crate::model::UmlMetaclass::UseCase)
+    )
 }
 
 fn collect_declared_group_names(
@@ -947,7 +1162,7 @@ fn declared_projection(
                     .line_col(document.text(), range.start())
                     .expect("member range");
                 diagnostics.push(
-                    Diagnostic::new(
+                    Diagnostic::warn(
                         crate::diagnostic::DiagCode::UnresolvedTarget,
                         format!("unresolved UML member '{href}'"),
                         path.clone(),
@@ -1138,7 +1353,11 @@ fn declared_projection(
             }
             let target = crate::okf::resolve_href(&path, href);
             if !claimed.contains(target.as_str()) {
-                if *kind == crate::model::RelationshipKind::InstanceOf {
+                if matches!(
+                    kind,
+                    crate::model::RelationshipKind::InstanceOf
+                        | crate::model::RelationshipKind::Links
+                ) {
                     continue;
                 }
                 let range = relationship
@@ -1198,38 +1417,7 @@ fn declared_projection(
         }
         for inline in concept.inline_instances.iter() {
             let validity = inline_instance_validity(inline, &path, &claimed);
-            if let InlineInstanceValidity::Unresolved { classifier } = validity {
-                let range = inline
-                    .syntax
-                    .classifier_token()
-                    .expect("valid declared classifier token")
-                    .range();
-                let id = context
-                    .catalog
-                    .id_for_path(
-                        &crate::source::BundlePath::parse(path.clone())
-                            .expect("catalog path valid"),
-                    )
-                    .expect("catalog document");
-                let document = context.catalog.document(id).expect("catalog document");
-                let line = document
-                    .line_index()
-                    .line_col(document.text(), range.start())
-                    .expect("inline range");
-                diagnostics.push(
-                    Diagnostic::new(
-                        crate::diagnostic::DiagCode::UnresolvedTarget,
-                        format!("unresolved inline classifier '{classifier}'"),
-                        path.clone(),
-                        line.line as usize + 1,
-                    )
-                    .with_span((
-                        line.byte_column as usize,
-                        line.byte_column as usize
-                            + (range.end().to_usize() - range.start().to_usize()),
-                    ))
-                    .with_provenance(id, document.revision(), range),
-                );
+            if matches!(validity, InlineInstanceValidity::Unresolved) {
                 continue;
             }
             let InlineInstanceValidity::Valid(ValidInlineInstance { name, target }) = validity
@@ -1739,7 +1927,7 @@ struct ValidInlineInstance<'a> {
 
 enum InlineInstanceValidity<'a> {
     Invalid,
-    Unresolved { classifier: &'a str },
+    Unresolved,
     Valid(ValidInlineInstance<'a>),
 }
 
@@ -1772,7 +1960,7 @@ fn inline_instance_validity<'a>(
     if claimed.contains(target.as_str()) {
         InlineInstanceValidity::Valid(ValidInlineInstance { name, target })
     } else {
-        InlineInstanceValidity::Unresolved { classifier }
+        InlineInstanceValidity::Unresolved
     }
 }
 
@@ -1818,7 +2006,7 @@ fn lower_member_group(
                 InlineInstanceValidity::Valid(ValidInlineInstance { name, .. }) => {
                     Some(format!("{owner}#{name}"))
                 }
-                InlineInstanceValidity::Invalid | InlineInstanceValidity::Unresolved { .. } => None,
+                InlineInstanceValidity::Invalid | InlineInstanceValidity::Unresolved => None,
             },
         })
         .collect::<Vec<_>>();
