@@ -7,6 +7,18 @@ pub struct AttributeSyntax(pub(crate) SyntaxNode<UmlLanguage>);
 pub struct TypeReferenceSyntax(pub(crate) SyntaxNode<UmlLanguage>);
 #[derive(Clone, Debug)]
 pub struct MultiplicitySyntax(pub(crate) SyntaxNode<UmlLanguage>);
+#[derive(Clone, Debug)]
+pub struct ValueSyntax(pub(crate) SyntaxNode<UmlLanguage>);
+#[derive(Clone, Debug)]
+pub struct SlotSyntax(pub(crate) SyntaxNode<UmlLanguage>);
+#[derive(Clone, Debug)]
+pub struct RelationshipSyntax(pub(crate) SyntaxNode<UmlLanguage>);
+#[derive(Clone, Debug)]
+pub struct MemberSyntax(pub(crate) SyntaxNode<UmlLanguage>);
+#[derive(Clone, Debug)]
+pub struct MemberGroupSyntax(pub(crate) SyntaxNode<UmlLanguage>);
+#[derive(Clone, Debug)]
+pub struct InlineInstanceSyntax(pub(crate) SyntaxNode<UmlLanguage>);
 impl AttributeSyntax {
     pub fn visibility_token(&self) -> Option<SyntaxToken<UmlLanguage>> {
         self.token(UmlSyntaxKind::VisibilityToken)
@@ -106,5 +118,57 @@ impl AstNode<UmlLanguage> for MultiplicitySyntax {
     }
     fn syntax(&self) -> &SyntaxNode<UmlLanguage> {
         &self.0
+    }
+}
+
+macro_rules! simple_ast {
+    ($name:ident, $kind:ident) => {
+        impl AstNode<UmlLanguage> for $name {
+            fn can_cast(kind: UmlSyntaxKind) -> bool {
+                kind == UmlSyntaxKind::$kind
+            }
+            fn cast(node: SyntaxNode<UmlLanguage>) -> Option<Self> {
+                Self::can_cast(node.kind()).then_some(Self(node))
+            }
+            fn syntax(&self) -> &SyntaxNode<UmlLanguage> {
+                &self.0
+            }
+        }
+    };
+}
+simple_ast!(ValueSyntax, Value);
+simple_ast!(SlotSyntax, Slot);
+simple_ast!(RelationshipSyntax, Relationship);
+simple_ast!(MemberSyntax, Member);
+simple_ast!(MemberGroupSyntax, MemberGroup);
+simple_ast!(InlineInstanceSyntax, InlineInstance);
+
+macro_rules! raw_slot {
+    ($name:ident) => {
+        impl $name {
+            pub fn content_token(&self) -> Option<SyntaxToken<UmlLanguage>> {
+                self.0
+                    .children()
+                    .find(|e| e.kind() == UmlSyntaxKind::RawMarkdownToken)
+                    .and_then(SyntaxElement::into_token)
+            }
+        }
+    };
+}
+raw_slot!(ValueSyntax);
+raw_slot!(SlotSyntax);
+raw_slot!(RelationshipSyntax);
+raw_slot!(MemberSyntax);
+raw_slot!(InlineInstanceSyntax);
+impl MemberGroupSyntax {
+    pub fn heading_token(&self) -> Option<SyntaxToken<UmlLanguage>> {
+        self.0
+            .children()
+            .find_map(SyntaxElement::into_node)
+            .and_then(|n| {
+                n.children()
+                    .find(|e| e.kind() == UmlSyntaxKind::RawMarkdownToken)
+                    .and_then(SyntaxElement::into_token)
+            })
     }
 }

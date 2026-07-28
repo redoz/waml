@@ -1,7 +1,10 @@
 mod ast;
 mod kind;
 pub mod parser;
-pub use ast::{AttributeSyntax, MultiplicitySyntax, TypeReferenceSyntax};
+pub use ast::{
+    AttributeSyntax, InlineInstanceSyntax, MemberGroupSyntax, MemberSyntax, MultiplicitySyntax,
+    RelationshipSyntax, SlotSyntax, TypeReferenceSyntax, ValueSyntax,
+};
 pub use kind::{UmlSyntaxDiagnosticCode, UmlSyntaxKind};
 #[derive(Debug)]
 pub struct UmlLanguage;

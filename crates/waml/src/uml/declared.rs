@@ -1,4 +1,7 @@
-use super::syntax::{AttributeSyntax, UmlLanguage};
+use super::syntax::{
+    AttributeSyntax, InlineInstanceSyntax, MemberSyntax, RelationshipSyntax, SlotSyntax,
+    UmlLanguage, ValueSyntax,
+};
 use crate::{
     model::{TypeRef, Visibility},
     multiplicity::Multiplicity,
@@ -38,9 +41,37 @@ pub struct DeclaredAttribute {
     pub ty: DeclaredField<UmlLanguage, TypeRef>,
     pub multiplicity: DeclaredField<UmlLanguage, Multiplicity>,
 }
+pub struct DeclaredValue {
+    pub syntax: ValueSyntax,
+    pub value: DeclaredField<UmlLanguage, String>,
+}
+pub struct DeclaredSlot {
+    pub syntax: SlotSyntax,
+    pub name: DeclaredField<UmlLanguage, String>,
+    pub value: DeclaredField<UmlLanguage, String>,
+}
+pub struct DeclaredRelationship {
+    pub syntax: RelationshipSyntax,
+    pub kind: DeclaredField<UmlLanguage, crate::model::RelationshipKind>,
+    pub target: DeclaredField<UmlLanguage, String>,
+}
+pub struct DeclaredMember {
+    pub syntax: MemberSyntax,
+    pub target: DeclaredField<UmlLanguage, String>,
+}
+pub struct DeclaredInlineInstance {
+    pub syntax: InlineInstanceSyntax,
+    pub classifier: DeclaredField<UmlLanguage, String>,
+    pub name: DeclaredField<UmlLanguage, String>,
+}
 pub struct DeclaredConcept {
     pub concept_id: String,
     pub attributes: Arc<[DeclaredAttribute]>,
+    pub values: Arc<[DeclaredValue]>,
+    pub slots: Arc<[DeclaredSlot]>,
+    pub relationships: Arc<[DeclaredRelationship]>,
+    pub members: Arc<[DeclaredMember]>,
+    pub inline_instances: Arc<[DeclaredInlineInstance]>,
 }
 #[derive(Default)]
 pub struct DeclaredBundle {

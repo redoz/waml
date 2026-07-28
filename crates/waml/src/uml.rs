@@ -14,7 +14,12 @@ pub use selector::{RelationshipSelector, Selector};
 pub type Projection = crate::model::Model;
 pub use analysis::{analyze, Analysis};
 pub use declared::{
-    DeclaredAttribute, DeclaredBundle, DeclaredConcept, DeclaredField, ExpectedSyntax,
+    DeclaredAttribute, DeclaredBundle, DeclaredConcept, DeclaredField, DeclaredInlineInstance,
+    DeclaredMember, DeclaredRelationship, DeclaredSlot, DeclaredValue, ExpectedSyntax,
+};
+pub use syntax::{
+    InlineInstanceSyntax, MemberGroupSyntax, MemberSyntax, RelationshipSyntax, SlotSyntax,
+    ValueSyntax,
 };
 
 pub(crate) fn recognizes_type(element_type: &crate::model::ElementType) -> bool {

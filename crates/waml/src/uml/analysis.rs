@@ -92,6 +92,11 @@ pub fn analyze(
                 })?;
         let tree = parser::parse(document.text().clone(), structure);
         let attributes = attributes(tree.root());
+        let values = items(tree.root(), super::syntax::UmlSyntaxKind::Value);
+        let slots = items(tree.root(), super::syntax::UmlSyntaxKind::Slot);
+        let relationships = items(tree.root(), super::syntax::UmlSyntaxKind::Relationship);
+        let members = items(tree.root(), super::syntax::UmlSyntaxKind::Member);
+        let inline_instances = items(tree.root(), super::syntax::UmlSyntaxKind::InlineInstance);
         let mut fields = Vec::new();
         for syntax in attributes {
             let name = syntax.name_token().text().write_to_string();
@@ -183,6 +188,31 @@ pub fn analyze(
             crate::uml::DeclaredConcept {
                 concept_id: concept.id.clone(),
                 attributes: fields.into(),
+                values: values
+                    .into_iter()
+                    .map(|node| declared_value(node))
+                    .collect::<Vec<_>>()
+                    .into(),
+                slots: slots
+                    .into_iter()
+                    .map(|node| declared_slot(node))
+                    .collect::<Vec<_>>()
+                    .into(),
+                relationships: relationships
+                    .into_iter()
+                    .map(|node| declared_relationship(node))
+                    .collect::<Vec<_>>()
+                    .into(),
+                members: members
+                    .into_iter()
+                    .map(|node| declared_member(node))
+                    .collect::<Vec<_>>()
+                    .into(),
+                inline_instances: inline_instances
+                    .into_iter()
+                    .map(|node| declared_inline_instance(node))
+                    .collect::<Vec<_>>()
+                    .into(),
             },
         );
         for diagnostic in tree.diagnostics() {
@@ -235,6 +265,111 @@ pub fn analyze(
         structures: context.structures.clone(),
         session_revision: context.session_revision,
     })
+}
+
+fn items(
+    node: SyntaxNode<UmlLanguage>,
+    kind: super::syntax::UmlSyntaxKind,
+) -> Vec<SyntaxNode<UmlLanguage>> {
+    let mut found = Vec::new();
+    for child in node.children() {
+        if let SyntaxElement::Node(child) = child {
+            if child.kind() == kind {
+                found.push(child);
+            } else {
+                found.extend(items(child, kind));
+            }
+        }
+    }
+    found
+}
+fn raw(node: &SyntaxNode<UmlLanguage>) -> String {
+    node.children()
+        .find(|e| e.kind() == super::syntax::UmlSyntaxKind::RawMarkdownToken)
+        .and_then(|e| e.into_token())
+        .map(|t| t.text().write_to_string())
+        .unwrap_or_default()
+}
+fn valid<T>(node: SyntaxNode<UmlLanguage>, value: T) -> crate::uml::DeclaredField<UmlLanguage, T> {
+    crate::uml::DeclaredField::Valid {
+        value,
+        syntax: node,
+    }
+}
+fn invalid<T>(node: SyntaxNode<UmlLanguage>) -> crate::uml::DeclaredField<UmlLanguage, T> {
+    crate::uml::DeclaredField::Invalid {
+        syntax: node,
+        diagnostics: Arc::from([crate::diagnostic::DiagCode::DroppableContent]),
+    }
+}
+fn declared_value(node: SyntaxNode<UmlLanguage>) -> crate::uml::DeclaredValue {
+    let value = raw(&node).trim().to_string();
+    crate::uml::DeclaredValue {
+        syntax: super::syntax::ValueSyntax(node.clone()),
+        value: if value.is_empty() {
+            invalid(node)
+        } else {
+            valid(node, value)
+        },
+    }
+}
+fn declared_slot(node: SyntaxNode<UmlLanguage>) -> crate::uml::DeclaredSlot {
+    let line = format!("- {}", raw(&node));
+    match crate::grammar::parse_slot_line(&line) {
+        Ok(slot) => crate::uml::DeclaredSlot {
+            syntax: super::syntax::SlotSyntax(node.clone()),
+            name: valid(node.clone(), slot.name),
+            value: valid(node, crate::grammar::render_slot_value(&slot.value)),
+        },
+        Err(_) => crate::uml::DeclaredSlot {
+            syntax: super::syntax::SlotSyntax(node.clone()),
+            name: invalid(node.clone()),
+            value: invalid(node),
+        },
+    }
+}
+fn declared_relationship(node: SyntaxNode<UmlLanguage>) -> crate::uml::DeclaredRelationship {
+    let line = format!("- {}", raw(&node));
+    match crate::grammar::parse_relationship_line(&line) {
+        Ok(rel) => crate::uml::DeclaredRelationship {
+            syntax: super::syntax::RelationshipSyntax(node.clone()),
+            kind: valid(node.clone(), rel.kind),
+            target: valid(node, rel.target_slug),
+        },
+        Err(_) => crate::uml::DeclaredRelationship {
+            syntax: super::syntax::RelationshipSyntax(node.clone()),
+            kind: invalid(node.clone()),
+            target: invalid(node),
+        },
+    }
+}
+fn declared_member(node: SyntaxNode<UmlLanguage>) -> crate::uml::DeclaredMember {
+    let line = format!("- {}", raw(&node));
+    match crate::grammar::parse_member_line(&line) {
+        Ok(member) => crate::uml::DeclaredMember {
+            syntax: super::syntax::MemberSyntax(node.clone()),
+            target: valid(node, member.slug),
+        },
+        Err(_) => crate::uml::DeclaredMember {
+            syntax: super::syntax::MemberSyntax(node.clone()),
+            target: invalid(node),
+        },
+    }
+}
+fn declared_inline_instance(node: SyntaxNode<UmlLanguage>) -> crate::uml::DeclaredInlineInstance {
+    let line = format!("- {}", raw(&node));
+    match crate::grammar::parse_inline_instance(&line) {
+        Ok(instance) => crate::uml::DeclaredInlineInstance {
+            syntax: super::syntax::InlineInstanceSyntax(node.clone()),
+            classifier: valid(node.clone(), instance.classifier.slug),
+            name: valid(node, instance.name),
+        },
+        Err(_) => crate::uml::DeclaredInlineInstance {
+            syntax: super::syntax::InlineInstanceSyntax(node.clone()),
+            classifier: invalid(node.clone()),
+            name: invalid(node),
+        },
+    }
 }
 
 fn attributes(node: SyntaxNode<UmlLanguage>) -> Vec<super::syntax::AttributeSyntax> {
