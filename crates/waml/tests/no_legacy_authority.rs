@@ -64,6 +64,10 @@ fn handwritten_shadow_parsers_and_renderers_are_absent() {
             ]
             .as_slice(),
         ),
+        (
+            "src/uml.rs",
+            ["pub fn project(bundle: &crate::okf::Bundle)"].as_slice(),
+        ),
     ];
     let mut violations = Vec::new();
     for (relative, symbols) in prohibited {

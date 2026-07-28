@@ -47,44 +47,6 @@ pub fn recognizes(concept: &crate::okf::Concept) -> bool {
     recognizes_type(&crate::model::ElementType::parse(&concept.ty))
 }
 
-pub fn project(bundle: &crate::okf::Bundle) -> Projection {
-    use crate::frontmatter::{FmValue, Frontmatter};
-
-    let documents = bundle.concepts().iter().map(|concept| {
-        let mut frontmatter = concept.extra.clone();
-        let mut known = vec![("type".to_owned(), FmValue::Str(concept.ty.clone()))];
-        for (key, value) in [
-            ("title", concept.title.as_ref()),
-            ("description", concept.description.as_ref()),
-            ("resource", concept.resource.as_ref()),
-            ("timestamp", concept.timestamp.as_ref()),
-        ] {
-            if let Some(value) = value {
-                known.push((key.to_owned(), FmValue::Str(value.clone())));
-            }
-        }
-        if !concept.tags.is_empty() {
-            known.push((
-                "tags".to_owned(),
-                FmValue::List(concept.tags.iter().cloned().map(FmValue::Str).collect()),
-            ));
-        }
-        known.append(&mut frontmatter.entries);
-        let rendered = crate::frontmatter::render_frontmatter(&Frontmatter { entries: known });
-        (
-            format!("{}.md", concept.id),
-            format!("---\n{rendered}\n---\n{}", concept.body.as_ref()),
-        )
-    });
-    let source = crate::source::SourceBundle::try_from_pairs(documents)
-        .expect("OKF concept IDs form valid unique document paths");
-    crate::analysis::prepare_candidate(source, None, 0)
-        .expect("an existing OKF bundle remains analyzable")
-        .uml()
-        .projection
-        .clone()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -92,6 +54,14 @@ mod tests {
 
     fn concept(ty: &str) -> crate::okf::Concept {
         crate::okf::project("x.md", &format!("---\ntype: {ty}\n---\n# X\n"))
+    }
+
+    fn projection(source: &SourceBundle) -> Projection {
+        crate::analysis::prepare_candidate(source.clone(), None, 0)
+            .unwrap()
+            .uml()
+            .projection
+            .clone()
     }
 
     #[test]
@@ -121,8 +91,7 @@ mod tests {
         ])
         .unwrap();
         let bundle = crate::okf::Bundle::parse(&source).unwrap();
-
-        let projection = project(&bundle);
+        let projection = projection(&source);
 
         assert_eq!(
             projection
@@ -164,9 +133,7 @@ mod tests {
             ),
         ])
         .unwrap();
-        let bundle = crate::okf::Bundle::parse(&source).unwrap();
-
-        let projection = project(&bundle);
+        let projection = projection(&source);
 
         assert_eq!(projection.edges.len(), 1);
         assert_eq!(projection.edges[0].target, "customer");

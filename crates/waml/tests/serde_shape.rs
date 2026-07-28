@@ -80,8 +80,11 @@ fn selective_uml_projection_omits_unknowns_and_structural_packages() {
         ("vendor.md", "---\ntype: vendor.Custom\n---\n# Vendor\n"),
     ])
     .unwrap();
-    let bundle = waml::okf::Bundle::parse(&source).unwrap();
-    let projection = waml::uml::project(&bundle);
+    let projection = waml::analysis::prepare_candidate(source, None, 0)
+        .unwrap()
+        .uml()
+        .projection
+        .clone();
     let value = serde_json::to_value(&projection).unwrap();
 
     assert_eq!(value["nodes"].as_array().unwrap().len(), 1);

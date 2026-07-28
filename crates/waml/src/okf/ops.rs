@@ -118,11 +118,7 @@ mod tests {
     use super::*;
     use crate::edit::EditBatch;
 
-    fn context<'a>(
-        source: &'a SourceBundle,
-        _okf: &'a crate::okf::Bundle,
-        _uml: &'a crate::uml::Projection,
-    ) -> EditContext<'a> {
+    fn context(source: &SourceBundle) -> EditContext<'_> {
         let okf_analysis = Box::leak(Box::new(
             crate::analysis::analyze_okf(source, None, 0).unwrap(),
         ));
@@ -151,8 +147,6 @@ mod tests {
     #[test]
     fn root_directory_mutations_are_rejected() {
         let source = SourceBundle::default();
-        let okf = crate::okf::Bundle::parse(&source).unwrap();
-        let uml = crate::uml::project(&okf);
         let root = DirectoryAddress::parse("/").unwrap();
         for op in [
             Op::DirectoryRename {
@@ -169,7 +163,7 @@ mod tests {
                 cascade: true,
             },
         ] {
-            assert!(Batch(vec![op]).lower(context(&source, &okf, &uml)).is_err());
+            assert!(Batch(vec![op]).lower(context(&source)).is_err());
         }
     }
 
@@ -180,15 +174,13 @@ mod tests {
             "---\ntype: uml.Class\n---\n# Order\n",
         )])
         .unwrap();
-        let okf = crate::okf::Bundle::parse(&source).unwrap();
-        let uml = crate::uml::project(&okf);
         let sales = DirectoryAddress::parse("/sales").unwrap();
 
         let renamed = Batch(vec![Op::DirectoryRename {
             directory: sales.clone(),
             name: "commerce".into(),
         }])
-        .lower(context(&source, &okf, &uml))
+        .lower(context(&source))
         .unwrap();
         assert_eq!(renamed.documents()[0].path().as_str(), "commerce/order.md");
 
@@ -197,7 +189,7 @@ mod tests {
             to_parent: DirectoryAddress::parse("/domains").unwrap(),
             name: None,
         }])
-        .lower(context(&source, &okf, &uml))
+        .lower(context(&source))
         .unwrap();
         assert_eq!(
             moved.documents()[0].path().as_str(),
@@ -208,7 +200,7 @@ mod tests {
             directory: sales,
             title: "Sales Domain".into(),
         }])
-        .lower(context(&source, &okf, &uml))
+        .lower(context(&source))
         .unwrap();
         assert!(retitled
             .documents()
@@ -224,13 +216,11 @@ mod tests {
             ("archive/order.md", "# Existing\n"),
         ])
         .unwrap();
-        let okf = crate::okf::Bundle::parse(&source).unwrap();
-        let uml = crate::uml::project(&okf);
         let result = Batch(vec![Op::ConceptMove {
             id: "sales/order".into(),
             to_directory: DirectoryAddress::parse("/archive").unwrap(),
         }])
-        .lower(context(&source, &okf, &uml));
+        .lower(context(&source));
         assert!(result.is_err());
         assert_eq!(source.documents()[0].path().as_str(), "sales/order.md");
     }

@@ -104,7 +104,11 @@ fn parser_platform_baseline_keeps_okf_membership_and_selective_uml_claims() {
     )
     .unwrap();
     let okf = waml::okf::Bundle::parse(&source).unwrap();
-    let projection = waml::uml::project(&okf);
+    let projection = waml::analysis::prepare_candidate(source, None, 0)
+        .unwrap()
+        .uml()
+        .projection
+        .clone();
 
     assert_eq!(
         okf.concepts()
