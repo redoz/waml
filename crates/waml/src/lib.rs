@@ -7,6 +7,7 @@ pub mod diagnostic;
 pub mod edit;
 pub mod frontmatter;
 pub mod grammar;
+pub mod host;
 pub mod index_md;
 pub mod layout;
 pub mod model;

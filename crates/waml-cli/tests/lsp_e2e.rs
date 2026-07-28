@@ -279,8 +279,8 @@ fn publishes_diagnostics_for_a_malformed_flow_bullet_with_no_extra_wiring() {
         "no publishDiagnostics seen; got: {out}"
     );
     assert!(
-        out.contains("unrecognized flow bullet"),
-        "expected 'unrecognized flow bullet' message; got: {out}"
+        out.contains("malformed transition"),
+        "expected parser-platform recovery message; got: {out}"
     );
 }
 

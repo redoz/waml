@@ -298,6 +298,19 @@ impl SourceBundle {
         Ok(())
     }
 
+    pub(crate) fn push_source_document(
+        &mut self,
+        document: SourceDocument,
+    ) -> Result<(), SourceError> {
+        if self.by_path.contains_key(document.path()) {
+            return Err(SourceError::DuplicatePath(document.path().to_string()));
+        }
+        let index = self.documents.len();
+        self.by_path.insert(document.path().clone(), index);
+        self.documents.push(document);
+        Ok(())
+    }
+
     pub(crate) fn remove_document(&mut self, index: usize) -> Option<SourceDocument> {
         if index >= self.documents.len() {
             return None;

@@ -2,8 +2,10 @@
 //! This is the only place byte offsets become UTF-16 code units.
 
 use tower_lsp::lsp_types as lsp;
-use waml::diagnostic::{Diagnostic, Severity};
-use waml::model::ElementType;
+use waml::{
+    analysis::DocumentVersion,
+    diagnostic::{Diagnostic, Severity},
+};
 
 /// True iff the document's frontmatter declares a recognized WAML `type:`.
 ///
@@ -13,31 +15,6 @@ use waml::model::ElementType;
 /// frontmatter is broken/unterminated (the exact `FrontmatterNotClean` case):
 /// a strict block parse would classify it as non-WAML and silently suppress
 /// its live diagnostics, blinding the LSP to the very error it reports.
-pub fn is_waml(text: &str) -> bool {
-    let mut in_fm = false;
-    for raw in text.lines() {
-        let trimmed = raw.trim_end_matches('\r').trim();
-        if !in_fm {
-            if trimmed.is_empty() {
-                continue;
-            }
-            if trimmed == "---" {
-                in_fm = true;
-                continue;
-            }
-            return false; // first content isn't a frontmatter opener
-        }
-        if trimmed == "---" || trimmed == "..." {
-            break; // frontmatter closed without a recognized type
-        }
-        if let Some(rest) = trimmed.strip_prefix("type:") {
-            let ty = rest.trim().trim_matches('"');
-            return ty == "Diagram" || !matches!(ElementType::parse(ty), ElementType::Unknown(_));
-        }
-    }
-    false
-}
-
 /// UTF-16 code-unit offset of byte offset `byte_col` within `line_text`.
 pub fn utf16_col(line_text: &str, byte_col: usize) -> u32 {
     line_text[..byte_col.min(line_text.len())]
@@ -54,14 +31,46 @@ fn severity(s: Severity) -> lsp::DiagnosticSeverity {
 }
 
 /// Map a core `Diagnostic` to an LSP diagnostic, given the text of its line.
-pub fn to_lsp_diagnostic(d: &Diagnostic, line_text: &str) -> lsp::Diagnostic {
-    let line = (d.line.saturating_sub(1)) as u32; // LSP is 0-based
-    let (start_ch, end_ch) = match d.span {
-        Some((s, e)) => (utf16_col(line_text, s), utf16_col(line_text, e)),
-        None => (0, utf16_col(line_text, line_text.len())),
-    };
-    lsp::Diagnostic {
-        range: lsp::Range {
+pub fn to_lsp_diagnostic(d: &Diagnostic, document: &DocumentVersion) -> lsp::Diagnostic {
+    let range = d.range.and_then(|range| {
+        let start = document
+            .line_index()
+            .line_col(document.text(), range.start())
+            .ok()?;
+        let end = document
+            .line_index()
+            .line_col(document.text(), range.end())
+            .ok()?;
+        Some(lsp::Range {
+            start: lsp::Position {
+                line: start.line,
+                character: document
+                    .line_index()
+                    .utf16_column(document.text(), range.start())
+                    .ok()?,
+            },
+            end: lsp::Position {
+                line: end.line,
+                character: document
+                    .line_index()
+                    .utf16_column(document.text(), range.end())
+                    .ok()?,
+            },
+        })
+    });
+    let range = range.unwrap_or_else(|| {
+        let line = (d.line.saturating_sub(1)) as u32;
+        let line_text = document
+            .text()
+            .shared()
+            .lines()
+            .nth(line as usize)
+            .unwrap_or("");
+        let (start_ch, end_ch) = match d.span {
+            Some((start, end)) => (utf16_col(line_text, start), utf16_col(line_text, end)),
+            None => (0, utf16_col(line_text, line_text.len())),
+        };
+        lsp::Range {
             start: lsp::Position {
                 line,
                 character: start_ch,
@@ -70,7 +79,10 @@ pub fn to_lsp_diagnostic(d: &Diagnostic, line_text: &str) -> lsp::Diagnostic {
                 line,
                 character: end_ch,
             },
-        },
+        }
+    });
+    lsp::Diagnostic {
+        range,
         severity: Some(severity(d.severity)),
         code: Some(lsp::NumberOrString::String(d.code.as_str().to_string())),
         source: Some("waml".to_string()),
@@ -82,27 +94,6 @@ pub fn to_lsp_diagnostic(d: &Diagnostic, line_text: &str) -> lsp::Diagnostic {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn is_waml_detects_recognized_types_only() {
-        assert!(is_waml("---\ntype: uml.Class\n---\n# X\n"));
-        assert!(is_waml("---\ntype: Diagram\n---\n# X\n"));
-        assert!(!is_waml("# just markdown\n"));
-        assert!(!is_waml("---\ntype: bpmn.Task\n---\n# X\n"));
-    }
-
-    #[test]
-    fn is_waml_recognizes_broken_frontmatter_with_a_type() {
-        // A buffer mid-edit with an unterminated frontmatter block (the exact
-        // `FrontmatterNotClean` case) must still be classified as WAML so its
-        // live diagnostics are published, not silently suppressed.
-        assert!(is_waml("---\ntype: uml.Class\ntitle: A\n# X\n"));
-        // ... closer with no trailing block terminator is still recognized.
-        assert!(is_waml("---\ntype: uml.Class\n"));
-        // Broken block without any recognized type stays non-WAML.
-        assert!(!is_waml("---\ntitle: A\n# X\n"));
-        assert!(!is_waml("---\ntype: bpmn.Task\n# X\n"));
-    }
 
     #[test]
     fn utf16_col_counts_code_units_not_bytes() {
