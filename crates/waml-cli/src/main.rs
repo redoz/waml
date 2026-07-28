@@ -305,21 +305,21 @@ fn main() {
             stdin,
             format,
         } => {
-            let bundle = match io::read_bundle_rooted(&paths, stdin) {
+            let bundle = match io::read_analysis_bundle(&paths, stdin) {
                 Ok(b) => b,
                 Err(e) => {
                     eprintln!("waml: {e}");
                     std::process::exit(2);
                 }
             };
-            let prepared = match commands::prepare(&bundle) {
+            let prepared = match commands::prepare(&bundle.files) {
                 Ok(prepared) => prepared,
                 Err(error) => {
                     eprintln!("waml: {error}");
                     std::process::exit(2);
                 }
             };
-            let diags = commands::diagnostics(&prepared);
+            let diags = commands::diagnostics(&prepared, &bundle.display_paths);
             let out = match format {
                 Format::Human => commands::render_human(&diags),
                 Format::Json => commands::render_json(&diags),
@@ -371,7 +371,12 @@ fn main() {
             let mut exit = 0;
             for r in &plan {
                 if r.skipped {
-                    eprintln!("waml: skipped {} (has errors; run `waml check`)", r.path);
+                    let display = bundle
+                        .display_paths
+                        .get(&r.path)
+                        .map(String::as_str)
+                        .unwrap_or(&r.path);
+                    eprintln!("waml: skipped {display} (has errors; run `waml check`)");
                     exit = 1;
                     continue;
                 }
@@ -379,16 +384,32 @@ fn main() {
                     print!("{}", r.formatted);
                 } else if check {
                     if r.changed {
-                        eprintln!("waml: {} is not formatted", r.path);
+                        let display = bundle
+                            .display_paths
+                            .get(&r.path)
+                            .map(String::as_str)
+                            .unwrap_or(&r.path);
+                        eprintln!("waml: {display} is not formatted");
                         exit = 1;
                     }
-                } else if r.changed {
-                    let destination = bundle.root.join(&r.path);
-                    if let Err(e) = std::fs::write(&destination, &r.formatted) {
-                        eprintln!("waml: failed to write {}: {e}", r.path);
-                        std::process::exit(2);
-                    }
-                    println!("waml: formatted {}", r.path);
+                }
+            }
+            if !stdout && !check {
+                let formatted = plan
+                    .iter()
+                    .map(|result| (result.path.clone(), result.formatted.clone()))
+                    .collect::<Vec<_>>();
+                if let Err(error) = io::write_back(&bundle.root, &bundle.files, &formatted) {
+                    eprintln!("waml: {error}");
+                    std::process::exit(2);
+                }
+                for result in plan.iter().filter(|result| result.changed) {
+                    let display = bundle
+                        .display_paths
+                        .get(&result.path)
+                        .map(String::as_str)
+                        .unwrap_or(&result.path);
+                    println!("waml: formatted {display}");
                 }
             }
             exit
@@ -773,7 +794,7 @@ fn run_show(slug: &str, q: &QueryArgs) -> i32 {
             0
         }
         Format::Json => {
-            let refs = waml::ops::referrers(&bundle, slug);
+            let refs = prepared.referrers(slug);
             let dto = serde_json::json!({
                 "slug": slug, "title": node.concept.title.as_deref().unwrap_or("Untitled"), "type": node.ty.as_str(),
                 "attributes": node.attributes.iter().map(|a| serde_json::json!({
@@ -806,7 +827,7 @@ fn run_refs(slug: &str, q: &QueryArgs) -> i32 {
             return 2;
         }
     };
-    let refs = waml::ops::referrers(&prepared.source().to_pairs(), slug);
+    let refs = prepared.referrers(slug);
     match q.format {
         Format::Human => {
             if refs.is_empty() {

@@ -311,3 +311,115 @@ fn apply_late_multi_file_failure_writes_nothing() {
         beta_before
     );
 }
+
+#[test]
+fn show_json_and_refs_share_prepared_referrer_results() {
+    let d = tmp();
+    std::fs::write(
+        d.join("order.md"),
+        "---\ntype: uml.Class\ntitle: Order\n---\n# Order\n",
+    )
+    .unwrap();
+    std::fs::write(
+        d.join("customer.md"),
+        "---\ntype: uml.Class\ntitle: Customer\n---\n# Customer\n\n## Attributes\n- order: [Order](./order.md)\n",
+    )
+    .unwrap();
+
+    let shown = bin()
+        .args(["show", "order", "--format", "json", "--dir"])
+        .arg(&d)
+        .output()
+        .unwrap();
+    let refs = bin()
+        .args(["refs", "order", "--format", "json", "--dir"])
+        .arg(&d)
+        .output()
+        .unwrap();
+    assert!(shown.status.success());
+    assert!(refs.status.success());
+    let shown: serde_json::Value = serde_json::from_slice(&shown.stdout).unwrap();
+    let refs: serde_json::Value = serde_json::from_slice(&refs.stdout).unwrap();
+
+    assert_eq!(shown["referrers"], refs);
+    assert_eq!(refs, serde_json::json!(["customer"]));
+}
+
+fn malformed_class() -> &'static str {
+    "---\ntype: uml.Class\ntitle: Order\n---\n# Order\n\n## Attributes\n- id:\n"
+}
+
+fn diagnostic_file(output: &std::process::Output) -> String {
+    let diagnostics: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    diagnostics[0]["file"].as_str().unwrap().to_owned()
+}
+
+#[test]
+fn diagnostic_paths_preserve_absolute_and_relative_file_spellings() {
+    let d = tmp();
+    let absolute = d.join("absolute.md");
+    std::fs::write(&absolute, malformed_class()).unwrap();
+    std::fs::write(d.join("relative.md"), malformed_class()).unwrap();
+
+    let absolute_output = bin()
+        .arg("check")
+        .arg(&absolute)
+        .args(["--format", "json"])
+        .output()
+        .unwrap();
+    let relative_output = {
+        let mut command = bin();
+        command
+            .current_dir(&d)
+            .args(["check", "relative.md", "--format", "json"]);
+        command.output().unwrap()
+    };
+
+    assert_eq!(
+        diagnostic_file(&absolute_output),
+        absolute.to_string_lossy()
+    );
+    assert_eq!(diagnostic_file(&relative_output), "relative.md");
+}
+
+#[test]
+fn diagnostic_paths_preserve_typed_directory_prefix() {
+    let d = tmp();
+    std::fs::create_dir(d.join("typed-bundle")).unwrap();
+    std::fs::write(d.join("typed-bundle/order.md"), malformed_class()).unwrap();
+    let mut command = bin();
+    command
+        .current_dir(&d)
+        .args(["check", "typed-bundle", "--format", "json"]);
+
+    let output = command.output().unwrap();
+
+    assert_eq!(
+        diagnostic_file(&output),
+        std::path::Path::new("typed-bundle")
+            .join("order.md")
+            .to_string_lossy()
+    );
+}
+
+#[test]
+fn diagnostic_paths_render_stdin_exactly() {
+    use std::io::Write;
+    use std::process::Stdio;
+
+    let mut child = bin()
+        .args(["check", "--stdin", "--format", "json"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(malformed_class().as_bytes())
+        .unwrap();
+    let output = child.wait_with_output().unwrap();
+
+    assert_eq!(diagnostic_file(&output), "stdin");
+}

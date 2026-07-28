@@ -284,6 +284,10 @@ impl PreparedCandidate {
         self.revision
     }
 
+    pub fn referrers(&self, target: &str) -> Vec<String> {
+        self.uml.referrers(target)
+    }
+
     pub fn into_parts(self) -> (SourceBundle, OkfAnalysis, crate::uml::Analysis, u64) {
         (self.source, self.okf, self.uml, self.revision)
     }

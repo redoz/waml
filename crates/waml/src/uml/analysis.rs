@@ -24,6 +24,98 @@ impl Analysis {
     pub fn session_revision(&self) -> u64 {
         self.session_revision
     }
+
+    pub fn referrers(&self, target: &str) -> Vec<String> {
+        let target_document = self
+            .syntax
+            .catalog()
+            .documents()
+            .iter()
+            .find_map(|(id, document)| {
+                (crate::okf::id_of(document.path().as_str()) == target).then_some((*id, document))
+            })
+            .or_else(|| {
+                let mut matches = self
+                    .syntax
+                    .catalog()
+                    .documents()
+                    .iter()
+                    .filter(|(_, document)| document_slug(document.path().as_str()) == target);
+                match (matches.next(), matches.next()) {
+                    (Some((id, document)), None) => Some((*id, document)),
+                    _ => None,
+                }
+            });
+        let target_slug = target_document
+            .map(|(_, document)| document_slug(document.path().as_str()))
+            .unwrap_or(target);
+        let href = format!("./{target_slug}.md");
+        let target_id = target_document.map(|(id, _)| id);
+        let mut output = Vec::new();
+        for source_document in self.syntax.catalog().documents().values() {
+            let document = source_document.id();
+            if Some(document) == target_id {
+                continue;
+            }
+            let Some(snapshot) = self.syntax.document(document) else {
+                continue;
+            };
+            let source = snapshot.document().text().shared();
+            let referenced = [
+                super::syntax::UmlSyntaxKind::Attribute,
+                super::syntax::UmlSyntaxKind::Relationship,
+                super::syntax::UmlSyntaxKind::Member,
+                super::syntax::UmlSyntaxKind::InlineInstance,
+                super::syntax::UmlSyntaxKind::LayoutStatement,
+            ]
+            .into_iter()
+            .flat_map(|kind| syntax_nodes(snapshot.syntax(), kind))
+            .any(|syntax| {
+                let range = syntax.range();
+                let authored = &source[range.start().to_usize()..range.end().to_usize()];
+                authored.contains(&href)
+                    || (syntax.kind() == super::syntax::UmlSyntaxKind::LayoutStatement
+                        && authored
+                            .split(|character: char| {
+                                character.is_whitespace()
+                                    || matches!(character, '[' | ']' | '(' | ')' | ',')
+                            })
+                            .any(|word| word == target_slug))
+            });
+            if referenced {
+                output.push(document_slug(source_document.path().as_str()).to_owned());
+            }
+        }
+        output.sort();
+        output.dedup();
+        output
+    }
+}
+
+fn document_slug(path: &str) -> &str {
+    let segment = path.rsplit(['/', '\\']).next().unwrap_or(path);
+    segment.strip_suffix(".md").unwrap_or(segment)
+}
+
+fn syntax_nodes(
+    tree: &waml_syntax::SyntaxTree<UmlLanguage>,
+    kind: super::syntax::UmlSyntaxKind,
+) -> Vec<SyntaxNode<UmlLanguage>> {
+    fn collect(
+        node: &SyntaxNode<UmlLanguage>,
+        kind: super::syntax::UmlSyntaxKind,
+        output: &mut Vec<SyntaxNode<UmlLanguage>>,
+    ) {
+        for child in node.children().filter_map(SyntaxElement::into_node) {
+            if child.kind() == kind {
+                output.push(child.clone());
+            }
+            collect(&child, kind, output);
+        }
+    }
+    let mut output = Vec::new();
+    collect(&tree.root(), kind, &mut output);
+    output
 }
 pub fn analyze(
     context: DomainAnalysisContext<'_>,

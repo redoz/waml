@@ -58,3 +58,68 @@ compatibility projection.
 TokenSave was used before source inspection and reported approximately 5,044
 tokens saved across CLI authority, preparation API, and baseline-failure
 queries.
+
+## Formal fix round 1
+
+### P1 — prepared-snapshot referrer authority
+
+- Added `PreparedCandidate::referrers`, backed only by the immutable
+  `uml::Analysis` syntax snapshots and shared catalog produced during
+  preparation.
+- The query covers attributes, relationships, members, inline instances, and
+  linked/bare layout operands without rebuilding a `SourceBundle` or invoking a
+  parser.
+- CLI `refs` and JSON `show` now consume that same prepared query.
+- RED: `cargo test -p waml --test prepared_referrers` failed to compile because
+  `PreparedCandidate::referrers` did not exist.
+- GREEN: the prepared-referrer integration test passes, and CLI JSON
+  show/refs consistency passes.
+
+### P1 — physical display paths
+
+- Added an invocation-local logical `BundlePath` to caller-facing display-path
+  map while retaining normalized relative paths for analysis.
+- Human/JSON diagnostics and formatter status output render physical paths from
+  that map.
+- Absolute and relative file spellings, typed directory prefixes, and `stdin`
+  remain distinct and current-directory-independent.
+- RED: all three focused e2e tests failed: absolute paths collapsed to a
+  basename, directory prefixes disappeared, and `stdin` rendered as
+  `stdin.md`.
+- GREEN: all absolute/relative/directory/stdin display-path tests pass.
+
+### P1 — filesystem transaction atomicity
+
+- Replaced sequential writes/deletes with a complete-set transaction staged
+  inside the bundle root.
+- Existing targets move into a rollback journal; desired bytes are staged with
+  inherited permissions; add/update/delete operations commit by same-volume
+  rename; failures unwind in reverse and remove newly created directories.
+- `fmt` now submits its complete formatted set to the same transaction used by
+  compatibility mutations and emits success output only after commit.
+- Added a private filesystem-boundary test seam whose fault implementation
+  delegates to real `std::fs::rename` except for one deterministic late call.
+- RED: both late-failure tests left the first updated file as `"after"` instead
+  of restoring `"before"`.
+- GREEN: late write and late delete failures restore every prior byte/path,
+  remove all new files/directories/staging artifacts, and return stable errors;
+  successful add/update/delete commits as one set and preserves permissions.
+
+### Fix-round verification
+
+- `cargo test -p waml-cli --test cli_e2e`: 15 passed.
+- `cargo test -p waml-cli`: 61 passed.
+- `cargo test -p waml-ops-dto`: 19 passed.
+- `cargo test -p waml --test prepared_referrers`: 1 passed.
+- `cargo test -p waml compat`: 4 passed.
+- `cargo test -p waml prepare_candidate`: 2 passed.
+- `cargo test -p waml parser_platform_baseline`: 5 passed.
+- `cargo test -p waml --test golden`: 6 passed.
+- `cargo test -p waml --lib`: 440 passed.
+- `cargo test -p waml-editor`: 735 passed.
+- `cargo check --workspace --all-features`: passed with existing warnings.
+- `cargo test --workspace --all-features` still fails only at the documented
+  pre-existing `serde_shape::package_node_and_model_path` assertion in
+  `okf.rs:394`; all other reported suites pass.
+
+TokenSave reported approximately 10,465 tokens saved during this fix round.

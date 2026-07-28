@@ -163,8 +163,22 @@ pub fn prepare(files: &[(String, String)]) -> Result<PreparedCandidate, String> 
     prepare_candidate(source, None, 0).map_err(|e| e.to_string())
 }
 
-pub fn diagnostics(candidate: &PreparedCandidate) -> Vec<Diagnostic> {
-    candidate.uml().diagnostics.iter().cloned().collect()
+pub fn diagnostics(
+    candidate: &PreparedCandidate,
+    display_paths: &std::collections::BTreeMap<String, String>,
+) -> Vec<Diagnostic> {
+    candidate
+        .uml()
+        .diagnostics
+        .iter()
+        .cloned()
+        .map(|mut diagnostic| {
+            if let Some(display) = display_paths.get(&diagnostic.file) {
+                diagnostic.file.clone_from(display);
+            }
+            diagnostic
+        })
+        .collect()
 }
 
 pub fn plan_fmt(files: &[(String, String)]) -> Result<Vec<FmtResult>, String> {
@@ -227,7 +241,7 @@ pub fn plan_fmt(files: &[(String, String)]) -> Result<Vec<FmtResult>, String> {
         1,
     )
     .map_err(|e| e.to_string())?;
-    let diagnostics = diagnostics(&validated);
+    let diagnostics = diagnostics(&validated, &std::collections::BTreeMap::new());
     Ok(files
         .iter()
         .map(|(path, original)| {
