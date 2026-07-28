@@ -1608,6 +1608,7 @@ fn lower_sequence_behavior(
     let mut root = Vec::new();
     let mut fragment_stack: Vec<(usize, usize)> = Vec::new();
     let mut operand_stack: Vec<(usize, usize)> = Vec::new();
+    let mut fragment_count = 0usize;
     for (_, item) in ordered {
         match item {
             Ordered::Operand(value) => {
@@ -1624,7 +1625,8 @@ fn lower_sequence_behavior(
                     {
                         operand_stack.pop();
                     }
-                    let id = format!("f{}", nodes.len());
+                    let id = format!("f{fragment_count}");
+                    fragment_count += 1;
                     let index = nodes.len();
                     nodes.push(crate::model::SeqNode::Fragment {
                         id: id.clone(),
@@ -1655,7 +1657,12 @@ fn lower_sequence_behavior(
                     else {
                         continue;
                     };
-                    let id = format!("o{}", nodes.len());
+                    let id = match &nodes[fragment] {
+                        crate::model::SeqNode::Fragment { id, operands, .. } => {
+                            format!("{id}.o{}", operands.len())
+                        }
+                        _ => unreachable!("fragment stack points to a fragment"),
+                    };
                     let index = nodes.len();
                     nodes.push(crate::model::SeqNode::Operand {
                         id: id.clone(),
@@ -2099,9 +2106,17 @@ fn declared_flow_node(node: SyntaxNode<UmlLanguage>) -> crate::uml::DeclaredFlow
         field_from_token(&identity_slot, super::syntax::UmlSyntaxKind::IdentityToken)
             .filter(|value| !value.is_empty())
             .map(|value| valid(identity_slot.clone(), value))
-            .unwrap_or_else(|| crate::uml::DeclaredField::Incomplete {
-                syntax: identity_slot.clone(),
-                expected: crate::uml::ExpectedSyntax::FlowTarget,
+            .unwrap_or_else(|| match field_value(&kind) {
+                Some(crate::model::FlowNodeKind::Initial) => {
+                    valid(identity_slot.clone(), "initial".to_owned())
+                }
+                Some(crate::model::FlowNodeKind::Final) => {
+                    valid(identity_slot.clone(), "final".to_owned())
+                }
+                _ => crate::uml::DeclaredField::Incomplete {
+                    syntax: identity_slot.clone(),
+                    expected: crate::uml::ExpectedSyntax::FlowTarget,
+                },
             })
     };
     let object_ref = if matches!(field_value(&kind), Some(crate::model::FlowNodeKind::Object)) {

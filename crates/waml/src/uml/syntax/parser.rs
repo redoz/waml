@@ -733,12 +733,14 @@ fn flow_heading(
             )
             .unwrap(),
         ));
-        diags.push(diag(
-            UmlSyntaxDiagnosticCode::MalformedFlow,
-            body,
-            content_end,
-            "missing flow node identity",
-        ));
+        if !matches!(kind, Some("initial" | "final")) {
+            diags.push(diag(
+                UmlSyntaxDiagnosticCode::MalformedFlow,
+                body,
+                content_end,
+                "missing flow node identity",
+            ));
+        }
     }
     let recovery = if p < content_end {
         let recovery = skipped(

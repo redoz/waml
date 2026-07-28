@@ -36,31 +36,40 @@ fn apply(candidate: &PreparedCandidate, action: waml::action::CodeAction) -> Sou
 }
 
 #[test]
-fn valid_fixture_formatting_is_idempotent() {
+fn valid_fixtures_keep_exact_canonical_bytes_and_are_idempotent() {
     let fixtures = [
-        ("enum.md", include_str!("fixtures/parser-platform/enum.md")),
+        (
+            "enum.md",
+            include_str!("fixtures/parser-platform/enum.md"),
+            "---\ntype: uml.Enum\ntitle: Status\n---\n\n# Status\n\n## Values\n- Draft\n- Submitted\n",
+        ),
         (
             "object.md",
             include_str!("fixtures/parser-platform/object.md"),
+            "---\ntype: uml.InstanceSpecification\ntitle: Draft Order\n---\n\n# Draft Order\n\n## Slots\n- id: ORD-1\n- label: cafe\u{301}\n\n## Relationships\n- instance of [Café Order](./class.md)\n",
         ),
         (
             "diagram.md",
             include_str!("fixtures/parser-platform/diagram.md"),
+            "---\ntype: Diagram\ntitle: Orders\nprofile: uml-domain\n---\n\n# Orders\n\n## Members\n- [Café Order](./class.md)\n- [Status](./enum.md)\n\n## Layout\n- class right of enum\n",
         ),
         (
             "activity.md",
             include_str!("fixtures/parser-platform/activity.md"),
+            "---\ntype: uml.Activity\ntitle: Fulfil\n---\n\n# Fulfil\n\n## Nodes\n\n### Start\n- transitions to Pack\n\n### Pack\n- transitions to Done\n\n### Done\n",
         ),
         (
             "state-machine.md",
             include_str!("fixtures/parser-platform/state-machine.md"),
+            "---\ntype: uml.StateMachine\ntitle: Order State\n---\n\n# Order State\n\n## Nodes\n\n### Draft\n- on `submit` transitions to Submitted\n\n### Submitted\n",
         ),
         (
             "sequence.md",
             include_str!("fixtures/parser-platform/sequence.md"),
+            "---\ntype: uml.Sequence\ntitle: Checkout\n---\n\n# Checkout\n\n## Lifelines\n- [Buyer](./object.md)\n- [Order](./class.md)\n\n## Messages\n- Buyer calls Order: `submit()`\n",
         ),
     ];
-    for (path, source) in fixtures {
+    for (path, source, expected) in fixtures {
         let candidate = prepared(path, source, 17);
         let action = Formatter
             .format(
@@ -73,6 +82,7 @@ fn valid_fixture_formatting_is_idempotent() {
             .document(&BundlePath::parse(path).unwrap())
             .unwrap()
             .text();
+        assert_eq!(formatted_text, expected, "{path}: exact canonical bytes");
         let second = prepared(path, formatted_text, 18);
         let second_action = Formatter
             .format(
@@ -133,38 +143,45 @@ fn malformed_recovery_and_unclaimed_generic_source_are_not_rewritten() {
 }
 
 #[test]
-fn noncanonical_claimed_families_format_to_a_parser_fixpoint() {
+fn noncanonical_claimed_families_match_exact_canonical_bytes() {
     let fixtures = [
         (
             "class.md",
             "---\ntype: uml.Class\ntitle: C\n---\n# C\n\n## Relationships\n\n- depends [Target](target.md)\n\n## Attributes\n\n- + id: OrderId {1}\n",
+            "---\ntype: uml.Class\ntitle: C\n---\n\n# C\n\n## Attributes\n- + id: OrderId {1}\n\n## Relationships\n- depends [Target](./target.md)\n",
         ),
         (
             "enum.md",
             "---\ntype:   uml.Enum\ntitle:   E\nstereotype: [ valueObject,entity ]\n---\n# Wrong\n\n## Values\n\n- Open\n- Closed\n",
+            "---\ntype: uml.Enum\ntitle: E\nstereotype: [valueObject, entity]\n---\n\n# Wrong\n\n## Values\n- Open\n- Closed\n",
         ),
         (
             "object.md",
             "---\ntype: uml.InstanceSpecification\ntitle: O\n---\n# O\n\n## Slots\n\n- state: \"Open\"\n",
+            "---\ntype: uml.InstanceSpecification\ntitle: O\n---\n\n# O\n\n## Slots\n- state: \"Open\"\n",
         ),
         (
             "diagram.md",
             "---\ntype: Diagram\ntitle: D\nprofile: uml-domain\n---\n# D\n\n## Layout\n\n- Users with FRAME and LARGE margins\n\n## Members\n\n- [User](user.md)\n",
+            "---\ntype: Diagram\ntitle: D\nprofile: uml-domain\n---\n\n# D\n\n## Members\n- [User](user.md)\n\n## Layout\n- Users with frame, large margin\n",
         ),
         (
             "activity.md",
             "---\ntype: uml.Activity\ntitle: A\n---\n# A\n\n## Nodes\n\n### Start\n- transitions to Done\n\n### Done\n",
+            "---\ntype: uml.Activity\ntitle: A\n---\n\n# A\n\n## Nodes\n\n### Start\n- transitions to Done\n\n### Done\n",
         ),
         (
             "state.md",
             "---\ntype: uml.StateMachine\ntitle: S\n---\n# S\n\n## Nodes\n\n### Draft\n- on `submit` transitions to Submitted\n\n### Submitted\n",
+            "---\ntype: uml.StateMachine\ntitle: S\n---\n\n# S\n\n## Nodes\n\n### Draft\n- on `submit` transitions to Submitted\n\n### Submitted\n",
         ),
         (
             "sequence.md",
             "---\ntype: uml.Sequence\ntitle: Q\n---\n# Q\n\n## Messages\n\n- Buyer calls Order: `submit()`\n\n## Lifelines\n\n- [Buyer](./buyer.md)\n- [Order](./order.md)\n",
+            "---\ntype: uml.Sequence\ntitle: Q\n---\n\n# Q\n\n## Lifelines\n- [Buyer](./buyer.md)\n- [Order](./order.md)\n\n## Messages\n- Buyer calls Order: `submit()`\n",
         ),
     ];
-    for (path, source) in fixtures {
+    for (path, source, expected) in fixtures {
         let candidate = prepared(path, source, 40);
         assert!(
             candidate
@@ -198,6 +215,7 @@ fn noncanonical_claimed_families_format_to_a_parser_fixpoint() {
             .document(&BundlePath::parse(path).unwrap())
             .unwrap()
             .text();
+        assert_eq!(actual, expected, "{path}: exact canonical bytes");
         let reparsed = prepared(path, actual, 41);
         assert!(
             reparsed

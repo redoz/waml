@@ -756,13 +756,6 @@ fn document_title(work: &SourceBundle, target: &str, op: &str) -> String {
         .unwrap_or_else(|| target.to_owned())
 }
 
-fn stored_slug(work: &SourceBundle, target: &str) -> String {
-    resolve_index(work, target)
-        .and_then(|index| work.document_at(index))
-        .map(|document| slug_of(document.path().as_str()))
-        .unwrap_or_else(|| target.to_owned())
-}
-
 fn stored_id(work: &SourceBundle, target: &str) -> String {
     resolve_index(work, target)
         .and_then(|index| work.document_at(index))

@@ -270,7 +270,7 @@ fn flow_doc_json_matches_ts_field_names() {
     let b = vec![
         ("m/order.md".to_string(), "---\ntype: uml.Class\ntitle: Order\n---\n# Order\n".to_string()),
         ("m/lifecycle.md".to_string(),
-         "---\ntype: uml.StateMachine\ntitle: Order Lifecycle\ndescribes: [Order](./order.md)\n---\n# Order Lifecycle\n\n## Nodes\n\n### Draft\n- on `place` transitions to Placed\n\n### Placed\n".to_string()),
+         "---\ntype: uml.StateMachine\ntitle: Order Lifecycle\ndescribes: [Order](./order.md)\n---\n# Order Lifecycle\n\n## Nodes\n\n### initial\n- transitions to Draft\n\n### Draft\n- on `place` when `items > 0` transitions to Placed: `reserve`\n- else transitions to Cancelled\n\n### Placed\n- entry: `reserveStock`\n\n### Cancelled\n\n### final\n".to_string()),
     ];
     let m = projection(&b);
     let v = serde_json::to_value(&m).unwrap();
@@ -279,16 +279,20 @@ fn flow_doc_json_matches_ts_field_names() {
     assert_eq!(f["flavor"], "stateMachine");
     assert_eq!(f["describes"], "m/order");
     // The view references pooled nodes/edges by key (no inline objects).
-    assert_eq!(f["nodes"][0], "m/lifecycle#Draft");
-    assert_eq!(f["edges"][0], "m/lifecycle#e0");
+    assert_eq!(f["nodes"][0], "m/lifecycle#initial");
+    assert_eq!(f["edges"][1], "m/lifecycle#e1");
     // Activity nodes live in the model-level `activityNodes` pool.
-    assert_eq!(v["activityNodes"][0]["kind"], "plain");
+    assert_eq!(v["activityNodes"][0]["kind"], "initial");
     assert_eq!(v["activityNodes"][0]["behavior"], "m/lifecycle");
+    assert_eq!(v["activityNodes"][2]["entry"], "reserveStock");
     // Flow edges live in the typed model-level `flowEdges` pool.
-    let e = &v["flowEdges"][0];
+    let e = &v["flowEdges"][1];
     assert_eq!(e["from"], "m/lifecycle#Draft");
     assert_eq!(e["kind"], "controlFlow");
     assert_eq!(e["trigger"], "place");
+    assert_eq!(e["guard"], "items > 0");
+    assert_eq!(e["effect"], "reserve");
+    assert_eq!(v["flowEdges"][2]["else"], true);
     // classifier-only models omit the fields entirely
     let m2 = projection(&[(
         "a.md".to_string(),
@@ -306,23 +310,44 @@ fn sequence_doc_json_matches_ts_field_names() {
         ("s/buyer.md".to_string(), "---\ntype: uml.Class\ntitle: Buyer\n---\n# Buyer\n".to_string()),
         ("s/order.md".to_string(), "---\ntype: uml.Class\ntitle: Order\n---\n# Order\n".to_string()),
         ("s/seq.md".to_string(),
-         "---\ntype: uml.Sequence\ntitle: S\n---\n# S\n\n## Lifelines\n\n- [Buyer](./buyer.md)\n- [Order](./order.md)\n\n## Messages\n\n- Buyer calls Order: `tick()`\n".to_string()),
+         "---\ntype: uml.Sequence\ntitle: S\n---\n# S\n\n## Lifelines\n- [Buyer](./buyer.md) as buyer\n- [Order](./order.md) as order\n\n## Messages\n- buyer calls order: `tick()`\n- opt\n  - when `ready`\n    - buyer sends order: `go()`\n".to_string()),
     ];
     let m = projection(&b);
     let v = serde_json::to_value(&m).unwrap();
     let s = &v["interactions"][0];
     // Lifelines are tagged nodes keyed by their handle; `ref`/`alias` preserved.
     assert_eq!(s["nodes"][0]["node"], "lifeline");
-    assert_eq!(s["nodes"][0]["id"], "Buyer");
+    assert_eq!(s["nodes"][0]["id"], "buyer");
     assert_eq!(s["nodes"][0]["ref"], "s/buyer");
-    assert!(s["nodes"][0]["alias"].is_null());
+    assert_eq!(s["nodes"][0]["alias"], "buyer");
     // Messages become ordered edges (`m0`, `m1`, … in time order).
     assert_eq!(s["edges"][0]["id"], "m0");
     assert_eq!(s["edges"][0]["verb"], "calls");
     assert_eq!(s["edges"][0]["signature"], "tick()");
-    // The root item stream references the edge in document order.
+    // The root item stream references the edge, then the fragment (document order).
     assert_eq!(s["items"][0]["item"], "message");
     assert_eq!(s["items"][0]["edge"], "m0");
+    assert_eq!(s["items"][1]["item"], "fragment");
+    assert_eq!(s["items"][1]["node"], "f0");
+    // Containment: the operand is emitted before its fragment; guard + nested edge kept.
+    let operand = s["nodes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|node| node["id"] == "f0.o0")
+        .unwrap();
+    assert_eq!(operand["node"], "operand");
+    assert_eq!(operand["guard"], "ready");
+    assert_eq!(operand["items"][0]["edge"], "m1");
+    let fragment = s["nodes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|node| node["id"] == "f0")
+        .unwrap();
+    assert_eq!(fragment["node"], "fragment");
+    assert_eq!(fragment["kind"], "opt");
+    assert_eq!(fragment["operands"][0], "f0.o0");
 }
 
 #[test]
