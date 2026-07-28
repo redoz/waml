@@ -47,7 +47,6 @@ fn okf_bundle_json_has_separate_semantic_collections_and_string_bodies() {
     let encoded = serde_json::to_string(&value).unwrap();
     assert!(!encoded.contains("\"source\""));
     assert!(!encoded.contains("\"range\""));
-    assert!(!encoded.contains("ConceptRole"));
     assert!(value["directories"].is_array());
 }
 

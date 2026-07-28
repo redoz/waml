@@ -339,9 +339,8 @@ fn scan_frontmatter_and_preamble(src: &str) -> Vec<Diagnostic> {
                 .map(|(key, value)| (key.trim(), value));
             if let Some(("type", rest)) = entry {
                 let ty = rest.trim().trim_matches('"');
-                if ty.starts_with("uml.")
-                    && matches!(ElementType::parse(ty), ElementType::Unknown(_))
-                {
+                let element_type = ElementType::parse(ty);
+                if ty.starts_with("uml.") && !crate::uml::recognizes_type(&element_type) {
                     diags.push(Diagnostic::warn(
                         DiagCode::UnknownType,
                         format!("unsupported UML metaclass '{ty}'"),
