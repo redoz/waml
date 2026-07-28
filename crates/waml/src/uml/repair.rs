@@ -77,11 +77,15 @@ pub fn repair_actions(
         if let DeclaredField::Invalid { syntax, .. } = &attribute.multiplicity {
             let range = syntax.range();
             let raw = &source[range.start().to_usize()..range.end().to_usize()];
-            let Some(open) = raw.find('[') else {
+            let Some((open, delimiter)) = raw
+                .char_indices()
+                .find(|(_, delimiter)| matches!(delimiter, '[' | '{'))
+            else {
                 continue;
             };
+            let close_delimiter = if delimiter == '{' { '}' } else { ']' };
             let close = raw[open..]
-                .find(']')
+                .find(close_delimiter)
                 .map(|relative| open + relative + 1)
                 .unwrap_or(raw.len());
             let number = first_ascii_decimal(&raw[open..close]).unwrap_or("1");

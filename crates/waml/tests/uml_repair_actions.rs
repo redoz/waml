@@ -186,3 +186,78 @@ fn multiplicity_repair_reanalyzes_cleanly_with_canonical_braces() {
     .iter()
     .all(|action| action.title != "Replace invalid multiplicity"));
 }
+
+#[test]
+fn brace_multiplicity_repairs_use_the_exact_typed_slot_range() {
+    let cases = [
+        ("{oops 42}", "{42}", "42"),
+        ("{oops}", "{1}", "1"),
+        ("{oops", "{1}", "1"),
+    ];
+    for (invalid, replacement, expected_value) in cases {
+        let source = format!(
+            "---\r\ntype: uml.Class\r\n---\r\n# Café 😀\r\n\r\n## Attributes\r\n- quantité: Number {invalid}\r\n"
+        );
+        let candidate = prepared(&source, 70);
+        let action = repair_actions(
+            ActionContext::from_prepared(&candidate).unwrap(),
+            document(&candidate),
+        )
+        .unwrap()
+        .into_iter()
+        .find(|action| action.title == "Replace invalid multiplicity")
+        .unwrap_or_else(|| panic!("missing brace repair for {invalid:?}"));
+        let edit = &action.changes[0].edits[0];
+        let expected_start = source.find(invalid).unwrap();
+        assert_eq!(edit.range.start().to_usize(), expected_start, "{invalid}");
+        assert_eq!(
+            edit.range.end().to_usize(),
+            expected_start + invalid.len(),
+            "{invalid}"
+        );
+        assert_eq!(&*edit.replacement, replacement, "{invalid}");
+
+        let repaired = SyntaxChangeBatch::new(action)
+            .unwrap()
+            .lower(EditContext {
+                source: candidate.source(),
+                okf_analysis: candidate.okf(),
+                session_revision: candidate.revision(),
+                uml: candidate.uml(),
+            })
+            .unwrap();
+        let repaired_text = repaired
+            .document(&BundlePath::parse("class.md").unwrap())
+            .unwrap()
+            .text();
+        assert_eq!(
+            repaired_text,
+            source.replace(invalid, replacement),
+            "{invalid}"
+        );
+        let reparsed = prepare_candidate(repaired, None, 71).unwrap();
+        assert!(
+            reparsed
+                .uml()
+                .diagnostics
+                .iter()
+                .all(|diagnostic| diagnostic.message != "invalid multiplicity"
+                    && diagnostic.message != "unterminated multiplicity"),
+            "{invalid}: {:?}",
+            reparsed.uml().diagnostics
+        );
+        let attribute = &reparsed.uml().projection.node("class").unwrap().attributes[0];
+        assert_eq!(
+            attribute.multiplicity.as_ref().unwrap().as_str(),
+            expected_value,
+            "{invalid}"
+        );
+        assert!(repair_actions(
+            ActionContext::from_prepared(&reparsed).unwrap(),
+            document(&reparsed)
+        )
+        .unwrap()
+        .into_iter()
+        .all(|action| action.title != "Replace invalid multiplicity"));
+    }
+}
