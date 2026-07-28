@@ -374,13 +374,25 @@ fn write_back_with_ops(
     })();
 
     if let Err(error) = result {
-        let rollback = rollback(&journal, &created_directories);
-        let _ = fs::remove_dir_all(&staging);
+        let rollback = rollback(&journal, &created_directories, &staging, ops);
         return match rollback {
-            Ok(()) => Err(error),
+            Ok(()) => match fs::remove_dir_all(&staging) {
+                Ok(()) => Err(error),
+                Err(cleanup) => Err(std::io::Error::new(
+                    error.kind(),
+                    format!(
+                        "{error}; rollback restored targets but cleanup failed: {cleanup}; \
+                         recovery journal retained at {}",
+                        staging.display()
+                    ),
+                )),
+            },
             Err(rollback) => Err(std::io::Error::new(
                 error.kind(),
-                format!("{error}; rollback failed: {rollback}"),
+                format!(
+                    "{error}; rollback failed: {rollback}; recovery journal retained at {}",
+                    staging.display()
+                ),
             )),
         };
     }
@@ -463,19 +475,53 @@ fn create_missing_parents(
     Ok(())
 }
 
-fn rollback(journal: &[JournalEntry], created: &[PathBuf]) -> std::io::Result<()> {
-    let mut first_error = None;
-    for entry in journal.iter().rev() {
-        let result = match entry {
+fn rollback(
+    journal: &[JournalEntry],
+    created: &[PathBuf],
+    staging: &Path,
+    ops: &impl FsOps,
+) -> std::io::Result<()> {
+    let mut trash = Vec::new();
+    for (index, entry) in journal.iter().enumerate().rev() {
+        match entry {
             JournalEntry::Updated { target, backup } => {
-                let _ = fs::remove_file(target);
-                fs::rename(backup, target)
+                let displaced = staging.join(format!("rollback-{index}"));
+                ops.rename(target, &displaced).map_err(|error| {
+                    rollback_error("displace updated target", target, &displaced, error)
+                })?;
+                if let Err(restore) = ops.rename(backup, target) {
+                    let reinstall = ops.rename(&displaced, target);
+                    return Err(match reinstall {
+                        Ok(()) => rollback_error("restore backup", backup, target, restore),
+                        Err(reinstall) => std::io::Error::new(
+                            restore.kind(),
+                            format!(
+                                "{}; reinstalling displaced target also failed: {}",
+                                rollback_error("restore backup", backup, target, restore),
+                                rollback_error(
+                                    "reinstall displaced target",
+                                    &displaced,
+                                    target,
+                                    reinstall
+                                )
+                            ),
+                        ),
+                    });
+                }
+                trash.push(displaced);
             }
-            JournalEntry::Added { target } => fs::remove_file(target),
-            JournalEntry::Deleted { target, backup } => fs::rename(backup, target),
-        };
-        if let Err(error) = result {
-            first_error.get_or_insert(error);
+            JournalEntry::Added { target } => {
+                let displaced = staging.join(format!("rollback-{index}"));
+                ops.rename(target, &displaced).map_err(|error| {
+                    rollback_error("displace added target", target, &displaced, error)
+                })?;
+                trash.push(displaced);
+            }
+            JournalEntry::Deleted { target, backup } => {
+                ops.rename(backup, target).map_err(|error| {
+                    rollback_error("restore deleted target", backup, target, error)
+                })?;
+            }
         }
     }
     for directory in created.iter().rev() {
@@ -483,14 +529,78 @@ fn rollback(journal: &[JournalEntry], created: &[PathBuf]) -> std::io::Result<()
             Ok(()) => {}
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
             Err(error) => {
-                first_error.get_or_insert(error);
+                return Err(std::io::Error::new(
+                    error.kind(),
+                    format!(
+                        "failed to remove transaction-created directory {}: {error}",
+                        directory.display()
+                    ),
+                ));
             }
         }
     }
-    match first_error {
-        Some(error) => Err(error),
-        None => Ok(()),
+    for displaced in trash {
+        let metadata = fs::metadata(&displaced).map_err(|error| {
+            std::io::Error::new(
+                error.kind(),
+                format!(
+                    "failed to inspect displaced rollback target {}: {error}",
+                    displaced.display()
+                ),
+            )
+        })?;
+        clear_deletion_blocking_permissions(&displaced, &metadata)?;
+        fs::remove_file(&displaced).map_err(|error| {
+            std::io::Error::new(
+                error.kind(),
+                format!(
+                    "failed to remove displaced rollback target {}: {error}",
+                    displaced.display()
+                ),
+            )
+        })?;
     }
+    Ok(())
+}
+
+#[cfg(windows)]
+fn clear_deletion_blocking_permissions(
+    path: &Path,
+    metadata: &fs::Metadata,
+) -> std::io::Result<()> {
+    if metadata.permissions().readonly() {
+        let mut permissions = metadata.permissions();
+        permissions.set_readonly(false);
+        fs::set_permissions(path, permissions).map_err(|error| {
+            std::io::Error::new(
+                error.kind(),
+                format!(
+                    "failed to clear deletion-blocking permissions on {}: {error}",
+                    path.display()
+                ),
+            )
+        })?;
+    }
+    Ok(())
+}
+
+#[cfg(not(windows))]
+fn clear_deletion_blocking_permissions(
+    _path: &Path,
+    _metadata: &fs::Metadata,
+) -> std::io::Result<()> {
+    Ok(())
+}
+
+fn rollback_error(action: &str, from: &Path, to: &Path, error: std::io::Error) -> std::io::Error {
+    std::io::Error::new(
+        error.kind(),
+        format!(
+            "failed to {action} {} -> {}: {error}",
+            from.display(),
+            to.display()
+        ),
+    )
 }
 
 #[cfg(test)]
@@ -522,6 +632,77 @@ mod tests {
     struct FailRename {
         at: usize,
         calls: AtomicUsize,
+    }
+
+    struct FailRenames {
+        at: &'static [usize],
+        calls: AtomicUsize,
+    }
+
+    impl FsOps for FailRenames {
+        fn rename(&self, from: &Path, to: &Path) -> std::io::Result<()> {
+            let call = self.calls.fetch_add(1, Ordering::Relaxed) + 1;
+            if self.at.contains(&call) {
+                Err(std::io::Error::new(
+                    std::io::ErrorKind::Other,
+                    format!("injected rename failure at call {call}"),
+                ))
+            } else {
+                std::fs::rename(from, to)
+            }
+        }
+    }
+
+    #[cfg(windows)]
+    struct RequireRollbackDisplacement {
+        readonly_target: PathBuf,
+        calls: AtomicUsize,
+        displaced: std::sync::atomic::AtomicBool,
+    }
+
+    #[cfg(windows)]
+    impl RequireRollbackDisplacement {
+        fn new(readonly_target: PathBuf) -> Self {
+            Self {
+                readonly_target: readonly_target.canonicalize().unwrap(),
+                calls: AtomicUsize::new(0),
+                displaced: std::sync::atomic::AtomicBool::new(false),
+            }
+        }
+
+        fn displaced(&self) -> bool {
+            self.displaced.load(Ordering::Relaxed)
+        }
+    }
+
+    #[cfg(windows)]
+    impl FsOps for RequireRollbackDisplacement {
+        fn rename(&self, from: &Path, to: &Path) -> std::io::Result<()> {
+            let call = self.calls.fetch_add(1, Ordering::Relaxed) + 1;
+            if call == 3 {
+                assert!(
+                    std::fs::metadata(&self.readonly_target)
+                        .unwrap()
+                        .permissions()
+                        .readonly(),
+                    "installed rollback target must be genuinely read-only"
+                );
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::Other,
+                    "injected later rename failure",
+                ));
+            }
+            if from == self.readonly_target {
+                self.displaced.store(true, Ordering::Relaxed);
+            }
+            if to == self.readonly_target && call > 3 && !self.displaced.load(Ordering::Relaxed) {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::PermissionDenied,
+                    "read-only rollback target was not displaced",
+                ));
+            }
+            std::fs::rename(from, to)
+        }
     }
 
     impl FailRename {
@@ -717,6 +898,177 @@ mod tests {
         );
     }
 
+    #[cfg(windows)]
+    #[test]
+    fn readonly_update_is_restored_after_later_write_failure() {
+        let temp = TempDir::new();
+        let readonly = temp.0.join("a-readonly.md");
+        let unrelated = temp.0.join("unrelated.md");
+        std::fs::write(&readonly, "original readonly bytes").unwrap();
+        std::fs::write(&unrelated, "unrelated bytes").unwrap();
+        set_readonly(&readonly, true);
+        let original_attributes = windows_file_attributes(&readonly);
+        let old = vec![
+            (
+                "a-readonly.md".to_owned(),
+                "original readonly bytes".to_owned(),
+            ),
+            ("unrelated.md".to_owned(), "unrelated bytes".to_owned()),
+        ];
+        let new = vec![
+            ("a-readonly.md".to_owned(), "replacement".to_owned()),
+            ("z-later.md".to_owned(), "later write".to_owned()),
+            ("unrelated.md".to_owned(), "unrelated bytes".to_owned()),
+        ];
+
+        let fault = RequireRollbackDisplacement::new(readonly.clone());
+        let error = write_back_with_ops(&temp.0, &old, &new, &fault).unwrap_err();
+
+        assert_eq!(
+            error.to_string(),
+            "failed to write z-later.md: injected later rename failure"
+        );
+        assert!(
+            fault.displaced(),
+            "rollback must displace the installed read-only target through the checked boundary"
+        );
+        assert_eq!(
+            std::fs::read_to_string(&readonly).unwrap(),
+            "original readonly bytes"
+        );
+        assert_eq!(windows_file_attributes(&readonly), original_attributes);
+        assert!(std::fs::metadata(&readonly)
+            .unwrap()
+            .permissions()
+            .readonly());
+        assert_eq!(
+            std::fs::read_to_string(&unrelated).unwrap(),
+            "unrelated bytes"
+        );
+        assert!(!temp.0.join("z-later.md").exists());
+        assert_eq!(
+            directory_entries(&temp.0),
+            ["a-readonly.md", "unrelated.md"]
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn readonly_update_is_restored_after_later_delete_failure() {
+        let temp = TempDir::new();
+        let readonly = temp.0.join("a-readonly.md");
+        let deleted = temp.0.join("z-delete.md");
+        let unrelated = temp.0.join("unrelated.md");
+        std::fs::write(&readonly, "original readonly bytes").unwrap();
+        std::fs::write(&deleted, "delete original").unwrap();
+        std::fs::write(&unrelated, "unrelated bytes").unwrap();
+        set_readonly(&readonly, true);
+        let readonly_attributes = windows_file_attributes(&readonly);
+        let deleted_attributes = windows_file_attributes(&deleted);
+        let old = vec![
+            (
+                "a-readonly.md".to_owned(),
+                "original readonly bytes".to_owned(),
+            ),
+            ("unrelated.md".to_owned(), "unrelated bytes".to_owned()),
+            ("z-delete.md".to_owned(), "delete original".to_owned()),
+        ];
+        let new = vec![
+            ("a-readonly.md".to_owned(), "replacement".to_owned()),
+            ("unrelated.md".to_owned(), "unrelated bytes".to_owned()),
+        ];
+
+        let fault = RequireRollbackDisplacement::new(readonly.clone());
+        let error = write_back_with_ops(&temp.0, &old, &new, &fault).unwrap_err();
+
+        assert_eq!(
+            error.to_string(),
+            "failed to delete z-delete.md: injected later rename failure"
+        );
+        assert!(
+            fault.displaced(),
+            "rollback must displace the installed read-only target through the checked boundary"
+        );
+        assert_eq!(
+            std::fs::read_to_string(&readonly).unwrap(),
+            "original readonly bytes"
+        );
+        assert_eq!(windows_file_attributes(&readonly), readonly_attributes);
+        assert!(std::fs::metadata(&readonly)
+            .unwrap()
+            .permissions()
+            .readonly());
+        assert_eq!(
+            std::fs::read_to_string(&deleted).unwrap(),
+            "delete original"
+        );
+        assert_eq!(windows_file_attributes(&deleted), deleted_attributes);
+        assert_eq!(
+            std::fs::read_to_string(&unrelated).unwrap(),
+            "unrelated bytes"
+        );
+        assert_eq!(
+            directory_entries(&temp.0),
+            ["a-readonly.md", "unrelated.md", "z-delete.md"]
+        );
+    }
+
+    #[test]
+    fn rollback_failure_retains_a_reported_recovery_journal() {
+        let temp = TempDir::new();
+        let updated = temp.0.join("a.md");
+        let unrelated = temp.0.join("unrelated.md");
+        std::fs::write(&updated, "original bytes").unwrap();
+        std::fs::write(&unrelated, "unrelated bytes").unwrap();
+        let old = vec![
+            ("a.md".to_owned(), "original bytes".to_owned()),
+            ("unrelated.md".to_owned(), "unrelated bytes".to_owned()),
+        ];
+        let new = vec![
+            ("a.md".to_owned(), "replacement".to_owned()),
+            ("unrelated.md".to_owned(), "unrelated bytes".to_owned()),
+            ("z-later.md".to_owned(), "later".to_owned()),
+        ];
+
+        let error = write_back_with_ops(
+            &temp.0,
+            &old,
+            &new,
+            &FailRenames {
+                at: &[3, 4],
+                calls: AtomicUsize::new(0),
+            },
+        )
+        .unwrap_err();
+
+        assert!(error.to_string().contains(
+            "failed to write z-later.md: injected rename failure at call 3; rollback failed:"
+        ));
+        assert!(error.to_string().contains("recovery journal retained at "));
+        assert_eq!(std::fs::read_to_string(&updated).unwrap(), "replacement");
+        assert_eq!(
+            std::fs::read_to_string(&unrelated).unwrap(),
+            "unrelated bytes"
+        );
+        let journal = std::fs::read_dir(&temp.0)
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .find(|path| {
+                path.file_name()
+                    .is_some_and(|name| name.to_string_lossy().starts_with(".waml-cli-"))
+            })
+            .expect("failed rollback must retain its recovery journal");
+        let backup = std::fs::read_dir(&journal)
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .find(|path| {
+                path.file_name()
+                    .is_some_and(|name| name.to_string_lossy().starts_with("backup-"))
+            })
+            .expect("recovery journal must retain the original backup");
+        assert_eq!(std::fs::read_to_string(backup).unwrap(), "original bytes");
+    }
+
     #[test]
     fn successful_transaction_adds_updates_and_deletes_as_one_set() {
         let temp = TempDir::new();
@@ -770,5 +1122,18 @@ mod tests {
             .collect::<Vec<_>>();
         entries.sort();
         entries
+    }
+
+    #[cfg(windows)]
+    fn windows_file_attributes(path: &Path) -> u32 {
+        use std::os::windows::fs::MetadataExt;
+        std::fs::metadata(path).unwrap().file_attributes()
+    }
+
+    #[cfg(windows)]
+    fn set_readonly(path: &Path, readonly: bool) {
+        let mut permissions = std::fs::metadata(path).unwrap().permissions();
+        permissions.set_readonly(readonly);
+        std::fs::set_permissions(path, permissions).unwrap();
     }
 }

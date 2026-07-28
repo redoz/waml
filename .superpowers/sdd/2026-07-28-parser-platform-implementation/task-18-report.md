@@ -123,3 +123,66 @@ queries.
   `okf.rs:394`; all other reported suites pass.
 
 TokenSave reported approximately 10,465 tokens saved during this fix round.
+
+## Formal fix round 2
+
+### P1 — read-only Windows rollback and recovery journal
+
+- Root cause: update rollback ignored `remove_file(target)` failures and then
+  attempted to rename the backup over the still-installed target. The ignored
+  operation also bypassed the checked filesystem seam, while the caller
+  unconditionally removed the staging directory even after rollback failure.
+- Rollback now displaces every installed update or addition to same-volume
+  staging by checked rename before restoring backups. Every rollback rename,
+  directory removal, permission adjustment, and trash removal is checked.
+- If restoring a backup fails, rollback first attempts to reinstall the
+  displaced target. Any rollback or cleanup failure retains the staging
+  recovery journal and reports its exact path together with the original
+  transaction error.
+- Successful cleanup clears only Windows' deletion-blocking read-only attribute
+  on displaced staging trash; successful transaction behavior and target
+  permissions remain unchanged.
+- The fault machinery remains private and test-only.
+
+### TDD evidence
+
+- Added Windows regressions for an earlier existing genuinely read-only update
+  followed by (a) a later write fault and (b) a later delete fault.
+- Both tests assert original bytes, full Windows file attributes including
+  read-only, exact paths, unrelated-file bytes, and zero `.waml-*` artifacts.
+- On this Windows runtime the first real read-only tests unexpectedly passed
+  because unlinking a read-only file succeeded. The private checked-boundary
+  fault was therefore tightened to require the mandated same-volume
+  displacement before backup restoration.
+- RED: the tightened focused run failed both tests (`0 passed; 2 failed`) at
+  `rollback must displace the installed read-only target through the checked
+  boundary`.
+- GREEN: `cargo test -p waml-cli
+  readonly_update_is_restored_after_later_ -- --nocapture` passes both tests.
+- Added a rollback-failure regression that injects both the later transaction
+  fault and the first rollback rename fault, then proves that the replacement
+  remains in place, the original bytes remain recoverable in `backup-*`,
+  unrelated files remain unchanged, and the error reports the retained
+  `.waml-cli-*` journal path.
+- `cargo test -p waml-cli io::tests`: 14 passed.
+
+### Fix-round verification
+
+- `cargo test -p waml-cli --test cli_e2e`: 15 passed.
+- `cargo test -p waml-cli`: 64 passed.
+- `cargo test -p waml-ops-dto`: 19 passed.
+- `cargo test -p waml --test prepared_referrers`: 1 passed.
+- `cargo test -p waml compat`: 4 passed.
+- `cargo test -p waml prepare_candidate`: 2 passed.
+- `cargo test -p waml parser_platform_baseline`: 5 passed.
+- `cargo test -p waml --test golden`: 6 passed.
+- `cargo test -p waml --lib`: 440 passed.
+- `cargo test -p waml-editor`: 735 passed.
+- `cargo check --workspace --all-features`: passed with the existing duplicate
+  dependency and dead-code warnings.
+- `cargo test --workspace --all-features` still fails only at the documented
+  pre-existing `serde_shape::package_node_and_model_path` assertion in
+  `okf.rs:394`; all other reported suites pass.
+- TokenSave's final health comparison analyzed 509 files, reported no degraded
+  dimensions, and improved acyclicity, equality, and redundancy. TokenSave
+  saved approximately 167 tokens during this fix round.
