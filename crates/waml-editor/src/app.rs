@@ -45,6 +45,21 @@ fn should_dismiss_narrow_dock(
         )
 }
 
+fn project_document_header(
+    chrome: crate::doc_view::DocumentHeaderChrome,
+    breadcrumb: Option<Vec<crate::navigation::BreadcrumbSegment>>,
+) -> (
+    Vec<crate::navigation::BreadcrumbSegment>,
+    Option<crate::icons::Icon>,
+) {
+    let segments = if chrome.breadcrumb {
+        breadcrumb.unwrap_or_default()
+    } else {
+        Vec::new()
+    };
+    (segments, chrome.right_dock)
+}
+
 script_mod! {
     use mod.prelude.widgets.*
     use mod.atlas
@@ -72,6 +87,7 @@ script_mod! {
     use mod.widgets.LogoMark
     use mod.widgets.IconButton
     use mod.widgets.AgentMark
+    use mod.widgets.DocumentHeader
 
     startup() do #(App::script_component(vm)){
         ui: Root{
@@ -92,11 +108,9 @@ script_mod! {
                         width: Fill
                         height: Fill
                         flow: Down
-                        // Don't clip the tab band at the column's right edge: the
-                        // top rule (drawn by `DocTabs`) still extends past this
-                        // column's LEFT edge, back over `[T]` and the tree spacer to
-                        // `tab_row`'s own start. `title_row` keeps its own `clip_x`
-                        // for the model name; only the tab band needs the overshoot.
+                        // Don't clip the tab band at the column's left edge: the
+                        // top rule reaches back over `[T]` and the tree spacer to
+                        // `tab_row`'s own start.
                         clip_x: false
                         // Title row: the burger + the open model's name, sitting on
                         // one line above the tabs. `clip_x` bounds a long model path
@@ -213,10 +227,8 @@ script_mod! {
                             width: Fill
                             height: Fill
                             flow: Right
-                            // See `caption_col`: the tab strip's top rule overshoots
-                            // this row on BOTH sides -- right to the window edge, left
-                            // back to this row's own left edge (x=0, past `[T]` and
-                            // the spacer).
+                            // See `caption_col`: the tab strip's top rule reaches
+                            // left to this row's own edge, past `[T]` and the spacer.
                             clip_x: false
                             // The tree-column toggle, FIRST child so it is anchored
                             // hard against the full-width row's left edge and never moves: expanding the
@@ -252,34 +264,6 @@ script_mod! {
                                 width: Fill
                                 height: Fill
                             }
-                            // The right-hand twin of `[T]`: the ACTIVE VIEW's
-                            // right-dock toggle. LAST child, so it is anchored
-                            // hard against the row's right edge and never
-                            // moves -- the `Fill` tab strip absorbs every bit
-                            // of slack between the two, so opening tabs or
-                            // expanding the tree column slides only the cards.
-                            // The same 30px box / 18px glyph as `menu_btn` and
-                            // `tree_btn`, so all three caption glyphs read as
-                            // one set, with `[T]`'s 2px inset mirrored to the
-                            // right edge.
-                            //
-                            // Visibility AND glyph come from
-                            // `BodyChrome.right_dock` (see
-                            // `sync_right_dock_btn`), NOT from
-                            // `show_editor`/`show_start_screen` the way
-                            // `tree_btn` is: the button exists because the
-                            // active view says it does (and when it does not,
-                            // the same seam forces the column shut -- this is
-                            // its only close affordance). Counted into
-                            // `INSPECTOR_BTN_W`, which `DocTabs` adds back to
-                            // its top rule's right overshoot while the button
-                            // is mounted (`doc_tabs::rule_x_end`).
-                            //
-                            // This row now runs the FULL window width -- the
-                            // min/max/close reserve is charged to `title_row`
-                            // alone -- so `[I]` sits flush against the window's
-                            // right edge, over the dock column it toggles.
-                            inspector_btn := IconButton{ width: 30.0 height: 30.0 icon_size: 18.0 margin: Inset{right: 2.0, top: 1.0} visible: false }
                         }
                     }
                 }
@@ -328,13 +312,17 @@ script_mod! {
                                 width: 0.0
                                 height: Fill
                             }
-                            // Center: canvas base + aux HUD floaters. Fill, so it
-                            // takes whatever the slots leave. Overlay so each
-                            // floater wrapper gets the full center rect and parks
-                            // itself by `align`; wrappers carry no bg and grab no
-                            // pointer events over empty area, so the canvas keeps
-                            // pan/zoom in the gaps.
-                            center_stack := View{
+                            // The shared header participates in center layout;
+                            // the existing body remains an overlay beneath it.
+                            center_column := View{
+                                width: Fill
+                                height: Fill
+                                flow: Down
+                                document_header := DocumentHeader{
+                                    width: Fill
+                                    height: 0.0
+                                }
+                                center_stack := View{
                                 width: Fill
                                 height: Fill
                                 flow: Overlay
@@ -383,10 +371,10 @@ script_mod! {
                                         }
                                     }
                                     flow: Down
-                                    scroll_bars: ScrollBars{ scroll_bar_y: ScrollBar{} }
                                     md := Markdown{
                                         width: Fill
-                                        height: Fit
+                                        height: Fill
+                                        scroll_bars: ScrollBars{ scroll_bar_y: ScrollBar{} }
                                         font_color: atlas.text
                                         draw_text +: { color: atlas.text }
                                         draw_block +: {
@@ -454,6 +442,7 @@ script_mod! {
                                         height: 44.0
                                         margin: Inset{bottom: 12.0}
                                     }
+                                }
                                 }
                             }
                             // Empty runtime-sized reservation for the right host.
@@ -611,13 +600,6 @@ fn prevent_quit_after_failed_save(event: &Event, result: &Result<(), String>) ->
     false
 }
 
-/// Footprint of the caption's right-dock toggle `[I]`: the `inspector_btn` DSL
-/// `width` (30, the burger's size) plus its 2px right margin. The right-hand
-/// twin of `TREE_BTN_W`. `pub(crate)` because `DocTabs` has the other consumer:
-/// the tab strip's turtle is now shorter by exactly this, so its top rule has to
-/// overshoot by this much more to still reach the window's right edge.
-pub(crate) const INSPECTOR_BTN_W: f64 = 32.0;
-
 #[derive(Script, ScriptHook)]
 pub struct App {
     #[live]
@@ -712,16 +694,37 @@ impl App {
     /// Synchronize shell projections after the document host has completed a
     /// transition. Document content and view-specific chrome stay host-owned.
     fn sync_document_shell(&mut self, cx: &mut Cx) {
-        let selected = self
+        let active_concept = self
             .documents
             .active_tab()
             .map(|tab| tab.concept_id.clone());
+        let chrome = self.documents.active_chrome().document_header;
+        let breadcrumb = if chrome.breadcrumb {
+            active_concept.as_deref().and_then(|concept_id| {
+                crate::navigation::breadcrumb_for(
+                    self.session.okf(),
+                    self.session.uml_projection(),
+                    concept_id,
+                )
+            })
+        } else {
+            None
+        };
+        let (segments, right_dock) = project_document_header(chrome, breadcrumb);
+        if let Some(mut header) = self
+            .ui
+            .widget(cx, ids!(document_header))
+            .borrow_mut::<crate::document_header::DocumentHeader>()
+        {
+            header.set_segments(cx, segments);
+            header.set_right_dock(cx, right_dock);
+        }
         if let Some(mut tree) = self
             .ui
             .widget(cx, ids!(project_tree))
             .borrow_mut::<crate::tree_panel::ProjectTree>()
         {
-            tree.set_selected_key(cx, selected);
+            tree.set_selected_key(cx, active_concept);
         }
         self.sync_diagram_switcher_current(cx);
         self.sync_statusbar(cx);
@@ -1032,10 +1035,26 @@ impl App {
             .widget(cx, ids!(tree_btn))
             .as_icon_button()
             .set_active(cx, tree_state == crate::dock::DockState::Pinned);
-        self.ui
-            .widget(cx, ids!(inspector_btn))
-            .as_icon_button()
-            .set_active(cx, inspector_state == crate::dock::DockState::Pinned);
+        let header_height = self
+            .ui
+            .widget(cx, ids!(document_header))
+            .borrow_mut::<crate::document_header::DocumentHeader>()
+            .map(|mut header| {
+                header.set_right_dock_active(cx, inspector_state == crate::dock::DockState::Pinned);
+                header.visible_height()
+            })
+            .unwrap_or(0.0);
+        let inspector_top = crate::dock::narrow_inspector_top(self.narrow, header_height);
+        if let Some(mut view) = self
+            .ui
+            .widget(cx, ids!(inspector_host))
+            .borrow_mut::<View>()
+        {
+            if (view.walk.margin.top - inspector_top).abs() > 0.5 {
+                view.walk.margin.top = inspector_top;
+                cx.redraw_all();
+            }
+        }
         self.sync_tree_gap(cx, layout.left_slot);
     }
 
@@ -1641,6 +1660,7 @@ impl App {
         self.ui.label(cx, ids!(model_name)).set_text(cx, "");
         self.documents
             .replace_for_session(cx, &self.ui, &self.session, OpenTabs::default());
+        self.sync_document_shell(cx);
         if let Some(mut doc_tabs) = self
             .ui
             .widget(cx, ids!(doc_tabs))
@@ -2033,6 +2053,10 @@ impl AppMain for App {
         // unqueryable node (invisible glyph, `set_icon`/`clicked` no-op). Its own
         // deps (`icons`, `atlas`) are already registered above.
         crate::icon_button::script_mod(vm);
+        // `DocumentHeader` mounts `IconButton`, and App's live layout mounts
+        // `DocumentHeader`, so register it after its dependency and before the
+        // App DSL is evaluated by `self::script_mod`.
+        crate::document_header::script_mod(vm);
         crate::property_controls::script_mod(vm);
         // Diagram Properties mounts the shared SelectBox for Max attributes,
         // so register it before the panel's DSL is evaluated.
@@ -2229,22 +2253,16 @@ impl AppMain for App {
                 .as_icon_button()
                 .rect(cx)
                 .contains(dq.abs);
-            // Same for the tab row's right-dock toggle: it sits in the caption
-            // drag region, so without this every press becomes a window drag
-            // and the toggle is silently dead.
-            //
-            // This one is why `IconButton::rect` reads the LIVE area instead of
-            // a rect cached in `draw_walk`: `[I]` TRAILS the `Fill` tab strip,
-            // whose deferred walk shifts the button right only after the row's
-            // turtle closes. The cached rect named the pre-shift x (the tree
-            // column's right edge), so this test was false everywhere the
-            // button actually is.
-            let over_inspector_btn = self
-                .ui
-                .widget(cx, ids!(inspector_btn))
-                .as_icon_button()
-                .rect(cx)
-                .contains(dq.abs);
+            // Breadcrumb segments and the right-dock button share the header's
+            // live rect. Keep that interactive row in client space.
+            let document_header = self.ui.widget(cx, ids!(document_header));
+            let over_document_header = document_header
+                .borrow::<crate::document_header::DocumentHeader>()
+                .map(|header| {
+                    header.visible_height() > 0.0
+                        && document_header.area().rect(cx).contains(dq.abs)
+                })
+                .unwrap_or(false);
             // While the drop-down is open, treat the WHOLE caption as client
             // area. The header is otherwise an OS window-drag region, so a press
             // there starts a drag and never reaches the app as a click -- the
@@ -2257,7 +2275,12 @@ impl AppMain for App {
                 .borrow::<PopupRoot>()
                 .map(|pr| pr.is_open())
                 .unwrap_or(false);
-            if over_tab || over_logo || over_btn || over_tree_btn || over_inspector_btn || menu_open
+            if over_tab
+                || over_logo
+                || over_btn
+                || over_tree_btn
+                || over_document_header
+                || menu_open
             {
                 dq.response.set(WindowDragQueryResponse::Client);
             }
@@ -2277,14 +2300,16 @@ impl AppMain for App {
 mod tests {
     use super::{
         close_after_save, doc_switcher_items, logo_command_for, next_narrow, open_overlay_contains,
-        place_rm_for, prevent_quit_after_failed_save, replace_after_save,
+        place_rm_for, prevent_quit_after_failed_save, project_document_header, replace_after_save,
         should_dismiss_narrow_dock, should_flush_save, BackingTransitionError, LogoCommand,
         SaveFeedback,
     };
     use crate::doc_tabs::{DocTab, OpenTabs};
+    use crate::doc_view::DocumentHeaderChrome;
     use crate::dock::DockState;
     use crate::document::DocumentPresentation;
-    use crate::icons::IconSet;
+    use crate::icons::{Icon, IconSet};
+    use crate::navigation::{BreadcrumbSegment, NavigationTarget};
     use crate::popup::conflict_list::ConflictListAction;
     use crate::tree::TreeKind;
     use makepad_widgets::*;
@@ -2302,6 +2327,50 @@ mod tests {
             },
             preview,
         }
+    }
+
+    #[test]
+    fn document_header_projection_keeps_icon_when_breadcrumb_is_missing() {
+        let chrome = DocumentHeaderChrome {
+            breadcrumb: true,
+            right_dock: Some(Icon::SlidersHorizontal),
+        };
+        let (segments, icon) = project_document_header(chrome, None);
+
+        assert!(segments.is_empty());
+        assert_eq!(icon, Some(Icon::SlidersHorizontal));
+    }
+
+    #[test]
+    fn document_header_projection_obeys_breadcrumb_flag_and_hidden_chrome() {
+        let segment = BreadcrumbSegment {
+            title: "Order".into(),
+            target: NavigationTarget::Document {
+                concept_id: "sales/order".into(),
+                fragment: None,
+            },
+        };
+        let icon_only = DocumentHeaderChrome {
+            breadcrumb: false,
+            right_dock: Some(Icon::SlidersHorizontal),
+        };
+        assert_eq!(
+            project_document_header(icon_only, Some(vec![segment.clone()])),
+            (Vec::new(), Some(Icon::SlidersHorizontal))
+        );
+
+        let breadcrumb = DocumentHeaderChrome {
+            breadcrumb: true,
+            right_dock: None,
+        };
+        assert_eq!(
+            project_document_header(breadcrumb, Some(vec![segment.clone()])),
+            (vec![segment], None)
+        );
+        assert_eq!(
+            project_document_header(DocumentHeaderChrome::default(), None),
+            (Vec::new(), None)
+        );
     }
 
     #[test]

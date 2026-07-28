@@ -156,12 +156,15 @@ impl App {
             }
         }
 
-        if self
+        let document_header_action = self
             .ui
-            .widget(cx, ids!(inspector_btn))
-            .as_icon_button()
-            .clicked(actions)
-        {
+            .widget(cx, ids!(document_header))
+            .borrow::<crate::document_header::DocumentHeader>()
+            .and_then(|header| header.action(actions));
+        if matches!(
+            document_header_action,
+            Some(crate::document_header::DocumentHeaderAction::ToggleRightDock)
+        ) {
             if self.narrow {
                 let (tree, inspector) = self.dock_states(cx);
                 let (tree, inspector) = crate::dock::narrow_toggle_states(

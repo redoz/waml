@@ -506,16 +506,6 @@ pub struct DocTabs {
     #[rust(TAB_LEFT_INSET)]
     lead_inset: f64,
 
-    /// Whether the caption's right-dock toggle `[I]` is currently on screen.
-    /// Runtime-driven by `App::sync_right_dock_btn`, because the button exists
-    /// only while the active view declares a right dock. The top rule's right
-    /// overshoot tracks it (see `rule_x_end`): hidden, the button reserves no
-    /// width and this `Fill` strip absorbs its span instead. Defaults `false`
-    /// -> no overshoot, the safe reading if the wiring is ever dropped (the
-    /// rule stops a touch short rather than running off the window).
-    #[rust]
-    right_dock_btn: bool,
-
     /// Colour override for the active tab's top accent bar, as dictated by the
     /// view that tab opens (`DocView::tab_accent`). `None` keeps the DSL
     /// default on `draw_accent`, the theme accent.
@@ -523,25 +513,9 @@ pub struct DocTabs {
     active_accent: Option<Vec4>,
 }
 
-/// Far end of the top rule, given this strip's own right edge and whether the
-/// caption's right-dock toggle `[I]` is on screen. `tab_row` runs the full window
-/// width (the min/max/close reserve is charged to `title_row` alone), so the only
-/// thing between this strip and the window's right edge is the toggle that trails
-/// it -- and then only while that toggle is actually mounted.
-///
-/// The toggle's width has to be conditional rather than a constant: `[I]` is
-/// hidden whenever the active view declares no right dock (no active tab at
-/// all, say), hidden widgets reserve no width, and this `Fill` strip swallows
-/// the slack. Adding `INSPECTOR_BTN_W` anyway would land the far end a button's
-/// width PAST the window edge, pushing the whole `EDGE_FADE` run off-screen so
-/// the rule terminates hard against the edge instead of dissolving into it.
-fn rule_x_end(strip_right: f64, right_dock_btn: bool) -> f64 {
-    let btn = if right_dock_btn {
-        crate::app::INSPECTOR_BTN_W
-    } else {
-        0.0
-    };
-    (strip_right + btn).round()
+/// Pixel-snapped far end of the top rule at this strip's own right edge.
+fn rule_x_end(strip_right: f64) -> f64 {
+    strip_right.round()
 }
 
 impl Widget for DocTabs {
@@ -620,20 +594,17 @@ impl Widget for DocTabs {
         // than at the window's own left edge (x = 0): the logo is a keep-out
         // zone and a rule through it slices the wordmark in half.
         //
-        // At the far end the line overshoots the tab band by -- only while it is
-        // mounted -- the caption's right-dock toggle (which trails the strip in
-        // `tab_row`), so it still reaches the
-        // window's right edge, then dissolves over the last `EDGE_FADE` px --
-        // faked as stacked 1px segments of falling alpha since a crisp plain
-        // quad carries one flat colour (see `EDGE_FADE`). `rule_x_end` owns
-        // that arithmetic and the reason the toggle's width is conditional.
+        // At the far end the line stops at this strip's own right edge, then
+        // dissolves over the last `EDGE_FADE` px -- faked as stacked 1px
+        // segments of falling alpha since a crisp plain quad carries one flat
+        // colour (see `EDGE_FADE`).
         //
         // Both reaches escape this strip's turtle only because `caption_col` and
         // `tab_row` set `clip_x: false` (see `app.rs`).
         let base = self.draw_edge.color;
         let y = rect.pos.y.round();
         let x0 = rule_x_start(rect.pos.x, self.left_overshoot);
-        let x_end = rule_x_end(rect.pos.x + rect.size.x, self.right_dock_btn);
+        let x_end = rule_x_end(rect.pos.x + rect.size.x);
         let solid_end = x_end - EDGE_FADE;
         self.draw_edge.color = base;
         self.draw_edge.draw_abs(
@@ -923,17 +894,6 @@ impl DocTabs {
     pub fn set_left_overshoot(&mut self, cx: &mut Cx, px: f64) {
         self.left_overshoot = px;
         self.draw_bg.redraw(cx);
-    }
-
-    /// Whether the caption's `[I]` toggle is mounted (see `right_dock_btn`).
-    /// `App::sync_right_dock_btn` pushes the same verdict it gives the button;
-    /// change-guarded here rather than at the call site, because that runs on
-    /// every tab switch and the answer usually hasn't moved.
-    pub fn set_right_dock_btn(&mut self, cx: &mut Cx, present: bool) {
-        if self.right_dock_btn != present {
-            self.right_dock_btn = present;
-            self.draw_bg.redraw(cx);
-        }
     }
 
     /// Gap from this strip's turtle to the first card (see `lead_inset`).
@@ -1249,15 +1209,9 @@ mod tests {
     }
 
     #[test]
-    fn top_rule_overshoot_tracks_the_right_dock_toggle() {
-        // `[I]` is the last child of `tab_row` and the strip is `Fill`, so the
-        // strip's right edge moves by exactly the button's width as the button
-        // comes and goes. Either way the rule must land on the SAME window edge
-        // -- overshooting by the constant while the button is hidden would push
-        // the whole `EDGE_FADE` run off-screen and terminate the rule hard.
-        let win = 1000.0;
-        assert_eq!(rule_x_end(win - crate::app::INSPECTOR_BTN_W, true), win);
-        assert_eq!(rule_x_end(win, false), win);
+    fn top_rule_ends_at_the_tab_strip_edge() {
+        let strip_right = 970.0;
+        assert_eq!(rule_x_end(strip_right), strip_right);
     }
 
     #[test]

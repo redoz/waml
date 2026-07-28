@@ -161,6 +161,17 @@ pub fn header_controls_visible(state: DockState) -> bool {
     body_visible(state)
 }
 
+/// In narrow mode the inspector floats above the center column, so its host
+/// starts below a visible document header. Wide mode remains a full-height
+/// reserved column beside the center.
+pub fn narrow_inspector_top(narrow: bool, header_height: f64) -> f64 {
+    if narrow {
+        header_height.max(0.0)
+    } else {
+        0.0
+    }
+}
+
 /// Which window edge a dock panel is anchored to. The Model tree docks left,
 /// the Inspector docks right.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -258,6 +269,13 @@ impl PeekTimer {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn narrow_inspector_starts_below_only_a_visible_header() {
+        assert_eq!(narrow_inspector_top(true, 30.0), 30.0);
+        assert_eq!(narrow_inspector_top(true, 0.0), 0.0);
+        assert_eq!(narrow_inspector_top(false, 30.0), 0.0);
+    }
 
     #[test]
     fn wide_and_narrow_layout_use_the_same_dock_states() {
