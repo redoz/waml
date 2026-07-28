@@ -1,6 +1,6 @@
 use std::{path::PathBuf, sync::Arc};
 
-use tokio::sync::RwLock;
+use tokio::sync::{Mutex, RwLock};
 use tower_lsp::jsonrpc::Result;
 use tower_lsp::lsp_types::*;
 use tower_lsp::{Client, LanguageServer, LspService, Server};
@@ -9,7 +9,21 @@ use crate::lsp::bundle::{read_disk_documents, LspAnalysisState};
 
 struct Backend {
     client: Client,
-    current: RwLock<Arc<LspAnalysisState>>,
+    current: Arc<RwLock<Arc<LspAnalysisState>>>,
+    publication_gate: Arc<Mutex<()>>,
+}
+
+async fn ordered_publish<F, Fut>(
+    gate: Arc<Mutex<()>>,
+    current: Arc<RwLock<Arc<LspAnalysisState>>>,
+    publish: F,
+) where
+    F: FnOnce(Arc<LspAnalysisState>) -> Fut,
+    Fut: std::future::Future<Output = ()>,
+{
+    let _send_order = gate.lock().await;
+    let snapshot = current.read().await.clone();
+    publish(snapshot).await;
 }
 
 impl Backend {
@@ -54,22 +68,25 @@ impl Backend {
     }
 
     async fn publish_all(&self) {
-        let snapshot = self.snapshot().await;
-        let revision = i32::try_from(snapshot.revision).ok();
-        let diagnostics = snapshot.diagnostics();
-        if self.current.read().await.revision != snapshot.revision {
-            return;
-        }
-        for (path, diagnostics) in diagnostics {
-            if self.current.read().await.revision != snapshot.revision {
-                return;
-            }
-            if let Ok(uri) = Url::from_file_path(&path) {
-                self.client
-                    .publish_diagnostics(uri, diagnostics, revision)
-                    .await;
-            }
-        }
+        let client = self.client.clone();
+        ordered_publish(
+            self.publication_gate.clone(),
+            self.current.clone(),
+            move |snapshot| async move {
+                for publication in snapshot.diagnostics() {
+                    if let Ok(uri) = Url::from_file_path(&publication.physical) {
+                        client
+                            .publish_diagnostics(
+                                uri,
+                                publication.diagnostics,
+                                publication.client_version,
+                            )
+                            .await;
+                    }
+                }
+            },
+        )
+        .await;
     }
 }
 
@@ -108,9 +125,11 @@ impl LanguageServer for Backend {
             return;
         };
         let text = params.text_document.text;
+        let version = params.text_document.version;
+        let expected_generation = self.snapshot().await.open_generation(&physical);
         if self
             .ingress(move |base| {
-                base.open(physical.clone(), text.clone())
+                base.open_expected(physical.clone(), expected_generation, version, text.clone())
                     .map(Some)
                     .map_err(|error| error.to_string())
             })
@@ -132,9 +151,17 @@ impl LanguageServer for Backend {
         else {
             return;
         };
+        let generation = self.snapshot().await.open_generation(&physical);
+        let Some(generation) = generation else {
+            self.client
+                .log_message(MessageType::WARNING, "change for non-open document")
+                .await;
+            return;
+        };
+        let version = params.text_document.version;
         if self
             .ingress(move |base| {
-                base.change(&physical, text.clone())
+                base.change(&physical, generation, version, text.clone())
                     .map(Some)
                     .map_err(|error| error.to_string())
             })
@@ -169,8 +196,98 @@ pub fn serve_stdio() {
         let initial = Arc::new(LspAnalysisState::empty().expect("empty LSP analysis"));
         let (service, socket) = LspService::new(move |client| Backend {
             client,
-            current: RwLock::new(initial.clone()),
+            current: Arc::new(RwLock::new(initial.clone())),
+            publication_gate: Arc::new(Mutex::new(())),
         });
         Server::new(stdin, stdout, socket).serve(service).await;
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::{collections::BTreeMap, path::Path, sync::Mutex as StdMutex};
+    use tokio::sync::Notify;
+
+    #[tokio::test]
+    async fn delayed_old_publication_cannot_arrive_after_newer_publication() {
+        let physical = PathBuf::from("C:/outside/order.md");
+        let opened = LspAnalysisState::empty()
+            .unwrap()
+            .open(physical.clone(), 1, "# One\n".into())
+            .unwrap();
+        let generation = opened.open_generation(&physical).unwrap();
+        let current = Arc::new(RwLock::new(Arc::new(opened)));
+        let gate = Arc::new(tokio::sync::Mutex::new(()));
+        let old_started = Arc::new(Notify::new());
+        let release_old = Arc::new(Notify::new());
+        let sent = Arc::new(StdMutex::new(Vec::new()));
+
+        let old = tokio::spawn(ordered_publish(gate.clone(), current.clone(), {
+            let old_started = old_started.clone();
+            let release_old = release_old.clone();
+            let sent = sent.clone();
+            move |snapshot| async move {
+                old_started.notify_one();
+                release_old.notified().await;
+                sent.lock()
+                    .unwrap()
+                    .push(snapshot.client_version(&physical));
+            }
+        }));
+        old_started.notified().await;
+
+        let newer = current
+            .read()
+            .await
+            .change(
+                Path::new("C:/outside/order.md"),
+                generation,
+                2,
+                "# Two\n".into(),
+            )
+            .unwrap();
+        *current.write().await = Arc::new(newer);
+        let new = tokio::spawn(ordered_publish(gate.clone(), current.clone(), {
+            let sent = sent.clone();
+            move |snapshot| async move {
+                sent.lock()
+                    .unwrap()
+                    .push(snapshot.client_version(Path::new("C:/outside/order.md")));
+            }
+        }));
+
+        release_old.notify_one();
+        old.await.unwrap();
+        new.await.unwrap();
+        assert_eq!(*sent.lock().unwrap(), [Some(1), Some(2)]);
+    }
+
+    #[tokio::test]
+    async fn cross_document_reanalysis_keeps_each_documents_client_version() {
+        let a = PathBuf::from("C:/outside/a.md");
+        let b = PathBuf::from("C:/outside/b.md");
+        let disk = PathBuf::from("C:/workspace/disk.md");
+        let state = LspAnalysisState::from_documents(
+            Some(PathBuf::from("C:/workspace")),
+            [(disk.clone(), "# Disk\n".into())],
+        )
+        .unwrap()
+        .open(a.clone(), 7, "# A\n".into())
+        .unwrap()
+        .open(b.clone(), 20, "# B\n".into())
+        .unwrap();
+        let generation = state.open_generation(&b).unwrap();
+        let changed = state
+            .change(&b, generation, 21, "# B changed\n".into())
+            .unwrap();
+        let versions = changed
+            .diagnostics()
+            .into_iter()
+            .map(|publication| (publication.physical, publication.client_version))
+            .collect::<BTreeMap<_, _>>();
+        assert_eq!(versions.get(&a), Some(&Some(7)));
+        assert_eq!(versions.get(&b), Some(&Some(21)));
+        assert_eq!(versions.get(&disk), Some(&None));
+    }
 }

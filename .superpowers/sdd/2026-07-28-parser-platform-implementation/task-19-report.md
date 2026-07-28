@@ -40,3 +40,37 @@ The first query used a stale index and saved 0 tokens. The useful LSP/source que
 
 - The pre-existing modified `task-7-report.md` was preserved and is not staged.
 - No VS Code / Task 20 changes were made.
+
+## Formal fix round 1
+
+Root causes:
+
+- CAS retries carried only path/text, so a stale FULL change became indistinguishable from current work after retry.
+- diagnostics used global analysis revision as the protocol document version, and the state check happened before an awaited send without ordering concurrent publishers.
+
+RED evidence:
+
+- `slow_v2_cannot_install_after_v3_wins_the_compare_and_swap` initially failed to compile because no client-version/open-generation contract existed.
+- `delayed_old_publication_cannot_arrive_after_newer_publication` initially failed because no ordered publication boundary existed.
+- the close/reopen stale-`didOpen` test initially failed because `open_expected` did not exist.
+
+Fixes:
+
+- Every open document now stores its client version and a monotonic open generation in the immutable host index.
+- `didOpen` and `didChange` capture the request generation before preparation; every CAS retry validates it. Duplicate/older versions reject before preparation.
+- Closing and reopening always allocates a new generation, so old work cannot affect the new open lifetime.
+- Diagnostic batches carry the target document's client version; disk-only documents carry `None`.
+- One async publication gate serializes at the actual client-send boundary. It holds no analysis-state lock across an await.
+- Deterministic `Barrier`/`Notify` tests cover stale FULL changes, close/reopen work, delayed old publication, per-document cross-file reanalysis versions, lifecycle collisions, and unchanged identity/revision after rejected ingress.
+
+Fresh verification:
+
+- focused LSP: 12 passed; stdio e2e: 3 passed; full CLI: 65 passed.
+- host: 2 passed; action: 4 passed; editor session: 18 passed.
+- parser baseline: 5 passed; golden: 6 passed.
+- full `waml`: 555 passed; full editor: 735 passed.
+- workspace check passes with existing warnings.
+- workspace tests retain the unrelated `serde_shape::package_node_and_model_path` failure at `okf.rs:394`.
+- formatting, diff, and legacy-authority scans pass.
+
+Remaining concern: the current Rust LSP exposes diagnostics and FULL lifecycle only; it has no formatting, rename, or code-action request handlers on which to add result-suppression tests in Task 19 without expanding the approved interface beyond the task brief.

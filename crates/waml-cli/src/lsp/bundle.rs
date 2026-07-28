@@ -19,7 +19,21 @@ type BoxError = Box<dyn std::error::Error + Send + Sync>;
 pub struct LspHostIndex {
     pub root: Option<PathBuf>,
     pub disk_by_physical: BTreeMap<PathBuf, SourceDocument>,
-    pub open_by_physical: BTreeMap<PathBuf, BundlePath>,
+    pub open_by_physical: BTreeMap<PathBuf, OpenDocument>,
+    pub next_open_generation: u64,
+}
+
+#[derive(Clone)]
+pub struct OpenDocument {
+    pub logical: BundlePath,
+    pub client_version: i32,
+    pub generation: u64,
+}
+
+pub struct DiagnosticPublication {
+    pub physical: PathBuf,
+    pub diagnostics: Vec<lsp::Diagnostic>,
+    pub client_version: Option<i32>,
 }
 
 pub struct LspAnalysisState {
@@ -81,10 +95,34 @@ impl LspAnalysisState {
         &self.uml
     }
 
-    pub fn open(&self, physical: PathBuf, text: String) -> Result<Self, BoxError> {
+    pub fn open(&self, physical: PathBuf, version: i32, text: String) -> Result<Self, BoxError> {
         let physical = normalize_physical(physical);
-        if self.host.open_by_physical.contains_key(&physical) {
-            return self.change(&physical, text);
+        let expected = self
+            .host
+            .open_by_physical
+            .get(&physical)
+            .map(|open| open.generation);
+        self.open_expected(physical, expected, version, text)
+    }
+
+    pub fn open_expected(
+        &self,
+        physical: PathBuf,
+        expected_generation: Option<u64>,
+        version: i32,
+        text: String,
+    ) -> Result<Self, BoxError> {
+        let physical = normalize_physical(physical);
+        let current_generation = self
+            .host
+            .open_by_physical
+            .get(&physical)
+            .map(|open| open.generation);
+        if current_generation != expected_generation {
+            return Err(format!("stale didOpen generation {}", physical.display()).into());
+        }
+        if let Some(generation) = expected_generation {
+            return self.change(&physical, generation, version, text);
         }
         let logical = logical_path(self.host.root.as_deref(), &physical)?;
         self.reject_collision(&physical, &logical)?;
@@ -95,27 +133,58 @@ impl LspAnalysisState {
             host::add_document(&self.source, document)?
         };
         let mut next_host = self.host.clone();
-        next_host.open_by_physical.insert(physical, logical);
+        let generation = next_host
+            .next_open_generation
+            .checked_add(1)
+            .ok_or("LSP open generation overflow")?;
+        next_host.next_open_generation = generation;
+        next_host.open_by_physical.insert(
+            physical,
+            OpenDocument {
+                logical,
+                client_version: version,
+                generation,
+            },
+        );
         self.prepare(next_host, source)
     }
 
-    pub fn change(&self, physical: &Path, text: String) -> Result<Self, BoxError> {
+    pub fn change(
+        &self,
+        physical: &Path,
+        generation: u64,
+        version: i32,
+        text: String,
+    ) -> Result<Self, BoxError> {
         let physical = normalize_physical(physical.to_path_buf());
-        let logical = self
+        let open = self
             .host
             .open_by_physical
             .get(&physical)
-            .cloned()
             .ok_or_else(|| format!("change for non-open document {}", physical.display()))?;
+        if open.generation != generation {
+            return Err(format!("change for stale open generation {}", physical.display()).into());
+        }
+        if version <= open.client_version {
+            return Err(format!("stale document version {version}").into());
+        }
+        let logical = open.logical.clone();
         let source = host::replace_document(&self.source, SourceDocument::new(logical, text))?;
-        self.prepare(self.host.clone(), source)
+        let mut next_host = self.host.clone();
+        next_host
+            .open_by_physical
+            .get_mut(&physical)
+            .expect("open document checked")
+            .client_version = version;
+        self.prepare(next_host, source)
     }
 
     pub fn close(&self, physical: &Path) -> Result<Option<Self>, BoxError> {
         let physical = normalize_physical(physical.to_path_buf());
-        let Some(logical) = self.host.open_by_physical.get(&physical).cloned() else {
+        let Some(open) = self.host.open_by_physical.get(&physical) else {
             return Ok(None);
         };
+        let logical = open.logical.clone();
         let mut next_host = self.host.clone();
         next_host.open_by_physical.remove(&physical);
         let source = if let Some(disk) = self.host.disk_by_physical.get(&physical) {
@@ -136,7 +205,7 @@ impl LspAnalysisState {
             .host
             .open_by_physical
             .iter()
-            .any(|(owner, path)| owner != physical && path == logical);
+            .any(|(owner, open)| owner != physical && &open.logical == logical);
         if disk_collision || open_collision {
             return Err(format!("logical path collision at {logical}").into());
         }
@@ -166,7 +235,21 @@ impl LspAnalysisState {
         })
     }
 
-    pub fn diagnostics(&self) -> Vec<(PathBuf, Vec<lsp::Diagnostic>)> {
+    pub fn open_generation(&self, physical: &Path) -> Option<u64> {
+        self.host
+            .open_by_physical
+            .get(&normalize_physical(physical.to_path_buf()))
+            .map(|open| open.generation)
+    }
+
+    pub fn client_version(&self, physical: &Path) -> Option<i32> {
+        self.host
+            .open_by_physical
+            .get(&normalize_physical(physical.to_path_buf()))
+            .map(|open| open.client_version)
+    }
+
+    pub fn diagnostics(&self) -> Vec<DiagnosticPublication> {
         let mut output = Vec::new();
         for (physical, logical) in self.physical_documents() {
             let Some(_document) = self.source.document(&logical) else {
@@ -187,7 +270,11 @@ impl LspAnalysisState {
                 .filter(|diagnostic| diagnostic.file == logical.as_str())
                 .map(|diagnostic| to_lsp_diagnostic(diagnostic, version))
                 .collect();
-            output.push((physical, diagnostics));
+            output.push(DiagnosticPublication {
+                client_version: self.client_version(&physical),
+                physical,
+                diagnostics,
+            });
         }
         output
     }
@@ -197,8 +284,8 @@ impl LspAnalysisState {
         for (physical, disk) in &self.host.disk_by_physical {
             documents.insert(physical.clone(), disk.path().clone());
         }
-        for (physical, logical) in &self.host.open_by_physical {
-            documents.insert(physical.clone(), logical.clone());
+        for (physical, open) in &self.host.open_by_physical {
+            documents.insert(physical.clone(), open.logical.clone());
         }
         documents
     }
@@ -268,11 +355,18 @@ mod tests {
         let open = state
             .open(
                 physical.clone(),
+                1,
                 "---\ntype: uml.Class\n---\n# Open\n".into(),
             )
             .unwrap();
+        let generation = open.open_generation(&physical).unwrap();
         let changed = open
-            .change(&physical, "---\ntype: uml.Class\n---\n# Changed\n".into())
+            .change(
+                &physical,
+                generation,
+                2,
+                "---\ntype: uml.Class\n---\n# Changed\n".into(),
+            )
             .unwrap();
         let closed = changed.close(&physical).unwrap().unwrap();
         assert_eq!(closed.revision(), 3);
@@ -286,15 +380,147 @@ mod tests {
         let physical = PathBuf::from("C:/outside/notes.md");
         let state = LspAnalysisState::empty().unwrap();
         let open = state
-            .open(physical.clone(), "---\ntype: Notes\n---\n# Notes\n".into())
+            .open(
+                physical.clone(),
+                1,
+                "---\ntype: Notes\n---\n# Notes\n".into(),
+            )
             .unwrap();
         assert_eq!(open.source().documents().len(), 1);
         let closed = open.close(&physical).unwrap().unwrap();
         assert!(closed.source().documents().is_empty());
         assert!(closed.close(&physical).unwrap().is_none());
         assert!(open
-            .change(&PathBuf::from("C:/missing.md"), String::new())
+            .change(&PathBuf::from("C:/missing.md"), 1, 2, String::new())
             .is_err());
+    }
+
+    #[test]
+    fn duplicate_and_older_full_changes_are_rejected_without_revision_consumption() {
+        let physical = PathBuf::from("C:/outside/order.md");
+        let opened = LspAnalysisState::empty()
+            .unwrap()
+            .open(physical.clone(), 4, "# Four\n".into())
+            .unwrap();
+        let generation = opened.open_generation(&physical).unwrap();
+        let logical = logical_path(None, &physical).unwrap();
+        let before_text = opened
+            .source()
+            .document(&logical)
+            .unwrap()
+            .slice(0..opened.source().document(&logical).unwrap().text().len())
+            .unwrap();
+        let before_id = opened.okf().catalog.id_for_path(&logical).unwrap();
+        let before_document_revision = opened.okf().catalog.document(before_id).unwrap().revision();
+
+        for version in [4, 3] {
+            let rejected = opened.change(&physical, generation, version, "# stale\n".into());
+            assert!(rejected.is_err());
+            assert_eq!(opened.revision(), 1);
+            assert_eq!(opened.source().documents()[0].text(), "# Four\n");
+            assert_eq!(opened.okf().catalog.id_for_path(&logical), Some(before_id));
+            assert_eq!(
+                opened.okf().catalog.document(before_id).unwrap().revision(),
+                before_document_revision
+            );
+            assert_eq!(
+                before_text.as_str(),
+                opened.source().document(&logical).unwrap().text()
+            );
+        }
+    }
+
+    #[test]
+    fn slow_v2_cannot_install_after_v3_wins_the_compare_and_swap() {
+        use std::sync::{Arc, Barrier, RwLock};
+
+        let physical = PathBuf::from("C:/outside/order.md");
+        let opened = Arc::new(
+            LspAnalysisState::empty()
+                .unwrap()
+                .open(physical.clone(), 1, "# One\n".into())
+                .unwrap(),
+        );
+        let generation = opened.open_generation(&physical).unwrap();
+        let current = Arc::new(RwLock::new(opened));
+        let v2_prepared = Arc::new(Barrier::new(2));
+        let v3_installed = Arc::new(Barrier::new(2));
+
+        let stale_worker = {
+            let current = current.clone();
+            let physical = physical.clone();
+            let v2_prepared = v2_prepared.clone();
+            let v3_installed = v3_installed.clone();
+            std::thread::spawn(move || {
+                let base = current.read().unwrap().clone();
+                let _candidate = base
+                    .change(&physical, generation, 2, "# Two\n".into())
+                    .unwrap();
+                v2_prepared.wait();
+                v3_installed.wait();
+                current
+                    .read()
+                    .unwrap()
+                    .change(&physical, generation, 2, "# Two\n".into())
+            })
+        };
+
+        v2_prepared.wait();
+        let base = current.read().unwrap().clone();
+        let v3 = base
+            .change(&physical, generation, 3, "# Three\n".into())
+            .unwrap();
+        *current.write().unwrap() = Arc::new(v3);
+        v3_installed.wait();
+        assert!(stale_worker.join().unwrap().is_err());
+        let final_state = current.read().unwrap();
+        assert_eq!(final_state.revision(), 2);
+        assert_eq!(final_state.source().documents()[0].text(), "# Three\n");
+        assert_eq!(final_state.client_version(&physical), Some(3));
+    }
+
+    #[test]
+    fn in_flight_change_from_closed_generation_cannot_affect_reopen() {
+        let physical = PathBuf::from("C:/outside/order.md");
+        let opened = LspAnalysisState::empty()
+            .unwrap()
+            .open(physical.clone(), 10, "# First open\n".into())
+            .unwrap();
+        let old_generation = opened.open_generation(&physical).unwrap();
+        let closed = opened.close(&physical).unwrap().unwrap();
+        let reopened = closed
+            .open(physical.clone(), 1, "# Reopened\n".into())
+            .unwrap();
+
+        assert_ne!(reopened.open_generation(&physical), Some(old_generation));
+        assert!(reopened
+            .change(&physical, old_generation, 11, "# Old work\n".into())
+            .is_err());
+        assert!(reopened
+            .open_expected(
+                physical.clone(),
+                Some(old_generation),
+                11,
+                "# Old didOpen work\n".into(),
+            )
+            .is_err());
+        assert_eq!(reopened.source().documents()[0].text(), "# Reopened\n");
+        assert_eq!(reopened.revision(), 3);
+    }
+
+    #[test]
+    fn external_logical_collision_rejects_second_owner_atomically() {
+        let first = PathBuf::from("C:/one/../two/order.md");
+        let collision = PathBuf::from("C:/one/two/order.md");
+        let opened = LspAnalysisState::empty()
+            .unwrap()
+            .open(first, 1, "# First\n".into())
+            .unwrap();
+
+        assert!(opened.open(collision, 1, "# Collision\n".into()).is_err());
+        assert_eq!(opened.revision(), 1);
+        assert_eq!(opened.source().documents().len(), 1);
+        assert_eq!(opened.source().documents()[0].text(), "# First\n");
     }
 
     #[test]
