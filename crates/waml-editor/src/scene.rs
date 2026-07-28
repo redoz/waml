@@ -280,11 +280,14 @@ fn drawable_edges(model: &Model) -> Vec<&waml::model::Edge> {
 /// The slug a placement operand refers to (`[Title](./slug.md)` or a bare
 /// name). `None` for inline-group / paren operands, which the relation
 /// projection skips.
-fn operand_slug(op: &waml::layout::Operand) -> Option<&str> {
+fn operand_slug(op: &waml::layout::Operand, diagram: &Diagram) -> Option<String> {
     use waml::layout::{NameRef, OperandRef};
     match &op.ref_ {
-        OperandRef::Name(NameRef::Link { slug, .. }) => Some(slug.as_str()),
-        OperandRef::Name(NameRef::Bare(s)) => Some(s.as_str()),
+        OperandRef::Name(NameRef::Link { slug, .. }) => Some(waml::okf::resolve_href(
+            &format!("{}.md", diagram.key),
+            slug,
+        )),
+        OperandRef::Name(NameRef::Bare(s)) => Some(s.clone()),
         _ => None,
     }
 }
@@ -302,12 +305,13 @@ fn project_relations(diagram: &Diagram) -> Vec<SceneRelation> {
         } = stmt
         {
             if operands.len() == 2 && directions.len() == 1 {
-                if let (Some(subject), Some(reference)) =
-                    (operand_slug(&operands[0]), operand_slug(&operands[1]))
-                {
+                if let (Some(subject), Some(reference)) = (
+                    operand_slug(&operands[0], diagram),
+                    operand_slug(&operands[1], diagram),
+                ) {
                     out.push(SceneRelation {
-                        subject: subject.to_string(),
-                        reference: reference.to_string(),
+                        subject,
+                        reference,
                         dir: directions[0],
                     });
                 }
@@ -688,18 +692,26 @@ fn title_for(model: &Model, slug: &str) -> String {
 /// as a 2-operand single-direction relation, in EITHER operand order (mirrors
 /// `ops::placement_matches`). Pair-symmetric so a reversed-pair re-drag replaces
 /// the existing relation rather than stacking a conflicting one.
-fn placement_is_pair(stmt: &waml::layout::LayoutStatement, subject: &str, reference: &str) -> bool {
+fn placement_is_pair(
+    stmt: &waml::layout::LayoutStatement,
+    diagram: &Diagram,
+    subject: &str,
+    reference: &str,
+) -> bool {
     use waml::layout::LayoutStatement;
     if let LayoutStatement::Placement {
         operands,
         directions,
     } = stmt
     {
-        let (a, b) = (operand_slug(&operands[0]), operand_slug(&operands[1]));
+        let (a, b) = (
+            operand_slug(&operands[0], diagram),
+            operand_slug(&operands[1], diagram),
+        );
         operands.len() == 2
             && directions.len() == 1
-            && ((a == Some(subject) && b == Some(reference))
-                || (a == Some(reference) && b == Some(subject)))
+            && ((a.as_deref() == Some(subject) && b.as_deref() == Some(reference))
+                || (a.as_deref() == Some(reference) && b.as_deref() == Some(subject)))
     } else {
         false
     }
@@ -753,7 +765,7 @@ pub fn placement_preview(
     let mut scratch = diagram.clone();
     scratch
         .layout
-        .retain(|s| !placement_is_pair(s, subject_slug, reference_slug));
+        .retain(|s| !placement_is_pair(s, diagram, subject_slug, reference_slug));
     scratch.layout.push(LayoutStatement::Placement {
         operands: vec![link(subject_slug), link(reference_slug)],
         directions: vec![dir],
