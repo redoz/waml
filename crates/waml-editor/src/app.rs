@@ -67,21 +67,6 @@ struct PendingFragment {
     fragment: String,
 }
 
-#[cfg(test)]
-std::thread_local! {
-    static DIRECTORY_TOGGLE_INVOCATIONS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
-}
-
-#[cfg(test)]
-fn reset_directory_toggle_invocations() {
-    DIRECTORY_TOGGLE_INVOCATIONS.with(|invocations| invocations.set(0));
-}
-
-#[cfg(test)]
-fn directory_toggle_invocations() -> usize {
-    DIRECTORY_TOGGLE_INVOCATIONS.with(std::cell::Cell::get)
-}
-
 script_mod! {
     use mod.prelude.widgets.*
     use mod.atlas
@@ -804,9 +789,6 @@ impl App {
                 true
             }
             crate::navigation::NavigationTarget::Directory { address } => {
-                #[cfg(test)]
-                DIRECTORY_TOGGLE_INVOCATIONS
-                    .with(|invocations| invocations.set(invocations.get() + 1));
                 let toggled = self
                     .ui
                     .widget(cx, ids!(project_tree))
@@ -2462,9 +2444,8 @@ impl AppMain for App {
 #[cfg(test)]
 mod tests {
     use super::{
-        close_after_save, directory_toggle_invocations, doc_switcher_items, logo_command_for,
-        next_narrow, open_overlay_contains, place_rm_for, prevent_quit_after_failed_save,
-        project_document_header, replace_after_save, reset_directory_toggle_invocations,
+        close_after_save, doc_switcher_items, logo_command_for, next_narrow, open_overlay_contains,
+        place_rm_for, prevent_quit_after_failed_save, project_document_header, replace_after_save,
         should_dismiss_narrow_dock, should_flush_save, App, BackingTransitionError, LogoCommand,
         PendingFragment, SaveFeedback,
     };
@@ -2520,6 +2501,9 @@ mod tests {
         let uml = waml::uml::project(&okf);
         app.session.replace(source, uml);
         let mut project_tree = cx.with_vm(crate::tree_panel::ProjectTree::script_new_with_default);
+        let file_tree =
+            WidgetRef::new_with_inner(Box::new(cx.with_vm(FileTree::script_new_with_default)));
+        project_tree.children.push((live_id!(file_tree), file_tree));
         project_tree.set_view(
             &mut cx,
             crate::nav::view(
@@ -2587,6 +2571,27 @@ mod tests {
             draw_list.end(&mut cx_2d);
         }
         draw_cx.end_pass(&pass);
+    }
+
+    fn project_tree_folder_is_open(cx: &mut Cx, app: &App, address: &str) -> bool {
+        let project_tree = app.ui.widget(cx, ids!(project_tree));
+        let file_tree = project_tree.file_tree(cx, ids!(file_tree));
+        let draw_event = DrawEvent::default();
+        let mut draw_cx = CxDraw::new(cx, &draw_event);
+        let mut cx_2d = Cx2d::new(&mut draw_cx);
+        cx_2d.begin_root_turtle(dvec2(0.0, 0.0), Layout::default());
+        let mut file_tree = file_tree
+            .borrow_mut()
+            .expect("mounted ProjectTree has a FileTree");
+        let is_open = file_tree
+            .begin_folder(&mut cx_2d, LiveId::from_str(address), address)
+            .is_ok();
+        if is_open {
+            file_tree.end_folder();
+        }
+        drop(file_tree);
+        cx_2d.end_turtle();
+        is_open
     }
 
     #[test]
@@ -2791,6 +2796,7 @@ mod tests {
 
         for ingress in [Ingress::Tree, Ingress::Header, Ingress::Markdown] {
             let (mut cx, mut app) = navigation_app();
+            mount_markdown_surface(&mut cx, &mut app);
             let mut browser = FakeBrowser::default();
             assert!(app.navigate_with(
                 &mut cx,
@@ -2803,7 +2809,20 @@ mod tests {
             ));
             app.nav_state.scope = "/sales".into();
             let active = app.documents.active_id();
-            reset_directory_toggle_invocations();
+            let markdown = app.ui.widget(&cx, ids!(markdown_surface.md));
+            assert!(
+                markdown.borrow::<Markdown>().is_some(),
+                "Markdown ingress must originate from the mounted renderer"
+            );
+            assert!(
+                markdown.text().contains("# Order"),
+                "the mounted renderer must belong to the active document"
+            );
+            let markdown_uid = markdown.widget_uid();
+            assert!(
+                project_tree_folder_is_open(&mut cx, &app, "/sales"),
+                "the fresh Browse tree starts with its top-level folder open"
+            );
             let action = match ingress {
                 Ingress::Tree => {
                     let uid = app.ui.widget(&cx, ids!(project_tree)).widget_uid();
@@ -2831,13 +2850,16 @@ mod tests {
                     )
                 }
                 Ingress::Markdown => {
-                    widget_action(WidgetUid(99), MarkdownAction::LinkNavigated("./".into()))
+                    widget_action(markdown_uid, MarkdownAction::LinkNavigated("./".into()))
                 }
             };
             let actions: ActionsBuf = vec![action];
             app.handle_action_batch(&mut cx, &actions);
 
-            assert_eq!(directory_toggle_invocations(), 1);
+            assert!(
+                !project_tree_folder_is_open(&mut cx, &app, "/sales"),
+                "each ingress must close the initially-open folder exactly once"
+            );
             assert_eq!(app.documents.active_id(), active);
             assert_eq!(app.nav_state.scope, "/sales");
         }
