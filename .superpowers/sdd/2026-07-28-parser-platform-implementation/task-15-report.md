@@ -129,3 +129,53 @@ Implementation commit: `f2626c2`.
 
 Fix-round TokenSave queries saved approximately 5,537 additional tokens
 (2,364 + 3,173).
+
+## Fix Round 3 — Exact Per-Referrer Href Rewrites
+
+- Changed rename reference discovery from a source-directory basename scan to
+  every cumulatively claimed document.
+- Each syntax-owned href is resolved against its referrer's exact pre-rename
+  `BundlePath` and rewritten only when it resolves to the renamed document's
+  exact old path.
+- Replacement hrefs are rendered relative to each referrer's post-rename path,
+  including the renamed/moved document itself.
+- Limited edits to typed link destinations, linked attribute destination
+  ranges, layout link atoms, and exact layout operands. Protected Markdown
+  regions and unrelated same-basename targets remain byte-identical.
+- Preserved query/fragment suffixes, optional relative-prefix spelling,
+  backslash spelling, surrounding destination trivia/angle brackets, CRLF, and
+  UTF-8.
+- Retained pre-edit collision validation and cumulative rename-then-edit
+  behavior.
+
+TDD evidence:
+
+- The new cross-directory regression first failed on the moved document's
+  unchanged self-reference.
+- The first typed-token implementation still failed because linked attribute
+  types currently live in an `Attribute` recovery node rather than a
+  `TypeToken`. Narrowing the edit to that typed attribute's single href range
+  made the regression pass without restoring section-wide replacement.
+- Existing rename tests then exposed leading trivia in bare layout word token
+  ranges; trimming only for resolution while retaining the trivia restored the
+  expected exact operand rewrite.
+
+Fresh verification:
+
+- `rtk cargo test -p waml --test uml_lowering_authority`: 1 passed.
+- `rtk cargo test -p waml --test uml_lowering_order`: 11 passed.
+- `rtk cargo test -p waml uml::rename::tests`: 7 passed.
+- `rtk cargo test -p waml uml::ops::tests`: 5 passed.
+- `rtk cargo test -p waml --test ops_golden`: 3 passed.
+- `rtk cargo test -p waml`: 541 passed across 20 suites.
+- `rtk cargo test -p waml-editor`: 727 passed across 5 suites.
+- `rtk cargo check --workspace --all-features`: passed with two duplicate
+  dependency warnings.
+- `rtk cargo fmt --all -- --check`: passed.
+- `rtk git diff --check`: passed.
+- Direct prohibited-symbol scan: no matches.
+
+Implementation commit: `574b5d2`.
+
+Fix-round TokenSave queries saved approximately 7,310 additional tokens
+(1,080 + 6,230).
