@@ -22,6 +22,12 @@ impl<'a, L: SyntaxLanguage> AstSlots<'a, L> {
     pub fn new(syntax: &'a SyntaxNode<L>) -> Self {
         Self { syntax }
     }
+    pub fn len(&self) -> usize {
+        self.syntax.children().count()
+    }
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
     pub fn required_node(&self, index: usize) -> Option<SyntaxNode<L>> {
         self.syntax.child_at(index)?.into_node()
     }

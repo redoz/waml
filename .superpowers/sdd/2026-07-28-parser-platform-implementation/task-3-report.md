@@ -39,3 +39,15 @@ Verification:
 - `rtk cargo test -p waml-syntax`: 15 passed across 4 suites, including the compile-fail doctest.
 - `rtk cargo check --workspace`: passed; only pre-existing duplicate-package warnings were emitted after removing the new dead-code warning.
 - `rtk cargo fmt --check`: passed.
+
+## Review fix round 2
+
+- Replaced the direct `AstSlots` smoke test with a representative typed `DeclaredPair` wrapper that declares required name/colon/trailing tokens, an optional value, a repeated list range, and a recovery node through fixed indices.
+- Added paired fixtures with zero and three skipped tokens nested inside the recovery element. Both parent forms retain exactly six declared slots; every wrapper accessor resolves its declared child path and the trailing slot after recovery remains index 5.
+- Added minimal `AstSlots::len`/`is_empty` introspection so the contract test can assert the parent slot layout directly.
+
+Verification:
+
+- Exact strengthened AstSlots test: 1 passed.
+- `rtk cargo test -p waml-syntax --test red_ast`: 7 passed.
+- `rtk cargo test -p waml-syntax`: 15 passed across 4 suites.

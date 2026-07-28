@@ -139,7 +139,7 @@ fn token_annotations_target_only_the_resolved_shared_occurrence() {
         .unwrap()
         .into_token()
         .unwrap();
-    let right = tree
+    let _right = tree
         .root()
         .child_at(1)
         .unwrap()
@@ -186,32 +186,124 @@ fn token_annotations_target_only_the_resolved_shared_occurrence() {
 
 #[test]
 fn ast_slots_use_declared_indices_for_all_slot_categories() {
-    let f = GreenFactory::<Lang>::new();
-    let token =
-        |kind, text| GreenElement::Token(f.token(kind, GreenText::Static(text), [], []).unwrap());
-    let list = f.node(Kind::Value, [token(Kind::Value, "a")]).unwrap();
-    let recovery = f.node(Kind::Recovery, [token(Kind::Value, "?")]).unwrap();
-    let pair = f
-        .node(
-            Kind::Pair,
-            [
-                token(Kind::Name, "n"),
-                token(Kind::Colon, ":"),
-                token(Kind::Value, "v"),
-                GreenElement::Node(list),
-                GreenElement::Node(recovery),
-            ],
-        )
-        .unwrap();
-    let root = f.node(Kind::Root, [GreenElement::Node(pair)]).unwrap();
-    let tree = SyntaxTree::new(root, Arc::from([]), MarkdownDialect::CommonMarkCurrent);
-    let pair = tree.root().child_at(0).unwrap().into_node().unwrap();
-    let slots = AstSlots::new(&pair);
-    assert_eq!(slots.required_token(0).unwrap().kind(), Kind::Name);
-    assert_eq!(slots.required_token(1).unwrap().kind(), Kind::Colon);
-    assert_eq!(slots.optional_token(2).unwrap().kind(), Kind::Value);
-    assert_eq!(slots.list(3..4).len(), 1);
-    assert_eq!(slots.recovery(4).unwrap().kind(), Kind::Recovery);
+    struct DeclaredPair(waml_syntax::SyntaxNode<Lang>);
+    impl DeclaredPair {
+        const NAME: usize = 0;
+        const COLON: usize = 1;
+        const VALUE: usize = 2;
+        const ITEMS: std::ops::Range<usize> = 3..4;
+        const RECOVERY: usize = 4;
+        const TRAILING: usize = 5;
+        fn slots(&self) -> AstSlots<'_, Lang> {
+            AstSlots::new(&self.0)
+        }
+        fn name(&self) -> waml_syntax::SyntaxToken<Lang> {
+            self.slots().required_token(Self::NAME).unwrap()
+        }
+        fn colon(&self) -> waml_syntax::SyntaxToken<Lang> {
+            self.slots().required_token(Self::COLON).unwrap()
+        }
+        fn value(&self) -> Option<waml_syntax::SyntaxToken<Lang>> {
+            self.slots().optional_token(Self::VALUE)
+        }
+        fn items(&self) -> Vec<SyntaxElement<Lang>> {
+            self.slots().list(Self::ITEMS)
+        }
+        fn recovery(&self) -> waml_syntax::SyntaxNode<Lang> {
+            self.slots().recovery(Self::RECOVERY).unwrap()
+        }
+        fn trailing(&self) -> waml_syntax::SyntaxToken<Lang> {
+            self.slots().required_token(Self::TRAILING).unwrap()
+        }
+    }
+    fn declared_pair(skipped_count: usize) -> DeclaredPair {
+        let f = GreenFactory::<Lang>::new();
+        let token = |kind, text: &str| {
+            GreenElement::Token(
+                f.token(kind, GreenText::Owned(Arc::from(text)), [], [])
+                    .unwrap(),
+            )
+        };
+        let list = f.node(Kind::Value, [token(Kind::Value, "item")]).unwrap();
+        let recovery = f
+            .node(
+                Kind::Recovery,
+                (0..skipped_count).map(|_| token(Kind::Value, "?")),
+            )
+            .unwrap();
+        let pair = f
+            .node(
+                Kind::Pair,
+                [
+                    token(Kind::Name, "name"),
+                    token(Kind::Colon, ":"),
+                    token(Kind::Value, "value"),
+                    GreenElement::Node(list),
+                    GreenElement::Node(recovery),
+                    token(Kind::Name, "trailing"),
+                ],
+            )
+            .unwrap();
+        let root = f.node(Kind::Root, [GreenElement::Node(pair)]).unwrap();
+        let tree = SyntaxTree::new(root, Arc::from([]), MarkdownDialect::CommonMarkCurrent);
+        DeclaredPair(tree.root().child_at(0).unwrap().into_node().unwrap())
+    }
+    let zero = declared_pair(0);
+    let multiple = declared_pair(3);
+    for pair in [&zero, &multiple] {
+        assert_eq!(pair.slots().len(), 6);
+        assert_eq!(
+            pair.name().locator().path(),
+            pair.0
+                .child_at(DeclaredPair::NAME)
+                .unwrap()
+                .locator()
+                .path()
+        );
+        assert_eq!(
+            pair.colon().locator().path(),
+            pair.0
+                .child_at(DeclaredPair::COLON)
+                .unwrap()
+                .locator()
+                .path()
+        );
+        assert_eq!(
+            pair.value().unwrap().locator().path(),
+            pair.0
+                .child_at(DeclaredPair::VALUE)
+                .unwrap()
+                .locator()
+                .path()
+        );
+        assert_eq!(
+            pair.items()[0].locator().path(),
+            pair.0
+                .child_at(DeclaredPair::ITEMS.start)
+                .unwrap()
+                .locator()
+                .path()
+        );
+        assert_eq!(
+            pair.recovery().locator().path(),
+            pair.0
+                .child_at(DeclaredPair::RECOVERY)
+                .unwrap()
+                .locator()
+                .path()
+        );
+        assert_eq!(
+            pair.trailing().locator().path(),
+            pair.0
+                .child_at(DeclaredPair::TRAILING)
+                .unwrap()
+                .locator()
+                .path()
+        );
+    }
+    assert_eq!(zero.recovery().children().count(), 0);
+    assert_eq!(multiple.recovery().children().count(), 3);
+    assert_eq!(zero.trailing().kind(), multiple.trailing().kind());
 }
 
 #[test]
