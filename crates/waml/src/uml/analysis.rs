@@ -751,12 +751,7 @@ fn collect_unresolved_layout_refs(
     use crate::layout::{NameRef, OperandRef};
     match &operand.ref_ {
         OperandRef::Name(NameRef::Link { slug, .. }) => {
-            let href = if slug.starts_with('.') || slug.ends_with(".md") {
-                slug.clone()
-            } else {
-                format!("./{slug}.md")
-            };
-            if !claimed.contains(&crate::okf::resolve_href(path, &href)) {
+            if !claimed.contains(&crate::okf::resolve_href(path, slug)) {
                 unresolved.push(slug.clone());
             }
         }
@@ -785,9 +780,7 @@ fn collect_unresolved_layout_refs(
 fn layout_operand_key(operand: &crate::layout::Operand, path: &str) -> Option<String> {
     use crate::layout::{NameRef, OperandRef};
     match &operand.ref_ {
-        OperandRef::Name(NameRef::Link { slug, .. }) => {
-            Some(crate::okf::resolve_href(path, &format!("./{slug}.md")))
-        }
+        OperandRef::Name(NameRef::Link { slug, .. }) => Some(crate::okf::resolve_href(path, slug)),
         OperandRef::Name(NameRef::Bare(name)) => Some(name.clone()),
         OperandRef::Paren(inner) => layout_operand_key(inner, path),
         OperandRef::InlineGroup { .. } => None,
@@ -1291,7 +1284,7 @@ fn declared_projection(
 }
 
 fn resolve_slug(path: &str, slug: &str, claimed: &BTreeSet<&str>) -> Option<String> {
-    let target = crate::okf::resolve_href(path, &format!("./{slug}.md"));
+    let target = crate::okf::resolve_href(path, slug);
     claimed.contains(target.as_str()).then_some(target)
 }
 
@@ -1311,14 +1304,9 @@ fn parse_link_ref(value: &str) -> Option<crate::layout::LinkRef> {
     let title_end = value.find("](")?;
     let title = value.strip_prefix('[')?.get(..title_end - 1)?;
     let href = value.get(title_end + 2..)?.strip_suffix(')')?;
-    let slug = href
-        .strip_prefix("./")?
-        .strip_suffix(".md")
-        .unwrap_or(href.strip_prefix("./")?)
-        .to_owned();
     Some(crate::layout::LinkRef {
         title: title.to_owned(),
-        slug,
+        slug: href.to_owned(),
     })
 }
 
@@ -2935,11 +2923,11 @@ fn parse_layout_ref(cur: &mut LayoutCursor<'_>) -> Option<crate::layout::Operand
         Link(token) => {
             let raw = token.text().write_to_string();
             let raw = raw.trim();
-            let (title, path) = raw.strip_prefix('[')?.split_once("](./")?;
-            let slug = path.strip_suffix(".md)")?;
+            let (title, path) = raw.strip_prefix('[')?.split_once("](")?;
+            let href = path.strip_suffix(')')?;
             Some(OperandRef::Name(NameRef::Link {
                 title: title.to_string(),
-                slug: slug.to_string(),
+                slug: href.to_string(),
             }))
         }
         Quote(token) => {

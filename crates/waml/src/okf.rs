@@ -329,18 +329,29 @@ pub fn id_of(path: &str) -> String {
 
 /// Resolve a written href (e.g. `./orders.md`, `../shop/order.md`) against the
 /// *referring* document's own bundle-relative path, producing the target's full
-/// id (same shape as [`id_of`]). Strips a leading `./`, joins against
-/// `referring_path`'s parent directory, normalizes `..` segments, normalizes
-/// `\` to `/`, and strips a trailing `.md`.
+/// id (same shape as [`id_of`]). Bare, `./`, `../`, and root-relative paths are
+/// accepted; query/fragment suffixes are ignored for identity. The authored
+/// href itself is never normalized or rewritten.
 pub fn resolve_href(referring_path: &str, href: &str) -> String {
     let referring_norm = referring_path.replace('\\', "/");
-    let href_norm = href.replace('\\', "/");
+    let href_norm = href
+        .split_once(['?', '#'])
+        .map_or(href, |(resource, _)| resource)
+        .replace('\\', "/");
+    if href_norm.is_empty() {
+        return id_of(&referring_norm);
+    }
+    let rooted = href_norm.starts_with('/');
     let href_trimmed = href_norm.strip_prefix("./").unwrap_or(&href_norm);
 
-    let mut segments: Vec<&str> = referring_norm
-        .rsplit_once('/')
-        .map(|(dir, _)| dir.split('/').collect())
-        .unwrap_or_default();
+    let mut segments: Vec<&str> = if rooted {
+        Vec::new()
+    } else {
+        referring_norm
+            .rsplit_once('/')
+            .map(|(dir, _)| dir.split('/').collect())
+            .unwrap_or_default()
+    };
 
     for seg in href_trimmed.split('/') {
         match seg {
@@ -354,6 +365,28 @@ pub fn resolve_href(referring_path: &str, href: &str) -> String {
 
     let joined = segments.join("/");
     id_of(&joined)
+}
+
+/// Author a stable relative Markdown href from one bundle document to another.
+pub fn relative_href(referring_path: &str, target_path: &str) -> String {
+    let referring = referring_path.replace('\\', "/");
+    let target = target_path.replace('\\', "/");
+    let from = referring
+        .rsplit_once('/')
+        .map(|(directory, _)| directory.split('/').collect::<Vec<_>>())
+        .unwrap_or_default();
+    let to = target.split('/').collect::<Vec<_>>();
+    let common = from
+        .iter()
+        .zip(&to)
+        .take_while(|(left, right)| left == right)
+        .count();
+    let mut authored = "../".repeat(from.len().saturating_sub(common));
+    authored.push_str(&to[common..].join("/"));
+    if !authored.starts_with('.') {
+        authored.insert_str(0, "./");
+    }
+    authored
 }
 
 pub fn project_document(document: &SourceDocument) -> Option<Concept> {
@@ -551,6 +584,36 @@ mod tests {
         assert_eq!(
             resolve_href("tables/orders.md", "../shop/order.md"),
             "shop/order"
+        );
+    }
+
+    #[test]
+    fn href_resolution_accepts_authored_spellings_and_ignores_suffixes() {
+        for href in [
+            "money.md",
+            "./money.md",
+            "./money.md?view=compact",
+            "./money.md#amount",
+            "./money.md?view=compact#amount",
+        ] {
+            assert_eq!(resolve_href("shop/order.md", href), "shop/money", "{href}");
+        }
+        assert_eq!(
+            resolve_href("shop/orders/order.md", "../money.md#amount"),
+            "shop/money"
+        );
+        assert_eq!(resolve_href("shop/order.md", "#attributes"), "shop/order");
+        assert_eq!(
+            resolve_href("shop/order.md", "/types/money.md"),
+            "types/money"
+        );
+        assert_eq!(
+            relative_href("shop/order.md", "shop/money.md"),
+            "./money.md"
+        );
+        assert_eq!(
+            relative_href("shop/orders/order.md", "types/money.md"),
+            "../../types/money.md"
         );
     }
 

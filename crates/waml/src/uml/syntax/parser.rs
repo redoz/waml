@@ -1917,8 +1917,8 @@ fn layout_statement(
             },
             '[' => match source[at..content_end].find(")") {
                 Some(n)
-                    if source[at..at + n + 1].contains("](./")
-                        && source[at..at + n + 1].ends_with(".md)") =>
+                    if source[at..at + n + 1].contains("](")
+                        && !source[at..at + n + 1].ends_with("]()") =>
                 {
                     (at + n + 1, UmlSyntaxKind::LayoutLinkToken)
                 }

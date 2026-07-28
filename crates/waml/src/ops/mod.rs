@@ -604,6 +604,40 @@ mod tests {
     }
 
     #[test]
+    fn authored_links_are_relative_to_the_mutated_document() {
+        let bundle = vec![
+            (
+                "shop/order.md".to_string(),
+                "---\ntype: uml.Class\ntitle: Order\n---\n# Order\n".to_string(),
+            ),
+            (
+                "types/money.md".to_string(),
+                "---\ntype: uml.DataType\ntitle: Money\n---\n# Money\n".to_string(),
+            ),
+        ];
+        let with_attribute =
+            apply(&bundle, &[attr_add("shop/order", "total", "types/money")]).unwrap();
+        assert!(with_attribute[0]
+            .1
+            .contains("- total: [Money](../types/money.md)"));
+
+        let with_relationship = apply(
+            &with_attribute,
+            &[Op::RelAdd {
+                source: "shop/order".into(),
+                kind: RelationshipKind::Depends,
+                target: "types/money".into(),
+                name: None,
+                ends: None,
+            }],
+        )
+        .unwrap();
+        assert!(with_relationship[0]
+            .1
+            .contains("- depends [Money](../types/money.md)"));
+    }
+
+    #[test]
     fn rel_add_enforces_ends_xor_verb() {
         let b = vec![
             (

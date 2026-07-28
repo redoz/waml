@@ -770,14 +770,29 @@ fn stored_id(work: &SourceBundle, target: &str) -> String {
         .unwrap_or_else(|| target.to_owned())
 }
 
-fn type_text(work: &SourceBundle, token: &str) -> String {
+fn target_href(work: &SourceBundle, referring: &BundlePath, target: &str) -> String {
+    resolve_index(work, target)
+        .and_then(|index| work.document_at(index))
+        .map(|document| okf::relative_href(referring.as_str(), document.path().as_str()))
+        .unwrap_or_else(|| {
+            if target.starts_with('.') || target.starts_with('/') {
+                target.to_owned()
+            } else if target.ends_with(".md") {
+                format!("./{target}")
+            } else {
+                format!("./{target}.md")
+            }
+        })
+}
+
+fn type_text(work: &SourceBundle, referring: &BundlePath, token: &str) -> String {
     resolve_index(work, token)
         .and_then(|index| work.document_at(index))
         .map(|document| {
             format!(
-                "[{}](./{}.md)",
+                "[{}]({})",
                 document_title(work, token, "attr.type"),
-                slug_of(document.path().as_str())
+                okf::relative_href(referring.as_str(), document.path().as_str())
             )
         })
         .unwrap_or_else(|| token.to_owned())
@@ -823,7 +838,7 @@ pub(crate) fn op_attr_add(
         .unwrap_or_default();
     let line = format!(
         "- {visibility}{name}: {}{multiplicity}",
-        type_text(work, ty_token)
+        type_text(work, &path, ty_token)
     );
     append_line(work, &path, &tree, "Attributes", &line, "attr.add")
 }
@@ -865,7 +880,7 @@ pub(crate) fn op_attr_set(
             .ok_or_else(|| EditError::at("attr.set", "attribute has no type reference"))?;
         edits.push((
             node_content_range(source, type_syntax.syntax()),
-            type_text(work, token),
+            type_text(work, &path, token),
         ));
     }
     match multiplicity {
@@ -1042,13 +1057,13 @@ fn render_end(end: &RelEnd) -> String {
         .unwrap_or_else(|| multiplicity.to_owned())
 }
 
-fn render_name(work: &SourceBundle, name: &NameSpec) -> String {
+fn render_name(work: &SourceBundle, referring: &BundlePath, name: &NameSpec) -> String {
     match name {
         NameSpec::Label(label) => format!("\"{label}\""),
         NameSpec::Ref(target) => format!(
-            "[{}](./{}.md)",
+            "[{}]({})",
             document_title(work, target, "rel.name"),
-            stored_slug(work, target)
+            target_href(work, referring, target)
         ),
     }
 }
@@ -1089,7 +1104,6 @@ pub(crate) fn op_rel_add(
     }
     let (path, tree) = state.tree(work, source_id, "rel.add")?;
     let source = work.document(&path).expect("claimed document").text();
-    let target_slug = stored_slug(work, target);
     if nodes(&tree, UmlSyntaxKind::Relationship)
         .iter()
         .filter_map(|syntax| RelationshipSyntax::cast(syntax.clone()))
@@ -1108,17 +1122,17 @@ pub(crate) fn op_rel_add(
     }
     let name = name
         .as_ref()
-        .map(|name| format!(" as {}", render_name(work, name)))
+        .map(|name| format!(" as {}", render_name(work, &path, name)))
         .unwrap_or_default();
     let ends = ends
         .as_ref()
         .map(|(from, to)| format!(": {} to {}", render_end(from), render_end(to)))
         .unwrap_or_default();
     let line = format!(
-        "- {} [{}](./{}.md){name}{ends}",
+        "- {} [{}]({}){name}{ends}",
         kind.as_str(),
         document_title(work, target, "rel.add"),
-        target_slug,
+        target_href(work, &path, target),
     );
     append_line(work, &path, &tree, "Relationships", &line, "rel.add")
 }
@@ -1189,7 +1203,7 @@ pub(crate) fn op_rel_set(
         ));
     }
     if let Some(name) = name {
-        let replacement = render_name(work, name);
+        let replacement = render_name(work, &path, name);
         if let Some(existing) = syntax
             .syntax()
             .children()
@@ -1512,8 +1526,10 @@ pub(crate) fn op_place_set(
             &tree,
             "Layout",
             &format!(
-                "- [{subject_title}](./{subject_slug}.md) {} [{reference_title}](./{reference_slug}.md)",
-                direction_text(*direction)
+                "- [{subject_title}]({}) {} [{reference_title}]({})",
+                target_href(work, &path, subject_slug),
+                direction_text(*direction),
+                target_href(work, &path, reference_slug)
             ),
             "place.set",
         )?;

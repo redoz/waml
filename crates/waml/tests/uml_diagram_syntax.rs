@@ -203,12 +203,12 @@ fn diagram_projection_preserves_complete_two_link_placement() {
     assert!(matches!(
         &operands[0].ref_,
         waml::layout::OperandRef::Name(waml::layout::NameRef::Link { slug, .. })
-            if slug == "order"
+            if slug == "./order.md"
     ));
     assert!(matches!(
         &operands[1].ref_,
         waml::layout::OperandRef::Name(waml::layout::NameRef::Link { slug, .. })
-            if slug == "customer"
+            if slug == "./customer.md"
     ));
 }
 
@@ -272,7 +272,7 @@ fn complete_layout_matrix_matches_legacy_model_and_has_fixed_nested_slots() {
     let link = || Operand {
         ref_: OperandRef::Name(NameRef::Link {
             title: "A".into(),
-            slug: "a".into(),
+            slug: "./a.md".into(),
         }),
         axis: None,
         hints: vec![],
