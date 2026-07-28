@@ -76,6 +76,49 @@ pub struct DeclaredInlineInstance {
     pub name: DeclaredField<UmlLanguage, String>,
     pub slots: Arc<[DeclaredSlot]>,
 }
+pub struct DeclaredFlowTransition {
+    pub syntax: super::syntax::FlowTransitionSyntax,
+    pub trigger: DeclaredField<UmlLanguage, String>,
+    pub guard: DeclaredField<UmlLanguage, String>,
+    pub is_else: bool,
+    pub target: DeclaredField<UmlLanguage, crate::syntax::FlowTargetRef>,
+    pub carries: DeclaredField<UmlLanguage, String>,
+    pub effect: DeclaredField<UmlLanguage, String>,
+}
+pub struct DeclaredFlowNode {
+    pub syntax: super::syntax::FlowNodeSyntax,
+    pub kind: DeclaredField<UmlLanguage, crate::model::FlowNodeKind>,
+    pub identity: DeclaredField<UmlLanguage, String>,
+    pub object_ref: DeclaredField<UmlLanguage, String>,
+    pub entry: DeclaredField<UmlLanguage, String>,
+    pub do_: DeclaredField<UmlLanguage, String>,
+    pub exit: DeclaredField<UmlLanguage, String>,
+    pub refines: DeclaredField<UmlLanguage, String>,
+    pub partition: DeclaredField<UmlLanguage, String>,
+    pub notes: Arc<[DeclaredField<UmlLanguage, String>]>,
+    pub transitions: Arc<[DeclaredFlowTransition]>,
+}
+pub struct DeclaredLifeline {
+    pub syntax: super::syntax::LifelineSyntax,
+    pub target: DeclaredField<UmlLanguage, String>,
+    pub title: DeclaredField<UmlLanguage, String>,
+    pub alias: DeclaredField<UmlLanguage, String>,
+}
+pub struct DeclaredMessage {
+    pub syntax: super::syntax::MessageSyntax,
+    pub from: DeclaredField<UmlLanguage, String>,
+    pub verb: DeclaredField<UmlLanguage, crate::model::MessageVerb>,
+    pub to: DeclaredField<UmlLanguage, String>,
+    pub signature: DeclaredField<UmlLanguage, String>,
+    pub depth: usize,
+}
+pub struct DeclaredSequenceOperand {
+    pub syntax: super::syntax::SequenceOperandSyntax,
+    pub fragment: DeclaredField<UmlLanguage, crate::model::FragmentKind>,
+    pub guard: DeclaredField<UmlLanguage, String>,
+    pub is_else: bool,
+    pub depth: usize,
+}
 pub enum DeclaredLayoutStatement {
     Placement {
         operands: Arc<[DeclaredField<UmlLanguage, crate::syntax::Operand>]>,
@@ -97,6 +140,10 @@ pub struct DeclaredConcept {
     pub member_groups: Arc<[DeclaredMemberGroup]>,
     pub inline_instances: Arc<[DeclaredInlineInstance]>,
     pub layout: Arc<[DeclaredField<UmlLanguage, DeclaredLayoutStatement>]>,
+    pub flow_nodes: Arc<[DeclaredFlowNode]>,
+    pub lifelines: Arc<[DeclaredLifeline]>,
+    pub messages: Arc<[DeclaredMessage]>,
+    pub sequence_operands: Arc<[DeclaredSequenceOperand]>,
 }
 #[derive(Default)]
 pub struct DeclaredBundle {

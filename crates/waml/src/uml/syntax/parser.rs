@@ -32,6 +32,38 @@ pub fn parse(text: SourceText, structure: &MarkdownStructureMap) -> Arc<SyntaxTr
         }
         let heading_end = line_end(source, start, end);
         let mut section = vec![raw(&factory, &text, start, heading_end)];
+        if section_kind == UmlSyntaxKind::FlowSection {
+            section.push(GreenElement::Node(flow_block(
+                &factory,
+                &text,
+                source,
+                heading_end,
+                end,
+                structure,
+                &mut diagnostics,
+            )));
+            children.push(GreenElement::Node(
+                factory.node(section_kind, section).unwrap(),
+            ));
+            at = end;
+            continue;
+        }
+        if section_kind == UmlSyntaxKind::MessagesSection {
+            section.extend(sequence_items(
+                &factory,
+                &text,
+                source,
+                heading_end,
+                end,
+                structure,
+                &mut diagnostics,
+            ));
+            children.push(GreenElement::Node(
+                factory.node(section_kind, section).unwrap(),
+            ));
+            at = end;
+            continue;
+        }
         if section_kind == UmlSyntaxKind::MembersSection {
             section.extend(member_items(
                 &factory,
@@ -66,6 +98,24 @@ pub fn parse(text: SourceText, structure: &MarkdownStructureMap) -> Arc<SyntaxTr
                         section.push(GreenElement::Node(attribute));
                     } else {
                         section.push(raw(&factory, &text, line_start, line_end));
+                    }
+                } else if section_kind == UmlSyntaxKind::LifelinesSection {
+                    let line = source[line_start..line_end].trim_end_matches(['\r', '\n']);
+                    if line.trim().is_empty() {
+                        section.push(raw(&factory, &text, line_start, line_end));
+                    } else {
+                        section.push(behavior_item(
+                            &factory,
+                            &text,
+                            source,
+                            line_start,
+                            line_end,
+                            UmlSyntaxKind::Lifeline,
+                            crate::grammar::parse_lifeline_line(line).is_ok(),
+                            UmlSyntaxDiagnosticCode::MalformedLifeline,
+                            "malformed lifeline",
+                            &mut diagnostics,
+                        ));
                     }
                 } else if let Some(item) = simple_item(
                     &factory,
@@ -262,9 +312,401 @@ fn section_kind(source: &str, range: TextRange) -> Option<UmlSyntaxKind> {
         Some(UmlSyntaxKind::MembersSection)
     } else if name.eq_ignore_ascii_case("Layout") {
         Some(UmlSyntaxKind::LayoutSection)
+    } else if name.eq_ignore_ascii_case("Nodes") {
+        Some(UmlSyntaxKind::FlowSection)
+    } else if name.eq_ignore_ascii_case("Lifelines") {
+        Some(UmlSyntaxKind::LifelinesSection)
+    } else if name.eq_ignore_ascii_case("Messages") {
+        Some(UmlSyntaxKind::MessagesSection)
     } else {
         None
     }
+}
+
+fn flow_block(
+    f: &GreenFactory<UmlLanguage>,
+    text: &SourceText,
+    source: &str,
+    from: usize,
+    to: usize,
+    structure: &MarkdownStructureMap,
+    diags: &mut Vec<TreeDiagnostic<UmlSyntaxDiagnosticCode>>,
+) -> waml_syntax::GreenNode<UmlLanguage> {
+    let mut roots = Vec::new();
+    let mut current = Vec::new();
+    let mut have_node = false;
+    let mut notes = false;
+    let close = |current: &mut Vec<GreenElement<UmlLanguage>>,
+                 roots: &mut Vec<GreenElement<UmlLanguage>>,
+                 have_node: &mut bool| {
+        if *have_node {
+            roots.push(GreenElement::Node(
+                f.node(UmlSyntaxKind::FlowNode, std::mem::take(current))
+                    .unwrap(),
+            ));
+            *have_node = false;
+        }
+    };
+    for (start, end) in lines_between(source, from, to) {
+        let nested = structure
+            .nested_headings
+            .iter()
+            .find(|heading| heading.range.start().to_usize() == start);
+        if let Some(heading) = nested {
+            if heading.level == 3 {
+                close(&mut current, &mut roots, &mut have_node);
+                current.extend(behavior_tokens(f, text, source, start, end, false));
+                have_node = true;
+                notes = false;
+                continue;
+            }
+            if heading.level == 4
+                && have_node
+                && source
+                    [heading.text_range.start().to_usize()..heading.text_range.end().to_usize()]
+                    .trim()
+                    .eq_ignore_ascii_case("notes")
+            {
+                current.extend(behavior_tokens(f, text, source, start, end, false));
+                notes = true;
+                continue;
+            }
+        }
+        let trimmed = source[start..end].trim_end_matches(['\r', '\n']);
+        if trimmed.trim().is_empty() {
+            (if have_node { &mut current } else { &mut roots }).push(raw(f, text, start, end));
+            continue;
+        }
+        if !have_node {
+            roots.push(recovery_line(
+                f,
+                text,
+                start,
+                end,
+                UmlSyntaxDiagnosticCode::MalformedFlow,
+                "flow content before first node heading",
+                diags,
+            ));
+            continue;
+        }
+        let valid = if notes {
+            trimmed.trim_start().starts_with("- ")
+        } else {
+            crate::grammar::parse_flow_bullet(trimmed).is_ok()
+        };
+        if valid {
+            let kind = if !notes
+                && matches!(
+                    crate::grammar::parse_flow_bullet(trimmed),
+                    Ok(crate::syntax::FlowBullet::Transition(_))
+                ) {
+                UmlSyntaxKind::FlowTransition
+            } else {
+                UmlSyntaxKind::Value
+            };
+            current.push(GreenElement::Node(
+                f.node(kind, behavior_tokens(f, text, source, start, end, true))
+                    .unwrap(),
+            ));
+        } else {
+            let message = if notes {
+                "malformed flow note"
+            } else {
+                "malformed flow bullet"
+            };
+            if !notes && trimmed.contains("transitions") {
+                current.push(recovery_typed(
+                    f,
+                    text,
+                    start,
+                    end,
+                    UmlSyntaxKind::FlowTransition,
+                    UmlSyntaxDiagnosticCode::MalformedFlow,
+                    message,
+                    diags,
+                ));
+            } else {
+                current.push(recovery_line(
+                    f,
+                    text,
+                    start,
+                    end,
+                    UmlSyntaxDiagnosticCode::MalformedFlow,
+                    message,
+                    diags,
+                ));
+            }
+        }
+    }
+    close(&mut current, &mut roots, &mut have_node);
+    f.node(UmlSyntaxKind::FlowBlock, roots).unwrap()
+}
+
+fn sequence_items(
+    f: &GreenFactory<UmlLanguage>,
+    text: &SourceText,
+    source: &str,
+    from: usize,
+    to: usize,
+    structure: &MarkdownStructureMap,
+    diags: &mut Vec<TreeDiagnostic<UmlSyntaxDiagnosticCode>>,
+) -> Vec<GreenElement<UmlLanguage>> {
+    let mut items = Vec::new();
+    for (start, end) in lines_between(source, from, to) {
+        if opaque_line(structure, start, end) {
+            items.push(raw(f, text, start, end));
+            continue;
+        }
+        let line = source[start..end].trim_end_matches(['\r', '\n']);
+        if line.trim().is_empty() {
+            items.push(raw(f, text, start, end));
+            continue;
+        }
+        let leading = line.len() - line.trim_start_matches(' ').len();
+        let malformed_indent = leading % 2 != 0 || line.starts_with('\t');
+        let body = line.trim_start();
+        let (kind, valid, code, message) =
+            if body == "- par" || body.contains(" coregion") || body.contains(" gate ") {
+                (
+                    UmlSyntaxKind::SkippedTokensSyntax,
+                    false,
+                    UmlSyntaxDiagnosticCode::UnsupportedSequenceForm,
+                    "unsupported sequence form",
+                )
+            } else if body == "- alt" || body == "- opt" || body == "- loop" {
+                (
+                    UmlSyntaxKind::SequenceFragment,
+                    true,
+                    UmlSyntaxDiagnosticCode::MalformedMessage,
+                    "",
+                )
+            } else if body.starts_with("- when ") || body == "- else" {
+                (
+                    UmlSyntaxKind::SequenceOperand,
+                    leading >= 2,
+                    UmlSyntaxDiagnosticCode::MalformedMessage,
+                    "sequence operand outside a fragment",
+                )
+            } else {
+                let parsed = crate::grammar::parse_message_line(body);
+                let self_message = parsed
+                    .as_ref()
+                    .is_ok_and(|message| message.from == message.to);
+                (
+                    UmlSyntaxKind::Message,
+                    parsed.is_ok() && !self_message,
+                    if self_message {
+                        UmlSyntaxDiagnosticCode::UnsupportedSequenceForm
+                    } else {
+                        UmlSyntaxDiagnosticCode::MalformedMessage
+                    },
+                    if self_message {
+                        "self messages are not supported"
+                    } else {
+                        "malformed message"
+                    },
+                )
+            };
+        if malformed_indent {
+            items.push(recovery_line(
+                f,
+                text,
+                start,
+                end,
+                UmlSyntaxDiagnosticCode::MalformedIndentation,
+                "sequence indentation must use pairs of spaces",
+                diags,
+            ));
+        } else if valid {
+            items.push(GreenElement::Node(
+                f.node(kind, behavior_tokens(f, text, source, start, end, true))
+                    .unwrap(),
+            ));
+        } else if kind == UmlSyntaxKind::Message {
+            items.push(recovery_typed(
+                f, text, start, end, kind, code, message, diags,
+            ));
+        } else {
+            items.push(recovery_line(f, text, start, end, code, message, diags));
+        }
+    }
+    items
+}
+
+fn behavior_item(
+    f: &GreenFactory<UmlLanguage>,
+    text: &SourceText,
+    source: &str,
+    start: usize,
+    end: usize,
+    kind: UmlSyntaxKind,
+    valid: bool,
+    code: UmlSyntaxDiagnosticCode,
+    message: &'static str,
+    diags: &mut Vec<TreeDiagnostic<UmlSyntaxDiagnosticCode>>,
+) -> GreenElement<UmlLanguage> {
+    if valid {
+        GreenElement::Node(
+            f.node(kind, behavior_tokens(f, text, source, start, end, true))
+                .unwrap(),
+        )
+    } else {
+        recovery_typed(f, text, start, end, kind, code, message, diags)
+    }
+}
+
+fn recovery_typed(
+    f: &GreenFactory<UmlLanguage>,
+    text: &SourceText,
+    start: usize,
+    end: usize,
+    kind: UmlSyntaxKind,
+    code: UmlSyntaxDiagnosticCode,
+    message: &'static str,
+    diags: &mut Vec<TreeDiagnostic<UmlSyntaxDiagnosticCode>>,
+) -> GreenElement<UmlLanguage> {
+    let recovery = recovery_line(f, text, start, end, code, message, diags);
+    GreenElement::Node(f.node(kind, [recovery]).unwrap())
+}
+
+fn recovery_line(
+    f: &GreenFactory<UmlLanguage>,
+    text: &SourceText,
+    start: usize,
+    end: usize,
+    code: UmlSyntaxDiagnosticCode,
+    message: &'static str,
+    diags: &mut Vec<TreeDiagnostic<UmlSyntaxDiagnosticCode>>,
+) -> GreenElement<UmlLanguage> {
+    diags.push(diag(code, start, end, message));
+    GreenElement::Node(
+        f.node(
+            UmlSyntaxKind::SkippedTokensSyntax,
+            [GreenElement::Token(
+                f.bad_token(UmlSyntaxKind::BadToken, slice(text, start, end), code)
+                    .unwrap(),
+            )],
+        )
+        .unwrap(),
+    )
+}
+
+fn behavior_tokens(
+    f: &GreenFactory<UmlLanguage>,
+    text: &SourceText,
+    source: &str,
+    start: usize,
+    end: usize,
+    bullet: bool,
+) -> Vec<GreenElement<UmlLanguage>> {
+    let newline_start = source[start..end]
+        .find('\n')
+        .map(|offset| start + offset)
+        .unwrap_or(end);
+    let content_end = source[start..newline_start].trim_end_matches('\r').len() + start;
+    let leading = skip_ws(source, start, content_end);
+    let mut children = Vec::new();
+    let mut at = leading;
+    if bullet && at < content_end && source.as_bytes()[at] == b'-' {
+        children.push(token(
+            f,
+            text,
+            start,
+            at,
+            at + 1,
+            UmlSyntaxKind::BulletToken,
+        ));
+        at += 1;
+    }
+    let mut word_index = 0usize;
+    let mut previous = "";
+    while at < content_end {
+        let word = skip_ws(source, at, content_end);
+        if word >= content_end {
+            break;
+        }
+        let word_end = source[word..content_end]
+            .find(char::is_whitespace)
+            .map(|offset| word + offset)
+            .unwrap_or(content_end);
+        let spelling = &source[word..word_end];
+        let message_verb = matches!(
+            previous,
+            "calls" | "sends" | "replies" | "creates" | "destroys"
+        );
+        let kind = if spelling.starts_with('[')
+            || previous == "to"
+            || message_verb
+            || (bullet
+                && word_index == 0
+                && !matches!(
+                    spelling,
+                    "alt"
+                        | "opt"
+                        | "loop"
+                        | "when"
+                        | "else"
+                        | "on"
+                        | "transitions"
+                        | "entry:"
+                        | "do:"
+                        | "exit:"
+                        | "refines"
+                        | "partition:"
+                )) {
+            UmlSyntaxKind::TargetToken
+        } else if spelling.starts_with('`') {
+            UmlSyntaxKind::ExpressionToken
+        } else if matches!(
+            spelling,
+            "initial"
+                | "final"
+                | "decision"
+                | "merge"
+                | "fork"
+                | "join"
+                | "object"
+                | "entry:"
+                | "do:"
+                | "exit:"
+                | "refines"
+                | "partition:"
+                | "transitions"
+        ) {
+            UmlSyntaxKind::FlowKeywordToken
+        } else if matches!(
+            spelling,
+            "calls"
+                | "sends"
+                | "replies"
+                | "creates"
+                | "destroys"
+                | "alt"
+                | "opt"
+                | "loop"
+                | "when"
+                | "else"
+        ) {
+            UmlSyntaxKind::MessageKeywordToken
+        } else {
+            UmlSyntaxKind::IdentifierToken
+        };
+        children.push(token(f, text, at, word, word_end, kind));
+        previous = spelling;
+        word_index += 1;
+        at = word_end;
+    }
+    if content_end < end {
+        children.push(token(
+            f,
+            text,
+            at,
+            content_end,
+            end,
+            UmlSyntaxKind::NewlineToken,
+        ));
+    }
+    children
 }
 
 fn simple_item(

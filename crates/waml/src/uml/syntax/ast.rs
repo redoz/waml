@@ -64,6 +64,20 @@ pub struct ShapeSyntax(pub(crate) SyntaxNode<UmlLanguage>);
 pub struct MarginSyntax(pub(crate) SyntaxNode<UmlLanguage>);
 #[derive(Clone, Debug)]
 pub struct FlagSyntax(pub(crate) SyntaxNode<UmlLanguage>);
+#[derive(Clone, Debug)]
+pub struct FlowNodeSyntax(pub(crate) SyntaxNode<UmlLanguage>);
+#[derive(Clone, Debug)]
+pub struct FlowTransitionSyntax(pub(crate) SyntaxNode<UmlLanguage>);
+#[derive(Clone, Debug)]
+pub struct FlowBlockSyntax(pub(crate) SyntaxNode<UmlLanguage>);
+#[derive(Clone, Debug)]
+pub struct LifelineSyntax(pub(crate) SyntaxNode<UmlLanguage>);
+#[derive(Clone, Debug)]
+pub struct MessageSyntax(pub(crate) SyntaxNode<UmlLanguage>);
+#[derive(Clone, Debug)]
+pub struct SequenceOperandSyntax(pub(crate) SyntaxNode<UmlLanguage>);
+#[derive(Clone, Debug)]
+pub struct MessagesBlockSyntax(pub(crate) SyntaxNode<UmlLanguage>);
 /// A typed leaf in a layout statement.  The source range belongs to this
 /// token directly, keeping diagnostics on links/quotes/delimiters precise.
 #[derive(Clone, Debug)]
@@ -225,6 +239,36 @@ simple_ast!(HintSyntax, Hint);
 simple_ast!(ShapeSyntax, Shape);
 simple_ast!(MarginSyntax, Margin);
 simple_ast!(FlagSyntax, Flag);
+simple_ast!(FlowNodeSyntax, FlowNode);
+simple_ast!(FlowTransitionSyntax, FlowTransition);
+simple_ast!(FlowBlockSyntax, FlowBlock);
+simple_ast!(LifelineSyntax, Lifeline);
+simple_ast!(MessageSyntax, Message);
+simple_ast!(SequenceOperandSyntax, SequenceOperand);
+simple_ast!(MessagesBlockSyntax, MessagesSection);
+
+macro_rules! behavior_syntax {
+    ($name:ident) => {
+        impl $name {
+            pub fn tokens(&self) -> impl Iterator<Item = SyntaxToken<UmlLanguage>> + '_ {
+                self.0.children().filter_map(SyntaxElement::into_token)
+            }
+            pub fn recovery(&self) -> impl Iterator<Item = SyntaxElement<UmlLanguage>> + '_ {
+                self.0.children().filter(|element| {
+                    matches!(
+                        element.kind(),
+                        UmlSyntaxKind::SkippedTokensSyntax | UmlSyntaxKind::BadToken
+                    )
+                })
+            }
+        }
+    };
+}
+behavior_syntax!(FlowNodeSyntax);
+behavior_syntax!(FlowTransitionSyntax);
+behavior_syntax!(LifelineSyntax);
+behavior_syntax!(MessageSyntax);
+behavior_syntax!(SequenceOperandSyntax);
 impl LayoutStatementSyntax {
     pub fn placement(&self) -> Option<LayoutPlacementSyntax> {
         self.0

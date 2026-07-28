@@ -14,17 +14,19 @@ pub use selector::{RelationshipSelector, Selector};
 pub type Projection = crate::model::Model;
 pub use analysis::{analyze, Analysis};
 pub use declared::{
-    DeclaredAttribute, DeclaredBundle, DeclaredConcept, DeclaredField, DeclaredInlineInstance,
-    DeclaredLayoutStatement, DeclaredMember, DeclaredMemberGroup, DeclaredRelationship,
-    DeclaredSlot, DeclaredValue, ExpectedSyntax,
+    DeclaredAttribute, DeclaredBundle, DeclaredConcept, DeclaredField, DeclaredFlowNode,
+    DeclaredFlowTransition, DeclaredInlineInstance, DeclaredLayoutStatement, DeclaredLifeline,
+    DeclaredMember, DeclaredMemberGroup, DeclaredMessage, DeclaredRelationship,
+    DeclaredSequenceOperand, DeclaredSlot, DeclaredValue, ExpectedSyntax,
 };
 pub use syntax::{
     AnchoredSyntax, AxisSyntax, DiagramMembersSyntax, DirectionClauseSyntax, EdgeSyntax,
-    FlagSyntax, HintClauseSyntax, HintSyntax, InlineInstanceSyntax, LayoutAlignmentSyntax,
-    LayoutAtomSyntax, LayoutPlacementSyntax, LayoutSectionSyntax, LayoutStandaloneSyntax,
-    LayoutStatementSyntax, MarginSyntax, MemberGroupSyntax, MemberSyntax, NameRefSyntax,
-    OperandRefSyntax, OperandSyntax, RelationshipEndSyntax, RelationshipSyntax, ShapeSyntax,
-    SlotSyntax, SlotValueKind, ValueSyntax,
+    FlagSyntax, FlowBlockSyntax, FlowNodeSyntax, FlowTransitionSyntax, HintClauseSyntax,
+    HintSyntax, InlineInstanceSyntax, LayoutAlignmentSyntax, LayoutAtomSyntax,
+    LayoutPlacementSyntax, LayoutSectionSyntax, LayoutStandaloneSyntax, LayoutStatementSyntax,
+    LifelineSyntax, MarginSyntax, MemberGroupSyntax, MemberSyntax, MessageSyntax,
+    MessagesBlockSyntax, NameRefSyntax, OperandRefSyntax, OperandSyntax, RelationshipEndSyntax,
+    RelationshipSyntax, SequenceOperandSyntax, ShapeSyntax, SlotSyntax, SlotValueKind, ValueSyntax,
 };
 
 pub(crate) fn recognizes_type(element_type: &crate::model::ElementType) -> bool {

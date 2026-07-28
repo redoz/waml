@@ -3,11 +3,12 @@ mod kind;
 pub mod parser;
 pub use ast::{
     AnchoredSyntax, AttributeSyntax, AxisSyntax, DiagramMembersSyntax, DirectionClauseSyntax,
-    EdgeSyntax, FlagSyntax, HintClauseSyntax, HintSyntax, InlineInstanceSyntax,
-    LayoutAlignmentSyntax, LayoutAtomSyntax, LayoutPlacementSyntax, LayoutSectionSyntax,
-    LayoutStandaloneSyntax, LayoutStatementSyntax, MarginSyntax, MemberGroupSyntax,
-    MemberLineSyntax, MemberSyntax, MultiplicitySyntax, NameRefSyntax, OperandRefSyntax,
-    OperandSyntax, RelationshipEndSyntax, RelationshipSyntax, ShapeSyntax, SlotSyntax,
+    EdgeSyntax, FlagSyntax, FlowBlockSyntax, FlowNodeSyntax, FlowTransitionSyntax,
+    HintClauseSyntax, HintSyntax, InlineInstanceSyntax, LayoutAlignmentSyntax, LayoutAtomSyntax,
+    LayoutPlacementSyntax, LayoutSectionSyntax, LayoutStandaloneSyntax, LayoutStatementSyntax,
+    LifelineSyntax, MarginSyntax, MemberGroupSyntax, MemberLineSyntax, MemberSyntax, MessageSyntax,
+    MessagesBlockSyntax, MultiplicitySyntax, NameRefSyntax, OperandRefSyntax, OperandSyntax,
+    RelationshipEndSyntax, RelationshipSyntax, SequenceOperandSyntax, ShapeSyntax, SlotSyntax,
     SlotValueKind, TypeReferenceSyntax, ValueSyntax,
 };
 pub use kind::{UmlSyntaxDiagnosticCode, UmlSyntaxKind};
