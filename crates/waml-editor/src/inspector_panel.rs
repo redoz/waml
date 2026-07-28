@@ -957,6 +957,20 @@ impl Inspector {
     /// (keyed per subject); an in-progress edit is discarded uncommitted.
     pub fn set_subject(&mut self, cx: &mut Cx, model: &Model, subject: Subject) {
         self.proj = build_view(model, &subject);
+        self.install_subject(cx, subject);
+    }
+
+    pub fn set_subject_analysis(
+        &mut self,
+        cx: &mut Cx,
+        analysis: &waml::uml::Analysis,
+        subject: Subject,
+    ) {
+        self.proj = crate::inspector::build_view_from_analysis(analysis, &subject);
+        self.install_subject(cx, subject);
+    }
+
+    fn install_subject(&mut self, cx: &mut Cx, subject: Subject) {
         self.subject = subject;
         self.editing = None;
         // Subject changes no longer force-unfold -- dock state is independent

@@ -193,10 +193,76 @@ pub enum PopupRequest {
 #[derive(Clone, Copy)]
 pub struct ViewData<'a> {
     pub source: &'a SourceBundle,
-    pub okf: &'a waml::okf::Bundle,
-    pub uml: &'a waml::uml::Projection,
-    #[allow(dead_code)]
+    pub okf_analysis: &'a waml::analysis::OkfAnalysis,
+    pub uml_analysis: &'a waml::uml::Analysis,
     pub revision: u64,
+}
+
+pub struct PreparedAction {
+    pub title: String,
+    pub edit: PendingEdit,
+}
+
+impl<'a> From<crate::editor_session::EditorSnapshot<'a>> for ViewData<'a> {
+    fn from(snapshot: crate::editor_session::EditorSnapshot<'a>) -> Self {
+        Self {
+            source: snapshot.source,
+            okf_analysis: snapshot.okf_analysis,
+            uml_analysis: snapshot.uml_analysis,
+            revision: snapshot.revision,
+        }
+    }
+}
+
+impl ViewData<'_> {
+    fn document_id(&self, concept_id: &str) -> Option<waml::analysis::DocumentId> {
+        let path = self.source.document_by_concept_id(concept_id)?.path();
+        self.okf_analysis.catalog.id_for_path(path)
+    }
+
+    pub fn uml_repair_actions(
+        self,
+        concept_id: &str,
+    ) -> Result<Vec<PreparedAction>, waml::action::ActionError> {
+        let Some(document) = self.document_id(concept_id) else {
+            return Ok(Vec::new());
+        };
+        let context =
+            waml::uml::ActionContext::new(self.okf_analysis, self.uml_analysis, self.revision)?;
+        waml::uml::repair_actions(context, document)?
+            .into_iter()
+            .map(|action| {
+                let title = action.title.clone();
+                let batch = waml::action::SyntaxChangeBatch::new(action)?;
+                Ok(PreparedAction {
+                    title,
+                    edit: PendingEdit::new(batch),
+                })
+            })
+            .collect()
+    }
+
+    pub fn uml_format_action(
+        self,
+        concept_id: &str,
+    ) -> Result<Option<PreparedAction>, waml::edit::EditError> {
+        let Some(document) = self.document_id(concept_id) else {
+            return Ok(None);
+        };
+        let context =
+            waml::uml::ActionContext::new(self.okf_analysis, self.uml_analysis, self.revision)
+                .map_err(waml::edit::EditError::from)?;
+        let action = waml::uml::Formatter
+            .format(context, document)
+            .map_err(waml::edit::EditError::from)?;
+        let title = action.title.clone();
+        let batch =
+            waml::action::SyntaxChangeBatch::new(action).map_err(waml::edit::EditError::from)?;
+        Ok(Some(PreparedAction {
+            title,
+            edit: PendingEdit::new(batch),
+        }))
+    }
 }
 
 pub trait DocView {

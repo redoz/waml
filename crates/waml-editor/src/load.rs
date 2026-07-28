@@ -33,7 +33,7 @@ impl From<SourceError> for LoadError {
 }
 
 /// Walk `dir` recursively, returning `(rel_path, contents)` for every `*.md`
-/// file, sorted by path. Paths use forward slashes so keys match `build_model`.
+/// file, sorted by path. Paths use forward slashes so keys match bundle IDs.
 pub fn read_bundle(dir: &Path) -> Result<SourceBundle, LoadError> {
     let mut out = Vec::new();
     collect(dir, dir, &mut out)?;
@@ -58,13 +58,15 @@ fn collect(root: &Path, dir: &Path, out: &mut Vec<(String, String)>) -> std::io:
     Ok(())
 }
 
-/// Load an OKF directory into a resolved `Model`. Test-only convenience: the
-/// app path now uses `load_bundle_and_model` (it retains the bundle for
-/// drag-to-place write-back); tests that only need a `Model` still use this.
+/// Load and analyze an OKF directory for tests that exercise projection-only
+/// presentation helpers. Production installation always goes through
+/// `EditorSession::replace`.
 #[cfg(test)]
 pub fn load_model(dir: &Path) -> Result<waml::uml::Projection, LoadError> {
-    let bundle = read_bundle(dir)?;
-    Ok(waml::parse::build_model_from_source(&bundle))
+    let source = read_bundle(dir)?;
+    let prepared = waml::analysis::prepare_candidate(source, None, 0)
+        .map_err(|error| std::io::Error::other(error.to_string()))?;
+    Ok(prepared.uml().projection.clone())
 }
 
 /// Return the raw markdown of the bundle file whose OKF id equals `key`. A

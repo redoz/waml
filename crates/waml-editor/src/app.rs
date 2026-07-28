@@ -879,8 +879,8 @@ impl App {
     /// stay identical for classifiers and diagrams.
     fn transition_document(&mut self, cx: &mut Cx, concept_id: &str, persistent: bool) -> bool {
         let Some(document) = crate::documents::open(
-            self.session.okf(),
-            self.session.uml_projection(),
+            self.session.okf_analysis(),
+            self.session.uml_analysis(),
             concept_id,
         ) else {
             return false;
@@ -1372,14 +1372,15 @@ impl App {
     /// this is the seam where that difference lives; callers only ever say the
     /// document changed (`mark_dirty`), never how to store it.
     fn save(&mut self, cx: &mut Cx) -> Result<(), String> {
-        if !self.session.is_dirty() {
+        let snapshot = self.session.snapshot();
+        if snapshot.dirty_revision.is_none() {
             return Ok(());
         }
-        if self.session.source().is_empty() {
+        if snapshot.source.is_empty() {
             return Err("cannot save an empty bundle".to_string());
         }
-        let revision = self.session.revision();
-        self.save_backend(cx)?;
+        let revision = snapshot.revision;
+        self.save_backend(cx, snapshot)?;
         self.session.mark_saved(revision);
         Ok(())
     }
@@ -1419,9 +1420,13 @@ impl App {
     /// `replace`, not push: an edit is not a navigation, and one history entry
     /// per save would make Back mean "undo some edits, sometimes".
     #[cfg(target_arch = "wasm32")]
-    fn save_backend(&mut self, cx: &mut Cx) -> Result<(), String> {
+    fn save_backend(
+        &self,
+        cx: &mut Cx,
+        snapshot: crate::editor_session::EditorSnapshot<'_>,
+    ) -> Result<(), String> {
         cx.browser_update_url(
-            &format!("#{}", waml::share::encode_source(self.session.source())),
+            &format!("#{}", waml::share::encode_source(snapshot.source)),
             true,
         );
         Ok(())
@@ -1430,16 +1435,16 @@ impl App {
     /// Native backing: atomically replace each authored file in the opened OKF
     /// directory. The helper validates bundle paths before performing writes.
     #[cfg(not(target_arch = "wasm32"))]
-    fn save_backend(&mut self, _cx: &mut Cx) -> Result<(), String> {
+    fn save_backend(
+        &self,
+        _cx: &mut Cx,
+        snapshot: crate::editor_session::EditorSnapshot<'_>,
+    ) -> Result<(), String> {
         let Some(root) = self.open_dir.as_deref() else {
             return Err("native bundle has no opened directory".to_string());
         };
-        crate::native_save::save_bundle_atomic(
-            root,
-            self.session.persisted_bundle(),
-            self.session.source(),
-        )
-        .map_err(|error| format!("failed to save OKF dir {root:?}: {error}"))
+        crate::native_save::save_snapshot_atomic(root, snapshot)
+            .map_err(|error| format!("failed to save OKF dir {root:?}: {error}"))
     }
 
     /// Push the canvas's current conflict count onto the toolbar badge.
@@ -1579,7 +1584,7 @@ impl App {
         // Fresh model: recompute the type-filter chip's cycle and reset scope /
         // search / filter to the whole-model browse state.
         self.nav_kinds =
-            crate::nav::kinds_in_model(self.session.okf(), self.session.uml_projection());
+            crate::nav::kinds_in_model(self.session.okf_analysis(), self.session.uml_analysis());
         self.nav_state = NavState::default();
 
         self.open_name = display_name;
@@ -1732,17 +1737,14 @@ impl App {
         let result = {
             let root = self.open_dir.as_deref();
             close_after_save(&mut self.session, |session| {
-                if !session.is_dirty() {
+                let snapshot = session.snapshot();
+                if snapshot.dirty_revision.is_none() {
                     return Ok(());
                 }
                 let root =
                     root.ok_or_else(|| "native bundle has no opened directory".to_string())?;
-                crate::native_save::save_bundle_atomic(
-                    root,
-                    session.persisted_bundle(),
-                    session.source(),
-                )
-                .map_err(|error| format!("failed to save OKF dir {root:?}: {error}"))
+                crate::native_save::save_snapshot_atomic(root, snapshot)
+                    .map_err(|error| format!("failed to save OKF dir {root:?}: {error}"))
             })
         };
 
@@ -1869,13 +1871,13 @@ impl App {
     /// field keeps showing the previous model's text over an unfiltered tree).
     fn refresh_nav(&mut self, cx: &mut Cx, scope_changed: bool) {
         let view = crate::nav::view(
-            self.session.okf(),
-            self.session.uml_projection(),
+            self.session.okf_analysis(),
+            self.session.uml_analysis(),
             &self.nav_state,
         );
         let chip = crate::nav::chip_label(self.nav_state.filter).to_string();
         let title = scope_changed.then(|| {
-            crate::nav::packages(self.session.okf(), self.session.uml_projection())
+            crate::nav::packages(self.session.okf_analysis(), self.session.uml_analysis())
                 .into_iter()
                 .find(|r| r.key == self.nav_state.scope)
                 .map(|r| r.title)

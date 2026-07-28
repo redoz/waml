@@ -22,6 +22,29 @@ pub enum Subject {
     Edge(String),
 }
 
+#[cfg(test)]
+mod parser_recovery_tests {
+    use super::*;
+
+    #[test]
+    fn declared_invalid_present_attribute_is_visible_instead_of_disappearing() {
+        let source = waml::source::SourceBundle::try_from_pairs([(
+            "broken.md",
+            "---\ntype: uml.Class\n---\n# Broken\n\n## Attributes\n- name String [oops 42]\n",
+        )])
+        .unwrap();
+        let prepared = waml::analysis::prepare_candidate(source, None, 4).unwrap();
+
+        let view = build_view_from_analysis(prepared.uml(), &Subject::Classifier("broken".into()))
+            .unwrap();
+
+        assert_eq!(view.attributes.len(), 1);
+        assert_eq!(view.attributes[0].name, "name");
+        assert_eq!(view.attributes[0].ty, "String");
+        assert_eq!(view.attributes[0].multiplicity, "<invalid multiplicity>");
+    }
+}
+
 /// An editable inspector field. Overrides are keyed `(subject_key, FieldId)`.
 /// UX mock scope A/B: title + description; attribute-row editing is a
 /// fast-follow (see `AttrField`, used once attribute rows gain the same
@@ -285,6 +308,69 @@ pub fn build_view(model: &Model, subject: &Subject) -> Option<InspectorView> {
         Subject::Classifier(key) => build_classifier_view(model, key),
         Subject::Group(name) => build_group_view(model, name),
         Subject::Edge(id) => build_edge_view(model, id),
+    }
+}
+
+pub fn build_view_from_analysis(
+    analysis: &waml::uml::Analysis,
+    subject: &Subject,
+) -> Option<InspectorView> {
+    let Subject::Classifier(key) = subject else {
+        return build_view(&analysis.projection, subject);
+    };
+    let declared = analysis.declared.concept(key)?;
+    let mut view =
+        build_classifier_view(&analysis.projection, key).unwrap_or_else(|| InspectorView {
+            title: key.rsplit('/').next().unwrap_or(key).to_string(),
+            kind_label: "UML".to_string(),
+            profile: String::new(),
+            abstract_flag: false,
+            stereotypes: Vec::new(),
+            description: None,
+            attributes: Vec::new(),
+            members: Vec::new(),
+            associations: Vec::new(),
+        });
+    view.attributes = declared
+        .attributes
+        .iter()
+        .map(|attribute| AttrRow {
+            name: declared_text(&attribute.name, "<missing name>", "<invalid name>"),
+            ty: match &attribute.ty {
+                waml::uml::DeclaredField::Valid { value, .. } => value.name.clone(),
+                waml::uml::DeclaredField::Absent | waml::uml::DeclaredField::Incomplete { .. } => {
+                    "<missing type>".into()
+                }
+                waml::uml::DeclaredField::Invalid { .. } => "<invalid type>".into(),
+            },
+            multiplicity: match &attribute.multiplicity {
+                waml::uml::DeclaredField::Valid { value, .. } => value.as_str().to_string(),
+                waml::uml::DeclaredField::Absent => String::new(),
+                waml::uml::DeclaredField::Incomplete { .. } => "<incomplete multiplicity>".into(),
+                waml::uml::DeclaredField::Invalid { .. } => "<invalid multiplicity>".into(),
+            },
+            visibility: match &attribute.visibility {
+                waml::uml::DeclaredField::Valid { value, .. } => value.marker().to_string(),
+                waml::uml::DeclaredField::Absent => String::new(),
+                waml::uml::DeclaredField::Incomplete { .. } => "<missing visibility>".into(),
+                waml::uml::DeclaredField::Invalid { .. } => "<invalid visibility>".into(),
+            },
+        })
+        .collect();
+    Some(view)
+}
+
+fn declared_text(
+    field: &waml::uml::DeclaredField<waml::uml::syntax::UmlLanguage, String>,
+    missing: &str,
+    invalid: &str,
+) -> String {
+    match field {
+        waml::uml::DeclaredField::Valid { value, .. } => value.clone(),
+        waml::uml::DeclaredField::Absent | waml::uml::DeclaredField::Incomplete { .. } => {
+            missing.into()
+        }
+        waml::uml::DeclaredField::Invalid { .. } => invalid.into(),
     }
 }
 

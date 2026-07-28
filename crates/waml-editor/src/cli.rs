@@ -179,9 +179,11 @@ mod tests {
             .join("tests/fixtures")
             .join(name);
         let source = load::read_bundle(&dir).unwrap();
-        let bundle = waml::okf::Bundle::parse(&source).unwrap();
-        let uml = waml::uml::project(&bundle);
-        (bundle, uml)
+        let prepared = waml::analysis::prepare_candidate(source, None, 0).unwrap();
+        (
+            prepared.okf().bundle.clone(),
+            prepared.uml().projection.clone(),
+        )
     }
 
     #[test]
@@ -209,10 +211,9 @@ mod tests {
     #[test]
     fn initial_document_is_none_for_empty_bundle() {
         let source = waml::source::SourceBundle::default();
-        let bundle = waml::okf::Bundle::parse(&source).unwrap();
-        let uml = waml::uml::project(&bundle);
+        let prepared = waml::analysis::prepare_candidate(source, None, 0).unwrap();
         assert_eq!(
-            select_initial_document(&bundle, &uml, None),
+            select_initial_document(&prepared.okf().bundle, &prepared.uml().projection, None,),
             InitialDocument::None
         );
     }

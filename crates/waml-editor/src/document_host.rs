@@ -26,12 +26,7 @@ pub struct DocumentHost {
 type RemovedViews = Vec<(LiveId, Box<dyn DocView>)>;
 
 fn data(session: &EditorSession) -> ViewData<'_> {
-    ViewData {
-        source: session.source(),
-        okf: &session.okf_analysis().bundle,
-        uml: &session.uml_analysis().projection,
-        revision: session.revision(),
-    }
+    session.snapshot().into()
 }
 
 impl DocumentHost {
@@ -238,12 +233,14 @@ impl DocumentHost {
                 break;
             }
             let current = &self.tabs.tabs[index];
+            let current_id = current.id;
             let Some(prepared) = prepared else {
                 continue;
             };
-            if prepared.tab_id == current.id {
+            if prepared.tab_id == current_id {
                 self.tabs.tabs[index].title = prepared.title;
                 self.tabs.tabs[index].presentation = prepared.presentation;
+                self.views.insert(current_id, prepared.view);
                 continue;
             }
             let preview = current.preview;
@@ -443,6 +440,30 @@ mod tests {
         host.reconcile_documents(vec![Some(changed_provider)]);
         assert_eq!(host.active_id(), LiveId::from_str("replacement-provider"));
         assert_eq!(host.views.len(), 1);
+    }
+
+    #[test]
+    fn same_provider_prepared_document_replaces_revision_bound_live_view() {
+        let old_calls = Rc::new(Cell::new(0));
+        let new_calls = Rc::new(Cell::new(0));
+        let mut host = DocumentHost::default();
+        host.apply_command(DocumentCommand::Open {
+            document: prepared("order", NavCategory::Class, old_calls.clone()),
+            persistent: true,
+        });
+        assert!(host.active_chrome().tool_dock);
+        assert_eq!(old_calls.get(), 1);
+
+        host.reconcile_documents(vec![Some(prepared(
+            "order",
+            NavCategory::Class,
+            new_calls.clone(),
+        ))]);
+
+        assert!(host.active_chrome().tool_dock);
+        assert_eq!(old_calls.get(), 1);
+        assert_eq!(new_calls.get(), 1);
+        assert!(!host.active_tab().unwrap().preview);
     }
 
     #[test]

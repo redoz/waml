@@ -92,8 +92,11 @@ const KIND_ORDER: [TreeKind; 10] = [
 /// The distinct `TreeKind`s present anywhere in the model, in canonical order.
 /// Drives the type-filter chip's cycle; compute once on Model load, not per
 /// keystroke.
-pub fn kinds_in_model(bundle: &waml::okf::Bundle, uml: &waml::uml::Projection) -> Vec<TreeKind> {
-    let full = build_tree(bundle, uml, "Untitled");
+pub fn kinds_in_model(
+    okf: &waml::analysis::OkfAnalysis,
+    uml: &waml::uml::Analysis,
+) -> Vec<TreeKind> {
+    let full = build_tree(okf, uml, "Untitled");
     let mut present: Vec<TreeKind> = Vec::new();
     fn walk(nodes: &[TreeNode], present: &mut Vec<TreeKind>) {
         for n in nodes {
@@ -112,9 +115,10 @@ pub fn kinds_in_model(bundle: &waml::okf::Bundle, uml: &waml::uml::Projection) -
 }
 
 /// Nested directory-only rows for the title dropdown, depth-indented.
-pub fn packages(bundle: &waml::okf::Bundle, uml: &waml::uml::Projection) -> Vec<PackageRow> {
-    let full = build_tree(bundle, uml, "Untitled");
-    let root_title = bundle
+pub fn packages(okf: &waml::analysis::OkfAnalysis, uml: &waml::uml::Analysis) -> Vec<PackageRow> {
+    let full = build_tree(okf, uml, "Untitled");
+    let root_title = okf
+        .bundle
         .index("/")
         .and_then(|index| index.title.clone())
         .unwrap_or_else(|| "Untitled".into());
@@ -207,8 +211,12 @@ fn query_prune(nodes: &[TreeNode], q: &str) -> Vec<TreeNode> {
         .collect()
 }
 
-pub fn view(bundle: &waml::okf::Bundle, uml: &waml::uml::Projection, state: &NavState) -> NavView {
-    let full = build_tree(bundle, uml, "Untitled");
+pub fn view(
+    okf: &waml::analysis::OkfAnalysis,
+    uml: &waml::uml::Analysis,
+    state: &NavState,
+) -> NavView {
+    let full = build_tree(okf, uml, "Untitled");
     let scoped = scoped_roots(&full, &state.scope);
     let filtered = match state.filter {
         Some(k) => filter_kind(&scoped, k),
@@ -240,7 +248,7 @@ mod tests {
     use super::*;
     use waml::source::SourceBundle;
 
-    fn built() -> (waml::okf::Bundle, waml::uml::Projection) {
+    fn built() -> (waml::analysis::OkfAnalysis, waml::uml::Analysis) {
         let source = SourceBundle::try_from_pairs([
             (
                 "index.md",
@@ -257,9 +265,9 @@ mod tests {
             ),
         ])
         .unwrap();
-        let bundle = waml::okf::Bundle::parse(&source).unwrap();
-        let projection = waml::uml::project(&bundle);
-        (bundle, projection)
+        let prepared = waml::analysis::prepare_candidate(source, None, 1).unwrap();
+        let (_, okf, uml, _) = prepared.into_parts();
+        (okf, uml)
     }
 
     #[test]

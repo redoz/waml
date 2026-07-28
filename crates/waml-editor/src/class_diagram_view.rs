@@ -256,7 +256,7 @@ impl ClassDiagramView {
 impl DocView for ClassDiagramView {
     fn sync(&mut self, cx: &mut Cx, body: &BodyWidgets, data: ViewData<'_>) {
         body.show_canvas(cx);
-        let model = data.uml;
+        let model = &data.uml_analysis.projection;
         self.sync_properties(cx, body, model);
         let built = model.diagrams.iter().find(|d| d.key == self.key).map(|d| {
             let (scene, diags) = build_scene(model, d, resolve_display(&d.display), &self.expanded);
@@ -320,7 +320,7 @@ impl DocView for ClassDiagramView {
         actions: &Actions,
         data: ViewData<'_>,
     ) -> ViewOutcome {
-        let model = data.uml;
+        let model = &data.uml_analysis.projection;
         let mut out = ViewOutcome::default();
 
         if self.mode.properties_visible() {
@@ -665,7 +665,7 @@ impl DocView for ClassDiagramView {
         tag: LiveId,
         result: PopupResult,
     ) -> ViewOutcome {
-        let model = data.uml;
+        let model = &data.uml_analysis.projection;
         if tag == live_id!(max_attributes_picker) {
             let action = body
                 .diagram_properties(cx)
@@ -754,7 +754,7 @@ impl DocView for ClassDiagramView {
     ) {
         match refresh_for(change) {
             DiagramRefresh::PreserveCamera => {
-                self.update_scene(cx, body, data.uml);
+                self.update_scene(cx, body, &data.uml_analysis.projection);
             }
             DiagramRefresh::None => {}
         }
@@ -1149,28 +1149,44 @@ mod tests {
         let ui = test_body(&mut vm);
         let cx = vm.cx_mut();
         let body = crate::doc_view::BodyWidgets::new(cx, &ui);
-        let mut model = mini_model();
         let mut view = ClassDiagramView::new("orders-diagram".into());
-        let source = waml::source::SourceBundle::default();
-        let okf = waml::okf::Bundle::parse(&source).unwrap();
+        let first = waml::analysis::prepare_candidate(
+            waml::source::SourceBundle::try_from_pairs([(
+                "orders-diagram.md",
+                "---\ntype: Diagram\ntitle: Orders\nprofile: uml-domain\n---\n# Orders\n",
+            )])
+            .unwrap(),
+            None,
+            1,
+        )
+        .unwrap();
         let data = crate::doc_view::ViewData {
-            source: &source,
-            okf: &okf,
-            uml: &model,
+            source: first.source(),
+            okf_analysis: first.okf(),
+            uml_analysis: first.uml(),
             revision: 1,
         };
 
         view.sync(cx, &body, data);
-        model.diagrams[0].title = "Order flow".into();
+        let second = waml::analysis::prepare_candidate(
+            waml::source::SourceBundle::try_from_pairs([(
+                "orders-diagram.md",
+                "---\ntype: Diagram\ntitle: Order flow\nprofile: uml-domain\n---\n# Order flow\n",
+            )])
+            .unwrap(),
+            None,
+            2,
+        )
+        .unwrap();
         view.on_deactivate(cx, &body);
         view.on_activate(cx, &body);
         view.sync(
             cx,
             &body,
             crate::doc_view::ViewData {
-                source: &source,
-                okf: &okf,
-                uml: &model,
+                source: second.source(),
+                okf_analysis: second.okf(),
+                uml_analysis: second.uml(),
                 revision: 2,
             },
         );

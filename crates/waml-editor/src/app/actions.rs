@@ -258,7 +258,7 @@ impl App {
                 match command {
                     crate::popup::node_menu::NodeMenuCommand::ViewSource => {
                         if let Some(document) =
-                            crate::okf_documents::open_source(self.session.okf(), &key)
+                            crate::okf_documents::open_source(self.session.okf_analysis(), &key)
                         {
                             self.documents.transition(
                                 cx,
@@ -375,7 +375,7 @@ impl App {
         };
 
         self.nav_scope_ids.clear();
-        let items = crate::nav::packages(self.session.okf(), self.session.uml_projection())
+        let items = crate::nav::packages(self.session.okf_analysis(), self.session.uml_analysis())
             .into_iter()
             .map(|row| {
                 let id = LiveId::from_str(&format!("scope:{}", row.key));
@@ -844,8 +844,8 @@ impl App {
                         .iter()
                         .map(|tab| {
                             crate::documents::reopen(
-                                self.session.okf(),
-                                self.session.uml_projection(),
+                                self.session.okf_analysis(),
+                                self.session.uml_analysis(),
                                 tab,
                             )
                         })
@@ -860,8 +860,8 @@ impl App {
                 }
                 if change.navigation_changed {
                     self.nav_kinds = crate::nav::kinds_in_model(
-                        self.session.okf(),
-                        self.session.uml_projection(),
+                        self.session.okf_analysis(),
+                        self.session.uml_analysis(),
                     );
                     self.refresh_nav(cx, false);
                 }

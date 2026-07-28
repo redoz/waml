@@ -34,12 +34,15 @@ impl DocView for SourceView {
         body.show_markdown(cx);
         let markdown = self.markdown(data);
         body.set_markdown(cx, markdown.as_ref());
-        let model = data.uml;
         if let Some(mut inspector) = body
             .inspector(cx)
             .borrow_mut::<crate::inspector_panel::Inspector>()
         {
-            inspector.set_subject(cx, model, Subject::Classifier(self.key.clone()));
+            inspector.set_subject_analysis(
+                cx,
+                data.uml_analysis,
+                Subject::Classifier(self.key.clone()),
+            );
             // A source view is not a diagram: no element picker.
             inspector.set_picker_visible(cx, false);
         }
@@ -120,13 +123,13 @@ mod tests {
 
     fn data<'a>(
         source: &'a SourceBundle,
-        okf: &'a waml::okf::Bundle,
-        uml: &'a waml::uml::Projection,
+        okf_analysis: &'a waml::analysis::OkfAnalysis,
+        uml_analysis: &'a waml::uml::Analysis,
     ) -> ViewData<'a> {
         ViewData {
             source,
-            okf,
-            uml,
+            okf_analysis,
+            uml_analysis,
             revision: 7,
         }
     }
@@ -138,12 +141,11 @@ mod tests {
             "# Order\nraw source".to_string(),
         )])
         .unwrap();
-        let okf = waml::okf::Bundle::parse(&source).unwrap();
-        let uml = waml::uml::project(&okf);
+        let prepared = waml::analysis::prepare_candidate(source.clone(), None, 7).unwrap();
         let view = SourceView::new("shop/order".into());
 
         assert_eq!(
-            view.markdown(data(&source, &okf, &uml)),
+            view.markdown(data(&source, prepared.okf(), prepared.uml())),
             "# Order\nraw source"
         );
     }
@@ -151,12 +153,11 @@ mod tests {
     #[test]
     fn missing_source_keeps_the_existing_italic_fallback() {
         let source = SourceBundle::default();
-        let okf = waml::okf::Bundle::parse(&source).unwrap();
-        let uml = waml::uml::project(&okf);
+        let prepared = waml::analysis::prepare_candidate(source.clone(), None, 7).unwrap();
         let view = SourceView::new("missing".into());
 
         assert_eq!(
-            view.markdown(data(&source, &okf, &uml)),
+            view.markdown(data(&source, prepared.okf(), prepared.uml())),
             "*No source for `missing`*"
         );
     }

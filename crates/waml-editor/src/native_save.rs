@@ -106,6 +106,19 @@ pub(crate) fn save_bundle_atomic(
     Ok(())
 }
 
+pub(crate) fn save_snapshot_atomic(
+    root: &Path,
+    snapshot: crate::editor_session::EditorSnapshot<'_>,
+) -> io::Result<()> {
+    if snapshot.dirty_revision != Some(snapshot.revision) {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "refusing to save a clean or stale editor snapshot",
+        ));
+    }
+    save_bundle_atomic(root, snapshot.persisted_source, snapshot.source)
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum DiskState {
     AlreadyDesired,
@@ -337,7 +350,7 @@ fn replace_file(temp: &Path, target: &Path) -> io::Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::save_bundle_atomic as save_source_bundle_atomic;
+    use super::{save_bundle_atomic as save_source_bundle_atomic, save_snapshot_atomic};
     use std::path::{Path, PathBuf};
     use std::sync::atomic::{AtomicU32, Ordering};
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -541,6 +554,17 @@ mod tests {
 
         assert_eq!(error.kind(), std::io::ErrorKind::InvalidInput);
         assert!(!temp.path().join("safe").exists());
+    }
+
+    #[test]
+    fn clean_snapshot_is_rejected_before_touching_disk() {
+        let temp = TempDir::new();
+        let session = crate::editor_session::EditorSession::default();
+
+        let error = save_snapshot_atomic(temp.path(), session.snapshot()).unwrap_err();
+
+        assert_eq!(error.kind(), std::io::ErrorKind::InvalidInput);
+        assert!(std::fs::read_dir(temp.path()).unwrap().next().is_none());
     }
 
     #[test]

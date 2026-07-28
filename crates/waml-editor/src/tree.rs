@@ -56,16 +56,17 @@ pub fn kind_of(ty: &ElementType) -> TreeKind {
 }
 
 pub fn build_tree(
-    bundle: &waml::okf::Bundle,
-    uml: &waml::uml::Projection,
+    okf: &waml::analysis::OkfAnalysis,
+    uml_analysis: &waml::uml::Analysis,
     root_fallback: &str,
 ) -> ProjectTree {
     fn directory_node(
-        bundle: &waml::okf::Bundle,
-        uml: &waml::uml::Projection,
+        okf: &waml::analysis::OkfAnalysis,
+        uml_analysis: &waml::uml::Analysis,
         address: &waml::okf::DirectoryAddress,
         root_fallback: &str,
     ) -> Option<TreeNode> {
+        let bundle = &okf.bundle;
         let directory = bundle
             .directories()
             .iter()
@@ -92,7 +93,7 @@ pub fn build_tree(
         };
         let concept_node = |concept_id: &str| {
             let concept = bundle.concept(concept_id)?;
-            let descriptor = crate::documents::describe(bundle, uml, concept_id)?;
+            let descriptor = crate::documents::describe(okf, uml_analysis, concept_id)?;
             let presentation = descriptor.presentation;
             Some(TreeNode {
                 key: concept_id.to_owned(),
@@ -122,7 +123,7 @@ pub fn build_tree(
                     .iter()
                     .find(|child| child.as_str() == member)
                 {
-                    if let Some(row) = directory_node(bundle, uml, child, root_fallback) {
+                    if let Some(row) = directory_node(okf, uml_analysis, child, root_fallback) {
                         seen.insert(member.clone());
                         children.push(row);
                     }
@@ -136,7 +137,7 @@ pub fn build_tree(
         }
         for child in &directory.child_directories {
             if seen.insert(child.as_str().to_owned()) {
-                if let Some(row) = directory_node(bundle, uml, child, root_fallback) {
+                if let Some(row) = directory_node(okf, uml_analysis, child, root_fallback) {
                     children.push(row);
                 }
             }
@@ -164,7 +165,7 @@ pub fn build_tree(
 
     let root = waml::okf::DirectoryAddress::parse("/").expect("root address is valid");
     ProjectTree {
-        roots: directory_node(bundle, uml, &root, root_fallback)
+        roots: directory_node(okf, uml_analysis, &root, root_fallback)
             .into_iter()
             .collect(),
     }
@@ -175,7 +176,7 @@ mod tests {
     use super::*;
     use waml::source::SourceBundle;
 
-    fn mixed() -> (waml::okf::Bundle, waml::uml::Projection) {
+    fn mixed() -> (waml::analysis::OkfAnalysis, waml::uml::Analysis) {
         let source = SourceBundle::try_from_pairs([
             ("index.md", "# Root\n\n* [Sales](sales/)\n"),
             (
@@ -187,9 +188,9 @@ mod tests {
             ("sales/runbook.md", "---\ntype: Runbook\ntitle: Runbook\n---\n# Runbook\n"),
             ("sales/log.md", "# Log\n"),
         ]).unwrap();
-        let bundle = waml::okf::Bundle::parse(&source).unwrap();
-        let projection = waml::uml::project(&bundle);
-        (bundle, projection)
+        let prepared = waml::analysis::prepare_candidate(source, None, 1).unwrap();
+        let (_, okf, uml, _) = prepared.into_parts();
+        (okf, uml)
     }
 
     #[test]
@@ -254,14 +255,13 @@ mod tests {
             ),
         ])
         .unwrap();
-        let bundle = waml::okf::Bundle::parse(&source).unwrap();
-        let projection = waml::uml::project(&bundle);
-        let tree = build_tree(&bundle, &projection, "Fallback");
+        let prepared = waml::analysis::prepare_candidate(source, None, 1).unwrap();
+        let tree = build_tree(prepared.okf(), prepared.uml(), "Fallback");
         let domain = &tree.roots[0].children[0];
 
         assert_eq!(domain.kind, NavCategory::Directory);
         assert!(!domain.is_directory);
         assert!(domain.openable);
-        assert!(crate::documents::open(&bundle, &projection, "domain").is_some());
+        assert!(crate::documents::open(prepared.okf(), prepared.uml(), "domain").is_some());
     }
 }

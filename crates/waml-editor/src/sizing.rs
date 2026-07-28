@@ -59,7 +59,7 @@ mod tests {
     /// Build a single-node model whose one classifier has `n` attributes, each
     /// typed `ty`. Returns the model so `size_of` can be called with it.
     fn model_with_attrs(n: usize, ty: &str) -> Model {
-        let bundle = vec![(
+        let source = waml::source::SourceBundle::try_from_pairs([(
             "e.md".to_string(),
             format!(
                 "---\ntype: uml.Class\ntitle: E\n---\n# E\n\n## Attributes\n{}",
@@ -67,8 +67,13 @@ mod tests {
                     .map(|i| format!("- f{i}: {ty} {{1}}\n"))
                     .collect::<String>()
             ),
-        )];
-        waml::parse::build_model(&bundle)
+        )])
+        .unwrap();
+        waml::analysis::prepare_candidate(source, None, 0)
+            .unwrap()
+            .uml()
+            .projection
+            .clone()
     }
 
     fn node0(model: &Model) -> &Node {

@@ -13,6 +13,16 @@ pub struct EditorSession {
     dirty_revision: Option<u64>,
 }
 
+#[derive(Clone, Copy)]
+pub struct EditorSnapshot<'a> {
+    pub source: &'a SourceBundle,
+    pub persisted_source: &'a SourceBundle,
+    pub okf_analysis: &'a OkfAnalysis,
+    pub uml_analysis: &'a waml::uml::Analysis,
+    pub revision: u64,
+    pub dirty_revision: Option<u64>,
+}
+
 impl Default for EditorSession {
     fn default() -> Self {
         let prepared = prepare_candidate(SourceBundle::default(), None, 0)
@@ -53,6 +63,17 @@ impl SessionChange {
 }
 
 impl EditorSession {
+    pub fn snapshot(&self) -> EditorSnapshot<'_> {
+        EditorSnapshot {
+            source: &self.source,
+            persisted_source: &self.persisted_source,
+            okf_analysis: &self.okf_analysis,
+            uml_analysis: &self.uml,
+            revision: self.revision,
+            dirty_revision: self.dirty_revision,
+        }
+    }
+
     pub fn replace(&mut self, source: SourceBundle) -> Result<SessionChange, EditError> {
         let next_revision = self.revision.wrapping_add(1);
         let prepared = prepare_candidate(source, None, next_revision)?;
@@ -247,6 +268,27 @@ mod tests {
             catalog_document
         ));
         assert!(!session.is_dirty());
+    }
+
+    #[test]
+    fn snapshot_exposes_one_coherent_revision_and_provenance_set() {
+        let mut session = EditorSession::default();
+        session.replace(diagram_bundle("")).unwrap();
+
+        let snapshot = session.snapshot();
+        assert_eq!(snapshot.revision, 1);
+        assert_eq!(
+            snapshot.okf_analysis.catalog.session_revision(),
+            snapshot.revision
+        );
+        assert_eq!(snapshot.uml_analysis.session_revision(), snapshot.revision);
+        assert!(Arc::ptr_eq(
+            &snapshot.okf_analysis.catalog,
+            snapshot.uml_analysis.syntax.catalog(),
+        ));
+        assert_eq!(snapshot.source, session.source());
+        assert_eq!(snapshot.persisted_source, session.persisted_bundle());
+        assert_eq!(snapshot.dirty_revision, None);
     }
 
     #[test]

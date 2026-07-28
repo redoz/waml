@@ -8,7 +8,15 @@ pub fn uml_document_tab_id(concept_id: &str) -> LiveId {
     LiveId::from_str(&format!("__doc_tab_uml__{concept_id}"))
 }
 
-fn category(projection: &waml::uml::Projection, concept_id: &str) -> Option<NavCategory> {
+fn category(
+    okf: &waml::analysis::OkfAnalysis,
+    uml: &waml::uml::Analysis,
+    concept_id: &str,
+) -> Option<NavCategory> {
+    if !uml.claims.contains(concept_id) {
+        return None;
+    }
+    let projection = &uml.projection;
     if projection
         .diagrams
         .iter()
@@ -36,21 +44,26 @@ fn category(projection: &waml::uml::Projection, concept_id: &str) -> Option<NavC
     if projection.flows.iter().any(|flow| flow.key == concept_id) {
         return Some(NavCategory::Behavior);
     }
-    None
+    let concept = okf.bundle.concept(concept_id)?;
+    Some(crate::tree::kind_of(&waml::model::ElementType::parse(
+        &concept.ty,
+    )))
 }
 
 pub fn presentation(
-    projection: &waml::uml::Projection,
+    okf: &waml::analysis::OkfAnalysis,
+    uml: &waml::uml::Analysis,
     concept_id: &str,
 ) -> Option<DocumentPresentation> {
-    describe(projection, concept_id).map(|descriptor| descriptor.presentation)
+    describe(okf, uml, concept_id).map(|descriptor| descriptor.presentation)
 }
 
 pub fn describe(
-    projection: &waml::uml::Projection,
+    okf: &waml::analysis::OkfAnalysis,
+    uml: &waml::uml::Analysis,
     concept_id: &str,
 ) -> Option<DocumentDescriptor> {
-    let category = category(projection, concept_id)?;
+    let category = category(okf, uml, concept_id)?;
     let classifier = matches!(
         category,
         NavCategory::Class | NavCategory::Interface | NavCategory::Enum | NavCategory::DataType
@@ -69,12 +82,12 @@ pub fn describe(
 }
 
 pub fn open(
-    bundle: &waml::okf::Bundle,
-    projection: &waml::uml::Projection,
+    okf: &waml::analysis::OkfAnalysis,
+    uml: &waml::uml::Analysis,
     concept_id: &str,
 ) -> Option<OpenDocument> {
-    let concept = bundle.concept(concept_id)?;
-    let presentation = presentation(projection, concept_id)?;
+    let concept = okf.bundle.concept(concept_id)?;
+    let presentation = presentation(okf, uml, concept_id)?;
     let title = concept.title.clone().unwrap_or_else(|| {
         concept_id
             .rsplit('/')
@@ -114,12 +127,11 @@ mod tests {
             ("runbook.md", "---\ntype: Runbook\n---\n# Runbook\n"),
         ])
         .unwrap();
-        let bundle = waml::okf::Bundle::parse(&source).unwrap();
-        let projection = waml::uml::project(&bundle);
-        assert!(open(&bundle, &projection, "order").is_some());
-        let package = describe(&projection, "domain").unwrap();
+        let prepared = waml::analysis::prepare_candidate(source, None, 1).unwrap();
+        assert!(open(prepared.okf(), prepared.uml(), "order").is_some());
+        let package = describe(prepared.okf(), prepared.uml(), "domain").unwrap();
         assert_eq!(package.presentation.category, NavCategory::Directory);
         assert!(!package.capabilities.can_edit_classifier);
-        assert!(open(&bundle, &projection, "runbook").is_none());
+        assert!(open(prepared.okf(), prepared.uml(), "runbook").is_none());
     }
 }

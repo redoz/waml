@@ -16,7 +16,8 @@ impl GenericOkfView {
     }
 
     fn markdown<'a>(&self, data: ViewData<'a>) -> Cow<'a, str> {
-        data.okf
+        data.okf_analysis
+            .bundle
             .concept(&self.concept_id)
             .map(|concept| Cow::Borrowed(concept.body.as_str()))
             .unwrap_or_else(|| Cow::Owned(format!("*No source for `{}`*", self.concept_id)))
@@ -100,22 +101,26 @@ mod tests {
 
     fn fixture(
         pairs: impl IntoIterator<Item = (&'static str, &'static str)>,
-    ) -> (SourceBundle, waml::okf::Bundle, waml::uml::Projection) {
+    ) -> (
+        SourceBundle,
+        waml::analysis::OkfAnalysis,
+        waml::uml::Analysis,
+    ) {
         let source = SourceBundle::try_from_pairs(pairs).unwrap();
-        let okf = waml::okf::Bundle::parse(&source).unwrap();
-        let uml = waml::uml::project(&okf);
+        let prepared = waml::analysis::prepare_candidate(source, None, 3).unwrap();
+        let (source, okf, uml, _) = prepared.into_parts();
         (source, okf, uml)
     }
 
     fn data<'a>(
         source: &'a SourceBundle,
-        okf: &'a waml::okf::Bundle,
-        uml: &'a waml::uml::Projection,
+        okf_analysis: &'a waml::analysis::OkfAnalysis,
+        uml_analysis: &'a waml::uml::Analysis,
     ) -> ViewData<'a> {
         ViewData {
             source,
-            okf,
-            uml,
+            okf_analysis,
+            uml_analysis,
             revision: 3,
         }
     }

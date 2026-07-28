@@ -24,7 +24,7 @@ impl ClassifierPreviewView {
 impl DocView for ClassifierPreviewView {
     fn sync(&mut self, cx: &mut Cx, body: &BodyWidgets, data: ViewData<'_>) {
         body.show_canvas(cx);
-        let model = data.uml;
+        let model = &data.uml_analysis.projection;
         let scene = build_focus_scene(model, &self.key);
         if let Some(mut canvas) = body
             .canvas(cx)
@@ -36,7 +36,11 @@ impl DocView for ClassifierPreviewView {
             .inspector(cx)
             .borrow_mut::<crate::inspector_panel::Inspector>()
         {
-            inspector.set_subject(cx, model, Subject::Classifier(self.key.clone()));
+            inspector.set_subject_analysis(
+                cx,
+                data.uml_analysis,
+                Subject::Classifier(self.key.clone()),
+            );
             // Previewing a classifier/package (not a diagram): no picker.
             inspector.set_picker_visible(cx, false);
         }
@@ -61,7 +65,7 @@ impl DocView for ClassifierPreviewView {
         actions: &Actions,
         data: ViewData<'_>,
     ) -> ViewOutcome {
-        let model = data.uml;
+        let model = &data.uml_analysis.projection;
         let mut out = ViewOutcome::default();
 
         // Inline-edit commit: promote (pin) this preview tab.
@@ -85,7 +89,7 @@ impl DocView for ClassifierPreviewView {
                     .inspector(cx)
                     .borrow_mut::<crate::inspector_panel::Inspector>()
                 {
-                    inspector.set_subject(cx, model, Subject::Classifier(key));
+                    inspector.set_subject_analysis(cx, data.uml_analysis, Subject::Classifier(key));
                 }
                 return out;
             }

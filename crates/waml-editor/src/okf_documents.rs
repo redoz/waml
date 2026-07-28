@@ -18,12 +18,18 @@ pub fn source_document_tab_id(concept_id: &str) -> LiveId {
     LiveId::from_str(&format!("__doc_tab_source__{concept_id}"))
 }
 
-pub fn presentation(bundle: &waml::okf::Bundle, concept_id: &str) -> Option<DocumentPresentation> {
-    describe(bundle, concept_id).map(|descriptor| descriptor.presentation)
+pub fn presentation(
+    analysis: &waml::analysis::OkfAnalysis,
+    concept_id: &str,
+) -> Option<DocumentPresentation> {
+    describe(analysis, concept_id).map(|descriptor| descriptor.presentation)
 }
 
-pub fn describe(bundle: &waml::okf::Bundle, concept_id: &str) -> Option<DocumentDescriptor> {
-    bundle.concept(concept_id)?;
+pub fn describe(
+    analysis: &waml::analysis::OkfAnalysis,
+    concept_id: &str,
+) -> Option<DocumentDescriptor> {
+    analysis.bundle.concept(concept_id)?;
     Some(DocumentDescriptor {
         presentation: DocumentPresentation {
             icon: Icon::StickyNote,
@@ -34,9 +40,9 @@ pub fn describe(bundle: &waml::okf::Bundle, concept_id: &str) -> Option<Document
     })
 }
 
-pub fn open(bundle: &waml::okf::Bundle, concept_id: &str) -> Option<OpenDocument> {
-    let concept = bundle.concept(concept_id)?;
-    let presentation = presentation(bundle, concept_id)?;
+pub fn open(analysis: &waml::analysis::OkfAnalysis, concept_id: &str) -> Option<OpenDocument> {
+    let concept = analysis.bundle.concept(concept_id)?;
+    let presentation = presentation(analysis, concept_id)?;
     Some(OpenDocument {
         tab_id: okf_document_tab_id(concept_id),
         concept_id: concept_id.to_string(),
@@ -54,9 +60,12 @@ pub fn open(bundle: &waml::okf::Bundle, concept_id: &str) -> Option<OpenDocument
     })
 }
 
-pub fn open_source(bundle: &waml::okf::Bundle, concept_id: &str) -> Option<OpenDocument> {
-    let concept = bundle.concept(concept_id)?;
-    let presentation = presentation(bundle, concept_id)?;
+pub fn open_source(
+    analysis: &waml::analysis::OkfAnalysis,
+    concept_id: &str,
+) -> Option<OpenDocument> {
+    let concept = analysis.bundle.concept(concept_id)?;
+    let presentation = presentation(analysis, concept_id)?;
     Some(OpenDocument {
         tab_id: source_document_tab_id(concept_id),
         concept_id: concept_id.to_string(),
@@ -85,10 +94,10 @@ mod tests {
             ("runbook.md", "---\ntype: Runbook\n---\n# Runbook\n"),
         ])
         .unwrap();
-        let bundle = waml::okf::Bundle::parse(&source).unwrap();
-        assert!(open(&bundle, "runbook").is_some());
-        assert!(open(&bundle, "index").is_none());
-        assert!(open(&bundle, "log").is_none());
+        let prepared = waml::analysis::prepare_candidate(source, None, 1).unwrap();
+        assert!(open(prepared.okf(), "runbook").is_some());
+        assert!(open(prepared.okf(), "index").is_none());
+        assert!(open(prepared.okf(), "log").is_none());
     }
 
     #[test]
