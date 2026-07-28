@@ -178,6 +178,17 @@ fn simple_item(
             section,
         ));
     }
+    if kind == UmlSyntaxKind::Slot && !source[body..content_end].contains(':') {
+        children.push(GreenElement::Token(
+            f.missing_token(UmlSyntaxKind::ColonToken),
+        ));
+        diags.push(diag(
+            UmlSyntaxDiagnosticCode::MissingColon,
+            lead,
+            content_end,
+            "missing ':' in slot",
+        ));
+    }
     if content_end < end {
         children.push(token(
             f,

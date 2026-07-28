@@ -19,6 +19,14 @@ pub struct MemberSyntax(pub(crate) SyntaxNode<UmlLanguage>);
 pub struct MemberGroupSyntax(pub(crate) SyntaxNode<UmlLanguage>);
 #[derive(Clone, Debug)]
 pub struct InlineInstanceSyntax(pub(crate) SyntaxNode<UmlLanguage>);
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum SlotValueKind {
+    Bare,
+    Quoted,
+    Link,
+    Missing,
+    Invalid,
+}
 impl AttributeSyntax {
     pub fn visibility_token(&self) -> Option<SyntaxToken<UmlLanguage>> {
         self.token(UmlSyntaxKind::VisibilityToken)
@@ -184,6 +192,34 @@ impl MemberSyntax {
     }
 }
 impl SlotSyntax {
+    pub fn value_kind(&self) -> SlotValueKind {
+        let Some(colon) = self.colon_token() else {
+            return SlotValueKind::Missing;
+        };
+        if colon.flags().is_missing() {
+            return SlotValueKind::Missing;
+        }
+        let mut after_colon = false;
+        for child in self.0.children() {
+            if child.kind() == UmlSyntaxKind::ColonToken {
+                after_colon = true;
+                continue;
+            }
+            if !after_colon {
+                continue;
+            }
+            return match child.kind() {
+                UmlSyntaxKind::Link => SlotValueKind::Link,
+                UmlSyntaxKind::TypeToken => SlotValueKind::Quoted,
+                UmlSyntaxKind::IdentifierToken => SlotValueKind::Bare,
+                UmlSyntaxKind::BadToken | UmlSyntaxKind::SkippedTokensSyntax => {
+                    SlotValueKind::Invalid
+                }
+                _ => continue,
+            };
+        }
+        SlotValueKind::Missing
+    }
     pub fn value_token(&self) -> Option<SyntaxToken<UmlLanguage>> {
         let mut after_colon = false;
         for child in self.0.children() {

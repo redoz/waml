@@ -174,3 +174,39 @@ fn declared_classifier_fields_are_lowered_from_fixed_syntax_slots() {
         matches!(concept.members[0].target, uml::DeclaredField::Valid { ref value, .. } if value == "./other.md")
     );
 }
+
+#[test]
+fn slot_value_variants_and_missing_colon_are_distinguished() {
+    let source = SourceBundle::try_from_pairs([
+        ("class.md", "---\ntype: uml.Class\n---\n# Class\n\n## Slots\n- bare: OPEN\n- quoted: \"OPEN\"\n- linked: [State](./state.md)\n- missing OPEN\n"),
+        ("state.md", "---\ntype: uml.Class\n---\n# State\n"),
+    ]).unwrap();
+    let analysis = analyze(&source);
+    let id = analysis
+        .syntax
+        .catalog()
+        .id_for_path(&waml::source::BundlePath::parse("class.md").unwrap())
+        .unwrap();
+    let root = analysis.syntax.document(id).unwrap().syntax().root();
+    let mut variants = Vec::new();
+    fn visit(
+        node: waml_syntax::SyntaxNode<waml::uml::syntax::UmlLanguage>,
+        out: &mut Vec<waml::uml::SlotSyntax>,
+    ) {
+        if let Some(slot) = waml::uml::SlotSyntax::cast(node.clone()) {
+            out.push(slot);
+        }
+        for child in node
+            .children()
+            .filter_map(waml_syntax::SyntaxElement::into_node)
+        {
+            visit(child, out);
+        }
+    }
+    visit(root, &mut variants);
+    assert_eq!(variants.len(), 4);
+    assert_eq!(variants[0].value_kind(), waml::uml::SlotValueKind::Bare);
+    assert_eq!(variants[1].value_kind(), waml::uml::SlotValueKind::Quoted);
+    assert_eq!(variants[2].value_kind(), waml::uml::SlotValueKind::Link);
+    assert!(variants[3].colon_token().unwrap().flags().is_missing());
+}

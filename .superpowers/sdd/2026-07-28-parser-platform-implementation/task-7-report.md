@@ -39,15 +39,25 @@
   members, and inline instances no longer call `grammar.rs` to reparse source.
   The direct declared-field regression brings the focused suite to 4 tests.
 
+## Latest incremental regression
+
+- Added a red/green fixed-slot regression for bare, quoted, link, and missing
+  slot values. `SlotSyntax::value_kind` distinguishes those authored variants
+  without descendant searching; a missing colon is represented by the required
+  zero-width `ColonToken` and emits the existing missing-colon recovery
+  diagnostic. The focused suite now has 5 tests.
+
 ## Remaining concerns
 
 This is not complete Task 7 parity yet: slot values still lack distinct
-quoted/bare/link syntax variants and precise missing/invalid state;
 relationship names/ends/multiplicities and skipped-token recovery are not fixed
 slots; member groups and inline clauses do not enforce indentation-aware
 structure; and the exhaustive CRLF/Unicode/range/progress matrix is absent.
-Target resolution, located diagnostics, and syntax-authoritative projection
-remain a later phase.
+Most importantly, `uml::analysis` still starts with legacy
+`super::project(context.okf)` and only replaces attributes, so values, slots,
+members, relationships, targets, diagnostics, and edges are not yet wholly
+syntax-authoritative. Target resolution against the claimed-document index and
+located `UnresolvedTarget` provenance remain unimplemented.
 
 ## Metrics
 
