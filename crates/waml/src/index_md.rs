@@ -24,6 +24,21 @@ fn member_url(dir: &str, e: &IndexEntry) -> String {
     }
 }
 
+pub(crate) fn render_members(dir: &str, members: &[IndexEntry], newline: &str) -> String {
+    let mut out = String::new();
+    for entry in members {
+        let url = member_url(dir, entry);
+        match &entry.blurb {
+            Some(blurb) if !blurb.trim().is_empty() => {
+                out.push_str(&format!("* [{}]({url}) - {}", entry.title, blurb.trim()));
+            }
+            _ => out.push_str(&format!("* [{}]({url})", entry.title)),
+        }
+        out.push_str(newline);
+    }
+    out
+}
+
 pub fn render_index(
     dir: &str,
     title: Option<&str>,
@@ -50,15 +65,7 @@ pub fn render_index(
     if !members.is_empty() {
         out.push('\n');
     }
-    for e in members {
-        let url = member_url(dir, e);
-        match &e.blurb {
-            Some(b) if !b.trim().is_empty() => {
-                out.push_str(&format!("* [{}]({url}) - {}\n", e.title, b.trim()))
-            }
-            _ => out.push_str(&format!("* [{}]({url})\n", e.title)),
-        }
-    }
+    out.push_str(&render_members(dir, members, "\n"));
     out
 }
 

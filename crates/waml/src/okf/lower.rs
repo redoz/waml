@@ -1,6 +1,212 @@
-use crate::edit::EditError;
-use crate::index_md::{render_index, IndexEntry};
+use std::collections::{BTreeMap, BTreeSet};
+use std::sync::Arc;
+
+use crate::edit::{EditContext, EditError};
+use crate::index_md::{render_index, render_members, IndexEntry};
 use crate::source::{BundlePath, SourceBundle};
+use waml_syntax::{
+    parse_okf_markdown, MarkdownDialect, OkfMarkdownSyntaxKind, ShellParse, SourceText,
+    SyntaxElement,
+};
+
+pub(crate) struct OkfLoweringCursor<'a> {
+    original: EditContext<'a>,
+    candidate: SourceBundle,
+    state: OkfLoweringState,
+}
+
+pub(crate) struct OkfLoweringState {
+    touched_shell: BTreeMap<BundlePath, ShellParse>,
+    structural_paths: BTreeSet<BundlePath>,
+}
+
+impl OkfLoweringState {
+    pub(crate) fn from_source(source: &SourceBundle) -> Self {
+        Self {
+            touched_shell: BTreeMap::new(),
+            structural_paths: source
+                .documents()
+                .iter()
+                .map(|document| document.path().clone())
+                .collect(),
+        }
+    }
+
+    pub(crate) fn from_context(context: &EditContext<'_>) -> Self {
+        Self::from_source(context.source)
+    }
+
+    pub(crate) fn invalidate_text(&mut self, path: &BundlePath) {
+        self.touched_shell.remove(path);
+    }
+
+    pub(crate) fn inserted(&mut self, path: BundlePath) -> Result<(), EditError> {
+        if !self.structural_paths.insert(path.clone()) {
+            return Err(EditError::at(
+                "okf.structure",
+                format!("'{}' already exists", path.as_str()),
+            ));
+        }
+        self.touched_shell.remove(&path);
+        Ok(())
+    }
+
+    pub(crate) fn removed(&mut self, path: &BundlePath) {
+        self.structural_paths.remove(path);
+        self.touched_shell.remove(path);
+    }
+
+    pub(crate) fn renamed(&mut self, from: &BundlePath, to: BundlePath) -> Result<(), EditError> {
+        if from != &to && self.structural_paths.contains(&to) {
+            return Err(EditError::at(
+                "okf.structure",
+                format!("'{}' already exists", to.as_str()),
+            ));
+        }
+        if !self.structural_paths.remove(from) {
+            return Err(EditError::at(
+                "okf.structure",
+                format!("no document '{}'", from.as_str()),
+            ));
+        }
+        self.structural_paths.insert(to.clone());
+        self.touched_shell.remove(from);
+        self.touched_shell.remove(&to);
+        Ok(())
+    }
+
+    fn shell<'a>(
+        &'a mut self,
+        candidate: &SourceBundle,
+        path: &BundlePath,
+        op: &str,
+    ) -> Result<&'a ShellParse, EditError> {
+        if !self.touched_shell.contains_key(path) {
+            let document = candidate
+                .document(path)
+                .ok_or_else(|| EditError::at(op, format!("no document '{}'", path.as_str())))?;
+            let text = SourceText::from_shared(document.text_arc().clone())
+                .map_err(|error| EditError::at(op, error.to_string()))?;
+            let parsed = parse_okf_markdown(text, MarkdownDialect::CommonMarkCurrent)
+                .map_err(|error| EditError::at(op, error.to_string()))?;
+            self.touched_shell.insert(path.clone(), parsed);
+        }
+        Ok(self
+            .touched_shell
+            .get(path)
+            .expect("shell parse inserted for candidate path"))
+    }
+
+    fn reparse(
+        &mut self,
+        candidate: &SourceBundle,
+        path: &BundlePath,
+        op: &str,
+    ) -> Result<(), EditError> {
+        self.invalidate_text(path);
+        self.shell(candidate, path, op).map(|_| ())
+    }
+}
+
+impl<'a> OkfLoweringCursor<'a> {
+    pub(crate) fn new(context: EditContext<'a>) -> Self {
+        let candidate = context.source.clone();
+        let state = OkfLoweringState::from_context(&context);
+        Self {
+            original: context,
+            candidate,
+            state,
+        }
+    }
+
+    pub(crate) fn apply(&mut self, index: usize, op: &crate::okf::Op) -> Result<(), EditError> {
+        if index == 0 {
+            validate_context(&self.original)?;
+        }
+        apply_step(&mut self.candidate, &mut self.state, index, op)
+    }
+
+    pub(crate) fn finish(self) -> SourceBundle {
+        self.candidate
+    }
+}
+
+pub(crate) fn apply_step(
+    candidate: &mut SourceBundle,
+    state: &mut OkfLoweringState,
+    index: usize,
+    op: &crate::okf::Op,
+) -> Result<(), EditError> {
+    let before: BTreeSet<_> = candidate
+        .documents()
+        .iter()
+        .map(|document| document.path().clone())
+        .collect();
+    crate::okf::ops::lower_one_with_state(candidate, state, op).map_err(|mut error| {
+        error.index = index;
+        error
+    })?;
+    let after: BTreeSet<_> = candidate
+        .documents()
+        .iter()
+        .map(|document| document.path().clone())
+        .collect();
+    let removed: Vec<_> = before.difference(&after).cloned().collect();
+    let inserted: Vec<_> = after.difference(&before).cloned().collect();
+    if !removed.is_empty() && removed.len() == inserted.len() {
+        for (from, to) in removed.iter().zip(inserted) {
+            state.renamed(from, to).map_err(|mut error| {
+                error.index = index;
+                error
+            })?;
+        }
+    } else {
+        for path in &removed {
+            state.removed(path);
+        }
+        for path in inserted {
+            state.inserted(path).map_err(|mut error| {
+                error.index = index;
+                error
+            })?;
+        }
+    }
+    Ok(())
+}
+
+fn validate_context(context: &EditContext<'_>) -> Result<(), EditError> {
+    let catalog = &context.okf_analysis.catalog;
+    if catalog.session_revision() != context.session_revision
+        || context.uml.session_revision() != context.session_revision
+    {
+        return Err(EditError::at(
+            "okf.context",
+            "analysis revision does not match the requested session revision",
+        ));
+    }
+    if !Arc::ptr_eq(catalog, context.okf_analysis.shell.catalog())
+        || !Arc::ptr_eq(catalog, context.uml.syntax.catalog())
+        || catalog.documents().len() != context.source.len()
+    {
+        return Err(EditError::at(
+            "okf.context",
+            "analysis catalog does not match the source bundle",
+        ));
+    }
+    for document in catalog.documents().values() {
+        let source = context
+            .source
+            .document(document.path())
+            .ok_or_else(|| EditError::at("okf.context", "catalog path is absent from source"))?;
+        if !Arc::ptr_eq(document.text().shared(), source.text_arc()) {
+            return Err(EditError::at(
+                "okf.context",
+                "catalog text does not match source identity",
+            ));
+        }
+    }
+    Ok(())
+}
 
 fn slug_of(path: &str) -> String {
     let segment = path.rsplit(['/', '\\']).next().unwrap_or(path);
@@ -170,20 +376,6 @@ pub(crate) fn op_pkg_delete(
 
 /// Title/description now live on `concept` (single source). Look up a member's
 /// display title across nodes, diagrams, and sub-packages.
-fn member_title(bundle: &crate::okf::Bundle, key: &str) -> String {
-    if key.starts_with('/') {
-        bundle
-            .index(key)
-            .and_then(|index| index.title.clone())
-            .unwrap_or_else(|| key.rsplit('/').next().unwrap_or(key).to_owned())
-    } else {
-        bundle
-            .concept(key)
-            .and_then(|concept| concept.title.clone())
-            .unwrap_or_else(|| key.rsplit('/').next().unwrap_or(key).to_owned())
-    }
-}
-
 /// How a rewritten index.md orders its members. `Sort` = A–Z by title; `Explicit`
 /// = a caller-supplied order (unknown keys ignored, missing keys appended).
 enum MemberOrder<'a> {
@@ -194,40 +386,337 @@ enum MemberOrder<'a> {
     Keep,
 }
 
+fn package_entries(
+    work: &SourceBundle,
+    state: &mut OkfLoweringState,
+    directory: &str,
+) -> Result<Vec<IndexEntry>, EditError> {
+    let prefix = if directory.is_empty() {
+        String::new()
+    } else {
+        format!("{directory}/")
+    };
+    let mut child_directories = BTreeSet::new();
+    let mut concept_paths = Vec::new();
+    for path in &state.structural_paths {
+        let Some(relative) = path.as_str().strip_prefix(&prefix) else {
+            continue;
+        };
+        if let Some((child, _)) = relative.split_once('/') {
+            child_directories.insert(child.to_owned());
+            continue;
+        }
+        if matches!(relative, "index.md" | "log.md") {
+            continue;
+        }
+        concept_paths.push(path.clone());
+    }
+
+    let mut entries = Vec::new();
+    for child in child_directories {
+        let child_directory = if directory.is_empty() {
+            child
+        } else {
+            format!("{directory}/{child}")
+        };
+        let index_path = BundlePath::parse(format!("{child_directory}/index.md"))
+            .map_err(|error| EditError::at("pkg.index", error.to_string()))?;
+        let title = if work.document(&index_path).is_some() {
+            document_title(work, state, &index_path, "pkg.index")?
+                .unwrap_or_else(|| child_directory.rsplit('/').next().unwrap().to_owned())
+        } else {
+            child_directory.rsplit('/').next().unwrap().to_owned()
+        };
+        entries.push(IndexEntry {
+            key: format!("/{child_directory}"),
+            title,
+            blurb: None,
+            is_package: true,
+        });
+    }
+    for path in concept_paths {
+        let key = path
+            .as_str()
+            .strip_suffix(".md")
+            .expect("structural Markdown path has md suffix")
+            .to_owned();
+        let title = document_title(work, state, &path, "pkg.index")?
+            .unwrap_or_else(|| slug_of(path.as_str()));
+        let blurb = frontmatter_value(work, state, &path, "description", "pkg.index")?
+            .map(|description| description.lines().next().unwrap_or("").to_owned());
+        entries.push(IndexEntry {
+            key,
+            title,
+            blurb,
+            is_package: false,
+        });
+    }
+    entries.sort_by(|left, right| left.key.cmp(&right.key));
+    Ok(entries)
+}
+
+fn document_title(
+    work: &SourceBundle,
+    state: &mut OkfLoweringState,
+    path: &BundlePath,
+    op: &str,
+) -> Result<Option<String>, EditError> {
+    if let Some(title) = frontmatter_value(work, state, path, "title", op)? {
+        return Ok(Some(title));
+    }
+    let document = work
+        .document(path)
+        .ok_or_else(|| EditError::at(op, format!("no document '{}'", path.as_str())))?;
+    let shell = state.shell(work, path, op)?;
+    Ok(shell
+        .structure
+        .headings
+        .iter()
+        .find(|heading| heading.level == 1)
+        .map(|heading| {
+            document.text()
+                [heading.text_range.start().to_usize()..heading.text_range.end().to_usize()]
+                .trim()
+                .to_owned()
+        })
+        .filter(|title| !title.is_empty()))
+}
+
+fn frontmatter_value(
+    work: &SourceBundle,
+    state: &mut OkfLoweringState,
+    path: &BundlePath,
+    wanted: &str,
+    op: &str,
+) -> Result<Option<String>, EditError> {
+    let shell = state.shell(work, path, op)?;
+    for child in shell
+        .tree
+        .root()
+        .children()
+        .filter_map(SyntaxElement::into_node)
+    {
+        if child.kind() != OkfMarkdownSyntaxKind::Frontmatter {
+            continue;
+        }
+        let closed = child.children().any(|element| {
+            element.into_token().is_some_and(|token| {
+                token.kind() == OkfMarkdownSyntaxKind::FrontmatterCloseFence
+                    && !token.flags().is_missing()
+            })
+        });
+        if !closed {
+            return Ok(None);
+        }
+        for entry in child.children().filter_map(SyntaxElement::into_node) {
+            if entry.kind() != OkfMarkdownSyntaxKind::FrontmatterEntry {
+                continue;
+            }
+            let mut key = None;
+            let mut value = None;
+            for token in entry.children().filter_map(SyntaxElement::into_token) {
+                match token.kind() {
+                    OkfMarkdownSyntaxKind::FrontmatterKey => {
+                        key = Some(token.text().write_to_string())
+                    }
+                    OkfMarkdownSyntaxKind::FrontmatterValue if !token.flags().is_missing() => {
+                        value = Some(token.text().write_to_string())
+                    }
+                    _ => {}
+                }
+            }
+            if key.as_deref().is_some_and(|key| key.trim() == wanted) {
+                return Ok(value.and_then(|value| {
+                    match crate::frontmatter::parse_value(value.trim()) {
+                        crate::frontmatter::FmValue::Str(value) => Some(value),
+                        _ => None,
+                    }
+                }));
+            }
+        }
+    }
+    Ok(None)
+}
+
+fn authored_member_order(
+    work: &SourceBundle,
+    state: &mut OkfLoweringState,
+    directory: &str,
+    valid: &[String],
+) -> Result<Vec<String>, EditError> {
+    let path = BundlePath::parse(if directory.is_empty() {
+        "index.md".to_owned()
+    } else {
+        format!("{directory}/index.md")
+    })
+    .map_err(|error| EditError::at("pkg.index", error.to_string()))?;
+    let Some(document) = work.document(&path) else {
+        return Ok(Vec::new());
+    };
+    let ranges = state
+        .shell(work, &path, "pkg.index")?
+        .structure
+        .list_item_lines
+        .clone();
+    let mut ordered = Vec::new();
+    for range in ranges.iter() {
+        let line = &document.text()[range.start().to_usize()..range.end().to_usize()];
+        let Some(href) = markdown_href(line) else {
+            continue;
+        };
+        let key = if href.ends_with('/') {
+            let child = href.trim_end_matches('/').trim_start_matches("./");
+            if directory.is_empty() {
+                format!("/{child}")
+            } else {
+                format!("/{directory}/{child}")
+            }
+        } else {
+            let relative = href.trim_start_matches("./").trim_end_matches(".md");
+            if directory.is_empty() {
+                relative.to_owned()
+            } else {
+                format!("{directory}/{relative}")
+            }
+        };
+        if valid.contains(&key) && !ordered.contains(&key) {
+            ordered.push(key);
+        }
+    }
+    Ok(ordered)
+}
+
+fn markdown_href(line: &str) -> Option<&str> {
+    let start = line.find("](")? + 2;
+    let end = line[start..].find(')')? + start;
+    Some(&line[start..end])
+}
+
+fn update_authored_index(
+    work: &mut SourceBundle,
+    state: &mut OkfLoweringState,
+    index_path: &BundlePath,
+    directory: &str,
+    title_override: Option<&str>,
+    entries: &[IndexEntry],
+) -> Result<(), EditError> {
+    let document = work
+        .document(index_path)
+        .ok_or_else(|| EditError::at("pkg.index", "index disappeared during lowering"))?;
+    let source = document.text();
+    let newline = if source.contains("\r\n") {
+        "\r\n"
+    } else {
+        "\n"
+    };
+    let shell = state.shell(work, index_path, "pkg.index")?;
+    let h1 = shell
+        .structure
+        .headings
+        .iter()
+        .find(|heading| heading.level == 1)
+        .map(|heading| {
+            let start = heading.text_range.start().to_usize();
+            let mut end = heading.text_range.end().to_usize();
+            while end > start && source.as_bytes()[end - 1].is_ascii_whitespace() {
+                end -= 1;
+            }
+            start..end
+        });
+    let list_ranges: Vec<_> = shell
+        .structure
+        .list_item_lines
+        .iter()
+        .map(|range| range.start().to_usize()..range.end().to_usize())
+        .collect();
+    let mut edits: Vec<(std::ops::Range<usize>, String)> = Vec::new();
+    if let Some(title) = title_override {
+        match h1 {
+            Some(range) => edits.push((range, title.to_owned())),
+            None => edits.push((0..0, format!("# {title}{newline}{newline}"))),
+        }
+    }
+    let listing = render_members(directory, entries, newline);
+    if let Some(first) = list_ranges.first() {
+        edits.push((first.clone(), listing));
+        for range in list_ranges.iter().skip(1) {
+            edits.push((range.clone(), String::new()));
+        }
+    } else if !listing.is_empty() {
+        let separator = if source.is_empty() || source.ends_with("\n\n") {
+            ""
+        } else if source.ends_with('\n') {
+            newline
+        } else {
+            if newline == "\r\n" {
+                "\r\n\r\n"
+            } else {
+                "\n\n"
+            }
+        };
+        edits.push((source.len()..source.len(), format!("{separator}{listing}")));
+    }
+    edits.sort_by_key(|(range, _)| (range.start, range.end));
+    let text = work
+        .document_mut(index_path)
+        .expect("authored index remains in candidate")
+        .text_mut();
+    for (range, replacement) in edits.into_iter().rev() {
+        text.replace_range(range, &replacement);
+    }
+    state.reparse(work, index_path, "pkg.index")
+}
+
 /// Write/replace `<path>/index.md` (root → `index.md`) with a listing in the
 /// requested order, preserving intro prose + blurbs. The H1 title comes from
 /// `title_override` when set, else the package's current title (root →
 /// `model.path`, else `concept.title`), else the dir basename.
 fn write_package_index(
     work: &mut SourceBundle,
+    state: &mut OkfLoweringState,
     path: &str,
     order: MemberOrder<'_>,
     title_override: Option<&str>,
 ) -> Result<(), EditError> {
-    let bundle = crate::okf::Bundle::parse(work)
-        .map_err(|error| EditError::at("pkg.index", error.to_string()))?;
-    let address = if path.is_empty() {
-        "/".to_owned()
+    let prefix = if path.is_empty() {
+        String::new()
     } else {
-        format!("/{path}")
+        format!("{path}/")
     };
-    let index = bundle
-        .index(&address)
-        .ok_or_else(|| EditError::at("pkg.index", format!("no package '{path}'")))?;
-    let mut keys: Vec<String> = match order {
+    if !path.is_empty()
+        && !state
+            .structural_paths
+            .iter()
+            .any(|candidate| candidate.as_str().starts_with(&prefix))
+    {
+        return Err(EditError::at("pkg.index", format!("no package '{path}'")));
+    }
+    let mut entries = package_entries(work, state, path)?;
+    let mut keys: Vec<String> = entries.iter().map(|entry| entry.key.clone()).collect();
+    keys.sort_by(|left, right| {
+        let title = |key: &String| {
+            entries
+                .iter()
+                .find(|entry| &entry.key == key)
+                .map(|entry| entry.title.to_lowercase())
+                .unwrap_or_default()
+        };
+        title(left).cmp(&title(right)).then(left.cmp(right))
+    });
+    keys = match order {
         MemberOrder::Explicit(o) => {
             let mut v: Vec<String> = o
                 .iter()
                 .filter_map(|key| {
-                    if index.members.contains(key) {
+                    if keys.contains(key) {
                         Some(key.clone())
                     } else {
                         let rooted = format!("/{key}");
-                        index.members.contains(&rooted).then_some(rooted)
+                        keys.contains(&rooted).then_some(rooted)
                     }
                 })
                 .collect();
-            for m in &index.members {
+            for m in &keys {
                 if !v.contains(m) {
                     v.push(m.clone());
                 }
@@ -235,39 +724,34 @@ fn write_package_index(
             v
         }
         MemberOrder::Sort => {
-            let mut v = index.members.clone();
-            v.sort_by_key(|key| member_title(&bundle, key).to_lowercase());
+            let mut v = keys;
+            v.sort_by_key(|key| {
+                entries
+                    .iter()
+                    .find(|entry| &entry.key == key)
+                    .map(|entry| entry.title.to_lowercase())
+                    .unwrap_or_default()
+            });
             v
         }
-        MemberOrder::Keep => index.members.clone(),
-    };
-    let entries: Vec<IndexEntry> = keys
-        .drain(..)
-        .map(|key| {
-            let is_package = key.starts_with('/');
-            let blurb = (!is_package)
-                .then(|| {
-                    bundle
-                        .concept(&key)
-                        .and_then(|concept| concept.description.as_deref())
-                        .map(|description| description.lines().next().unwrap_or("").to_owned())
+        MemberOrder::Keep => {
+            let authored = authored_member_order(work, state, path, &keys)?;
+            authored
+                .into_iter()
+                .chain(keys)
+                .fold(Vec::new(), |mut ordered, key| {
+                    if !ordered.contains(&key) {
+                        ordered.push(key);
+                    }
+                    ordered
                 })
-                .flatten();
-            IndexEntry {
-                title: member_title(&bundle, &key),
-                key,
-                is_package,
-                blurb,
-            }
-        })
-        .collect();
-    let title_for_index = title_override.map(str::to_string).or(index.title.clone());
-    let text = render_index(
-        path,
-        title_for_index.as_deref(),
-        index.description.as_deref(),
-        &entries,
-    );
+        }
+    };
+    entries.sort_by_key(|entry| {
+        keys.iter()
+            .position(|key| key == &entry.key)
+            .unwrap_or(usize::MAX)
+    });
     // Root special-case is ONLY the index-file path arithmetic.
     let idx_path = if path.is_empty() {
         "index.md".to_string()
@@ -276,19 +760,31 @@ fn write_package_index(
     };
     let idx_path = BundlePath::parse(idx_path)
         .map_err(|error| EditError::at("pkg.index", error.to_string()))?;
-    work.upsert(idx_path, text);
+    if work.document(&idx_path).is_some() {
+        update_authored_index(work, state, &idx_path, path, title_override, &entries)?;
+    } else {
+        let title = title_override
+            .or_else(|| (!path.is_empty()).then_some(path.rsplit('/').next().unwrap_or(path)));
+        work.upsert(idx_path.clone(), render_index(path, title, None, &entries));
+        state.reparse(work, &idx_path, "pkg.index")?;
+    }
     Ok(())
 }
 
 pub(crate) fn op_pkg_reorder(
     work: &mut SourceBundle,
+    state: &mut OkfLoweringState,
     path: &str,
     order: &[String],
 ) -> Result<(), EditError> {
-    write_package_index(work, path, MemberOrder::Explicit(order), None)
+    write_package_index(work, state, path, MemberOrder::Explicit(order), None)
 }
-pub(crate) fn op_pkg_sort(work: &mut SourceBundle, path: &str) -> Result<(), EditError> {
-    write_package_index(work, path, MemberOrder::Sort, None)
+pub(crate) fn op_pkg_sort(
+    work: &mut SourceBundle,
+    state: &mut OkfLoweringState,
+    path: &str,
+) -> Result<(), EditError> {
+    write_package_index(work, state, path, MemberOrder::Sort, None)
 }
 
 /// Set a package's display title by writing its index.md H1, creating the file
@@ -297,13 +793,14 @@ pub(crate) fn op_pkg_sort(work: &mut SourceBundle, path: &str) -> Result<(), Edi
 /// any package key; root ("") is just one instance.
 pub(crate) fn op_pkg_retitle(
     work: &mut SourceBundle,
+    state: &mut OkfLoweringState,
     path: &str,
     title: &str,
 ) -> Result<(), EditError> {
     if title.trim().is_empty() {
         return Err(EditError::at("pkg.retitle", "title cannot be empty"));
     }
-    write_package_index(work, path, MemberOrder::Keep, Some(title))
+    write_package_index(work, state, path, MemberOrder::Keep, Some(title))
 }
 
 /// Insert a package: re-root every doc in `docs` under `<parent_path>/<name>/`

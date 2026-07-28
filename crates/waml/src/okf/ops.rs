@@ -47,14 +47,11 @@ impl crate::edit::sealed::Sealed for Batch {}
 
 impl EditBatch for Batch {
     fn lower(&self, context: EditContext<'_>) -> Result<SourceBundle, EditError> {
-        let mut candidate = context.source.clone();
+        let mut cursor = super::lower::OkfLoweringCursor::new(context);
         for (index, op) in self.0.iter().enumerate() {
-            lower_one(&mut candidate, op).map_err(|mut error| {
-                error.index = index;
-                error
-            })?;
+            cursor.apply(index, op)?;
         }
-        Ok(candidate)
+        Ok(cursor.finish())
     }
 }
 
@@ -63,6 +60,15 @@ pub(crate) fn legacy_path(directory: &DirectoryAddress) -> String {
 }
 
 pub(crate) fn lower_one(work: &mut SourceBundle, op: &Op) -> Result<(), EditError> {
+    let mut state = super::lower::OkfLoweringState::from_source(work);
+    lower_one_with_state(work, &mut state, op)
+}
+
+pub(crate) fn lower_one_with_state(
+    work: &mut SourceBundle,
+    state: &mut super::lower::OkfLoweringState,
+    op: &Op,
+) -> Result<(), EditError> {
     match op {
         Op::ConceptMove { id, to_directory } => {
             super::lower::op_pkg_move(work, id, &legacy_path(to_directory))
@@ -96,11 +102,13 @@ pub(crate) fn lower_one(work: &mut SourceBundle, op: &Op) -> Result<(), EditErro
             super::lower::op_pkg_delete(work, &legacy_path(directory), *cascade)
         }
         Op::IndexReorder { directory, order } => {
-            super::lower::op_pkg_reorder(work, &legacy_path(directory), order)
+            super::lower::op_pkg_reorder(work, state, &legacy_path(directory), order)
         }
-        Op::IndexSort { directory } => super::lower::op_pkg_sort(work, &legacy_path(directory)),
+        Op::IndexSort { directory } => {
+            super::lower::op_pkg_sort(work, state, &legacy_path(directory))
+        }
         Op::IndexRetitle { directory, title } => {
-            super::lower::op_pkg_retitle(work, &legacy_path(directory), title)
+            super::lower::op_pkg_retitle(work, state, &legacy_path(directory), title)
         }
         Op::BundleImport {
             parent,

@@ -67,3 +67,32 @@ fn rename_on_orders_domain_fixture_rewrites_all_referrers() {
         "no stale link left in orders-domain.md"
     );
 }
+
+#[test]
+fn legacy_retitle_preserves_unknown_index_markdown_and_crlf() {
+    let bundle = vec![
+        (
+            "sales/index.md".to_owned(),
+            "# Sales\r\n\r\nIntro.\r\n\r\n## Notes\r\nKeep me.\r\n".to_owned(),
+        ),
+        ("sales/order.md".to_owned(), "# Order\r\n".to_owned()),
+    ];
+
+    let out = apply(
+        &bundle,
+        &[Op::PkgRetitle {
+            path: "sales".into(),
+            title: "Sales Domain".into(),
+        }],
+    )
+    .unwrap();
+
+    let index = &out
+        .iter()
+        .find(|(path, _)| path == "sales/index.md")
+        .unwrap()
+        .1;
+    assert!(index.starts_with("# Sales Domain\r\n\r\nIntro.\r\n"));
+    assert!(index.contains("## Notes\r\nKeep me.\r\n"));
+    assert!(index.ends_with("* [Order](./order.md)\r\n"));
+}
