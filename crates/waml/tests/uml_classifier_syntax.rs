@@ -176,6 +176,50 @@ fn declared_classifier_fields_are_lowered_from_fixed_syntax_slots() {
 }
 
 #[test]
+fn linked_attribute_type_is_a_type_reference_not_a_multiplicity() {
+    let source = SourceBundle::try_from_pairs([
+        (
+            "shop/order.md",
+            "---\r\ntype: uml.Class\r\n---\r\n# Ordér\r\n\r\n## Attributes\r\n- status: [OrderStatus](./order-status.md) {1}\r\n",
+        ),
+        (
+            "shop/order-status.md",
+            "---\ntype: uml.Enum\n---\n# OrderStatus\n",
+        ),
+    ])
+    .unwrap();
+    let analysis = analyze(&source);
+    let declared = &analysis.declared.concept("shop/order").unwrap().attributes[0];
+    assert!(
+        matches!(
+            &declared.ty,
+            uml::DeclaredField::Valid { value, .. }
+                if value.name == "OrderStatus"
+                    && value.ref_.as_deref() == Some("shop/order-status")
+        ),
+        "linked type must preserve its label and resolve its href"
+    );
+    assert!(
+        matches!(
+            &declared.multiplicity,
+            uml::DeclaredField::Valid { value, .. } if value.as_str() == "1"
+        ),
+        "the following braces are the multiplicity"
+    );
+    assert!(
+        analysis.diagnostics.is_empty(),
+        "valid linked types must not create recovery diagnostics: {:?}",
+        analysis.diagnostics
+    );
+    let projected = analysis.projection.node("shop/order").unwrap();
+    assert_eq!(projected.attributes[0].ty.name, "OrderStatus");
+    assert_eq!(
+        projected.attributes[0].ty.ref_.as_deref(),
+        Some("shop/order-status")
+    );
+}
+
+#[test]
 fn slot_value_variants_and_missing_colon_are_distinguished() {
     let source = SourceBundle::try_from_pairs([
         ("class.md", "---\ntype: uml.Class\n---\n# Class\n\n## Slots\n- bare: OPEN\n- quoted: \"OPEN\"\n- linked: [State](./state.md)\n- missing OPEN\n"),

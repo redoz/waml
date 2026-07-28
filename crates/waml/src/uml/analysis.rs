@@ -200,7 +200,7 @@ pub fn analyze(
         for syntax in attributes {
             let name = syntax.name_token().text().write_to_string();
             let name_node = syntax.syntax().clone();
-            let ty = syntax.type_syntax().map(|node| node.0);
+            let ty = syntax.type_syntax();
             let multiplicity = syntax.multiplicity().map(|node| node.0);
             let visibility = syntax
                 .visibility_token()
@@ -223,17 +223,32 @@ pub fn analyze(
                 }
             };
             let ty_field = match ty {
-                Some(node) => {
-                    let value = node
-                        .children()
-                        .find_map(|e| e.into_token())
-                        .map(|t| t.text().write_to_string())
-                        .unwrap_or_default();
+                Some(typed) => {
+                    let node = typed.syntax().clone();
+                    let (name, ref_) = match (typed.link_text_token(), typed.link_target_token()) {
+                        (Some(label), Some(href)) => {
+                            let href = href.text().write_to_string();
+                            let resolved =
+                                crate::okf::resolve_href(document.path().as_str(), &href);
+                            (
+                                label.text().write_to_string(),
+                                context
+                                    .okf
+                                    .concept(&resolved)
+                                    .filter(|target| super::recognizes(target))
+                                    .map(|_| resolved),
+                            )
+                        }
+                        _ => (
+                            node.children()
+                                .find_map(|e| e.into_token())
+                                .map(|t| t.text().write_to_string())
+                                .unwrap_or_default(),
+                            None,
+                        ),
+                    };
                     crate::uml::DeclaredField::Valid {
-                        value: crate::model::TypeRef {
-                            name: value,
-                            ref_: None,
-                        },
+                        value: crate::model::TypeRef { name, ref_ },
                         syntax: node,
                     }
                 }

@@ -333,7 +333,6 @@ fn parser_platform_baseline_keeps_okf_membership_and_selective_uml_claims() {
 }
 
 #[test]
-#[ignore = "pre-platform tuple fixture uses retired attribute surface forms"]
 fn orders_domain_builds_the_expected_model() {
     let bundle = split_bundle(FIXTURE);
     let m = projection(&bundle);
@@ -471,11 +470,8 @@ fn nested_packages_round_trip_through_reindex() {
 }
 
 #[test]
-fn orders_domain_surfaces_active_parser_diagnostics() {
+fn orders_domain_has_no_diagnostics() {
     let bundle = waml::source::split_bundle(FIXTURE);
     let diags = waml::validate::validate(&bundle);
-    assert!(
-        !diags.is_empty(),
-        "retired attribute surface forms must not bypass active parser diagnostics"
-    );
+    assert!(diags.is_empty(), "expected clean fixture, got: {diags:?}");
 }

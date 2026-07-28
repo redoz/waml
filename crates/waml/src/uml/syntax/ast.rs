@@ -150,6 +150,24 @@ impl TypeReferenceSyntax {
             .and_then(SyntaxElement::into_token)
             .expect("type reference has fixed type token")
     }
+    pub fn link(&self) -> Option<SyntaxNode<UmlLanguage>> {
+        self.0
+            .children()
+            .find(|element| element.kind() == UmlSyntaxKind::Link)
+            .and_then(SyntaxElement::into_node)
+    }
+    pub fn link_text_token(&self) -> Option<SyntaxToken<UmlLanguage>> {
+        self.link()?
+            .children()
+            .find(|element| element.kind() == UmlSyntaxKind::LinkTextToken)
+            .and_then(SyntaxElement::into_token)
+    }
+    pub fn link_target_token(&self) -> Option<SyntaxToken<UmlLanguage>> {
+        self.link()?
+            .children()
+            .find(|element| element.kind() == UmlSyntaxKind::LinkTargetToken)
+            .and_then(SyntaxElement::into_token)
+    }
 }
 impl MultiplicitySyntax {
     pub fn open_token(&self) -> SyntaxToken<UmlLanguage> {

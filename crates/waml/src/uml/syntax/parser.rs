@@ -3325,34 +3325,42 @@ fn attribute(
         ));
     }
     let type_start = skip_ws(source, p, content_end);
-    let type_end = source[type_start..content_end]
-        .find(['[', '{'])
-        .map(|i| type_start + i)
-        .unwrap_or(content_end)
-        .trim_end_matches_index(source, type_start);
-    if type_start < type_end {
-        let ty = f
-            .node(
-                UmlSyntaxKind::TypeReference,
-                [token(
-                    f,
-                    text,
-                    p,
-                    type_start,
-                    type_end,
-                    UmlSyntaxKind::TypeToken,
-                )],
-            )
-            .unwrap();
-        c.push(GreenElement::Node(ty));
-        p = type_end;
-    } else if colon.is_some() {
-        diags.push(diag(
-            UmlSyntaxDiagnosticCode::MissingType,
-            start,
-            content_end,
-            "missing attribute type",
+    if type_start < content_end && source.as_bytes()[type_start] == b'[' {
+        let (link, next) = relationship_link(f, text, source, type_start, content_end, p, diags);
+        c.push(GreenElement::Node(
+            f.node(UmlSyntaxKind::TypeReference, [link]).unwrap(),
         ));
+        p = next;
+    } else {
+        let type_end = source[type_start..content_end]
+            .find(['[', '{'])
+            .map(|i| type_start + i)
+            .unwrap_or(content_end)
+            .trim_end_matches_index(source, type_start);
+        if type_start < type_end {
+            let ty = f
+                .node(
+                    UmlSyntaxKind::TypeReference,
+                    [token(
+                        f,
+                        text,
+                        p,
+                        type_start,
+                        type_end,
+                        UmlSyntaxKind::TypeToken,
+                    )],
+                )
+                .unwrap();
+            c.push(GreenElement::Node(ty));
+            p = type_end;
+        } else if colon.is_some() {
+            diags.push(diag(
+                UmlSyntaxDiagnosticCode::MissingType,
+                start,
+                content_end,
+                "missing attribute type",
+            ));
+        }
     }
     let mstart = skip_ws(source, p, content_end);
     if mstart < content_end && matches!(source.as_bytes()[mstart], b'[' | b'{') {
