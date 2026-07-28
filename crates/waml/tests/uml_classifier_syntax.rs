@@ -57,3 +57,40 @@ fn classifier_sections_are_lossless_and_expose_fixed_typed_slots() {
         authored
     );
 }
+
+#[test]
+fn classifier_items_do_not_hide_authored_grammar_in_raw_markdown_tokens() {
+    let source = SourceBundle::try_from_pairs([
+        ("class.md", "---\ntype: uml.Class\n---\n# Class\n\n## Values\n- READY\n\n## Slots\n- state: \"ready\"\n\n## Relationships\n- depends [Other](./other.md)\n\n## Members\n- [Other](./other.md)\n"),
+        ("other.md", "---\ntype: uml.Class\n---\n# Other\n"),
+    ]).unwrap();
+    let analysis = analyze(&source);
+    let id = analysis
+        .syntax
+        .catalog()
+        .id_for_path(&waml::source::BundlePath::parse("class.md").unwrap())
+        .unwrap();
+    let root = analysis.syntax.document(id).unwrap().syntax().root();
+    fn typed_nodes_have_no_raw(node: waml_syntax::SyntaxNode<waml::uml::syntax::UmlLanguage>) {
+        let typed = matches!(
+            node.kind(),
+            waml::uml::syntax::UmlSyntaxKind::Value
+                | waml::uml::syntax::UmlSyntaxKind::Slot
+                | waml::uml::syntax::UmlSyntaxKind::Relationship
+                | waml::uml::syntax::UmlSyntaxKind::Member
+                | waml::uml::syntax::UmlSyntaxKind::InlineInstance
+        );
+        if typed {
+            assert!(!node
+                .children()
+                .any(|e| e.kind() == waml::uml::syntax::UmlSyntaxKind::RawMarkdownToken));
+        }
+        for child in node
+            .children()
+            .filter_map(waml_syntax::SyntaxElement::into_node)
+        {
+            typed_nodes_have_no_raw(child);
+        }
+    }
+    typed_nodes_have_no_raw(root);
+}

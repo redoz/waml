@@ -168,13 +168,14 @@ fn simple_item(
             "missing classifier item content",
         ));
     } else {
-        children.push(token(
+        children.extend(classifier_tokens(
             f,
             text,
+            source,
             lead + 1,
             body,
             content_end,
-            UmlSyntaxKind::RawMarkdownToken,
+            section,
         ));
     }
     if content_end < end {
@@ -188,6 +189,130 @@ fn simple_item(
         ));
     }
     Some(f.node(kind, children).unwrap())
+}
+
+/// Tokenize the small, currently-supported classifier line vocabulary.  This is
+/// deliberately line-local: the shell has already established the list-item
+/// boundary, so recovery cannot consume the following item or heading.
+fn classifier_tokens(
+    f: &GreenFactory<UmlLanguage>,
+    text: &SourceText,
+    source: &str,
+    leading: usize,
+    mut at: usize,
+    end: usize,
+    section: UmlSyntaxKind,
+) -> Vec<GreenElement<UmlLanguage>> {
+    let mut out = Vec::new();
+    let mut first = true;
+    let mut trivia_start = leading;
+    while at < end {
+        let start = at;
+        let kind = if source[at..].starts_with('[') {
+            if let Some(close) = source[at + 1..end].find(']').map(|n| at + 1 + n) {
+                if source.get(close + 1..close + 2) == Some("(") {
+                    if let Some(target_end) =
+                        source[close + 2..end].find(')').map(|n| close + 2 + n)
+                    {
+                        let link = f
+                            .node(
+                                UmlSyntaxKind::Link,
+                                [
+                                    token(
+                                        f,
+                                        text,
+                                        trivia_start,
+                                        at,
+                                        at + 1,
+                                        UmlSyntaxKind::OpenBracketToken,
+                                    ),
+                                    token(
+                                        f,
+                                        text,
+                                        at + 1,
+                                        at + 1,
+                                        close,
+                                        UmlSyntaxKind::LinkTextToken,
+                                    ),
+                                    token(
+                                        f,
+                                        text,
+                                        close,
+                                        close,
+                                        close + 1,
+                                        UmlSyntaxKind::CloseBracketToken,
+                                    ),
+                                    token(
+                                        f,
+                                        text,
+                                        close + 1,
+                                        close + 1,
+                                        close + 2,
+                                        UmlSyntaxKind::OpenBracketToken,
+                                    ),
+                                    token(
+                                        f,
+                                        text,
+                                        close + 2,
+                                        close + 2,
+                                        target_end,
+                                        UmlSyntaxKind::LinkTargetToken,
+                                    ),
+                                    token(
+                                        f,
+                                        text,
+                                        target_end,
+                                        target_end,
+                                        target_end + 1,
+                                        UmlSyntaxKind::CloseBracketToken,
+                                    ),
+                                ],
+                            )
+                            .unwrap();
+                        out.push(GreenElement::Node(link));
+                        at = target_end + 1;
+                        trivia_start = at;
+                        first = false;
+                        continue;
+                    }
+                }
+            }
+            at += 1;
+            UmlSyntaxKind::BadToken
+        } else if source.as_bytes()[at] == b':' {
+            at += 1;
+            UmlSyntaxKind::ColonToken
+        } else if source.as_bytes()[at] == b'\"' {
+            at += 1;
+            while at < end && source.as_bytes()[at] != b'\"' {
+                at += 1;
+            }
+            if at < end {
+                at += 1;
+            }
+            UmlSyntaxKind::TypeToken
+        } else if source.as_bytes()[at].is_ascii_whitespace() {
+            trivia_start = at;
+            at += 1;
+            continue;
+        } else {
+            while at < end
+                && !source.as_bytes()[at].is_ascii_whitespace()
+                && !matches!(source.as_bytes()[at], b':' | b'[' | b'\"')
+            {
+                at += 1;
+            }
+            if first && section == UmlSyntaxKind::RelationshipsSection {
+                UmlSyntaxKind::RelationshipKindToken
+            } else {
+                UmlSyntaxKind::IdentifierToken
+            }
+        };
+        out.push(token(f, text, trivia_start, start, at, kind));
+        trivia_start = at;
+        first = false;
+    }
+    out
 }
 
 fn attribute(

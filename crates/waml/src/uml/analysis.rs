@@ -190,27 +190,27 @@ pub fn analyze(
                 attributes: fields.into(),
                 values: values
                     .into_iter()
-                    .map(|node| declared_value(node))
+                    .map(|node| declared_value(node, document.text().shared()))
                     .collect::<Vec<_>>()
                     .into(),
                 slots: slots
                     .into_iter()
-                    .map(|node| declared_slot(node))
+                    .map(|node| declared_slot(node, document.text().shared()))
                     .collect::<Vec<_>>()
                     .into(),
                 relationships: relationships
                     .into_iter()
-                    .map(|node| declared_relationship(node))
+                    .map(|node| declared_relationship(node, document.text().shared()))
                     .collect::<Vec<_>>()
                     .into(),
                 members: members
                     .into_iter()
-                    .map(|node| declared_member(node))
+                    .map(|node| declared_member(node, document.text().shared()))
                     .collect::<Vec<_>>()
                     .into(),
                 inline_instances: inline_instances
                     .into_iter()
-                    .map(|node| declared_inline_instance(node))
+                    .map(|node| declared_inline_instance(node, document.text().shared()))
                     .collect::<Vec<_>>()
                     .into(),
             },
@@ -283,12 +283,9 @@ fn items(
     }
     found
 }
-fn raw(node: &SyntaxNode<UmlLanguage>) -> String {
-    node.children()
-        .find(|e| e.kind() == super::syntax::UmlSyntaxKind::RawMarkdownToken)
-        .and_then(|e| e.into_token())
-        .map(|t| t.text().write_to_string())
-        .unwrap_or_default()
+fn raw(node: &SyntaxNode<UmlLanguage>, source: &str) -> String {
+    let range = node.range();
+    source[range.start().to_usize()..range.end().to_usize()].to_owned()
 }
 fn valid<T>(node: SyntaxNode<UmlLanguage>, value: T) -> crate::uml::DeclaredField<UmlLanguage, T> {
     crate::uml::DeclaredField::Valid {
@@ -302,8 +299,8 @@ fn invalid<T>(node: SyntaxNode<UmlLanguage>) -> crate::uml::DeclaredField<UmlLan
         diagnostics: Arc::from([crate::diagnostic::DiagCode::DroppableContent]),
     }
 }
-fn declared_value(node: SyntaxNode<UmlLanguage>) -> crate::uml::DeclaredValue {
-    let value = raw(&node).trim().to_string();
+fn declared_value(node: SyntaxNode<UmlLanguage>, source: &str) -> crate::uml::DeclaredValue {
+    let value = crate::grammar::parse_value_line(&raw(&node, source)).unwrap_or_default();
     crate::uml::DeclaredValue {
         syntax: super::syntax::ValueSyntax(node.clone()),
         value: if value.is_empty() {
@@ -313,8 +310,8 @@ fn declared_value(node: SyntaxNode<UmlLanguage>) -> crate::uml::DeclaredValue {
         },
     }
 }
-fn declared_slot(node: SyntaxNode<UmlLanguage>) -> crate::uml::DeclaredSlot {
-    let line = format!("- {}", raw(&node));
+fn declared_slot(node: SyntaxNode<UmlLanguage>, source: &str) -> crate::uml::DeclaredSlot {
+    let line = raw(&node, source);
     match crate::grammar::parse_slot_line(&line) {
         Ok(slot) => crate::uml::DeclaredSlot {
             syntax: super::syntax::SlotSyntax(node.clone()),
@@ -328,8 +325,11 @@ fn declared_slot(node: SyntaxNode<UmlLanguage>) -> crate::uml::DeclaredSlot {
         },
     }
 }
-fn declared_relationship(node: SyntaxNode<UmlLanguage>) -> crate::uml::DeclaredRelationship {
-    let line = format!("- {}", raw(&node));
+fn declared_relationship(
+    node: SyntaxNode<UmlLanguage>,
+    source: &str,
+) -> crate::uml::DeclaredRelationship {
+    let line = raw(&node, source);
     match crate::grammar::parse_relationship_line(&line) {
         Ok(rel) => crate::uml::DeclaredRelationship {
             syntax: super::syntax::RelationshipSyntax(node.clone()),
@@ -343,8 +343,8 @@ fn declared_relationship(node: SyntaxNode<UmlLanguage>) -> crate::uml::DeclaredR
         },
     }
 }
-fn declared_member(node: SyntaxNode<UmlLanguage>) -> crate::uml::DeclaredMember {
-    let line = format!("- {}", raw(&node));
+fn declared_member(node: SyntaxNode<UmlLanguage>, source: &str) -> crate::uml::DeclaredMember {
+    let line = raw(&node, source);
     match crate::grammar::parse_member_line(&line) {
         Ok(member) => crate::uml::DeclaredMember {
             syntax: super::syntax::MemberSyntax(node.clone()),
@@ -356,8 +356,11 @@ fn declared_member(node: SyntaxNode<UmlLanguage>) -> crate::uml::DeclaredMember 
         },
     }
 }
-fn declared_inline_instance(node: SyntaxNode<UmlLanguage>) -> crate::uml::DeclaredInlineInstance {
-    let line = format!("- {}", raw(&node));
+fn declared_inline_instance(
+    node: SyntaxNode<UmlLanguage>,
+    source: &str,
+) -> crate::uml::DeclaredInlineInstance {
+    let line = raw(&node, source);
     match crate::grammar::parse_inline_instance(&line) {
         Ok(instance) => crate::uml::DeclaredInlineInstance {
             syntax: super::syntax::InlineInstanceSyntax(node.clone()),
