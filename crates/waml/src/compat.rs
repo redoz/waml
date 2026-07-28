@@ -445,27 +445,11 @@ fn claimed_id(path: &BundlePath, text: &Arc<String>) -> Option<String> {
         .children()
         .filter_map(SyntaxElement::into_node)
         .find(|node| node.kind() == OkfMarkdownSyntaxKind::Frontmatter)?;
-    let ty = frontmatter
-        .children()
-        .filter_map(SyntaxElement::into_node)
-        .filter(|node| node.kind() == OkfMarkdownSyntaxKind::FrontmatterEntry)
-        .find_map(|entry| {
-            let mut key = None;
-            let mut value = None;
-            for token in entry.children().filter_map(SyntaxElement::into_token) {
-                match token.kind() {
-                    OkfMarkdownSyntaxKind::FrontmatterKey => {
-                        key = Some(token.text().write_to_string())
-                    }
-                    OkfMarkdownSyntaxKind::FrontmatterValue if !token.flags().is_missing() => {
-                        value = Some(token.text().write_to_string())
-                    }
-                    _ => {}
-                }
-            }
-            (key.as_deref() == Some("type")).then_some(value).flatten()
-        })?;
-    crate::uml::recognizes_type(&crate::model::ElementType::parse(ty.trim()))
+    let parsed = crate::frontmatter::parse_closed_syntax(&frontmatter)?;
+    let crate::frontmatter::FmValue::Str(ty) = parsed.get("type")? else {
+        return None;
+    };
+    crate::uml::recognizes_type(&crate::model::ElementType::parse(ty))
         .then(|| path.concept_id().map(str::to_owned))
         .flatten()
 }

@@ -234,3 +234,67 @@ fn imported_generic_okf_concept_does_not_become_a_uml_claim() {
     .unwrap_err();
     assert_eq!(error.index, 1);
 }
+
+#[test]
+fn imported_quoted_uml_type_is_immediately_available_to_uml_lowering() {
+    let imported = SourceBundle::try_from_pairs([(
+        "order.md",
+        "---\r\ntype: \"uml.Class\"\r\ntitle: Order\r\n---\r\n\r\n# Order\r\n",
+    )])
+    .unwrap();
+    let changed = lower(
+        &SourceBundle::default(),
+        vec![
+            Step::Okf(okf::Op::BundleImport {
+                parent: directory("/"),
+                name: "sales".into(),
+                bundle: imported,
+            }),
+            Step::Uml(uml::Op::AttributeAdd {
+                node: "sales/order".into(),
+                name: "id".into(),
+                ty_token: "String".into(),
+                multiplicity: None,
+                visibility: None,
+            }),
+        ],
+    )
+    .unwrap();
+    assert!(changed
+        .document(&BundlePath::parse("sales/order.md").unwrap())
+        .unwrap()
+        .text()
+        .contains("- id: String\r\n"));
+}
+
+#[test]
+fn imported_unclosed_frontmatter_stays_unclaimed_and_rolls_back() {
+    let imported = SourceBundle::try_from_pairs([(
+        "order.md",
+        "---\ntype: uml.Class\ntitle: Order\n# missing close fence\n",
+    )])
+    .unwrap();
+    let source = SourceBundle::default();
+    let baseline = source.clone();
+    let error = lower(
+        &source,
+        vec![
+            Step::Okf(okf::Op::BundleImport {
+                parent: directory("/"),
+                name: "sales".into(),
+                bundle: imported,
+            }),
+            Step::Uml(uml::Op::AttributeAdd {
+                node: "sales/order".into(),
+                name: "id".into(),
+                ty_token: "String".into(),
+                multiplicity: None,
+                visibility: None,
+            }),
+        ],
+    )
+    .unwrap_err();
+    assert_eq!(error.index, 1);
+    assert_eq!(source, baseline);
+    assert_eq!(source.len(), 0);
+}

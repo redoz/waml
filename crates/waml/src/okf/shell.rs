@@ -6,15 +6,13 @@ use std::{
 };
 
 use regex::Regex;
-use waml_syntax::{
-    MarkdownStructureMap, OkfMarkdownLanguage, OkfMarkdownSyntaxKind, SyntaxElement, TextRange,
-};
+use waml_syntax::{MarkdownStructureMap, OkfMarkdownLanguage, TextRange};
 
 use crate::{
     analysis::{
         AnalysisError, AnalysisStage, DocumentCatalog, DocumentId, DocumentVersion, SyntaxSet,
     },
-    frontmatter::{parse_value, Frontmatter},
+    frontmatter::{parse_closed_syntax, Frontmatter},
     source::SourceSlice,
 };
 
@@ -145,40 +143,14 @@ fn shell_fields(
         let Some(node) = element.into_node() else {
             continue;
         };
-        if node.kind() != OkfMarkdownSyntaxKind::Frontmatter {
-            continue;
-        }
-        let closed = node.children().any(|element| {
-            element.into_token().is_some_and(|token| {
-                token.kind() == OkfMarkdownSyntaxKind::FrontmatterCloseFence
-                    && !token.flags().is_missing()
-            })
-        });
-        if !closed {
-            return Ok((Frontmatter::default(), 0));
-        }
-        body_start = node.range().end().to_usize();
-        for entry in node.children().filter_map(SyntaxElement::into_node) {
-            if entry.kind() != OkfMarkdownSyntaxKind::FrontmatterEntry {
+        let Some(parsed) = parse_closed_syntax(&node) else {
+            if node.kind() != waml_syntax::OkfMarkdownSyntaxKind::Frontmatter {
                 continue;
             }
-            let mut key = None;
-            let mut value = None;
-            for token in entry.children().filter_map(SyntaxElement::into_token) {
-                match token.kind() {
-                    OkfMarkdownSyntaxKind::FrontmatterKey => {
-                        key = Some(token.text().write_to_string())
-                    }
-                    OkfMarkdownSyntaxKind::FrontmatterValue if !token.flags().is_missing() => {
-                        value = Some(token.text().write_to_string())
-                    }
-                    _ => {}
-                }
-            }
-            if let (Some(key), Some(value)) = (key, value) {
-                frontmatter.entries.push((key, parse_value(&value)));
-            }
-        }
+            return Ok((Frontmatter::default(), 0));
+        };
+        body_start = node.range().end().to_usize();
+        frontmatter = parsed;
         break;
     }
     if body_start <= document.text().len().to_usize() {

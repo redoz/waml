@@ -1,5 +1,6 @@
 use regex::Regex;
 use std::sync::LazyLock;
+use waml_syntax::{OkfMarkdownLanguage, OkfMarkdownSyntaxKind, SyntaxElement, SyntaxNode};
 
 static BLOCK_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"(?s)^---\n(.*?)\n(?:---|\.\.\.)\n?(.*)$").unwrap());
@@ -167,6 +168,41 @@ pub(crate) fn parse_value(s: &str) -> FmValue {
         "false" => FmValue::Bool(false),
         other => FmValue::Str(other.to_string()),
     }
+}
+
+pub(crate) fn parse_closed_syntax(node: &SyntaxNode<OkfMarkdownLanguage>) -> Option<Frontmatter> {
+    if node.kind() != OkfMarkdownSyntaxKind::Frontmatter
+        || !node.children().any(|element| {
+            element.into_token().is_some_and(|token| {
+                token.kind() == OkfMarkdownSyntaxKind::FrontmatterCloseFence
+                    && !token.flags().is_missing()
+            })
+        })
+    {
+        return None;
+    }
+
+    let mut frontmatter = Frontmatter::default();
+    for entry in node.children().filter_map(SyntaxElement::into_node) {
+        if entry.kind() != OkfMarkdownSyntaxKind::FrontmatterEntry {
+            continue;
+        }
+        let mut key = None;
+        let mut value = None;
+        for token in entry.children().filter_map(SyntaxElement::into_token) {
+            match token.kind() {
+                OkfMarkdownSyntaxKind::FrontmatterKey => key = Some(token.text().write_to_string()),
+                OkfMarkdownSyntaxKind::FrontmatterValue if !token.flags().is_missing() => {
+                    value = Some(token.text().write_to_string())
+                }
+                _ => {}
+            }
+        }
+        if let (Some(key), Some(value)) = (key, value) {
+            frontmatter.entries.push((key, parse_value(&value)));
+        }
+    }
+    Some(frontmatter)
 }
 
 pub struct ParsedFrontmatter {
