@@ -482,7 +482,7 @@ fn declared_projection(
                     .title
                     .clone()
                     .unwrap_or_else(|| concept.concept_id.clone()),
-                profile: String::new(),
+                profile: okf.extra.get_str("profile").unwrap_or_default().to_string(),
                 description: okf.description.clone(),
                 groups,
                 layout: concept
@@ -2230,12 +2230,12 @@ fn parse_layout_atoms(
 }
 
 fn parse_layout_anchored(cur: &mut LayoutCursor<'_>) -> Option<crate::syntax::Anchored> {
-    let edge = match cur.word()?.to_ascii_lowercase().as_str() {
-        "top" => Some(crate::syntax::Edge::Top),
-        "bottom" => Some(crate::syntax::Edge::Bottom),
-        "left" => Some(crate::syntax::Edge::Left),
-        "right" => Some(crate::syntax::Edge::Right),
-        "center" => Some(crate::syntax::Edge::Center),
+    let edge = match cur.word().map(|word| word.to_ascii_lowercase()).as_deref() {
+        Some("top") => Some(crate::syntax::Edge::Top),
+        Some("bottom") => Some(crate::syntax::Edge::Bottom),
+        Some("left") => Some(crate::syntax::Edge::Left),
+        Some("right") => Some(crate::syntax::Edge::Right),
+        Some("center") => Some(crate::syntax::Edge::Center),
         _ => None,
     };
     if let Some(edge) = edge {

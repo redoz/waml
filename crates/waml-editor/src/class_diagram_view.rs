@@ -665,7 +665,6 @@ impl DocView for ClassDiagramView {
         tag: LiveId,
         result: PopupResult,
     ) -> ViewOutcome {
-        let model = &data.uml_analysis.projection;
         if tag == live_id!(max_attributes_picker) {
             let action = body
                 .diagram_properties(cx)
@@ -683,7 +682,7 @@ impl DocView for ClassDiagramView {
                 .inspector(cx)
                 .borrow_mut::<crate::inspector_panel::Inspector>()
             {
-                inspector.on_picker_closed(cx, model, result);
+                inspector.on_picker_closed(cx, data.uml_analysis, result);
             }
             return ViewOutcome::default();
         }

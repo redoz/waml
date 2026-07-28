@@ -143,6 +143,107 @@ fn diagram_members_and_layout_are_lossless_and_project_valid_placement() {
     );
 }
 
+fn linked_diagram_source() -> SourceBundle {
+    let source = SourceBundle::try_from_pairs([
+        (
+            "orders-diagram.md",
+            "---\ntype: Diagram\ntitle: Orders\nprofile: uml-domain\n---\n# Orders\n\n## Members\n- [Order](./order.md)\n- [Customer](./customer.md)\n\n## Layout\n- [Order](./order.md) left of [Customer](./customer.md)\n",
+        ),
+        ("order.md", "---\ntype: uml.Class\n---\n# Order\n"),
+        (
+            "customer.md",
+            "---\ntype: uml.Class\n---\n# Customer\n",
+        ),
+    ])
+    .unwrap();
+    source
+}
+
+#[test]
+fn diagram_projection_preserves_profile() {
+    let source = linked_diagram_source();
+    let analysis = analyze(&source);
+    let diagram = analysis
+        .projection
+        .diagrams
+        .iter()
+        .find(|diagram| diagram.key == "orders-diagram")
+        .unwrap();
+
+    assert_eq!(diagram.profile, "uml-domain");
+}
+
+#[test]
+fn diagram_projection_preserves_complete_two_link_placement() {
+    let source = linked_diagram_source();
+    let analysis = analyze(&source);
+    let diagram = analysis
+        .projection
+        .diagrams
+        .iter()
+        .find(|diagram| diagram.key == "orders-diagram")
+        .unwrap();
+
+    let [waml::syntax::LayoutStatement::Placement {
+        operands,
+        directions,
+    }] = diagram.layout.as_slice()
+    else {
+        let declared = &analysis.declared.concept("orders-diagram").unwrap().layout[0];
+        let state = match declared {
+            uml::DeclaredField::Absent => "absent",
+            uml::DeclaredField::Valid { .. } => "valid",
+            uml::DeclaredField::Incomplete { .. } => "incomplete",
+            uml::DeclaredField::Invalid { .. } => "invalid",
+        };
+        panic!("linked placement must remain a validated placement; declared={state}");
+    };
+    assert_eq!(directions, &[waml::syntax::Direction::LeftOf]);
+    assert_eq!(operands.len(), 2);
+    assert!(matches!(
+        &operands[0].ref_,
+        waml::syntax::OperandRef::Name(waml::syntax::NameRef::Link { slug, .. })
+            if slug == "order"
+    ));
+    assert!(matches!(
+        &operands[1].ref_,
+        waml::syntax::OperandRef::Name(waml::syntax::NameRef::Link { slug, .. })
+            if slug == "customer"
+    ));
+}
+
+#[test]
+fn contradictory_linked_placements_reach_shared_solver_conflict_diagnostics() {
+    let source = SourceBundle::try_from_pairs([
+        (
+            "diagram.md",
+            "---\ntype: Diagram\nprofile: uml-domain\n---\n# Diagram\n\n## Members\n- [A](./a.md)\n- [B](./b.md)\n- [C](./c.md)\n\n## Layout\n- [A](./a.md) left of [B](./b.md)\n- [B](./b.md) left of [C](./c.md)\n- [C](./c.md) left of [A](./a.md)\n",
+        ),
+        ("a.md", "---\ntype: uml.Class\n---\n# A\n"),
+        ("b.md", "---\ntype: uml.Class\n---\n# B\n"),
+        ("c.md", "---\ntype: uml.Class\n---\n# C\n"),
+    ])
+    .unwrap();
+    let analysis = analyze(&source);
+    let diagram = analysis.projection.diagrams.first().unwrap();
+    let sizes = ["a", "b", "c"]
+        .into_iter()
+        .map(|key| (key.to_string(), waml::solve::Size { w: 100.0, h: 60.0 }))
+        .collect();
+
+    let (_, diagnostics, dropped) = waml::solve::solve_diagram_reported(
+        diagram,
+        &[],
+        &sizes,
+        &waml::solve::SolveConfig::default(),
+    );
+
+    assert!(!dropped.is_empty());
+    assert!(diagnostics
+        .iter()
+        .any(|diagnostic| diagnostic.code == waml::diagnostic::DiagCode::LayoutConflict));
+}
+
 #[test]
 fn complete_layout_matrix_matches_legacy_model_and_has_fixed_nested_slots() {
     let lines = [

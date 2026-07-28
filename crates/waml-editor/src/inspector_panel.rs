@@ -1133,7 +1133,12 @@ impl Inspector {
     /// element and repoint the inspector. Returns the new subject, or `None` if
     /// the id isn't in the current element list at all. Every listed row is
     /// pickable, the diagram row included.
-    pub fn apply_pick(&mut self, cx: &mut Cx, model: &Model, id: LiveId) -> Option<Subject> {
+    pub fn apply_pick(
+        &mut self,
+        cx: &mut Cx,
+        analysis: &waml::uml::Analysis,
+        id: LiveId,
+    ) -> Option<Subject> {
         let idx = self
             .picker_ids
             .iter()
@@ -1141,7 +1146,7 @@ impl Inspector {
             .map(|(_, x)| *x)?;
         let row = self.elements.get(idx)?;
         let subject = crate::inspector::subject_from(&row.key, row.kind);
-        self.set_subject(cx, model, subject.clone());
+        self.set_subject_analysis(cx, analysis, subject.clone());
         Some(subject)
     }
 
@@ -1255,14 +1260,19 @@ impl Inspector {
 
     /// The flyout closed. Clear the box's active state; on a committed node pick
     /// repoint the inspector via `apply_pick`.
-    pub fn on_picker_closed(&mut self, cx: &mut Cx, model: &Model, result: PopupResult) {
+    pub fn on_picker_closed(
+        &mut self,
+        cx: &mut Cx,
+        analysis: &waml::uml::Analysis,
+        result: PopupResult,
+    ) {
         let picked = self
             .view
             .widget(cx, ids!(element_bar.select_box))
             .borrow_mut::<SelectBox>()
             .and_then(|mut b| b.on_closed(cx, result));
         if let Some(id) = picked {
-            self.apply_pick(cx, model, id);
+            self.apply_pick(cx, analysis, id);
         }
     }
 }
@@ -1270,6 +1280,55 @@ impl Inspector {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn picker_selection_keeps_declared_recovery_rows_and_revision_bound_actions() {
+        let mut vm = crate::script_gate::boot_test_vm();
+        let mut inspector = Inspector::script_new(&mut vm);
+        let cx = vm.cx_mut();
+        let source = waml::source::SourceBundle::try_from_pairs([
+            (
+                "diagram.md",
+                "---\ntype: Diagram\nprofile: uml-domain\n---\n# Diagram\n\n## Members\n- [Broken](./broken.md)\n",
+            ),
+            (
+                "broken.md",
+                "---\ntype: uml.Class\n---\n# Broken\n\n## Attributes\n- name String [oops 42]\n",
+            ),
+        ])
+        .unwrap();
+        let mut session = crate::editor_session::EditorSession::default();
+        session.replace(source).unwrap();
+        let analysis = session.uml_analysis();
+        let model = &analysis.projection;
+        let rows =
+            crate::inspector::diagram_elements(model, "diagram", "Diagram", &["broken".into()]);
+        inspector.set_diagram_elements(cx, model, rows);
+
+        assert_eq!(
+            inspector.apply_pick(cx, analysis, LiveId::from_str("broken")),
+            Some(Subject::Classifier("broken".into()))
+        );
+        let projection = inspector.proj.as_ref().unwrap();
+        assert_eq!(projection.attributes.len(), 1);
+        assert_eq!(
+            projection.attributes[0].multiplicity,
+            "<invalid multiplicity>"
+        );
+
+        let mut actions: Vec<_> = crate::doc_view::ViewData::from(session.snapshot())
+            .uml_repair_actions("broken")
+            .unwrap();
+        let titles: Vec<_> = actions.iter().map(|action| action.title.as_str()).collect();
+        assert_eq!(
+            titles,
+            ["Insert missing `: `", "Replace invalid multiplicity"]
+        );
+        let first = actions.remove(0);
+        let stale = actions.remove(0);
+        session.apply(first.edit).unwrap();
+        assert!(session.apply(stale.edit).is_err());
+    }
 
     fn rows() -> Vec<ElementRow> {
         vec![
