@@ -48,12 +48,61 @@ impl AttributeSyntax {
             .and_then(SyntaxElement::into_node)
     }
 }
+impl TypeReferenceSyntax {
+    pub fn type_token(&self) -> SyntaxToken<UmlLanguage> {
+        self.0
+            .children()
+            .find(|element| element.kind() == UmlSyntaxKind::TypeToken)
+            .and_then(SyntaxElement::into_token)
+            .expect("type reference has fixed type token")
+    }
+}
+impl MultiplicitySyntax {
+    pub fn open_token(&self) -> SyntaxToken<UmlLanguage> {
+        self.token(UmlSyntaxKind::OpenBracketToken)
+    }
+    pub fn value_token(&self) -> SyntaxToken<UmlLanguage> {
+        self.token(UmlSyntaxKind::IdentifierToken)
+    }
+    pub fn close_token(&self) -> SyntaxToken<UmlLanguage> {
+        self.token(UmlSyntaxKind::CloseBracketToken)
+    }
+    fn token(&self, kind: UmlSyntaxKind) -> SyntaxToken<UmlLanguage> {
+        self.0
+            .children()
+            .find(|element| element.kind() == kind)
+            .and_then(SyntaxElement::into_token)
+            .expect("multiplicity has fixed token slots")
+    }
+}
 impl AstNode<UmlLanguage> for AttributeSyntax {
     fn can_cast(k: UmlSyntaxKind) -> bool {
         k == UmlSyntaxKind::Attribute
     }
     fn cast(n: SyntaxNode<UmlLanguage>) -> Option<Self> {
         Self::can_cast(n.kind()).then_some(Self(n))
+    }
+    fn syntax(&self) -> &SyntaxNode<UmlLanguage> {
+        &self.0
+    }
+}
+impl AstNode<UmlLanguage> for TypeReferenceSyntax {
+    fn can_cast(kind: UmlSyntaxKind) -> bool {
+        kind == UmlSyntaxKind::TypeReference
+    }
+    fn cast(node: SyntaxNode<UmlLanguage>) -> Option<Self> {
+        Self::can_cast(node.kind()).then_some(Self(node))
+    }
+    fn syntax(&self) -> &SyntaxNode<UmlLanguage> {
+        &self.0
+    }
+}
+impl AstNode<UmlLanguage> for MultiplicitySyntax {
+    fn can_cast(kind: UmlSyntaxKind) -> bool {
+        kind == UmlSyntaxKind::Multiplicity
+    }
+    fn cast(node: SyntaxNode<UmlLanguage>) -> Option<Self> {
+        Self::can_cast(node.kind()).then_some(Self(node))
     }
     fn syntax(&self) -> &SyntaxNode<UmlLanguage> {
         &self.0

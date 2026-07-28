@@ -7,18 +7,33 @@ use crate::{
     diagnostic::Diagnostic,
 };
 use std::{collections::BTreeMap, sync::Arc};
-use waml_syntax::{AstNode, SyntaxElement, SyntaxNode};
+use waml_syntax::{AstNode, MarkdownStructureMap, SyntaxElement, SyntaxNode};
 pub struct Analysis {
     pub claims: ClaimSet,
     pub syntax: SyntaxSet<UmlLanguage>,
     pub declared: DeclaredBundle,
     pub projection: super::Projection,
     pub diagnostics: Arc<[Diagnostic]>,
+    pub structures: Arc<BTreeMap<crate::analysis::DocumentId, Arc<MarkdownStructureMap>>>,
+    session_revision: u64,
+}
+impl Analysis {
+    pub fn session_revision(&self) -> u64 {
+        self.session_revision
+    }
 }
 pub fn analyze(
     context: DomainAnalysisContext<'_>,
     _previous: Option<&Analysis>,
 ) -> Result<Analysis, AnalysisError> {
+    if context.session_revision != context.catalog.session_revision()
+        || !Arc::ptr_eq(context.catalog, context.shell.catalog())
+    {
+        return Err(AnalysisError::Specialization {
+            name: "uml",
+            reason: "UML analysis context does not share the shell catalog revision".into(),
+        });
+    }
     let claimed: Vec<_> = context
         .okf
         .concepts()
@@ -40,8 +55,42 @@ pub fn analyze(
             .ok_or_else(|| AnalysisError::CatalogInvariant {
                 reason: "claimed concept has no document".into(),
             })?;
-        let document = context.catalog.document(id).unwrap().clone();
-        let tree = parser::parse(document.text().clone());
+        let shell_snapshot =
+            context
+                .shell
+                .document(id)
+                .ok_or_else(|| AnalysisError::CatalogInvariant {
+                    reason: "claimed concept has no shell syntax snapshot".into(),
+                })?;
+        let document = shell_snapshot.document().clone();
+        let catalog_document =
+            context
+                .catalog
+                .document(id)
+                .ok_or_else(|| AnalysisError::CatalogInvariant {
+                    reason: "claimed concept has no catalog document".into(),
+                })?;
+        let source_document = context.source.document(document.path()).ok_or_else(|| {
+            AnalysisError::CatalogInvariant {
+                reason: "claimed concept has no source document".into(),
+            }
+        })?;
+        if !Arc::ptr_eq(catalog_document, &document)
+            || !Arc::ptr_eq(document.text().shared(), source_document.text_arc())
+        {
+            return Err(AnalysisError::Specialization {
+                name: "uml",
+                reason: "UML document does not share shell/catalog/source provenance".into(),
+            });
+        }
+        let structure =
+            context
+                .structures
+                .get(&id)
+                .ok_or_else(|| AnalysisError::CatalogInvariant {
+                    reason: "claimed concept has no Markdown structure map".into(),
+                })?;
+        let tree = parser::parse(document.text().clone(), structure);
         let attributes = attributes(tree.root());
         let mut fields = Vec::new();
         for syntax in attributes {
@@ -161,7 +210,8 @@ pub fn analyze(
                     } else {
                         start_line.byte_column
                     }) as usize,
-                )),
+                ))
+                .with_provenance(id, document.revision(), diagnostic.range),
             );
         }
         snapshots.insert(id, Arc::new(SyntaxSnapshot::new(document.clone(), tree)));
@@ -182,6 +232,8 @@ pub fn analyze(
         declared,
         projection,
         diagnostics: diagnostics.into(),
+        structures: context.structures.clone(),
+        session_revision: context.session_revision,
     })
 }
 

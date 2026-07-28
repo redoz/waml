@@ -1,3 +1,6 @@
+use crate::analysis::{DocumentId, DocumentRevision};
+use waml_syntax::TextRange;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "serde", serde(rename_all = "lowercase"))]
@@ -76,6 +79,15 @@ pub struct Diagnostic {
     pub line: usize,
     /// Byte range within `line`, if the diagnostic pins a precise column span.
     pub span: Option<(usize, usize)>,
+    /// Stable source identity for revision-scoped parser diagnostics.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub document: Option<DocumentId>,
+    /// Document revision against which `range` was produced.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub document_revision: Option<DocumentRevision>,
+    /// Absolute UTF-8 byte range in the revision-scoped document.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub range: Option<TextRange>,
 }
 
 impl Diagnostic {
@@ -92,6 +104,9 @@ impl Diagnostic {
             file: file.into(),
             line,
             span: None,
+            document: None,
+            document_revision: None,
+            range: None,
         }
     }
     pub fn warn(
@@ -107,11 +122,26 @@ impl Diagnostic {
             file: file.into(),
             line,
             span: None,
+            document: None,
+            document_revision: None,
+            range: None,
         }
     }
     /// Attach a byte range (relative to the diagnostic's line) to this diagnostic.
     pub fn with_span(mut self, span: (usize, usize)) -> Diagnostic {
         self.span = Some(span);
+        self
+    }
+
+    pub fn with_provenance(
+        mut self,
+        document: DocumentId,
+        document_revision: DocumentRevision,
+        range: TextRange,
+    ) -> Diagnostic {
+        self.document = Some(document);
+        self.document_revision = Some(document_revision);
+        self.range = Some(range);
         self
     }
 }

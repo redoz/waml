@@ -2,61 +2,53 @@ use std::sync::Arc;
 
 use super::{UmlLanguage, UmlSyntaxDiagnosticCode, UmlSyntaxKind};
 use waml_syntax::{
-    GreenElement, GreenFactory, GreenText, MarkdownDialect, SourceText, SyntaxSeverity, SyntaxTree,
-    TextRange, TextSize, TreeDiagnostic, TriviaKind,
+    GreenElement, GreenFactory, GreenText, MarkdownStructureMap, SourceText, SyntaxSeverity,
+    SyntaxTree, TextRange, TextSize, TreeDiagnostic, TriviaKind,
 };
 
-pub fn parse(text: SourceText) -> Arc<SyntaxTree<UmlLanguage>> {
+pub fn parse(text: SourceText, structure: &MarkdownStructureMap) -> Arc<SyntaxTree<UmlLanguage>> {
     let factory = GreenFactory::<UmlLanguage>::new();
     let source = text.shared();
     let mut children = Vec::new();
     let mut diagnostics = Vec::new();
     let mut at = 0;
-    let mut in_attributes = false;
-    let mut section = Vec::new();
-    for (start, end) in lines(source) {
-        let significant = source[start..end].trim_end_matches(['\r', '\n', ' ', '\t']);
-        if significant
-            .trim_start()
-            .eq_ignore_ascii_case("## Attributes")
-        {
-            if at < start {
-                children.push(raw(&factory, &text, at, start));
-            }
-            in_attributes = true;
-            at = start;
-            section.push(raw(&factory, &text, start, end));
+    for (index, heading) in structure.headings.iter().enumerate() {
+        if heading.level != 2 || !is_attributes_heading(source, heading.text_range) {
             continue;
         }
-        if in_attributes && significant.trim_start().starts_with("## ") {
-            children.push(GreenElement::Node(
-                factory
-                    .node(
-                        UmlSyntaxKind::AttributesSection,
-                        std::mem::take(&mut section),
-                    )
-                    .unwrap(),
-            ));
-            in_attributes = false;
-            at = start;
+        let start = heading.range.start().to_usize();
+        let end = structure
+            .headings
+            .get(index + 1)
+            .map(|next| next.range.start().to_usize())
+            .unwrap_or(source.len());
+        if at < start {
+            children.push(raw(&factory, &text, at, start));
         }
-        if in_attributes {
-            if let Some(attribute) =
-                attribute(&factory, &text, source, start, end, &mut diagnostics)
-            {
+        let heading_end = line_end(source, start, end);
+        let mut section = vec![raw(&factory, &text, start, heading_end)];
+        for (line_start, line_end) in lines_between(source, heading_end, end) {
+            if protected_non_list_line(structure, source, line_start) {
+                section.push(raw(&factory, &text, line_start, line_end));
+            } else if let Some(attribute) = attribute(
+                &factory,
+                &text,
+                source,
+                line_start,
+                line_end,
+                &mut diagnostics,
+            ) {
                 section.push(GreenElement::Node(attribute));
             } else {
-                section.push(raw(&factory, &text, start, end));
+                section.push(raw(&factory, &text, line_start, line_end));
             }
-            at = end;
         }
-    }
-    if in_attributes {
         children.push(GreenElement::Node(
             factory
                 .node(UmlSyntaxKind::AttributesSection, section)
                 .unwrap(),
         ));
+        at = end;
     }
     if at < source.len() {
         children.push(raw(&factory, &text, at, source.len()));
@@ -65,11 +57,7 @@ pub fn parse(text: SourceText) -> Arc<SyntaxTree<UmlLanguage>> {
         factory.missing_token(UmlSyntaxKind::EndOfFileToken),
     ));
     let root = factory.node(UmlSyntaxKind::Root, children).unwrap();
-    Arc::new(SyntaxTree::new(
-        root,
-        diagnostics.into(),
-        MarkdownDialect::CommonMarkCurrent,
-    ))
+    Arc::new(SyntaxTree::new(root, diagnostics.into(), structure.dialect))
 }
 
 fn attribute(
@@ -123,14 +111,24 @@ fn attribute(
     let name_leading = if vis.is_some() { p } else { after_bullet };
     let name_start = skip_ws(source, p, content_end);
     let name_end = scan_name(source, name_start, content_end);
-    c.push(token(
-        f,
-        text,
-        name_leading,
-        name_start,
-        name_end,
-        UmlSyntaxKind::IdentifierToken,
-    ));
+    c.push(if name_start == name_end {
+        missing_token(
+            f,
+            text,
+            name_leading,
+            name_start,
+            UmlSyntaxKind::IdentifierToken,
+        )
+    } else {
+        token(
+            f,
+            text,
+            name_leading,
+            name_start,
+            name_end,
+            UmlSyntaxKind::IdentifierToken,
+        )
+    });
     p = name_end;
     let colon = source[p..content_end]
         .find(':')
@@ -194,7 +192,7 @@ fn attribute(
             .map(|i| mstart + 1 + i)
         {
             let value = &source[mstart + 1..close];
-            let valid = parse_multiplicity(value);
+            let valid = crate::multiplicity::Multiplicity::parse(value).is_some();
             let mc = vec![
                 token(
                     f,
@@ -273,7 +271,14 @@ fn attribute(
         c.push(GreenElement::Node(
             f.node(
                 UmlSyntaxKind::SkippedTokensSyntax,
-                [token(f, text, p, p, content_end, UmlSyntaxKind::BadToken)],
+                [GreenElement::Token(
+                    f.bad_token(
+                        UmlSyntaxKind::BadToken,
+                        slice(text, p, content_end),
+                        UmlSyntaxDiagnosticCode::UnexpectedToken,
+                    )
+                    .unwrap(),
+                )],
             )
             .unwrap(),
         ));
@@ -334,6 +339,22 @@ fn token(
     };
     GreenElement::Token(f.token(kind, slice(text, start, end), trivia, []).unwrap())
 }
+fn missing_token(
+    f: &GreenFactory<UmlLanguage>,
+    text: &SourceText,
+    leading: usize,
+    start: usize,
+    kind: UmlSyntaxKind,
+) -> GreenElement<UmlLanguage> {
+    let trivia = if leading < start {
+        vec![f
+            .trivia(TriviaKind::Whitespace, slice(text, leading, start))
+            .unwrap()]
+    } else {
+        vec![]
+    };
+    GreenElement::Token(f.missing_token_with_leading(kind, trivia).unwrap())
+}
 fn slice(text: &SourceText, start: usize, end: usize) -> GreenText {
     GreenText::SourceSlice {
         source: text.clone(),
@@ -344,15 +365,44 @@ fn slice(text: &SourceText, start: usize, end: usize) -> GreenText {
         .unwrap(),
     }
 }
-fn lines(s: &str) -> impl Iterator<Item = (usize, usize)> + '_ {
-    let mut p = 0;
+fn lines_between(s: &str, from: usize, to: usize) -> impl Iterator<Item = (usize, usize)> + '_ {
+    let mut p = from;
     std::iter::from_fn(move || {
-        if p >= s.len() {
+        if p >= to {
             return None;
         }
         let a = p;
-        p = s[p..].find('\n').map(|n| p + n + 1).unwrap_or(s.len());
+        p = s[p..to].find('\n').map(|n| p + n + 1).unwrap_or(to);
         Some((a, p))
+    })
+}
+fn line_end(source: &str, start: usize, limit: usize) -> usize {
+    source[start..limit]
+        .find('\n')
+        .map(|offset| start + offset + 1)
+        .unwrap_or(limit)
+}
+fn is_attributes_heading(source: &str, range: TextRange) -> bool {
+    source[range.start().to_usize()..range.end().to_usize()]
+        .trim()
+        .trim_end_matches('#')
+        .trim()
+        .eq_ignore_ascii_case("Attributes")
+}
+fn protected_non_list_line(
+    structure: &MarkdownStructureMap,
+    source: &str,
+    line_start: usize,
+) -> bool {
+    structure.protected_ranges.iter().any(|range| {
+        let start = range.start().to_usize();
+        let end = range.end().to_usize();
+        if !(start <= line_start && line_start < end) {
+            return false;
+        }
+        !source[start..line_end(source, start, end)]
+            .trim_start()
+            .starts_with('-')
     })
 }
 fn skip_ws(s: &str, mut p: usize, end: usize) -> usize {
@@ -378,14 +428,6 @@ impl TrimEndIndex for usize {
         }
         p
     }
-}
-fn parse_multiplicity(s: &str) -> bool {
-    let s = s.trim();
-    s == "*"
-        || s.parse::<u32>().is_ok()
-        || s.split_once("..").is_some_and(|(a, b)| {
-            a.parse::<u32>().is_ok() && (b == "*" || b.parse::<u32>().is_ok())
-        })
 }
 fn diag(
     code: UmlSyntaxDiagnosticCode,

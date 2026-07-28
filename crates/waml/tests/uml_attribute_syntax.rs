@@ -1,4 +1,6 @@
+use std::sync::Arc;
 use waml::{analysis::analyze_okf, source::SourceBundle, uml};
+use waml_syntax::SyntaxElement;
 
 fn analyze(source: &SourceBundle) -> uml::Analysis {
     let okf = analyze_okf(source, None, 1).unwrap();
@@ -197,4 +199,162 @@ fn unterminated_multiplicity_is_declared_invalid_not_absent() {
         .unwrap()
         .attributes
         .is_empty());
+}
+
+#[test]
+fn only_shell_confirmed_top_level_h2_opens_the_attribute_island() {
+    let authored = "---\ntype: uml.Class\n---\n# Order\n\n```md\n## Attributes\n- fenced: Bad [1]\n```\n\n> ## Attributes\n> - quoted: Bad [1]\n\n- ## Attributes\n  - listed: Bad [1]\n\n<div>\n## Attributes\n- html: Bad [1]\n</div>\n\nordinary ## Attributes\n- prose: Bad [1]\n\n## Attributes\n- real: Good [1]\n";
+    let source = SourceBundle::try_from_pairs([("order.md", authored)]).unwrap();
+    let analysis = analyze(&source);
+    let concept = analysis.declared.concept("order").unwrap();
+    assert_eq!(concept.attributes.len(), 1);
+    assert_eq!(
+        analysis.projection.node("order").unwrap().attributes[0].name,
+        "real"
+    );
+    let snapshot = analysis
+        .syntax
+        .document(
+            analysis
+                .syntax
+                .catalog()
+                .id_for_path(&waml::source::BundlePath::parse("order.md").unwrap())
+                .unwrap(),
+        )
+        .unwrap();
+    assert_eq!(snapshot.syntax().write_to_string(), authored);
+}
+
+#[test]
+fn every_invalid_present_multiplicity_has_one_exact_located_diagnostic() {
+    let authored = "---\ntype: uml.Class\n---\n# Order\n\n## Attributes\n- zero: T [0]\n- reversed: T [5..2]\n- empty: T []\n- open_hi: T [1..]\n- open_lo: T [..5]\n- negative: T [-1]\n- repeated: T [1..2..3]\n- alpha: T [a]\n- unclosed: T [1\n";
+    let source = SourceBundle::try_from_pairs([("order.md", authored)]).unwrap();
+    let analysis = analyze(&source);
+    let expected = [
+        (7, (10, 13), "invalid multiplicity"),
+        (8, (14, 20), "invalid multiplicity"),
+        (9, (11, 13), "invalid multiplicity"),
+        (10, (13, 18), "invalid multiplicity"),
+        (11, (13, 18), "invalid multiplicity"),
+        (12, (14, 18), "invalid multiplicity"),
+        (13, (14, 23), "invalid multiplicity"),
+        (14, (11, 14), "invalid multiplicity"),
+        (15, (14, 16), "unterminated multiplicity"),
+    ];
+    assert_eq!(analysis.diagnostics.len(), expected.len());
+    for (diagnostic, (line, span, message)) in analysis.diagnostics.iter().zip(expected) {
+        assert_eq!(
+            diagnostic.code,
+            waml::diagnostic::DiagCode::MalformedAttribute
+        );
+        assert_eq!(diagnostic.severity, waml::diagnostic::Severity::Error);
+        assert_eq!(diagnostic.line, line);
+        assert_eq!(diagnostic.span, Some(span));
+        assert_eq!(diagnostic.message, message);
+    }
+    let concept = analysis.declared.concept("order").unwrap();
+    assert!(concept
+        .attributes
+        .iter()
+        .all(|attribute| matches!(attribute.multiplicity, uml::DeclaredField::Invalid { .. })));
+    assert!(analysis
+        .projection
+        .node("order")
+        .unwrap()
+        .attributes
+        .is_empty());
+}
+
+#[test]
+fn typed_accessors_preserve_fixed_missing_slots_and_recovery() {
+    let source = SourceBundle::try_from_pairs([(
+        "order.md",
+        "---\ntype: uml.Class\n---\n# Order\n\n## Attributes\n- : T\n- name T\n- good: T [1] trailing\n",
+    )]).unwrap();
+    let analysis = analyze(&source);
+    let attributes = &analysis.declared.concept("order").unwrap().attributes;
+    assert!(attributes[0].syntax.name_token().flags().is_missing());
+    assert!(!attributes[0].syntax.colon_token().flags().is_missing());
+    assert!(attributes[1].syntax.colon_token().flags().is_missing());
+    let ty = attributes[2].syntax.type_syntax().unwrap();
+    assert_eq!(ty.type_token().text().write_to_string(), "T");
+    let multiplicity = attributes[2].syntax.multiplicity().unwrap();
+    assert_eq!(multiplicity.open_token().text().write_to_string(), "[");
+    assert_eq!(multiplicity.value_token().text().write_to_string(), "1");
+    assert_eq!(multiplicity.close_token().text().write_to_string(), "]");
+    let recovery: Vec<_> = attributes[2].syntax.recovery().collect();
+    assert_eq!(recovery.len(), 1);
+    let SyntaxElement::Node(recovery) = &recovery[0] else {
+        panic!("recovery slot must contain skipped syntax")
+    };
+    let recovered = recovery.children().next().unwrap().into_token().unwrap();
+    assert!(recovered.flags().is_bad());
+    assert_eq!(recovered.text().write_to_string(), " trailing");
+}
+
+#[test]
+fn snapshots_and_diagnostics_expose_catalog_revision_provenance() {
+    let source = SourceBundle::try_from_pairs([(
+        "order.md",
+        "---\ntype: uml.Class\n---\n# Order\n\n## Attributes\n- count: T [0]\n",
+    )])
+    .unwrap();
+    let okf = analyze_okf(&source, None, 41).unwrap();
+    assert!(matches!(
+        uml::analyze(
+            waml::analysis::DomainAnalysisContext {
+                source: &source,
+                catalog: &okf.catalog,
+                shell: &okf.shell,
+                structures: &okf.structures,
+                okf: &okf.bundle,
+                session_revision: 42,
+            },
+            None,
+        ),
+        Err(waml::analysis::AnalysisError::Specialization { name: "uml", .. })
+    ));
+    let analysis = uml::analyze(
+        waml::analysis::DomainAnalysisContext {
+            source: &source,
+            catalog: &okf.catalog,
+            shell: &okf.shell,
+            structures: &okf.structures,
+            okf: &okf.bundle,
+            session_revision: 41,
+        },
+        None,
+    )
+    .unwrap();
+    assert_eq!(analysis.session_revision(), 41);
+    assert!(Arc::ptr_eq(analysis.syntax.catalog(), &okf.catalog));
+    assert!(Arc::ptr_eq(&analysis.structures, &okf.structures));
+    let id = okf
+        .catalog
+        .id_for_path(&waml::source::BundlePath::parse("order.md").unwrap())
+        .unwrap();
+    let shell = okf.shell.document(id).unwrap();
+    let uml = analysis.syntax.document(id).unwrap();
+    assert!(Arc::ptr_eq(shell.document(), uml.document()));
+    assert!(Arc::ptr_eq(
+        shell.document().text().shared(),
+        uml.document().text().shared()
+    ));
+    let diagnostic = &analysis.diagnostics[0];
+    assert_eq!(diagnostic.file, "order.md");
+    assert_eq!(diagnostic.document, Some(id));
+    assert_eq!(
+        diagnostic.document_revision,
+        Some(uml.document().revision())
+    );
+    assert_eq!(
+        diagnostic.range,
+        Some(
+            waml_syntax::TextRange::new(
+                waml_syntax::TextSize::try_from_usize(58).unwrap(),
+                waml_syntax::TextSize::try_from_usize(61).unwrap(),
+            )
+            .unwrap()
+        )
+    );
 }
