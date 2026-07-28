@@ -82,17 +82,6 @@ pub struct SequenceOperandSyntax(pub(crate) SyntaxNode<UmlLanguage>);
 pub struct SequenceFragmentSyntax(pub(crate) SyntaxNode<UmlLanguage>);
 #[derive(Clone, Debug)]
 pub struct MessagesBlockSyntax(pub(crate) SyntaxNode<UmlLanguage>);
-/// A typed leaf in a layout statement.  The source range belongs to this
-/// token directly, keeping diagnostics on links/quotes/delimiters precise.
-#[derive(Clone, Debug)]
-pub enum LayoutAtomSyntax {
-    Word(SyntaxToken<UmlLanguage>),
-    Link(SyntaxToken<UmlLanguage>),
-    Quote(SyntaxToken<UmlLanguage>),
-    OpenParen(SyntaxToken<UmlLanguage>),
-    CloseParen(SyntaxToken<UmlLanguage>),
-    Comma(SyntaxToken<UmlLanguage>),
-}
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum SlotValueKind {
     Bare,
@@ -536,43 +525,6 @@ impl LayoutStatementSyntax {
             .and_then(SyntaxElement::into_node)
             .map(LayoutStandaloneSyntax)
     }
-    /// Direct, lossless layout atoms in authored order.  Consumers must not
-    /// descend through arbitrary Markdown nodes or reconstruct the bullet.
-    pub fn atoms(&self) -> impl Iterator<Item = SyntaxToken<UmlLanguage>> + '_ {
-        fn collect(node: &SyntaxNode<UmlLanguage>, out: &mut Vec<SyntaxToken<UmlLanguage>>) {
-            for element in node.children() {
-                if let Some(token) = element.clone().into_token() {
-                    if matches!(
-                        token.kind(),
-                        UmlSyntaxKind::LayoutWordToken
-                            | UmlSyntaxKind::LayoutLinkToken
-                            | UmlSyntaxKind::LayoutQuoteToken
-                            | UmlSyntaxKind::LayoutOpenParenToken
-                            | UmlSyntaxKind::LayoutCloseParenToken
-                            | UmlSyntaxKind::LayoutCommaToken
-                    ) {
-                        out.push(token);
-                    }
-                } else if let Some(child) = element.into_node() {
-                    collect(&child, out);
-                }
-            }
-        }
-        let mut atoms = Vec::new();
-        collect(&self.0, &mut atoms);
-        atoms.into_iter()
-    }
-    pub fn typed_atoms(&self) -> impl Iterator<Item = LayoutAtomSyntax> + '_ {
-        self.atoms().filter_map(|token| match token.kind() {
-            UmlSyntaxKind::LayoutWordToken => Some(LayoutAtomSyntax::Word(token)),
-            UmlSyntaxKind::LayoutLinkToken => Some(LayoutAtomSyntax::Link(token)),
-            UmlSyntaxKind::LayoutQuoteToken => Some(LayoutAtomSyntax::Quote(token)),
-            UmlSyntaxKind::LayoutOpenParenToken => Some(LayoutAtomSyntax::OpenParen(token)),
-            UmlSyntaxKind::LayoutCloseParenToken => Some(LayoutAtomSyntax::CloseParen(token)),
-            UmlSyntaxKind::LayoutCommaToken => Some(LayoutAtomSyntax::Comma(token)),
-            _ => None,
-        })
-    }
 }
 impl LayoutPlacementSyntax {
     pub fn operands(&self) -> impl Iterator<Item = OperandSyntax> + '_ {
@@ -635,6 +587,22 @@ impl OperandSyntax {
                 .collect::<Vec<_>>()
         })
     }
+
+    /// Decode the already-shaped operand slots without re-reading the
+    /// statement's authored atom sequence.
+    pub fn value(&self) -> Option<crate::layout::Operand> {
+        Some(crate::layout::Operand {
+            ref_: self.reference()?.value()?,
+            axis: match self.axis() {
+                Some(axis) => Some(axis.value()?),
+                None => None,
+            },
+            hints: self
+                .hints()
+                .map(|hint| hint.value())
+                .collect::<Option<Vec<_>>>()?,
+        })
+    }
 }
 impl AnchoredSyntax {
     pub fn edge(&self) -> Option<EdgeSyntax> {
@@ -642,6 +610,16 @@ impl AnchoredSyntax {
     }
     pub fn operand(&self) -> Option<OperandSyntax> {
         direct_node(&self.0, UmlSyntaxKind::Operand).map(OperandSyntax)
+    }
+
+    pub fn value(&self) -> Option<crate::layout::Anchored> {
+        Some(crate::layout::Anchored {
+            edge: match self.edge() {
+                Some(edge) => Some(edge.value()?),
+                None => None,
+            },
+            operand: self.operand()?.value()?,
+        })
     }
 }
 impl OperandRefSyntax {
@@ -658,6 +636,27 @@ impl OperandRefSyntax {
             .filter_map(SyntaxElement::into_node)
             .map(OperandSyntax)
     }
+
+    pub fn value(&self) -> Option<crate::layout::OperandRef> {
+        if let Some(name) = self.name() {
+            return Some(crate::layout::OperandRef::Name(name.value()?));
+        }
+        if let Some(axis) = self.group_axis() {
+            return Some(crate::layout::OperandRef::InlineGroup {
+                axis: axis.value()?,
+                items: self
+                    .items()
+                    .map(|item| item.value())
+                    .collect::<Option<Vec<_>>>()?,
+            });
+        }
+        let mut items = self.items();
+        let inner = items.next()?.value()?;
+        items
+            .next()
+            .is_none()
+            .then_some(crate::layout::OperandRef::Paren(Box::new(inner)))
+    }
 }
 impl HintSyntax {
     pub fn shape(&self) -> Option<ShapeSyntax> {
@@ -669,6 +668,136 @@ impl HintSyntax {
     pub fn flag(&self) -> Option<FlagSyntax> {
         direct_node(&self.0, UmlSyntaxKind::Flag).map(FlagSyntax)
     }
+
+    pub fn value(&self) -> Option<crate::layout::Hint> {
+        if let Some(shape) = self.shape() {
+            return Some(crate::layout::Hint::Shape(shape.value()?));
+        }
+        if let Some(margin) = self.margin() {
+            return Some(crate::layout::Hint::Margin(margin.value()?));
+        }
+        self.flag()
+            .map(|flag| flag.value().map(crate::layout::Hint::Flag))?
+    }
+}
+
+impl DirectionClauseSyntax {
+    pub fn value(&self) -> Option<crate::layout::Direction> {
+        use crate::layout::Direction;
+        match direct_layout_words(&self.0).as_slice() {
+            [first] if first == "above" => Some(Direction::Above),
+            [first] if first == "below" => Some(Direction::Below),
+            [first, of] if first == "left" && of == "of" => Some(Direction::LeftOf),
+            [first, of] if first == "right" && of == "of" => Some(Direction::RightOf),
+            [first, diagonal, of] if first == "above" && diagonal == "left" && of == "of" => {
+                Some(Direction::AboveLeft)
+            }
+            [first, diagonal, of] if first == "above" && diagonal == "right" && of == "of" => {
+                Some(Direction::AboveRight)
+            }
+            [first, diagonal, of] if first == "below" && diagonal == "left" && of == "of" => {
+                Some(Direction::BelowLeft)
+            }
+            [first, diagonal, of] if first == "below" && diagonal == "right" && of == "of" => {
+                Some(Direction::BelowRight)
+            }
+            _ => None,
+        }
+    }
+}
+
+impl AxisSyntax {
+    pub fn value(&self) -> Option<crate::layout::Axis> {
+        match direct_layout_words(&self.0).last().map(String::as_str) {
+            Some("row") => Some(crate::layout::Axis::Row),
+            Some("column") => Some(crate::layout::Axis::Column),
+            _ => None,
+        }
+    }
+}
+
+impl EdgeSyntax {
+    pub fn value(&self) -> Option<crate::layout::Edge> {
+        match direct_layout_words(&self.0).first().map(String::as_str) {
+            Some("top") => Some(crate::layout::Edge::Top),
+            Some("bottom") => Some(crate::layout::Edge::Bottom),
+            Some("left") => Some(crate::layout::Edge::Left),
+            Some("right") => Some(crate::layout::Edge::Right),
+            Some("center") => Some(crate::layout::Edge::Center),
+            _ => None,
+        }
+    }
+}
+
+impl NameRefSyntax {
+    pub fn value(&self) -> Option<crate::layout::NameRef> {
+        let token = self
+            .0
+            .children()
+            .find_map(SyntaxElement::into_token)
+            .filter(|token| !token.flags().is_missing())?;
+        let authored = token.text().write_to_string();
+        let authored = authored.trim();
+        match token.kind() {
+            UmlSyntaxKind::LayoutLinkToken => {
+                let (title, target) = authored.strip_prefix('[')?.split_once("](")?;
+                Some(crate::layout::NameRef::Link {
+                    title: title.to_string(),
+                    slug: target.strip_suffix(')')?.to_string(),
+                })
+            }
+            UmlSyntaxKind::LayoutQuoteToken => Some(crate::layout::NameRef::Bare(
+                authored.strip_prefix('"')?.strip_suffix('"')?.to_string(),
+            )),
+            UmlSyntaxKind::LayoutWordToken => {
+                Some(crate::layout::NameRef::Bare(authored.to_string()))
+            }
+            _ => None,
+        }
+    }
+}
+
+impl ShapeSyntax {
+    pub fn value(&self) -> Option<crate::layout::Shape> {
+        match direct_layout_words(&self.0).first().map(String::as_str) {
+            Some("frame") => Some(crate::layout::Shape::Frame),
+            Some("box") => Some(crate::layout::Shape::Box),
+            Some("shrink") => Some(crate::layout::Shape::Shrink),
+            _ => None,
+        }
+    }
+}
+
+impl MarginSyntax {
+    pub fn value(&self) -> Option<crate::layout::Margin> {
+        match direct_layout_words(&self.0).first().map(String::as_str) {
+            Some("no") => Some(crate::layout::Margin::No),
+            Some("small") => Some(crate::layout::Margin::Small),
+            Some("medium") => Some(crate::layout::Margin::Medium),
+            Some("large") => Some(crate::layout::Margin::Large),
+            _ => None,
+        }
+    }
+}
+
+impl FlagSyntax {
+    pub fn value(&self) -> Option<crate::layout::Flag> {
+        match direct_layout_words(&self.0).first().map(String::as_str) {
+            Some("emphasized") => Some(crate::layout::Flag::Emphasized),
+            Some("collapsed") => Some(crate::layout::Flag::Collapsed),
+            _ => None,
+        }
+    }
+}
+
+fn direct_layout_words(node: &SyntaxNode<UmlLanguage>) -> Vec<String> {
+    node.children()
+        .filter_map(SyntaxElement::into_token)
+        .filter(|token| {
+            token.kind() == UmlSyntaxKind::LayoutWordToken && !token.flags().is_missing()
+        })
+        .map(|token| token.text().write_to_string().trim().to_ascii_lowercase())
+        .collect()
 }
 
 fn direct_node(

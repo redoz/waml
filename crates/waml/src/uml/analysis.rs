@@ -2631,18 +2631,6 @@ fn declared_layout(
     node: SyntaxNode<UmlLanguage>,
 ) -> crate::uml::DeclaredField<UmlLanguage, crate::uml::DeclaredLayoutStatement> {
     let syntax = super::syntax::LayoutStatementSyntax(node.clone());
-    let atoms = syntax.typed_atoms().collect::<Vec<_>>();
-    let missing_atom = atoms.iter().any(|atom| {
-        let token = match atom {
-            super::syntax::LayoutAtomSyntax::Word(token)
-            | super::syntax::LayoutAtomSyntax::Link(token)
-            | super::syntax::LayoutAtomSyntax::Quote(token)
-            | super::syntax::LayoutAtomSyntax::OpenParen(token)
-            | super::syntax::LayoutAtomSyntax::CloseParen(token)
-            | super::syntax::LayoutAtomSyntax::Comma(token) => token,
-        };
-        token.flags().is_missing() || token.text().write_to_string().trim().is_empty()
-    });
     if has_recovery(&node) {
         let recovery = first_recovery_node(&node).expect("recovery predicate found a node");
         return crate::uml::DeclaredField::Incomplete {
@@ -2650,330 +2638,60 @@ fn declared_layout(
             expected: crate::uml::ExpectedSyntax::LayoutOperand,
         };
     }
-    if atoms.is_empty() || missing_atom {
-        return crate::uml::DeclaredField::Incomplete {
-            syntax: node,
-            expected: crate::uml::ExpectedSyntax::LayoutOperand,
+    if let Some(slots) = syntax.placement() {
+        let operands = slots
+            .operands()
+            .map(|slot| slot.value().map(|value| valid(slot.0, value)))
+            .collect::<Option<Vec<_>>>();
+        let directions = slots
+            .directions()
+            .map(|slot| slot.value().map(|value| valid(slot.0, value)))
+            .collect::<Option<Vec<_>>>();
+        return match (operands, directions) {
+            (Some(operands), Some(directions))
+                if operands.len() == directions.len().saturating_add(1) =>
+            {
+                valid(
+                    node,
+                    crate::uml::DeclaredLayoutStatement::Placement {
+                        operands: operands.into(),
+                        directions: directions.into(),
+                    },
+                )
+            }
+            _ => invalid(node),
         };
     }
-    match parse_layout_atoms(&atoms) {
-        Some(crate::layout::LayoutStatement::Placement {
-            operands,
-            directions,
-        }) => {
-            let Some(slots) = syntax.placement() else {
-                return invalid(node);
-            };
-            let operand_slots = slots.operands().map(|slot| slot.0).collect::<Vec<_>>();
-            let direction_slots = slots.directions().map(|slot| slot.0).collect::<Vec<_>>();
-            if operand_slots.len() != operands.len() || direction_slots.len() != directions.len() {
-                return invalid(node);
-            }
-            valid(
-                node.clone(),
-                crate::uml::DeclaredLayoutStatement::Placement {
-                    operands: operands
-                        .into_iter()
-                        .zip(operand_slots)
-                        .map(|(value, slot)| valid(slot, value))
-                        .collect::<Vec<_>>()
-                        .into(),
-                    directions: directions
-                        .into_iter()
-                        .zip(direction_slots)
-                        .map(|(value, slot)| valid(slot, value))
-                        .collect::<Vec<_>>()
-                        .into(),
-                },
-            )
-        }
-        Some(crate::layout::LayoutStatement::Alignment { left, right }) => {
-            let Some(alignment) = syntax.alignment() else {
-                return invalid(node);
-            };
-            let slots = alignment.anchored().map(|slot| slot.0).collect::<Vec<_>>();
-            let [left_slot, right_slot] = slots.as_slice() else {
-                return invalid(node);
-            };
-            valid(
-                node.clone(),
-                crate::uml::DeclaredLayoutStatement::Alignment {
-                    left: valid(left_slot.clone(), left),
-                    right: valid(right_slot.clone(), right),
-                },
-            )
-        }
-        Some(crate::layout::LayoutStatement::Standalone(operand)) => {
-            let Some(slot) = syntax
-                .standalone()
-                .and_then(|standalone| standalone.operand())
-            else {
-                return invalid(node);
-            };
-            valid(
-                node.clone(),
-                crate::uml::DeclaredLayoutStatement::Standalone(valid(slot.0, operand)),
-            )
-        }
-        None => invalid(node),
+    if let Some(alignment) = syntax.alignment() {
+        return match (alignment.left(), alignment.right()) {
+            (Some(left), Some(right)) => match (left.value(), right.value()) {
+                (Some(left_value), Some(right_value)) => valid(
+                    node,
+                    crate::uml::DeclaredLayoutStatement::Alignment {
+                        left: valid(left.0, left_value),
+                        right: valid(right.0, right_value),
+                    },
+                ),
+                _ => invalid(node),
+            },
+            _ => invalid(node),
+        };
     }
-}
-
-/// The layout declaration cursor consumes the lossless UML atoms directly.
-/// It intentionally never reconstructs a Markdown body or calls the legacy
-/// string lexer/parser: whitespace is trivia in the syntax tree, while every
-/// grammatical decision is made from the authored token kind and spelling.
-struct LayoutCursor<'a> {
-    atoms: &'a [super::syntax::LayoutAtomSyntax],
-    pos: usize,
-}
-
-impl<'a> LayoutCursor<'a> {
-    fn peek(&self) -> Option<&'a super::syntax::LayoutAtomSyntax> {
-        self.atoms.get(self.pos)
+    if let Some(standalone) = syntax.standalone() {
+        return match standalone.operand() {
+            Some(operand) => match operand.value() {
+                Some(value) => valid(
+                    node,
+                    crate::uml::DeclaredLayoutStatement::Standalone(valid(operand.0, value)),
+                ),
+                None => invalid(node),
+            },
+            None => invalid(node),
+        };
     }
-    fn bump(&mut self) -> Option<&'a super::syntax::LayoutAtomSyntax> {
-        let atom = self.peek();
-        if atom.is_some() {
-            self.pos += 1;
-        }
-        atom
-    }
-    fn word(&self) -> Option<String> {
-        match self.peek()? {
-            // The lossless lexer attaches leading horizontal trivia to its
-            // following atom so the green tree round-trips byte-for-byte.
-            // Treat that trivia as trivia here; do not concatenate atoms into
-            // a synthetic source string merely to get this behavior.
-            super::syntax::LayoutAtomSyntax::Word(token) => {
-                Some(token.text().write_to_string().trim().to_string())
-            }
-            _ => None,
-        }
-    }
-    fn eat_word(&mut self, expected: &str) -> bool {
-        self.word()
-            .is_some_and(|word| word.eq_ignore_ascii_case(expected))
-            && {
-                self.pos += 1;
-                true
-            }
-    }
-    fn eat_comma(&mut self) -> bool {
-        matches!(self.peek(), Some(super::syntax::LayoutAtomSyntax::Comma(_))) && {
-            self.pos += 1;
-            true
-        }
-    }
-    fn done(&self) -> bool {
-        self.pos == self.atoms.len()
-    }
-}
-
-fn parse_layout_atoms(
-    atoms: &[super::syntax::LayoutAtomSyntax],
-) -> Option<crate::layout::LayoutStatement> {
-    let mut cur = LayoutCursor { atoms, pos: 0 };
-    let first = parse_layout_anchored(&mut cur)?;
-    if cur.eat_word("aligned") {
-        if !cur.eat_word("with") {
-            return None;
-        }
-        let right = parse_layout_anchored(&mut cur)?;
-        return cur
-            .done()
-            .then_some(crate::layout::LayoutStatement::Alignment { left: first, right });
-    }
-    let first = match first.edge {
-        Some(_) => return None,
-        None => first.operand,
-    };
-    let Some(direction) = parse_layout_direction(&mut cur) else {
-        return cur
-            .done()
-            .then_some(crate::layout::LayoutStatement::Standalone(first));
-    };
-    let mut operands = vec![first, parse_layout_operand(&mut cur)?];
-    let mut directions = vec![direction];
-    while let Some(direction) = parse_layout_direction(&mut cur) {
-        directions.push(direction);
-        operands.push(parse_layout_operand(&mut cur)?);
-    }
-    cur.done()
-        .then_some(crate::layout::LayoutStatement::Placement {
-            operands,
-            directions,
-        })
-}
-
-fn parse_layout_anchored(cur: &mut LayoutCursor<'_>) -> Option<crate::layout::Anchored> {
-    let edge = match cur.word().map(|word| word.to_ascii_lowercase()).as_deref() {
-        Some("top") => Some(crate::layout::Edge::Top),
-        Some("bottom") => Some(crate::layout::Edge::Bottom),
-        Some("left") => Some(crate::layout::Edge::Left),
-        Some("right") => Some(crate::layout::Edge::Right),
-        Some("center") => Some(crate::layout::Edge::Center),
-        _ => None,
-    };
-    if let Some(edge) = edge {
-        cur.bump();
-        if cur.eat_word("of") {
-            return Some(crate::layout::Anchored {
-                edge: Some(edge),
-                operand: parse_layout_operand(cur)?,
-            });
-        }
-        cur.pos -= 1;
-    }
-    Some(crate::layout::Anchored {
-        edge: None,
-        operand: parse_layout_operand(cur)?,
-    })
-}
-
-fn parse_layout_direction(cur: &mut LayoutCursor<'_>) -> Option<crate::layout::Direction> {
-    let word = cur.word()?.to_ascii_lowercase();
-    match word.as_str() {
-        "above" | "below" => {
-            cur.bump();
-            let diagonal = cur.word().map(|word| word.to_ascii_lowercase());
-            let direction = match (word.as_str(), diagonal.as_deref()) {
-                ("above", Some("left")) => crate::layout::Direction::AboveLeft,
-                ("above", Some("right")) => crate::layout::Direction::AboveRight,
-                ("below", Some("left")) => crate::layout::Direction::BelowLeft,
-                ("below", Some("right")) => crate::layout::Direction::BelowRight,
-                ("above", _) => return Some(crate::layout::Direction::Above),
-                _ => return Some(crate::layout::Direction::Below),
-            };
-            cur.bump();
-            if cur.eat_word("of") {
-                Some(direction)
-            } else {
-                None
-            }
-        }
-        "left" | "right" => {
-            cur.bump();
-            if !cur.eat_word("of") {
-                return None;
-            }
-            Some(if word == "left" {
-                crate::layout::Direction::LeftOf
-            } else {
-                crate::layout::Direction::RightOf
-            })
-        }
-        _ => None,
-    }
-}
-
-fn parse_layout_operand(cur: &mut LayoutCursor<'_>) -> Option<crate::layout::Operand> {
-    let ref_ = parse_layout_ref(cur)?;
-    let axis = if cur.eat_word("as") {
-        Some(parse_layout_axis(cur)?)
-    } else {
-        None
-    };
-    let hints = if cur.eat_word("with") {
-        parse_layout_hints(cur)?
-    } else {
-        vec![]
-    };
-    Some(crate::layout::Operand { ref_, axis, hints })
-}
-
-fn parse_layout_axis(cur: &mut LayoutCursor<'_>) -> Option<crate::layout::Axis> {
-    let word = cur.word()?.to_ascii_lowercase();
-    cur.bump();
-    match word.as_str() {
-        "row" => Some(crate::layout::Axis::Row),
-        "column" => Some(crate::layout::Axis::Column),
-        _ => None,
-    }
-}
-
-fn parse_layout_hints(cur: &mut LayoutCursor<'_>) -> Option<Vec<crate::layout::Hint>> {
-    let mut hints = vec![parse_layout_hint(cur)?];
-    while cur.eat_comma() || cur.eat_word("and") {
-        hints.push(parse_layout_hint(cur)?);
-    }
-    Some(hints)
-}
-
-fn parse_layout_hint(cur: &mut LayoutCursor<'_>) -> Option<crate::layout::Hint> {
-    use crate::layout::{Flag, Hint, Margin, Shape};
-    let word = cur.word()?.to_ascii_lowercase();
-    cur.bump();
-    match word.as_str() {
-        "frame" => Some(Hint::Shape(Shape::Frame)),
-        "box" => Some(Hint::Shape(Shape::Box)),
-        "shrink" => Some(Hint::Shape(Shape::Shrink)),
-        "emphasized" => Some(Hint::Flag(Flag::Emphasized)),
-        "collapsed" => Some(Hint::Flag(Flag::Collapsed)),
-        "no" | "small" | "medium" | "large" => {
-            let margin = match word.as_str() {
-                "no" => Margin::No,
-                "small" => Margin::Small,
-                "medium" => Margin::Medium,
-                _ => Margin::Large,
-            };
-            (cur.eat_word("margin") || cur.eat_word("margins")).then_some(Hint::Margin(margin))
-        }
-        _ => None,
-    }
-}
-
-fn parse_layout_ref(cur: &mut LayoutCursor<'_>) -> Option<crate::layout::OperandRef> {
-    use super::syntax::LayoutAtomSyntax::{Link, OpenParen, Quote, Word};
-    use crate::layout::{Axis, NameRef, OperandRef};
-    match cur.bump()? {
-        OpenParen(_) => {
-            let operand = parse_layout_operand(cur)?;
-            matches!(
-                cur.bump(),
-                Some(super::syntax::LayoutAtomSyntax::CloseParen(_))
-            )
-            .then_some(OperandRef::Paren(Box::new(operand)))
-        }
-        Link(token) => {
-            let raw = token.text().write_to_string();
-            let raw = raw.trim();
-            let (title, path) = raw.strip_prefix('[')?.split_once("](")?;
-            let href = path.strip_suffix(')')?;
-            Some(OperandRef::Name(NameRef::Link {
-                title: title.to_string(),
-                slug: href.to_string(),
-            }))
-        }
-        Quote(token) => {
-            let raw = token.text().write_to_string();
-            let raw = raw.trim();
-            Some(OperandRef::Name(NameRef::Bare(
-                raw.strip_prefix('"')?.strip_suffix('"')?.to_string(),
-            )))
-        }
-        Word(token) => {
-            let word = token.text().write_to_string().trim().to_string();
-            let lower = word.to_ascii_lowercase();
-            if lower == "column" || lower == "row" {
-                if !cur.eat_word("of") {
-                    return None;
-                }
-                let axis = if lower == "column" {
-                    Axis::Column
-                } else {
-                    Axis::Row
-                };
-                let mut items = vec![parse_layout_operand(cur)?];
-                while cur.eat_comma() {
-                    items.push(parse_layout_operand(cur)?);
-                }
-                Some(OperandRef::InlineGroup { axis, items })
-            } else {
-                Some(OperandRef::Name(NameRef::Bare(word)))
-            }
-        }
-        _ => None,
+    crate::uml::DeclaredField::Incomplete {
+        syntax: node,
+        expected: crate::uml::ExpectedSyntax::LayoutOperand,
     }
 }
 fn declared_member(node: SyntaxNode<UmlLanguage>) -> crate::uml::DeclaredMember {

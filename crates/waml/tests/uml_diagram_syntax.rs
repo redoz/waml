@@ -371,6 +371,21 @@ fn complete_layout_matrix_matches_legacy_model_and_has_fixed_nested_slots() {
     assert!(rich_operand.reference().is_some());
     assert!(rich_operand.axis().is_some());
     assert_eq!(rich_operand.hints().count(), 3);
+    let LayoutStatement::Placement {
+        operands: expected_operands,
+        ..
+    } = &expected[1]
+    else {
+        unreachable!("second expected statement is a placement");
+    };
+    let OperandRef::InlineGroup {
+        items: expected_group_items,
+        ..
+    } = &expected_operands[0].ref_
+    else {
+        unreachable!("first placement operand is an inline group");
+    };
+    assert_eq!(rich_operand.value(), Some(expected_group_items[1].clone()));
     assert_eq!(
         analysis
             .syntax
@@ -383,6 +398,66 @@ fn complete_layout_matrix_matches_legacy_model_and_has_fixed_nested_slots() {
             .unwrap()
             .text()
     );
+}
+
+#[test]
+fn fixed_layout_slots_preserve_crlf_utf8_recovery_ranges_and_declared_state() {
+    let authored = "---\r\ntype: Diagram\r\n---\r\n# D\r\n\r\n## Layout\r\n- Café left Café\r\n- Café above left of \"Étage\"\r\n";
+    let source = SourceBundle::try_from_pairs([("d.md", authored)]).unwrap();
+    let analysis = analyze(&source);
+    let id = analysis
+        .syntax
+        .catalog()
+        .id_for_path(&waml::source::BundlePath::parse("d.md").unwrap())
+        .unwrap();
+    let syntax = analysis.syntax.document(id).unwrap().syntax();
+    assert_eq!(syntax.write_to_string(), authored);
+
+    let statements = descendants(syntax.root(), UmlSyntaxKind::LayoutStatement);
+    assert_eq!(statements.len(), 2);
+    let first_recovery = descendants(statements[0].clone(), UmlSyntaxKind::SkippedTokensSyntax);
+    assert_eq!(first_recovery.len(), 2);
+    let recovered = first_recovery[0].range();
+    assert_eq!(
+        &authored[recovered.start().to_usize()..recovered.end().to_usize()],
+        " left"
+    );
+    let trailing = first_recovery[1].range();
+    assert_eq!(
+        &authored[trailing.start().to_usize()..trailing.end().to_usize()],
+        " Café"
+    );
+    assert!(descendant_tokens(statements[0].clone())
+        .iter()
+        .any(|token| token.flags().is_missing()
+            && token.kind() == UmlSyntaxKind::LayoutKeywordToken
+            && token.range().start() == token.range().end()));
+
+    let declared = &analysis.declared.concept("d").unwrap().layout;
+    assert!(matches!(
+        &declared[0],
+        uml::DeclaredField::Incomplete { syntax, .. } if syntax.range() == recovered
+    ));
+    let uml::DeclaredField::Valid {
+        value:
+            uml::DeclaredLayoutStatement::Placement {
+                operands,
+                directions,
+            },
+        ..
+    } = &declared[1]
+    else {
+        panic!("valid UTF-8 row must recover independently after malformed row");
+    };
+    assert_eq!(operands.len(), 2);
+    assert_eq!(directions.len(), 1);
+    assert!(matches!(
+        &directions[0],
+        uml::DeclaredField::Valid {
+            value: waml::layout::Direction::AboveLeft,
+            ..
+        }
+    ));
 }
 
 #[test]
