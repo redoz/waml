@@ -67,3 +67,35 @@
   for Makepad's `bitflags` and `cfg-if`.
 - The unrelated modified `task-7-report.md` orchestration file was preserved
   and excluded from staging and commits.
+
+## Fix Round 1
+
+- Added the opt-in `waml/test-support` feature and enabled it only through
+  `waml-editor`'s dev-dependency. Its hidden `PreparationProbe` implements the
+  existing private `PreparationHooks`, so counts and injected failures occur at
+  the real shell, OKF, UML, and claims boundaries inside
+  `prepare_candidate_inner`; the normal editor build retains only the public
+  production `prepare_candidate` boundary.
+- Added a successful session transaction regression proving the exact phase
+  trace is `shell, okf, uml, claims`, with one occurrence each.
+- Added failure/retry coverage for every phase. Each injected failure records
+  exactly the prefix through the failing phase, invokes no later phase, leaves
+  the committed catalog/revision unchanged, and a retry records exactly one
+  complete phase sequence with one revision advance.
+- RED evidence: the focused editor test failed because
+  `analysis::test_support::{PreparationProbe, prepare_candidate_with_probe}`
+  did not exist.
+- GREEN evidence:
+  - session tests: 16 passed;
+  - editor action tests: 4 passed;
+  - syntax action tests: 10 passed;
+  - full editor all-features: 726 passed;
+  - workspace all-features check: passed;
+  - normal editor binary check: passed;
+  - format and diff checks: passed.
+- Workspace checks retain only the two documented Makepad duplicate-package
+  warnings.
+- Fix implementation commit:
+  `1d04a80968b8f8a4a930e62e7404901692357dfd`.
+- TokenSave reported approximately 693 tokens saved for the fix-round context
+  query.
