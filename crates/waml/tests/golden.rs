@@ -74,7 +74,8 @@ fn every_doc_is_a_serialize_fixpoint() {
 
 #[test]
 fn nested_packages_round_trip_through_reindex() {
-    use waml::index_md::reindex_bundle;
+    use waml::index_md::reindex_source;
+    use waml::source::SourceBundle;
     let b = vec![
         (
             "sales/order.md".to_string(),
@@ -91,7 +92,7 @@ fn nested_packages_round_trip_through_reindex() {
         ),
     ];
     let m1 = build_model(&b);
-    let bundle2 = reindex_bundle(&b);
+    let bundle2 = reindex_source(&SourceBundle::try_from_pairs(b.clone()).unwrap()).to_pairs();
     let m2 = build_model(&bundle2);
     // packages + members stable across the round-trip
     let names = |m: &waml::model::Model| {
@@ -108,7 +109,8 @@ fn nested_packages_round_trip_through_reindex() {
     let idx = bundle2.iter().find(|(p, _)| p == "sales/index.md").unwrap();
     assert!(idx.1.contains("[Customer](./customer.md) - A buyer."));
     // second reindex is a fixpoint
-    let bundle3 = reindex_bundle(&bundle2);
+    let bundle3 =
+        reindex_source(&SourceBundle::try_from_pairs(bundle2.clone()).unwrap()).to_pairs();
     assert_eq!(
         bundle2
             .iter()

@@ -563,7 +563,7 @@ fn parse_authored_index(document: &SourceDocument, directory: DirectoryAddress) 
                     .map(|address| address.to_string())
                     .unwrap_or_default()
             } else {
-                resolve_href(&document.path().to_string(), url)
+                resolve_href(document.path().as_ref(), url)
             };
             if !member.is_empty() {
                 authored_order.push(member);

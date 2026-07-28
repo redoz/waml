@@ -446,14 +446,14 @@ pub struct ProjectTree {
 
 /// Walk the tree once, building both id maps. Kept free-standing so it is unit
 /// testable without a `Cx`.
-fn build_id_maps(
-    tree: &ProjectTreeData,
-) -> (
+type TreeIdMaps = (
     HashMap<LiveId, String>,
     HashMap<LiveId, String>,
     HashSet<LiveId>,
     HashSet<LiveId>,
-) {
+);
+
+fn build_id_maps(tree: &ProjectTreeData) -> TreeIdMaps {
     fn walk(
         nodes: &[TreeNode],
         keys: &mut HashMap<LiveId, String>,

@@ -50,11 +50,10 @@ impl DocumentHost {
             .copied()
             .filter(|id| !open.contains(id))
             .collect();
-        let removed = stale
+        stale
             .into_iter()
             .filter_map(|id| self.views.remove(&id).map(|view| (id, view)))
-            .collect();
-        removed
+            .collect()
     }
 
     fn apply_command(&mut self, command: DocumentCommand) -> (bool, RemovedViews) {

@@ -220,7 +220,7 @@ mod tests {
                 "---\ntype: uml.Class\ntitle: Order\n---\n# Order\n".to_string(),
             ),
         ];
-        let out = reindex_bundle(&b);
+        let out = reindex_source(&SourceBundle::try_from_pairs(b).unwrap()).to_pairs();
         let root = &out.iter().find(|(p, _)| p == "index.md").unwrap().1;
         assert!(
             root.starts_with("# My Domain\n"),
@@ -240,7 +240,7 @@ mod tests {
                 "---\ntype: uml.Class\ntitle: Line\n---\n# Line\n".to_string(),
             ),
         ];
-        let out = reindex_bundle(&b);
+        let out = reindex_source(&SourceBundle::try_from_pairs(b.clone()).unwrap()).to_pairs();
         assert!(out.iter().any(|(p, _)| p == "index.md"));
         assert!(out.iter().any(|(p, _)| p == "sales/index.md"));
         assert!(out.iter().any(|(p, _)| p == "sales/orders/index.md"));
