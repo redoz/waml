@@ -163,7 +163,7 @@ pub fn analyze(
                         .filter_map(|e| e.into_token())
                         .map(|t| t.text().write_to_string())
                         .collect::<String>();
-                    let value = raw.trim_matches(['[', ']']).to_string();
+                    let value = raw.trim_matches(['[', ']', '{', '}']).to_string();
                     match (!missing_close)
                         .then(|| crate::multiplicity::Multiplicity::parse(&value))
                         .flatten()

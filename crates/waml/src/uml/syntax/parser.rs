@@ -3326,7 +3326,7 @@ fn attribute(
     }
     let type_start = skip_ws(source, p, content_end);
     let type_end = source[type_start..content_end]
-        .find('[')
+        .find(['[', '{'])
         .map(|i| type_start + i)
         .unwrap_or(content_end)
         .trim_end_matches_index(source, type_start);
@@ -3355,9 +3355,14 @@ fn attribute(
         ));
     }
     let mstart = skip_ws(source, p, content_end);
-    if mstart < content_end && source[mstart..].starts_with('[') {
+    if mstart < content_end && matches!(source.as_bytes()[mstart], b'[' | b'{') {
+        let close_delimiter = if source.as_bytes()[mstart] == b'{' {
+            '}'
+        } else {
+            ']'
+        };
         if let Some(close) = source[mstart + 1..content_end]
-            .find(']')
+            .find(close_delimiter)
             .map(|i| mstart + 1 + i)
         {
             let value = &source[mstart + 1..close];

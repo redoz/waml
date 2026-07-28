@@ -619,6 +619,67 @@ mod tests {
     }
 
     #[test]
+    fn multiplicity_repair_commits_and_reanalysis_removes_the_diagnostic() {
+        let mut session = EditorSession::default();
+        session
+            .replace(source(vec![(
+                "class.md".into(),
+                "---\r\ntype: uml.Class\r\n---\r\n# Café 😀\r\n\r\n## Attributes\r\n- quantité: Number [oops 42]\r\n".into(),
+            )]))
+            .unwrap();
+        let path = waml::source::BundlePath::parse("class.md").unwrap();
+        let document = session.okf_analysis().catalog.id_for_path(&path).unwrap();
+        let action = waml::uml::repair_actions(
+            waml::uml::ActionContext::new(
+                session.okf_analysis(),
+                session.uml_analysis(),
+                session.revision(),
+            )
+            .unwrap(),
+            document,
+        )
+        .unwrap()
+        .into_iter()
+        .find(|action| action.title == "Replace invalid multiplicity")
+        .unwrap();
+
+        let change = session
+            .apply(SyntaxChangeBatch::new(action).unwrap())
+            .unwrap();
+
+        assert_eq!(change.revision, 2);
+        assert!(session
+            .source()
+            .document(&path)
+            .unwrap()
+            .text()
+            .contains("quantité: Number {42}\r\n"));
+        assert!(session.uml_analysis().diagnostics.iter().all(|diagnostic| {
+            diagnostic.message != "invalid multiplicity"
+                && diagnostic.message != "unterminated multiplicity"
+        }));
+        let attribute = &session
+            .uml_analysis()
+            .projection
+            .node("class")
+            .unwrap()
+            .attributes[0];
+        assert_eq!(attribute.multiplicity.as_ref().unwrap().as_str(), "42");
+        assert!(waml::uml::repair_actions(
+            waml::uml::ActionContext::new(
+                session.okf_analysis(),
+                session.uml_analysis(),
+                session.revision(),
+            )
+            .unwrap(),
+            document,
+        )
+        .unwrap()
+        .into_iter()
+        .all(|action| action.title != "Replace invalid multiplicity"));
+    }
+
+    #[test]
     fn recoverable_malformed_source_commits_with_diagnostics() {
         let bundle = source(vec![(
             "recoverable.md".into(),

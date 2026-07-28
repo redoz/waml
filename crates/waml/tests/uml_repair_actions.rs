@@ -127,3 +127,62 @@ fn produced_action_is_rejected_after_a_new_session_revision() {
         .unwrap_err();
     assert!(error.reason.contains("StaleSession"), "{error:?}");
 }
+
+#[test]
+fn multiplicity_repair_reanalyzes_cleanly_with_canonical_braces() {
+    let source = "---\r\ntype: uml.Class\r\ntitle: Café 😀\r\n---\r\n# Café 😀\r\n\r\n## Attributes\r\n- quantité: Number [oops 42]\r\n";
+    let candidate = prepared(source, 30);
+    let action = repair_actions(
+        ActionContext::from_prepared(&candidate).unwrap(),
+        document(&candidate),
+    )
+    .unwrap()
+    .into_iter()
+    .find(|action| action.title == "Replace invalid multiplicity")
+    .unwrap();
+    let repaired = SyntaxChangeBatch::new(action)
+        .unwrap()
+        .lower(EditContext {
+            source: candidate.source(),
+            okf_analysis: candidate.okf(),
+            session_revision: candidate.revision(),
+            uml: candidate.uml(),
+        })
+        .unwrap();
+    let repaired_text = repaired
+        .document(&BundlePath::parse("class.md").unwrap())
+        .unwrap()
+        .text();
+    assert!(repaired_text.contains("quantité: Number {42}\r\n"));
+    assert!(repaired_text.starts_with("---\r\n"));
+
+    let reparsed = prepare_candidate(repaired, None, 31).unwrap();
+    assert!(
+        reparsed.uml().diagnostics.iter().all(|diagnostic| {
+            diagnostic.message != "invalid multiplicity"
+                && diagnostic.message != "unterminated multiplicity"
+        }),
+        "{:?}",
+        reparsed.uml().diagnostics
+    );
+    let attribute = &reparsed.uml().declared.concept("class").unwrap().attributes[0];
+    assert!(matches!(
+        attribute.multiplicity,
+        waml::uml::DeclaredField::Valid { .. }
+    ));
+    assert_eq!(
+        reparsed.uml().projection.node("class").unwrap().attributes[0]
+            .multiplicity
+            .as_ref()
+            .unwrap()
+            .as_str(),
+        "42"
+    );
+    assert!(repair_actions(
+        ActionContext::from_prepared(&reparsed).unwrap(),
+        document(&reparsed)
+    )
+    .unwrap()
+    .iter()
+    .all(|action| action.title != "Replace invalid multiplicity"));
+}
