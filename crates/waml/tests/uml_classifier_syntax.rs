@@ -142,3 +142,35 @@ fn classifier_accessors_read_only_direct_fixed_slots() {
     }
     visit(root);
 }
+
+#[test]
+fn declared_classifier_fields_are_lowered_from_fixed_syntax_slots() {
+    let source = SourceBundle::try_from_pairs([
+        ("class.md", "---\ntype: uml.Class\n---\n# Class\n\n## Values\n- READY\n\n## Slots\n- state: \"ready\"\n\n## Relationships\n- depends [Other](./other.md)\n\n## Members\n- [Other](./other.md)\n"),
+        ("other.md", "---\ntype: uml.Class\n---\n# Other\n"),
+    ]).unwrap();
+    let analysis = analyze(&source);
+    let concept = analysis.declared.concept("class").unwrap();
+    assert!(
+        matches!(concept.values[0].value, uml::DeclaredField::Valid { ref value, .. } if value == "READY")
+    );
+    assert!(
+        matches!(concept.slots[0].name, uml::DeclaredField::Valid { ref value, .. } if value == "state")
+    );
+    assert!(
+        matches!(concept.slots[0].value, uml::DeclaredField::Valid { ref value, .. } if value == "\"ready\"")
+    );
+    assert!(matches!(
+        concept.relationships[0].kind,
+        uml::DeclaredField::Valid {
+            value: waml::model::RelationshipKind::Depends,
+            ..
+        }
+    ));
+    assert!(
+        matches!(concept.relationships[0].target, uml::DeclaredField::Valid { ref value, .. } if value == "./other.md")
+    );
+    assert!(
+        matches!(concept.members[0].target, uml::DeclaredField::Valid { ref value, .. } if value == "./other.md")
+    );
+}

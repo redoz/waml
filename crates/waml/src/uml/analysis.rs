@@ -190,27 +190,27 @@ pub fn analyze(
                 attributes: fields.into(),
                 values: values
                     .into_iter()
-                    .map(|node| declared_value(node, document.text().shared()))
+                    .map(declared_value)
                     .collect::<Vec<_>>()
                     .into(),
                 slots: slots
                     .into_iter()
-                    .map(|node| declared_slot(node, document.text().shared()))
+                    .map(declared_slot)
                     .collect::<Vec<_>>()
                     .into(),
                 relationships: relationships
                     .into_iter()
-                    .map(|node| declared_relationship(node, document.text().shared()))
+                    .map(declared_relationship)
                     .collect::<Vec<_>>()
                     .into(),
                 members: members
                     .into_iter()
-                    .map(|node| declared_member(node, document.text().shared()))
+                    .map(declared_member)
                     .collect::<Vec<_>>()
                     .into(),
                 inline_instances: inline_instances
                     .into_iter()
-                    .map(|node| declared_inline_instance(node, document.text().shared()))
+                    .map(declared_inline_instance)
                     .collect::<Vec<_>>()
                     .into(),
             },
@@ -283,10 +283,6 @@ fn items(
     }
     found
 }
-fn raw(node: &SyntaxNode<UmlLanguage>, source: &str) -> String {
-    let range = node.range();
-    source[range.start().to_usize()..range.end().to_usize()].to_owned()
-}
 fn valid<T>(node: SyntaxNode<UmlLanguage>, value: T) -> crate::uml::DeclaredField<UmlLanguage, T> {
     crate::uml::DeclaredField::Valid {
         value,
@@ -299,79 +295,79 @@ fn invalid<T>(node: SyntaxNode<UmlLanguage>) -> crate::uml::DeclaredField<UmlLan
         diagnostics: Arc::from([crate::diagnostic::DiagCode::DroppableContent]),
     }
 }
-fn declared_value(node: SyntaxNode<UmlLanguage>, source: &str) -> crate::uml::DeclaredValue {
-    let value = crate::grammar::parse_value_line(&raw(&node, source)).unwrap_or_default();
+fn declared_value(node: SyntaxNode<UmlLanguage>) -> crate::uml::DeclaredValue {
+    let syntax = super::syntax::ValueSyntax(node.clone());
     crate::uml::DeclaredValue {
-        syntax: super::syntax::ValueSyntax(node.clone()),
-        value: if value.is_empty() {
-            invalid(node)
-        } else {
-            valid(node, value)
-        },
+        value: syntax
+            .value_token()
+            .map(|t| valid(node.clone(), t.text().write_to_string()))
+            .unwrap_or_else(|| crate::uml::DeclaredField::Incomplete {
+                syntax: node.clone(),
+                expected: crate::uml::ExpectedSyntax::TypeReference,
+            }),
+        syntax,
     }
 }
-fn declared_slot(node: SyntaxNode<UmlLanguage>, source: &str) -> crate::uml::DeclaredSlot {
-    let line = raw(&node, source);
-    match crate::grammar::parse_slot_line(&line) {
-        Ok(slot) => crate::uml::DeclaredSlot {
-            syntax: super::syntax::SlotSyntax(node.clone()),
-            name: valid(node.clone(), slot.name),
-            value: valid(node, crate::grammar::render_slot_value(&slot.value)),
-        },
-        Err(_) => crate::uml::DeclaredSlot {
-            syntax: super::syntax::SlotSyntax(node.clone()),
-            name: invalid(node.clone()),
-            value: invalid(node),
-        },
+fn declared_slot(node: SyntaxNode<UmlLanguage>) -> crate::uml::DeclaredSlot {
+    let syntax = super::syntax::SlotSyntax(node.clone());
+    let field = |token: Option<waml_syntax::SyntaxToken<UmlLanguage>>, expected| {
+        token
+            .map(|t| valid(node.clone(), t.text().write_to_string()))
+            .unwrap_or_else(|| crate::uml::DeclaredField::Incomplete {
+                syntax: node.clone(),
+                expected,
+            })
+    };
+    crate::uml::DeclaredSlot {
+        name: field(syntax.name_token(), crate::uml::ExpectedSyntax::ColonToken),
+        value: field(syntax.value_token(), crate::uml::ExpectedSyntax::LinkTarget),
+        syntax,
     }
 }
-fn declared_relationship(
-    node: SyntaxNode<UmlLanguage>,
-    source: &str,
-) -> crate::uml::DeclaredRelationship {
-    let line = raw(&node, source);
-    match crate::grammar::parse_relationship_line(&line) {
-        Ok(rel) => crate::uml::DeclaredRelationship {
-            syntax: super::syntax::RelationshipSyntax(node.clone()),
-            kind: valid(node.clone(), rel.kind),
-            target: valid(node, rel.target_slug),
-        },
-        Err(_) => crate::uml::DeclaredRelationship {
-            syntax: super::syntax::RelationshipSyntax(node.clone()),
-            kind: invalid(node.clone()),
-            target: invalid(node),
-        },
+fn declared_relationship(node: SyntaxNode<UmlLanguage>) -> crate::uml::DeclaredRelationship {
+    let syntax = super::syntax::RelationshipSyntax(node.clone());
+    let kind = syntax
+        .kind_token()
+        .and_then(|t| crate::model::RelationshipKind::parse(&t.text().write_to_string()))
+        .map(|value| valid(node.clone(), value))
+        .unwrap_or_else(|| invalid(node.clone()));
+    let target = syntax
+        .target_token()
+        .map(|t| valid(node.clone(), t.text().write_to_string()))
+        .unwrap_or_else(|| crate::uml::DeclaredField::Incomplete {
+            syntax: node.clone(),
+            expected: crate::uml::ExpectedSyntax::RelationshipTarget,
+        });
+    crate::uml::DeclaredRelationship {
+        syntax,
+        kind,
+        target,
     }
 }
-fn declared_member(node: SyntaxNode<UmlLanguage>, source: &str) -> crate::uml::DeclaredMember {
-    let line = raw(&node, source);
-    match crate::grammar::parse_member_line(&line) {
-        Ok(member) => crate::uml::DeclaredMember {
-            syntax: super::syntax::MemberSyntax(node.clone()),
-            target: valid(node, member.slug),
-        },
-        Err(_) => crate::uml::DeclaredMember {
-            syntax: super::syntax::MemberSyntax(node.clone()),
-            target: invalid(node),
-        },
-    }
+fn declared_member(node: SyntaxNode<UmlLanguage>) -> crate::uml::DeclaredMember {
+    let syntax = super::syntax::MemberSyntax(node.clone());
+    let target = syntax
+        .target_token()
+        .map(|t| valid(node.clone(), t.text().write_to_string()))
+        .unwrap_or_else(|| crate::uml::DeclaredField::Incomplete {
+            syntax: node.clone(),
+            expected: crate::uml::ExpectedSyntax::LinkTarget,
+        });
+    crate::uml::DeclaredMember { syntax, target }
 }
-fn declared_inline_instance(
-    node: SyntaxNode<UmlLanguage>,
-    source: &str,
-) -> crate::uml::DeclaredInlineInstance {
-    let line = raw(&node, source);
-    match crate::grammar::parse_inline_instance(&line) {
-        Ok(instance) => crate::uml::DeclaredInlineInstance {
-            syntax: super::syntax::InlineInstanceSyntax(node.clone()),
-            classifier: valid(node.clone(), instance.classifier.slug),
-            name: valid(node, instance.name),
-        },
-        Err(_) => crate::uml::DeclaredInlineInstance {
-            syntax: super::syntax::InlineInstanceSyntax(node.clone()),
-            classifier: invalid(node.clone()),
-            name: invalid(node),
-        },
+fn declared_inline_instance(node: SyntaxNode<UmlLanguage>) -> crate::uml::DeclaredInlineInstance {
+    let syntax = super::syntax::InlineInstanceSyntax(node.clone());
+    let classifier = syntax
+        .classifier_token()
+        .map(|t| valid(node.clone(), t.text().write_to_string()))
+        .unwrap_or_else(|| crate::uml::DeclaredField::Incomplete {
+            syntax: node.clone(),
+            expected: crate::uml::ExpectedSyntax::LinkTarget,
+        });
+    crate::uml::DeclaredInlineInstance {
+        syntax,
+        classifier,
+        name: invalid(node),
     }
 }
 
