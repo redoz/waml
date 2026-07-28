@@ -589,10 +589,11 @@ fn confirmed_member_block(
         .structure
         .headings
         .iter()
-        .find(|heading| {
-            heading.level <= 2 && first_h1.map_or(true, |h1| heading.range.start() > h1)
-        })
-        .map(|heading| heading.range.start().to_usize())
+        .chain(shell.structure.nested_headings.iter())
+        .filter(|heading| first_h1.map_or(true, |h1| heading.range.start() > h1))
+        .map(|heading| heading.range.start())
+        .min()
+        .map(|start| start.to_usize())
         .unwrap_or(source.len());
     let ranges: Vec<_> = shell
         .structure

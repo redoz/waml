@@ -218,3 +218,49 @@ fn cumulative_index_edits_rewrite_only_the_confirmed_member_block() {
     let repeated = lower(&candidate, operations).unwrap();
     assert_eq!(repeated.document(&index_path).unwrap().text(), index);
 }
+
+#[test]
+fn nested_unknown_headings_bound_the_confirmed_member_preamble() {
+    let unknown_sections = "### Références 😀\r\n\r\n\
+* [Alpha mention](./alpha.md)\r\n\r\n\
+#### Über details\r\n\r\n\
+* [Zebra mention](./zebra.md)\r\n";
+    let source = SourceBundle::try_from_pairs([
+        (
+            "sales/index.md",
+            format!(
+                "# Sales\r\n\r\nIntro Ω.\r\n\r\n\
+* [Zebra](./zebra.md)\r\n\
+* [Alpha](./alpha.md)\r\n\r\n\
+{unknown_sections}"
+            ),
+        ),
+        ("sales/zebra.md", "# Zebra\r\n".to_owned()),
+        ("sales/alpha.md", "# Alpha\r\n".to_owned()),
+    ])
+    .unwrap();
+    let operations = vec![
+        okf::Op::IndexReorder {
+            directory: directory("/sales"),
+            order: vec!["sales/zebra".into(), "sales/alpha".into()],
+        },
+        okf::Op::IndexRetitle {
+            directory: directory("/sales"),
+            title: "Café Sales".into(),
+        },
+        okf::Op::IndexSort {
+            directory: directory("/sales"),
+        },
+    ];
+
+    let candidate = lower(&source, operations.clone()).unwrap();
+    let index_path = waml::source::BundlePath::parse("sales/index.md").unwrap();
+    let index = candidate.document(&index_path).unwrap().text();
+    let nested_start = index.find("### Références 😀").unwrap();
+    let generated = &index[..nested_start];
+    assert!(generated.find("./alpha.md").unwrap() < generated.find("./zebra.md").unwrap());
+    assert_eq!(&index[nested_start..], unknown_sections);
+
+    let repeated = lower(&candidate, operations).unwrap();
+    assert_eq!(repeated.document(&index_path).unwrap().text(), index);
+}
