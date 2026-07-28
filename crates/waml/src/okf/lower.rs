@@ -1,6 +1,34 @@
-use super::{find_doc, OpError};
+use crate::edit::EditError;
 use crate::index_md::{render_index, IndexEntry};
 use crate::source::{BundlePath, SourceBundle};
+
+fn slug_of(path: &str) -> String {
+    let segment = path.rsplit(['/', '\\']).next().unwrap_or(path);
+    segment.strip_suffix(".md").unwrap_or(segment).to_string()
+}
+
+fn resolve_index(work: &SourceBundle, target: &str) -> Option<usize> {
+    if let Some(index) = work
+        .documents()
+        .iter()
+        .position(|document| crate::okf::id_of(document.path().as_str()) == target)
+    {
+        return Some(index);
+    }
+    let mut matches = work
+        .documents()
+        .iter()
+        .enumerate()
+        .filter(|(_, document)| slug_of(document.path().as_str()) == target);
+    match (matches.next(), matches.next()) {
+        (Some((index, _)), None) => Some(index),
+        _ => None,
+    }
+}
+
+fn find_doc(work: &SourceBundle, target: &str, op: &str) -> Result<usize, EditError> {
+    resolve_index(work, target).ok_or_else(|| EditError::at(op, format!("no document '{target}'")))
+}
 
 fn join(dir: &str, slug: &str) -> String {
     if dir.is_empty() {
@@ -17,28 +45,38 @@ pub(crate) fn op_pkg_move(
     work: &mut SourceBundle,
     slug: &str,
     to_dir: &str,
-) -> Result<(), OpError> {
+) -> Result<(), EditError> {
     let idx = find_doc(work, slug, "pkg.move")?;
-    let dest = join(to_dir, &super::slug_of(slug));
+    let dest = join(to_dir, &slug_of(slug));
     if work
         .documents()
         .iter()
         .enumerate()
         .any(|(i, document)| i != idx && document.path().as_str() == dest)
     {
-        return Err(OpError::at("pkg.move", format!("'{dest}' already exists")));
+        return Err(EditError::at(
+            "pkg.move",
+            format!("'{dest}' already exists"),
+        ));
     }
     work.rename_document(idx, dest)
-        .map_err(|error| OpError::at("pkg.move", error.to_string()))?;
+        .map_err(|error| EditError::at("pkg.move", error.to_string()))?;
     Ok(())
 }
 
 /// Rename a package directory: rewrite the `from/` path prefix of every doc
 /// under it to `to/`. Slugs (keys) and slug-based references are unchanged.
 /// Errors if `to` already exists as a directory prefix or `from` is empty/absent.
-pub(crate) fn op_pkg_rename(work: &mut SourceBundle, from: &str, to: &str) -> Result<(), OpError> {
+pub(crate) fn op_pkg_rename(
+    work: &mut SourceBundle,
+    from: &str,
+    to: &str,
+) -> Result<(), EditError> {
     if from.is_empty() {
-        return Err(OpError::at("pkg.rename", "cannot rename the root package"));
+        return Err(EditError::at(
+            "pkg.rename",
+            "cannot rename the root package",
+        ));
     }
     let from_pfx = format!("{from}/");
     let to_pfx = format!("{to}/");
@@ -47,7 +85,7 @@ pub(crate) fn op_pkg_rename(work: &mut SourceBundle, from: &str, to: &str) -> Re
         .iter()
         .any(|document| document.path().as_str().starts_with(&to_pfx))
     {
-        return Err(OpError::at(
+        return Err(EditError::at(
             "pkg.rename",
             format!("directory '{to}' already exists"),
         ));
@@ -65,11 +103,11 @@ pub(crate) fn op_pkg_rename(work: &mut SourceBundle, from: &str, to: &str) -> Re
         })
         .collect();
     if renames.is_empty() {
-        return Err(OpError::at("pkg.rename", format!("no package '{from}'")));
+        return Err(EditError::at("pkg.rename", format!("no package '{from}'")));
     }
     for (index, path) in renames {
         work.rename_document(index, path)
-            .map_err(|error| OpError::at("pkg.rename", error.to_string()))?;
+            .map_err(|error| EditError::at("pkg.rename", error.to_string()))?;
     }
     Ok(())
 }
@@ -89,16 +127,19 @@ pub(crate) fn op_pkg_delete(
     work: &mut SourceBundle,
     path: &str,
     cascade: bool,
-) -> Result<(), OpError> {
+) -> Result<(), EditError> {
     if path.is_empty() {
-        return Err(OpError::at("pkg.delete", "cannot delete the root package"));
+        return Err(EditError::at(
+            "pkg.delete",
+            "cannot delete the root package",
+        ));
     }
     let pfx = format!("{path}/");
     if cascade {
         let before = work.len();
         work.retain_documents(|document| !document.path().as_str().starts_with(&pfx));
         if work.len() == before {
-            return Err(OpError::at("pkg.delete", format!("no package '{path}'")));
+            return Err(EditError::at("pkg.delete", format!("no package '{path}'")));
         }
     } else {
         let parent = parent_of(path);
@@ -121,7 +162,7 @@ pub(crate) fn op_pkg_delete(
             .collect();
         for (index, path) in renames {
             work.rename_document(index, path)
-                .map_err(|error| OpError::at("pkg.delete", error.to_string()))?;
+                .map_err(|error| EditError::at("pkg.delete", error.to_string()))?;
         }
     }
     Ok(())
@@ -162,9 +203,9 @@ fn write_package_index(
     path: &str,
     order: MemberOrder<'_>,
     title_override: Option<&str>,
-) -> Result<(), OpError> {
+) -> Result<(), EditError> {
     let bundle = crate::okf::Bundle::parse(work)
-        .map_err(|error| OpError::at("pkg.index", error.to_string()))?;
+        .map_err(|error| EditError::at("pkg.index", error.to_string()))?;
     let address = if path.is_empty() {
         "/".to_owned()
     } else {
@@ -172,7 +213,7 @@ fn write_package_index(
     };
     let index = bundle
         .index(&address)
-        .ok_or_else(|| OpError::at("pkg.index", format!("no package '{path}'")))?;
+        .ok_or_else(|| EditError::at("pkg.index", format!("no package '{path}'")))?;
     let mut keys: Vec<String> = match order {
         MemberOrder::Explicit(o) => {
             let mut v: Vec<String> = o
@@ -233,8 +274,8 @@ fn write_package_index(
     } else {
         format!("{path}/index.md")
     };
-    let idx_path =
-        BundlePath::parse(idx_path).map_err(|error| OpError::at("pkg.index", error.to_string()))?;
+    let idx_path = BundlePath::parse(idx_path)
+        .map_err(|error| EditError::at("pkg.index", error.to_string()))?;
     work.upsert(idx_path, text);
     Ok(())
 }
@@ -243,10 +284,10 @@ pub(crate) fn op_pkg_reorder(
     work: &mut SourceBundle,
     path: &str,
     order: &[String],
-) -> Result<(), OpError> {
+) -> Result<(), EditError> {
     write_package_index(work, path, MemberOrder::Explicit(order), None)
 }
-pub(crate) fn op_pkg_sort(work: &mut SourceBundle, path: &str) -> Result<(), OpError> {
+pub(crate) fn op_pkg_sort(work: &mut SourceBundle, path: &str) -> Result<(), EditError> {
     write_package_index(work, path, MemberOrder::Sort, None)
 }
 
@@ -258,9 +299,9 @@ pub(crate) fn op_pkg_retitle(
     work: &mut SourceBundle,
     path: &str,
     title: &str,
-) -> Result<(), OpError> {
+) -> Result<(), EditError> {
     if title.trim().is_empty() {
-        return Err(OpError::at("pkg.retitle", "title cannot be empty"));
+        return Err(EditError::at("pkg.retitle", "title cannot be empty"));
     }
     write_package_index(work, path, MemberOrder::Keep, Some(title))
 }
@@ -276,9 +317,9 @@ pub(crate) fn op_pkg_insert(
     parent_path: &str,
     name: &str,
     docs: &[(String, String)],
-) -> Result<(), OpError> {
+) -> Result<(), EditError> {
     if name.is_empty() {
-        return Err(OpError::at("pkg.insert", "package name is required"));
+        return Err(EditError::at("pkg.insert", "package name is required"));
     }
     let prefix = if parent_path.is_empty() {
         format!("{name}/")
@@ -290,7 +331,7 @@ pub(crate) fn op_pkg_insert(
         .iter()
         .any(|document| document.path().as_str().starts_with(&prefix))
     {
-        return Err(OpError::at(
+        return Err(EditError::at(
             "pkg.insert",
             format!("package '{}' already exists", prefix.trim_end_matches('/')),
         ));
@@ -303,7 +344,7 @@ pub(crate) fn op_pkg_insert(
             None => norm.as_str(),
         };
         work.push_document(format!("{prefix}{rest}"), text.clone())
-            .map_err(|error| OpError::at("pkg.insert", error.to_string()))?;
+            .map_err(|error| EditError::at("pkg.insert", error.to_string()))?;
     }
     Ok(())
 }

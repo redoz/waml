@@ -13,6 +13,7 @@ pub struct TreeNode {
     pub title: String,
     pub kind: TreeKind,
     pub presentation: DocumentPresentation,
+    pub is_directory: bool,
     pub openable: bool,
     pub concept_id: Option<String>,
     pub can_edit_classifier: bool,
@@ -91,15 +92,8 @@ pub fn build_tree(
         };
         let concept_node = |concept_id: &str| {
             let concept = bundle.concept(concept_id)?;
-            let presentation = crate::uml_documents::presentation(uml, concept_id)
-                .or_else(|| crate::okf_documents::presentation(bundle, concept_id))?;
-            let classifier = matches!(
-                presentation.category,
-                NavCategory::Class
-                    | NavCategory::Interface
-                    | NavCategory::Enum
-                    | NavCategory::DataType
-            );
+            let descriptor = crate::documents::describe(bundle, uml, concept_id)?;
+            let presentation = descriptor.presentation;
             Some(TreeNode {
                 key: concept_id.to_owned(),
                 title: concept.title.clone().unwrap_or_else(|| {
@@ -111,10 +105,11 @@ pub fn build_tree(
                 }),
                 kind: presentation.category,
                 presentation,
+                is_directory: false,
                 openable: true,
                 concept_id: Some(concept_id.to_owned()),
-                can_edit_classifier: classifier,
-                can_delete_classifier: classifier,
+                can_edit_classifier: descriptor.capabilities.can_edit_classifier,
+                can_delete_classifier: descriptor.capabilities.can_delete_classifier,
                 children: Vec::new(),
             })
         };
@@ -158,6 +153,7 @@ pub fn build_tree(
             title,
             kind: NavCategory::Directory,
             presentation,
+            is_directory: true,
             openable: false,
             concept_id: None,
             can_edit_classifier: false,
@@ -246,5 +242,26 @@ mod tests {
             kind_of(&ElementType::parse("vendor.Custom")),
             NavCategory::OkfDocument
         );
+    }
+
+    #[test]
+    fn claimed_uml_package_concept_is_an_openable_leaf_not_a_structural_directory() {
+        let source = SourceBundle::try_from_pairs([
+            ("index.md", "# Root\n\n* [Domain](domain.md)\n"),
+            (
+                "domain.md",
+                "---\ntype: uml.Package\ntitle: Domain\n---\n# Domain\n",
+            ),
+        ])
+        .unwrap();
+        let bundle = waml::okf::Bundle::parse(&source).unwrap();
+        let projection = waml::uml::project(&bundle);
+        let tree = build_tree(&bundle, &projection, "Fallback");
+        let domain = &tree.roots[0].children[0];
+
+        assert_eq!(domain.kind, NavCategory::Directory);
+        assert!(!domain.is_directory);
+        assert!(domain.openable);
+        assert!(crate::documents::open(&bundle, &projection, "domain").is_some());
     }
 }

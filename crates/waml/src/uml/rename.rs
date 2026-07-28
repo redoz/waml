@@ -1,4 +1,5 @@
-use super::{find_doc, slug_of, OpError};
+use super::lower::{find_doc, slug_of};
+use crate::edit::EditError;
 use crate::okf;
 use crate::parse::parse_document;
 use crate::serialize::serialize_document;
@@ -125,7 +126,11 @@ fn rename_in_operand(op: &mut Operand, from: &str, to: &str) -> bool {
     changed
 }
 
-pub(crate) fn op_node_rename(work: &mut SourceBundle, from: &str, to: &str) -> Result<(), OpError> {
+pub(crate) fn op_node_rename(
+    work: &mut SourceBundle,
+    from: &str,
+    to: &str,
+) -> Result<(), EditError> {
     // `from` may be a full bundle-path id (the parse/graph layer's node key)
     // or a bare basename; `to` is always a bare local name in the renamed
     // doc's own directory. Repointing compares against stored hrefs, which
@@ -146,7 +151,7 @@ pub(crate) fn op_node_rename(work: &mut SourceBundle, from: &str, to: &str) -> R
         .enumerate()
         .any(|(i, document)| i != idx && okf::id_of(document.path().as_str()) == dest_id)
     {
-        return Err(OpError::at(
+        return Err(EditError::at(
             "node.rename",
             format!("target slug '{to}' already exists"),
         ));
@@ -165,13 +170,14 @@ pub(crate) fn op_node_rename(work: &mut SourceBundle, from: &str, to: &str) -> R
         }
     }
     work.rename_document(idx, dest_path)
-        .map_err(|error| OpError::at("node.rename", error.to_string()))?;
+        .map_err(|error| EditError::at("node.rename", error.to_string()))?;
     Ok(())
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::ops::{apply, slug_of, Op};
+    use super::slug_of;
+    use crate::ops::{apply, Op};
 
     fn bundle() -> Vec<(String, String)> {
         vec![

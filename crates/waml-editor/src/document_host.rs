@@ -116,9 +116,9 @@ impl DocumentHost {
     }
 
     pub fn active_accent(&self) -> Option<Vec4> {
-        self.views
-            .get(&self.tabs.active)
-            .and_then(|view| view.tab_accent())
+        self.tabs
+            .active_tab()
+            .and_then(|tab| tab.presentation.accent)
     }
 
     fn refresh_tabs(&self, cx: &mut Cx, ui: &WidgetRef) {
@@ -197,9 +197,10 @@ impl DocumentHost {
         ui: &WidgetRef,
         session: &EditorSession,
         change: SessionChange,
+        prepared: Vec<Option<crate::document::OpenDocument>>,
     ) {
         if change.okf_changed || change.uml_changed {
-            self.reconcile_documents(session);
+            self.reconcile_documents(prepared);
         }
         let body = BodyWidgets::new(cx, ui);
         if let Some(view) = self.views.get_mut(&self.tabs.active) {
@@ -208,16 +209,15 @@ impl DocumentHost {
         self.refresh_tabs(cx, ui);
     }
 
-    fn reconcile_documents(&mut self, session: &EditorSession) {
-        for index in 0..self.tabs.tabs.len() {
+    fn reconcile_documents(
+        &mut self,
+        prepared_documents: Vec<Option<crate::document::OpenDocument>>,
+    ) {
+        for (index, prepared) in prepared_documents.into_iter().enumerate() {
+            if index >= self.tabs.tabs.len() {
+                break;
+            }
             let current = &self.tabs.tabs[index];
-            let concept_id = current.concept_id.clone();
-            let is_source = current.id == crate::okf_documents::source_document_tab_id(&concept_id);
-            let prepared = if is_source {
-                crate::okf_documents::open_source(session.okf(), &concept_id)
-            } else {
-                crate::documents::open(session.okf(), session.uml_projection(), &concept_id)
-            };
             let Some(prepared) = prepared else {
                 continue;
             };
@@ -362,6 +362,42 @@ mod tests {
         });
         assert!(host.active_chrome().tool_dock);
         assert_eq!(calls.get(), 1);
+    }
+
+    #[test]
+    fn active_accent_comes_from_provider_presentation() {
+        let mut host = DocumentHost::default();
+        let accent = vec4(0.2, 0.4, 0.6, 1.0);
+        let mut document = prepared("order", NavCategory::Class, Rc::new(Cell::new(0)));
+        document.presentation.accent = Some(accent);
+        host.apply_command(DocumentCommand::Open {
+            document,
+            persistent: false,
+        });
+
+        assert_eq!(host.active_accent(), Some(accent));
+    }
+
+    #[test]
+    fn reconciliation_consumes_prepared_documents_without_resolving_providers() {
+        let mut host = DocumentHost::default();
+        let original = prepared("order", NavCategory::Class, Rc::new(Cell::new(0)));
+        host.apply_command(DocumentCommand::Open {
+            document: original,
+            persistent: false,
+        });
+
+        let mut renamed = prepared("order", NavCategory::Class, Rc::new(Cell::new(0)));
+        renamed.title = "Purchase Order".into();
+        host.reconcile_documents(vec![Some(renamed)]);
+        assert_eq!(host.active_tab().unwrap().title, "Purchase Order");
+
+        let mut changed_provider =
+            prepared("order", NavCategory::OkfDocument, Rc::new(Cell::new(0)));
+        changed_provider.tab_id = LiveId::from_str("replacement-provider");
+        host.reconcile_documents(vec![Some(changed_provider)]);
+        assert_eq!(host.active_id(), LiveId::from_str("replacement-provider"));
+        assert_eq!(host.views.len(), 1);
     }
 
     #[test]

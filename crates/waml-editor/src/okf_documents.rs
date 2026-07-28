@@ -1,4 +1,6 @@
-use crate::document::{DocumentPresentation, NavCategory, OpenDocument};
+use crate::document::{
+    DocumentCapabilities, DocumentDescriptor, DocumentPresentation, NavCategory, OpenDocument,
+};
 use crate::icons::Icon;
 use makepad_widgets::{LiveId, Vec4};
 
@@ -17,11 +19,18 @@ pub fn source_document_tab_id(concept_id: &str) -> LiveId {
 }
 
 pub fn presentation(bundle: &waml::okf::Bundle, concept_id: &str) -> Option<DocumentPresentation> {
+    describe(bundle, concept_id).map(|descriptor| descriptor.presentation)
+}
+
+pub fn describe(bundle: &waml::okf::Bundle, concept_id: &str) -> Option<DocumentDescriptor> {
     bundle.concept(concept_id)?;
-    Some(DocumentPresentation {
-        icon: Icon::StickyNote,
-        accent: generic_okf_accent(),
-        category: NavCategory::OkfDocument,
+    Some(DocumentDescriptor {
+        presentation: DocumentPresentation {
+            icon: Icon::StickyNote,
+            accent: generic_okf_accent(),
+            category: NavCategory::OkfDocument,
+        },
+        capabilities: DocumentCapabilities::default(),
     })
 }
 

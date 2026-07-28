@@ -64,7 +64,7 @@ pub(crate) fn legacy_path(directory: &DirectoryAddress) -> String {
 pub(crate) fn lower_one(work: &mut SourceBundle, op: &Op) -> Result<(), EditError> {
     match op {
         Op::ConceptMove { id, to_directory } => {
-            crate::ops::pkg::op_pkg_move(work, id, &legacy_path(to_directory))
+            super::lower::op_pkg_move(work, id, &legacy_path(to_directory))
         }
         Op::DirectoryRename { directory, name } => {
             let from = legacy_path(directory);
@@ -72,7 +72,7 @@ pub(crate) fn lower_one(work: &mut SourceBundle, op: &Op) -> Result<(), EditErro
                 Some((parent, _)) => format!("{parent}/{name}"),
                 None => name.clone(),
             };
-            crate::ops::pkg::op_pkg_rename(work, &from, &to)
+            super::lower::op_pkg_rename(work, &from, &to)
         }
         Op::DirectoryMove {
             directory,
@@ -86,80 +86,23 @@ pub(crate) fn lower_one(work: &mut SourceBundle, op: &Op) -> Result<(), EditErro
             } else {
                 format!("{parent}/{name}")
             };
-            crate::ops::pkg::op_pkg_rename(work, &from, &to)
+            super::lower::op_pkg_rename(work, &from, &to)
         }
         Op::DirectoryDelete { directory, cascade } => {
-            crate::ops::pkg::op_pkg_delete(work, &legacy_path(directory), *cascade)
+            super::lower::op_pkg_delete(work, &legacy_path(directory), *cascade)
         }
         Op::IndexReorder { directory, order } => {
-            crate::ops::pkg::op_pkg_reorder(work, &legacy_path(directory), order)
+            super::lower::op_pkg_reorder(work, &legacy_path(directory), order)
         }
-        Op::IndexSort { directory } => crate::ops::pkg::op_pkg_sort(work, &legacy_path(directory)),
+        Op::IndexSort { directory } => super::lower::op_pkg_sort(work, &legacy_path(directory)),
         Op::IndexRetitle { directory, title } => {
-            crate::ops::pkg::op_pkg_retitle(work, &legacy_path(directory), title)
+            super::lower::op_pkg_retitle(work, &legacy_path(directory), title)
         }
         Op::BundleImport {
             parent,
             name,
             bundle,
-        } => crate::ops::pkg::op_pkg_insert(work, &legacy_path(parent), name, &bundle.to_pairs()),
-    }
-}
-
-impl From<Op> for crate::ops::Op {
-    fn from(op: Op) -> Self {
-        match op {
-            Op::ConceptMove { id, to_directory } => crate::ops::Op::PkgMove {
-                slug: id,
-                to_dir: legacy_path(&to_directory),
-            },
-            Op::DirectoryRename { directory, name } => {
-                let from = legacy_path(&directory);
-                let to = match from.rsplit_once('/') {
-                    Some((parent, _)) => format!("{parent}/{name}"),
-                    None => name,
-                };
-                crate::ops::Op::PkgRename { from, to }
-            }
-            Op::DirectoryMove {
-                directory,
-                to_parent,
-            } => {
-                let from = legacy_path(&directory);
-                let name = from.rsplit('/').next().unwrap_or_default();
-                let parent = legacy_path(&to_parent);
-                let to = if parent.is_empty() {
-                    name.to_string()
-                } else {
-                    format!("{parent}/{name}")
-                };
-                crate::ops::Op::PkgRename { from, to }
-            }
-            Op::DirectoryDelete { directory, cascade } => crate::ops::Op::PkgDelete {
-                path: legacy_path(&directory),
-                cascade,
-            },
-            Op::IndexReorder { directory, order } => crate::ops::Op::PkgReorder {
-                path: legacy_path(&directory),
-                order,
-            },
-            Op::IndexSort { directory } => crate::ops::Op::PkgSort {
-                path: legacy_path(&directory),
-            },
-            Op::IndexRetitle { directory, title } => crate::ops::Op::PkgRetitle {
-                path: legacy_path(&directory),
-                title,
-            },
-            Op::BundleImport {
-                parent,
-                name,
-                bundle,
-            } => crate::ops::Op::PkgInsert {
-                parent_path: legacy_path(&parent),
-                name,
-                docs: bundle.to_pairs(),
-            },
-        }
+        } => super::lower::op_pkg_insert(work, &legacy_path(parent), name, &bundle.to_pairs()),
     }
 }
 

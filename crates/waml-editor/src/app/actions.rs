@@ -822,8 +822,23 @@ impl App {
     ) -> Option<crate::editor_session::SessionChange> {
         match self.session.apply(edit) {
             Ok(change) => {
+                let prepared = if change.okf_changed || change.uml_changed {
+                    self.documents
+                        .tabs()
+                        .iter()
+                        .map(|tab| {
+                            crate::documents::reopen(
+                                self.session.okf(),
+                                self.session.uml_projection(),
+                                tab,
+                            )
+                        })
+                        .collect()
+                } else {
+                    Vec::new()
+                };
                 self.documents
-                    .after_session_change(cx, &self.ui, &self.session, change);
+                    .after_session_change(cx, &self.ui, &self.session, change, prepared);
                 if change.uml_changed {
                     self.sync_document_shell(cx);
                 }

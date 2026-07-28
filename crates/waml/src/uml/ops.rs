@@ -116,7 +116,7 @@ impl EditBatch for Batch {
 }
 
 fn require_claimed(work: &SourceBundle, target: &str, op: &str) -> Result<(), EditError> {
-    let index = crate::ops::resolve_index(work, target)
+    let index = super::lower::resolve_index(work, target)
         .ok_or_else(|| EditError::at(op, format!("no document '{target}'")))?;
     let document = work.document_at(index).expect("resolved document index");
     let parsed = crate::parse::parse_document(document.text());
@@ -141,7 +141,7 @@ pub(crate) fn lower_one(work: &mut SourceBundle, op: &Op) -> Result<(), EditErro
             visibility,
         } => {
             require_claimed(work, node, "attr.add")?;
-            crate::ops::op_attr_add(work, node, name, ty_token, multiplicity, *visibility)
+            super::lower::op_attr_add(work, node, name, ty_token, multiplicity, *visibility)
         }
         Op::AttributeSet {
             node,
@@ -152,7 +152,7 @@ pub(crate) fn lower_one(work: &mut SourceBundle, op: &Op) -> Result<(), EditErro
             rename,
         } => {
             require_claimed(work, node, "attr.set")?;
-            crate::ops::op_attr_set(
+            super::lower::op_attr_set(
                 work,
                 node,
                 name,
@@ -164,15 +164,15 @@ pub(crate) fn lower_one(work: &mut SourceBundle, op: &Op) -> Result<(), EditErro
         }
         Op::AttributeRemove { node, name } => {
             require_claimed(work, node, "attr.rm")?;
-            crate::ops::op_attr_rm(work, node, name)
+            super::lower::op_attr_rm(work, node, name)
         }
         Op::ValueAdd { node, literal } => {
             require_claimed(work, node, "value.add")?;
-            crate::ops::op_value_add(work, node, literal)
+            super::lower::op_value_add(work, node, literal)
         }
         Op::ValueRemove { node, literal } => {
             require_claimed(work, node, "value.rm")?;
-            crate::ops::op_value_rm(work, node, literal)
+            super::lower::op_value_rm(work, node, literal)
         }
         Op::RelationshipAdd {
             source,
@@ -182,14 +182,15 @@ pub(crate) fn lower_one(work: &mut SourceBundle, op: &Op) -> Result<(), EditErro
             ends,
         } => {
             require_claimed(work, source, "rel.add")?;
-            crate::ops::op_rel_add(work, source, *kind, target, name, ends)
+            require_claimed(work, target, "rel.add")?;
+            super::lower::op_rel_add(work, source, *kind, target, name, ends)
         }
         Op::RelationshipSet {
             selector,
             ends,
             name,
-        } => crate::ops::op_rel_set(work, selector, ends, name),
-        Op::RelationshipRemove { selector } => crate::ops::op_rel_rm(work, selector),
+        } => super::lower::op_rel_set(work, selector, ends, name),
+        Op::RelationshipRemove { selector } => super::lower::op_rel_rm(work, selector),
         Op::ClassifierNew {
             slug,
             directory,
@@ -202,7 +203,7 @@ pub(crate) fn lower_one(work: &mut SourceBundle, op: &Op) -> Result<(), EditErro
             if !crate::uml::recognizes_type(ty) {
                 return Err(EditError::at("node.new", "type is not claimed by UML"));
             }
-            crate::ops::op_node_new(
+            super::lower::op_node_new(
                 work,
                 slug,
                 &crate::okf::ops::legacy_path(directory),
@@ -222,15 +223,15 @@ pub(crate) fn lower_one(work: &mut SourceBundle, op: &Op) -> Result<(), EditErro
             ty,
         } => {
             require_claimed(work, id, "node.set")?;
-            crate::ops::op_node_set(work, id, title, description, stereotype, abstract_, ty)
+            super::lower::op_node_set(work, id, title, description, stereotype, abstract_, ty)
         }
         Op::ClassifierRemove { id, cascade } => {
             require_claimed(work, id, "node.rm")?;
-            crate::ops::op_node_rm(work, id, *cascade)
+            super::lower::op_node_rm(work, id, *cascade)
         }
         Op::ClassifierRename { from, to } => {
             require_claimed(work, from, "node.rename")?;
-            crate::ops::rename::op_node_rename(work, from, to)
+            super::rename::op_node_rename(work, from, to)
         }
         Op::DiagramSet {
             key,
@@ -240,7 +241,7 @@ pub(crate) fn lower_one(work: &mut SourceBundle, op: &Op) -> Result<(), EditErro
             display,
         } => {
             require_claimed(work, key, "diagram.set")?;
-            crate::ops::op_diagram_set(work, key, title, description, *clear_description, display)
+            super::lower::op_diagram_set(work, key, title, description, *clear_description, display)
         }
         Op::PlacementSet {
             diagram,
@@ -251,7 +252,7 @@ pub(crate) fn lower_one(work: &mut SourceBundle, op: &Op) -> Result<(), EditErro
             directions,
         } => {
             require_claimed(work, diagram, "place.set")?;
-            crate::ops::op_place_set(
+            super::lower::op_place_set(
                 work,
                 diagram,
                 subject_title,
@@ -267,139 +268,7 @@ pub(crate) fn lower_one(work: &mut SourceBundle, op: &Op) -> Result<(), EditErro
             reference_slug,
         } => {
             require_claimed(work, diagram, "place.rm")?;
-            crate::ops::op_place_rm(work, diagram, subject_slug, reference_slug)
-        }
-    }
-}
-
-impl From<Op> for crate::ops::Op {
-    fn from(op: Op) -> Self {
-        match op {
-            Op::AttributeAdd {
-                node,
-                name,
-                ty_token,
-                multiplicity,
-                visibility,
-            } => Self::AttrAdd {
-                node,
-                name,
-                ty_token,
-                multiplicity,
-                visibility,
-            },
-            Op::AttributeSet {
-                node,
-                name,
-                ty_token,
-                multiplicity,
-                visibility,
-                rename,
-            } => Self::AttrSet {
-                node,
-                name,
-                ty_token,
-                multiplicity,
-                visibility,
-                rename,
-            },
-            Op::AttributeRemove { node, name } => Self::AttrRm { node, name },
-            Op::ValueAdd { node, literal } => Self::ValueAdd { node, literal },
-            Op::ValueRemove { node, literal } => Self::ValueRm { node, literal },
-            Op::RelationshipAdd {
-                source,
-                kind,
-                target,
-                name,
-                ends,
-            } => Self::RelAdd {
-                source,
-                kind,
-                target,
-                name,
-                ends,
-            },
-            Op::RelationshipSet {
-                selector,
-                ends,
-                name,
-            } => Self::RelSet {
-                selector,
-                ends,
-                name,
-            },
-            Op::RelationshipRemove { selector } => Self::RelRm { selector },
-            Op::ClassifierNew {
-                slug,
-                directory,
-                ty,
-                title,
-                stereotype,
-                description,
-                abstract_,
-            } => Self::NodeNew {
-                slug,
-                dir: crate::okf::ops::legacy_path(&directory),
-                ty,
-                title,
-                stereotype,
-                description,
-                abstract_,
-            },
-            Op::ClassifierSet {
-                id,
-                title,
-                description,
-                stereotype,
-                abstract_,
-                ty,
-            } => Self::NodeSet {
-                slug: id,
-                title,
-                description,
-                stereotype,
-                abstract_,
-                ty,
-            },
-            Op::ClassifierRemove { id, cascade } => Self::NodeRm { slug: id, cascade },
-            Op::ClassifierRename { from, to } => Self::NodeRename { from, to },
-            Op::DiagramSet {
-                key,
-                title,
-                description,
-                clear_description,
-                display,
-            } => Self::DiagramSet {
-                key,
-                title,
-                description,
-                clear_description,
-                display,
-            },
-            Op::PlacementSet {
-                diagram,
-                subject_title,
-                subject_slug,
-                reference_title,
-                reference_slug,
-                directions,
-            } => Self::PlaceSet {
-                diagram,
-                subject_title,
-                subject_slug,
-                reference_title,
-                reference_slug,
-                directions,
-            },
-            Op::PlacementRemove {
-                diagram,
-                subject_slug,
-                reference_slug,
-            } => Self::PlaceRm {
-                diagram,
-                subject_slug,
-                reference_slug,
-            },
+            super::lower::op_place_rm(work, diagram, subject_slug, reference_slug)
         }
     }
 }
@@ -514,5 +383,67 @@ mod tests {
         })
         .unwrap();
         assert!(changed.documents()[0].text().contains("id: InvoiceId"));
+    }
+
+    #[test]
+    fn relationship_add_rejects_unclaimed_target() {
+        let source = SourceBundle::try_from_pairs([
+            ("order.md", "---\ntype: uml.Class\n---\n# Order\n"),
+            ("vendor.md", "---\ntype: vendor.Custom\n---\n# Vendor\n"),
+        ])
+        .unwrap();
+        let okf = crate::okf::Bundle::parse(&source).unwrap();
+        let uml = crate::uml::project(&okf);
+        let result = Batch(vec![Op::RelationshipAdd {
+            source: "order".into(),
+            kind: RelationshipKind::Depends,
+            target: "vendor".into(),
+            name: None,
+            ends: None,
+        }])
+        .lower(EditContext {
+            source: &source,
+            okf: &okf,
+            uml: &uml,
+        });
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn relationship_add_accepts_target_created_earlier_in_batch() {
+        let source =
+            SourceBundle::try_from_pairs([("order.md", "---\ntype: uml.Class\n---\n# Order\n")])
+                .unwrap();
+        let okf = crate::okf::Bundle::parse(&source).unwrap();
+        let uml = crate::uml::project(&okf);
+        let changed = Batch(vec![
+            Op::ClassifierNew {
+                slug: "invoice".into(),
+                directory: DirectoryAddress::parse("/").unwrap(),
+                ty: ElementType::parse("uml.Class"),
+                title: "Invoice".into(),
+                stereotype: vec![],
+                description: None,
+                abstract_: false,
+            },
+            Op::RelationshipAdd {
+                source: "order".into(),
+                kind: RelationshipKind::Depends,
+                target: "invoice".into(),
+                name: None,
+                ends: None,
+            },
+        ])
+        .lower(EditContext {
+            source: &source,
+            okf: &okf,
+            uml: &uml,
+        })
+        .unwrap();
+        assert!(changed
+            .document_by_concept_id("order")
+            .unwrap()
+            .text()
+            .contains("invoice.md"));
     }
 }

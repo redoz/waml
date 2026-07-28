@@ -1,4 +1,6 @@
-use crate::document::{DocumentPresentation, NavCategory, OpenDocument};
+use crate::document::{
+    DocumentCapabilities, DocumentDescriptor, DocumentPresentation, NavCategory, OpenDocument,
+};
 use crate::icons::{Icon, IconSet};
 use makepad_widgets::LiveId;
 
@@ -18,6 +20,13 @@ fn category(projection: &waml::uml::Projection, concept_id: &str) -> Option<NavC
         return Some(crate::tree::kind_of(&node.ty));
     }
     if projection
+        .packages
+        .iter()
+        .any(|package| package.key == concept_id)
+    {
+        return Some(NavCategory::Directory);
+    }
+    if projection
         .interactions
         .iter()
         .any(|interaction| interaction.key == concept_id)
@@ -34,11 +43,28 @@ pub fn presentation(
     projection: &waml::uml::Projection,
     concept_id: &str,
 ) -> Option<DocumentPresentation> {
+    describe(projection, concept_id).map(|descriptor| descriptor.presentation)
+}
+
+pub fn describe(
+    projection: &waml::uml::Projection,
+    concept_id: &str,
+) -> Option<DocumentDescriptor> {
     let category = category(projection, concept_id)?;
-    Some(DocumentPresentation {
-        icon: IconSet::icon_for(category).unwrap_or(Icon::StickyNote),
-        accent: crate::accent::tree_kind_color(category),
+    let classifier = matches!(
         category,
+        NavCategory::Class | NavCategory::Interface | NavCategory::Enum | NavCategory::DataType
+    );
+    Some(DocumentDescriptor {
+        presentation: DocumentPresentation {
+            icon: IconSet::icon_for(category).unwrap_or(Icon::StickyNote),
+            accent: crate::accent::tree_kind_color(category),
+            category,
+        },
+        capabilities: DocumentCapabilities {
+            can_edit_classifier: classifier,
+            can_delete_classifier: classifier,
+        },
     })
 }
 
@@ -84,12 +110,16 @@ mod tests {
     fn claims_only_projected_uml_concepts() {
         let source = SourceBundle::try_from_pairs([
             ("order.md", "---\ntype: uml.Class\n---\n# Order\n"),
+            ("domain.md", "---\ntype: uml.Package\n---\n# Domain\n"),
             ("runbook.md", "---\ntype: Runbook\n---\n# Runbook\n"),
         ])
         .unwrap();
         let bundle = waml::okf::Bundle::parse(&source).unwrap();
         let projection = waml::uml::project(&bundle);
         assert!(open(&bundle, &projection, "order").is_some());
+        let package = describe(&projection, "domain").unwrap();
+        assert_eq!(package.presentation.category, NavCategory::Directory);
+        assert!(!package.capabilities.can_edit_classifier);
         assert!(open(&bundle, &projection, "runbook").is_none());
     }
 }

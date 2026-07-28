@@ -1,8 +1,12 @@
 //! Selective UML projection over the domain-agnostic OKF bundle.
 
+pub(crate) mod lower;
 pub mod ops;
-pub use crate::ops::{DiagramDisplaySet, FieldEdit, NameSpec, Selector};
+pub(crate) mod rename;
+pub mod selector;
+pub use crate::ops::{DiagramDisplaySet, FieldEdit, NameSpec};
 pub use ops::{Batch, Op};
+pub use selector::Selector;
 
 pub type Projection = crate::model::Model;
 

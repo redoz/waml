@@ -137,10 +137,20 @@ impl TryFrom<crate::ops::Op> for Step {
                 id: slug,
                 to_directory: directory(&to_dir)?,
             }),
-            Legacy::PkgRename { from, to } => Step::Okf(okf::Op::DirectoryRename {
-                directory: directory(&from)?,
-                name: to.rsplit('/').next().unwrap_or(&to).to_string(),
-            }),
+            Legacy::PkgRename { from, to } => {
+                let from_parent = from.rsplit_once('/').map_or("", |(parent, _)| parent);
+                let to_parent = to.rsplit_once('/').map_or("", |(parent, _)| parent);
+                if from_parent != to_parent {
+                    return Err(EditError::at(
+                        "pkg.rename",
+                        "directory relocation requires compatibility batch expansion",
+                    ));
+                }
+                Step::Okf(okf::Op::DirectoryRename {
+                    directory: directory(&from)?,
+                    name: to.rsplit('/').next().unwrap_or(&to).to_string(),
+                })
+            }
             Legacy::PkgDelete { path, cascade } => Step::Okf(okf::Op::DirectoryDelete {
                 directory: directory(&path)?,
                 cascade,
@@ -207,6 +217,37 @@ impl TryFrom<crate::ops::Op> for Step {
     }
 }
 
+pub(crate) fn steps_from_legacy(op: crate::ops::Op) -> Result<Vec<Step>, EditError> {
+    let crate::ops::Op::PkgRename { from, to } = op else {
+        return Step::try_from(op).map(|step| vec![step]);
+    };
+    let from_name = from.rsplit('/').next().unwrap_or(&from);
+    let to_name = to.rsplit('/').next().unwrap_or(&to);
+    let from_parent = from.rsplit_once('/').map_or("", |(parent, _)| parent);
+    let to_parent = to.rsplit_once('/').map_or("", |(parent, _)| parent);
+    let mut steps = Vec::new();
+    let mut current = directory(&from)?;
+    if from_parent != to_parent {
+        steps.push(Step::Okf(okf::Op::DirectoryMove {
+            directory: current.clone(),
+            to_parent: directory(to_parent)?,
+        }));
+        let moved = if to_parent.is_empty() {
+            from_name.to_string()
+        } else {
+            format!("{to_parent}/{from_name}")
+        };
+        current = directory(&moved)?;
+    }
+    if from_name != to_name {
+        steps.push(Step::Okf(okf::Op::DirectoryRename {
+            directory: current,
+            name: to_name.to_string(),
+        }));
+    }
+    Ok(steps)
+}
+
 pub fn apply(source: &SourceBundle, batch: &Batch) -> Result<SourceBundle, EditError> {
     let mut candidate = source.clone();
     for (index, step) in batch.steps().iter().enumerate() {
@@ -262,5 +303,26 @@ mod tests {
             }],
         );
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn legacy_directory_rename_preserves_combined_move_and_rename() {
+        let source = SourceBundle::try_from_pairs([(
+            "domains/sales/order.md",
+            "---\ntype: uml.Class\n---\n# Order\n",
+        )])
+        .unwrap();
+        let changed = crate::ops::apply_source(
+            &source,
+            &[crate::ops::Op::PkgRename {
+                from: "domains/sales".into(),
+                to: "archive/commerce".into(),
+            }],
+        )
+        .unwrap();
+        assert!(changed
+            .documents()
+            .iter()
+            .any(|document| document.path().as_str() == "archive/commerce/order.md"));
     }
 }

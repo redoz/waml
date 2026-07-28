@@ -2511,28 +2511,38 @@ mod tests {
     // tests and `scene.rs`'s `project_conflicts` tests.
     #[test]
     fn conflict_delete_removes_only_the_targeted_placement() {
-        let bundle = vec![(
+        let source = waml::source::SourceBundle::try_from_pairs([(
             "shop/dia.md".to_string(),
             "---\ntype: Diagram\ntitle: D\nprofile: uml-domain\n---\n# D\n\n## Layout\n\
              - [Order](./order.md) left of [PaymentGateway](./payment-gateway.md)\n\
              - [Customer](./customer.md) below [Order](./order.md)\n"
                 .to_string(),
-        )];
+        )])
+        .unwrap();
+        let okf = waml::okf::Bundle::parse(&source).unwrap();
+        let uml = waml::uml::project(&okf);
         let action = ConflictListAction::Delete {
             subject: "order".to_string(),
             reference: "payment-gateway".to_string(),
         };
         let op = place_rm_for("dia", &action).expect("Delete maps to an Op");
-        let out = waml::ops::apply(&bundle, &[op.into()]).unwrap();
+        let out = waml::edit::EditBatch::lower(
+            &waml::uml::Batch(vec![op]),
+            waml::edit::EditContext {
+                source: &source,
+                okf: &okf,
+                uml: &uml,
+            },
+        )
+        .unwrap();
+        let markdown = out.document_by_concept_id("shop/dia").unwrap().text();
         assert!(
-            !out[0].1.contains("left of"),
-            "the deleted placement is gone: {}",
-            out[0].1
+            !markdown.contains("left of"),
+            "the deleted placement is gone: {markdown}"
         );
         assert!(
-            out[0].1.contains("below"),
-            "the OTHER placement survives: {}",
-            out[0].1
+            markdown.contains("below"),
+            "the OTHER placement survives: {markdown}"
         );
     }
 

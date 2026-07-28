@@ -23,6 +23,18 @@ pub struct DocumentPresentation {
     pub category: NavCategory,
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct DocumentCapabilities {
+    pub can_edit_classifier: bool,
+    pub can_delete_classifier: bool,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct DocumentDescriptor {
+    pub presentation: DocumentPresentation,
+    pub capabilities: DocumentCapabilities,
+}
+
 pub struct OpenDocument {
     pub tab_id: LiveId,
     pub concept_id: String,

@@ -359,8 +359,6 @@ pub struct ProjectTree {
     #[rust]
     id_to_key: HashMap<LiveId, String>,
     #[rust]
-    id_to_kind: HashMap<LiveId, TreeKind>,
-    #[rust]
     id_to_concept: HashMap<LiveId, String>,
     #[rust]
     openable_ids: HashSet<LiveId>,
@@ -452,7 +450,6 @@ fn build_id_maps(
     tree: &ProjectTreeData,
 ) -> (
     HashMap<LiveId, String>,
-    HashMap<LiveId, TreeKind>,
     HashMap<LiveId, String>,
     HashSet<LiveId>,
     HashSet<LiveId>,
@@ -460,7 +457,6 @@ fn build_id_maps(
     fn walk(
         nodes: &[TreeNode],
         keys: &mut HashMap<LiveId, String>,
-        kinds: &mut HashMap<LiveId, TreeKind>,
         concepts: &mut HashMap<LiveId, String>,
         openable: &mut HashSet<LiveId>,
         classifier_context: &mut HashSet<LiveId>,
@@ -468,7 +464,6 @@ fn build_id_maps(
         for n in nodes {
             let id = LiveId::from_str(&n.key);
             keys.insert(id, n.key.clone());
-            kinds.insert(id, n.kind);
             if let Some(concept_id) = &n.concept_id {
                 concepts.insert(id, concept_id.clone());
             }
@@ -478,30 +473,21 @@ fn build_id_maps(
             if n.can_edit_classifier || n.can_delete_classifier {
                 classifier_context.insert(id);
             }
-            walk(
-                &n.children,
-                keys,
-                kinds,
-                concepts,
-                openable,
-                classifier_context,
-            );
+            walk(&n.children, keys, concepts, openable, classifier_context);
         }
     }
     let mut keys = HashMap::new();
-    let mut kinds = HashMap::new();
     let mut concepts = HashMap::new();
     let mut openable = HashSet::new();
     let mut classifier_context = HashSet::new();
     walk(
         &tree.roots,
         &mut keys,
-        &mut kinds,
         &mut concepts,
         &mut openable,
         &mut classifier_context,
     );
-    (keys, kinds, concepts, openable, classifier_context)
+    (keys, concepts, openable, classifier_context)
 }
 
 /// The package-folder keys `set_view` expands for `tag`, in depth-first order.
@@ -515,7 +501,7 @@ fn folders_to_open(tag: NavStateTag, tree: &ProjectTreeData) -> Vec<String> {
     let deep = matches!(tag, NavStateTag::Results | NavStateTag::Elsewhere);
     fn collect(nodes: &[TreeNode], deep: bool, out: &mut Vec<String>) {
         for n in nodes {
-            if matches!(n.kind, TreeKind::Directory) {
+            if n.is_directory {
                 out.push(n.key.clone());
                 if deep {
                     collect(&n.children, deep, out);
@@ -528,8 +514,7 @@ fn folders_to_open(tag: NavStateTag, tree: &ProjectTreeData) -> Vec<String> {
     out
 }
 
-/// Draw the row-leading glyph for `kind` at `row_top`, indented by `depth`.
-/// `Unknown` has no matching HUD glyph and is skipped, leaving a bare row.
+/// Draw the provider-supplied row-leading glyph at `row_top`.
 ///
 /// The draw position is rounded to whole device pixels before `draw_abs` so the
 /// SDF glyph's thin strokes land pixel-aligned; a subpixel `x`/`y` would soften
@@ -537,14 +522,11 @@ fn folders_to_open(tag: NavStateTag, tree: &ProjectTreeData) -> Vec<String> {
 fn draw_row_icon(
     cx: &mut Cx2d,
     icons: &mut IconSet,
-    kind: TreeKind,
+    icon: Icon,
     row_top: Vec2d,
     depth: usize,
     color: Vec4,
 ) {
-    let Some(icon) = IconSet::icon_for(kind) else {
-        return;
-    };
     let x = (row_top.x + ICON_LEFT_MARGIN + depth as f64 * ICON_DEPTH_INDENT).round();
     let y = (row_top.y + (ROW_HEIGHT - ICON_SIZE) / 2.0).round();
     icons.draw(
@@ -595,12 +577,12 @@ fn draw_nodes(
         let id = LiveId::from_str(&node.key);
         let row_top = cx.turtle().pos();
         let is_selected = selected == Some(node.key.as_str());
-        if matches!(node.kind, TreeKind::Directory) {
+        if node.is_directory {
             let opened = ft.begin_folder(cx, id, &node.title).is_ok();
             if is_selected {
                 draw_row_highlight(cx, draw_selection, row_top);
             }
-            draw_row_icon(cx, icons, node.kind, row_top, depth, color);
+            draw_row_icon(cx, icons, node.presentation.icon, row_top, depth, color);
             if opened {
                 draw_nodes(
                     cx,
@@ -619,7 +601,7 @@ fn draw_nodes(
             if is_selected {
                 draw_row_highlight(cx, draw_selection, row_top);
             }
-            draw_row_icon(cx, icons, node.kind, row_top, depth, color);
+            draw_row_icon(cx, icons, node.presentation.icon, row_top, depth, color);
         }
     }
 }
@@ -1024,8 +1006,7 @@ impl ProjectTree {
             NavView::Elsewhere(t) => (t, NavStateTag::Elsewhere),
             NavView::Empty => (ProjectTreeData::default(), NavStateTag::Empty),
         };
-        let (id_to_key, id_to_kind, id_to_concept, openable_ids, classifier_context_ids) =
-            build_id_maps(&tree);
+        let (id_to_key, id_to_concept, openable_ids, classifier_context_ids) = build_id_maps(&tree);
         let file_tree = self.view.file_tree(cx, ids!(file_tree));
         // Open package folders so the panel isn't collapsed. Browse expands only
         // the top-level packages (under scope the roots are the scope's members,
@@ -1035,7 +1016,6 @@ impl ProjectTree {
             file_tree.set_folder_is_open(cx, LiveId::from_str(&key), true, Animate::No);
         }
         self.id_to_key = id_to_key;
-        self.id_to_kind = id_to_kind;
         self.id_to_concept = id_to_concept;
         self.openable_ids = openable_ids;
         self.classifier_context_ids = classifier_context_ids;
@@ -1280,6 +1260,7 @@ mod tests {
                 accent: None,
                 category: kind,
             },
+            is_directory: kind == TreeKind::Directory,
             openable: kind != TreeKind::Directory,
             concept_id: (kind != TreeKind::Directory).then(|| key.to_owned()),
             can_edit_classifier: is_classifier,
@@ -1313,7 +1294,7 @@ mod tests {
     }
 
     #[test]
-    fn id_maps_round_trip_key_and_kind() {
+    fn id_maps_round_trip_identity_and_provider_capabilities() {
         let tree = ProjectTreeData {
             roots: vec![node(
                 "/",
@@ -1326,26 +1307,13 @@ mod tests {
             )],
         };
 
-        let (id_to_key, id_to_kind, id_to_concept, openable, classifier_context) =
-            build_id_maps(&tree);
+        let (id_to_key, id_to_concept, openable, classifier_context) = build_id_maps(&tree);
 
-        // Every node's key and kind recover through LiveId::from_str.
+        // Every node's key recovers through LiveId::from_str.
         for key in ["/", "orders-diagram", "customer"] {
             let id = LiveId::from_str(key);
             assert_eq!(id_to_key.get(&id).map(String::as_str), Some(key));
         }
-        assert_eq!(
-            id_to_kind.get(&LiveId::from_str("orders-diagram")).copied(),
-            Some(TreeKind::Diagram)
-        );
-        assert_eq!(
-            id_to_kind.get(&LiveId::from_str("customer")).copied(),
-            Some(TreeKind::Class)
-        );
-        assert_eq!(
-            id_to_kind.get(&LiveId::from_str("/")).copied(),
-            Some(TreeKind::Directory)
-        );
         assert_eq!(id_to_key.len(), 3);
         assert_eq!(
             id_to_concept

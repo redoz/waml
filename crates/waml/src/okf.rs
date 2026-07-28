@@ -17,6 +17,7 @@ use regex::Regex;
 use crate::frontmatter::{parse_frontmatter_spanned, Frontmatter};
 use crate::source::{SourceBundle, SourceDocument, SourceSlice};
 
+pub(crate) mod lower;
 pub mod ops;
 pub use ops::{Batch, Op};
 
