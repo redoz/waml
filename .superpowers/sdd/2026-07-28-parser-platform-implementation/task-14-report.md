@@ -88,3 +88,33 @@ Green verification:
 - Production prohibited scan remained empty.
 
 TokenSave saved approximately 2,952 tokens in this review round.
+
+## Review fix round 2
+
+Implementation commit: `5c8197a`
+
+- The authored member-list preamble now ends at the earliest shell-confirmed heading of any level after the Index H1.
+- The boundary is the minimum range start across `MarkdownStructureMap::headings` and `nested_headings`; no raw heading scan is used.
+- H3-H6 unknown sections and their member-looking links cannot participate in member-order discovery, rewriting, or multiple-block detection.
+- Added CRLF/UTF-8 H3/H4 coverage with valid member-looking links, cumulative reorder/retitle/sort, repeated application, and byte-exact unknown-section preservation.
+
+Red evidence:
+
+- `rtk cargo test -p waml --test okf_lowering_order nested_unknown_headings_bound_the_confirmed_member_preamble` failed at step zero with `multiple shell-confirmed member-list blocks`.
+
+Green verification:
+
+- `rtk cargo test -p waml --test okf_lowering_order` — 6 passed
+- `rtk cargo test -p waml okf::ops::tests` — 3 passed
+- `rtk cargo test -p waml --test ops_golden` — 2 passed
+- `rtk cargo test -p waml --test syntax_actions` — 10 passed
+- `rtk cargo test -p waml parser_platform_baseline` — 5 passed
+- `rtk cargo test -p waml` — 528 passed
+- `rtk cargo test -p waml-editor editor_session::tests` — 17 passed
+- `rtk cargo test -p waml-editor` — 727 passed
+- `rtk cargo check --workspace --all-features`
+- `rtk cargo fmt --all -- --check`
+- `rtk git diff --check`
+- Production prohibited scan remained empty.
+
+TokenSave saved approximately 2,523 tokens in this review round.
