@@ -283,6 +283,32 @@ pub(crate) fn lower_one(work: &mut SourceBundle, op: &Op) -> Result<(), EditErro
 mod tests {
     use super::*;
 
+    fn context(source: &SourceBundle) -> EditContext<'_> {
+        let okf_analysis = Box::leak(Box::new(
+            crate::analysis::analyze_okf(source, None, 0).unwrap(),
+        ));
+        let uml = Box::leak(Box::new(
+            crate::uml::analyze(
+                crate::analysis::DomainAnalysisContext {
+                    source,
+                    catalog: &okf_analysis.catalog,
+                    shell: &okf_analysis.shell,
+                    structures: &okf_analysis.structures,
+                    okf: &okf_analysis.bundle,
+                    session_revision: 0,
+                },
+                None,
+            )
+            .unwrap(),
+        ));
+        EditContext {
+            source,
+            okf_analysis,
+            session_revision: 0,
+            uml,
+        }
+    }
+
     #[test]
     fn ordered_batch_is_atomic_and_copy_on_write() {
         let source = SourceBundle::try_from_pairs([
@@ -290,8 +316,6 @@ mod tests {
             ("b.md", "---\ntype: uml.Class\ntitle: B\n---\n# B\n"),
         ])
         .unwrap();
-        let okf = crate::okf::Bundle::parse(&source).unwrap();
-        let uml = crate::uml::project(&okf);
         let batch = Batch(vec![
             Op::ClassifierSet {
                 id: "a".into(),
@@ -306,13 +330,7 @@ mod tests {
                 name: "x".into(),
             },
         ]);
-        assert!(batch
-            .lower(EditContext {
-                source: &source,
-                okf: &okf,
-                uml: &uml
-            })
-            .is_err());
+        assert!(batch.lower(context(&source)).is_err());
         assert!(source.documents()[0].text().contains("title: A"));
 
         let changed = Batch(vec![Op::ClassifierSet {
@@ -323,11 +341,7 @@ mod tests {
             abstract_: None,
             ty: None,
         }])
-        .lower(EditContext {
-            source: &source,
-            okf: &okf,
-            uml: &uml,
-        })
+        .lower(context(&source))
         .unwrap();
         assert!(!changed.shares_text_with(&source, "a.md"));
         assert!(changed.shares_text_with(&source, "b.md"));
@@ -340,8 +354,6 @@ mod tests {
             "---\ntype: vendor.Custom\ntitle: Vendor\n---\n# Vendor\n",
         )])
         .unwrap();
-        let okf = crate::okf::Bundle::parse(&source).unwrap();
-        let uml = crate::uml::project(&okf);
         let result = Batch(vec![Op::ClassifierSet {
             id: "vendor".into(),
             title: Some("Changed".into()),
@@ -350,11 +362,7 @@ mod tests {
             abstract_: None,
             ty: None,
         }])
-        .lower(EditContext {
-            source: &source,
-            okf: &okf,
-            uml: &uml,
-        });
+        .lower(context(&source));
         assert!(result.is_err());
         assert!(source.documents()[0].text().contains("title: Vendor"));
     }
@@ -362,8 +370,6 @@ mod tests {
     #[test]
     fn ordered_batch_validates_against_the_evolving_candidate() {
         let source = SourceBundle::default();
-        let okf = crate::okf::Bundle::parse(&source).unwrap();
-        let uml = crate::uml::project(&okf);
         let changed = Batch(vec![
             Op::ClassifierNew {
                 slug: "invoice".into(),
@@ -382,11 +388,7 @@ mod tests {
                 visibility: None,
             },
         ])
-        .lower(EditContext {
-            source: &source,
-            okf: &okf,
-            uml: &uml,
-        })
+        .lower(context(&source))
         .unwrap();
         assert!(changed.documents()[0].text().contains("id: InvoiceId"));
     }
@@ -398,8 +400,6 @@ mod tests {
             ("vendor.md", "---\ntype: vendor.Custom\n---\n# Vendor\n"),
         ])
         .unwrap();
-        let okf = crate::okf::Bundle::parse(&source).unwrap();
-        let uml = crate::uml::project(&okf);
         let result = Batch(vec![Op::RelationshipAdd {
             source: "order".into(),
             kind: RelationshipKind::Depends,
@@ -407,11 +407,7 @@ mod tests {
             name: None,
             ends: None,
         }])
-        .lower(EditContext {
-            source: &source,
-            okf: &okf,
-            uml: &uml,
-        });
+        .lower(context(&source));
         assert!(result.is_err());
     }
 
@@ -420,8 +416,6 @@ mod tests {
         let source =
             SourceBundle::try_from_pairs([("order.md", "---\ntype: uml.Class\n---\n# Order\n")])
                 .unwrap();
-        let okf = crate::okf::Bundle::parse(&source).unwrap();
-        let uml = crate::uml::project(&okf);
         let changed = Batch(vec![
             Op::ClassifierNew {
                 slug: "invoice".into(),
@@ -440,11 +434,7 @@ mod tests {
                 ends: None,
             },
         ])
-        .lower(EditContext {
-            source: &source,
-            okf: &okf,
-            uml: &uml,
-        })
+        .lower(context(&source))
         .unwrap();
         assert!(changed
             .document_by_concept_id("order")

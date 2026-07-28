@@ -117,10 +117,32 @@ mod tests {
 
     fn context<'a>(
         source: &'a SourceBundle,
-        okf: &'a crate::okf::Bundle,
-        uml: &'a crate::uml::Projection,
+        _okf: &'a crate::okf::Bundle,
+        _uml: &'a crate::uml::Projection,
     ) -> EditContext<'a> {
-        EditContext { source, okf, uml }
+        let okf_analysis = Box::leak(Box::new(
+            crate::analysis::analyze_okf(source, None, 0).unwrap(),
+        ));
+        let uml = Box::leak(Box::new(
+            crate::uml::analyze(
+                crate::analysis::DomainAnalysisContext {
+                    source,
+                    catalog: &okf_analysis.catalog,
+                    shell: &okf_analysis.shell,
+                    structures: &okf_analysis.structures,
+                    okf: &okf_analysis.bundle,
+                    session_revision: 0,
+                },
+                None,
+            )
+            .unwrap(),
+        ));
+        EditContext {
+            source,
+            okf_analysis,
+            session_revision: 0,
+            uml,
+        }
     }
 
     #[test]

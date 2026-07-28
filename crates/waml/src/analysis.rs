@@ -193,6 +193,17 @@ impl fmt::Display for AnalysisError {
 }
 impl std::error::Error for AnalysisError {}
 
+impl From<AnalysisError> for crate::edit::EditError {
+    fn from(error: AnalysisError) -> Self {
+        crate::edit::EditError {
+            index: 0,
+            op: "analysis.prepare".into(),
+            selector: None,
+            reason: error.to_string(),
+        }
+    }
+}
+
 pub fn validate_disjoint_claims<'a>(
     claims: impl IntoIterator<Item = (&'a str, &'a ClaimSet)>,
 ) -> Result<(), AnalysisError> {

@@ -1,13 +1,27 @@
 use crate::source::SourceBundle;
-use crate::{okf, uml};
+use crate::{analysis::OkfAnalysis, uml};
+use std::fmt;
 
 pub type EditError = crate::ops::OpError;
+
+impl fmt::Display for crate::ops::OpError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            formatter,
+            "edit step {} ({}) failed: {}",
+            self.index, self.op, self.reason
+        )
+    }
+}
+
+impl std::error::Error for crate::ops::OpError {}
 
 #[derive(Clone, Copy)]
 pub struct EditContext<'a> {
     pub source: &'a SourceBundle,
-    pub okf: &'a okf::Bundle,
-    pub uml: &'a uml::Projection,
+    pub okf_analysis: &'a OkfAnalysis,
+    pub session_revision: u64,
+    pub uml: &'a uml::Analysis,
 }
 
 pub(crate) mod sealed {
