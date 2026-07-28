@@ -1,5 +1,12 @@
 # Native Diagram Properties Form Layout Implementation Plan
 
+> **Rebase note (2026-07-28):** This plan records the original pre-retirement
+> implementation sequence. Current `main` has removed `packages/okf`,
+> `packages/core`, `packages/wasm`, and `packages/web`; the rebased feature keeps
+> those deletions and ports the persistence work into the Rust
+> `SourceBundle`/UML lowering pipeline. TypeScript steps and commands below are
+> historical evidence, not current implementation or verification requirements.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Give the native Diagram Properties page a compact, left-anchored responsive form and preserve multiline Note content through editing and WAML round trips.

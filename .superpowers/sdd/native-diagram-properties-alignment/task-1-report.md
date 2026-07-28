@@ -1,5 +1,13 @@
 # Task 1 report — Native Diagram Properties alignment
 
+> **Rebase note (2026-07-28):** This is the historical report from the original
+> pre-retirement branch. Current `main` has intentionally removed the referenced
+> TypeScript, web, and WASM packages; the rebased feature does not restore them.
+> The surviving behavior was ported into the current Rust
+> `SourceBundle`/`waml::uml::Batch` architecture and independently verified with
+> 736 editor tests, 438 WAML tests, 16 operation-DTO tests, formatting, and
+> strict Clippy.
+
 ## Status
 
 DONE
