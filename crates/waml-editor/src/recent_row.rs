@@ -80,7 +80,7 @@ script_mod! {
             width: Fill
             height: Fit
             flow: Down
-            spacing: -2.0
+            spacing: 0.0
 
             titlerow := View {
                 width: Fill
@@ -92,23 +92,24 @@ script_mod! {
                     text: ""
                     draw_text +: {
                         color: atlas.text
-                        text_style: fonts.text_label
+                        text_style: fonts.text_compact_label
                     }
                 }
                 when := Label {
                     text: ""
                     draw_text +: {
                         color: atlas.text_dim
-                        text_style: fonts.text_label
+                        text_style: fonts.text_micro
                     }
                 }
             }
 
             path := Label {
                 text: ""
+                margin: Inset{bottom: 4.0}
                 draw_text +: {
                     color: atlas.text_dim
-                    text_style: fonts.text_menu
+                    text_style: fonts.text_micro
                 }
             }
         }

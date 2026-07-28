@@ -80,7 +80,7 @@ pub(crate) fn namespace_key_ids(vm: &mut ScriptVm, ns: ScriptValue) -> Option<BT
     }))
 }
 
-/// The 8 semantic chrome-typography role tokens `fonts.rs` defines in its
+/// The 10 semantic chrome-typography role tokens `fonts.rs` defines in its
 /// single `mod.fonts = { ... }` object literal. Building this namespace
 /// field-by-field (`mod.fonts.text_x = ...`) instead aborts the VM
 /// type-check, the namespace is never created, and ALL chrome text blanks at
@@ -88,7 +88,7 @@ pub(crate) fn namespace_key_ids(vm: &mut ScriptVm, ns: ScriptValue) -> Option<BT
 /// produced object back, so that failure class is caught semantically —
 /// unlike the deleted `include_str!` substring grep.
 #[test]
-fn mod_fonts_carries_exactly_the_eight_role_keys() {
+fn mod_fonts_carries_exactly_the_ten_role_keys() {
     let mut vm = boot_test_vm();
     crate::fonts::script_mod(&mut vm);
 
@@ -105,8 +105,10 @@ fn mod_fonts_carries_exactly_the_eight_role_keys() {
         live_id!(text_body),
         live_id!(text_caption),
         live_id!(text_label),
+        live_id!(text_compact_label),
         live_id!(text_menu),
         live_id!(text_eyebrow),
+        live_id!(text_micro),
         live_id!(text_mono),
     ]
     .into_iter()
@@ -114,6 +116,6 @@ fn mod_fonts_carries_exactly_the_eight_role_keys() {
 
     assert_eq!(
         keys, expected,
-        "mod.fonts key set drifted from the 8 declared role tokens"
+        "mod.fonts key set drifted from the 10 declared role tokens"
     );
 }

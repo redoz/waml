@@ -1,4 +1,4 @@
-//! Mode-independent chrome typography scale: 8 semantic `TextStyle` role
+//! Mode-independent chrome typography scale: 10 semantic `TextStyle` role
 //! tokens (family + size + weight + line-spacing) that every chrome widget
 //! references instead of an ad-hoc inline `font_size:`/`FontMember`. Mirrors
 //! `theme_atlas.rs`'s shape (a single top-level `script_mod!` block of named
@@ -83,6 +83,15 @@ script_mod! {
             line_spacing: 1.2
         }
 
+        // Emphasized names in dense two-line rows.
+        text_compact_label: TextStyle{
+            font_size: 10
+            font_family: FontFamily{
+                latin := FontMember{res: crate_resource("self:resources/fonts/IBM_Plex_Sans/IBMPlexSans-Medium.ttf") asc: -0.1 desc: 0.0}
+            }
+            line_spacing: 1.2
+        }
+
         // Dense interactive menu/select/tab rows.
         text_menu: TextStyle{
             font_size: 10
@@ -97,6 +106,15 @@ script_mod! {
             font_size: 10
             font_family: FontFamily{
                 latin := FontMember{res: crate_resource("self:resources/fonts/IBM_Plex_Sans/IBMPlexSans-SemiBold.ttf") asc: -0.1 desc: 0.0}
+            }
+            line_spacing: 1.2
+        }
+
+        // Lowest-priority metadata in dense two-line rows.
+        text_micro: TextStyle{
+            font_size: 9
+            font_family: FontFamily{
+                latin := FontMember{res: crate_resource("self:resources/fonts/IBM_Plex_Sans/IBMPlexSans-Regular.ttf") asc: -0.1 desc: 0.0}
             }
             line_spacing: 1.2
         }
