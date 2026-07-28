@@ -74,6 +74,7 @@ pub struct GreenTokenData<L: SyntaxLanguage> {
     text: GreenText,
     trailing: Arc<[GreenTrivia]>,
     annotations: Arc<[L::DiagnosticCode]>,
+    syntax_annotations: Arc<[SyntaxAnnotation]>,
     flags: TokenFlags,
     width: TextSize,
 }
@@ -193,6 +194,9 @@ impl<L: SyntaxLanguage> GreenTokenData<L> {
     }
     pub fn annotations(&self) -> &[L::DiagnosticCode] {
         &self.annotations
+    }
+    pub fn syntax_annotations(&self) -> &[SyntaxAnnotation] {
+        &self.syntax_annotations
     }
     pub fn flags(&self) -> TokenFlags {
         self.flags
@@ -335,9 +339,26 @@ impl<L: SyntaxLanguage> GreenFactory<L> {
             text,
             trailing: trailing.into(),
             annotations,
+            syntax_annotations: Arc::from([]),
             flags,
             width,
         }))
+    }
+    pub(crate) fn token_with_syntax_annotations(
+        &self,
+        token: &GreenToken<L>,
+        annotations: Arc<[SyntaxAnnotation]>,
+    ) -> GreenToken<L> {
+        Arc::new(GreenTokenData {
+            kind: token.kind,
+            leading: token.leading.clone(),
+            text: token.text.clone(),
+            trailing: token.trailing.clone(),
+            annotations: token.annotations.clone(),
+            syntax_annotations: annotations,
+            flags: token.flags,
+            width: token.width,
+        })
     }
 }
 impl<L: SyntaxLanguage> Default for GreenFactory<L> {

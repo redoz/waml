@@ -7,7 +7,7 @@ mod red;
 mod text;
 
 pub use annotation::{annotate_occurrence, find_annotation, SyntaxAnnotation};
-pub use ast::{AstNode, SyntaxRewriter, SyntaxVisitor};
+pub use ast::{AstNode, AstSlots, SyntaxRewriter, SyntaxVisitor};
 pub use green::{
     write_green_to, GreenElement, GreenError, GreenFactory, GreenNode, GreenNodeData, GreenText,
     GreenToken, GreenTokenData, GreenTrivia, TokenFlags, TriviaKind,

@@ -84,6 +84,23 @@ impl<L: SyntaxLanguage> Clone for SyntaxElement<L> {
         }
     }
 }
+/// Tree-bound location of one syntax occurrence.
+///
+/// The fields are deliberately private, so external code cannot forge or
+/// mutate occurrence identity.
+///
+/// ```compile_fail
+/// use waml_syntax::{SyntaxLanguage, SyntaxLocator, SyntaxPath};
+/// # #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)] enum Kind { Root }
+/// # #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)] enum Code { Error }
+/// # struct Lang;
+/// # impl SyntaxLanguage for Lang { type Kind = Kind; type DiagnosticCode = Code; }
+/// let locator = SyntaxLocator::<Lang> {
+///     tree: unsafe { std::mem::zeroed() },
+///     path: SyntaxPath::from_indices([]),
+///     expected_kind: Kind::Root,
+/// };
+/// ```
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub struct SyntaxLocator<L: SyntaxLanguage> {
     tree: TreeInstanceId,
@@ -146,12 +163,17 @@ impl<L: SyntaxLanguage> SyntaxTree<L> {
         }
     }
     pub fn root(&self) -> SyntaxNode<L> {
+        let range = TextRange::new(
+            TextSize::try_from_usize(0).expect("zero is representable"),
+            self.root_green.width(),
+        )
+        .expect("root range is ordered");
         node(
             self.root_green.clone(),
             self.context.clone(),
             SyntaxPath::from_indices([]),
             None,
-            zero(),
+            range,
         )
     }
     pub fn root_green(&self) -> &GreenNode<L> {
@@ -258,13 +280,6 @@ impl<L: SyntaxLanguage> SyntaxTree<L> {
         )
     }
 }
-fn zero() -> TextRange {
-    TextRange::new(
-        TextSize::try_from_usize(0).unwrap(),
-        TextSize::try_from_usize(0).unwrap(),
-    )
-    .unwrap()
-}
 fn node<L: SyntaxLanguage>(
     g: GreenNode<L>,
     c: Arc<RedContext>,
@@ -289,6 +304,12 @@ impl<L: SyntaxLanguage> SyntaxNode<L> {
     }
     pub fn range(&self) -> TextRange {
         self.0.range
+    }
+    pub fn same_green(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.0.green, &other.0.green)
+    }
+    pub fn syntax_annotations(&self) -> &[crate::SyntaxAnnotation] {
+        self.0.green.annotations()
     }
     pub fn parent(&self) -> Option<SyntaxNode<L>> {
         self.0.parent.clone()
@@ -372,6 +393,9 @@ impl<L: SyntaxLanguage> SyntaxToken<L> {
     pub fn same_green(&self, o: &Self) -> bool {
         Arc::ptr_eq(&self.0.green, &o.0.green)
     }
+    pub fn syntax_annotations(&self) -> &[crate::SyntaxAnnotation] {
+        self.0.green.syntax_annotations()
+    }
     pub fn previous_sibling(&self) -> Option<SyntaxElement<L>> {
         let i = *self.0.path.as_slice().last()? as usize;
         self.0.parent.child_at(i.checked_sub(1)?)
@@ -453,6 +477,41 @@ impl<L: SyntaxLanguage> SyntaxLocator<L> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+    enum Kind {
+        Root,
+        Token,
+        Other,
+    }
+    #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+    enum Code {
+        Error,
+    }
+    struct Lang;
+    impl SyntaxLanguage for Lang {
+        type Kind = Kind;
+        type DiagnosticCode = Code;
+    }
     #[test]
-    fn forged_expected_kind_is_rejected() {}
+    fn forged_expected_kind_is_rejected() {
+        let factory = GreenFactory::<Lang>::new();
+        let token = factory.missing_token(Kind::Token);
+        let root = factory
+            .node(Kind::Root, [GreenElement::Token(token)])
+            .unwrap();
+        let tree = SyntaxTree::new(root, Arc::from([]), MarkdownDialect::CommonMarkCurrent);
+        let valid = tree.root().child_at(0).unwrap().locator();
+        let forged = SyntaxLocator {
+            tree: valid.tree,
+            path: valid.path,
+            expected_kind: Kind::Other,
+        };
+        assert!(matches!(
+            tree.resolve(&forged),
+            Err(RewriteError::KindMismatch {
+                expected: Kind::Other,
+                actual: Kind::Token
+            })
+        ));
+    }
 }

@@ -21,6 +21,21 @@
 
 ## Warnings / concerns
 
-- The requested private-forged-locator unit test is currently a placeholder and should be strengthened with a crate-local test language before integration.
-- Typed slots are represented by fixed `child_at` indexing rather than a dedicated `AstSlots` abstraction; later grammar wrappers will need a small slot helper to encode required/optional/list/recovery declarations.
+- The private-forged-locator test and dedicated `AstSlots` abstraction were completed in review fix round 1.
 - TokenSave reported no indexed symbols for this newly added crate; direct source inspection was used after the required context query. RTK global savings at collection time were 81.4M tokens (42.2%).
+
+## Review fix round 1
+
+- Split occurrence `SyntaxAnnotation` storage from token diagnostic codes and rebuilt the exact node or token selected by the checked locator. Shared token occurrences now diverge only at the annotated path.
+- Corrected root red ranges to `0..root_green.width()` and covered non-empty and zero-width roots.
+- Added `AstSlots`, with declared-index accessors for required/optional node and token slots, lists, and recovery nodes. The representative wrapper test keeps skipped material nested in its declared recovery slot.
+- Added node green-identity queries and tests for same-tree facades plus cross-rewrite structural sharing.
+- Replaced the vacuous forged-locator test with an exact `KindMismatch` assertion and added a compile-fail locator privacy example.
+- Strengthened rewriting coverage: a token replacement produces fresh changed ancestors while retaining the untouched annotated sibling allocation and annotation.
+
+Verification:
+
+- `rtk cargo test -p waml-syntax --test red_ast`: 7 passed.
+- `rtk cargo test -p waml-syntax`: 15 passed across 4 suites, including the compile-fail doctest.
+- `rtk cargo check --workspace`: passed; only pre-existing duplicate-package warnings were emitted after removing the new dead-code warning.
+- `rtk cargo fmt --check`: passed.

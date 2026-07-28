@@ -1,4 +1,5 @@
-use crate::{GreenNode, GreenToken, SyntaxElement, SyntaxLanguage, SyntaxNode};
+use crate::{GreenNode, GreenToken, SyntaxElement, SyntaxLanguage, SyntaxNode, SyntaxToken};
+use std::ops::Range;
 
 pub trait AstNode<L: SyntaxLanguage>: Sized {
     fn can_cast(kind: L::Kind) -> bool;
@@ -12,4 +13,33 @@ pub trait SyntaxVisitor<L: SyntaxLanguage> {
 pub trait SyntaxRewriter<L: SyntaxLanguage> {
     fn rewrite_node(&mut self, node: &GreenNode<L>) -> GreenNode<L>;
     fn rewrite_token(&mut self, token: &GreenToken<L>) -> GreenToken<L>;
+}
+
+pub struct AstSlots<'a, L: SyntaxLanguage> {
+    syntax: &'a SyntaxNode<L>,
+}
+impl<'a, L: SyntaxLanguage> AstSlots<'a, L> {
+    pub fn new(syntax: &'a SyntaxNode<L>) -> Self {
+        Self { syntax }
+    }
+    pub fn required_node(&self, index: usize) -> Option<SyntaxNode<L>> {
+        self.syntax.child_at(index)?.into_node()
+    }
+    pub fn required_token(&self, index: usize) -> Option<SyntaxToken<L>> {
+        self.syntax.child_at(index)?.into_token()
+    }
+    pub fn optional_node(&self, index: usize) -> Option<SyntaxNode<L>> {
+        self.required_node(index)
+    }
+    pub fn optional_token(&self, index: usize) -> Option<SyntaxToken<L>> {
+        self.required_token(index)
+    }
+    pub fn list(&self, indices: Range<usize>) -> Vec<SyntaxElement<L>> {
+        indices
+            .filter_map(|index| self.syntax.child_at(index))
+            .collect()
+    }
+    pub fn recovery(&self, index: usize) -> Option<SyntaxNode<L>> {
+        self.required_node(index)
+    }
 }

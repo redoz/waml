@@ -57,9 +57,16 @@ fn rebuild<L: SyntaxLanguage>(
         .children()
         .iter()
         .enumerate()
-        .map(|(n, e)| match (n == i, e) {
-            (true, GreenElement::Node(child)) => {
+        .map(|(n, e)| match (n == i, e, path.len()) {
+            (true, GreenElement::Node(child), _) => {
                 GreenElement::Node(rebuild(child, &path[1..], annotation.clone()))
+            }
+            (true, GreenElement::Token(token), 1) => {
+                let mut annotations = token.syntax_annotations().to_vec();
+                annotations.push(annotation.clone());
+                GreenElement::Token(
+                    GreenFactory::new().token_with_syntax_annotations(token, annotations.into()),
+                )
             }
             _ => e.clone(),
         });

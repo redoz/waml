@@ -1,9 +1,9 @@
 use std::{num::NonZeroU64, sync::Arc};
 
 use waml_syntax::{
-    annotate_occurrence, find_annotation, AstNode, GreenElement, GreenFactory, GreenText,
+    annotate_occurrence, find_annotation, AstNode, AstSlots, GreenElement, GreenFactory, GreenText,
     MarkdownDialect, SyntaxAnnotation, SyntaxElement, SyntaxLanguage, SyntaxRewriter, SyntaxTree,
-    SyntaxVisitor, TextSize,
+    SyntaxVisitor, TextRange, TextSize,
 };
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -70,6 +70,8 @@ fn shared_zero_width_occurrences_have_distinct_red_identity_and_locators() {
     let root = tree.root();
     let first = root.children().next().unwrap().into_node().unwrap();
     let second = root.children().nth(1).unwrap().into_node().unwrap();
+    assert!(first.same_green(&tree.root().children().next().unwrap().into_node().unwrap()));
+    assert!(!first.same_green(&second));
     let first_colon = first.children().nth(1).unwrap().into_token().unwrap();
     let second_colon = second.children().next().unwrap().into_token().unwrap();
     assert_eq!(
@@ -103,6 +105,113 @@ fn shared_zero_width_occurrences_have_distinct_red_identity_and_locators() {
         tree.resolve(&right).unwrap().into_token().unwrap(),
         second_colon
     );
+}
+
+#[test]
+fn root_range_covers_full_width_and_empty_tree() {
+    let tree = tree();
+    assert_eq!(
+        tree.root().range(),
+        TextRange::new(
+            TextSize::try_from_usize(0).unwrap(),
+            TextSize::try_from_usize(4).unwrap()
+        )
+        .unwrap()
+    );
+    let empty = GreenFactory::<Lang>::new().node(Kind::Root, []).unwrap();
+    let empty = SyntaxTree::new(empty, Arc::from([]), MarkdownDialect::CommonMarkCurrent);
+    assert_eq!(
+        empty.root().range().len(),
+        TextSize::try_from_usize(0).unwrap()
+    );
+}
+
+#[test]
+fn token_annotations_target_only_the_resolved_shared_occurrence() {
+    let tree = tree();
+    let left = tree
+        .root()
+        .child_at(0)
+        .unwrap()
+        .into_node()
+        .unwrap()
+        .child_at(1)
+        .unwrap()
+        .into_token()
+        .unwrap();
+    let right = tree
+        .root()
+        .child_at(1)
+        .unwrap()
+        .into_node()
+        .unwrap()
+        .child_at(0)
+        .unwrap()
+        .into_token()
+        .unwrap();
+    let green = annotate_occurrence(
+        &tree,
+        &left.locator(),
+        SyntaxAnnotation::new(NonZeroU64::new(11).unwrap(), "token", None),
+    )
+    .unwrap();
+    let updated = SyntaxTree::new(green, Arc::from([]), MarkdownDialect::CommonMarkCurrent);
+    let left = updated
+        .root()
+        .child_at(0)
+        .unwrap()
+        .into_node()
+        .unwrap()
+        .child_at(1)
+        .unwrap()
+        .into_token()
+        .unwrap();
+    let right = updated
+        .root()
+        .child_at(1)
+        .unwrap()
+        .into_node()
+        .unwrap()
+        .child_at(0)
+        .unwrap()
+        .into_token()
+        .unwrap();
+    assert_eq!(
+        left.syntax_annotations()[0].id(),
+        NonZeroU64::new(11).unwrap()
+    );
+    assert!(right.syntax_annotations().is_empty());
+    assert!(!left.same_green(&right));
+}
+
+#[test]
+fn ast_slots_use_declared_indices_for_all_slot_categories() {
+    let f = GreenFactory::<Lang>::new();
+    let token =
+        |kind, text| GreenElement::Token(f.token(kind, GreenText::Static(text), [], []).unwrap());
+    let list = f.node(Kind::Value, [token(Kind::Value, "a")]).unwrap();
+    let recovery = f.node(Kind::Recovery, [token(Kind::Value, "?")]).unwrap();
+    let pair = f
+        .node(
+            Kind::Pair,
+            [
+                token(Kind::Name, "n"),
+                token(Kind::Colon, ":"),
+                token(Kind::Value, "v"),
+                GreenElement::Node(list),
+                GreenElement::Node(recovery),
+            ],
+        )
+        .unwrap();
+    let root = f.node(Kind::Root, [GreenElement::Node(pair)]).unwrap();
+    let tree = SyntaxTree::new(root, Arc::from([]), MarkdownDialect::CommonMarkCurrent);
+    let pair = tree.root().child_at(0).unwrap().into_node().unwrap();
+    let slots = AstSlots::new(&pair);
+    assert_eq!(slots.required_token(0).unwrap().kind(), Kind::Name);
+    assert_eq!(slots.required_token(1).unwrap().kind(), Kind::Colon);
+    assert_eq!(slots.optional_token(2).unwrap().kind(), Kind::Value);
+    assert_eq!(slots.list(3..4).len(), 1);
+    assert_eq!(slots.recovery(4).unwrap().kind(), Kind::Recovery);
 }
 
 #[test]
@@ -200,6 +309,54 @@ fn visitor_rewriter_slots_and_annotations_use_declared_occurrences() {
         SyntaxTree::new(annotated, Arc::from([]), MarkdownDialect::CommonMarkCurrent);
     assert_eq!(
         find_annotation(&annotated_tree, NonZeroU64::new(8).unwrap()).len(),
+        1
+    );
+}
+
+#[test]
+fn one_token_rewrite_rebuilds_ancestors_and_retains_sibling_annotation_and_green() {
+    let tree = tree();
+    let sibling = tree.root().child_at(1).unwrap().into_node().unwrap();
+    let annotated = annotate_occurrence(
+        &tree,
+        &sibling.locator(),
+        SyntaxAnnotation::new(NonZeroU64::new(12).unwrap(), "retained", None),
+    )
+    .unwrap();
+    let tree = SyntaxTree::new(annotated, Arc::from([]), MarkdownDialect::CommonMarkCurrent);
+    let old_root = tree.root();
+    let old_changed = old_root.child_at(0).unwrap().into_node().unwrap();
+    let old_sibling = old_root.child_at(1).unwrap().into_node().unwrap();
+    struct ReplaceName;
+    impl SyntaxRewriter<Lang> for ReplaceName {
+        fn rewrite_node(
+            &mut self,
+            node: &waml_syntax::GreenNode<Lang>,
+        ) -> waml_syntax::GreenNode<Lang> {
+            node.clone()
+        }
+        fn rewrite_token(
+            &mut self,
+            token: &waml_syntax::GreenToken<Lang>,
+        ) -> waml_syntax::GreenToken<Lang> {
+            if token.kind() == Kind::Name {
+                GreenFactory::new()
+                    .token(Kind::Name, GreenText::Static("NAME"), [], [])
+                    .unwrap()
+            } else {
+                token.clone()
+            }
+        }
+    }
+    let rewritten = tree.rewrite(&mut ReplaceName);
+    let new_root = rewritten.root();
+    let new_changed = new_root.child_at(0).unwrap().into_node().unwrap();
+    let new_sibling = new_root.child_at(1).unwrap().into_node().unwrap();
+    assert!(!old_root.same_green(&new_root));
+    assert!(!old_changed.same_green(&new_changed));
+    assert!(old_sibling.same_green(&new_sibling));
+    assert_eq!(
+        find_annotation(&rewritten, NonZeroU64::new(12).unwrap()).len(),
         1
     );
 }
