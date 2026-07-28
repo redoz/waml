@@ -16,6 +16,7 @@ pub enum Op {
     DirectoryMove {
         directory: DirectoryAddress,
         to_parent: DirectoryAddress,
+        name: Option<String>,
     },
     DirectoryDelete {
         directory: DirectoryAddress,
@@ -77,9 +78,12 @@ pub(crate) fn lower_one(work: &mut SourceBundle, op: &Op) -> Result<(), EditErro
         Op::DirectoryMove {
             directory,
             to_parent,
+            name,
         } => {
             let from = legacy_path(directory);
-            let name = from.rsplit('/').next().unwrap_or_default();
+            let name = name
+                .as_deref()
+                .unwrap_or_else(|| from.rsplit('/').next().unwrap_or_default());
             let parent = legacy_path(to_parent);
             let to = if parent.is_empty() {
                 name.to_string()
@@ -133,6 +137,7 @@ mod tests {
             Op::DirectoryMove {
                 directory: root.clone(),
                 to_parent: root.clone(),
+                name: None,
             },
             Op::DirectoryDelete {
                 directory: root.clone(),
@@ -165,6 +170,7 @@ mod tests {
         let moved = Batch(vec![Op::DirectoryMove {
             directory: sales.clone(),
             to_parent: DirectoryAddress::parse("/domains").unwrap(),
+            name: None,
         }])
         .lower(context(&source, &okf, &uml))
         .unwrap();
