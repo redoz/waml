@@ -169,6 +169,49 @@ fn shell_tokens_apply_normative_trivia_ownership() {
 }
 
 #[test]
+fn structure_distinguishes_list_item_lines_from_nested_fenced_bullets() {
+    let source = "## Attributes\n- real: Good [1]\n\n  ```text\n  - fenced: Bad [1]\n  ```\n";
+    let shell = parse(source);
+    let lines: Vec<_> = shell
+        .structure
+        .list_item_lines
+        .iter()
+        .map(|range| &source[range.start().to_usize()..range.end().to_usize()])
+        .collect();
+    assert_eq!(lines, ["- real: Good [1]\n"]);
+    assert!(shell
+        .structure
+        .protected_ranges
+        .iter()
+        .any(
+            |range| range.start().to_usize() <= source.find("- fenced").unwrap()
+                && range.end().to_usize() > source.find("- fenced").unwrap()
+        ));
+    assert!(shell
+        .structure
+        .opaque_ranges
+        .iter()
+        .any(
+            |range| range.start().to_usize() <= source.find("- fenced").unwrap()
+                && range.end().to_usize() > source.find("- fenced").unwrap()
+        ));
+}
+
+#[test]
+fn structure_exposes_tab_indented_item_lines_separately_from_commonmark_items() {
+    let source = "## Attributes\n\t- tabbed: Good [1]\n";
+    let shell = parse(source);
+    assert!(shell.structure.list_item_lines.is_empty());
+    let lines: Vec<_> = shell
+        .structure
+        .tab_indented_item_lines
+        .iter()
+        .map(|range| &source[range.start().to_usize()..range.end().to_usize()])
+        .collect();
+    assert_eq!(lines, ["\t- tabbed: Good [1]\n"]);
+}
+
+#[test]
 fn shell_fixtures_are_exact_bounded_progressing_and_golden() {
     let mut actuals = Vec::new();
     for fixture in FIXTURES {
@@ -370,6 +413,38 @@ fn assert_shell_invariants(name: &str, source: &str, shell: &ShellParse) {
             .windows(2)
             .all(|pair| pair[0].end() <= pair[1].start()),
         "protected ranges sorted/non-overlapping: {name}"
+    );
+    assert!(
+        shell
+            .structure
+            .list_item_lines
+            .iter()
+            .all(|range| range.start() <= range.end() && range.end().to_usize() <= source.len()),
+        "list item line bounds: {name}"
+    );
+    assert!(
+        shell
+            .structure
+            .list_item_lines
+            .windows(2)
+            .all(|pair| pair[0].end() <= pair[1].start()),
+        "list item lines sorted/non-overlapping: {name}"
+    );
+    assert!(
+        shell
+            .structure
+            .opaque_ranges
+            .windows(2)
+            .all(|pair| pair[0].end() <= pair[1].start()),
+        "opaque ranges sorted/non-overlapping: {name}"
+    );
+    assert!(
+        shell
+            .structure
+            .tab_indented_item_lines
+            .windows(2)
+            .all(|pair| pair[0].end() <= pair[1].start()),
+        "tab-indented item lines sorted/non-overlapping: {name}"
     );
     assert!(
         shell

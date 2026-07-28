@@ -207,7 +207,14 @@ fn only_shell_confirmed_top_level_h2_opens_the_attribute_island() {
     let source = SourceBundle::try_from_pairs([("order.md", authored)]).unwrap();
     let analysis = analyze(&source);
     let concept = analysis.declared.concept("order").unwrap();
-    assert_eq!(concept.attributes.len(), 1);
+    assert_eq!(
+        concept
+            .attributes
+            .iter()
+            .map(|attribute| attribute.syntax.name_token().text().write_to_string())
+            .collect::<Vec<_>>(),
+        ["real"]
+    );
     assert_eq!(
         analysis.projection.node("order").unwrap().attributes[0].name,
         "real"
@@ -356,5 +363,78 @@ fn snapshots_and_diagnostics_expose_catalog_revision_provenance() {
             )
             .unwrap()
         )
+    );
+}
+
+#[test]
+fn nested_fenced_bullet_inside_real_attribute_list_stays_markdown() {
+    let authored = "---\ntype: uml.Class\n---\n# Order\n\n## Attributes\n- real: Good [1]\n\n  ```text\n  - fenced: Bad [1]\n  ```\n\n      - indented: Bad [1]\n\n  <div>\n  - html: Bad [1]\n  </div>\n";
+    let source = SourceBundle::try_from_pairs([("order.md", authored)]).unwrap();
+    let analysis = analyze(&source);
+    let id = analysis
+        .syntax
+        .catalog()
+        .id_for_path(&waml::source::BundlePath::parse("order.md").unwrap())
+        .unwrap();
+    let structure = analysis.structures.get(&id).unwrap();
+    let indented = authored.find("- indented").unwrap();
+    let indented_line = authored[..indented].rfind('\n').map_or(0, |at| at + 1);
+    let opaque: Vec<_> = structure
+        .opaque_ranges
+        .iter()
+        .map(|range| &authored[range.start().to_usize()..range.end().to_usize()])
+        .collect();
+    assert!(
+        structure.opaque_ranges.iter().any(|range| {
+            range.start().to_usize() <= indented && indented < range.end().to_usize()
+        }),
+        "nested indented code must be structurally opaque: {opaque:?}"
+    );
+    let items: Vec<_> = structure
+        .list_item_lines
+        .iter()
+        .map(|range| &authored[range.start().to_usize()..range.end().to_usize()])
+        .collect();
+    assert!(
+        !structure
+            .list_item_lines
+            .iter()
+            .any(|range| range.start().to_usize() == indented_line),
+        "nested indented line must not be a top-level item: {items:?}"
+    );
+    let tab_items: Vec<_> = structure
+        .tab_indented_item_lines
+        .iter()
+        .map(|range| &authored[range.start().to_usize()..range.end().to_usize()])
+        .collect();
+    assert!(
+        !structure
+            .tab_indented_item_lines
+            .iter()
+            .any(|range| range.start().to_usize() == indented_line),
+        "space-indented code must not be a tab item: {tab_items:?}"
+    );
+    let concept = analysis.declared.concept("order").unwrap();
+    assert_eq!(
+        concept
+            .attributes
+            .iter()
+            .map(|attribute| attribute.syntax.name_token().text().write_to_string())
+            .collect::<Vec<_>>(),
+        ["real"]
+    );
+    assert_eq!(
+        analysis.projection.node("order").unwrap().attributes[0].name,
+        "real"
+    );
+    assert!(analysis.diagnostics.is_empty());
+    assert_eq!(
+        analysis
+            .syntax
+            .document(id)
+            .unwrap()
+            .syntax()
+            .write_to_string(),
+        authored
     );
 }

@@ -28,19 +28,23 @@ pub fn parse(text: SourceText, structure: &MarkdownStructureMap) -> Arc<SyntaxTr
         let heading_end = line_end(source, start, end);
         let mut section = vec![raw(&factory, &text, start, heading_end)];
         for (line_start, line_end) in lines_between(source, heading_end, end) {
-            if protected_non_list_line(structure, source, line_start) {
+            let item_line = confirmed_list_item_line(structure, line_start)
+                || tab_indented_item_line(structure, line_start);
+            if opaque_line(structure, line_start, line_end) && !item_line {
                 section.push(raw(&factory, &text, line_start, line_end));
-            } else if let Some(attribute) = attribute(
-                &factory,
-                &text,
-                source,
-                line_start,
-                line_end,
-                &mut diagnostics,
-            ) {
-                section.push(GreenElement::Node(attribute));
             } else {
-                section.push(raw(&factory, &text, line_start, line_end));
+                if let Some(attribute) = attribute(
+                    &factory,
+                    &text,
+                    source,
+                    line_start,
+                    line_end,
+                    &mut diagnostics,
+                ) {
+                    section.push(GreenElement::Node(attribute));
+                } else {
+                    section.push(raw(&factory, &text, line_start, line_end));
+                }
             }
         }
         children.push(GreenElement::Node(
@@ -389,21 +393,23 @@ fn is_attributes_heading(source: &str, range: TextRange) -> bool {
         .trim()
         .eq_ignore_ascii_case("Attributes")
 }
-fn protected_non_list_line(
-    structure: &MarkdownStructureMap,
-    source: &str,
-    line_start: usize,
-) -> bool {
-    structure.protected_ranges.iter().any(|range| {
-        let start = range.start().to_usize();
-        let end = range.end().to_usize();
-        if !(start <= line_start && line_start < end) {
-            return false;
-        }
-        !source[start..line_end(source, start, end)]
-            .trim_start()
-            .starts_with('-')
-    })
+fn opaque_line(structure: &MarkdownStructureMap, line_start: usize, line_end: usize) -> bool {
+    structure
+        .opaque_ranges
+        .iter()
+        .any(|range| range.start().to_usize() < line_end && line_start < range.end().to_usize())
+}
+fn confirmed_list_item_line(structure: &MarkdownStructureMap, line_start: usize) -> bool {
+    structure
+        .list_item_lines
+        .iter()
+        .any(|range| range.start().to_usize() == line_start)
+}
+fn tab_indented_item_line(structure: &MarkdownStructureMap, line_start: usize) -> bool {
+    structure
+        .tab_indented_item_lines
+        .iter()
+        .any(|range| range.start().to_usize() == line_start)
 }
 fn skip_ws(s: &str, mut p: usize, end: usize) -> usize {
     while p < end && matches!(s.as_bytes()[p], b' ' | b'\t') {
