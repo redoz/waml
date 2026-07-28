@@ -5,9 +5,12 @@
 //! canvas is occluded by the opaque slot, the tool dock by
 //! `wants_tooldock() == false`, the inspector's element picker explicitly.
 
-use crate::doc_view::{BodyChrome, BodyWidgets, DocView, ViewData, ViewOutcome};
+use crate::doc_view::{
+    BodyChrome, BodyWidgets, DocView, DocumentHeaderChrome, ViewData, ViewOutcome,
+};
 use crate::icons::Icon;
 use crate::inspector::Subject;
+use crate::navigation::NavigationIntent;
 use makepad_widgets::*;
 
 pub struct SourceView {
@@ -45,11 +48,20 @@ impl DocView for SourceView {
     fn handle(
         &mut self,
         _cx: &mut Cx,
-        _body: &BodyWidgets,
-        _actions: &Actions,
+        body: &BodyWidgets,
+        actions: &Actions,
         _data: ViewData<'_>,
     ) -> ViewOutcome {
-        ViewOutcome::default()
+        let Some(href) = body.markdown_link(actions) else {
+            return ViewOutcome::default();
+        };
+        ViewOutcome {
+            navigation: Some(NavigationIntent::MarkdownLink {
+                current_concept_id: self.key.clone(),
+                href,
+            }),
+            ..ViewOutcome::default()
+        }
     }
 
     /// Neutral slate, deliberately not the subject's node-kind swatch: a source
@@ -60,7 +72,10 @@ impl DocView for SourceView {
             tool_dock: false,
             view_bar: false,
             canvas_overlays: false,
-            right_dock: Some(Icon::SlidersHorizontal),
+            document_header: DocumentHeaderChrome {
+                breadcrumb: true,
+                right_dock: Some(Icon::SlidersHorizontal),
+            },
         }
     }
 
@@ -74,7 +89,17 @@ impl DocView for SourceView {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::navigation::NavigationIntent;
     use waml::source::SourceBundle;
+
+    fn markdown_link_action(href: &str) -> Action {
+        Box::new(WidgetAction {
+            data: None,
+            action: Box::new(MarkdownAction::LinkNavigated(href.into())),
+            widget_uid: WidgetUid(1),
+            group: None,
+        })
+    }
 
     fn data<'a>(
         source: &'a SourceBundle,
@@ -116,6 +141,27 @@ mod tests {
         assert_eq!(
             view.markdown(data(&source, &okf, &uml)),
             "*No source for `missing`*"
+        );
+    }
+
+    #[test]
+    fn markdown_link_emits_raw_navigation_intent_from_source_subject() {
+        let source = SourceBundle::default();
+        let okf = waml::okf::Bundle::parse(&source).unwrap();
+        let uml = waml::uml::project(&okf);
+        let mut cx = Cx::new(Box::new(|_, _| {}));
+        let body = BodyWidgets::new(&mut cx, &WidgetRef::empty());
+        let mut view = SourceView::new("shop/order".into());
+        let actions: ActionsBuf = vec![markdown_link_action("../customer.md#history")];
+
+        let outcome = view.handle(&mut cx, &body, &actions, data(&source, &okf, &uml));
+
+        assert_eq!(
+            outcome.navigation,
+            Some(NavigationIntent::MarkdownLink {
+                current_concept_id: "shop/order".into(),
+                href: "../customer.md#history".into(),
+            })
         );
     }
 }

@@ -290,6 +290,7 @@ impl DocumentHost {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::doc_view::DocumentHeaderChrome;
     use crate::document::{DocumentPresentation, NavCategory, OpenDocument};
     use crate::icons::Icon;
     use std::cell::Cell;
@@ -314,7 +315,10 @@ mod tests {
                 tool_dock: true,
                 view_bar: false,
                 canvas_overlays: false,
-                right_dock: None,
+                document_header: DocumentHeaderChrome {
+                    breadcrumb: false,
+                    right_dock: None,
+                },
             }
         }
     }

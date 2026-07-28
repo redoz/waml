@@ -12,8 +12,8 @@ use waml::edit::PendingEdit;
 use waml::source::SourceBundle;
 
 use crate::editor_session::SessionChange;
-use crate::icon_button::IconButtonWidgetRefExt;
 use crate::icons::Icon;
+use crate::navigation::NavigationIntent;
 use crate::popup::base::PopupItem;
 use crate::popup::base::PopupResult;
 use crate::popup::select::SelectItem;
@@ -109,27 +109,27 @@ impl BodyWidgets {
         crate::markdown_surface::set_markdown(&self.ui, cx, markdown);
     }
 
+    pub fn markdown_link(&self, actions: &Actions) -> Option<String> {
+        crate::markdown_surface::link_navigated(actions)
+    }
+
+    pub fn scroll_markdown_to_fragment(&self, cx: &mut Cx, fragment: &str) -> bool {
+        crate::markdown_surface::scroll_to_fragment(&self.ui, cx, fragment)
+    }
+
     pub fn apply_chrome(&self, cx: &mut Cx, chrome: BodyChrome) {
         self.set_tool_dock_visible(cx, chrome.tool_dock);
         self.set_view_bar_visible(cx, chrome.view_bar);
         self.set_conflict_badge_visible(cx, chrome.canvas_overlays);
 
-        let button = self.ui.widget(cx, ids!(inspector_btn));
-        if button.visible() != chrome.right_dock.is_some() {
-            button.set_visible(cx, chrome.right_dock.is_some());
-            cx.redraw_all();
-        }
-        if let Some(icon) = chrome.right_dock {
-            button.as_icon_button().set_icon(cx, icon);
-        }
-        if let Some(mut tabs) = self
+        if let Some(mut header) = self
             .ui
-            .widget(cx, ids!(doc_tabs))
-            .borrow_mut::<crate::doc_tabs::DocTabs>()
+            .widget(cx, ids!(document_header))
+            .borrow_mut::<crate::document_header::DocumentHeader>()
         {
-            tabs.set_right_dock_btn(cx, chrome.right_dock.is_some());
+            header.set_right_dock(cx, chrome.document_header.right_dock);
         }
-        if chrome.right_dock.is_none() {
+        if chrome.document_header.right_dock.is_none() {
             if let Some(mut panel) = self
                 .ui
                 .widget(cx, ids!(inspector))
@@ -164,6 +164,7 @@ pub struct ViewOutcome {
     pub close_active: bool,
     /// Ask the shell to re-push the statusbar snapshot.
     pub statusbar_dirty: bool,
+    pub navigation: Option<NavigationIntent>,
 }
 
 /// A popup a view wants placed. The view describes it; the shell computes window
@@ -269,6 +270,12 @@ pub trait DocView {
 }
 
 /// Which pieces of the shared body chrome the active tab drives.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct DocumentHeaderChrome {
+    pub breadcrumb: bool,
+    pub right_dock: Option<Icon>,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct BodyChrome {
     /// The left tool dock (`tool_dock_wrap`).
@@ -277,9 +284,7 @@ pub struct BodyChrome {
     pub view_bar: bool,
     /// Canvas-only overlays such as the conflict badge.
     pub canvas_overlays: bool,
-    /// The right-hand docked panel the active view drives, and the glyph its
-    /// caption toggle wears (`None` = no dock, so the toggle is hidden).
-    pub right_dock: Option<Icon>,
+    pub document_header: DocumentHeaderChrome,
 }
 
 impl BodyChrome {
@@ -287,7 +292,10 @@ impl BodyChrome {
         tool_dock: false,
         view_bar: false,
         canvas_overlays: false,
-        right_dock: None,
+        document_header: DocumentHeaderChrome {
+            breadcrumb: false,
+            right_dock: None,
+        },
     };
 }
 
@@ -304,6 +312,7 @@ mod tests {
         assert!(o.promote_subject.is_none());
         assert!(!o.close_active);
         assert!(!o.statusbar_dirty);
+        assert!(o.navigation.is_none());
     }
 
     #[test]
@@ -314,6 +323,7 @@ mod tests {
             TreeKind::Class,
         );
         let source = crate::source_view::SourceView::new("order".into());
+        let generic = crate::generic_okf_view::GenericOkfView::new("order".into());
 
         assert_eq!(
             diagram.chrome(),
@@ -321,7 +331,10 @@ mod tests {
                 tool_dock: true,
                 view_bar: true,
                 canvas_overlays: true,
-                right_dock: Some(Icon::SlidersHorizontal),
+                document_header: DocumentHeaderChrome {
+                    breadcrumb: true,
+                    right_dock: Some(Icon::SlidersHorizontal),
+                },
             }
         );
         for chrome in [classifier.chrome(), source.chrome()] {
@@ -331,10 +344,29 @@ mod tests {
                     tool_dock: false,
                     view_bar: false,
                     canvas_overlays: false,
-                    right_dock: Some(Icon::SlidersHorizontal),
+                    document_header: DocumentHeaderChrome {
+                        breadcrumb: true,
+                        right_dock: Some(Icon::SlidersHorizontal),
+                    },
                 }
             );
         }
+        assert_eq!(
+            generic.chrome(),
+            BodyChrome {
+                tool_dock: false,
+                view_bar: false,
+                canvas_overlays: false,
+                document_header: DocumentHeaderChrome {
+                    breadcrumb: true,
+                    right_dock: None,
+                },
+            }
+        );
+        assert_eq!(
+            BodyChrome::HIDDEN.document_header,
+            DocumentHeaderChrome::default()
+        );
     }
 
     #[test]

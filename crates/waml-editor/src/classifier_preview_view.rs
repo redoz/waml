@@ -1,7 +1,9 @@
 //! `ClassifierPreviewView` — the single-element preview (focus canvas + inspector-
 //! without-picker, no tool dock). Real behavior lands in Task 4.
 
-use crate::doc_view::{BodyChrome, BodyWidgets, DocView, ViewData, ViewOutcome};
+use crate::doc_view::{
+    BodyChrome, BodyWidgets, DocView, DocumentHeaderChrome, ViewData, ViewOutcome,
+};
 use crate::document::NavCategory;
 use crate::icons::Icon;
 use crate::inspector::Subject;
@@ -130,7 +132,10 @@ impl DocView for ClassifierPreviewView {
             tool_dock: false,
             view_bar: false,
             canvas_overlays: false,
-            right_dock: Some(Icon::SlidersHorizontal),
+            document_header: DocumentHeaderChrome {
+                breadcrumb: true,
+                right_dock: Some(Icon::SlidersHorizontal),
+            },
         }
     }
 

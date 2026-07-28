@@ -1,6 +1,9 @@
 use std::borrow::Cow;
 
-use crate::doc_view::{BodyChrome, BodyWidgets, DocView, ViewData, ViewOutcome};
+use crate::doc_view::{
+    BodyChrome, BodyWidgets, DocView, DocumentHeaderChrome, ViewData, ViewOutcome,
+};
+use crate::navigation::NavigationIntent;
 use makepad_widgets::*;
 
 pub struct GenericOkfView {
@@ -18,10 +21,6 @@ impl GenericOkfView {
             .map(|concept| Cow::Borrowed(concept.body.as_str()))
             .unwrap_or_else(|| Cow::Owned(format!("*No source for `{}`*", self.concept_id)))
     }
-
-    fn idle_outcome() -> ViewOutcome {
-        ViewOutcome::default()
-    }
 }
 
 impl DocView for GenericOkfView {
@@ -34,15 +33,32 @@ impl DocView for GenericOkfView {
     fn handle(
         &mut self,
         _cx: &mut Cx,
-        _body: &BodyWidgets,
-        _actions: &Actions,
+        body: &BodyWidgets,
+        actions: &Actions,
         _data: ViewData<'_>,
     ) -> ViewOutcome {
-        Self::idle_outcome()
+        let Some(href) = body.markdown_link(actions) else {
+            return ViewOutcome::default();
+        };
+        ViewOutcome {
+            navigation: Some(NavigationIntent::MarkdownLink {
+                current_concept_id: self.concept_id.clone(),
+                href,
+            }),
+            ..ViewOutcome::default()
+        }
     }
 
     fn chrome(&self) -> BodyChrome {
-        BodyChrome::HIDDEN
+        BodyChrome {
+            tool_dock: false,
+            view_bar: false,
+            canvas_overlays: false,
+            document_header: DocumentHeaderChrome {
+                breadcrumb: true,
+                right_dock: None,
+            },
+        }
     }
 
     fn tab_accent(&self) -> Option<Vec4> {
@@ -53,7 +69,17 @@ impl DocView for GenericOkfView {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::navigation::NavigationIntent;
     use waml::source::SourceBundle;
+
+    fn markdown_link_action(href: &str) -> Action {
+        Box::new(WidgetAction {
+            data: None,
+            action: Box::new(MarkdownAction::LinkNavigated(href.into())),
+            widget_uid: WidgetUid(1),
+            group: None,
+        })
+    }
 
     fn fixture(
         pairs: impl IntoIterator<Item = (&'static str, &'static str)>,
@@ -103,7 +129,18 @@ mod tests {
     #[test]
     fn generic_document_hides_all_diagram_chrome_and_has_stable_accent() {
         let view = GenericOkfView::new("runbook".into());
-        assert_eq!(view.chrome(), BodyChrome::HIDDEN);
+        assert_eq!(
+            view.chrome(),
+            BodyChrome {
+                tool_dock: false,
+                view_bar: false,
+                canvas_overlays: false,
+                document_header: DocumentHeaderChrome {
+                    breadcrumb: true,
+                    right_dock: None,
+                },
+            }
+        );
         assert_eq!(
             view.tab_accent(),
             crate::okf_documents::generic_okf_accent()
@@ -111,11 +148,21 @@ mod tests {
     }
 
     #[test]
-    fn generic_document_emits_no_edits_or_shell_actions() {
-        let outcome = GenericOkfView::idle_outcome();
-        assert!(outcome.edit.is_none());
-        assert!(outcome.popup.is_none());
-        assert!(outcome.promote_subject.is_none());
-        assert!(!outcome.close_active);
+    fn markdown_link_emits_raw_navigation_intent_from_generic_concept() {
+        let (source, okf, uml) = fixture([]);
+        let mut cx = Cx::new(Box::new(|_, _| {}));
+        let body = BodyWidgets::new(&mut cx, &WidgetRef::empty());
+        let mut view = GenericOkfView::new("runbook".into());
+        let actions: ActionsBuf = vec![markdown_link_action("../customer.md#history")];
+
+        let outcome = view.handle(&mut cx, &body, &actions, data(&source, &okf, &uml));
+
+        assert_eq!(
+            outcome.navigation,
+            Some(NavigationIntent::MarkdownLink {
+                current_concept_id: "runbook".into(),
+                href: "../customer.md#history".into(),
+            })
+        );
     }
 }

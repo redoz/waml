@@ -8,7 +8,9 @@ use waml::model::Model;
 use crate::canvas::ConstraintVisibility;
 use crate::diagram_display::resolve_display;
 use crate::diagram_properties::{DiagramPropertiesAction, DiagramPropertiesWidgetRefExt};
-use crate::doc_view::{BodyChrome, BodyWidgets, DocView, PopupRequest, ViewData, ViewOutcome};
+use crate::doc_view::{
+    BodyChrome, BodyWidgets, DocView, DocumentHeaderChrome, PopupRequest, ViewData, ViewOutcome,
+};
 use crate::editor_session::SessionChange;
 use crate::icons::Icon;
 use crate::inspector::{diagram_elements, subject_from, Subject};
@@ -766,7 +768,10 @@ impl DocView for ClassDiagramView {
                 tool_dock: true,
                 view_bar: true,
                 canvas_overlays: true,
-                right_dock: Some(Icon::SlidersHorizontal),
+                document_header: DocumentHeaderChrome {
+                    breadcrumb: true,
+                    right_dock: Some(Icon::SlidersHorizontal),
+                },
             }
         }
     }
@@ -996,7 +1001,10 @@ mod tests {
                 tool_dock: true,
                 view_bar: true,
                 canvas_overlays: true,
-                right_dock: Some(crate::icons::Icon::SlidersHorizontal),
+                document_header: crate::doc_view::DocumentHeaderChrome {
+                    breadcrumb: true,
+                    right_dock: Some(crate::icons::Icon::SlidersHorizontal),
+                },
             }
         );
     }
