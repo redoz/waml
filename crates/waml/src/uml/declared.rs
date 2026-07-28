@@ -54,6 +54,9 @@ pub struct DeclaredRelationship {
     pub syntax: RelationshipSyntax,
     pub kind: DeclaredField<UmlLanguage, crate::model::RelationshipKind>,
     pub target: DeclaredField<UmlLanguage, String>,
+    pub name: DeclaredField<UmlLanguage, crate::model::AssocName>,
+    pub from_end: DeclaredField<UmlLanguage, crate::model::RelEnd>,
+    pub to_end: DeclaredField<UmlLanguage, crate::model::RelEnd>,
 }
 pub struct DeclaredMember {
     pub syntax: MemberSyntax,

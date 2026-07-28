@@ -210,3 +210,104 @@ fn slot_value_variants_and_missing_colon_are_distinguished() {
     assert_eq!(variants[2].value_kind(), waml::uml::SlotValueKind::Link);
     assert!(variants[3].colon_token().unwrap().flags().is_missing());
 }
+
+#[test]
+fn relationship_has_fixed_name_and_end_slots_with_bounded_recovery() {
+    let authored = "---\r\ntype: uml.Class\r\n---\r\n# Café\r\n\r\n## Relationships\r\n- associates [Customer](./customer.md) as \"owns\": 1 order to 0..* café\r\n- composes [Line](./line.md): 1 to 1..* lines\r\n- associates [Broken](./broken.md): nope to 1 trailing\r\n";
+    let source = SourceBundle::try_from_pairs([
+        ("class.md", authored),
+        ("customer.md", "---\ntype: uml.Class\n---\n# Customer\n"),
+        ("line.md", "---\ntype: uml.Class\n---\n# Line\n"),
+    ])
+    .unwrap();
+    let analysis = analyze(&source);
+    let concept = analysis.declared.concept("class").unwrap();
+    let first = &concept.relationships[0];
+    assert_eq!(
+        first
+            .syntax
+            .name_label_token()
+            .unwrap()
+            .text()
+            .write_to_string(),
+        "\"owns\""
+    );
+    assert_eq!(
+        first
+            .syntax
+            .from_end()
+            .unwrap()
+            .multiplicity_token()
+            .text()
+            .write_to_string(),
+        "1"
+    );
+    assert_eq!(
+        first
+            .syntax
+            .to_end()
+            .unwrap()
+            .role_token()
+            .unwrap()
+            .text()
+            .write_to_string(),
+        "café"
+    );
+    assert!(matches!(first.name, uml::DeclaredField::Valid { .. }));
+    assert!(matches!(first.from_end, uml::DeclaredField::Valid { .. }));
+    assert!(matches!(
+        concept.relationships[2].from_end,
+        uml::DeclaredField::Invalid { .. }
+    ));
+    assert_eq!(
+        analysis
+            .syntax
+            .document(
+                analysis
+                    .syntax
+                    .catalog()
+                    .id_for_path(&waml::source::BundlePath::parse("class.md").unwrap())
+                    .unwrap()
+            )
+            .unwrap()
+            .syntax()
+            .write_to_string(),
+        authored
+    );
+}
+
+#[test]
+fn relationship_recovery_keeps_required_slots_and_progresses_to_next_item() {
+    let authored = "---\ntype: uml.Class\n---\n# C\n\n## Relationships\n- composes [Line](./line.md)\n- includes [Use](./use.md): 1 to 1\n- associates [Bad](./bad.md): 1 to\n- depends [Good](./good.md)\n";
+    let source = SourceBundle::try_from_pairs([
+        ("c.md", authored),
+        ("line.md", "---\ntype: uml.Class\n---\n# Line\n"),
+        ("use.md", "---\ntype: uml.UseCase\n---\n# Use\n"),
+        ("good.md", "---\ntype: uml.Class\n---\n# Good\n"),
+    ])
+    .unwrap();
+    let analysis = analyze(&source);
+    let relationships = &analysis.declared.concept("c").unwrap().relationships;
+    assert_eq!(
+        relationships.len(),
+        4,
+        "recovery must not consume the next list item"
+    );
+    assert!(matches!(
+        relationships[0].from_end,
+        uml::DeclaredField::Incomplete { .. }
+    ));
+    assert!(matches!(
+        relationships[1].from_end,
+        uml::DeclaredField::Invalid { .. }
+    ));
+    assert!(matches!(
+        relationships[2].to_end,
+        uml::DeclaredField::Invalid { .. } | uml::DeclaredField::Incomplete { .. }
+    ));
+    assert!(matches!(
+        relationships[3].target,
+        uml::DeclaredField::Valid { .. }
+    ));
+    assert!(!analysis.diagnostics.is_empty());
+}

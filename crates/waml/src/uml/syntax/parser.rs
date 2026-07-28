@@ -148,6 +148,18 @@ fn simple_item(
         }
         _ => return None,
     };
+    if kind == UmlSyntaxKind::Relationship {
+        return Some(relationship(
+            f,
+            text,
+            source,
+            start,
+            end,
+            lead,
+            content_end,
+            diags,
+        ));
+    }
     let mut children = vec![token(
         f,
         text,
@@ -200,6 +212,352 @@ fn simple_item(
         ));
     }
     Some(f.node(kind, children).unwrap())
+}
+
+fn relationship(
+    f: &GreenFactory<UmlLanguage>,
+    text: &SourceText,
+    source: &str,
+    start: usize,
+    end: usize,
+    lead: usize,
+    content_end: usize,
+    diags: &mut Vec<TreeDiagnostic<UmlSyntaxDiagnosticCode>>,
+) -> waml_syntax::GreenNode<UmlLanguage> {
+    let mut c = vec![token(
+        f,
+        text,
+        start,
+        lead,
+        lead + 1,
+        UmlSyntaxKind::BulletToken,
+    )];
+    let mut p = skip_ws(source, lead + 1, content_end);
+    let kind_start = p;
+    let kind_text = [
+        "instance of",
+        "associates",
+        "aggregates",
+        "composes",
+        "specializes",
+        "implements",
+        "depends",
+        "annotates",
+        "includes",
+        "extends",
+        "links",
+    ]
+    .into_iter()
+    .find(|k| source[p..content_end].starts_with(k));
+    if let Some(k) = kind_text {
+        p += k.len();
+        c.push(token(
+            f,
+            text,
+            lead + 1,
+            kind_start,
+            p,
+            UmlSyntaxKind::RelationshipKindToken,
+        ));
+    } else {
+        let q = scan_name(source, p, content_end);
+        c.push(if p == q {
+            missing_token(f, text, lead + 1, p, UmlSyntaxKind::RelationshipKindToken)
+        } else {
+            token(
+                f,
+                text,
+                lead + 1,
+                p,
+                q,
+                UmlSyntaxKind::RelationshipKindToken,
+            )
+        });
+        diags.push(diag(
+            UmlSyntaxDiagnosticCode::UnexpectedToken,
+            kind_start,
+            q,
+            "invalid relationship kind",
+        ));
+        p = q;
+    }
+    let link_leading = p;
+    p = skip_ws(source, p, content_end);
+    let (target, next) = relationship_link(f, text, source, p, content_end, link_leading, diags);
+    c.push(target);
+    p = next;
+    let mut suffix_leading = p;
+    p = skip_ws(source, p, content_end);
+    if source[p..content_end].starts_with("as")
+        && source[p + 2..content_end]
+            .chars()
+            .next()
+            .is_none_or(char::is_whitespace)
+    {
+        let as_end = p + 2;
+        c.push(token(
+            f,
+            text,
+            suffix_leading,
+            p,
+            as_end,
+            UmlSyntaxKind::AsToken,
+        ));
+        p = skip_ws(source, as_end, content_end);
+        let mut name = Vec::new();
+        if p < content_end && source.as_bytes()[p] == b'"' {
+            let q = source[p + 1..content_end]
+                .find('"')
+                .map(|n| p + n + 2)
+                .unwrap_or(content_end);
+            name.push(token(f, text, as_end, p, q, UmlSyntaxKind::TypeToken));
+            p = q;
+        } else {
+            let (link, q) = relationship_link(f, text, source, p, content_end, as_end, diags);
+            name.push(link);
+            p = q;
+        }
+        c.push(GreenElement::Node(
+            f.node(UmlSyntaxKind::RelationshipName, name).unwrap(),
+        ));
+        suffix_leading = p;
+        p = skip_ws(source, p, content_end);
+    }
+    if p < content_end && source.as_bytes()[p] == b':' {
+        c.push(token(
+            f,
+            text,
+            suffix_leading,
+            p,
+            p + 1,
+            UmlSyntaxKind::ColonToken,
+        ));
+        let from_leading = p + 1;
+        p = skip_ws(source, p + 1, content_end);
+        let (from, q) = relationship_end(f, text, source, p, content_end, from_leading, diags);
+        c.push(GreenElement::Node(from));
+        p = skip_ws(source, q, content_end);
+        if source[p..content_end].starts_with("to")
+            && source[p + 2..content_end]
+                .chars()
+                .next()
+                .is_none_or(char::is_whitespace)
+        {
+            c.push(token(f, text, q, p, p + 2, UmlSyntaxKind::ToToken));
+            let to_leading = p + 2;
+            p = skip_ws(source, p + 2, content_end);
+            let (to, q) = relationship_end(f, text, source, p, content_end, to_leading, diags);
+            c.push(GreenElement::Node(to));
+            p = q;
+        } else {
+            c.push(GreenElement::Token(f.missing_token(UmlSyntaxKind::ToToken)));
+            diags.push(diag(
+                UmlSyntaxDiagnosticCode::UnexpectedToken,
+                p,
+                content_end,
+                "missing 'to' between relationship ends",
+            ));
+            let (to, q) = relationship_end(f, text, source, p, content_end, q, diags);
+            c.push(GreenElement::Node(to));
+            p = q;
+        }
+    }
+    if p < content_end {
+        c.push(GreenElement::Node(
+            f.node(
+                UmlSyntaxKind::SkippedTokensSyntax,
+                [GreenElement::Token(
+                    f.bad_token(
+                        UmlSyntaxKind::BadToken,
+                        slice(text, p, content_end),
+                        UmlSyntaxDiagnosticCode::UnexpectedToken,
+                    )
+                    .unwrap(),
+                )],
+            )
+            .unwrap(),
+        ));
+        diags.push(diag(
+            UmlSyntaxDiagnosticCode::UnexpectedToken,
+            p,
+            content_end,
+            "unexpected relationship content",
+        ));
+    }
+    if content_end < end {
+        c.push(token(
+            f,
+            text,
+            content_end,
+            content_end,
+            end,
+            UmlSyntaxKind::NewlineToken,
+        ));
+    }
+    f.node(UmlSyntaxKind::Relationship, c).unwrap()
+}
+
+fn relationship_link(
+    f: &GreenFactory<UmlLanguage>,
+    text: &SourceText,
+    source: &str,
+    p: usize,
+    end: usize,
+    leading: usize,
+    diags: &mut Vec<TreeDiagnostic<UmlSyntaxDiagnosticCode>>,
+) -> (GreenElement<UmlLanguage>, usize) {
+    if p < end && source.as_bytes()[p] == b'[' {
+        if let Some(close) = source[p + 1..end].find(']').map(|n| p + 1 + n) {
+            if source.get(close + 1..close + 2) == Some("(") {
+                if let Some(q) = source[close + 2..end].find(')').map(|n| close + 2 + n) {
+                    return (
+                        GreenElement::Node(
+                            f.node(
+                                UmlSyntaxKind::Link,
+                                [
+                                    token(
+                                        f,
+                                        text,
+                                        leading,
+                                        p,
+                                        p + 1,
+                                        UmlSyntaxKind::OpenBracketToken,
+                                    ),
+                                    token(
+                                        f,
+                                        text,
+                                        p + 1,
+                                        p + 1,
+                                        close,
+                                        UmlSyntaxKind::LinkTextToken,
+                                    ),
+                                    token(
+                                        f,
+                                        text,
+                                        close,
+                                        close,
+                                        close + 1,
+                                        UmlSyntaxKind::CloseBracketToken,
+                                    ),
+                                    token(
+                                        f,
+                                        text,
+                                        close + 1,
+                                        close + 1,
+                                        close + 2,
+                                        UmlSyntaxKind::OpenBracketToken,
+                                    ),
+                                    token(
+                                        f,
+                                        text,
+                                        close + 2,
+                                        close + 2,
+                                        q,
+                                        UmlSyntaxKind::LinkTargetToken,
+                                    ),
+                                    token(f, text, q, q, q + 1, UmlSyntaxKind::CloseBracketToken),
+                                ],
+                            )
+                            .unwrap(),
+                        ),
+                        q + 1,
+                    );
+                }
+            }
+        }
+    }
+    let q = scan_name(source, p, end);
+    diags.push(diag(
+        UmlSyntaxDiagnosticCode::UnexpectedToken,
+        p,
+        q,
+        "malformed relationship link",
+    ));
+    (
+        GreenElement::Node(
+            f.node(
+                UmlSyntaxKind::Link,
+                [
+                    GreenElement::Token(f.missing_token(UmlSyntaxKind::OpenBracketToken)),
+                    GreenElement::Token(f.missing_token(UmlSyntaxKind::LinkTextToken)),
+                    GreenElement::Token(f.missing_token(UmlSyntaxKind::CloseBracketToken)),
+                    GreenElement::Token(f.missing_token(UmlSyntaxKind::OpenBracketToken)),
+                    GreenElement::Token(f.missing_token(UmlSyntaxKind::LinkTargetToken)),
+                    GreenElement::Token(f.missing_token(UmlSyntaxKind::CloseBracketToken)),
+                    GreenElement::Node(
+                        f.node(
+                            UmlSyntaxKind::SkippedTokensSyntax,
+                            [GreenElement::Token(
+                                f.bad_token(
+                                    UmlSyntaxKind::BadToken,
+                                    slice(text, p, q),
+                                    UmlSyntaxDiagnosticCode::UnexpectedToken,
+                                )
+                                .unwrap(),
+                            )],
+                        )
+                        .unwrap(),
+                    ),
+                ],
+            )
+            .unwrap(),
+        ),
+        q,
+    )
+}
+
+fn relationship_end(
+    f: &GreenFactory<UmlLanguage>,
+    text: &SourceText,
+    source: &str,
+    p: usize,
+    end: usize,
+    leading: usize,
+    diags: &mut Vec<TreeDiagnostic<UmlSyntaxDiagnosticCode>>,
+) -> (waml_syntax::GreenNode<UmlLanguage>, usize) {
+    let q = scan_name(source, p, end);
+    let mut c = Vec::new();
+    if p == q {
+        c.push(missing_token(
+            f,
+            text,
+            leading,
+            p,
+            UmlSyntaxKind::IdentifierToken,
+        ));
+        diags.push(diag(
+            UmlSyntaxDiagnosticCode::InvalidMultiplicity,
+            p,
+            p,
+            "missing relationship end multiplicity",
+        ));
+        return (f.node(UmlSyntaxKind::RelationshipEnd, c).unwrap(), p);
+    }
+    let mult = &source[p..q];
+    c.push(token(
+        f,
+        text,
+        leading,
+        p,
+        q,
+        UmlSyntaxKind::IdentifierToken,
+    ));
+    let at = skip_ws(source, q, end);
+    let mut next = q;
+    if crate::multiplicity::Multiplicity::parse(mult).is_none() {
+        diags.push(diag(
+            UmlSyntaxDiagnosticCode::InvalidMultiplicity,
+            p,
+            q,
+            "invalid relationship end multiplicity",
+        ));
+    }
+    if at < end && !source[at..end].starts_with("to") && source.as_bytes()[at] != b':' {
+        let r = scan_name(source, at, end);
+        c.push(token(f, text, q, at, r, UmlSyntaxKind::IdentifierToken));
+        next = r;
+    }
+    (f.node(UmlSyntaxKind::RelationshipEnd, c).unwrap(), next)
 }
 
 /// Tokenize the small, currently-supported classifier line vocabulary.  This is

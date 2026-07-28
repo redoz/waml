@@ -14,6 +14,8 @@ pub struct SlotSyntax(pub(crate) SyntaxNode<UmlLanguage>);
 #[derive(Clone, Debug)]
 pub struct RelationshipSyntax(pub(crate) SyntaxNode<UmlLanguage>);
 #[derive(Clone, Debug)]
+pub struct RelationshipEndSyntax(pub(crate) SyntaxNode<UmlLanguage>);
+#[derive(Clone, Debug)]
 pub struct MemberSyntax(pub(crate) SyntaxNode<UmlLanguage>);
 #[derive(Clone, Debug)]
 pub struct MemberGroupSyntax(pub(crate) SyntaxNode<UmlLanguage>);
@@ -147,6 +149,7 @@ macro_rules! simple_ast {
 simple_ast!(ValueSyntax, Value);
 simple_ast!(SlotSyntax, Slot);
 simple_ast!(RelationshipSyntax, Relationship);
+simple_ast!(RelationshipEndSyntax, RelationshipEnd);
 simple_ast!(MemberSyntax, Member);
 simple_ast!(MemberGroupSyntax, MemberGroup);
 simple_ast!(InlineInstanceSyntax, InlineInstance);
@@ -244,10 +247,74 @@ impl SlotSyntax {
     }
 }
 impl RelationshipSyntax {
+    pub fn recovery(&self) -> impl Iterator<Item = SyntaxElement<UmlLanguage>> + '_ {
+        self.0.children().filter(|e| {
+            matches!(
+                e.kind(),
+                UmlSyntaxKind::SkippedTokensSyntax | UmlSyntaxKind::BadToken
+            )
+        })
+    }
+    pub fn name_label_token(&self) -> Option<SyntaxToken<UmlLanguage>> {
+        self.0
+            .children()
+            .find(|e| e.kind() == UmlSyntaxKind::RelationshipName)
+            .and_then(|e| e.into_node())?
+            .children()
+            .find(|e| e.kind() == UmlSyntaxKind::TypeToken)
+            .and_then(SyntaxElement::into_token)
+    }
+    pub fn name_link(&self) -> Option<SyntaxNode<UmlLanguage>> {
+        self.0
+            .children()
+            .find(|e| e.kind() == UmlSyntaxKind::RelationshipName)
+            .and_then(|e| e.into_node())?
+            .children()
+            .find(|e| e.kind() == UmlSyntaxKind::Link)
+            .and_then(SyntaxElement::into_node)
+    }
+    pub fn colon_token(&self) -> Option<SyntaxToken<UmlLanguage>> {
+        self.0
+            .children()
+            .find(|e| e.kind() == UmlSyntaxKind::ColonToken)
+            .and_then(SyntaxElement::into_token)
+    }
+    pub fn from_end(&self) -> Option<RelationshipEndSyntax> {
+        self.0
+            .children()
+            .filter(|e| e.kind() == UmlSyntaxKind::RelationshipEnd)
+            .nth(0)
+            .and_then(SyntaxElement::into_node)
+            .map(RelationshipEndSyntax)
+    }
+    pub fn to_end(&self) -> Option<RelationshipEndSyntax> {
+        self.0
+            .children()
+            .filter(|e| e.kind() == UmlSyntaxKind::RelationshipEnd)
+            .nth(1)
+            .and_then(SyntaxElement::into_node)
+            .map(RelationshipEndSyntax)
+    }
     pub fn target_token(&self) -> Option<SyntaxToken<UmlLanguage>> {
         self.link()?
             .children()
             .find(|e| e.kind() == UmlSyntaxKind::LinkTargetToken)
+            .and_then(SyntaxElement::into_token)
+    }
+}
+impl RelationshipEndSyntax {
+    pub fn multiplicity_token(&self) -> SyntaxToken<UmlLanguage> {
+        self.0
+            .children()
+            .find(|e| e.kind() == UmlSyntaxKind::IdentifierToken)
+            .and_then(|e| e.clone().into_token())
+            .expect("relationship end has fixed multiplicity slot")
+    }
+    pub fn role_token(&self) -> Option<SyntaxToken<UmlLanguage>> {
+        self.0
+            .children()
+            .filter(|e| e.kind() == UmlSyntaxKind::IdentifierToken)
+            .nth(1)
             .and_then(SyntaxElement::into_token)
     }
 }

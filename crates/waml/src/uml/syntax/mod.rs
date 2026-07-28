@@ -3,7 +3,8 @@ mod kind;
 pub mod parser;
 pub use ast::{
     AttributeSyntax, InlineInstanceSyntax, MemberGroupSyntax, MemberSyntax, MultiplicitySyntax,
-    RelationshipSyntax, SlotSyntax, SlotValueKind, TypeReferenceSyntax, ValueSyntax,
+    RelationshipEndSyntax, RelationshipSyntax, SlotSyntax, SlotValueKind, TypeReferenceSyntax,
+    ValueSyntax,
 };
 pub use kind::{UmlSyntaxDiagnosticCode, UmlSyntaxKind};
 #[derive(Debug)]

@@ -18,8 +18,8 @@ pub use declared::{
     DeclaredMember, DeclaredRelationship, DeclaredSlot, DeclaredValue, ExpectedSyntax,
 };
 pub use syntax::{
-    InlineInstanceSyntax, MemberGroupSyntax, MemberSyntax, RelationshipSyntax, SlotSyntax,
-    SlotValueKind, ValueSyntax,
+    InlineInstanceSyntax, MemberGroupSyntax, MemberSyntax, RelationshipEndSyntax,
+    RelationshipSyntax, SlotSyntax, SlotValueKind, ValueSyntax,
 };
 
 pub(crate) fn recognizes_type(element_type: &crate::model::ElementType) -> bool {

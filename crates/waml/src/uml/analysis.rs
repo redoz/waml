@@ -338,10 +338,76 @@ fn declared_relationship(node: SyntaxNode<UmlLanguage>) -> crate::uml::DeclaredR
             syntax: node.clone(),
             expected: crate::uml::ExpectedSyntax::RelationshipTarget,
         });
+    let name = if let Some(label) = syntax.name_label_token() {
+        valid(
+            node.clone(),
+            crate::model::AssocName::Label(
+                label.text().write_to_string().trim_matches('"').to_string(),
+            ),
+        )
+    } else if let Some(link) = syntax.name_link() {
+        link.children()
+            .find(|e| e.kind() == super::syntax::UmlSyntaxKind::LinkTargetToken)
+            .and_then(|e| e.into_token())
+            .map(|t| {
+                valid(
+                    node.clone(),
+                    crate::model::AssocName::Assoc(t.text().write_to_string()),
+                )
+            })
+            .unwrap_or_else(|| invalid(node.clone()))
+    } else {
+        crate::uml::DeclaredField::Absent
+    };
+    let end = |end: Option<super::syntax::RelationshipEndSyntax>| {
+        let Some(end) = end else {
+            return crate::uml::DeclaredField::Absent;
+        };
+        let raw = end.multiplicity_token().text().write_to_string();
+        let Some(multiplicity) = crate::multiplicity::Multiplicity::parse(&raw) else {
+            return invalid(end.0);
+        };
+        valid(
+            end.0.clone(),
+            crate::model::RelEnd {
+                multiplicity: Some(multiplicity),
+                role: end.role_token().map(|t| t.text().write_to_string()),
+                navigable: None,
+            },
+        )
+    };
+    let mut from_end = end(syntax.from_end());
+    let mut to_end = end(syntax.to_end());
+    match (&kind, syntax.colon_token().is_some()) {
+        (crate::uml::DeclaredField::Valid { value, .. }, false)
+            if matches!(
+                value,
+                crate::model::RelationshipKind::Aggregates
+                    | crate::model::RelationshipKind::Composes
+            ) =>
+        {
+            from_end = crate::uml::DeclaredField::Incomplete {
+                syntax: node.clone(),
+                expected: crate::uml::ExpectedSyntax::ValidMultiplicity,
+            };
+            to_end = crate::uml::DeclaredField::Incomplete {
+                syntax: node.clone(),
+                expected: crate::uml::ExpectedSyntax::ValidMultiplicity,
+            };
+        }
+        (crate::uml::DeclaredField::Valid { value, .. }, true) if !value.is_ended() => {
+            from_end = invalid(node.clone());
+            to_end = invalid(node.clone());
+        }
+        _ => {}
+    }
     crate::uml::DeclaredRelationship {
         syntax,
         kind,
         target,
+        name,
+        from_end,
+        to_end,
     }
 }
 fn declared_member(node: SyntaxNode<UmlLanguage>) -> crate::uml::DeclaredMember {
