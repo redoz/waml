@@ -44,6 +44,11 @@ fn okf_bundle_json_has_separate_semantic_collections_and_string_bodies() {
     assert!(value["indexes"][0]["body"].is_string());
     assert!(value["logs"][0]["body"].is_string());
     assert!(value["concepts"][0].get("role").is_none());
+    let encoded = serde_json::to_string(&value).unwrap();
+    assert!(!encoded.contains("\"source\""));
+    assert!(!encoded.contains("\"range\""));
+    assert!(!encoded.contains("ConceptRole"));
+    assert!(value["directories"].is_array());
 }
 
 #[test]
@@ -75,6 +80,15 @@ fn selective_uml_projection_omits_unknowns_and_structural_packages() {
 
     assert_eq!(value["nodes"].as_array().unwrap().len(), 1);
     assert_eq!(value["nodes"][0]["key"], "order");
+    assert!(value["nodes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .all(|node| node["type"] != serde_json::json!("")));
+    assert!(projection
+        .nodes
+        .iter()
+        .all(|node| !matches!(node.ty, ElementType::Unknown(_))));
     assert!(value.get("packages").is_none());
     assert_eq!(value["path"], "");
 }
@@ -84,7 +98,12 @@ fn model_json_matches_ts_field_names() {
     let model = build_model(&bundle());
     let v = serde_json::to_value(&model).unwrap();
 
-    let node = &v["nodes"][0];
+    let node = v["nodes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|node| node["key"] == "m/order")
+        .unwrap();
     // TS ModelNode uses `type` and `key`, not `ty`.
     assert_eq!(node["type"], "uml.Class");
     assert_eq!(node["key"], "m/order");

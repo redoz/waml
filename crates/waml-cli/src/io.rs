@@ -148,6 +148,7 @@ pub fn read_ndjson(src: &str) -> std::io::Result<Vec<(usize, String)>> {
 /// Write only changed/added entries; delete entries dropped from the bundle.
 /// Returns a human list of what happened.
 pub fn write_back(
+    root: &Path,
     old: &[(String, String)],
     new: &[(String, String)],
 ) -> std::io::Result<Vec<String>> {
@@ -156,13 +157,17 @@ pub fn write_back(
     let mut touched = Vec::new();
     for (p, c) in &nm {
         if om.get(p) != Some(c) {
-            fs::write(p, c)?;
+            let destination = root.join(p);
+            if let Some(parent) = destination.parent() {
+                fs::create_dir_all(parent)?;
+            }
+            fs::write(destination, c)?;
             touched.push(format!("wrote {p}"));
         }
     }
     for p in om.keys() {
         if !nm.contains_key(p) {
-            fs::remove_file(p)?;
+            fs::remove_file(root.join(p))?;
             touched.push(format!("deleted {p}"));
         }
     }

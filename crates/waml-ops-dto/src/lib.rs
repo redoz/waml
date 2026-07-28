@@ -1,8 +1,12 @@
 use serde::{Deserialize, Serialize};
+use waml::compat::{Batch, Step};
 use waml::grammar::{parse_ends, render_ends};
 use waml::model::{CardinalityVisibility, ElementType, RelEnd, RelationshipKind, Visibility};
 use waml::multiplicity::Multiplicity;
-use waml::ops::{DiagramDisplaySet, FieldEdit, NameSpec, Op, RelBy, Selector};
+use waml::ops::{DiagramDisplaySet, FieldEdit, NameSpec, RelBy, Selector};
+use waml::source::SourceBundle;
+use waml::syntax::Direction;
+use waml::{okf, uml};
 
 fn one() -> u32 {
     1
@@ -206,6 +210,26 @@ pub enum OpDto {
         #[serde(default)]
         docs: Vec<(String, String)>,
     },
+    #[serde(rename = "place.set")]
+    PlaceSet {
+        #[serde(default = "one")]
+        v: u32,
+        diagram: String,
+        subject_title: String,
+        subject_slug: String,
+        reference_title: String,
+        reference_slug: String,
+        #[serde(default)]
+        directions: Vec<Direction>,
+    },
+    #[serde(rename = "place.rm")]
+    PlaceRm {
+        #[serde(default = "one")]
+        v: u32,
+        diagram: String,
+        subject_slug: String,
+        reference_slug: String,
+    },
     #[serde(rename = "diagram.set")]
     DiagramSet {
         #[serde(default = "one")]
@@ -340,9 +364,30 @@ fn rel_sel(
     })
 }
 
+fn directory(path: &str) -> Result<okf::DirectoryAddress, String> {
+    let path = path.trim_matches('/');
+    okf::DirectoryAddress::parse(if path.is_empty() {
+        "/".to_string()
+    } else {
+        format!("/{path}")
+    })
+    .map_err(|error| error.to_string())
+}
+
+pub fn to_batch(dtos: &[OpDto]) -> Result<Batch, String> {
+    dtos.iter()
+        .enumerate()
+        .map(|(index, dto)| {
+            dto.to_compat_step()
+                .map_err(|error| format!("op {index}: {error}"))
+        })
+        .collect::<Result<Vec<_>, _>>()
+        .map(Batch::new)
+}
+
 impl OpDto {
-    pub fn to_op(&self) -> Result<Op, String> {
-        match self {
+    pub fn to_compat_step(&self) -> Result<Step, String> {
+        Ok(match self {
             OpDto::NodeNew {
                 v,
                 slug,
@@ -354,9 +399,9 @@ impl OpDto {
                 abstract_,
             } => {
                 check_v(*v, "node.new")?;
-                Ok(Op::NodeNew {
+                Step::Uml(uml::Op::ClassifierNew {
                     slug: slug.clone(),
-                    dir: dir.clone(),
+                    directory: directory(dir)?,
                     ty: ElementType::parse(ty),
                     title: title.clone(),
                     stereotype: stereotype.clone(),
@@ -366,7 +411,7 @@ impl OpDto {
             }
             OpDto::NodeRename { v, from, to } => {
                 check_v(*v, "node.rename")?;
-                Ok(Op::NodeRename {
+                Step::Uml(uml::Op::ClassifierRename {
                     from: from.clone(),
                     to: to.clone(),
                 })
@@ -381,19 +426,19 @@ impl OpDto {
                 ty,
             } => {
                 check_v(*v, "node.set")?;
-                Ok(Op::NodeSet {
-                    slug: slug.clone(),
+                Step::Uml(uml::Op::ClassifierSet {
+                    id: slug.clone(),
                     title: title.clone(),
                     description: desc.clone(),
                     stereotype: stereotype.clone(),
                     abstract_: *abstract_,
-                    ty: ty.as_ref().map(|t| ElementType::parse(t)),
+                    ty: ty.as_ref().map(|value| ElementType::parse(value)),
                 })
             }
             OpDto::NodeRm { v, slug, cascade } => {
                 check_v(*v, "node.rm")?;
-                Ok(Op::NodeRm {
-                    slug: slug.clone(),
+                Step::Uml(uml::Op::ClassifierRemove {
+                    id: slug.clone(),
                     cascade: *cascade,
                 })
             }
@@ -406,7 +451,7 @@ impl OpDto {
                 vis,
             } => {
                 check_v(*v, "attr.add")?;
-                Ok(Op::AttrAdd {
+                Step::Uml(uml::Op::AttributeAdd {
                     node: node.clone(),
                     name: name.clone(),
                     ty_token: ty.clone(),
@@ -424,7 +469,7 @@ impl OpDto {
                 rename,
             } => {
                 check_v(*v, "attr.set")?;
-                Ok(Op::AttrSet {
+                Step::Uml(uml::Op::AttributeSet {
                     node: node.clone(),
                     name: name.clone(),
                     ty_token: ty.clone(),
@@ -435,21 +480,21 @@ impl OpDto {
             }
             OpDto::AttrRm { v, node, name } => {
                 check_v(*v, "attr.rm")?;
-                Ok(Op::AttrRm {
+                Step::Uml(uml::Op::AttributeRemove {
                     node: node.clone(),
                     name: name.clone(),
                 })
             }
             OpDto::ValueAdd { v, node, literal } => {
                 check_v(*v, "value.add")?;
-                Ok(Op::ValueAdd {
+                Step::Uml(uml::Op::ValueAdd {
                     node: node.clone(),
                     literal: literal.clone(),
                 })
             }
             OpDto::ValueRm { v, node, literal } => {
                 check_v(*v, "value.rm")?;
-                Ok(Op::ValueRm {
+                Step::Uml(uml::Op::ValueRemove {
                     node: node.clone(),
                     literal: literal.clone(),
                 })
@@ -464,7 +509,7 @@ impl OpDto {
                 ends,
             } => {
                 check_v(*v, "rel.add")?;
-                Ok(Op::RelAdd {
+                Step::Uml(uml::Op::RelationshipAdd {
                     source: source.clone(),
                     kind: kind_req(kind)?,
                     target: target.clone(),
@@ -483,7 +528,7 @@ impl OpDto {
                 set_as_ref,
             } => {
                 check_v(*v, "rel.set")?;
-                Ok(Op::RelSet {
+                Step::Uml(uml::Op::RelationshipSet {
                     selector: rel_sel(source, kind, target, as_sel)?,
                     ends: ends_opt(ends)?,
                     name: name_of(set_label, set_as_ref),
@@ -497,48 +542,60 @@ impl OpDto {
                 as_sel,
             } => {
                 check_v(*v, "rel.rm")?;
-                Ok(Op::RelRm {
+                Step::Uml(uml::Op::RelationshipRemove {
                     selector: rel_sel(source, kind, target, as_sel)?,
                 })
             }
             OpDto::PkgMove { v, slug, to_dir } => {
                 check_v(*v, "pkg.move")?;
-                Ok(Op::PkgMove {
-                    slug: slug.clone(),
-                    to_dir: to_dir.clone(),
+                Step::Okf(okf::Op::ConceptMove {
+                    id: slug.clone(),
+                    to_directory: directory(to_dir)?,
                 })
             }
             OpDto::PkgRename { v, from, to } => {
                 check_v(*v, "pkg.rename")?;
-                Ok(Op::PkgRename {
-                    from: from.clone(),
-                    to: to.clone(),
-                })
+                let from_parent = from.rsplit_once('/').map_or("", |(parent, _)| parent);
+                let to_parent = to.rsplit_once('/').map_or("", |(parent, _)| parent);
+                if from_parent == to_parent {
+                    Step::Okf(okf::Op::DirectoryRename {
+                        directory: directory(from)?,
+                        name: to.rsplit('/').next().unwrap_or(to).to_string(),
+                    })
+                } else {
+                    Step::Okf(okf::Op::DirectoryMove {
+                        directory: directory(from)?,
+                        to_parent: directory(to_parent)?,
+                        name: Some(to.rsplit('/').next().unwrap_or(to).to_string()),
+                    })
+                }
             }
             OpDto::PkgDelete { v, path, cascade } => {
                 check_v(*v, "pkg.delete")?;
-                Ok(Op::PkgDelete {
-                    path: path.clone(),
+                Step::Okf(okf::Op::DirectoryDelete {
+                    directory: directory(path)?,
                     cascade: *cascade,
                 })
             }
             OpDto::PkgReorder { v, path, order } => {
                 check_v(*v, "pkg.reorder")?;
-                Ok(Op::PkgReorder {
-                    path: path.clone(),
+                Step::Okf(okf::Op::IndexReorder {
+                    directory: directory(path)?,
                     order: order.clone(),
-                })
-            }
-            OpDto::PkgRetitle { v, path, title } => {
-                check_v(*v, "pkg.retitle")?;
-                Ok(Op::PkgRetitle {
-                    path: path.clone(),
-                    title: title.clone(),
                 })
             }
             OpDto::PkgSort { v, path } => {
                 check_v(*v, "pkg.sort")?;
-                Ok(Op::PkgSort { path: path.clone() })
+                Step::Okf(okf::Op::IndexSort {
+                    directory: directory(path)?,
+                })
+            }
+            OpDto::PkgRetitle { v, path, title } => {
+                check_v(*v, "pkg.retitle")?;
+                Step::Okf(okf::Op::IndexRetitle {
+                    directory: directory(path)?,
+                    title: title.clone(),
+                })
             }
             OpDto::PkgInsert {
                 v,
@@ -547,10 +604,43 @@ impl OpDto {
                 docs,
             } => {
                 check_v(*v, "pkg.insert")?;
-                Ok(Op::PkgInsert {
-                    parent_path: parent_path.clone(),
+                Step::Okf(okf::Op::BundleImport {
+                    parent: directory(parent_path)?,
                     name: name.clone(),
-                    docs: docs.clone(),
+                    bundle: SourceBundle::try_from_pairs(docs.clone())
+                        .map_err(|error| error.to_string())?,
+                })
+            }
+            OpDto::PlaceSet {
+                v,
+                diagram,
+                subject_title,
+                subject_slug,
+                reference_title,
+                reference_slug,
+                directions,
+            } => {
+                check_v(*v, "place.set")?;
+                Step::Uml(uml::Op::PlacementSet {
+                    diagram: diagram.clone(),
+                    subject_title: subject_title.clone(),
+                    subject_slug: subject_slug.clone(),
+                    reference_title: reference_title.clone(),
+                    reference_slug: reference_slug.clone(),
+                    directions: directions.clone(),
+                })
+            }
+            OpDto::PlaceRm {
+                v,
+                diagram,
+                subject_slug,
+                reference_slug,
+            } => {
+                check_v(*v, "place.rm")?;
+                Step::Uml(uml::Op::PlacementRemove {
+                    diagram: diagram.clone(),
+                    subject_slug: subject_slug.clone(),
+                    reference_slug: reference_slug.clone(),
                 })
             }
             OpDto::DiagramSet {
@@ -562,7 +652,7 @@ impl OpDto {
                 display,
             } => {
                 check_v(*v, "diagram.set")?;
-                Ok(Op::DiagramSet {
+                Step::Uml(uml::Op::DiagramSet {
                     key: key.clone(),
                     title: title.clone(),
                     description: desc.clone(),
@@ -570,223 +660,269 @@ impl OpDto {
                     display: display.as_ref().map(display_dto_to_set),
                 })
             }
-        }
+        })
     }
 
-    /// Reverse of `to_op`; not yet wired to any CLI surface (future `waml serve`/`--emit`
-    /// round-trip work) but kept alongside `to_op` and covered by its own round-trip test.
-    #[allow(dead_code)]
-    pub fn from_op(op: &Op) -> OpDto {
-        let ends_str = |e: &Option<(RelEnd, RelEnd)>| e.as_ref().map(|(f, t)| render_ends(f, t));
-        let name_parts = |n: &Option<NameSpec>| match n {
-            Some(NameSpec::Label(l)) => (Some(l.clone()), None),
-            Some(NameSpec::Ref(s)) => (None, Some(s.clone())),
+    pub fn from_compat_step(step: &Step) -> Self {
+        let ends_str =
+            |ends: &Option<(RelEnd, RelEnd)>| ends.as_ref().map(|(from, to)| render_ends(from, to));
+        let name_parts = |name: &Option<NameSpec>| match name {
+            Some(NameSpec::Label(label)) => (Some(label.clone()), None),
+            Some(NameSpec::Ref(reference)) => (None, Some(reference.clone())),
             None => (None, None),
         };
-        match op {
-            Op::NodeNew {
-                slug,
-                dir,
-                ty,
-                title,
-                stereotype,
-                description,
-                abstract_,
-            } => OpDto::NodeNew {
-                v: 1,
-                slug: slug.clone(),
-                dir: dir.clone(),
-                ty: ty.as_str(),
-                title: title.clone(),
-                stereotype: stereotype.clone(),
-                desc: description.clone(),
-                abstract_: *abstract_,
-            },
-            Op::NodeRename { from, to } => OpDto::NodeRename {
-                v: 1,
-                from: from.clone(),
-                to: to.clone(),
-            },
-            Op::NodeSet {
-                slug,
-                title,
-                description,
-                stereotype,
-                abstract_,
-                ty,
-            } => OpDto::NodeSet {
-                v: 1,
-                slug: slug.clone(),
-                title: title.clone(),
-                desc: description.clone(),
-                stereotype: stereotype.clone(),
-                abstract_: *abstract_,
-                ty: ty.as_ref().map(|t| t.as_str()),
-            },
-            Op::NodeRm { slug, cascade } => OpDto::NodeRm {
-                v: 1,
-                slug: slug.clone(),
-                cascade: *cascade,
-            },
-            Op::AttrAdd {
-                node,
-                name,
-                ty_token,
-                multiplicity,
-                visibility,
-            } => OpDto::AttrAdd {
-                v: 1,
-                node: node.clone(),
-                name: name.clone(),
-                ty: ty_token.clone(),
-                mult: multiplicity.as_ref().map(|m| m.as_str().to_string()),
-                vis: visibility.map(|x| x.marker().to_string()),
-            },
-            Op::AttrSet {
-                node,
-                name,
-                ty_token,
-                multiplicity,
-                visibility,
-                rename,
-            } => OpDto::AttrSet {
-                v: 1,
-                node: node.clone(),
-                name: name.clone(),
-                ty: ty_token.clone(),
-                mult: match multiplicity {
-                    FieldEdit::Unchanged => FieldEdit::Unchanged,
-                    FieldEdit::Clear => FieldEdit::Clear,
-                    FieldEdit::Set(value) => FieldEdit::Set(value.as_str().to_string()),
+        let legacy_directory =
+            |address: &okf::DirectoryAddress| address.as_str().trim_start_matches('/').to_string();
+        match step {
+            Step::Okf(op) => match op {
+                okf::Op::ConceptMove { id, to_directory } => OpDto::PkgMove {
+                    v: 1,
+                    slug: id.clone(),
+                    to_dir: legacy_directory(to_directory),
                 },
-                vis: visibility.map(|x| x.marker().to_string()),
-                rename: rename.clone(),
-            },
-            Op::AttrRm { node, name } => OpDto::AttrRm {
-                v: 1,
-                node: node.clone(),
-                name: name.clone(),
-            },
-            Op::ValueAdd { node, literal } => OpDto::ValueAdd {
-                v: 1,
-                node: node.clone(),
-                literal: literal.clone(),
-            },
-            Op::ValueRm { node, literal } => OpDto::ValueRm {
-                v: 1,
-                node: node.clone(),
-                literal: literal.clone(),
-            },
-            Op::RelAdd {
-                source,
-                kind,
-                target,
-                name,
-                ends,
-            } => {
-                let (as_label, as_ref) = name_parts(name);
-                OpDto::RelAdd {
-                    v: 1,
-                    source: source.clone(),
-                    kind: kind.as_str().to_string(),
-                    target: target.clone(),
-                    as_label,
-                    as_ref,
-                    ends: ends_str(ends),
+                okf::Op::DirectoryRename { directory, name } => {
+                    let from = legacy_directory(directory);
+                    let to = match from.rsplit_once('/') {
+                        Some((parent, _)) => format!("{parent}/{name}"),
+                        None => name.clone(),
+                    };
+                    OpDto::PkgRename { v: 1, from, to }
                 }
-            }
-            Op::RelSet {
-                selector,
-                ends,
-                name,
-            } => {
-                let (source, kind, target, as_sel) = sel_parts(selector);
-                let (set_label, set_as_ref) = name_parts(name);
-                OpDto::RelSet {
+                okf::Op::DirectoryMove {
+                    directory,
+                    to_parent,
+                    name,
+                } => {
+                    let from = legacy_directory(directory);
+                    let parent = legacy_directory(to_parent);
+                    let name = name
+                        .as_deref()
+                        .unwrap_or_else(|| from.rsplit('/').next().unwrap_or_default());
+                    let to = if parent.is_empty() {
+                        name.to_string()
+                    } else {
+                        format!("{parent}/{name}")
+                    };
+                    OpDto::PkgRename { v: 1, from, to }
+                }
+                okf::Op::DirectoryDelete { directory, cascade } => OpDto::PkgDelete {
                     v: 1,
+                    path: legacy_directory(directory),
+                    cascade: *cascade,
+                },
+                okf::Op::IndexReorder { directory, order } => OpDto::PkgReorder {
+                    v: 1,
+                    path: legacy_directory(directory),
+                    order: order.clone(),
+                },
+                okf::Op::IndexSort { directory } => OpDto::PkgSort {
+                    v: 1,
+                    path: legacy_directory(directory),
+                },
+                okf::Op::IndexRetitle { directory, title } => OpDto::PkgRetitle {
+                    v: 1,
+                    path: legacy_directory(directory),
+                    title: title.clone(),
+                },
+                okf::Op::BundleImport {
+                    parent,
+                    name,
+                    bundle,
+                } => OpDto::PkgInsert {
+                    v: 1,
+                    parent_path: legacy_directory(parent),
+                    name: name.clone(),
+                    docs: bundle.to_pairs(),
+                },
+            },
+            Step::Uml(op) => match op {
+                uml::Op::AttributeAdd {
+                    node,
+                    name,
+                    ty_token,
+                    multiplicity,
+                    visibility,
+                } => OpDto::AttrAdd {
+                    v: 1,
+                    node: node.clone(),
+                    name: name.clone(),
+                    ty: ty_token.clone(),
+                    mult: multiplicity
+                        .as_ref()
+                        .map(|value| value.as_str().to_string()),
+                    vis: visibility.map(|value| value.marker().to_string()),
+                },
+                uml::Op::AttributeSet {
+                    node,
+                    name,
+                    ty_token,
+                    multiplicity,
+                    visibility,
+                    rename,
+                } => OpDto::AttrSet {
+                    v: 1,
+                    node: node.clone(),
+                    name: name.clone(),
+                    ty: ty_token.clone(),
+                    mult: match multiplicity {
+                        FieldEdit::Unchanged => FieldEdit::Unchanged,
+                        FieldEdit::Clear => FieldEdit::Clear,
+                        FieldEdit::Set(value) => FieldEdit::Set(value.as_str().to_string()),
+                    },
+                    vis: visibility.map(|value| value.marker().to_string()),
+                    rename: rename.clone(),
+                },
+                uml::Op::AttributeRemove { node, name } => OpDto::AttrRm {
+                    v: 1,
+                    node: node.clone(),
+                    name: name.clone(),
+                },
+                uml::Op::ValueAdd { node, literal } => OpDto::ValueAdd {
+                    v: 1,
+                    node: node.clone(),
+                    literal: literal.clone(),
+                },
+                uml::Op::ValueRemove { node, literal } => OpDto::ValueRm {
+                    v: 1,
+                    node: node.clone(),
+                    literal: literal.clone(),
+                },
+                uml::Op::RelationshipAdd {
                     source,
                     kind,
                     target,
-                    as_sel,
-                    ends: ends_str(ends),
-                    set_label,
-                    set_as_ref,
+                    name,
+                    ends,
+                } => {
+                    let (as_label, as_ref) = name_parts(name);
+                    OpDto::RelAdd {
+                        v: 1,
+                        source: source.clone(),
+                        kind: kind.as_str().to_string(),
+                        target: target.clone(),
+                        as_label,
+                        as_ref,
+                        ends: ends_str(ends),
+                    }
                 }
-            }
-            Op::RelRm { selector } => {
-                let (source, kind, target, as_sel) = sel_parts(selector);
-                OpDto::RelRm {
+                uml::Op::RelationshipSet {
+                    selector,
+                    ends,
+                    name,
+                } => {
+                    let (source, kind, target, as_sel) = sel_parts(selector);
+                    let (set_label, set_as_ref) = name_parts(name);
+                    OpDto::RelSet {
+                        v: 1,
+                        source,
+                        kind,
+                        target,
+                        as_sel,
+                        ends: ends_str(ends),
+                        set_label,
+                        set_as_ref,
+                    }
+                }
+                uml::Op::RelationshipRemove { selector } => {
+                    let (source, kind, target, as_sel) = sel_parts(selector);
+                    OpDto::RelRm {
+                        v: 1,
+                        source,
+                        kind,
+                        target,
+                        as_sel,
+                    }
+                }
+                uml::Op::ClassifierNew {
+                    slug,
+                    directory,
+                    ty,
+                    title,
+                    stereotype,
+                    description,
+                    abstract_,
+                } => OpDto::NodeNew {
                     v: 1,
-                    source,
-                    kind,
-                    target,
-                    as_sel,
-                }
-            }
-            Op::PkgMove { slug, to_dir } => OpDto::PkgMove {
-                v: 1,
-                slug: slug.clone(),
-                to_dir: to_dir.clone(),
+                    slug: slug.clone(),
+                    dir: legacy_directory(directory),
+                    ty: ty.as_str(),
+                    title: title.clone(),
+                    stereotype: stereotype.clone(),
+                    desc: description.clone(),
+                    abstract_: *abstract_,
+                },
+                uml::Op::ClassifierSet {
+                    id,
+                    title,
+                    description,
+                    stereotype,
+                    abstract_,
+                    ty,
+                } => OpDto::NodeSet {
+                    v: 1,
+                    slug: id.clone(),
+                    title: title.clone(),
+                    desc: description.clone(),
+                    stereotype: stereotype.clone(),
+                    abstract_: *abstract_,
+                    ty: ty.as_ref().map(|value| value.as_str()),
+                },
+                uml::Op::ClassifierRemove { id, cascade } => OpDto::NodeRm {
+                    v: 1,
+                    slug: id.clone(),
+                    cascade: *cascade,
+                },
+                uml::Op::ClassifierRename { from, to } => OpDto::NodeRename {
+                    v: 1,
+                    from: from.clone(),
+                    to: to.clone(),
+                },
+                uml::Op::DiagramSet {
+                    key,
+                    title,
+                    description,
+                    clear_description,
+                    display,
+                } => OpDto::DiagramSet {
+                    v: 1,
+                    key: key.clone(),
+                    title: title.clone(),
+                    desc: description.clone(),
+                    clear_desc: *clear_description,
+                    display: display.as_ref().map(display_set_to_dto),
+                },
+                uml::Op::PlacementSet {
+                    diagram,
+                    subject_title,
+                    subject_slug,
+                    reference_title,
+                    reference_slug,
+                    directions,
+                } => OpDto::PlaceSet {
+                    v: 1,
+                    diagram: diagram.clone(),
+                    subject_title: subject_title.clone(),
+                    subject_slug: subject_slug.clone(),
+                    reference_title: reference_title.clone(),
+                    reference_slug: reference_slug.clone(),
+                    directions: directions.clone(),
+                },
+                uml::Op::PlacementRemove {
+                    diagram,
+                    subject_slug,
+                    reference_slug,
+                } => OpDto::PlaceRm {
+                    v: 1,
+                    diagram: diagram.clone(),
+                    subject_slug: subject_slug.clone(),
+                    reference_slug: reference_slug.clone(),
+                },
             },
-            Op::PkgRename { from, to } => OpDto::PkgRename {
-                v: 1,
-                from: from.clone(),
-                to: to.clone(),
-            },
-            Op::PkgDelete { path, cascade } => OpDto::PkgDelete {
-                v: 1,
-                path: path.clone(),
-                cascade: *cascade,
-            },
-            Op::PkgReorder { path, order } => OpDto::PkgReorder {
-                v: 1,
-                path: path.clone(),
-                order: order.clone(),
-            },
-            Op::PkgSort { path } => OpDto::PkgSort {
-                v: 1,
-                path: path.clone(),
-            },
-            Op::PkgRetitle { path, title } => OpDto::PkgRetitle {
-                v: 1,
-                path: path.clone(),
-                title: title.clone(),
-            },
-            Op::PkgInsert {
-                parent_path,
-                name,
-                docs,
-            } => OpDto::PkgInsert {
-                v: 1,
-                parent_path: parent_path.clone(),
-                name: name.clone(),
-                docs: docs.clone(),
-            },
-            Op::DiagramSet {
-                key,
-                title,
-                description,
-                clear_description,
-                display,
-            } => OpDto::DiagramSet {
-                v: 1,
-                key: key.clone(),
-                title: title.clone(),
-                desc: description.clone(),
-                clear_desc: *clear_description,
-                display: display.as_ref().map(display_set_to_dto),
-            },
-            Op::PlaceSet { .. } => {
-                unreachable!("place.set no web DTO yet (native-only)")
-            }
-            Op::PlaceRm { .. } => {
-                unreachable!("place.rm no web DTO yet (native-only)")
-            }
         }
     }
 }
 
-/// Decompose a `Selector::Rel` into wire fields for `from_op`.
+/// Decompose a `Selector::Rel` into wire fields for compatibility conversion.
 #[allow(dead_code)]
 fn sel_parts(sel: &Selector) -> (String, Option<String>, Option<String>, Option<String>) {
     match sel {
@@ -816,9 +952,9 @@ mod tests {
     use super::*;
     use waml::ops::{FieldEdit, Op};
 
-    fn round_trip(line: &str) -> Op {
+    fn round_trip(line: &str) -> Step {
         let dto: OpDto = serde_json::from_str(line).unwrap();
-        dto.to_op().unwrap()
+        dto.to_compat_step().unwrap()
     }
 
     #[test]
@@ -827,13 +963,13 @@ mod tests {
             r#"{"v":1,"op":"attr.add","node":"order","name":"total","ty":"Money","mult":"0..1"}"#,
         );
         match op {
-            Op::AttrAdd {
+            Step::Uml(uml::Op::AttributeAdd {
                 node,
                 name,
                 ty_token,
                 multiplicity,
                 ..
-            } => {
+            }) => {
                 assert_eq!(
                     (node.as_str(), name.as_str(), ty_token.as_str()),
                     ("order", "total", "Money")
@@ -853,10 +989,10 @@ mod tests {
 
         assert!(matches!(
             op,
-            Op::AttrSet {
+            Step::Uml(uml::Op::AttributeSet {
                 multiplicity: FieldEdit::Unchanged,
                 ..
-            }
+            })
         ));
     }
 
@@ -866,10 +1002,10 @@ mod tests {
 
         assert!(matches!(
             op,
-            Op::AttrSet {
+            Step::Uml(uml::Op::AttributeSet {
                 multiplicity: FieldEdit::Clear,
                 ..
-            }
+            })
         ));
     }
 
@@ -888,7 +1024,8 @@ mod tests {
                 visibility: None,
                 rename: None,
             };
-            let value = serde_json::to_value(OpDto::from_op(&op)).unwrap();
+            let step = Step::try_from(op.clone()).unwrap();
+            let value = serde_json::to_value(OpDto::from_compat_step(&step)).unwrap();
             match &op {
                 Op::AttrSet {
                     multiplicity: FieldEdit::Unchanged,
@@ -905,7 +1042,7 @@ mod tests {
                 _ => unreachable!(),
             }
             let dto: OpDto = serde_json::from_value(value).unwrap();
-            assert_eq!(dto.to_op().unwrap(), op);
+            assert_eq!(dto.to_compat_step().unwrap(), step);
         }
     }
 
@@ -916,7 +1053,7 @@ mod tests {
         // explicit unknown v is rejected
         let dto: OpDto =
             serde_json::from_str(r#"{"v":2,"op":"value.add","node":"e","literal":"X"}"#).unwrap();
-        assert!(dto.to_op().is_err());
+        assert!(dto.to_compat_step().is_err());
     }
 
     #[test]
@@ -924,11 +1061,11 @@ mod tests {
         let op = round_trip(
             r#"{"v":1,"op":"rel.add","source":"order","kind":"composes","target":"order-line","ends":"1 to 1..* lines"}"#,
         );
-        assert!(matches!(op, Op::RelAdd { .. }));
+        assert!(matches!(op, Step::Uml(uml::Op::RelationshipAdd { .. })));
     }
 
     #[test]
-    fn from_op_round_trips_through_to_op() {
+    fn from_compat_step_round_trips_through_wire() {
         // build a core Op, render to a DTO line, parse back, expect equality
         let op = Op::AttrAdd {
             node: "order".into(),
@@ -937,12 +1074,93 @@ mod tests {
             multiplicity: Some(waml::multiplicity::Multiplicity::parse("0..1").unwrap()),
             visibility: None,
         };
-        let line = serde_json::to_string(&OpDto::from_op(&op)).unwrap();
+        let step = Step::try_from(op).unwrap();
+        let line = serde_json::to_string(&OpDto::from_compat_step(&step)).unwrap();
         let back = {
             let dto: OpDto = serde_json::from_str(&line).unwrap();
-            dto.to_op().unwrap()
+            dto.to_compat_step().unwrap()
         };
-        assert_eq!(op, back);
+        assert_eq!(step, back);
+    }
+
+    #[test]
+    fn mixed_domain_batch_is_ordered_and_atomic() {
+        let source = SourceBundle::try_from_pairs([
+            (
+                "sales/order.md",
+                "---\ntype: uml.Class\ntitle: Order\n---\n# Order\n",
+            ),
+            ("archive/order.md", "# Existing\n"),
+            ("a.md", "---\ntype: uml.Class\ntitle: A\n---\n# A\n"),
+            ("b.md", "---\ntype: uml.Class\ntitle: B\n---\n# B\n"),
+            (
+                "dia.md",
+                "---\ntype: Diagram\ntitle: Before\nprofile: uml-domain\n---\n# Before\n",
+            ),
+        ])
+        .unwrap();
+        let success: Vec<OpDto> = serde_json::from_value(serde_json::json!([
+            {"op":"pkg.retitle","path":"sales","title":"Commerce"},
+            {"op":"node.rename","from":"a","to":"renamed"},
+            {
+                "op":"place.set",
+                "diagram":"dia",
+                "subject_title":"A",
+                "subject_slug":"renamed",
+                "reference_title":"B",
+                "reference_slug":"b",
+                "directions":["LeftOf"]
+            }
+        ]))
+        .unwrap();
+        let changed = waml::compat::apply(&source, &to_batch(&success).unwrap()).unwrap();
+        assert!(changed
+            .documents()
+            .iter()
+            .any(|document| document.path().as_str() == "renamed.md"));
+        assert!(changed
+            .documents()
+            .iter()
+            .any(|document| document.path().as_str() == "sales/index.md"
+                && document.text().contains("Commerce")));
+        assert!(changed
+            .documents()
+            .iter()
+            .any(|document| document.path().as_str() == "dia.md"
+                && document.text().contains("renamed")));
+
+        let original = source.to_pairs();
+        let identities = source
+            .documents()
+            .iter()
+            .map(|document| document.text().as_ptr())
+            .collect::<Vec<_>>();
+        let failure: Vec<OpDto> = serde_json::from_value(serde_json::json!([
+            {"op":"pkg.retitle","path":"sales","title":"Changed"},
+            {"op":"node.rename","from":"a","to":"renamed"},
+            {
+                "op":"place.set",
+                "diagram":"dia",
+                "subject_title":"A",
+                "subject_slug":"renamed",
+                "reference_title":"B",
+                "reference_slug":"b",
+                "directions":["LeftOf"]
+            },
+            {"op":"pkg.move","slug":"sales/order","to_dir":"archive"}
+        ]))
+        .unwrap();
+        let error = waml::compat::apply(&source, &to_batch(&failure).unwrap()).unwrap_err();
+        assert_eq!(error.index, 3);
+        assert_eq!(source.to_pairs(), original);
+        assert_eq!(
+            source
+                .documents()
+                .iter()
+                .map(|document| document.text().as_ptr())
+                .collect::<Vec<_>>(),
+            identities
+        );
     }
 
     #[test]
@@ -1057,6 +1275,19 @@ mod tests {
                 name: "orders".into(),
                 docs: vec![("t/order.md".into(), "body".into())],
             },
+            Op::PlaceSet {
+                diagram: "dia".into(),
+                subject_title: "Order".into(),
+                subject_slug: "order".into(),
+                reference_title: "Customer".into(),
+                reference_slug: "customer".into(),
+                directions: vec![Direction::LeftOf, Direction::Above],
+            },
+            Op::PlaceRm {
+                diagram: "dia".into(),
+                subject_slug: "order".into(),
+                reference_slug: "customer".into(),
+            },
             Op::DiagramSet {
                 key: "dia".into(),
                 title: Some("D".into()),
@@ -1084,11 +1315,12 @@ mod tests {
             },
         ];
         for op in &ops {
-            let line = serde_json::to_string(&OpDto::from_op(op)).unwrap();
+            let step = Step::try_from(op.clone()).unwrap();
+            let line = serde_json::to_string(&OpDto::from_compat_step(&step)).unwrap();
             let back: OpDto = serde_json::from_str(&line).unwrap();
             assert_eq!(
-                &back.to_op().unwrap(),
-                op,
+                back.to_compat_step().unwrap(),
+                step,
                 "wire round-trip changed op: {line}"
             );
         }
@@ -1104,21 +1336,28 @@ mod tests {
                 "---\ntype: uml.Class\ntitle: Order\n---\n# Order\n".into(),
             )],
         };
-        let line = serde_json::to_string(&OpDto::from_op(&op)).unwrap();
+        let step = Step::try_from(op.clone()).unwrap();
+        let line = serde_json::to_string(&OpDto::from_compat_step(&step)).unwrap();
         assert!(line.contains("\"op\":\"pkg.insert\""), "wire tag: {line}");
         let back: OpDto = serde_json::from_str(&line).unwrap();
-        assert_eq!(back.to_op().unwrap(), op, "round-trip changed op: {line}");
+        assert_eq!(
+            back.to_compat_step().unwrap(),
+            step,
+            "round-trip changed op: {line}"
+        );
     }
 
     #[test]
     fn diagram_set_wire_tag_is_diagram_dot_set() {
-        let dto = OpDto::from_op(&Op::DiagramSet {
+        let step = Step::try_from(Op::DiagramSet {
             key: "dia".into(),
             title: Some("D".into()),
             description: None,
             clear_description: false,
             display: None,
-        });
+        })
+        .unwrap();
+        let dto = OpDto::from_compat_step(&step);
         let line = serde_json::to_string(&dto).unwrap();
         assert!(
             line.contains("\"op\":\"diagram.set\""),
@@ -1136,10 +1375,11 @@ mod tests {
             display: None,
         };
 
-        let line = serde_json::to_string(&OpDto::from_op(&op)).unwrap();
+        let step = Step::try_from(op).unwrap();
+        let line = serde_json::to_string(&OpDto::from_compat_step(&step)).unwrap();
         let back: OpDto = serde_json::from_str(&line).unwrap();
 
-        assert_eq!(back.to_op().unwrap(), op);
+        assert_eq!(back.to_compat_step().unwrap(), step);
         assert!(line.contains("\"clearDesc\":true"), "wire payload: {line}");
     }
 
@@ -1153,8 +1393,10 @@ mod tests {
                 .to_string(),
         )];
 
-        let updated = waml::ops::apply(&bundle, &[dto.to_op().unwrap()]).unwrap();
-        let model = waml::parse::build_model(&updated);
+        let source = SourceBundle::try_from_pairs(bundle).unwrap();
+        let batch = to_batch(&[dto]).unwrap();
+        let updated = waml::compat::apply(&source, &batch).unwrap();
+        let model = waml::parse::build_model(&updated.to_pairs());
 
         assert_eq!(model.diagrams[0].description, None);
     }
@@ -1164,14 +1406,14 @@ mod tests {
         let dto: OpDto = serde_json::from_str(r#"{"op":"diagram.set","v":1,"key":"dia"}"#).unwrap();
 
         assert_eq!(
-            dto.to_op().unwrap(),
-            Op::DiagramSet {
+            dto.to_compat_step().unwrap(),
+            Step::Uml(uml::Op::DiagramSet {
                 key: "dia".into(),
                 title: None,
                 description: None,
                 clear_description: false,
                 display: None,
-            }
+            })
         );
     }
 
@@ -1195,12 +1437,13 @@ mod tests {
                 stereotype_colors: vec![],
             }),
         };
-        let dto = OpDto::from_op(&op);
+        let step = Step::try_from(op).unwrap();
+        let dto = OpDto::from_compat_step(&step);
         let line = serde_json::to_string(&dto).unwrap();
         let back: OpDto = serde_json::from_str(&line).unwrap();
         assert_eq!(
-            back.to_op().unwrap(),
-            op,
+            back.to_compat_step().unwrap(),
+            step,
             "absent maxAttributes/stereotypeFilter must round-trip as None: {line}"
         );
     }

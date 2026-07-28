@@ -6,7 +6,7 @@
 //! duplicate slugs) stay correct as buffers change.
 
 use std::collections::HashMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use tower_lsp::lsp_types as lsp;
 
@@ -15,6 +15,7 @@ use crate::lsp::map::{is_waml, to_lsp_diagnostic};
 #[derive(Default)]
 pub struct Workspace {
     docs: HashMap<String, String>,
+    root: Option<PathBuf>,
 }
 
 impl Workspace {
@@ -33,6 +34,7 @@ impl Workspace {
     /// derive from a document URI — so an open buffer overlays its disk copy
     /// under one key (no phantom duplicate-slug, edits reach cross-file checks).
     pub fn seed_from_glob(&mut self, root: &Path) {
+        self.root = Some(root.to_path_buf());
         fn walk(dir: &Path, out: &mut Vec<std::path::PathBuf>) {
             if let Ok(rd) = std::fs::read_dir(dir) {
                 for e in rd.flatten() {
@@ -58,23 +60,54 @@ impl Workspace {
     /// Per-file LSP diagnostics for the whole bundle. Non-WAML files get an
     /// empty vec (so the client clears any stale squiggles).
     pub fn diagnostics(&self) -> Vec<(String, Vec<lsp::Diagnostic>)> {
-        let bundle: Vec<(String, String)> = self
+        let entries: Vec<(String, String, String)> = self
             .docs
             .iter()
-            .map(|(p, t)| (p.clone(), t.clone()))
+            .map(|(physical, text)| {
+                let logical = self
+                    .root
+                    .as_ref()
+                    .and_then(|root| Path::new(physical).strip_prefix(root).ok())
+                    .map(|path| path.to_string_lossy().replace('\\', "/"))
+                    .or_else(|| {
+                        waml::source::BundlePath::parse(physical.clone())
+                            .ok()
+                            .map(|path| path.to_string())
+                    })
+                    .or_else(|| {
+                        Path::new(physical)
+                            .file_name()
+                            .map(|name| name.to_string_lossy().into_owned())
+                    })
+                    .unwrap_or_else(|| physical.clone());
+                (physical.clone(), logical, text.clone())
+            })
             .collect();
-        let all = waml::validate::validate(&bundle);
+        let source = match waml::source::SourceBundle::try_from_pairs(
+            entries
+                .iter()
+                .map(|(_, logical, text)| (logical.clone(), text.clone())),
+        ) {
+            Ok(source) => source,
+            Err(_) => {
+                return entries
+                    .into_iter()
+                    .map(|(physical, _, _)| (physical, Vec::new()))
+                    .collect();
+            }
+        };
+        let all = waml::validate::validate_from_source(&source);
         let mut out: Vec<(String, Vec<lsp::Diagnostic>)> = Vec::new();
-        for (path, text) in &bundle {
+        for (physical, logical, text) in &entries {
             let mut ds = Vec::new();
             if is_waml(text) {
                 let lines: Vec<&str> = text.lines().collect();
-                for d in all.iter().filter(|d| d.file == *path) {
+                for d in all.iter().filter(|d| d.file == *logical) {
                     let line_text = lines.get(d.line.saturating_sub(1)).copied().unwrap_or("");
                     ds.push(to_lsp_diagnostic(d, line_text));
                 }
             }
-            out.push((path.clone(), ds));
+            out.push((physical.clone(), ds));
         }
         out
     }
@@ -116,6 +149,22 @@ mod tests {
             .find(|(p, _)| p == "notes.md")
             .map(|(_, d)| d.is_empty())
             .unwrap_or(true));
+    }
+
+    #[test]
+    fn arbitrary_and_missing_okf_types_receive_no_unknown_uml_diagnostic() {
+        let mut ws = Workspace::new();
+        ws.overlay(
+            "playbook.md".into(),
+            "---\ntype: Playbook\n---\n# Playbook\n".into(),
+        );
+        ws.overlay("notes.md".into(), "# Notes\n".into());
+        for (_, diagnostics) in ws.diagnostics() {
+            assert!(diagnostics.iter().all(|diagnostic| !matches!(
+                &diagnostic.code,
+                Some(lsp::NumberOrString::String(code)) if code == "unknown-type"
+            )));
+        }
     }
 
     #[test]

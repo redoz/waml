@@ -4,7 +4,7 @@ use clap::{Args, Parser, Subcommand, ValueEnum};
 use waml::multiplicity::Multiplicity;
 use waml::ops::FieldEdit;
 
-use crate::ops_dto::OpDto;
+use crate::ops_dto::{to_batch, OpDto};
 
 mod commands;
 mod io;
@@ -577,34 +577,51 @@ fn run_mutation(common: &Common, dto: OpDto) -> i32 {
             }
         };
     }
-    let op = match dto.to_op() {
-        Ok(o) => o,
+    let batch = match to_batch(std::slice::from_ref(&dto)) {
+        Ok(batch) => batch,
         Err(e) => {
             eprintln!("waml: {e}");
             return 1;
         }
     };
-    run_batch(common, vec![op])
+    run_batch(common, batch)
 }
 
-fn run_batch(common: &Common, ops: Vec<waml::ops::Op>) -> i32 {
-    let bundle = match io::read_files(std::slice::from_ref(&common.dir)) {
-        Ok(b) => b,
+fn run_batch(common: &Common, batch: waml::compat::Batch) -> i32 {
+    let pairs = match io::read_bundle_rooted(std::slice::from_ref(&common.dir), false) {
+        Ok(pairs) => pairs,
         Err(e) => {
             eprintln!("waml: {e}");
             return 2;
         }
     };
-    match waml::ops::apply(&bundle, &ops) {
-        Ok(new) => {
+    let source = match waml::source::SourceBundle::try_from_pairs(pairs) {
+        Ok(source) => source,
+        Err(e) => {
+            eprintln!("waml: {e}");
+            return 2;
+        }
+    };
+    let okf = match waml::okf::Bundle::parse(&source) {
+        Ok(okf) => okf,
+        Err(e) => {
+            eprintln!("waml: {e}");
+            return 2;
+        }
+    };
+    let _uml = waml::uml::project(&okf);
+    match waml::compat::apply(&source, &batch) {
+        Ok(changed) => {
+            let old = source.to_pairs();
+            let new = changed.to_pairs();
             if common.stdout {
                 print!("{}", to_blob(&new));
                 0
             } else if common.dry_run {
-                print!("{}", commands::render_diff(&bundle, &new));
+                print!("{}", commands::render_diff(&old, &new));
                 0
             } else {
-                match io::write_back(&bundle, &new) {
+                match io::write_back(&common.dir, &old, &new) {
                     Ok(touched) => {
                         for t in touched {
                             println!("waml: {t}");
@@ -638,24 +655,37 @@ fn run_apply(ops_src: &str, common: &Common) -> i32 {
             return 2;
         }
     };
-    let mut ops = Vec::new();
-    for (n, line) in lines {
-        let dto: OpDto = match serde_json::from_str(&line) {
+    let mut dtos = Vec::new();
+    for (n, line) in &lines {
+        let dto: OpDto = match serde_json::from_str(line) {
             Ok(d) => d,
             Err(e) => {
                 eprintln!("waml: line {n}: {e}");
                 return 1;
             }
         };
-        match dto.to_op() {
-            Ok(o) => ops.push(o),
-            Err(e) => {
-                eprintln!("waml: line {n}: {e}");
-                return 1;
-            }
-        }
+        dtos.push((*n, dto));
     }
-    run_batch(common, ops)
+    let raw = dtos.into_iter().map(|(_, dto)| dto).collect::<Vec<_>>();
+    let batch = match to_batch(&raw) {
+        Ok(batch) => batch,
+        Err(error) => {
+            let rendered = error
+                .strip_prefix("op ")
+                .and_then(|rest| rest.split_once(':'))
+                .and_then(|(index, reason)| {
+                    index
+                        .parse::<usize>()
+                        .ok()
+                        .and_then(|index| lines.get(index))
+                        .map(|(line, _)| format!("line {line}:{reason}"))
+                })
+                .unwrap_or(error);
+            eprintln!("waml: {rendered}");
+            return 1;
+        }
+    };
+    run_batch(common, batch)
 }
 
 fn run_show(slug: &str, q: &QueryArgs) -> i32 {
