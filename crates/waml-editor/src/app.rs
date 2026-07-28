@@ -344,7 +344,7 @@ script_mod! {
                                 // draws every frame unconditionally). Diagram + Preview
                                 // tabs keep it shown; the active `DocView` toggles it off
                                 // only for a Source tab, mutually exclusive with
-                                // `source_view` below.
+                                // `markdown_surface` below.
                                 canvas_wrap := View{
                                     width: Fill
                                     height: Fill
@@ -371,7 +371,7 @@ script_mod! {
                                 // Markdown default inks text with `theme.color_label_inner`
                                 // (near-white) -- unreadable on a light slot -- so `font_color` is
                                 // repointed at the Atlas `text` ink for dark-on-light contrast.
-                                source_view := View{
+                                markdown_surface := View{
                                     width: Fill
                                     height: Fill
                                     visible: false
@@ -1414,22 +1414,23 @@ impl App {
 
         self.refresh_nav(cx, true);
 
-        // A model may carry zero diagrams (a pure classifier/behavior bundle). We
-        // still open it -- the project tree is useful on its own -- just with an
-        // empty canvas and no active diagram tab. With no tab there is no view to
-        // declare a right dock, so the inspector stays closed and its `[I]`
-        // toggle stays hidden.
+        // Start with the requested/first supported diagram, otherwise the first
+        // indexed Concept. An empty bundle keeps an empty canvas and no tab.
         self.documents
             .replace_for_session(cx, &self.ui, &self.session, OpenTabs::default());
-        match crate::cli::select_diagram(self.session.model(), wanted_diagram)
-            .map(|diagram| diagram.key.clone())
-        {
-            Some(diagram_key) => {
-                self.transition_document(cx, &diagram_key, false);
+        match crate::cli::select_initial_document(
+            self.session.okf(),
+            self.session.uml_projection(),
+            wanted_diagram,
+        ) {
+            crate::cli::InitialDocument::Diagram(concept_id)
+            | crate::cli::InitialDocument::Concept(concept_id) => {
+                let concept_id = concept_id.to_owned();
+                self.transition_document(cx, &concept_id, false);
             }
-            None => {
+            crate::cli::InitialDocument::None => {
                 log!(
-                    "no diagrams in {:?}; opening model with an empty canvas",
+                    "no documents in {:?}; opening bundle with an empty canvas",
                     self.open_name
                 );
                 // Empty scene draws nothing and `bounding_box` returns `None`, so

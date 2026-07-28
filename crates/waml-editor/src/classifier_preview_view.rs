@@ -22,7 +22,7 @@ impl ClassifierPreviewView {
 impl DocView for ClassifierPreviewView {
     fn sync(&mut self, cx: &mut Cx, body: &BodyWidgets, data: ViewData<'_>) {
         body.show_canvas(cx);
-        let model = data.model;
+        let model = data.uml;
         let scene = build_focus_scene(model, &self.key);
         if let Some(mut canvas) = body
             .canvas(cx)
@@ -59,7 +59,7 @@ impl DocView for ClassifierPreviewView {
         actions: &Actions,
         data: ViewData<'_>,
     ) -> ViewOutcome {
-        let model = data.model;
+        let model = data.uml;
         let mut out = ViewOutcome::default();
 
         // Inline-edit commit: promote (pin) this preview tab.

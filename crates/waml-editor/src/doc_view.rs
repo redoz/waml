@@ -9,7 +9,6 @@
 
 use makepad_widgets::*;
 use waml::edit::PendingEdit;
-use waml::model::Model;
 use waml::source::SourceBundle;
 
 use crate::editor_session::SessionChange;
@@ -45,8 +44,8 @@ impl BodyWidgets {
     pub fn selection_toolbar(&self, cx: &mut Cx) -> WidgetRef {
         self.ui.widget(cx, ids!(selection_toolbar))
     }
-    pub fn source_view(&self, cx: &mut Cx) -> WidgetRef {
-        self.ui.widget(cx, ids!(source_view))
+    pub fn markdown_surface(&self, cx: &mut Cx) -> WidgetRef {
+        crate::markdown_surface::surface(&self.ui, cx)
     }
     pub fn view_bar(&self, cx: &mut Cx) -> WidgetRef {
         self.ui.widget(cx, ids!(view_bar))
@@ -96,22 +95,18 @@ impl BodyWidgets {
     }
 
     pub fn show_canvas(&self, cx: &mut Cx) {
-        self.source_view(cx).set_visible(cx, false);
+        crate::markdown_surface::hide(&self.ui, cx);
         self.ui.widget(cx, ids!(canvas_wrap)).set_visible(cx, true);
         self.set_canvas_interaction_enabled(cx, true);
     }
 
-    pub fn show_source(&self, cx: &mut Cx) {
-        self.source_view(cx).set_visible(cx, true);
-        self.ui.widget(cx, ids!(canvas_wrap)).set_visible(cx, false);
+    pub fn show_markdown(&self, cx: &mut Cx) {
+        crate::markdown_surface::show(&self.ui, cx);
         self.set_canvas_interaction_enabled(cx, false);
     }
 
-    pub fn set_source_markdown(&self, cx: &mut Cx, markdown: &str) {
-        self.ui
-            .widget(cx, ids!(source_view.md))
-            .as_markdown()
-            .set_text(cx, markdown);
+    pub fn set_markdown(&self, cx: &mut Cx, markdown: &str) {
+        crate::markdown_surface::set_markdown(&self.ui, cx, markdown);
     }
 
     pub fn apply_chrome(&self, cx: &mut Cx, chrome: BodyChrome) {
@@ -200,8 +195,9 @@ pub enum PopupRequest {
 
 #[derive(Clone, Copy)]
 pub struct ViewData<'a> {
-    pub model: &'a Model,
-    pub bundle: &'a SourceBundle,
+    pub source: &'a SourceBundle,
+    pub okf: &'a waml::okf::Bundle,
+    pub uml: &'a waml::uml::Projection,
     pub revision: u64,
 }
 

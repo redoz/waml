@@ -260,7 +260,7 @@ impl ClassDiagramView {
 impl DocView for ClassDiagramView {
     fn sync(&mut self, cx: &mut Cx, body: &BodyWidgets, data: ViewData<'_>) {
         body.show_canvas(cx);
-        let model = data.model;
+        let model = data.uml;
         self.sync_properties(cx, body, model);
         let built = model.diagrams.iter().find(|d| d.key == self.key).map(|d| {
             let (scene, diags) = build_scene(model, d, resolve_display(&d.display), &self.expanded);
@@ -324,7 +324,7 @@ impl DocView for ClassDiagramView {
         actions: &Actions,
         data: ViewData<'_>,
     ) -> ViewOutcome {
-        let model = data.model;
+        let model = data.uml;
         let mut out = ViewOutcome::default();
 
         if self.mode.properties_visible() {
@@ -664,7 +664,7 @@ impl DocView for ClassDiagramView {
         tag: LiveId,
         result: PopupResult,
     ) -> ViewOutcome {
-        let model = data.model;
+        let model = data.uml;
         // Element-picker: any close clears the box's active state; a node
         // commit repoints the inspector (inspector-local -- no tab, no canvas
         // move).
@@ -744,7 +744,7 @@ impl DocView for ClassDiagramView {
     ) {
         match refresh_for(change) {
             DiagramRefresh::PreserveCamera => {
-                self.update_scene(cx, body, data.model);
+                self.update_scene(cx, body, data.uml);
             }
             DiagramRefresh::None => {}
         }
@@ -1106,10 +1106,12 @@ mod tests {
         let body = crate::doc_view::BodyWidgets::new(cx, &ui);
         let mut model = mini_model();
         let mut view = ClassDiagramView::new("orders-diagram".into());
-        let bundle = waml::source::SourceBundle::default();
+        let source = waml::source::SourceBundle::default();
+        let okf = waml::okf::Bundle::parse(&source).unwrap();
         let data = crate::doc_view::ViewData {
-            model: &model,
-            bundle: &bundle,
+            source: &source,
+            okf: &okf,
+            uml: &model,
             revision: 1,
         };
 
@@ -1121,8 +1123,9 @@ mod tests {
             cx,
             &body,
             crate::doc_view::ViewData {
-                model: &model,
-                bundle: &bundle,
+                source: &source,
+                okf: &okf,
+                uml: &model,
                 revision: 2,
             },
         );

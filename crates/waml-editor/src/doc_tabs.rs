@@ -991,6 +991,12 @@ mod tests {
         tab.id = crate::okf_documents::source_document_tab_id(key);
         tab
     }
+
+    fn generic_okf_tab(key: &str, title: &str) -> DocTab {
+        let mut tab = tab(key, title, TreeKind::OkfDocument);
+        tab.id = crate::okf_documents::okf_document_tab_id(key);
+        tab
+    }
     use super::*;
 
     #[test]
@@ -1227,6 +1233,19 @@ mod tests {
         assert_eq!(source_open, source);
         assert_eq!(open.tabs.len(), 2);
         assert_eq!(open.active, source);
+    }
+
+    #[test]
+    fn generic_okf_and_source_tabs_for_one_concept_can_persist_together() {
+        let mut open = OpenTabs::default();
+        let generic = open.open_preview(generic_okf_tab("runbook", "Recovery"));
+        open.promote(generic);
+        let source = open.open_preview(source_tab("runbook", "Recovery"));
+        open.promote(source);
+
+        assert_ne!(generic, source);
+        assert_eq!(open.tabs.len(), 2);
+        assert!(open.tabs.iter().all(|tab| !tab.preview));
     }
 
     #[test]

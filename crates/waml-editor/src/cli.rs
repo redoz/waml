@@ -86,6 +86,41 @@ pub fn select_diagram<'a>(model: &'a Model, wanted: Option<&str>) -> Option<&'a 
     model.diagrams.first()
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InitialDocument<'a> {
+    Diagram(&'a str),
+    Concept(&'a str),
+    None,
+}
+
+fn first_concept_in_directory<'a>(bundle: &'a waml::okf::Bundle, address: &str) -> Option<&'a str> {
+    let index = bundle.index(address)?;
+    for member in &index.members {
+        if let Some(concept) = bundle.concept(member) {
+            return Some(concept.id.as_str());
+        }
+        if bundle.directory(member).is_some() {
+            if let Some(concept_id) = first_concept_in_directory(bundle, member) {
+                return Some(concept_id);
+            }
+        }
+    }
+    None
+}
+
+pub fn select_initial_document<'a>(
+    bundle: &'a waml::okf::Bundle,
+    uml: &'a waml::uml::Projection,
+    wanted_diagram: Option<&str>,
+) -> InitialDocument<'a> {
+    if let Some(diagram) = select_diagram(uml, wanted_diagram) {
+        return InitialDocument::Diagram(diagram.key.as_str());
+    }
+    first_concept_in_directory(bundle, "/")
+        .map(InitialDocument::Concept)
+        .unwrap_or(InitialDocument::None)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -137,6 +172,49 @@ mod tests {
 
         let default = select_diagram(&model, None).unwrap();
         assert_eq!(default.title, "Orders");
+    }
+
+    fn fixture(name: &str) -> (waml::okf::Bundle, waml::uml::Projection) {
+        let dir = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures")
+            .join(name);
+        let source = load::read_bundle(&dir).unwrap();
+        let bundle = waml::okf::Bundle::parse(&source).unwrap();
+        let uml = waml::uml::project(&bundle);
+        (bundle, uml)
+    }
+
+    #[test]
+    fn initial_document_prefers_requested_then_first_diagram() {
+        let (bundle, uml) = fixture("mixed-okf");
+        assert_eq!(
+            select_initial_document(&bundle, &uml, Some("Orders")),
+            InitialDocument::Diagram("orders-diagram")
+        );
+        assert_eq!(
+            select_initial_document(&bundle, &uml, Some("missing")),
+            InitialDocument::Diagram("orders-diagram")
+        );
+    }
+
+    #[test]
+    fn initial_document_falls_back_to_first_indexed_concept() {
+        let (bundle, uml) = fixture("okf-only");
+        assert_eq!(
+            select_initial_document(&bundle, &uml, None),
+            InitialDocument::Concept("notes")
+        );
+    }
+
+    #[test]
+    fn initial_document_is_none_for_empty_bundle() {
+        let source = waml::source::SourceBundle::default();
+        let bundle = waml::okf::Bundle::parse(&source).unwrap();
+        let uml = waml::uml::project(&bundle);
+        assert_eq!(
+            select_initial_document(&bundle, &uml, None),
+            InitialDocument::None
+        );
     }
 
     // Two-diagram coverage: the single-diagram fixture above can't distinguish a

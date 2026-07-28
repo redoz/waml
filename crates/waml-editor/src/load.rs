@@ -99,6 +99,12 @@ mod tests {
         Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/mini")
     }
 
+    fn named_fixture_dir(name: &str) -> std::path::PathBuf {
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures")
+            .join(name)
+    }
+
     #[test]
     fn read_bundle_returns_sorted_md_pairs() {
         let bundle = read_bundle(&fixture_dir()).unwrap();
@@ -129,6 +135,27 @@ mod tests {
         assert_eq!(model.nodes.len(), 3);
         assert_eq!(model.diagrams.len(), 1);
         assert_eq!(model.edges.len(), 1);
+    }
+
+    #[test]
+    fn mixed_fixture_loads_uml_and_generic_okf_concepts_together() {
+        let (source, uml) = load_bundle_and_model(&named_fixture_dir("mixed-okf")).unwrap();
+        let okf = waml::okf::Bundle::parse(&source).unwrap();
+        assert!(okf.concept("runbook").is_some());
+        assert!(uml.nodes.iter().any(|node| node.key == "order"));
+        assert!(uml
+            .diagrams
+            .iter()
+            .any(|diagram| diagram.key == "orders-diagram"));
+    }
+
+    #[test]
+    fn okf_only_fixture_loads_with_an_empty_uml_projection() {
+        let (source, uml) = load_bundle_and_model(&named_fixture_dir("okf-only")).unwrap();
+        let okf = waml::okf::Bundle::parse(&source).unwrap();
+        assert!(okf.concept("notes").is_some());
+        assert!(uml.nodes.is_empty());
+        assert!(uml.diagrams.is_empty());
     }
 
     /// The `sixkind` fixture is the visual-regression bench for terminal

@@ -29,6 +29,7 @@ mod fonts;
 mod fonts_overlay;
 mod fps_meter;
 mod frame;
+mod generic_okf_view;
 mod icon_button;
 mod icons;
 mod icons_overlay;
@@ -36,6 +37,7 @@ mod inspector;
 mod inspector_panel;
 mod load;
 mod logo;
+mod markdown_surface;
 #[cfg(not(target_arch = "wasm32"))]
 mod native_save;
 mod nav;

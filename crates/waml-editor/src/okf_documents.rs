@@ -1,6 +1,12 @@
 use crate::document::{DocumentPresentation, NavCategory, OpenDocument};
 use crate::icons::Icon;
-use makepad_widgets::LiveId;
+use makepad_widgets::{LiveId, Vec4};
+
+pub fn generic_okf_accent() -> Option<Vec4> {
+    Some(crate::accent::bucket_color(
+        crate::node_style::AccentBucket::None,
+    ))
+}
 
 pub fn okf_document_tab_id(concept_id: &str) -> LiveId {
     LiveId::from_str(&format!("__doc_tab_okf__{concept_id}"))
@@ -14,7 +20,7 @@ pub fn presentation(bundle: &waml::okf::Bundle, concept_id: &str) -> Option<Docu
     bundle.concept(concept_id)?;
     Some(DocumentPresentation {
         icon: Icon::StickyNote,
-        accent: None,
+        accent: generic_okf_accent(),
         category: NavCategory::OkfDocument,
     })
 }
@@ -33,8 +39,9 @@ pub fn open(bundle: &waml::okf::Bundle, concept_id: &str) -> Option<OpenDocument
                 .to_string()
         }),
         presentation,
-        // Task 8 replaces this Markdown-only source surface with GenericOkfView.
-        view: Box::new(crate::source_view::SourceView::new(concept_id.to_string())),
+        view: Box::new(crate::generic_okf_view::GenericOkfView::new(
+            concept_id.to_string(),
+        )),
     })
 }
 
@@ -73,5 +80,16 @@ mod tests {
         assert!(open(&bundle, "runbook").is_some());
         assert!(open(&bundle, "index").is_none());
         assert!(open(&bundle, "log").is_none());
+    }
+
+    #[test]
+    fn generic_okf_identity_is_stable_and_distinct_from_uml_and_source() {
+        let generic = okf_document_tab_id("runbook");
+        assert_ne!(
+            generic,
+            crate::uml_documents::uml_document_tab_id("runbook")
+        );
+        assert_ne!(generic, source_document_tab_id("runbook"));
+        assert_eq!(generic, okf_document_tab_id("runbook"));
     }
 }

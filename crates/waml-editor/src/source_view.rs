@@ -1,5 +1,5 @@
 //! `SourceView` -- the View Source tab body. Renders the subject classifier's
-//! raw markdown into the shared `source_view` slot (a scrolling `Markdown`
+//! raw markdown into the shared `markdown_surface` slot (a scrolling `Markdown`
 //! surface fed the verbatim bundle file text; the feed itself is pushed from
 //! the shell in `App::sync_active_tab`) and hides the diagram chrome: the
 //! canvas is occluded by the opaque slot, the tool dock by
@@ -20,7 +20,7 @@ impl SourceView {
     }
 
     fn markdown<'a>(&self, data: ViewData<'a>) -> std::borrow::Cow<'a, str> {
-        crate::load::source_for(data.bundle, &self.key)
+        crate::load::source_for(data.source, &self.key)
             .map(std::borrow::Cow::Borrowed)
             .unwrap_or_else(|| std::borrow::Cow::Owned(format!("*No source for `{}`*", self.key)))
     }
@@ -28,10 +28,10 @@ impl SourceView {
 
 impl DocView for SourceView {
     fn sync(&mut self, cx: &mut Cx, body: &BodyWidgets, data: ViewData<'_>) {
-        body.show_source(cx);
+        body.show_markdown(cx);
         let markdown = self.markdown(data);
-        body.set_source_markdown(cx, markdown.as_ref());
-        let model = data.model;
+        body.set_markdown(cx, markdown.as_ref());
+        let model = data.uml;
         if let Some(mut inspector) = body
             .inspector(cx)
             .borrow_mut::<crate::inspector_panel::Inspector>()
@@ -74,38 +74,47 @@ impl DocView for SourceView {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use waml::model::Model;
     use waml::source::SourceBundle;
 
-    fn data<'a>(model: &'a Model, bundle: &'a SourceBundle) -> ViewData<'a> {
+    fn data<'a>(
+        source: &'a SourceBundle,
+        okf: &'a waml::okf::Bundle,
+        uml: &'a waml::uml::Projection,
+    ) -> ViewData<'a> {
         ViewData {
-            model,
-            bundle,
+            source,
+            okf,
+            uml,
             revision: 7,
         }
     }
 
     #[test]
     fn source_markdown_reads_the_raw_bundle() {
-        let model = Model::default();
-        let bundle = SourceBundle::try_from_pairs([(
+        let source = SourceBundle::try_from_pairs([(
             "shop/order.md".to_string(),
             "# Order\nraw source".to_string(),
         )])
         .unwrap();
+        let okf = waml::okf::Bundle::parse(&source).unwrap();
+        let uml = waml::uml::project(&okf);
         let view = SourceView::new("shop/order".into());
 
-        assert_eq!(view.markdown(data(&model, &bundle)), "# Order\nraw source");
+        assert_eq!(
+            view.markdown(data(&source, &okf, &uml)),
+            "# Order\nraw source"
+        );
     }
 
     #[test]
     fn missing_source_keeps_the_existing_italic_fallback() {
-        let model = Model::default();
-        let bundle = SourceBundle::default();
+        let source = SourceBundle::default();
+        let okf = waml::okf::Bundle::parse(&source).unwrap();
+        let uml = waml::uml::project(&okf);
         let view = SourceView::new("missing".into());
 
         assert_eq!(
-            view.markdown(data(&model, &bundle)),
+            view.markdown(data(&source, &okf, &uml)),
             "*No source for `missing`*"
         );
     }
