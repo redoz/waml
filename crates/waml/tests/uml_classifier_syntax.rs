@@ -354,3 +354,29 @@ fn member_groups_and_inline_instances_have_fixed_indented_slots() {
         authored
     );
 }
+
+#[test]
+fn declared_projection_resolves_only_claimed_targets_with_located_diagnostic() {
+    let source = SourceBundle::try_from_pairs([
+        ("order.md", "---\ntype: uml.Class\n---\n# Order\n\n## Values\n- OPEN\n\n## Slots\n- state: \"open\"\n\n## Relationships\n- associates [Customer](./customer.md): 1 to 1\n- depends [Generic](./generic.md)\n"),
+        ("customer.md", "---\ntype: uml.Class\n---\n# Customer\n"),
+        ("generic.md", "---\ntype: vendor.Custom\n---\n# Generic\n"),
+    ]).unwrap();
+    let analysis = analyze(&source);
+    let order = analysis.projection.node("order").unwrap();
+    assert_eq!(order.values, ["OPEN"]);
+    assert_eq!(order.slots[0].value, "\"open\"");
+    assert_eq!(analysis.projection.edges.len(), 1);
+    let unresolved = analysis
+        .diagnostics
+        .iter()
+        .find(|d| d.code == waml::diagnostic::DiagCode::UnresolvedTarget)
+        .unwrap();
+    assert_eq!(unresolved.file, "order.md");
+    assert!(
+        unresolved.document.is_some()
+            && unresolved.document_revision.is_some()
+            && unresolved.range.is_some()
+            && unresolved.span.is_some()
+    );
+}

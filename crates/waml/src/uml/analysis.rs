@@ -6,7 +6,10 @@ use crate::{
     analysis::{AnalysisError, ClaimSet, DomainAnalysisContext, SyntaxSet, SyntaxSnapshot},
     diagnostic::Diagnostic,
 };
-use std::{collections::BTreeMap, sync::Arc};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    sync::Arc,
+};
 use waml_syntax::{AstNode, MarkdownStructureMap, SyntaxElement, SyntaxNode};
 pub struct Analysis {
     pub claims: ClaimSet,
@@ -246,16 +249,7 @@ pub fn analyze(
         }
         snapshots.insert(id, Arc::new(SyntaxSnapshot::new(document.clone(), tree)));
     }
-    let mut projection = super::project(context.okf);
-    for node in &mut projection.nodes {
-        if let Some(concept) = declared.concept(&node.key) {
-            node.attributes = concept
-                .attributes
-                .iter()
-                .filter_map(DeclaredAttribute::validated)
-                .collect();
-        }
-    }
+    let projection = declared_projection(&context, &declared, &mut diagnostics);
     Ok(Analysis {
         claims,
         syntax: SyntaxSet::from_snapshots(context.catalog.clone(), snapshots),
@@ -265,6 +259,152 @@ pub fn analyze(
         structures: context.structures.clone(),
         session_revision: context.session_revision,
     })
+}
+
+fn declared_projection(
+    context: &DomainAnalysisContext<'_>,
+    declared: &DeclaredBundle,
+    diagnostics: &mut Vec<Diagnostic>,
+) -> super::Projection {
+    let claimed: BTreeSet<_> = declared.concepts().map(|c| c.concept_id.as_str()).collect();
+    let mut model = crate::model::Model::default();
+    for concept in declared.concepts() {
+        let okf = context
+            .okf
+            .concept(&concept.concept_id)
+            .expect("declared concept is claimed OKF concept");
+        let path = context
+            .catalog
+            .documents()
+            .iter()
+            .find_map(|(_, d)| {
+                (crate::okf::id_of(d.path().as_str()) == concept.concept_id)
+                    .then_some(d.path().as_str().to_string())
+            })
+            .unwrap_or_default();
+        let attributes = concept
+            .attributes
+            .iter()
+            .filter_map(DeclaredAttribute::validated)
+            .collect();
+        let values = concept
+            .values
+            .iter()
+            .filter_map(|v| match &v.value {
+                crate::uml::DeclaredField::Valid { value, .. } => Some(value.clone()),
+                _ => None,
+            })
+            .collect();
+        let slots = concept
+            .slots
+            .iter()
+            .filter_map(|s| match (&s.name, &s.value) {
+                (
+                    crate::uml::DeclaredField::Valid { value: name, .. },
+                    crate::uml::DeclaredField::Valid { value, .. },
+                ) => Some(crate::model::Slot {
+                    name: name.clone(),
+                    value: value.clone(),
+                    ref_: None,
+                }),
+                _ => None,
+            })
+            .collect();
+        let ty = crate::model::ElementType::parse(&okf.ty);
+        if ty == crate::model::ElementType::Diagram {
+            model.diagrams.push(crate::model::Diagram {
+                key: concept.concept_id.clone(),
+                title: okf
+                    .title
+                    .clone()
+                    .unwrap_or_else(|| concept.concept_id.clone()),
+                profile: String::new(),
+                description: okf.description.clone(),
+                groups: vec![],
+                layout: vec![],
+                display: Default::default(),
+            });
+        } else {
+            model.nodes.push(crate::model::Node {
+                concept: okf.clone(),
+                key: concept.concept_id.clone(),
+                ty,
+                stereotypes: vec![],
+                abstract_: false,
+                attributes,
+                values,
+                note_body: None,
+                annotates: vec![],
+                members: vec![],
+                slots,
+            });
+        }
+        for relationship in concept.relationships.iter() {
+            let (
+                crate::uml::DeclaredField::Valid {
+                    value: kind,
+                    syntax,
+                },
+                crate::uml::DeclaredField::Valid { value: href, .. },
+            ) = (&relationship.kind, &relationship.target)
+            else {
+                continue;
+            };
+            let target = crate::okf::resolve_href(&path, href);
+            if !claimed.contains(target.as_str()) {
+                let range = syntax.range();
+                let id = context
+                    .catalog
+                    .id_for_path(
+                        &crate::source::BundlePath::parse(path.clone())
+                            .expect("catalog path valid"),
+                    )
+                    .expect("catalog document");
+                let document = context.catalog.document(id).expect("catalog document");
+                let line = document
+                    .line_index()
+                    .line_col(document.text(), range.start())
+                    .expect("relationship range");
+                diagnostics.push(
+                    Diagnostic::new(
+                        crate::diagnostic::DiagCode::UnresolvedTarget,
+                        format!("unresolved UML target '{href}'"),
+                        path.clone(),
+                        line.line as usize + 1,
+                    )
+                    .with_span((
+                        line.byte_column as usize,
+                        line.byte_column as usize
+                            + (range.end().to_usize() - range.start().to_usize()),
+                    ))
+                    .with_provenance(id, document.revision(), range),
+                );
+                continue;
+            }
+            let from_end = match &relationship.from_end {
+                crate::uml::DeclaredField::Valid { value, .. } => value.clone(),
+                _ => crate::model::RelEnd::default(),
+            };
+            let to_end = match &relationship.to_end {
+                crate::uml::DeclaredField::Valid { value, .. } => value.clone(),
+                _ => crate::model::RelEnd::default(),
+            };
+            let name = match &relationship.name {
+                crate::uml::DeclaredField::Valid { value, .. } => Some(value.clone()),
+                _ => None,
+            };
+            model.edges.push(crate::model::Edge {
+                source: concept.concept_id.clone(),
+                target,
+                kind: *kind,
+                name,
+                from_end,
+                to_end,
+                bidirectional: false,
+            });
+        }
+    }
+    model
 }
 
 fn items(
