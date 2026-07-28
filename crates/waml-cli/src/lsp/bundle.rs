@@ -181,9 +181,24 @@ impl LspAnalysisState {
 
     pub fn close(&self, physical: &Path) -> Result<Option<Self>, BoxError> {
         let physical = normalize_physical(physical.to_path_buf());
+        let Some(generation) = self.open_generation(&physical) else {
+            return Ok(None);
+        };
+        self.close_expected(&physical, generation)
+    }
+
+    pub fn close_expected(
+        &self,
+        physical: &Path,
+        expected_generation: u64,
+    ) -> Result<Option<Self>, BoxError> {
+        let physical = normalize_physical(physical.to_path_buf());
         let Some(open) = self.host.open_by_physical.get(&physical) else {
             return Ok(None);
         };
+        if open.generation != expected_generation {
+            return Ok(None);
+        }
         let logical = open.logical.clone();
         let mut next_host = self.host.clone();
         next_host.open_by_physical.remove(&physical);
@@ -506,6 +521,81 @@ mod tests {
             .is_err());
         assert_eq!(reopened.source().documents()[0].text(), "# Reopened\n");
         assert_eq!(reopened.revision(), 3);
+    }
+
+    #[test]
+    fn delayed_g1_close_cannot_close_reopened_g2() {
+        use std::sync::{Arc, Barrier, RwLock};
+
+        let physical = PathBuf::from("C:/outside/order.md");
+        let opened = Arc::new(
+            LspAnalysisState::empty()
+                .unwrap()
+                .open(physical.clone(), 1, "# G1\n".into())
+                .unwrap(),
+        );
+        let g1 = opened.open_generation(&physical).unwrap();
+        let current = Arc::new(RwLock::new(opened));
+        let g1_prepared = Arc::new(Barrier::new(2));
+        let g2_reopened = Arc::new(Barrier::new(2));
+
+        let stale_close = {
+            let current = current.clone();
+            let physical = physical.clone();
+            let g1_prepared = g1_prepared.clone();
+            let g2_reopened = g2_reopened.clone();
+            std::thread::spawn(move || {
+                let base = current.read().unwrap().clone();
+                let _candidate = base.close_expected(&physical, g1).unwrap().unwrap();
+                g1_prepared.wait();
+                g2_reopened.wait();
+                current.read().unwrap().close_expected(&physical, g1)
+            })
+        };
+
+        g1_prepared.wait();
+        let base = current.read().unwrap().clone();
+        let closed = base.close_expected(&physical, g1).unwrap().unwrap();
+        let reopened = closed.open(physical.clone(), 1, "# G2\n".into()).unwrap();
+        let g2 = reopened.open_generation(&physical).unwrap();
+        assert_ne!(g1, g2);
+        let logical = logical_path(None, &physical).unwrap();
+        let document_id = reopened.okf().catalog.id_for_path(&logical).unwrap();
+        let document_revision = reopened
+            .okf()
+            .catalog
+            .document(document_id)
+            .unwrap()
+            .revision();
+        let allocation = reopened
+            .source()
+            .document(&logical)
+            .unwrap()
+            .slice(0..5)
+            .unwrap();
+        *current.write().unwrap() = Arc::new(reopened);
+        g2_reopened.wait();
+
+        assert!(stale_close.join().unwrap().unwrap().is_none());
+        let final_state = current.read().unwrap();
+        assert_eq!(final_state.revision(), 3);
+        assert_eq!(final_state.client_version(&physical), Some(1));
+        assert_eq!(final_state.source().documents()[0].text(), "# G2\n");
+        assert_eq!(final_state.open_generation(&physical), Some(g2));
+        assert_eq!(
+            final_state.okf().catalog.id_for_path(&logical),
+            Some(document_id)
+        );
+        assert_eq!(
+            final_state
+                .okf()
+                .catalog
+                .document(document_id)
+                .unwrap()
+                .revision(),
+            document_revision
+        );
+        assert_eq!(allocation.as_str(), "# G2\n");
     }
 
     #[test]

@@ -74,3 +74,12 @@ Fresh verification:
 - formatting, diff, and legacy-authority scans pass.
 
 Remaining concern: the current Rust LSP exposes diagnostics and FULL lifecycle only; it has no formatting, rename, or code-action request handlers on which to add result-suppression tests in Task 19 without expanding the approved interface beyond the task brief.
+
+## Formal fix round 2
+
+- Root cause: `didClose` retried plain `close(path)` after CAS loss, so delayed G1 work could see reopened G2 as current and close it.
+- RED: deterministic `Barrier` test failed because no `close_expected(path, generation)` boundary existed.
+- GREEN: `didClose` captures the open generation before preparation and every retry calls `close_expected`; a missing or mismatched generation returns `Ok(None)`, preventing preparation, swap, revision/counter consumption, and publication.
+- The race test proves G2 remains open with exact text, snapshot revision, client version, open generation, document ID/revision, and allocation-backed slice unchanged.
+- Current-generation disk restoration, overlay removal, duplicate close, external collision, and ordered publication tests remain green.
+- Fresh gates: focused LSP 13 passed; e2e 3; full CLI 66; host 2; session 18; full `waml` 555; editor 735; workspace check passed; fmt/diff/legacy scans passed.

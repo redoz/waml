@@ -175,8 +175,14 @@ impl LanguageServer for Backend {
         let Ok(physical) = params.text_document.uri.to_file_path() else {
             return;
         };
+        let Some(expected_generation) = self.snapshot().await.open_generation(&physical) else {
+            return;
+        };
         if self
-            .ingress(move |base| base.close(&physical).map_err(|error| error.to_string()))
+            .ingress(move |base| {
+                base.close_expected(&physical, expected_generation)
+                    .map_err(|error| error.to_string())
+            })
             .await
         {
             self.publish_all().await;
