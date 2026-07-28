@@ -322,63 +322,51 @@ fn declared_projection(
             .collect();
         let ty = crate::model::ElementType::parse(&okf.ty);
         if ty == crate::model::ElementType::Diagram {
-            let mut member_keys = Vec::new();
             for member in concept.members.iter() {
                 let crate::uml::DeclaredField::Valid { value: href, .. } = &member.target else {
                     continue;
                 };
                 let target = crate::okf::resolve_href(&path, href);
                 if claimed.contains(target.as_str()) {
-                    member_keys.push(target);
-                } else {
-                    let range = member
-                        .syntax
-                        .target_token()
-                        .expect("valid member target token")
-                        .range();
-                    let id = context
-                        .catalog
-                        .id_for_path(
-                            &crate::source::BundlePath::parse(path.clone())
-                                .expect("catalog path valid"),
-                        )
-                        .expect("catalog document");
-                    let document = context.catalog.document(id).expect("catalog document");
-                    let line = document
-                        .line_index()
-                        .line_col(document.text(), range.start())
-                        .expect("member range");
-                    diagnostics.push(
-                        Diagnostic::new(
-                            crate::diagnostic::DiagCode::UnresolvedTarget,
-                            format!("unresolved UML member '{href}'"),
-                            path.clone(),
-                            line.line as usize + 1,
-                        )
-                        .with_span((
-                            line.byte_column as usize,
-                            line.byte_column as usize + range.end().to_usize()
-                                - range.start().to_usize(),
-                        ))
-                        .with_provenance(id, document.revision(), range),
-                    );
+                    continue;
                 }
+                let range = member
+                    .syntax
+                    .target_token()
+                    .expect("valid member target token")
+                    .range();
+                let id = context
+                    .catalog
+                    .id_for_path(
+                        &crate::source::BundlePath::parse(path.clone())
+                            .expect("catalog path valid"),
+                    )
+                    .expect("catalog document");
+                let document = context.catalog.document(id).expect("catalog document");
+                let line = document
+                    .line_index()
+                    .line_col(document.text(), range.start())
+                    .expect("member range");
+                diagnostics.push(
+                    Diagnostic::new(
+                        crate::diagnostic::DiagCode::UnresolvedTarget,
+                        format!("unresolved UML member '{href}'"),
+                        path.clone(),
+                        line.line as usize + 1,
+                    )
+                    .with_span((
+                        line.byte_column as usize,
+                        line.byte_column as usize + range.end().to_usize()
+                            - range.start().to_usize(),
+                    ))
+                    .with_provenance(id, document.revision(), range),
+                );
             }
-            let groups = if concept.member_groups.is_empty() {
-                vec![crate::model::DiagramGroup {
-                    name: String::new(),
-                    members: member_keys,
-                    children: vec![],
-                }]
-            } else {
-                concept
-                    .member_groups
-                    .iter()
-                    .filter_map(|group| {
-                        lower_member_group(group, &path, &claimed, &concept.concept_id)
-                    })
-                    .collect()
-            };
+            let groups = concept
+                .member_groups
+                .iter()
+                .filter_map(|group| lower_member_group(group, &path, &claimed, &concept.concept_id))
+                .collect();
             model.diagrams.push(crate::model::Diagram {
                 key: concept.concept_id.clone(),
                 title: okf

@@ -413,6 +413,74 @@ fn invalid_group_inline_instance_never_creates_a_dangling_member() {
 }
 
 #[test]
+fn root_only_member_items_use_an_implicit_ordered_group() {
+    use waml::model::RelationshipKind;
+    use waml::uml::syntax::UmlSyntaxKind;
+
+    let authored = "---\ntype: Diagram\n---\n# Diagram\n\n## Members\n- [First](./first.md)\n- instance of [Kind](./kind.md) as only with state set to OPEN\n- [Last](./last.md)\n";
+    let source = SourceBundle::try_from_pairs([
+        ("diagram.md", authored),
+        ("first.md", "---\ntype: uml.Class\n---\n# First\n"),
+        ("kind.md", "---\ntype: uml.Class\n---\n# Kind\n"),
+        ("last.md", "---\ntype: uml.Class\n---\n# Last\n"),
+    ])
+    .unwrap();
+    let analysis = analyze(&source);
+    let concept = analysis.declared.concept("diagram").unwrap();
+
+    assert_eq!(concept.member_groups.len(), 1);
+    let group = &concept.member_groups[0];
+    assert!(matches!(group.name, uml::DeclaredField::Absent));
+    assert_eq!(group.members.len(), 2);
+    assert_eq!(group.inline_instances.len(), 1);
+    assert_eq!(
+        group
+            .syntax
+            .syntax()
+            .children()
+            .filter_map(waml_syntax::SyntaxElement::into_node)
+            .map(|node| node.kind())
+            .filter(|kind| matches!(kind, UmlSyntaxKind::Member | UmlSyntaxKind::InlineInstance))
+            .collect::<Vec<_>>(),
+        [
+            UmlSyntaxKind::Member,
+            UmlSyntaxKind::InlineInstance,
+            UmlSyntaxKind::Member,
+        ]
+    );
+
+    let diagram = &analysis.projection.diagrams[0];
+    assert_eq!(diagram.groups.len(), 1);
+    assert_eq!(diagram.groups[0].name, "");
+    assert_eq!(diagram.groups[0].members, ["first", "diagram#only", "last"]);
+    assert!(analysis.projection.node("diagram#only").is_some());
+    assert_eq!(analysis.projection.edges.len(), 1);
+    let instance_of = &analysis.projection.edges[0];
+    assert_eq!(instance_of.source, "diagram#only");
+    assert_eq!(instance_of.target, "kind");
+    assert_eq!(instance_of.kind, RelationshipKind::InstanceOf);
+
+    let path = waml::source::BundlePath::parse("diagram.md").unwrap();
+    let id = analysis.syntax.catalog().id_for_path(&path).unwrap();
+    let snapshot = analysis.syntax.document(id).unwrap();
+    assert_eq!(snapshot.syntax().write_to_string(), authored);
+    assert!(std::ptr::eq(
+        source.document(&path).unwrap().text(),
+        snapshot.document().text().shared().as_str()
+    ));
+    assert!(std::sync::Arc::ptr_eq(
+        snapshot.document().text().shared(),
+        analysis
+            .syntax
+            .catalog()
+            .document(id)
+            .unwrap()
+            .text()
+            .shared()
+    ));
+}
+
+#[test]
 fn mixed_root_and_group_member_items_preserve_authored_order_and_provenance() {
     use waml::uml::syntax::UmlSyntaxKind;
 
