@@ -861,7 +861,14 @@ fn relationship_link(
             }
         }
     }
-    let q = scan_name(source, p, end);
+    let q = scan_name(source, p, end).max(
+        (p + source[p..end]
+            .chars()
+            .next()
+            .map(char::len_utf8)
+            .unwrap_or(0))
+        .min(end),
+    );
     diags.push(diag(
         UmlSyntaxDiagnosticCode::UnexpectedToken,
         p,

@@ -384,6 +384,70 @@ fn multi_word_values_are_one_field_and_malformed_items_do_not_project() {
 }
 
 #[test]
+fn delimiter_recovery_distinguishes_incomplete_from_invalid_and_never_projects() {
+    let source=SourceBundle::try_from_pairs([("c.md", "---\ntype: uml.Class\n---\n# C\n\n## Slots\n- missing value\n- quote: \"unterminated\n- link: [Broken](./broken.md\n- trailing: OPEN extra\n\n## Relationships\n- composes [Good](./good.md)\n- associates [Good](./good.md): 1 1\n- depends [Good](./good.md) trailing\n- depends [Broken](./broken.md\n- associates [Good](./good.md) as \"broken: 1 to 1\n\n## Members\n- [Good](./good.md) trailing\n- instance of [Good](./good.md) primary\n- instance of [Good](./good.md) as x with state OPEN\n- instance of [Good](./good.md) as q with state set to \"unterminated\n"), ("good.md", "---\ntype: uml.Class\n---\n# Good\n")]).unwrap();
+    let analysis = analyze(&source);
+    let d = analysis.declared.concept("c").unwrap();
+    assert!(matches!(
+        d.slots[0].value,
+        uml::DeclaredField::Invalid { .. }
+    ));
+    assert!(matches!(
+        d.slots[1].value,
+        uml::DeclaredField::Invalid { .. }
+    ));
+    assert!(matches!(
+        d.slots[2].value,
+        uml::DeclaredField::Invalid { .. }
+    ));
+    assert!(matches!(
+        d.slots[3].value,
+        uml::DeclaredField::Invalid { .. }
+    ));
+    assert!(matches!(
+        d.relationships[0].from_end,
+        uml::DeclaredField::Incomplete { .. }
+    ));
+    assert!(matches!(
+        d.relationships[1].to_end,
+        uml::DeclaredField::Incomplete { .. } | uml::DeclaredField::Invalid { .. }
+    ));
+    assert!(matches!(
+        d.relationships[2].kind,
+        uml::DeclaredField::Invalid { .. }
+    ));
+    assert!(matches!(
+        d.relationships[3].target,
+        uml::DeclaredField::Incomplete { .. } | uml::DeclaredField::Invalid { .. }
+    ));
+    assert!(matches!(
+        d.relationships[4].name,
+        uml::DeclaredField::Invalid { .. }
+    ));
+    assert!(matches!(
+        d.members[0].target,
+        uml::DeclaredField::Invalid { .. }
+    ));
+    assert!(matches!(
+        d.inline_instances[0].name,
+        uml::DeclaredField::Incomplete { .. } | uml::DeclaredField::Invalid { .. }
+    ));
+    assert!(matches!(
+        d.inline_instances[1].slots[0].value,
+        uml::DeclaredField::Incomplete { .. } | uml::DeclaredField::Invalid { .. }
+    ));
+    assert!(matches!(
+        d.inline_instances[2].slots[0].value,
+        uml::DeclaredField::Incomplete { .. } | uml::DeclaredField::Invalid { .. }
+    ));
+    let node = analysis.projection.node("c").unwrap();
+    assert!(node.slots.is_empty());
+    assert!(analysis.projection.edges.is_empty());
+    assert!(analysis.projection.node("c#x").is_none());
+    assert!(analysis.projection.node("c#q").is_none());
+}
+
+#[test]
 fn declared_projection_resolves_only_claimed_targets_with_located_diagnostic() {
     let source = SourceBundle::try_from_pairs([
         ("order.md", "---\ntype: uml.Class\nabstract: true\nstereotype: [entity, aggregate]\n---\n# Order\n\n## Values\n- OPEN\n\n## Slots\n- state: \"open\"\n\n## Relationships\n- associates [Customer](./customer.md): 1 to 1\n- composes [Customer](./customer.md)\n- depends [Generic](./generic.md)\n"),
