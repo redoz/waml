@@ -562,3 +562,128 @@ fn missing_lifeline_link_is_incomplete_but_present_malformed_link_is_invalid() {
             && diagnostic.range.end().to_usize() == malformed_start + "broken".len()
     }));
 }
+
+#[test]
+fn required_behavior_accessors_return_indexed_missing_tokens_without_panicking() {
+    let flow = "---\ntype: uml.Activity\n---\n# Flow\n\n## Nodes\n### initial\n- entry: `begin`\n- transitions\n- transitions to [broken\n### object\n### object [broken\n";
+    let sequence =
+        "---\ntype: uml.Sequence\n---\n# Sequence\n\n## Messages\n- sender\n- alt\n  - else\n";
+    let analysis = analyze([("flow.md", flow), ("sequence.md", sequence)]);
+
+    let flow_root = root(&analysis, "flow.md");
+    let nodes = typed::<uml::FlowNodeSyntax>(flow_root.clone());
+    let initial_identity = nodes[0].identity_token();
+    let initial_at = flow.find("### initial").unwrap() + "### initial".len();
+    assert_eq!(
+        initial_identity.kind(),
+        uml::syntax::UmlSyntaxKind::IdentityToken
+    );
+    assert!(initial_identity.flags().is_missing());
+    assert_eq!(initial_identity.range().start().to_usize(), initial_at);
+    assert_eq!(initial_identity.range().end().to_usize(), initial_at);
+
+    let object_identity = nodes[1].identity_token();
+    let object_at = flow.find("### object").unwrap() + "### object".len();
+    assert_eq!(
+        object_identity.kind(),
+        uml::syntax::UmlSyntaxKind::IdentityToken
+    );
+    assert!(object_identity.flags().is_missing());
+    assert_eq!(object_identity.range().start().to_usize(), object_at);
+    assert_eq!(object_identity.range().end().to_usize(), object_at);
+
+    let malformed_object_identity = nodes[2].identity_token();
+    let malformed_object_at = flow.rfind("[broken").unwrap();
+    assert_eq!(
+        malformed_object_identity.kind(),
+        uml::syntax::UmlSyntaxKind::LinkTextToken
+    );
+    assert!(malformed_object_identity.flags().is_missing());
+    assert_eq!(
+        malformed_object_identity.range().start().to_usize(),
+        malformed_object_at
+    );
+    assert_eq!(
+        malformed_object_identity.range().end().to_usize(),
+        malformed_object_at
+    );
+
+    let transitions = typed::<uml::FlowTransitionSyntax>(flow_root);
+    let missing_target = transitions[0].target_token().unwrap();
+    let target_at = flow.find("- transitions\n").unwrap() + "- transitions".len();
+    assert_eq!(
+        missing_target.kind(),
+        uml::syntax::UmlSyntaxKind::TargetToken
+    );
+    assert!(missing_target.flags().is_missing());
+    assert_eq!(missing_target.range().start().to_usize(), target_at);
+    assert_eq!(missing_target.range().end().to_usize(), target_at);
+
+    let malformed_link_target = transitions[1].target_token().unwrap();
+    let malformed_link_at = flow.find("[broken").unwrap();
+    assert_eq!(
+        malformed_link_target.kind(),
+        uml::syntax::UmlSyntaxKind::LinkTargetToken
+    );
+    assert!(malformed_link_target.flags().is_missing());
+    assert_eq!(
+        malformed_link_target.range().start().to_usize(),
+        malformed_link_at
+    );
+    assert_eq!(
+        malformed_link_target.range().end().to_usize(),
+        malformed_link_at
+    );
+
+    let internal = typed::<uml::FlowInternalSyntax>(root(&analysis, "flow.md")).remove(0);
+    let internal_keyword = internal.keyword_token().unwrap();
+    assert_eq!(
+        internal_keyword.kind(),
+        uml::syntax::UmlSyntaxKind::InternalKeywordToken
+    );
+    assert!(!internal_keyword.flags().is_missing());
+
+    let sequence_root = root(&analysis, "sequence.md");
+    let messages = typed::<uml::MessageSyntax>(sequence_root.clone());
+    let sender_start = sequence.find("sender").unwrap();
+    let sender_at = sender_start + "sender".len();
+    assert_eq!(
+        messages[0].source_token().kind(),
+        uml::syntax::UmlSyntaxKind::SourceToken
+    );
+    assert!(!messages[0].source_token().flags().is_missing());
+    assert_eq!(
+        messages[0].source_token().range().start().to_usize(),
+        sender_start - 1
+    );
+    assert_eq!(
+        messages[0].source_token().range().end().to_usize(),
+        sender_at
+    );
+    assert_eq!(
+        messages[0].verb_token().kind(),
+        uml::syntax::UmlSyntaxKind::VerbToken
+    );
+    assert_eq!(
+        messages[0].target_token().kind(),
+        uml::syntax::UmlSyntaxKind::TargetToken
+    );
+    for token in [messages[0].verb_token(), messages[0].target_token()] {
+        assert!(token.flags().is_missing());
+        assert_eq!(token.range().start().to_usize(), sender_at);
+        assert_eq!(token.range().end().to_usize(), sender_at);
+    }
+
+    let fragment = typed::<uml::SequenceFragmentSyntax>(sequence_root.clone()).remove(0);
+    assert_eq!(
+        fragment.kind_token().kind(),
+        uml::syntax::UmlSyntaxKind::FragmentKindToken
+    );
+    assert!(!fragment.kind_token().flags().is_missing());
+    let operand = typed::<uml::SequenceOperandSyntax>(sequence_root).remove(0);
+    assert_eq!(
+        operand.keyword_token().kind(),
+        uml::syntax::UmlSyntaxKind::OperandKeywordToken
+    );
+    assert!(!operand.keyword_token().flags().is_missing());
+}
