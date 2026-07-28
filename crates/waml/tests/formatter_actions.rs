@@ -139,3 +139,190 @@ fn malformed_recovery_and_unclaimed_generic_source_are_not_rewritten() {
         .unwrap_err();
     assert!(matches!(error, waml::uml::FormatError::NotClaimed { .. }));
 }
+
+#[test]
+fn noncanonical_claimed_families_match_the_frozen_serializer() {
+    let fixtures = [
+        (
+            "class.md",
+            "---\ntype: uml.Class\ntitle: C\n---\n# C\n\n## Relationships\n\n- depends [Target](target.md)\n\n## Attributes\n\n- + id: OrderId {1}\n",
+        ),
+        (
+            "enum.md",
+            "---\ntype:   uml.Enum\ntitle:   E\nstereotype: [ valueObject,entity ]\n---\n# Wrong\n\n## Values\n\n- Open\n- Closed\n",
+        ),
+        (
+            "object.md",
+            "---\ntype: uml.InstanceSpecification\ntitle: O\n---\n# O\n\n## Slots\n\n- state: \"Open\"\n",
+        ),
+        (
+            "diagram.md",
+            "---\ntype: Diagram\ntitle: D\nprofile: uml-domain\n---\n# D\n\n## Layout\n\n- Users with FRAME and LARGE margins\n\n## Members\n\n- [User](user.md)\n",
+        ),
+        (
+            "activity.md",
+            "---\ntype: uml.Activity\ntitle: A\n---\n# A\n\n## Nodes\n\n### Start\n- transitions to Done\n\n### Done\n",
+        ),
+        (
+            "state.md",
+            "---\ntype: uml.StateMachine\ntitle: S\n---\n# S\n\n## Nodes\n\n### Draft\n- on `submit` transitions to Submitted\n\n### Submitted\n",
+        ),
+        (
+            "sequence.md",
+            "---\ntype: uml.Sequence\ntitle: Q\n---\n# Q\n\n## Messages\n\n- Buyer calls Order: `submit()`\n\n## Lifelines\n\n- [Buyer](./buyer.md)\n- [Order](./order.md)\n",
+        ),
+    ];
+    for (path, source) in fixtures {
+        let candidate = prepared(path, source, 40);
+        assert!(
+            candidate
+                .uml()
+                .syntax
+                .document(document(&candidate, path))
+                .is_some(),
+            "{path} was not claimed"
+        );
+        assert!(
+            candidate
+                .uml()
+                .syntax
+                .document(document(&candidate, path))
+                .unwrap()
+                .syntax()
+                .diagnostics()
+                .is_empty(),
+            "{path} is not valid for the active parser"
+        );
+        let formatted = apply(
+            &candidate,
+            Formatter
+                .format(
+                    ActionContext::from_prepared(&candidate).unwrap(),
+                    document(&candidate, path),
+                )
+                .unwrap(),
+        );
+        let actual = formatted
+            .document(&BundlePath::parse(path).unwrap())
+            .unwrap()
+            .text();
+        let expected = serialize_document(&parse_document(source));
+        assert_eq!(actual, expected, "{path}");
+
+        let reparsed = prepared(path, actual, 41);
+        assert!(
+            reparsed
+                .uml()
+                .syntax
+                .document(document(&reparsed, path))
+                .unwrap()
+                .syntax()
+                .diagnostics()
+                .is_empty(),
+            "{path}: canonical output did not reparse"
+        );
+        assert!(
+            Formatter
+                .format(
+                    ActionContext::from_prepared(&reparsed).unwrap(),
+                    document(&reparsed, path),
+                )
+                .unwrap()
+                .changes[0]
+                .edits
+                .is_empty(),
+            "{path}: formatter is not idempotent"
+        );
+    }
+}
+
+#[test]
+fn tolerated_bracket_multiplicity_formats_to_canonical_braces() {
+    let source = "---\ntype: uml.Class\n---\n# C\n\n## Attributes\n- count: Number [0..42]\n";
+    let candidate = prepared("class.md", source, 50);
+    let formatted = apply(
+        &candidate,
+        Formatter
+            .format(
+                ActionContext::from_prepared(&candidate).unwrap(),
+                document(&candidate, "class.md"),
+            )
+            .unwrap(),
+    );
+    let actual = formatted
+        .document(&BundlePath::parse("class.md").unwrap())
+        .unwrap()
+        .text();
+    assert!(actual.contains("- count: Number {0..42}\n"), "{actual}");
+    let reparsed = prepared("class.md", actual, 51);
+    assert!(reparsed
+        .uml()
+        .syntax
+        .document(document(&reparsed, "class.md"))
+        .is_some());
+    assert!(Formatter
+        .format(
+            ActionContext::from_prepared(&reparsed).unwrap(),
+            document(&reparsed, "class.md")
+        )
+        .unwrap()
+        .changes[0]
+        .edits
+        .is_empty());
+}
+
+#[test]
+fn formatter_moves_owned_sections_without_covering_unknown_markdown() {
+    let source = "---\ntype: uml.Class\n---\n# C\n\n## Relationships\n\n- depends [T](./t.md)\n\n## Operations\n\nRaw 😀 bytes stay.   \n\n## Attributes\n\n- id: String\n";
+    let raw = "## Operations\n\nRaw 😀 bytes stay.   \n";
+    let raw_start = source.find(raw).unwrap();
+    let raw_end = raw_start + raw.len();
+    let candidate = prepared("class.md", source, 60);
+    let action = Formatter
+        .format(
+            ActionContext::from_prepared(&candidate).unwrap(),
+            document(&candidate, "class.md"),
+        )
+        .unwrap();
+    for edit in action.changes[0].edits.iter() {
+        assert!(
+            edit.range.end().to_usize() <= raw_start || raw_end <= edit.range.start().to_usize(),
+            "edit {:?} covers protected raw range {raw_start}..{raw_end}",
+            edit.range
+        );
+    }
+    let formatted = apply(&candidate, action);
+    let actual = formatted
+        .document(&BundlePath::parse("class.md").unwrap())
+        .unwrap()
+        .text();
+    assert!(actual.contains(raw));
+    assert!(actual.find("## Attributes").unwrap() < actual.find("## Relationships").unwrap());
+    assert!(actual.find("## Relationships").unwrap() < actual.find("## Operations").unwrap());
+}
+
+#[test]
+fn formatter_preserves_unowned_claimed_body_while_formatting_both_sides() {
+    let source = "---\ntype:   uml.Class\n---\n# C\n\nBody 😀 stays byte exact.   \n\n## Values\n\n- Ready\n";
+    let raw = "Body 😀 stays byte exact.   ";
+    let raw_start = source.find(raw).unwrap();
+    let raw_end = raw_start + raw.len();
+    let candidate = prepared("class.md", source, 61);
+    let action = Formatter
+        .format(
+            ActionContext::from_prepared(&candidate).unwrap(),
+            document(&candidate, "class.md"),
+        )
+        .unwrap();
+    assert!(action.changes[0].edits.iter().all(|edit| {
+        edit.range.end().to_usize() <= raw_start || raw_end <= edit.range.start().to_usize()
+    }));
+    let actual = apply(&candidate, action)
+        .document(&BundlePath::parse("class.md").unwrap())
+        .unwrap()
+        .text()
+        .to_owned();
+    assert!(actual.contains(raw));
+    assert!(actual.contains("type: uml.Class"));
+    assert!(actual.contains("## Values\n- Ready"));
+}
