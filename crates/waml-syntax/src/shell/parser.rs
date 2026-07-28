@@ -30,7 +30,7 @@ pub(super) fn parse(text: SourceText, dialect: MarkdownDialect) -> Result<ShellP
         children.push(GreenElement::Node(heading_node(
             &factory, &text, source, line,
         )?));
-        at = line.end;
+        at = structured_end(line);
     }
 
     let eof_trivia_start = trailing_eof_whitespace_start(source, at);
@@ -88,8 +88,10 @@ fn frontmatter(
         OkfMarkdownSyntaxKind::FrontmatterOpenFence,
     )?;
     let mut clean = !recovered;
+    let mut entries_consumed_end = open.end;
     for (start, end) in lines(source, open.end, entries_end) {
         let line = line_at(source, start, end);
+        entries_consumed_end = structured_end(line);
         let (entry, malformed) = frontmatter_entry(factory, text, source, line)?;
         if malformed {
             clean = false;
@@ -110,24 +112,24 @@ fn frontmatter(
             close,
             OkfMarkdownSyntaxKind::FrontmatterCloseFence,
         )?);
-        close.end
+        structured_end(close)
     } else {
         children.push(GreenElement::Token(
             factory.missing_token(OkfMarkdownSyntaxKind::FrontmatterCloseFence),
         ));
         diagnostics.push(diagnostic(
             OkfSyntaxDiagnosticCode::MissingFrontmatterFence,
-            boundary,
-            boundary,
+            entries_consumed_end,
+            entries_consumed_end,
             "missing frontmatter close fence",
         ));
-        boundary
+        entries_consumed_end
     };
     if !clean {
         diagnostics.push(diagnostic(
             OkfSyntaxDiagnosticCode::FrontmatterNotClean,
             open.end,
-            entries_end,
+            entries_consumed_end,
             "frontmatter required recovery",
         ));
     }
@@ -498,6 +500,13 @@ fn trailing_eof_whitespace_start(source: &str, minimum: usize) -> usize {
         at -= 1;
     }
     at
+}
+fn structured_end(line: Line) -> usize {
+    if line.newline_start < line.end {
+        line.end
+    } else {
+        line.significant_end
+    }
 }
 fn size(value: usize) -> Result<TextSize, ParseError> {
     TextSize::try_from_usize(value).map_err(|_| ParseError::SourceTooLarge { bytes: value })

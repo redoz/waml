@@ -28,3 +28,11 @@
 ## Concerns
 
 - None known within Task 4 scope. Task 5 island semantics remain intentionally untouched.
+
+## Fix round 2
+
+- Corrected structured-line advancement at an unterminated final line: headings, authored close fences, and recovered frontmatter now advance only through their significant structural bytes.
+- Remaining horizontal EOF whitespace is owned exactly once by leading trivia on the missing EOF token.
+- Missing-close-fence and `FrontmatterNotClean` recovery ranges now end at the consumed structural boundary, before EOF trivia.
+- Added deterministic escaped-source fixtures and goldens for `# Title   `, a clean close fence ending in spaces, and recovered frontmatter ending in spaces, all without a final newline.
+- Routed the BOM/CRLF/Unicode case through the generalized roundtrip, leaf-concatenation, range, width, progress, and protected-range invariant helper.

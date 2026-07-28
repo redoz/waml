@@ -9,6 +9,7 @@ struct Fixture {
     name: &'static str,
     source: &'static str,
     golden: &'static str,
+    escaped: bool,
 }
 
 macro_rules! fixture {
@@ -17,6 +18,18 @@ macro_rules! fixture {
             name: $name,
             source: include_str!(concat!("fixtures/shell/", $name, ".md")),
             golden: include_str!(concat!("fixtures/shell/", $name, ".golden")),
+            escaped: false,
+        }
+    };
+}
+
+macro_rules! escaped_fixture {
+    ($name:literal) => {
+        Fixture {
+            name: $name,
+            source: include_str!(concat!("fixtures/shell/", $name, ".escaped")),
+            golden: include_str!(concat!("fixtures/shell/", $name, ".golden")),
+            escaped: true,
         }
     };
 }
@@ -32,6 +45,9 @@ const FIXTURES: &[Fixture] = &[
     fixture!("protected_containers"),
     fixture!("lower_headings"),
     fixture!("html_comment"),
+    escaped_fixture!("heading_eof_spaces"),
+    escaped_fixture!("closed_frontmatter_eof_spaces"),
+    escaped_fixture!("unclosed_frontmatter_eof_spaces"),
 ];
 
 #[test]
@@ -40,7 +56,7 @@ fn preserves_bom_crlf_unicode_frontmatter_and_top_level_headings() {
     let text = SourceText::from_shared(Arc::new(source.into())).unwrap();
     let shell = parse_okf_markdown(text, MarkdownDialect::CommonMarkCurrent).unwrap();
 
-    assert_eq!(shell.tree.write_to_string(), source);
+    assert_shell_invariants("bom_crlf_unicode", source, &shell);
     assert_eq!(shell.structure.headings.len(), 2);
     assert_eq!(shell.structure.headings[0].level, 1);
     assert_eq!(shell.structure.headings[1].level, 2);
@@ -156,13 +172,17 @@ fn shell_tokens_apply_normative_trivia_ownership() {
 fn shell_fixtures_are_exact_bounded_progressing_and_golden() {
     let mut actuals = Vec::new();
     for fixture in FIXTURES {
-        let shell = parse(fixture.source);
-        assert_shell_invariants(fixture.name, fixture.source, &shell);
-        assert_fixture_shape(fixture.name, fixture.source, &shell);
+        let source = fixture_source(fixture);
+        let shell = parse(&source);
+        assert_shell_invariants(fixture.name, &source, &shell);
+        assert_fixture_shape(fixture.name, &source, &shell);
         actuals.push((fixture, golden(&shell)));
     }
-    if std::env::var_os("WAML_DUMP_SHELL_GOLDENS").is_some() {
+    if let Ok(filter) = std::env::var("WAML_DUMP_SHELL_GOLDENS") {
         for (fixture, actual) in &actuals {
+            if !fixture.name.contains(&filter) {
+                continue;
+            }
             println!(
                 "@@GOLDEN:{}@@\n{}@@END:{}@@",
                 fixture.name, actual, fixture.name
@@ -231,8 +251,49 @@ fn assert_fixture_shape(name: &str, source: &str, shell: &ShellParse) {
         }
         "lower_headings" => assert_eq!(shell.structure.headings.len(), 1),
         "html_comment" => assert_eq!(shell.structure.headings.len(), 1),
+        "heading_eof_spaces"
+        | "closed_frontmatter_eof_spaces"
+        | "unclosed_frontmatter_eof_spaces" => {
+            let eof = leaf_tokens(&shell.tree.root()).pop().unwrap();
+            assert_eq!(eof.kind(), OkfMarkdownSyntaxKind::EndOfFileToken);
+            assert!(eof.flags().is_missing());
+            assert_eq!(
+                eof.leading_trivia()
+                    .iter()
+                    .map(|trivia| trivia.text.write_to_string())
+                    .collect::<String>(),
+                "   "
+            );
+        }
         _ => unreachable!("fixture table is exhaustive"),
     }
+}
+
+fn fixture_source(fixture: &Fixture) -> String {
+    if !fixture.escaped {
+        return fixture.source.to_owned();
+    }
+    let encoded = fixture.source.strip_suffix('\n').unwrap_or(fixture.source);
+    let mut decoded = String::new();
+    let mut chars = encoded.chars();
+    while let Some(ch) = chars.next() {
+        if ch != '\\' {
+            decoded.push(ch);
+            continue;
+        }
+        match chars.next().expect("fixture escape") {
+            'n' => decoded.push('\n'),
+            'r' => decoded.push('\r'),
+            't' => decoded.push('\t'),
+            'x' => {
+                let digits = [chars.next().unwrap(), chars.next().unwrap()];
+                let byte = u8::from_str_radix(&digits.iter().collect::<String>(), 16).unwrap();
+                decoded.push(char::from(byte));
+            }
+            escaped => panic!("unsupported fixture escape: {escaped}"),
+        }
+    }
+    decoded
 }
 
 fn parse(source: &str) -> waml_syntax::ShellParse {

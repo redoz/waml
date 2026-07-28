@@ -1,0 +1,5 @@
+N root Root 0..10
+N root/0 Heading 0..7
+T root/0/0 HeadingMarkerToken 0..1 missing=false leading="" text="#" trailing=""
+T root/0/1 HeadingText 1..7 missing=false leading=" " text="Title" trailing=""
+T root/1 EndOfFileToken 7..10 missing=true leading="   " text="" trailing=""

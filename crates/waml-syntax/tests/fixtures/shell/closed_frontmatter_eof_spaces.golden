@@ -1,0 +1,11 @@
+N root Root 0..18
+N root/0 Frontmatter 0..15
+T root/0/0 FrontmatterOpenFence 0..3 missing=false leading="" text="---" trailing=""
+T root/0/1 NewlineToken 3..4 missing=false leading="" text="\n" trailing=""
+N root/0/2 FrontmatterEntry 4..12
+T root/0/2/0 FrontmatterKey 4..8 missing=false leading="" text="type" trailing=""
+T root/0/2/1 ColonToken 8..9 missing=false leading="" text=":" trailing=""
+T root/0/2/2 FrontmatterValue 9..11 missing=false leading=" " text="x" trailing=""
+T root/0/2/3 NewlineToken 11..12 missing=false leading="" text="\n" trailing=""
+T root/0/3 FrontmatterCloseFence 12..15 missing=false leading="" text="---" trailing=""
+T root/1 EndOfFileToken 15..18 missing=true leading="   " text="" trailing=""
