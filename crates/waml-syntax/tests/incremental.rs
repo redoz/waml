@@ -636,7 +636,7 @@ fn deleting_invalidated_container_range_falls_back_without_panicking() {
     let next = "- firstcond\n";
     let outcome = exact_oracle(
         previous,
-        &next,
+        next,
         &[TextChange {
             old_range: range(7, 12),
             replacement: Arc::from(""),
@@ -655,7 +655,8 @@ fn deleting_invalidated_container_range_falls_back_without_panicking() {
 #[test]
 fn property_sequence_falls_back_when_selected_window_cannot_be_consumed() {
     let initial = "- type: uml.Class\n  name: Example\n=";
-    let replacement = "\u{1d456}0\u{ab09}  \u{ae}a  \u{1cf00}\u{a1}a \u{1f860}\u{ad0}0 \u{fb40}\u{c0e}A 0";
+    let replacement =
+        "\u{1d456}0\u{ab09}  \u{ae}a  \u{1cf00}\u{a1}a \u{1f860}\u{ad0}0 \u{fb40}\u{c0e}A 0";
     let first = format!("{replacement}xample\n=");
     let second = &first[4..];
 
@@ -692,7 +693,10 @@ fn property_sequence_falls_back_when_selected_window_cannot_be_consumed() {
         }
     };
     assert_eq!(tree.write_to_string(), full.tree.write_to_string());
-    assert_eq!(diagnostic_fingerprint(&tree), diagnostic_fingerprint(&full.tree));
+    assert_eq!(
+        diagnostic_fingerprint(&tree),
+        diagnostic_fingerprint(&full.tree)
+    );
 }
 
 #[test]

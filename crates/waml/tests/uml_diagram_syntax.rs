@@ -144,7 +144,7 @@ fn diagram_members_and_layout_are_lossless_and_project_valid_placement() {
 }
 
 fn linked_diagram_source() -> SourceBundle {
-    let source = SourceBundle::try_from_pairs([
+    SourceBundle::try_from_pairs([
         (
             "orders-diagram.md",
             "---\ntype: Diagram\ntitle: Orders\nprofile: uml-domain\n---\n# Orders\n\n## Members\n- [Order](./order.md)\n- [Customer](./customer.md)\n\n## Layout\n- [Order](./order.md) left of [Customer](./customer.md)\n",
@@ -155,8 +155,7 @@ fn linked_diagram_source() -> SourceBundle {
             "---\ntype: uml.Class\n---\n# Customer\n",
         ),
     ])
-    .unwrap();
-    source
+    .unwrap()
 }
 
 #[test]

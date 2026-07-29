@@ -171,10 +171,7 @@ fn only_waml_non_dev_depends_on_waml_syntax() {
                 .iter()
                 .any(|dependency| {
                     dependency["name"].as_str() == Some("waml-syntax")
-                        && matches!(
-                            dependency["kind"].as_str(),
-                            None | Some("build")
-                        )
+                        && matches!(dependency["kind"].as_str(), None | Some("build"))
                 })
         })
         .map(|package| {

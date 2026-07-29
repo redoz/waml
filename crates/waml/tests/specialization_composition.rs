@@ -55,7 +55,7 @@ fn analyze_future(context: DomainAnalysisContext<'_>) -> FutureAnalysis {
     let mut declared = Vec::new();
 
     for concept in claimed {
-        let path = BundlePath::parse(&format!("{}.md", concept.id)).unwrap();
+        let path = BundlePath::parse(format!("{}.md", concept.id)).unwrap();
         let id = context.catalog.id_for_path(&path).unwrap();
         let document = context.catalog.document(id).unwrap().clone();
         let raw = factory

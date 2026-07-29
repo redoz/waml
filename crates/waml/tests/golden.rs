@@ -92,6 +92,7 @@ fn parser_platform_corpus_full_and_retained_results_match() {
         uml::{syntax::UmlLanguage, DeclaredBundle, DeclaredField, DeclaredLayoutStatement},
     };
 
+    #[allow(clippy::type_complexity)]
     fn diagnostic_fingerprint(
         analysis: &waml::uml::Analysis,
     ) -> Vec<(

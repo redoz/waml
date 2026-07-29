@@ -1,8 +1,4 @@
-use waml::{
-    analysis::prepare_candidate,
-    model::CardinalityVisibility,
-    source::SourceBundle,
-};
+use waml::{analysis::prepare_candidate, model::CardinalityVisibility, source::SourceBundle};
 
 #[test]
 fn diagram_display_frontmatter_projects_all_supported_fields() {
@@ -43,7 +39,10 @@ fn diagram_display_frontmatter_projects_all_supported_fields() {
     assert_eq!(diagram.display.show_type, Some(false));
     assert_eq!(diagram.display.show_attribute_visibility, Some(false));
     assert_eq!(diagram.display.show_attribute_multiplicity, Some(true));
-    assert_eq!(diagram.display.cardinality, Some(CardinalityVisibility::Explicit));
+    assert_eq!(
+        diagram.display.cardinality,
+        Some(CardinalityVisibility::Explicit)
+    );
     assert_eq!(diagram.display.max_attributes, Some(6));
     assert_eq!(diagram.display.show_roles, Some(false));
     assert_eq!(diagram.display.show_cardinality, Some(true));

@@ -382,16 +382,14 @@ fn main() {
                 }
                 if stdout {
                     print!("{}", r.formatted);
-                } else if check {
-                    if r.changed {
-                        let display = bundle
-                            .display_paths
-                            .get(&r.path)
-                            .map(String::as_str)
-                            .unwrap_or(&r.path);
-                        eprintln!("waml: {display} is not formatted");
-                        exit = 1;
-                    }
+                } else if check && r.changed {
+                    let display = bundle
+                        .display_paths
+                        .get(&r.path)
+                        .map(String::as_str)
+                        .unwrap_or(&r.path);
+                    eprintln!("waml: {display} is not formatted");
+                    exit = 1;
                 }
             }
             if !stdout && !check {

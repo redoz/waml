@@ -130,6 +130,7 @@ impl EditorSession {
         Ok(SessionChange::full(self.revision))
     }
 
+    #[allow(dead_code)]
     pub fn source(&self) -> &SourceBundle {
         &self.source
     }
@@ -139,6 +140,7 @@ impl EditorSession {
         self.source()
     }
 
+    #[allow(dead_code)]
     pub fn persisted_bundle(&self) -> &SourceBundle {
         &self.persisted_source
     }
@@ -217,8 +219,8 @@ mod tests {
             .leading_trivia()
             .iter()
             .try_fold(zero, |sum, trivia| {
-                let width = waml_syntax::TextSize::try_from(trivia.text.write_to_string().len())
-                    .unwrap();
+                let width =
+                    waml_syntax::TextSize::try_from(trivia.text.write_to_string().len()).unwrap();
                 sum.checked_add(width)
             })
             .unwrap();
@@ -228,8 +230,8 @@ mod tests {
             .trailing_trivia()
             .iter()
             .try_fold(zero, |sum, trivia| {
-                let width = waml_syntax::TextSize::try_from(trivia.text.write_to_string().len())
-                    .unwrap();
+                let width =
+                    waml_syntax::TextSize::try_from(trivia.text.write_to_string().len()).unwrap();
                 sum.checked_add(width)
             })
             .unwrap();
@@ -299,9 +301,7 @@ mod tests {
         }
     }
 
-    fn assert_clean_layout_alignment(
-        tree: &SyntaxTree<waml::uml::syntax::UmlLanguage>,
-    ) {
+    fn assert_clean_layout_alignment(tree: &SyntaxTree<waml::uml::syntax::UmlLanguage>) {
         fn collect_alignments(
             node: waml_syntax::SyntaxNode<waml::uml::syntax::UmlLanguage>,
             alignments: &mut Vec<waml_syntax::SyntaxNode<waml::uml::syntax::UmlLanguage>>,
@@ -309,7 +309,10 @@ mod tests {
             if node.kind() == waml::uml::syntax::UmlSyntaxKind::LayoutAlignment {
                 alignments.push(node.clone());
             }
-            for child in node.children().filter_map(waml_syntax::SyntaxElement::into_node) {
+            for child in node
+                .children()
+                .filter_map(waml_syntax::SyntaxElement::into_node)
+            {
                 collect_alignments(child, alignments);
             }
         }
@@ -351,8 +354,7 @@ mod tests {
                     .find_map(|child| child.into_node().and_then(find))
             }
 
-            find(node)
-                .expect("fixture must contain an attribute node")
+            find(node).expect("fixture must contain an attribute node")
         }
 
         let mut session = EditorSession::default();
@@ -376,24 +378,19 @@ mod tests {
         assert_clean_layout_alignment(old_tree);
         let old_attribute = first_attribute(old_tree.root());
         let old_locator = old_attribute.locator();
-        let annotation = SyntaxAnnotation::new(
-            NonZeroU64::new(22).unwrap(),
-            "selection",
-            None,
-        );
+        let annotation = SyntaxAnnotation::new(NonZeroU64::new(22).unwrap(), "selection", None);
         let annotation_id = annotation.id();
         let annotated_tree = Arc::new(SyntaxTree::new(
             annotate_occurrence(old_tree, &old_locator, annotation).unwrap(),
             Arc::from(old_tree.diagnostics()),
             MarkdownDialect::CommonMarkCurrent,
         ));
-        let replacement_syntax =
-            waml::uml::analysis::test_support::syntax_with_replaced_tree(
-                &session.uml,
-                document_id,
-                annotated_tree.clone(),
-            )
-            .unwrap();
+        let replacement_syntax = waml::uml::analysis::test_support::syntax_with_replaced_tree(
+            &session.uml,
+            document_id,
+            annotated_tree.clone(),
+        )
+        .unwrap();
         session.uml.syntax = replacement_syntax;
         let baseline_current = session.source().clone();
         let baseline_persisted = session.persisted_bundle().clone();
@@ -439,7 +436,9 @@ mod tests {
         assert!(session
             .source()
             .shares_text_with(session.persisted_bundle(), "notes.md"));
-        assert!(session.source().shares_text_with(&baseline_current, "notes.md"));
+        assert!(session
+            .source()
+            .shares_text_with(&baseline_current, "notes.md"));
         assert!(session
             .persisted_bundle()
             .shares_text_with(&baseline_persisted, "class.md"));

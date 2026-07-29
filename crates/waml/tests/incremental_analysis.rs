@@ -184,6 +184,7 @@ fn uml_diagnostic_fingerprint(tree: &SyntaxTree<UmlLanguage>) -> Vec<String> {
         .collect()
 }
 
+#[allow(clippy::type_complexity)]
 fn semantic_diagnostic_fingerprint(
     analysis: &waml::uml::Analysis,
 ) -> Vec<(

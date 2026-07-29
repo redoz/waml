@@ -16,9 +16,7 @@ enum Kind {
     Recovery,
 }
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-enum Code {
-    Bad,
-}
+struct Code;
 #[derive(Debug, Eq, PartialEq)]
 struct Lang;
 impl SyntaxLanguage for Lang {

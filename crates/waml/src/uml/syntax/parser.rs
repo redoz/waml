@@ -113,7 +113,7 @@ pub(super) fn parse_island_element(
         .heading_end
         .expect("section islands have headings")
         .to_usize();
-    let mut section = vec![raw(&factory, &text, start, heading_end)];
+    let mut section = vec![raw(factory, text, start, heading_end)];
     if island.kind == UmlSyntaxKind::FlowSection {
         section.push(GreenElement::Node(flow_block(
             factory,
@@ -207,8 +207,7 @@ fn member_group_children(
         .find('\n')
         .map(|n| start + n)
         .unwrap_or(end);
-    let markers = source[start..line_end]
-        .as_bytes()
+    let markers = source.as_bytes()[start..line_end]
         .iter()
         .take_while(|c| **c == b'#')
         .count();
@@ -625,7 +624,17 @@ fn lifeline_line(
         ));
         p = alias_end;
     } else {
-        children.push(GreenElement::Token(f.missing_token(UmlSyntaxKind::AsToken)));
+        let leading: Vec<_> = (p < as_start)
+            .then(|| {
+                f.trivia(TriviaKind::Whitespace, slice(text, p, as_start))
+                    .unwrap()
+            })
+            .into_iter()
+            .collect();
+        children.push(GreenElement::Token(
+            f.missing_token_with_leading(UmlSyntaxKind::AsToken, leading)
+                .unwrap(),
+        ));
         children.push(slot(
             f,
             UmlSyntaxKind::LifelineAlias,
@@ -669,6 +678,7 @@ fn recovery_line(
     recovery_line_at(f, text, start, end, start, end, code, message, diags)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn recovery_line_at(
     f: &GreenFactory<UmlLanguage>,
     text: &SourceText,
@@ -1513,7 +1523,7 @@ fn sequence_message(
             )
         } else {
             valid = false;
-            GreenElement::Token(f.missing_token(UmlSyntaxKind::VerbToken))
+            missing_token(f, text, source_end, verb_start, UmlSyntaxKind::VerbToken)
         },
     ));
     let target_start = skip_ws(
@@ -1559,14 +1569,18 @@ fn sequence_message(
             children.push(slot(
                 f,
                 UmlSyntaxKind::MessageSignature,
-                GreenElement::Token(f.missing_token(UmlSyntaxKind::SignatureToken)),
+                missing_token(f, text, p + 1, signature, UmlSyntaxKind::SignatureToken),
             ));
             p = signature;
             valid = false;
         }
     } else {
-        children.push(GreenElement::Token(
-            f.missing_token(UmlSyntaxKind::ColonToken),
+        children.push(missing_token(
+            f,
+            text,
+            target_end,
+            p,
+            UmlSyntaxKind::ColonToken,
         ));
         children.push(slot(
             f,
@@ -1758,8 +1772,12 @@ fn push_behavior_newline(
             UmlSyntaxKind::NewlineToken,
         ));
     } else {
-        children.push(GreenElement::Token(
-            f.missing_token(UmlSyntaxKind::NewlineToken),
+        children.push(missing_token(
+            f,
+            text,
+            leading.min(newline),
+            newline,
+            UmlSyntaxKind::NewlineToken,
         ));
     }
 }
@@ -1781,7 +1799,7 @@ fn simple_item(
             .len();
     let lead = start + source[start..newline].len()
         - source[start..newline].trim_start_matches([' ', '\t']).len();
-    if !source[lead..content_end].starts_with('-') {
+    if lead >= content_end || !source[lead..content_end].starts_with('-') {
         return None;
     }
     let kind = match section {
@@ -1923,6 +1941,7 @@ fn simple_item(
     Some(f.node(kind, children).unwrap())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn layout_statement(
     f: &GreenFactory<UmlLanguage>,
     text: &SourceText,
@@ -2559,6 +2578,7 @@ fn layout_anchored_node(
     GreenElement::Node(f.node(UmlSyntaxKind::Anchored, children).unwrap())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn inline_instance(
     f: &GreenFactory<UmlLanguage>,
     text: &SourceText,
@@ -2776,6 +2796,7 @@ fn inline_instance(
     f.node(UmlSyntaxKind::InlineInstance, c).unwrap()
 }
 
+#[allow(clippy::too_many_arguments)]
 fn relationship(
     f: &GreenFactory<UmlLanguage>,
     text: &SourceText,
@@ -2854,7 +2875,7 @@ fn relationship(
         && source[p + 2..content_end]
             .chars()
             .next()
-            .is_none_or(char::is_whitespace)
+            .map_or(true, char::is_whitespace)
     {
         let as_end = p + 2;
         c.push(token(
@@ -2903,7 +2924,7 @@ fn relationship(
             && source[p + 2..content_end]
                 .chars()
                 .next()
-                .is_none_or(char::is_whitespace)
+                .map_or(true, char::is_whitespace)
         {
             c.push(token(f, text, q, p, p + 2, UmlSyntaxKind::ToToken));
             let to_leading = p + 2;
@@ -2925,13 +2946,20 @@ fn relationship(
         }
     }
     if p < content_end {
+        let leading = (suffix_leading < p)
+            .then(|| {
+                f.trivia(TriviaKind::Whitespace, slice(text, suffix_leading, p))
+                    .unwrap()
+            })
+            .into_iter();
         c.push(GreenElement::Node(
             f.node(
                 UmlSyntaxKind::SkippedTokensSyntax,
                 [GreenElement::Token(
-                    f.bad_token(
+                    f.bad_token_with_leading(
                         UmlSyntaxKind::BadToken,
                         slice(text, p, content_end),
+                        leading,
                         UmlSyntaxDiagnosticCode::UnexpectedToken,
                     )
                     .unwrap(),
@@ -2959,6 +2987,7 @@ fn relationship(
     f.node(UmlSyntaxKind::Relationship, c).unwrap()
 }
 
+#[allow(clippy::too_many_arguments)]
 fn behavior_link(
     f: &GreenFactory<UmlLanguage>,
     text: &SourceText,
@@ -3316,11 +3345,11 @@ fn attribute(
     let after_bullet = p;
     p = skip_ws(source, p, content_end);
     let mut vis = None;
-    if p < content_end {
-        if crate::model::Visibility::from_marker(source[p..].chars().next().unwrap()).is_some() {
-            vis = Some(p);
-            p += 1;
-        }
+    if p < content_end
+        && crate::model::Visibility::from_marker(source[p..].chars().next().unwrap()).is_some()
+    {
+        vis = Some(p);
+        p += 1;
     }
     if let Some(v) = vis {
         c.push(token(

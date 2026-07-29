@@ -113,6 +113,10 @@ impl<L: SyntaxLanguage> SyntaxSet<L> {
     pub fn len(&self) -> usize {
         self.documents.len()
     }
+
+    pub fn is_empty(&self) -> bool {
+        self.documents.is_empty()
+    }
     pub(crate) fn documents(&self) -> &BTreeMap<DocumentId, Arc<SyntaxSnapshot<L>>> {
         &self.documents
     }
@@ -540,10 +544,10 @@ fn analyze_okf_inner(
     })
 }
 
-fn previous_snapshot<'a>(
-    previous: Option<&'a OkfAnalysis>,
+fn previous_snapshot(
+    previous: Option<&OkfAnalysis>,
     id: DocumentId,
-) -> Option<&'a Arc<SyntaxSnapshot<OkfMarkdownLanguage>>> {
+) -> Option<&Arc<SyntaxSnapshot<OkfMarkdownLanguage>>> {
     previous.and_then(|analysis| analysis.shell.document(id))
 }
 

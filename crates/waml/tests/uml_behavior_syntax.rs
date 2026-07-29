@@ -39,7 +39,7 @@ fn typed<T: AstNode<uml::syntax::UmlLanguage>>(
     result
 }
 
-fn root<'a>(analysis: &'a uml::Analysis, path: &str) -> SyntaxNode<uml::syntax::UmlLanguage> {
+fn root(analysis: &uml::Analysis, path: &str) -> SyntaxNode<uml::syntax::UmlLanguage> {
     let id = analysis
         .syntax
         .catalog()

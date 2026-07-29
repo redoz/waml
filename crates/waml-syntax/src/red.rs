@@ -496,9 +496,7 @@ mod tests {
         Other,
     }
     #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-    enum Code {
-        Error,
-    }
+    struct Code;
     struct Lang;
     impl SyntaxLanguage for Lang {
         type Kind = Kind;

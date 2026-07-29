@@ -441,13 +441,11 @@ impl ChangeMap {
         {
             return None;
         }
-        Some(
-            TextRange::new(
-                self.translate_start_boundary(old.start())?,
-                self.translate_end_boundary(old.end())?,
-            )
-            .ok()?,
+        TextRange::new(
+            self.translate_start_boundary(old.start())?,
+            self.translate_end_boundary(old.end())?,
         )
+        .ok()
     }
 
     pub fn translate_start_boundary(&self, old: TextSize) -> Option<TextSize> {
@@ -1197,6 +1195,21 @@ fn has_syntax_annotations(node: &GreenNode<OkfMarkdownLanguage>) -> bool {
         })
 }
 
+fn same_containers(
+    old: &MarkdownStructureMap,
+    new: &MarkdownStructureMap,
+    map: &ChangeMap,
+) -> bool {
+    same_ranges(&old.protected_ranges, &new.protected_ranges, map)
+        && same_ranges(&old.opaque_ranges, &new.opaque_ranges, map)
+        && same_ranges(&old.list_item_lines, &new.list_item_lines, map)
+        && same_ranges(
+            &old.tab_indented_item_lines,
+            &new.tab_indented_item_lines,
+            map,
+        )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1413,18 +1426,4 @@ mod tests {
             .unwrap();
         assert!(recover_exact_source(&source_independent).is_none());
     }
-}
-fn same_containers(
-    old: &MarkdownStructureMap,
-    new: &MarkdownStructureMap,
-    map: &ChangeMap,
-) -> bool {
-    same_ranges(&old.protected_ranges, &new.protected_ranges, map)
-        && same_ranges(&old.opaque_ranges, &new.opaque_ranges, map)
-        && same_ranges(&old.list_item_lines, &new.list_item_lines, map)
-        && same_ranges(
-            &old.tab_indented_item_lines,
-            &new.tab_indented_item_lines,
-            map,
-        )
 }

@@ -564,6 +564,7 @@ fn rollback(
 }
 
 #[cfg(windows)]
+#[allow(clippy::permissions_set_readonly_false)]
 fn clear_deletion_blocking_permissions(
     path: &Path,
     metadata: &fs::Metadata,
@@ -643,10 +644,9 @@ mod tests {
         fn rename(&self, from: &Path, to: &Path) -> std::io::Result<()> {
             let call = self.calls.fetch_add(1, Ordering::Relaxed) + 1;
             if self.at.contains(&call) {
-                Err(std::io::Error::new(
-                    std::io::ErrorKind::Other,
-                    format!("injected rename failure at call {call}"),
-                ))
+                Err(std::io::Error::other(format!(
+                    "injected rename failure at call {call}"
+                )))
             } else {
                 std::fs::rename(from, to)
             }
@@ -687,10 +687,7 @@ mod tests {
                         .readonly(),
                     "installed rollback target must be genuinely read-only"
                 );
-                return Err(std::io::Error::new(
-                    std::io::ErrorKind::Other,
-                    "injected later rename failure",
-                ));
+                return Err(std::io::Error::other("injected later rename failure"));
             }
             if from == self.readonly_target {
                 self.displaced.store(true, Ordering::Relaxed);
@@ -718,10 +715,9 @@ mod tests {
         fn rename(&self, from: &Path, to: &Path) -> std::io::Result<()> {
             let call = self.calls.fetch_add(1, Ordering::Relaxed) + 1;
             if call == self.at {
-                Err(std::io::Error::new(
-                    std::io::ErrorKind::Other,
-                    format!("injected rename failure at call {call}"),
-                ))
+                Err(std::io::Error::other(format!(
+                    "injected rename failure at call {call}"
+                )))
             } else {
                 std::fs::rename(from, to)
             }

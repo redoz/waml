@@ -143,7 +143,8 @@ where
     L: SyntaxLanguage,
     L::DiagnosticCode: Debug,
 {
-    tree.diagnostics()
+    let mut diagnostics: Vec<_> = tree
+        .diagnostics()
         .iter()
         .map(|diagnostic| {
             format!(
@@ -151,7 +152,9 @@ where
                 diagnostic.code, diagnostic.severity, diagnostic.range, diagnostic.message
             )
         })
-        .collect()
+        .collect();
+    diagnostics.sort_unstable();
+    diagnostics
 }
 
 pub fn derived_valid_edit(data: &[u8], value: &str) -> (usize, usize, Arc<str>) {

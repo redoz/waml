@@ -166,7 +166,7 @@ fn allocation_counter_reports_exactly_one_named_document_buffer_with_provenance(
         allocations, 1,
         "the named document buffer is the one allocation"
     );
-    assert_eq!(named_document_buffer.as_ptr().is_null(), false);
+    assert_eq!(named_document_buffer.len(), DOCUMENT_BYTES);
 }
 
 #[test]

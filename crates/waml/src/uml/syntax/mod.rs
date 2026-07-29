@@ -64,9 +64,7 @@ pub(in crate::uml) fn reparse_island(
             continue;
         }
         let range = mapped_range(old_island.range, &map)?;
-        let Some(new_island) = new_islands.get(index) else {
-            return None;
-        };
+        let new_island = new_islands.get(index)?;
         if new_island.kind != old_island.kind || new_island.range != range {
             return None;
         }
@@ -441,6 +439,66 @@ mod tests {
             })
         }
         find(node).expect("expected missing token")
+    }
+
+    #[test]
+    fn malformed_lifeline_preserves_space_before_recovery() {
+        let authored = "## Lifelines\nm ha";
+        let text = SourceText::from_shared(Arc::new(authored.to_owned())).unwrap();
+        let shell = parse_okf_markdown(text.clone(), MarkdownDialect::CommonMarkCurrent).unwrap();
+        let tree = parse_full(text, &shell.structure);
+
+        assert_eq!(tree.write_to_string(), authored);
+    }
+
+    #[test]
+    fn malformed_message_preserves_space_before_recovery() {
+        let authored = "## Messages\nas `s";
+        let text = SourceText::from_shared(Arc::new(authored.to_owned())).unwrap();
+        let shell = parse_okf_markdown(text.clone(), MarkdownDialect::CommonMarkCurrent).unwrap();
+        let tree = parse_full(text, &shell.structure);
+
+        assert_eq!(tree.write_to_string(), authored);
+    }
+
+    #[test]
+    fn malformed_message_preserves_trailing_space() {
+        let authored = "## Messages\nD, D ";
+        let text = SourceText::from_shared(Arc::new(authored.to_owned())).unwrap();
+        let shell = parse_okf_markdown(text.clone(), MarkdownDialect::CommonMarkCurrent).unwrap();
+        let tree = parse_full(text, &shell.structure);
+
+        assert_eq!(tree.write_to_string(), authored);
+    }
+
+    #[test]
+    fn malformed_message_preserves_space_before_signature_recovery() {
+        let authored = "## Messages\n- A calls B: `s";
+        let text = SourceText::from_shared(Arc::new(authored.to_owned())).unwrap();
+        let shell = parse_okf_markdown(text.clone(), MarkdownDialect::CommonMarkCurrent).unwrap();
+        let tree = parse_full(text, &shell.structure);
+
+        assert_eq!(tree.write_to_string(), authored);
+    }
+
+    #[test]
+    fn whitespace_only_value_line_is_lossless() {
+        let authored = "## Values\n ";
+        let text = SourceText::from_shared(Arc::new(authored.to_owned())).unwrap();
+        let shell = parse_okf_markdown(text.clone(), MarkdownDialect::CommonMarkCurrent).unwrap();
+        let tree = parse_full(text, &shell.structure);
+
+        assert_eq!(tree.write_to_string(), authored);
+    }
+
+    #[test]
+    fn malformed_relationship_preserves_space_before_link_recovery() {
+        let authored = "## Relationships\n- status: Draft\n";
+        let text = SourceText::from_shared(Arc::new(authored.to_owned())).unwrap();
+        let shell = parse_okf_markdown(text.clone(), MarkdownDialect::CommonMarkCurrent).unwrap();
+        let tree = parse_full(text, &shell.structure);
+
+        assert_eq!(tree.write_to_string(), authored);
     }
 
     #[test]

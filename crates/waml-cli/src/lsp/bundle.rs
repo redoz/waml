@@ -44,6 +44,7 @@ pub struct LspAnalysisState {
     pub revision: u64,
 }
 
+#[allow(dead_code)]
 impl LspAnalysisState {
     pub fn empty() -> Result<Self, BoxError> {
         Self::from_documents(None, std::iter::empty::<(PathBuf, String)>())

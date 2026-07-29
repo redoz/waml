@@ -416,7 +416,12 @@ fn compare_if_present(
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
             return Ok("LATENCY_SKIPPED_BASELINE_ABSENT".into());
         }
-        Err(error) => return Err(format!("read prior observation {}: {error}", prior.display())),
+        Err(error) => {
+            return Err(format!(
+                "read prior observation {}: {error}",
+                prior.display()
+            ))
+        }
     };
     compare_prior(&current, &prior_source)
 }
@@ -671,7 +676,10 @@ mod tests {
     }
 
     fn comparison_file(name: &str) -> PathBuf {
-        env::temp_dir().join(format!("parser-platform-baseline-{name}-{}.json", std::process::id()))
+        env::temp_dir().join(format!(
+            "parser-platform-baseline-{name}-{}.json",
+            std::process::id()
+        ))
     }
 
     #[test]
@@ -708,11 +716,9 @@ mod tests {
         )
         .unwrap();
 
-        assert!(
-            compare_if_present(&prior, &current, TEST_CORPUS_IDENTITY)
-                .unwrap()
-                .contains("LATENCY_REPORT_ONLY")
-        );
+        assert!(compare_if_present(&prior, &current, TEST_CORPUS_IDENTITY)
+            .unwrap()
+            .contains("LATENCY_REPORT_ONLY"));
         fs::remove_file(prior).unwrap();
         fs::remove_file(current).unwrap();
     }
@@ -771,18 +777,12 @@ mod tests {
     }
 
     #[test]
-    fn parser_platform_baseline_compare_if_present_rejects_wrong_current_corpus_with_absent_prior() {
+    fn parser_platform_baseline_compare_if_present_rejects_wrong_current_corpus_with_absent_prior()
+    {
         let prior = comparison_file("wrong-corpus-absent-prior");
         let current = comparison_file("wrong-corpus-current");
-        let mut observation = Observation::test_sample(
-            Hardware::current().unwrap(),
-            120,
-            150,
-            10,
-            500,
-            1000,
-            20,
-        );
+        let mut observation =
+            Observation::test_sample(Hardware::current().unwrap(), 120, 150, 10, 500, 1000, 20);
         observation.corpus_identity = "fedcba9876543210".into();
         fs::write(&current, observation.json()).unwrap();
 
@@ -793,7 +793,8 @@ mod tests {
     }
 
     #[test]
-    fn parser_platform_baseline_compare_if_present_rejects_wrong_current_corpus_with_present_prior() {
+    fn parser_platform_baseline_compare_if_present_rejects_wrong_current_corpus_with_present_prior()
+    {
         let prior = comparison_file("wrong-corpus-present-prior");
         let current = comparison_file("wrong-corpus-present-current");
         let hardware = Hardware::current().unwrap();
@@ -802,8 +803,7 @@ mod tests {
             Observation::test_sample(hardware.clone(), 100, 140, 8, 450, 900, 18).json(),
         )
         .unwrap();
-        let mut observation =
-            Observation::test_sample(hardware, 120, 150, 10, 500, 1000, 20);
+        let mut observation = Observation::test_sample(hardware, 120, 150, 10, 500, 1000, 20);
         observation.corpus_identity = "fedcba9876543210".into();
         fs::write(&current, observation.json()).unwrap();
 

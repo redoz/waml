@@ -909,6 +909,7 @@ mod tests {
         cx.handle_triggers();
     }
 
+    #[allow(dead_code)]
     fn mini_model() -> waml::model::Model {
         let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/mini");
         crate::load::load_model(&dir).expect("mini fixture must load")

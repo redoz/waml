@@ -195,9 +195,11 @@ pub struct ViewData<'a> {
     pub source: &'a SourceBundle,
     pub okf_analysis: &'a waml::analysis::OkfAnalysis,
     pub uml_analysis: &'a waml::uml::Analysis,
+    #[allow(dead_code)]
     pub revision: u64,
 }
 
+#[allow(dead_code)]
 pub struct PreparedAction {
     pub title: String,
     pub edit: PendingEdit,
@@ -214,6 +216,7 @@ impl<'a> From<crate::editor_session::EditorSnapshot<'a>> for ViewData<'a> {
     }
 }
 
+#[allow(dead_code)]
 impl ViewData<'_> {
     fn document_id(&self, concept_id: &str) -> Option<waml::analysis::DocumentId> {
         let path = self.source.document_by_concept_id(concept_id)?.path();

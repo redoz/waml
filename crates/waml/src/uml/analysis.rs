@@ -36,12 +36,14 @@ pub mod test_support {
         document: crate::analysis::DocumentId,
         syntax: Arc<waml_syntax::SyntaxTree<UmlLanguage>>,
     ) -> Result<SyntaxSet<UmlLanguage>, AnalysisError> {
-        let snapshot = analysis.syntax.document(document).ok_or_else(|| {
-            AnalysisError::Specialization {
-                name: "uml",
-                reason: "test UML syntax replacement document is missing".into(),
-            }
-        })?;
+        let snapshot =
+            analysis
+                .syntax
+                .document(document)
+                .ok_or_else(|| AnalysisError::Specialization {
+                    name: "uml",
+                    reason: "test UML syntax replacement document is missing".into(),
+                })?;
         if syntax.write_to_string() != snapshot.document().text().shared().as_str() {
             return Err(AnalysisError::Specialization {
                 name: "uml",
@@ -1279,9 +1281,7 @@ fn declared_projection(
                             directions: directions
                                 .iter()
                                 .filter_map(|field| match field {
-                                    crate::uml::DeclaredField::Valid { value, .. } => {
-                                        Some(value.clone())
-                                    }
+                                    crate::uml::DeclaredField::Valid { value, .. } => Some(*value),
                                     _ => None,
                                 })
                                 .collect(),
@@ -1300,14 +1300,12 @@ fn declared_projection(
                             },
                         }),
                         crate::uml::DeclaredField::Valid {
-                            value: crate::uml::DeclaredLayoutStatement::Standalone(operand),
+                            value:
+                                crate::uml::DeclaredLayoutStatement::Standalone(
+                                    crate::uml::DeclaredField::Valid { value, .. },
+                                ),
                             ..
-                        } => match operand {
-                            crate::uml::DeclaredField::Valid { value, .. } => {
-                                Some(crate::layout::LayoutStatement::Standalone(value.clone()))
-                            }
-                            _ => None,
-                        },
+                        } => Some(crate::layout::LayoutStatement::Standalone(value.clone())),
                         _ => None,
                     })
                     .collect(),
@@ -2719,7 +2717,10 @@ fn declared_slot(node: SyntaxNode<UmlLanguage>) -> crate::uml::DeclaredSlot {
         };
     }
     let name = field(syntax.name_token(), crate::uml::ExpectedSyntax::ColonToken);
-    if syntax.colon_token().is_none_or(|t| t.flags().is_missing()) {
+    if syntax
+        .colon_token()
+        .map_or(true, |t| t.flags().is_missing())
+    {
         return crate::uml::DeclaredSlot {
             name,
             value: crate::uml::DeclaredField::Incomplete {
@@ -2845,13 +2846,15 @@ fn declared_relationship(node: SyntaxNode<UmlLanguage>) -> crate::uml::DeclaredR
     let mut from_end = end(syntax.from_end());
     let mut to_end = end(syntax.to_end());
     match (&kind, syntax.colon_token().is_some()) {
-        (crate::uml::DeclaredField::Valid { value, .. }, false)
-            if matches!(
-                value,
-                crate::model::RelationshipKind::Aggregates
-                    | crate::model::RelationshipKind::Composes
-            ) =>
-        {
+        (
+            crate::uml::DeclaredField::Valid {
+                value:
+                    crate::model::RelationshipKind::Aggregates
+                    | crate::model::RelationshipKind::Composes,
+                ..
+            },
+            false,
+        ) => {
             from_end = crate::uml::DeclaredField::Incomplete {
                 syntax: node.clone(),
                 expected: crate::uml::ExpectedSyntax::ValidMultiplicity,
