@@ -358,6 +358,15 @@ fn real_syntax_tree_authority_signatures_and_builders_are_rejected() {
                 }
             }
 
+            struct TreeSlot {
+                tree: Arc<SyntaxTree<UmlLanguage>>,
+            }
+            impl TreeSlot {
+                fn parse_into(&mut self, raw: &str) {
+                    self.tree = external_factory(raw);
+                }
+            }
+
             pub trait ShadowParser {
                 fn trait_entry(text: SharedInput<'_>) -> WrappedTree;
                 fn trait_raw_entry(text: SharedRaw<'_>) -> WrappedTree;
@@ -366,6 +375,25 @@ fn real_syntax_tree_authority_signatures_and_builders_are_rejected() {
                     let _ = text;
                     let _tree = SyntaxTree::<UmlLanguage>::new(unimplemented!());
                     Opaque
+                }
+            }
+            "#,
+        ),
+        (
+            "crates/waml/src/uml/lower.rs",
+            r#"
+            mod shadow {
+                struct UmlLoweringState;
+
+                impl UmlLoweringState {
+                    fn tree(
+                        &self,
+                        bundle: &SourceBundle,
+                        raw: &str,
+                    ) -> Arc<SyntaxTree<UmlLanguage>> {
+                        let _ = bundle;
+                        external_factory(raw)
+                    }
                 }
             }
             "#,
@@ -383,6 +411,7 @@ fn real_syntax_tree_authority_signatures_and_builders_are_rejected() {
         "annotated_local",
         "cast_local",
         "cached_tree_near_match",
+        "parse_into",
         "trait_entry",
         "trait_raw_entry",
         "trait_constructed",
@@ -394,6 +423,14 @@ fn real_syntax_tree_authority_signatures_and_builders_are_rejected() {
             "real authority bypass `{expected}` escaped: {violations:#?}"
         );
     }
+    assert!(
+        violations.iter().any(|violation| {
+            violation
+                .reason
+                .contains("waml::uml::lower::shadow::<UmlLoweringState>::tree")
+        }),
+        "same-file nested cache-owner collision escaped: {violations:#?}"
+    );
 }
 
 #[test]
@@ -1196,6 +1233,106 @@ fn imported_external_to_string_is_not_allowlisted() {
         }),
         "imported external `ToString` escaped the visible serializer guard: {violations:#?}"
     );
+}
+
+#[test]
+fn local_standard_root_names_do_not_acquire_external_trust() {
+    let alloc_violations = reasons(
+        r#"
+        mod alloc {
+            pub mod vec {
+                pub enum Vec {
+                    Sink,
+                }
+            }
+            pub mod string {
+                pub trait ToString {
+                    fn to_string(&self) -> String;
+                }
+            }
+        }
+
+        impl external::Push for alloc::vec::Vec {}
+        impl alloc::string::ToString for Model {
+            fn to_string(&self) -> String {
+                export_model_source(self)
+            }
+        }
+
+        fn alloc_vec_leak(sink: &alloc::vec::Vec, model: &Model) {
+            let rendered = model.to_string();
+            sink.push(rendered);
+        }
+        "#,
+    );
+    let std_violations = reasons(
+        r#"
+        #![no_std]
+
+        mod std {
+            pub mod vec {
+                pub enum Vec {
+                    Sink,
+                }
+            }
+            pub mod string {
+                pub trait ToString {
+                    fn to_string(&self) -> String;
+                }
+            }
+        }
+
+        impl external::Push for std::vec::Vec {}
+        impl std::string::ToString for Model {
+            fn to_string(&self) -> String {
+                export_model_source(self)
+            }
+        }
+
+        fn std_vec_leak(sink: &std::vec::Vec, model: &Model) {
+            let rendered = model.to_string();
+            sink.push(rendered);
+        }
+        "#,
+    );
+    let extern_alias_violations = reasons(
+        r#"
+        extern crate external as alloc;
+
+        impl external::Push for alloc::vec::Vec {}
+        impl alloc::string::ToString for Model {
+            fn to_string(&self) -> String {
+                export_model_source(self)
+            }
+        }
+
+        fn extern_alias_vec_leak(sink: &alloc::vec::Vec, model: &Model) {
+            let rendered = model.to_string();
+            sink.push(rendered);
+        }
+        "#,
+    );
+
+    for (root, violations) in [
+        ("alloc", alloc_violations),
+        ("std", std_violations),
+        ("extern_alias", extern_alias_violations),
+    ] {
+        assert!(
+            violations.iter().any(|reason| {
+                reason.contains(&format!("{root}_vec_leak"))
+                    && reason.contains("unresolved callable dispatch")
+            }),
+            "local `{root}` collection root acquired external trust: {violations:#?}"
+        );
+        assert!(
+            violations.iter().any(|reason| {
+                reason.contains("to_string")
+                    && reason.contains("visible model-to-source capability")
+            }),
+            "local `{root}::string::ToString` acquired external trust: {violations:#?}"
+        );
+    }
 }
 
 #[test]

@@ -406,6 +406,26 @@ impl<'ast, 'env> Visit<'ast> for BodyFacts<'env> {
         visit::visit_expr_cast(self, expression);
     }
 
+    fn visit_expr_assign(&mut self, assignment: &'ast syn::ExprAssign) {
+        if let syn::Expr::Field(field) = unwrap_expression(&assignment.left) {
+            if let Some(owner) = self.expression_type_identity(&field.base) {
+                let name = match &field.member {
+                    syn::Member::Named(name) => name.to_string(),
+                    syn::Member::Unnamed(index) => index.index.to_string(),
+                };
+                if let Some(field_type) = self
+                    .env
+                    .struct_fields
+                    .get(&owner)
+                    .and_then(|fields| fields.get(&name))
+                {
+                    self.body_paths.extend(field_type.paths.iter().cloned());
+                }
+            }
+        }
+        visit::visit_expr_assign(self, assignment);
+    }
+
     fn visit_macro(&mut self, item_macro: &'ast syn::Macro) {
         let name = macro_path(item_macro);
         if !is_harmless_body_macro(&name) {
@@ -1489,8 +1509,14 @@ fn collect_bindings(
         }
         match item {
             Item::Mod(item_mod) => {
+                let name = item_mod.ident.to_string();
+                imports
+                    .entry(module.clone())
+                    .or_default()
+                    .entry(name.clone())
+                    .or_insert_with(|| vec!["self".into(), name.clone()]);
                 if let Some((_, nested)) = &item_mod.content {
-                    let nested_module = module.child(item_mod.ident.to_string());
+                    let nested_module = module.child(name);
                     collect_bindings(nested, &nested_module, imports, aliases);
                 }
             }
@@ -1499,6 +1525,18 @@ fn collect_bindings(
                 &item_use.tree,
                 imports.entry(module.clone()).or_default(),
             ),
+            Item::ExternCrate(item_extern) => {
+                let binding = item_extern
+                    .rename
+                    .as_ref()
+                    .map(|(_, rename)| rename.to_string())
+                    .unwrap_or_else(|| item_extern.ident.to_string());
+                imports
+                    .entry(module.clone())
+                    .or_default()
+                    .entry(binding)
+                    .or_insert_with(|| vec![item_extern.ident.to_string()]);
+            }
             Item::Type(item_type) => {
                 aliases.insert(
                     (module.clone(), item_type.ident.to_string()),
@@ -2778,8 +2816,13 @@ fn summary_is_raw_grammar_entry(
     let output_names =
         resolved_type_names(&summary.id.module, &summary.output_paths, aliases, imports);
     let body_names = resolved_type_names(&summary.id.module, &summary.body_paths, aliases, imports);
+    let exact_cached_tree_owner = summary.owner_type.as_ref().is_some_and(|owner| {
+        owner.name == "UmlLoweringState"
+            && owner.module == summary.id.module
+            && owner.module.display() == "waml::uml::lower"
+    });
     let cached_tree_lookup = summary.path == "crates/waml/src/uml/lower.rs"
-        && summary.id.owner.as_deref() == Some("UmlLoweringState")
+        && exact_cached_tree_owner
         && summary.id.name == "tree"
         && summary.has_receiver
         && input_names.contains("SourceBundle")
@@ -3284,13 +3327,19 @@ fn resolve_type_path(
     imports: &Imports,
 ) -> (ModuleIdentity, String) {
     let name = path.last().cloned().unwrap_or_default();
-    if path.len() == 1 {
+    if let Some(first) = path.first() {
         if let Some(imported) = imports
             .get(context)
-            .and_then(|bindings| bindings.get(&name))
+            .and_then(|bindings| bindings.get(first))
         {
-            return resolve_type_path(context, imported, imports);
+            let mut expanded = imported.clone();
+            expanded.extend(path[1..].iter().cloned());
+            if expanded != path {
+                return resolve_type_path(context, &expanded, imports);
+            }
         }
+    }
+    if path.len() == 1 {
         return (context.clone(), name);
     }
     let mut module = context.clone();
