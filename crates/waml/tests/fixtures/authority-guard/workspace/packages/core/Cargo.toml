@@ -7,6 +7,10 @@ build = "tools/custom_build.rs"
 [lib]
 path = "source/root.rs"
 
+[[bin]]
+name = "custom-bin"
+path = "targets/custom_bin.rs"
+
 [[example]]
 name = "custom-example"
 path = "targets/custom_example.rs"

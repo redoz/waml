@@ -90,11 +90,19 @@ fn cargo_metadata_and_module_graph_cover_every_production_source_shape() {
         .collect::<Vec<_>>();
 
     for expected in [
+        "packages/core/source/root.rs",
         "packages/core/source/nested.rs",
+        "packages/core/source/lib_authority.rs",
         "packages/core/shared/path_module.rs",
         "packages/core/shared/included.rs",
+        "packages/core/shared/body_included.rs",
+        "packages/core/shared/body_expression.rs",
+        "packages/core/targets/custom_bin.rs",
+        "packages/core/targets/bin_authority.rs",
         "packages/core/targets/custom_example.rs",
+        "packages/core/targets/example_authority.rs",
         "packages/core/tools/custom_build.rs",
+        "packages/core/tools/build_authority.rs",
         "../outside-member/custom/lib_entry.rs",
     ] {
         assert!(
@@ -109,6 +117,23 @@ fn cargo_metadata_and_module_graph_cover_every_production_source_shape() {
         "dynamic/generated include policy was not enforced: {violations:#?}"
     );
     assert!(
+        violations
+            .iter()
+            .any(|violation| violation.reason.contains("body_included_shadow")),
+        "function-body include authority escaped: {violations:#?}"
+    );
+    assert!(
+        violations.iter().any(|violation| {
+            violation
+                .path
+                .ends_with("packages/core/shared/body_expression.rs")
+                && violation
+                    .reason
+                    .contains("context-dependent function-body include")
+        }),
+        "context-dependent body include did not fail closed: {violations:#?}"
+    );
+    assert!(
         violations.iter().any(|violation| {
             violation
                 .reason
@@ -116,6 +141,44 @@ fn cargo_metadata_and_module_graph_cover_every_production_source_shape() {
         }),
         "workspace dependency direction was not enforced: {violations:#?}"
     );
+
+    for (path, caller) in [
+        ("packages/core/source/root.rs", "lib_route"),
+        ("packages/core/targets/custom_bin.rs", "bin_route"),
+        ("packages/core/targets/custom_example.rs", "example_route"),
+        ("packages/core/tools/custom_build.rs", "build_route"),
+    ] {
+        assert!(
+            violations.iter().any(|violation| {
+                violation.path.ends_with(path)
+                    && violation.reason.contains(caller)
+                    && violation.reason.contains("reaches shadow authority")
+            }),
+            "target-scoped `crate::` call for {caller} was not propagated: {violations:#?}"
+        );
+    }
+}
+
+#[test]
+fn cargo_target_crate_roots_preserve_cross_module_crate_resolution() {
+    let violations =
+        analyze_workspace(&fixture_workspace("workspace")).expect("analyze fixture workspace");
+
+    for (path, caller) in [
+        ("packages/core/source/root.rs", "lib_route"),
+        ("packages/core/targets/custom_bin.rs", "bin_route"),
+        ("packages/core/targets/custom_example.rs", "example_route"),
+        ("packages/core/tools/custom_build.rs", "build_route"),
+    ] {
+        assert!(
+            violations.iter().any(|violation| {
+                violation.path.ends_with(path)
+                    && violation.reason.contains(caller)
+                    && violation.reason.contains("reaches shadow authority")
+            }),
+            "target-scoped `crate::` call for {caller} was not propagated: {violations:#?}"
+        );
+    }
 }
 
 #[test]
@@ -194,6 +257,79 @@ fn differently_named_and_pub_super_helpers_are_rejected() {
 }
 
 #[test]
+fn real_syntax_tree_authority_signatures_and_builders_are_rejected() {
+    let violations = analyze_sources([
+        (
+            "crates/waml/src/types.rs",
+            r#"
+            type SharedInput<'a> = &'a SourceText;
+            type ProtectedTree = Arc<SyntaxTree<UmlLanguage>>;
+            type WrappedTree = Result<Box<ProtectedTree>, Error>;
+            type TreeSink = Option<ProtectedTree>;
+            struct TreeBuilder<L>(core::marker::PhantomData<L>);
+            "#,
+        ),
+        (
+            "crates/waml/src/uml/compat.rs",
+            r#"
+            use crate::types::{SharedInput, TreeBuilder, TreeSink, WrappedTree};
+
+            fn direct(text: SourceText) -> Arc<SyntaxTree<UmlLanguage>> {
+                let _ = text;
+                unimplemented!()
+            }
+
+            fn imported_alias(text: SharedInput<'_>) -> WrappedTree {
+                let _ = text;
+                unimplemented!()
+            }
+
+            fn output_parameter(text: &SourceText, output: &mut TreeSink) {
+                let _ = (text, output);
+            }
+
+            fn builder_output(text: SourceText, builder: &mut TreeBuilder<UmlLanguage>) {
+                let _ = (text, builder);
+            }
+
+            fn constructed(text: SourceText) -> Opaque {
+                let _ = text;
+                let _tree = SyntaxTree::<UmlLanguage>::new(unimplemented!());
+                Opaque
+            }
+
+            pub trait ShadowParser {
+                fn trait_entry(text: SharedInput<'_>) -> WrappedTree;
+
+                fn trait_constructed(text: SourceText) -> Opaque {
+                    let _ = text;
+                    let _tree = SyntaxTree::<UmlLanguage>::new(unimplemented!());
+                    Opaque
+                }
+            }
+            "#,
+        ),
+    ]);
+
+    for expected in [
+        "direct",
+        "imported_alias",
+        "output_parameter",
+        "builder_output",
+        "constructed",
+        "trait_entry",
+        "trait_constructed",
+    ] {
+        assert!(
+            violations
+                .iter()
+                .any(|violation| violation.reason.contains(expected)),
+            "real authority bypass `{expected}` escaped: {violations:#?}"
+        );
+    }
+}
+
+#[test]
 fn closure_and_call_indirection_are_rejected() {
     let violations = reasons(
         r#"
@@ -221,6 +357,124 @@ fn closure_and_call_indirection_are_rejected() {
             .any(|reason| reason.contains("route_through_helper")),
         "{violations:#?}"
     );
+}
+
+#[test]
+fn call_edges_propagate_reparse_through_resolved_and_unresolved_dispatch() {
+    let violations = reasons(
+        r#"
+        fn raw_authority(text: SourceText) -> Arc<SyntaxTree<UmlLanguage>> {
+            let _ = text;
+            unimplemented!()
+        }
+
+        fn free_dispatch(raw: String) -> Analysis {
+            let _tree = raw_authority(SourceText::from(raw));
+            Analysis
+        }
+
+        struct Decoder;
+        impl Decoder {
+            fn decode(&self, raw: String) -> Analysis {
+                let _tree = raw_authority(SourceText::from(raw));
+                Analysis
+            }
+        }
+
+        trait Decode {
+            fn route(&self, raw: String) -> Analysis;
+        }
+        impl Decode for Decoder {
+            fn route(&self, raw: String) -> Analysis {
+                let _tree = raw_authority(SourceText::from(raw));
+                Analysis
+            }
+        }
+
+        type Parser = fn(String) -> Analysis;
+        struct Services {
+            decoder: Decoder,
+            callable: Parser,
+        }
+        impl Services {
+            fn decoder(&self) -> &Decoder {
+                &self.decoder
+            }
+        }
+
+        fn function_pointer(model: &Model) -> Analysis {
+            let rendered = model.to_string();
+            let callable: Parser = free_dispatch;
+            callable(rendered)
+        }
+
+        fn field_receiver(services: &Services, model: &Model) -> Analysis {
+            let rendered = model.to_string();
+            services.decoder.decode(rendered)
+        }
+
+        fn trait_receiver(decoder: &dyn Decode, model: &Model) -> Analysis {
+            let rendered = model.to_string();
+            decoder.route(rendered)
+        }
+
+        fn callable_field(services: &Services, model: &Model) -> Analysis {
+            let rendered = model.to_string();
+            (services.callable)(rendered)
+        }
+
+        fn chained_dispatch(services: &Services, model: &Model) -> Analysis {
+            let rendered = model.to_string();
+            services.decoder().decode(rendered)
+        }
+
+        fn unrelated_callable(callable: fn(&str) -> String, label: &str) -> String {
+            callable(label)
+        }
+
+        fn unrelated_domain_helper(model: &Model) -> Analysis {
+            inspect_model(model)
+        }
+        "#,
+    );
+
+    for expected in [
+        "function_pointer",
+        "field_receiver",
+        "trait_receiver",
+        "chained_dispatch",
+    ] {
+        let matching = violations
+            .iter()
+            .filter(|reason| reason.contains(expected))
+            .collect::<Vec<_>>();
+        assert!(
+            !matching.is_empty(),
+            "dispatch bypass `{expected}` escaped: {violations:#?}"
+        );
+        assert!(
+            matching
+                .iter()
+                .any(|reason| reason.contains("model-to-source reparse")),
+            "`{expected}` was not rejected through resolved call-edge capability propagation: {matching:#?}"
+        );
+    }
+    let callable_field = violations
+        .iter()
+        .filter(|reason| reason.contains("callable_field"))
+        .collect::<Vec<_>>();
+    assert!(
+        callable_field
+            .iter()
+            .any(|reason| reason.contains("unresolved callable dispatch")),
+        "callable-field model text was not rejected through the unresolved-call edge: {callable_field:#?}"
+    );
+    for control in ["unrelated_callable", "unrelated_domain_helper"] {
+        assert!(
+            violations.iter().all(|reason| !reason.contains(control)),
+            "legitimate control `{control}` was rejected: {violations:#?}"
+        );
+    }
 }
 
 #[test]
@@ -309,6 +563,105 @@ fn macro_generated_shadow_authority_is_rejected() {
             .iter()
             .any(|reason| reason.contains("opaque macro")),
         "{violations:#?}"
+    );
+}
+
+#[test]
+fn body_macros_and_external_proc_macros_cannot_expand_authority() {
+    let body_macro_violations = reasons(
+        r#"
+        fn statement_macro(text: SourceText) -> Opaque {
+            external_authority!(text);
+            Opaque
+        }
+
+        fn expression_macro(text: SourceText) -> Opaque {
+            let _expanded = external_authority!(text);
+            Opaque
+        }
+
+        macro_rules! expands_real_authority {
+            () => {
+                fn generated(text: SourceText) -> Arc<SyntaxTree<UmlLanguage>> {
+                    let _ = text;
+                    unimplemented!()
+                }
+            };
+        }
+        expands_real_authority!();
+        "#,
+    );
+    for expected in [
+        "statement_macro",
+        "expression_macro",
+        "expands_real_authority",
+    ] {
+        assert!(
+            body_macro_violations
+                .iter()
+                .any(|reason| reason.contains(expected)),
+            "body/macro-expanded authority `{expected}` escaped: {body_macro_violations:#?}"
+        );
+    }
+
+    let proc_macro_violations = analyze_sources([
+        (
+            "crates/waml/src/uml/syntax/attribute_generated.rs",
+            r#"
+            #[external::authority]
+            fn generated(text: SourceText) -> Arc<SyntaxTree<UmlLanguage>> {
+                let _ = text;
+                unimplemented!()
+            }
+            "#,
+        ),
+        (
+            "crates/waml/src/uml/syntax/derive_generated.rs",
+            r#"
+            #[derive(Clone, external::Authority)]
+            struct Generated;
+            "#,
+        ),
+        (
+            "crates/waml/src/uml/syntax/function_generated.rs",
+            r#"
+            external::generate_authority! {
+                fn generated(text: SourceText) -> Arc<SyntaxTree<UmlLanguage>>;
+            }
+
+            fn host(text: SourceText) {
+                let _ = external::parse_authority!(text);
+            }
+            "#,
+        ),
+    ]);
+    for expected in [
+        "external::authority",
+        "external::Authority",
+        "external::generate_authority",
+        "external::parse_authority",
+    ] {
+        assert!(
+            proc_macro_violations
+                .iter()
+                .any(|violation| violation.reason.contains(expected)),
+            "external authority proc macro `{expected}` escaped: {proc_macro_violations:#?}"
+        );
+    }
+
+    let harmless = analyze_sources([(
+        "crates/waml/src/uml/syntax/harmless.rs",
+        r#"
+        #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+        struct Harmless;
+
+        #[allow(dead_code)]
+        fn helper() {}
+        "#,
+    )]);
+    assert!(
+        harmless.is_empty(),
+        "harmless authority attributes were rejected: {harmless:#?}"
     );
 }
 
@@ -486,6 +839,105 @@ fn visible_model_to_source_capability_is_rejected_but_private_rendering_is_allow
         "{visible:#?}"
     );
     assert!(private.is_empty(), "{private:#?}");
+}
+
+#[test]
+fn visible_semantic_model_self_and_concrete_owner_surfaces_are_rejected() {
+    let violations = reasons(
+        r#"
+        impl Model {
+            pub fn export(&self) -> String {
+                String::new()
+            }
+        }
+        impl Diagram {
+            pub(super) fn export_diagram(&self) -> Box<str> {
+                unimplemented!()
+            }
+            fn private_label(&self) -> String {
+                String::new()
+            }
+        }
+        impl Node {
+            pub fn export_node(&self) -> Arc<String> {
+                unimplemented!()
+            }
+        }
+        impl Edge {
+            pub fn export_edge(&self) -> Result<String, Error> {
+                unimplemented!()
+            }
+        }
+        impl Attribute {
+            pub fn export_attribute(&self) -> String {
+                String::new()
+            }
+        }
+        impl Slot {
+            pub fn export_slot(&self) -> String {
+                String::new()
+            }
+        }
+        impl ActivityNode {
+            pub fn export_activity(&self) -> String {
+                String::new()
+            }
+        }
+        impl FlowEdge {
+            pub fn export_flow_edge(&self) -> String {
+                String::new()
+            }
+        }
+        impl SequenceDoc {
+            pub fn export_sequence(&self) -> String {
+                String::new()
+            }
+        }
+        impl RelEnd {
+            pub fn export_relation_end(&self) -> String {
+                String::new()
+            }
+        }
+
+        pub fn export_typed_diagram(diagram: &Diagram) -> String {
+            let _ = diagram;
+            String::new()
+        }
+
+        impl ToString for Model {
+            fn to_string(&self) -> String {
+                String::new()
+            }
+        }
+        "#,
+    );
+
+    for expected in [
+        "export",
+        "export_diagram",
+        "export_node",
+        "export_edge",
+        "export_attribute",
+        "export_slot",
+        "export_activity",
+        "export_flow_edge",
+        "export_sequence",
+        "export_relation_end",
+        "export_typed_diagram",
+    ] {
+        assert!(
+            violations.iter().any(|reason| {
+                reason.contains(expected) && reason.contains("visible model-to-source capability")
+            }),
+            "visible semantic owner `{expected}` escaped: {violations:#?}"
+        );
+    }
+    for control in ["private_label", "to_string"] {
+        assert!(
+            violations.iter().all(|reason| !reason.contains(control)),
+            "legitimate semantic text control `{control}` was rejected: {violations:#?}"
+        );
+    }
 }
 
 #[test]
