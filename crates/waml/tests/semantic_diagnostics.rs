@@ -12,6 +12,14 @@ fn diagnostics(
         .to_vec()
 }
 
+fn prepared(
+    documents: impl IntoIterator<Item = (&'static str, &'static str)>,
+    session_revision: u64,
+) -> waml::analysis::PreparedCandidate {
+    let source = SourceBundle::try_from_pairs(documents).unwrap();
+    waml::analysis::prepare_candidate(source, None, session_revision).unwrap()
+}
+
 fn exact<'a>(
     found: &'a [waml::diagnostic::Diagnostic],
     code: DiagCode,
@@ -285,38 +293,95 @@ fn conformant_inline_instance_has_no_instance_diagnostics() {
 }
 
 #[test]
-fn layout_resolution_matrix_covers_relative_unique_ambiguous_and_unknown_refs() {
-    let found = diagnostics([
-        (
-            "views/d.md",
-            "---\ntype: Diagram\n---\n# D\n\n## Layout\n- [Order](../domain/order.md)\n- Customer\n- Missing\n- Order\n",
-        ),
-        (
-            "domain/order.md",
-            "---\ntype: uml.Class\n---\n# Order\n",
-        ),
-        (
-            "domain/customer.md",
-            "---\ntype: uml.Class\n---\n# Customer\n",
-        ),
-        (
-            "archive/order.md",
-            "---\ntype: uml.Class\n---\n# Archived Order\n",
-        ),
-    ]);
-    let warnings = found
+fn layout_resolution_provenance_is_exact_for_missing_and_ambiguous_refs() {
+    let diagram = "---\r\ntype: Diagram\r\n---\r\n# Café\r\n\r\n## Layout\r\n- [Order](../domain/order.md)\r\n- Customer\r\n- Missing\r\n- Order\r\n";
+    let analysis = prepared(
+        [
+            (
+                "archive/order.md",
+                "---\ntype: uml.Class\n---\n# Archived Order\n",
+            ),
+            (
+                "domain/customer.md",
+                "---\ntype: uml.Class\n---\n# Customer\n",
+            ),
+            ("domain/order.md", "---\ntype: uml.Class\n---\n# Order\n"),
+            ("views/d.md", diagram),
+        ],
+        73,
+    );
+    assert_eq!(analysis.revision(), 73);
+    assert_eq!(analysis.okf().catalog.session_revision(), 73);
+    assert_eq!(analysis.uml().session_revision(), 73);
+
+    let warnings = analysis
+        .uml()
+        .diagnostics
         .iter()
         .filter(|diagnostic| diagnostic.code == DiagCode::UnresolvedLayoutRef)
         .collect::<Vec<_>>();
-    assert_eq!(warnings.len(), 2, "{found:#?}");
-    assert!(warnings.iter().any(|diagnostic| {
-        diagnostic.message == "layout operand 'Missing' resolves no member group"
-            && diagnostic.severity == Severity::Warning
-    }));
-    assert!(warnings.iter().any(|diagnostic| {
-        diagnostic.message == "layout operand 'Order' resolves no member group"
-            && diagnostic.severity == Severity::Warning
-    }));
+    assert_eq!(warnings.len(), 2, "{:#?}", analysis.uml().diagnostics);
+
+    for (message, line, span, absolute_range, authored) in [
+        (
+            "layout operand 'Missing' resolves no member group",
+            9,
+            (1, 9),
+            (91, 99),
+            " Missing",
+        ),
+        (
+            "layout operand 'Order' resolves no member group",
+            10,
+            (1, 7),
+            (102, 108),
+            " Order",
+        ),
+    ] {
+        let diagnostic = exact(
+            &analysis.uml().diagnostics,
+            DiagCode::UnresolvedLayoutRef,
+            message,
+        );
+        assert_eq!(diagnostic.file, "views/d.md");
+        assert_eq!(diagnostic.line, line);
+        assert_eq!(diagnostic.span, Some(span));
+        assert_eq!(diagnostic.severity, Severity::Warning);
+        assert_eq!(diagnostic.code, DiagCode::UnresolvedLayoutRef);
+        assert_eq!(diagnostic.message, message);
+        assert_eq!(format!("{:?}", diagnostic.document), "Some(DocumentId(3))");
+        assert_eq!(
+            format!("{:?}", diagnostic.document_revision),
+            "Some(DocumentRevision(1))"
+        );
+        let range = diagnostic.range.expect("layout diagnostic absolute range");
+        assert_eq!(
+            (range.start().to_usize(), range.end().to_usize()),
+            absolute_range
+        );
+        assert_eq!(
+            &diagram[absolute_range.0..absolute_range.1],
+            authored,
+            "CRLF and UTF-8 byte offsets must remain source-exact"
+        );
+
+        let document = analysis
+            .okf()
+            .catalog
+            .document(diagnostic.document.expect("document identity"))
+            .expect("diagnostic document");
+        assert_eq!(document.path().as_str(), "views/d.md");
+        assert_eq!(format!("{:?}", document.id()), "DocumentId(3)");
+        assert_eq!(format!("{:?}", document.revision()), "DocumentRevision(1)");
+    }
+
+    assert!(
+        warnings.iter().all(|diagnostic| {
+            !diagnostic.message.contains("../domain/order.md")
+                && !diagnostic.message.contains("Customer")
+        }),
+        "relative link and unique basename are clean controls: {warnings:#?}"
+    );
 }
 
 #[test]

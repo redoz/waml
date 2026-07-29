@@ -814,14 +814,14 @@ fn validate_declared_semantics(
             let crate::uml::DeclaredField::Valid { value, syntax } = layout else {
                 continue;
             };
-            for operand in declared_layout_operands(value) {
+            for (operand, operand_syntax) in declared_layout_operands(value) {
                 let mut unresolved = Vec::new();
                 collect_unresolved_layout_refs(operand, path, &claimed, &groups, &mut unresolved);
                 for name in unresolved {
                     diagnostics.push(declared_diagnostic(
                         context,
                         path,
-                        syntax,
+                        operand_syntax,
                         crate::diagnostic::DiagCode::UnresolvedLayoutRef,
                         format!("layout operand '{name}' resolves no member group"),
                         true,
@@ -933,24 +933,26 @@ fn collect_declared_group_names(
 
 fn declared_layout_operands(
     statement: &crate::uml::DeclaredLayoutStatement,
-) -> Vec<&crate::layout::Operand> {
+) -> Vec<(&crate::layout::Operand, &SyntaxNode<UmlLanguage>)> {
     match statement {
         crate::uml::DeclaredLayoutStatement::Placement { operands, .. } => operands
             .iter()
             .filter_map(|operand| match operand {
-                crate::uml::DeclaredField::Valid { value, .. } => Some(value),
+                crate::uml::DeclaredField::Valid { value, syntax } => Some((value, syntax)),
                 _ => None,
             })
             .collect(),
         crate::uml::DeclaredLayoutStatement::Alignment { left, right } => [left, right]
             .into_iter()
             .filter_map(|anchored| match anchored {
-                crate::uml::DeclaredField::Valid { value, .. } => Some(&value.operand),
+                crate::uml::DeclaredField::Valid { value, syntax } => {
+                    Some((&value.operand, syntax))
+                }
                 _ => None,
             })
             .collect(),
         crate::uml::DeclaredLayoutStatement::Standalone(operand) => match operand {
-            crate::uml::DeclaredField::Valid { value, .. } => vec![value],
+            crate::uml::DeclaredField::Valid { value, syntax } => vec![(value, syntax)],
             _ => Vec::new(),
         },
     }
