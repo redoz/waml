@@ -2866,6 +2866,87 @@ script_mod! {
         }
     }
 
+    // File text: a document with a folded top-right corner and text rows.
+    // Faithful port of resources/icons/file-text.svg via scripts/gen-icon.py.
+    mod.draw.IconFileText = mod.draw.DrawColor{
+        pixel: fn() {
+            let s = self.rect_size.x
+            let w = s * 0.068
+            let sdf = Sdf2d.viewport(self.pos * self.rect_size)
+            sdf.move_to(s * 0.4167, s * 0.3750)
+            sdf.line_to(s * 0.3333, s * 0.3750)
+            sdf.stroke(self.color, w)
+            sdf.move_to(s * 0.5833, s * 0.0833)
+            sdf.line_to(s * 0.5833, s * 0.2917)
+            sdf.arc_to(s * 0.6250, s * 0.2917, s * 0.0417, 3.1416, 1.5708)
+            sdf.line_to(s * 0.8333, s * 0.3333)
+            sdf.stroke(self.color, w)
+            sdf.move_to(s * 0.6667, s * 0.5417)
+            sdf.line_to(s * 0.3333, s * 0.5417)
+            sdf.stroke(self.color, w)
+            sdf.move_to(s * 0.6667, s * 0.7083)
+            sdf.line_to(s * 0.3333, s * 0.7083)
+            sdf.stroke(self.color, w)
+            sdf.move_to(s * 0.2500, s * 0.9167)
+            sdf.arc_to(s * 0.2500, s * 0.8333, s * 0.0833, 1.5708, 3.1416)
+            sdf.line_to(s * 0.1667, s * 0.1667)
+            sdf.arc_to(s * 0.2500, s * 0.1667, s * 0.0833, 3.1416, 4.7124)
+            sdf.line_to(s * 0.5833, s * 0.0833)
+            sdf.arc_to(s * 0.5835, s * 0.1833, s * 0.1000, -1.5724, -0.7836)
+            sdf.line_to(s * 0.8038, s * 0.2623)
+            sdf.arc_to(s * 0.7333, s * 0.3332, s * 0.1000, -0.7884, 0.0016)
+            sdf.line_to(s * 0.8333, s * 0.8333)
+            sdf.arc_to(s * 0.7500, s * 0.8333, s * 0.0833, 0.0000, 1.5708)
+            sdf.close_path()
+            sdf.stroke(self.color, w)
+            return sdf.result
+        }
+    }
+
+    // File braces: a document with a folded top-right corner and brace pair.
+    // Faithful port of resources/icons/file-braces.svg via scripts/gen-icon.py.
+    mod.draw.IconFileBraces = mod.draw.DrawColor{
+        pixel: fn() {
+            let s = self.rect_size.x
+            let w = s * 0.068
+            let sdf = Sdf2d.viewport(self.pos * self.rect_size)
+            sdf.move_to(s * 0.2500, s * 0.9167)
+            sdf.arc_to(s * 0.2500, s * 0.8333, s * 0.0833, 1.5708, 3.1416)
+            sdf.line_to(s * 0.1667, s * 0.1667)
+            sdf.arc_to(s * 0.2500, s * 0.1667, s * 0.0833, 3.1416, 4.7124)
+            sdf.line_to(s * 0.5833, s * 0.0833)
+            sdf.arc_to(s * 0.5835, s * 0.1833, s * 0.1000, -1.5724, -0.7836)
+            sdf.line_to(s * 0.8038, s * 0.2623)
+            sdf.arc_to(s * 0.7333, s * 0.3332, s * 0.1000, -0.7884, 0.0016)
+            sdf.line_to(s * 0.8333, s * 0.8333)
+            sdf.arc_to(s * 0.7500, s * 0.8333, s * 0.0833, 0.0000, 1.5708)
+            sdf.close_path()
+            sdf.stroke(self.color, w)
+            sdf.move_to(s * 0.5833, s * 0.0833)
+            sdf.line_to(s * 0.5833, s * 0.2917)
+            sdf.arc_to(s * 0.6250, s * 0.2917, s * 0.0417, 3.1416, 1.5708)
+            sdf.line_to(s * 0.8333, s * 0.3333)
+            sdf.stroke(self.color, w)
+            sdf.move_to(s * 0.4167, s * 0.5000)
+            sdf.arc_to(s * 0.4167, s * 0.5417, s * 0.0417, -1.5708, -3.1416)
+            sdf.line_to(s * 0.3750, s * 0.5833)
+            sdf.arc_to(s * 0.3333, s * 0.5833, s * 0.0417, 0.0000, 1.5708)
+            sdf.arc_to(s * 0.3333, s * 0.6667, s * 0.0417, -1.5708, 0.0000)
+            sdf.line_to(s * 0.3750, s * 0.7083)
+            sdf.arc_to(s * 0.4167, s * 0.7083, s * 0.0417, 3.1416, 1.5708)
+            sdf.stroke(self.color, w)
+            sdf.move_to(s * 0.5833, s * 0.7500)
+            sdf.arc_to(s * 0.5833, s * 0.7083, s * 0.0417, 1.5708, 0.0000)
+            sdf.line_to(s * 0.6250, s * 0.6667)
+            sdf.arc_to(s * 0.6667, s * 0.6667, s * 0.0417, 3.1416, 4.7124)
+            sdf.arc_to(s * 0.6667, s * 0.5833, s * 0.0417, 1.5708, 3.1416)
+            sdf.line_to(s * 0.6250, s * 0.5417)
+            sdf.arc_to(s * 0.5833, s * 0.5417, s * 0.0417, 0.0000, -1.5708)
+            sdf.stroke(self.color, w)
+            return sdf.result
+        }
+    }
+
     // List: three bullet dots + three rows.
     // Faithful port of resources/icons/list.svg via scripts/gen-icon.py.
     mod.draw.IconList = mod.draw.DrawColor{
@@ -3636,6 +3717,8 @@ script_mod! {
         vector_square: mod.draw.IconVectorSquare{ color: atlas.accent }
         door_closed: mod.draw.IconDoorClosed{ color: atlas.accent }
         sticky_note: mod.draw.IconStickyNote{ color: atlas.accent }
+        file_text: mod.draw.IconFileText{ color: atlas.accent }
+        file_braces: mod.draw.IconFileBraces{ color: atlas.accent }
         list: mod.draw.IconList{ color: atlas.accent }
         braces: mod.draw.IconBraces{ color: atlas.accent }
         workflow: mod.draw.IconWorkflow{ color: atlas.accent }
@@ -3833,6 +3916,10 @@ pub struct IconSet {
     #[live]
     pub sticky_note: DrawColor,
     #[live]
+    pub file_text: DrawColor,
+    #[live]
+    pub file_braces: DrawColor,
+    #[live]
     pub list: DrawColor,
     #[live]
     pub braces: DrawColor,
@@ -3978,6 +4065,8 @@ impl IconSet {
             Icon::VectorSquare => &mut self.vector_square,
             Icon::DoorClosed => &mut self.door_closed,
             Icon::StickyNote => &mut self.sticky_note,
+            Icon::FileText => &mut self.file_text,
+            Icon::FileBraces => &mut self.file_braces,
             Icon::List => &mut self.list,
             Icon::Braces => &mut self.braces,
             Icon::Workflow => &mut self.workflow,
@@ -4104,6 +4193,8 @@ pub enum Icon {
     VectorSquare,
     DoorClosed,
     StickyNote,
+    FileText,
+    FileBraces,
     List,
     Braces,
     Workflow,
@@ -4137,7 +4228,7 @@ pub enum Icon {
 impl Icon {
     /// Every glyph, in field order. The single source of glyph identity; the
     /// `icon_harness` proof grid iterates this.
-    pub const ALL: [Icon; 108] = [
+    pub const ALL: [Icon; 110] = [
         Icon::Package,
         Icon::Message,
         Icon::PackagePlus,
@@ -4219,6 +4310,8 @@ impl Icon {
         Icon::VectorSquare,
         Icon::DoorClosed,
         Icon::StickyNote,
+        Icon::FileText,
+        Icon::FileBraces,
         Icon::List,
         Icon::Braces,
         Icon::Workflow,
@@ -4333,6 +4426,8 @@ impl Icon {
             Icon::VectorSquare => "vector-square",
             Icon::DoorClosed => "door-closed",
             Icon::StickyNote => "sticky-note",
+            Icon::FileText => "file-text",
+            Icon::FileBraces => "file-braces",
             Icon::List => "list",
             Icon::Braces => "braces",
             Icon::Workflow => "workflow",
@@ -4369,39 +4464,41 @@ mod tests {
     use super::*;
 
     #[test]
-    fn icon_all_has_100_entries() {
-        assert_eq!(Icon::ALL.len(), 108);
+    fn icon_all_has_110_entries() {
+        assert_eq!(Icon::ALL.len(), 110);
     }
 
     #[test]
     fn icon_all_is_in_field_order_at_the_edges() {
         assert_eq!(Icon::ALL[0], Icon::Package);
         assert_eq!(Icon::ALL[1], Icon::Message);
-        assert_eq!(Icon::ALL[85], Icon::ArrowLeftRight);
-        assert_eq!(Icon::ALL[86], Icon::Folder);
-        assert_eq!(Icon::ALL[87], Icon::FolderClosed);
-        assert_eq!(Icon::ALL[88], Icon::DoorOpen);
-        assert_eq!(Icon::ALL[89], Icon::Search);
-        assert_eq!(Icon::ALL[90], Icon::MessageSquareWarning);
-        assert_eq!(Icon::ALL[91], Icon::Group);
-        assert_eq!(Icon::ALL[92], Icon::ListTree);
-        assert_eq!(Icon::ALL[93], Icon::InspectionPanel);
+        assert_eq!(Icon::ALL[81], Icon::FileText);
+        assert_eq!(Icon::ALL[82], Icon::FileBraces);
+        assert_eq!(Icon::ALL[87], Icon::ArrowLeftRight);
+        assert_eq!(Icon::ALL[88], Icon::Folder);
+        assert_eq!(Icon::ALL[89], Icon::FolderClosed);
+        assert_eq!(Icon::ALL[90], Icon::DoorOpen);
+        assert_eq!(Icon::ALL[91], Icon::Search);
+        assert_eq!(Icon::ALL[92], Icon::MessageSquareWarning);
+        assert_eq!(Icon::ALL[93], Icon::Group);
+        assert_eq!(Icon::ALL[94], Icon::ListTree);
+        assert_eq!(Icon::ALL[95], Icon::InspectionPanel);
         // View-bar glyphs, appended in ViewOption layout order.
-        assert_eq!(Icon::ALL[94], Icon::ZoomIn);
-        assert_eq!(Icon::ALL[95], Icon::ZoomOut);
-        assert_eq!(Icon::ALL[96], Icon::Maximize);
-        assert_eq!(Icon::ALL[97], Icon::ScanSearch);
-        assert_eq!(Icon::ALL[98], Icon::SquareDashed);
-        assert_eq!(Icon::ALL[99], Icon::Ruler);
+        assert_eq!(Icon::ALL[96], Icon::ZoomIn);
+        assert_eq!(Icon::ALL[97], Icon::ZoomOut);
+        assert_eq!(Icon::ALL[98], Icon::Maximize);
+        assert_eq!(Icon::ALL[99], Icon::ScanSearch);
+        assert_eq!(Icon::ALL[100], Icon::SquareDashed);
+        assert_eq!(Icon::ALL[101], Icon::Ruler);
         // Directional arrow glyphs, appended in clockwise order from up.
-        assert_eq!(Icon::ALL[100], Icon::ArrowUp);
-        assert_eq!(Icon::ALL[101], Icon::ArrowUpRight);
-        assert_eq!(Icon::ALL[102], Icon::ArrowRight);
-        assert_eq!(Icon::ALL[103], Icon::ArrowDownRight);
-        assert_eq!(Icon::ALL[104], Icon::ArrowDown);
-        assert_eq!(Icon::ALL[105], Icon::ArrowDownLeft);
-        assert_eq!(Icon::ALL[106], Icon::ArrowLeft);
-        assert_eq!(Icon::ALL[107], Icon::ArrowUpLeft);
+        assert_eq!(Icon::ALL[102], Icon::ArrowUp);
+        assert_eq!(Icon::ALL[103], Icon::ArrowUpRight);
+        assert_eq!(Icon::ALL[104], Icon::ArrowRight);
+        assert_eq!(Icon::ALL[105], Icon::ArrowDownRight);
+        assert_eq!(Icon::ALL[106], Icon::ArrowDown);
+        assert_eq!(Icon::ALL[107], Icon::ArrowDownLeft);
+        assert_eq!(Icon::ALL[108], Icon::ArrowLeft);
+        assert_eq!(Icon::ALL[109], Icon::ArrowUpLeft);
     }
 
     #[test]
@@ -4423,7 +4520,7 @@ mod tests {
             assert!(!l.is_empty(), "empty label for {icon:?}");
             assert!(seen.insert(l), "duplicate label {l:?}");
         }
-        assert_eq!(seen.len(), 108);
+        assert_eq!(seen.len(), 110);
     }
 
     #[test]

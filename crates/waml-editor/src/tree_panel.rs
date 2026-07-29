@@ -284,7 +284,7 @@ impl IconSet {
             TreeKind::Enum => Icon::List,
             TreeKind::DataType => Icon::Braces,
             TreeKind::Directory => Icon::Folder,
-            TreeKind::OkfDocument => Icon::StickyNote,
+            TreeKind::OkfDocument => Icon::FileText,
             TreeKind::Diagram => Icon::Workflow,
             TreeKind::Behavior => Icon::Activity,
             TreeKind::Sequence => Icon::ArrowLeftRight,
@@ -1916,8 +1916,8 @@ mod icon_map_tests {
         );
         assert_eq!(IconSet::icon_for(TreeKind::Note), Some(Icon::StickyNote));
         assert_eq!(
-            IconSet::icon_for(TreeKind::OkfDocument),
-            Some(Icon::StickyNote)
+            IconSet::icon_for(TreeKind::OkfDocument).map(Icon::label),
+            Some("file-text")
         );
     }
 }
