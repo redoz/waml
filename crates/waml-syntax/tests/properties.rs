@@ -258,7 +258,7 @@ fn assert_shell_case(source_text: String) {
 }
 
 #[test]
-fn hierarchy_and_nested_container_examples_are_guaranteed() {
+fn heading_hierarchy_example_is_guaranteed() {
     let hierarchy = "# H1\n## H2\n### H3\n#### H4\n##### H5\n###### H6\nleaf 🦀\n";
     let parsed = parse_okf_markdown(source(hierarchy), MarkdownDialect::CommonMarkCurrent).unwrap();
     assert_eq!(
@@ -280,19 +280,49 @@ fn hierarchy_and_nested_container_examples_are_guaranteed() {
         vec![3, 4, 5, 6]
     );
     assert_red_tree(&parsed.tree, hierarchy);
+}
 
-    for nested in [
-        "> - outer\n>   - inner\n>     ### hidden\n>     arbitrary UTF-8 🦀\n",
-        "> - outer\n>   ```text\n>   arbitrary UTF-8 🦀\n>   ```\n>\n>   <div>\n>   html\n>   </div>\n",
-    ] {
-        let parsed =
-            parse_okf_markdown(source(nested), MarkdownDialect::CommonMarkCurrent).unwrap();
-        assert!(parsed.structure.headings.is_empty());
-        assert!(parsed.structure.nested_headings.is_empty());
-        assert!(!parsed.structure.protected_ranges.is_empty());
-        assert!(!parsed.structure.opaque_ranges.is_empty());
-        assert_red_tree(&parsed.tree, nested);
-    }
+#[test]
+fn list_hidden_heading_is_protected_but_not_opaque() {
+    let value = "- outer\n  ### hidden\n  leaf\n";
+    let parsed = parse_okf_markdown(source(value), MarkdownDialect::CommonMarkCurrent).unwrap();
+    assert!(parsed.structure.headings.is_empty());
+    assert!(parsed.structure.nested_headings.is_empty());
+    assert_eq!(parsed.structure.list_item_lines.as_ref(), &[range(0, 8)]);
+    assert_eq!(
+        parsed.structure.protected_ranges.as_ref(),
+        &[range(0, value.len())]
+    );
+    assert!(parsed.structure.opaque_ranges.is_empty());
+    assert_red_tree(&parsed.tree, value);
+}
+
+#[test]
+fn list_fenced_code_has_exact_inner_opaque_range() {
+    let value = "- outer\n  before\n\n  ```text\n  code 🦀\n  ```\n\n  after\n";
+    let parsed = parse_okf_markdown(source(value), MarkdownDialect::CommonMarkCurrent).unwrap();
+    let list = range(0, value.len());
+    let opaque = range(20, 45);
+    assert_eq!(parsed.structure.list_item_lines.as_ref(), &[range(0, 8)]);
+    assert_eq!(parsed.structure.protected_ranges.as_ref(), &[list]);
+    assert_eq!(parsed.structure.opaque_ranges.as_ref(), &[opaque]);
+    assert!(list.start() < opaque.start());
+    assert!(opaque.end() < list.end());
+    assert_red_tree(&parsed.tree, value);
+}
+
+#[test]
+fn list_html_has_exact_inner_opaque_range() {
+    let value = "- outer\n  before\n\n  <div>\n  html\n  </div>\n\n  after\n";
+    let parsed = parse_okf_markdown(source(value), MarkdownDialect::CommonMarkCurrent).unwrap();
+    let list = range(0, value.len());
+    let opaque = range(20, 42);
+    assert_eq!(parsed.structure.list_item_lines.as_ref(), &[range(0, 8)]);
+    assert_eq!(parsed.structure.protected_ranges.as_ref(), &[list]);
+    assert_eq!(parsed.structure.opaque_ranges.as_ref(), &[opaque]);
+    assert!(list.start() < opaque.start());
+    assert!(opaque.end() < list.end());
+    assert_red_tree(&parsed.tree, value);
 }
 
 fn boundaries(value: &str) -> Vec<usize> {
