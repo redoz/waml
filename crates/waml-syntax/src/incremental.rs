@@ -251,8 +251,8 @@ pub fn transfer_mapped_annotations<L: SyntaxLanguage>(
         existing: &[SyntaxAnnotation],
         copied: Option<&Vec<SyntaxAnnotation>>,
     ) -> Arc<[SyntaxAnnotation]> {
-        let mut annotations = existing.to_vec();
-        for annotation in copied.into_iter().flatten() {
+        let mut annotations: Vec<SyntaxAnnotation> = Vec::new();
+        for annotation in existing.iter().chain(copied.into_iter().flatten()) {
             if !annotations
                 .iter()
                 .any(|present| present.id() == annotation.id())

@@ -167,9 +167,54 @@ fn mapped_annotations_preserve_node_and_token_occurrences() {
     )
     .unwrap();
     let candidate = parse_okf_markdown(new, MarkdownDialect::CommonMarkCurrent).unwrap();
+    let candidate_diagnostics: Arc<[_]> = Arc::from(candidate.tree.diagnostics());
+    let candidate_heading = first_node(&candidate.tree, OkfMarkdownSyntaxKind::Heading);
+    let candidate = SyntaxTree::new(
+        annotate_occurrence(
+            &candidate.tree,
+            &candidate_heading.locator(),
+            node_annotation.clone(),
+        )
+        .unwrap(),
+        candidate_diagnostics.clone(),
+        MarkdownDialect::CommonMarkCurrent,
+    );
+    let candidate_heading = first_node(&candidate, OkfMarkdownSyntaxKind::Heading);
+    let candidate = SyntaxTree::new(
+        annotate_occurrence(
+            &candidate,
+            &candidate_heading.locator(),
+            node_annotation.clone(),
+        )
+        .unwrap(),
+        candidate_diagnostics.clone(),
+        MarkdownDialect::CommonMarkCurrent,
+    );
+    let candidate_token = first_token(&candidate, OkfMarkdownSyntaxKind::HeadingText);
+    let candidate = SyntaxTree::new(
+        annotate_occurrence(
+            &candidate,
+            &candidate_token.locator(),
+            token_annotation.clone(),
+        )
+        .unwrap(),
+        candidate_diagnostics.clone(),
+        MarkdownDialect::CommonMarkCurrent,
+    );
+    let candidate_token = first_token(&candidate, OkfMarkdownSyntaxKind::HeadingText);
+    let candidate = SyntaxTree::new(
+        annotate_occurrence(
+            &candidate,
+            &candidate_token.locator(),
+            token_annotation.clone(),
+        )
+        .unwrap(),
+        candidate_diagnostics.clone(),
+        MarkdownDialect::CommonMarkCurrent,
+    );
     let transferred = SyntaxTree::new(
-        transfer_mapped_annotations(&previous, &candidate.tree, &map),
-        Arc::from(candidate.tree.diagnostics()),
+        transfer_mapped_annotations(&previous, &candidate, &map),
+        candidate_diagnostics,
         MarkdownDialect::CommonMarkCurrent,
     );
     let mapped_heading = first_node(&transferred, OkfMarkdownSyntaxKind::Heading);
