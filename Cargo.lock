@@ -2600,6 +2600,7 @@ dependencies = [
  "taffy",
  "url",
  "waml",
+ "waml-syntax",
  "winresource",
 ]
 

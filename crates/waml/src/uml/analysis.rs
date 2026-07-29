@@ -14,8 +14,7 @@ use std::{
     sync::Arc,
 };
 use waml_syntax::{
-    AstNode, MarkdownStructureMap, SyntaxElement, SyntaxNode, SyntaxToken, SyntaxTree, TextRange,
-    TextSize,
+    AstNode, MarkdownStructureMap, SyntaxElement, SyntaxNode, SyntaxToken, TextRange, TextSize,
 };
 pub struct Analysis {
     pub claims: ClaimSet,
@@ -35,7 +34,7 @@ pub mod test_support {
     pub fn syntax_with_replaced_tree(
         analysis: &Analysis,
         document: crate::analysis::DocumentId,
-        syntax: Arc<SyntaxTree<UmlLanguage>>,
+        syntax: Arc<waml_syntax::SyntaxTree<UmlLanguage>>,
     ) -> Result<SyntaxSet<UmlLanguage>, AnalysisError> {
         let snapshot = analysis.syntax.document(document).ok_or_else(|| {
             AnalysisError::Specialization {

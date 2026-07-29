@@ -299,6 +299,43 @@ mod tests {
         }
     }
 
+    fn assert_clean_layout_alignment(
+        tree: &SyntaxTree<waml::uml::syntax::UmlLanguage>,
+    ) {
+        fn collect_alignments(
+            node: waml_syntax::SyntaxNode<waml::uml::syntax::UmlLanguage>,
+            alignments: &mut Vec<waml_syntax::SyntaxNode<waml::uml::syntax::UmlLanguage>>,
+        ) {
+            if node.kind() == waml::uml::syntax::UmlSyntaxKind::LayoutAlignment {
+                alignments.push(node.clone());
+            }
+            for child in node.children().filter_map(waml_syntax::SyntaxElement::into_node) {
+                collect_alignments(child, alignments);
+            }
+        }
+
+        assert!(
+            tree.diagnostics().is_empty(),
+            "fixture must stay on clean UML syntax: {:#?}",
+            tree.diagnostics(),
+        );
+        let mut alignments = Vec::new();
+        collect_alignments(tree.root(), &mut alignments);
+        assert_eq!(alignments.len(), 1, "fixture must contain one alignment");
+        assert_eq!(
+            alignments[0]
+                .children()
+                .map(|child| child.kind())
+                .collect::<Vec<_>>(),
+            vec![
+                waml::uml::syntax::UmlSyntaxKind::Anchored,
+                waml::uml::syntax::UmlSyntaxKind::DirectionClause,
+                waml::uml::syntax::UmlSyntaxKind::Anchored,
+            ],
+            "alignment must retain both anchors and its join clause",
+        );
+    }
+
     #[test]
     fn repeated_atomic_edits_bound_sources_and_preserve_mapped_annotation() {
         fn first_attribute(
@@ -323,7 +360,7 @@ mod tests {
             .replace(source(vec![
                 (
                     "class.md".into(),
-                    "---\ntype: uml.Class\n---\n# Class\n\n## Attributes\n- name: String\n\n## Layout\n-left of Class\n"
+                    "---\ntype: uml.Class\n---\n# Class\n\n## Attributes\n- name: String\n\n## Layout\n-left of Class aligned with Class\n"
                         .into(),
                 ),
                 ("notes.md".into(), "# Notes\nUntouched\n".into()),
@@ -336,6 +373,7 @@ mod tests {
             .id_for_path(&BundlePath::parse("class.md").unwrap())
             .unwrap();
         let old_tree = session.uml.syntax.document(document_id).unwrap().syntax();
+        assert_clean_layout_alignment(old_tree);
         let old_attribute = first_attribute(old_tree.root());
         let old_locator = old_attribute.locator();
         let annotation = SyntaxAnnotation::new(
@@ -362,6 +400,7 @@ mod tests {
 
         for iteration in 0..32 {
             let snapshot = session.uml.syntax.document(document_id).unwrap();
+            assert_clean_layout_alignment(snapshot.syntax());
             let current_document = snapshot.document();
             let authored = current_document.text().shared();
             let (needle, replacement) = if authored.contains("left") {
@@ -388,6 +427,9 @@ mod tests {
             };
             let batch = SyntaxChangeBatch::new(action).unwrap();
             session.apply(batch).unwrap();
+            assert_clean_layout_alignment(
+                session.uml.syntax.document(document_id).unwrap().syntax(),
+            );
         }
 
         assert!(session.is_dirty());
@@ -405,7 +447,19 @@ mod tests {
         let final_snapshot = session.uml.syntax.document(document_id).unwrap();
         let final_tree = final_snapshot.syntax();
         let final_attribute = first_attribute(final_tree.root());
-        assert_eq!(find_annotation(final_tree, annotation_id).len(), 1);
+        let mapped_annotations = find_annotation(final_tree, annotation_id);
+        assert_eq!(mapped_annotations.len(), 1);
+        let mapped_attribute = &mapped_annotations[0];
+        assert!(mapped_attribute.same_green(&final_attribute));
+        assert_eq!(
+            mapped_attribute
+                .syntax_annotations()
+                .iter()
+                .filter(|annotation| annotation.id() == annotation_id)
+                .map(|annotation| (annotation.kind(), annotation.data()))
+                .collect::<Vec<_>>(),
+            vec![("selection", None)],
+        );
         assert!(matches!(
             final_tree.resolve(&old_locator),
             Err(RewriteError::WrongTree { .. })
