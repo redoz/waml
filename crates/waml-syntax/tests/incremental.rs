@@ -8,6 +8,122 @@ use waml_syntax::{
     SyntaxAnnotation, SyntaxElement, SyntaxTree, TextChange, TextRange, TextSize,
 };
 
+fn incremental_outcome(
+    previous: &str,
+    next: &str,
+    changes: &[TextChange],
+) -> ReparseOutcome<waml_syntax::OkfMarkdownLanguage> {
+    let previous = parse_okf_markdown(text(previous), MarkdownDialect::CommonMarkCurrent).unwrap();
+    reparse_okf_markdown(&previous.tree, text(next), changes).unwrap()
+}
+
+fn assert_incremental(previous: &str, next: &str, changes: &[TextChange], range: TextRange) {
+    match incremental_outcome(previous, next, changes) {
+        ReparseOutcome::Incremental { reparsed_range, .. } => assert_eq!(reparsed_range, range),
+        ReparseOutcome::Full { reason, .. } => {
+            panic!("expected incremental result, got {reason:?}")
+        }
+    }
+}
+
+#[test]
+fn zero_width_insert_at_raw_start_has_one_owner() {
+    assert_incremental(
+        "body\n",
+        "xbody\n",
+        &[TextChange {
+            old_range: range(0, 0),
+            replacement: Arc::from("x"),
+        }],
+        range(0, 6),
+    );
+}
+
+#[test]
+fn zero_width_insert_at_child_boundary_selects_unique_raw_owner() {
+    assert_incremental(
+        "# H\nbody\n",
+        "# H\nxbody\n",
+        &[TextChange {
+            old_range: range(4, 4),
+            replacement: Arc::from("x"),
+        }],
+        range(4, 10),
+    );
+}
+
+#[test]
+fn zero_width_insert_at_eof_reparses_tail() {
+    assert_incremental(
+        "body\n",
+        "body\nx",
+        &[TextChange {
+            old_range: range(5, 5),
+            replacement: Arc::from("x"),
+        }],
+        range(0, 6),
+    );
+}
+
+#[test]
+fn source_backed_eof_trivia_moves_through_tail_window() {
+    let previous = "body   ";
+    let next = "body   x";
+    let outcome = incremental_outcome(
+        previous,
+        next,
+        &[TextChange {
+            old_range: range(7, 7),
+            replacement: Arc::from("x"),
+        }],
+    );
+    let ReparseOutcome::Incremental {
+        tree,
+        reparsed_range,
+        ..
+    } = outcome
+    else {
+        panic!("tail insertion must be incremental")
+    };
+    assert_eq!(reparsed_range, range(0, 8));
+    assert!(!first_token(
+        &parse_okf_markdown(text(previous), MarkdownDialect::CommonMarkCurrent)
+            .unwrap()
+            .tree,
+        OkfMarkdownSyntaxKind::EndOfFileToken
+    )
+    .same_green(&first_token(&tree, OkfMarkdownSyntaxKind::EndOfFileToken)));
+}
+
+#[test]
+fn frontmatter_creation_at_zero_is_named() {
+    assert!(matches!(
+        incremental_outcome(
+            "body\n",
+            "---\ntype: x\n---\nbody\n",
+            &[TextChange {
+                old_range: range(0, 0),
+                replacement: Arc::from("---\ntype: x\n---\n")
+            }]
+        ),
+        ReparseOutcome::Full {
+            reason: FullReparseReason::FrontmatterBoundaryChanged,
+            ..
+        }
+    ));
+}
+
+#[test]
+fn unchanged_input_reuses_root_green() {
+    let previous = parse_okf_markdown(text("body\n"), MarkdownDialect::CommonMarkCurrent).unwrap();
+    let ReparseOutcome::Incremental { tree, .. } =
+        reparse_okf_markdown(&previous.tree, text("body\n"), &[]).unwrap()
+    else {
+        panic!("unchanged input must be incremental")
+    };
+    assert!(previous.tree.root().same_green(&tree.root()));
+}
+
 fn text(value: &str) -> SourceText {
     SourceText::from_shared(Arc::new(value.to_owned())).unwrap()
 }

@@ -16,8 +16,9 @@ pub use green::{
     GreenToken, GreenTokenData, GreenTrivia, TokenFlags, TriviaKind,
 };
 pub use incremental::{
-    rebase_unchanged_green, reparse_okf_markdown, transfer_mapped_annotations, ChangeMap,
-    ChangeSegment, FullReparseReason, RebasedGreen, ReparseOutcome, TextChange,
+    rebase_unchanged_green, reparse_okf_markdown, reparse_okf_markdown_with_structure,
+    transfer_mapped_annotations, ChangeMap, ChangeSegment, FullReparseReason, RebasedGreen,
+    ReparseOutcome, TextChange,
 };
 pub use markdown::{ConfirmedHeading, MarkdownStructureMap};
 pub use red::{

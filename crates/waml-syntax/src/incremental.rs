@@ -1,9 +1,10 @@
 use std::{collections::HashMap, hash::Hash, sync::Arc};
 
 use crate::{
-    parse_okf_markdown, GreenElement, GreenError, GreenFactory, GreenNode, GreenText, GreenTrivia,
-    MarkdownDialect, OkfMarkdownLanguage, ParseError, SourceText, SyntaxAnnotation, SyntaxElement,
-    SyntaxLanguage, SyntaxNode, SyntaxTree, TextError, TextRange, TextSize,
+    GreenElement, GreenError, GreenFactory, GreenNode, GreenText, GreenTrivia, MarkdownDialect,
+    MarkdownStructureMap, OkfMarkdownLanguage, OkfMarkdownSyntaxKind, ParseError, SourceText,
+    SyntaxAnnotation, SyntaxElement, SyntaxLanguage, SyntaxNode, SyntaxTree, TextError, TextRange,
+    TextSize, TreeDiagnostic,
 };
 
 /// One replacement expressed in checked, half-open byte offsets of the old text.
@@ -518,6 +519,23 @@ pub fn reparse_okf_markdown(
     new_text: SourceText,
     changes: &[TextChange],
 ) -> Result<ReparseOutcome<OkfMarkdownLanguage>, ParseError> {
+    Ok(reparse_okf_markdown_with_structure(previous, new_text, changes)?.0)
+}
+
+/// Like [`reparse_okf_markdown`], while retaining the one candidate structure
+/// map used for the synchronization proof and parser call.
+#[doc(hidden)]
+pub fn reparse_okf_markdown_with_structure(
+    previous: &SyntaxTree<OkfMarkdownLanguage>,
+    new_text: SourceText,
+    changes: &[TextChange],
+) -> Result<
+    (
+        ReparseOutcome<OkfMarkdownLanguage>,
+        Arc<MarkdownStructureMap>,
+    ),
+    ParseError,
+> {
     let old = SourceText::from_shared(Arc::new(previous.write_to_string()))
         .map_err(|_| ParseError::WidthOverflow)?;
     let map = ChangeMap::checked(&old, changes).map_err(|_| ParseError::StructuralInvariant {
@@ -534,20 +552,309 @@ pub fn reparse_okf_markdown(
         });
     }
     if changes.is_empty() {
-        return Ok(ReparseOutcome::Incremental {
+        let structure = Arc::new(crate::markdown::map(
+            &new_text,
+            MarkdownDialect::CommonMarkCurrent,
+        )?);
+        return Ok((
+            ReparseOutcome::Incremental {
+                tree: Arc::new(SyntaxTree::new(
+                    previous.root_green().clone(),
+                    Arc::from(previous.diagnostics()),
+                    MarkdownDialect::CommonMarkCurrent,
+                )),
+                shared_source_independent_green: 0,
+                reparsed_range: TextRange::new(TextSize::try_from_usize(0).unwrap(), old.len())
+                    .unwrap(),
+            },
+            structure,
+        ));
+    }
+    let old_structure = Arc::new(crate::markdown::map(
+        &old,
+        MarkdownDialect::CommonMarkCurrent,
+    )?);
+    let new_structure = Arc::new(crate::markdown::map(
+        &new_text,
+        MarkdownDialect::CommonMarkCurrent,
+    )?);
+    let full = |reason| -> Result<_, ParseError> {
+        let parsed = crate::shell::parse_okf_markdown_with_structure(
+            new_text.clone(),
+            MarkdownDialect::CommonMarkCurrent,
+            new_structure.clone(),
+        )?;
+        Ok((
+            ReparseOutcome::Full {
+                tree: parsed.tree,
+                reason,
+            },
+            new_structure.clone(),
+        ))
+    };
+    if !same_optional_range(
+        crate::shell::frontmatter_range(&old, &old_structure)?,
+        crate::shell::frontmatter_range(&new_text, &new_structure)?,
+        &map,
+    ) {
+        return full(FullReparseReason::FrontmatterBoundaryChanged);
+    }
+    if !same_headings(&old_structure, &new_structure, &map) {
+        return full(FullReparseReason::HeadingBoundaryChanged);
+    }
+    if !same_containers(&old_structure, &new_structure, &map) {
+        return full(FullReparseReason::MarkdownContainerBoundaryChanged);
+    }
+
+    let windows = shell_windows(previous, &old)?;
+    let Some(window) = select_window(&windows, &map) else {
+        return full(FullReparseReason::UnsafeSynchronization);
+    };
+    let Some(new_range) = expanded_window_range(window.range, &map) else {
+        return full(FullReparseReason::UnsafeSynchronization);
+    };
+    let parsed_window = crate::shell::parse_window(
+        &new_text,
+        &new_structure,
+        crate::shell::ShellWindow {
+            kind: window.kind,
+            range: new_range,
+        },
+    )?;
+    let mut children = Vec::new();
+    let mut shared = 0;
+    for (index, child) in previous.root_green().children().iter().enumerate() {
+        if index == window.first {
+            children.extend(parsed_window.elements.iter().cloned());
+        }
+        if (window.first..=window.last).contains(&index) {
+            continue;
+        }
+        let Some(rebased) = rebase_unchanged_green(child, &new_text, &map)
+            .map_err(|_| ParseError::WidthOverflow)?
+        else {
+            return full(FullReparseReason::UnsafeSynchronization);
+        };
+        shared += rebased.shared_source_independent_green;
+        children.push(rebased.element);
+    }
+    let root = GreenFactory::new()
+        .node(OkfMarkdownSyntaxKind::Root, children)
+        .map_err(|_| ParseError::WidthOverflow)?;
+    let mut diagnostics: Vec<TreeDiagnostic<_>> = previous
+        .diagnostics()
+        .iter()
+        .filter_map(|diagnostic| {
+            ((diagnostic.range.end() <= window.range.start()
+                || diagnostic.range.start() >= window.range.end())
+            .then(|| map.translate_unchanged(diagnostic.range))?)
+            .map(|range| TreeDiagnostic {
+                code: diagnostic.code,
+                severity: diagnostic.severity,
+                message: diagnostic.message.clone(),
+                range,
+            })
+        })
+        .collect();
+    diagnostics.extend(parsed_window.diagnostics.iter().cloned());
+    diagnostics.sort_by_key(|d| (d.range.start(), d.range.end(), d.code as u8));
+    let candidate = SyntaxTree::new(root, diagnostics.into(), MarkdownDialect::CommonMarkCurrent);
+    let root = transfer_mapped_annotations(previous, &candidate, &map);
+    Ok((
+        ReparseOutcome::Incremental {
             tree: Arc::new(SyntaxTree::new(
-                previous.root_green().clone(),
-                Arc::from(previous.diagnostics()),
+                root,
+                Arc::from(candidate.diagnostics()),
                 MarkdownDialect::CommonMarkCurrent,
             )),
-            shared_source_independent_green: 0,
-            reparsed_range: TextRange::new(TextSize::try_from_usize(0).unwrap(), old.len())
-                .unwrap(),
-        });
+            shared_source_independent_green: shared,
+            reparsed_range: new_range,
+        },
+        new_structure,
+    ))
+}
+
+#[derive(Clone, Copy)]
+struct Window {
+    kind: crate::shell::ShellWindowKind,
+    range: TextRange,
+    first: usize,
+    last: usize,
+}
+
+fn shell_windows(
+    previous: &SyntaxTree<OkfMarkdownLanguage>,
+    old: &SourceText,
+) -> Result<Vec<Window>, ParseError> {
+    let children = previous.root_green().children();
+    let mut start = TextSize::try_from_usize(0).unwrap();
+    let mut result = Vec::new();
+    for (index, child) in children.iter().enumerate() {
+        let width = match child {
+            GreenElement::Node(node) => node.width(),
+            GreenElement::Token(token) => token.width(),
+        };
+        let end = start
+            .checked_add(width)
+            .map_err(|_| ParseError::WidthOverflow)?;
+        let range = TextRange::new(start, end).map_err(|_| ParseError::WidthOverflow)?;
+        let kind = match child {
+            GreenElement::Node(node) => match node.kind() {
+                OkfMarkdownSyntaxKind::Frontmatter => {
+                    Some(crate::shell::ShellWindowKind::Frontmatter)
+                }
+                OkfMarkdownSyntaxKind::Heading => Some(crate::shell::ShellWindowKind::Heading),
+                OkfMarkdownSyntaxKind::MarkdownRegion => {
+                    Some(crate::shell::ShellWindowKind::MarkdownRegion)
+                }
+                _ => None,
+            },
+            _ => None,
+        };
+        if let Some(kind) = kind {
+            result.push(Window {
+                kind,
+                range,
+                first: index,
+                last: index,
+            });
+        }
+        start = end;
     }
-    let parsed = parse_okf_markdown(new_text, MarkdownDialect::CommonMarkCurrent)?;
-    Ok(ReparseOutcome::Full {
-        tree: parsed.tree,
-        reason: FullReparseReason::UnsafeSynchronization,
-    })
+    let eof = children
+        .len()
+        .checked_sub(1)
+        .ok_or(ParseError::WidthOverflow)?;
+    let tail_first = if eof > 0
+        && matches!(&children[eof - 1], GreenElement::Node(node) if node.kind() == OkfMarkdownSyntaxKind::MarkdownRegion)
+    {
+        eof - 1
+    } else {
+        eof
+    };
+    let tail_start = children[..tail_first].iter().try_fold(
+        TextSize::try_from_usize(0).unwrap(),
+        |at, child| {
+            at.checked_add(match child {
+                GreenElement::Node(node) => node.width(),
+                GreenElement::Token(token) => token.width(),
+            })
+            .map_err(|_| ParseError::WidthOverflow)
+        },
+    )?;
+    result.retain(|window| window.first != tail_first);
+    result.push(Window {
+        kind: crate::shell::ShellWindowKind::Tail,
+        range: TextRange::new(tail_start, old.len()).map_err(|_| ParseError::WidthOverflow)?,
+        first: tail_first,
+        last: eof,
+    });
+    Ok(result)
+}
+
+fn select_window(windows: &[Window], map: &ChangeMap) -> Option<Window> {
+    let hull = map.changed_old_range()?;
+    let zero = hull.start() == hull.end();
+    let mut candidates: Vec<_> = windows
+        .iter()
+        .copied()
+        .filter(|window| {
+            if zero {
+                window.range.start() <= hull.start() && hull.start() <= window.range.end()
+            } else {
+                window.range.start() <= hull.start() && hull.end() <= window.range.end()
+            }
+        })
+        .collect();
+    if zero {
+        candidates.sort_by_key(|window| {
+            (
+                window.kind != crate::shell::ShellWindowKind::MarkdownRegion
+                    || window.range.start() != hull.start(),
+                window.kind != crate::shell::ShellWindowKind::Tail,
+            )
+        });
+        let chosen = candidates.first().copied()?;
+        let equally_best = candidates
+            .iter()
+            .skip(1)
+            .any(|other| other.kind == chosen.kind && other.range.start() == chosen.range.start());
+        (!equally_best).then_some(chosen)
+    } else {
+        (candidates.len() == 1).then(|| candidates.remove(0))
+    }
+}
+
+fn expanded_window_range(old: TextRange, map: &ChangeMap) -> Option<TextRange> {
+    let mut start = map.translate_start_boundary(old.start())?;
+    let mut end = map.translate_end_boundary(old.end())?;
+    for segment in map.segments() {
+        if segment.old.start() == segment.old.end()
+            && old.start() <= segment.old.start()
+            && segment.old.start() <= old.end()
+        {
+            start = start.min(segment.new.start());
+            end = end.max(segment.new.end());
+        }
+    }
+    TextRange::new(start, end).ok()
+}
+
+fn map_range(range: TextRange, map: &ChangeMap) -> Option<TextRange> {
+    TextRange::new(
+        map.translate_start_boundary(range.start())?,
+        map.translate_end_boundary(range.end())?,
+    )
+    .ok()
+}
+fn same_optional_range(old: Option<TextRange>, new: Option<TextRange>, map: &ChangeMap) -> bool {
+    old.and_then(|range| map_range(range, map)) == new
+}
+fn same_ranges(old: &[TextRange], new: &[TextRange], map: &ChangeMap) -> bool {
+    let mut old: Option<Vec<_>> = old
+        .iter()
+        .copied()
+        .map(|range| map_range(range, map))
+        .collect();
+    let mut new = new.to_vec();
+    old.as_mut()
+        .unwrap()
+        .sort_by_key(|range| (range.start(), range.end()));
+    new.sort_by_key(|range| (range.start(), range.end()));
+    old.unwrap() == new
+}
+fn same_headings(old: &MarkdownStructureMap, new: &MarkdownStructureMap, map: &ChangeMap) -> bool {
+    let old = old
+        .headings
+        .iter()
+        .chain(old.nested_headings.iter())
+        .map(|heading| {
+            Some((
+                heading.level,
+                map_range(heading.range, map)?,
+                map_range(heading.text_range, map)?,
+            ))
+        })
+        .collect::<Option<Vec<_>>>();
+    let new = new
+        .headings
+        .iter()
+        .chain(new.nested_headings.iter())
+        .map(|heading| (heading.level, heading.range, heading.text_range))
+        .collect::<Vec<_>>();
+    old == Some(new)
+}
+fn same_containers(
+    old: &MarkdownStructureMap,
+    new: &MarkdownStructureMap,
+    map: &ChangeMap,
+) -> bool {
+    same_ranges(&old.protected_ranges, &new.protected_ranges, map)
+        && same_ranges(&old.opaque_ranges, &new.opaque_ranges, map)
+        && same_ranges(&old.list_item_lines, &new.list_item_lines, map)
+        && same_ranges(
+            &old.tab_indented_item_lines,
+            &new.tab_indented_item_lines,
+            map,
+        )
 }
