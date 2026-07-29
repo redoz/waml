@@ -1,6 +1,7 @@
 mod edges;
 mod groups;
 mod labels;
+mod metrics;
 mod nodes;
 mod overlays;
 mod primitives;
