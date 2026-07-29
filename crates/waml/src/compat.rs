@@ -638,14 +638,14 @@ mod tests {
                 name: "commerce".into(),
             }),
         ]);
-        let okf = okf::Bundle::parse(&source).unwrap();
-        let uml = uml::project(&okf);
+        let prepared = crate::analysis::prepare_candidate(source.clone(), None, 1).unwrap();
 
         let applied = batch
             .apply_reversible(EditContext {
                 source: &source,
-                okf: &okf,
-                uml: &uml,
+                okf_analysis: prepared.okf(),
+                session_revision: prepared.revision(),
+                uml: prepared.uml(),
             })
             .unwrap();
         assert_eq!(
@@ -656,26 +656,28 @@ mod tests {
             .text()
             .contains("- id: OrderId"));
 
-        let applied_okf = okf::Bundle::parse(&applied.source).unwrap();
-        let applied_uml = uml::project(&applied_okf);
+        let applied_prepared =
+            crate::analysis::prepare_candidate(applied.source.clone(), None, 2).unwrap();
         let restored = applied
             .inverse
             .apply_reversible(EditContext {
                 source: &applied.source,
-                okf: &applied_okf,
-                uml: &applied_uml,
+                okf_analysis: applied_prepared.okf(),
+                session_revision: applied_prepared.revision(),
+                uml: applied_prepared.uml(),
             })
             .unwrap();
         assert_eq!(restored.source, source);
 
-        let restored_okf = okf::Bundle::parse(&restored.source).unwrap();
-        let restored_uml = uml::project(&restored_okf);
+        let restored_prepared =
+            crate::analysis::prepare_candidate(restored.source.clone(), None, 3).unwrap();
         let redone = restored
             .inverse
             .apply_reversible(EditContext {
                 source: &restored.source,
-                okf: &restored_okf,
-                uml: &restored_uml,
+                okf_analysis: restored_prepared.okf(),
+                session_revision: restored_prepared.revision(),
+                uml: restored_prepared.uml(),
             })
             .unwrap();
         assert_eq!(redone.source, applied.source);
@@ -698,14 +700,14 @@ mod tests {
                 name: "missing".into(),
             }),
         ]);
-        let okf = okf::Bundle::parse(&source).unwrap();
-        let uml = uml::project(&okf);
+        let prepared = crate::analysis::prepare_candidate(source.clone(), None, 1).unwrap();
 
         assert!(batch
             .apply_reversible(EditContext {
                 source: &source,
-                okf: &okf,
-                uml: &uml,
+                okf_analysis: prepared.okf(),
+                session_revision: prepared.revision(),
+                uml: prepared.uml(),
             })
             .is_err());
         assert_eq!(
