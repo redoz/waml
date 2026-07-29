@@ -167,6 +167,30 @@ impl ViewportController {
         }
     }
 
+    pub(crate) fn restore_camera(&mut self, camera: Camera) -> Camera {
+        let restored = Camera {
+            pan_x: if camera.pan_x.is_finite() {
+                camera.pan_x
+            } else {
+                0.0
+            },
+            pan_y: if camera.pan_y.is_finite() {
+                camera.pan_y
+            } else {
+                0.0
+            },
+            zoom: if camera.zoom.is_finite() {
+                camera.zoom.clamp(MIN_ZOOM, MAX_ZOOM)
+            } else {
+                1.0
+            },
+        };
+        self.camera = restored;
+        self.initial_fit = InitialFit::None;
+        self.tween = None;
+        restored
+    }
+
     pub(crate) fn set_view_rect(&mut self, rect: ViewRect) {
         self.view_rect = rect;
     }
@@ -739,6 +763,36 @@ mod tests {
                 pan_y: 550.0,
                 zoom: 1.0,
             },
+        );
+    }
+
+    #[test]
+    fn restoring_a_camera_clamps_zoom_and_rejects_non_finite_coordinates() {
+        let mut viewport = ViewportController::default();
+
+        assert_eq!(
+            viewport.restore_camera(Camera {
+                pan_x: f64::NAN,
+                pan_y: f64::INFINITY,
+                zoom: MAX_ZOOM * 2.0,
+            }),
+            Camera {
+                pan_x: 0.0,
+                pan_y: 0.0,
+                zoom: MAX_ZOOM,
+            }
+        );
+        assert_eq!(
+            viewport.restore_camera(Camera {
+                pan_x: 12.0,
+                pan_y: -8.0,
+                zoom: 0.0,
+            }),
+            Camera {
+                pan_x: 12.0,
+                pan_y: -8.0,
+                zoom: MIN_ZOOM,
+            }
         );
     }
 }

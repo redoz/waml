@@ -67,6 +67,7 @@ mod tree;
 mod tree_panel;
 mod uml_documents;
 mod view_bar;
+mod view_history;
 
 #[cfg(test)]
 mod script_gate;

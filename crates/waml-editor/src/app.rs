@@ -3456,6 +3456,7 @@ mod tests {
                 document: crate::document::OpenDocument {
                     tab_id,
                     concept_id: "diagram".into(),
+                    kind: crate::view_history::DocumentKind::Primary,
                     title: "Diagram".into(),
                     presentation: DocumentPresentation {
                         icon: Icon::Workflow,
@@ -3602,6 +3603,7 @@ mod tests {
         DocTab {
             id,
             concept_id: key.into(),
+            kind: crate::view_history::DocumentKind::Primary,
             title: title.into(),
             presentation: DocumentPresentation {
                 icon: IconSet::icon_for(category).unwrap(),

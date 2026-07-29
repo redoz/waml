@@ -1,4 +1,5 @@
 use crate::tree::{build_tree, TreeNode};
+pub use crate::view_history::{DocumentKind, DocumentLocator};
 use url::Url;
 use waml::okf::DirectoryAddress;
 

@@ -16,6 +16,7 @@ use crate::icons::Icon;
 use crate::inspector::{diagram_elements, subject_from, Subject};
 use crate::popup::base::{PopupItem, PopupResult};
 use crate::scene::build_scene;
+use crate::view_history::ViewAnchor;
 use waml::uml::Op;
 
 /// Strip a defensive `.md` tail from a node/diagram key.
@@ -757,6 +758,40 @@ impl DocView for ClassDiagramView {
             }
             DiagramRefresh::None => {}
         }
+    }
+
+    fn capture_anchor(&self, body: &BodyWidgets) -> ViewAnchor {
+        let Some(canvas) = body
+            .canvas_ref()
+            .borrow::<crate::canvas::ClassDiagramSurface>()
+        else {
+            return ViewAnchor::None;
+        };
+        ViewAnchor::Diagram {
+            selected_key: canvas.selected_key().map(str::to_owned),
+            camera: canvas.camera_anchor(),
+        }
+    }
+
+    fn restore_anchor(&mut self, cx: &mut Cx, body: &BodyWidgets, anchor: &ViewAnchor) -> bool {
+        let ViewAnchor::Diagram {
+            selected_key,
+            camera,
+        } = anchor
+        else {
+            return false;
+        };
+        let Some(mut canvas) = body
+            .canvas_ref()
+            .borrow_mut::<crate::canvas::ClassDiagramSurface>()
+        else {
+            return false;
+        };
+        canvas.restore_camera_anchor(cx, *camera);
+        if let Some(key) = selected_key {
+            canvas.select_by_key(cx, key);
+        }
+        true
     }
 
     fn chrome(&self) -> BodyChrome {

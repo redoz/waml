@@ -135,12 +135,19 @@ script_mod! {
 pub struct DocTab {
     pub id: LiveId,
     pub concept_id: String,
+    pub kind: crate::view_history::DocumentKind,
     pub title: String,
     pub presentation: DocumentPresentation,
     /// A preview tab is replaced in place by the next document click; an
     /// inline-edit commit "pins" it (`promote`), after which it behaves like
     /// any other persisted tab.
     pub preview: bool,
+}
+
+impl DocTab {
+    pub fn locator(&self) -> crate::view_history::DocumentLocator {
+        crate::view_history::DocumentLocator::new(self.concept_id.clone(), self.kind)
+    }
 }
 
 /// The open-tabs state. Classifiers, diagrams, and source tabs share one
@@ -171,6 +178,7 @@ impl OpenTabs {
         tabs.open_preview(DocTab {
             id: crate::uml_documents::uml_document_tab_id(&key),
             concept_id: key,
+            kind: crate::view_history::DocumentKind::Primary,
             title: title.into(),
             presentation: DocumentPresentation {
                 icon: crate::icons::Icon::Workflow,
@@ -936,6 +944,7 @@ mod tests {
         DocTab {
             id: crate::uml_documents::uml_document_tab_id(key),
             concept_id: key.to_string(),
+            kind: crate::view_history::DocumentKind::Primary,
             title: title.to_string(),
             presentation: DocumentPresentation {
                 icon: IconSet::icon_for(category).unwrap_or(Icon::StickyNote),
@@ -950,6 +959,7 @@ mod tests {
         let mut tab = tab(key, title, TreeKind::OkfDocument);
         tab.id = crate::okf_documents::source_document_tab_id(key);
         tab.presentation.icon = Icon::FileBraces;
+        tab.kind = crate::view_history::DocumentKind::Source;
         tab
     }
 

@@ -2,6 +2,7 @@ use crate::document::{
     DocumentCapabilities, DocumentDescriptor, DocumentPresentation, NavCategory, OpenDocument,
 };
 use crate::icons::Icon;
+use crate::view_history::DocumentKind;
 use makepad_widgets::{LiveId, Vec4};
 
 pub fn generic_okf_accent() -> Option<Vec4> {
@@ -46,6 +47,7 @@ pub fn open(analysis: &waml::analysis::OkfAnalysis, concept_id: &str) -> Option<
     Some(OpenDocument {
         tab_id: okf_document_tab_id(concept_id),
         concept_id: concept_id.to_string(),
+        kind: DocumentKind::Primary,
         title: concept.title.clone().unwrap_or_else(|| {
             concept_id
                 .rsplit('/')
@@ -69,6 +71,7 @@ pub fn open_source(
     Some(OpenDocument {
         tab_id: source_document_tab_id(concept_id),
         concept_id: concept_id.to_string(),
+        kind: DocumentKind::Source,
         title: concept.title.clone().unwrap_or_else(|| {
             concept_id
                 .rsplit('/')

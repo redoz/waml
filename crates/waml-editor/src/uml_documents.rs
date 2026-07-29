@@ -2,6 +2,7 @@ use crate::document::{
     DocumentCapabilities, DocumentDescriptor, DocumentPresentation, NavCategory, OpenDocument,
 };
 use crate::icons::{Icon, IconSet};
+use crate::view_history::DocumentKind;
 use makepad_widgets::LiveId;
 
 pub fn uml_document_tab_id(concept_id: &str) -> LiveId {
@@ -108,6 +109,7 @@ pub fn open(
     Some(OpenDocument {
         tab_id: uml_document_tab_id(concept_id),
         concept_id: concept_id.to_string(),
+        kind: DocumentKind::Primary,
         title,
         presentation,
         view,

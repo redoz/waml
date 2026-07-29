@@ -4,15 +4,20 @@ use crate::doc_view::{
     BodyChrome, BodyWidgets, DocView, DocumentHeaderChrome, ViewData, ViewOutcome,
 };
 use crate::navigation::NavigationIntent;
+use crate::view_history::ViewAnchor;
 use makepad_widgets::*;
 
 pub struct GenericOkfView {
     concept_id: String,
+    fragment: Option<String>,
 }
 
 impl GenericOkfView {
     pub fn new(concept_id: String) -> Self {
-        Self { concept_id }
+        Self {
+            concept_id,
+            fragment: None,
+        }
     }
 
     fn markdown<'a>(&self, data: ViewData<'a>) -> Cow<'a, str> {
@@ -64,6 +69,25 @@ impl DocView for GenericOkfView {
 
     fn tab_accent(&self) -> Option<Vec4> {
         crate::okf_documents::generic_okf_accent()
+    }
+
+    fn capture_anchor(&self, body: &BodyWidgets) -> ViewAnchor {
+        ViewAnchor::Markdown {
+            fragment: self.fragment.clone(),
+            scroll_y: body.markdown_scroll_y(),
+        }
+    }
+
+    fn restore_anchor(&mut self, cx: &mut Cx, body: &BodyWidgets, anchor: &ViewAnchor) -> bool {
+        let ViewAnchor::Markdown { fragment, scroll_y } = anchor else {
+            return false;
+        };
+        self.fragment = fragment
+            .as_deref()
+            .filter(|fragment| body.scroll_markdown_to_fragment(cx, fragment))
+            .map(str::to_owned);
+        body.set_markdown_scroll_y(cx, *scroll_y);
+        true
     }
 }
 
@@ -199,6 +223,31 @@ mod tests {
                 current_concept_id: "shop/order".into(),
                 href: "./next.md#details".into(),
             })
+        );
+    }
+
+    #[test]
+    fn markdown_anchor_restores_the_pre_layout_origin_without_a_fragment() {
+        let (source, okf, uml) = fixture([("runbook.md", "---\ntype: Runbook\n---\n# Runbook\n")]);
+        let mut cx = Cx::new(Box::new(|_, _| {}));
+        let (_ui, body, _) = mounted_body(&mut cx);
+        let mut view = GenericOkfView::new("runbook".into());
+        view.sync(&mut cx, &body, data(&source, &okf, &uml));
+
+        assert!(view.restore_anchor(
+            &mut cx,
+            &body,
+            &ViewAnchor::Markdown {
+                fragment: None,
+                scroll_y: 0.0,
+            },
+        ));
+        assert_eq!(
+            view.capture_anchor(&body),
+            ViewAnchor::Markdown {
+                fragment: None,
+                scroll_y: 0.0,
+            }
         );
     }
 }

@@ -800,6 +800,33 @@ impl ClassDiagramSurface {
         self.draw_bg.redraw(cx);
     }
 
+    pub fn selected_key(&self) -> Option<&str> {
+        self.selection.selected_key()
+    }
+
+    pub fn camera_anchor(&self) -> crate::view_history::DiagramCameraAnchor {
+        let camera = self.viewport.snapshot().camera;
+        crate::view_history::DiagramCameraAnchor {
+            pan_x: camera.pan_x,
+            pan_y: camera.pan_y,
+            zoom: camera.zoom,
+        }
+    }
+
+    pub fn restore_camera_anchor(
+        &mut self,
+        cx: &mut Cx,
+        anchor: crate::view_history::DiagramCameraAnchor,
+    ) {
+        self.viewport
+            .restore_camera(crate::canvas::viewport::Camera {
+                pan_x: anchor.pan_x,
+                pan_y: anchor.pan_y,
+                zoom: anchor.zoom,
+            });
+        self.draw_bg.redraw(cx);
+    }
+
     /// Store the per-zone conflict verdict pushed by the view; repaint so the
     /// compass reddens the flagged zones on the next frame.
     /// Push the arm-time speculative solves' candidate layouts (one per zone).

@@ -11,15 +11,20 @@ use crate::doc_view::{
 use crate::icons::Icon;
 use crate::inspector::Subject;
 use crate::navigation::NavigationIntent;
+use crate::view_history::ViewAnchor;
 use makepad_widgets::*;
 
 pub struct SourceView {
     key: String,
+    fragment: Option<String>,
 }
 
 impl SourceView {
     pub fn new(key: String) -> SourceView {
-        SourceView { key }
+        SourceView {
+            key,
+            fragment: None,
+        }
     }
 
     fn markdown<'a>(&self, data: ViewData<'a>) -> std::borrow::Cow<'a, str> {
@@ -86,6 +91,25 @@ impl DocView for SourceView {
         Some(crate::accent::bucket_color(
             crate::node_style::AccentBucket::None,
         ))
+    }
+
+    fn capture_anchor(&self, body: &BodyWidgets) -> ViewAnchor {
+        ViewAnchor::Markdown {
+            fragment: self.fragment.clone(),
+            scroll_y: body.markdown_scroll_y(),
+        }
+    }
+
+    fn restore_anchor(&mut self, cx: &mut Cx, body: &BodyWidgets, anchor: &ViewAnchor) -> bool {
+        let ViewAnchor::Markdown { fragment, scroll_y } = anchor else {
+            return false;
+        };
+        self.fragment = fragment
+            .as_deref()
+            .filter(|fragment| body.scroll_markdown_to_fragment(cx, fragment))
+            .map(str::to_owned);
+        body.set_markdown_scroll_y(cx, *scroll_y);
+        true
     }
 }
 

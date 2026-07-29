@@ -3,6 +3,7 @@ use crate::doc_view::{BodyChrome, BodyWidgets, DocView, ViewData, ViewOutcome};
 use crate::document::{NavCategory, OpenDocument};
 use crate::editor_session::{EditorSession, SessionChange};
 use crate::popup::base::PopupResult;
+use crate::view_history::{DocumentLocator, ViewAnchor, ViewLocation};
 use makepad_widgets::*;
 use std::collections::{HashMap, HashSet};
 
@@ -98,6 +99,14 @@ impl DocumentHost {
         &self.tabs.tabs
     }
 
+    pub fn tab_id_for_locator(&self, locator: &DocumentLocator) -> Option<LiveId> {
+        self.tabs
+            .tabs
+            .iter()
+            .find(|tab| tab.locator() == *locator)
+            .map(|tab| tab.id)
+    }
+
     pub fn active_id(&self) -> LiveId {
         self.tabs.active
     }
@@ -133,7 +142,70 @@ impl DocumentHost {
             return false;
         }
         let body = BodyWidgets::new(cx, ui);
-        body.scroll_markdown_to_fragment(cx, fragment)
+        if !body.scroll_markdown_to_fragment(cx, fragment) {
+            return false;
+        }
+        let anchor = ViewAnchor::Markdown {
+            fragment: Some(fragment.to_owned()),
+            scroll_y: body.markdown_scroll_y(),
+        };
+        if let Some(view) = self.views.get_mut(&self.tabs.active) {
+            let _ = view.restore_anchor(cx, &body, &anchor);
+        }
+        true
+    }
+
+    pub fn capture_active_location(&self, cx: &mut Cx, ui: &WidgetRef) -> Option<ViewLocation> {
+        let tab = self.tabs.active_tab()?;
+        let view = self.views.get(&tab.id)?;
+        let body = BodyWidgets::new(cx, ui);
+        Some(ViewLocation {
+            document: tab.locator(),
+            anchor: view.capture_anchor(&body),
+        })
+    }
+
+    pub fn restore_active_anchor(
+        &mut self,
+        cx: &mut Cx,
+        ui: &WidgetRef,
+        anchor: &ViewAnchor,
+    ) -> bool {
+        let body = BodyWidgets::new(cx, ui);
+        self.views
+            .get_mut(&self.tabs.active)
+            .is_some_and(|view| view.restore_anchor(cx, &body, anchor))
+    }
+
+    pub fn restore_location(
+        &mut self,
+        cx: &mut Cx,
+        ui: &WidgetRef,
+        session: &EditorSession,
+        location: &ViewLocation,
+    ) -> bool {
+        if let Some(id) = self.tab_id_for_locator(&location.document) {
+            self.transition(cx, ui, session, DocumentCommand::Activate(id));
+        } else {
+            let Some(document) = crate::documents::open_locator(
+                session.okf_analysis(),
+                session.uml_analysis(),
+                &location.document,
+            ) else {
+                return false;
+            };
+            self.transition(
+                cx,
+                ui,
+                session,
+                DocumentCommand::Open {
+                    document,
+                    persistent: false,
+                },
+            );
+        }
+        let _ = self.restore_active_anchor(cx, ui, &location.anchor);
+        true
     }
 
     fn refresh_tabs(&self, cx: &mut Cx, ui: &WidgetRef) {
@@ -345,6 +417,7 @@ mod tests {
         OpenDocument {
             tab_id: LiveId::from_str(&format!("test-{key}")),
             concept_id: key.into(),
+            kind: crate::view_history::DocumentKind::Primary,
             title: key.into(),
             presentation: DocumentPresentation {
                 icon: Icon::StickyNote,
@@ -371,6 +444,34 @@ mod tests {
         assert!(!host.views.contains_key(&first_id));
         assert_eq!(host.tabs.tabs.len(), 1);
         assert_eq!(host.tabs.tabs[0].concept_id, "second");
+    }
+
+    #[test]
+    fn locator_lookup_distinguishes_primary_and_source_tabs_for_one_concept() {
+        let mut host = DocumentHost::default();
+        let primary = prepared("order", NavCategory::Class, Rc::new(Cell::new(0)));
+        let primary_id = primary.tab_id;
+        host.apply_command(DocumentCommand::Open {
+            document: primary,
+            persistent: true,
+        });
+        let mut source = prepared("order", NavCategory::OkfDocument, Rc::new(Cell::new(0)));
+        source.tab_id = crate::okf_documents::source_document_tab_id("order");
+        source.kind = crate::view_history::DocumentKind::Source;
+        let source_id = source.tab_id;
+        host.apply_command(DocumentCommand::Open {
+            document: source,
+            persistent: true,
+        });
+
+        assert_eq!(
+            host.tab_id_for_locator(&DocumentLocator::primary("order")),
+            Some(primary_id)
+        );
+        assert_eq!(
+            host.tab_id_for_locator(&DocumentLocator::source("order")),
+            Some(source_id)
+        );
     }
 
     #[test]

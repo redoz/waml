@@ -13,6 +13,7 @@ use crate::navigation::NavigationIntent;
 use crate::popup::base::PopupItem;
 use crate::popup::base::PopupResult;
 use crate::popup::select::SelectItem;
+use crate::view_history::ViewAnchor;
 
 /// Typed handles to the single shared body surface (canvas + inspector + tool
 /// dock + selection toolbar) the active `DocView` renders through. Cheap: holds
@@ -21,15 +22,26 @@ use crate::popup::select::SelectItem;
 /// explicit.
 pub struct BodyWidgets {
     ui: WidgetRef,
+    canvas: WidgetRef,
+    markdown: MarkdownRef,
 }
 
 impl BodyWidgets {
     pub fn new(_cx: &mut Cx, ui: &WidgetRef) -> BodyWidgets {
-        BodyWidgets { ui: ui.clone() }
+        BodyWidgets {
+            ui: ui.clone(),
+            canvas: ui.widget(_cx, ids!(canvas)),
+            markdown: ui.widget(_cx, ids!(markdown_surface.md)).as_markdown(),
+        }
     }
 
     pub fn canvas(&self, cx: &mut Cx) -> WidgetRef {
-        self.ui.widget(cx, ids!(canvas))
+        let _ = cx;
+        self.canvas.clone()
+    }
+
+    pub fn canvas_ref(&self) -> &WidgetRef {
+        &self.canvas
     }
     pub fn inspector(&self, cx: &mut Cx) -> WidgetRef {
         self.ui.widget(cx, ids!(inspector))
@@ -107,7 +119,15 @@ impl BodyWidgets {
     }
 
     pub fn scroll_markdown_to_fragment(&self, cx: &mut Cx, fragment: &str) -> bool {
-        crate::markdown_surface::scroll_to_fragment(&self.ui, cx, fragment)
+        self.markdown.scroll_to_fragment(cx, fragment)
+    }
+
+    pub fn markdown_scroll_y(&self) -> f64 {
+        self.markdown.scroll_y()
+    }
+
+    pub fn set_markdown_scroll_y(&self, cx: &mut Cx, scroll_y: f64) {
+        self.markdown.set_scroll_y(cx, scroll_y);
     }
 
     pub fn apply_chrome(&self, cx: &mut Cx, chrome: BodyChrome) {
@@ -329,6 +349,14 @@ pub trait DocView {
 
     fn on_escape(&mut self, cx: &mut Cx, body: &BodyWidgets) {
         let _ = (cx, body);
+    }
+
+    fn capture_anchor(&self, _body: &BodyWidgets) -> ViewAnchor {
+        ViewAnchor::None
+    }
+
+    fn restore_anchor(&mut self, _cx: &mut Cx, _body: &BodyWidgets, anchor: &ViewAnchor) -> bool {
+        matches!(anchor, ViewAnchor::None)
     }
 }
 

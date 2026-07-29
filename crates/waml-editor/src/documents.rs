@@ -1,4 +1,5 @@
 use crate::document::{DocumentDescriptor, OpenDocument};
+use crate::view_history::{DocumentKind, DocumentLocator};
 
 pub fn describe(
     okf: &waml::analysis::OkfAnalysis,
@@ -23,10 +24,17 @@ pub fn reopen(
     uml: &waml::uml::Analysis,
     tab: &crate::doc_tabs::DocTab,
 ) -> Option<OpenDocument> {
-    if tab.id == crate::okf_documents::source_document_tab_id(&tab.concept_id) {
-        crate::okf_documents::open_source(okf, &tab.concept_id)
-    } else {
-        open(okf, uml, &tab.concept_id)
+    open_locator(okf, uml, &tab.locator())
+}
+
+pub fn open_locator(
+    okf: &waml::analysis::OkfAnalysis,
+    uml: &waml::uml::Analysis,
+    locator: &DocumentLocator,
+) -> Option<OpenDocument> {
+    match locator.kind {
+        DocumentKind::Primary => open(okf, uml, &locator.concept_id),
+        DocumentKind::Source => crate::okf_documents::open_source(okf, &locator.concept_id),
     }
 }
 
@@ -156,5 +164,26 @@ mod tests {
 
         assert!(open(prepared.okf(), prepared.uml(), "index").is_none());
         assert!(open(prepared.okf(), prepared.uml(), "log").is_none());
+    }
+
+    #[test]
+    fn locator_reopens_the_correct_view_after_transient_tab_identity_is_gone() {
+        let source =
+            SourceBundle::try_from_pairs([("runbook.md", "---\ntype: Runbook\n---\n# Runbook\n")])
+                .unwrap();
+        let prepared = waml::analysis::prepare_candidate(source, None, 17).unwrap();
+        let (mut old_source_tab, _) = crate::okf_documents::open_source(prepared.okf(), "runbook")
+            .unwrap()
+            .into_tab(false);
+        old_source_tab.id = makepad_widgets::LiveId::from_str("closed-transient-tab");
+
+        let reopened = reopen(prepared.okf(), prepared.uml(), &old_source_tab).unwrap();
+
+        assert_eq!(reopened.locator(), old_source_tab.locator());
+        assert_eq!(reopened.kind, DocumentKind::Source);
+        assert_eq!(
+            reopened.tab_id,
+            crate::okf_documents::source_document_tab_id("runbook")
+        );
     }
 }
