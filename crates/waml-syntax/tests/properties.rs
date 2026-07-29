@@ -3,17 +3,34 @@ use std::sync::Arc;
 use proptest::prelude::*;
 use waml_syntax::{
     parse_okf_markdown, reparse_okf_markdown, write_green_to, GreenText, MarkdownDialect,
-    OkfMarkdownLanguage, ReparseOutcome, SourceText, SyntaxElement, SyntaxTree, TextChange,
-    TextRange, TextSize,
+    OkfMarkdownLanguage, OkfMarkdownSyntaxKind, ReparseOutcome, SourceText, SyntaxElement,
+    SyntaxTree, TextChange, TextRange, TextSize, TokenFlags, TriviaKind,
 };
+
+fn heading_hierarchy_source() -> impl Strategy<Value = String> {
+    any::<String>()
+        .prop_map(|leaf| format!("# H1\n## H2\n### H3\n#### H4\n##### H5\n###### H6\n{leaf}"))
+}
+
+fn quote_list_nesting_source() -> impl Strategy<Value = String> {
+    any::<String>().prop_map(|leaf| {
+        format!("> - outer\n>   - inner\n>     ### container heading\n>     {leaf}\n")
+    })
+}
+
+fn protected_container_nesting_source() -> impl Strategy<Value = String> {
+    any::<String>().prop_map(|leaf| {
+        format!("> - outer\n>   ```text\n>   {leaf}\n>   ```\n>\n>   <div>\n>   html\n>   </div>\n")
+    })
+}
 
 fn shell_source() -> impl Strategy<Value = String> {
     prop_oneof![
         any::<String>(),
         ("(?s).{0,96}").prop_map(|body| format!("---\ntype: uml.Class\n---\n{body}")),
-        (1usize..7, "(?s).{0,80}")
-            .prop_map(|(level, body)| format!("{} Heading\n{body}", "#".repeat(level))),
-        "(?s).{0,80}".prop_map(|body| format!("> quote\n- item\n```\n{body}\n```\n<!-- html -->")),
+        heading_hierarchy_source(),
+        quote_list_nesting_source(),
+        protected_container_nesting_source(),
         "(?s).{0,80}".prop_map(|body| format!("- type: uml.Class\n  name: Example\n{body}")),
     ]
 }
@@ -141,33 +158,82 @@ fn assert_red_tree(tree: &SyntaxTree<OkfMarkdownLanguage>, source: &str) {
     assert_eq!(tree.write_to_string(), source);
 }
 
-fn shell_fingerprint(tree: &SyntaxTree<OkfMarkdownLanguage>) -> Vec<String> {
+#[derive(Debug, Eq, PartialEq)]
+enum TextFingerprint {
+    Static(String),
+    Owned(String),
+    SourceSlice { range: TextRange, text: String },
+}
+
+fn text_fingerprint(text: &GreenText) -> TextFingerprint {
+    match text {
+        GreenText::Static(value) => TextFingerprint::Static((*value).to_owned()),
+        GreenText::Owned(value) => TextFingerprint::Owned(value.to_string()),
+        GreenText::SourceSlice { range, .. } => TextFingerprint::SourceSlice {
+            range: *range,
+            text: text.write_to_string(),
+        },
+    }
+}
+
+#[derive(Debug, Eq, PartialEq)]
+struct TriviaFingerprint {
+    kind: TriviaKind,
+    text: TextFingerprint,
+}
+
+fn trivia_fingerprint(kind: TriviaKind, text: &GreenText) -> TriviaFingerprint {
+    TriviaFingerprint {
+        kind,
+        text: text_fingerprint(text),
+    }
+}
+
+#[derive(Debug, Eq, PartialEq)]
+enum ElementFingerprint {
+    Node {
+        kind: OkfMarkdownSyntaxKind,
+        range: TextRange,
+    },
+    Token {
+        kind: OkfMarkdownSyntaxKind,
+        range: TextRange,
+        flags: TokenFlags,
+        leading: Vec<TriviaFingerprint>,
+        text: TextFingerprint,
+        trailing: Vec<TriviaFingerprint>,
+    },
+}
+
+fn shell_fingerprint(tree: &SyntaxTree<OkfMarkdownLanguage>) -> Vec<ElementFingerprint> {
     let mut stack = vec![tree.root().into()];
     let mut out = Vec::new();
     while let Some(element) = stack.pop() {
         match element {
             SyntaxElement::Node(node) => {
-                out.push(format!("node:{:?}:{:?}", node.kind(), node.range()));
+                out.push(ElementFingerprint::Node {
+                    kind: node.kind(),
+                    range: node.range(),
+                });
                 let children: Vec<_> = node.children().collect();
                 stack.extend(children.into_iter().rev());
             }
-            SyntaxElement::Token(token) => out.push(format!(
-                "token:{:?}:{:?}:{:?}:{}:{}:{}",
-                token.kind(),
-                token.range(),
-                token.flags(),
-                token
+            SyntaxElement::Token(token) => out.push(ElementFingerprint::Token {
+                kind: token.kind(),
+                range: token.range(),
+                flags: token.flags(),
+                leading: token
                     .leading_trivia()
                     .iter()
-                    .map(|t| t.text.write_to_string())
-                    .collect::<String>(),
-                token.text().write_to_string(),
-                token
+                    .map(|trivia| trivia_fingerprint(trivia.kind, &trivia.text))
+                    .collect(),
+                text: text_fingerprint(token.text()),
+                trailing: token
                     .trailing_trivia()
                     .iter()
-                    .map(|t| t.text.write_to_string())
-                    .collect::<String>(),
-            )),
+                    .map(|trivia| trivia_fingerprint(trivia.kind, &trivia.text))
+                    .collect(),
+            }),
         }
     }
     out
@@ -189,6 +255,44 @@ fn assert_shell_case(source_text: String) {
     let parsed =
         parse_okf_markdown(source(&source_text), MarkdownDialect::CommonMarkCurrent).unwrap();
     assert_red_tree(&parsed.tree, &source_text);
+}
+
+#[test]
+fn hierarchy_and_nested_container_examples_are_guaranteed() {
+    let hierarchy = "# H1\n## H2\n### H3\n#### H4\n##### H5\n###### H6\nleaf 🦀\n";
+    let parsed = parse_okf_markdown(source(hierarchy), MarkdownDialect::CommonMarkCurrent).unwrap();
+    assert_eq!(
+        parsed
+            .structure
+            .headings
+            .iter()
+            .map(|heading| heading.level)
+            .collect::<Vec<_>>(),
+        vec![1, 2]
+    );
+    assert_eq!(
+        parsed
+            .structure
+            .nested_headings
+            .iter()
+            .map(|heading| heading.level)
+            .collect::<Vec<_>>(),
+        vec![3, 4, 5, 6]
+    );
+    assert_red_tree(&parsed.tree, hierarchy);
+
+    for nested in [
+        "> - outer\n>   - inner\n>     ### hidden\n>     arbitrary UTF-8 🦀\n",
+        "> - outer\n>   ```text\n>   arbitrary UTF-8 🦀\n>   ```\n>\n>   <div>\n>   html\n>   </div>\n",
+    ] {
+        let parsed =
+            parse_okf_markdown(source(nested), MarkdownDialect::CommonMarkCurrent).unwrap();
+        assert!(parsed.structure.headings.is_empty());
+        assert!(parsed.structure.nested_headings.is_empty());
+        assert!(!parsed.structure.protected_ranges.is_empty());
+        assert!(!parsed.structure.opaque_ranges.is_empty());
+        assert_red_tree(&parsed.tree, nested);
+    }
 }
 
 fn boundaries(value: &str) -> Vec<usize> {
