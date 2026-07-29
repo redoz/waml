@@ -82,6 +82,18 @@ pub struct SequenceOperandSyntax(pub(crate) SyntaxNode<UmlLanguage>);
 pub struct SequenceFragmentSyntax(pub(crate) SyntaxNode<UmlLanguage>);
 #[derive(Clone, Debug)]
 pub struct MessagesBlockSyntax(pub(crate) SyntaxNode<UmlLanguage>);
+/// A typed, lossless leaf view over an authoritative fixed-slot layout tree.
+/// Consumers may inspect source order and ranges through this compatibility
+/// API; semantic lowering reads the typed nodes directly.
+#[derive(Clone, Debug)]
+pub enum LayoutAtomSyntax {
+    Word(SyntaxToken<UmlLanguage>),
+    Link(SyntaxToken<UmlLanguage>),
+    Quote(SyntaxToken<UmlLanguage>),
+    OpenParen(SyntaxToken<UmlLanguage>),
+    CloseParen(SyntaxToken<UmlLanguage>),
+    Comma(SyntaxToken<UmlLanguage>),
+}
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum SlotValueKind {
     Bare,
@@ -524,6 +536,43 @@ impl LayoutStatementSyntax {
             .find(|e| e.kind() == UmlSyntaxKind::LayoutStandalone)
             .and_then(SyntaxElement::into_node)
             .map(LayoutStandaloneSyntax)
+    }
+    /// Lossless layout leaves in authored order, projected from the fixed
+    /// typed-node tree without reconstructing source or grammar state.
+    pub fn atoms(&self) -> impl Iterator<Item = SyntaxToken<UmlLanguage>> + '_ {
+        fn collect(node: &SyntaxNode<UmlLanguage>, out: &mut Vec<SyntaxToken<UmlLanguage>>) {
+            for element in node.children() {
+                if let Some(token) = element.clone().into_token() {
+                    if matches!(
+                        token.kind(),
+                        UmlSyntaxKind::LayoutWordToken
+                            | UmlSyntaxKind::LayoutLinkToken
+                            | UmlSyntaxKind::LayoutQuoteToken
+                            | UmlSyntaxKind::LayoutOpenParenToken
+                            | UmlSyntaxKind::LayoutCloseParenToken
+                            | UmlSyntaxKind::LayoutCommaToken
+                    ) {
+                        out.push(token);
+                    }
+                } else if let Some(child) = element.into_node() {
+                    collect(&child, out);
+                }
+            }
+        }
+        let mut atoms = Vec::new();
+        collect(&self.0, &mut atoms);
+        atoms.into_iter()
+    }
+    pub fn typed_atoms(&self) -> impl Iterator<Item = LayoutAtomSyntax> + '_ {
+        self.atoms().filter_map(|token| match token.kind() {
+            UmlSyntaxKind::LayoutWordToken => Some(LayoutAtomSyntax::Word(token)),
+            UmlSyntaxKind::LayoutLinkToken => Some(LayoutAtomSyntax::Link(token)),
+            UmlSyntaxKind::LayoutQuoteToken => Some(LayoutAtomSyntax::Quote(token)),
+            UmlSyntaxKind::LayoutOpenParenToken => Some(LayoutAtomSyntax::OpenParen(token)),
+            UmlSyntaxKind::LayoutCloseParenToken => Some(LayoutAtomSyntax::CloseParen(token)),
+            UmlSyntaxKind::LayoutCommaToken => Some(LayoutAtomSyntax::Comma(token)),
+            _ => None,
+        })
     }
 }
 impl LayoutPlacementSyntax {
