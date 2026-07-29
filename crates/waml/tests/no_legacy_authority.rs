@@ -1802,6 +1802,43 @@ fn local_standard_root_names_do_not_acquire_external_trust() {
             let sink = Vec::new();
             sink.push(model.to_string());
         }
+
+        fn block_glob_vec_leak(model: &Model) {
+            mod local {
+                pub struct Vec;
+                impl Vec {
+                    pub fn new() -> Self {
+                        Self
+                    }
+
+                    pub fn push(&self, _: String) {}
+                }
+            }
+            use local::*;
+
+            let sink = Vec::new();
+            sink.push(model.to_string());
+        }
+        "#,
+    );
+    let glob_violations = reasons(
+        r#"
+        mod custom {
+            pub struct Vec;
+            impl Vec {
+                pub fn new() -> Self {
+                    Self
+                }
+
+                pub fn push(&self, _: String) {}
+            }
+        }
+        use custom::*;
+
+        fn glob_vec_leak(model: &Model) {
+            let sink = Vec::new();
+            sink.push(model.to_string());
+        }
         "#,
     );
 
@@ -1832,7 +1869,11 @@ fn local_standard_root_names_do_not_acquire_external_trust() {
         }),
         "block-local `alloc` collection root acquired external trust: {block_local_violations:#?}"
     );
-    for expected in ["generic_vec_leak", "block_unqualified_vec_leak"] {
+    for expected in [
+        "generic_vec_leak",
+        "block_unqualified_vec_leak",
+        "block_glob_vec_leak",
+    ] {
         assert!(
             unqualified_violations.iter().any(|reason| {
                 reason.contains(expected) && reason.contains("unresolved callable dispatch")
@@ -1841,6 +1882,12 @@ fn local_standard_root_names_do_not_acquire_external_trust() {
              {unqualified_violations:#?}"
         );
     }
+    assert!(
+        glob_violations.iter().any(|reason| {
+            reason.contains("glob_vec_leak") && reason.contains("unresolved callable dispatch")
+        }),
+        "glob-imported `Vec` shadow acquired prelude trust: {glob_violations:#?}"
+    );
 }
 
 #[test]

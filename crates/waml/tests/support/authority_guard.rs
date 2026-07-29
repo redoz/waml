@@ -2618,7 +2618,11 @@ fn block_local_standard_roots(block: &syn::Block) -> BTreeSet<String> {
             let mut bindings = BTreeMap::new();
             collect_use_bindings(Vec::new(), &item_use.tree, &mut bindings);
             for binding in bindings.into_keys() {
-                self.record(binding);
+                if binding == "*" {
+                    self.roots.insert("Vec".into());
+                } else {
+                    self.record(binding);
+                }
             }
         }
 
@@ -3611,7 +3615,9 @@ fn collect_use_bindings(
                 collect_use_bindings(prefix.clone(), item, out);
             }
         }
-        UseTree::Glob(_) => {}
+        UseTree::Glob(_) => {
+            out.insert("*".into(), prefix);
+        }
     }
 }
 
@@ -4413,7 +4419,11 @@ fn is_harmless_standard_collection_dispatch(
     );
     let unqualified_prelude_vec = receiver.name == "Vec"
         && receiver.module == *env.module
-        && !local_standard_roots.contains("Vec");
+        && !local_standard_roots.contains("Vec")
+        && !env
+            .imports
+            .get(env.module)
+            .is_some_and(|bindings| bindings.contains_key("*"));
     if !external_standard && !unqualified_prelude_vec {
         return false;
     }
