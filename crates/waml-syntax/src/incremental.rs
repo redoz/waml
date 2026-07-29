@@ -50,11 +50,9 @@ pub enum ReparseOutcome<L: SyntaxLanguage> {
 }
 
 impl ChangeMap {
-    pub fn checked(
-        old: &SourceText,
-        changes: &[TextChange],
-    ) -> Result<Self, FullReparseReason> {
-        let zero = TextSize::try_from_usize(0).map_err(|_| FullReparseReason::UnsafeSynchronization)?;
+    pub fn checked(old: &SourceText, changes: &[TextChange]) -> Result<Self, FullReparseReason> {
+        let zero =
+            TextSize::try_from_usize(0).map_err(|_| FullReparseReason::UnsafeSynchronization)?;
         let mut previous_start = zero;
         let mut previous_end = zero;
         let mut previous_was_insertion = false;
@@ -73,7 +71,8 @@ impl ChangeMap {
                 _ => FullReparseReason::UnsafeSynchronization,
             })?;
             let unchanged = TextSize::try_from_usize(
-                start.to_usize()
+                start
+                    .to_usize()
                     .checked_sub(previous_end.to_usize())
                     .ok_or(FullReparseReason::UnsafeSynchronization)?,
             )
@@ -88,7 +87,10 @@ impl ChangeMap {
                 .map_err(|_| FullReparseReason::UnsafeSynchronization)?;
             let new = TextRange::new(new_at, new_end)
                 .map_err(|_| FullReparseReason::UnsafeSynchronization)?;
-            segments.push(ChangeSegment { old: change.old_range, new });
+            segments.push(ChangeSegment {
+                old: change.old_range,
+                new,
+            });
             new_at = new_end;
             previous_start = start;
             previous_end = change.old_range.end();
@@ -104,12 +106,22 @@ impl ChangeMap {
         let new_len = new_at
             .checked_add(tail)
             .map_err(|_| FullReparseReason::UnsafeSynchronization)?;
-        Ok(Self { old_len: old.len(), new_len, segments: segments.into() })
+        Ok(Self {
+            old_len: old.len(),
+            new_len,
+            segments: segments.into(),
+        })
     }
 
-    pub fn old_len(&self) -> TextSize { self.old_len }
-    pub fn new_len(&self) -> TextSize { self.new_len }
-    pub fn segments(&self) -> &[ChangeSegment] { &self.segments }
+    pub fn old_len(&self) -> TextSize {
+        self.old_len
+    }
+    pub fn new_len(&self) -> TextSize {
+        self.new_len
+    }
+    pub fn segments(&self) -> &[ChangeSegment] {
+        &self.segments
+    }
 
     pub fn changed_old_range(&self) -> Option<TextRange> {
         let first = self.segments.first()?;
@@ -124,19 +136,24 @@ impl ChangeMap {
     }
 
     pub fn translate_unchanged(&self, old: TextRange) -> Option<TextRange> {
-        if old.end() > self.old_len || self.segments.iter().any(|segment| {
-            if segment.old.start() == segment.old.end() {
-                old.start() < segment.old.start() && segment.old.start() < old.end()
-            } else {
-                old.start() < segment.old.end() && segment.old.start() < old.end()
-            }
-        }) {
+        if old.end() > self.old_len
+            || self.segments.iter().any(|segment| {
+                if segment.old.start() == segment.old.end() {
+                    old.start() < segment.old.start() && segment.old.start() < old.end()
+                } else {
+                    old.start() < segment.old.end() && segment.old.start() < old.end()
+                }
+            })
+        {
             return None;
         }
-        Some(TextRange::new(
-            self.translate_start_boundary(old.start())?,
-            self.translate_end_boundary(old.end())?,
-        ).ok()?)
+        Some(
+            TextRange::new(
+                self.translate_start_boundary(old.start())?,
+                self.translate_end_boundary(old.end())?,
+            )
+            .ok()?,
+        )
     }
 
     pub fn translate_start_boundary(&self, old: TextSize) -> Option<TextSize> {
@@ -159,13 +176,18 @@ impl ChangeMap {
             }
             let before = segment.old.end() < old
                 || (!insertion && segment.old.end() == old)
-                || (insertion && (segment.old.start() < old || (start_bias && segment.old.start() == old)));
+                || (insertion
+                    && (segment.old.start() < old || (start_bias && segment.old.start() == old)));
             if before {
-                delta += segment.new.len().to_usize() as i64 - segment.old.len().to_usize() as i64;
+                let new_len = i64::try_from(segment.new.len().to_usize()).ok()?;
+                let old_len = i64::try_from(segment.old.len().to_usize()).ok()?;
+                let segment_delta = new_len.checked_sub(old_len)?;
+                delta = delta.checked_add(segment_delta)?;
             }
         }
-        let translated = old.to_usize() as i64 + delta;
-        (0..=u32::MAX as i64).contains(&translated)
+        let translated = i64::try_from(old.to_usize()).ok()?.checked_add(delta)?;
+        (0..=u32::MAX as i64)
+            .contains(&translated)
             .then(|| TextSize::try_from_usize(translated as usize).ok())?
     }
 }
@@ -178,15 +200,25 @@ fn changes_reconstruct(
     let mut rebuilt = String::with_capacity(new.len().to_usize());
     let mut cursor = TextSize::try_from_usize(0).map_err(|_| ParseError::WidthOverflow)?;
     for change in changes {
-        let prefix = TextRange::new(cursor, change.old_range.start())
-            .map_err(|_| ParseError::InvalidRange { range: change.old_range })?;
-        rebuilt.push_str(old.slice(prefix).map_err(|_| ParseError::InvalidRange { range: prefix })?);
+        let prefix = TextRange::new(cursor, change.old_range.start()).map_err(|_| {
+            ParseError::InvalidRange {
+                range: change.old_range,
+            }
+        })?;
+        rebuilt.push_str(
+            old.slice(prefix)
+                .map_err(|_| ParseError::InvalidRange { range: prefix })?,
+        );
         rebuilt.push_str(&change.replacement);
         cursor = change.old_range.end();
     }
-    let tail = TextRange::new(cursor, old.len())
-        .map_err(|_| ParseError::InvalidRange { range: TextRange::new(cursor, cursor).unwrap() })?;
-    rebuilt.push_str(old.slice(tail).map_err(|_| ParseError::InvalidRange { range: tail })?);
+    let tail = TextRange::new(cursor, old.len()).map_err(|_| ParseError::InvalidRange {
+        range: TextRange::new(cursor, cursor).unwrap(),
+    })?;
+    rebuilt.push_str(
+        old.slice(tail)
+            .map_err(|_| ParseError::InvalidRange { range: tail })?,
+    );
     Ok(rebuilt == new.shared().as_str())
 }
 
@@ -203,18 +235,30 @@ pub fn reparse_okf_markdown(
         reason: "invalid incremental change map".into(),
     })?;
     if map.new_len() != new_text.len() {
-        return Err(ParseError::StructuralInvariant { reason: "incremental changes do not reconstruct candidate source".into() });
+        return Err(ParseError::StructuralInvariant {
+            reason: "incremental changes do not reconstruct candidate source".into(),
+        });
     }
     if !changes_reconstruct(&old, &new_text, changes)? {
-        return Err(ParseError::StructuralInvariant { reason: "incremental changes do not reconstruct candidate source".into() });
+        return Err(ParseError::StructuralInvariant {
+            reason: "incremental changes do not reconstruct candidate source".into(),
+        });
     }
     if changes.is_empty() {
         return Ok(ReparseOutcome::Incremental {
-            tree: Arc::new(SyntaxTree::new(previous.root_green().clone(), Arc::from(previous.diagnostics()), MarkdownDialect::CommonMarkCurrent)),
+            tree: Arc::new(SyntaxTree::new(
+                previous.root_green().clone(),
+                Arc::from(previous.diagnostics()),
+                MarkdownDialect::CommonMarkCurrent,
+            )),
             shared_source_independent_green: 0,
-            reparsed_range: TextRange::new(TextSize::try_from_usize(0).unwrap(), old.len()).unwrap(),
+            reparsed_range: TextRange::new(TextSize::try_from_usize(0).unwrap(), old.len())
+                .unwrap(),
         });
     }
     let parsed = parse_okf_markdown(new_text, MarkdownDialect::CommonMarkCurrent)?;
-    Ok(ReparseOutcome::Full { tree: parsed.tree, reason: FullReparseReason::UnsafeSynchronization })
+    Ok(ReparseOutcome::Full {
+        tree: parsed.tree,
+        reason: FullReparseReason::UnsafeSynchronization,
+    })
 }
