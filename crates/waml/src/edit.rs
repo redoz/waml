@@ -1,4 +1,5 @@
 use reversible::{DeltaBatch, SourceDelta};
+use std::sync::Arc;
 
 use crate::source::SourceBundle;
 use crate::{analysis::OkfAnalysis, uml};
@@ -47,11 +48,12 @@ pub trait EditBatch: sealed::Sealed {
     }
 }
 
-pub struct PendingEdit(Box<dyn EditBatch>);
+#[derive(Clone)]
+pub struct PendingEdit(Arc<dyn EditBatch>);
 
 impl PendingEdit {
     pub fn new(batch: impl EditBatch + 'static) -> Self {
-        Self(Box::new(batch))
+        Self(Arc::new(batch))
     }
 
     pub fn sequence(edits: Vec<PendingEdit>) -> Self {

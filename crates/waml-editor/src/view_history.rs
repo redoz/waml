@@ -1,3 +1,7 @@
+use std::collections::VecDeque;
+
+pub const VIEW_HISTORY_LIMIT: usize = 256;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum DocumentKind {
     Primary,
@@ -159,6 +163,3 @@ impl ViewHistory {
         self.cursor.and_then(|cursor| self.entries.get(cursor))
     }
 }
-use std::collections::VecDeque;
-
-pub const VIEW_HISTORY_LIMIT: usize = 256;

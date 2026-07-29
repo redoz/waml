@@ -25,6 +25,7 @@ mod document_header;
 mod document_host;
 mod documents;
 mod edge_labels;
+mod editor_history;
 mod editor_session;
 mod fonts;
 mod fonts_overlay;
