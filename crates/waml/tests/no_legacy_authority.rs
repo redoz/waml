@@ -385,6 +385,10 @@ fn real_syntax_tree_authority_signatures_and_builders_are_rejected() {
             struct TreeSlot {
                 tree: Arc<SyntaxTree<UmlLanguage>>,
             }
+            struct TreePair<'a>(&'a mut Arc<SyntaxTree<UmlLanguage>>);
+            struct TreeNamed<'a> {
+                slot: &'a mut Arc<SyntaxTree<UmlLanguage>>,
+            }
             impl TreeSlot {
                 fn parse_into(&mut self, raw: &str) {
                     self.tree = external_factory(raw);
@@ -414,6 +418,28 @@ fn real_syntax_tree_authority_signatures_and_builders_are_rejected() {
 
                 fn parse_blocked(&mut self, raw: &str) {
                     let slot = { &mut self.tree };
+                    *slot = external_factory(raw);
+                }
+
+                fn parse_destructured(&mut self, raw: &str) {
+                    let (slot,) = (&mut self.tree,);
+                    *slot = external_factory(raw);
+                }
+
+                fn parse_tuple_structured(&mut self, raw: &str) {
+                    let TreePair(slot) = TreePair(&mut self.tree);
+                    *slot = external_factory(raw);
+                }
+
+                fn parse_named_structured(&mut self, raw: &str) {
+                    let TreeNamed { slot } = TreeNamed {
+                        slot: &mut self.tree,
+                    };
+                    *slot = external_factory(raw);
+                }
+
+                fn parse_sliced(&mut self, raw: &str) {
+                    let [slot] = [&mut self.tree];
                     *slot = external_factory(raw);
                 }
             }
@@ -530,6 +556,10 @@ fn real_syntax_tree_authority_signatures_and_builders_are_rejected() {
         "parse_selected",
         "parse_matched",
         "parse_blocked",
+        "parse_destructured",
+        "parse_tuple_structured",
+        "parse_named_structured",
+        "parse_sliced",
         "parse_sibling",
         "parse_sibling_selected",
         "parse_indexed",

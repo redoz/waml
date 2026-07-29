@@ -347,16 +347,10 @@ impl<'ast, 'env> Visit<'ast> for BodyFacts<'env> {
     }
 
     fn visit_local(&mut self, node: &'ast Local) {
-        let (binding, explicit_paths) = match &node.pat {
-            syn::Pat::Ident(pattern) => (Some(pattern.ident.to_string()), Vec::new()),
-            syn::Pat::Type(pattern) => (
-                match &*pattern.pat {
-                    syn::Pat::Ident(pattern) => Some(pattern.ident.to_string()),
-                    _ => None,
-                },
-                type_paths(&pattern.ty),
-            ),
-            _ => (None, Vec::new()),
+        let bindings = pattern_binding_names(&node.pat);
+        let explicit_paths = match &node.pat {
+            syn::Pat::Type(pattern) => type_paths(&pattern.ty),
+            _ => Vec::new(),
         };
         self.body_paths.extend(explicit_paths.iter().cloned());
         let explicit_type_uses = if explicit_paths.is_empty() {
@@ -382,19 +376,23 @@ impl<'ast, 'env> Visit<'ast> for BodyFacts<'env> {
             .init
             .as_ref()
             .and_then(|init| self.expression_type_identity(&init.expr));
-        if let (Some(binding), Some(ty)) = (binding.as_ref(), explicit.or(inferred)) {
-            self.receiver_types.insert(binding.clone(), ty);
+        if let Some(ty) = explicit.or(inferred) {
+            for binding in &bindings {
+                self.receiver_types.insert(binding.clone(), ty.clone());
+            }
         }
         let type_uses = if explicit_type_uses.is_empty() {
             inferred_type_uses
         } else {
             explicit_type_uses
         };
-        if let Some(binding) = binding.as_ref().filter(|_| !type_uses.is_empty()) {
-            self.receiver_type_uses.insert(binding.clone(), type_uses);
+        if !type_uses.is_empty() {
+            for binding in &bindings {
+                self.receiver_type_uses
+                    .insert(binding.clone(), type_uses.clone());
+            }
         }
-        if let Some(binding) = &binding {
-            self.bindings.insert(binding.clone());
+        if !bindings.is_empty() {
             let origin = node
                 .init
                 .as_ref()
@@ -409,12 +407,15 @@ impl<'ast, 'env> Visit<'ast> for BodyFacts<'env> {
                     )
                 });
             self.local.serialize |= origin == ValueOrigin::ModelText;
-            self.origins.insert(binding.clone(), origin);
+            for binding in &bindings {
+                self.bindings.insert(binding.clone());
+                self.origins.insert(binding.clone(), origin);
+            }
         }
-        if let (Some(binding), Some(init)) = (binding, &node.init) {
+        if let ([binding], Some(init)) = (bindings.as_slice(), &node.init) {
             if let syn::Expr::Path(path) = &*init.expr {
                 self.callable_paths.insert(
-                    binding,
+                    binding.clone(),
                     path.path
                         .segments
                         .iter()
@@ -469,6 +470,24 @@ impl<'ast, 'env> Visit<'ast> for BodyFacts<'env> {
     }
 }
 
+fn pattern_binding_names(pattern: &syn::Pat) -> Vec<String> {
+    #[derive(Default)]
+    struct PatternBindings {
+        names: BTreeSet<String>,
+    }
+
+    impl<'ast> Visit<'ast> for PatternBindings {
+        fn visit_pat_ident(&mut self, pattern: &'ast syn::PatIdent) {
+            self.names.insert(pattern.ident.to_string());
+            visit::visit_pat_ident(self, pattern);
+        }
+    }
+
+    let mut bindings = PatternBindings::default();
+    bindings.visit_pat(pattern);
+    bindings.names.into_iter().collect()
+}
+
 impl<'env> BodyFacts<'env> {
     fn new(env: BodyEnvironment<'env>) -> Self {
         Self {
@@ -498,18 +517,37 @@ impl<'env> BodyFacts<'env> {
     }
 
     fn record_assignment_place_type(&mut self, expression: &syn::Expr) {
-        let type_uses = self.expression_type_uses(expression);
-        if !type_uses.is_empty() {
-            self.body_type_uses.extend(type_uses);
-            return;
-        }
+        self.record_assignment_place_type_inner(expression, false);
+    }
 
+    fn record_assignment_place_type_inner(&mut self, expression: &syn::Expr, through_alias: bool) {
         match unwrap_expression(expression) {
-            syn::Expr::Field(field) => self.record_assignment_place_type(&field.base),
-            syn::Expr::Index(index) => self.record_assignment_place_type(&index.expr),
-            syn::Expr::MethodCall(call) => self.record_assignment_place_type(&call.receiver),
+            syn::Expr::Path(_) if through_alias => {
+                self.body_type_uses
+                    .extend(self.expression_type_uses(expression));
+            }
+            syn::Expr::Field(field) => {
+                let type_uses = self.expression_type_uses(expression);
+                if type_uses.is_empty() {
+                    self.record_assignment_place_type_inner(&field.base, through_alias);
+                } else {
+                    self.body_type_uses.extend(type_uses);
+                }
+            }
+            syn::Expr::Index(index) => {
+                let type_uses = self.expression_type_uses(expression);
+                if type_uses.is_empty() {
+                    self.record_assignment_place_type_inner(&index.expr, through_alias);
+                } else {
+                    self.body_type_uses.extend(type_uses);
+                }
+            }
             syn::Expr::Unary(unary) if matches!(unary.op, syn::UnOp::Deref(_)) => {
-                self.record_assignment_place_type(&unary.expr);
+                self.record_assignment_place_type_inner(&unary.expr, true);
+            }
+            _ if through_alias => {
+                self.body_type_uses
+                    .extend(self.expression_type_uses(expression));
             }
             _ => {}
         }
@@ -556,32 +594,58 @@ impl<'env> BodyFacts<'env> {
                     .into_iter()
                     .collect()
             }
-            syn::Expr::Struct(expression) => vec![TypeUse {
-                module: self.env.module.clone(),
-                paths: paths_in_path(&expression.path),
-            }],
-            syn::Expr::Call(expression) => match unwrap_expression(&expression.func) {
-                syn::Expr::Path(function) => {
-                    let mut segments = function
-                        .path
-                        .segments
-                        .iter()
-                        .map(|segment| segment.ident.to_string())
-                        .collect::<Vec<_>>();
-                    if segments.len() >= 2
-                        && segments.last().is_some_and(|method| {
-                            method.chars().next().is_some_and(char::is_lowercase)
-                        })
-                    {
-                        segments.pop();
-                    }
-                    vec![TypeUse {
-                        module: self.env.module.clone(),
-                        paths: vec![segments],
-                    }]
+            syn::Expr::Struct(expression) => {
+                let mut types = vec![TypeUse {
+                    module: self.env.module.clone(),
+                    paths: paths_in_path(&expression.path),
+                }];
+                for field in &expression.fields {
+                    types.extend(self.expression_type_uses(&field.expr));
                 }
-                _ => Vec::new(),
-            },
+                if let Some(rest) = &expression.rest {
+                    types.extend(self.expression_type_uses(rest));
+                }
+                types
+            }
+            syn::Expr::Call(expression) => {
+                let mut types = match unwrap_expression(&expression.func) {
+                    syn::Expr::Path(function) => {
+                        let mut segments = function
+                            .path
+                            .segments
+                            .iter()
+                            .map(|segment| segment.ident.to_string())
+                            .collect::<Vec<_>>();
+                        if segments.len() >= 2
+                            && segments.last().is_some_and(|method| {
+                                method.chars().next().is_some_and(char::is_lowercase)
+                            })
+                        {
+                            segments.pop();
+                        }
+                        vec![TypeUse {
+                            module: self.env.module.clone(),
+                            paths: vec![segments],
+                        }]
+                    }
+                    _ => self.expression_type_uses(&expression.func),
+                };
+                for argument in &expression.args {
+                    types.extend(self.expression_type_uses(argument));
+                }
+                types
+            }
+            syn::Expr::Tuple(expression) => expression
+                .elems
+                .iter()
+                .flat_map(|element| self.expression_type_uses(element))
+                .collect(),
+            syn::Expr::Array(expression) => expression
+                .elems
+                .iter()
+                .flat_map(|element| self.expression_type_uses(element))
+                .collect(),
+            syn::Expr::Repeat(expression) => self.expression_type_uses(&expression.expr),
             syn::Expr::Index(expression) => self.expression_type_uses(&expression.expr),
             syn::Expr::Unary(expression) if matches!(expression.op, syn::UnOp::Deref(_)) => {
                 self.expression_type_uses(&expression.expr)
