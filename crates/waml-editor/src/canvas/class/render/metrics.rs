@@ -69,6 +69,20 @@ mod tests {
     }
 
     #[test]
+    fn edge_dependents_derive_from_the_mode_specific_stroke() {
+        let cad_low = LineworkMetrics::for_zoom(LineworkMode::Cad, 0.25);
+        let cad_high = LineworkMetrics::for_zoom(LineworkMode::Cad, 4.0);
+        assert_eq!(cad_low.edge_thickness * 2.0, cad_high.edge_thickness * 2.0);
+        assert_eq!(cad_low.edge_thickness * 0.5, cad_high.edge_thickness * 0.5);
+        assert_eq!(cad_low.marker_size, cad_high.marker_size);
+
+        let scaled_low = LineworkMetrics::for_zoom(LineworkMode::Scaled, 0.25);
+        let scaled_high = LineworkMetrics::for_zoom(LineworkMode::Scaled, 4.0);
+        assert_ne!(scaled_low.edge_thickness * 2.0, scaled_high.edge_thickness * 2.0);
+        assert_ne!(scaled_low.marker_size, scaled_high.marker_size);
+    }
+
+    #[test]
     fn scaled_metrics_at_quarter_zoom_obey_minima() {
         let metrics = LineworkMetrics::for_zoom(LineworkMode::Scaled, 0.25);
 

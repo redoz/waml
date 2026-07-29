@@ -15,8 +15,8 @@ pub(super) fn draw_edges(
     let camera = snapshot.viewport.camera;
     let rect = snapshot.viewport.view_rect;
     let zoom = camera.zoom;
-    let thickness = (3.0 * zoom).max(1.8);
-    let marker_size = (10.0 * zoom).max(4.0);
+    let thickness = snapshot.linework.edge_thickness;
+    let marker_size = snapshot.linework.marker_size;
     draws.edge.set_uniform(cx, live_id!(zoom), &[zoom as f32]);
     draws.elbow.set_uniform(cx, live_id!(zoom), &[zoom as f32]);
     let r_base = thickness * 2.0;
