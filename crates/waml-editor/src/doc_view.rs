@@ -178,6 +178,8 @@ pub struct ViewOutcome {
     pub close_active: bool,
     /// Ask the shell to re-push the statusbar snapshot.
     pub statusbar_dirty: bool,
+    /// A focus/selection boundary that must stop older text edits coalescing.
+    pub break_merge_group: bool,
     pub navigation: Option<NavigationIntent>,
 }
 
@@ -404,6 +406,7 @@ mod tests {
         assert!(o.promote_subject.is_none());
         assert!(!o.close_active);
         assert!(!o.statusbar_dirty);
+        assert!(!o.break_merge_group);
         assert!(o.navigation.is_none());
     }
 

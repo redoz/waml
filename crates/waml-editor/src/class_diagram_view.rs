@@ -428,6 +428,7 @@ impl DocView for ClassDiagramView {
             {
                 canvas.select_by_key(cx, &key);
             }
+            out.break_merge_group = true;
             return out;
         }
 
@@ -535,6 +536,7 @@ impl DocView for ClassDiagramView {
                 {
                     inspector.set_subject(cx, model, Subject::Classifier(key));
                 }
+                out.break_merge_group = true;
                 return out;
             }
             Some(crate::canvas::ClassDiagramSurfaceAction::NodeDeselect) => {
@@ -547,6 +549,7 @@ impl DocView for ClassDiagramView {
                 {
                     inspector.set_subject(cx, model, diagram_subject);
                 }
+                out.break_merge_group = true;
                 return out;
             }
             Some(crate::canvas::ClassDiagramSurfaceAction::ToggleExpand { key }) => {

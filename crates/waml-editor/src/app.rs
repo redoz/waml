@@ -14,6 +14,7 @@ use crate::platform_browser::{ExternalUrlAdapter, PlatformBrowser};
 use crate::popup::base::PopupResult;
 use crate::popup::root::{MenuOpen, PopupRoot, PopupSpec};
 use crate::popup::select::{SelectItem, SelectLead};
+use crate::view_history::{HistoryDirection, ViewAnchor, ViewHistory, ViewLocation};
 use makepad_widgets::*;
 use std::path::{Path, PathBuf};
 
@@ -65,6 +66,20 @@ fn project_document_header(
 struct PendingFragment {
     concept_id: String,
     fragment: String,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+struct PendingAnchorRestore {
+    document: crate::navigation::DocumentLocator,
+    anchor: ViewAnchor,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum TransitionCause {
+    UserNavigation,
+    UndoRedoReveal,
+    HistoryTraversal,
+    PassiveReconciliation,
 }
 
 script_mod! {
@@ -629,6 +644,8 @@ pub struct App {
     open_name: String,
     #[rust]
     documents: DocumentHost,
+    #[rust]
+    view_history: ViewHistory,
     /// Complete recent-config backing list. `StartScreen` renders a capped copy
     /// of its first five entries, so `OpenRecent(i)` and `TogglePin(i)` resolve
     /// here without re-reading disk or introducing index drift.
@@ -696,6 +713,8 @@ pub struct App {
     agent_row_w: f64,
     #[rust]
     pending_fragment: Option<PendingFragment>,
+    #[rust]
+    pending_anchor_restore: Option<PendingAnchorRestore>,
 }
 
 impl App {
@@ -763,14 +782,34 @@ impl App {
                     concept_id: concept_id.clone(),
                     fragment,
                 });
-                self.transition_document(
+                let anchor = self
+                    .pending_fragment
+                    .as_ref()
+                    .map(|pending| ViewAnchor::Markdown {
+                        fragment: Some(pending.fragment.clone()),
+                        scroll_y: 0.0,
+                    })
+                    .unwrap_or(ViewAnchor::None);
+                let changed = self.transition_to_location(
                     cx,
-                    &concept_id,
-                    disposition == crate::navigation::OpenDisposition::Persistent,
+                    ViewLocation {
+                        document: crate::navigation::DocumentLocator::primary(&concept_id),
+                        anchor,
+                    },
+                    TransitionCause::UserNavigation,
                 );
+                if disposition == crate::navigation::OpenDisposition::Persistent {
+                    let id = self.documents.active_id();
+                    self.documents.transition(
+                        cx,
+                        &self.ui,
+                        &self.session,
+                        DocumentCommand::Promote(id),
+                    );
+                }
                 cx.redraw_all();
                 self.set_navigation_message(cx, None);
-                true
+                changed
             }
             crate::navigation::NavigationTarget::Directory { address } if address == "/" => {
                 self.nav_state.scope = "/".into();
@@ -828,9 +867,31 @@ impl App {
             .scroll_active_to_fragment(cx, &self.ui, &fragment);
         self.pending_fragment = None;
         if found {
+            if let Some(current) = self.documents.capture_active_location(cx, &self.ui) {
+                self.view_history.refresh_current(current);
+            }
             self.set_navigation_message(cx, None);
         } else {
             self.set_navigation_message(cx, Some(&format!("Section not found: {fragment}")));
+        }
+    }
+
+    fn apply_pending_anchor_restore(&mut self, cx: &mut Cx) {
+        let Some(pending) = self.pending_anchor_restore.take() else {
+            return;
+        };
+        if self
+            .documents
+            .active_tab()
+            .map_or(true, |tab| tab.locator() != pending.document)
+        {
+            return;
+        }
+        let _ = self
+            .documents
+            .restore_active_anchor(cx, &self.ui, &pending.anchor);
+        if let Some(current) = self.documents.capture_active_location(cx, &self.ui) {
+            self.view_history.refresh_current(current);
         }
     }
 
@@ -878,29 +939,150 @@ impl App {
     /// use this path so replacement cleanup and view/chrome synchronization
     /// stay identical for classifiers and diagrams.
     fn transition_document(&mut self, cx: &mut Cx, concept_id: &str, persistent: bool) -> bool {
-        let Some(document) = crate::documents::open(
-            self.session.okf_analysis(),
-            self.session.uml_analysis(),
-            concept_id,
-        ) else {
-            return false;
-        };
-        let changed = self.documents.transition(
+        let changed = self.transition_to_location(
             cx,
-            &self.ui,
-            &self.session,
-            DocumentCommand::Open {
-                document,
-                persistent,
+            ViewLocation {
+                document: crate::navigation::DocumentLocator::primary(concept_id),
+                anchor: ViewAnchor::None,
             },
+            TransitionCause::UserNavigation,
         );
+        if persistent && changed {
+            let id = self.documents.active_id();
+            self.documents
+                .transition(cx, &self.ui, &self.session, DocumentCommand::Promote(id));
+        }
+        changed
+    }
+
+    fn transition_to_location(
+        &mut self,
+        cx: &mut Cx,
+        location: ViewLocation,
+        cause: TransitionCause,
+    ) -> bool {
+        let departing = self.documents.capture_active_location(cx, &self.ui);
+        if matches!(cause, TransitionCause::HistoryTraversal) {
+            if let Some(departing) = departing.clone() {
+                self.view_history.refresh_current(departing);
+            }
+        }
+        if !self
+            .documents
+            .restore_location(cx, &self.ui, &self.session, &location)
+        {
+            return false;
+        }
+        if matches!(
+            cause,
+            TransitionCause::HistoryTraversal | TransitionCause::UndoRedoReveal
+        ) && !matches!(location.anchor, ViewAnchor::None)
+        {
+            self.pending_anchor_restore = Some(PendingAnchorRestore {
+                document: location.document.clone(),
+                anchor: location.anchor.clone(),
+            });
+            cx.redraw_all();
+        }
         self.sync_document_shell(cx);
         // Re-submit the complete composed tree after the selection change.
         // Makepad's immediate-mode `FileTree` otherwise retains only the rows
         // visited before its clicked leaf on that redraw, making a trailing
         // Generic OKF row disappear until the next query/filter event.
         self.refresh_nav(cx, false);
-        changed
+        let Some(mut arriving) = self.documents.capture_active_location(cx, &self.ui) else {
+            return false;
+        };
+        if matches!(
+            location.anchor,
+            ViewAnchor::Markdown {
+                fragment: Some(_),
+                ..
+            }
+        ) {
+            arriving.anchor = location.anchor.clone();
+        }
+
+        match cause {
+            TransitionCause::UserNavigation | TransitionCause::UndoRedoReveal => {
+                self.session.break_edit_merge_group();
+                if let Some(departing) = departing {
+                    let explicit_fragment = matches!(
+                        location.anchor,
+                        ViewAnchor::Markdown {
+                            fragment: Some(_),
+                            ..
+                        }
+                    );
+                    if departing.document == arriving.document && !explicit_fragment {
+                        self.view_history.refresh_current(arriving);
+                    } else {
+                        self.view_history.record_transition(departing, arriving);
+                    }
+                } else {
+                    self.view_history.reset(Some(arriving));
+                }
+            }
+            TransitionCause::HistoryTraversal => {}
+            TransitionCause::PassiveReconciliation => {
+                if self
+                    .view_history
+                    .current()
+                    .is_some_and(|current| current.document == arriving.document)
+                {
+                    self.view_history.refresh_current(arriving);
+                }
+            }
+        }
+        true
+    }
+
+    fn traverse_view_history(&mut self, cx: &mut Cx, direction: HistoryDirection) -> bool {
+        let Some(target) = self.view_history.target(direction, |location| {
+            crate::documents::open_locator(
+                self.session.okf_analysis(),
+                self.session.uml_analysis(),
+                &location.document,
+            )
+            .is_some()
+        }) else {
+            return false;
+        };
+        let location = target.location.clone();
+        if !self.transition_to_location(cx, location, TransitionCause::HistoryTraversal) {
+            return false;
+        }
+        self.view_history.commit_traversal(target);
+        self.session.break_edit_merge_group();
+        true
+    }
+
+    fn close_document(&mut self, cx: &mut Cx, id: LiveId) -> bool {
+        let was_active = self.documents.active_id() == id;
+        let departing = was_active
+            .then(|| self.documents.capture_active_location(cx, &self.ui))
+            .flatten();
+        let changed =
+            self.documents
+                .transition(cx, &self.ui, &self.session, DocumentCommand::Close(id));
+        if !changed {
+            return false;
+        }
+        self.sync_document_shell(cx);
+        if was_active {
+            self.session.break_edit_merge_group();
+            match (
+                departing,
+                self.documents.capture_active_location(cx, &self.ui),
+            ) {
+                (Some(departing), Some(arriving)) => {
+                    self.view_history.record_transition(departing, arriving);
+                }
+                (_, None) => self.view_history.reset(None),
+                _ => {}
+            }
+        }
+        true
     }
 
     /// Push the active diagram title into the switcher's trigger chip, falling
@@ -1604,6 +1786,7 @@ impl App {
         // indexed Concept. An empty bundle keeps an empty canvas and no tab.
         self.documents
             .replace_for_session(cx, &self.ui, &self.session, OpenTabs::default());
+        self.view_history.reset(None);
         match crate::cli::select_initial_document(
             self.session.okf(),
             self.session.uml_projection(),
@@ -2368,6 +2551,7 @@ impl AppMain for App {
         self.ui.handle_event(cx, event, &mut Scope::empty());
         if matches!(event, Event::Draw(_)) {
             self.apply_pending_fragment(cx);
+            self.apply_pending_anchor_restore(cx);
         }
         // The Window widget marks the entire caption bar (minus the window
         // min/max/close buttons) as an OS window-drag region, which swallows
@@ -2457,7 +2641,7 @@ mod tests {
         close_after_save, doc_switcher_items, logo_command_for, next_narrow, open_overlay_contains,
         place_rm_for, prevent_quit_after_failed_save, project_document_header, replace_after_save,
         should_dismiss_narrow_dock, should_flush_save, App, BackingTransitionError, LogoCommand,
-        PendingFragment, SaveFeedback,
+        PendingFragment, SaveFeedback, TransitionCause,
     };
     use crate::doc_tabs::{DocTab, OpenTabs};
     use crate::doc_view::{BodyWidgets, DocView, DocumentHeaderChrome, ViewData};
@@ -2472,6 +2656,7 @@ mod tests {
     use crate::platform_browser::ExternalUrlAdapter;
     use crate::popup::conflict_list::ConflictListAction;
     use crate::tree::TreeKind;
+    use crate::view_history::{HistoryDirection, ViewAnchor, ViewLocation};
     use makepad_widgets::*;
     use std::cell::{Cell, RefCell};
     use std::rc::Rc;
@@ -2957,18 +3142,14 @@ mod tests {
     fn navigation_app_with_active_order() -> (Cx, App) {
         let (mut cx, mut app) = navigation_app();
         mount_markdown_surface(&mut cx, &mut app);
-        let order = crate::okf_documents::open(app.session.okf_analysis(), "sales/order")
-            .expect("order document exists");
-        app.documents.transition(
+        assert!(app.transition_to_location(
             &mut cx,
-            &app.ui,
-            &app.session,
-            DocumentCommand::Open {
-                document: order,
-                persistent: false,
+            ViewLocation {
+                document: crate::navigation::DocumentLocator::primary("sales/order"),
+                anchor: ViewAnchor::None,
             },
-        );
-        app.sync_document_shell(&mut cx);
+            TransitionCause::UserNavigation,
+        ));
         assert_eq!(
             app.documents
                 .active_tab()
@@ -2983,6 +3164,169 @@ mod tests {
             "the mounted Markdown ingress belongs to the active order document"
         );
         (cx, app)
+    }
+
+    #[test]
+    fn manual_and_preview_transitions_follow_back_and_forward_history() {
+        let (mut cx, mut app) = navigation_app_with_active_order();
+        assert!(app.transition_to_location(
+            &mut cx,
+            ViewLocation {
+                document: crate::navigation::DocumentLocator::primary("sales/customer"),
+                anchor: ViewAnchor::None,
+            },
+            TransitionCause::UserNavigation,
+        ));
+        assert_eq!(app.documents.tabs().len(), 1);
+        assert!(app.documents.tabs()[0].preview);
+        assert_eq!(app.view_history.len(), 2);
+
+        assert!(app.traverse_view_history(&mut cx, HistoryDirection::Back));
+        assert_eq!(
+            app.documents.active_tab().unwrap().concept_id,
+            "sales/order"
+        );
+        assert_eq!(app.documents.tabs().len(), 1);
+        assert!(app.documents.tabs()[0].preview);
+
+        assert!(app.traverse_view_history(&mut cx, HistoryDirection::Forward));
+        assert_eq!(
+            app.documents.active_tab().unwrap().concept_id,
+            "sales/customer"
+        );
+        assert_eq!(app.view_history.len(), 2);
+    }
+
+    #[test]
+    fn back_then_manual_navigation_clears_forward() {
+        let (mut cx, mut app) = navigation_app_with_active_order();
+        for concept_id in ["sales/customer", "sales/next"] {
+            assert!(app.transition_to_location(
+                &mut cx,
+                ViewLocation {
+                    document: crate::navigation::DocumentLocator::primary(concept_id),
+                    anchor: ViewAnchor::None,
+                },
+                TransitionCause::UserNavigation,
+            ));
+        }
+        assert!(app.traverse_view_history(&mut cx, HistoryDirection::Back));
+        assert_eq!(
+            app.documents.active_tab().unwrap().concept_id,
+            "sales/customer"
+        );
+
+        assert!(app.transition_to_location(
+            &mut cx,
+            ViewLocation {
+                document: crate::navigation::DocumentLocator::primary("sales/order"),
+                anchor: ViewAnchor::None,
+            },
+            TransitionCause::UserNavigation,
+        ));
+
+        assert!(!app
+            .view_history
+            .can_traverse(HistoryDirection::Forward, |_| true));
+    }
+
+    #[test]
+    fn active_close_records_fallback_but_promote_and_inactive_close_do_not() {
+        let (mut cx, mut app) = navigation_app_with_active_order();
+        let order_id = app.documents.active_id();
+        app.documents.transition(
+            &mut cx,
+            &app.ui,
+            &app.session,
+            DocumentCommand::Promote(order_id),
+        );
+        let history_after_promote = app.view_history.len();
+        assert!(app.transition_to_location(
+            &mut cx,
+            ViewLocation {
+                document: crate::navigation::DocumentLocator::primary("sales/customer"),
+                anchor: ViewAnchor::None,
+            },
+            TransitionCause::UserNavigation,
+        ));
+        let customer_id = app.documents.active_id();
+        assert_eq!(app.documents.tabs().len(), 2);
+        let history_before_inactive_close = app.view_history.len();
+
+        assert!(app.close_document(&mut cx, order_id));
+        assert_eq!(app.view_history.len(), history_before_inactive_close);
+        assert_eq!(app.documents.active_id(), customer_id);
+
+        app.documents.transition(
+            &mut cx,
+            &app.ui,
+            &app.session,
+            DocumentCommand::Promote(customer_id),
+        );
+        assert!(app.transition_to_location(
+            &mut cx,
+            ViewLocation {
+                document: crate::navigation::DocumentLocator::primary("sales/next"),
+                anchor: ViewAnchor::None,
+            },
+            TransitionCause::UserNavigation,
+        ));
+        let before_active_close = app.view_history.len();
+        let next_id = app.documents.active_id();
+        assert!(app.close_document(&mut cx, next_id));
+        assert_eq!(app.view_history.len(), before_active_close + 1);
+        assert_eq!(
+            app.documents.active_tab().unwrap().concept_id,
+            "sales/customer"
+        );
+        assert!(history_after_promote > 0);
+    }
+
+    #[test]
+    fn undo_reveals_the_document_where_the_edit_started_and_records_the_move() {
+        let (mut cx, mut app) = navigation_app_with_active_order();
+        let order = ViewLocation {
+            document: crate::navigation::DocumentLocator::primary("sales/order"),
+            anchor: ViewAnchor::None,
+        };
+        let customer = ViewLocation {
+            document: crate::navigation::DocumentLocator::primary("sales/customer"),
+            anchor: ViewAnchor::None,
+        };
+        app.session
+            .apply_edit(crate::editor_session::EditRequest {
+                before_location: order.clone(),
+                intent: crate::document::EditIntent {
+                    edit: waml::edit::PendingEdit::new(waml::okf::Batch(vec![
+                        waml::okf::Op::IndexRetitle {
+                            directory: waml::okf::DirectoryAddress::parse("/sales").unwrap(),
+                            title: "Commerce".into(),
+                        },
+                    ])),
+                    label: "Rename sales".into(),
+                    merge_key: None,
+                    after_location: Some(customer),
+                },
+            })
+            .unwrap();
+        assert!(app.transition_to_location(
+            &mut cx,
+            ViewLocation {
+                document: crate::navigation::DocumentLocator::primary("sales/next"),
+                anchor: ViewAnchor::None,
+            },
+            TransitionCause::UserNavigation,
+        ));
+
+        assert!(app.perform_undo(&mut cx));
+
+        assert_eq!(
+            app.documents.active_tab().unwrap().concept_id,
+            "sales/order"
+        );
+        assert!(app
+            .view_history
+            .can_traverse(HistoryDirection::Back, |_| true));
     }
 
     #[test]
@@ -3076,6 +3420,12 @@ mod tests {
                     .contains("# Customer"),
                 "each ingress must update the mounted Preview body"
             );
+            assert_eq!(app.view_history.len(), 2);
+            assert!(app.traverse_view_history(&mut cx, HistoryDirection::Back));
+            assert_eq!(
+                app.documents.active_tab().unwrap().concept_id,
+                "sales/order"
+            );
         }
 
         let (mut cx, mut app) = navigation_app_with_active_order();
@@ -3093,9 +3443,11 @@ mod tests {
         app.handle_action_batch(&mut cx, &[persistent_action()]);
         assert_eq!(app.documents.tabs().len(), 1);
         assert!(!app.documents.tabs()[0].preview);
+        let history_after_first = app.view_history.len();
         app.handle_action_batch(&mut cx, &[persistent_action()]);
         assert_eq!(app.documents.tabs().len(), 1);
         assert!(!app.documents.tabs()[0].preview);
+        assert_eq!(app.view_history.len(), history_after_first);
     }
 
     #[test]

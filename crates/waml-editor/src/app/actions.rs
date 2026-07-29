@@ -215,9 +215,22 @@ impl App {
                 .set_active(cx, false);
         }
         if let Some(PopupResult::Invoked(id)) = doc_switcher_closed {
-            self.documents
-                .transition(cx, &self.ui, &self.session, DocumentCommand::Activate(id));
-            self.sync_document_shell(cx);
+            if let Some(document) = self
+                .documents
+                .tabs()
+                .iter()
+                .find(|tab| tab.id == id)
+                .map(|tab| tab.locator())
+            {
+                self.transition_to_location(
+                    cx,
+                    crate::view_history::ViewLocation {
+                        document,
+                        anchor: crate::view_history::ViewAnchor::None,
+                    },
+                    super::TransitionCause::UserNavigation,
+                );
+            }
         }
         if let Some(PopupResult::Invoked(id)) = burger_closed {
             if id == live_id!(new_model) {
@@ -257,20 +270,14 @@ impl App {
                 let key = self.node_menu_key.clone().unwrap_or_default();
                 match command {
                     crate::popup::node_menu::NodeMenuCommand::ViewSource => {
-                        if let Some(document) =
-                            crate::okf_documents::open_source(self.session.okf_analysis(), &key)
-                        {
-                            self.documents.transition(
-                                cx,
-                                &self.ui,
-                                &self.session,
-                                DocumentCommand::Open {
-                                    document,
-                                    persistent: false,
-                                },
-                            );
-                            self.sync_document_shell(cx);
-                        }
+                        self.transition_to_location(
+                            cx,
+                            crate::view_history::ViewLocation {
+                                document: crate::navigation::DocumentLocator::source(&key),
+                                anchor: crate::view_history::ViewAnchor::None,
+                            },
+                            super::TransitionCause::UserNavigation,
+                        );
                     }
                     crate::popup::node_menu::NodeMenuCommand::FindInDiagrams => {
                         log!("find in diagrams: {key}");
@@ -808,13 +815,22 @@ impl App {
                 }
             }
             crate::doc_tabs::DocTabsAction::Activate(id) => {
-                self.documents.transition(
-                    cx,
-                    &self.ui,
-                    &self.session,
-                    DocumentCommand::Activate(id),
-                );
-                self.sync_document_shell(cx);
+                if let Some(document) = self
+                    .documents
+                    .tabs()
+                    .iter()
+                    .find(|tab| tab.id == id)
+                    .map(|tab| tab.locator())
+                {
+                    self.transition_to_location(
+                        cx,
+                        crate::view_history::ViewLocation {
+                            document,
+                            anchor: crate::view_history::ViewAnchor::None,
+                        },
+                        super::TransitionCause::UserNavigation,
+                    );
+                }
             }
             crate::doc_tabs::DocTabsAction::Promote(id) => {
                 self.documents.transition(
@@ -826,9 +842,7 @@ impl App {
                 self.sync_document_shell(cx);
             }
             crate::doc_tabs::DocTabsAction::Close(id) => {
-                self.documents
-                    .transition(cx, &self.ui, &self.session, DocumentCommand::Close(id));
-                self.sync_document_shell(cx);
+                self.close_document(cx, id);
             }
             crate::doc_tabs::DocTabsAction::None => {}
         }
@@ -850,42 +864,101 @@ impl App {
             before_location,
         }) {
             Ok(change) => {
-                let prepared = if change.okf_changed || change.uml_changed {
-                    self.documents
-                        .tabs()
-                        .iter()
-                        .map(|tab| {
-                            crate::documents::reopen(
-                                self.session.okf_analysis(),
-                                self.session.uml_analysis(),
-                                tab,
-                            )
-                        })
-                        .collect()
-                } else {
-                    Vec::new()
-                };
-                self.documents
-                    .after_session_change(cx, &self.ui, &self.session, change, prepared);
-                if change.uml_changed {
-                    self.sync_document_shell(cx);
-                }
-                if change.navigation_changed {
-                    self.nav_kinds = crate::nav::kinds_in_model(
-                        self.session.okf_analysis(),
-                        self.session.uml_analysis(),
-                    );
-                    self.refresh_nav(cx, false);
-                }
-                if change.conflicts_changed {
-                    self.sync_conflict_badge(cx);
-                }
-                self.mark_dirty(cx);
+                self.complete_session_change(cx, change);
                 Some(change)
             }
             Err(error) => {
                 log!("{error_label}: {error:?}");
                 None
+            }
+        }
+    }
+
+    fn complete_session_change(
+        &mut self,
+        cx: &mut Cx,
+        change: crate::editor_session::SessionChange,
+    ) {
+        let prepared = if change.okf_changed || change.uml_changed {
+            self.documents
+                .tabs()
+                .iter()
+                .map(|tab| {
+                    crate::documents::reopen(
+                        self.session.okf_analysis(),
+                        self.session.uml_analysis(),
+                        tab,
+                    )
+                })
+                .collect()
+        } else {
+            Vec::new()
+        };
+        self.documents
+            .after_session_change(cx, &self.ui, &self.session, change, prepared);
+        if change.uml_changed {
+            self.sync_document_shell(cx);
+        }
+        if change.navigation_changed {
+            self.nav_kinds = crate::nav::kinds_in_model(
+                self.session.okf_analysis(),
+                self.session.uml_analysis(),
+            );
+            self.refresh_nav(cx, false);
+        }
+        if change.conflicts_changed {
+            self.sync_conflict_badge(cx);
+        }
+        if let Some(current) = self.documents.capture_active_location(cx, &self.ui) {
+            self.transition_to_location(cx, current, super::TransitionCause::PassiveReconciliation);
+        }
+        self.mark_dirty(cx);
+    }
+
+    fn complete_history_effect(
+        &mut self,
+        cx: &mut Cx,
+        effect: crate::editor_session::HistoryEffect,
+    ) -> bool {
+        let label = effect.label;
+        let location = effect.location;
+        self.complete_session_change(cx, effect.change);
+        if self.transition_to_location(cx, location.clone(), super::TransitionCause::UndoRedoReveal)
+        {
+            self.set_navigation_message(cx, None);
+            true
+        } else {
+            self.set_navigation_message(
+                cx,
+                Some(&format!(
+                    "{label} applied, but could not reveal {}",
+                    location.document.concept_id
+                )),
+            );
+            false
+        }
+    }
+
+    pub(super) fn perform_undo(&mut self, cx: &mut Cx) -> bool {
+        match self.session.undo() {
+            Ok(Some(effect)) => self.complete_history_effect(cx, effect),
+            Ok(None) => false,
+            Err(error) => {
+                log!("undo failed: {error:?}");
+                self.set_navigation_message(cx, Some("Undo failed"));
+                false
+            }
+        }
+    }
+
+    pub(super) fn perform_redo(&mut self, cx: &mut Cx) -> bool {
+        match self.session.redo() {
+            Ok(Some(effect)) => self.complete_history_effect(cx, effect),
+            Ok(None) => false,
+            Err(error) => {
+                log!("redo failed: {error:?}");
+                self.set_navigation_message(cx, Some("Redo failed"));
+                false
             }
         }
     }
@@ -992,13 +1065,14 @@ impl App {
         }
         if outcome.close_active {
             let id = self.documents.active_id();
-            self.documents
-                .transition(cx, &self.ui, &self.session, DocumentCommand::Close(id));
-            self.sync_document_shell(cx);
+            self.close_document(cx, id);
             flow = ActionFlow::Consumed;
         }
         if outcome.statusbar_dirty {
             self.sync_statusbar(cx);
+        }
+        if outcome.break_merge_group {
+            self.session.break_edit_merge_group();
         }
         flow
     }
