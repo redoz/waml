@@ -185,7 +185,19 @@ Task 7 report is outside every staged/committed Task 21 correction slice.
 
 - `e38a3d3b` `refactor(parser): seal UML parser facade`
 - `f536e2c8` `test(parser): enforce honest authority boundaries`
-- runtime/evidence commit: recorded after commit
+- `38d4fe92` `fix(parser): restore honest Task 21 boundary`
+
+## Final correction review — lockfile evidence
+
+- The focused Cargo update removed the stale direct `syn 2.0.119` lockfile
+  entry from package `waml`; no unrelated lockfile entries were regenerated.
+- `rtk cargo test --locked -p waml --test no_legacy_authority`: 4 passed,
+  1 suite.
+- `rtk cargo check --locked -p waml`: PASS, 0 errors; two pre-existing
+  duplicate-package warnings.
+- After committing this correction, `rtk git status --short` reports only the
+  protected dirty original-plan `task-7-report.md`. `rtk git diff --name-only
+  38d4fe92..HEAD` reports only `Cargo.lock` and this Task 21 report.
 
 ## Concerns
 

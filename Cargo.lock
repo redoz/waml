@@ -2571,7 +2571,6 @@ dependencies = [
  "regex",
  "serde",
  "serde_json",
- "syn 2.0.119",
  "ttf-parser 0.25.1",
  "waml-syntax",
 ]
