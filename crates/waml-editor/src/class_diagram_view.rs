@@ -143,19 +143,24 @@ impl ClassDiagramView {
         let mut outcome = ViewOutcome::default();
         let mut ops = Vec::new();
         let mut close = false;
+        let mut description_only = true;
         for action in actions {
             if action == DiagramPropertiesAction::Close {
                 close = true;
+            } else if action == DiagramPropertiesAction::BreakEditMergeGroup {
+                outcome.break_merge_group = true;
             } else {
                 let (title, description, clear_description, display) = match action {
                     DiagramPropertiesAction::DisplayChanged(display) => {
+                        description_only = false;
                         (None, None, false, Some(display))
                     }
                     DiagramPropertiesAction::DescriptionChanged(description) => {
                         let clear_description = description.is_none();
                         (None, description, clear_description, None)
                     }
-                    DiagramPropertiesAction::Close => unreachable!(),
+                    DiagramPropertiesAction::BreakEditMergeGroup
+                    | DiagramPropertiesAction::Close => unreachable!(),
                 };
                 ops.push(Op::DiagramSet {
                     key: self.key.clone(),
@@ -167,10 +172,17 @@ impl ClassDiagramView {
             }
         }
         if !ops.is_empty() {
+            let merge_key =
+                (description_only && ops.len() == 1).then(|| crate::editor_history::EditMergeKey {
+                    document: crate::view_history::DocumentLocator::primary(self.key.clone()),
+                    control: "diagram.description".into(),
+                    kind: crate::editor_history::EditMergeKind::Continuous,
+                    span: None,
+                });
             outcome.edit = Some(crate::document::EditIntent {
                 edit: waml::edit::PendingEdit::new(waml::uml::Batch(ops)),
                 label: "Change diagram properties".into(),
-                merge_key: None,
+                merge_key,
                 after_location: None,
             });
         }
@@ -1010,7 +1022,6 @@ mod tests {
         let prepared = waml::analysis::prepare_candidate(source.clone(), None, 1).unwrap();
         let intent = outcome.edit.expect("outcome contains an edit");
         assert_eq!(intent.label, "Change diagram properties");
-        assert!(intent.merge_key.is_none());
         let changed = intent
             .edit
             .lower(EditContext {
@@ -1089,6 +1100,7 @@ mod tests {
 
         let outcome = view
             .properties_actions_outcome([DiagramPropertiesAction::DisplayChanged(display.clone())]);
+        assert!(outcome.edit.as_ref().unwrap().merge_key.is_none());
 
         let text = apply_outcome(outcome);
         assert!(text.contains("showType: false"), "{text}");
@@ -1127,6 +1139,61 @@ mod tests {
         let text = apply_outcome(outcome);
         assert!(text.contains("title: Old"), "{text}");
         assert!(!text.contains("description:"), "{text}");
+    }
+
+    #[test]
+    fn production_description_typing_coalesces_beyond_the_atomic_tail() {
+        let mut view = ClassDiagramView::new("orders".into());
+        let location = crate::view_history::ViewLocation {
+            document: crate::view_history::DocumentLocator::primary("orders"),
+            anchor: ViewAnchor::None,
+        };
+        let mut history = crate::editor_history::EditorHistory::default();
+
+        for index in 0..(crate::editor_history::ATOMIC_TAIL + 3) {
+            let outcome =
+                view.properties_actions_outcome([DiagramPropertiesAction::DescriptionChanged(
+                    Some(format!("Customer {index}")),
+                )]);
+            let intent = outcome.edit.expect("typing emits a model edit");
+            let merge_key = intent
+                .merge_key
+                .as_ref()
+                .expect("production typing supplies a merge key");
+            assert_eq!(
+                merge_key,
+                &crate::editor_history::EditMergeKey {
+                    document: crate::view_history::DocumentLocator::primary("orders"),
+                    control: "diagram.description".into(),
+                    kind: crate::editor_history::EditMergeKind::Continuous,
+                    span: None,
+                }
+            );
+            history.record_edit(
+                intent.edit,
+                intent.label,
+                intent.merge_key,
+                location.clone(),
+                location.clone(),
+            );
+        }
+
+        assert_eq!(
+            history.undo_len(),
+            crate::editor_history::ATOMIC_TAIL + 2,
+            "the first post-save production typing pair coalesces while the savepoint and atomic tail stay distinct",
+        );
+    }
+
+    #[test]
+    fn description_focus_or_selection_change_breaks_the_merge_group() {
+        let mut view = ClassDiagramView::new("orders".into());
+
+        let outcome =
+            view.properties_actions_outcome([DiagramPropertiesAction::BreakEditMergeGroup]);
+
+        assert!(outcome.break_merge_group);
+        assert!(outcome.edit.is_none());
     }
 
     #[test]
@@ -1178,6 +1245,7 @@ mod tests {
             DiagramPropertiesAction::Close,
             DiagramPropertiesAction::DisplayChanged(display.clone()),
         ]);
+        assert!(outcome.edit.as_ref().unwrap().merge_key.is_none());
 
         let text = apply_outcome(outcome);
         assert!(text.contains("title: Old"), "{text}");

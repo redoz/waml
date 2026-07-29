@@ -259,6 +259,7 @@ script_mod! {
 pub enum DiagramPropertiesAction {
     DisplayChanged(DiagramDisplaySet),
     DescriptionChanged(Option<String>),
+    BreakEditMergeGroup,
     Close,
 }
 
@@ -566,7 +567,21 @@ impl DiagramProperties {
 
 impl Widget for DiagramProperties {
     fn handle_event(&mut self, cx: &mut Cx, event: &Event, scope: &mut Scope) {
+        let description_input = self.view.text_input(cx, ids!(description_input));
+        let text_before = description_input.text();
+        let selection_before = description_input.selection();
         self.view.handle_event(cx, event, scope);
+        let text_after = description_input.text();
+        let selection_after = description_input.selection();
+        if text_before == text_after
+            && (selection_before.cursor != selection_after.cursor
+                || selection_before.anchor != selection_after.anchor)
+        {
+            cx.widget_action(
+                self.widget_uid(),
+                DiagramPropertiesAction::BreakEditMergeGroup,
+            );
+        }
         self.widget_match_event(cx, event, scope);
     }
 
@@ -587,11 +602,22 @@ impl WidgetMatchEvent for DiagramProperties {
             cx.widget_action(self.widget_uid(), DiagramPropertiesAction::Close);
         }
 
-        if let Some(description) = self
-            .view
-            .text_input(cx, ids!(description_input))
-            .changed(actions)
-        {
+        let description_input = self.view.text_input(cx, ids!(description_input));
+        let focus_changed = actions
+            .filter_widget_actions_cast::<TextInputAction>(description_input.widget_uid())
+            .any(|action| {
+                matches!(
+                    action,
+                    TextInputAction::KeyFocus | TextInputAction::KeyFocusLost
+                )
+            });
+        if focus_changed {
+            cx.widget_action(
+                self.widget_uid(),
+                DiagramPropertiesAction::BreakEditMergeGroup,
+            );
+        }
+        if let Some(description) = description_input.changed(actions) {
             self.emit_change(
                 cx,
                 PropertyChange::Description(if description.trim().is_empty() {
