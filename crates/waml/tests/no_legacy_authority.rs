@@ -103,15 +103,102 @@ fn closure_and_call_indirection_are_rejected() {
     );
 
     assert!(
-        violations
-            .iter()
-            .any(|reason| reason.contains("`concealed` defines raw-text grammar")),
+        violations.iter().any(|reason| {
+            reason.contains("concealed") && reason.contains("defines raw-text grammar")
+        }),
         "{violations:#?}"
     );
     assert!(
-        violations.iter().any(|reason| {
-            reason.contains("`route_through_helper` reaches shadow authority `concealed`")
+        violations
+            .iter()
+            .any(|reason| reason.contains("route_through_helper")),
+        "{violations:#?}"
+    );
+}
+
+#[test]
+fn qualified_duplicate_names_cross_file_and_method_calls_do_not_hide_edges() {
+    let sources = [
+        (
+            "crates/waml/src/codec.rs",
+            r#"
+            type Tree = LayoutStatement;
+            struct Decoder;
+            impl Decoder {
+                fn decode(&self, input: &str) -> Tree {
+                    let _parts = input.split_whitespace().collect::<Vec<_>>();
+                    unimplemented!()
+                }
+            }
+            fn route(decoder: &Decoder, input: &[u8]) -> Tree {
+                let _ = input;
+                decoder.decode("")
+            }
+            fn associated(input: &[u8]) -> Tree {
+                let _ = input;
+                Decoder::decode(&Decoder, "")
+            }
+            fn local_receiver(input: &[u8]) -> Tree {
+                let _ = input;
+                let decoder = Decoder;
+                decoder.decode("")
+            }
+            fn hidden(input: &str) -> Tree {
+                let _parts = input.split(',').collect::<Vec<_>>();
+                unimplemented!()
+            }
+            "#,
+        ),
+        (
+            "crates/waml/src/other.rs",
+            r#"
+            fn decode(input: &str) -> String {
+                input.trim().to_owned()
+            }
+            "#,
+        ),
+        (
+            "crates/waml/src/entry.rs",
+            r#"
+            use crate::codec::hidden as imported;
+            fn enter(decoder: &Decoder, input: &[u8]) -> Tree {
+                crate::codec::route(decoder, input)
+            }
+            fn imported_entry(input: &[u8]) -> Tree {
+                let _ = input;
+                imported("")
+            }
+            "#,
+        ),
+    ];
+    let violations = analyze_sources(sources);
+
+    assert!(
+        violations.iter().any(|violation| {
+            violation.reason.contains("waml::codec::<Decoder>::decode")
+                && violation.reason.contains("raw-text grammar")
         }),
+        "{violations:#?}"
+    );
+    assert!(
+        violations.iter().any(|violation| {
+            violation.reason.contains("waml::entry::enter")
+                && violation.reason.contains("waml::codec::route")
+        }),
+        "{violations:#?}"
+    );
+    for caller in ["associated", "local_receiver", "imported_entry"] {
+        assert!(
+            violations
+                .iter()
+                .any(|violation| violation.reason.contains(caller)),
+            "missing call edge for {caller}: {violations:#?}"
+        );
+    }
+    assert!(
+        violations
+            .iter()
+            .all(|violation| !violation.reason.contains("waml::other::decode")),
         "{violations:#?}"
     );
 }
@@ -152,6 +239,100 @@ fn deleted_module_paths_and_model_source_reparse_are_rejected() {
             .any(|reason| reason.contains("model-to-source reparse")),
         "{model_reparse:#?}"
     );
+}
+
+#[test]
+fn split_model_serialization_and_reparse_capabilities_are_propagated() {
+    let violations = reasons(
+        r#"
+        fn authored(model: &Model) -> String {
+            model.render()
+        }
+        fn decode(authored: &str) -> Analysis {
+            parse_document(authored)
+        }
+        fn rebuild(model: &Model) -> Analysis {
+            let source = authored(model);
+            decode(&source)
+        }
+        "#,
+    );
+
+    assert!(
+        violations.iter().any(|reason| {
+            reason.contains("waml::compat::rebuild") && reason.contains("model-to-source reparse")
+        }),
+        "{violations:#?}"
+    );
+}
+
+#[test]
+fn imported_and_qualified_arbitrary_aliases_are_rejected() {
+    let violations = analyze_sources([
+        ("crates/waml/src/types.rs", "type Tree = LayoutStatement;"),
+        (
+            "crates/waml/src/alias_entry.rs",
+            r#"
+            use crate::types::Tree;
+            fn imported(input: &str) -> Tree {
+                let _parts = input.split(',').collect::<Vec<_>>();
+                unimplemented!()
+            }
+            fn qualified(input: &str) -> crate::types::Tree {
+                let _parts = input.split_whitespace().collect::<Vec<_>>();
+                unimplemented!()
+            }
+            "#,
+        ),
+    ]);
+
+    for function in ["imported", "qualified"] {
+        assert!(
+            violations
+                .iter()
+                .any(|violation| violation.reason.contains(function)),
+            "missing alias violation for {function}: {violations:#?}"
+        );
+    }
+}
+
+#[test]
+fn allowlist_is_qualified_not_inherited_by_nested_same_name() {
+    let violations = analyze_sources([(
+        "crates/waml-editor/src/cli.rs",
+        r#"
+        mod shadow {
+            fn parse_hex(input: &str) -> LayoutStatement {
+                let _parts = input.split(',').collect::<Vec<_>>();
+                unimplemented!()
+            }
+        }
+        "#,
+    )]);
+
+    assert!(
+        violations
+            .iter()
+            .any(|violation| violation.reason.contains("shadow::parse_hex")),
+        "{violations:#?}"
+    );
+}
+
+#[test]
+fn cfg_test_shadow_authority_is_not_a_production_violation() {
+    let violations = reasons(
+        r#"
+        #[cfg(test)]
+        mod tests {
+            fn fake(input: &str) -> LayoutStatement {
+                let _parts = input.split_whitespace().collect::<Vec<_>>();
+                unimplemented!()
+            }
+        }
+        "#,
+    );
+
+    assert!(violations.is_empty(), "{violations:#?}");
 }
 
 #[test]
