@@ -148,6 +148,21 @@ impl ModuleIdentity {
     }
 }
 
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+struct TypeIdentity {
+    module: ModuleIdentity,
+    name: String,
+}
+
+impl TypeIdentity {
+    fn new(module: ModuleIdentity, name: impl Into<String>) -> Self {
+        Self {
+            module,
+            name: name.into(),
+        }
+    }
+}
+
 type Imports = BTreeMap<ModuleIdentity, BTreeMap<String, Vec<String>>>;
 type Aliases = BTreeMap<(ModuleIdentity, String), Vec<Vec<String>>>;
 
@@ -176,9 +191,8 @@ impl FunctionId {
 struct CallSite {
     segments: Vec<String>,
     method: bool,
-    receiver_type: Option<String>,
+    receiver_type: Option<TypeIdentity>,
     indirect: bool,
-    protected_model_flow: bool,
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -200,19 +214,22 @@ impl Capabilities {
 struct FunctionSummary {
     path: String,
     id: FunctionId,
+    block: syn::Block,
     calls: Vec<CallSite>,
     local: Capabilities,
     input_types: Vec<ParameterSummary>,
     owner_paths: Vec<Vec<String>>,
+    owner_type: Option<TypeIdentity>,
     has_receiver: bool,
-    trait_owner: Option<String>,
-    raw_input: bool,
+    trait_type: Option<TypeIdentity>,
+    allowlisted_standard_text_trait: bool,
     model_input: bool,
     output_type: Option<Type>,
     output_paths: Vec<Vec<String>>,
     body_paths: Vec<Vec<String>>,
     retired_calls: BTreeSet<String>,
     opaque_authority_macros: BTreeSet<String>,
+    raw_authority_closure: bool,
     allowlisted_leaf_codec: bool,
     visible: bool,
 }
@@ -230,8 +247,10 @@ struct TypeUse {
     paths: Vec<Vec<String>>,
 }
 
-type StructFields = BTreeMap<String, BTreeMap<String, TypeUse>>;
-type MethodReturns = BTreeMap<(String, String), TypeUse>;
+type StructFields = BTreeMap<TypeIdentity, BTreeMap<String, TypeUse>>;
+type MethodReturns = BTreeMap<(TypeIdentity, String), TypeUse>;
+type TraitVisibility = BTreeMap<TypeIdentity, bool>;
+type TraitDefaults = BTreeMap<TypeIdentity, Vec<(Signature, syn::Block)>>;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum ValueOrigin {
@@ -254,19 +273,20 @@ struct BodyFacts<'env> {
     calls: Vec<CallSite>,
     local: Capabilities,
     retired_calls: BTreeSet<String>,
-    receiver_types: BTreeMap<String, String>,
+    receiver_types: BTreeMap<String, TypeIdentity>,
     callable_paths: BTreeMap<String, Vec<String>>,
     bindings: BTreeSet<String>,
     origins: BTreeMap<String, ValueOrigin>,
     body_paths: Vec<Vec<String>>,
     opaque_authority_macros: BTreeSet<String>,
-    saw_method_call: bool,
+    raw_authority_closure: bool,
 }
 
 impl<'ast, 'env> Visit<'ast> for BodyFacts<'env> {
     fn visit_expr_call(&mut self, node: &'ast ExprCall) {
         let (mut segments, mut indirect) = match unwrap_expression(&node.func) {
             syn::Expr::Path(ExprPath { path, .. }) => {
+                self.body_paths.extend(paths_in_path(path));
                 let segments = path
                     .segments
                     .iter()
@@ -297,20 +317,20 @@ impl<'ast, 'env> Visit<'ast> for BodyFacts<'env> {
                 method: false,
                 receiver_type: None,
                 indirect,
-                protected_model_flow: node
-                    .args
-                    .iter()
-                    .any(|argument| self.expression_origin(argument) == ValueOrigin::ModelText),
             });
         }
         visit::visit_expr_call(self, node);
     }
 
+    fn visit_expr_struct(&mut self, expression: &'ast syn::ExprStruct) {
+        self.body_paths.extend(paths_in_path(&expression.path));
+        visit::visit_expr_struct(self, expression);
+    }
+
     fn visit_expr_method_call(&mut self, node: &'ast ExprMethodCall) {
         let name = node.method.to_string();
-        let receiver_type = self.expression_type_name(&node.receiver);
+        let receiver_type = self.expression_type_identity(&node.receiver);
         let receiver_origin = self.expression_origin(&node.receiver);
-        self.saw_method_call = true;
         self.local.serialize |=
             receiver_origin == ValueOrigin::Model && is_model_text_method(&name);
         self.calls.push(CallSite {
@@ -318,10 +338,6 @@ impl<'ast, 'env> Visit<'ast> for BodyFacts<'env> {
             method: true,
             receiver_type,
             indirect: true,
-            protected_model_flow: node
-                .args
-                .iter()
-                .any(|argument| self.expression_origin(argument) == ValueOrigin::ModelText),
         });
         visit::visit_expr_method_call(self, node);
     }
@@ -338,7 +354,7 @@ impl<'ast, 'env> Visit<'ast> for BodyFacts<'env> {
             ),
             _ => (None, Vec::new()),
         };
-        let explicit = preferred_type_name(
+        let explicit = receiver_type_identity(
             self.env.module,
             &explicit_paths,
             self.env.aliases,
@@ -347,7 +363,7 @@ impl<'ast, 'env> Visit<'ast> for BodyFacts<'env> {
         let inferred = node
             .init
             .as_ref()
-            .and_then(|init| self.expression_type_name(&init.expr));
+            .and_then(|init| self.expression_type_identity(&init.expr));
         if let (Some(binding), Some(ty)) = (binding.as_ref(), explicit.or(inferred)) {
             self.receiver_types.insert(binding.clone(), ty);
         }
@@ -384,11 +400,6 @@ impl<'ast, 'env> Visit<'ast> for BodyFacts<'env> {
         visit::visit_local(self, node);
     }
 
-    fn visit_path(&mut self, path: &'ast syn::Path) {
-        self.body_paths.extend(paths_in_path(path));
-        visit::visit_path(self, path);
-    }
-
     fn visit_macro(&mut self, item_macro: &'ast syn::Macro) {
         let name = macro_path(item_macro);
         if !is_harmless_body_macro(&name) {
@@ -410,6 +421,16 @@ impl<'ast, 'env> Visit<'ast> for BodyFacts<'env> {
         }
         visit::visit_macro(self, item_macro);
     }
+
+    fn visit_expr_closure(&mut self, closure: &'ast syn::ExprClosure) {
+        self.raw_authority_closure |= closure_is_raw_grammar_entry(
+            closure,
+            self.env.module,
+            self.env.aliases,
+            self.env.imports,
+        );
+        visit::visit_expr_closure(self, closure);
+    }
 }
 
 impl<'env> BodyFacts<'env> {
@@ -425,7 +446,7 @@ impl<'env> BodyFacts<'env> {
             origins: BTreeMap::new(),
             body_paths: Vec::new(),
             opaque_authority_macros: BTreeSet::new(),
-            saw_method_call: false,
+            raw_authority_closure: false,
         }
     }
 
@@ -438,7 +459,7 @@ impl<'env> BodyFacts<'env> {
         }
     }
 
-    fn expression_type_name(&self, expression: &syn::Expr) -> Option<String> {
+    fn expression_type_identity(&self, expression: &syn::Expr) -> Option<TypeIdentity> {
         match unwrap_expression(expression) {
             syn::Expr::Path(expression) => {
                 if expression.path.segments.len() == 1 {
@@ -447,20 +468,21 @@ impl<'env> BodyFacts<'env> {
                         return Some(ty.clone());
                     }
                 }
-                expression
-                    .path
-                    .segments
-                    .last()
-                    .map(|segment| segment.ident.to_string())
+                receiver_type_identity(
+                    self.env.module,
+                    &paths_in_path(&expression.path),
+                    self.env.aliases,
+                    self.env.imports,
+                )
             }
             syn::Expr::Field(expression) => {
-                let owner = self.expression_type_name(&expression.base)?;
+                let owner = self.expression_type_identity(&expression.base)?;
                 let field = match &expression.member {
                     syn::Member::Named(name) => name.to_string(),
                     syn::Member::Unnamed(index) => index.index.to_string(),
                 };
                 let field_type = self.env.struct_fields.get(&owner)?.get(&field)?;
-                preferred_type_name(
+                receiver_type_identity(
                     &field_type.module,
                     &field_type.paths,
                     self.env.aliases,
@@ -468,40 +490,45 @@ impl<'env> BodyFacts<'env> {
                 )
             }
             syn::Expr::MethodCall(expression) => {
-                let owner = self.expression_type_name(&expression.receiver)?;
+                let owner = self.expression_type_identity(&expression.receiver)?;
                 let output = self
                     .env
                     .method_returns
                     .get(&(owner, expression.method.to_string()))?;
-                preferred_type_name(
+                receiver_type_identity(
                     &output.module,
                     &output.paths,
                     self.env.aliases,
                     self.env.imports,
                 )
             }
-            syn::Expr::Struct(expression) => expression
-                .path
-                .segments
-                .last()
-                .map(|segment| segment.ident.to_string()),
+            syn::Expr::Struct(expression) => preferred_type_identity(
+                self.env.module,
+                &paths_in_path(&expression.path),
+                self.env.aliases,
+                self.env.imports,
+            ),
             syn::Expr::Call(expression) => match unwrap_expression(&expression.func) {
                 syn::Expr::Path(function) => {
-                    let segments = function.path.segments.iter().collect::<Vec<_>>();
-                    match segments.as_slice() {
-                        [.., owner, method]
-                            if method
-                                .ident
-                                .to_string()
-                                .chars()
-                                .next()
-                                .is_some_and(char::is_lowercase) =>
-                        {
-                            Some(owner.ident.to_string())
-                        }
-                        [.., constructor] => Some(constructor.ident.to_string()),
-                        [] => None,
+                    let mut segments = function
+                        .path
+                        .segments
+                        .iter()
+                        .map(|segment| segment.ident.to_string())
+                        .collect::<Vec<_>>();
+                    if segments.len() >= 2
+                        && segments.last().is_some_and(|method| {
+                            method.chars().next().is_some_and(char::is_lowercase)
+                        })
+                    {
+                        segments.pop();
                     }
+                    receiver_type_identity(
+                        self.env.module,
+                        &[segments],
+                        self.env.aliases,
+                        self.env.imports,
+                    )
                 }
                 _ => None,
             },
@@ -1209,18 +1236,28 @@ fn analyze_source_units(units: &[SourceUnit]) -> Vec<Violation> {
     let mut aliases = BTreeMap::new();
     let mut struct_fields = StructFields::new();
     let mut method_returns = MethodReturns::new();
+    let mut trait_visibility = TraitVisibility::new();
+    let mut trait_defaults = TraitDefaults::new();
 
     for unit in units {
         let Ok(parsed) = syn::parse_file(&unit.source) else {
             continue;
         };
-        collect_declarations(
+        collect_bindings(&parsed.items, &unit.module, &mut imports, &mut aliases);
+    }
+    for unit in units {
+        let Ok(parsed) = syn::parse_file(&unit.source) else {
+            continue;
+        };
+        collect_type_members(
             &parsed.items,
             &unit.module,
-            &mut imports,
-            &mut aliases,
+            &aliases,
+            &imports,
             &mut struct_fields,
             &mut method_returns,
+            &mut trait_visibility,
+            &mut trait_defaults,
         );
     }
 
@@ -1235,7 +1272,7 @@ fn analyze_source_units(units: &[SourceUnit]) -> Vec<Violation> {
                 continue;
             }
         };
-        if is_authoritative_path(&unit.path) {
+        if module_can_access_raw_parser(&unit.module) {
             let local_macros = local_macro_names(&parsed);
             let mut attribute_visitor = AuthorityAttributeVisitor {
                 path: &unit.path,
@@ -1253,11 +1290,20 @@ fn analyze_source_units(units: &[SourceUnit]) -> Vec<Violation> {
             &aliases,
             &struct_fields,
             &method_returns,
+            &trait_visibility,
+            &trait_defaults,
             &mut violations,
         );
     }
 
-    let (edges, unresolved_model_dispatch) = resolve_edges(&summaries, &imports);
+    let edges = resolve_edges(&summaries, &imports, &aliases);
+    let unresolved_model_dispatch = find_unresolved_model_dispatch(
+        &summaries,
+        &imports,
+        &aliases,
+        &struct_fields,
+        &method_returns,
+    );
     let direct_shadow = summaries
         .iter()
         .enumerate()
@@ -1267,13 +1313,19 @@ fn analyze_source_units(units: &[SourceUnit]) -> Vec<Violation> {
         })
         .map(|(index, _)| index)
         .collect::<BTreeSet<_>>();
+    let closure_shadow = summaries
+        .iter()
+        .enumerate()
+        .filter(|(_, summary)| summary.raw_authority_closure && !summary.allowlisted_leaf_codec)
+        .map(|(index, _)| index)
+        .collect::<BTreeSet<_>>();
     let mut capabilities = summaries
         .iter()
         .enumerate()
         .map(|(index, summary)| {
             let mut local = summary.local;
             local.serialize |= summary_is_model_to_text(summary, &aliases, &imports);
-            local.reparse |= direct_shadow.contains(&index);
+            local.reparse |= direct_shadow.contains(&index) || closure_shadow.contains(&index);
             local
         })
         .collect::<Vec<_>>();
@@ -1322,6 +1374,7 @@ fn analyze_source_units(units: &[SourceUnit]) -> Vec<Violation> {
     let seeds = direct_shadow
         .union(&model_reparse)
         .copied()
+        .chain(closure_shadow.iter().copied())
         .chain(retired.iter().copied())
         .chain(visible_model_text.iter().copied())
         .chain(unresolved_model_dispatch.iter().copied())
@@ -1335,6 +1388,15 @@ fn analyze_source_units(units: &[SourceUnit]) -> Vec<Violation> {
                 path: summary.path.clone(),
                 reason: format!(
                     "`{}` defines raw-text grammar outside the syntax authority",
+                    summary.id.display()
+                ),
+            });
+        }
+        if closure_shadow.contains(&index) {
+            violations.push(Violation {
+                path: summary.path.clone(),
+                reason: format!(
+                    "`{}` defines raw-text grammar in a local closure outside the syntax authority",
                     summary.id.display()
                 ),
             });
@@ -1409,13 +1471,11 @@ fn analyze_source_units(units: &[SourceUnit]) -> Vec<Violation> {
     violations
 }
 
-fn collect_declarations(
+fn collect_bindings(
     items: &[Item],
     module: &ModuleIdentity,
     imports: &mut Imports,
     aliases: &mut Aliases,
-    struct_fields: &mut StructFields,
-    method_returns: &mut MethodReturns,
 ) {
     for item in items {
         if is_test_only(item_attributes(item)) {
@@ -1425,14 +1485,7 @@ fn collect_declarations(
             Item::Mod(item_mod) => {
                 if let Some((_, nested)) = &item_mod.content {
                     let nested_module = module.child(item_mod.ident.to_string());
-                    collect_declarations(
-                        nested,
-                        &nested_module,
-                        imports,
-                        aliases,
-                        struct_fields,
-                        method_returns,
-                    );
+                    collect_bindings(nested, &nested_module, imports, aliases);
                 }
             }
             Item::Use(item_use) => collect_use_bindings(
@@ -1446,9 +1499,48 @@ fn collect_declarations(
                     type_paths(&item_type.ty),
                 );
             }
+            _ => {}
+        }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn collect_type_members(
+    items: &[Item],
+    module: &ModuleIdentity,
+    aliases: &Aliases,
+    imports: &Imports,
+    struct_fields: &mut StructFields,
+    method_returns: &mut MethodReturns,
+    trait_visibility: &mut TraitVisibility,
+    trait_defaults: &mut TraitDefaults,
+) {
+    for item in items {
+        if is_test_only(item_attributes(item)) {
+            continue;
+        }
+        match item {
+            Item::Mod(item_mod) => {
+                if let Some((_, nested)) = &item_mod.content {
+                    let nested_module = module.child(item_mod.ident.to_string());
+                    collect_type_members(
+                        nested,
+                        &nested_module,
+                        aliases,
+                        imports,
+                        struct_fields,
+                        method_returns,
+                        trait_visibility,
+                        trait_defaults,
+                    );
+                }
+            }
             Item::Struct(item_struct) => {
                 let fields = struct_fields
-                    .entry(item_struct.ident.to_string())
+                    .entry(TypeIdentity::new(
+                        module.clone(),
+                        item_struct.ident.to_string(),
+                    ))
                     .or_default();
                 for (index, field) in item_struct.fields.iter().enumerate() {
                     let name = field
@@ -1466,10 +1558,13 @@ fn collect_declarations(
                 }
             }
             Item::Impl(item_impl) => {
-                let owner = type_names(&item_impl.self_ty)
-                    .last()
-                    .cloned()
-                    .unwrap_or_else(|| "_".into());
+                let owner = receiver_type_identity(
+                    module,
+                    &type_paths(&item_impl.self_ty),
+                    aliases,
+                    imports,
+                )
+                .unwrap_or_else(|| TypeIdentity::new(module.clone(), "_"));
                 for item in &item_impl.items {
                     if let ImplItem::Fn(method) = item {
                         if let ReturnType::Type(_, output) = &method.sig.output {
@@ -1485,9 +1580,19 @@ fn collect_declarations(
                 }
             }
             Item::Trait(item_trait) => {
-                let owner = item_trait.ident.to_string();
+                let owner = TypeIdentity::new(module.clone(), item_trait.ident.to_string());
+                trait_visibility.insert(
+                    owner.clone(),
+                    !matches!(item_trait.vis, syn::Visibility::Inherited),
+                );
                 for item in &item_trait.items {
                     if let syn::TraitItem::Fn(method) = item {
+                        if let Some(default) = &method.default {
+                            trait_defaults
+                                .entry(owner.clone())
+                                .or_default()
+                                .push((method.sig.clone(), default.clone()));
+                        }
                         if let ReturnType::Type(_, output) = &method.sig.output {
                             method_returns.insert(
                                 (owner.clone(), method.sig.ident.to_string()),
@@ -1515,6 +1620,8 @@ fn analyze_items(
     aliases: &Aliases,
     struct_fields: &StructFields,
     method_returns: &MethodReturns,
+    trait_visibility: &TraitVisibility,
+    trait_defaults: &TraitDefaults,
     violations: &mut Vec<Violation>,
 ) {
     let authoritative = is_authoritative_path(path);
@@ -1533,6 +1640,8 @@ fn analyze_items(
                         aliases,
                         struct_fields,
                         method_returns,
+                        trait_visibility,
+                        trait_defaults,
                         violations,
                     );
                 }
@@ -1546,6 +1655,7 @@ fn analyze_items(
                 None,
                 Vec::new(),
                 None,
+                false,
                 &item_fn.sig,
                 &item_fn.block,
                 !matches!(item_fn.vis, syn::Visibility::Inherited),
@@ -1565,19 +1675,23 @@ fn analyze_items(
                 imports,
                 struct_fields,
                 method_returns,
+                trait_visibility,
+                trait_defaults,
                 summaries,
             ),
             Item::Trait(item_trait) if !is_test_only(&item_trait.attrs) && !authoritative => {
                 for trait_item in &item_trait.items {
                     if let syn::TraitItem::Fn(method) = trait_item {
                         if let Some(default) = &method.default {
-                            let owner = item_trait.ident.to_string();
+                            let owner =
+                                TypeIdentity::new(module.clone(), item_trait.ident.to_string());
                             summarize_function(
                                 path,
                                 module,
                                 Some(owner.clone()),
-                                vec![vec![owner]],
+                                vec![vec![owner.name.clone()]],
                                 None,
+                                false,
                                 &method.sig,
                                 default,
                                 !matches!(item_trait.vis, syn::Visibility::Inherited),
@@ -1640,18 +1754,33 @@ fn summarize_impl(
     imports: &Imports,
     struct_fields: &StructFields,
     method_returns: &MethodReturns,
+    trait_visibility: &TraitVisibility,
+    trait_defaults: &TraitDefaults,
     summaries: &mut Vec<FunctionSummary>,
 ) {
-    let owner = type_names(&item_impl.self_ty)
-        .last()
-        .cloned()
-        .unwrap_or_else(|| "_".into());
     let owner_paths = type_paths(&item_impl.self_ty);
-    let trait_owner = item_impl.trait_.as_ref().and_then(|(_, path, _)| {
-        path.segments
-            .last()
-            .map(|segment| segment.ident.to_string())
+    let owner = receiver_type_identity(module, &owner_paths, aliases, imports)
+        .unwrap_or_else(|| TypeIdentity::new(module.clone(), "_"));
+    let trait_type = item_impl.trait_.as_ref().and_then(|(_, path, _)| {
+        preferred_type_identity(module, &paths_in_path(path), aliases, imports)
     });
+    let trait_visible = trait_type
+        .as_ref()
+        .map(|identity| trait_visibility.get(identity).copied().unwrap_or(true))
+        .unwrap_or(false);
+    let allowlisted_standard_text_trait = trait_type.as_ref().is_some_and(|identity| {
+        identity.name == "ToString" && !trait_visibility.contains_key(identity)
+    });
+    let implemented_methods = item_impl
+        .items
+        .iter()
+        .filter_map(|item| match item {
+            ImplItem::Fn(method) if !is_test_only(&method.attrs) => {
+                Some(method.sig.ident.to_string())
+            }
+            _ => None,
+        })
+        .collect::<BTreeSet<_>>();
     for item in &item_impl.items {
         if let ImplItem::Fn(method) = item {
             if is_test_only(&method.attrs) {
@@ -1662,10 +1791,37 @@ fn summarize_impl(
                 module,
                 Some(owner.clone()),
                 owner_paths.clone(),
-                trait_owner.clone(),
+                trait_type.clone(),
+                allowlisted_standard_text_trait,
                 &method.sig,
                 &method.block,
-                !matches!(method.vis, syn::Visibility::Inherited),
+                !matches!(method.vis, syn::Visibility::Inherited) || trait_visible,
+                authoritative,
+                aliases,
+                imports,
+                struct_fields,
+                method_returns,
+                summaries,
+            );
+        }
+    }
+    if let Some(trait_identity) = &trait_type {
+        for (signature, default) in trait_defaults
+            .get(trait_identity)
+            .into_iter()
+            .flatten()
+            .filter(|(signature, _)| !implemented_methods.contains(&signature.ident.to_string()))
+        {
+            summarize_function(
+                path,
+                module,
+                Some(owner.clone()),
+                owner_paths.clone(),
+                trait_type.clone(),
+                allowlisted_standard_text_trait,
+                signature,
+                default,
+                trait_visible,
                 authoritative,
                 aliases,
                 imports,
@@ -1681,9 +1837,10 @@ fn summarize_impl(
 fn summarize_function(
     path: &str,
     module: &ModuleIdentity,
-    owner: Option<String>,
+    owner: Option<TypeIdentity>,
     owner_paths: Vec<Vec<String>>,
-    trait_owner: Option<String>,
+    trait_type: Option<TypeIdentity>,
+    allowlisted_standard_text_trait: bool,
     signature: &Signature,
     block: &syn::Block,
     visible: bool,
@@ -1728,8 +1885,9 @@ fn summarize_function(
                 if let syn::Pat::Ident(pattern) = &*argument.pat {
                     let binding = pattern.ident.to_string();
                     let paths = type_paths(&argument.ty);
-                    if let Some(name) = preferred_type_name(module, &paths, aliases, imports) {
-                        facts.receiver_types.insert(binding.clone(), name);
+                    if let Some(identity) = receiver_type_identity(module, &paths, aliases, imports)
+                    {
+                        facts.receiver_types.insert(binding.clone(), identity);
                     }
                     facts.bindings.insert(binding.clone());
                     facts
@@ -1760,16 +1918,10 @@ fn summarize_function(
             }),
         })
         .collect::<Vec<_>>();
-    let raw_input = signature.inputs.iter().any(|argument| match argument {
-        FnArg::Receiver(_) => false,
-        FnArg::Typed(argument) => type_contains_any(&argument.ty, &["str", "String"]),
-    });
     let model_input = signature.inputs.iter().any(|argument| match argument {
         FnArg::Receiver(_) => false,
         FnArg::Typed(argument) => type_contains_any(&argument.ty, MODEL_TYPES),
     });
-    facts.local.serialize |=
-        signature_is_model_to_text(signature) || (model_input && facts.saw_method_call);
     let output_paths = match &signature.output {
         ReturnType::Default => Vec::new(),
         ReturnType::Type(_, output) => type_paths(output),
@@ -1781,29 +1933,32 @@ fn summarize_function(
     let name = signature.ident.to_string();
     let id = FunctionId {
         module: module.clone(),
-        owner,
+        owner: owner.as_ref().map(|identity| identity.name.clone()),
         name: name.clone(),
     };
 
     summaries.push(FunctionSummary {
         path: path.to_owned(),
         id: id.clone(),
+        block: block.clone(),
         calls: facts.calls,
         local: facts.local,
         input_types,
         owner_paths,
+        owner_type: owner,
         has_receiver: signature
             .inputs
             .iter()
             .any(|argument| matches!(argument, FnArg::Receiver(_))),
-        trait_owner,
-        raw_input,
+        trait_type,
+        allowlisted_standard_text_trait,
         model_input,
         output_type,
         output_paths,
         body_paths: facts.body_paths,
         retired_calls: facts.retired_calls,
         opaque_authority_macros: facts.opaque_authority_macros,
+        raw_authority_closure: facts.raw_authority_closure,
         allowlisted_leaf_codec: is_allowlisted_leaf_codec(&id),
         visible,
     });
@@ -1812,19 +1967,16 @@ fn summarize_function(
 fn resolve_edges(
     summaries: &[FunctionSummary],
     imports: &Imports,
-) -> (Vec<BTreeSet<usize>>, BTreeSet<usize>) {
+    aliases: &Aliases,
+) -> Vec<BTreeSet<usize>> {
     let mut edges = vec![BTreeSet::new(); summaries.len()];
-    let mut unresolved_model_dispatch = BTreeSet::new();
     for (caller_index, caller) in summaries.iter().enumerate() {
         for call in &caller.calls {
-            let targets = resolve_call(caller, call, summaries, imports);
-            if targets.is_empty() && call.indirect && call.protected_model_flow {
-                unresolved_model_dispatch.insert(caller_index);
-            }
+            let targets = resolve_call(caller, call, summaries, imports, aliases);
             edges[caller_index].extend(targets);
         }
     }
-    (edges, unresolved_model_dispatch)
+    edges
 }
 
 fn resolve_call(
@@ -1832,6 +1984,7 @@ fn resolve_call(
     call: &CallSite,
     summaries: &[FunctionSummary],
     imports: &Imports,
+    aliases: &Aliases,
 ) -> Vec<usize> {
     let Some(name) = call.segments.last() else {
         return Vec::new();
@@ -1848,27 +2001,32 @@ fn resolve_call(
                     method: false,
                     receiver_type: None,
                     indirect: call.indirect,
-                    protected_model_flow: call.protected_model_flow,
                 },
                 summaries,
                 imports,
+                aliases,
             );
         }
     }
     let associated_owner = (!call.method && call.segments.len() >= 2)
-        .then(|| call.segments[call.segments.len() - 2].clone())
-        .filter(|owner| owner.chars().next().is_some_and(char::is_uppercase));
+        .then(|| call.segments[..call.segments.len() - 1].to_vec())
+        .filter(|owner| {
+            owner
+                .last()
+                .is_some_and(|name| name.chars().next().is_some_and(char::is_uppercase))
+        })
+        .and_then(|path| preferred_type_identity(&caller.id.module, &[path], aliases, imports));
     let compatible = |candidate: &&FunctionSummary| {
         candidate.id.name == *name
             && if call.method {
                 call.receiver_type.as_ref().is_some_and(|owner| {
-                    candidate.id.owner.as_ref() == Some(owner)
-                        || candidate.trait_owner.as_ref() == Some(owner)
+                    candidate.owner_type.as_ref() == Some(owner)
+                        || candidate.trait_type.as_ref() == Some(owner)
                 })
             } else if let Some(owner) = &associated_owner {
-                candidate.id.owner.as_ref() == Some(owner)
+                candidate.owner_type.as_ref() == Some(owner)
             } else {
-                candidate.id.owner.is_none()
+                candidate.owner_type.is_none()
             }
     };
     let named = summaries
@@ -1927,6 +2085,435 @@ fn resolve_call(
         .filter(|(_, candidate)| candidate.id.module == expected)
         .map(|(index, _)| index)
         .collect()
+}
+
+fn find_unresolved_model_dispatch(
+    summaries: &[FunctionSummary],
+    imports: &Imports,
+    aliases: &Aliases,
+    struct_fields: &StructFields,
+    method_returns: &MethodReturns,
+) -> BTreeSet<usize> {
+    let model_text_returns = summaries
+        .iter()
+        .enumerate()
+        .filter(|(_, summary)| summary_is_model_to_text(summary, aliases, imports))
+        .map(|(index, _)| index)
+        .collect::<BTreeSet<_>>();
+    summaries
+        .iter()
+        .enumerate()
+        .filter_map(|(index, caller)| {
+            let mut facts = ReturnTaintFacts::new(
+                BodyEnvironment {
+                    module: &caller.id.module,
+                    aliases,
+                    imports,
+                    struct_fields,
+                    method_returns,
+                },
+                caller,
+                summaries,
+                &model_text_returns,
+            );
+            facts.visit_block(&caller.block);
+            facts.unresolved_model_dispatch.then_some(index)
+        })
+        .collect()
+}
+
+struct ReturnTaintFacts<'env> {
+    env: BodyEnvironment<'env>,
+    caller: &'env FunctionSummary,
+    summaries: &'env [FunctionSummary],
+    model_text_returns: &'env BTreeSet<usize>,
+    receiver_types: BTreeMap<String, TypeIdentity>,
+    callable_paths: BTreeMap<String, Vec<String>>,
+    bindings: BTreeSet<String>,
+    origins: BTreeMap<String, ValueOrigin>,
+    unresolved_model_dispatch: bool,
+}
+
+impl<'env> ReturnTaintFacts<'env> {
+    fn new(
+        env: BodyEnvironment<'env>,
+        caller: &'env FunctionSummary,
+        summaries: &'env [FunctionSummary],
+        model_text_returns: &'env BTreeSet<usize>,
+    ) -> Self {
+        let mut facts = Self {
+            env,
+            caller,
+            summaries,
+            model_text_returns,
+            receiver_types: BTreeMap::new(),
+            callable_paths: BTreeMap::new(),
+            bindings: BTreeSet::new(),
+            origins: BTreeMap::new(),
+            unresolved_model_dispatch: false,
+        };
+        if caller.has_receiver {
+            if let Some(owner) = &caller.owner_type {
+                facts.receiver_types.insert("self".into(), owner.clone());
+                facts.bindings.insert("self".into());
+                facts.origins.insert(
+                    "self".into(),
+                    if MODEL_TYPES.contains(&owner.name.as_str()) {
+                        ValueOrigin::Model
+                    } else {
+                        ValueOrigin::Other
+                    },
+                );
+            }
+        }
+        for input in &caller.input_types {
+            let Some(name) = &input.name else {
+                continue;
+            };
+            facts.bindings.insert(name.clone());
+            if let Some(identity) = receiver_type_identity(
+                facts.env.module,
+                &input.paths,
+                facts.env.aliases,
+                facts.env.imports,
+            ) {
+                facts.receiver_types.insert(name.clone(), identity);
+            }
+            facts.origins.insert(
+                name.clone(),
+                origin_for_type(
+                    facts.env.module,
+                    &input.paths,
+                    facts.env.aliases,
+                    facts.env.imports,
+                ),
+            );
+        }
+        facts
+    }
+
+    fn call_site(&self, call: &ExprCall) -> CallSite {
+        let (mut segments, mut indirect) = match unwrap_expression(&call.func) {
+            syn::Expr::Path(ExprPath { path, .. }) => {
+                let segments = path
+                    .segments
+                    .iter()
+                    .map(|segment| segment.ident.to_string())
+                    .collect::<Vec<_>>();
+                let indirect = segments.len() == 1 && self.bindings.contains(&segments[0]);
+                (segments, indirect)
+            }
+            syn::Expr::Field(field) => (
+                vec![match &field.member {
+                    syn::Member::Named(name) => name.to_string(),
+                    syn::Member::Unnamed(index) => index.index.to_string(),
+                }],
+                true,
+            ),
+            _ => (Vec::new(), true),
+        };
+        if segments.len() == 1 {
+            if let Some(target) = self.callable_paths.get(&segments[0]) {
+                segments = target.clone();
+                indirect = true;
+            }
+        }
+        CallSite {
+            segments,
+            method: false,
+            receiver_type: None,
+            indirect,
+        }
+    }
+
+    fn method_call_site(&self, call: &ExprMethodCall) -> CallSite {
+        CallSite {
+            segments: vec![call.method.to_string()],
+            method: true,
+            receiver_type: self.expression_type_identity(&call.receiver),
+            indirect: true,
+        }
+    }
+
+    fn call_returns_model_text(&self, call: &CallSite) -> bool {
+        resolve_call(
+            self.caller,
+            call,
+            self.summaries,
+            self.env.imports,
+            self.env.aliases,
+        )
+        .iter()
+        .any(|target| self.model_text_returns.contains(target))
+    }
+
+    fn expression_type_identity(&self, expression: &syn::Expr) -> Option<TypeIdentity> {
+        match unwrap_expression(expression) {
+            syn::Expr::Path(expression) => {
+                if expression.path.segments.len() == 1 {
+                    let name = expression.path.segments[0].ident.to_string();
+                    if let Some(identity) = self.receiver_types.get(&name) {
+                        return Some(identity.clone());
+                    }
+                }
+                receiver_type_identity(
+                    self.env.module,
+                    &paths_in_path(&expression.path),
+                    self.env.aliases,
+                    self.env.imports,
+                )
+            }
+            syn::Expr::Field(expression) => {
+                let owner = self.expression_type_identity(&expression.base)?;
+                let field = match &expression.member {
+                    syn::Member::Named(name) => name.to_string(),
+                    syn::Member::Unnamed(index) => index.index.to_string(),
+                };
+                let field_type = self.env.struct_fields.get(&owner)?.get(&field)?;
+                receiver_type_identity(
+                    &field_type.module,
+                    &field_type.paths,
+                    self.env.aliases,
+                    self.env.imports,
+                )
+            }
+            syn::Expr::MethodCall(expression) => {
+                let owner = self.expression_type_identity(&expression.receiver)?;
+                let output = self
+                    .env
+                    .method_returns
+                    .get(&(owner, expression.method.to_string()))?;
+                receiver_type_identity(
+                    &output.module,
+                    &output.paths,
+                    self.env.aliases,
+                    self.env.imports,
+                )
+            }
+            syn::Expr::Struct(expression) => preferred_type_identity(
+                self.env.module,
+                &paths_in_path(&expression.path),
+                self.env.aliases,
+                self.env.imports,
+            ),
+            syn::Expr::Call(expression) => match unwrap_expression(&expression.func) {
+                syn::Expr::Path(function) => {
+                    let mut segments = function
+                        .path
+                        .segments
+                        .iter()
+                        .map(|segment| segment.ident.to_string())
+                        .collect::<Vec<_>>();
+                    if segments.len() >= 2
+                        && segments.last().is_some_and(|method| {
+                            method.chars().next().is_some_and(char::is_lowercase)
+                        })
+                    {
+                        segments.pop();
+                    }
+                    receiver_type_identity(
+                        self.env.module,
+                        &[segments],
+                        self.env.aliases,
+                        self.env.imports,
+                    )
+                }
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
+    fn expression_origin(&self, expression: &syn::Expr) -> ValueOrigin {
+        match unwrap_expression(expression) {
+            syn::Expr::Path(path) if path.path.segments.len() == 1 => self
+                .origins
+                .get(&path.path.segments[0].ident.to_string())
+                .copied()
+                .unwrap_or(ValueOrigin::Other),
+            syn::Expr::Field(field) => match self.expression_origin(&field.base) {
+                ValueOrigin::Model => ValueOrigin::Model,
+                origin => origin,
+            },
+            syn::Expr::MethodCall(call) => {
+                let receiver = self.expression_origin(&call.receiver);
+                if (receiver == ValueOrigin::Model
+                    && is_model_text_method(&call.method.to_string()))
+                    || receiver == ValueOrigin::ModelText
+                    || call
+                        .args
+                        .iter()
+                        .any(|argument| self.expression_origin(argument) == ValueOrigin::ModelText)
+                    || self.call_returns_model_text(&self.method_call_site(call))
+                {
+                    ValueOrigin::ModelText
+                } else {
+                    ValueOrigin::Other
+                }
+            }
+            syn::Expr::Call(call) => {
+                if call
+                    .args
+                    .iter()
+                    .any(|argument| self.expression_origin(argument) == ValueOrigin::ModelText)
+                    || self.call_returns_model_text(&self.call_site(call))
+                {
+                    ValueOrigin::ModelText
+                } else {
+                    ValueOrigin::Other
+                }
+            }
+            syn::Expr::Macro(expression) => {
+                let identifiers = macro_identifiers(&expression.mac);
+                if identifiers.iter().any(|identifier| {
+                    self.origins
+                        .get(identifier)
+                        .is_some_and(|origin| *origin == ValueOrigin::ModelText)
+                }) {
+                    ValueOrigin::ModelText
+                } else {
+                    ValueOrigin::Other
+                }
+            }
+            syn::Expr::Binary(expression) => merge_origins([
+                self.expression_origin(&expression.left),
+                self.expression_origin(&expression.right),
+            ]),
+            syn::Expr::Array(expression) => merge_origins(
+                expression
+                    .elems
+                    .iter()
+                    .map(|item| self.expression_origin(item)),
+            ),
+            syn::Expr::Tuple(expression) => merge_origins(
+                expression
+                    .elems
+                    .iter()
+                    .map(|item| self.expression_origin(item)),
+            ),
+            syn::Expr::Struct(expression) => merge_origins(
+                expression
+                    .fields
+                    .iter()
+                    .map(|field| self.expression_origin(&field.expr)),
+            ),
+            _ => ValueOrigin::Other,
+        }
+    }
+}
+
+impl<'ast> Visit<'ast> for ReturnTaintFacts<'_> {
+    fn visit_expr_call(&mut self, call: &'ast ExprCall) {
+        let site = self.call_site(call);
+        let protected_model_flow = call
+            .args
+            .iter()
+            .any(|argument| self.expression_origin(argument) == ValueOrigin::ModelText);
+        if protected_model_flow
+            && site.indirect
+            && resolve_call(
+                self.caller,
+                &site,
+                self.summaries,
+                self.env.imports,
+                self.env.aliases,
+            )
+            .is_empty()
+        {
+            self.unresolved_model_dispatch = true;
+        }
+        visit::visit_expr_call(self, call);
+    }
+
+    fn visit_expr_method_call(&mut self, call: &'ast ExprMethodCall) {
+        let site = self.method_call_site(call);
+        let protected_model_flow = call
+            .args
+            .iter()
+            .any(|argument| self.expression_origin(argument) == ValueOrigin::ModelText);
+        if protected_model_flow
+            && resolve_call(
+                self.caller,
+                &site,
+                self.summaries,
+                self.env.imports,
+                self.env.aliases,
+            )
+            .is_empty()
+            && !is_harmless_standard_collection_dispatch(&site, &self.env)
+        {
+            self.unresolved_model_dispatch = true;
+        }
+        visit::visit_expr_method_call(self, call);
+    }
+
+    fn visit_local(&mut self, local: &'ast Local) {
+        let (binding, explicit_paths) = match &local.pat {
+            syn::Pat::Ident(pattern) => (Some(pattern.ident.to_string()), Vec::new()),
+            syn::Pat::Type(pattern) => (
+                match &*pattern.pat {
+                    syn::Pat::Ident(pattern) => Some(pattern.ident.to_string()),
+                    _ => None,
+                },
+                type_paths(&pattern.ty),
+            ),
+            _ => (None, Vec::new()),
+        };
+        let explicit = receiver_type_identity(
+            self.env.module,
+            &explicit_paths,
+            self.env.aliases,
+            self.env.imports,
+        );
+        let inferred = local
+            .init
+            .as_ref()
+            .and_then(|init| self.expression_type_identity(&init.expr));
+        if let (Some(binding), Some(identity)) = (binding.as_ref(), explicit.or(inferred)) {
+            self.receiver_types.insert(binding.clone(), identity);
+        }
+        if let Some(binding) = &binding {
+            self.bindings.insert(binding.clone());
+            let origin = local
+                .init
+                .as_ref()
+                .map(|init| self.expression_origin(&init.expr))
+                .filter(|origin| *origin != ValueOrigin::Other)
+                .unwrap_or_else(|| {
+                    origin_for_type(
+                        self.env.module,
+                        &explicit_paths,
+                        self.env.aliases,
+                        self.env.imports,
+                    )
+                });
+            self.origins.insert(binding.clone(), origin);
+        }
+        if let (Some(binding), Some(init)) = (binding, &local.init) {
+            if let syn::Expr::Path(path) = &*init.expr {
+                self.callable_paths.insert(
+                    binding,
+                    path.path
+                        .segments
+                        .iter()
+                        .map(|segment| segment.ident.to_string())
+                        .collect(),
+                );
+            }
+        }
+        visit::visit_local(self, local);
+    }
+
+    fn visit_expr_assign(&mut self, assignment: &'ast syn::ExprAssign) {
+        if let syn::Expr::Path(path) = unwrap_expression(&assignment.left) {
+            if path.path.segments.len() == 1 {
+                let binding = path.path.segments[0].ident.to_string();
+                let origin = self.expression_origin(&assignment.right);
+                self.origins.insert(binding, origin);
+            }
+        }
+        visit::visit_expr_assign(self, assignment);
+    }
 }
 
 fn reverse_reachable(edges: &[BTreeSet<usize>], seeds: &BTreeSet<usize>) -> BTreeSet<usize> {
@@ -2048,8 +2635,18 @@ fn signature_is_resolved_raw_grammar_entry(
     aliases: &Aliases,
     imports: &Imports,
 ) -> bool {
-    let inputs = signature
-        .inputs
+    let inputs = parameter_summaries(&signature.inputs);
+    let output_paths = match &signature.output {
+        ReturnType::Default => Vec::new(),
+        ReturnType::Type(_, output) => type_paths(output),
+    };
+    resolved_raw_grammar_shape(module, &inputs, &output_paths, &[], aliases, imports)
+}
+
+fn parameter_summaries(
+    inputs: &syn::punctuated::Punctuated<FnArg, syn::Token![,]>,
+) -> Vec<ParameterSummary> {
+    inputs
         .iter()
         .filter_map(|argument| match argument {
             FnArg::Receiver(_) => None,
@@ -2066,23 +2663,27 @@ fn signature_is_resolved_raw_grammar_entry(
                 mutable: type_is_mutable_reference(&argument.ty),
             }),
         })
-        .collect::<Vec<_>>();
-    let direct_raw_input = signature.inputs.iter().any(|argument| match argument {
-        FnArg::Receiver(_) => false,
-        FnArg::Typed(argument) => type_contains_any(&argument.ty, &["str", "String"]),
+        .collect()
+}
+
+fn resolved_raw_grammar_shape(
+    module: &ModuleIdentity,
+    inputs: &[ParameterSummary],
+    output_paths: &[Vec<String>],
+    body_paths: &[Vec<String>],
+    aliases: &Aliases,
+    imports: &Imports,
+) -> bool {
+    let raw_input = inputs.iter().any(|input| {
+        resolved_type_names(module, &input.paths, aliases, imports)
+            .iter()
+            .any(|name| matches!(name.as_str(), "str" | "String" | "SourceText"))
     });
-    let source_text_input = inputs.iter().any(|input| {
-        resolved_type_names(module, &input.paths, aliases, imports).contains("SourceText")
-    });
-    if !direct_raw_input && !source_text_input {
+    if !raw_input {
         return false;
     }
 
-    let output_paths = match &signature.output {
-        ReturnType::Default => Vec::new(),
-        ReturnType::Type(_, output) => type_paths(output),
-    };
-    let output_names = resolved_type_names(module, &output_paths, aliases, imports);
+    let output_names = resolved_type_names(module, output_paths, aliases, imports);
     let grammar_output = output_names
         .iter()
         .any(|name| HIGH_LEVEL_GRAMMAR_TYPES.contains(&name.as_str()));
@@ -2097,9 +2698,66 @@ fn signature_is_resolved_raw_grammar_entry(
         (input.mutable || named_output)
             && (is_typed_uml_tree(&names) || is_typed_uml_tree_builder(&names))
     });
+    let body_names = resolved_type_names(module, body_paths, aliases, imports);
+    let constructs_protected =
+        is_typed_uml_tree(&body_names) || is_typed_uml_tree_builder(&body_names);
 
-    (direct_raw_input && grammar_output)
-        || (source_text_input && (is_typed_uml_tree(&output_names) || output_parameter))
+    grammar_output || is_typed_uml_tree(&output_names) || output_parameter || constructs_protected
+}
+
+fn closure_is_raw_grammar_entry(
+    closure: &syn::ExprClosure,
+    module: &ModuleIdentity,
+    aliases: &Aliases,
+    imports: &Imports,
+) -> bool {
+    let inputs = closure
+        .inputs
+        .iter()
+        .filter_map(|pattern| match pattern {
+            syn::Pat::Type(pattern) => Some(ParameterSummary {
+                name: match &*pattern.pat {
+                    syn::Pat::Ident(pattern) => Some(pattern.ident.to_string()),
+                    _ => None,
+                },
+                paths: type_paths(&pattern.ty),
+                mutable: type_is_mutable_reference(&pattern.ty),
+            }),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    let output_paths = match &closure.output {
+        ReturnType::Default => Vec::new(),
+        ReturnType::Type(_, output) => type_paths(output),
+    };
+    #[derive(Default)]
+    struct ExpressionPaths {
+        paths: Vec<Vec<String>>,
+    }
+    impl<'ast> Visit<'ast> for ExpressionPaths {
+        fn visit_expr_call(&mut self, call: &'ast ExprCall) {
+            if let syn::Expr::Path(function) = unwrap_expression(&call.func) {
+                self.paths.extend(paths_in_path(&function.path));
+            }
+            visit::visit_expr_call(self, call);
+        }
+
+        fn visit_expr_struct(&mut self, expression: &'ast syn::ExprStruct) {
+            self.paths.extend(paths_in_path(&expression.path));
+            visit::visit_expr_struct(self, expression);
+        }
+    }
+    let mut body = ExpressionPaths::default();
+    body.visit_expr(&closure.body);
+
+    resolved_raw_grammar_shape(
+        module,
+        &inputs,
+        &output_paths,
+        &body.paths,
+        aliases,
+        imports,
+    )
 }
 
 fn summary_is_raw_grammar_entry(
@@ -2107,40 +2765,31 @@ fn summary_is_raw_grammar_entry(
     aliases: &Aliases,
     imports: &Imports,
 ) -> bool {
-    let raw_input = summary.raw_input
-        || summary.input_types.iter().any(|input| {
-            resolved_type_names(&summary.id.module, &input.paths, aliases, imports)
-                .contains("SourceText")
-        });
-    if !raw_input {
-        return false;
-    }
-
+    let input_names = summary
+        .input_types
+        .iter()
+        .flat_map(|input| resolved_type_names(&summary.id.module, &input.paths, aliases, imports))
+        .collect::<BTreeSet<_>>();
     let output_names =
         resolved_type_names(&summary.id.module, &summary.output_paths, aliases, imports);
-    let typed_tree_output = is_typed_uml_tree(&output_names);
-    let grammar_output = is_domain_output(summary, aliases, imports);
-    let output_parameter = summary.input_types.iter().any(|input| {
-        let names = resolved_type_names(&summary.id.module, &input.paths, aliases, imports);
-        let named_output = input.name.as_ref().is_some_and(|name| {
-            matches!(
-                name.as_str(),
-                "builder" | "factory" | "out" | "output" | "sink" | "target"
-            )
-        });
-        (input.mutable || named_output)
-            && (is_typed_uml_tree(&names) || is_typed_uml_tree_builder(&names))
-    });
     let body_names = resolved_type_names(&summary.id.module, &summary.body_paths, aliases, imports);
-    let constructs_tree = is_typed_uml_tree(&body_names) || is_typed_uml_tree_builder(&body_names);
-
-    let source_text_input = summary.input_types.iter().any(|input| {
-        resolved_type_names(&summary.id.module, &input.paths, aliases, imports)
-            .contains("SourceText")
-    });
-    (raw_input && grammar_output)
-        || (source_text_input && (typed_tree_output || output_parameter))
-        || (raw_input && constructs_tree)
+    let cached_tree_lookup = summary.has_receiver
+        && input_names.contains("SourceBundle")
+        && !input_names.contains("SourceText")
+        && is_typed_uml_tree(&output_names)
+        && !is_typed_uml_tree(&body_names)
+        && !is_typed_uml_tree_builder(&body_names);
+    if cached_tree_lookup {
+        return false;
+    }
+    resolved_raw_grammar_shape(
+        &summary.id.module,
+        &summary.input_types,
+        &summary.output_paths,
+        &summary.body_paths,
+        aliases,
+        imports,
+    )
 }
 
 fn summary_has_model_input(
@@ -2184,7 +2833,7 @@ fn summary_exposes_visible_model_text(
 ) -> bool {
     if !summary.visible
         || !summary_is_model_to_text(summary, aliases, imports)
-        || is_allowlisted_visible_model_text(&summary.id)
+        || is_allowlisted_visible_model_text(summary)
     {
         return false;
     }
@@ -2268,38 +2917,114 @@ fn resolved_type_names(
     names
 }
 
-fn preferred_type_name(
+fn preferred_type_identity(
     context: &ModuleIdentity,
     paths: &[Vec<String>],
     aliases: &Aliases,
     imports: &Imports,
-) -> Option<String> {
-    let names = resolved_type_names(context, paths, aliases, imports);
-    if let Some(model) = names
+) -> Option<TypeIdentity> {
+    let mut pending = paths
         .iter()
-        .find(|name| MODEL_TYPES.contains(&name.as_str()))
+        .cloned()
+        .map(|path| (context.clone(), path))
+        .collect::<Vec<_>>();
+    let mut seen = BTreeSet::new();
+    let mut candidates = BTreeSet::new();
+    while let Some((path_context, path)) = pending.pop() {
+        let (module, name) = resolve_type_path(&path_context, &path, imports);
+        if !seen.insert((module.clone(), name.clone())) {
+            continue;
+        }
+        if let Some(targets) = aliases.get(&(module.clone(), name.clone())) {
+            pending.extend(
+                targets
+                    .iter()
+                    .cloned()
+                    .map(|target| (module.clone(), target)),
+            );
+            continue;
+        }
+        candidates.insert(TypeIdentity::new(module, name));
+    }
+    if let Some(model) = candidates
+        .iter()
+        .find(|identity| MODEL_TYPES.contains(&identity.name.as_str()))
     {
         return Some(model.clone());
     }
-    names
-        .iter()
-        .find(|name| {
-            name.chars().next().is_some_and(char::is_uppercase)
-                && !matches!(
-                    name.as_str(),
-                    "Analysis"
-                        | "Arc"
-                        | "Box"
-                        | "Cow"
-                        | "Error"
-                        | "Option"
-                        | "Result"
-                        | "String"
-                        | "Vec"
-                )
-                && !aliases.keys().any(|(_, alias)| alias == *name)
-        })
-        .cloned()
+    candidates.into_iter().find(|identity| {
+        identity.name.chars().next().is_some_and(char::is_uppercase)
+            && !matches!(
+                identity.name.as_str(),
+                "Analysis"
+                    | "Arc"
+                    | "Box"
+                    | "Cow"
+                    | "Error"
+                    | "Option"
+                    | "Result"
+                    | "String"
+                    | "Vec"
+            )
+    })
+}
+
+fn receiver_type_identity(
+    context: &ModuleIdentity,
+    paths: &[Vec<String>],
+    aliases: &Aliases,
+    imports: &Imports,
+) -> Option<TypeIdentity> {
+    fn resolve(
+        context: &ModuleIdentity,
+        paths: &[Vec<String>],
+        aliases: &Aliases,
+        imports: &Imports,
+        seen: &mut BTreeSet<(ModuleIdentity, String)>,
+    ) -> Option<TypeIdentity> {
+        let path = paths.first()?;
+        let (module, name) = resolve_type_path(context, path, imports);
+        if !seen.insert((module.clone(), name.clone())) {
+            return None;
+        }
+        if let Some(targets) = aliases.get(&(module.clone(), name.clone())) {
+            return resolve(&module, targets, aliases, imports, seen);
+        }
+
+        let identity = TypeIdentity::new(module, name);
+        if matches!(identity.name.as_str(), "Arc" | "Box" | "Cow" | "Pin" | "Rc") {
+            return resolve(context, &paths[1..], aliases, imports, seen).or(Some(identity));
+        }
+        Some(identity)
+    }
+
+    resolve(context, paths, aliases, imports, &mut BTreeSet::new())
+}
+
+fn is_harmless_standard_collection_dispatch(call: &CallSite, env: &BodyEnvironment<'_>) -> bool {
+    let Some(receiver) = &call.receiver_type else {
+        return false;
+    };
+    if env.struct_fields.contains_key(receiver) {
+        return false;
+    }
+
+    let module_tail = &receiver.module.segments[receiver.module.crate_root_len..];
+    let explicitly_standard = module_tail
+        .first()
+        .is_some_and(|segment| matches!(segment.as_str(), "std" | "alloc"));
+    let prelude_vec = receiver.name == "Vec" && receiver.module == *env.module;
+    if !explicitly_standard && !prelude_vec {
+        return false;
+    }
+
+    matches!(
+        (
+            receiver.name.as_str(),
+            call.segments.last().map(String::as_str)
+        ),
+        ("Vec", Some("push")) | ("HashSet", Some("contains"))
+    )
 }
 
 fn origin_for_type(
@@ -2537,37 +3262,6 @@ fn is_harmless_authority_attribute(name: &str) -> bool {
             | "test"
             | "warn"
     )
-}
-
-fn is_domain_output(summary: &FunctionSummary, aliases: &Aliases, imports: &Imports) -> bool {
-    let mut pending = summary
-        .output_paths
-        .iter()
-        .cloned()
-        .map(|path| (summary.id.module.clone(), path))
-        .collect::<Vec<_>>();
-    let mut seen = BTreeSet::new();
-    while let Some((context, path)) = pending.pop() {
-        let Some(name) = path.last().cloned() else {
-            continue;
-        };
-        if HIGH_LEVEL_GRAMMAR_TYPES.contains(&name.as_str()) {
-            return true;
-        }
-        let (module, alias) = resolve_type_path(&context, &path, imports);
-        if !seen.insert((module.clone(), alias.clone())) {
-            continue;
-        }
-        if let Some(targets) = aliases.get(&(module.clone(), alias)) {
-            pending.extend(
-                targets
-                    .iter()
-                    .cloned()
-                    .map(|target| (module.clone(), target)),
-            );
-        }
-    }
-    false
 }
 
 fn resolve_type_path(
@@ -2825,6 +3519,15 @@ fn is_authoritative_path(path: &str) -> bool {
         || path.starts_with("crates/waml-syntax/src/")
 }
 
+fn module_can_access_raw_parser(module: &ModuleIdentity) -> bool {
+    module.segments.first().is_some_and(|name| name == "waml")
+        && module.segments.get(1).is_some_and(|name| name == "uml")
+        || module
+            .segments
+            .first()
+            .is_some_and(|crate_name| crate_name == "waml-syntax")
+}
+
 fn is_allowlisted_leaf_codec(id: &FunctionId) -> bool {
     id.owner.is_none()
         && matches!(
@@ -2851,20 +3554,39 @@ fn is_allowlisted_leaf_codec(id: &FunctionId) -> bool {
                     if crate_name == "waml" && first == "uml" && second == "analysis"
             )
         || id.owner.is_none()
-            && matches!(
-                (id.module.segments.as_slice(), id.name.as_str()),
-                ([crate_name, module], "parse_hex")
-                    if crate_name == "waml-editor" && module == "cli"
-            )
+            && id
+                .module
+                .segments
+                .first()
+                .is_some_and(|crate_name| crate_name == "waml_editor")
+            && id
+                .module
+                .segments
+                .last()
+                .is_some_and(|module| module == "cli")
+            && id.name == "parse_hex"
         || id.owner.is_none()
+            && id
+                .module
+                .segments
+                .first()
+                .is_some_and(|crate_name| crate_name == "waml_editor")
+            && id
+                .module
+                .segments
+                .last()
+                .is_some_and(|module| module == "scene")
             && matches!(
-                (id.module.segments.as_slice(), id.name.as_str()),
-                ([crate_name, module], "placement_candidate" | "placement_preview")
-                    if crate_name == "waml-editor" && module == "scene"
+                id.name.as_str(),
+                "placement_candidate" | "placement_preview"
             )
 }
 
-fn is_allowlisted_visible_model_text(id: &FunctionId) -> bool {
+fn is_allowlisted_visible_model_text(summary: &FunctionSummary) -> bool {
+    let id = &summary.id;
+    if summary.allowlisted_standard_text_trait && id.name == "to_string" {
+        return true;
+    }
     matches!(
         (
             id.module.segments.as_slice(),

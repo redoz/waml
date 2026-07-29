@@ -182,6 +182,33 @@ fn cargo_target_crate_roots_preserve_cross_module_crate_resolution() {
 }
 
 #[test]
+fn cargo_target_type_identities_isolate_same_named_receivers() {
+    let violations =
+        analyze_workspace(&fixture_workspace("workspace")).expect("analyze fixture workspace");
+
+    for expected in ["bin_unsafe_field", "bin_unsafe_chain"] {
+        assert!(
+            violations.iter().any(|violation| {
+                violation
+                    .path
+                    .ends_with("packages/core/targets/custom_bin.rs")
+                    && violation.reason.contains(expected)
+                    && violation.reason.contains("model-to-source reparse")
+            }),
+            "target-qualified receiver edge for `{expected}` escaped: {violations:#?}"
+        );
+    }
+    for control in ["lib_safe_field", "lib_safe_chain"] {
+        assert!(
+            violations
+                .iter()
+                .all(|violation| !violation.reason.contains(control)),
+            "same-named receiver leaked across Cargo targets into `{control}`: {violations:#?}"
+        );
+    }
+}
+
+#[test]
 fn raw_authority_entry_is_not_an_external_api() {
     let output = compile_external(
         r#"
@@ -263,6 +290,7 @@ fn real_syntax_tree_authority_signatures_and_builders_are_rejected() {
             "crates/waml/src/types.rs",
             r#"
             type SharedInput<'a> = &'a SourceText;
+            type SharedRaw<'a> = &'a str;
             type ProtectedTree = Arc<SyntaxTree<UmlLanguage>>;
             type WrappedTree = Result<Box<ProtectedTree>, Error>;
             type TreeSink = Option<ProtectedTree>;
@@ -272,14 +300,24 @@ fn real_syntax_tree_authority_signatures_and_builders_are_rejected() {
         (
             "crates/waml/src/uml/compat.rs",
             r#"
-            use crate::types::{SharedInput, TreeBuilder, TreeSink, WrappedTree};
+            use crate::types::{SharedInput, SharedRaw, TreeBuilder, TreeSink, WrappedTree};
 
             fn direct(text: SourceText) -> Arc<SyntaxTree<UmlLanguage>> {
                 let _ = text;
                 unimplemented!()
             }
 
+            fn direct_raw(text: &str) -> Arc<SyntaxTree<UmlLanguage>> {
+                let _ = text;
+                unimplemented!()
+            }
+
             fn imported_alias(text: SharedInput<'_>) -> WrappedTree {
+                let _ = text;
+                unimplemented!()
+            }
+
+            fn raw_alias(text: SharedRaw<'_>) -> WrappedTree {
                 let _ = text;
                 unimplemented!()
             }
@@ -300,6 +338,7 @@ fn real_syntax_tree_authority_signatures_and_builders_are_rejected() {
 
             pub trait ShadowParser {
                 fn trait_entry(text: SharedInput<'_>) -> WrappedTree;
+                fn trait_raw_entry(text: SharedRaw<'_>) -> WrappedTree;
 
                 fn trait_constructed(text: SourceText) -> Opaque {
                     let _ = text;
@@ -313,11 +352,14 @@ fn real_syntax_tree_authority_signatures_and_builders_are_rejected() {
 
     for expected in [
         "direct",
+        "direct_raw",
         "imported_alias",
+        "raw_alias",
         "output_parameter",
         "builder_output",
         "constructed",
         "trait_entry",
+        "trait_raw_entry",
         "trait_constructed",
     ] {
         assert!(
@@ -356,6 +398,28 @@ fn closure_and_call_indirection_are_rejected() {
             .iter()
             .any(|reason| reason.contains("route_through_helper")),
         "{violations:#?}"
+    );
+}
+
+#[test]
+fn standalone_raw_authority_closures_are_rejected() {
+    let violations = reasons(
+        r#"
+        fn install() {
+            let parser = |raw: &str| -> Arc<SyntaxTree<UmlLanguage>> {
+                let _ = raw;
+                unimplemented!()
+            };
+            let _ = parser;
+        }
+        "#,
+    );
+
+    assert!(
+        violations
+            .iter()
+            .any(|reason| { reason.contains("install") && reason.contains("closure") }),
+        "standalone raw authority closure escaped: {violations:#?}"
     );
 }
 
@@ -402,6 +466,25 @@ fn call_edges_propagate_reparse_through_resolved_and_unresolved_dispatch() {
             }
         }
 
+        struct Renderer;
+        impl Renderer {
+            fn render(&self, model: &Model) -> String {
+                model.to_string()
+            }
+        }
+        struct RenderServices {
+            renderer: Renderer,
+        }
+        impl RenderServices {
+            fn renderer(&self) -> &Renderer {
+                &self.renderer
+            }
+        }
+
+        fn render_model(model: &Model) -> String {
+            model.to_string()
+        }
+
         fn function_pointer(model: &Model) -> Analysis {
             let rendered = model.to_string();
             let callable: Parser = free_dispatch;
@@ -426,6 +509,40 @@ fn call_edges_propagate_reparse_through_resolved_and_unresolved_dispatch() {
         fn chained_dispatch(services: &Services, model: &Model) -> Analysis {
             let rendered = model.to_string();
             services.decoder().decode(rendered)
+        }
+
+        fn helper_return_pointer(model: &Model, callable: Parser) -> Analysis {
+            let rendered = render_model(model);
+            callable(rendered)
+        }
+
+        fn helper_method_pointer(
+            renderer: &Renderer,
+            model: &Model,
+            callable: Parser,
+        ) -> Analysis {
+            let rendered = renderer.render(model);
+            callable(rendered)
+        }
+
+        fn helper_chain_pointer(
+            services: &RenderServices,
+            model: &Model,
+            callable: Parser,
+        ) -> Analysis {
+            let rendered = services.renderer().render(model);
+            callable(rendered)
+        }
+
+        struct Vec;
+        impl Vec {
+            fn push(&self, raw: String) -> Analysis {
+                free_dispatch(raw)
+            }
+        }
+
+        fn custom_vec_push(sink: &Vec, model: &Model) -> Analysis {
+            sink.push(render_model(model))
         }
 
         fn unrelated_callable(callable: fn(&str) -> String, label: &str) -> String {
@@ -469,12 +586,47 @@ fn call_edges_propagate_reparse_through_resolved_and_unresolved_dispatch() {
             .any(|reason| reason.contains("unresolved callable dispatch")),
         "callable-field model text was not rejected through the unresolved-call edge: {callable_field:#?}"
     );
+    for expected in [
+        "helper_return_pointer",
+        "helper_method_pointer",
+        "helper_chain_pointer",
+    ] {
+        assert!(
+            violations.iter().any(|reason| {
+                reason.contains(expected) && reason.contains("unresolved callable dispatch")
+            }),
+            "helper-return model text escaped unresolved dispatch in `{expected}`: {violations:#?}"
+        );
+    }
+    assert!(
+        violations.iter().any(|reason| {
+            reason.contains("custom_vec_push") && reason.contains("model-to-source reparse")
+        }),
+        "user-defined `Vec::push` was mistaken for a harmless standard collection call: {violations:#?}"
+    );
     for control in ["unrelated_callable", "unrelated_domain_helper"] {
         assert!(
             violations.iter().all(|reason| !reason.contains(control)),
             "legitimate control `{control}` was rejected: {violations:#?}"
         );
     }
+}
+
+#[test]
+fn benign_model_inspection_does_not_taint_unrelated_reparse() {
+    let violations = reasons(
+        r#"
+        fn inspect_and_parse_constant(model: &Model) -> Analysis {
+            let _count = model.nodes.len();
+            crate::analysis::prepare_candidate("constant")
+        }
+        "#,
+    );
+
+    assert!(
+        violations.is_empty(),
+        "benign model inspection was treated as serialization: {violations:#?}"
+    );
 }
 
 #[test]
@@ -634,12 +786,23 @@ fn body_macros_and_external_proc_macros_cannot_expand_authority() {
             }
             "#,
         ),
+        (
+            "crates/waml/src/uml/analysis_generated.rs",
+            r#"
+            #[external::compat_authority]
+            fn ordinary_helper() {}
+
+            external::generate_hidden_authority!();
+            "#,
+        ),
     ]);
     for expected in [
         "external::authority",
         "external::Authority",
         "external::generate_authority",
         "external::parse_authority",
+        "external::compat_authority",
+        "external::generate_hidden_authority",
     ] {
         assert!(
             proc_macro_violations
@@ -909,6 +1072,22 @@ fn visible_semantic_model_self_and_concrete_owner_surfaces_are_rejected() {
                 String::new()
             }
         }
+
+        pub trait ExportModel {
+            fn export_trait(&self) -> String;
+        }
+        impl ExportModel for Model {
+            fn export_trait(&self) -> String {
+                String::new()
+            }
+        }
+
+        pub trait DefaultExportModel {
+            fn default_export_trait(&self) -> String {
+                String::new()
+            }
+        }
+        impl DefaultExportModel for Model {}
         "#,
     );
 
@@ -924,6 +1103,8 @@ fn visible_semantic_model_self_and_concrete_owner_surfaces_are_rejected() {
         "export_sequence",
         "export_relation_end",
         "export_typed_diagram",
+        "export_trait",
+        "default_export_trait",
     ] {
         assert!(
             violations.iter().any(|reason| {
