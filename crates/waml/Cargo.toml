@@ -21,4 +21,3 @@ test-support = []
 
 [dev-dependencies]
 serde_json = { workspace = true }
-syn = { version = "2", features = ["full", "visit"] }

@@ -1,3 +1,0 @@
-[workspace]
-resolver = "2"
-members = ["packages/core", "packages/syntax", "products/cli", "../outside-member"]
