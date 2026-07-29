@@ -155,6 +155,279 @@ fn oracle(previous: &str, next: &str, changes: &[TextChange]) {
     );
 }
 
+fn annotations(annotations: &[SyntaxAnnotation]) -> Vec<(u64, &str, Option<&str>)> {
+    annotations
+        .iter()
+        .map(|annotation| (annotation.id().get(), annotation.kind(), annotation.data()))
+        .collect()
+}
+
+fn structural_fingerprint(tree: &SyntaxTree<waml_syntax::OkfMarkdownLanguage>) -> Vec<String> {
+    fn visit(
+        element: &GreenElement<waml_syntax::OkfMarkdownLanguage>,
+        at: TextSize,
+        out: &mut Vec<String>,
+    ) -> TextSize {
+        match element {
+            GreenElement::Node(node) => {
+                let end = at.checked_add(node.width()).unwrap();
+                out.push(format!(
+                    "node:{:?}:{at:?}..{end:?}:{:?}",
+                    node.kind(),
+                    annotations(node.annotations())
+                ));
+                node.children()
+                    .iter()
+                    .fold(at, |offset, child| visit(child, offset, out))
+            }
+            GreenElement::Token(token) => {
+                let end = at.checked_add(token.width()).unwrap();
+                let spelling = token.text().write_to_string();
+                let leading: Vec<_> = token
+                    .leading_trivia()
+                    .iter()
+                    .map(|trivia| (format!("{:?}", trivia.kind), trivia.text.write_to_string()))
+                    .collect();
+                let trailing: Vec<_> = token
+                    .trailing_trivia()
+                    .iter()
+                    .map(|trivia| (format!("{:?}", trivia.kind), trivia.text.write_to_string()))
+                    .collect();
+                out.push(format!("token:{:?}:{at:?}..{end:?}:{spelling:?}:{leading:?}:{trailing:?}:missing={}:bad={}:codes={:?}:{:?}", token.kind(), token.flags().is_missing(), token.flags().is_bad(), token.annotations(), annotations(token.syntax_annotations())));
+                end
+            }
+        }
+    }
+    let mut out = Vec::new();
+    visit(
+        &GreenElement::Node(tree.root_green().clone()),
+        size(0),
+        &mut out,
+    );
+    out
+}
+
+fn diagnostic_fingerprint(tree: &SyntaxTree<waml_syntax::OkfMarkdownLanguage>) -> Vec<String> {
+    let mut fingerprint: Vec<_> = tree
+        .diagnostics()
+        .iter()
+        .map(|diagnostic| {
+            format!(
+                "{:?}:{:?}:{:?}:{}",
+                diagnostic.code, diagnostic.severity, diagnostic.range, diagnostic.message
+            )
+        })
+        .collect();
+    fingerprint.sort();
+    fingerprint
+}
+
+fn exact_oracle(
+    previous: &str,
+    next: &str,
+    changes: &[TextChange],
+) -> ReparseOutcome<waml_syntax::OkfMarkdownLanguage> {
+    let old = parse_okf_markdown(text(previous), MarkdownDialect::CommonMarkCurrent).unwrap();
+    let clean_source = text(next);
+    let full =
+        parse_okf_markdown(clean_source.clone(), MarkdownDialect::CommonMarkCurrent).unwrap();
+    let outcome = reparse_okf_markdown(&old.tree, clean_source.clone(), changes).unwrap();
+    let tree = match &outcome {
+        ReparseOutcome::Incremental { tree, .. } | ReparseOutcome::Full { tree, .. } => tree,
+    };
+    assert_eq!(tree.write_to_string(), full.tree.write_to_string());
+    assert_eq!(
+        structural_fingerprint(tree),
+        structural_fingerprint(&full.tree)
+    );
+    assert_eq!(
+        diagnostic_fingerprint(tree),
+        diagnostic_fingerprint(&full.tree)
+    );
+    assert!(all_source_slices_use(
+        &GreenElement::Node(tree.root_green().clone()),
+        &clean_source
+    ));
+    outcome
+}
+
+#[test]
+fn ambiguous_zero_width_boundary_falls_back() {
+    assert!(matches!(
+        exact_oracle(
+            "# A\n# B\n",
+            "# A\n\n# B\n",
+            &[TextChange {
+                old_range: range(4, 4),
+                replacement: Arc::from("\n")
+            }]
+        ),
+        ReparseOutcome::Full {
+            reason: FullReparseReason::UnsafeSynchronization,
+            ..
+        }
+    ));
+}
+
+#[test]
+fn covering_container_boundaries_are_compared_globally() {
+    assert!(matches!(
+        exact_oracle(
+            "> a\n> b\n",
+            "> a\n> bee\n",
+            &[TextChange {
+                old_range: range(6, 7),
+                replacement: Arc::from("bee")
+            }]
+        ),
+        ReparseOutcome::Incremental { .. }
+    ));
+}
+
+#[test]
+fn added_or_removed_container_is_named() {
+    assert!(matches!(
+        exact_oracle(
+            "body\n",
+            "> body\n",
+            &[TextChange {
+                old_range: range(0, 0),
+                replacement: Arc::from("> ")
+            }]
+        ),
+        ReparseOutcome::Full {
+            reason: FullReparseReason::MarkdownContainerBoundaryChanged,
+            ..
+        }
+    ));
+}
+
+#[test]
+fn safe_edit_matrix_matches_full_oracle() {
+    for (old, new, changes) in [
+        (
+            "body\n",
+            "bXdy\n",
+            vec![TextChange {
+                old_range: range(1, 3),
+                replacement: Arc::from("Xd"),
+            }],
+        ),
+        (
+            "body\n",
+            "body!\n",
+            vec![TextChange {
+                old_range: range(4, 4),
+                replacement: Arc::from("!"),
+            }],
+        ),
+        (
+            "---\ntype: uml.Class\n---\n",
+            "---\ntype: uml.Interface\n---\n",
+            vec![TextChange {
+                old_range: range(10, 19),
+                replacement: Arc::from("uml.Interface"),
+            }],
+        ),
+        (
+            "a: [b, c]\n",
+            "a: [b, d]\n",
+            vec![TextChange {
+                old_range: range(7, 8),
+                replacement: Arc::from("d"),
+            }],
+        ),
+        (
+            "one\ntwo\n",
+            "ONE\nTWO\n",
+            vec![
+                TextChange {
+                    old_range: range(0, 3),
+                    replacement: Arc::from("ONE"),
+                },
+                TextChange {
+                    old_range: range(4, 7),
+                    replacement: Arc::from("TWO"),
+                },
+            ],
+        ),
+    ] {
+        assert!(matches!(
+            exact_oracle(old, new, &changes),
+            ReparseOutcome::Incremental { .. }
+        ));
+    }
+}
+
+#[test]
+fn boundary_fallback_matrix_is_named() {
+    let non_utf8 = ChangeMap::checked(
+        &text("# Café\n"),
+        &[TextChange {
+            old_range: range(5, 6),
+            replacement: Arc::from("x"),
+        }],
+    );
+    assert_eq!(
+        non_utf8.unwrap_err(),
+        FullReparseReason::InvalidUtf8Boundary
+    );
+    for (old, new, changes, reason) in [
+        (
+            "---\na: b\n---\n",
+            "---\na: b\n",
+            vec![TextChange {
+                old_range: range(9, 13),
+                replacement: Arc::from(""),
+            }],
+            FullReparseReason::FrontmatterBoundaryChanged,
+        ),
+        (
+            "# H\n",
+            "## H\n",
+            vec![TextChange {
+                old_range: range(1, 1),
+                replacement: Arc::from("#"),
+            }],
+            FullReparseReason::HeadingBoundaryChanged,
+        ),
+        (
+            "body\n",
+            "    body\n",
+            vec![TextChange {
+                old_range: range(0, 0),
+                replacement: Arc::from("    "),
+            }],
+            FullReparseReason::MarkdownContainerBoundaryChanged,
+        ),
+        (
+            "# One\n# Two\n",
+            "# Uno\n# Dos\n",
+            vec![
+                TextChange {
+                    old_range: range(2, 5),
+                    replacement: Arc::from("Uno"),
+                },
+                TextChange {
+                    old_range: range(8, 11),
+                    replacement: Arc::from("Dos"),
+                },
+            ],
+            FullReparseReason::UnsafeSynchronization,
+        ),
+    ] {
+        let outcome = exact_oracle(old, new, &changes);
+        let actual = match outcome {
+            ReparseOutcome::Full { reason, .. } => format!("{reason:?}"),
+            ReparseOutcome::Incremental { .. } => "Incremental".into(),
+        };
+        assert!(
+            actual == format!("{reason:?}"),
+            "expected {reason:?}, got {actual}"
+        );
+    }
+}
+
 fn first_node(
     tree: &SyntaxTree<waml_syntax::OkfMarkdownLanguage>,
     kind: OkfMarkdownSyntaxKind,

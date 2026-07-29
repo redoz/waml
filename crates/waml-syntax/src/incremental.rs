@@ -592,11 +592,13 @@ pub fn reparse_okf_markdown_with_structure(
             new_structure.clone(),
         ))
     };
+    let old_frontmatter = crate::shell::frontmatter_range(&old, &old_structure)?;
     if !same_optional_range(
-        crate::shell::frontmatter_range(&old, &old_structure)?,
+        old_frontmatter,
         crate::shell::frontmatter_range(&new_text, &new_structure)?,
         &map,
-    ) {
+    ) || frontmatter_fence_touched(&old, old_frontmatter, changes)
+    {
         return full(FullReparseReason::FrontmatterBoundaryChanged);
     }
     if !same_headings(&old_structure, &new_structure, &map) {
@@ -767,19 +769,24 @@ fn select_window(windows: &[Window], map: &ChangeMap) -> Option<Window> {
         })
         .collect();
     if zero {
-        candidates.sort_by_key(|window| {
-            (
-                window.kind != crate::shell::ShellWindowKind::MarkdownRegion
-                    || window.range.start() != hull.start(),
-                window.kind != crate::shell::ShellWindowKind::Tail,
-            )
-        });
-        let chosen = candidates.first().copied()?;
-        let equally_best = candidates
-            .iter()
-            .skip(1)
-            .any(|other| other.kind == chosen.kind && other.range.start() == chosen.range.start());
-        (!equally_best).then_some(chosen)
+        if hull.start() == map.old_len() {
+            return candidates
+                .into_iter()
+                .find(|window| window.kind == crate::shell::ShellWindowKind::Tail);
+        }
+        if let Some(raw) = candidates.iter().find(|window| {
+            window.kind == crate::shell::ShellWindowKind::MarkdownRegion
+                && window.range.start() == hull.start()
+        }) {
+            return Some(*raw);
+        }
+        if let Some(tail) = candidates.iter().find(|window| {
+            window.kind == crate::shell::ShellWindowKind::Tail
+                && window.range.start() == hull.start()
+        }) {
+            return Some(*tail);
+        }
+        (candidates.len() == 1).then(|| candidates.remove(0))
     } else {
         (candidates.len() == 1).then(|| candidates.remove(0))
     }
@@ -809,6 +816,33 @@ fn map_range(range: TextRange, map: &ChangeMap) -> Option<TextRange> {
 }
 fn same_optional_range(old: Option<TextRange>, new: Option<TextRange>, map: &ChangeMap) -> bool {
     old.and_then(|range| map_range(range, map)) == new
+}
+
+fn frontmatter_fence_touched(
+    old: &SourceText,
+    frontmatter: Option<TextRange>,
+    changes: &[TextChange],
+) -> bool {
+    let Some(frontmatter) = frontmatter else {
+        return false;
+    };
+    let source = old.shared();
+    let end = frontmatter.end().to_usize();
+    let significant_end = source[..end].trim_end_matches(['\r', '\n']).len();
+    let close_start = source[..significant_end].rfind('\n').map_or(0, |at| at + 1);
+    let first_end = source.find('\n').map_or(source.len(), |at| at + 1);
+    changes.iter().any(|change| {
+        let overlaps = |start: usize, end: usize| {
+            let start = TextSize::try_from_usize(start).unwrap();
+            let end = TextSize::try_from_usize(end).unwrap();
+            if change.old_range.start() == change.old_range.end() {
+                start <= change.old_range.start() && change.old_range.start() <= end
+            } else {
+                change.old_range.start() < end && start < change.old_range.end()
+            }
+        };
+        overlaps(0, first_end) || overlaps(close_start, end)
+    })
 }
 fn same_ranges(old: &[TextRange], new: &[TextRange], map: &ChangeMap) -> bool {
     let mut old: Option<Vec<_>> = old
