@@ -208,6 +208,11 @@ impl SelectionToolbar {
         self.draw_bg.redraw(cx);
     }
 
+    #[cfg(test)]
+    pub(crate) fn selection_count_for_test(&self) -> Option<usize> {
+        self.count
+    }
+
     /// Convenience reader for `App`, mirroring `DocTabs::tab_action`.
     pub fn toolbar_action(&self, actions: &Actions) -> Option<SelectionToolbarAction> {
         let item = actions.find_widget_action(self.widget_uid())?;

@@ -924,9 +924,9 @@ impl App {
             return;
         }
         let fragment = pending.fragment.clone();
-        let found = self
-            .documents
-            .scroll_active_to_fragment(cx, &self.ui, &fragment);
+        let found =
+            self.documents
+                .scroll_active_to_fragment(cx, &self.ui, &self.session, &fragment);
         self.pending_fragment = None;
         if found {
             if let Some(current) = self.documents.capture_active_location(cx, &self.ui) {
@@ -951,7 +951,7 @@ impl App {
         }
         let _ = self
             .documents
-            .restore_active_anchor(cx, &self.ui, &pending.anchor);
+            .restore_active_anchor(cx, &self.ui, &self.session, &pending.anchor);
         if let Some(current) = self.documents.capture_active_location(cx, &self.ui) {
             self.view_history.refresh_current(current);
         }
@@ -1025,6 +1025,18 @@ impl App {
         cause: TransitionCause,
     ) -> bool {
         let departing = self.documents.capture_active_location(cx, &self.ui);
+        if matches!(cause, TransitionCause::UserNavigation)
+            && matches!(location.anchor, ViewAnchor::None)
+            && departing
+                .as_ref()
+                .is_some_and(|current| current.document == location.document)
+        {
+            self.session.break_edit_merge_group();
+            self.view_history
+                .refresh_current(departing.expect("same-document location was checked"));
+            self.sync_history_controls(cx);
+            return true;
+        }
         if matches!(cause, TransitionCause::HistoryTraversal) {
             if let Some(departing) = departing.clone() {
                 self.view_history.refresh_current(departing);
@@ -1067,7 +1079,7 @@ impl App {
         }
 
         match cause {
-            TransitionCause::UserNavigation | TransitionCause::UndoRedoReveal => {
+            TransitionCause::UserNavigation => {
                 self.session.break_edit_merge_group();
                 if let Some(departing) = departing {
                     let explicit_fragment = matches!(
@@ -1082,6 +1094,14 @@ impl App {
                     } else {
                         self.view_history.record_transition(departing, arriving);
                     }
+                } else {
+                    self.view_history.reset(Some(arriving));
+                }
+            }
+            TransitionCause::UndoRedoReveal => {
+                self.session.break_edit_merge_group();
+                if let Some(departing) = departing {
+                    self.view_history.record_transition(departing, arriving);
                 } else {
                     self.view_history.reset(Some(arriving));
                 }
@@ -2735,7 +2755,7 @@ mod tests {
     use crate::doc_tabs::{DocTab, OpenTabs};
     use crate::doc_view::{BodyWidgets, DocView, DocumentHeaderChrome, ViewData};
     use crate::dock::DockState;
-    use crate::document::DocumentPresentation;
+    use crate::document::{DocumentPresentation, NavCategory, OpenDocument};
     use crate::document_host::DocumentCommand;
     use crate::icons::{Icon, IconSet};
     use crate::nav::NavState;
@@ -2761,6 +2781,72 @@ mod tests {
             self.opened.push(url.into());
             self.error.clone().map_or(Ok(()), Err)
         }
+    }
+
+    struct ResettingAnchorView(Rc<RefCell<ViewAnchor>>);
+
+    impl DocView for ResettingAnchorView {
+        fn sync(&mut self, _: &mut Cx, _: &BodyWidgets, _: ViewData<'_>) {
+            *self.0.borrow_mut() = ViewAnchor::None;
+        }
+
+        fn handle(
+            &mut self,
+            _: &mut Cx,
+            _: &BodyWidgets,
+            _: &Actions,
+            _: ViewData<'_>,
+        ) -> crate::doc_view::ViewOutcome {
+            crate::doc_view::ViewOutcome::default()
+        }
+
+        fn chrome(&self) -> crate::doc_view::BodyChrome {
+            crate::doc_view::BodyChrome::HIDDEN
+        }
+
+        fn capture_anchor(&self, _: &BodyWidgets) -> ViewAnchor {
+            self.0.borrow().clone()
+        }
+
+        fn restore_anchor(
+            &mut self,
+            _: &mut Cx,
+            _: &BodyWidgets,
+            _: ViewData<'_>,
+            anchor: &ViewAnchor,
+        ) -> bool {
+            *self.0.borrow_mut() = anchor.clone();
+            true
+        }
+    }
+
+    fn navigation_app_with_anchor_probe(anchor: ViewAnchor) -> (Cx, App, Rc<RefCell<ViewAnchor>>) {
+        let (mut cx, mut app) = navigation_app();
+        let state = Rc::new(RefCell::new(anchor.clone()));
+        app.documents.transition(
+            &mut cx,
+            &app.ui,
+            &app.session,
+            DocumentCommand::Open {
+                document: OpenDocument {
+                    tab_id: LiveId::from_str("anchor-probe"),
+                    concept_id: "sales/order".into(),
+                    kind: crate::view_history::DocumentKind::Primary,
+                    title: "Order".into(),
+                    presentation: DocumentPresentation {
+                        icon: Icon::StickyNote,
+                        accent: None,
+                        category: NavCategory::OkfDocument,
+                    },
+                    view: Box::new(ResettingAnchorView(state.clone())),
+                },
+                persistent: true,
+            },
+        );
+        *state.borrow_mut() = anchor;
+        app.view_history
+            .reset(app.documents.capture_active_location(&mut cx, &app.ui));
+        (cx, app, state)
     }
 
     fn navigation_app() -> (Cx, App) {
@@ -3306,7 +3392,7 @@ mod tests {
             &mut cx,
             &[widget_action(
                 back_button_uid,
-                crate::icon_button::IconButtonAction::HistoryBack,
+                crate::icon_button::IconButtonAction::TaggedClicked(live_id!(history_back)),
             )],
         );
         assert_eq!(
@@ -3331,7 +3417,7 @@ mod tests {
             &mut cx,
             &[widget_action(
                 forward_button_uid,
-                crate::icon_button::IconButtonAction::HistoryForward,
+                crate::icon_button::IconButtonAction::TaggedClicked(live_id!(history_forward)),
             )],
         );
         assert_eq!(
@@ -3345,14 +3431,14 @@ mod tests {
             &mut cx,
             &[widget_action(
                 back_button_uid,
-                crate::icon_button::IconButtonAction::HistoryBack,
+                crate::icon_button::IconButtonAction::TaggedClicked(live_id!(history_back)),
             )],
         );
         app.handle_action_batch(
             &mut cx,
             &[widget_action(
                 back_button_uid,
-                crate::icon_button::IconButtonAction::HistoryBack,
+                crate::icon_button::IconButtonAction::TaggedClicked(live_id!(history_back)),
             )],
         );
         let statusbar = app.ui.widget(&cx, ids!(statusbar));
@@ -3396,6 +3482,65 @@ mod tests {
         assert!(!app
             .view_history
             .can_traverse(HistoryDirection::Forward, |_| true));
+    }
+
+    #[test]
+    fn repeat_current_user_navigation_preserves_the_active_anchor() {
+        let anchor = ViewAnchor::Diagram {
+            selected_key: Some("sales/customer".into()),
+            camera: crate::view_history::DiagramCameraAnchor {
+                pan_x: 12.0,
+                pan_y: 34.0,
+                zoom: 1.5,
+            },
+        };
+        let (mut cx, mut app, state) = navigation_app_with_anchor_probe(anchor.clone());
+
+        assert!(app.transition_to_location(
+            &mut cx,
+            ViewLocation {
+                document: crate::navigation::DocumentLocator::primary("sales/order"),
+                anchor: ViewAnchor::None,
+            },
+            TransitionCause::UserNavigation,
+        ));
+
+        assert_eq!(*state.borrow(), anchor);
+    }
+
+    #[test]
+    fn same_document_undo_reveal_records_the_departing_anchor_for_back() {
+        let departing = ViewAnchor::Diagram {
+            selected_key: Some("sales/customer".into()),
+            camera: crate::view_history::DiagramCameraAnchor {
+                pan_x: 12.0,
+                pan_y: 34.0,
+                zoom: 1.5,
+            },
+        };
+        let (mut cx, mut app, _) = navigation_app_with_anchor_probe(departing.clone());
+
+        assert!(app.transition_to_location(
+            &mut cx,
+            ViewLocation {
+                document: crate::navigation::DocumentLocator::primary("sales/order"),
+                anchor: ViewAnchor::Diagram {
+                    selected_key: None,
+                    camera: crate::view_history::DiagramCameraAnchor {
+                        pan_x: 40.0,
+                        pan_y: 50.0,
+                        zoom: 2.0,
+                    },
+                },
+            },
+            TransitionCause::UndoRedoReveal,
+        ));
+
+        let back = app
+            .view_history
+            .target(HistoryDirection::Back, |_| true)
+            .expect("Undo reveal must create a Back entry even within one document");
+        assert_eq!(back.location.anchor, departing);
     }
 
     #[test]

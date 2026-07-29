@@ -358,7 +358,13 @@ pub trait DocView {
         ViewAnchor::None
     }
 
-    fn restore_anchor(&mut self, _cx: &mut Cx, _body: &BodyWidgets, anchor: &ViewAnchor) -> bool {
+    fn restore_anchor(
+        &mut self,
+        _cx: &mut Cx,
+        _body: &BodyWidgets,
+        _data: ViewData<'_>,
+        anchor: &ViewAnchor,
+    ) -> bool {
         matches!(anchor, ViewAnchor::None)
     }
 }

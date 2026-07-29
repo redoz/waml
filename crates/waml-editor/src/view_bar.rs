@@ -372,6 +372,11 @@ impl ViewBar {
             self.view.redraw(cx);
         }
     }
+
+    #[cfg(test)]
+    pub(crate) fn fit_to_selection_enabled_for_test(&self) -> bool {
+        self.fit_to_selection_enabled
+    }
 }
 
 #[cfg(test)]

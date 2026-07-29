@@ -132,6 +132,7 @@ impl DocumentHost {
         &mut self,
         cx: &mut Cx,
         ui: &WidgetRef,
+        session: &EditorSession,
         fragment: &str,
     ) -> bool {
         let active_uses_markdown = self
@@ -150,7 +151,7 @@ impl DocumentHost {
             scroll_y: body.markdown_scroll_y(),
         };
         if let Some(view) = self.views.get_mut(&self.tabs.active) {
-            let _ = view.restore_anchor(cx, &body, &anchor);
+            let _ = view.restore_anchor(cx, &body, data(session), &anchor);
         }
         true
     }
@@ -169,12 +170,13 @@ impl DocumentHost {
         &mut self,
         cx: &mut Cx,
         ui: &WidgetRef,
+        session: &EditorSession,
         anchor: &ViewAnchor,
     ) -> bool {
         let body = BodyWidgets::new(cx, ui);
         self.views
             .get_mut(&self.tabs.active)
-            .is_some_and(|view| view.restore_anchor(cx, &body, anchor))
+            .is_some_and(|view| view.restore_anchor(cx, &body, data(session), anchor))
     }
 
     pub fn restore_location(
@@ -184,16 +186,16 @@ impl DocumentHost {
         session: &EditorSession,
         location: &ViewLocation,
     ) -> bool {
+        let Some(document) = crate::documents::open_locator(
+            session.okf_analysis(),
+            session.uml_analysis(),
+            &location.document,
+        ) else {
+            return false;
+        };
         if let Some(id) = self.tab_id_for_locator(&location.document) {
             self.transition(cx, ui, session, DocumentCommand::Activate(id));
         } else {
-            let Some(document) = crate::documents::open_locator(
-                session.okf_analysis(),
-                session.uml_analysis(),
-                &location.document,
-            ) else {
-                return false;
-            };
             self.transition(
                 cx,
                 ui,
@@ -204,7 +206,7 @@ impl DocumentHost {
                 },
             );
         }
-        let _ = self.restore_active_anchor(cx, ui, &location.anchor);
+        let _ = self.restore_active_anchor(cx, ui, session, &location.anchor);
         true
     }
 
@@ -472,6 +474,33 @@ mod tests {
             host.tab_id_for_locator(&DocumentLocator::source("order")),
             Some(source_id)
         );
+    }
+
+    #[test]
+    fn unresolved_locator_does_not_activate_a_stale_matching_tab() {
+        let mut host = DocumentHost::default();
+        for key in ["stale", "current"] {
+            host.apply_command(DocumentCommand::Open {
+                document: prepared(key, NavCategory::Class, Rc::new(Cell::new(0))),
+                persistent: true,
+            });
+        }
+        let current_id = host.active_id();
+        let mut cx = Cx::new(Box::new(|_, _| {}));
+        let ui = WidgetRef::empty();
+        let session = EditorSession::default();
+
+        assert!(!host.restore_location(
+            &mut cx,
+            &ui,
+            &session,
+            &ViewLocation {
+                document: DocumentLocator::primary("stale"),
+                anchor: ViewAnchor::None,
+            },
+        ));
+        assert_eq!(host.active_id(), current_id);
+        assert_eq!(host.active_tab().unwrap().concept_id, "current");
     }
 
     #[test]

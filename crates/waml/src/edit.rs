@@ -56,7 +56,13 @@ impl PendingEdit {
         Self(Arc::new(batch))
     }
 
-    pub fn sequence(edits: Vec<PendingEdit>) -> Self {
+    /// Compose reciprocal edits that have already been lowered against their
+    /// original intermediate states.
+    ///
+    /// This is intentionally not a general operation-batch API: projection
+    /// data in `EditContext` is not rebuilt between children. History uses it
+    /// only for compact source deltas, applied in reciprocal order.
+    pub fn sequence_reciprocals(edits: Vec<PendingEdit>) -> Self {
         Self::new(SequenceBatch(edits))
     }
 
@@ -111,7 +117,7 @@ impl EditBatch for SequenceBatch {
         inverses.reverse();
         Ok(AppliedEdit {
             source,
-            inverse: PendingEdit::sequence(inverses),
+            inverse: PendingEdit::sequence_reciprocals(inverses),
         })
     }
 }
@@ -206,7 +212,7 @@ mod tests {
         let after =
             SourceBundle::try_from_pairs([("renamed/customer.md", "# Customerr\n")]).unwrap();
 
-        let edit = PendingEdit::sequence(vec![
+        let edit = PendingEdit::sequence_reciprocals(vec![
             PendingEdit::from_delta(SourceDelta::between(&before, &middle)),
             PendingEdit::from_delta(SourceDelta::between(&middle, &after)),
         ]);

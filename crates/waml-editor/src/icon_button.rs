@@ -84,8 +84,7 @@ pub enum IconButtonAction {
     #[default]
     None,
     Clicked,
-    HistoryBack,
-    HistoryForward,
+    TaggedClicked(LiveId),
     Pressed(DVec2),
 }
 
@@ -128,9 +127,7 @@ pub struct IconButton {
     #[rust]
     hovered: bool,
     #[live]
-    history_back: bool,
-    #[live]
-    history_forward: bool,
+    action_tag: LiveId,
 }
 
 /// The two independent light channels of an icon button, split so a resting
@@ -154,10 +151,8 @@ impl Widget for IconButton {
                 cx.widget_action(uid, IconButtonAction::Pressed(fe.abs));
             }
             Hit::FingerUp(fe) if fe.is_primary_hit() && fe.is_over => {
-                let action = if self.history_back {
-                    IconButtonAction::HistoryBack
-                } else if self.history_forward {
-                    IconButtonAction::HistoryForward
+                let action = if self.action_tag != LiveId(0) {
+                    IconButtonAction::TaggedClicked(self.action_tag)
                 } else {
                     IconButtonAction::Clicked
                 };
@@ -239,7 +234,12 @@ impl IconButton {
     pub fn clicked(&self, actions: &Actions) -> bool {
         actions
             .find_widget_action(self.widget_uid())
-            .is_some_and(|a| matches!(a.cast(), IconButtonAction::Clicked))
+            .is_some_and(|a| {
+                matches!(
+                    a.cast(),
+                    IconButtonAction::Clicked | IconButtonAction::TaggedClicked(_)
+                )
+            })
     }
 
     /// The press position when this button emitted a primary press in `actions`,

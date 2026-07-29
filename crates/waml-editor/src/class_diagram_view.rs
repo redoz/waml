@@ -257,6 +257,48 @@ impl ClassDiagramView {
             inspector.set_diagram_elements(cx, model, rows);
         }
     }
+
+    /// Resolve one requested canvas selection and project that resolved state to
+    /// every selection consumer. Missing keys deliberately converge on the
+    /// diagram subject rather than leaving stale inspector or toolbar state.
+    fn sync_selection(
+        &self,
+        cx: &mut Cx,
+        body: &BodyWidgets,
+        model: &Model,
+        requested_key: Option<&str>,
+    ) {
+        let selected_key = body
+            .canvas(cx)
+            .borrow_mut::<crate::canvas::ClassDiagramSurface>()
+            .and_then(|mut canvas| {
+                if let Some(key) = requested_key {
+                    canvas.select_by_key(cx, key);
+                } else {
+                    canvas.clear_selection(cx);
+                }
+                canvas.selected_key().map(str::to_owned)
+            });
+        let subject = selected_key
+            .as_ref()
+            .map(|key| Subject::Classifier(key.clone()))
+            .unwrap_or_else(|| Subject::Diagram(self.key.clone()));
+        if let Some(mut inspector) = body
+            .inspector(cx)
+            .borrow_mut::<crate::inspector_panel::Inspector>()
+        {
+            inspector.set_subject(cx, model, subject);
+        }
+        if let Some(mut toolbar) = body
+            .selection_toolbar(cx)
+            .borrow_mut::<crate::selection_toolbar::SelectionToolbar>()
+        {
+            toolbar.set_selection(cx, selected_key.as_ref().map(|_| 1));
+        }
+        if let Some(mut bar) = body.view_bar(cx).borrow_mut::<crate::view_bar::ViewBar>() {
+            bar.set_fit_to_selection_enabled(cx, selected_key.is_some());
+        }
+    }
 }
 
 impl DocView for ClassDiagramView {
@@ -281,26 +323,9 @@ impl DocView for ClassDiagramView {
             }
             self.sync_inspector_elements(cx, body, model, &self.key, &title, &node_keys);
         }
-        // Nothing is selected yet on a fresh sync (tab activation, model
-        // reload), so the diagram itself is the subject.
-        let diagram_subject = Subject::Diagram(self.key.clone());
-        if let Some(mut inspector) = body
-            .inspector(cx)
-            .borrow_mut::<crate::inspector_panel::Inspector>()
-        {
-            inspector.set_subject(cx, model, diagram_subject);
-        }
-        if let Some(mut toolbar) = body
-            .selection_toolbar(cx)
-            .borrow_mut::<crate::selection_toolbar::SelectionToolbar>()
-        {
-            toolbar.set_selection(cx, None);
-        }
-        // A fresh scene clears the selection (`set_scene`), so the button starts
-        // dim on every diagram activation.
-        if let Some(mut bar) = body.view_bar(cx).borrow_mut::<crate::view_bar::ViewBar>() {
-            bar.set_fit_to_selection_enabled(cx, false);
-        }
+        // A fresh scene starts with no selection. Converge the canvas,
+        // inspector, selection toolbar, and fit control through one path.
+        self.sync_selection(cx, body, model, None);
         // Re-converge the view bar's lit state onto the canvas. The canvas owns
         // both the veil mode and the hidden-border x-ray; the bar only caches
         // them, and its own click handler is otherwise the sole writer -- so
@@ -508,14 +533,9 @@ impl DocView for ClassDiagramView {
             .and_then(|c| c.surface_action(actions));
         match canvas_action {
             Some(crate::canvas::ClassDiagramSurfaceAction::NodeMenu { abs, key }) => {
-                // Select-on-right-click: point the inspector at the node (the
-                // same call `NodeSelect` makes).
-                if let Some(mut inspector) = body
-                    .inspector(cx)
-                    .borrow_mut::<crate::inspector_panel::Inspector>()
-                {
-                    inspector.set_subject(cx, model, Subject::Classifier(key.clone()));
-                }
+                // Select-on-right-click follows the same projection path as a
+                // normal node selection.
+                self.sync_selection(cx, body, model, Some(&key));
                 // Gather the diagram's per-node context items (empty for now).
                 let context = body
                     .canvas(cx)
@@ -530,25 +550,13 @@ impl DocView for ClassDiagramView {
                 return out;
             }
             Some(crate::canvas::ClassDiagramSurfaceAction::NodeSelect { key }) => {
-                if let Some(mut inspector) = body
-                    .inspector(cx)
-                    .borrow_mut::<crate::inspector_panel::Inspector>()
-                {
-                    inspector.set_subject(cx, model, Subject::Classifier(key));
-                }
+                self.sync_selection(cx, body, model, Some(&key));
                 out.break_merge_group = true;
                 return out;
             }
             Some(crate::canvas::ClassDiagramSurfaceAction::NodeDeselect) => {
-                // Deselecting on the canvas falls back to the diagram, never to
-                // an empty panel.
-                let diagram_subject = Subject::Diagram(self.key.clone());
-                if let Some(mut inspector) = body
-                    .inspector(cx)
-                    .borrow_mut::<crate::inspector_panel::Inspector>()
-                {
-                    inspector.set_subject(cx, model, diagram_subject);
-                }
+                // Deselecting falls back to the diagram, never an empty panel.
+                self.sync_selection(cx, body, model, None);
                 out.break_merge_group = true;
                 return out;
             }
@@ -787,7 +795,13 @@ impl DocView for ClassDiagramView {
         }
     }
 
-    fn restore_anchor(&mut self, cx: &mut Cx, body: &BodyWidgets, anchor: &ViewAnchor) -> bool {
+    fn restore_anchor(
+        &mut self,
+        cx: &mut Cx,
+        body: &BodyWidgets,
+        data: ViewData<'_>,
+        anchor: &ViewAnchor,
+    ) -> bool {
         let ViewAnchor::Diagram {
             selected_key,
             camera,
@@ -802,9 +816,13 @@ impl DocView for ClassDiagramView {
             return false;
         };
         canvas.restore_camera_anchor(cx, *camera);
-        if let Some(key) = selected_key {
-            canvas.select_by_key(cx, key);
-        }
+        drop(canvas);
+        self.sync_selection(
+            cx,
+            body,
+            &data.uml_analysis.projection,
+            selected_key.as_deref(),
+        );
         true
     }
 
@@ -856,6 +874,7 @@ mod tests {
     use crate::doc_view::{BodyChrome, DocView, ViewOutcome};
     use crate::tool_dock::{Tool, ToolDockAction};
     use crate::view_bar::{ViewBarAction, ViewOption};
+    use crate::view_history::ViewAnchor;
     use makepad_widgets::{
         live_id, Area, Cx, DrawList, LiveId, RectArea, ScriptApply, ScriptNew, ScriptVm,
         ScriptVmCx, Trigger, Walk, Widget, WidgetNode, WidgetRef, WidgetUid,
@@ -935,6 +954,22 @@ mod tests {
                     WidgetRef::new_with_inner(Box::new(
                         crate::diagram_properties::DiagramProperties::script_new(vm),
                     )),
+                ),
+                (
+                    live_id!(canvas),
+                    WidgetRef::new_with_inner(Box::new(
+                        crate::canvas::ClassDiagramSurface::script_new(vm),
+                    )),
+                ),
+                (
+                    live_id!(selection_toolbar),
+                    WidgetRef::new_with_inner(Box::new(
+                        crate::selection_toolbar::SelectionToolbar::script_new(vm),
+                    )),
+                ),
+                (
+                    live_id!(view_bar),
+                    WidgetRef::new_with_inner(Box::new(crate::view_bar::ViewBar::script_new(vm))),
                 ),
             ],
         }))
@@ -1251,6 +1286,118 @@ mod tests {
             "Order flow",
             "the diagram row must be rebuilt from the renamed model"
         );
+    }
+
+    #[test]
+    fn anchor_restore_synchronizes_every_selection_consumer_and_clears_unresolved_keys() {
+        let mut vm = crate::script_gate::boot_test_vm();
+        let ui = test_body(&mut vm);
+        let cx = vm.cx_mut();
+        let body = crate::doc_view::BodyWidgets::new(cx, &ui);
+        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/mini");
+        let source = crate::load::read_bundle(&dir).unwrap();
+        let prepared = waml::analysis::prepare_candidate(source, None, 1).unwrap();
+        let (source, okf_analysis, uml_analysis, revision) = prepared.into_parts();
+        let mut view = ClassDiagramView::new("orders-diagram".into());
+        view.sync(
+            cx,
+            &body,
+            crate::doc_view::ViewData {
+                source: &source,
+                okf_analysis: &okf_analysis,
+                uml_analysis: &uml_analysis,
+                revision,
+            },
+        );
+        let camera = crate::view_history::DiagramCameraAnchor {
+            pan_x: 12.0,
+            pan_y: 34.0,
+            zoom: 1.5,
+        };
+
+        assert!(view.restore_anchor(
+            cx,
+            &body,
+            crate::doc_view::ViewData {
+                source: &source,
+                okf_analysis: &okf_analysis,
+                uml_analysis: &uml_analysis,
+                revision,
+            },
+            &ViewAnchor::Diagram {
+                selected_key: Some("customer".into()),
+                camera,
+            },
+        ));
+        assert_eq!(
+            body.canvas(cx)
+                .borrow::<crate::canvas::ClassDiagramSurface>()
+                .unwrap()
+                .selected_key(),
+            Some("customer")
+        );
+        assert_eq!(
+            body.inspector(cx)
+                .borrow::<crate::inspector_panel::Inspector>()
+                .unwrap()
+                .subject_key_for_test()
+                .as_deref(),
+            Some("customer")
+        );
+        assert_eq!(
+            body.selection_toolbar(cx)
+                .borrow::<crate::selection_toolbar::SelectionToolbar>()
+                .unwrap()
+                .selection_count_for_test(),
+            Some(1)
+        );
+        assert!(body
+            .view_bar(cx)
+            .borrow::<crate::view_bar::ViewBar>()
+            .unwrap()
+            .fit_to_selection_enabled_for_test());
+
+        assert!(view.restore_anchor(
+            cx,
+            &body,
+            crate::doc_view::ViewData {
+                source: &source,
+                okf_analysis: &okf_analysis,
+                uml_analysis: &uml_analysis,
+                revision,
+            },
+            &ViewAnchor::Diagram {
+                selected_key: Some("deleted".into()),
+                camera,
+            },
+        ));
+        assert_eq!(
+            body.canvas(cx)
+                .borrow::<crate::canvas::ClassDiagramSurface>()
+                .unwrap()
+                .selected_key(),
+            None
+        );
+        assert_eq!(
+            body.inspector(cx)
+                .borrow::<crate::inspector_panel::Inspector>()
+                .unwrap()
+                .subject_key_for_test()
+                .as_deref(),
+            Some("orders-diagram")
+        );
+        assert_eq!(
+            body.selection_toolbar(cx)
+                .borrow::<crate::selection_toolbar::SelectionToolbar>()
+                .unwrap()
+                .selection_count_for_test(),
+            None
+        );
+        assert!(!body
+            .view_bar(cx)
+            .borrow::<crate::view_bar::ViewBar>()
+            .unwrap()
+            .fit_to_selection_enabled_for_test());
     }
 
     #[test]

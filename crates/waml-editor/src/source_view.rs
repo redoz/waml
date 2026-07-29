@@ -100,7 +100,13 @@ impl DocView for SourceView {
         }
     }
 
-    fn restore_anchor(&mut self, cx: &mut Cx, body: &BodyWidgets, anchor: &ViewAnchor) -> bool {
+    fn restore_anchor(
+        &mut self,
+        cx: &mut Cx,
+        body: &BodyWidgets,
+        _data: ViewData<'_>,
+        anchor: &ViewAnchor,
+    ) -> bool {
         let ViewAnchor::Markdown { fragment, scroll_y } = anchor else {
             return false;
         };

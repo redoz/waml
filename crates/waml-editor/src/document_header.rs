@@ -37,13 +37,13 @@ script_mod! {
             visible: false
             width: 30.0
             height: 30.0
-            history_back: true
+            action_tag: history_back
         }
         forward_button := IconButton {
             visible: false
             width: 30.0
             height: 30.0
-            history_forward: true
+            action_tag: history_forward
         }
         draw_ancestor +: {
             color: atlas.text_dim
@@ -518,10 +518,10 @@ impl DocumentHeader {
                 continue;
             };
             match item.action.downcast_ref::<IconButtonAction>() {
-                Some(IconButtonAction::HistoryBack) => {
+                Some(IconButtonAction::TaggedClicked(tag)) if *tag == live_id!(history_back) => {
                     return Some(DocumentHeaderAction::Back);
                 }
-                Some(IconButtonAction::HistoryForward) => {
+                Some(IconButtonAction::TaggedClicked(tag)) if *tag == live_id!(history_forward) => {
                     return Some(DocumentHeaderAction::Forward);
                 }
                 _ => {}

@@ -117,6 +117,28 @@ fn back_then_new_navigation_clears_forward_without_recording_traversal() {
 }
 
 #[test]
+fn back_then_repeat_current_keeps_forward_history() {
+    let (a, b, c) = (location("a", 0.0), location("b", 0.0), location("c", 0.0));
+    let mut history = ViewHistory::default();
+    history.reset(Some(a.clone()));
+    history.record_transition(a, b.clone());
+    history.record_transition(b.clone(), c.clone());
+    let back = history.target(HistoryDirection::Back, |_| true).unwrap();
+    history.commit_traversal(back);
+
+    history.record_transition(b.clone(), b);
+
+    assert_eq!(
+        history
+            .target(HistoryDirection::Forward, |_| true)
+            .unwrap()
+            .location,
+        c,
+        "a no-op navigation at the current entry must preserve Forward"
+    );
+}
+
+#[test]
 fn traversal_moves_only_on_commit_and_refreshes_the_current_anchor() {
     let a = location("a", 0.0);
     let stale_b = location("b", 1.0);

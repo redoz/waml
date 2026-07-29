@@ -800,6 +800,11 @@ impl ClassDiagramSurface {
         self.draw_bg.redraw(cx);
     }
 
+    pub fn clear_selection(&mut self, cx: &mut Cx) {
+        self.selection.clear();
+        self.draw_bg.redraw(cx);
+    }
+
     pub fn selected_key(&self) -> Option<&str> {
         self.selection.selected_key()
     }

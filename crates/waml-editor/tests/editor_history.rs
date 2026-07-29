@@ -7,7 +7,7 @@ use waml_editor::editor_history::{
 use waml_editor::view_history::{DocumentLocator, ViewAnchor, ViewLocation};
 
 fn fake_edit() -> PendingEdit {
-    PendingEdit::sequence(Vec::new())
+    PendingEdit::sequence_reciprocals(Vec::new())
 }
 
 fn location(document: &str, scroll_y: f64) -> ViewLocation {

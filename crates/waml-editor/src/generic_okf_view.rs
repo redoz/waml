@@ -78,7 +78,13 @@ impl DocView for GenericOkfView {
         }
     }
 
-    fn restore_anchor(&mut self, cx: &mut Cx, body: &BodyWidgets, anchor: &ViewAnchor) -> bool {
+    fn restore_anchor(
+        &mut self,
+        cx: &mut Cx,
+        body: &BodyWidgets,
+        _data: ViewData<'_>,
+        anchor: &ViewAnchor,
+    ) -> bool {
         let ViewAnchor::Markdown { fragment, scroll_y } = anchor else {
             return false;
         };
@@ -237,6 +243,7 @@ mod tests {
         assert!(view.restore_anchor(
             &mut cx,
             &body,
+            data(&source, &okf, &uml),
             &ViewAnchor::Markdown {
                 fragment: None,
                 scroll_y: 0.0,

@@ -1160,6 +1160,11 @@ impl Inspector {
         }
     }
 
+    #[cfg(test)]
+    pub(crate) fn subject_key_for_test(&self) -> Option<String> {
+        self.subject_key()
+    }
+
     fn effective_title(&self, view: &InspectorView) -> String {
         let key = self.subject_key();
         let over = key

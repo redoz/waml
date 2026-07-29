@@ -33,6 +33,11 @@ impl crate::edit::EditBatch for DeltaBatch {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum SourceDelta {
     Text(Vec<TextSplice>),
+    /// Shallow snapshots for document-set or document-order changes.
+    ///
+    /// `SourceDocument` text is `Arc<String>`, so these clones duplicate only
+    /// bundle paths/index metadata plus any document buffers that actually
+    /// changed.
     Structural {
         before: SourceBundle,
         after: SourceBundle,

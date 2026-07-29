@@ -103,12 +103,12 @@ impl ViewHistory {
             }
         };
         self.entries[cursor] = departing;
-        self.entries.truncate(cursor + 1);
-
-        if self.entries.get(cursor) != Some(&arriving) {
-            self.entries.push_back(arriving);
-            self.cursor = Some(cursor + 1);
+        if self.entries.get(cursor) == Some(&arriving) {
+            return;
         }
+        self.entries.truncate(cursor + 1);
+        self.entries.push_back(arriving);
+        self.cursor = Some(cursor + 1);
 
         while self.entries.len() > VIEW_HISTORY_LIMIT {
             self.entries.pop_front();

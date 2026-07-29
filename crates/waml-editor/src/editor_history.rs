@@ -285,7 +285,7 @@ impl EditorHistory {
             self.undo.insert(
                 index,
                 EditHistoryStep {
-                    edit: PendingEdit::sequence(vec![right.edit, left.edit]),
+                    edit: PendingEdit::sequence_reciprocals(vec![right.edit, left.edit]),
                     label: right.label,
                     merge_key: Some(merge_key),
                     source_state: right.source_state,
