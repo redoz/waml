@@ -1,7 +1,18 @@
 use crate::doc_view::DocView;
+use crate::editor_history::EditMergeKey;
 use crate::icons::Icon;
 use crate::navigation::{DocumentKind, DocumentLocator};
+use crate::view_history::ViewLocation;
 use makepad_widgets::{LiveId, Vec4};
+use waml::edit::PendingEdit;
+
+#[derive(Clone)]
+pub struct EditIntent {
+    pub edit: PendingEdit,
+    pub label: String,
+    pub merge_key: Option<EditMergeKey>,
+    pub after_location: Option<ViewLocation>,
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum NavCategory {

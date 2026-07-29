@@ -335,7 +335,12 @@ impl App {
                     if self
                         .apply_session_edit(
                             cx,
-                            waml::edit::PendingEdit::new(waml::uml::Batch(vec![op])),
+                            crate::document::EditIntent {
+                                edit: waml::edit::PendingEdit::new(waml::uml::Batch(vec![op])),
+                                label: "Remove conflicting placement".into(),
+                                merge_key: None,
+                                after_location: None,
+                            },
                             "place.rm failed",
                         )
                         .is_some()
@@ -833,10 +838,17 @@ impl App {
     pub(super) fn apply_session_edit(
         &mut self,
         cx: &mut Cx,
-        edit: waml::edit::PendingEdit,
+        intent: crate::document::EditIntent,
         error_label: &str,
     ) -> Option<crate::editor_session::SessionChange> {
-        match self.session.apply(edit) {
+        let Some(before_location) = self.documents.capture_active_location(cx, &self.ui) else {
+            log!("{error_label}: no active document");
+            return None;
+        };
+        match self.session.apply_edit(crate::editor_session::EditRequest {
+            intent,
+            before_location,
+        }) {
             Ok(change) => {
                 let prepared = if change.okf_changed || change.uml_changed {
                     self.documents

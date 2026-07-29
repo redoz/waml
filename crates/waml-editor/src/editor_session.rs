@@ -1,8 +1,12 @@
 use waml::analysis::{
     prepare_candidate, AnalysisError, OkfAnalysis, PreparedCandidate, PreviousAnalyses,
 };
-use waml::edit::{EditBatch, EditContext, EditError};
+use waml::edit::{EditBatch, EditContext, EditError, PendingEdit};
 use waml::source::SourceBundle;
+
+use crate::document::EditIntent;
+use crate::editor_history::{EditorHistory, HistoryStateId};
+use crate::view_history::{DocumentLocator, ViewAnchor, ViewLocation};
 
 pub struct EditorSession {
     source: SourceBundle,
@@ -10,7 +14,7 @@ pub struct EditorSession {
     okf_analysis: OkfAnalysis,
     uml: waml::uml::Analysis,
     revision: u64,
-    dirty_revision: Option<u64>,
+    history: EditorHistory,
 }
 
 #[derive(Clone, Copy)]
@@ -34,7 +38,7 @@ impl Default for EditorSession {
             okf_analysis,
             uml,
             revision,
-            dirty_revision: None,
+            history: EditorHistory::default(),
         }
     }
 }
@@ -47,6 +51,17 @@ pub struct SessionChange {
     pub uml_changed: bool,
     pub navigation_changed: bool,
     pub conflicts_changed: bool,
+}
+
+pub struct EditRequest {
+    pub intent: EditIntent,
+    pub before_location: ViewLocation,
+}
+
+pub struct HistoryEffect {
+    pub change: SessionChange,
+    pub label: String,
+    pub location: ViewLocation,
 }
 
 impl SessionChange {
@@ -70,7 +85,7 @@ impl EditorSession {
             okf_analysis: &self.okf_analysis,
             uml_analysis: &self.uml,
             revision: self.revision,
-            dirty_revision: self.dirty_revision,
+            dirty_revision: self.is_dirty().then_some(self.revision),
         }
     }
 
@@ -84,11 +99,11 @@ impl EditorSession {
         self.okf_analysis = okf_analysis;
         self.uml = uml;
         self.revision = revision;
-        self.dirty_revision = None;
+        self.history.reset();
         Ok(SessionChange::full(self.revision))
     }
 
-    pub fn apply<B: EditBatch>(&mut self, batch: B) -> Result<SessionChange, EditError> {
+    pub fn apply<B: EditBatch + 'static>(&mut self, batch: B) -> Result<SessionChange, EditError> {
         self.apply_with_preparer(batch, prepare_candidate)
     }
 
@@ -98,14 +113,51 @@ impl EditorSession {
         prepare: F,
     ) -> Result<SessionChange, EditError>
     where
-        B: EditBatch,
+        B: EditBatch + 'static,
         F: for<'a> FnOnce(
             SourceBundle,
             Option<PreviousAnalyses<'a>>,
             u64,
         ) -> Result<PreparedCandidate, AnalysisError>,
     {
-        let candidate_source = batch.lower(EditContext {
+        let location = ViewLocation {
+            document: DocumentLocator::primary("__legacy_edit__"),
+            anchor: ViewAnchor::None,
+        };
+        self.apply_edit_with_preparer(
+            EditRequest {
+                intent: EditIntent {
+                    edit: PendingEdit::new(batch),
+                    label: "Edit".into(),
+                    merge_key: None,
+                    after_location: Some(location.clone()),
+                },
+                before_location: location,
+            },
+            prepare,
+        )
+    }
+
+    fn apply_pending(
+        &mut self,
+        edit: &PendingEdit,
+    ) -> Result<(SessionChange, PendingEdit), EditError> {
+        self.apply_pending_with_preparer(edit, prepare_candidate)
+    }
+
+    fn apply_pending_with_preparer<F>(
+        &mut self,
+        edit: &PendingEdit,
+        prepare: F,
+    ) -> Result<(SessionChange, PendingEdit), EditError>
+    where
+        F: for<'a> FnOnce(
+            SourceBundle,
+            Option<PreviousAnalyses<'a>>,
+            u64,
+        ) -> Result<PreparedCandidate, AnalysisError>,
+    {
+        let applied = edit.apply_reversible(EditContext {
             source: &self.source,
             okf_analysis: &self.okf_analysis,
             session_revision: self.revision,
@@ -113,7 +165,7 @@ impl EditorSession {
         })?;
         let next_revision = self.revision.wrapping_add(1);
         let prepared = prepare(
-            candidate_source,
+            applied.source,
             Some(PreviousAnalyses {
                 okf: &self.okf_analysis,
                 uml: &self.uml,
@@ -126,8 +178,86 @@ impl EditorSession {
         self.okf_analysis = okf_analysis;
         self.uml = uml;
         self.revision = revision;
-        self.dirty_revision = Some(self.revision);
-        Ok(SessionChange::full(self.revision))
+        Ok((SessionChange::full(self.revision), applied.inverse))
+    }
+
+    fn apply_edit_with_preparer<F>(
+        &mut self,
+        request: EditRequest,
+        prepare: F,
+    ) -> Result<SessionChange, EditError>
+    where
+        F: for<'a> FnOnce(
+            SourceBundle,
+            Option<PreviousAnalyses<'a>>,
+            u64,
+        ) -> Result<PreparedCandidate, AnalysisError>,
+    {
+        let EditRequest {
+            intent:
+                EditIntent {
+                    edit,
+                    label,
+                    merge_key,
+                    after_location,
+                },
+            before_location,
+        } = request;
+        let after_location = after_location.unwrap_or_else(|| before_location.clone());
+        let (change, inverse) = self.apply_pending_with_preparer(&edit, prepare)?;
+        self.history
+            .record_edit(inverse, label, merge_key, before_location, after_location);
+        Ok(change)
+    }
+
+    pub fn apply_edit(&mut self, request: EditRequest) -> Result<SessionChange, EditError> {
+        self.apply_edit_with_preparer(request, prepare_candidate)
+    }
+
+    pub fn undo(&mut self) -> Result<Option<HistoryEffect>, EditError> {
+        let Some(prepared) = self.history.prepare_undo() else {
+            return Ok(None);
+        };
+        let label = prepared.label().to_owned();
+        let location = prepared.target_location().clone();
+        match self.apply_pending(prepared.edit()) {
+            Ok((change, reciprocal)) => {
+                let committed = self.history.commit_undo(prepared, reciprocal);
+                debug_assert!(committed);
+                Ok(Some(HistoryEffect {
+                    change,
+                    label,
+                    location,
+                }))
+            }
+            Err(error) => {
+                self.history.abort_undo(prepared);
+                Err(error)
+            }
+        }
+    }
+
+    pub fn redo(&mut self) -> Result<Option<HistoryEffect>, EditError> {
+        let Some(prepared) = self.history.prepare_redo() else {
+            return Ok(None);
+        };
+        let label = prepared.label().to_owned();
+        let location = prepared.target_location().clone();
+        match self.apply_pending(prepared.edit()) {
+            Ok((change, reciprocal)) => {
+                let committed = self.history.commit_redo(prepared, reciprocal);
+                debug_assert!(committed);
+                Ok(Some(HistoryEffect {
+                    change,
+                    label,
+                    location,
+                }))
+            }
+            Err(error) => {
+                self.history.abort_redo(prepared);
+                Err(error)
+            }
+        }
     }
 
     #[allow(dead_code)]
@@ -171,20 +301,41 @@ impl EditorSession {
     }
 
     pub fn is_dirty(&self) -> bool {
-        self.dirty_revision.is_some()
+        !self.history.is_saved()
     }
 
-    pub fn mark_saved(&mut self, revision: u64) {
-        if self.dirty_revision == Some(revision) {
+    pub fn mark_saved(&mut self, revision: u64, state: HistoryStateId) -> bool {
+        if revision == self.revision && state == self.history.current_state() {
             self.persisted_source.clone_from(&self.source);
-            self.dirty_revision = None;
+            self.history.mark_saved();
+            true
+        } else {
+            false
         }
+    }
+
+    pub fn can_undo(&self) -> bool {
+        self.history.can_undo()
+    }
+
+    pub fn can_redo(&self) -> bool {
+        self.history.can_redo()
+    }
+
+    pub fn history_state(&self) -> HistoryStateId {
+        self.history.current_state()
+    }
+
+    pub fn break_edit_merge_group(&mut self) {
+        self.history.break_merge_group();
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::document::EditIntent;
+    use crate::view_history::{DocumentLocator, ViewAnchor, ViewLocation};
     use std::{num::NonZeroU64, sync::Arc};
     use waml::action::{
         ActionBasis, CodeAction, SyntaxChangeBatch, TextEdit, VersionedDocumentChange,
@@ -469,7 +620,9 @@ mod tests {
             final_snapshot.document().text(),
         );
 
-        session.mark_saved(session.revision());
+        let revision = session.revision();
+        let state = session.history_state();
+        session.mark_saved(revision, state);
         assert!(!session.is_dirty());
         assert!(session
             .source()
@@ -495,6 +648,28 @@ mod tests {
             diagram: "dia".into(),
             subject_slug: "order".into(),
             reference_slug: "customer".into(),
+        }
+    }
+
+    fn location(scroll_y: f64) -> ViewLocation {
+        ViewLocation {
+            document: DocumentLocator::primary("dia"),
+            anchor: ViewAnchor::Markdown {
+                fragment: None,
+                scroll_y,
+            },
+        }
+    }
+
+    fn request(edit: waml::edit::PendingEdit, label: &str) -> EditRequest {
+        EditRequest {
+            before_location: location(1.0),
+            intent: EditIntent {
+                edit,
+                label: label.into(),
+                merge_key: None,
+                after_location: Some(location(2.0)),
+            },
         }
     }
 
@@ -665,7 +840,7 @@ mod tests {
             let before_uml_catalog = session.uml_analysis().syntax.catalog().clone();
             let before_projection = session.uml_projection().clone();
             let before_revision = session.revision();
-            let before_dirty_revision = session.dirty_revision;
+            let before_dirty_revision = session.snapshot().dirty_revision;
             let document_id = session
                 .okf_analysis()
                 .catalog
@@ -754,7 +929,7 @@ mod tests {
             ));
             assert_eq!(session.uml_projection(), &before_projection);
             assert_eq!(session.revision(), before_revision);
-            assert_eq!(session.dirty_revision, before_dirty_revision);
+            assert_eq!(session.snapshot().dirty_revision, before_dirty_revision);
 
             let retry = session
                 .apply(waml::uml::Batch(vec![Op::ClassifierSet {
@@ -920,7 +1095,7 @@ mod tests {
         let committed_source = session.source().clone();
         let committed_catalog = session.okf_analysis().catalog.clone();
         let committed_revision = session.revision();
-        let committed_dirty = session.dirty_revision;
+        let committed_dirty = session.snapshot().dirty_revision;
 
         let stale = session.apply(batch);
 
@@ -934,7 +1109,7 @@ mod tests {
             &committed_catalog
         ));
         assert_eq!(session.revision(), committed_revision);
-        assert_eq!(session.dirty_revision, committed_dirty);
+        assert_eq!(session.snapshot().dirty_revision, committed_dirty);
     }
 
     #[test]
@@ -1157,12 +1332,13 @@ mod tests {
         let mut session = EditorSession::default();
         session.replace(bundle).unwrap();
         let old = session.revision();
+        let old_state = session.history_state();
         session.apply(waml::uml::Batch(vec![place_set()])).unwrap();
 
-        session.mark_saved(old);
+        session.mark_saved(old, old_state);
         assert!(session.is_dirty());
 
-        session.mark_saved(session.revision());
+        session.mark_saved(session.revision(), session.history_state());
         assert!(!session.is_dirty());
         assert_eq!(session.persisted_bundle(), session.bundle());
         assert!(session
@@ -1338,5 +1514,161 @@ mod tests {
             dirty_before_failure,
             "class.md failed lowerer dirty atomicity"
         );
+    }
+
+    #[test]
+    fn successful_edit_undo_and_redo_publish_reciprocals_and_locations() {
+        let bundle = diagram_bundle("");
+        let mut session = EditorSession::default();
+        session.replace(bundle.clone()).unwrap();
+
+        session
+            .apply_edit(request(
+                waml::edit::PendingEdit::new(waml::uml::Batch(vec![place_set()])),
+                "Place Order",
+            ))
+            .unwrap();
+        assert!(session.can_undo());
+        assert!(session.bundle().documents()[0].text().contains("left of"));
+
+        let undone = session.undo().unwrap().unwrap();
+        assert_eq!(undone.label, "Place Order");
+        assert_eq!(undone.location, location(1.0));
+        assert_eq!(session.bundle(), &bundle);
+        assert!(session.can_redo());
+        assert!(
+            !session.is_dirty(),
+            "undo returned to the initial savepoint"
+        );
+
+        let redone = session.redo().unwrap().unwrap();
+        assert_eq!(redone.label, "Place Order");
+        assert_eq!(redone.location, location(2.0));
+        assert!(session.bundle().documents()[0].text().contains("left of"));
+        assert!(session.can_undo());
+    }
+
+    #[test]
+    fn failed_edit_does_not_allocate_history_or_change_session_state() {
+        let bundle = diagram_bundle("");
+        let mut session = EditorSession::default();
+        session.replace(bundle.clone()).unwrap();
+        let state = session.history_state();
+        let revision = session.revision();
+
+        let result = session.apply_edit(request(
+            waml::edit::PendingEdit::new(waml::uml::Batch(vec![Op::AttributeRemove {
+                node: "missing".into(),
+                name: "missing".into(),
+            }])),
+            "Broken",
+        ));
+
+        assert!(result.is_err());
+        assert_eq!(session.history_state(), state);
+        assert_eq!(session.revision(), revision);
+        assert_eq!(session.bundle(), &bundle);
+        assert!(!session.can_undo());
+    }
+
+    #[test]
+    fn failed_undo_and_redo_keep_their_source_stack_intact() {
+        let bundle = diagram_bundle("");
+        let mut session = EditorSession::default();
+        session.replace(bundle).unwrap();
+        session
+            .apply_edit(request(
+                waml::edit::PendingEdit::new(waml::uml::Batch(vec![Op::DiagramSet {
+                    key: "dia".into(),
+                    title: Some("Changed".into()),
+                    description: None,
+                    clear_description: false,
+                    display: None,
+                }])),
+                "Retitle diagram",
+            ))
+            .unwrap();
+        let applied_source = session.source.clone();
+
+        session.source = diagram_bundle("tampered");
+        let failed_undo_source = session.source.clone();
+        let failed_undo_revision = session.revision();
+        assert!(session.undo().is_err());
+        assert!(session.can_undo());
+        assert_eq!(session.source, failed_undo_source);
+        assert_eq!(session.revision(), failed_undo_revision);
+
+        session.source = applied_source.clone();
+        let prepared =
+            waml::analysis::prepare_candidate(applied_source, None, session.revision()).unwrap();
+        let (source, okf_analysis, uml, _) = prepared.into_parts();
+        session.source = source;
+        session.okf_analysis = okf_analysis;
+        session.uml = uml;
+        session.undo().unwrap().unwrap();
+        assert!(session.can_redo());
+
+        let tampered = SourceBundle::try_from_pairs([(
+            "dia.md",
+            session.source.documents()[0]
+                .text()
+                .replace("title: D", "title: Other"),
+        )])
+        .unwrap();
+        session.source = tampered;
+        let failed_redo_source = session.source.clone();
+        let failed_redo_revision = session.revision();
+        assert!(session.redo().is_err());
+        assert!(session.can_redo());
+        assert_eq!(session.source, failed_redo_source);
+        assert_eq!(session.revision(), failed_redo_revision);
+    }
+
+    #[test]
+    fn save_requires_matching_revision_and_state_and_undo_tracks_savepoint_identity() {
+        let bundle = diagram_bundle("");
+        let mut session = EditorSession::default();
+        session.replace(bundle).unwrap();
+        let clean_state = session.history_state();
+        session
+            .apply_edit(request(
+                waml::edit::PendingEdit::new(waml::uml::Batch(vec![place_set()])),
+                "Place Order",
+            ))
+            .unwrap();
+        let edited_revision = session.revision();
+        let edited_state = session.history_state();
+
+        assert!(!session.mark_saved(edited_revision, clean_state));
+        assert!(session.is_dirty());
+        assert!(session.mark_saved(edited_revision, edited_state));
+        assert!(!session.is_dirty());
+
+        session.undo().unwrap().unwrap();
+        assert!(session.is_dirty(), "undo after save leaves the saved state");
+        session.redo().unwrap().unwrap();
+        assert!(!session.is_dirty(), "redo returns to the saved state");
+    }
+
+    #[test]
+    fn replace_resets_both_history_stacks() {
+        let bundle = diagram_bundle("");
+        let mut session = EditorSession::default();
+        session.replace(bundle).unwrap();
+        session
+            .apply_edit(request(
+                waml::edit::PendingEdit::new(waml::uml::Batch(vec![place_set()])),
+                "Place Order",
+            ))
+            .unwrap();
+        session.undo().unwrap().unwrap();
+        assert!(session.can_redo());
+
+        let replacement = diagram_bundle("");
+        session.replace(replacement).unwrap();
+
+        assert!(!session.can_undo());
+        assert!(!session.can_redo());
+        assert!(!session.is_dirty());
     }
 }

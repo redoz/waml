@@ -123,8 +123,9 @@ mod tests {
     use crate::source::SourceBundle;
 
     fn apply(edit: &PendingEdit, source: &SourceBundle) -> super::AppliedEdit {
-        let okf_analysis =
-            Box::leak(Box::new(crate::analysis::analyze_okf(source, None, 0).unwrap()));
+        let okf_analysis = Box::leak(Box::new(
+            crate::analysis::analyze_okf(source, None, 0).unwrap(),
+        ));
         let uml = Box::leak(Box::new(
             crate::uml::analyze(
                 crate::analysis::DomainAnalysisContext {

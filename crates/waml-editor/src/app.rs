@@ -1372,6 +1372,8 @@ impl App {
     /// this is the seam where that difference lives; callers only ever say the
     /// document changed (`mark_dirty`), never how to store it.
     fn save(&mut self, cx: &mut Cx) -> Result<(), String> {
+        let revision = self.session.revision();
+        let state = self.session.history_state();
         let snapshot = self.session.snapshot();
         if snapshot.dirty_revision.is_none() {
             return Ok(());
@@ -1379,9 +1381,8 @@ impl App {
         if snapshot.source.is_empty() {
             return Err("cannot save an empty bundle".to_string());
         }
-        let revision = snapshot.revision;
         self.save_backend(cx, snapshot)?;
-        self.session.mark_saved(revision);
+        self.session.mark_saved(revision, state);
         Ok(())
     }
 

@@ -253,12 +253,12 @@ fn coalesced_inverse_commands_preserve_reverse_application_order() {
     .unwrap();
     let directory = waml::okf::DirectoryAddress::parse("/sales").unwrap();
     let apply = |edit: &PendingEdit, source: &waml::source::SourceBundle| {
-        let okf = waml::okf::Bundle::parse(source).unwrap();
-        let uml = waml::uml::project(&okf);
+        let prepared = waml::analysis::prepare_candidate(source.clone(), None, 0).unwrap();
         edit.apply_reversible(EditContext {
             source,
-            okf: &okf,
-            uml: &uml,
+            okf_analysis: prepared.okf(),
+            session_revision: prepared.revision(),
+            uml: prepared.uml(),
         })
         .unwrap()
     };

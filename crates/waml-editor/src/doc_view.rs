@@ -7,6 +7,7 @@ use makepad_widgets::*;
 use waml::edit::PendingEdit;
 use waml::source::SourceBundle;
 
+use crate::document::EditIntent;
 use crate::editor_session::SessionChange;
 use crate::icons::Icon;
 use crate::navigation::NavigationIntent;
@@ -167,7 +168,7 @@ impl BodyWidgets {
 /// place that applies ops, opens tabs, and places popups (spec §3).
 #[derive(Default)]
 pub struct ViewOutcome {
-    pub edit: Option<PendingEdit>,
+    pub edit: Option<EditIntent>,
     /// Ask the shell to open an element preview by key (spec §5). Unused this
     /// A cross-tree popup the shell must place via `popup_root`.
     pub popup: Option<PopupRequest>,

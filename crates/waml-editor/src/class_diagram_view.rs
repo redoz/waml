@@ -167,7 +167,12 @@ impl ClassDiagramView {
             }
         }
         if !ops.is_empty() {
-            outcome.edit = Some(waml::edit::PendingEdit::new(waml::uml::Batch(ops)));
+            outcome.edit = Some(crate::document::EditIntent {
+                edit: waml::edit::PendingEdit::new(waml::uml::Batch(ops)),
+                label: "Change diagram properties".into(),
+                merge_key: None,
+                after_location: None,
+            });
         }
         if close {
             self.mode.deactivate();
@@ -706,16 +711,22 @@ impl DocView for ClassDiagramView {
             });
             if let Some(p) = placement {
                 let strip_md = |s: &str| s.strip_suffix(".md").unwrap_or(s).to_string();
-                out.edit = Some(waml::edit::PendingEdit::new(waml::uml::Batch(vec![
-                    waml::uml::Op::PlacementSet {
-                        diagram: strip_md(&self.key),
-                        subject_title: p.subject_title,
-                        subject_slug: strip_md(&p.subject_key),
-                        reference_title: p.reference_title,
-                        reference_slug: strip_md(&p.reference_key),
-                        directions: p.directions,
-                    },
-                ])));
+                let label = format!("Place {}", p.subject_title);
+                out.edit = Some(crate::document::EditIntent {
+                    edit: waml::edit::PendingEdit::new(waml::uml::Batch(vec![
+                        waml::uml::Op::PlacementSet {
+                            diagram: strip_md(&self.key),
+                            subject_title: p.subject_title,
+                            subject_slug: strip_md(&p.subject_key),
+                            reference_title: p.reference_title,
+                            reference_slug: strip_md(&p.reference_key),
+                            directions: p.directions,
+                        },
+                    ])),
+                    label,
+                    merge_key: None,
+                    after_location: None,
+                });
             }
         }
         // node_menu currently only `log!`s on commit -- kept in the shell for
@@ -959,9 +970,11 @@ mod tests {
         )])
         .unwrap();
         let prepared = waml::analysis::prepare_candidate(source.clone(), None, 1).unwrap();
-        let changed = outcome
+        let intent = outcome.edit.expect("outcome contains an edit");
+        assert_eq!(intent.label, "Change diagram properties");
+        assert!(intent.merge_key.is_none());
+        let changed = intent
             .edit
-            .expect("outcome contains an edit")
             .lower(EditContext {
                 source: &source,
                 okf_analysis: prepared.okf(),
