@@ -599,7 +599,7 @@ mod tests {
     }
 
     #[test]
-    fn source_recovery_complete_hostile_matrix_including_valid_empty() {
+    fn source_recovery_rejects_hostile_streams() {
         fn token(source: &SourceText, start: usize, end: usize) -> GreenElement<UmlLanguage> {
             GreenElement::Token(
                 GreenFactory::new()
@@ -622,6 +622,13 @@ mod tests {
         let empty_source = SourceText::from_shared(Arc::new(String::new())).unwrap();
         let source = SourceText::from_shared(Arc::new("ab".to_owned())).unwrap();
         let factory = GreenFactory::new();
+        let ordinary = factory
+            .node(UmlSyntaxKind::Root, [token(&source, 0, 2)])
+            .unwrap();
+        assert!(Arc::ptr_eq(
+            recover_exact_source(&ordinary).unwrap().shared(),
+            source.shared()
+        ));
         let empty = factory
             .node(UmlSyntaxKind::Root, [token(&empty_source, 0, 0)])
             .unwrap();
@@ -636,6 +643,18 @@ mod tests {
             )
             .unwrap();
         assert!(recover_exact_source(&overlap).is_none());
+        let gap = factory
+            .node(UmlSyntaxKind::Root, [token(&source, 1, 2)])
+            .unwrap();
+        assert!(recover_exact_source(&gap).is_none());
+        let other = SourceText::from_shared(Arc::new("ab".to_owned())).unwrap();
+        let mixed = factory
+            .node(
+                UmlSyntaxKind::Root,
+                [token(&source, 0, 1), token(&other, 1, 2)],
+            )
+            .unwrap();
+        assert!(recover_exact_source(&mixed).is_none());
         let owned = factory
             .node(
                 UmlSyntaxKind::Root,

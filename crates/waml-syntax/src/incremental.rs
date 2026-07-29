@@ -1298,7 +1298,7 @@ mod source_recovery_tests {
     }
 
     #[test]
-    fn exact_source_recovery_complete_hostile_matrix_including_valid_empty() {
+    fn source_recovery_rejects_hostile_streams() {
         let empty_source = SourceText::from_shared(Arc::new(String::new())).unwrap();
         let source = SourceText::from_shared(Arc::new("ab".to_owned())).unwrap();
         let factory = GreenFactory::new();
