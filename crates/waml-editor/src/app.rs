@@ -845,8 +845,8 @@ impl App {
         let breadcrumb = if chrome.breadcrumb {
             active_concept.as_deref().and_then(|concept_id| {
                 crate::navigation::breadcrumb_for(
-                    self.session.okf(),
-                    self.session.uml_projection(),
+                    self.session.okf_analysis(),
+                    self.session.uml_analysis(),
                     concept_id,
                 )
             })
