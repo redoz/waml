@@ -359,14 +359,14 @@ impl<'ast, 'env> Visit<'ast> for BodyFacts<'env> {
             _ => (None, Vec::new()),
         };
         self.body_paths.extend(explicit_paths.iter().cloned());
-        let explicit_type_uses = (!explicit_paths.is_empty())
-            .then(|| {
-                vec![TypeUse {
-                    module: self.env.module.clone(),
-                    paths: explicit_paths.clone(),
-                }]
-            })
-            .unwrap_or_default();
+        let explicit_type_uses = if explicit_paths.is_empty() {
+            Vec::new()
+        } else {
+            vec![TypeUse {
+                module: self.env.module.clone(),
+                paths: explicit_paths.clone(),
+            }]
+        };
         let inferred_type_uses = node
             .init
             .as_ref()
