@@ -280,6 +280,84 @@ mod tests {
         }
     }
 
+    fn resolved_target(intent: &NavigationIntent) -> Option<&NavigationTarget> {
+        match intent {
+            NavigationIntent::Resolved { target, .. } => Some(target),
+            NavigationIntent::MarkdownLink { .. } => None,
+        }
+    }
+
+    #[test]
+    fn tree_breadcrumb_and_markdown_entry_targets_are_equivalent() {
+        let bundle = resolve_fixture();
+        let uml = waml::uml::project(&bundle);
+        let breadcrumb = breadcrumb_for(&bundle, &uml, "sales/customer")
+            .expect("customer has a canonical breadcrumb");
+
+        let tree_document = NavigationIntent::Resolved {
+            target: doc("sales/customer", None),
+            disposition: OpenDisposition::Preview,
+        };
+        let breadcrumb_document = NavigationIntent::Resolved {
+            target: breadcrumb
+                .last()
+                .expect("breadcrumb ends at the document")
+                .target
+                .clone(),
+            disposition: OpenDisposition::Preview,
+        };
+        let markdown_document = NavigationIntent::Resolved {
+            target: resolve_link(&bundle, "sales/order", "./customer.md")
+                .expect("relative document resolves"),
+            disposition: OpenDisposition::Preview,
+        };
+        assert_eq!(
+            resolved_target(&tree_document),
+            resolved_target(&breadcrumb_document)
+        );
+        assert_eq!(
+            resolved_target(&tree_document),
+            resolved_target(&markdown_document)
+        );
+
+        let tree_directory = NavigationIntent::Resolved {
+            target: dir("/sales"),
+            disposition: OpenDisposition::Preview,
+        };
+        let breadcrumb_directory = NavigationIntent::Resolved {
+            target: breadcrumb
+                .iter()
+                .find(|segment| segment.title == "Sales")
+                .expect("breadcrumb contains Sales")
+                .target
+                .clone(),
+            disposition: OpenDisposition::Preview,
+        };
+        let markdown_directory = NavigationIntent::Resolved {
+            target: resolve_link(&bundle, "sales/order", "/sales/")
+                .expect("logical directory resolves"),
+            disposition: OpenDisposition::Preview,
+        };
+        assert_eq!(
+            resolved_target(&tree_directory),
+            resolved_target(&breadcrumb_directory)
+        );
+        assert_eq!(
+            resolved_target(&tree_directory),
+            resolved_target(&markdown_directory)
+        );
+
+        let persistent_tree_document = NavigationIntent::Resolved {
+            target: doc("sales/customer", None),
+            disposition: OpenDisposition::Persistent,
+        };
+        assert_eq!(
+            resolved_target(&tree_document),
+            resolved_target(&persistent_tree_document)
+        );
+        assert_ne!(tree_document, persistent_tree_document);
+    }
+
     #[test]
     fn breadcrumb_uses_authored_titles_and_full_tree_hierarchy() {
         let (bundle, uml) = fixture();

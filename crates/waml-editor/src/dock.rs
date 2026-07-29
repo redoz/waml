@@ -316,6 +316,66 @@ mod tests {
     }
 
     #[test]
+    fn document_header_and_inspector_rects_follow_wide_and_narrow_reservations() {
+        let body = makepad_widgets::Rect {
+            pos: makepad_widgets::dvec2(12.0, 66.0),
+            size: makepad_widgets::dvec2(900.0, 600.0),
+        };
+        let wide = responsive_layout(
+            false,
+            body.size.x,
+            DockState::Pinned,
+            DockState::Pinned,
+            280.0,
+            320.0,
+        );
+        assert_eq!(wide.left_slot, 280.0);
+        assert_eq!(wide.right_slot, 320.0);
+        let left_slot = makepad_widgets::Rect {
+            pos: body.pos,
+            size: makepad_widgets::dvec2(wide.left_slot, body.size.y),
+        };
+        let right_slot = makepad_widgets::Rect {
+            pos: makepad_widgets::dvec2(body.pos.x + body.size.x - wide.right_slot, body.pos.y),
+            size: makepad_widgets::dvec2(wide.right_slot, body.size.y),
+        };
+        let header = makepad_widgets::Rect {
+            pos: makepad_widgets::dvec2(left_slot.pos.x + left_slot.size.x, body.pos.y),
+            size: makepad_widgets::dvec2(body.size.x - wide.left_slot - wide.right_slot, 30.0),
+        };
+        assert_eq!(header.pos.x, left_slot.pos.x + left_slot.size.x);
+        assert_eq!(header.pos.x + header.size.x, right_slot.pos.x);
+
+        let narrow = responsive_layout(
+            true,
+            390.0,
+            DockState::Flag,
+            DockState::Pinned,
+            280.0,
+            320.0,
+        );
+        assert_eq!(narrow.left_slot, 0.0);
+        assert_eq!(narrow.right_slot, 0.0);
+        let visible_header = makepad_widgets::Rect {
+            pos: body.pos,
+            size: makepad_widgets::dvec2(390.0, 30.0),
+        };
+        let inspector_with_header = makepad_widgets::Rect {
+            pos: makepad_widgets::dvec2(
+                body.pos.x,
+                body.pos.y + narrow_inspector_top(true, visible_header.size.y),
+            ),
+            size: makepad_widgets::dvec2(narrow.inspector_body, 570.0),
+        };
+        assert!(inspector_with_header.pos.y >= visible_header.pos.y + visible_header.size.y);
+        let inspector_without_header = makepad_widgets::Rect {
+            pos: makepad_widgets::dvec2(body.pos.x, body.pos.y + narrow_inspector_top(true, 0.0)),
+            size: makepad_widgets::dvec2(narrow.inspector_body, body.size.y),
+        };
+        assert_eq!(inspector_without_header.pos.y, body.pos.y);
+    }
+
+    #[test]
     fn narrow_body_width_is_capped_to_the_viewport() {
         let layout = responsive_layout(
             true,

@@ -2450,9 +2450,10 @@ mod tests {
         PendingFragment, SaveFeedback,
     };
     use crate::doc_tabs::{DocTab, OpenTabs};
-    use crate::doc_view::DocumentHeaderChrome;
+    use crate::doc_view::{BodyWidgets, DocView, DocumentHeaderChrome, ViewData};
     use crate::dock::DockState;
     use crate::document::DocumentPresentation;
+    use crate::document_host::DocumentCommand;
     use crate::icons::{Icon, IconSet};
     use crate::nav::NavState;
     use crate::navigation::{
@@ -2462,7 +2463,8 @@ mod tests {
     use crate::popup::conflict_list::ConflictListAction;
     use crate::tree::TreeKind;
     use makepad_widgets::*;
-    use std::cell::RefCell;
+    use std::cell::{Cell, RefCell};
+    use std::rc::Rc;
 
     #[derive(Default)]
     struct FakeBrowser {
@@ -2495,6 +2497,10 @@ mod tests {
                 "sales/customer.md",
                 "---\ntype: Runbook\ntitle: Customer\n---\n# Customer\n\n## History\nDetails\n",
             ),
+            (
+                "sales/next.md",
+                "---\ntype: Runbook\ntitle: Next\n---\n# Next\n\n## Details\nRecorded\n",
+            ),
         ])
         .unwrap();
         let okf = waml::okf::Bundle::parse(&source).unwrap();
@@ -2519,11 +2525,15 @@ mod tests {
         let document_header = WidgetRef::new_with_inner(Box::new(
             cx.with_vm(crate::document_header::DocumentHeader::script_new_with_default),
         ));
+        let inspector = WidgetRef::new_with_inner(Box::new(
+            cx.with_vm(crate::inspector_panel::Inspector::script_new_with_default),
+        ));
         let mut ui = cx.with_vm(View::script_new_with_default);
         ui.children.push((live_id!(project_tree), project_tree));
         ui.children.push((live_id!(statusbar), statusbar));
         ui.children
             .push((live_id!(document_header), document_header));
+        ui.children.push((live_id!(inspector), inspector));
         app.ui = WidgetRef::new_with_inner(Box::new(ui));
         (cx, app)
     }
@@ -2571,6 +2581,32 @@ mod tests {
             draw_list.end(&mut cx_2d);
         }
         draw_cx.end_pass(&pass);
+    }
+
+    fn draw_document_header(cx: &mut Cx, app: &App, size: DVec2) -> Rect {
+        let draw_event = DrawEvent {
+            redraw_all: true,
+            ..DrawEvent::default()
+        };
+        let pass = DrawPass::new_with_name(cx, "document-header-test");
+        let mut draw_list = DrawList2d::new(cx);
+        let mut draw_cx = CxDraw::new(cx, &draw_event);
+        draw_cx.begin_pass(&pass, None);
+        draw_list.begin_always(&mut draw_cx);
+        {
+            let mut cx_2d = Cx2d::new(&mut draw_cx);
+            cx_2d.begin_root_turtle(size, Layout::default());
+            app.ui.widget(&cx_2d, ids!(document_header)).draw_walk_all(
+                &mut cx_2d,
+                &mut Scope::empty(),
+                Walk::fill(),
+            );
+            cx_2d.end_turtle();
+            draw_list.end(&mut cx_2d);
+        }
+        draw_cx.end_pass(&pass);
+        drop(draw_cx);
+        app.ui.widget(cx, ids!(document_header)).area().rect(cx)
     }
 
     fn project_tree_folder_is_open(cx: &mut Cx, app: &App, address: &str) -> bool {
@@ -2716,6 +2752,112 @@ mod tests {
             Some("sales/customer")
         );
         assert!(app.documents.tabs()[0].preview);
+    }
+
+    fn resolved_target(intent: &NavigationIntent) -> Option<&NavigationTarget> {
+        match intent {
+            NavigationIntent::Resolved { target, .. } => Some(target),
+            NavigationIntent::MarkdownLink { .. } => None,
+        }
+    }
+
+    #[test]
+    fn navigation_document_ingresses_share_target_and_preview_command() {
+        let (mut cx, mut app) = navigation_app();
+        mount_markdown_surface(&mut cx, &mut app);
+        let target = NavigationTarget::Document {
+            concept_id: "sales/customer".into(),
+            fragment: None,
+        };
+        let tree_intent = NavigationIntent::Resolved {
+            target: target.clone(),
+            disposition: OpenDisposition::Preview,
+        };
+        let breadcrumb_target = crate::navigation::breadcrumb_for(
+            app.session.okf(),
+            app.session.uml_projection(),
+            "sales/customer",
+        )
+        .expect("customer has a canonical breadcrumb")
+        .into_iter()
+        .last()
+        .expect("breadcrumb ends at the document")
+        .target;
+        let breadcrumb_intent = NavigationIntent::Resolved {
+            target: breadcrumb_target,
+            disposition: OpenDisposition::Preview,
+        };
+        let markdown_resolved_intent = NavigationIntent::Resolved {
+            target: crate::navigation::resolve_link(
+                app.session.okf(),
+                "sales/order",
+                "./customer.md",
+            )
+            .expect("relative customer link resolves"),
+            disposition: OpenDisposition::Preview,
+        };
+
+        assert_eq!(
+            resolved_target(&tree_intent),
+            resolved_target(&breadcrumb_intent)
+        );
+        assert_eq!(
+            resolved_target(&tree_intent),
+            resolved_target(&markdown_resolved_intent)
+        );
+
+        enum Ingress {
+            Tree,
+            Header,
+            Markdown,
+        }
+        for ingress in [Ingress::Tree, Ingress::Header, Ingress::Markdown] {
+            let action = match ingress {
+                Ingress::Tree => widget_action(
+                    app.ui.widget(&cx, ids!(project_tree)).widget_uid(),
+                    crate::tree_panel::ProjectTreeAction::Navigate(tree_intent.clone()),
+                ),
+                Ingress::Header => widget_action(
+                    app.ui.widget(&cx, ids!(document_header)).widget_uid(),
+                    crate::document_header::DocumentHeaderAction::Navigate(target.clone()),
+                ),
+                Ingress::Markdown => widget_action(
+                    app.ui.widget(&cx, ids!(markdown_surface.md)).widget_uid(),
+                    MarkdownAction::LinkNavigated("./customer.md".into()),
+                ),
+            };
+
+            app.handle_action_batch(&mut cx, &[action]);
+            assert_eq!(
+                app.documents
+                    .active_tab()
+                    .map(|tab| tab.concept_id.as_str()),
+                Some("sales/customer")
+            );
+            assert_eq!(app.documents.tabs().len(), 1);
+            assert!(
+                app.documents.tabs()[0].preview,
+                "all ordinary navigation ingresses must use preview disposition"
+            );
+        }
+
+        let persistent_tree = NavigationIntent::Resolved {
+            target,
+            disposition: OpenDisposition::Persistent,
+        };
+        let project_tree_uid = app.ui.widget(&cx, ids!(project_tree)).widget_uid();
+        let persistent_action = || {
+            widget_action(
+                project_tree_uid,
+                crate::tree_panel::ProjectTreeAction::Navigate(persistent_tree.clone()),
+            )
+        };
+        app.handle_action_batch(&mut cx, &[persistent_action()]);
+        assert_eq!(app.documents.tabs().len(), 1);
+        assert!(!app.documents.tabs()[0].preview);
+        app.handle_action_batch(&mut cx, &[persistent_action()]);
+        assert_eq!(app.documents.tabs().len(), 1);
+        assert!(!app.documents.tabs()[0].preview);
     }
 
     #[test]
@@ -3001,6 +3143,106 @@ mod tests {
         assert_eq!(crate::statusbar::navigation_message(&statusbar), None);
     }
 
+    #[test]
+    fn navigation_source_and_generic_views_activate_and_scroll_real_renderer() {
+        #[derive(Clone, Copy)]
+        enum ViewKind {
+            Source,
+            Generic,
+        }
+
+        for view_kind in [ViewKind::Source, ViewKind::Generic] {
+            for (fragment, expected_status) in [
+                ("details", None),
+                ("missing", Some("Section not found: missing")),
+            ] {
+                let (mut cx, mut app) = navigation_app();
+                mount_markdown_surface(&mut cx, &mut app);
+                let markdown = app.ui.widget(&cx, ids!(markdown_surface.md));
+                let markdown_uid = markdown.widget_uid();
+                let intent = {
+                    let body = BodyWidgets::new(&mut cx, &app.ui);
+                    let mut view: Box<dyn DocView> = match view_kind {
+                        ViewKind::Source => {
+                            Box::new(crate::source_view::SourceView::new("sales/order".into()))
+                        }
+                        ViewKind::Generic => Box::new(
+                            crate::generic_okf_view::GenericOkfView::new("sales/order".into()),
+                        ),
+                    };
+                    let data = ViewData {
+                        source: app.session.source(),
+                        okf: app.session.okf(),
+                        uml: app.session.uml_projection(),
+                        revision: app.session.revision(),
+                    };
+                    view.sync(&mut cx, &body, data);
+                    assert!(
+                        markdown.text().contains("# Order"),
+                        "each view must populate the mounted shared renderer"
+                    );
+                    let href = format!("./next.md#{fragment}");
+                    let actions: ActionsBuf = vec![widget_action(
+                        markdown_uid,
+                        MarkdownAction::LinkNavigated(href.clone()),
+                    )];
+                    let outcome = view.handle(&mut cx, &body, &actions, data);
+                    assert_eq!(
+                        outcome.navigation,
+                        Some(NavigationIntent::MarkdownLink {
+                            current_concept_id: "sales/order".into(),
+                            href,
+                        })
+                    );
+                    outcome.navigation.expect("view emits navigation")
+                };
+
+                assert!(app.handle_navigation_intent(&mut cx, intent));
+                assert_eq!(
+                    app.documents
+                        .active_tab()
+                        .map(|tab| tab.concept_id.as_str()),
+                    Some("sales/next")
+                );
+                assert_eq!(
+                    app.pending_fragment,
+                    Some(PendingFragment {
+                        concept_id: "sales/next".into(),
+                        fragment: fragment.into(),
+                    })
+                );
+
+                record_markdown_anchors(&mut cx, &app);
+                AppMain::handle_event(
+                    &mut app,
+                    &mut cx,
+                    &Event::Draw(DrawEvent {
+                        redraw_all: true,
+                        ..DrawEvent::default()
+                    }),
+                );
+
+                assert_eq!(app.pending_fragment, None);
+                assert_eq!(
+                    app.documents
+                        .active_tab()
+                        .map(|tab| tab.concept_id.as_str()),
+                    Some("sales/next"),
+                    "missing anchors must preserve the newly activated target"
+                );
+                let statusbar = app.ui.widget(&cx, ids!(statusbar));
+                let statusbar = statusbar
+                    .borrow::<crate::statusbar::Statusbar>()
+                    .expect("test statusbar is mounted");
+                assert_eq!(
+                    crate::statusbar::navigation_message(&statusbar),
+                    expected_status,
+                    "{fragment}"
+                );
+            }
+        }
+    }
+
     fn tab(id: LiveId, key: &str, title: &str, category: TreeKind, preview: bool) -> DocTab {
         DocTab {
             id,
@@ -3057,6 +3299,217 @@ mod tests {
             project_document_header(DocumentHeaderChrome::default(), None),
             (Vec::new(), None)
         );
+    }
+
+    fn assert_mounted_header(
+        cx: &Cx,
+        app: &App,
+        expected_titles: &[&str],
+        expected_icon: Option<Icon>,
+        expected_height: f64,
+    ) {
+        let header = app.ui.widget(cx, ids!(document_header));
+        let header = header
+            .borrow::<crate::document_header::DocumentHeader>()
+            .expect("test document header is mounted");
+        assert_eq!(
+            header
+                .test_segments()
+                .iter()
+                .map(|segment| segment.title.as_str())
+                .collect::<Vec<_>>(),
+            expected_titles
+        );
+        assert_eq!(header.test_right_dock(), expected_icon);
+        assert_eq!(header.visible_height(), expected_height);
+    }
+
+    fn mounted_inspector_state(cx: &Cx, app: &App) -> DockState {
+        app.ui
+            .widget(cx, ids!(inspector))
+            .borrow::<crate::inspector_panel::Inspector>()
+            .expect("test inspector is mounted")
+            .dock_state()
+    }
+
+    #[test]
+    fn document_header_source_generic_start_source_sequence_has_no_stale_state() {
+        let (mut cx, mut app) = navigation_app();
+        let source = crate::okf_documents::open_source(app.session.okf(), "sales/order")
+            .expect("source document exists");
+        app.documents.transition(
+            &mut cx,
+            &app.ui,
+            &app.session,
+            DocumentCommand::Open {
+                document: source,
+                persistent: false,
+            },
+        );
+        app.sync_document_shell(&mut cx);
+        assert_mounted_header(
+            &cx,
+            &app,
+            &["Root", "Sales", "Order"],
+            Some(Icon::SlidersHorizontal),
+            crate::document_header::DOCUMENT_HEADER_H,
+        );
+
+        // The minimal harness has no mounted Window bounds, so keep responsive
+        // mode explicitly narrow instead of letting a zero-width query perform
+        // the initial wide-to-narrow reconciliation during the style check.
+        app.narrow = true;
+        let right_button_uid = app
+            .ui
+            .widget(&cx, ids!(document_header.right_button))
+            .widget_uid();
+        app.handle_action_batch(
+            &mut cx,
+            &[widget_action(
+                right_button_uid,
+                crate::icon_button::IconButtonAction::Clicked,
+            )],
+        );
+        assert_eq!(mounted_inspector_state(&cx, &app), DockState::Pinned);
+        app.sync_dock_slots(&mut cx);
+        assert!(app
+            .ui
+            .widget(&cx, ids!(document_header))
+            .borrow::<crate::document_header::DocumentHeader>()
+            .expect("test document header is mounted")
+            .test_right_dock_active());
+
+        let generic = crate::okf_documents::open(app.session.okf(), "sales/order")
+            .expect("generic document exists");
+        app.documents.transition(
+            &mut cx,
+            &app.ui,
+            &app.session,
+            DocumentCommand::Open {
+                document: generic,
+                persistent: false,
+            },
+        );
+        app.sync_document_shell(&mut cx);
+        assert_mounted_header(
+            &cx,
+            &app,
+            &["Root", "Sales", "Order"],
+            None,
+            crate::document_header::DOCUMENT_HEADER_H,
+        );
+        assert_eq!(mounted_inspector_state(&cx, &app), DockState::Flag);
+        app.sync_dock_slots(&mut cx);
+        assert!(!app
+            .ui
+            .widget(&cx, ids!(document_header))
+            .borrow::<crate::document_header::DocumentHeader>()
+            .expect("test document header is mounted")
+            .test_right_dock_active());
+
+        app.show_start_screen(&mut cx);
+        assert_mounted_header(&cx, &app, &[], None, 0.0);
+        assert_eq!(mounted_inspector_state(&cx, &app), DockState::Flag);
+        app.sync_dock_slots(&mut cx);
+        assert!(!app
+            .ui
+            .widget(&cx, ids!(document_header))
+            .borrow::<crate::document_header::DocumentHeader>()
+            .expect("test document header is mounted")
+            .test_right_dock_active());
+
+        let source = crate::okf_documents::open_source(app.session.okf(), "sales/order")
+            .expect("source document still exists");
+        app.documents.transition(
+            &mut cx,
+            &app.ui,
+            &app.session,
+            DocumentCommand::Open {
+                document: source,
+                persistent: false,
+            },
+        );
+        app.sync_document_shell(&mut cx);
+        assert_mounted_header(
+            &cx,
+            &app,
+            &["Root", "Sales", "Order"],
+            Some(Icon::SlidersHorizontal),
+            crate::document_header::DOCUMENT_HEADER_H,
+        );
+        assert_eq!(mounted_inspector_state(&cx, &app), DockState::Flag);
+        app.sync_dock_slots(&mut cx);
+        assert!(!app
+            .ui
+            .widget(&cx, ids!(document_header))
+            .borrow::<crate::document_header::DocumentHeader>()
+            .expect("test document header is mounted")
+            .test_right_dock_active());
+    }
+
+    #[test]
+    fn visible_mounted_document_header_is_client_area_but_collapsed_header_is_not() {
+        let (mut cx, mut app) = navigation_app();
+        app.narrow = true;
+        let segment = BreadcrumbSegment {
+            title: "Order".into(),
+            target: NavigationTarget::Document {
+                concept_id: "sales/order".into(),
+                fragment: None,
+            },
+        };
+        {
+            let header_widget = app.ui.widget(&cx, ids!(document_header));
+            let mut header = header_widget
+                .borrow_mut::<crate::document_header::DocumentHeader>()
+                .expect("test document header is mounted");
+            header.set_segments(&mut cx, vec![segment]);
+            header.set_right_dock(&mut cx, Some(Icon::SlidersHorizontal));
+        }
+        let header_rect = draw_document_header(&mut cx, &app, dvec2(360.0, 30.0));
+        assert_eq!(
+            header_rect.size.y,
+            crate::document_header::DOCUMENT_HEADER_H
+        );
+        let response = Rc::new(Cell::new(WindowDragQueryResponse::Caption));
+        AppMain::handle_event(
+            &mut app,
+            &mut cx,
+            &Event::WindowDragQuery(WindowDragQueryEvent {
+                window_id: WindowId(0, 0),
+                abs: header_rect.pos + header_rect.size * 0.5,
+                response: response.clone(),
+            }),
+        );
+        assert!(matches!(response.get(), WindowDragQueryResponse::Client));
+
+        {
+            let header_widget = app.ui.widget(&cx, ids!(document_header));
+            let mut header = header_widget
+                .borrow_mut::<crate::document_header::DocumentHeader>()
+                .expect("test document header is mounted");
+            header.set_segments(&mut cx, Vec::new());
+            header.set_right_dock(&mut cx, None);
+        }
+        assert_eq!(
+            app.ui
+                .widget(&cx, ids!(document_header))
+                .borrow::<crate::document_header::DocumentHeader>()
+                .expect("test document header is mounted")
+                .visible_height(),
+            0.0
+        );
+        response.set(WindowDragQueryResponse::Caption);
+        AppMain::handle_event(
+            &mut app,
+            &mut cx,
+            &Event::WindowDragQuery(WindowDragQueryEvent {
+                window_id: WindowId(0, 0),
+                abs: header_rect.pos + header_rect.size * 0.5,
+                response: response.clone(),
+            }),
+        );
+        assert!(matches!(response.get(), WindowDragQueryResponse::Caption));
     }
 
     #[test]

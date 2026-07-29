@@ -72,13 +72,30 @@ mod tests {
     use crate::navigation::NavigationIntent;
     use waml::source::SourceBundle;
 
-    fn markdown_link_action(href: &str) -> Action {
+    fn markdown_link_action(widget_uid: WidgetUid, href: &str) -> Action {
         Box::new(WidgetAction {
             data: None,
             action: Box::new(MarkdownAction::LinkNavigated(href.into())),
-            widget_uid: WidgetUid(1),
+            widget_uid,
             group: None,
         })
+    }
+
+    fn mounted_body(cx: &mut Cx) -> (WidgetRef, BodyWidgets, WidgetUid) {
+        cx.widget_tree_mark_dirty(WidgetUid(0));
+        let markdown =
+            WidgetRef::new_with_inner(Box::new(cx.with_vm(Markdown::script_new_with_default)));
+        let markdown_uid = markdown.widget_uid();
+        let mut surface = cx.with_vm(View::script_new_with_default);
+        surface.children.push((live_id!(md), markdown));
+        let mut root = cx.with_vm(View::script_new_with_default);
+        root.children.push((
+            live_id!(markdown_surface),
+            WidgetRef::new_with_inner(Box::new(surface)),
+        ));
+        let ui = WidgetRef::new_with_inner(Box::new(root));
+        let body = BodyWidgets::new(cx, &ui);
+        (ui, body, markdown_uid)
     }
 
     fn fixture(
@@ -148,20 +165,34 @@ mod tests {
     }
 
     #[test]
-    fn markdown_link_emits_raw_navigation_intent_from_generic_concept() {
-        let (source, okf, uml) = fixture([]);
+    fn mounted_markdown_link_emits_raw_navigation_intent_from_generic_concept() {
+        let (source, okf, uml) = fixture([
+            (
+                "shop/order.md",
+                "---\ntype: vendor.Runbook\n---\n# Order\n\n[Next](./next.md#details)\n",
+            ),
+            (
+                "shop/next.md",
+                "---\ntype: vendor.Runbook\n---\n# Next\n\n## Details\n",
+            ),
+        ]);
         let mut cx = Cx::new(Box::new(|_, _| {}));
-        let body = BodyWidgets::new(&mut cx, &WidgetRef::empty());
-        let mut view = GenericOkfView::new("runbook".into());
-        let actions: ActionsBuf = vec![markdown_link_action("../customer.md#history")];
+        let (ui, body, markdown_uid) = mounted_body(&mut cx);
+        let mut view = GenericOkfView::new("shop/order".into());
+        view.sync(&mut cx, &body, data(&source, &okf, &uml));
+        assert!(ui
+            .widget(&cx, ids!(markdown_surface.md))
+            .text()
+            .contains("[Next](./next.md#details)"));
+        let actions: ActionsBuf = vec![markdown_link_action(markdown_uid, "./next.md#details")];
 
         let outcome = view.handle(&mut cx, &body, &actions, data(&source, &okf, &uml));
 
         assert_eq!(
             outcome.navigation,
             Some(NavigationIntent::MarkdownLink {
-                current_concept_id: "runbook".into(),
-                href: "../customer.md#history".into(),
+                current_concept_id: "shop/order".into(),
+                href: "./next.md#details".into(),
             })
         );
     }

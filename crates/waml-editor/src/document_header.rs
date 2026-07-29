@@ -148,6 +148,8 @@ struct DocumentHeaderState {
     segments: Vec<BreadcrumbSegment>,
     right_dock: Option<Icon>,
     segment_rects: Vec<(usize, Rect)>,
+    #[cfg(test)]
+    right_dock_active: bool,
 }
 
 impl DocumentHeaderState {
@@ -161,6 +163,7 @@ impl DocumentHeaderState {
             segments,
             right_dock,
             segment_rects,
+            right_dock_active: false,
         }
     }
 
@@ -331,6 +334,10 @@ impl DocumentHeader {
     }
 
     pub fn set_right_dock_active(&mut self, cx: &mut Cx, active: bool) {
+        #[cfg(test)]
+        {
+            self.state.right_dock_active = active;
+        }
         self.view
             .widget(cx, ids!(right_button))
             .as_icon_button()
@@ -339,6 +346,21 @@ impl DocumentHeader {
 
     pub fn visible_height(&self) -> f64 {
         self.state.visible_height()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn test_segments(&self) -> &[BreadcrumbSegment] {
+        &self.state.segments
+    }
+
+    #[cfg(test)]
+    pub(crate) fn test_right_dock(&self) -> Option<Icon> {
+        self.state.right_dock
+    }
+
+    #[cfg(test)]
+    pub(crate) fn test_right_dock_active(&self) -> bool {
+        self.state.right_dock_active
     }
 
     pub fn action(&self, actions: &Actions) -> Option<DocumentHeaderAction> {
@@ -394,6 +416,23 @@ mod tests {
         let layout = layout_header(30.0, &[44.0, 58.0], 30.0);
         assert_eq!(layout.visible_indices, vec![1]);
         assert_eq!(layout.segment_rects[0].1.size.x, 0.0);
+    }
+
+    #[test]
+    fn every_positive_width_keeps_the_current_segment_in_layout() {
+        for width in [f64::MIN_POSITIVE, 0.01, 1.0, 29.9, 30.0, 31.0, 240.0] {
+            let layout = layout_header(width, &[44.0, 52.0, 58.0], 30.0);
+            assert_eq!(
+                layout.visible_indices.last(),
+                Some(&2),
+                "current segment missing at width {width}"
+            );
+            assert_eq!(
+                layout.segment_rects.last().map(|(index, _)| *index),
+                Some(2),
+                "current hit geometry missing at width {width}"
+            );
+        }
     }
 
     #[test]
@@ -501,6 +540,43 @@ mod tests {
             state.action_at(dvec2(80.0, 15.0)),
             Some(DocumentHeaderAction::Navigate(expected))
         );
+    }
+
+    #[test]
+    fn every_visible_segment_hit_rect_maps_to_its_original_target() {
+        let segments = vec![
+            BreadcrumbSegment {
+                title: "Root".into(),
+                target: NavigationTarget::Directory {
+                    address: "/".into(),
+                },
+            },
+            BreadcrumbSegment {
+                title: "Sales".into(),
+                target: NavigationTarget::Directory {
+                    address: "/sales".into(),
+                },
+            },
+            segment("Archive", "sales/archive"),
+            segment("Order", "sales/archive/order"),
+        ];
+        let layout = layout_header(260.0, &[36.0, 42.0, 48.0, 50.0], 30.0);
+        let state = DocumentHeaderState::for_test(
+            segments.clone(),
+            Some(Icon::SlidersHorizontal),
+            layout.segment_rects.clone(),
+        );
+
+        for (index, rect) in &layout.segment_rects {
+            assert!(rect.size.x > 0.0);
+            assert_eq!(
+                state.action_at(rect.pos + rect.size * 0.5),
+                Some(DocumentHeaderAction::Navigate(
+                    segments[*index].target.clone()
+                )),
+                "hit for visible segment {index}"
+            );
+        }
     }
 
     #[test]

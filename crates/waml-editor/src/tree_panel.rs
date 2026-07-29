@@ -1251,7 +1251,7 @@ mod tests {
         let mut view = cx.with_vm(View::script_new_with_default);
         view.children.push((live_id!(file_tree), file_tree.clone()));
         panel.view = view;
-        let file_tree = panel.view.file_tree(&mut cx, ids!(file_tree));
+        let file_tree = panel.view.file_tree(&cx, ids!(file_tree));
         (cx, panel, file_tree)
     }
 
