@@ -27,7 +27,7 @@ pub(in crate::uml) fn reparse_island(
     let map = ChangeMap::checked(&old, changes).ok()?;
     if map.new_len() != text.len()
         || changes.is_empty()
-        || !same_structure(previous_structure, structure, &map)
+        || !same_structure(&old, &text, previous_structure, structure, &map)
     {
         return None;
     }
@@ -36,6 +36,14 @@ pub(in crate::uml) fn reparse_island(
     let changed = map.changed_old_range()?;
     let selected = select_owner(&old_islands, changed, map.old_len())?;
     let selected_old = old_islands[selected];
+    if previous.diagnostics().iter().any(|diagnostic| {
+        diagnostic.range.start() == diagnostic.range.end()
+            && ((selected > 0 && diagnostic.range.start() == selected_old.range.start())
+                || (selected + 1 < old_islands.len()
+                    && diagnostic.range.start() == selected_old.range.end()))
+    }) {
+        return None;
+    }
     let selected_new_range = expanded_range(selected_old.range, &map)?;
     let selected_new = new_islands.iter().position(|island| {
         island.kind == selected_old.kind && island.range == selected_new_range
@@ -91,8 +99,12 @@ pub(in crate::uml) fn reparse_island(
         .diagnostics()
         .iter()
         .filter_map(|diagnostic| {
-            (diagnostic.range.end() <= selected_old.range.start()
-                || diagnostic.range.start() >= selected_old.range.end())
+            let boundary_point = diagnostic.range.start() == diagnostic.range.end()
+                && (diagnostic.range.start() == selected_old.range.start()
+                    || diagnostic.range.start() == selected_old.range.end());
+            (!boundary_point
+                && (diagnostic.range.end() <= selected_old.range.start()
+                    || diagnostic.range.start() >= selected_old.range.end()))
             .then(|| map.translate_unchanged(diagnostic.range))?
             .map(|range| TreeDiagnostic {
                 code: diagnostic.code,
@@ -164,7 +176,13 @@ fn select_owner(
     }
     (owners.len() == 1).then(|| owners[0])
 }
-fn same_structure(old: &MarkdownStructureMap, new: &MarkdownStructureMap, map: &ChangeMap) -> bool {
+fn same_structure(
+    old_text: &SourceText,
+    new_text: &SourceText,
+    old: &MarkdownStructureMap,
+    new: &MarkdownStructureMap,
+    map: &ChangeMap,
+) -> bool {
     let same = |old: &[TextRange], new: &[TextRange]| {
         old.iter()
             .map(|range| mapped_range(*range, map))
@@ -179,6 +197,8 @@ fn same_structure(old: &MarkdownStructureMap, new: &MarkdownStructureMap, map: &
             left.level == right.level
                 && mapped_range(left.range, map) == Some(right.range)
                 && mapped_range(left.text_range, map) == Some(right.text_range)
+                && (left.level != 2
+                    || old_text.slice(left.range).ok() == new_text.slice(right.range).ok())
         })
         && old.headings.len() == new.headings.len()
         && old
@@ -227,47 +247,138 @@ impl waml_syntax::SyntaxLanguage for UmlLanguage {
 mod tests {
     use std::sync::Arc;
 
-    use waml_syntax::{parse_okf_markdown, MarkdownDialect, SourceText, SyntaxElement, SyntaxTree};
+    use waml_syntax::{
+        parse_okf_markdown, GreenElement, GreenText, MarkdownDialect, SourceText, SyntaxAnnotation,
+        SyntaxElement, SyntaxNode, SyntaxToken, SyntaxTree, TextSize,
+    };
 
     use super::{parse_full, reparse_island, UmlLanguage, UmlSyntaxKind};
 
-    fn tree_fingerprint(tree: &SyntaxTree<UmlLanguage>) -> (String, Vec<(u32, u32, u8)>) {
-        (
-            tree.write_to_string(),
-            tree.diagnostics()
-                .iter()
-                .map(|diagnostic| {
-                    (
-                        diagnostic.range.start().to_usize() as u32,
-                        diagnostic.range.end().to_usize() as u32,
-                        diagnostic.code as u8,
-                    )
-                })
-                .collect(),
-        )
+    fn annotations(annotations: &[SyntaxAnnotation]) -> Vec<(u64, &str, Option<&str>)> {
+        annotations
+            .iter()
+            .map(|annotation| (annotation.id().get(), annotation.kind(), annotation.data()))
+            .collect()
     }
 
-    fn first_token(
-        tree: &SyntaxTree<UmlLanguage>,
-        kind: UmlSyntaxKind,
-    ) -> waml_syntax::SyntaxToken<UmlLanguage> {
-        tree.root()
-            .children()
-            .find_map(|element| match element {
-                SyntaxElement::Token(token) if token.kind() == kind => Some(token),
+    #[derive(Debug, Eq, PartialEq)]
+    enum TextFingerprint {
+        Static(String),
+        Owned(String),
+        SourceSlice {
+            range: waml_syntax::TextRange,
+            spelling: String,
+        },
+    }
+
+    fn text_fingerprint(text: &GreenText) -> TextFingerprint {
+        match text {
+            GreenText::Static(value) => TextFingerprint::Static((*value).to_owned()),
+            GreenText::Owned(value) => TextFingerprint::Owned(value.to_string()),
+            GreenText::SourceSlice { range, .. } => TextFingerprint::SourceSlice {
+                range: *range,
+                spelling: text.write_to_string(),
+            },
+        }
+    }
+
+    fn structural_fingerprint(tree: &SyntaxTree<UmlLanguage>) -> Vec<String> {
+        fn visit(
+            element: &GreenElement<UmlLanguage>,
+            at: TextSize,
+            out: &mut Vec<String>,
+        ) -> TextSize {
+            match element {
+                GreenElement::Node(node) => {
+                    let end = at.checked_add(node.width()).unwrap();
+                    out.push(format!(
+                        "node:{:?}:{at:?}..{end:?}:{:?}",
+                        node.kind(),
+                        annotations(node.annotations())
+                    ));
+                    node.children()
+                        .iter()
+                        .fold(at, |offset, child| visit(child, offset, out))
+                }
+                GreenElement::Token(token) => {
+                    let end = at.checked_add(token.width()).unwrap();
+                    let leading: Vec<_> = token
+                        .leading_trivia()
+                        .iter()
+                        .map(|trivia| (trivia.kind, text_fingerprint(&trivia.text)))
+                        .collect();
+                    let trailing: Vec<_> = token
+                        .trailing_trivia()
+                        .iter()
+                        .map(|trivia| (trivia.kind, text_fingerprint(&trivia.text)))
+                        .collect();
+                    out.push(format!(
+                        "token:{:?}:{at:?}..{end:?}:{:?}:{leading:?}:{trailing:?}:missing={}:bad={}:codes={:?}:{:?}",
+                        token.kind(),
+                        text_fingerprint(token.text()),
+                        token.flags().is_missing(),
+                        token.flags().is_bad(),
+                        token.annotations(),
+                        annotations(token.syntax_annotations())
+                    ));
+                    end
+                }
+            }
+        }
+        let mut out = Vec::new();
+        visit(
+            &GreenElement::Node(tree.root_green().clone()),
+            TextSize::try_from_usize(0).unwrap(),
+            &mut out,
+        );
+        out
+    }
+
+    fn diagnostic_fingerprint(tree: &SyntaxTree<UmlLanguage>) -> Vec<String> {
+        tree.diagnostics()
+            .iter()
+            .map(|diagnostic| {
+                format!(
+                    "{:?}:{:?}:{:?}:{}",
+                    diagnostic.code, diagnostic.severity, diagnostic.range, diagnostic.message
+                )
+            })
+            .collect()
+    }
+
+    fn first_node(tree: &SyntaxTree<UmlLanguage>, kind: UmlSyntaxKind) -> SyntaxNode<UmlLanguage> {
+        fn find(
+            node: SyntaxNode<UmlLanguage>,
+            kind: UmlSyntaxKind,
+        ) -> Option<SyntaxNode<UmlLanguage>> {
+            if node.kind() == kind {
+                return Some(node);
+            }
+            node.children()
+                .find_map(|child| child.into_node().and_then(|node| find(node, kind)))
+        }
+        find(tree.root(), kind).expect("expected node")
+    }
+
+    fn first_missing_token(node: SyntaxNode<UmlLanguage>) -> SyntaxToken<UmlLanguage> {
+        fn find(node: SyntaxNode<UmlLanguage>) -> Option<SyntaxToken<UmlLanguage>> {
+            node.children().find_map(|child| match child {
+                SyntaxElement::Token(token) if token.flags().is_missing() => Some(token),
+                SyntaxElement::Node(node) => find(node),
                 _ => None,
             })
-            .expect("expected token")
+        }
+        find(node).expect("expected missing token")
     }
 
     #[test]
     fn reparse_island_matches_full_and_reuses_only_source_independent_greens() {
         let old_text = SourceText::from_shared(Arc::new(
-            "## Attributes\n- old: String\n\n## Layout\n- item\n".to_owned(),
+            "## Attributes\n- old: String\n\n## Layout\n- left of\n".to_owned(),
         ))
         .unwrap();
         let new_text = SourceText::from_shared(Arc::new(
-            "## Attributes\n- new: String\n\n## Layout\n- item\n".to_owned(),
+            "## Attributes\n- new: String\n\n## Layout\n- left of\n".to_owned(),
         ))
         .unwrap();
         let old_shell =
@@ -287,9 +398,79 @@ mod tests {
         )
         .expect("attribute edit has one unambiguous island");
 
-        assert_eq!(tree_fingerprint(&reparsed), tree_fingerprint(&full));
-        assert!(first_token(&previous, UmlSyntaxKind::EndOfFileToken)
-            .same_green(&first_token(&reparsed, UmlSyntaxKind::EndOfFileToken)));
+        assert_eq!(
+            structural_fingerprint(&reparsed),
+            structural_fingerprint(&full)
+        );
+        assert_eq!(
+            diagnostic_fingerprint(&reparsed),
+            diagnostic_fingerprint(&full)
+        );
+        let previous_layout = first_node(&previous, UmlSyntaxKind::LayoutSection);
+        let reparsed_layout = first_node(&reparsed, UmlSyntaxKind::LayoutSection);
+        assert!(first_missing_token(previous_layout.clone())
+            .same_green(&first_missing_token(reparsed_layout.clone())));
+        assert!(!first_node(&previous, UmlSyntaxKind::AttributesSection)
+            .same_green(&first_node(&reparsed, UmlSyntaxKind::AttributesSection)));
+        assert!(!previous_layout.same_green(&reparsed_layout));
         assert!(!previous.root().same_green(&reparsed.root()));
+    }
+
+    #[test]
+    fn reparse_island_does_not_duplicate_final_boundary_diagnostics() {
+        let old_text = SourceText::from_shared(Arc::new(
+            "## Nodes\n### state Node\ntrigger: before\n###".to_owned(),
+        ))
+        .unwrap();
+        let new_text = SourceText::from_shared(Arc::new(
+            "## Nodes\n### state Node\ntrigger: changed\n###".to_owned(),
+        ))
+        .unwrap();
+        let old_shell =
+            parse_okf_markdown(old_text.clone(), MarkdownDialect::CommonMarkCurrent).unwrap();
+        let new_shell =
+            parse_okf_markdown(new_text.clone(), MarkdownDialect::CommonMarkCurrent).unwrap();
+        let previous = parse_full(old_text.clone(), &old_shell.structure);
+        let full = parse_full(new_text.clone(), &new_shell.structure);
+        assert_eq!(previous.write_to_string(), old_text.shared().as_str());
+        let reparsed = reparse_island(
+            &previous,
+            &old_shell.structure,
+            new_text.clone(),
+            &new_shell.structure,
+            &crate::analysis::single_text_change(&old_text, &new_text),
+        )
+        .expect("earlier edit in one final island is unambiguous");
+
+        assert_eq!(
+            structural_fingerprint(&reparsed),
+            structural_fingerprint(&full)
+        );
+        assert_eq!(
+            diagnostic_fingerprint(&reparsed),
+            diagnostic_fingerprint(&full)
+        );
+    }
+
+    #[test]
+    fn reparse_island_rejects_recognized_heading_rename() {
+        let old_text =
+            SourceText::from_shared(Arc::new("## Attributes\n- old: String\n".to_owned())).unwrap();
+        let new_text =
+            SourceText::from_shared(Arc::new("## attributes\n- old: String\n".to_owned())).unwrap();
+        let old_shell =
+            parse_okf_markdown(old_text.clone(), MarkdownDialect::CommonMarkCurrent).unwrap();
+        let new_shell =
+            parse_okf_markdown(new_text.clone(), MarkdownDialect::CommonMarkCurrent).unwrap();
+        let previous = parse_full(old_text.clone(), &old_shell.structure);
+
+        assert!(reparse_island(
+            &previous,
+            &old_shell.structure,
+            new_text.clone(),
+            &new_shell.structure,
+            &crate::analysis::single_text_change(&old_text, &new_text),
+        )
+        .is_none());
     }
 }
