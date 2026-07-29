@@ -1203,6 +1203,10 @@ fn merge_origins(origins: impl IntoIterator<Item = ValueOrigin>) -> ValueOrigin 
     result
 }
 
+fn expression_key<T>(expression: &T) -> usize {
+    expression as *const T as usize
+}
+
 fn is_model_text_method(name: &str) -> bool {
     matches!(
         name,
@@ -2829,18 +2833,33 @@ struct ReturnTaintFacts<'env> {
     model_text_returns: &'env BTreeSet<usize>,
     receiver_types: BTreeMap<String, TypeIdentity>,
     callable_paths: BTreeMap<String, Vec<String>>,
+    callable_origins: BTreeMap<String, ValueOrigin>,
     bindings: BTreeSet<String>,
     origins: BTreeMap<String, ValueOrigin>,
     binding_scopes: Vec<BTreeMap<String, TaintBindingState>>,
     expression_origins: BTreeMap<usize, ValueOrigin>,
+    break_origins: Vec<BreakOriginState>,
     unresolved_model_dispatch: bool,
 }
 
 struct TaintBindingState {
     receiver_type: Option<TypeIdentity>,
     callable_path: Option<Vec<String>>,
+    callable_origin: Option<ValueOrigin>,
     bound: bool,
     origin: Option<ValueOrigin>,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum BreakTargetKind {
+    Loop,
+    Block,
+}
+
+struct BreakOriginState {
+    kind: BreakTargetKind,
+    label: Option<String>,
+    origins: Vec<ValueOrigin>,
 }
 
 impl<'env> ReturnTaintFacts<'env> {
@@ -2857,10 +2876,12 @@ impl<'env> ReturnTaintFacts<'env> {
             model_text_returns,
             receiver_types: BTreeMap::new(),
             callable_paths: BTreeMap::new(),
+            callable_origins: BTreeMap::new(),
             bindings: BTreeSet::new(),
             origins: BTreeMap::new(),
             binding_scopes: Vec::new(),
             expression_origins: BTreeMap::new(),
+            break_origins: Vec::new(),
             unresolved_model_dispatch: false,
         };
         if caller.has_receiver {
@@ -2911,6 +2932,7 @@ impl<'env> ReturnTaintFacts<'env> {
         let state = TaintBindingState {
             receiver_type: self.receiver_types.get(binding).cloned(),
             callable_path: self.callable_paths.get(binding).cloned(),
+            callable_origin: self.callable_origins.get(binding).copied(),
             bound: self.bindings.contains(binding),
             origin: self.origins.get(binding).copied(),
         };
@@ -2941,6 +2963,14 @@ impl<'env> ReturnTaintFacts<'env> {
                     self.callable_paths.remove(&binding);
                 }
             }
+            match state.callable_origin {
+                Some(value) => {
+                    self.callable_origins.insert(binding.clone(), value);
+                }
+                None => {
+                    self.callable_origins.remove(&binding);
+                }
+            }
             if state.bound {
                 self.bindings.insert(binding.clone());
             } else {
@@ -2957,14 +2987,58 @@ impl<'env> ReturnTaintFacts<'env> {
         }
     }
 
+    fn cached_expression_origin<T>(&self, expression: &T) -> ValueOrigin {
+        self.expression_origins
+            .get(&expression_key(expression))
+            .copied()
+            .unwrap_or(ValueOrigin::Other)
+    }
+
+    fn cache_expression_origin<T>(&mut self, expression: &T, origin: ValueOrigin) {
+        self.expression_origins
+            .insert(expression_key(expression), origin);
+    }
+
+    fn callable_result_origin(&self, expression: &syn::Expr) -> ValueOrigin {
+        match unwrap_expression(expression) {
+            syn::Expr::Closure(expression) => self.cached_expression_origin(expression),
+            syn::Expr::Path(path) if path.path.segments.len() == 1 => self
+                .callable_origins
+                .get(&path.path.segments[0].ident.to_string())
+                .copied()
+                .unwrap_or(ValueOrigin::Other),
+            _ => ValueOrigin::Other,
+        }
+    }
+
+    fn visit_value_block<T>(
+        &mut self,
+        expression: &T,
+        attributes: &[syn::Attribute],
+        block: &syn::Block,
+    ) {
+        for attribute in attributes {
+            self.visit_attribute(attribute);
+        }
+        let origin = self.visit_scoped_block(block);
+        self.cache_expression_origin(expression, origin);
+    }
+
     fn bind_pattern_from_expression(&mut self, pattern: &syn::Pat, expression: &syn::Expr) {
         let bindings = pattern_binding_names(pattern);
         let identity = self.expression_type_identity(expression);
         let origin = self.expression_origin(expression);
+        let callable_origin = self.callable_result_origin(expression);
         for binding in bindings {
             self.record_binding_declaration(&binding);
             self.bindings.insert(binding.clone());
             self.callable_paths.remove(&binding);
+            if callable_origin == ValueOrigin::Other {
+                self.callable_origins.remove(&binding);
+            } else {
+                self.callable_origins
+                    .insert(binding.clone(), callable_origin);
+            }
             if let Some(identity) = &identity {
                 self.receiver_types
                     .insert(binding.clone(), identity.clone());
@@ -3158,27 +3232,21 @@ impl<'env> ReturnTaintFacts<'env> {
                     .iter()
                     .any(|argument| self.expression_origin(argument) == ValueOrigin::ModelText)
                     || self.call_returns_model_text(&self.call_site(call))
+                    || self.callable_result_origin(&call.func) == ValueOrigin::ModelText
                 {
                     ValueOrigin::ModelText
                 } else {
                     ValueOrigin::Other
                 }
             }
-            syn::Expr::Block(expression) => self
-                .expression_origins
-                .get(&(expression as *const syn::ExprBlock as usize))
-                .copied()
-                .unwrap_or(ValueOrigin::Other),
-            syn::Expr::If(expression) => self
-                .expression_origins
-                .get(&(expression as *const syn::ExprIf as usize))
-                .copied()
-                .unwrap_or(ValueOrigin::Other),
-            syn::Expr::Match(expression) => self
-                .expression_origins
-                .get(&(expression as *const syn::ExprMatch as usize))
-                .copied()
-                .unwrap_or(ValueOrigin::Other),
+            syn::Expr::Block(expression) => self.cached_expression_origin(expression),
+            syn::Expr::If(expression) => self.cached_expression_origin(expression),
+            syn::Expr::Match(expression) => self.cached_expression_origin(expression),
+            syn::Expr::Loop(expression) => self.cached_expression_origin(expression),
+            syn::Expr::Async(expression) => self.cached_expression_origin(expression),
+            syn::Expr::Const(expression) => self.cached_expression_origin(expression),
+            syn::Expr::TryBlock(expression) => self.cached_expression_origin(expression),
+            syn::Expr::Unsafe(expression) => self.cached_expression_origin(expression),
             syn::Expr::Await(expression) => self.expression_origin(&expression.base),
             syn::Expr::Index(expression) => self.expression_origin(&expression.expr),
             syn::Expr::Repeat(expression) => self.expression_origin(&expression.expr),
@@ -3232,12 +3300,90 @@ impl<'ast> Visit<'ast> for ReturnTaintFacts<'_> {
         for attribute in &expression.attrs {
             self.visit_attribute(attribute);
         }
+        let label = expression
+            .label
+            .as_ref()
+            .map(|label| label.name.ident.to_string());
         if let Some(label) = &expression.label {
             self.visit_label(label);
         }
-        let origin = self.visit_scoped_block(&expression.block);
-        self.expression_origins
-            .insert(expression as *const syn::ExprBlock as usize, origin);
+        if label.is_some() {
+            self.break_origins.push(BreakOriginState {
+                kind: BreakTargetKind::Block,
+                label,
+                origins: Vec::new(),
+            });
+        }
+        let mut origin = self.visit_scoped_block(&expression.block);
+        if expression.label.is_some() {
+            let breaks = self
+                .break_origins
+                .pop()
+                .expect("labeled block break origin is balanced");
+            origin = merge_origins(std::iter::once(origin).chain(breaks.origins));
+        }
+        self.cache_expression_origin(expression, origin);
+    }
+
+    fn visit_expr_async(&mut self, expression: &'ast syn::ExprAsync) {
+        self.visit_value_block(expression, &expression.attrs, &expression.block);
+    }
+
+    fn visit_expr_const(&mut self, expression: &'ast syn::ExprConst) {
+        self.visit_value_block(expression, &expression.attrs, &expression.block);
+    }
+
+    fn visit_expr_try_block(&mut self, expression: &'ast syn::ExprTryBlock) {
+        self.visit_value_block(expression, &expression.attrs, &expression.block);
+    }
+
+    fn visit_expr_unsafe(&mut self, expression: &'ast syn::ExprUnsafe) {
+        self.visit_value_block(expression, &expression.attrs, &expression.block);
+    }
+
+    fn visit_expr_loop(&mut self, expression: &'ast syn::ExprLoop) {
+        for attribute in &expression.attrs {
+            self.visit_attribute(attribute);
+        }
+        let label = expression
+            .label
+            .as_ref()
+            .map(|label| label.name.ident.to_string());
+        if let Some(label) = &expression.label {
+            self.visit_label(label);
+        }
+        self.break_origins.push(BreakOriginState {
+            kind: BreakTargetKind::Loop,
+            label,
+            origins: Vec::new(),
+        });
+        self.visit_scoped_block(&expression.body);
+        let breaks = self
+            .break_origins
+            .pop()
+            .expect("loop break origin is balanced");
+        self.cache_expression_origin(expression, merge_origins(breaks.origins));
+    }
+
+    fn visit_expr_break(&mut self, expression: &'ast syn::ExprBreak) {
+        visit::visit_expr_break(self, expression);
+        let Some(value) = &expression.expr else {
+            return;
+        };
+        let origin = self.expression_origin(value);
+        let target = if let Some(label) = &expression.label {
+            let label = label.ident.to_string();
+            self.break_origins
+                .iter_mut()
+                .rfind(|target| target.label.as_deref() == Some(label.as_str()))
+        } else {
+            self.break_origins
+                .iter_mut()
+                .rfind(|target| target.kind == BreakTargetKind::Loop)
+        };
+        if let Some(target) = target {
+            target.origins.push(origin);
+        }
     }
 
     fn visit_expr_for_loop(&mut self, expression: &'ast syn::ExprForLoop) {
@@ -3267,10 +3413,7 @@ impl<'ast> Visit<'ast> for ReturnTaintFacts<'_> {
             origins.push(self.expression_origin(&arm.body));
             self.pop_binding_scope();
         }
-        self.expression_origins.insert(
-            expression as *const syn::ExprMatch as usize,
-            merge_origins(origins),
-        );
+        self.cache_expression_origin(expression, merge_origins(origins));
     }
 
     fn visit_expr_if(&mut self, expression: &'ast syn::ExprIf) {
@@ -3294,8 +3437,7 @@ impl<'ast> Visit<'ast> for ReturnTaintFacts<'_> {
         } else {
             ValueOrigin::Other
         };
-        self.expression_origins
-            .insert(expression as *const syn::ExprIf as usize, origin);
+        self.cache_expression_origin(expression, origin);
     }
 
     fn visit_expr_while(&mut self, expression: &'ast syn::ExprWhile) {
@@ -3329,6 +3471,7 @@ impl<'ast> Visit<'ast> for ReturnTaintFacts<'_> {
                 self.record_binding_declaration(&binding);
                 self.bindings.insert(binding.clone());
                 self.callable_paths.remove(&binding);
+                self.callable_origins.remove(&binding);
                 if let Some(identity) = &identity {
                     self.receiver_types
                         .insert(binding.clone(), identity.clone());
@@ -3339,6 +3482,8 @@ impl<'ast> Visit<'ast> for ReturnTaintFacts<'_> {
             }
         }
         visit::visit_expr_closure(self, closure);
+        let origin = self.expression_origin(&closure.body);
+        self.cache_expression_origin(closure, origin);
         self.pop_binding_scope();
     }
 
@@ -3450,11 +3595,17 @@ impl<'ast> Visit<'ast> for ReturnTaintFacts<'_> {
         } else {
             None
         };
+        let callable_origin = if let ([_], Some(init)) = (bindings.as_slice(), &local.init) {
+            self.callable_result_origin(&init.expr)
+        } else {
+            ValueOrigin::Other
+        };
 
         for binding in &bindings {
             self.record_binding_declaration(binding);
             self.receiver_types.remove(binding);
             self.callable_paths.remove(binding);
+            self.callable_origins.remove(binding);
             self.origins.remove(binding);
             self.bindings.insert(binding.clone());
         }
@@ -3472,6 +3623,10 @@ impl<'ast> Visit<'ast> for ReturnTaintFacts<'_> {
         if let Some((binding, path)) = callable_path {
             self.callable_paths.insert(binding.clone(), path);
         }
+        if callable_origin != ValueOrigin::Other {
+            self.callable_origins
+                .insert(bindings[0].clone(), callable_origin);
+        }
     }
 
     fn visit_expr_assign(&mut self, assignment: &'ast syn::ExprAssign) {
@@ -3480,6 +3635,7 @@ impl<'ast> Visit<'ast> for ReturnTaintFacts<'_> {
         let assigned_bindings = assignment_local_binding_names(&assignment.left, &self.bindings);
         let identity = self.expression_type_identity(&assignment.right);
         let origin = self.expression_origin(&assignment.right);
+        let callable_origin = self.callable_result_origin(&assignment.right);
         let callable_path = if assigned_bindings.len() == 1 {
             match unwrap_expression(&assignment.right) {
                 syn::Expr::Path(path) => Some(
@@ -3506,6 +3662,12 @@ impl<'ast> Visit<'ast> for ReturnTaintFacts<'_> {
                     .insert(binding.clone(), callable_path.clone());
             } else {
                 self.callable_paths.remove(&binding);
+            }
+            if callable_origin == ValueOrigin::Other {
+                self.callable_origins.remove(&binding);
+            } else {
+                self.callable_origins
+                    .insert(binding.clone(), callable_origin);
             }
             self.origins.insert(binding, origin);
         }

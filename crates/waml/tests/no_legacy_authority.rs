@@ -1044,6 +1044,40 @@ fn call_edges_propagate_reparse_through_resolved_and_unresolved_dispatch() {
             })
         }
 
+        fn loop_argument_pointer(model: &Model, callable: Parser) -> Analysis {
+            callable(loop {
+                break model.to_string();
+            })
+        }
+
+        fn labeled_block_argument_pointer(model: &Model, callable: Parser) -> Analysis {
+            callable('rendered: {
+                break 'rendered model.to_string();
+            })
+        }
+
+        fn labeled_loop_argument_pointer(model: &Model, callable: Parser) -> Analysis {
+            callable('rendered: loop {
+                loop {
+                    break 'rendered model.to_string();
+                }
+            })
+        }
+
+        fn unsafe_argument_pointer(model: &Model, callable: Parser) -> Analysis {
+            callable(unsafe { model.to_string() })
+        }
+
+        async fn async_argument_pointer(model: &Model, callable: Parser) -> Analysis {
+            callable(async { model.to_string() }.await)
+        }
+
+        fn closure_return_pointer(model: &Model, callable: Parser) -> Analysis {
+            let render = || model.to_string();
+            let alias = render;
+            callable(alias())
+        }
+
         struct Vec;
         impl Vec {
             fn push(&self, raw: String) -> Analysis {
@@ -1133,6 +1167,12 @@ fn call_edges_propagate_reparse_through_resolved_and_unresolved_dispatch() {
         "block_argument_pointer",
         "if_argument_pointer",
         "match_argument_pointer",
+        "loop_argument_pointer",
+        "labeled_block_argument_pointer",
+        "labeled_loop_argument_pointer",
+        "unsafe_argument_pointer",
+        "async_argument_pointer",
+        "closure_return_pointer",
     ] {
         assert!(
             violations.iter().any(|reason| {
