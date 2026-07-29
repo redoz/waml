@@ -184,13 +184,7 @@ pub fn analyze(
                     reason: "claimed concept has no Markdown structure map".into(),
                 })?;
         let tree = match previous.and_then(|analysis| analysis.syntax.document(id)) {
-            Some(previous_snapshot)
-                if Arc::ptr_eq(previous_snapshot.document(), &document)
-                    || Arc::ptr_eq(
-                        previous_snapshot.document().text().shared(),
-                        document.text().shared(),
-                    ) =>
-            {
+            Some(previous_snapshot) if Arc::ptr_eq(previous_snapshot.document(), &document) => {
                 previous_snapshot.syntax().clone()
             }
             Some(previous_snapshot) => {
@@ -471,13 +465,7 @@ pub fn analyze(
         }
         let snapshot = previous
             .and_then(|analysis| analysis.syntax.document(id))
-            .filter(|previous_snapshot| {
-                Arc::ptr_eq(previous_snapshot.document(), &document)
-                    || Arc::ptr_eq(
-                        previous_snapshot.document().text().shared(),
-                        document.text().shared(),
-                    )
-            })
+            .filter(|previous_snapshot| Arc::ptr_eq(previous_snapshot.document(), &document))
             .cloned()
             .unwrap_or_else(|| Arc::new(SyntaxSnapshot::new(document.clone(), tree)));
         snapshots.insert(id, snapshot);
