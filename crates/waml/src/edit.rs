@@ -85,7 +85,8 @@ impl EditBatch for SequenceBatch {
         for edit in &self.0 {
             source = edit.lower(EditContext {
                 source: &source,
-                okf: context.okf,
+                okf_analysis: context.okf_analysis,
+                session_revision: context.session_revision,
                 uml: context.uml,
             })?;
         }
@@ -98,7 +99,8 @@ impl EditBatch for SequenceBatch {
         for edit in &self.0 {
             let applied = edit.apply_reversible(EditContext {
                 source: &source,
-                okf: context.okf,
+                okf_analysis: context.okf_analysis,
+                session_revision: context.session_revision,
                 uml: context.uml,
             })?;
             source = applied.source;
@@ -119,12 +121,27 @@ mod tests {
     use crate::source::SourceBundle;
 
     fn apply(edit: &PendingEdit, source: &SourceBundle) -> super::AppliedEdit {
-        let okf = crate::okf::Bundle::parse(source).unwrap();
-        let uml = crate::uml::project(&okf);
+        let okf_analysis =
+            Box::leak(Box::new(crate::analysis::analyze_okf(source, None, 0).unwrap()));
+        let uml = Box::leak(Box::new(
+            crate::uml::analyze(
+                crate::analysis::DomainAnalysisContext {
+                    source,
+                    catalog: &okf_analysis.catalog,
+                    shell: &okf_analysis.shell,
+                    structures: &okf_analysis.structures,
+                    okf: &okf_analysis.bundle,
+                    session_revision: 0,
+                },
+                None,
+            )
+            .unwrap(),
+        ));
         edit.apply_reversible(EditContext {
             source,
-            okf: &okf,
-            uml: &uml,
+            okf_analysis,
+            session_revision: 0,
+            uml,
         })
         .unwrap()
     }

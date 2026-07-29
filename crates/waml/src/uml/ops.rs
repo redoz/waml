@@ -307,6 +307,28 @@ pub(crate) fn lower_one_with_state(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::edit::{AppliedEdit, EditBatch};
+    use crate::uml::selector::RelBy;
+
+    fn apply_reversible(batch: &impl EditBatch, source: &SourceBundle) -> AppliedEdit {
+        batch.apply_reversible(context(source)).unwrap()
+    }
+
+    fn assert_reversible(
+        source: SourceBundle,
+        batch: Batch,
+        assert_forward: impl FnOnce(&SourceBundle),
+    ) {
+        let applied = apply_reversible(&batch, &source);
+        assert_forward(&applied.source);
+        let forward = applied.source.clone();
+
+        let restored = apply_reversible(&applied.inverse, &applied.source);
+        assert_eq!(restored.source, source);
+
+        let redone = apply_reversible(&restored.inverse, &restored.source);
+        assert_eq!(redone.source, forward);
+    }
 
     fn context(source: &SourceBundle) -> EditContext<'_> {
         let okf_analysis = Box::leak(Box::new(
@@ -355,7 +377,7 @@ mod tests {
                 name: "x".into(),
             },
         ]);
-        assert!(batch.lower(context(&source)).is_err());
+        assert!(batch.apply_reversible(context(&source)).is_err());
         assert!(source.documents()[0].text().contains("title: A"));
 
         let changed = Batch(vec![Op::ClassifierSet {
@@ -466,5 +488,258 @@ mod tests {
             .unwrap()
             .text()
             .contains("invoice.md"));
+    }
+
+    #[test]
+    fn every_uml_operation_round_trips_authored_source() {
+        let class = "---\ntype: uml.Class\ntitle: Order\n---\n# Order\n";
+        let class_with_attr =
+            "---\ntype: uml.Class\ntitle: Order\n---\n# Order\n\n## Attributes\n- id: OrderId\n";
+        let class_with_attrs = "---\ntype: uml.Class\ntitle: Order\n---\n# Order\n\n## Attributes\n- id: OrderId\n- total: Money\n";
+        let enum_one = "---\ntype: uml.Enum\ntitle: Status\n---\n# Status\n\n## Values\n- DRAFT\n";
+        let enum_two =
+            "---\ntype: uml.Enum\ntitle: Status\n---\n# Status\n\n## Values\n- DRAFT\n- PLACED\n";
+        let customer = "---\ntype: uml.Class\ntitle: Customer\n---\n# Customer\n";
+        let relationship = "---\ntype: uml.Class\ntitle: Order\n---\n# Order\n\n## Relationships\n- depends [Customer](./customer.md)\n";
+        let diagram = "---\ntype: Diagram\ntitle: Domain\nprofile: uml-domain\n---\n# Domain\n";
+        let placed = "---\ntype: Diagram\ntitle: Domain\nprofile: uml-domain\n---\n# Domain\n\n## Layout\n- [Order](./order.md) left of [Customer](./customer.md)\n";
+
+        assert_reversible(
+            SourceBundle::try_from_pairs([("order.md", class)]).unwrap(),
+            Batch(vec![Op::AttributeAdd {
+                node: "order".into(),
+                name: "total".into(),
+                ty_token: "Money".into(),
+                multiplicity: None,
+                visibility: None,
+            }]),
+            |source| assert!(source.documents()[0].text().contains("- total: Money")),
+        );
+        assert_reversible(
+            SourceBundle::try_from_pairs([("order.md", class_with_attr)]).unwrap(),
+            Batch(vec![Op::AttributeSet {
+                node: "order".into(),
+                name: "id".into(),
+                ty_token: Some("String".into()),
+                multiplicity: FieldEdit::Set(Multiplicity::parse("0..1").unwrap()),
+                visibility: Some(Visibility::Private),
+                rename: Some("customer_id".into()),
+            }]),
+            |source| {
+                let text = source.documents()[0].text();
+                assert!(text.contains("customer_id"));
+                assert!(text.contains("String {0..1}"));
+            },
+        );
+        assert_reversible(
+            SourceBundle::try_from_pairs([("order.md", class_with_attrs)]).unwrap(),
+            Batch(vec![Op::AttributeRemove {
+                node: "order".into(),
+                name: "total".into(),
+            }]),
+            |source| {
+                assert!(!source.documents()[0].text().contains("total"));
+                assert!(source.documents()[0].text().contains("- id: OrderId"));
+            },
+        );
+        assert_reversible(
+            SourceBundle::try_from_pairs([("status.md", enum_one)]).unwrap(),
+            Batch(vec![Op::ValueAdd {
+                node: "status".into(),
+                literal: "PLACED".into(),
+            }]),
+            |source| assert!(source.documents()[0].text().contains("- PLACED")),
+        );
+        assert_reversible(
+            SourceBundle::try_from_pairs([("status.md", enum_two)]).unwrap(),
+            Batch(vec![Op::ValueRemove {
+                node: "status".into(),
+                literal: "DRAFT".into(),
+            }]),
+            |source| {
+                assert!(!source.documents()[0].text().contains("DRAFT"));
+                assert!(source.documents()[0].text().contains("- PLACED"));
+            },
+        );
+
+        let relationship_source = || {
+            SourceBundle::try_from_pairs([("order.md", class), ("customer.md", customer)]).unwrap()
+        };
+        let selector = || RelationshipSelector {
+            source: "order".into(),
+            by: RelBy::Endpoint {
+                kind: RelationshipKind::Depends,
+                target: "customer".into(),
+            },
+        };
+        assert_reversible(
+            relationship_source(),
+            Batch(vec![Op::RelationshipAdd {
+                source: "order".into(),
+                kind: RelationshipKind::Depends,
+                target: "customer".into(),
+                name: None,
+                ends: None,
+            }]),
+            |source| {
+                assert!(source.documents()[0]
+                    .text()
+                    .contains("- depends [Customer](./customer.md)"))
+            },
+        );
+        assert_reversible(
+            SourceBundle::try_from_pairs([("order.md", relationship), ("customer.md", customer)])
+                .unwrap(),
+            Batch(vec![Op::RelationshipSet {
+                selector: selector(),
+                ends: None,
+                name: Some(NameSpec::Label("buyer".into())),
+            }]),
+            |source| assert!(source.documents()[0].text().contains("as \"buyer\"")),
+        );
+        assert_reversible(
+            SourceBundle::try_from_pairs([("order.md", relationship), ("customer.md", customer)])
+                .unwrap(),
+            Batch(vec![Op::RelationshipRemove {
+                selector: selector(),
+            }]),
+            |source| assert!(!source.documents()[0].text().contains("depends")),
+        );
+
+        assert_reversible(
+            SourceBundle::default(),
+            Batch(vec![Op::ClassifierNew {
+                slug: "invoice".into(),
+                directory: DirectoryAddress::parse("/sales").unwrap(),
+                ty: ElementType::parse("uml.Class"),
+                title: "Invoice".into(),
+                stereotype: vec!["entity".into()],
+                description: Some("An invoice.".into()),
+                abstract_: false,
+            }]),
+            |source| {
+                assert_eq!(source.documents()[0].path().as_str(), "sales/invoice.md");
+                assert!(source.documents()[0].text().contains("title: Invoice"));
+            },
+        );
+        assert_reversible(
+            SourceBundle::try_from_pairs([("order.md", class)]).unwrap(),
+            Batch(vec![Op::ClassifierSet {
+                id: "order".into(),
+                title: Some("Sales Order".into()),
+                description: Some("Placed by a customer.".into()),
+                stereotype: Some(vec!["aggregateRoot".into()]),
+                abstract_: Some(true),
+                ty: None,
+            }]),
+            |source| {
+                let text = source.documents()[0].text();
+                assert!(text.contains("title: Sales Order"));
+                assert!(text.contains("# Sales Order"));
+                assert!(text.contains("abstract: true"));
+            },
+        );
+        assert_reversible(
+            SourceBundle::try_from_pairs([("order.md", class)]).unwrap(),
+            Batch(vec![Op::ClassifierRemove {
+                id: "order".into(),
+                cascade: false,
+            }]),
+            |source| assert!(source.is_empty()),
+        );
+        assert_reversible(
+            SourceBundle::try_from_pairs([
+                ("order.md", class),
+                (
+                    "customer.md",
+                    "---\ntype: uml.Class\ntitle: Customer\n---\n# Customer\n\n## Relationships\n- depends [Order](./order.md)\n",
+                ),
+            ])
+            .unwrap(),
+            Batch(vec![Op::ClassifierRename {
+                from: "order".into(),
+                to: "purchase-order".into(),
+            }]),
+            |source| {
+                assert!(source
+                    .documents()
+                    .iter()
+                    .any(|doc| doc.path().as_str() == "purchase-order.md"));
+                assert!(source
+                    .documents()
+                    .iter()
+                    .any(|doc| doc.text().contains("./purchase-order.md")));
+            },
+        );
+        assert_reversible(
+            SourceBundle::try_from_pairs([("dia.md", diagram)]).unwrap(),
+            Batch(vec![Op::DiagramSet {
+                key: "dia".into(),
+                title: Some("Order lifecycle".into()),
+                description: Some("Notes for reviewers".into()),
+                clear_description: false,
+                display: None,
+            }]),
+            |source| {
+                let text = source.documents()[0].text();
+                assert!(text.contains("title: Order lifecycle"));
+                assert!(text.contains("# Order lifecycle"));
+                assert!(text.contains("description: Notes for reviewers"));
+            },
+        );
+        assert_reversible(
+            SourceBundle::try_from_pairs([("dia.md", diagram)]).unwrap(),
+            Batch(vec![Op::PlacementSet {
+                diagram: "dia".into(),
+                subject_title: "Order".into(),
+                subject_slug: "order".into(),
+                reference_title: "Customer".into(),
+                reference_slug: "customer".into(),
+                directions: vec![Direction::LeftOf],
+            }]),
+            |source| {
+                assert!(source.documents()[0]
+                    .text()
+                    .contains("- [Order](./order.md) left of [Customer](./customer.md)"))
+            },
+        );
+        assert_reversible(
+            SourceBundle::try_from_pairs([("dia.md", placed)]).unwrap(),
+            Batch(vec![Op::PlacementRemove {
+                diagram: "dia".into(),
+                subject_slug: "order".into(),
+                reference_slug: "customer".into(),
+            }]),
+            |source| assert!(!source.documents()[0].text().contains("left of")),
+        );
+    }
+
+    #[test]
+    fn evolving_multi_step_uml_batch_round_trips_as_one_transaction() {
+        assert_reversible(
+            SourceBundle::default(),
+            Batch(vec![
+                Op::ClassifierNew {
+                    slug: "invoice".into(),
+                    directory: DirectoryAddress::parse("/").unwrap(),
+                    ty: ElementType::parse("uml.Class"),
+                    title: "Invoice".into(),
+                    stereotype: vec![],
+                    description: None,
+                    abstract_: false,
+                },
+                Op::AttributeAdd {
+                    node: "invoice".into(),
+                    name: "id".into(),
+                    ty_token: "InvoiceId".into(),
+                    multiplicity: None,
+                    visibility: None,
+                },
+            ]),
+            |source| {
+                assert_eq!(source.len(), 1);
+                assert!(source.documents()[0].text().contains("- id: InvoiceId"));
+            },
+        );
     }
 }

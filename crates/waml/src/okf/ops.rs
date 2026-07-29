@@ -145,9 +145,7 @@ mod tests {
     }
 
     fn apply_reversible(batch: &impl EditBatch, source: &SourceBundle) -> AppliedEdit {
-        let okf = crate::okf::Bundle::parse(source).unwrap();
-        let uml = crate::uml::project(&okf);
-        batch.apply_reversible(context(source, &okf, &uml)).unwrap()
+        batch.apply_reversible(context(source)).unwrap()
     }
 
     fn assert_reversible(source: SourceBundle, batch: Batch, expected: SourceBundle) {
@@ -390,8 +388,6 @@ mod tests {
     #[test]
     fn late_okf_failure_does_not_publish_source_or_inverse() {
         let source = SourceBundle::try_from_pairs([("sales/order.md", "# Order\n")]).unwrap();
-        let okf = crate::okf::Bundle::parse(&source).unwrap();
-        let uml = crate::uml::project(&okf);
         let batch = Batch(vec![
             Op::ConceptMove {
                 id: "sales/order".into(),
@@ -403,9 +399,7 @@ mod tests {
             },
         ]);
 
-        assert!(batch
-            .apply_reversible(context(&source, &okf, &uml))
-            .is_err());
+        assert!(batch.apply_reversible(context(&source)).is_err());
         assert_eq!(
             source.to_pairs(),
             vec![("sales/order.md".into(), "# Order\n".into())]
