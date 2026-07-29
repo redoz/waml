@@ -442,6 +442,23 @@ fn real_syntax_tree_authority_signatures_and_builders_are_rejected() {
                     let [slot] = [&mut self.tree];
                     *slot = external_factory(raw);
                 }
+
+                fn parse_projected(&mut self, raw: &str) {
+                    let (slot,) = ((&mut self.tree,),).0;
+                    *slot = external_factory(raw);
+                }
+
+                fn parse_wrapped(&mut self, raw: &str) {
+                    let (slot,) = (&mut self.tree,).into();
+                    *slot = external_factory(raw);
+                }
+
+                fn parse_looped(&mut self, raw: &str) {
+                    let (slot,) = loop {
+                        break (&mut self.tree,);
+                    };
+                    *slot = external_factory(raw);
+                }
             }
 
             fn parse_sibling(slot: &mut crate::types::sibling_types::Slot, raw: &str) {
@@ -560,6 +577,9 @@ fn real_syntax_tree_authority_signatures_and_builders_are_rejected() {
         "parse_tuple_structured",
         "parse_named_structured",
         "parse_sliced",
+        "parse_projected",
+        "parse_wrapped",
+        "parse_looped",
         "parse_sibling",
         "parse_sibling_selected",
         "parse_indexed",

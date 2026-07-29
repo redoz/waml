@@ -568,32 +568,37 @@ impl<'env> BodyFacts<'env> {
                 }]
             }
             syn::Expr::Field(expression) => {
-                let Some(owner) = self.expression_type_identity(&expression.base) else {
-                    return Vec::new();
-                };
                 let field = match &expression.member {
                     syn::Member::Named(name) => name.to_string(),
                     syn::Member::Unnamed(index) => index.index.to_string(),
                 };
-                self.env
-                    .struct_fields
-                    .get(&owner)
-                    .and_then(|fields| fields.get(&field))
-                    .cloned()
-                    .into_iter()
-                    .collect()
+                self.expression_type_identity(&expression.base)
+                    .and_then(|owner| {
+                        self.env
+                            .struct_fields
+                            .get(&owner)
+                            .and_then(|fields| fields.get(&field))
+                            .cloned()
+                    })
+                    .map(|ty| vec![ty])
+                    .unwrap_or_else(|| self.expression_type_uses(&expression.base))
             }
-            syn::Expr::MethodCall(expression) => {
-                let Some(owner) = self.expression_type_identity(&expression.receiver) else {
-                    return Vec::new();
-                };
-                self.env
-                    .method_returns
-                    .get(&(owner, expression.method.to_string()))
-                    .cloned()
-                    .into_iter()
-                    .collect()
-            }
+            syn::Expr::MethodCall(expression) => self
+                .expression_type_identity(&expression.receiver)
+                .and_then(|owner| {
+                    self.env
+                        .method_returns
+                        .get(&(owner, expression.method.to_string()))
+                        .cloned()
+                })
+                .map(|ty| vec![ty])
+                .unwrap_or_else(|| {
+                    let mut types = self.expression_type_uses(&expression.receiver);
+                    for argument in &expression.args {
+                        types.extend(self.expression_type_uses(argument));
+                    }
+                    types
+                }),
             syn::Expr::Struct(expression) => {
                 let mut types = vec![TypeUse {
                     module: self.env.module.clone(),
@@ -664,8 +669,40 @@ impl<'env> BodyFacts<'env> {
                 .flat_map(|arm| self.expression_type_uses(&arm.body))
                 .collect(),
             syn::Expr::Try(expression) => self.expression_type_uses(&expression.expr),
-            _ => Vec::new(),
+            _ => self.descendant_expression_type_uses(expression),
         }
+    }
+
+    fn descendant_expression_type_uses(&self, expression: &syn::Expr) -> Vec<TypeUse> {
+        struct DescendantTypeUses<'facts, 'env> {
+            facts: &'facts BodyFacts<'env>,
+            at_root: bool,
+            types: Vec<TypeUse>,
+        }
+
+        impl<'ast, 'facts, 'env> Visit<'ast> for DescendantTypeUses<'facts, 'env> {
+            fn visit_expr(&mut self, expression: &'ast syn::Expr) {
+                if self.at_root {
+                    self.at_root = false;
+                    visit::visit_expr(self, expression);
+                    return;
+                }
+                let types = self.facts.expression_type_uses(expression);
+                if types.is_empty() {
+                    visit::visit_expr(self, expression);
+                } else {
+                    self.types.extend(types);
+                }
+            }
+        }
+
+        let mut descendants = DescendantTypeUses {
+            facts: self,
+            at_root: true,
+            types: Vec::new(),
+        };
+        descendants.visit_expr(expression);
+        descendants.types
     }
 
     fn block_type_uses(&self, block: &syn::Block) -> Vec<TypeUse> {
