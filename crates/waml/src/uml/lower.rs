@@ -153,7 +153,7 @@ impl UmlLoweringState {
         let path = self
             .path(target)
             .cloned()
-            .ok_or_else(|| EditError::at(op, "no claimed concept"))?;
+            .ok_or_else(|| EditError::at(op, format!("no claimed concept '{target}'")))?;
         if !self.touched_islands.contains_key(&path) {
             self.reparse(candidate, &path, op)?;
         }
@@ -184,6 +184,28 @@ impl UmlLoweringState {
             super::syntax::parse_full(text, &shell.structure),
         );
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn missing_tree_error_names_requested_concept() {
+        let source = SourceBundle::default();
+        let mut state = UmlLoweringState {
+            current_paths: BTreeMap::new(),
+            touched_islands: BTreeMap::new(),
+        };
+
+        let error = match state.tree(&source, "missing-order", "attr.add") {
+            Err(error) => error,
+            Ok(_) => panic!("missing concept must fail"),
+        };
+
+        assert_eq!(error.op, "attr.add");
+        assert_eq!(error.reason, "no claimed concept 'missing-order'");
     }
 }
 

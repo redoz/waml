@@ -226,7 +226,7 @@ pub fn diagram_elements(
             .unwrap_or_else(|| k.to_string())
     };
 
-    let mut rows = std::vec::Vec::with_capacity(node_keys.len() + 1);
+    let mut rows = Vec::with_capacity(node_keys.len() + 1);
     rows.push(ElementRow {
         key: diagram_key.to_string(),
         label: diagram_title.to_string(),
@@ -414,7 +414,7 @@ fn build_classifier_view(model: &Model, key: &str) -> Option<InspectorView> {
         })
         .collect();
 
-    let mut associations = std::vec::Vec::new();
+    let mut associations = Vec::new();
     for edge in &model.edges {
         // uml.Note anchor, not a real relationship (mirrors the web skip).
         if edge.kind == RelationshipKind::Annotates {
