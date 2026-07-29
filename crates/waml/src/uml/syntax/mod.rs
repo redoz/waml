@@ -23,7 +23,7 @@ pub(in crate::uml) fn reparse_island(
     structure: &MarkdownStructureMap,
     changes: &[TextChange],
 ) -> Option<Arc<SyntaxTree<UmlLanguage>>> {
-    let old = SourceText::from_shared(Arc::new(previous.write_to_string())).ok()?;
+    let old = recover_exact_source(previous.root_green())?;
     let map = ChangeMap::checked(&old, changes).ok()?;
     if map.new_len() != text.len()
         || changes.is_empty()
@@ -127,6 +127,78 @@ pub(in crate::uml) fn reparse_island(
         Arc::from(candidate.diagnostics()),
         structure.dialect,
     )))
+}
+
+fn recover_exact_source(root: &waml_syntax::GreenNode<UmlLanguage>) -> Option<SourceText> {
+    fn walk(
+        root: &waml_syntax::GreenNode<UmlLanguage>,
+        f: &mut impl FnMut(&waml_syntax::GreenText) -> Option<()>,
+    ) -> Option<()> {
+        let mut frames = vec![root.children().iter()];
+        while let Some(frame) = frames.last_mut() {
+            let Some(element) = frame.next() else {
+                frames.pop();
+                continue;
+            };
+            match element {
+                GreenElement::Node(node) => frames.push(node.children().iter()),
+                GreenElement::Token(token) => {
+                    for text in token
+                        .leading_trivia()
+                        .iter()
+                        .map(|x| &x.text)
+                        .chain(std::iter::once(token.text()))
+                        .chain(token.trailing_trivia().iter().map(|x| &x.text))
+                    {
+                        f(text)?;
+                    }
+                }
+            }
+        }
+        Some(())
+    }
+    let mut source: Option<SourceText> = None;
+    walk(root, &mut |text| {
+        if let waml_syntax::GreenText::SourceSlice { source: found, .. } = text {
+            match &source {
+                Some(expected) if !Arc::ptr_eq(expected.shared(), found.shared()) => return None,
+                Some(_) => {}
+                None => source = Some(found.clone()),
+            }
+        }
+        Some(())
+    })?;
+    let source = source?;
+    let mut offset = TextSize::try_from_usize(0).ok()?;
+    walk(root, &mut |text| {
+        match text {
+            waml_syntax::GreenText::SourceSlice {
+                source: found,
+                range,
+            } => {
+                Arc::ptr_eq(source.shared(), found.shared()).then_some(())?;
+                (range.start() == offset).then_some(())?;
+                offset = range.end();
+            }
+            waml_syntax::GreenText::Static(value) => {
+                let end = offset
+                    .checked_add(TextSize::try_from_usize(value.len()).ok()?)
+                    .ok()?;
+                (source.slice(TextRange::new(offset, end).ok()?).ok()? == *value).then_some(())?;
+                offset = end;
+            }
+            waml_syntax::GreenText::Owned(value) => {
+                let end = offset
+                    .checked_add(TextSize::try_from_usize(value.len()).ok()?)
+                    .ok()?;
+                (source.slice(TextRange::new(offset, end).ok()?).ok()? == value.as_ref())
+                    .then_some(())?;
+                offset = end;
+            }
+        }
+        Some(())
+    })?;
+    (offset == source.len() && root.width() == source.len()).then_some(source)
 }
 
 fn mapped_range(range: TextRange, map: &ChangeMap) -> Option<TextRange> {
@@ -248,11 +320,11 @@ mod tests {
     use std::sync::Arc;
 
     use waml_syntax::{
-        parse_okf_markdown, GreenElement, GreenText, MarkdownDialect, SourceText, SyntaxAnnotation,
-        SyntaxElement, SyntaxNode, SyntaxToken, SyntaxTree, TextSize,
+        parse_okf_markdown, GreenElement, GreenFactory, GreenText, MarkdownDialect, SourceText,
+        SyntaxAnnotation, SyntaxElement, SyntaxNode, SyntaxToken, SyntaxTree, TextRange, TextSize,
     };
 
-    use super::{parse_full, reparse_island, UmlLanguage, UmlSyntaxKind};
+    use super::{parse_full, recover_exact_source, reparse_island, UmlLanguage, UmlSyntaxKind};
 
     fn annotations(annotations: &[SyntaxAnnotation]) -> Vec<(u64, &str, Option<&str>)> {
         annotations
@@ -472,5 +544,57 @@ mod tests {
             &crate::analysis::single_text_change(&old_text, &new_text),
         )
         .is_none());
+    }
+
+    #[test]
+    fn source_recovery_handles_deep_and_wide_uml_trees_iteratively() {
+        fn token(source: &SourceText, start: usize, end: usize) -> GreenElement<UmlLanguage> {
+            GreenElement::Token(
+                GreenFactory::new()
+                    .token(
+                        UmlSyntaxKind::IdentifierToken,
+                        GreenText::SourceSlice {
+                            source: source.clone(),
+                            range: TextRange::new(
+                                TextSize::try_from_usize(start).unwrap(),
+                                TextSize::try_from_usize(end).unwrap(),
+                            )
+                            .unwrap(),
+                        },
+                        [],
+                        [],
+                    )
+                    .unwrap(),
+            )
+        }
+        let deep_source = SourceText::from_shared(Arc::new("x".to_owned())).unwrap();
+        let mut deep = GreenFactory::new()
+            .node(UmlSyntaxKind::MarkdownRegion, [token(&deep_source, 0, 1)])
+            .unwrap();
+        for _ in 0..2_048 {
+            deep = GreenFactory::new()
+                .node(UmlSyntaxKind::MarkdownRegion, [GreenElement::Node(deep)])
+                .unwrap();
+        }
+        let deep_root = GreenFactory::new()
+            .node(UmlSyntaxKind::Root, [GreenElement::Node(deep)])
+            .unwrap();
+        assert!(Arc::ptr_eq(
+            recover_exact_source(&deep_root).unwrap().shared(),
+            deep_source.shared()
+        ));
+
+        let wide_source = SourceText::from_shared(Arc::new("x".repeat(20_000))).unwrap();
+        let wide_root = GreenFactory::new()
+            .node(
+                UmlSyntaxKind::Root,
+                (0..20_000).map(|i| token(&wide_source, i, i + 1)),
+            )
+            .unwrap();
+        assert!(Arc::ptr_eq(
+            recover_exact_source(&wide_root).unwrap().shared(),
+            wide_source.shared()
+        ));
+        std::mem::forget(deep_root);
     }
 }

@@ -491,29 +491,136 @@ fn changes_reconstruct(
     new: &SourceText,
     changes: &[TextChange],
 ) -> Result<bool, ParseError> {
-    let mut rebuilt = String::with_capacity(new.len().to_usize());
     let mut cursor = TextSize::try_from_usize(0).map_err(|_| ParseError::WidthOverflow)?;
+    let mut new_cursor = cursor;
     for change in changes {
         let prefix = TextRange::new(cursor, change.old_range.start()).map_err(|_| {
             ParseError::InvalidRange {
                 range: change.old_range,
             }
         })?;
-        rebuilt.push_str(
-            old.slice(prefix)
-                .map_err(|_| ParseError::InvalidRange { range: prefix })?,
-        );
-        rebuilt.push_str(&change.replacement);
+        let new_prefix = TextRange::new(
+            new_cursor,
+            new_cursor
+                .checked_add(prefix.len())
+                .map_err(|_| ParseError::WidthOverflow)?,
+        )
+        .map_err(|_| ParseError::WidthOverflow)?;
+        if old
+            .slice(prefix)
+            .map_err(|_| ParseError::InvalidRange { range: prefix })?
+            != new
+                .slice(new_prefix)
+                .map_err(|_| ParseError::InvalidRange { range: new_prefix })?
+        {
+            return Ok(false);
+        }
+        new_cursor = new_prefix.end();
+        let replacement = TextSize::try_from_usize(change.replacement.len())
+            .map_err(|_| ParseError::WidthOverflow)?;
+        let new_replacement = TextRange::new(
+            new_cursor,
+            new_cursor
+                .checked_add(replacement)
+                .map_err(|_| ParseError::WidthOverflow)?,
+        )
+        .map_err(|_| ParseError::WidthOverflow)?;
+        if new
+            .slice(new_replacement)
+            .map_err(|_| ParseError::InvalidRange {
+                range: new_replacement,
+            })?
+            != change.replacement.as_ref()
+        {
+            return Ok(false);
+        }
+        new_cursor = new_replacement.end();
         cursor = change.old_range.end();
     }
     let tail = TextRange::new(cursor, old.len()).map_err(|_| ParseError::InvalidRange {
         range: TextRange::new(cursor, cursor).unwrap(),
     })?;
-    rebuilt.push_str(
-        old.slice(tail)
-            .map_err(|_| ParseError::InvalidRange { range: tail })?,
-    );
-    Ok(rebuilt == new.shared().as_str())
+    let new_tail = TextRange::new(new_cursor, new.len()).map_err(|_| ParseError::WidthOverflow)?;
+    Ok(old
+        .slice(tail)
+        .map_err(|_| ParseError::InvalidRange { range: tail })?
+        == new
+            .slice(new_tail)
+            .map_err(|_| ParseError::InvalidRange { range: new_tail })?)
+}
+
+// Two depth-first passes: discover one backing allocation, then prove the
+// emitted leaf stream covers it exactly. Any uncertainty chooses full parsing.
+fn recover_exact_source<L: SyntaxLanguage>(root: &GreenNode<L>) -> Option<SourceText> {
+    fn walk<L: SyntaxLanguage>(
+        root: &GreenNode<L>,
+        f: &mut impl FnMut(&GreenText) -> Option<()>,
+    ) -> Option<()> {
+        let mut frames = vec![root.children().iter()];
+        while let Some(frame) = frames.last_mut() {
+            let Some(element) = frame.next() else {
+                frames.pop();
+                continue;
+            };
+            match element {
+                GreenElement::Node(node) => frames.push(node.children().iter()),
+                GreenElement::Token(token) => {
+                    for text in token
+                        .leading_trivia()
+                        .iter()
+                        .map(|x| &x.text)
+                        .chain(std::iter::once(token.text()))
+                        .chain(token.trailing_trivia().iter().map(|x| &x.text))
+                    {
+                        f(text)?;
+                    }
+                }
+            }
+        }
+        Some(())
+    }
+    let mut source: Option<SourceText> = None;
+    walk(root, &mut |text| {
+        if let GreenText::SourceSlice { source: found, .. } = text {
+            match &source {
+                Some(expected) if !Arc::ptr_eq(expected.shared(), found.shared()) => return None,
+                Some(_) => {}
+                None => source = Some(found.clone()),
+            }
+        }
+        Some(())
+    })?;
+    let source = source?;
+    let mut offset = TextSize::try_from_usize(0).ok()?;
+    walk(root, &mut |text| {
+        match text {
+            GreenText::SourceSlice {
+                source: found,
+                range,
+            } => {
+                Arc::ptr_eq(source.shared(), found.shared()).then_some(())?;
+                (range.start() == offset).then_some(())?;
+                offset = range.end();
+            }
+            GreenText::Static(value) => {
+                let end = offset
+                    .checked_add(TextSize::try_from_usize(value.len()).ok()?)
+                    .ok()?;
+                (source.slice(TextRange::new(offset, end).ok()?).ok()? == *value).then_some(())?;
+                offset = end;
+            }
+            GreenText::Owned(value) => {
+                let end = offset
+                    .checked_add(TextSize::try_from_usize(value.len()).ok()?)
+                    .ok()?;
+                (source.slice(TextRange::new(offset, end).ok()?).ok()? == value.as_ref())
+                    .then_some(())?;
+                offset = end;
+            }
+        }
+        Some(())
+    })?;
+    (offset == source.len() && root.width() == source.len()).then_some(source)
 }
 
 /// Safely advance an OKF shell tree. A full parse is deliberately retained as
@@ -540,12 +647,24 @@ pub fn reparse_okf_markdown_with_structure(
     ),
     ParseError,
 > {
-    let old = SourceText::from_shared(Arc::new(previous.write_to_string()))
-        .map_err(|_| ParseError::WidthOverflow)?;
     let new_structure = Arc::new(crate::markdown::map(
         &new_text,
         MarkdownDialect::CommonMarkCurrent,
     )?);
+    let Some(old) = recover_exact_source(previous.root_green()) else {
+        let parsed = crate::shell::parse_okf_markdown_with_structure(
+            new_text,
+            MarkdownDialect::CommonMarkCurrent,
+            new_structure.clone(),
+        )?;
+        return Ok((
+            ReparseOutcome::Full {
+                tree: parsed.tree,
+                reason: FullReparseReason::UnsafeSynchronization,
+            },
+            new_structure,
+        ));
+    };
     let map = match ChangeMap::checked(&old, changes) {
         Ok(map) => map,
         Err(reason) => {
@@ -1076,6 +1195,107 @@ fn has_syntax_annotations(node: &GreenNode<OkfMarkdownLanguage>) -> bool {
             GreenElement::Node(child) => has_syntax_annotations(child),
             GreenElement::Token(token) => !token.syntax_annotations().is_empty(),
         })
+}
+
+#[cfg(test)]
+mod source_recovery_tests {
+    use super::*;
+
+    fn source_token(
+        source: &SourceText,
+        start: usize,
+        end: usize,
+    ) -> GreenElement<OkfMarkdownLanguage> {
+        GreenElement::Token(
+            GreenFactory::new()
+                .token(
+                    OkfMarkdownSyntaxKind::RawTextToken,
+                    GreenText::SourceSlice {
+                        source: source.clone(),
+                        range: TextRange::new(
+                            TextSize::try_from_usize(start).unwrap(),
+                            TextSize::try_from_usize(end).unwrap(),
+                        )
+                        .unwrap(),
+                    },
+                    [],
+                    [],
+                )
+                .unwrap(),
+        )
+    }
+
+    #[test]
+    fn exact_source_recovery_handles_deep_and_wide_trees_iteratively() {
+        let deep_source = SourceText::from_shared(Arc::new("x".to_owned())).unwrap();
+        let mut deep = GreenFactory::new()
+            .node(
+                OkfMarkdownSyntaxKind::MarkdownRegion,
+                [source_token(&deep_source, 0, 1)],
+            )
+            .unwrap();
+        for _ in 0..2_048 {
+            deep = GreenFactory::new()
+                .node(
+                    OkfMarkdownSyntaxKind::MarkdownRegion,
+                    [GreenElement::Node(deep)],
+                )
+                .unwrap();
+        }
+        let deep_root = GreenFactory::new()
+            .node(OkfMarkdownSyntaxKind::Root, [GreenElement::Node(deep)])
+            .unwrap();
+        let recovered = recover_exact_source(&deep_root).unwrap();
+        assert!(Arc::ptr_eq(recovered.shared(), deep_source.shared()));
+
+        let wide_source = SourceText::from_shared(Arc::new("x".repeat(20_000))).unwrap();
+        let wide_root = GreenFactory::new()
+            .node(
+                OkfMarkdownSyntaxKind::Root,
+                (0..20_000).map(|index| source_token(&wide_source, index, index + 1)),
+            )
+            .unwrap();
+        let recovered = recover_exact_source(&wide_root).unwrap();
+        assert!(Arc::ptr_eq(recovered.shared(), wide_source.shared()));
+        std::mem::forget(deep_root);
+    }
+
+    #[test]
+    fn exact_source_recovery_rejects_mixed_gap_and_owned_mismatch_streams() {
+        let left = SourceText::from_shared(Arc::new("ab".to_owned())).unwrap();
+        let right = SourceText::from_shared(Arc::new("ab".to_owned())).unwrap();
+        let factory = GreenFactory::new();
+        let mixed = factory
+            .node(
+                OkfMarkdownSyntaxKind::Root,
+                [source_token(&left, 0, 1), source_token(&right, 1, 2)],
+            )
+            .unwrap();
+        assert!(recover_exact_source(&mixed).is_none());
+        let gap = factory
+            .node(OkfMarkdownSyntaxKind::Root, [source_token(&left, 1, 2)])
+            .unwrap();
+        assert!(recover_exact_source(&gap).is_none());
+        let owned = factory
+            .node(
+                OkfMarkdownSyntaxKind::Root,
+                [
+                    source_token(&left, 0, 1),
+                    GreenElement::Token(
+                        factory
+                            .token(
+                                OkfMarkdownSyntaxKind::RawTextToken,
+                                GreenText::Owned(Arc::from("x")),
+                                [],
+                                [],
+                            )
+                            .unwrap(),
+                    ),
+                ],
+            )
+            .unwrap();
+        assert!(recover_exact_source(&owned).is_none());
+    }
 }
 fn same_containers(
     old: &MarkdownStructureMap,

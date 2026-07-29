@@ -2,11 +2,14 @@
 
 use std::{
     collections::{BTreeMap, BTreeSet},
+    fmt,
     sync::{Arc, LazyLock},
 };
 
 use regex::Regex;
-use waml_syntax::{MarkdownStructureMap, OkfMarkdownLanguage, TextRange};
+use waml_syntax::{
+    write_green_to, GreenNode, MarkdownStructureMap, OkfMarkdownLanguage, TextRange,
+};
 
 use crate::{
     analysis::{
@@ -85,8 +88,7 @@ fn validate<'a>(
             ));
         }
         let source = document.text().shared();
-        let tree_text = snapshot.syntax().write_to_string();
-        if tree_text.as_str() != source.as_str()
+        if !exact_tree_source(snapshot.syntax().root_green(), source.as_str())
             || snapshot.syntax().root().range().end().to_usize() != source.len()
         {
             return invariant(format!(
@@ -108,6 +110,46 @@ fn validate<'a>(
         });
     }
     Ok(validated)
+}
+
+/// Validates lossless green output against source without materializing the
+/// document.  A short write, mismatch, or trailing source bytes is false.
+fn exact_tree_source(tree: &GreenNode<OkfMarkdownLanguage>, source: &str) -> bool {
+    struct Comparator<'a> {
+        source: &'a str,
+        cursor: usize,
+        matched: bool,
+    }
+    impl fmt::Write for Comparator<'_> {
+        fn write_str(&mut self, fragment: &str) -> fmt::Result {
+            let Some(end) = self.cursor.checked_add(fragment.len()) else {
+                self.matched = false;
+                return Err(fmt::Error);
+            };
+            if source_fragment(self.source, self.cursor, end) != Some(fragment) {
+                self.matched = false;
+                return Err(fmt::Error);
+            }
+            self.cursor = end;
+            Ok(())
+        }
+    }
+    let mut comparator = Comparator {
+        source,
+        cursor: 0,
+        matched: true,
+    };
+    write_green_to(tree, &mut comparator).is_ok()
+        && comparator.matched
+        && comparator.cursor == source.len()
+}
+
+fn source_fragment(source: &str, start: usize, end: usize) -> Option<&str> {
+    (start <= end
+        && end <= source.len()
+        && source.is_char_boundary(start)
+        && source.is_char_boundary(end))
+    .then(|| &source[start..end])
 }
 
 fn validate_structure(
@@ -472,5 +514,32 @@ fn structural(reason: impl Into<Arc<str>>) -> AnalysisError {
     AnalysisError::StructuralInvariant {
         stage: AnalysisStage::Shell,
         reason: reason.into(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::exact_tree_source;
+    use std::sync::Arc;
+    use waml_syntax::{parse_okf_markdown, MarkdownDialect, SourceText};
+
+    #[test]
+    fn streaming_tree_source_comparator_covers_exact_mismatch_short_and_trailing() {
+        let source = "# Café\nbody\n";
+        let parsed = parse_okf_markdown(
+            SourceText::from_shared(Arc::new(source.to_owned())).unwrap(),
+            MarkdownDialect::CommonMarkCurrent,
+        )
+        .unwrap();
+        assert!(exact_tree_source(parsed.tree.root_green(), source));
+        assert!(!exact_tree_source(
+            parsed.tree.root_green(),
+            "# Cafe\nbody\n"
+        ));
+        assert!(!exact_tree_source(parsed.tree.root_green(), "# Café\nbody"));
+        assert!(!exact_tree_source(
+            parsed.tree.root_green(),
+            "# Café\nbody\ntrailing"
+        ));
     }
 }
