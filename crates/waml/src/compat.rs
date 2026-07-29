@@ -533,6 +533,7 @@ impl crate::edit::EditBatch for Batch {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::edit::EditBatch;
 
     #[test]
     fn malformed_legacy_directories_return_errors_instead_of_panicking() {
@@ -611,5 +612,108 @@ mod tests {
             .documents()
             .iter()
             .any(|document| document.path().as_str() == "archive/sales/existing.md"));
+    }
+
+    #[test]
+    fn mixed_okf_uml_batch_round_trips_as_one_transaction() {
+        let source = SourceBundle::try_from_pairs([(
+            "sales/order.md",
+            "---\ntype: uml.Class\ntitle: Order\n---\n# Order\n",
+        )])
+        .unwrap();
+        let batch = Batch::new(vec![
+            Step::Okf(okf::Op::ConceptMove {
+                id: "sales/order".into(),
+                to_directory: okf::DirectoryAddress::parse("/archive").unwrap(),
+            }),
+            Step::Uml(uml::Op::AttributeAdd {
+                node: "archive/order".into(),
+                name: "id".into(),
+                ty_token: "OrderId".into(),
+                multiplicity: None,
+                visibility: None,
+            }),
+            Step::Okf(okf::Op::DirectoryRename {
+                directory: okf::DirectoryAddress::parse("/archive").unwrap(),
+                name: "commerce".into(),
+            }),
+        ]);
+        let okf = okf::Bundle::parse(&source).unwrap();
+        let uml = uml::project(&okf);
+
+        let applied = batch
+            .apply_reversible(EditContext {
+                source: &source,
+                okf: &okf,
+                uml: &uml,
+            })
+            .unwrap();
+        assert_eq!(
+            applied.source.documents()[0].path().as_str(),
+            "commerce/order.md"
+        );
+        assert!(applied.source.documents()[0]
+            .text()
+            .contains("- id: OrderId"));
+
+        let applied_okf = okf::Bundle::parse(&applied.source).unwrap();
+        let applied_uml = uml::project(&applied_okf);
+        let restored = applied
+            .inverse
+            .apply_reversible(EditContext {
+                source: &applied.source,
+                okf: &applied_okf,
+                uml: &applied_uml,
+            })
+            .unwrap();
+        assert_eq!(restored.source, source);
+
+        let restored_okf = okf::Bundle::parse(&restored.source).unwrap();
+        let restored_uml = uml::project(&restored_okf);
+        let redone = restored
+            .inverse
+            .apply_reversible(EditContext {
+                source: &restored.source,
+                okf: &restored_okf,
+                uml: &restored_uml,
+            })
+            .unwrap();
+        assert_eq!(redone.source, applied.source);
+    }
+
+    #[test]
+    fn late_mixed_batch_failure_publishes_no_source_or_inverse() {
+        let source = SourceBundle::try_from_pairs([(
+            "sales/order.md",
+            "---\ntype: uml.Class\ntitle: Order\n---\n# Order\n",
+        )])
+        .unwrap();
+        let batch = Batch::new(vec![
+            Step::Okf(okf::Op::ConceptMove {
+                id: "sales/order".into(),
+                to_directory: okf::DirectoryAddress::parse("/archive").unwrap(),
+            }),
+            Step::Uml(uml::Op::AttributeRemove {
+                node: "archive/order".into(),
+                name: "missing".into(),
+            }),
+        ]);
+        let okf = okf::Bundle::parse(&source).unwrap();
+        let uml = uml::project(&okf);
+
+        assert!(batch
+            .apply_reversible(EditContext {
+                source: &source,
+                okf: &okf,
+                uml: &uml,
+            })
+            .is_err());
+        assert_eq!(
+            source.to_pairs(),
+            vec![(
+                "sales/order.md".into(),
+                "---\ntype: uml.Class\ntitle: Order\n---\n# Order\n".into()
+            )]
+        );
     }
 }
