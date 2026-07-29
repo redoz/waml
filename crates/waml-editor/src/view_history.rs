@@ -1,3 +1,10 @@
+//! Logical Back/Forward history for document views.
+//!
+//! Locations identify model documents and value-only anchors, not tabs or
+//! widgets. Traversal skips currently unresolved locations without deleting
+//! them, so a later Undo can make an old target reachable again. The timeline
+//! is capped independently of model Undo/Redo and never mutates model state.
+
 use std::collections::VecDeque;
 
 pub const VIEW_HISTORY_LIMIT: usize = 256;

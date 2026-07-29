@@ -1,7 +1,9 @@
 use crate::doc_view::DocView;
 use crate::editor_history::EditMergeKey;
 use crate::icons::Icon;
-use crate::navigation::{DocumentKind, DocumentLocator};
+use crate::navigation::DocumentKind;
+#[cfg(test)]
+use crate::navigation::DocumentLocator;
 use crate::view_history::ViewLocation;
 use makepad_widgets::{LiveId, Vec4};
 use waml::edit::PendingEdit;
@@ -57,6 +59,7 @@ pub struct OpenDocument {
 }
 
 impl OpenDocument {
+    #[cfg(test)]
     pub fn locator(&self) -> DocumentLocator {
         DocumentLocator::new(self.concept_id.clone(), self.kind)
     }

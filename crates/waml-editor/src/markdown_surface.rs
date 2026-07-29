@@ -34,12 +34,6 @@ pub fn link_navigated(actions: &Actions) -> Option<String> {
     None
 }
 
-pub fn scroll_to_fragment(ui: &WidgetRef, cx: &mut Cx, fragment: &str) -> bool {
-    ui.widget(cx, ids!(markdown_surface.md))
-        .as_markdown()
-        .scroll_to_fragment(cx, fragment)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

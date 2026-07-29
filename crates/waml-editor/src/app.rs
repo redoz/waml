@@ -764,8 +764,8 @@ impl App {
             .view_history
             .can_traverse(HistoryDirection::Back, |location| {
                 crate::documents::open_locator(
-                    self.session.okf(),
-                    self.session.uml_projection(),
+                    self.session.okf_analysis(),
+                    self.session.uml_analysis(),
                     &location.document,
                 )
                 .is_some()
@@ -774,8 +774,8 @@ impl App {
             .view_history
             .can_traverse(HistoryDirection::Forward, |location| {
                 crate::documents::open_locator(
-                    self.session.okf(),
-                    self.session.uml_projection(),
+                    self.session.okf_analysis(),
+                    self.session.uml_analysis(),
                     &location.document,
                 )
                 .is_some()
@@ -3495,6 +3495,12 @@ mod tests {
         assert!(app
             .view_history
             .can_traverse(HistoryDirection::Back, |_| true));
+        assert!(app.traverse_view_history(&mut cx, HistoryDirection::Back));
+        assert_eq!(
+            app.documents.active_tab().unwrap().concept_id,
+            "sales/next",
+            "Back after an Undo reveal returns to the editor that was active"
+        );
         let statusbar = app.ui.widget(&cx, ids!(statusbar));
         let statusbar = statusbar
             .borrow::<crate::statusbar::Statusbar>()

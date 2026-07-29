@@ -57,6 +57,7 @@ pub fn save_status_line(
     )
 }
 
+#[cfg(test)]
 pub fn status_line_with_feedback(
     diagram_name: &str,
     node_count: usize,
@@ -70,11 +71,20 @@ pub fn status_line_with_feedback(
         node_count,
         zoom_pct,
         tool_label,
-        save_error,
-        None,
-        None,
-        navigation_message,
+        StatusFeedback {
+            save_error,
+            navigation_message,
+            ..Default::default()
+        },
     )
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+pub struct StatusFeedback<'a> {
+    pub save_error: Option<&'a str>,
+    pub history_problem: Option<&'a str>,
+    pub history_success: Option<&'a str>,
+    pub navigation_message: Option<&'a str>,
 }
 
 pub fn prioritized_status_line(
@@ -82,16 +92,14 @@ pub fn prioritized_status_line(
     node_count: usize,
     zoom_pct: i32,
     tool_label: &str,
-    save_error: Option<&str>,
-    history_problem: Option<&str>,
-    history_success: Option<&str>,
-    navigation_message: Option<&str>,
+    feedback: StatusFeedback<'_>,
 ) -> String {
-    match save_error {
+    match feedback.save_error {
         Some(error) => format!("Save failed: {error}"),
-        None => history_problem
-            .or(history_success)
-            .or(navigation_message)
+        None => feedback
+            .history_problem
+            .or(feedback.history_success)
+            .or(feedback.navigation_message)
             .map(str::to_owned)
             .unwrap_or_else(|| status_line(diagram_name, node_count, zoom_pct, tool_label)),
     }
@@ -146,10 +154,12 @@ impl Widget for Statusbar {
             self.node_count,
             self.zoom_pct,
             &self.tool_label,
-            self.save_error.as_deref(),
-            self.history_problem.as_deref(),
-            self.history_success.as_deref(),
-            self.navigation_message.as_deref(),
+            StatusFeedback {
+                save_error: self.save_error.as_deref(),
+                history_problem: self.history_problem.as_deref(),
+                history_success: self.history_success.as_deref(),
+                navigation_message: self.navigation_message.as_deref(),
+            },
         );
         let text_y = rect.pos.y + rect.size.y * 0.5 - 6.0;
         self.draw_text
@@ -290,7 +300,16 @@ mod tests {
     fn history_feedback_obeys_error_warning_success_navigation_precedence() {
         let line = |save, problem, success, navigation| {
             prioritized_status_line(
-                "Orders", 3, 100, "Select", save, problem, success, navigation,
+                "Orders",
+                3,
+                100,
+                "Select",
+                StatusFeedback {
+                    save_error: save,
+                    history_problem: problem,
+                    history_success: success,
+                    navigation_message: navigation,
+                },
             )
         };
         assert_eq!(

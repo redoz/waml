@@ -1,3 +1,11 @@
+//! Bounded, model-global Undo/Redo metadata.
+//!
+//! Entries hold compact reversible commands plus stable view locations, never
+//! whole editor/session snapshots. The newest 64 entries stay atomic; only
+//! older compatible text edits may coalesce, and never across an explicit
+//! boundary or the saved state. Preparing an Undo/Redo is non-mutating so a
+//! failed model transaction can leave both stacks exactly intact.
+
 use std::ops::Range;
 
 use waml::edit::PendingEdit;

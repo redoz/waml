@@ -6,7 +6,9 @@ use waml::source::SourceBundle;
 
 use crate::document::EditIntent;
 use crate::editor_history::{EditorHistory, HistoryStateId};
-use crate::view_history::{DocumentLocator, ViewAnchor, ViewLocation};
+use crate::view_history::ViewLocation;
+#[cfg(test)]
+use crate::view_history::{DocumentLocator, ViewAnchor};
 
 pub struct EditorSession {
     source: SourceBundle,
@@ -103,10 +105,12 @@ impl EditorSession {
         Ok(SessionChange::full(self.revision))
     }
 
+    #[cfg(test)]
     pub fn apply<B: EditBatch + 'static>(&mut self, batch: B) -> Result<SessionChange, EditError> {
         self.apply_with_preparer(batch, prepare_candidate)
     }
 
+    #[cfg(test)]
     fn apply_with_preparer<B, F>(
         &mut self,
         batch: B,
@@ -314,10 +318,12 @@ impl EditorSession {
         }
     }
 
+    #[cfg(test)]
     pub fn can_undo(&self) -> bool {
         self.history.can_undo()
     }
 
+    #[cfg(test)]
     pub fn can_redo(&self) -> bool {
         self.history.can_redo()
     }
@@ -1546,6 +1552,48 @@ mod tests {
         assert_eq!(redone.location, location(2.0));
         assert!(session.bundle().documents()[0].text().contains("left of"));
         assert!(session.can_undo());
+    }
+
+    #[test]
+    fn newest_typed_character_undo_keeps_the_rest_of_customerr() {
+        let bundle = diagram_bundle("");
+        let mut session = EditorSession::default();
+        session.replace(bundle).unwrap();
+        let typed = |title: &str, label: &str, span: std::ops::Range<usize>| EditRequest {
+            before_location: location(1.0),
+            intent: EditIntent {
+                edit: waml::edit::PendingEdit::new(waml::uml::Batch(vec![Op::DiagramSet {
+                    key: "dia".into(),
+                    title: Some(title.into()),
+                    description: None,
+                    clear_description: false,
+                    display: None,
+                }])),
+                label: label.into(),
+                merge_key: Some(crate::editor_history::EditMergeKey {
+                    document: DocumentLocator::primary("dia"),
+                    control: "title".into(),
+                    kind: crate::editor_history::EditMergeKind::Insert,
+                    span: Some(span),
+                }),
+                after_location: Some(location(2.0)),
+            },
+        };
+
+        session
+            .apply_edit(typed("Customer", "Type Customer", 0..8))
+            .unwrap();
+        session
+            .apply_edit(typed("Customerr", "Type r", 8..9))
+            .unwrap();
+        assert!(session.bundle().documents()[0].text().contains("Customerr"));
+
+        let undone = session.undo().unwrap().unwrap();
+
+        assert_eq!(undone.label, "Type r");
+        let text = session.bundle().documents()[0].text();
+        assert!(text.contains("Customer"));
+        assert!(!text.contains("Customerr"));
     }
 
     #[test]

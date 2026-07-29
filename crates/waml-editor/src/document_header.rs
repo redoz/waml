@@ -577,10 +577,7 @@ mod tests {
             HISTORY_CONTROLS_W + HEADER_PAD_X
         );
         assert_eq!(layout.segment_rects[0].1.size.x, 32.0);
-        assert_eq!(
-            layout.segment_rects[1].1.pos.x,
-            HISTORY_CONTROLS_W + 56.0
-        );
+        assert_eq!(layout.segment_rects[1].1.pos.x, HISTORY_CONTROLS_W + 56.0);
         assert_eq!(layout.segment_rects[1].1.size.x, 42.0);
 
         let separator = separator_rect(layout.segment_rects[0].1);

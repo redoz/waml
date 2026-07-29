@@ -1,5 +1,6 @@
 pub use makepad_widgets;
 use makepad_widgets::*;
+use waml_editor::{editor_history, view_history};
 
 mod accent;
 mod action_link;
@@ -25,7 +26,6 @@ mod document_header;
 mod document_host;
 mod documents;
 mod edge_labels;
-mod editor_history;
 mod editor_session;
 mod fonts;
 mod fonts_overlay;
@@ -69,7 +69,6 @@ mod tree;
 mod tree_panel;
 mod uml_documents;
 mod view_bar;
-mod view_history;
 
 #[cfg(test)]
 mod script_gate;
