@@ -11,10 +11,12 @@ use super::{placement::PlacementSnapshot, selection::SelectionSnapshot};
 use crate::{canvas::viewport::ViewportSnapshot, scene::Scene};
 use makepad_widgets::Cx2d;
 
+pub(super) use metrics::{LineworkMetrics, DEFAULT_LINEWORK_MODE};
 pub(super) use primitives::ClassDrawResources;
 
 pub(super) struct RenderSnapshot<'a> {
     pub(super) scene: &'a Scene,
+    pub(super) linework: LineworkMetrics,
     pub(super) viewport: ViewportSnapshot,
     pub(super) selection: SelectionSnapshot,
     pub(super) placement: PlacementSnapshot,

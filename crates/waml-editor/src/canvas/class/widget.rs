@@ -8,7 +8,7 @@
 use super::{
     interaction::ClassInteraction,
     placement::PlacementInteraction,
-    render::{self, ClassDrawResources, RenderSnapshot},
+    render::{self, ClassDrawResources, LineworkMetrics, RenderSnapshot, DEFAULT_LINEWORK_MODE},
     selection::{ConstraintVisibility, SelectionPolicy, SelectionState},
     DialPlacement, FrameCommand, InteractionEffects, SceneUpdate, SurfaceIntent, TimerCommand,
     Zone,
@@ -613,9 +613,11 @@ impl Widget for ClassDiagramSurface {
 
         viewport.set_view_rect(rect);
         viewport.apply_initial_fit();
+        let viewport = viewport.snapshot();
         let snapshot = RenderSnapshot {
             scene,
-            viewport: viewport.snapshot(),
+            linework: LineworkMetrics::for_zoom(DEFAULT_LINEWORK_MODE, viewport.camera.zoom),
+            viewport,
             selection: selection.snapshot(),
             placement: placement.snapshot(),
         };

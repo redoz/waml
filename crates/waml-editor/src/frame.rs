@@ -122,6 +122,7 @@ script_mod! {
         border_hi: uniform(atlas.frame_hi)
         border_lo: uniform(atlas.frame_lo)
         zoom: uniform(1.0)
+        stroke_scale: uniform(1.0)
         selected: uniform(0.0)
         grey: uniform(0.0)
         // Padding the CALLER added on every side so the shadow has room to fall
@@ -140,7 +141,7 @@ script_mod! {
         pixel: fn() {
             // Selection widens the border ~1.5x: mix() lifts the 1.5px base to
             // 2.25px when selected == 1.0, leaving the unselected path untouched.
-            let inset = 1.5 * self.zoom * mix(1.0, 1.5, self.selected)
+            let inset = 1.5 * self.zoom * self.stroke_scale * mix(1.0, 1.5, self.selected)
             // Stroke width floors to a 1px screen-space hairline so the frame
             // never smears sub-pixel (and fades) when zoomed out, mirroring the
             // canvas EdgeLine pen. The rect inset stays proportional; only the

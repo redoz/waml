@@ -1,13 +1,13 @@
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum LineworkMode {
+pub(in super::super) enum LineworkMode {
     Cad,
     Scaled,
 }
 
-pub(super) const DEFAULT_LINEWORK_MODE: LineworkMode = LineworkMode::Cad;
+pub(in super::super) const DEFAULT_LINEWORK_MODE: LineworkMode = LineworkMode::Cad;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub(super) struct LineworkMetrics {
+pub(in super::super) struct LineworkMetrics {
     pub(super) frame_stroke_scale: f32,
     pub(super) group_stroke_width: f32,
     pub(super) group_dash_period: f32,
@@ -18,7 +18,7 @@ pub(super) struct LineworkMetrics {
 }
 
 impl LineworkMetrics {
-    pub(super) fn for_zoom(mode: LineworkMode, zoom: f64) -> Self {
+    pub(in super::super) fn for_zoom(mode: LineworkMode, zoom: f64) -> Self {
         debug_assert!(zoom.is_finite() && zoom > 0.0);
         match mode {
             LineworkMode::Cad => Self {

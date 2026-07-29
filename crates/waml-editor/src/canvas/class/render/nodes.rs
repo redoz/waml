@@ -1,4 +1,8 @@
-use super::{primitives::ClassDrawResources, relations::relations_for_visibility, RenderSnapshot};
+use super::{
+    primitives::ClassDrawResources,
+    relations::relations_for_visibility,
+    LineworkMetrics, RenderSnapshot,
+};
 use crate::canvas::primitives::{font_raster_size, world_rect_to_screen};
 use crate::frame::SurfaceExt;
 use makepad_widgets::*;
@@ -39,6 +43,11 @@ pub(super) fn draw_nodes(
 ) {
     let zoom = snapshot.viewport.camera.zoom;
     draws.node.set_uniform(cx, live_id!(zoom), &[zoom as f32]);
+    draws.node.set_uniform(
+        cx,
+        live_id!(stroke_scale),
+        &[snapshot.linework.frame_stroke_scale],
+    );
 
     let focus_keys: HashSet<String> = relations_for_visibility(
         &snapshot.scene.relations,
@@ -68,7 +77,7 @@ pub(super) fn draw_nodes(
             .node
             .set_uniform(cx, live_id!(grey), &[if muted { 1.0 } else { 0.0 }]);
         draws.node.draw_surface_abs(cx, screen);
-        draw_card(cx, screen, node, zoom, muted, draws);
+        draw_card(cx, screen, node, zoom, snapshot.linework, muted, draws);
     }
 }
 
@@ -77,6 +86,7 @@ fn draw_card(
     screen: Rect,
     node: &crate::scene::SceneNode,
     zoom: f64,
+    linework: LineworkMetrics,
     grey: bool,
     draws: &mut ClassDrawResources<'_>,
 ) {
@@ -118,7 +128,7 @@ fn draw_card(
             cx,
             Rect {
                 pos: dvec2(screen.pos.x, screen.pos.y + dy * zoom),
-                size: dvec2(card_w, (1.0 * zoom).max(1.0)),
+                size: dvec2(card_w, linework.divider_thickness),
             },
         );
     }
@@ -129,7 +139,7 @@ fn draw_card(
             cx,
             Rect {
                 pos: dvec2(screen.pos.x, screen.pos.y + dy * zoom),
-                size: dvec2(card_w, (1.0 * zoom).max(1.0)),
+                size: dvec2(card_w, linework.divider_thickness),
             },
         );
     }
@@ -172,7 +182,7 @@ fn draw_card(
     }
 
     if node.ports {
-        let nub = 6.0 * zoom;
+        let nub = linework.nub_size;
         let cy = screen.pos.y + placed.size.1 * 0.5 * zoom - nub * 0.5;
         draws.rule.color = accent;
         draws.rule.draw_abs(

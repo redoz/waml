@@ -82,14 +82,20 @@ pub(super) fn draw_groups(
 
     let title_ink = draws.text.color;
     let dim_ink = draws.group_title_dim.color;
-    let dash_px = (6.0 * zoom).clamp(3.0, 18.0) as f32;
     for (screen, label, mode) in group_draws {
         match mode {
             GroupDraw::Chrome => draws.group.draw_abs(cx, screen),
             GroupDraw::Dashed => {
-                draws
-                    .group_dashed
-                    .set_uniform(cx, live_id!(dash_px), &[dash_px]);
+                draws.group_dashed.set_uniform(
+                    cx,
+                    live_id!(dash_px),
+                    &[snapshot.linework.group_dash_period],
+                );
+                draws.group_dashed.set_uniform(
+                    cx,
+                    live_id!(stroke_w),
+                    &[snapshot.linework.group_stroke_width],
+                );
                 draws.group_dashed.draw_abs(cx, screen);
             }
             GroupDraw::Skip => {}
