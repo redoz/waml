@@ -175,19 +175,24 @@ mod tests {
             ),
         ])
         .unwrap();
-        let okf = waml::okf::Bundle::parse(&source).unwrap();
-        let uml = waml::uml::project(&okf);
+        let prepared = waml::analysis::prepare_candidate(source.clone(), None, 1).unwrap();
+        let (_, okf_analysis, uml_analysis, _) = prepared.into_parts();
         let mut cx = Cx::new(Box::new(|_, _| {}));
         let (ui, body, markdown_uid) = mounted_body(&mut cx);
         let mut view = SourceView::new("shop/order".into());
-        view.sync(&mut cx, &body, data(&source, &okf, &uml));
+        view.sync(&mut cx, &body, data(&source, &okf_analysis, &uml_analysis));
         assert!(ui
             .widget(&cx, ids!(markdown_surface.md))
             .text()
             .contains("[Next](./next.md#details)"));
         let actions: ActionsBuf = vec![markdown_link_action(markdown_uid, "./next.md#details")];
 
-        let outcome = view.handle(&mut cx, &body, &actions, data(&source, &okf, &uml));
+        let outcome = view.handle(
+            &mut cx,
+            &body,
+            &actions,
+            data(&source, &okf_analysis, &uml_analysis),
+        );
 
         assert_eq!(
             outcome.navigation,

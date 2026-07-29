@@ -2512,9 +2512,7 @@ mod tests {
             ),
         ])
         .unwrap();
-        let okf = waml::okf::Bundle::parse(&source).unwrap();
-        let uml = waml::uml::project(&okf);
-        app.session.replace(source, uml);
+        app.session.replace(source).unwrap();
         let mut project_tree = cx.with_vm(crate::tree_panel::ProjectTree::script_new_with_default);
         let file_tree =
             WidgetRef::new_with_inner(Box::new(cx.with_vm(FileTree::script_new_with_default)));
@@ -2522,8 +2520,8 @@ mod tests {
         project_tree.set_view(
             &mut cx,
             crate::nav::view(
-                app.session.okf(),
-                app.session.uml_projection(),
+                app.session.okf_analysis(),
+                app.session.uml_analysis(),
                 &NavState::default(),
             ),
         );
@@ -2958,7 +2956,7 @@ mod tests {
     fn navigation_app_with_active_order() -> (Cx, App) {
         let (mut cx, mut app) = navigation_app();
         mount_markdown_surface(&mut cx, &mut app);
-        let order = crate::okf_documents::open(app.session.okf(), "sales/order")
+        let order = crate::okf_documents::open(app.session.okf_analysis(), "sales/order")
             .expect("order document exists");
         app.documents.transition(
             &mut cx,
@@ -2999,8 +2997,8 @@ mod tests {
         let (breadcrumb_intent, markdown_resolved_intent) = {
             let (_cx, fixture_app) = navigation_app();
             let breadcrumb_target = crate::navigation::breadcrumb_for(
-                fixture_app.session.okf(),
-                fixture_app.session.uml_projection(),
+                fixture_app.session.okf_analysis(),
+                fixture_app.session.uml_analysis(),
                 "sales/customer",
             )
             .expect("customer has a canonical breadcrumb")
@@ -3529,8 +3527,8 @@ mod tests {
                     };
                     let data = ViewData {
                         source: app.session.source(),
-                        okf: app.session.okf(),
-                        uml: app.session.uml_projection(),
+                        okf_analysis: app.session.okf_analysis(),
+                        uml_analysis: app.session.uml_analysis(),
                         revision: app.session.revision(),
                     };
                     view.sync(&mut cx, &body, data);
@@ -3692,7 +3690,7 @@ mod tests {
     #[test]
     fn document_header_source_generic_start_source_sequence_has_no_stale_state() {
         let (mut cx, mut app) = navigation_app();
-        let source = crate::okf_documents::open_source(app.session.okf(), "sales/order")
+        let source = crate::okf_documents::open_source(app.session.okf_analysis(), "sales/order")
             .expect("source document exists");
         app.documents.transition(
             &mut cx,
@@ -3730,7 +3728,7 @@ mod tests {
         assert_eq!(mounted_inspector_state(&cx, &app), DockState::Pinned);
         app.sync_dock_slots(&mut cx);
 
-        let generic = crate::okf_documents::open(app.session.okf(), "sales/order")
+        let generic = crate::okf_documents::open(app.session.okf_analysis(), "sales/order")
             .expect("generic document exists");
         app.documents.transition(
             &mut cx,
@@ -3757,7 +3755,7 @@ mod tests {
         assert_eq!(mounted_inspector_state(&cx, &app), DockState::Flag);
         app.sync_dock_slots(&mut cx);
 
-        let source = crate::okf_documents::open_source(app.session.okf(), "sales/order")
+        let source = crate::okf_documents::open_source(app.session.okf_analysis(), "sales/order")
             .expect("source document still exists");
         app.documents.transition(
             &mut cx,

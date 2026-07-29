@@ -1534,9 +1534,10 @@ mod tests {
         ])
         .unwrap();
         let bundle = waml::okf::Bundle::parse(&source).unwrap();
-        let uml = waml::uml::project(&bundle);
+        let prepared = waml::analysis::prepare_candidate(source, None, 1).unwrap();
+        let (_, okf_analysis, uml_analysis, _) = prepared.into_parts();
         let tree_intent = row_navigation("/sales", None, true, false, 1).unwrap();
-        let breadcrumb_target = breadcrumb_for(&bundle, &uml, "sales/order")
+        let breadcrumb_target = breadcrumb_for(&okf_analysis, &uml_analysis, "sales/order")
             .unwrap()
             .into_iter()
             .find(|segment| segment.title == "Sales")
