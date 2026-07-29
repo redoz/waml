@@ -570,14 +570,41 @@ pub fn reparse_okf_markdown_with_structure(
         });
     }
     if changes.is_empty() {
+        let (root, shared_source_independent_green) =
+            if green_uses_source(previous.root_green(), &new_text) {
+                (
+                    previous.root_green().clone(),
+                    count_source_independent_greens(&GreenElement::Node(
+                        previous.root_green().clone(),
+                    )),
+                )
+            } else {
+                let Some(rebased) = rebase_unchanged_green(
+                    &GreenElement::Node(previous.root_green().clone()),
+                    &new_text,
+                    &map,
+                )
+                .map_err(|_| ParseError::WidthOverflow)?
+                else {
+                    return Err(ParseError::StructuralInvariant {
+                        reason: "empty change map could not rebase unchanged syntax".into(),
+                    });
+                };
+                let GreenElement::Node(root) = rebased.element else {
+                    return Err(ParseError::StructuralInvariant {
+                        reason: "rebased syntax root was not a node".into(),
+                    });
+                };
+                (root, rebased.shared_source_independent_green)
+            };
         return Ok((
             ReparseOutcome::Incremental {
                 tree: Arc::new(SyntaxTree::new(
-                    previous.root_green().clone(),
+                    root,
                     Arc::from(previous.diagnostics()),
                     MarkdownDialect::CommonMarkCurrent,
                 )),
-                shared_source_independent_green: 0,
+                shared_source_independent_green,
                 reparsed_range: TextRange::new(TextSize::try_from_usize(0).unwrap(), old.len())
                     .unwrap(),
             },
@@ -686,6 +713,39 @@ pub fn reparse_okf_markdown_with_structure(
         },
         new_structure,
     ))
+}
+
+fn green_uses_source(node: &GreenNode<OkfMarkdownLanguage>, source: &SourceText) -> bool {
+    node.children().iter().all(|child| match child {
+        GreenElement::Node(child) => green_uses_source(child, source),
+        GreenElement::Token(token) => std::iter::once(token.text())
+            .chain(token.leading_trivia().iter().map(|trivia| &trivia.text))
+            .chain(token.trailing_trivia().iter().map(|trivia| &trivia.text))
+            .all(|text| match text {
+                GreenText::SourceSlice { source: actual, .. } => {
+                    Arc::ptr_eq(actual.shared(), source.shared())
+                }
+                GreenText::Static(_) | GreenText::Owned(_) => true,
+            }),
+    })
+}
+
+fn count_source_independent_greens(element: &GreenElement<OkfMarkdownLanguage>) -> usize {
+    match element {
+        GreenElement::Token(token) => usize::from(token.is_source_independent()),
+        GreenElement::Node(node) if node.is_source_independent() => {
+            1 + node
+                .children()
+                .iter()
+                .map(count_source_independent_greens)
+                .sum::<usize>()
+        }
+        GreenElement::Node(node) => node
+            .children()
+            .iter()
+            .map(count_source_independent_greens)
+            .sum(),
+    }
 }
 
 #[derive(Clone, Copy)]

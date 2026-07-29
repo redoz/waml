@@ -115,13 +115,73 @@ fn frontmatter_creation_at_zero_is_named() {
 
 #[test]
 fn unchanged_input_reuses_root_green() {
-    let previous = parse_okf_markdown(text("body\n"), MarkdownDialect::CommonMarkCurrent).unwrap();
-    let ReparseOutcome::Incremental { tree, .. } =
-        reparse_okf_markdown(&previous.tree, text("body\n"), &[]).unwrap()
+    let source = text("body\n");
+    let previous = parse_okf_markdown(source.clone(), MarkdownDialect::CommonMarkCurrent).unwrap();
+    let ReparseOutcome::Incremental {
+        tree,
+        shared_source_independent_green,
+        reparsed_range,
+    } = reparse_okf_markdown(&previous.tree, source, &[]).unwrap()
     else {
         panic!("unchanged input must be incremental")
     };
+    assert_eq!(shared_source_independent_green, 1);
+    assert_eq!(reparsed_range, range(0, 5));
     assert!(previous.tree.root().same_green(&tree.root()));
+}
+
+#[test]
+fn unchanged_bytes_on_fresh_source_rebase_source_backed_greens() {
+    let old_source = text("---\nbad\n---\nbody\n");
+    let parsed = parse_okf_markdown(old_source, MarkdownDialect::CommonMarkCurrent).unwrap();
+    let raw = first_node(&parsed.tree, OkfMarkdownSyntaxKind::MarkdownRegion);
+    let annotated = annotate_occurrence(
+        &parsed.tree,
+        &raw.locator(),
+        SyntaxAnnotation::new(NonZeroU64::new(9).unwrap(), "retained", None),
+    )
+    .unwrap();
+    let previous = SyntaxTree::new(
+        annotated,
+        Arc::from(parsed.tree.diagnostics()),
+        MarkdownDialect::CommonMarkCurrent,
+    );
+    assert!(!previous.diagnostics().is_empty());
+    let new_source = text("---\nbad\n---\nbody\n");
+    let (outcome, _) =
+        reparse_okf_markdown_with_structure(&previous, new_source.clone(), &[]).unwrap();
+    let ReparseOutcome::Incremental {
+        tree,
+        shared_source_independent_green,
+        reparsed_range,
+    } = outcome
+    else {
+        panic!("empty change map must stay incremental")
+    };
+
+    assert_eq!(shared_source_independent_green, 1);
+    assert_eq!(reparsed_range, range(0, 17));
+    assert!(all_source_slices_use(
+        &GreenElement::Node(tree.root_green().clone()),
+        &new_source
+    ));
+    assert!(!previous.root().same_green(&tree.root()));
+    assert!(
+        !first_node(&previous, OkfMarkdownSyntaxKind::MarkdownRegion)
+            .same_green(&first_node(&tree, OkfMarkdownSyntaxKind::MarkdownRegion))
+    );
+    assert!(
+        first_token(&previous, OkfMarkdownSyntaxKind::EndOfFileToken)
+            .same_green(&first_token(&tree, OkfMarkdownSyntaxKind::EndOfFileToken))
+    );
+    assert_eq!(
+        structural_fingerprint(&tree),
+        structural_fingerprint(&previous)
+    );
+    assert_eq!(
+        diagnostic_fingerprint(&tree),
+        diagnostic_fingerprint(&previous)
+    );
 }
 
 fn text(value: &str) -> SourceText {
