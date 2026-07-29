@@ -227,6 +227,7 @@ struct FunctionSummary {
     output_type: Option<Type>,
     output_paths: Vec<Vec<String>>,
     body_paths: Vec<Vec<String>>,
+    local_standard_roots: BTreeSet<String>,
     retired_calls: BTreeSet<String>,
     opaque_authority_macros: BTreeSet<String>,
     raw_authority_closure: bool,
@@ -407,22 +408,7 @@ impl<'ast, 'env> Visit<'ast> for BodyFacts<'env> {
     }
 
     fn visit_expr_assign(&mut self, assignment: &'ast syn::ExprAssign) {
-        if let syn::Expr::Field(field) = unwrap_expression(&assignment.left) {
-            if let Some(owner) = self.expression_type_identity(&field.base) {
-                let name = match &field.member {
-                    syn::Member::Named(name) => name.to_string(),
-                    syn::Member::Unnamed(index) => index.index.to_string(),
-                };
-                if let Some(field_type) = self
-                    .env
-                    .struct_fields
-                    .get(&owner)
-                    .and_then(|fields| fields.get(&name))
-                {
-                    self.body_paths.extend(field_type.paths.iter().cloned());
-                }
-            }
-        }
+        self.record_assignment_place_type(&assignment.left);
         visit::visit_expr_assign(self, assignment);
     }
 
@@ -482,6 +468,33 @@ impl<'env> BodyFacts<'env> {
             if RETIRED_CALLS.contains(&name.as_str()) {
                 self.retired_calls.insert(name.to_owned());
             }
+        }
+    }
+
+    fn record_assignment_place_type(&mut self, expression: &syn::Expr) {
+        match unwrap_expression(expression) {
+            syn::Expr::Field(field) => {
+                let Some(owner) = self.expression_type_identity(&field.base) else {
+                    return;
+                };
+                let name = match &field.member {
+                    syn::Member::Named(name) => name.to_string(),
+                    syn::Member::Unnamed(index) => index.index.to_string(),
+                };
+                let paths = self
+                    .env
+                    .struct_fields
+                    .get(&owner)
+                    .and_then(|fields| fields.get(&name))
+                    .map(|field_type| field_type.paths.clone())
+                    .unwrap_or_default();
+                self.body_paths.extend(paths);
+            }
+            syn::Expr::Index(index) => self.record_assignment_place_type(&index.expr),
+            syn::Expr::Unary(unary) if matches!(unary.op, syn::UnOp::Deref(_)) => {
+                self.record_assignment_place_type(&unary.expr);
+            }
+            _ => {}
         }
     }
 
@@ -558,6 +571,9 @@ impl<'env> BodyFacts<'env> {
                 }
                 _ => None,
             },
+            syn::Expr::Unary(expression) if matches!(expression.op, syn::UnOp::Deref(_)) => {
+                self.expression_type_identity(&expression.expr)
+            }
             _ => None,
         }
     }
@@ -1999,12 +2015,59 @@ fn summarize_function(
         output_type,
         output_paths,
         body_paths: facts.body_paths,
+        local_standard_roots: block_local_standard_roots(block),
         retired_calls: facts.retired_calls,
         opaque_authority_macros: facts.opaque_authority_macros,
         raw_authority_closure: facts.raw_authority_closure,
         allowlisted_leaf_codec: is_allowlisted_leaf_codec(&id),
         visible,
     });
+}
+
+fn block_local_standard_roots(block: &syn::Block) -> BTreeSet<String> {
+    #[derive(Default)]
+    struct LocalRootBindings {
+        roots: BTreeSet<String>,
+    }
+
+    impl LocalRootBindings {
+        fn record(&mut self, name: impl Into<String>) {
+            let name = name.into();
+            if matches!(name.as_str(), "std" | "alloc" | "core") {
+                self.roots.insert(name);
+            }
+        }
+    }
+
+    impl<'ast> Visit<'ast> for LocalRootBindings {
+        fn visit_item_mod(&mut self, item_mod: &'ast ItemMod) {
+            self.record(item_mod.ident.to_string());
+        }
+
+        fn visit_item_use(&mut self, item_use: &'ast ItemUse) {
+            let mut bindings = BTreeMap::new();
+            collect_use_bindings(Vec::new(), &item_use.tree, &mut bindings);
+            for binding in bindings.into_keys() {
+                self.record(binding);
+            }
+        }
+
+        fn visit_item_extern_crate(&mut self, item_extern: &'ast syn::ItemExternCrate) {
+            self.record(
+                item_extern
+                    .rename
+                    .as_ref()
+                    .map(|(_, rename)| rename.to_string())
+                    .unwrap_or_else(|| item_extern.ident.to_string()),
+            );
+        }
+
+        fn visit_item_fn(&mut self, _item_fn: &'ast syn::ItemFn) {}
+    }
+
+    let mut bindings = LocalRootBindings::default();
+    bindings.visit_block(block);
+    bindings.roots
 }
 
 fn resolve_edges(
@@ -2363,6 +2426,9 @@ impl<'env> ReturnTaintFacts<'env> {
                 }
                 _ => None,
             },
+            syn::Expr::Unary(expression) if matches!(expression.op, syn::UnOp::Deref(_)) => {
+                self.expression_type_identity(&expression.expr)
+            }
             _ => None,
         }
     }
@@ -2483,7 +2549,11 @@ impl<'ast> Visit<'ast> for ReturnTaintFacts<'_> {
                 self.env.aliases,
             )
             .is_empty()
-            && !is_harmless_standard_collection_dispatch(&site, &self.env)
+            && !is_harmless_standard_collection_dispatch(
+                &site,
+                &self.env,
+                &self.caller.local_standard_roots,
+            )
         {
             self.unresolved_model_dispatch = true;
         }
@@ -2829,7 +2899,8 @@ fn summary_is_raw_grammar_entry(
         && !input_names.contains("SourceText")
         && is_typed_uml_tree(&output_names)
         && !is_typed_uml_tree(&body_names)
-        && !is_typed_uml_tree_builder(&body_names);
+        && !is_typed_uml_tree_builder(&body_names)
+        && cached_tree_body_is_verified(summary);
     if cached_tree_lookup {
         return false;
     }
@@ -2841,6 +2912,122 @@ fn summary_is_raw_grammar_entry(
         aliases,
         imports,
     )
+}
+
+fn cached_tree_body_is_verified(summary: &FunctionSummary) -> bool {
+    const KNOWN_METHODS: &[&str] = &[
+        "clone",
+        "cloned",
+        "contains_key",
+        "expect",
+        "get",
+        "ok_or_else",
+        "path",
+        "reparse",
+    ];
+
+    let mut saw_reparse = false;
+    let mut saw_contains_key = false;
+    let mut saw_get = false;
+    for call in &summary.calls {
+        if call.method {
+            let Some(name) = call.segments.last().map(String::as_str) else {
+                return false;
+            };
+            if !KNOWN_METHODS.contains(&name) {
+                return false;
+            }
+            saw_reparse |= name == "reparse";
+            saw_contains_key |= name == "contains_key";
+            saw_get |= name == "get";
+        } else if !matches!(
+            call.segments.as_slice(),
+            [name] if name == "Ok"
+        ) && !call.segments.ends_with(&["EditError".into(), "at".into()])
+        {
+            return false;
+        }
+    }
+
+    saw_reparse
+        && saw_contains_key
+        && saw_get
+        && cache_tree_tail_reads_touched_islands(&summary.block)
+        && cache_tree_body_uses_only_format_macro(&summary.block)
+}
+
+fn cache_tree_tail_reads_touched_islands(block: &syn::Block) -> bool {
+    let Some(syn::Stmt::Expr(tail, None)) = block.stmts.last() else {
+        return false;
+    };
+    let syn::Expr::Call(ok) = unwrap_expression(tail) else {
+        return false;
+    };
+    let syn::Expr::Path(function) = unwrap_expression(&ok.func) else {
+        return false;
+    };
+    if function
+        .path
+        .segments
+        .last()
+        .map(|segment| segment.ident != "Ok")
+        .unwrap_or(true)
+    {
+        return false;
+    }
+    let Some(argument) = ok.args.first() else {
+        return false;
+    };
+    let syn::Expr::Tuple(tuple) = unwrap_expression(argument) else {
+        return false;
+    };
+    let Some(tree) = tuple.elems.get(1) else {
+        return false;
+    };
+
+    let mut expression = tree;
+    let mut saw_get = false;
+    loop {
+        match unwrap_expression(expression) {
+            syn::Expr::MethodCall(call) => {
+                saw_get |= call.method == "get";
+                expression = &call.receiver;
+            }
+            syn::Expr::Field(field) => {
+                let syn::Member::Named(name) = &field.member else {
+                    return false;
+                };
+                let syn::Expr::Path(base) = unwrap_expression(&field.base) else {
+                    return false;
+                };
+                return saw_get
+                    && name == "touched_islands"
+                    && base.path.segments.len() == 1
+                    && base.path.segments[0].ident == "self";
+            }
+            _ => return false,
+        }
+    }
+}
+
+fn cache_tree_body_uses_only_format_macro(block: &syn::Block) -> bool {
+    #[derive(Default)]
+    struct MacroNames {
+        names: BTreeSet<String>,
+    }
+
+    impl<'ast> Visit<'ast> for MacroNames {
+        fn visit_macro(&mut self, item_macro: &'ast syn::Macro) {
+            self.names.insert(macro_path(item_macro));
+        }
+    }
+
+    let mut macros = MacroNames::default();
+    macros.visit_block(block);
+    macros
+        .names
+        .iter()
+        .all(|name| name == "format" || name.ends_with("::format"))
 }
 
 fn summary_has_model_input(
@@ -3052,7 +3239,11 @@ fn receiver_type_identity(
     resolve(context, paths, aliases, imports, &mut BTreeSet::new())
 }
 
-fn is_harmless_standard_collection_dispatch(call: &CallSite, env: &BodyEnvironment<'_>) -> bool {
+fn is_harmless_standard_collection_dispatch(
+    call: &CallSite,
+    env: &BodyEnvironment<'_>,
+    local_standard_roots: &BTreeSet<String>,
+) -> bool {
     let Some(receiver) = &call.receiver_type else {
         return false;
     };
@@ -3064,6 +3255,14 @@ fn is_harmless_standard_collection_dispatch(call: &CallSite, env: &BodyEnvironme
         receiver.module.crate_key.as_str(),
         "external:std" | "external:alloc"
     ) {
+        return false;
+    }
+    let external_root = receiver
+        .module
+        .crate_key
+        .strip_prefix("external:")
+        .unwrap_or_default();
+    if local_standard_roots.contains(external_root) {
         return false;
     }
 

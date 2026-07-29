@@ -367,6 +367,19 @@ fn real_syntax_tree_authority_signatures_and_builders_are_rejected() {
                 }
             }
 
+            struct TreeSlots {
+                trees: Vec<Arc<SyntaxTree<UmlLanguage>>>,
+            }
+            impl TreeSlots {
+                fn parse_indexed(&mut self, raw: &str) {
+                    self.trees[0] = external_factory(raw);
+                }
+            }
+
+            fn parse_dereferenced(slot: &mut TreeSlot, raw: &str) {
+                (*slot).tree = external_factory(raw);
+            }
+
             pub trait ShadowParser {
                 fn trait_entry(text: SharedInput<'_>) -> WrappedTree;
                 fn trait_raw_entry(text: SharedRaw<'_>) -> WrappedTree;
@@ -382,6 +395,19 @@ fn real_syntax_tree_authority_signatures_and_builders_are_rejected() {
         (
             "crates/waml/src/uml/lower.rs",
             r#"
+            struct UmlLoweringState;
+            impl UmlLoweringState {
+                fn tree(
+                    &mut self,
+                    candidate: &SourceBundle,
+                    target: &str,
+                    op: &str,
+                ) -> Result<(BundlePath, Arc<SyntaxTree<UmlLanguage>>), EditError> {
+                    let _ = (candidate, op);
+                    Ok((BundlePath::default(), external_factory(target)))
+                }
+            }
+
             mod shadow {
                 struct UmlLoweringState;
 
@@ -412,6 +438,8 @@ fn real_syntax_tree_authority_signatures_and_builders_are_rejected() {
         "cast_local",
         "cached_tree_near_match",
         "parse_into",
+        "parse_indexed",
+        "parse_dereferenced",
         "trait_entry",
         "trait_raw_entry",
         "trait_constructed",
@@ -430,6 +458,14 @@ fn real_syntax_tree_authority_signatures_and_builders_are_rejected() {
                 .contains("waml::uml::lower::shadow::<UmlLoweringState>::tree")
         }),
         "same-file nested cache-owner collision escaped: {violations:#?}"
+    );
+    assert!(
+        violations.iter().any(|violation| {
+            violation
+                .reason
+                .contains("waml::uml::lower::<UmlLoweringState>::tree")
+        }),
+        "behavior-changing edit to the exact cache accessor escaped: {violations:#?}"
     );
 }
 
@@ -1312,6 +1348,30 @@ fn local_standard_root_names_do_not_acquire_external_trust() {
         }
         "#,
     );
+    let block_local_violations = reasons(
+        r#"
+        struct Model;
+        impl Model {
+            fn to_string(&self) -> String {
+                String::new()
+            }
+        }
+
+        fn block_local_vec_leak(model: &Model) {
+            mod alloc {
+                pub mod vec {
+                    pub struct Vec;
+                    impl Vec {
+                        pub fn push(&self, _: String) {}
+                    }
+                }
+            }
+
+            let sink: alloc::vec::Vec = alloc::vec::Vec;
+            sink.push(model.to_string());
+        }
+        "#,
+    );
 
     for (root, violations) in [
         ("alloc", alloc_violations),
@@ -1333,6 +1393,13 @@ fn local_standard_root_names_do_not_acquire_external_trust() {
             "local `{root}::string::ToString` acquired external trust: {violations:#?}"
         );
     }
+    assert!(
+        block_local_violations.iter().any(|reason| {
+            reason.contains("block_local_vec_leak")
+                && reason.contains("unresolved callable dispatch")
+        }),
+        "block-local `alloc` collection root acquired external trust: {block_local_violations:#?}"
+    );
 }
 
 #[test]
