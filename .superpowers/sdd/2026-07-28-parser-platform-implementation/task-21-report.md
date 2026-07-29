@@ -23,14 +23,25 @@
 
 ## Architecture and semantic contracts
 
-- `tests/no_legacy_authority.rs` parses every workspace production Rust target under `src`,
-  `examples`, and `build.rs` with `syn`, excluding test-only items. Its qualified module/owner call
-  graph resolves imports, renames, associated calls, and typed method receivers; propagates
-  lexical, serialization, and reparse capabilities; follows arbitrary type aliases; and rejects
-  deleted paths, raw shadow grammar, model-to-source reparsing, and all production callers.
-- Eleven adversarial architecture fixtures cover compatibility modules, arbitrary function names,
-  `pub(super)`, closures, duplicate names, cross-file and method indirection, imported/qualified
-  aliases, split serialization/reparse helpers, qualified allowlists, and legitimate text helpers.
+- `tests/no_legacy_authority.rs` obtains actual workspace members and production targets from
+  `cargo metadata`. It follows custom lib/bin/example/build target paths, external `mod` files,
+  inline modules, `#[path]`, and literal `include!` sources instead of assuming `crates/*/src`.
+  A committed nested fixture includes an out-of-directory workspace member and proves all of those
+  source shapes are audited.
+- Package dependency checks enforce `waml-syntax <- waml <- retained hosts`, with DTO composition
+  explicit and direct host-to-syntax dependencies rejected. The raw UML parser module is visible
+  only inside `crate::uml`; an external Cargo compile-fail fixture proves it is not a public API.
+- Seventeen adversarial architecture fixtures cover compatibility modules, arbitrary function
+  names, private/`pub(super)` entries, closures, function pointers/callable locals, duplicate
+  names, cross-file, chained/field receiver and trait dispatch, imported/qualified aliases,
+  direct grammar construction, split serialization/reparse helpers, qualified syntax reparsing,
+  macro/include/generated policy, qualified allowlists, visible model-to-source surfaces, and
+  legitimate label/render/analyze/trim/to-string helpers.
+- The AST pass is residual rather than a substitute for rustc. It checks raw-to-protected-grammar
+  signatures, exact qualified type aliases, visible model-to-text surfaces, and conservative
+  model-to-authority-reparse reachability. It does not claim general type inference or external
+  macro expansion. Literal Rust includes are followed; dynamic/generated includes fail closed;
+  local opaque macros that mention protected grammar types fail closed.
 - Layout syntax coverage includes the complete valid matrix, malformed/missing slots, bounded
   recovery, following-row progress, CRLF, UTF-8, exact write-back, exact occurrence ranges, and
   declared valid/incomplete/invalid state.
@@ -86,6 +97,15 @@
 - Editor GREEN:
   - nested candidate regression: `2 passed` across the crate's lib/bin targets.
   - complete editor scene suite: `64 passed`.
+- Architecture round-four RED:
+  - metadata fixture failed at the old hard-coded `crates` directory scan;
+  - raw parser external compile fixture compiled successfully, proving the module was public;
+  - direct construction, callable-local, field/trait receiver, qualified reparse, macro, and
+    visible model-to-source fixtures all escaped the old partial resolver.
+- Architecture round-four GREEN:
+  - `no_legacy_authority`: `17 passed`, including Cargo-aware target/module discovery, dependency
+    direction, compile-fail visibility, every reviewer bypass, and legitimate-name controls;
+  - full Task 21 API/architecture/semantic matrix: `38 passed` across 4 suites.
 
 ## Task 21 commit chain
 
@@ -105,13 +125,17 @@
 - `ac163811` `test(parser): enforce syntax authority`
 - `81388e1d` `fix(parser): pin layout provenance`
 - `014f145` `fix(parser): harden authority graph`
+- `e797e86` `fix(parser)!: seal raw authority boundary`
 
 ## Verification
 
-- Focused round-three API/architecture/semantic matrix: `32 passed` across 4 suites.
+- Focused round-four API/architecture/semantic matrix: `38 passed` across 4 suites.
+- Raw authority external compile-fail and Cargo/module/dependency fixtures: `17 passed` in the
+  architecture suite.
 - Complete editor scene suite: `64 passed`.
+- Complete `waml-editor` package gate: `737 passed` across 5 target-expanded suites.
 - `rtk cargo test -p waml --all-features`: `427 passed` across 26 suites.
-- `rtk cargo test --workspace --all-features`: `1,274 passed` across 41 suites.
+- `rtk cargo test --workspace --all-features`: `1,280 passed` across 41 suites.
 - `rtk cargo check --workspace --all-features`: PASS, 0 errors; four existing warning groups.
 - `rtk cargo fmt --all -- --check`: PASS.
 - `rtk git diff --check`: PASS.
@@ -127,3 +151,5 @@
 - TokenSave code-graph context saved approximately 30,481 tokens in the main thread across the
   three formal review rounds, plus approximately 38,900 tokens reported by the independent
   round-three reviewer.
+- TokenSave saved approximately 10,922 additional tokens during the round-four architecture
+  redesign.
