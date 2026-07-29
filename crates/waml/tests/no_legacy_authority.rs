@@ -370,6 +370,28 @@ fn real_syntax_tree_authority_signatures_and_builders_are_rejected() {
                     let slot = &mut self.tree;
                     *slot = external_factory(raw);
                 }
+
+                fn parse_selected(&mut self, raw: &str, choose: bool) {
+                    let slot = if choose {
+                        &mut self.tree
+                    } else {
+                        &mut self.tree
+                    };
+                    *slot = external_factory(raw);
+                }
+
+                fn parse_matched(&mut self, raw: &str, choose: bool) {
+                    let slot = match choose {
+                        true => &mut self.tree,
+                        false => &mut self.tree,
+                    };
+                    *slot = external_factory(raw);
+                }
+
+                fn parse_blocked(&mut self, raw: &str) {
+                    let slot = { &mut self.tree };
+                    *slot = external_factory(raw);
+                }
             }
 
             struct TreeSlots {
@@ -418,7 +440,7 @@ fn real_syntax_tree_authority_signatures_and_builders_are_rejected() {
                     let path = self
                         .path(target)
                         .cloned()
-                        .ok_or_else(|| EditError::at(op, format!("missing '{target}'")))?;
+                        .ok_or_else(|| EditError::at(op, "missing concept"))?;
                     if !self.touched_islands.contains_key(&path) {
                         parser.reparse(target);
                     }
@@ -463,6 +485,9 @@ fn real_syntax_tree_authority_signatures_and_builders_are_rejected() {
         "cached_tree_near_match",
         "parse_into",
         "parse_alias",
+        "parse_selected",
+        "parse_matched",
+        "parse_blocked",
         "parse_indexed",
         "parse_dereferenced",
         "trait_entry",
@@ -491,6 +516,58 @@ fn real_syntax_tree_authority_signatures_and_builders_are_rejected() {
                 .contains("waml::uml::lower::<UmlLoweringState>::tree")
         }),
         "behavior-changing edit to the exact cache accessor escaped: {violations:#?}"
+    );
+}
+
+#[test]
+fn exact_cache_accessor_rejects_shadowed_format_macro() {
+    let violations = analyze_sources([(
+        "crates/waml/src/uml/lower.rs",
+        r#"
+        macro_rules! format {
+            ($literal:literal) => {{
+                perform_side_effect();
+                String::new()
+            }};
+        }
+
+        struct UmlLoweringState {
+            touched_islands: BTreeMap<BundlePath, Arc<SyntaxTree<UmlLanguage>>>,
+        }
+
+        impl UmlLoweringState {
+            fn tree(
+                &mut self,
+                candidate: &SourceBundle,
+                target: &str,
+                op: &str,
+            ) -> Result<(BundlePath, Arc<SyntaxTree<UmlLanguage>>), EditError> {
+                let path = self
+                    .path(target)
+                    .cloned()
+                    .ok_or_else(|| EditError::at(op, format!("missing '{target}'")))?;
+                if !self.touched_islands.contains_key(&path) {
+                    self.reparse(candidate, &path, op)?;
+                }
+                Ok((
+                    path.clone(),
+                    self.touched_islands
+                        .get(&path)
+                        .expect("cached tree")
+                        .clone(),
+                ))
+            }
+        }
+        "#,
+    )]);
+
+    assert!(
+        violations.iter().any(|violation| {
+            violation
+                .reason
+                .contains("waml::uml::lower::<UmlLoweringState>::tree")
+        }),
+        "shadowed `format!` kept the exact cache exception: {violations:#?}"
     );
 }
 

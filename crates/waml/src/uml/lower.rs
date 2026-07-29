@@ -153,7 +153,7 @@ impl UmlLoweringState {
         let path = self
             .path(target)
             .cloned()
-            .ok_or_else(|| EditError::at(op, format!("no claimed concept '{target}'")))?;
+            .ok_or_else(|| EditError::at(op, "no claimed concept"))?;
         if !self.touched_islands.contains_key(&path) {
             self.reparse(candidate, &path, op)?;
         }

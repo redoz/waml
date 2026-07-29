@@ -562,8 +562,49 @@ impl<'env> BodyFacts<'env> {
             syn::Expr::Unary(expression) if matches!(expression.op, syn::UnOp::Deref(_)) => {
                 self.expression_type_use(&expression.expr)
             }
+            syn::Expr::Block(expression) => self.block_type_use(&expression.block),
+            syn::Expr::If(expression) => {
+                let mut branches = Vec::new();
+                if let Some(ty) = self.block_type_use(&expression.then_branch) {
+                    branches.push(ty);
+                }
+                if let Some((_, alternative)) = &expression.else_branch {
+                    if let Some(ty) = self.expression_type_use(alternative) {
+                        branches.push(ty);
+                    }
+                }
+                self.merge_type_uses(branches)
+            }
+            syn::Expr::Match(expression) => self.merge_type_uses(
+                expression
+                    .arms
+                    .iter()
+                    .filter_map(|arm| self.expression_type_use(&arm.body)),
+            ),
+            syn::Expr::Try(expression) => self.expression_type_use(&expression.expr),
             _ => None,
         }
+    }
+
+    fn block_type_use(&self, block: &syn::Block) -> Option<TypeUse> {
+        let syn::Stmt::Expr(expression, None) = block.stmts.last()? else {
+            return None;
+        };
+        self.expression_type_use(expression)
+    }
+
+    fn merge_type_uses(&self, types: impl IntoIterator<Item = TypeUse>) -> Option<TypeUse> {
+        let mut types = types.into_iter();
+        let mut merged = types.next()?;
+        for ty in types {
+            if merged.module != ty.module {
+                merged.module = self.env.module.clone();
+            }
+            merged.paths.extend(ty.paths);
+        }
+        merged.paths.sort();
+        merged.paths.dedup();
+        Some(merged)
     }
 
     fn expression_type_identity(&self, expression: &syn::Expr) -> Option<TypeIdentity> {
@@ -3072,7 +3113,7 @@ fn cached_tree_body_is_verified(summary: &FunctionSummary) -> bool {
         && calls.saw_get
         && cache_tree_body_has_expected_shape(&summary.block)
         && cache_tree_tail_reads_touched_islands(&summary.block)
-        && cache_tree_body_uses_only_format_macro(&summary.block)
+        && cache_tree_body_has_no_macros(&summary.block)
 }
 
 fn cache_tree_body_has_expected_shape(block: &syn::Block) -> bool {
@@ -3295,19 +3336,7 @@ fn cache_tree_function_call_is_verified(call: &ExprCall) -> bool {
                     .args
                     .first()
                     .is_some_and(|op| cache_tree_is_binding(op, "op"))
-                && call.args.get(1).is_some_and(|message| {
-                    matches!(
-                        unwrap_expression(message),
-                        syn::Expr::Macro(expression)
-                            if {
-                                let name = macro_path(&expression.mac);
-                                (name == "format" || name.ends_with("::format"))
-                                    && syn::parse2::<syn::LitStr>(
-                                        expression.mac.tokens.clone()
-                                    ).is_ok()
-                            }
-                    )
-                })
+                && call.args.get(1).is_some_and(cache_tree_is_string_literal)
         }
         _ => false,
     }
@@ -3367,7 +3396,7 @@ fn cache_tree_tail_reads_touched_islands(block: &syn::Block) -> bool {
     }
 }
 
-fn cache_tree_body_uses_only_format_macro(block: &syn::Block) -> bool {
+fn cache_tree_body_has_no_macros(block: &syn::Block) -> bool {
     #[derive(Default)]
     struct MacroNames {
         names: BTreeSet<String>,
@@ -3381,10 +3410,7 @@ fn cache_tree_body_uses_only_format_macro(block: &syn::Block) -> bool {
 
     let mut macros = MacroNames::default();
     macros.visit_block(block);
-    macros
-        .names
-        .iter()
-        .all(|name| name == "format" || name.ends_with("::format"))
+    macros.names.is_empty()
 }
 
 fn summary_has_model_input(
