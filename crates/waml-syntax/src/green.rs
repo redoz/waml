@@ -415,6 +415,45 @@ impl<L: SyntaxLanguage> GreenFactory<L> {
             width: token.width,
         })
     }
+    pub(crate) fn rebuild_token<I, J>(
+        &self,
+        token: &GreenToken<L>,
+        text: GreenText,
+        leading: I,
+        trailing: J,
+        syntax_annotations: Arc<[SyntaxAnnotation]>,
+    ) -> Result<GreenToken<L>, GreenError>
+    where
+        I: IntoIterator<Item = GreenTrivia>,
+        J: IntoIterator<Item = GreenTrivia>,
+    {
+        text.validate()?;
+        let leading: Vec<_> = leading.into_iter().collect();
+        let trailing: Vec<_> = trailing.into_iter().collect();
+        for trivia in leading.iter().chain(trailing.iter()) {
+            trivia.validate()?;
+        }
+        let width = leading
+            .iter()
+            .chain(std::iter::once(&GreenTrivia {
+                kind: TriviaKind::Whitespace,
+                text: text.clone(),
+            }))
+            .chain(trailing.iter())
+            .try_fold(TextSize::try_from_usize(0)?, |sum, piece| {
+                sum.checked_add(piece.width()?)
+            })?;
+        Ok(Arc::new(GreenTokenData {
+            kind: token.kind,
+            leading: leading.into(),
+            text,
+            trailing: trailing.into(),
+            annotations: token.annotations.clone(),
+            syntax_annotations,
+            flags: token.flags,
+            width,
+        }))
+    }
 }
 impl<L: SyntaxLanguage> Default for GreenFactory<L> {
     fn default() -> Self {

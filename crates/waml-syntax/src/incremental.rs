@@ -1,8 +1,9 @@
-use std::sync::Arc;
+use std::{collections::HashMap, hash::Hash, sync::Arc};
 
 use crate::{
-    parse_okf_markdown, MarkdownDialect, OkfMarkdownLanguage, ParseError, SourceText,
-    SyntaxLanguage, SyntaxTree, TextError, TextRange, TextSize,
+    parse_okf_markdown, GreenElement, GreenError, GreenFactory, GreenNode, GreenText, GreenTrivia,
+    MarkdownDialect, OkfMarkdownLanguage, ParseError, SourceText, SyntaxAnnotation, SyntaxElement,
+    SyntaxLanguage, SyntaxNode, SyntaxTree, TextError, TextRange, TextSize,
 };
 
 /// One replacement expressed in checked, half-open byte offsets of the old text.
@@ -47,6 +48,294 @@ pub enum ReparseOutcome<L: SyntaxLanguage> {
         tree: Arc<SyntaxTree<L>>,
         reason: FullReparseReason,
     },
+}
+
+pub struct RebasedGreen<L: SyntaxLanguage> {
+    pub element: GreenElement<L>,
+    pub shared_source_independent_green: usize,
+}
+
+fn rebase_text(
+    text: &GreenText,
+    new_text: &SourceText,
+    map: &ChangeMap,
+) -> Result<Option<GreenText>, GreenError> {
+    Ok(Some(match text {
+        GreenText::Static(value) => GreenText::Static(value),
+        GreenText::Owned(value) => GreenText::Owned(value.clone()),
+        GreenText::SourceSlice { range, .. } => GreenText::SourceSlice {
+            source: new_text.clone(),
+            range: match map.translate_unchanged(*range) {
+                Some(range) => range,
+                None => return Ok(None),
+            },
+        },
+    }))
+}
+
+fn rebase_trivia(
+    trivia: &GreenTrivia,
+    new_text: &SourceText,
+    map: &ChangeMap,
+) -> Result<Option<GreenTrivia>, GreenError> {
+    Ok(
+        rebase_text(&trivia.text, new_text, map)?.map(|text| GreenTrivia {
+            kind: trivia.kind,
+            text,
+        }),
+    )
+}
+
+pub fn rebase_unchanged_green<L: SyntaxLanguage>(
+    element: &GreenElement<L>,
+    new_text: &SourceText,
+    map: &ChangeMap,
+) -> Result<Option<RebasedGreen<L>>, GreenError> {
+    fn go<L: SyntaxLanguage>(
+        element: &GreenElement<L>,
+        new_text: &SourceText,
+        map: &ChangeMap,
+    ) -> Result<Option<(GreenElement<L>, usize)>, GreenError> {
+        match element {
+            GreenElement::Token(token) if token.is_source_independent() => {
+                Ok(Some((element.clone(), 1)))
+            }
+            GreenElement::Token(token) => {
+                let text = match rebase_text(token.text(), new_text, map)? {
+                    Some(text) => text,
+                    None => return Ok(None),
+                };
+                let leading = token
+                    .leading_trivia()
+                    .iter()
+                    .map(|trivia| rebase_trivia(trivia, new_text, map))
+                    .collect::<Result<Option<Vec<_>>, _>>()?;
+                let trailing = token
+                    .trailing_trivia()
+                    .iter()
+                    .map(|trivia| rebase_trivia(trivia, new_text, map))
+                    .collect::<Result<Option<Vec<_>>, _>>()?;
+                let (Some(leading), Some(trailing)) = (leading, trailing) else {
+                    return Ok(None);
+                };
+                Ok(Some((
+                    GreenElement::Token(GreenFactory::new().rebuild_token(
+                        token,
+                        text,
+                        leading,
+                        trailing,
+                        token.syntax_annotations().into(),
+                    )?),
+                    0,
+                )))
+            }
+            GreenElement::Node(node) if node.is_source_independent() => {
+                Ok(Some((element.clone(), count_greens(element))))
+            }
+            GreenElement::Node(node) => {
+                let mut shared = 0;
+                let mut children = Vec::with_capacity(node.children().len());
+                for child in node.children() {
+                    let Some((child, child_shared)) = go(child, new_text, map)? else {
+                        return Ok(None);
+                    };
+                    shared += child_shared;
+                    children.push(child);
+                }
+                Ok(Some((
+                    GreenElement::Node(GreenFactory::new().node_with_annotations(
+                        node.kind(),
+                        children,
+                        node.annotations().into(),
+                    )?),
+                    shared,
+                )))
+            }
+        }
+    }
+    fn count_greens<L: SyntaxLanguage>(element: &GreenElement<L>) -> usize {
+        match element {
+            GreenElement::Token(_) => 1,
+            GreenElement::Node(node) => 1 + node.children().iter().map(count_greens).sum::<usize>(),
+        }
+    }
+    Ok(
+        go(element, new_text, map)?.map(|(element, shared_source_independent_green)| {
+            RebasedGreen {
+                element,
+                shared_source_independent_green,
+            }
+        }),
+    )
+}
+
+#[derive(Clone, Copy, Eq, Hash, PartialEq)]
+struct OccurrenceKey<K> {
+    kind: K,
+    range: TextRange,
+    token: bool,
+    ordinal: usize,
+}
+
+fn collect_occurrences<L: SyntaxLanguage>(
+    node: SyntaxNode<L>,
+    map: Option<&ChangeMap>,
+    out: &mut HashMap<OccurrenceKey<L::Kind>, Vec<SyntaxAnnotation>>,
+    ordinals: &mut HashMap<(L::Kind, TextRange, bool), usize>,
+) {
+    let add = |kind,
+               range,
+               token,
+               annotations: &[SyntaxAnnotation],
+               out: &mut HashMap<OccurrenceKey<L::Kind>, Vec<SyntaxAnnotation>>,
+               ordinals: &mut HashMap<(L::Kind, TextRange, bool), usize>| {
+        let Some(range) = map.map_or(Some(range), |map| map.translate_unchanged(range)) else {
+            return;
+        };
+        let base = (kind, range, token);
+        let ordinal = ordinals.entry(base).or_insert(0);
+        let key = OccurrenceKey {
+            kind,
+            range,
+            token,
+            ordinal: *ordinal,
+        };
+        *ordinal += 1;
+        if !annotations.is_empty() {
+            out.insert(key, annotations.to_vec());
+        }
+    };
+    add(
+        node.kind(),
+        node.range(),
+        false,
+        node.syntax_annotations(),
+        out,
+        ordinals,
+    );
+    for child in node.children() {
+        match child {
+            SyntaxElement::Node(child) => collect_occurrences(child, map, out, ordinals),
+            SyntaxElement::Token(token) => add(
+                token.kind(),
+                token.range(),
+                true,
+                token.syntax_annotations(),
+                out,
+                ordinals,
+            ),
+        }
+    }
+}
+
+pub fn transfer_mapped_annotations<L: SyntaxLanguage>(
+    previous: &SyntaxTree<L>,
+    candidate: &SyntaxTree<L>,
+    map: &ChangeMap,
+) -> GreenNode<L> {
+    let mut previous_annotations = HashMap::new();
+    collect_occurrences(
+        previous.root(),
+        Some(map),
+        &mut previous_annotations,
+        &mut HashMap::new(),
+    );
+    let mut candidate_occurrences = HashMap::new();
+    collect_occurrences(
+        candidate.root(),
+        None,
+        &mut candidate_occurrences,
+        &mut HashMap::new(),
+    );
+    fn merge(
+        existing: &[SyntaxAnnotation],
+        copied: Option<&Vec<SyntaxAnnotation>>,
+    ) -> Arc<[SyntaxAnnotation]> {
+        let mut annotations = existing.to_vec();
+        for annotation in copied.into_iter().flatten() {
+            if !annotations
+                .iter()
+                .any(|present| present.id() == annotation.id())
+            {
+                annotations.push(annotation.clone());
+            }
+        }
+        annotations.into()
+    }
+    fn rebuild<L: SyntaxLanguage>(
+        node: &GreenNode<L>,
+        path: &mut Vec<u32>,
+        copied: &HashMap<OccurrenceKey<L::Kind>, Vec<SyntaxAnnotation>>,
+        occurrences: &mut HashMap<(L::Kind, TextRange, bool), usize>,
+        start: TextSize,
+    ) -> GreenNode<L> {
+        let range = TextRange::new(start, start.checked_add(node.width()).unwrap()).unwrap();
+        let base = (node.kind(), range, false);
+        let ordinal = *occurrences.entry(base).or_insert(0);
+        *occurrences.get_mut(&base).unwrap() += 1;
+        let node_annotations = merge(
+            node.annotations(),
+            copied.get(&OccurrenceKey {
+                kind: node.kind(),
+                range,
+                token: false,
+                ordinal,
+            }),
+        );
+        let mut offset = start;
+        let children = node
+            .children()
+            .iter()
+            .enumerate()
+            .map(|(index, child)| {
+                let result = match child {
+                    GreenElement::Node(child) => {
+                        path.push(index as u32);
+                        let child = rebuild(child, path, copied, occurrences, offset);
+                        path.pop();
+                        GreenElement::Node(child)
+                    }
+                    GreenElement::Token(token) => {
+                        let range =
+                            TextRange::new(offset, offset.checked_add(token.width()).unwrap())
+                                .unwrap();
+                        let base = (token.kind(), range, true);
+                        let ordinal = *occurrences.entry(base).or_insert(0);
+                        *occurrences.get_mut(&base).unwrap() += 1;
+                        GreenElement::Token(GreenFactory::new().token_with_syntax_annotations(
+                            token,
+                            merge(
+                                token.syntax_annotations(),
+                                copied.get(&OccurrenceKey {
+                                    kind: token.kind(),
+                                    range,
+                                    token: true,
+                                    ordinal,
+                                }),
+                            ),
+                        ))
+                    }
+                };
+                offset = offset
+                    .checked_add(match &result {
+                        GreenElement::Node(node) => node.width(),
+                        GreenElement::Token(token) => token.width(),
+                    })
+                    .unwrap();
+                result
+            })
+            .collect::<Vec<_>>();
+        GreenFactory::new()
+            .node_with_annotations(node.kind(), children, node_annotations)
+            .unwrap()
+    }
+    rebuild(
+        candidate.root_green(),
+        &mut Vec::new(),
+        &previous_annotations,
+        &mut HashMap::new(),
+        TextSize::try_from_usize(0).unwrap(),
+    )
 }
 
 impl ChangeMap {

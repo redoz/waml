@@ -1,8 +1,11 @@
 use std::sync::Arc;
 
+use std::num::NonZeroU64;
 use waml_syntax::{
-    parse_okf_markdown, reparse_okf_markdown, ChangeMap, FullReparseReason, MarkdownDialect,
-    ReparseOutcome, SourceText, TextChange, TextRange, TextSize,
+    annotate_occurrence, parse_okf_markdown, rebase_unchanged_green, reparse_okf_markdown,
+    transfer_mapped_annotations, ChangeMap, FullReparseReason, GreenElement, GreenText,
+    MarkdownDialect, OkfMarkdownSyntaxKind, ReparseOutcome, RewriteError, SourceText,
+    SyntaxAnnotation, SyntaxElement, SyntaxTree, TextChange, TextRange, TextSize,
 };
 
 fn text(value: &str) -> SourceText {
@@ -34,6 +37,171 @@ fn oracle(previous: &str, next: &str, changes: &[TextChange]) {
         incremental.diagnostics().len(),
         full.tree.diagnostics().len()
     );
+}
+
+fn first_node(
+    tree: &SyntaxTree<waml_syntax::OkfMarkdownLanguage>,
+    kind: OkfMarkdownSyntaxKind,
+) -> waml_syntax::SyntaxNode<waml_syntax::OkfMarkdownLanguage> {
+    fn find(
+        node: waml_syntax::SyntaxNode<waml_syntax::OkfMarkdownLanguage>,
+        kind: OkfMarkdownSyntaxKind,
+    ) -> Option<waml_syntax::SyntaxNode<waml_syntax::OkfMarkdownLanguage>> {
+        if node.kind() == kind {
+            return Some(node);
+        }
+        node.children()
+            .find_map(|child| child.into_node().and_then(|node| find(node, kind)))
+    }
+    find(tree.root(), kind).unwrap()
+}
+
+fn first_token(
+    tree: &SyntaxTree<waml_syntax::OkfMarkdownLanguage>,
+    kind: OkfMarkdownSyntaxKind,
+) -> waml_syntax::SyntaxToken<waml_syntax::OkfMarkdownLanguage> {
+    fn find(
+        node: waml_syntax::SyntaxNode<waml_syntax::OkfMarkdownLanguage>,
+        kind: OkfMarkdownSyntaxKind,
+    ) -> Option<waml_syntax::SyntaxToken<waml_syntax::OkfMarkdownLanguage>> {
+        node.children().find_map(|child| match child {
+            SyntaxElement::Token(token) if token.kind() == kind => Some(token),
+            SyntaxElement::Node(node) => find(node, kind),
+            _ => None,
+        })
+    }
+    find(tree.root(), kind).unwrap()
+}
+
+fn all_source_slices_use(
+    element: &GreenElement<waml_syntax::OkfMarkdownLanguage>,
+    source: &SourceText,
+) -> bool {
+    match element {
+        GreenElement::Node(node) => node
+            .children()
+            .iter()
+            .all(|child| all_source_slices_use(child, source)),
+        GreenElement::Token(token) => std::iter::once(token.text())
+            .chain(token.leading_trivia().iter().map(|trivia| &trivia.text))
+            .chain(token.trailing_trivia().iter().map(|trivia| &trivia.text))
+            .all(|text| match text {
+                GreenText::SourceSlice { source: actual, .. } => {
+                    Arc::ptr_eq(actual.shared(), source.shared())
+                }
+                GreenText::Static(_) | GreenText::Owned(_) => true,
+            }),
+    }
+}
+
+#[test]
+fn green_rebase_rebuilds_source_backed_and_reuses_static_greens() {
+    let old = text("# One\nbody\n");
+    let previous = parse_okf_markdown(old.clone(), MarkdownDialect::CommonMarkCurrent).unwrap();
+    let new = text("# One\nbody\n");
+    let map = ChangeMap::checked(&old, &[]).unwrap();
+
+    let rebased = rebase_unchanged_green(
+        &GreenElement::Node(previous.tree.root_green().clone()),
+        &new,
+        &map,
+    )
+    .unwrap()
+    .unwrap();
+    assert!(all_source_slices_use(&rebased.element, &new));
+    let candidate = match rebased.element {
+        GreenElement::Node(root) => SyntaxTree::new(
+            root,
+            Arc::from(previous.tree.diagnostics()),
+            MarkdownDialect::CommonMarkCurrent,
+        ),
+        GreenElement::Token(_) => panic!("root is a node"),
+    };
+    assert!(!first_node(&previous.tree, OkfMarkdownSyntaxKind::Heading)
+        .same_green(&first_node(&candidate, OkfMarkdownSyntaxKind::Heading)));
+    assert!(!previous.tree.root().same_green(&candidate.root()));
+    assert!(
+        first_token(&previous.tree, OkfMarkdownSyntaxKind::EndOfFileToken).same_green(
+            &first_token(&candidate, OkfMarkdownSyntaxKind::EndOfFileToken)
+        )
+    );
+    assert!(rebased.shared_source_independent_green >= 1);
+}
+
+#[test]
+fn mapped_annotations_preserve_node_and_token_occurrences() {
+    let old = text("# One\nbody\n");
+    let parsed = parse_okf_markdown(old.clone(), MarkdownDialect::CommonMarkCurrent).unwrap();
+    let heading = first_node(&parsed.tree, OkfMarkdownSyntaxKind::Heading);
+    let heading_text = first_token(&parsed.tree, OkfMarkdownSyntaxKind::HeadingText);
+    let node_locator = heading.locator();
+    let token_locator = heading_text.locator();
+    let node_annotation = SyntaxAnnotation::new(NonZeroU64::new(1).unwrap(), "node", None);
+    let token_annotation = SyntaxAnnotation::new(NonZeroU64::new(2).unwrap(), "token", None);
+    let annotated =
+        annotate_occurrence(&parsed.tree, &node_locator, node_annotation.clone()).unwrap();
+    let annotated_tree = SyntaxTree::new(
+        annotated,
+        Arc::from(parsed.tree.diagnostics()),
+        MarkdownDialect::CommonMarkCurrent,
+    );
+    let annotated_token = first_token(&annotated_tree, OkfMarkdownSyntaxKind::HeadingText);
+    let annotated = annotate_occurrence(
+        &annotated_tree,
+        &annotated_token.locator(),
+        token_annotation.clone(),
+    )
+    .unwrap();
+    let previous = SyntaxTree::new(
+        annotated,
+        Arc::from(parsed.tree.diagnostics()),
+        MarkdownDialect::CommonMarkCurrent,
+    );
+    let new = text("# One\nbody!\n");
+    let map = ChangeMap::checked(
+        &old,
+        &[TextChange {
+            old_range: range(10, 10),
+            replacement: Arc::from("!"),
+        }],
+    )
+    .unwrap();
+    let candidate = parse_okf_markdown(new, MarkdownDialect::CommonMarkCurrent).unwrap();
+    let transferred = SyntaxTree::new(
+        transfer_mapped_annotations(&previous, &candidate.tree, &map),
+        Arc::from(candidate.tree.diagnostics()),
+        MarkdownDialect::CommonMarkCurrent,
+    );
+    let mapped_heading = first_node(&transferred, OkfMarkdownSyntaxKind::Heading);
+    let mapped_token = first_token(&transferred, OkfMarkdownSyntaxKind::HeadingText);
+    assert_eq!(
+        mapped_heading
+            .syntax_annotations()
+            .iter()
+            .filter(|annotation| annotation.id() == node_annotation.id())
+            .count(),
+        1
+    );
+    assert_eq!(
+        mapped_token
+            .syntax_annotations()
+            .iter()
+            .filter(|annotation| annotation.id() == token_annotation.id())
+            .count(),
+        1
+    );
+    assert_eq!(
+        mapped_token.range(),
+        map.translate_unchanged(heading_text.range()).unwrap()
+    );
+    assert!(matches!(
+        transferred.resolve(&node_locator),
+        Err(RewriteError::WrongTree { .. })
+    ));
+    assert!(matches!(
+        transferred.resolve(&token_locator),
+        Err(RewriteError::WrongTree { .. })
+    ));
 }
 
 #[test]
