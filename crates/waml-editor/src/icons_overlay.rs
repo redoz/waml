@@ -90,6 +90,13 @@ pub const ICON_GROUPS: &[(&str, &[IconEntry])] = &[
         ],
     ),
     (
+        "DOCUMENT HEADER",
+        &[
+            ie!(ArrowLeft, "Back through view history"),
+            ie!(ArrowRight, "Forward through view history"),
+        ],
+    ),
+    (
         "CONFLICT BADGE / LIST",
         &[
             ie!(MessageSquareWarning, "Conflict badge"),

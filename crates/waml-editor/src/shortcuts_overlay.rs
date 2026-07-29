@@ -65,6 +65,14 @@ pub const BINDINGS: &[(&str, &str)] = &[
     ("Esc", "Close this overlay"),
 ];
 
+pub fn history_bindings(macos: bool) -> [(&'static str, &'static str); 2] {
+    if macos {
+        [("Cmd+Z", "Undo"), ("Cmd+Shift+Z", "Redo")]
+    } else {
+        [("Ctrl+Z", "Undo"), ("Ctrl+Shift+Z / Ctrl+Y", "Redo")]
+    }
+}
+
 #[derive(Clone, Debug, Default)]
 pub enum ShortcutsOverlayAction {
     #[default]
@@ -122,7 +130,7 @@ impl Widget for ShortcutsOverlay {
 impl ShortcutsOverlay {
     /// Content height the shell needs to size + scroll the panel.
     fn content_height(&self) -> f64 {
-        TITLE_H + BINDINGS.len() as f64 * ROW_H
+        TITLE_H + (BINDINGS.len() + history_bindings(false).len()) as f64 * ROW_H
     }
 
     /// Draw the title + key/desc rows relative to the shell-provided origin.
@@ -130,6 +138,16 @@ impl ShortcutsOverlay {
         self.draw_title.draw_abs(cx, origin, "Shortcuts");
         let mut y = origin.y + TITLE_H;
         for (key, desc) in BINDINGS {
+            self.draw_key.draw_abs(cx, dvec2(origin.x, y), key);
+            self.draw_desc
+                .draw_abs(cx, dvec2(origin.x + KEY_COL_W, y), desc);
+            y += ROW_H;
+        }
+        let macos = matches!(
+            cx.os_type(),
+            makepad_widgets::makepad_platform::OsType::Macos
+        );
+        for (key, desc) in history_bindings(macos) {
             self.draw_key.draw_abs(cx, dvec2(origin.x, y), key);
             self.draw_desc
                 .draw_abs(cx, dvec2(origin.x + KEY_COL_W, y), desc);
@@ -164,5 +182,17 @@ mod tests {
         assert!(!BINDINGS.is_empty());
         assert!(BINDINGS.iter().any(|(k, _)| *k == "?"));
         assert!(BINDINGS.iter().any(|(k, _)| *k == "Esc"));
+    }
+
+    #[test]
+    fn history_rows_use_platform_appropriate_labels() {
+        assert_eq!(
+            history_bindings(true),
+            [("Cmd+Z", "Undo"), ("Cmd+Shift+Z", "Redo")]
+        );
+        assert_eq!(
+            history_bindings(false),
+            [("Ctrl+Z", "Undo"), ("Ctrl+Shift+Z / Ctrl+Y", "Redo")]
+        );
     }
 }

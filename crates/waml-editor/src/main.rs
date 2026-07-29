@@ -57,6 +57,7 @@ mod scene;
 mod section_heading;
 mod select_box;
 mod selection_toolbar;
+mod shortcuts;
 mod shortcuts_overlay;
 mod sizing;
 mod source_view;

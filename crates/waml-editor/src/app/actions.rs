@@ -556,17 +556,36 @@ impl App {
             .widget(cx, ids!(document_header))
             .borrow::<crate::document_header::DocumentHeader>()
             .and_then(|header| header.action(actions));
-        let Some(crate::document_header::DocumentHeaderAction::Navigate(target)) = action else {
-            return ActionFlow::Continue;
-        };
-        self.handle_navigation_intent(
-            cx,
-            crate::navigation::NavigationIntent::Resolved {
-                target,
-                disposition: crate::navigation::OpenDisposition::Preview,
-            },
-        );
-        ActionFlow::Consumed
+        match action {
+            Some(crate::document_header::DocumentHeaderAction::Back) => {
+                if self.traverse_view_history(cx, crate::view_history::HistoryDirection::Back) {
+                    self.clear_history_feedback(cx);
+                } else {
+                    self.set_history_problem(cx, Some("No previous view"));
+                }
+                ActionFlow::Consumed
+            }
+            Some(crate::document_header::DocumentHeaderAction::Forward) => {
+                if self.traverse_view_history(cx, crate::view_history::HistoryDirection::Forward) {
+                    self.clear_history_feedback(cx);
+                } else {
+                    self.set_history_problem(cx, Some("No next view"));
+                }
+                ActionFlow::Consumed
+            }
+            Some(crate::document_header::DocumentHeaderAction::Navigate(target)) => {
+                self.clear_history_feedback(cx);
+                self.handle_navigation_intent(
+                    cx,
+                    crate::navigation::NavigationIntent::Resolved {
+                        target,
+                        disposition: crate::navigation::OpenDisposition::Preview,
+                    },
+                );
+                ActionFlow::Consumed
+            }
+            _ => ActionFlow::Continue,
+        }
     }
 
     fn handle_diagram_switcher(&mut self, cx: &mut Cx, actions: &Actions) -> ActionFlow {
@@ -913,12 +932,14 @@ impl App {
             self.transition_to_location(cx, current, super::TransitionCause::PassiveReconciliation);
         }
         self.mark_dirty(cx);
+        self.sync_history_controls(cx);
     }
 
     fn complete_history_effect(
         &mut self,
         cx: &mut Cx,
         effect: crate::editor_session::HistoryEffect,
+        verb: &str,
     ) -> bool {
         let label = effect.label;
         let location = effect.location;
@@ -926,12 +947,13 @@ impl App {
         if self.transition_to_location(cx, location.clone(), super::TransitionCause::UndoRedoReveal)
         {
             self.set_navigation_message(cx, None);
+            self.set_history_success(cx, Some(&format!("{verb}: {label}")));
             true
         } else {
-            self.set_navigation_message(
+            self.set_history_problem(
                 cx,
                 Some(&format!(
-                    "{label} applied, but could not reveal {}",
+                    "{verb}: {label}, but could not reveal {}",
                     location.document.concept_id
                 )),
             );
@@ -941,11 +963,14 @@ impl App {
 
     pub(super) fn perform_undo(&mut self, cx: &mut Cx) -> bool {
         match self.session.undo() {
-            Ok(Some(effect)) => self.complete_history_effect(cx, effect),
-            Ok(None) => false,
+            Ok(Some(effect)) => self.complete_history_effect(cx, effect, "Undid"),
+            Ok(None) => {
+                self.set_history_problem(cx, Some("Nothing to undo"));
+                false
+            }
             Err(error) => {
                 log!("undo failed: {error:?}");
-                self.set_navigation_message(cx, Some("Undo failed"));
+                self.set_history_problem(cx, Some("Undo failed"));
                 false
             }
         }
@@ -953,11 +978,14 @@ impl App {
 
     pub(super) fn perform_redo(&mut self, cx: &mut Cx) -> bool {
         match self.session.redo() {
-            Ok(Some(effect)) => self.complete_history_effect(cx, effect),
-            Ok(None) => false,
+            Ok(Some(effect)) => self.complete_history_effect(cx, effect, "Redid"),
+            Ok(None) => {
+                self.set_history_problem(cx, Some("Nothing to redo"));
+                false
+            }
             Err(error) => {
                 log!("redo failed: {error:?}");
-                self.set_navigation_message(cx, Some("Redo failed"));
+                self.set_history_problem(cx, Some("Redo failed"));
                 false
             }
         }

@@ -728,6 +728,68 @@ impl App {
         }
     }
 
+    fn set_history_problem(&mut self, cx: &mut Cx, message: Option<&str>) {
+        if let Some(mut statusbar) = self
+            .ui
+            .widget(cx, ids!(statusbar))
+            .borrow_mut::<crate::statusbar::Statusbar>()
+        {
+            statusbar.set_history_problem(cx, message);
+        }
+    }
+
+    fn set_history_success(&mut self, cx: &mut Cx, message: Option<&str>) {
+        if let Some(mut statusbar) = self
+            .ui
+            .widget(cx, ids!(statusbar))
+            .borrow_mut::<crate::statusbar::Statusbar>()
+        {
+            statusbar.set_history_success(cx, message);
+        }
+    }
+
+    fn clear_history_feedback(&mut self, cx: &mut Cx) {
+        if let Some(mut statusbar) = self
+            .ui
+            .widget(cx, ids!(statusbar))
+            .borrow_mut::<crate::statusbar::Statusbar>()
+        {
+            statusbar.clear_history_feedback(cx);
+        }
+    }
+
+    fn sync_history_controls(&mut self, cx: &mut Cx) {
+        let has_active_document = self.documents.active_tab().is_some();
+        let can_back = self
+            .view_history
+            .can_traverse(HistoryDirection::Back, |location| {
+                crate::documents::open_locator(
+                    self.session.okf(),
+                    self.session.uml_projection(),
+                    &location.document,
+                )
+                .is_some()
+            });
+        let can_forward = self
+            .view_history
+            .can_traverse(HistoryDirection::Forward, |location| {
+                crate::documents::open_locator(
+                    self.session.okf(),
+                    self.session.uml_projection(),
+                    &location.document,
+                )
+                .is_some()
+            });
+        if let Some(mut header) = self
+            .ui
+            .widget(cx, ids!(document_header))
+            .borrow_mut::<crate::document_header::DocumentHeader>()
+        {
+            header.set_history_visible(cx, has_active_document);
+            header.set_history_enabled(cx, can_back, can_forward);
+        }
+    }
+
     fn handle_navigation_intent(
         &mut self,
         cx: &mut Cx,
@@ -923,6 +985,7 @@ impl App {
             header.set_segments(cx, segments);
             header.set_right_dock(cx, right_dock);
         }
+        self.sync_history_controls(cx);
         if let Some(mut tree) = self
             .ui
             .widget(cx, ids!(project_tree))
@@ -1034,6 +1097,7 @@ impl App {
                 }
             }
         }
+        self.sync_history_controls(cx);
         true
     }
 
@@ -1054,6 +1118,7 @@ impl App {
         }
         self.view_history.commit_traversal(target);
         self.session.break_edit_merge_group();
+        self.sync_history_controls(cx);
         true
     }
 
@@ -1082,6 +1147,7 @@ impl App {
                 _ => {}
             }
         }
+        self.sync_history_controls(cx);
         true
     }
 
@@ -2471,6 +2537,29 @@ impl AppMain for App {
             }
         }
 
+        // Model history owns the standard platform chords, even while an
+        // editor has focus. Returning here keeps focused widgets from also
+        // applying a competing local undo/redo when a stack is empty.
+        if let Event::KeyDown(ke) = event {
+            let macos = matches!(
+                cx.os_type(),
+                makepad_widgets::makepad_platform::OsType::Macos
+            );
+            if let Some(command) =
+                crate::shortcuts::history_command_for(ke.key_code, ke.modifiers, macos)
+            {
+                match command {
+                    crate::shortcuts::HistoryCommand::Undo => {
+                        self.perform_undo(cx);
+                    }
+                    crate::shortcuts::HistoryCommand::Redo => {
+                        self.perform_redo(cx);
+                    }
+                }
+                return;
+            }
+        }
+
         // Tool-dock hotkeys (V/N/C): global, visual-only mode switch. Only
         // live while nothing holds key focus, so they don't fight with the
         // inspector's inline-edit text entry.
@@ -3198,6 +3287,85 @@ mod tests {
     }
 
     #[test]
+    fn header_history_actions_traverse_once_and_report_unavailable_targets() {
+        let (mut cx, mut app) = navigation_app_with_active_order();
+        assert!(app.transition_document(&mut cx, "sales/customer", false));
+        {
+            let header = app.ui.widget(&cx, ids!(document_header));
+            let header = header
+                .borrow::<crate::document_header::DocumentHeader>()
+                .expect("test header is mounted");
+            assert_eq!(header.test_history_enabled(), (true, false));
+        }
+
+        let back_button_uid = app
+            .ui
+            .widget(&cx, ids!(document_header.back_button))
+            .widget_uid();
+        app.handle_action_batch(
+            &mut cx,
+            &[widget_action(
+                back_button_uid,
+                crate::icon_button::IconButtonAction::HistoryBack,
+            )],
+        );
+        assert_eq!(
+            app.documents
+                .active_tab()
+                .map(|tab| tab.concept_id.as_str()),
+            Some("sales/order")
+        );
+        {
+            let header = app.ui.widget(&cx, ids!(document_header));
+            let header = header
+                .borrow::<crate::document_header::DocumentHeader>()
+                .expect("test header is mounted");
+            assert_eq!(header.test_history_enabled(), (false, true));
+        }
+
+        let forward_button_uid = app
+            .ui
+            .widget(&cx, ids!(document_header.forward_button))
+            .widget_uid();
+        app.handle_action_batch(
+            &mut cx,
+            &[widget_action(
+                forward_button_uid,
+                crate::icon_button::IconButtonAction::HistoryForward,
+            )],
+        );
+        assert_eq!(
+            app.documents
+                .active_tab()
+                .map(|tab| tab.concept_id.as_str()),
+            Some("sales/customer")
+        );
+
+        app.handle_action_batch(
+            &mut cx,
+            &[widget_action(
+                back_button_uid,
+                crate::icon_button::IconButtonAction::HistoryBack,
+            )],
+        );
+        app.handle_action_batch(
+            &mut cx,
+            &[widget_action(
+                back_button_uid,
+                crate::icon_button::IconButtonAction::HistoryBack,
+            )],
+        );
+        let statusbar = app.ui.widget(&cx, ids!(statusbar));
+        let statusbar = statusbar
+            .borrow::<crate::statusbar::Statusbar>()
+            .expect("test statusbar is mounted");
+        assert_eq!(
+            crate::statusbar::history_feedback(&statusbar),
+            (Some("No previous view"), None)
+        );
+    }
+
+    #[test]
     fn back_then_manual_navigation_clears_forward() {
         let (mut cx, mut app) = navigation_app_with_active_order();
         for concept_id in ["sales/customer", "sales/next"] {
@@ -3327,6 +3495,68 @@ mod tests {
         assert!(app
             .view_history
             .can_traverse(HistoryDirection::Back, |_| true));
+        let statusbar = app.ui.widget(&cx, ids!(statusbar));
+        let statusbar = statusbar
+            .borrow::<crate::statusbar::Statusbar>()
+            .expect("test statusbar is mounted");
+        assert_eq!(
+            crate::statusbar::history_feedback(&statusbar),
+            (None, Some("Undid: Rename sales"))
+        );
+    }
+
+    #[test]
+    fn global_history_chord_dispatches_before_the_widget_tree_and_consumes_empty_stack() {
+        let (mut cx, mut app) = navigation_app_with_active_order();
+        app.session
+            .apply_edit(crate::editor_session::EditRequest {
+                before_location: ViewLocation {
+                    document: crate::navigation::DocumentLocator::primary("sales/order"),
+                    anchor: ViewAnchor::None,
+                },
+                intent: crate::document::EditIntent {
+                    edit: waml::edit::PendingEdit::new(waml::okf::Batch(vec![
+                        waml::okf::Op::IndexRetitle {
+                            directory: waml::okf::DirectoryAddress::parse("/sales").unwrap(),
+                            title: "Commerce".into(),
+                        },
+                    ])),
+                    label: "Rename sales".into(),
+                    merge_key: None,
+                    after_location: None,
+                },
+            })
+            .unwrap();
+        let undo = Event::KeyDown(KeyEvent {
+            key_code: KeyCode::KeyZ,
+            modifiers: KeyModifiers {
+                control: true,
+                ..Default::default()
+            },
+            ..Default::default()
+        });
+
+        app.handle_event(&mut cx, &undo);
+        {
+            let statusbar = app.ui.widget(&cx, ids!(statusbar));
+            let statusbar = statusbar
+                .borrow::<crate::statusbar::Statusbar>()
+                .expect("test statusbar is mounted");
+            assert_eq!(
+                crate::statusbar::history_feedback(&statusbar),
+                (None, Some("Undid: Rename sales"))
+            );
+        }
+
+        app.handle_event(&mut cx, &undo);
+        let statusbar = app.ui.widget(&cx, ids!(statusbar));
+        let statusbar = statusbar
+            .borrow::<crate::statusbar::Statusbar>()
+            .expect("test statusbar is mounted");
+        assert_eq!(
+            crate::statusbar::history_feedback(&statusbar),
+            (Some("Nothing to undo"), None)
+        );
     }
 
     #[test]
@@ -4069,17 +4299,26 @@ mod tests {
         // mode explicitly narrow instead of letting a zero-width query perform
         // the initial wide-to-narrow reconciliation during the style check.
         app.narrow = true;
+        draw_document_header(&mut cx, &app, dvec2(480.0, 30.0));
         let right_button_uid = app
             .ui
             .widget(&cx, ids!(document_header.right_button))
             .widget_uid();
-        app.handle_action_batch(
-            &mut cx,
-            &[widget_action(
-                right_button_uid,
-                crate::icon_button::IconButtonAction::Clicked,
-            )],
+        let action = widget_action(
+            right_button_uid,
+            crate::icon_button::IconButtonAction::Clicked,
         );
+        {
+            let header = app.ui.widget(&cx, ids!(document_header));
+            let header = header
+                .borrow::<crate::document_header::DocumentHeader>()
+                .expect("test document header is mounted");
+            assert_eq!(
+                header.action(std::slice::from_ref(&action)),
+                Some(crate::document_header::DocumentHeaderAction::ToggleRightDock)
+            );
+        }
+        app.handle_action_batch(&mut cx, &[action]);
         assert_eq!(mounted_inspector_state(&cx, &app), DockState::Pinned);
         app.sync_dock_slots(&mut cx);
 

@@ -65,9 +65,33 @@ pub fn status_line_with_feedback(
     save_error: Option<&str>,
     navigation_message: Option<&str>,
 ) -> String {
+    prioritized_status_line(
+        diagram_name,
+        node_count,
+        zoom_pct,
+        tool_label,
+        save_error,
+        None,
+        None,
+        navigation_message,
+    )
+}
+
+pub fn prioritized_status_line(
+    diagram_name: &str,
+    node_count: usize,
+    zoom_pct: i32,
+    tool_label: &str,
+    save_error: Option<&str>,
+    history_problem: Option<&str>,
+    history_success: Option<&str>,
+    navigation_message: Option<&str>,
+) -> String {
     match save_error {
         Some(error) => format!("Save failed: {error}"),
-        None => navigation_message
+        None => history_problem
+            .or(history_success)
+            .or(navigation_message)
             .map(str::to_owned)
             .unwrap_or_else(|| status_line(diagram_name, node_count, zoom_pct, tool_label)),
     }
@@ -102,6 +126,10 @@ pub struct Statusbar {
     #[rust]
     save_error: Option<String>,
     #[rust]
+    history_problem: Option<String>,
+    #[rust]
+    history_success: Option<String>,
+    #[rust]
     navigation_message: Option<String>,
 }
 
@@ -113,12 +141,14 @@ impl Widget for Statusbar {
     fn draw_walk(&mut self, cx: &mut Cx2d, _scope: &mut Scope, walk: Walk) -> DrawStep {
         let rect = cx.walk_turtle(walk);
         self.draw_bg.draw_abs(cx, rect);
-        let line = status_line_with_feedback(
+        let line = prioritized_status_line(
             &self.diagram_name,
             self.node_count,
             self.zoom_pct,
             &self.tool_label,
             self.save_error.as_deref(),
+            self.history_problem.as_deref(),
+            self.history_success.as_deref(),
             self.navigation_message.as_deref(),
         );
         let text_y = rect.pos.y + rect.size.y * 0.5 - 6.0;
@@ -153,6 +183,28 @@ impl Statusbar {
         self.navigation_message = message.map(str::to_owned);
         self.draw_bg.redraw(cx);
     }
+
+    pub fn set_history_problem(&mut self, cx: &mut Cx, message: Option<&str>) {
+        self.history_problem = message.map(str::to_owned);
+        if message.is_some() {
+            self.history_success = None;
+        }
+        self.draw_bg.redraw(cx);
+    }
+
+    pub fn set_history_success(&mut self, cx: &mut Cx, message: Option<&str>) {
+        self.history_success = message.map(str::to_owned);
+        if message.is_some() {
+            self.history_problem = None;
+        }
+        self.draw_bg.redraw(cx);
+    }
+
+    pub fn clear_history_feedback(&mut self, cx: &mut Cx) {
+        self.history_problem = None;
+        self.history_success = None;
+        self.draw_bg.redraw(cx);
+    }
 }
 
 #[cfg(test)]
@@ -163,6 +215,14 @@ pub(crate) fn navigation_message(statusbar: &Statusbar) -> Option<&str> {
 #[cfg(test)]
 pub(crate) fn save_error(statusbar: &Statusbar) -> Option<&str> {
     statusbar.save_error.as_deref()
+}
+
+#[cfg(test)]
+pub(crate) fn history_feedback(statusbar: &Statusbar) -> (Option<&str>, Option<&str>) {
+    (
+        statusbar.history_problem.as_deref(),
+        statusbar.history_success.as_deref(),
+    )
 }
 
 #[cfg(test)]
@@ -223,6 +283,41 @@ mod tests {
                 Some("Section not found: missing"),
             ),
             "Save failed: disk full"
+        );
+    }
+
+    #[test]
+    fn history_feedback_obeys_error_warning_success_navigation_precedence() {
+        let line = |save, problem, success, navigation| {
+            prioritized_status_line(
+                "Orders", 3, 100, "Select", save, problem, success, navigation,
+            )
+        };
+        assert_eq!(
+            line(
+                Some("disk full"),
+                Some("Undo failed"),
+                Some("Undid: Rename"),
+                Some("Section not found"),
+            ),
+            "Save failed: disk full"
+        );
+        assert_eq!(
+            line(
+                None,
+                Some("Undo failed"),
+                Some("Undid: Rename"),
+                Some("Section not found"),
+            ),
+            "Undo failed"
+        );
+        assert_eq!(
+            line(None, None, Some("Undid: Rename"), Some("Section not found"),),
+            "Undid: Rename"
+        );
+        assert_eq!(
+            line(None, None, None, Some("Section not found")),
+            "Section not found"
         );
     }
 }

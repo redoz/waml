@@ -84,6 +84,8 @@ pub enum IconButtonAction {
     #[default]
     None,
     Clicked,
+    HistoryBack,
+    HistoryForward,
     Pressed(DVec2),
 }
 
@@ -125,6 +127,10 @@ pub struct IconButton {
     /// Pointer-over state, self-managed from FingerHoverIn/Out.
     #[rust]
     hovered: bool,
+    #[live]
+    history_back: bool,
+    #[live]
+    history_forward: bool,
 }
 
 /// The two independent light channels of an icon button, split so a resting
@@ -148,7 +154,14 @@ impl Widget for IconButton {
                 cx.widget_action(uid, IconButtonAction::Pressed(fe.abs));
             }
             Hit::FingerUp(fe) if fe.is_primary_hit() && fe.is_over => {
-                cx.widget_action(uid, IconButtonAction::Clicked);
+                let action = if self.history_back {
+                    IconButtonAction::HistoryBack
+                } else if self.history_forward {
+                    IconButtonAction::HistoryForward
+                } else {
+                    IconButtonAction::Clicked
+                };
+                cx.widget_action(uid, action);
             }
             Hit::FingerHoverIn(_) => {
                 if !self.dim {

@@ -33,6 +33,18 @@ script_mod! {
         flow: Overlay
         clip_x: true
 
+        back_button := IconButton {
+            visible: false
+            width: 30.0
+            height: 30.0
+            history_back: true
+        }
+        forward_button := IconButton {
+            visible: false
+            width: 30.0
+            height: 30.0
+            history_forward: true
+        }
         draw_ancestor +: {
             color: atlas.text_dim
             text_style: fonts.text_menu
@@ -81,9 +93,12 @@ const SEGMENT_PAD_X: f64 = 6.0;
 const SEPARATOR_SLOT_W: f64 = 16.0;
 const SEPARATOR_SIZE: f64 = 8.0;
 const TEXT_DY: f64 = 1.0;
+const HISTORY_CONTROLS_W: f64 = 2.0 * DOCUMENT_HEADER_H;
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum DocumentHeaderAction {
+    Back,
+    Forward,
     Navigate(NavigationTarget),
     ToggleRightDock,
 }
@@ -97,7 +112,15 @@ pub struct DocumentHeaderLayout {
 }
 
 pub fn header_height(has_breadcrumb: bool, has_right_dock: bool) -> f64 {
-    if has_breadcrumb || has_right_dock {
+    header_height_for_document(has_breadcrumb, has_right_dock, false)
+}
+
+pub fn header_height_for_document(
+    has_breadcrumb: bool,
+    has_right_dock: bool,
+    has_active_document: bool,
+) -> f64 {
+    if has_active_document || has_breadcrumb || has_right_dock {
         DOCUMENT_HEADER_H
     } else {
         0.0
@@ -120,6 +143,7 @@ pub fn layout_header(
     }
 
     let content_width = (available_width
+        - HISTORY_CONTROLS_W
         - if has_right_dock {
             right_button_width
         } else {
@@ -141,10 +165,11 @@ pub fn layout_header(
     }
     visible_indices.reverse();
 
-    let mut x = 0.0;
+    let content_end = HISTORY_CONTROLS_W + content_width;
+    let mut x = HISTORY_CONTROLS_W;
     let mut segment_rects = Vec::with_capacity(visible_indices.len());
     for (position, &index) in visible_indices.iter().enumerate() {
-        let width = segment_width(index).min((content_width - x).max(0.0));
+        let width = segment_width(index).min((content_end - x).max(0.0));
         segment_rects.push((
             index,
             Rect {
@@ -186,8 +211,11 @@ fn content_clip_rect(origin: DVec2, available_width: f64, right_button_width: f6
         0.0
     };
     Rect {
-        pos: origin,
-        size: dvec2((available_width - reserved).max(0.0), DOCUMENT_HEADER_H),
+        pos: origin + dvec2(HISTORY_CONTROLS_W, 0.0),
+        size: dvec2(
+            (available_width - HISTORY_CONTROLS_W - reserved).max(0.0),
+            DOCUMENT_HEADER_H,
+        ),
     }
 }
 
@@ -196,6 +224,9 @@ struct DocumentHeaderState {
     segments: Vec<BreadcrumbSegment>,
     right_dock: Option<Icon>,
     segment_rects: Vec<(usize, Rect)>,
+    history_visible: bool,
+    can_back: bool,
+    can_forward: bool,
 }
 
 impl DocumentHeaderState {
@@ -209,6 +240,9 @@ impl DocumentHeaderState {
             segments,
             right_dock,
             segment_rects,
+            history_visible: false,
+            can_back: false,
+            can_forward: false,
         }
     }
 
@@ -231,7 +265,11 @@ impl DocumentHeaderState {
     }
 
     fn visible_height(&self) -> f64 {
-        header_height(!self.segments.is_empty(), self.right_dock.is_some())
+        header_height_for_document(
+            !self.segments.is_empty(),
+            self.right_dock.is_some(),
+            self.history_visible,
+        )
     }
 
     fn action_at(&self, position: DVec2) -> Option<DocumentHeaderAction> {
@@ -398,6 +436,35 @@ impl DocumentHeader {
             .set_active(cx, active);
     }
 
+    pub fn set_history_visible(&mut self, cx: &mut Cx, visible: bool) {
+        if self.state.history_visible == visible {
+            return;
+        }
+        self.state.history_visible = visible;
+        let back = self.view.widget(cx, ids!(back_button));
+        let forward = self.view.widget(cx, ids!(forward_button));
+        back.set_visible(cx, visible);
+        forward.set_visible(cx, visible);
+        if visible {
+            back.as_icon_button().set_icon(cx, Icon::ArrowLeft);
+            forward.as_icon_button().set_icon(cx, Icon::ArrowRight);
+        }
+        self.sync_content_layout(cx);
+    }
+
+    pub fn set_history_enabled(&mut self, cx: &mut Cx, can_back: bool, can_forward: bool) {
+        self.state.can_back = can_back;
+        self.state.can_forward = can_forward;
+        self.view
+            .widget(cx, ids!(back_button))
+            .as_icon_button()
+            .set_dim(cx, !can_back);
+        self.view
+            .widget(cx, ids!(forward_button))
+            .as_icon_button()
+            .set_dim(cx, !can_forward);
+    }
+
     pub fn visible_height(&self) -> f64 {
         self.state.visible_height()
     }
@@ -410,6 +477,11 @@ impl DocumentHeader {
     #[cfg(test)]
     pub(crate) fn test_right_dock(&self) -> Option<Icon> {
         self.state.right_dock
+    }
+
+    #[cfg(test)]
+    pub(crate) fn test_history_enabled(&self) -> (bool, bool) {
+        (self.state.can_back, self.state.can_forward)
     }
 
     #[cfg(test)]
@@ -441,13 +513,35 @@ impl DocumentHeader {
             }
         }
 
-        let button_uid = self.right_button_uid?;
-        let item = actions.find_widget_action(button_uid)?;
-        matches!(
-            item.action.downcast_ref::<IconButtonAction>(),
-            Some(IconButtonAction::Clicked)
-        )
-        .then_some(DocumentHeaderAction::ToggleRightDock)
+        for action in actions {
+            let Some(item) = action.as_widget_action() else {
+                continue;
+            };
+            match item.action.downcast_ref::<IconButtonAction>() {
+                Some(IconButtonAction::HistoryBack) => {
+                    return Some(DocumentHeaderAction::Back);
+                }
+                Some(IconButtonAction::HistoryForward) => {
+                    return Some(DocumentHeaderAction::Forward);
+                }
+                _ => {}
+            }
+        }
+
+        let clicked = |uid: Option<WidgetUid>| {
+            uid.and_then(|uid| actions.find_widget_action(uid))
+                .is_some_and(|item| {
+                    matches!(
+                        item.action.downcast_ref::<IconButtonAction>(),
+                        Some(IconButtonAction::Clicked)
+                    )
+                })
+        };
+        if clicked(self.right_button_uid) {
+            Some(DocumentHeaderAction::ToggleRightDock)
+        } else {
+            None
+        }
     }
 }
 
@@ -477,16 +571,25 @@ mod tests {
 
     #[test]
     fn layout_matches_reference_inset_padding_and_separator_spacing() {
-        let layout = layout_header(200.0, &[20.0, 30.0], 0.0);
-        assert_eq!(layout.segment_rects[0].1.pos.x, 8.0);
+        let layout = layout_header(260.0, &[20.0, 30.0], 0.0);
+        assert_eq!(
+            layout.segment_rects[0].1.pos.x,
+            HISTORY_CONTROLS_W + HEADER_PAD_X
+        );
         assert_eq!(layout.segment_rects[0].1.size.x, 32.0);
-        assert_eq!(layout.segment_rects[1].1.pos.x, 56.0);
+        assert_eq!(
+            layout.segment_rects[1].1.pos.x,
+            HISTORY_CONTROLS_W + 56.0
+        );
         assert_eq!(layout.segment_rects[1].1.size.x, 42.0);
 
         let separator = separator_rect(layout.segment_rects[0].1);
-        assert_eq!(separator.pos.x, 44.0);
+        assert_eq!(separator.pos.x, HISTORY_CONTROLS_W + 44.0);
         assert_eq!(separator.size, dvec2(8.0, 8.0));
-        assert_eq!(layout.segment_rects[0].1.pos.x + 6.0, 14.0);
+        assert_eq!(
+            layout.segment_rects[0].1.pos.x + SEGMENT_PAD_X,
+            HISTORY_CONTROLS_W + 14.0
+        );
     }
 
     #[test]
@@ -519,9 +622,27 @@ mod tests {
 
     #[test]
     fn constrained_positive_content_keeps_a_positive_current_hit_rect() {
-        let layout = layout_header(55.0, &[44.0, 58.0], 30.0);
+        let layout = layout_header(115.0, &[44.0, 58.0], 30.0);
         assert_eq!(layout.visible_indices, vec![1]);
         assert!(layout.segment_rects[0].1.size.x > 0.0);
+    }
+
+    #[test]
+    fn active_document_keeps_history_controls_and_header_mounted_without_breadcrumbs() {
+        assert_eq!(
+            header_height_for_document(false, false, true),
+            DOCUMENT_HEADER_H
+        );
+        assert_eq!(header_height_for_document(false, false, false), 0.0);
+    }
+
+    #[test]
+    fn history_controls_reserve_a_fixed_leading_region() {
+        let layout = layout_header(180.0, &[40.0, 50.0], 0.0);
+        assert_eq!(
+            layout.segment_rects.first().map(|(_, rect)| rect.pos.x),
+            Some(HISTORY_CONTROLS_W + HEADER_PAD_X)
+        );
     }
 
     #[test]
@@ -557,13 +678,19 @@ mod tests {
 
     #[test]
     fn right_button_reservation_elides_only_the_oldest_ancestor() {
-        let without_button = layout_header(170.0, &[30.0, 30.0, 30.0], 0.0);
+        let without_button = layout_header(230.0, &[30.0, 30.0, 30.0], 0.0);
         assert_eq!(without_button.visible_indices, vec![0, 1, 2]);
 
-        let with_button = layout_header(170.0, &[30.0, 30.0, 30.0], 30.0);
+        let with_button = layout_header(230.0, &[30.0, 30.0, 30.0], 30.0);
         assert_eq!(with_button.visible_indices, vec![1, 2]);
-        assert_eq!(with_button.segment_rects[0].1.pos.x, 8.0);
-        assert_eq!(with_button.segment_rects[1].1.pos.x, 66.0);
+        assert_eq!(
+            with_button.segment_rects[0].1.pos.x,
+            HISTORY_CONTROLS_W + HEADER_PAD_X
+        );
+        assert_eq!(
+            with_button.segment_rects[1].1.pos.x,
+            HISTORY_CONTROLS_W + 66.0
+        );
     }
 
     #[test]
@@ -571,22 +698,22 @@ mod tests {
         assert_eq!(
             content_clip_rect(dvec2(10.0, 5.0), 120.0, 30.0),
             Rect {
-                pos: dvec2(10.0, 5.0),
-                size: dvec2(90.0, DOCUMENT_HEADER_H),
+                pos: dvec2(70.0, 5.0),
+                size: dvec2(30.0, DOCUMENT_HEADER_H),
             }
         );
         assert_eq!(
             content_clip_rect(dvec2(10.0, 5.0), 120.0, 0.0),
             Rect {
-                pos: dvec2(10.0, 5.0),
-                size: dvec2(120.0, DOCUMENT_HEADER_H),
+                pos: dvec2(70.0, 5.0),
+                size: dvec2(60.0, DOCUMENT_HEADER_H),
             }
         );
     }
 
     #[test]
     fn hit_rects_retain_original_segment_indices() {
-        let layout = layout_header(300.0, &[40.0, 50.0, 60.0], 30.0);
+        let layout = layout_header(330.0, &[40.0, 50.0, 60.0], 30.0);
         assert_eq!(
             layout
                 .segment_rects
