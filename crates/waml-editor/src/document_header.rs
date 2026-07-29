@@ -12,11 +12,25 @@ script_mod! {
 
     mod.widgets.DocumentHeaderBase = #(DocumentHeader::register_widget(vm))
 
+    // Private Lucide `chevron-right` port. The shared public Icon enum does not
+    // expose this glyph, and a breadcrumb separator should not widen that API.
+    mod.draw.DocumentHeaderChevron = mod.draw.DrawColor{
+        pixel: fn() {
+            let s = self.rect_size.x
+            let w = max(1.0, s * 0.125)
+            let sdf = Sdf2d.viewport(self.pos * self.rect_size)
+            sdf.move_to(s * 0.375, s * 0.25)
+            sdf.line_to(s * 0.625, s * 0.5)
+            sdf.line_to(s * 0.375, s * 0.75)
+            sdf.stroke(self.color, w)
+            return sdf.result
+        }
+    }
+
     mod.widgets.DocumentHeader = set_type_default() do mod.widgets.DocumentHeaderBase{
         width: Fill
         height: 0.0
-        flow: Right
-        align: Align{y: 0.5}
+        flow: Overlay
         clip_x: true
 
         draw_ancestor +: {
@@ -27,25 +41,46 @@ script_mod! {
             color: atlas.text
             text_style: fonts.text_label
         }
-        draw_chevron +: {
-            color: atlas.text_dim
-            text_style: fonts.text_menu
-        }
+        draw_border +: { color: atlas.surface_border }
+        draw_separator: mod.draw.DocumentHeaderChevron{ color: atlas.text_dim }
 
-        breadcrumb_slot := View {
+        surface := View {
             width: Fill
             height: Fill
+            show_bg: true
+            draw_bg +: {
+                color: atlas.canvas_ground
+                pixel: fn() {
+                    return vec4(self.color.rgb * self.color.a, self.color.a)
+                }
+            }
         }
-        right_button := IconButton {
-            visible: false
-            width: 30.0
-            height: 30.0
+        content_row := View {
+            width: Fill
+            height: Fill
+            flow: Right
+            align: Align{y: 0.5}
+            clip_x: true
+
+            breadcrumb_slot := View {
+                width: Fill
+                height: Fill
+            }
+            right_button := IconButton {
+                visible: false
+                width: 30.0
+                height: 30.0
+            }
         }
     }
 }
 
 pub const DOCUMENT_HEADER_H: f64 = 30.0;
-const CHEVRON_W: f64 = 14.0;
+const HEADER_PAD_X: f64 = 8.0;
+const SEGMENT_PAD_X: f64 = 6.0;
+const SEPARATOR_SLOT_W: f64 = 16.0;
+const SEPARATOR_SIZE: f64 = 8.0;
+const TEXT_DY: f64 = 1.0;
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum DocumentHeaderAction {
@@ -89,13 +124,15 @@ pub fn layout_header(
             right_button_width
         } else {
             0.0
-        })
-    .max(0.0);
+        }
+        - HEADER_PAD_X)
+        .max(0.0);
     let current = label_widths.len() - 1;
     let mut visible_indices = vec![current];
-    let mut used = label_widths[current].max(0.0);
+    let segment_width = |index: usize| label_widths[index].max(0.0) + 2.0 * SEGMENT_PAD_X;
+    let mut used = segment_width(current);
     for index in (0..current).rev() {
-        let next = CHEVRON_W + label_widths[index].max(0.0);
+        let next = SEPARATOR_SLOT_W + segment_width(index);
         if used + next > content_width {
             break;
         }
@@ -107,19 +144,17 @@ pub fn layout_header(
     let mut x = 0.0;
     let mut segment_rects = Vec::with_capacity(visible_indices.len());
     for (position, &index) in visible_indices.iter().enumerate() {
-        let width = label_widths[index]
-            .max(0.0)
-            .min((content_width - x).max(0.0));
+        let width = segment_width(index).min((content_width - x).max(0.0));
         segment_rects.push((
             index,
             Rect {
-                pos: dvec2(x, 0.0),
+                pos: dvec2(HEADER_PAD_X + x, 0.0),
                 size: dvec2(width, DOCUMENT_HEADER_H),
             },
         ));
-        x += label_widths[index].max(0.0);
+        x += segment_width(index);
         if position + 1 < visible_indices.len() {
-            x += CHEVRON_W;
+            x += SEPARATOR_SLOT_W;
         }
     }
 
@@ -128,6 +163,20 @@ pub fn layout_header(
         segment_rects,
         height,
     }
+}
+
+fn separator_rect(left_segment: Rect) -> Rect {
+    Rect {
+        pos: dvec2(
+            left_segment.pos.x + left_segment.size.x + (SEPARATOR_SLOT_W - SEPARATOR_SIZE) * 0.5,
+            left_segment.pos.y + (DOCUMENT_HEADER_H - SEPARATOR_SIZE) * 0.5,
+        ),
+        size: dvec2(SEPARATOR_SIZE, SEPARATOR_SIZE),
+    }
+}
+
+fn centered_text_y(row: Rect, text_size: f64) -> f64 {
+    (row.pos.y + (row.size.y - text_size) * 0.5 + TEXT_DY).round()
 }
 
 fn content_clip_rect(origin: DVec2, available_width: f64, right_button_width: f64) -> Rect {
@@ -204,7 +253,9 @@ pub struct DocumentHeader {
     #[live]
     draw_current: DrawText,
     #[live]
-    draw_chevron: DrawText,
+    draw_border: DrawColor,
+    #[live]
+    draw_separator: DrawColor,
     #[rust]
     state: DocumentHeaderState,
     #[rust]
@@ -276,6 +327,19 @@ impl Widget for DocumentHeader {
             })
             .collect();
 
+        if self.draw_rect.size.y > 0.0 {
+            self.draw_border.draw_abs(
+                cx,
+                Rect {
+                    pos: dvec2(
+                        self.draw_rect.pos.x,
+                        self.draw_rect.pos.y + DOCUMENT_HEADER_H - 1.0,
+                    ),
+                    size: dvec2(self.draw_rect.size.x, 1.0),
+                },
+            );
+        }
+
         cx.push_clip_rect(content_clip_rect(
             self.draw_rect.pos,
             self.draw_rect.size.x,
@@ -288,13 +352,10 @@ impl Widget for DocumentHeader {
             } else {
                 &mut self.draw_ancestor
             };
-            let y = rect.pos.y + (DOCUMENT_HEADER_H - draw.text_style.font_size as f64) * 0.5;
-            draw.draw_abs(cx, dvec2(rect.pos.x, y), &segment.title);
+            let y = centered_text_y(*rect, draw.text_style.font_size as f64);
+            draw.draw_abs(cx, dvec2(rect.pos.x + SEGMENT_PAD_X, y), &segment.title);
             if position + 1 < self.state.segment_rects.len() {
-                let chevron_y = rect.pos.y
-                    + (DOCUMENT_HEADER_H - self.draw_chevron.text_style.font_size as f64) * 0.5;
-                self.draw_chevron
-                    .draw_abs(cx, dvec2(rect.pos.x + rect.size.x, chevron_y), ">");
+                self.draw_separator.draw_abs(cx, separator_rect(*rect));
             }
         }
         cx.pop_clip_rect();
@@ -305,7 +366,8 @@ impl Widget for DocumentHeader {
 
 impl DocumentHeader {
     fn sync_content_layout(&mut self, cx: &mut Cx) {
-        self.view.walk.height = Size::Fixed(self.state.visible_height());
+        let height = self.state.visible_height();
+        self.view.walk.height = Size::Fixed(height);
         cx.redraw_all();
     }
 
@@ -414,6 +476,55 @@ mod tests {
     }
 
     #[test]
+    fn layout_matches_reference_inset_padding_and_separator_spacing() {
+        let layout = layout_header(200.0, &[20.0, 30.0], 0.0);
+        assert_eq!(layout.segment_rects[0].1.pos.x, 8.0);
+        assert_eq!(layout.segment_rects[0].1.size.x, 32.0);
+        assert_eq!(layout.segment_rects[1].1.pos.x, 56.0);
+        assert_eq!(layout.segment_rects[1].1.size.x, 42.0);
+
+        let separator = separator_rect(layout.segment_rects[0].1);
+        assert_eq!(separator.pos.x, 44.0);
+        assert_eq!(separator.size, dvec2(8.0, 8.0));
+        assert_eq!(layout.segment_rects[0].1.pos.x + 6.0, 14.0);
+    }
+
+    #[test]
+    fn text_is_pixel_snapped_and_optically_centered() {
+        let row = Rect {
+            pos: dvec2(10.25, 5.25),
+            size: dvec2(80.0, DOCUMENT_HEADER_H),
+        };
+        assert_eq!(centered_text_y(row, 10.0), 16.0);
+        assert_eq!(centered_text_y(row, 11.0), 16.0);
+    }
+
+    #[test]
+    fn padded_hit_rects_keep_original_navigation_targets() {
+        let segments = vec![segment("Root", "root"), segment("Current", "current")];
+        let layout = layout_header(180.0, &[24.0, 42.0], 0.0);
+        let state =
+            DocumentHeaderState::for_test(segments.clone(), None, layout.segment_rects.clone());
+
+        for (index, rect) in &layout.segment_rects {
+            assert!(rect.size.x >= 12.0);
+            assert_eq!(
+                state.action_at(rect.pos + rect.size * 0.5),
+                Some(DocumentHeaderAction::Navigate(
+                    segments[*index].target.clone()
+                ))
+            );
+        }
+    }
+
+    #[test]
+    fn constrained_positive_content_keeps_a_positive_current_hit_rect() {
+        let layout = layout_header(55.0, &[44.0, 58.0], 30.0);
+        assert_eq!(layout.visible_indices, vec![1]);
+        assert!(layout.segment_rects[0].1.size.x > 0.0);
+    }
+
+    #[test]
     fn narrow_elision_preserves_the_current_segment() {
         let layout = layout_header(90.0, &[44.0, 52.0, 58.0], 0.0);
         assert_eq!(layout.visible_indices.last(), Some(&2));
@@ -446,13 +557,13 @@ mod tests {
 
     #[test]
     fn right_button_reservation_elides_only_the_oldest_ancestor() {
-        let without_button = layout_header(120.0, &[30.0, 30.0, 30.0], 0.0);
+        let without_button = layout_header(170.0, &[30.0, 30.0, 30.0], 0.0);
         assert_eq!(without_button.visible_indices, vec![0, 1, 2]);
 
-        let with_button = layout_header(120.0, &[30.0, 30.0, 30.0], 30.0);
+        let with_button = layout_header(170.0, &[30.0, 30.0, 30.0], 30.0);
         assert_eq!(with_button.visible_indices, vec![1, 2]);
-        assert_eq!(with_button.segment_rects[0].1.pos.x, 0.0);
-        assert_eq!(with_button.segment_rects[1].1.pos.x, 44.0);
+        assert_eq!(with_button.segment_rects[0].1.pos.x, 8.0);
+        assert_eq!(with_button.segment_rects[1].1.pos.x, 66.0);
     }
 
     #[test]
@@ -622,5 +733,8 @@ mod tests {
             cx.new_draw_event.redraw_all,
             "changing header height must invalidate the parent flow"
         );
+
+        header.set_segments(&mut cx, Vec::new());
+        assert_eq!(header.visible_height(), 0.0);
     }
 }
