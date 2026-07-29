@@ -1198,7 +1198,7 @@ fn has_syntax_annotations(node: &GreenNode<OkfMarkdownLanguage>) -> bool {
 }
 
 #[cfg(test)]
-mod source_recovery_tests {
+mod tests {
     use super::*;
 
     fn source_token(
@@ -1302,6 +1302,18 @@ mod source_recovery_tests {
         let empty_source = SourceText::from_shared(Arc::new(String::new())).unwrap();
         let source = SourceText::from_shared(Arc::new("ab".to_owned())).unwrap();
         let factory = GreenFactory::new();
+        let parser_source =
+            SourceText::from_shared(Arc::new("# Ordinary\nbody\n".to_owned())).unwrap();
+        let parser_tree =
+            crate::parse_okf_markdown(parser_source.clone(), MarkdownDialect::CommonMarkCurrent)
+                .unwrap()
+                .tree;
+        assert!(Arc::ptr_eq(
+            recover_exact_source(parser_tree.root_green())
+                .unwrap()
+                .shared(),
+            parser_source.shared()
+        ));
         let empty = factory
             .node(
                 OkfMarkdownSyntaxKind::Root,
@@ -1312,6 +1324,52 @@ mod source_recovery_tests {
             recover_exact_source(&empty).unwrap().shared(),
             empty_source.shared()
         ));
+        let trivia = factory
+            .trivia(
+                crate::TriviaKind::Whitespace,
+                GreenText::SourceSlice {
+                    source: source.clone(),
+                    range: TextRange::new(
+                        TextSize::try_from_usize(0).unwrap(),
+                        TextSize::try_from_usize(2).unwrap(),
+                    )
+                    .unwrap(),
+                },
+            )
+            .unwrap();
+        let trivia_only = factory
+            .node(
+                OkfMarkdownSyntaxKind::Root,
+                [GreenElement::Token(
+                    factory
+                        .token(
+                            OkfMarkdownSyntaxKind::RawTextToken,
+                            GreenText::Static(""),
+                            [trivia],
+                            [],
+                        )
+                        .unwrap(),
+                )],
+            )
+            .unwrap();
+        assert!(Arc::ptr_eq(
+            recover_exact_source(&trivia_only).unwrap().shared(),
+            source.shared()
+        ));
+        let reordered = factory
+            .node(
+                OkfMarkdownSyntaxKind::Root,
+                [source_token(&source, 1, 2), source_token(&source, 0, 1)],
+            )
+            .unwrap();
+        assert!(recover_exact_source(&reordered).is_none());
+        let duplicated = factory
+            .node(
+                OkfMarkdownSyntaxKind::Root,
+                [source_token(&source, 0, 1), source_token(&source, 0, 1)],
+            )
+            .unwrap();
+        assert!(recover_exact_source(&duplicated).is_none());
         let overlap = factory
             .node(
                 OkfMarkdownSyntaxKind::Root,
@@ -1338,6 +1396,22 @@ mod source_recovery_tests {
             )
             .unwrap();
         assert!(recover_exact_source(&static_mismatch).is_none());
+        let source_independent = factory
+            .node(
+                OkfMarkdownSyntaxKind::Root,
+                [GreenElement::Token(
+                    factory
+                        .token(
+                            OkfMarkdownSyntaxKind::RawTextToken,
+                            GreenText::Owned(Arc::from("ab")),
+                            [],
+                            [],
+                        )
+                        .unwrap(),
+                )],
+            )
+            .unwrap();
+        assert!(recover_exact_source(&source_independent).is_none());
     }
 }
 fn same_containers(

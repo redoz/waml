@@ -622,12 +622,18 @@ mod tests {
         let empty_source = SourceText::from_shared(Arc::new(String::new())).unwrap();
         let source = SourceText::from_shared(Arc::new("ab".to_owned())).unwrap();
         let factory = GreenFactory::new();
-        let ordinary = factory
-            .node(UmlSyntaxKind::Root, [token(&source, 0, 2)])
-            .unwrap();
+        let parser_source = SourceText::from_shared(Arc::new(
+            "---\ntype: uml.Class\n---\n# Ordinary\n## Attributes\n- name: String\n".to_owned(),
+        ))
+        .unwrap();
+        let shell =
+            parse_okf_markdown(parser_source.clone(), MarkdownDialect::CommonMarkCurrent).unwrap();
+        let ordinary = parse_full(parser_source.clone(), &shell.structure);
         assert!(Arc::ptr_eq(
-            recover_exact_source(&ordinary).unwrap().shared(),
-            source.shared()
+            recover_exact_source(ordinary.root_green())
+                .unwrap()
+                .shared(),
+            parser_source.shared()
         ));
         let empty = factory
             .node(UmlSyntaxKind::Root, [token(&empty_source, 0, 0)])
@@ -636,6 +642,52 @@ mod tests {
             recover_exact_source(&empty).unwrap().shared(),
             empty_source.shared()
         ));
+        let trivia = factory
+            .trivia(
+                waml_syntax::TriviaKind::Whitespace,
+                GreenText::SourceSlice {
+                    source: source.clone(),
+                    range: TextRange::new(
+                        TextSize::try_from_usize(0).unwrap(),
+                        TextSize::try_from_usize(2).unwrap(),
+                    )
+                    .unwrap(),
+                },
+            )
+            .unwrap();
+        let trivia_only = factory
+            .node(
+                UmlSyntaxKind::Root,
+                [GreenElement::Token(
+                    factory
+                        .token(
+                            UmlSyntaxKind::IdentifierToken,
+                            GreenText::Static(""),
+                            [trivia],
+                            [],
+                        )
+                        .unwrap(),
+                )],
+            )
+            .unwrap();
+        assert!(Arc::ptr_eq(
+            recover_exact_source(&trivia_only).unwrap().shared(),
+            source.shared()
+        ));
+        let reordered = factory
+            .node(
+                UmlSyntaxKind::Root,
+                [token(&source, 1, 2), token(&source, 0, 1)],
+            )
+            .unwrap();
+        assert!(recover_exact_source(&reordered).is_none());
+        let duplicated = factory
+            .node(
+                UmlSyntaxKind::Root,
+                [token(&source, 0, 1), token(&source, 0, 1)],
+            )
+            .unwrap();
+        assert!(recover_exact_source(&duplicated).is_none());
         let overlap = factory
             .node(
                 UmlSyntaxKind::Root,
@@ -674,5 +726,40 @@ mod tests {
             )
             .unwrap();
         assert!(recover_exact_source(&owned).is_none());
+        let static_mismatch = factory
+            .node(
+                UmlSyntaxKind::Root,
+                [
+                    token(&source, 0, 1),
+                    GreenElement::Token(
+                        factory
+                            .token(
+                                UmlSyntaxKind::IdentifierToken,
+                                GreenText::Static("x"),
+                                [],
+                                [],
+                            )
+                            .unwrap(),
+                    ),
+                ],
+            )
+            .unwrap();
+        assert!(recover_exact_source(&static_mismatch).is_none());
+        let source_independent = factory
+            .node(
+                UmlSyntaxKind::Root,
+                [GreenElement::Token(
+                    factory
+                        .token(
+                            UmlSyntaxKind::IdentifierToken,
+                            GreenText::Owned(Arc::from("ab")),
+                            [],
+                            [],
+                        )
+                        .unwrap(),
+                )],
+            )
+            .unwrap();
+        assert!(recover_exact_source(&source_independent).is_none());
     }
 }
