@@ -301,6 +301,57 @@ fn safe_frontmatter_boundary_insertions_are_incremental() {
     }
 }
 
+#[test]
+fn same_length_heading_text_edit_is_incremental_and_reuses_eof() {
+    let old_source = text("# Before\nraw text\n");
+    let previous = parse_okf_markdown(old_source, MarkdownDialect::CommonMarkCurrent).unwrap();
+    let next_source = text("# After!\nraw text\n");
+    let change = TextChange {
+        old_range: range(2, 8),
+        replacement: Arc::from("After!"),
+    };
+    let full = parse_okf_markdown(next_source.clone(), MarkdownDialect::CommonMarkCurrent).unwrap();
+    let (outcome, structure) =
+        reparse_okf_markdown_with_structure(&previous.tree, next_source.clone(), &[change])
+            .unwrap();
+    let ReparseOutcome::Incremental { tree, .. } = outcome else {
+        panic!("same-length heading text edit must be incremental")
+    };
+
+    assert_eq!(structure.headings.len(), 1);
+    assert_eq!(
+        structure.headings[0].level,
+        previous.structure.headings[0].level
+    );
+    assert_eq!(
+        structure.headings[0].range,
+        previous.structure.headings[0].range
+    );
+    assert_eq!(
+        structure.headings[0].text_range,
+        previous.structure.headings[0].text_range
+    );
+    assert_eq!(
+        structural_fingerprint(&tree),
+        structural_fingerprint(&full.tree)
+    );
+    assert_eq!(
+        diagnostic_fingerprint(&tree),
+        diagnostic_fingerprint(&full.tree)
+    );
+    assert!(all_source_slices_use(
+        &GreenElement::Node(tree.root_green().clone()),
+        &next_source
+    ));
+    assert!(
+        first_token(&previous.tree, OkfMarkdownSyntaxKind::EndOfFileToken)
+            .same_green(&first_token(&tree, OkfMarkdownSyntaxKind::EndOfFileToken))
+    );
+    assert!(!first_node(&previous.tree, OkfMarkdownSyntaxKind::Heading)
+        .same_green(&first_node(&tree, OkfMarkdownSyntaxKind::Heading)));
+    assert!(!previous.tree.root().same_green(&tree.root()));
+}
+
 fn exact_oracle(
     previous: &str,
     next: &str,

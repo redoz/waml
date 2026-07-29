@@ -669,7 +669,11 @@ pub fn reparse_okf_markdown_with_structure(
     diagnostics.extend(parsed_window.diagnostics.iter().cloned());
     diagnostics.sort_by_key(|d| (d.range.start(), d.range.end(), d.code as u8));
     let candidate = SyntaxTree::new(root, diagnostics.into(), MarkdownDialect::CommonMarkCurrent);
-    let root = transfer_mapped_annotations(previous, &candidate, &map);
+    let root = if has_syntax_annotations(previous.root_green()) {
+        transfer_mapped_annotations(previous, &candidate, &map)
+    } else {
+        candidate.root_green().clone()
+    };
     Ok((
         ReparseOutcome::Incremental {
             tree: Arc::new(SyntaxTree::new(
@@ -908,8 +912,8 @@ fn same_headings(old: &MarkdownStructureMap, new: &MarkdownStructureMap, map: &C
         .map(|heading| {
             Some((
                 heading.level,
-                map_range(heading.range, map)?,
-                map_range(heading.text_range, map)?,
+                translate_heading_boundaries(heading.range, map)?,
+                translate_heading_boundaries(heading.text_range, map)?,
             ))
         })
         .collect::<Option<Vec<_>>>();
@@ -920,6 +924,22 @@ fn same_headings(old: &MarkdownStructureMap, new: &MarkdownStructureMap, map: &C
         .map(|heading| (heading.level, heading.range, heading.text_range))
         .collect::<Vec<_>>();
     old == Some(new)
+}
+
+fn translate_heading_boundaries(range: TextRange, map: &ChangeMap) -> Option<TextRange> {
+    TextRange::new(
+        map.translate_start_boundary(range.start())?,
+        map.translate_end_boundary(range.end())?,
+    )
+    .ok()
+}
+
+fn has_syntax_annotations(node: &GreenNode<OkfMarkdownLanguage>) -> bool {
+    !node.annotations().is_empty()
+        || node.children().iter().any(|child| match child {
+            GreenElement::Node(child) => has_syntax_annotations(child),
+            GreenElement::Token(token) => !token.syntax_annotations().is_empty(),
+        })
 }
 fn same_containers(
     old: &MarkdownStructureMap,
