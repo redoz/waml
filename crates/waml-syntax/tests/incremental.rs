@@ -1,11 +1,12 @@
-use std::{collections::HashSet, sync::Arc};
+use std::sync::Arc;
 
 use std::num::NonZeroU64;
 use waml_syntax::{
     annotate_occurrence, parse_okf_markdown, rebase_unchanged_green, reparse_okf_markdown,
     reparse_okf_markdown_with_structure, transfer_mapped_annotations, ChangeMap, FullReparseReason,
-    GreenElement, GreenText, MarkdownDialect, OkfMarkdownSyntaxKind, ReparseOutcome, RewriteError,
-    SourceText, SyntaxAnnotation, SyntaxElement, SyntaxTree, TextChange, TextRange, TextSize,
+    GreenElement, GreenText, MarkdownDialect, OkfMarkdownSyntaxKind, OkfSyntaxDiagnosticCode,
+    ReparseOutcome, RewriteError, SourceText, SyntaxAnnotation, SyntaxElement, SyntaxTree,
+    TextChange, TextRange, TextSize,
 };
 
 fn incremental_outcome(
@@ -363,35 +364,97 @@ fn safe_frontmatter_boundary_insertions_are_incremental() {
 
 #[test]
 fn repeated_unclosed_frontmatter_edits_do_not_accumulate_eof_diagnostics() {
-    let mut previous = "---\ntype: x\n".to_owned();
+    let mut previous_source = "---\ntype: x\n".to_owned();
+    let mut previous =
+        parse_okf_markdown(text(&previous_source), MarkdownDialect::CommonMarkCurrent)
+            .unwrap()
+            .tree;
     for replacement in ["y", "z"] {
         let next = format!("---\ntype: {replacement}\n");
         let change = TextChange {
             old_range: range(10, 11),
             replacement: Arc::from(replacement),
         };
-        let outcome = incremental_outcome(&previous, &next, &[change]);
+        let outcome = reparse_okf_markdown(&previous, text(&next), &[change]).unwrap();
         let tree = match outcome {
-            ReparseOutcome::Incremental { tree, .. } | ReparseOutcome::Full { tree, .. } => tree,
+            ReparseOutcome::Full {
+                tree,
+                reason: FullReparseReason::UnsafeSynchronization,
+            } => tree,
+            ReparseOutcome::Full { reason, .. } => {
+                panic!("boundary diagnostic must use unsafe synchronization, got {reason:?}")
+            }
+            ReparseOutcome::Incremental { .. } => {
+                panic!("boundary diagnostic must conservatively fall back")
+            }
         };
         let full = parse_okf_markdown(text(&next), MarkdownDialect::CommonMarkCurrent).unwrap();
-        let mut incremental_diagnostics = diagnostic_fingerprint(&tree);
-        let mut full_diagnostics = diagnostic_fingerprint(&full.tree);
-        incremental_diagnostics.sort();
-        full_diagnostics.sort();
-        assert_eq!(incremental_diagnostics, full_diagnostics);
-        previous = next;
+        assert_eq!(
+            diagnostic_fingerprint(&tree),
+            diagnostic_fingerprint(&full.tree)
+        );
+        assert_eq!(
+            tree.diagnostics()
+                .iter()
+                .filter(|diagnostic| {
+                    diagnostic.code == OkfSyntaxDiagnosticCode::MissingFrontmatterFence
+                })
+                .count(),
+            1
+        );
+        previous_source = next;
+        previous = tree;
     }
+    assert_eq!(previous.write_to_string(), previous_source);
+}
+
+#[test]
+fn unclosed_frontmatter_heading_edit_at_boundary_falls_back() {
+    let previous = parse_okf_markdown(
+        text("---\ntype: x\n# Before\n"),
+        MarkdownDialect::CommonMarkCurrent,
+    )
+    .unwrap();
+    let ReparseOutcome::Full { tree, reason } = reparse_okf_markdown(
+        &previous.tree,
+        text("---\ntype: x\n# After!\n"),
+        &[TextChange {
+            old_range: range(14, 20),
+            replacement: Arc::from("After!"),
+        }],
+    )
+    .unwrap() else {
+        panic!("unclosed frontmatter boundary diagnostic must conservatively fall back")
+    };
+    assert_eq!(reason, FullReparseReason::UnsafeSynchronization);
+    let full = parse_okf_markdown(
+        text("---\ntype: x\n# After!\n"),
+        MarkdownDialect::CommonMarkCurrent,
+    )
+    .unwrap();
+    assert_eq!(
+        diagnostic_fingerprint(&tree),
+        diagnostic_fingerprint(&full.tree)
+    );
+    assert_eq!(
+        tree.diagnostics()
+            .iter()
+            .filter(|diagnostic| {
+                diagnostic.code == OkfSyntaxDiagnosticCode::MissingFrontmatterFence
+            })
+            .count(),
+        1
+    );
 }
 
 #[test]
 fn annotation_transfer_reports_source_independent_greens_from_final_tree() {
     let old = text("# One\nbody\n");
     let parsed = parse_okf_markdown(old.clone(), MarkdownDialect::CommonMarkCurrent).unwrap();
-    let heading = first_node(&parsed.tree, OkfMarkdownSyntaxKind::Heading);
+    let annotated_region = first_node(&parsed.tree, OkfMarkdownSyntaxKind::MarkdownRegion);
     let annotated = annotate_occurrence(
         &parsed.tree,
-        &heading.locator(),
+        &annotated_region.locator(),
         SyntaxAnnotation::new(NonZeroU64::new(11).unwrap(), "retained", None),
     )
     .unwrap();
@@ -406,19 +469,33 @@ fn annotation_transfer_reports_source_independent_greens_from_final_tree() {
         ..
     } = reparse_okf_markdown(
         &previous,
-        text("# One\nbody!\n"),
+        text("# Two\nbody\n"),
         &[TextChange {
-            old_range: range(10, 10),
-            replacement: Arc::from("!"),
+            old_range: range(2, 5),
+            replacement: Arc::from("Two"),
         }],
     )
     .unwrap()
     else {
-        panic!("body edit must be incremental")
+        panic!("heading edit must be incremental")
     };
+    let previous_eof = first_token(&previous, OkfMarkdownSyntaxKind::EndOfFileToken);
+    let final_eof = first_token(&tree, OkfMarkdownSyntaxKind::EndOfFileToken);
+    assert!(!previous_eof.same_green(&final_eof));
+    assert_eq!(shared_source_independent_green, 0);
+    assert!(!first_token(&previous, OkfMarkdownSyntaxKind::HeadingText)
+        .same_green(&first_token(&tree, OkfMarkdownSyntaxKind::HeadingText)));
+    assert!(
+        !first_node(&previous, OkfMarkdownSyntaxKind::MarkdownRegion)
+            .same_green(&first_node(&tree, OkfMarkdownSyntaxKind::MarkdownRegion))
+    );
     assert_eq!(
-        shared_source_independent_green,
-        shared_source_independent_green_count(previous.root_green(), tree.root_green())
+        first_node(&tree, OkfMarkdownSyntaxKind::MarkdownRegion)
+            .syntax_annotations()
+            .iter()
+            .filter(|annotation| annotation.id().get() == 11)
+            .count(),
+        1
     );
 }
 
@@ -732,61 +809,6 @@ fn all_source_slices_use(
                 GreenText::Static(_) | GreenText::Owned(_) => true,
             }),
     }
-}
-
-fn shared_source_independent_green_count(
-    previous: &waml_syntax::GreenNode<waml_syntax::OkfMarkdownLanguage>,
-    current: &waml_syntax::GreenNode<waml_syntax::OkfMarkdownLanguage>,
-) -> usize {
-    fn collect(
-        element: &GreenElement<waml_syntax::OkfMarkdownLanguage>,
-        nodes: &mut HashSet<usize>,
-        tokens: &mut HashSet<usize>,
-    ) {
-        match element {
-            GreenElement::Node(node) => {
-                if node.is_source_independent() {
-                    nodes.insert(Arc::as_ptr(node) as usize);
-                }
-                for child in node.children() {
-                    collect(child, nodes, tokens);
-                }
-            }
-            GreenElement::Token(token) => {
-                if token.is_source_independent() {
-                    tokens.insert(Arc::as_ptr(token) as usize);
-                }
-            }
-        }
-    }
-    fn count(
-        element: &GreenElement<waml_syntax::OkfMarkdownLanguage>,
-        nodes: &HashSet<usize>,
-        tokens: &HashSet<usize>,
-    ) -> usize {
-        match element {
-            GreenElement::Node(node) => {
-                usize::from(
-                    node.is_source_independent() && nodes.contains(&(Arc::as_ptr(node) as usize)),
-                ) + node
-                    .children()
-                    .iter()
-                    .map(|child| count(child, nodes, tokens))
-                    .sum::<usize>()
-            }
-            GreenElement::Token(token) => usize::from(
-                token.is_source_independent() && tokens.contains(&(Arc::as_ptr(token) as usize)),
-            ),
-        }
-    }
-    let mut nodes = HashSet::new();
-    let mut tokens = HashSet::new();
-    collect(
-        &GreenElement::Node(previous.clone()),
-        &mut nodes,
-        &mut tokens,
-    );
-    count(&GreenElement::Node(current.clone()), &nodes, &tokens)
 }
 
 #[test]

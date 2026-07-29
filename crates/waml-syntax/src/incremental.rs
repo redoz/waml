@@ -651,6 +651,13 @@ pub fn reparse_okf_markdown_with_structure(
     let Some(window) = select_window(&windows, &map) else {
         return full(FullReparseReason::UnsafeSynchronization);
     };
+    if previous.diagnostics().iter().any(|diagnostic| {
+        diagnostic.range.start() == diagnostic.range.end()
+            && (diagnostic.range.start() == window.range.start()
+                || diagnostic.range.start() == window.range.end())
+    }) {
+        return full(FullReparseReason::UnsafeSynchronization);
+    }
     let Some(new_range) = expanded_window_range(window.range, &map) else {
         return full(FullReparseReason::UnsafeSynchronization);
     };
@@ -684,8 +691,9 @@ pub fn reparse_okf_markdown_with_structure(
         .diagnostics()
         .iter()
         .filter_map(|diagnostic| {
-            (diagnostic_outside_window(diagnostic.range, window.range)
-                .then(|| map.translate_unchanged(diagnostic.range))?)
+            ((diagnostic.range.end() <= window.range.start()
+                || diagnostic.range.start() >= window.range.end())
+            .then(|| map.translate_unchanged(diagnostic.range))?)
             .map(|range| TreeDiagnostic {
                 code: diagnostic.code,
                 severity: diagnostic.severity,
@@ -716,14 +724,6 @@ pub fn reparse_okf_markdown_with_structure(
         },
         new_structure,
     ))
-}
-
-fn diagnostic_outside_window(diagnostic: TextRange, window: TextRange) -> bool {
-    if diagnostic.start() == diagnostic.end() {
-        diagnostic.start() < window.start() || diagnostic.start() > window.end()
-    } else {
-        diagnostic.end() <= window.start() || diagnostic.start() >= window.end()
-    }
 }
 
 fn green_uses_source(node: &GreenNode<OkfMarkdownLanguage>, source: &SourceText) -> bool {
