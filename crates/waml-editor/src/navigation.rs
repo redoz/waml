@@ -66,8 +66,8 @@ impl NavigationError {
 }
 
 pub fn breadcrumb_for(
-    bundle: &waml::okf::Bundle,
-    uml: &waml::uml::Projection,
+    okf: &waml::analysis::OkfAnalysis,
+    uml_analysis: &waml::uml::Analysis,
     concept_id: &str,
 ) -> Option<Vec<BreadcrumbSegment>> {
     fn find(nodes: &[TreeNode], concept_id: &str, path: &mut Vec<BreadcrumbSegment>) -> bool {
@@ -97,7 +97,7 @@ pub fn breadcrumb_for(
         false
     }
 
-    let tree = build_tree(bundle, uml, "Untitled");
+    let tree = build_tree(okf, uml_analysis, "Untitled");
     let mut path = Vec::new();
     find(&tree.roots, concept_id, &mut path).then_some(path)
 }
@@ -229,7 +229,7 @@ mod tests {
         }
     }
 
-    fn fixture() -> (waml::okf::Bundle, waml::uml::Projection) {
+    fn fixture() -> (waml::analysis::OkfAnalysis, waml::uml::Analysis) {
         let source = waml::source::SourceBundle::try_from_pairs([
             ("index.md", "# Root\n\n* [Sales](sales/)\n"),
             ("sales/index.md", "# Sales\n\n* [Archive](archive/)\n"),
@@ -243,9 +243,9 @@ mod tests {
             ),
         ])
         .unwrap();
-        let bundle = waml::okf::Bundle::parse(&source).unwrap();
-        let uml = waml::uml::project(&bundle);
-        (bundle, uml)
+        let prepared = waml::analysis::prepare_candidate(source, None, 1).unwrap();
+        let (_, okf, uml, _) = prepared.into_parts();
+        (okf, uml)
     }
 
     fn resolve_fixture() -> waml::okf::Bundle {
@@ -286,9 +286,21 @@ mod tests {
 
     #[test]
     fn tree_breadcrumb_and_markdown_entry_targets_are_equivalent() {
-        let bundle = resolve_fixture();
-        let uml = waml::uml::project(&bundle);
-        let breadcrumb = breadcrumb_for(&bundle, &uml, "sales/customer")
+        let source = waml::source::SourceBundle::try_from_pairs([
+            ("index.md", "# Root\n\n* [Sales](sales/)\n"),
+            (
+                "sales/index.md",
+                "# Sales\n\n* [Archive](archive/)\n* [Order](order.md)\n* [Customer](customer.md)\n",
+            ),
+            ("sales/order.md", "# Order\n"),
+            ("sales/customer.md", "# Customer\n"),
+            ("sales/archive/index.md", "# Archive\n"),
+            ("shared.md", "# Shared\n"),
+        ])
+        .unwrap();
+        let prepared = waml::analysis::prepare_candidate(source, None, 1).unwrap();
+        let (_, okf, uml, _) = prepared.into_parts();
+        let breadcrumb = breadcrumb_for(&okf, &uml, "sales/customer")
             .expect("customer has a canonical breadcrumb");
 
         let tree_document = NavigationIntent::Resolved {
@@ -304,7 +316,7 @@ mod tests {
             disposition: OpenDisposition::Preview,
         };
         let markdown_document = NavigationIntent::Resolved {
-            target: resolve_link(&bundle, "sales/order", "./customer.md")
+            target: resolve_link(&okf.bundle, "sales/order", "./customer.md")
                 .expect("relative document resolves"),
             disposition: OpenDisposition::Preview,
         };
@@ -331,7 +343,7 @@ mod tests {
             disposition: OpenDisposition::Preview,
         };
         let markdown_directory = NavigationIntent::Resolved {
-            target: resolve_link(&bundle, "sales/order", "/sales/")
+            target: resolve_link(&okf.bundle, "sales/order", "/sales/")
                 .expect("logical directory resolves"),
             disposition: OpenDisposition::Preview,
         };
@@ -357,8 +369,8 @@ mod tests {
 
     #[test]
     fn breadcrumb_uses_authored_titles_and_full_tree_hierarchy() {
-        let (bundle, uml) = fixture();
-        let segments = breadcrumb_for(&bundle, &uml, "sales/archive/order").unwrap();
+        let (okf, uml) = fixture();
+        let segments = breadcrumb_for(&okf, &uml, "sales/archive/order").unwrap();
         assert_eq!(
             segments,
             vec![
@@ -393,8 +405,8 @@ mod tests {
 
     #[test]
     fn filtered_nav_state_cannot_change_canonical_breadcrumb() {
-        let (bundle, uml) = fixture();
-        let before = breadcrumb_for(&bundle, &uml, "sales/archive/order");
+        let (okf, uml) = fixture();
+        let before = breadcrumb_for(&okf, &uml, "sales/archive/order");
         let states = [
             crate::nav::NavState {
                 scope: "/sales".into(),
@@ -413,8 +425,8 @@ mod tests {
             },
         ];
         for state in states {
-            let _projected = crate::nav::view(&bundle, &uml, &state);
-            assert_eq!(breadcrumb_for(&bundle, &uml, "sales/archive/order"), before);
+            let _projected = crate::nav::view(&okf, &uml, &state);
+            assert_eq!(breadcrumb_for(&okf, &uml, "sales/archive/order"), before);
         }
     }
 
