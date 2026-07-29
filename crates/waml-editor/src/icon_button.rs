@@ -230,6 +230,10 @@ impl IconButton {
         }
     }
 
+    pub fn set_action_tag(&mut self, tag: LiveId) {
+        self.action_tag = tag;
+    }
+
     /// Whether this button emitted a primary click in `actions`.
     pub fn clicked(&self, actions: &Actions) -> bool {
         actions
@@ -289,6 +293,13 @@ impl IconButtonRef {
     pub fn set_dim(&self, cx: &mut Cx, dim: bool) {
         if let Some(mut inner) = self.borrow_mut() {
             inner.set_dim(cx, dim);
+        }
+    }
+
+    /// See [`IconButton::set_action_tag`].
+    pub fn set_action_tag(&self, tag: LiveId) {
+        if let Some(mut inner) = self.borrow_mut() {
+            inner.set_action_tag(tag);
         }
     }
 

@@ -488,7 +488,7 @@ fn member_item_id(i: usize, key: &str) -> LiveId {
 /// element's type when one exists, else a coloured monogram badge. Every
 /// modelled UML kind resolves to an icon (`Customer`, a `Class`, leads with
 /// `PanelTop` -- the same glyph the tree and doc-tab strip already draw for
-/// it); only `Unknown` types, which have no HUD glyph, fall back to the badge.
+/// it). An unclaimed OKF type uses the generic document glyph.
 fn node_lead(ty: &ElementType, letter: String) -> SelectLead {
     match IconSet::icon_for(kind_of(ty)) {
         Some(icon) => SelectLead::Icon(icon),
@@ -1412,12 +1412,11 @@ mod tests {
         );
     }
 
-    // Unknown types have no HUD glyph, so the monogram badge is the correct
-    // fallback -- the letter survives for them.
+    // Unclaimed OKF types use the same generic-document glyph as the tree.
     #[test]
     fn node_lead_uses_generic_okf_icon_for_unclaimed_type() {
         let lead = node_lead(&ElementType::Unknown("Widget".into()), "W".into());
-        assert!(matches!(lead, SelectLead::Icon(Icon::StickyNote)));
+        assert!(matches!(lead, SelectLead::Icon(Icon::FileText)));
     }
 
     #[test]

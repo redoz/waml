@@ -68,11 +68,13 @@ pub const ICON_GROUPS: &[(&str, &[IconEntry])] = &[
         ],
     ),
     (
-        "TREE PANEL",
+        "TREE PANEL / DOCUMENT TABS",
         &[
             ie!(ListTree, "Caption tree-column toggle"),
             ie!(Folder, "Folder / package node"),
             ie!(Funnel, "Filter chip"),
+            ie!(FileText, "Generic OKF document"),
+            ie!(FileBraces, "Source document tab"),
             ie!(SquareDashedTopSolid, "Classifier kind"),
             ie!(List, "Enumeration kind"),
             ie!(Workflow, "Process kind"),

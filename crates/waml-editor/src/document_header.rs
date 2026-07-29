@@ -33,18 +33,6 @@ script_mod! {
         flow: Overlay
         clip_x: true
 
-        back_button := IconButton {
-            visible: false
-            width: 30.0
-            height: 30.0
-            action_tag: history_back
-        }
-        forward_button := IconButton {
-            visible: false
-            width: 30.0
-            height: 30.0
-            action_tag: history_forward
-        }
         draw_ancestor +: {
             color: atlas.text_dim
             text_style: fonts.text_menu
@@ -74,6 +62,16 @@ script_mod! {
             align: Align{y: 0.5}
             clip_x: true
 
+            back_button := IconButton {
+                visible: false
+                width: 30.0
+                height: 30.0
+            }
+            forward_button := IconButton {
+                visible: false
+                width: 30.0
+                height: 30.0
+            }
             breadcrumb_slot := View {
                 width: Fill
                 height: Fill
@@ -446,8 +444,12 @@ impl DocumentHeader {
         back.set_visible(cx, visible);
         forward.set_visible(cx, visible);
         if visible {
-            back.as_icon_button().set_icon(cx, Icon::ArrowLeft);
-            forward.as_icon_button().set_icon(cx, Icon::ArrowRight);
+            let back = back.as_icon_button();
+            back.set_icon(cx, Icon::ArrowLeft);
+            back.set_action_tag(live_id!(history_back));
+            let forward = forward.as_icon_button();
+            forward.set_icon(cx, Icon::ArrowRight);
+            forward.set_action_tag(live_id!(history_forward));
         }
         self.sync_content_layout(cx);
     }

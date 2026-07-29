@@ -3162,6 +3162,44 @@ mod tests {
         assert!(!drawn_header_right_dock_active(&mut cx, &app));
     }
 
+    #[test]
+    fn mounted_history_buttons_occupy_the_fixed_leading_strip() {
+        let size = dvec2(600.0, 30.0);
+        let (mut cx, mut app) = mounted_production_shell();
+        configure_mounted_dock(
+            &mut cx,
+            &mut app,
+            size,
+            DockState::Flag,
+            DockState::Flag,
+            true,
+        );
+        app.ui
+            .widget(&cx, ids!(document_header))
+            .borrow_mut::<crate::document_header::DocumentHeader>()
+            .expect("production shell mounts document_header")
+            .set_history_visible(&mut cx, true);
+
+        draw_document_header(&mut cx, &app, size);
+
+        let back = app
+            .ui
+            .widget(&cx, ids!(document_header.back_button))
+            .area()
+            .rect(&cx);
+        let forward = app
+            .ui
+            .widget(&cx, ids!(document_header.forward_button))
+            .area()
+            .rect(&cx);
+        assert_eq!(back.size.x, crate::document_header::DOCUMENT_HEADER_H);
+        assert_eq!(forward.size.x, crate::document_header::DOCUMENT_HEADER_H);
+        assert_eq!(
+            forward.pos.x,
+            back.pos.x + crate::document_header::DOCUMENT_HEADER_H
+        );
+    }
+
     fn project_tree_folder_is_open(cx: &mut Cx, app: &App, address: &str) -> bool {
         let project_tree = app.ui.widget(cx, ids!(project_tree));
         let file_tree = project_tree.file_tree(cx, ids!(file_tree));

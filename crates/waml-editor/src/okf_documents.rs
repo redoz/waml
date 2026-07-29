@@ -43,7 +43,8 @@ pub fn describe(
 
 pub fn open(analysis: &waml::analysis::OkfAnalysis, concept_id: &str) -> Option<OpenDocument> {
     let concept = analysis.bundle.concept(concept_id)?;
-    let presentation = presentation(analysis, concept_id)?;
+    let mut presentation = presentation(analysis, concept_id)?;
+    presentation.icon = Icon::FileText;
     Some(OpenDocument {
         tab_id: okf_document_tab_id(concept_id),
         concept_id: concept_id.to_string(),
@@ -67,7 +68,8 @@ pub fn open_source(
     concept_id: &str,
 ) -> Option<OpenDocument> {
     let concept = analysis.bundle.concept(concept_id)?;
-    let presentation = presentation(analysis, concept_id)?;
+    let mut presentation = presentation(analysis, concept_id)?;
+    presentation.icon = Icon::FileBraces;
     Some(OpenDocument {
         tab_id: source_document_tab_id(concept_id),
         concept_id: concept_id.to_string(),
@@ -98,7 +100,10 @@ mod tests {
         ])
         .unwrap();
         let prepared = waml::analysis::prepare_candidate(source, None, 1).unwrap();
-        assert!(open(prepared.okf(), "runbook").is_some());
+        assert_eq!(
+            open(prepared.okf(), "runbook").unwrap().presentation.icon,
+            Icon::FileText
+        );
         assert!(open(prepared.okf(), "index").is_none());
         assert!(open(prepared.okf(), "log").is_none());
     }
@@ -112,5 +117,17 @@ mod tests {
         );
         assert_ne!(generic, source_document_tab_id("runbook"));
         assert_eq!(generic, okf_document_tab_id("runbook"));
+    }
+
+    #[test]
+    fn source_documents_use_the_source_file_icon() {
+        let source =
+            SourceBundle::try_from_pairs([("runbook.md", "---\ntype: Runbook\n---\n# Runbook\n")])
+                .unwrap();
+        let prepared = waml::analysis::prepare_candidate(source, None, 1).unwrap();
+
+        let source_document = open_source(prepared.okf(), "runbook").unwrap();
+
+        assert_eq!(source_document.presentation.icon, Icon::FileBraces);
     }
 }
