@@ -1,0 +1,45 @@
+[workspace]
+members = ["."]
+resolver = "2"
+
+[package]
+name = "waml-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+waml = { path = "../crates/waml" }
+waml-syntax = { path = "../crates/waml-syntax" }
+
+[[bin]]
+name = "outer_mapping"
+path = "fuzz_targets/outer_mapping.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "uml_islands"
+path = "fuzz_targets/uml_islands.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "syntax_edits"
+path = "fuzz_targets/syntax_edits.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "parse_write"
+path = "fuzz_targets/parse_write.rs"
+test = false
+doc = false
+bench = false
