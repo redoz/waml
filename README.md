@@ -1,7 +1,5 @@
 # WAML
 
-> Fork of [OWOX Model Canvas](https://github.com/OWOX/owox-model-canvas) (© OWOX, Inc.). Not affiliated with or endorsed by OWOX. See [NOTICE](NOTICE) for attribution and changes.
-
 Native editor and language tooling for [Open Knowledge Format](https://github.com/GoogleCloudPlatform/knowledge-catalog) Markdown and WAML/UML projections.
 
 ## Develop
@@ -9,17 +7,19 @@ Native editor and language tooling for [Open Knowledge Format](https://github.co
 ```bash
 cargo build --workspace
 cargo test --workspace
-pnpm install --frozen-lockfile
-pnpm build
-pnpm test
 ```
 
 Run the native editor with `scripts/run-native.ps1` on Windows or
 `scripts/run-native.sh` on Unix-like systems.
 
-The Rust workspace contains `waml`, `waml-cli`, `waml-ops-dto`, and
-`waml-editor`. The pnpm workspace contains only `packages/vscode`, which
-launches the Rust `waml lsp --stdio` server through `vscode-languageclient`.
+The Rust workspace contains `waml`, `waml-cli`, `waml-ops-dto`, `waml-syntax`,
+and `waml-editor`. The VS Code extension in `editors/vscode` is a standalone
+Node project that launches the Rust `waml lsp --stdio` server through
+`vscode-languageclient`; see `editors/vscode/README.md` for its build steps.
+
+"Open Knowledge Format (OKF)" is an open specification published by Google
+(GoogleCloudPlatform/knowledge-catalog). WAML reads and writes that format but
+is an independent project — it is not affiliated with or endorsed by Google.
 
 ## Web delivery
 
@@ -39,4 +39,4 @@ must be installed at the same makepad rev as `crates/waml-editor/Cargo.toml`.
 
 ## License
 
-[Apache License 2.0](LICENSE) — © 2026 OWOX, Inc.; modifications © 2026 Patrik Husfloen (redoz). See [NOTICE](NOTICE).
+[Mozilla Public License 2.0](LICENSE) — © 2026 Patrik Husfloen (redoz).

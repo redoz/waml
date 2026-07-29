@@ -49,12 +49,7 @@ vi.mock("vscode-languageclient/node", () => ({
   LanguageClient: class {
     private readonly state;
 
-    constructor(
-      id: string,
-      name: string,
-      serverOptions: unknown,
-      clientOptions: unknown,
-    ) {
+    constructor(id: string, name: string, serverOptions: unknown, clientOptions: unknown) {
       this.state = {
         id,
         name,
@@ -203,9 +198,7 @@ describe("VS Code stdio transport isolation", () => {
   it("does not import parser, syntax, WASM, or retired TypeScript domains", () => {
     expect(importedModules()).not.toContain("@waml/parser");
     for (const moduleName of importedModules()) {
-      expect(moduleName).not.toMatch(
-        /(^@waml\/|(?:^|[/_-])(?:wasm|parser|syntax)(?:$|[/_.-]))/i,
-      );
+      expect(moduleName).not.toMatch(/(^@waml\/|(?:^|[/_-])(?:wasm|parser|syntax)(?:$|[/_.-]))/i);
     }
   });
 });
@@ -269,12 +262,8 @@ describe("extension lifecycle", () => {
     };
     const handler = new Handler({ name: "WAML" }, 4);
 
-    expect(handler.error(new Error("bad frame"), undefined, 3).action).toBe(
-      ErrorAction.Continue,
-    );
-    expect(handler.error(new Error("bad frame"), undefined, 4).action).toBe(
-      ErrorAction.Shutdown,
-    );
+    expect(handler.error(new Error("bad frame"), undefined, 3).action).toBe(ErrorAction.Continue);
+    expect(handler.error(new Error("bad frame"), undefined, 4).action).toBe(ErrorAction.Shutdown);
     for (let crash = 0; crash < 4; crash += 1) {
       expect(handler.closed().action).toBe(CloseAction.Restart);
     }

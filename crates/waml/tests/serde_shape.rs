@@ -103,7 +103,7 @@ fn selective_uml_projection_omits_unknowns_and_structural_packages() {
 }
 
 #[test]
-fn model_json_matches_ts_field_names() {
+fn model_json_wire_field_names() {
     let model = projection(&bundle());
     let v = serde_json::to_value(&model).unwrap();
 
@@ -113,7 +113,7 @@ fn model_json_matches_ts_field_names() {
         .iter()
         .find(|node| node["key"] == "m/order")
         .unwrap();
-    // TS ModelNode uses `type` and `key`, not `ty`.
+    // Wire contract: the node's type key serializes as `type` and its identity as `key` (not `ty`).
     assert_eq!(node["type"], "uml.Class");
     assert_eq!(node["key"], "m/order");
     // Flat title/description/body are DELETED — the concept is the single source.
@@ -125,13 +125,13 @@ fn model_json_matches_ts_field_names() {
     assert!(node.get("body").is_none(), "flat body deleted: {node}");
     assert_eq!(node["concept"]["id"], "m/order");
     assert_eq!(node["concept"]["title"], "Order");
-    // Attribute.type is a TypeRef ({ name, ref? }); multiplicity is canonical string.
+    // Attribute.type is a TypeRef ({ name, ref? }); multiplicity is a canonical string.
     assert_eq!(node["attributes"][0]["name"], "id");
     assert_eq!(node["attributes"][0]["type"]["name"], "OrderId");
     assert_eq!(node["attributes"][0]["multiplicity"], "1");
 
     let edge = &v["edges"][0];
-    // TS ModelEdge uses `from`/`to`, kind lowercase string.
+    // Wire contract: an edge's endpoints serialize as `from`/`to` and its kind as a lowercase string.
     assert_eq!(edge["kind"], "composes");
     assert_eq!(edge["from"], "m/order");
     assert_eq!(edge["to"], "m/line");

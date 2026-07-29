@@ -265,7 +265,7 @@ pub fn render_ends(from: &RelEnd, to: &RelEnd) -> String {
 /// A relationship's optional `as …` name: a plain label, or a link to a
 /// `uml.Association` document (an association class), stored by its resolved slug.
 ///
-/// TS shape (`types.ts`): `string | { ref: string }`. `Label` → bare string,
+/// JSON wire shape: `string | { ref: string }`. `Label` → bare string,
 /// `Assoc` → `{ ref }`. Two `String` newtypes can't disambiguate under
 /// `#[serde(untagged)]`, so the impls are hand-written.
 #[derive(Debug, Clone, PartialEq)]
@@ -764,7 +764,7 @@ pub struct SequenceDoc {
 /// An element's `type`. Graceful degradation is a type-level guarantee: any
 /// unrecognized token becomes `Unknown` and renders as a generic labelled box.
 ///
-/// Serializes as the flat TS `type` string (`"uml.Class"` / `"Diagram"` / opaque);
+/// Serializes as a flat `type` string (`"uml.Class"` / `"Diagram"` / opaque);
 /// `parse` is total, so `From<String>` (not `TryFrom`) drives Deserialize.
 #[derive(Debug, Clone, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -965,8 +965,8 @@ pub struct Diagram {
 }
 
 /// A diagram's authored render settings — a PARTIAL. Only keys present in the
-/// file are `Some`/non-empty; TS `resolveDisplay` fills the rest from
-/// `DEFAULT_DISPLAY`. Serde `rename_all="camelCase"` matches the TS keys.
+/// file are `Some`/non-empty; the renderer fills the rest from its own
+/// defaults. Serde `rename_all="camelCase"` matches the authored key casing.
 #[derive(Debug, Clone, Default, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "serde", serde(rename_all = "camelCase", default))]

@@ -40,13 +40,13 @@ const PROJECT = {
   baseBranch: 'main', // the trunk: worktrees fork off <remote>/<baseBranch> and every unit ff-pushes back onto it
   // Capability flags drive the SCOPE-AWARE gate: a plan is gated by only the toolchains it actually touches.
   rust: true, // repo is a cargo workspace (crates/*)
-  pnpm: true, // repo is a pnpm monorepo (packages/*)
+  pnpm: true, // repo carries one standalone Node project (editors/vscode), not a pnpm workspace
   gate: {
     // Rust half: fmt + clippy + tests. fmt/clippy were historically missing and slipped violations onto main.
     rust: 'cargo fmt --all --check && cargo clippy --workspace --all-targets -- -D warnings && cargo test --workspace',
-    // pnpm half: every package's vitest suite, eslint, then the build (which type-checks via tsc). Only run for
-    // plans that touch packages/** — a pure-Rust plan must NOT build the (OWOX-origin, off-limits) @waml/* packages.
-    pnpm: 'pnpm -r test && pnpm lint && pnpm build',
+    // Node half: the VS Code extension's vitest suite, eslint, then the build (which type-checks via tsc). Only run
+    // for plans that touch editors/** — a pure-Rust plan has no reason to install Node deps.
+    pnpm: 'pnpm -C editors/vscode test && pnpm -C editors/vscode lint && pnpm -C editors/vscode build',
     // Clean-room recompile of the pushed SHA in a fresh throwaway worktree (a fresh tree can't be dirty, so it
     // can't false-green). Cheap check-only compile of the whole workspace.
     verify: 'cargo check --workspace --all-targets',
@@ -116,19 +116,19 @@ const MAX_GENERATIONS = 25
 const MAX_REVIEW_FIX_ROUNDS = 3 // deep-review -> fix-forward -> re-review iterations (crit/high hard-gate; medium soft-gate: warn + proceed once it's all that's left after the cap)
 const MAX_ATTEMPTS = 3 // bounded local green-gate fix-and-retry attempts inside a generation
 
-// SCOPE-AWARE green-gate. This repo is a cargo workspace AND a pnpm monorepo, but a plan is gated by only the
-// toolchains it actually TOUCHES: a pure-Rust plan must not build the (OWOX-origin, off-limits) @waml/* packages, and a
-// docs-only plan need not do either. gateFor(files, override) returns the '&&'-joined command for a plan given the
-// repo-relative paths it changes (from the setup step) and an optional plan-header override.
+// SCOPE-AWARE green-gate. This repo is a cargo workspace plus one standalone Node project, but a plan is gated by only
+// the toolchains it actually TOUCHES: a pure-Rust plan need not install Node deps, and a docs-only plan need not do
+// either. gateFor(files, override) returns the '&&'-joined command for a plan given the repo-relative paths it changes
+// (from the setup step) and an optional plan-header override.
 //   - touches crates/** or *.rs or Cargo.* -> the Rust half (fmt + clippy + test --workspace)
-//   - touches packages/**                  -> the pnpm half (vitest + eslint + build)
+//   - touches editors/**                   -> the Node half (vitest + eslint + build)
 //   - plan header "> **Gate:** rust-only | full | auto" forces the shape (auto = derive from files; the default)
 // Rust is the fallback when a plan's touched files are unknown/empty, so a mis-detected plan over-gates (safe) rather
 // than under-gates. fmt + clippy are ALWAYS in the Rust half — they were historically absent and slipped onto main.
 function gateFor(files, override) {
   const fs = Array.isArray(files) ? files : []
   const touchesRust = PROJECT.rust && fs.some((f) => /\.rs$|(^|\/)crates\/|(^|\/)Cargo\.(toml|lock)$/i.test(f))
-  const touchesPnpm = PROJECT.pnpm && fs.some((f) => /(^|\/)packages\//i.test(f))
+  const touchesPnpm = PROJECT.pnpm && fs.some((f) => /(^|\/)editors\//i.test(f))
   let wantRust = touchesRust
   let wantPnpm = touchesPnpm
   if (override === 'rust-only') { wantRust = PROJECT.rust; wantPnpm = false }
@@ -346,7 +346,7 @@ function preflightPrompt() {
     : 'Other than an allowed fast-forward of ' + BASE_BRANCH + ' in step 3, do NOT change any tracked files. Return ok=true\nonly if the branch is ' + BASE_BRANCH + ', the tracked tree is clean, ' + BASE_BRANCH + ' has not diverged, the\ntoolchain is present, AND the base compiles; otherwise ok=false with a precise reason.'
   return [
     'You are the preflight check for an autonomous plan-implementation run on the ' + PROJECT.name + ' repo.',
-    'Host: Windows, PowerShell (a Bash tool is also available). This is a Rust cargo workspace (crates/*) AND a pnpm monorepo (packages/*).',
+    'Host: Windows, PowerShell (a Bash tool is also available). This is a Rust cargo workspace (crates/*) plus one standalone Node project (editors/vscode).',
     'Working directory is the repo root (' + REPO_DIR + '). Verify ALL of the following and report:',
     '1. Current branch is "' + BASE_BRANCH + '"  (git rev-parse --abbrev-ref HEAD).',
     '2. Working tree is clean of TRACKED changes  (git status --porcelain shows no staged/modified tracked files;',
@@ -398,7 +398,7 @@ function setupPrompt(plan) {
       ]
   return [
     'You are the SETUP step for ONE approved implementation plan in the ' + PROJECT.name + ' repo (batched implementer).',
-    'Project: ' + PROJECT.name + ' — a Rust cargo workspace (crates/*) under a pnpm monorepo (packages/*).',
+    'Project: ' + PROJECT.name + ' — a Rust cargo workspace (crates/*) plus one standalone Node project (editors/vscode).',
     'Host: Windows, PowerShell (Bash tool also available). You run in the MAIN repository directory (' + REPO_DIR + ').',
     '',
     (plan.isDir ? 'Plan DIRECTORY (README.md + task-N-*.md): ' : 'Plan file: ') + plan.path + '   (slug: ' + plan.slug + ')',
@@ -412,9 +412,9 @@ function setupPrompt(plan) {
     '    git -C ' + wt + ' rev-parse HEAD',
     '  Do NOT switch the MAIN worktree off ' + BASE_BRANCH + ', and do NOT modify the local ' + BASE_BRANCH + ' branch.',
     '',
-    'STEP A.5 — make the worktree buildable. This is a pnpm monorepo; a fresh worktree shares the repo history but has',
-    '  its OWN node_modules. From INSIDE the worktree (cd ' + wt + ') run "pnpm install"',
-    '  once so the packages resolve. (pnpm links from the shared store, so this is fast.) Do not change any lockfile.',
+    'STEP A.5 — make the worktree buildable. Only needed if the plan touches editors/**: that Node project has its OWN',
+    '  node_modules per worktree. From INSIDE the worktree run "pnpm -C editors/vscode install" (cd ' + wt + ')',
+    '  once so its deps resolve. (pnpm links from the shared store, so this is fast.) Do not change any lockfile.',
     '',
     ...(plan.isDir
       ? [
@@ -512,7 +512,7 @@ function implementerGenerationPrompt(plan, worktreePath, baseSha, gen, rigor, ta
     'as many committable green UNITS of an approved plan as you can, then RETURN gracefully when a context check says you',
     'are near your quality zone. A FRESH generation then resumes exactly where you left off, reading progress from git.',
     'You are generation #' + gen + '.',
-    'Project: ' + PROJECT.name + ' — a Rust cargo workspace (crates/*) plus a pnpm/TypeScript monorepo (packages/*). Host: Windows, PowerShell (Bash also',
+    'Project: ' + PROJECT.name + ' — a Rust cargo workspace (crates/*) plus one standalone Node/TypeScript project (editors/vscode). Host: Windows, PowerShell (Bash also',
     'available). Conventions you MUST follow: Conventional Commits for the subject line.',
     '',
     'Work ENTIRELY inside this git worktree — cd into it and run all git/pnpm commands there:',
@@ -606,7 +606,7 @@ function implementerGenerationPrompt(plan, worktreePath, baseSha, gen, rigor, ta
     '  a. Implement it (per the rigor hint above).',
     '  b. GATE — run the SCOPE-AWARE green-gate for this plan in the worktree and make it pass:  ' + gate,
     '     (This gate was derived from the files this plan touches: the cargo half is fmt --check + clippy + test',
-    '     --workspace; the pnpm half — vitest + eslint + build — is included only if the plan touches packages/**.)',
+    '     --workspace; the Node half — vitest + eslint + build — is included only if the plan touches editors/**.)',
     '     A failure: DEBUG + FIX (test-first for a behavior change), re-run, BOUNDED to ' + MAX_ATTEMPTS + ' attempts. If it',
     '     still cannot go green, STOP and return escalate=true with the reason in problems.',
     '  c. Commit the unit (Conventional Commit subject), staging ONLY the files this unit changed, with BOTH trailers in',
@@ -714,7 +714,7 @@ function deepReviewPrompt(plan, worktreePath, baseSha, concerns) {
       ].join('\n')
     : '(No prior plan-review concerns were supplied for this run — SKIP this step.)'
   return [
-    'You are the DEEP END-REVIEWER for a completed plan in the ' + PROJECT.name + ' repo (a Rust core under a pnpm/TypeScript monorepo).',
+    'You are the DEEP END-REVIEWER for a completed plan in the ' + PROJECT.name + ' repo (a Rust core plus one standalone Node/TypeScript project).',
     'You review its WHOLE cumulative implementation and decide what THIS change must fix before it can close.',
     'Host: Windows/PowerShell (a Bash tool is also available). cd into this worktree:  ' + worktreePath,
     'Branch: plan/' + plan.slug + '.',
@@ -778,7 +778,7 @@ function fixForwardPrompt(plan, worktreePath, actionable, gate) {
   const footerLine = COMMIT_FOOTER ? '     After a blank line, add the footer:  ' + COMMIT_FOOTER : ''
   return [
     'A deep end-review of a completed plan found defects THIS change INTRODUCED (critical/high/medium). Fix them and',
-    'commit the fixes on the branch. Project: ' + PROJECT.name + ' (Rust core + pnpm/TypeScript monorepo). Host: Windows/',
+    'commit the fixes on the branch. Project: ' + PROJECT.name + ' (Rust core + one standalone Node/TypeScript project). Host: Windows/',
     'PowerShell. Conventions: Conventional Commits.',
     'cd into this worktree:  ' + worktreePath,
     'Branch: plan/' + plan.slug + '. The plan is fully implemented on this branch; you are fixing review findings.',

@@ -26,16 +26,18 @@ function Run($label, [scriptblock]$block) {
     if ($LASTEXITCODE -ne 0) { Write-Error "$label failed (exit $LASTEXITCODE)" }
 }
 
-Run "pnpm install"   { pnpm install --frozen-lockfile }
+$ext = "editors/vscode"
+
+Run "pnpm install"   { pnpm -C $ext install --frozen-lockfile }
 Run "Rust build"     { cargo build --workspace }
-Run "VS Code build"  { pnpm build }
+Run "VS Code build"  { pnpm -C $ext build }
 if ($Test) {
     Run "Rust test" { cargo test --workspace }
-    Run "VS Code test" { pnpm test }
+    Run "VS Code test" { pnpm -C $ext test }
 }
 if ($Lint) {
     Run "Rust clippy" { cargo clippy --workspace --all-targets --all-features -- -D warnings }
-    Run "VS Code lint" { pnpm lint }
+    Run "VS Code lint" { pnpm -C $ext lint }
 }
 
 Write-Host "==> done"

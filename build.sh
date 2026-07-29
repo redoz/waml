@@ -20,16 +20,18 @@ for arg in "$@"; do
   esac
 done
 
+ext=editors/vscode
+
 echo "==> pnpm install"
-pnpm install --frozen-lockfile
+pnpm -C "$ext" install --frozen-lockfile
 
 echo "==> Rust build"
 cargo build --workspace
 
 echo "==> VS Code build"
-pnpm build
+pnpm -C "$ext" build
 
-[ "$run_test" = 1 ] && { echo "==> Rust test"; cargo test --workspace; echo "==> VS Code test"; pnpm test; }
-[ "$run_lint" = 1 ] && { echo "==> Rust clippy"; cargo clippy --workspace --all-targets --all-features -- -D warnings; echo "==> VS Code lint"; pnpm lint; }
+[ "$run_test" = 1 ] && { echo "==> Rust test"; cargo test --workspace; echo "==> VS Code test"; pnpm -C "$ext" test; }
+[ "$run_lint" = 1 ] && { echo "==> Rust clippy"; cargo clippy --workspace --all-targets --all-features -- -D warnings; echo "==> VS Code lint"; pnpm -C "$ext" lint; }
 
 echo "==> done"

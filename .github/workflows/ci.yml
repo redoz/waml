@@ -29,16 +29,22 @@ jobs:
 
       - name: Install pnpm
         uses: pnpm/action-setup@v4
-        # Version comes from the "packageManager" field in package.json.
+        with:
+          # The VS Code extension is a standalone Node project; its
+          # "packageManager" field pins the pnpm version.
+          package_json_file: editors/vscode/package.json
 
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version-file: .node-version
+          # Matches the "engines.node" floor in editors/vscode/package.json.
+          node-version: 22
           cache: pnpm
+          cache-dependency-path: editors/vscode/pnpm-lock.yaml
 
-      - name: Install dependencies
+      - name: Install VS Code extension dependencies
         run: pnpm install --frozen-lockfile
+        working-directory: editors/vscode
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -57,8 +63,19 @@ jobs:
       - name: Cargo clippy
         run: cargo clippy --workspace --all-targets --all-features -- -D warnings
 
+      # The root package.json that used to gate this test went away with the
+      # node workspace; the script itself still ships the Pages artifact.
+      - name: Web artifact script tests
+        run: node --test scripts/inject-runtime-shell.test.mjs
+
       - name: VS Code build
         run: pnpm build
+        working-directory: editors/vscode
 
       - name: VS Code test
         run: pnpm test
+        working-directory: editors/vscode
+
+      - name: VS Code lint
+        run: pnpm lint
+        working-directory: editors/vscode

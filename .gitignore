@@ -1,15 +1,33 @@
-node_modules/
-dist/
-.superpowers/
-.env
-.env.local
-*.log
-.DS_Store
+# Rust build output
 /target
 
-.worktrees/
-.tokensave/
+# Node build output and caches
+node_modules/
+dist/
+.pnpm-store/
+
+# Python bytecode (tooling scripts)
 __pycache__/
+
+# Editor and IDE local state
+# (.vscode/ is deliberately tracked: editors/vscode/.vscode/launch.json, lsp-demo/.vscode/settings.json)
+.idea/
+*.swp
+
+# Local secrets
+.env
+.env.local
+
+# Logs and OS cruft
+*.log
+.DS_Store
+Thumbs.db
+
+# Agent and tooling runtime state
+.rtk/
+.tokensave/
+.superpowers/
+.worktrees/
 
 # .claude: track skills/workflows/scripts, ignore local runtime state
 .claude/worktrees/
