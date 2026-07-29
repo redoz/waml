@@ -856,6 +856,10 @@ fn call_edges_propagate_reparse_through_resolved_and_unresolved_dispatch() {
             }
         }
 
+        trait ExternalPair {
+            fn route_pair(&self, raw: String, reset: ()) -> Analysis;
+        }
+
         type Parser = fn(String) -> Analysis;
         struct Services {
             decoder: Decoder,
@@ -1078,6 +1082,75 @@ fn call_edges_propagate_reparse_through_resolved_and_unresolved_dispatch() {
             callable(alias())
         }
 
+        fn dropped_closure_state_pointer(model: &Model, callable: Parser) -> Analysis {
+            let mut rendered = model.to_string();
+            let reset = || rendered = String::new();
+            drop(reset);
+            callable(rendered)
+        }
+
+        async fn dropped_async_state_pointer(model: &Model, callable: Parser) -> Analysis {
+            let mut rendered = model.to_string();
+            let reset = async { rendered = String::new() };
+            drop(reset);
+            callable(rendered)
+        }
+
+        fn explicit_closure_return_pointer(model: &Model, callable: Parser) -> Analysis {
+            let render = || {
+                return model.to_string();
+            };
+            callable(render())
+        }
+
+        async fn explicit_async_return_pointer(model: &Model, callable: Parser) -> Analysis {
+            callable(async { return model.to_string() }.await)
+        }
+
+        fn later_argument_mutation_pointer(
+            model: &Model,
+            callable: fn(String, ()) -> Analysis,
+        ) -> Analysis {
+            let mut rendered = model.to_string();
+            callable(rendered, {
+                rendered = String::new();
+            })
+        }
+
+        fn later_method_argument_mutation<T: ExternalPair>(
+            decoder: &T,
+            model: &Model,
+        ) -> Analysis {
+            let mut rendered = model.to_string();
+            decoder.route_pair(rendered, {
+                rendered = String::new();
+            })
+        }
+
+        fn dropped_closure_control(model: &Model, callable: Parser) -> Analysis {
+            let mut label = String::new();
+            let taint = || label = model.to_string();
+            drop(taint);
+            callable(label)
+        }
+
+        async fn dropped_async_control(model: &Model, callable: Parser) -> Analysis {
+            let mut label = String::new();
+            let taint = async { label = model.to_string() };
+            drop(taint);
+            callable(label)
+        }
+
+        fn later_argument_control(
+            model: &Model,
+            callable: fn(String, ()) -> Analysis,
+        ) -> Analysis {
+            let mut label = String::new();
+            callable(label, {
+                label = model.to_string();
+            })
+        }
+
         struct Vec;
         impl Vec {
             fn push(&self, raw: String) -> Analysis {
@@ -1173,6 +1246,12 @@ fn call_edges_propagate_reparse_through_resolved_and_unresolved_dispatch() {
         "unsafe_argument_pointer",
         "async_argument_pointer",
         "closure_return_pointer",
+        "dropped_closure_state_pointer",
+        "dropped_async_state_pointer",
+        "explicit_closure_return_pointer",
+        "explicit_async_return_pointer",
+        "later_argument_mutation_pointer",
+        "later_method_argument_mutation",
     ] {
         assert!(
             violations.iter().any(|reason| {
@@ -1195,7 +1274,13 @@ fn call_edges_propagate_reparse_through_resolved_and_unresolved_dispatch() {
             "unresolved enum `Vec::push` escaped in `{expected}`: {violations:#?}"
         );
     }
-    for control in ["unrelated_callable", "unrelated_domain_helper"] {
+    for control in [
+        "unrelated_callable",
+        "unrelated_domain_helper",
+        "dropped_closure_control",
+        "dropped_async_control",
+        "later_argument_control",
+    ] {
         assert!(
             violations.iter().all(|reason| !reason.contains(control)),
             "legitimate control `{control}` was rejected: {violations:#?}"

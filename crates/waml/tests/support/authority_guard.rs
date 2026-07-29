@@ -2839,7 +2839,16 @@ struct ReturnTaintFacts<'env> {
     binding_scopes: Vec<BTreeMap<String, TaintBindingState>>,
     expression_origins: BTreeMap<usize, ValueOrigin>,
     break_origins: Vec<BreakOriginState>,
+    return_origins: Vec<Vec<ValueOrigin>>,
     unresolved_model_dispatch: bool,
+}
+
+struct TaintEnvironment {
+    receiver_types: BTreeMap<String, TypeIdentity>,
+    callable_paths: BTreeMap<String, Vec<String>>,
+    callable_origins: BTreeMap<String, ValueOrigin>,
+    bindings: BTreeSet<String>,
+    origins: BTreeMap<String, ValueOrigin>,
 }
 
 struct TaintBindingState {
@@ -2882,6 +2891,7 @@ impl<'env> ReturnTaintFacts<'env> {
             binding_scopes: Vec::new(),
             expression_origins: BTreeMap::new(),
             break_origins: Vec::new(),
+            return_origins: Vec::new(),
             unresolved_model_dispatch: false,
         };
         if caller.has_receiver {
@@ -2922,6 +2932,24 @@ impl<'env> ReturnTaintFacts<'env> {
             );
         }
         facts
+    }
+
+    fn snapshot_environment(&self) -> TaintEnvironment {
+        TaintEnvironment {
+            receiver_types: self.receiver_types.clone(),
+            callable_paths: self.callable_paths.clone(),
+            callable_origins: self.callable_origins.clone(),
+            bindings: self.bindings.clone(),
+            origins: self.origins.clone(),
+        }
+    }
+
+    fn restore_environment(&mut self, environment: TaintEnvironment) {
+        self.receiver_types = environment.receiver_types;
+        self.callable_paths = environment.callable_paths;
+        self.callable_origins = environment.callable_origins;
+        self.bindings = environment.bindings;
+        self.origins = environment.origins;
     }
 
     fn push_binding_scope(&mut self) {
@@ -3022,6 +3050,14 @@ impl<'env> ReturnTaintFacts<'env> {
         }
         let origin = self.visit_scoped_block(block);
         self.cache_expression_origin(expression, origin);
+    }
+
+    fn finish_return_context(&mut self, tail_origin: ValueOrigin) -> ValueOrigin {
+        let returns = self
+            .return_origins
+            .pop()
+            .expect("return-origin context is balanced");
+        merge_origins(std::iter::once(tail_origin).chain(returns))
     }
 
     fn bind_pattern_from_expression(&mut self, pattern: &syn::Pat, expression: &syn::Expr) {
@@ -3210,35 +3246,8 @@ impl<'env> ReturnTaintFacts<'env> {
                 ValueOrigin::Model => ValueOrigin::Model,
                 origin => origin,
             },
-            syn::Expr::MethodCall(call) => {
-                let receiver = self.expression_origin(&call.receiver);
-                if (receiver == ValueOrigin::Model
-                    && is_model_text_method(&call.method.to_string()))
-                    || receiver == ValueOrigin::ModelText
-                    || call
-                        .args
-                        .iter()
-                        .any(|argument| self.expression_origin(argument) == ValueOrigin::ModelText)
-                    || self.call_returns_model_text(&self.method_call_site(call))
-                {
-                    ValueOrigin::ModelText
-                } else {
-                    ValueOrigin::Other
-                }
-            }
-            syn::Expr::Call(call) => {
-                if call
-                    .args
-                    .iter()
-                    .any(|argument| self.expression_origin(argument) == ValueOrigin::ModelText)
-                    || self.call_returns_model_text(&self.call_site(call))
-                    || self.callable_result_origin(&call.func) == ValueOrigin::ModelText
-                {
-                    ValueOrigin::ModelText
-                } else {
-                    ValueOrigin::Other
-                }
-            }
+            syn::Expr::MethodCall(call) => self.cached_expression_origin(call),
+            syn::Expr::Call(call) => self.cached_expression_origin(call),
             syn::Expr::Block(expression) => self.cached_expression_origin(expression),
             syn::Expr::If(expression) => self.cached_expression_origin(expression),
             syn::Expr::Match(expression) => self.cached_expression_origin(expression),
@@ -3326,7 +3335,19 @@ impl<'ast> Visit<'ast> for ReturnTaintFacts<'_> {
     }
 
     fn visit_expr_async(&mut self, expression: &'ast syn::ExprAsync) {
-        self.visit_value_block(expression, &expression.attrs, &expression.block);
+        for attribute in &expression.attrs {
+            self.visit_attribute(attribute);
+        }
+        let environment = self.snapshot_environment();
+        let outer_break_origins = std::mem::take(&mut self.break_origins);
+        self.return_origins.push(Vec::new());
+        let tail_origin = self.visit_scoped_block(&expression.block);
+        let origin = self.finish_return_context(tail_origin);
+        self.restore_environment(environment);
+        let deferred_break_origins =
+            std::mem::replace(&mut self.break_origins, outer_break_origins);
+        debug_assert!(deferred_break_origins.is_empty());
+        self.cache_expression_origin(expression, origin);
     }
 
     fn visit_expr_const(&mut self, expression: &'ast syn::ExprConst) {
@@ -3383,6 +3404,17 @@ impl<'ast> Visit<'ast> for ReturnTaintFacts<'_> {
         };
         if let Some(target) = target {
             target.origins.push(origin);
+        }
+    }
+
+    fn visit_expr_return(&mut self, expression: &'ast syn::ExprReturn) {
+        visit::visit_expr_return(self, expression);
+        let Some(value) = &expression.expr else {
+            return;
+        };
+        let origin = self.expression_origin(value);
+        if let Some(returns) = self.return_origins.last_mut() {
+            returns.push(origin);
         }
     }
 
@@ -3456,6 +3488,9 @@ impl<'ast> Visit<'ast> for ReturnTaintFacts<'_> {
     }
 
     fn visit_expr_closure(&mut self, closure: &'ast syn::ExprClosure) {
+        let environment = self.snapshot_environment();
+        let outer_break_origins = std::mem::take(&mut self.break_origins);
+        self.return_origins.push(Vec::new());
         self.push_binding_scope();
         for input in &closure.inputs {
             let bindings = pattern_binding_names(input);
@@ -3482,21 +3517,41 @@ impl<'ast> Visit<'ast> for ReturnTaintFacts<'_> {
             }
         }
         visit::visit_expr_closure(self, closure);
-        let origin = self.expression_origin(&closure.body);
-        self.cache_expression_origin(closure, origin);
+        let tail_origin = self.expression_origin(&closure.body);
+        let origin = self.finish_return_context(tail_origin);
         self.pop_binding_scope();
+        self.restore_environment(environment);
+        let deferred_break_origins =
+            std::mem::replace(&mut self.break_origins, outer_break_origins);
+        debug_assert!(deferred_break_origins.is_empty());
+        self.cache_expression_origin(closure, origin);
     }
 
     fn visit_expr_call(&mut self, call: &'ast ExprCall) {
-        // Resolve the callable before arguments can mutate alias state, but
-        // populate their cached block/if/match origins before reading taint.
+        // Resolve the callable before arguments can mutate alias state, then
+        // snapshot each argument's origin at its left-to-right evaluation
+        // point instead of re-reading every argument from the final state.
         let site = self.call_site(call);
-        visit::visit_expr_call(self, call);
-
-        let protected_model_flow = call
-            .args
-            .iter()
-            .any(|argument| self.expression_origin(argument) == ValueOrigin::ModelText);
+        for attribute in &call.attrs {
+            self.visit_attribute(attribute);
+        }
+        self.visit_expr(&call.func);
+        let callable_origin = self.callable_result_origin(&call.func);
+        let mut argument_origins = Vec::with_capacity(call.args.len());
+        for argument in &call.args {
+            self.visit_expr(argument);
+            argument_origins.push(self.expression_origin(argument));
+        }
+        let protected_model_flow = argument_origins.contains(&ValueOrigin::ModelText);
+        let result_origin = if protected_model_flow
+            || self.call_returns_model_text(&site)
+            || callable_origin == ValueOrigin::ModelText
+        {
+            ValueOrigin::ModelText
+        } else {
+            ValueOrigin::Other
+        };
+        self.cache_expression_origin(call, result_origin);
         if protected_model_flow
             && site.indirect
             && resolve_call(
@@ -3514,14 +3569,33 @@ impl<'ast> Visit<'ast> for ReturnTaintFacts<'_> {
 
     fn visit_expr_method_call(&mut self, call: &'ast ExprMethodCall) {
         // As with free calls, preserve the pre-argument receiver identity and
-        // query argument taint only after recursive origin caches are ready.
+        // retain each value's origin at its actual evaluation point.
         let site = self.method_call_site(call);
-        visit::visit_expr_method_call(self, call);
-
-        let protected_model_flow = call
-            .args
-            .iter()
-            .any(|argument| self.expression_origin(argument) == ValueOrigin::ModelText);
+        for attribute in &call.attrs {
+            self.visit_attribute(attribute);
+        }
+        self.visit_expr(&call.receiver);
+        let receiver_origin = self.expression_origin(&call.receiver);
+        if let Some(turbofish) = &call.turbofish {
+            self.visit_angle_bracketed_generic_arguments(turbofish);
+        }
+        let mut argument_origins = Vec::with_capacity(call.args.len());
+        for argument in &call.args {
+            self.visit_expr(argument);
+            argument_origins.push(self.expression_origin(argument));
+        }
+        let protected_model_flow = argument_origins.contains(&ValueOrigin::ModelText);
+        let result_origin = if (receiver_origin == ValueOrigin::Model
+            && is_model_text_method(&call.method.to_string()))
+            || receiver_origin == ValueOrigin::ModelText
+            || protected_model_flow
+            || self.call_returns_model_text(&site)
+        {
+            ValueOrigin::ModelText
+        } else {
+            ValueOrigin::Other
+        };
+        self.cache_expression_origin(call, result_origin);
         if protected_model_flow
             && resolve_call(
                 self.caller,
