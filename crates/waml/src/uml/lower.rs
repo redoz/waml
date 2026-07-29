@@ -181,7 +181,7 @@ impl UmlLoweringState {
             .map_err(|error| EditError::at(op, error.to_string()))?;
         self.touched_islands.insert(
             path.clone(),
-            super::syntax::parser::parse(text, &shell.structure),
+            super::syntax::parse_full(text, &shell.structure),
         );
         Ok(())
     }
@@ -1623,7 +1623,7 @@ pub fn referrers_source(work: &SourceBundle, slug: &str) -> Vec<String> {
             Ok(text) => text,
             Err(_) => continue,
         };
-        let tree = super::syntax::parser::parse(text, &parsed.structure);
+        let tree = super::syntax::parse_full(text, &parsed.structure);
         let referenced = [
             UmlSyntaxKind::Attribute,
             UmlSyntaxKind::Relationship,

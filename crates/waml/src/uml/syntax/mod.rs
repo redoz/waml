@@ -1,6 +1,18 @@
+use std::sync::Arc;
+
+use waml_syntax::{MarkdownStructureMap, SourceText, SyntaxTree};
+
 mod ast;
 mod kind;
-pub(in crate::uml) mod parser;
+mod parser;
+
+pub(in crate::uml) fn parse_full(
+    text: SourceText,
+    structure: &MarkdownStructureMap,
+) -> Arc<SyntaxTree<UmlLanguage>> {
+    parser::parse(text, structure)
+}
+
 pub use ast::{
     AnchoredSyntax, AttributeSyntax, AxisSyntax, DiagramMembersSyntax, DirectionClauseSyntax,
     EdgeSyntax, FlagSyntax, FlowBlockSyntax, FlowInternalSyntax, FlowNodeSyntax,

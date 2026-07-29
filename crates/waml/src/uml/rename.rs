@@ -112,7 +112,7 @@ fn rename_typed_references(
         .map_err(|error| EditError::at("node.rename", error.to_string()))?;
     let shell = parse_okf_markdown(text.clone(), MarkdownDialect::CommonMarkCurrent)
         .map_err(|error| EditError::at("node.rename", error.to_string()))?;
-    let tree = super::syntax::parser::parse(text, &shell.structure);
+    let tree = super::syntax::parse_full(text, &shell.structure);
     let mut edits = Vec::new();
     collect_reference_edits(
         &tree.root(),

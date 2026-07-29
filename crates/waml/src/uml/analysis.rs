@@ -1,6 +1,6 @@
 use super::{
     declared::{DeclaredAttribute, DeclaredBundle},
-    syntax::{parser, UmlLanguage},
+    syntax::{self, UmlLanguage},
 };
 use crate::{
     analysis::{AnalysisError, ClaimSet, DomainAnalysisContext, SyntaxSet, SyntaxSnapshot},
@@ -180,7 +180,7 @@ pub fn analyze(
                 .ok_or_else(|| AnalysisError::CatalogInvariant {
                     reason: "claimed concept has no Markdown structure map".into(),
                 })?;
-        let tree = parser::parse(document.text().clone(), structure);
+        let tree = syntax::parse_full(document.text().clone(), structure);
         let attributes = attributes(tree.root());
         let values = items(tree.root(), super::syntax::UmlSyntaxKind::Value);
         let slots = items(tree.root(), super::syntax::UmlSyntaxKind::Slot);

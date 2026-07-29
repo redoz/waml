@@ -6,7 +6,10 @@ use waml_syntax::{
     SyntaxTree, TextRange, TextSize, TreeDiagnostic, TriviaKind,
 };
 
-pub fn parse(text: SourceText, structure: &MarkdownStructureMap) -> Arc<SyntaxTree<UmlLanguage>> {
+pub(super) fn parse(
+    text: SourceText,
+    structure: &MarkdownStructureMap,
+) -> Arc<SyntaxTree<UmlLanguage>> {
     let factory = GreenFactory::<UmlLanguage>::new();
     let source = text.shared();
     let mut children = Vec::new();
