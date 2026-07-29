@@ -397,6 +397,20 @@ fn compare_prior(current: &Observation, source: &str) -> Result<String, String> 
     Ok(comparison_report(current, &prior))
 }
 
+fn compare_if_present(prior: &Path, current: &Path) -> Result<String, String> {
+    let current_source = fs::read_to_string(current)
+        .map_err(|error| format!("read current observation {}: {error}", current.display()))?;
+    let current = Observation::parse(&current_source)?;
+    let prior_source = match fs::read_to_string(prior) {
+        Ok(source) => source,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Ok("LATENCY_SKIPPED_BASELINE_ABSENT".into());
+        }
+        Err(error) => return Err(format!("read prior observation {}: {error}", prior.display())),
+    };
+    compare_prior(&current, &prior_source)
+}
+
 fn fnv1a64(fixtures: &[(String, String)]) -> String {
     let mut value = FNV_OFFSET;
     for (path, source) in fixtures {
@@ -511,7 +525,17 @@ fn run() -> Result<(), String> {
             .ok_or_else(|| "missing --record PATH".to_string())?;
         fs::write(path, &json).map_err(|error| format!("write observation {path}: {error}"))?;
     }
-    if let Some(index) = args.iter().position(|arg| arg == "--compare") {
+    if let Some(index) = args.iter().position(|arg| arg == "--compare-if-present") {
+        let prior = Path::new(
+            args.get(index + 1)
+                .ok_or_else(|| "missing --compare-if-present PRIOR CURRENT".to_string())?,
+        );
+        let current = Path::new(
+            args.get(index + 2)
+                .ok_or_else(|| "missing --compare-if-present PRIOR CURRENT".to_string())?,
+        );
+        println!("{}", compare_if_present(prior, current)?);
+    } else if let Some(index) = args.iter().position(|arg| arg == "--compare") {
         let path = args
             .get(index + 1)
             .ok_or_else(|| "missing --compare PATH".to_string())?;
@@ -551,6 +575,12 @@ mod tests {
 
         let broken = METHOD.replace("\"prime\": \"00000100000001b3\"", "\"prime\": \"deadbeef\"");
         assert!(Method::parse(&broken).unwrap_err().contains("prime"));
+        let with_numeric_budget = METHOD.replacen(
+            "\"enforcement\": \"report-only\"",
+            "\"enforcement\": \"report-only\", \"latency_budget\": 0",
+            1,
+        );
+        assert!(Method::parse(&with_numeric_budget).is_ok());
     }
 
     #[test]
@@ -623,5 +653,99 @@ mod tests {
             compare_prior(&current, r#"{"corpus_identity":"0123456789abcdef"}"#).unwrap(),
             "LATENCY_SKIPPED_HARDWARE_MISMATCH"
         );
+    }
+
+    fn comparison_file(name: &str) -> PathBuf {
+        env::temp_dir().join(format!("parser-platform-baseline-{name}-{}.json", std::process::id()))
+    }
+
+    #[test]
+    fn parser_platform_baseline_compare_if_present_absent_prior_skips() {
+        let prior = comparison_file("absent-prior");
+        let current = comparison_file("current");
+        fs::write(
+            &current,
+            Observation::test_sample(Hardware::current().unwrap(), 120, 150, 10, 500, 1000, 20)
+                .json(),
+        )
+        .unwrap();
+
+        assert_eq!(
+            compare_if_present(&prior, &current).unwrap(),
+            "LATENCY_SKIPPED_BASELINE_ABSENT"
+        );
+        fs::remove_file(current).unwrap();
+    }
+
+    #[test]
+    fn parser_platform_baseline_compare_if_present_reports_matching_evidence() {
+        let prior = comparison_file("matching-prior");
+        let current = comparison_file("matching-current");
+        let hardware = Hardware::current().unwrap();
+        fs::write(
+            &prior,
+            Observation::test_sample(hardware.clone(), 100, 140, 8, 450, 900, 18).json(),
+        )
+        .unwrap();
+        fs::write(
+            &current,
+            Observation::test_sample(hardware, 120, 150, 10, 500, 1000, 20).json(),
+        )
+        .unwrap();
+
+        assert!(
+            compare_if_present(&prior, &current)
+                .unwrap()
+                .contains("LATENCY_REPORT_ONLY")
+        );
+        fs::remove_file(prior).unwrap();
+        fs::remove_file(current).unwrap();
+    }
+
+    #[test]
+    fn parser_platform_baseline_compare_if_present_skips_hardware_mismatch() {
+        let prior = comparison_file("mismatch-prior");
+        let current = comparison_file("mismatch-current");
+        let mut prior_hardware = Hardware::current().unwrap();
+        prior_hardware.cpu_count += 1;
+        fs::write(
+            &prior,
+            Observation::test_sample(prior_hardware, 100, 140, 8, 450, 900, 18).json(),
+        )
+        .unwrap();
+        fs::write(
+            &current,
+            Observation::test_sample(Hardware::current().unwrap(), 120, 150, 10, 500, 1000, 20)
+                .json(),
+        )
+        .unwrap();
+
+        assert_eq!(
+            compare_if_present(&prior, &current).unwrap(),
+            "LATENCY_SKIPPED_HARDWARE_MISMATCH"
+        );
+        fs::remove_file(prior).unwrap();
+        fs::remove_file(current).unwrap();
+    }
+
+    #[test]
+    fn parser_platform_baseline_compare_if_present_rejects_missing_or_malformed_evidence() {
+        let prior = comparison_file("malformed-prior");
+        let current = comparison_file("missing-current");
+        assert!(compare_if_present(&prior, &current).unwrap_err().contains("read current observation"));
+
+        fs::write(&current, "not-json").unwrap();
+        assert!(compare_if_present(&prior, &current).unwrap_err().contains("invalid observation JSON"));
+
+        fs::write(&prior, "not-json").unwrap();
+        fs::write(
+            &current,
+            Observation::test_sample(Hardware::current().unwrap(), 120, 150, 10, 500, 1000, 20)
+                .json(),
+        )
+        .unwrap();
+        assert!(compare_if_present(&prior, &current).unwrap_err().contains("invalid observation JSON"));
+        fs::remove_file(prior).unwrap();
+        fs::remove_file(current).unwrap();
     }
 }
