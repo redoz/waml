@@ -140,9 +140,10 @@
 - `rtk cargo fmt --all -- --check`: PASS.
 - `rtk git diff --check`: PASS.
 - `rtk cargo clippy --workspace --all-features`: PASS, 0 errors; 20 existing warnings.
-- Strict `rtk cargo clippy --workspace --all-targets --all-features -- -D warnings` stops at the
-  pre-existing test-only dead-code error in `crates/waml-syntax/src/red.rs:500`
-  (`Code::Error` is never constructed). The file is unchanged by Task 21.
+- Strict focused Clippy with `-D warnings` stops at 14 pre-existing production lints, including
+  `too_many_arguments`, `incompatible_msrv`, `len_without_is_empty`, and `clone_on_copy`; none is
+  in the round-four guard or fixture changes. The required non-denying workspace Clippy gate
+  passes with 0 errors and 20 existing warnings.
 - Independent completion review found no remaining Critical or Important issues after three
   adversarial guard-hardening passes.
 
