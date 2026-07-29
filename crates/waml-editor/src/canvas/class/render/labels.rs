@@ -1,7 +1,5 @@
-use super::{
-    primitives::{edge_point_to_screen, fill_rect, font_raster_size, ClassDrawResources},
-    RenderSnapshot,
-};
+use super::{primitives::ClassDrawResources, RenderSnapshot};
+use crate::canvas::primitives::{edge_point_to_screen, fill_rect, font_raster_size};
 use crate::edge_labels::{edge_end_labels, EdgeLabel, LabelAlign};
 use makepad_widgets::*;
 

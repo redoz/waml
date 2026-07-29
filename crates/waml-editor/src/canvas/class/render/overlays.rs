@@ -1,7 +1,8 @@
 use super::{
-    primitives::{fill_rect, node_screen_rect, world_rect_to_screen, ClassDrawResources},
+    primitives::{node_screen_rect, ClassDrawResources},
     RenderSnapshot,
 };
+use crate::canvas::primitives::{fill_rect, world_rect_to_screen};
 use makepad_widgets::*;
 
 pub(super) fn draw_conflict_focus(

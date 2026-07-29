@@ -1,8 +1,5 @@
-use super::{
-    primitives::{font_raster_size, world_rect_to_screen, ClassDrawResources},
-    relations::relations_for_visibility,
-    RenderSnapshot,
-};
+use super::{primitives::ClassDrawResources, relations::relations_for_visibility, RenderSnapshot};
+use crate::canvas::primitives::{font_raster_size, world_rect_to_screen};
 use crate::frame::SurfaceExt;
 use makepad_widgets::*;
 use std::collections::HashSet;

@@ -1,11 +1,9 @@
-use super::{
-    primitives::{edge_point_to_screen, ClassDrawResources},
-    RenderSnapshot,
-};
+use super::{primitives::ClassDrawResources, RenderSnapshot};
 use crate::canvas::geometry::{
     corner_fillet, elbow_radius, marker_geometry, segment_quad, snap_bar_to_device,
     ELBOW_MIN_DEVICE_PX,
 };
+use crate::canvas::primitives::edge_point_to_screen;
 use makepad_widgets::*;
 use waml::adornment::{end_marker, End};
 

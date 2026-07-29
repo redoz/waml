@@ -1,7 +1,5 @@
-use super::{
-    primitives::{font_raster_size, world_rect_to_screen, ClassDrawResources},
-    RenderSnapshot,
-};
+use super::{primitives::ClassDrawResources, RenderSnapshot};
+use crate::canvas::primitives::{font_raster_size, world_rect_to_screen};
 use makepad_widgets::*;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]

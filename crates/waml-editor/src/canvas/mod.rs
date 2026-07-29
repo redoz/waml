@@ -1,5 +1,6 @@
 mod class;
 mod geometry;
+pub(crate) mod primitives;
 mod viewport;
 
 pub(crate) use class::script_mod;
