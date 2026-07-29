@@ -3,9 +3,9 @@ use std::sync::Arc;
 use std::num::NonZeroU64;
 use waml_syntax::{
     annotate_occurrence, parse_okf_markdown, rebase_unchanged_green, reparse_okf_markdown,
-    transfer_mapped_annotations, ChangeMap, FullReparseReason, GreenElement, GreenText,
-    MarkdownDialect, OkfMarkdownSyntaxKind, ReparseOutcome, RewriteError, SourceText,
-    SyntaxAnnotation, SyntaxElement, SyntaxTree, TextChange, TextRange, TextSize,
+    reparse_okf_markdown_with_structure, transfer_mapped_annotations, ChangeMap, FullReparseReason,
+    GreenElement, GreenText, MarkdownDialect, OkfMarkdownSyntaxKind, ReparseOutcome, RewriteError,
+    SourceText, SyntaxAnnotation, SyntaxElement, SyntaxTree, TextChange, TextRange, TextSize,
 };
 
 fn incremental_outcome(
@@ -162,6 +162,24 @@ fn annotations(annotations: &[SyntaxAnnotation]) -> Vec<(u64, &str, Option<&str>
         .collect()
 }
 
+#[derive(Debug, Eq, PartialEq)]
+enum TextFingerprint {
+    Static(String),
+    Owned(String),
+    SourceSlice { range: TextRange, spelling: String },
+}
+
+fn green_text_fingerprint(text: &GreenText) -> TextFingerprint {
+    match text {
+        GreenText::Static(value) => TextFingerprint::Static((*value).to_owned()),
+        GreenText::Owned(value) => TextFingerprint::Owned(value.to_string()),
+        GreenText::SourceSlice { range, .. } => TextFingerprint::SourceSlice {
+            range: *range,
+            spelling: text.write_to_string(),
+        },
+    }
+}
+
 fn structural_fingerprint(tree: &SyntaxTree<waml_syntax::OkfMarkdownLanguage>) -> Vec<String> {
     fn visit(
         element: &GreenElement<waml_syntax::OkfMarkdownLanguage>,
@@ -182,18 +200,17 @@ fn structural_fingerprint(tree: &SyntaxTree<waml_syntax::OkfMarkdownLanguage>) -
             }
             GreenElement::Token(token) => {
                 let end = at.checked_add(token.width()).unwrap();
-                let spelling = token.text().write_to_string();
                 let leading: Vec<_> = token
                     .leading_trivia()
                     .iter()
-                    .map(|trivia| (format!("{:?}", trivia.kind), trivia.text.write_to_string()))
+                    .map(|trivia| (trivia.kind, green_text_fingerprint(&trivia.text)))
                     .collect();
                 let trailing: Vec<_> = token
                     .trailing_trivia()
                     .iter()
-                    .map(|trivia| (format!("{:?}", trivia.kind), trivia.text.write_to_string()))
+                    .map(|trivia| (trivia.kind, green_text_fingerprint(&trivia.text)))
                     .collect();
-                out.push(format!("token:{:?}:{at:?}..{end:?}:{spelling:?}:{leading:?}:{trailing:?}:missing={}:bad={}:codes={:?}:{:?}", token.kind(), token.flags().is_missing(), token.flags().is_bad(), token.annotations(), annotations(token.syntax_annotations())));
+                out.push(format!("token:{:?}:{at:?}..{end:?}:{:?}:{leading:?}:{trailing:?}:missing={}:bad={}:codes={:?}:{:?}", token.kind(), green_text_fingerprint(token.text()), token.flags().is_missing(), token.flags().is_bad(), token.annotations(), annotations(token.syntax_annotations())));
                 end
             }
         }
@@ -208,8 +225,7 @@ fn structural_fingerprint(tree: &SyntaxTree<waml_syntax::OkfMarkdownLanguage>) -
 }
 
 fn diagnostic_fingerprint(tree: &SyntaxTree<waml_syntax::OkfMarkdownLanguage>) -> Vec<String> {
-    let mut fingerprint: Vec<_> = tree
-        .diagnostics()
+    tree.diagnostics()
         .iter()
         .map(|diagnostic| {
             format!(
@@ -217,9 +233,72 @@ fn diagnostic_fingerprint(tree: &SyntaxTree<waml_syntax::OkfMarkdownLanguage>) -
                 diagnostic.code, diagnostic.severity, diagnostic.range, diagnostic.message
             )
         })
-        .collect();
-    fingerprint.sort();
-    fingerprint
+        .collect()
+}
+
+#[test]
+fn green_text_fingerprint_detects_allocation_kind_and_slice_partition() {
+    let source = text("xx");
+    let first = GreenText::SourceSlice {
+        source: source.clone(),
+        range: range(0, 1),
+    };
+    let second = GreenText::SourceSlice {
+        source,
+        range: range(1, 2),
+    };
+    let owned = GreenText::Owned(Arc::from("x"));
+    assert_ne!(
+        green_text_fingerprint(&first),
+        green_text_fingerprint(&second)
+    );
+    assert_ne!(
+        green_text_fingerprint(&first),
+        green_text_fingerprint(&owned)
+    );
+}
+
+#[test]
+fn invalid_utf8_boundary_is_a_named_full_outcome_with_structure() {
+    let previous =
+        parse_okf_markdown(text("# Café\n"), MarkdownDialect::CommonMarkCurrent).unwrap();
+    let (outcome, structure) = reparse_okf_markdown_with_structure(
+        &previous.tree,
+        text("# Cafx\n"),
+        &[TextChange {
+            old_range: range(5, 6),
+            replacement: Arc::from("x"),
+        }],
+    )
+    .unwrap();
+    assert!(matches!(
+        outcome,
+        ReparseOutcome::Full {
+            reason: FullReparseReason::InvalidUtf8Boundary,
+            ..
+        }
+    ));
+    assert_eq!(structure.headings.len(), 1);
+}
+
+#[test]
+fn safe_frontmatter_boundary_insertions_are_incremental() {
+    for (old, new, at, replacement) in [
+        ("---\na: b\n---\n", "---\nx: y\na: b\n---\n", 4, "x: y\n"),
+        ("---\na: b\n---\n", "---\na: b\n---\nbody\n", 13, "body\n"),
+    ] {
+        assert!(matches!(
+            exact_oracle(
+                old,
+                new,
+                &[TextChange {
+                    old_range: range(at, at),
+                    replacement: Arc::from(replacement)
+                }]
+            ),
+            ReparseOutcome::Incremental { .. }
+        ));
+    }
 }
 
 fn exact_oracle(

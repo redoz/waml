@@ -538,9 +538,27 @@ pub fn reparse_okf_markdown_with_structure(
 > {
     let old = SourceText::from_shared(Arc::new(previous.write_to_string()))
         .map_err(|_| ParseError::WidthOverflow)?;
-    let map = ChangeMap::checked(&old, changes).map_err(|_| ParseError::StructuralInvariant {
-        reason: "invalid incremental change map".into(),
-    })?;
+    let new_structure = Arc::new(crate::markdown::map(
+        &new_text,
+        MarkdownDialect::CommonMarkCurrent,
+    )?);
+    let map = match ChangeMap::checked(&old, changes) {
+        Ok(map) => map,
+        Err(reason) => {
+            let parsed = crate::shell::parse_okf_markdown_with_structure(
+                new_text,
+                MarkdownDialect::CommonMarkCurrent,
+                new_structure.clone(),
+            )?;
+            return Ok((
+                ReparseOutcome::Full {
+                    tree: parsed.tree,
+                    reason,
+                },
+                new_structure,
+            ));
+        }
+    };
     if map.new_len() != new_text.len() {
         return Err(ParseError::StructuralInvariant {
             reason: "incremental changes do not reconstruct candidate source".into(),
@@ -552,10 +570,6 @@ pub fn reparse_okf_markdown_with_structure(
         });
     }
     if changes.is_empty() {
-        let structure = Arc::new(crate::markdown::map(
-            &new_text,
-            MarkdownDialect::CommonMarkCurrent,
-        )?);
         return Ok((
             ReparseOutcome::Incremental {
                 tree: Arc::new(SyntaxTree::new(
@@ -567,15 +581,11 @@ pub fn reparse_okf_markdown_with_structure(
                 reparsed_range: TextRange::new(TextSize::try_from_usize(0).unwrap(), old.len())
                     .unwrap(),
             },
-            structure,
+            new_structure,
         ));
     }
     let old_structure = Arc::new(crate::markdown::map(
         &old,
-        MarkdownDialect::CommonMarkCurrent,
-    )?);
-    let new_structure = Arc::new(crate::markdown::map(
-        &new_text,
         MarkdownDialect::CommonMarkCurrent,
     )?);
     let full = |reason| -> Result<_, ParseError> {
@@ -593,11 +603,9 @@ pub fn reparse_okf_markdown_with_structure(
         ))
     };
     let old_frontmatter = crate::shell::frontmatter_range(&old, &old_structure)?;
-    if !same_optional_range(
-        old_frontmatter,
-        crate::shell::frontmatter_range(&new_text, &new_structure)?,
-        &map,
-    ) || frontmatter_fence_touched(&old, old_frontmatter, changes)
+    let new_frontmatter = crate::shell::frontmatter_range(&new_text, &new_structure)?;
+    if !same_optional_range(old_frontmatter, new_frontmatter, &map)
+        || !same_frontmatter_fences(&old, &new_text, old_frontmatter, new_frontmatter, &map)
     {
         return full(FullReparseReason::FrontmatterBoundaryChanged);
     }
@@ -818,31 +826,66 @@ fn same_optional_range(old: Option<TextRange>, new: Option<TextRange>, map: &Cha
     old.and_then(|range| map_range(range, map)) == new
 }
 
-fn frontmatter_fence_touched(
+fn same_frontmatter_fences(
     old: &SourceText,
-    frontmatter: Option<TextRange>,
-    changes: &[TextChange],
+    new: &SourceText,
+    old_frontmatter: Option<TextRange>,
+    new_frontmatter: Option<TextRange>,
+    map: &ChangeMap,
 ) -> bool {
-    let Some(frontmatter) = frontmatter else {
+    let (Some(old_frontmatter), Some(new_frontmatter)) = (old_frontmatter, new_frontmatter) else {
+        return old_frontmatter.is_none() && new_frontmatter.is_none();
+    };
+    let Some((old_open, old_close)) = frontmatter_fences(old, old_frontmatter) else {
         return false;
     };
-    let source = old.shared();
+    let Some((new_open, new_close)) = frontmatter_fences(new, new_frontmatter) else {
+        return false;
+    };
+    let same = |old_range: TextRange, new_range: TextRange| {
+        map_range(old_range, map) == Some(new_range)
+            && old.slice(old_range).ok() == new.slice(new_range).ok()
+    };
+    same(old_open, new_open)
+        && match (old_close, new_close) {
+            (Some(old_close), Some(new_close)) => same(old_close, new_close),
+            (None, None) => true,
+            _ => false,
+        }
+}
+
+fn frontmatter_fences(
+    text: &SourceText,
+    frontmatter: TextRange,
+) -> Option<(TextRange, Option<TextRange>)> {
+    let source = text.shared();
+    let start = frontmatter.start().to_usize();
     let end = frontmatter.end().to_usize();
+    let open_end = source[start..end]
+        .find('\n')
+        .map_or(end, |at| start + at + 1);
+    let open = TextRange::new(
+        frontmatter.start(),
+        TextSize::try_from_usize(open_end).ok()?,
+    )
+    .ok()?;
+    if source[start..open_end].trim() != "---" {
+        return None;
+    }
     let significant_end = source[..end].trim_end_matches(['\r', '\n']).len();
-    let close_start = source[..significant_end].rfind('\n').map_or(0, |at| at + 1);
-    let first_end = source.find('\n').map_or(source.len(), |at| at + 1);
-    changes.iter().any(|change| {
-        let overlaps = |start: usize, end: usize| {
-            let start = TextSize::try_from_usize(start).unwrap();
-            let end = TextSize::try_from_usize(end).unwrap();
-            if change.old_range.start() == change.old_range.end() {
-                start <= change.old_range.start() && change.old_range.start() <= end
-            } else {
-                change.old_range.start() < end && start < change.old_range.end()
-            }
-        };
-        overlaps(0, first_end) || overlaps(close_start, end)
-    })
+    let close_start = source[..significant_end]
+        .rfind('\n')
+        .map_or(start, |at| at + 1);
+    let close = matches!(source[close_start..end].trim(), "---" | "...")
+        .then(|| {
+            TextRange::new(
+                TextSize::try_from_usize(close_start).ok()?,
+                frontmatter.end(),
+            )
+            .ok()
+        })
+        .flatten();
+    Some((open, close))
 }
 fn same_ranges(old: &[TextRange], new: &[TextRange], map: &ChangeMap) -> bool {
     let mut old: Option<Vec<_>> = old
