@@ -472,10 +472,26 @@ impl<'ast, 'env> Visit<'ast> for BodyFacts<'env> {
 
     fn visit_expr_assign(&mut self, assignment: &'ast syn::ExprAssign) {
         self.record_assignment_place_type(&assignment.left);
+        visit::visit_expr_assign(self, assignment);
+
         let assigned_bindings = assignment_local_binding_names(&assignment.left, &self.bindings);
         let type_uses = self.expression_type_uses(&assignment.right);
         let identity = self.expression_type_identity(&assignment.right);
         let origin = self.expression_origin(&assignment.right);
+        let callable_path = if assigned_bindings.len() == 1 {
+            match unwrap_expression(&assignment.right) {
+                syn::Expr::Path(path) => Some(
+                    path.path
+                        .segments
+                        .iter()
+                        .map(|segment| segment.ident.to_string())
+                        .collect::<Vec<_>>(),
+                ),
+                _ => None,
+            }
+        } else {
+            None
+        };
         for binding in assigned_bindings {
             if !type_uses.is_empty() {
                 self.receiver_type_uses
@@ -486,10 +502,17 @@ impl<'ast, 'env> Visit<'ast> for BodyFacts<'env> {
             if let Some(identity) = &identity {
                 self.receiver_types
                     .insert(binding.clone(), identity.clone());
+            } else {
+                self.receiver_types.remove(&binding);
+            }
+            if let Some(callable_path) = &callable_path {
+                self.callable_paths
+                    .insert(binding.clone(), callable_path.clone());
+            } else {
+                self.callable_paths.remove(&binding);
             }
             self.origins.insert(binding, origin);
         }
-        visit::visit_expr_assign(self, assignment);
     }
 
     fn visit_expr_for_loop(&mut self, expression: &'ast syn::ExprForLoop) {
@@ -1144,6 +1167,11 @@ impl<'env> BodyFacts<'env> {
                     .iter()
                     .map(|field| self.expression_origin(&field.expr)),
             ),
+            syn::Expr::Await(expression) => self.expression_origin(&expression.base),
+            syn::Expr::Index(expression) => self.expression_origin(&expression.expr),
+            syn::Expr::Repeat(expression) => self.expression_origin(&expression.expr),
+            syn::Expr::Try(expression) => self.expression_origin(&expression.expr),
+            syn::Expr::Unary(expression) => self.expression_origin(&expression.expr),
             _ => ValueOrigin::Other,
         }
     }
@@ -2112,6 +2140,22 @@ fn collect_type_members(
                     );
                 }
             }
+            Item::Enum(item_enum) => {
+                struct_fields
+                    .entry(TypeIdentity::new(
+                        module.clone(),
+                        item_enum.ident.to_string(),
+                    ))
+                    .or_default();
+            }
+            Item::Union(item_union) => {
+                struct_fields
+                    .entry(TypeIdentity::new(
+                        module.clone(),
+                        item_union.ident.to_string(),
+                    ))
+                    .or_default();
+            }
             Item::Impl(item_impl) => {
                 let owner = receiver_type_identity(
                     module,
@@ -2136,6 +2180,7 @@ fn collect_type_members(
             }
             Item::Trait(item_trait) => {
                 let owner = TypeIdentity::new(module.clone(), item_trait.ident.to_string());
+                struct_fields.entry(owner.clone()).or_default();
                 trait_visibility.insert(
                     owner.clone(),
                     !matches!(item_trait.vis, syn::Visibility::Inherited),
@@ -2508,6 +2553,18 @@ fn summarize_function(
         name: name.clone(),
     };
 
+    let mut local_standard_roots = block_local_standard_roots(block);
+    local_standard_roots.extend(
+        signature
+            .generics
+            .type_params()
+            .map(|parameter| parameter.ident.to_string())
+            .filter(|name| matches!(name.as_str(), "std" | "alloc" | "core" | "Vec")),
+    );
+    if owner_paths.iter().any(|path| path.as_slice() == ["Vec"]) {
+        local_standard_roots.insert("Vec".into());
+    }
+
     summaries.push(FunctionSummary {
         path: path.to_owned(),
         id: id.clone(),
@@ -2528,7 +2585,7 @@ fn summarize_function(
         output_paths,
         body_paths: facts.body_paths,
         body_type_uses: facts.body_type_uses,
-        local_standard_roots: block_local_standard_roots(block),
+        local_standard_roots,
         retired_calls: facts.retired_calls,
         opaque_authority_macros: facts.opaque_authority_macros,
         raw_authority_closure: facts.raw_authority_closure,
@@ -2546,7 +2603,7 @@ fn block_local_standard_roots(block: &syn::Block) -> BTreeSet<String> {
     impl LocalRootBindings {
         fn record(&mut self, name: impl Into<String>) {
             let name = name.into();
-            if matches!(name.as_str(), "std" | "alloc" | "core") {
+            if matches!(name.as_str(), "std" | "alloc" | "core" | "Vec") {
                 self.roots.insert(name);
             }
         }
@@ -2573,6 +2630,26 @@ fn block_local_standard_roots(block: &syn::Block) -> BTreeSet<String> {
                     .map(|(_, rename)| rename.to_string())
                     .unwrap_or_else(|| item_extern.ident.to_string()),
             );
+        }
+
+        fn visit_item_struct(&mut self, item_struct: &'ast syn::ItemStruct) {
+            self.record(item_struct.ident.to_string());
+        }
+
+        fn visit_item_enum(&mut self, item_enum: &'ast syn::ItemEnum) {
+            self.record(item_enum.ident.to_string());
+        }
+
+        fn visit_item_union(&mut self, item_union: &'ast syn::ItemUnion) {
+            self.record(item_union.ident.to_string());
+        }
+
+        fn visit_item_trait(&mut self, item_trait: &'ast syn::ItemTrait) {
+            self.record(item_trait.ident.to_string());
+        }
+
+        fn visit_item_type(&mut self, item_type: &'ast syn::ItemType) {
+            self.record(item_type.ident.to_string());
         }
 
         fn visit_item_fn(&mut self, _item_fn: &'ast syn::ItemFn) {}
@@ -2750,7 +2827,16 @@ struct ReturnTaintFacts<'env> {
     callable_paths: BTreeMap<String, Vec<String>>,
     bindings: BTreeSet<String>,
     origins: BTreeMap<String, ValueOrigin>,
+    binding_scopes: Vec<BTreeMap<String, TaintBindingState>>,
+    expression_origins: BTreeMap<usize, ValueOrigin>,
     unresolved_model_dispatch: bool,
+}
+
+struct TaintBindingState {
+    receiver_type: Option<TypeIdentity>,
+    callable_path: Option<Vec<String>>,
+    bound: bool,
+    origin: Option<ValueOrigin>,
 }
 
 impl<'env> ReturnTaintFacts<'env> {
@@ -2769,6 +2855,8 @@ impl<'env> ReturnTaintFacts<'env> {
             callable_paths: BTreeMap::new(),
             bindings: BTreeSet::new(),
             origins: BTreeMap::new(),
+            binding_scopes: Vec::new(),
+            expression_origins: BTreeMap::new(),
             unresolved_model_dispatch: false,
         };
         if caller.has_receiver {
@@ -2809,6 +2897,93 @@ impl<'env> ReturnTaintFacts<'env> {
             );
         }
         facts
+    }
+
+    fn push_binding_scope(&mut self) {
+        self.binding_scopes.push(BTreeMap::new());
+    }
+
+    fn record_binding_declaration(&mut self, binding: &str) {
+        let state = TaintBindingState {
+            receiver_type: self.receiver_types.get(binding).cloned(),
+            callable_path: self.callable_paths.get(binding).cloned(),
+            bound: self.bindings.contains(binding),
+            origin: self.origins.get(binding).copied(),
+        };
+        if let Some(scope) = self.binding_scopes.last_mut() {
+            scope.entry(binding.to_owned()).or_insert(state);
+        }
+    }
+
+    fn pop_binding_scope(&mut self) {
+        let scope = self
+            .binding_scopes
+            .pop()
+            .expect("binding scope is balanced");
+        for (binding, state) in scope {
+            match state.receiver_type {
+                Some(value) => {
+                    self.receiver_types.insert(binding.clone(), value);
+                }
+                None => {
+                    self.receiver_types.remove(&binding);
+                }
+            }
+            match state.callable_path {
+                Some(value) => {
+                    self.callable_paths.insert(binding.clone(), value);
+                }
+                None => {
+                    self.callable_paths.remove(&binding);
+                }
+            }
+            if state.bound {
+                self.bindings.insert(binding.clone());
+            } else {
+                self.bindings.remove(&binding);
+            }
+            match state.origin {
+                Some(value) => {
+                    self.origins.insert(binding, value);
+                }
+                None => {
+                    self.origins.remove(&binding);
+                }
+            }
+        }
+    }
+
+    fn bind_pattern_from_expression(&mut self, pattern: &syn::Pat, expression: &syn::Expr) {
+        let bindings = pattern_binding_names(pattern);
+        let identity = self.expression_type_identity(expression);
+        let origin = self.expression_origin(expression);
+        for binding in bindings {
+            self.record_binding_declaration(&binding);
+            self.bindings.insert(binding.clone());
+            self.callable_paths.remove(&binding);
+            if let Some(identity) = &identity {
+                self.receiver_types
+                    .insert(binding.clone(), identity.clone());
+            } else {
+                self.receiver_types.remove(&binding);
+            }
+            self.origins.insert(binding, origin);
+        }
+    }
+
+    fn visit_scoped_block(&mut self, block: &syn::Block) -> ValueOrigin {
+        self.push_binding_scope();
+        visit::visit_block(self, block);
+        let origin = block
+            .stmts
+            .last()
+            .and_then(|statement| match statement {
+                syn::Stmt::Expr(expression, None) => Some(self.expression_origin(expression)),
+                _ => None,
+            })
+            .unwrap_or(ValueOrigin::Other);
+        self.pop_binding_scope();
+        origin
     }
 
     fn call_site(&self, call: &ExprCall) -> CallSite {
@@ -2985,6 +3160,26 @@ impl<'env> ReturnTaintFacts<'env> {
                     ValueOrigin::Other
                 }
             }
+            syn::Expr::Block(expression) => self
+                .expression_origins
+                .get(&(expression as *const syn::ExprBlock as usize))
+                .copied()
+                .unwrap_or(ValueOrigin::Other),
+            syn::Expr::If(expression) => self
+                .expression_origins
+                .get(&(expression as *const syn::ExprIf as usize))
+                .copied()
+                .unwrap_or(ValueOrigin::Other),
+            syn::Expr::Match(expression) => self
+                .expression_origins
+                .get(&(expression as *const syn::ExprMatch as usize))
+                .copied()
+                .unwrap_or(ValueOrigin::Other),
+            syn::Expr::Await(expression) => self.expression_origin(&expression.base),
+            syn::Expr::Index(expression) => self.expression_origin(&expression.expr),
+            syn::Expr::Repeat(expression) => self.expression_origin(&expression.expr),
+            syn::Expr::Try(expression) => self.expression_origin(&expression.expr),
+            syn::Expr::Unary(expression) => self.expression_origin(&expression.expr),
             syn::Expr::Macro(expression) => {
                 let identifiers = macro_identifiers(&expression.mac);
                 if identifiers.iter().any(|identifier| {
@@ -3025,6 +3220,124 @@ impl<'env> ReturnTaintFacts<'env> {
 }
 
 impl<'ast> Visit<'ast> for ReturnTaintFacts<'_> {
+    fn visit_block(&mut self, block: &'ast syn::Block) {
+        self.visit_scoped_block(block);
+    }
+
+    fn visit_expr_block(&mut self, expression: &'ast syn::ExprBlock) {
+        for attribute in &expression.attrs {
+            self.visit_attribute(attribute);
+        }
+        if let Some(label) = &expression.label {
+            self.visit_label(label);
+        }
+        let origin = self.visit_scoped_block(&expression.block);
+        self.expression_origins
+            .insert(expression as *const syn::ExprBlock as usize, origin);
+    }
+
+    fn visit_expr_for_loop(&mut self, expression: &'ast syn::ExprForLoop) {
+        for attribute in &expression.attrs {
+            self.visit_attribute(attribute);
+        }
+        self.visit_expr(&expression.expr);
+        self.push_binding_scope();
+        self.bind_pattern_from_expression(&expression.pat, &expression.expr);
+        self.visit_block(&expression.body);
+        self.pop_binding_scope();
+    }
+
+    fn visit_expr_match(&mut self, expression: &'ast syn::ExprMatch) {
+        for attribute in &expression.attrs {
+            self.visit_attribute(attribute);
+        }
+        self.visit_expr(&expression.expr);
+        let mut origins = Vec::with_capacity(expression.arms.len());
+        for arm in &expression.arms {
+            self.push_binding_scope();
+            self.bind_pattern_from_expression(&arm.pat, &expression.expr);
+            if let Some((_, guard)) = &arm.guard {
+                self.visit_expr(guard);
+            }
+            self.visit_expr(&arm.body);
+            origins.push(self.expression_origin(&arm.body));
+            self.pop_binding_scope();
+        }
+        self.expression_origins.insert(
+            expression as *const syn::ExprMatch as usize,
+            merge_origins(origins),
+        );
+    }
+
+    fn visit_expr_if(&mut self, expression: &'ast syn::ExprIf) {
+        for attribute in &expression.attrs {
+            self.visit_attribute(attribute);
+        }
+        let then_origin = if let syn::Expr::Let(condition) = unwrap_expression(&expression.cond) {
+            self.visit_expr(&condition.expr);
+            self.push_binding_scope();
+            self.bind_pattern_from_expression(&condition.pat, &condition.expr);
+            let origin = self.visit_scoped_block(&expression.then_branch);
+            self.pop_binding_scope();
+            origin
+        } else {
+            self.visit_expr(&expression.cond);
+            self.visit_scoped_block(&expression.then_branch)
+        };
+        let origin = if let Some((_, alternative)) = &expression.else_branch {
+            self.visit_expr(alternative);
+            merge_origins([then_origin, self.expression_origin(alternative)])
+        } else {
+            ValueOrigin::Other
+        };
+        self.expression_origins
+            .insert(expression as *const syn::ExprIf as usize, origin);
+    }
+
+    fn visit_expr_while(&mut self, expression: &'ast syn::ExprWhile) {
+        let syn::Expr::Let(condition) = unwrap_expression(&expression.cond) else {
+            visit::visit_expr_while(self, expression);
+            return;
+        };
+        for attribute in &expression.attrs {
+            self.visit_attribute(attribute);
+        }
+        self.visit_expr(&condition.expr);
+        self.push_binding_scope();
+        self.bind_pattern_from_expression(&condition.pat, &condition.expr);
+        self.visit_block(&expression.body);
+        self.pop_binding_scope();
+    }
+
+    fn visit_expr_closure(&mut self, closure: &'ast syn::ExprClosure) {
+        self.push_binding_scope();
+        for input in &closure.inputs {
+            let bindings = pattern_binding_names(input);
+            let paths = match input {
+                syn::Pat::Type(pattern) => type_paths(&pattern.ty),
+                _ => Vec::new(),
+            };
+            let identity =
+                receiver_type_identity(self.env.module, &paths, self.env.aliases, self.env.imports);
+            let origin =
+                origin_for_type(self.env.module, &paths, self.env.aliases, self.env.imports);
+            for binding in bindings {
+                self.record_binding_declaration(&binding);
+                self.bindings.insert(binding.clone());
+                self.callable_paths.remove(&binding);
+                if let Some(identity) = &identity {
+                    self.receiver_types
+                        .insert(binding.clone(), identity.clone());
+                } else {
+                    self.receiver_types.remove(&binding);
+                }
+                self.origins.insert(binding, origin);
+            }
+        }
+        visit::visit_expr_closure(self, closure);
+        self.pop_binding_scope();
+    }
+
     fn visit_expr_call(&mut self, call: &'ast ExprCall) {
         let site = self.call_site(call);
         let protected_model_flow = call
@@ -3074,17 +3387,17 @@ impl<'ast> Visit<'ast> for ReturnTaintFacts<'_> {
     }
 
     fn visit_local(&mut self, local: &'ast Local) {
-        let (binding, explicit_paths) = match &local.pat {
-            syn::Pat::Ident(pattern) => (Some(pattern.ident.to_string()), Vec::new()),
-            syn::Pat::Type(pattern) => (
-                match &*pattern.pat {
-                    syn::Pat::Ident(pattern) => Some(pattern.ident.to_string()),
-                    _ => None,
-                },
-                type_paths(&pattern.ty),
-            ),
-            _ => (None, Vec::new()),
+        let bindings = pattern_binding_names(&local.pat);
+        let explicit_paths = match &local.pat {
+            syn::Pat::Type(pattern) => type_paths(&pattern.ty),
+            _ => Vec::new(),
         };
+
+        // Initializer and `let-else` names resolve against the previous scope.
+        // Visit them first so stateful initializers also update that scope
+        // before the declaration's inferred evidence is derived.
+        visit::visit_local(self, local);
+
         let explicit = receiver_type_identity(
             self.env.module,
             &explicit_paths,
@@ -3095,12 +3408,9 @@ impl<'ast> Visit<'ast> for ReturnTaintFacts<'_> {
             .init
             .as_ref()
             .and_then(|init| self.expression_type_identity(&init.expr));
-        if let (Some(binding), Some(identity)) = (binding.as_ref(), explicit.or(inferred)) {
-            self.receiver_types.insert(binding.clone(), identity);
-        }
-        if let Some(binding) = &binding {
-            self.bindings.insert(binding.clone());
-            let origin = local
+        let identity = explicit.or(inferred);
+        let origin = (!bindings.is_empty()).then(|| {
+            local
                 .init
                 .as_ref()
                 .map(|init| self.expression_origin(&init.expr))
@@ -3112,33 +3422,83 @@ impl<'ast> Visit<'ast> for ReturnTaintFacts<'_> {
                         self.env.aliases,
                         self.env.imports,
                     )
-                });
-            self.origins.insert(binding.clone(), origin);
-        }
-        if let (Some(binding), Some(init)) = (binding, &local.init) {
+                })
+        });
+        let callable_path = if let ([binding], Some(init)) = (bindings.as_slice(), &local.init) {
             if let syn::Expr::Path(path) = &*init.expr {
-                self.callable_paths.insert(
+                Some((
                     binding,
                     path.path
                         .segments
                         .iter()
                         .map(|segment| segment.ident.to_string())
                         .collect(),
-                );
+                ))
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
+        for binding in &bindings {
+            self.record_binding_declaration(binding);
+            self.receiver_types.remove(binding);
+            self.callable_paths.remove(binding);
+            self.origins.remove(binding);
+            self.bindings.insert(binding.clone());
+        }
+        if let Some(identity) = identity {
+            for binding in &bindings {
+                self.receiver_types
+                    .insert(binding.clone(), identity.clone());
             }
         }
-        visit::visit_local(self, local);
+        if let Some(origin) = origin {
+            for binding in &bindings {
+                self.origins.insert(binding.clone(), origin);
+            }
+        }
+        if let Some((binding, path)) = callable_path {
+            self.callable_paths.insert(binding.clone(), path);
+        }
     }
 
     fn visit_expr_assign(&mut self, assignment: &'ast syn::ExprAssign) {
-        if let syn::Expr::Path(path) = unwrap_expression(&assignment.left) {
-            if path.path.segments.len() == 1 {
-                let binding = path.path.segments[0].ident.to_string();
-                let origin = self.expression_origin(&assignment.right);
-                self.origins.insert(binding, origin);
-            }
-        }
         visit::visit_expr_assign(self, assignment);
+
+        let assigned_bindings = assignment_local_binding_names(&assignment.left, &self.bindings);
+        let identity = self.expression_type_identity(&assignment.right);
+        let origin = self.expression_origin(&assignment.right);
+        let callable_path = if assigned_bindings.len() == 1 {
+            match unwrap_expression(&assignment.right) {
+                syn::Expr::Path(path) => Some(
+                    path.path
+                        .segments
+                        .iter()
+                        .map(|segment| segment.ident.to_string())
+                        .collect::<Vec<_>>(),
+                ),
+                _ => None,
+            }
+        } else {
+            None
+        };
+        for binding in assigned_bindings {
+            if let Some(identity) = &identity {
+                self.receiver_types
+                    .insert(binding.clone(), identity.clone());
+            } else {
+                self.receiver_types.remove(&binding);
+            }
+            if let Some(callable_path) = &callable_path {
+                self.callable_paths
+                    .insert(binding.clone(), callable_path.clone());
+            } else {
+                self.callable_paths.remove(&binding);
+            }
+            self.origins.insert(binding, origin);
+        }
     }
 }
 
@@ -4047,19 +4407,25 @@ fn is_harmless_standard_collection_dispatch(
         return false;
     }
 
-    if !matches!(
+    let external_standard = matches!(
         receiver.module.crate_key.as_str(),
         "external:std" | "external:alloc"
-    ) {
+    );
+    let unqualified_prelude_vec = receiver.name == "Vec"
+        && receiver.module == *env.module
+        && !local_standard_roots.contains("Vec");
+    if !external_standard && !unqualified_prelude_vec {
         return false;
     }
-    let external_root = receiver
-        .module
-        .crate_key
-        .strip_prefix("external:")
-        .unwrap_or_default();
-    if local_standard_roots.contains(external_root) {
-        return false;
+    if external_standard {
+        let external_root = receiver
+            .module
+            .crate_key
+            .strip_prefix("external:")
+            .unwrap_or_default();
+        if local_standard_roots.contains(external_root) {
+            return false;
+        }
     }
 
     matches!(

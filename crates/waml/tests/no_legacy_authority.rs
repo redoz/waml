@@ -519,6 +519,18 @@ fn real_syntax_tree_authority_signatures_and_builders_are_rejected() {
                     let _ = raw;
                 }
 
+                fn parse_assignment_updates_alias(&mut self, raw: &str) {
+                    let replacement = self.tree.clone();
+                    let slot;
+                    let alias;
+                    alias = {
+                        slot = &mut self.tree;
+                        slot
+                    };
+                    *alias = replacement;
+                    let _ = raw;
+                }
+
                 fn parse_for_bound(&mut self, raw: &str) {
                     for slot in [&mut self.tree] {
                         *slot = external_factory(raw);
@@ -670,6 +682,7 @@ fn real_syntax_tree_authority_signatures_and_builders_are_rejected() {
         "parse_shadowed_initializer",
         "parse_let_else_shadow",
         "parse_initializer_updates_alias",
+        "parse_assignment_updates_alias",
         "parse_for_bound",
         "parse_match_bound",
         "parse_if_let_bound",
@@ -922,6 +935,93 @@ fn call_edges_propagate_reparse_through_resolved_and_unresolved_dispatch() {
             callable(rendered)
         }
 
+        fn shadowed_initializer_pointer(model: &Model, callable: Parser) -> Analysis {
+            let rendered = model.to_string();
+            let rendered: u32 = {
+                callable(rendered);
+                0
+            };
+            let _ = rendered;
+            Analysis
+        }
+
+        fn shadowed_block_pointer(model: &Model, callable: Parser) -> Analysis {
+            let rendered = model.to_string();
+            {
+                let rendered = 0_u32;
+                let _ = rendered;
+            }
+            callable(rendered)
+        }
+
+        fn let_else_shadow_pointer(model: &Model, callable: Parser) -> Analysis {
+            let rendered = model.to_string();
+            let Some(rendered): Option<u32> = None else {
+                return callable(rendered);
+            };
+            let _ = rendered;
+            Analysis
+        }
+
+        fn destructured_pointer(model: &Model, callable: Parser) -> Analysis {
+            let (rendered,) = (model.to_string(),);
+            callable(rendered)
+        }
+
+        fn assigned_pointer(model: &Model, callable: Parser) -> Analysis {
+            let rendered;
+            (rendered,) = (model.to_string(),);
+            callable(rendered)
+        }
+
+        fn stateful_initializer_pointer(model: &Model, callable: Parser) -> Analysis {
+            let rendered;
+            let alias = {
+                rendered = model.to_string();
+                rendered
+            };
+            callable(alias)
+        }
+
+        fn harmless_sink(raw: String) -> Analysis {
+            let _ = raw;
+            Analysis
+        }
+
+        fn reassigned_callable_pointer(model: &Model, external: Parser) -> Analysis {
+            let mut callable: Parser = harmless_sink;
+            callable = external;
+            callable(model.to_string())
+        }
+
+        fn for_bound_pointer(model: &Model, callable: Parser) -> Analysis {
+            for rendered in [model.to_string()] {
+                callable(rendered);
+            }
+            Analysis
+        }
+
+        fn match_bound_pointer(model: &Model, callable: Parser) -> Analysis {
+            match model.to_string() {
+                rendered => callable(rendered),
+            }
+        }
+
+        fn if_let_bound_pointer(model: &Model, callable: Parser) -> Analysis {
+            if let Some(rendered) = Some(model.to_string()) {
+                return callable(rendered);
+            }
+            Analysis
+        }
+
+        fn closure_shadow_pointer(model: &Model, callable: Parser) -> Analysis {
+            let rendered = model.to_string();
+            let _shadow = |rendered: u32| {
+                let _ = rendered;
+            };
+            callable(rendered)
+        }
+
         struct Vec;
         impl Vec {
             fn push(&self, raw: String) -> Analysis {
@@ -990,6 +1090,17 @@ fn call_edges_propagate_reparse_through_resolved_and_unresolved_dispatch() {
         "helper_return_pointer",
         "helper_method_pointer",
         "helper_chain_pointer",
+        "shadowed_initializer_pointer",
+        "shadowed_block_pointer",
+        "let_else_shadow_pointer",
+        "destructured_pointer",
+        "assigned_pointer",
+        "stateful_initializer_pointer",
+        "reassigned_callable_pointer",
+        "for_bound_pointer",
+        "match_bound_pointer",
+        "if_let_bound_pointer",
+        "closure_shadow_pointer",
     ] {
         assert!(
             violations.iter().any(|reason| {
@@ -1029,6 +1140,9 @@ fn benign_model_inspection_does_not_taint_unrelated_reparse() {
         }
 
         fn standard_collection_controls(model: &Model) {
+            let mut prelude_rows = Vec::new();
+            prelude_rows.push(model.to_string());
+
             let mut std_rows = std::vec::Vec::new();
             std_rows.push(model.to_string());
 
@@ -1662,6 +1776,34 @@ fn local_standard_root_names_do_not_acquire_external_trust() {
         }
         "#,
     );
+    let unqualified_violations = reasons(
+        r#"
+        trait Push {
+            fn push(&self, value: String);
+        }
+
+        fn generic_vec_leak<Vec: Push>(sink: &Vec, model: &Model) {
+            sink.push(model.to_string());
+        }
+
+        fn block_unqualified_vec_leak(model: &Model) {
+            mod local {
+                pub struct Vec;
+                impl Vec {
+                    pub fn new() -> Self {
+                        Self
+                    }
+
+                    pub fn push(&self, _: String) {}
+                }
+            }
+            use local::Vec;
+
+            let sink = Vec::new();
+            sink.push(model.to_string());
+        }
+        "#,
+    );
 
     for (root, violations) in [
         ("alloc", alloc_violations),
@@ -1690,6 +1832,15 @@ fn local_standard_root_names_do_not_acquire_external_trust() {
         }),
         "block-local `alloc` collection root acquired external trust: {block_local_violations:#?}"
     );
+    for expected in ["generic_vec_leak", "block_unqualified_vec_leak"] {
+        assert!(
+            unqualified_violations.iter().any(|reason| {
+                reason.contains(expected) && reason.contains("unresolved callable dispatch")
+            }),
+            "local unqualified `Vec` shadow acquired prelude trust in `{expected}`: \
+             {unqualified_violations:#?}"
+        );
+    }
 }
 
 #[test]
