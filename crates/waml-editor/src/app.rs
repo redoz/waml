@@ -182,10 +182,9 @@ script_mod! {
                             // sibling of the column they charged their whole 138px
                             // (3 x 46) to BOTH rows, even though the buttons are 29px
                             // tall and hug the top -- the tab row's y is clear of
-                            // them. That reserve was what held `[I]` 138px inboard of
-                            // the window edge instead of over the column it toggles.
-                            // Charged to this row alone, the tab row now runs the full
-                            // window width and `[I]` lands flush right.
+                            // them. That reserve held the tab row's trailing content
+                            // 138px inboard of the window edge. Charged to this row
+                            // alone, the tab row now runs the full window width.
                             //
                             // The fork resolves these by id (`ids!(windows_buttons)`,
                             // a descending path search) for its own drag query and
@@ -777,13 +776,13 @@ impl App {
                 self.nav_state.scope = "/".into();
                 self.nav_state.query.clear();
                 self.nav_state.filter = None;
-                if let Some(mut tree) = self
-                    .ui
-                    .widget(cx, ids!(project_tree))
-                    .borrow_mut::<crate::tree_panel::ProjectTree>()
-                {
-                    tree.open_dock(cx);
-                }
+                let (_, inspector) = self.dock_states(cx);
+                let inspector = if self.narrow {
+                    crate::dock::narrow_entry_states(crate::dock::DockState::Pinned, inspector).1
+                } else {
+                    inspector
+                };
+                self.apply_dock_states(cx, crate::dock::DockState::Pinned, inspector);
                 self.refresh_nav(cx, true);
                 self.set_navigation_message(cx, None);
                 true
@@ -824,8 +823,9 @@ impl App {
             return;
         }
         let fragment = pending.fragment.clone();
-        let found = crate::doc_view::BodyWidgets::new(cx, &self.ui)
-            .scroll_markdown_to_fragment(cx, &fragment);
+        let found = self
+            .documents
+            .scroll_active_to_fragment(cx, &self.ui, &fragment);
         self.pending_fragment = None;
         if found {
             self.set_navigation_message(cx, None);
@@ -1878,7 +1878,7 @@ impl App {
             .widget(cx, ids!(project_tree))
             .borrow_mut::<crate::tree_panel::ProjectTree>()
         {
-            panel.set_view(cx, view);
+            panel.set_view_with_fold_reset(cx, view, scope_changed);
             panel.set_chip_filter(cx, self.nav_state.filter, &chip);
             if let Some(title) = title {
                 panel.set_scope_title(cx, title);
@@ -3159,6 +3159,39 @@ mod tests {
     }
 
     #[test]
+    fn navigation_root_uses_narrow_mutual_exclusion_and_preserves_wide_inspector() {
+        for (narrow, expected_inspector) in [(true, DockState::Flag), (false, DockState::Pinned)] {
+            let (mut cx, mut app) = navigation_app();
+            let mut browser = FakeBrowser::default();
+            app.narrow = narrow;
+            app.ui
+                .widget(&cx, ids!(project_tree))
+                .borrow_mut::<crate::tree_panel::ProjectTree>()
+                .expect("test project tree is mounted")
+                .close_dock(&mut cx);
+            app.ui
+                .widget(&cx, ids!(inspector))
+                .borrow_mut::<crate::inspector_panel::Inspector>()
+                .expect("test inspector is mounted")
+                .open_dock(&mut cx);
+
+            assert!(app.navigate_with(
+                &mut cx,
+                NavigationTarget::Directory {
+                    address: "/".into(),
+                },
+                OpenDisposition::Preview,
+                &mut browser,
+            ));
+
+            assert_eq!(
+                app.dock_states(&mut cx),
+                (DockState::Pinned, expected_inspector)
+            );
+        }
+    }
+
+    #[test]
     fn navigation_directory_intents_share_one_app_owned_toggle_path() {
         enum Ingress {
             Tree,
@@ -3371,6 +3404,91 @@ mod tests {
             .borrow::<crate::statusbar::Statusbar>()
             .expect("test statusbar is mounted");
         assert_eq!(crate::statusbar::navigation_message(&statusbar), None);
+    }
+
+    #[test]
+    fn non_markdown_active_view_rejects_hidden_stale_fragment_once() {
+        struct NonMarkdownView;
+
+        impl DocView for NonMarkdownView {
+            fn sync(
+                &mut self,
+                cx: &mut Cx,
+                body: &BodyWidgets,
+                _data: crate::doc_view::ViewData<'_>,
+            ) {
+                body.show_canvas(cx);
+            }
+
+            fn handle(
+                &mut self,
+                _cx: &mut Cx,
+                _body: &BodyWidgets,
+                _actions: &Actions,
+                _data: crate::doc_view::ViewData<'_>,
+            ) -> crate::doc_view::ViewOutcome {
+                crate::doc_view::ViewOutcome::default()
+            }
+
+            fn chrome(&self) -> crate::doc_view::BodyChrome {
+                crate::doc_view::BodyChrome::HIDDEN
+            }
+        }
+
+        let (mut cx, mut app) = navigation_app();
+        mount_markdown_surface(&mut cx, &mut app);
+        crate::markdown_surface::set_markdown(&app.ui, &mut cx, "# Details\n");
+        record_markdown_anchors(&mut cx, &app);
+
+        let tab_id = LiveId::from_str("diagram");
+        app.documents.transition(
+            &mut cx,
+            &app.ui,
+            &app.session,
+            DocumentCommand::Open {
+                document: crate::document::OpenDocument {
+                    tab_id,
+                    concept_id: "diagram".into(),
+                    title: "Diagram".into(),
+                    presentation: DocumentPresentation {
+                        icon: Icon::Workflow,
+                        accent: None,
+                        category: crate::document::NavCategory::Diagram,
+                    },
+                    view: Box::new(NonMarkdownView),
+                },
+                persistent: true,
+            },
+        );
+        let active_before = app.documents.active_id();
+        app.pending_fragment = Some(PendingFragment {
+            concept_id: "diagram".into(),
+            fragment: "details".into(),
+        });
+
+        app.apply_pending_fragment(&mut cx);
+
+        assert_eq!(app.pending_fragment, None);
+        assert_eq!(app.documents.active_id(), active_before);
+        let statusbar = app.ui.widget(&cx, ids!(statusbar));
+        let mut statusbar = statusbar
+            .borrow_mut::<crate::statusbar::Statusbar>()
+            .expect("test statusbar is mounted");
+        assert_eq!(
+            crate::statusbar::navigation_message(&statusbar),
+            Some("Section not found: details")
+        );
+        statusbar.set_navigation_message(&mut cx, None);
+        drop(statusbar);
+
+        app.apply_pending_fragment(&mut cx);
+
+        let statusbar = app.ui.widget(&cx, ids!(statusbar));
+        let statusbar = statusbar
+            .borrow::<crate::statusbar::Statusbar>()
+            .expect("test statusbar is mounted");
+        assert_eq!(crate::statusbar::navigation_message(&statusbar), None);
+        assert_eq!(app.documents.active_id(), active_before);
     }
 
     #[test]

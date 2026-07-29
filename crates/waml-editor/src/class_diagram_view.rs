@@ -762,7 +762,15 @@ impl DocView for ClassDiagramView {
 
     fn chrome(&self) -> BodyChrome {
         if self.mode.properties_visible() {
-            BodyChrome::HIDDEN
+            BodyChrome {
+                tool_dock: false,
+                view_bar: false,
+                canvas_overlays: false,
+                document_header: DocumentHeaderChrome {
+                    breadcrumb: true,
+                    right_dock: None,
+                },
+            }
         } else {
             BodyChrome {
                 tool_dock: true,
@@ -956,16 +964,29 @@ mod tests {
     }
 
     #[test]
-    fn properties_mode_hides_the_inspector_toggle_and_canvas_chrome() {
+    fn properties_mode_preserves_breadcrumb_while_hiding_diagram_controls() {
         let mut view = ClassDiagramView::new("orders".into());
         view.apply_tool_action(ToolDockAction::Triggered(Tool::DiagramProps));
 
-        assert_eq!(view.chrome(), BodyChrome::HIDDEN);
+        assert_eq!(
+            view.chrome(),
+            BodyChrome {
+                tool_dock: false,
+                view_bar: false,
+                canvas_overlays: false,
+                document_header: crate::doc_view::DocumentHeaderChrome {
+                    breadcrumb: true,
+                    right_dock: None,
+                },
+            }
+        );
     }
 
     #[test]
     fn a_properties_change_returns_exactly_one_diagram_set() {
         let mut view = ClassDiagramView::new("orders".into());
+        view.mode = ClassDiagramMode::Properties;
+        let chrome_before = view.chrome();
         let display = DiagramDisplaySet {
             show_attributes: true,
             show_type: false,
@@ -986,6 +1007,7 @@ mod tests {
         let text = apply_outcome(outcome);
         assert!(text.contains("showType: false"), "{text}");
         assert_eq!(text.matches("showType:").count(), 1);
+        assert_eq!(view.chrome(), chrome_before);
     }
 
     #[test]

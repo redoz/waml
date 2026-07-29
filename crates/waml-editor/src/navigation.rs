@@ -1,6 +1,3 @@
-// The app integration lands in follow-up tasks; keep this pure model lint-clean meanwhile.
-#![allow(dead_code)]
-
 use crate::tree::{build_tree, TreeNode};
 use url::Url;
 use waml::okf::DirectoryAddress;

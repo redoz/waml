@@ -542,6 +542,29 @@ fn directory_addresses(tree: &ProjectTreeData) -> Vec<String> {
     out
 }
 
+fn reconcile_open_directories(
+    previous_addresses: &HashSet<String>,
+    previous_open: &HashSet<String>,
+    addresses: &HashSet<String>,
+    planned_open: &HashSet<String>,
+    reset: bool,
+) -> HashSet<String> {
+    if reset {
+        return planned_open.intersection(addresses).cloned().collect();
+    }
+
+    let mut open = previous_open
+        .intersection(addresses)
+        .cloned()
+        .collect::<HashSet<_>>();
+    for address in addresses.difference(previous_addresses) {
+        if planned_open.contains(address) {
+            open.insert(address.clone());
+        }
+    }
+    open
+}
+
 /// Draw the provider-supplied row-leading glyph at `row_top`.
 ///
 /// The draw position is rounded to whole device pixels before `draw_abs` so the
@@ -1034,7 +1057,12 @@ impl ProjectTree {
         self.view.area().rect(cx)
     }
 
+    #[cfg_attr(not(test), allow(dead_code))]
     pub fn set_view(&mut self, cx: &mut Cx, view: NavView) {
+        self.set_view_with_fold_reset(cx, view, false);
+    }
+
+    pub fn set_view_with_fold_reset(&mut self, cx: &mut Cx, view: NavView, reset_folds: bool) {
         let (tree, tag) = match view {
             NavView::Browse(t) => (t, NavStateTag::Browse),
             NavView::Results(t) => (t, NavStateTag::Results),
@@ -1042,10 +1070,19 @@ impl ProjectTree {
             NavView::Empty => (ProjectTreeData::default(), NavStateTag::Empty),
         };
         let (id_to_key, id_to_concept, openable_ids) = build_id_maps(&tree);
-        let directory_addresses = directory_addresses(&tree);
-        let open_directories = folders_to_open(tag, &tree)
+        let directory_addresses = directory_addresses(&tree)
             .into_iter()
             .collect::<HashSet<_>>();
+        let planned_open = folders_to_open(tag, &tree)
+            .into_iter()
+            .collect::<HashSet<_>>();
+        let open_directories = reconcile_open_directories(
+            &self.directory_addresses,
+            &self.open_directories,
+            &directory_addresses,
+            &planned_open,
+            reset_folds,
+        );
         let file_tree = self.view.file_tree(cx, ids!(file_tree));
         // Open package folders so the panel isn't collapsed. Browse expands only
         // the top-level packages (under scope the roots are the scope's members,
@@ -1062,7 +1099,7 @@ impl ProjectTree {
         self.id_to_key = id_to_key;
         self.id_to_concept = id_to_concept;
         self.openable_ids = openable_ids;
-        self.directory_addresses = directory_addresses.into_iter().collect();
+        self.directory_addresses = directory_addresses;
         self.open_directories = open_directories;
         self.tree = tree;
         self.nav_tag = tag;
@@ -1547,6 +1584,113 @@ mod tests {
             panel.directory_addresses,
             HashSet::from(["/sales".to_owned(), "/sales/archive".to_owned()])
         );
+        assert_eq!(panel.open_directories, HashSet::from(["/sales".to_owned()]));
+    }
+
+    #[test]
+    fn repeated_browse_refresh_preserves_nested_user_fold_state() {
+        fn nested_tree() -> ProjectTreeData {
+            ProjectTreeData {
+                roots: vec![node(
+                    "/sales",
+                    "Sales",
+                    TreeKind::Directory,
+                    vec![node(
+                        "/sales/archive",
+                        "Archive",
+                        TreeKind::Directory,
+                        vec![],
+                    )],
+                )],
+            }
+        }
+
+        let (mut cx, mut panel, file_tree) = mounted_project_tree_test_context();
+        panel.set_view(&mut cx, NavView::Browse(nested_tree()));
+        assert!(panel.toggle_directory(&mut cx, "/sales/archive"));
+        assert!(panel.toggle_directory(&mut cx, "/sales"));
+        assert!(!file_tree_folder_is_open(&mut cx, &file_tree, "/sales"));
+        assert!(file_tree_folder_is_open(
+            &mut cx,
+            &file_tree,
+            "/sales/archive"
+        ));
+
+        // Document activation and same-view model refresh both rebuild Browse
+        // through this same set_view path.
+        panel.set_view(&mut cx, NavView::Browse(nested_tree()));
+
+        assert_eq!(
+            panel.open_directories,
+            HashSet::from(["/sales/archive".to_owned()])
+        );
+        assert!(!file_tree_folder_is_open(&mut cx, &file_tree, "/sales"));
+        assert!(file_tree_folder_is_open(
+            &mut cx,
+            &file_tree,
+            "/sales/archive"
+        ));
+    }
+
+    #[test]
+    fn refresh_prunes_removed_folders_and_seeds_only_new_defaults() {
+        let (mut cx, mut panel) = project_tree_test_context();
+        panel.set_view(
+            &mut cx,
+            NavView::Browse(ProjectTreeData {
+                roots: vec![node(
+                    "/sales",
+                    "Sales",
+                    TreeKind::Directory,
+                    vec![node(
+                        "/sales/archive",
+                        "Archive",
+                        TreeKind::Directory,
+                        vec![],
+                    )],
+                )],
+            }),
+        );
+        assert!(panel.toggle_directory(&mut cx, "/sales/archive"));
+        assert!(panel.toggle_directory(&mut cx, "/sales"));
+
+        panel.set_view(
+            &mut cx,
+            NavView::Browse(ProjectTreeData {
+                roots: vec![
+                    node("/sales", "Sales", TreeKind::Directory, vec![]),
+                    node("/support", "Support", TreeKind::Directory, vec![]),
+                ],
+            }),
+        );
+
+        assert_eq!(
+            panel.open_directories,
+            HashSet::from(["/support".to_owned()])
+        );
+    }
+
+    #[test]
+    fn explicit_fold_reset_reseeds_planned_defaults() {
+        let (mut cx, mut panel) = project_tree_test_context();
+        let tree = || ProjectTreeData {
+            roots: vec![node(
+                "/sales",
+                "Sales",
+                TreeKind::Directory,
+                vec![node(
+                    "/sales/archive",
+                    "Archive",
+                    TreeKind::Directory,
+                    vec![],
+                )],
+            )],
+        };
+        panel.set_view(&mut cx, NavView::Browse(tree()));
+        assert!(panel.toggle_directory(&mut cx, "/sales"));
+
+        panel.set_view_with_fold_reset(&mut cx, NavView::Browse(tree()), true);
+
         assert_eq!(panel.open_directories, HashSet::from(["/sales".to_owned()]));
     }
 

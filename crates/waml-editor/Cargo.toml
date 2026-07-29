@@ -18,7 +18,7 @@ waml = { path = "../waml", features = ["serde"] }
 # WebGL buffer and repaints in the same task so Edge stops flashing black through a window
 # drag). Also includes Markdown heading anchors, fragment scrolling, and app-owned FileTree
 # folder toggles. rev is the reproducible pin; survives upstream force-push / branch renames.
-makepad-widgets = { git = "https://github.com/redoz/makepad.git", rev = "19350c7a66b39aee4fea4198eb0462e9aaf8c09c" }
+makepad-widgets = { git = "https://github.com/redoz/makepad.git", rev = "25d78a4d917ea2e943df6af5e037817248443bd7" }
 taffy = "0.12.2"
 serde = { workspace = true }
 serde_json = { workspace = true }

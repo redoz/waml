@@ -3,10 +3,6 @@
 //! `BodyWidgets` names the one shared body draw surface the per-tab views push
 //! into. Pure Rust: nothing here is a widget, so there is no `script_mod`.
 
-// A bin crate's dead-code lint would otherwise flag seam members exercised by
-// unit tests and provider-owned views. Same convention as `nav.rs`.
-#![allow(dead_code)]
-
 use makepad_widgets::*;
 use waml::edit::PendingEdit;
 use waml::source::SourceBundle;
@@ -43,9 +39,6 @@ impl BodyWidgets {
     }
     pub fn selection_toolbar(&self, cx: &mut Cx) -> WidgetRef {
         self.ui.widget(cx, ids!(selection_toolbar))
-    }
-    pub fn markdown_surface(&self, cx: &mut Cx) -> WidgetRef {
-        crate::markdown_surface::surface(&self.ui, cx)
     }
     pub fn view_bar(&self, cx: &mut Cx) -> WidgetRef {
         self.ui.widget(cx, ids!(view_bar))
@@ -202,6 +195,7 @@ pub struct ViewData<'a> {
     pub source: &'a SourceBundle,
     pub okf: &'a waml::okf::Bundle,
     pub uml: &'a waml::uml::Projection,
+    #[allow(dead_code)]
     pub revision: u64,
 }
 

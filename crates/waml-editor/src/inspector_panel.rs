@@ -9,8 +9,8 @@
 //! Top bar (`element_bar`): a real `SelectBox` child widget (badge + selected
 //! label + caret) listing the current diagram's contents (diagram, nodes,
 //! source-anchored edges). The panel's `dock: DockState` (Flag/Pinned; see
-//! `dock.rs`) is binary now -- there is no in-panel affordance for it at all,
-//! the caption bar's `[I]` toggle (see `app.rs`) is the sole way to flip it.
+//! `dock.rs`) is binary now -- there is no in-panel affordance for it at all;
+//! the active document header's right-dock toggle is the sole way to flip it.
 //! Clicking the box opens its `SelectFlyout`
 //! card (`App` relays `SelectBox`'s open request to `PopupRoot::show_at`), and
 //! a committed pick comes back through the tag-filtered `PopupRoot::closed`
@@ -369,8 +369,8 @@ pub struct Inspector {
     #[rust]
     picker_ids: Vec<(LiveId, usize)>,
     /// Dock visual state (Flag / Pinned), binary like `tree_panel.rs`'s. The
-    /// app reads `slot_width()` for the right slot; the caption bar's `[I]`
-    /// toggle is the only thing that ever changes it.
+    /// app reads `slot_width()` for the right slot; the active document
+    /// header's right-dock toggle is the only thing that ever changes it.
     #[rust]
     dock: DockState,
 }
@@ -391,8 +391,8 @@ const GLYPH_W: f64 = 18.0; // fixed x-advance reserved for the direction glyph
 const BAR_H: f64 = 56.0;
 
 // The column's open width, mirroring `tree_panel.rs`'s own slot constant --
-// flush against the window edge, no `FLAG_SQUARE` tab now that the caption
-// `[I]` toggle is the panel's only affordance.
+// flush against the window edge, no `FLAG_SQUARE` tab now that the document
+// header's right-dock toggle is the panel's only affordance.
 pub(crate) const INSPECTOR_W: f64 = 320.0;
 
 /// An association row's display text in the picker popup: just the target end.
@@ -523,9 +523,9 @@ impl Widget for Inspector {
         let hit_off = panel_rect.pos - self.view_rect.pos;
 
         // No more in-panel dock affordances (no flag tab, no pin button, no
-        // Peek auto-collapse timer) -- the caption bar's `[I]` toggle (see
-        // `app.rs`) is the panel's only way to flip `dock`. This panel is now
-        // just a laid-out `right_slot` column like `tree_panel.rs`'s.
+        // Peek auto-collapse timer) -- the active document header's right-dock
+        // toggle is the panel's only way to flip `dock`. This panel is now just
+        // a laid-out `right_slot` column like `tree_panel.rs`'s.
         match event.hits_with_capture_overload(cx, self.view.area(), false) {
             Hit::FingerUp(fe) if fe.is_primary_hit() => {
                 let p = fe.abs - hit_off;
@@ -985,9 +985,9 @@ impl Inspector {
         self.view.redraw(cx);
     }
 
-    /// Expand <-> collapse, driven by the caption bar's `[I]` toggle. Binary by
-    /// construction: `DockEvent::Toggle` never routes through `Peek`, so the
-    /// column is either a full 320px or zero pixels.
+    /// Expand <-> collapse, driven by the active document header's right-dock
+    /// toggle. Binary by construction: `DockEvent::Toggle` never routes through
+    /// `Peek`, so the column is either a full 320px or zero pixels.
     pub fn toggle_dock(&mut self, cx: &mut Cx) {
         self.apply_dock(cx, DockEvent::Toggle);
     }
@@ -1000,7 +1000,7 @@ impl Inspector {
 
     /// Force the panel shut, idempotently -- the shell's reconcile for an active
     /// view that declares no right dock (`BodyChrome.right_dock == None`; see
-    /// `App::sync_right_dock_btn`). Never expands: see `DockEvent::Close`. A
+    /// `BodyWidgets::apply_chrome`). Never expands: see `DockEvent::Close`. A
     /// no-op when already closed, so there is no redraw churn on tab switches.
     pub fn close_dock(&mut self, cx: &mut Cx) {
         self.apply_dock(cx, DockEvent::Close);
@@ -1441,9 +1441,9 @@ mod tests {
         );
     }
 
-    // The caption `[I]` toggle is the panel's only affordance now, so the state
-    // machine it drives must be strictly binary -- landing in `Peek` would
-    // self-collapse the column out from under the user.
+    // The document header's right-dock toggle is the panel's only affordance
+    // now, so the state machine it drives must be strictly binary -- landing in
+    // `Peek` would self-collapse the column out from under the user.
     #[test]
     fn the_caption_toggle_moves_the_column_between_flag_and_pinned() {
         use crate::dock::{next, DockEvent, DockState};

@@ -2,8 +2,8 @@
 //! raw markdown into the shared `markdown_surface` slot (a scrolling `Markdown`
 //! surface fed the verbatim bundle file text; the feed itself is pushed from
 //! the shell in `App::sync_active_tab`) and hides the diagram chrome: the
-//! canvas is occluded by the opaque slot, the tool dock by
-//! `wants_tooldock() == false`, the inspector's element picker explicitly.
+//! canvas is occluded by the opaque slot, while its `BodyChrome` declaration
+//! hides the diagram tool dock and the inspector's element picker explicitly.
 
 use crate::doc_view::{
     BodyChrome, BodyWidgets, DocView, DocumentHeaderChrome, ViewData, ViewOutcome,

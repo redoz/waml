@@ -1,6 +1,3 @@
-// App/layout mounting lands in follow-up tasks; keep the shared widget lint-clean meanwhile.
-#![allow(dead_code)]
-
 use crate::icon_button::{IconButtonAction, IconButtonWidgetRefExt};
 use crate::icons::Icon;
 use crate::navigation::{BreadcrumbSegment, NavigationTarget};
@@ -57,8 +54,10 @@ pub enum DocumentHeaderAction {
 }
 
 pub struct DocumentHeaderLayout {
+    #[cfg_attr(not(test), allow(dead_code))]
     pub visible_indices: Vec<usize>,
     pub segment_rects: Vec<(usize, Rect)>,
+    #[allow(dead_code)]
     pub height: f64,
 }
 

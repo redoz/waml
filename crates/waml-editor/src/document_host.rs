@@ -1,6 +1,6 @@
 use crate::doc_tabs::{DocTab, DocTabs, OpenTabs};
 use crate::doc_view::{BodyChrome, BodyWidgets, DocView, ViewData, ViewOutcome};
-use crate::document::OpenDocument;
+use crate::document::{NavCategory, OpenDocument};
 use crate::editor_session::{EditorSession, SessionChange};
 use crate::popup::base::PopupResult;
 use makepad_widgets::*;
@@ -115,9 +115,30 @@ impl DocumentHost {
     }
 
     pub fn active_accent(&self) -> Option<Vec4> {
-        self.tabs
+        self.tabs.active_tab().and_then(|tab| {
+            tab.presentation.accent.or_else(|| {
+                self.views
+                    .get(&self.tabs.active)
+                    .and_then(|view| view.tab_accent())
+            })
+        })
+    }
+
+    pub fn scroll_active_to_fragment(
+        &mut self,
+        cx: &mut Cx,
+        ui: &WidgetRef,
+        fragment: &str,
+    ) -> bool {
+        let active_uses_markdown = self
+            .tabs
             .active_tab()
-            .and_then(|tab| tab.presentation.accent)
+            .is_some_and(|tab| tab.presentation.category == NavCategory::OkfDocument);
+        if !active_uses_markdown {
+            return false;
+        }
+        let body = BodyWidgets::new(cx, ui);
+        body.scroll_markdown_to_fragment(cx, fragment)
     }
 
     fn refresh_tabs(&self, cx: &mut Cx, ui: &WidgetRef) {
