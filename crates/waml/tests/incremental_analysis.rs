@@ -446,3 +446,193 @@ fn retained_okf_analysis_reuses_unchanged_snapshots_and_matches_full_oracle() {
         );
     }
 }
+
+#[test]
+fn retained_uml_analysis_matches_full_declared_and_projection_oracles() {
+    let source = SourceBundle::try_from_pairs([
+        (
+            "class.md",
+            "---\ntype: uml.Class\n---\n# Class\n\n## Attributes\n- name: String\n\n## Layout\n- Class\n",
+        ),
+        ("other.md", "---\ntype: uml.Class\n---\n# Other\n"),
+    ])
+    .unwrap();
+    let baseline = prepared(source.clone(), None, 1);
+    let edited = replace_document(
+        &source,
+        SourceDocument::new(
+            BundlePath::parse("class.md").unwrap(),
+            "---\ntype: uml.Class\n---\n# Class\n\n## Attributes\n- title: String\n\n## Layout\n- Class\n".into(),
+        ),
+    )
+    .unwrap();
+    let incremental = prepared(
+        edited.clone(),
+        Some(PreviousAnalyses {
+            okf: baseline.okf(),
+            uml: baseline.uml(),
+        }),
+        2,
+    );
+    let full = prepared(edited, None, 2);
+
+    assert_eq!(incremental.source(), full.source());
+    assert_eq!(incremental.uml().projection, full.uml().projection);
+    assert_eq!(
+        incremental.uml().declared.concepts().count(),
+        full.uml().declared.concepts().count()
+    );
+    let diagnostics = |analysis: &waml::uml::Analysis| {
+        analysis
+            .diagnostics
+            .iter()
+            .map(|diagnostic| {
+                (
+                    diagnostic.severity,
+                    diagnostic.code,
+                    diagnostic.message.clone(),
+                    diagnostic.file.clone(),
+                    diagnostic.line,
+                    diagnostic.span,
+                    diagnostic.range,
+                )
+            })
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(diagnostics(incremental.uml()), diagnostics(full.uml()));
+    let untouched = document_id(&baseline, "other.md");
+    assert!(Arc::ptr_eq(
+        baseline.uml().syntax.document(untouched).unwrap(),
+        incremental.uml().syntax.document(untouched).unwrap(),
+    ));
+    for path in ["class.md", "other.md"] {
+        let incremental_id = document_id(&incremental, path);
+        let full_id = document_id(&full, path);
+        let incremental_tree = incremental
+            .uml()
+            .syntax
+            .document(incremental_id)
+            .unwrap()
+            .syntax();
+        let full_tree = full.uml().syntax.document(full_id).unwrap().syntax();
+        assert_eq!(
+            incremental_tree.write_to_string(),
+            full_tree.write_to_string()
+        );
+        assert_eq!(
+            incremental_tree
+                .diagnostics()
+                .iter()
+                .map(|diagnostic| {
+                    format!(
+                        "{:?}:{:?}:{:?}:{}",
+                        diagnostic.code, diagnostic.severity, diagnostic.range, diagnostic.message
+                    )
+                })
+                .collect::<Vec<_>>(),
+            full_tree
+                .diagnostics()
+                .iter()
+                .map(|diagnostic| {
+                    format!(
+                        "{:?}:{:?}:{:?}:{}",
+                        diagnostic.code, diagnostic.severity, diagnostic.range, diagnostic.message
+                    )
+                })
+                .collect::<Vec<_>>(),
+        );
+    }
+}
+
+#[test]
+fn retained_uml_analysis_reuses_exact_unchanged_and_static_greens() {
+    let source = SourceBundle::try_from_pairs([
+        (
+            "class.md",
+            "---\ntype: uml.Class\n---\n# Class\n\n## Attributes\n- name: String\n- broken String\n\n## Layout\n- Class\n",
+        ),
+        ("other.md", "---\ntype: uml.Class\n---\n# Other\n"),
+    ])
+    .unwrap();
+    let baseline = prepared(source.clone(), None, 1);
+    let edited = replace_document(
+        &source,
+        SourceDocument::new(
+            BundlePath::parse("class.md").unwrap(),
+            "---\ntype: uml.Class\n---\n# Class\n\n## Attributes\n- title: String\n- broken String\n\n## Layout\n- Class\n".into(),
+        ),
+    )
+    .unwrap();
+    let incremental = prepared(
+        edited,
+        Some(PreviousAnalyses {
+            okf: baseline.okf(),
+            uml: baseline.uml(),
+        }),
+        2,
+    );
+    let touched = document_id(&baseline, "class.md");
+    let untouched = document_id(&baseline, "other.md");
+    assert!(Arc::ptr_eq(
+        baseline.uml().syntax.document(untouched).unwrap(),
+        incremental.uml().syntax.document(untouched).unwrap(),
+    ));
+    assert!(Arc::ptr_eq(
+        baseline.uml().syntax.document(untouched).unwrap().syntax(),
+        incremental
+            .uml()
+            .syntax
+            .document(untouched)
+            .unwrap()
+            .syntax(),
+    ));
+    assert!(!Arc::ptr_eq(
+        baseline.uml().syntax.document(touched).unwrap(),
+        incremental.uml().syntax.document(touched).unwrap(),
+    ));
+    assert!(!baseline
+        .uml()
+        .syntax
+        .document(touched)
+        .unwrap()
+        .syntax()
+        .root()
+        .same_green(
+            &incremental
+                .uml()
+                .syntax
+                .document(touched)
+                .unwrap()
+                .syntax()
+                .root(),
+        ));
+    let old_tree = baseline.uml().syntax.document(touched).unwrap().syntax();
+    let new_tree = incremental.uml().syntax.document(touched).unwrap().syntax();
+    match (
+        old_tree.root_green().children().last().unwrap(),
+        new_tree.root_green().children().last().unwrap(),
+    ) {
+        (GreenElement::Token(old), GreenElement::Token(new)) => assert!(Arc::ptr_eq(old, new)),
+        (GreenElement::Node(old), GreenElement::Node(new)) => assert!(Arc::ptr_eq(old, new)),
+        _ => panic!("UML island shape changed"),
+    }
+    let current = incremental
+        .okf()
+        .catalog
+        .document(touched)
+        .unwrap()
+        .text()
+        .shared();
+    assert!(new_tree.write_to_string().contains("title"));
+    assert!(Arc::ptr_eq(
+        incremental
+            .uml()
+            .syntax
+            .document(touched)
+            .unwrap()
+            .document()
+            .text()
+            .shared(),
+        current,
+    ));
+}

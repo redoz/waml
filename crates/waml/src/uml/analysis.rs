@@ -3,7 +3,10 @@ use super::{
     syntax::{self, UmlLanguage},
 };
 use crate::{
-    analysis::{AnalysisError, ClaimSet, DomainAnalysisContext, SyntaxSet, SyntaxSnapshot},
+    analysis::{
+        single_text_change, AnalysisError, ClaimSet, DomainAnalysisContext, SyntaxSet,
+        SyntaxSnapshot,
+    },
     diagnostic::Diagnostic,
 };
 use std::{
@@ -121,7 +124,7 @@ fn syntax_nodes(
 }
 pub fn analyze(
     context: DomainAnalysisContext<'_>,
-    _previous: Option<&Analysis>,
+    previous: Option<&Analysis>,
 ) -> Result<Analysis, AnalysisError> {
     validate_shared_context(&context)?;
     let claimed: Vec<_> = context
@@ -180,7 +183,34 @@ pub fn analyze(
                 .ok_or_else(|| AnalysisError::CatalogInvariant {
                     reason: "claimed concept has no Markdown structure map".into(),
                 })?;
-        let tree = syntax::parse_full(document.text().clone(), structure);
+        let tree = match previous.and_then(|analysis| analysis.syntax.document(id)) {
+            Some(previous_snapshot)
+                if Arc::ptr_eq(previous_snapshot.document(), &document)
+                    || Arc::ptr_eq(
+                        previous_snapshot.document().text().shared(),
+                        document.text().shared(),
+                    ) =>
+            {
+                previous_snapshot.syntax().clone()
+            }
+            Some(previous_snapshot) => {
+                let changes =
+                    single_text_change(previous_snapshot.document().text(), document.text());
+                previous
+                    .and_then(|analysis| analysis.structures.get(&id))
+                    .and_then(|old_structure| {
+                        syntax::reparse_island(
+                            previous_snapshot.syntax(),
+                            old_structure,
+                            document.text().clone(),
+                            structure,
+                            &changes,
+                        )
+                    })
+                    .unwrap_or_else(|| syntax::parse_full(document.text().clone(), structure))
+            }
+            None => syntax::parse_full(document.text().clone(), structure),
+        };
         let attributes = attributes(tree.root());
         let values = items(tree.root(), super::syntax::UmlSyntaxKind::Value);
         let slots = items(tree.root(), super::syntax::UmlSyntaxKind::Slot);
@@ -439,7 +469,18 @@ pub fn analyze(
                 .with_provenance(id, document.revision(), diagnostic.range),
             );
         }
-        snapshots.insert(id, Arc::new(SyntaxSnapshot::new(document.clone(), tree)));
+        let snapshot = previous
+            .and_then(|analysis| analysis.syntax.document(id))
+            .filter(|previous_snapshot| {
+                Arc::ptr_eq(previous_snapshot.document(), &document)
+                    || Arc::ptr_eq(
+                        previous_snapshot.document().text().shared(),
+                        document.text().shared(),
+                    )
+            })
+            .cloned()
+            .unwrap_or_else(|| Arc::new(SyntaxSnapshot::new(document.clone(), tree)));
+        snapshots.insert(id, snapshot);
     }
     validate_declared_semantics(&context, &declared, &mut diagnostics);
     let projection = declared_projection(&context, &declared, &mut diagnostics);
@@ -1278,9 +1319,8 @@ fn declared_projection(
                                 .map(|value| value == "name-type")
                         }),
                         show_attribute_visibility: frontmatter.get_bool("showAttributeVisibility"),
-                        show_attribute_multiplicity: cardinality.map(
-                            crate::model::CardinalityVisibility::legacy_attribute_gate,
-                        ),
+                        show_attribute_multiplicity: cardinality
+                            .map(crate::model::CardinalityVisibility::legacy_attribute_gate),
                         cardinality,
                         max_attributes,
                         show_roles: frontmatter.get_bool("showRoles"),
