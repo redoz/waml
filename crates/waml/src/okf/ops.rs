@@ -116,7 +116,7 @@ pub(crate) fn lower_one_with_state(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::edit::EditBatch;
+    use crate::edit::{AppliedEdit, EditBatch};
 
     fn context(source: &SourceBundle) -> EditContext<'_> {
         let okf_analysis = Box::leak(Box::new(
@@ -142,6 +142,23 @@ mod tests {
             session_revision: 0,
             uml,
         }
+    }
+
+    fn apply_reversible(batch: &impl EditBatch, source: &SourceBundle) -> AppliedEdit {
+        let okf = crate::okf::Bundle::parse(source).unwrap();
+        let uml = crate::uml::project(&okf);
+        batch.apply_reversible(context(source, &okf, &uml)).unwrap()
+    }
+
+    fn assert_reversible(source: SourceBundle, batch: Batch, expected: SourceBundle) {
+        let applied = apply_reversible(&batch, &source);
+        assert_eq!(applied.source, expected);
+
+        let restored = apply_reversible(&applied.inverse, &applied.source);
+        assert_eq!(restored.source, source);
+
+        let redone = apply_reversible(&restored.inverse, &restored.source);
+        assert_eq!(redone.source, expected);
     }
 
     #[test]
@@ -223,5 +240,175 @@ mod tests {
         .lower(context(&source));
         assert!(result.is_err());
         assert_eq!(source.documents()[0].path().as_str(), "sales/order.md");
+    }
+
+    #[test]
+    fn every_okf_operation_round_trips_exact_authored_source() {
+        let doc = "---\ntitle: Order\n---\n# Order\n";
+        let alpha = "---\ntitle: Alpha\n---\n# Alpha\n";
+        let zulu = "---\ntitle: Zulu\n---\n# Zulu\n";
+        let index = "# Sales\n\n* [Zulu](./zulu.md)\n* [Alpha](./alpha.md)\n";
+        let sorted_index = "# Sales\n\n* [Alpha](./alpha.md)\n* [Zulu](./zulu.md)\n";
+
+        assert_reversible(
+            SourceBundle::try_from_pairs([("sales/order.md", doc)]).unwrap(),
+            Batch(vec![Op::ConceptMove {
+                id: "sales/order".into(),
+                to_directory: DirectoryAddress::parse("/archive").unwrap(),
+            }]),
+            SourceBundle::try_from_pairs([("archive/order.md", doc)]).unwrap(),
+        );
+
+        assert_reversible(
+            SourceBundle::try_from_pairs([
+                ("sales/order.md", doc),
+                ("sales/nested/customer.md", "# Customer\n"),
+            ])
+            .unwrap(),
+            Batch(vec![Op::DirectoryRename {
+                directory: DirectoryAddress::parse("/sales").unwrap(),
+                name: "commerce".into(),
+            }]),
+            SourceBundle::try_from_pairs([
+                ("commerce/order.md", doc),
+                ("commerce/nested/customer.md", "# Customer\n"),
+            ])
+            .unwrap(),
+        );
+
+        assert_reversible(
+            SourceBundle::try_from_pairs([("sales/order.md", doc)]).unwrap(),
+            Batch(vec![Op::DirectoryMove {
+                directory: DirectoryAddress::parse("/sales").unwrap(),
+                to_parent: DirectoryAddress::parse("/domains").unwrap(),
+                name: None,
+            }]),
+            SourceBundle::try_from_pairs([("domains/sales/order.md", doc)]).unwrap(),
+        );
+
+        assert_reversible(
+            SourceBundle::try_from_pairs([
+                ("keep.md", "# Keep\n"),
+                ("sales/order.md", doc),
+                ("sales/nested/customer.md", "# Customer\n"),
+            ])
+            .unwrap(),
+            Batch(vec![Op::DirectoryDelete {
+                directory: DirectoryAddress::parse("/sales").unwrap(),
+                cascade: true,
+            }]),
+            SourceBundle::try_from_pairs([("keep.md", "# Keep\n")]).unwrap(),
+        );
+
+        let indexed_source = || {
+            SourceBundle::try_from_pairs([
+                ("sales/index.md", index),
+                ("sales/zulu.md", zulu),
+                ("sales/alpha.md", alpha),
+            ])
+            .unwrap()
+        };
+        let sorted_source = || {
+            SourceBundle::try_from_pairs([
+                ("sales/index.md", sorted_index),
+                ("sales/zulu.md", zulu),
+                ("sales/alpha.md", alpha),
+            ])
+            .unwrap()
+        };
+
+        assert_reversible(
+            indexed_source(),
+            Batch(vec![Op::IndexReorder {
+                directory: DirectoryAddress::parse("/sales").unwrap(),
+                order: vec!["sales/alpha".into(), "sales/zulu".into()],
+            }]),
+            sorted_source(),
+        );
+
+        assert_reversible(
+            indexed_source(),
+            Batch(vec![Op::IndexSort {
+                directory: DirectoryAddress::parse("/sales").unwrap(),
+            }]),
+            sorted_source(),
+        );
+
+        assert_reversible(
+            indexed_source(),
+            Batch(vec![Op::IndexRetitle {
+                directory: DirectoryAddress::parse("/sales").unwrap(),
+                title: "Commerce".into(),
+            }]),
+            SourceBundle::try_from_pairs([
+                (
+                    "sales/index.md",
+                    "# Commerce\n\n* [Zulu](./zulu.md)\n* [Alpha](./alpha.md)\n",
+                ),
+                ("sales/zulu.md", zulu),
+                ("sales/alpha.md", alpha),
+            ])
+            .unwrap(),
+        );
+
+        let imported =
+            SourceBundle::try_from_pairs([("template/index.md", "# Template\n")]).unwrap();
+        assert_reversible(
+            SourceBundle::try_from_pairs([("keep.md", "# Keep\n")]).unwrap(),
+            Batch(vec![Op::BundleImport {
+                parent: DirectoryAddress::parse("/domains").unwrap(),
+                name: "sales".into(),
+                bundle: imported,
+            }]),
+            SourceBundle::try_from_pairs([
+                ("keep.md", "# Keep\n"),
+                ("domains/sales/index.md", "# Template\n"),
+            ])
+            .unwrap(),
+        );
+    }
+
+    #[test]
+    fn multi_step_okf_batch_round_trips_as_one_transaction() {
+        let doc = "---\ntitle: Order\n---\n# Order\n";
+        assert_reversible(
+            SourceBundle::try_from_pairs([("sales/order.md", doc)]).unwrap(),
+            Batch(vec![
+                Op::DirectoryRename {
+                    directory: DirectoryAddress::parse("/sales").unwrap(),
+                    name: "commerce".into(),
+                },
+                Op::ConceptMove {
+                    id: "commerce/order".into(),
+                    to_directory: DirectoryAddress::parse("/archive").unwrap(),
+                },
+            ]),
+            SourceBundle::try_from_pairs([("archive/order.md", doc)]).unwrap(),
+        );
+    }
+
+    #[test]
+    fn late_okf_failure_does_not_publish_source_or_inverse() {
+        let source = SourceBundle::try_from_pairs([("sales/order.md", "# Order\n")]).unwrap();
+        let okf = crate::okf::Bundle::parse(&source).unwrap();
+        let uml = crate::uml::project(&okf);
+        let batch = Batch(vec![
+            Op::ConceptMove {
+                id: "sales/order".into(),
+                to_directory: DirectoryAddress::parse("/archive").unwrap(),
+            },
+            Op::DirectoryRename {
+                directory: DirectoryAddress::parse("/missing").unwrap(),
+                name: "elsewhere".into(),
+            },
+        ]);
+
+        assert!(batch
+            .apply_reversible(context(&source, &okf, &uml))
+            .is_err());
+        assert_eq!(
+            source.to_pairs(),
+            vec![("sales/order.md".into(), "# Order\n".into())]
+        );
     }
 }

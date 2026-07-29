@@ -42,7 +42,7 @@ pub trait EditBatch: sealed::Sealed {
 
     fn apply_reversible(&self, context: EditContext<'_>) -> Result<AppliedEdit, EditError> {
         let source = self.lower(context)?;
-        let inverse = PendingEdit::from_delta(SourceDelta::between(context.source, &source));
+        let inverse = PendingEdit::from_delta(SourceDelta::between(&source, context.source));
         Ok(AppliedEdit { source, inverse })
     }
 }
