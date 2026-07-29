@@ -336,6 +336,28 @@ fn real_syntax_tree_authority_signatures_and_builders_are_rejected() {
                 Opaque
             }
 
+            fn annotated_local(raw: &str) -> Opaque {
+                let _tree: Arc<SyntaxTree<UmlLanguage>> = external_factory(raw);
+                Opaque
+            }
+
+            fn cast_local(raw: &str) -> Opaque {
+                let _tree = external_factory(raw) as *const SyntaxTree<UmlLanguage>;
+                Opaque
+            }
+
+            struct Shadow;
+            impl Shadow {
+                fn cached_tree_near_match(
+                    &self,
+                    bundle: &SourceBundle,
+                    raw: &str,
+                ) -> Arc<SyntaxTree<UmlLanguage>> {
+                    let _ = bundle;
+                    external_factory(raw)
+                }
+            }
+
             pub trait ShadowParser {
                 fn trait_entry(text: SharedInput<'_>) -> WrappedTree;
                 fn trait_raw_entry(text: SharedRaw<'_>) -> WrappedTree;
@@ -358,6 +380,9 @@ fn real_syntax_tree_authority_signatures_and_builders_are_rejected() {
         "output_parameter",
         "builder_output",
         "constructed",
+        "annotated_local",
+        "cast_local",
+        "cached_tree_near_match",
         "trait_entry",
         "trait_raw_entry",
         "trait_constructed",
@@ -545,6 +570,18 @@ fn call_edges_propagate_reparse_through_resolved_and_unresolved_dispatch() {
             sink.push(render_model(model))
         }
 
+        mod unresolved_vec_spoof {
+            enum Vec {
+                Sink,
+            }
+            impl external::Push for Vec {}
+
+            fn unresolved_vec_push(sink: &Vec, model: &Model) {
+                let rendered = model.to_string();
+                sink.push(rendered);
+            }
+        }
+
         fn unrelated_callable(callable: fn(&str) -> String, label: &str) -> String {
             callable(label)
         }
@@ -604,6 +641,13 @@ fn call_edges_propagate_reparse_through_resolved_and_unresolved_dispatch() {
         }),
         "user-defined `Vec::push` was mistaken for a harmless standard collection call: {violations:#?}"
     );
+    assert!(
+        violations.iter().any(|reason| {
+            reason.contains("unresolved_vec_push")
+                && reason.contains("unresolved callable dispatch")
+        }),
+        "unresolved enum `Vec::push` was mistaken for a harmless standard collection call: {violations:#?}"
+    );
     for control in ["unrelated_callable", "unrelated_domain_helper"] {
         assert!(
             violations.iter().all(|reason| !reason.contains(control)),
@@ -619,6 +663,17 @@ fn benign_model_inspection_does_not_taint_unrelated_reparse() {
         fn inspect_and_parse_constant(model: &Model) -> Analysis {
             let _count = model.nodes.len();
             crate::analysis::prepare_candidate("constant")
+        }
+
+        fn standard_collection_controls(model: &Model) {
+            let mut std_rows = std::vec::Vec::new();
+            std_rows.push(model.to_string());
+
+            let mut alloc_rows = alloc::vec::Vec::new();
+            alloc_rows.push(model.to_string());
+
+            let present: std::collections::HashSet<String> = Default::default();
+            let _ = present.contains(&model.to_string());
         }
         "#,
     );
@@ -1067,7 +1122,7 @@ fn visible_semantic_model_self_and_concrete_owner_surfaces_are_rejected() {
             String::new()
         }
 
-        impl ToString for Model {
+        impl std::string::ToString for Model {
             fn to_string(&self) -> String {
                 String::new()
             }
@@ -1119,6 +1174,28 @@ fn visible_semantic_model_self_and_concrete_owner_surfaces_are_rejected() {
             "legitimate semantic text control `{control}` was rejected: {violations:#?}"
         );
     }
+}
+
+#[test]
+fn imported_external_to_string_is_not_allowlisted() {
+    let violations = reasons(
+        r#"
+        use external::ToString;
+
+        impl ToString for Model {
+            fn to_string(&self) -> String {
+                export_model_source(self)
+            }
+        }
+        "#,
+    );
+
+    assert!(
+        violations.iter().any(|reason| {
+            reason.contains("to_string") && reason.contains("visible model-to-source capability")
+        }),
+        "imported external `ToString` escaped the visible serializer guard: {violations:#?}"
+    );
 }
 
 #[test]
@@ -1211,7 +1288,7 @@ fn legitimate_domain_and_text_helpers_are_not_name_false_positives() {
         struct Analysis;
         struct Model;
 
-        impl ToString for Model {
+        impl std::string::ToString for Model {
             fn to_string(&self) -> String {
                 String::new()
             }

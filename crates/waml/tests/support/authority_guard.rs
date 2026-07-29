@@ -354,6 +354,7 @@ impl<'ast, 'env> Visit<'ast> for BodyFacts<'env> {
             ),
             _ => (None, Vec::new()),
         };
+        self.body_paths.extend(explicit_paths.iter().cloned());
         let explicit = receiver_type_identity(
             self.env.module,
             &explicit_paths,
@@ -398,6 +399,11 @@ impl<'ast, 'env> Visit<'ast> for BodyFacts<'env> {
             }
         }
         visit::visit_local(self, node);
+    }
+
+    fn visit_expr_cast(&mut self, expression: &'ast syn::ExprCast) {
+        self.body_paths.extend(type_paths(&expression.ty));
+        visit::visit_expr_cast(self, expression);
     }
 
     fn visit_macro(&mut self, item_macro: &'ast syn::Macro) {
@@ -1768,9 +1774,8 @@ fn summarize_impl(
         .as_ref()
         .map(|identity| trait_visibility.get(identity).copied().unwrap_or(true))
         .unwrap_or(false);
-    let allowlisted_standard_text_trait = trait_type.as_ref().is_some_and(|identity| {
-        identity.name == "ToString" && !trait_visibility.contains_key(identity)
-    });
+    let allowlisted_standard_text_trait =
+        trait_type.as_ref().is_some_and(is_standard_to_string_trait);
     let implemented_methods = item_impl
         .items
         .iter()
@@ -2773,7 +2778,10 @@ fn summary_is_raw_grammar_entry(
     let output_names =
         resolved_type_names(&summary.id.module, &summary.output_paths, aliases, imports);
     let body_names = resolved_type_names(&summary.id.module, &summary.body_paths, aliases, imports);
-    let cached_tree_lookup = summary.has_receiver
+    let cached_tree_lookup = summary.path == "crates/waml/src/uml/lower.rs"
+        && summary.id.owner.as_deref() == Some("UmlLoweringState")
+        && summary.id.name == "tree"
+        && summary.has_receiver
         && input_names.contains("SourceBundle")
         && !input_names.contains("SourceText")
         && is_typed_uml_tree(&output_names)
@@ -3009,12 +3017,10 @@ fn is_harmless_standard_collection_dispatch(call: &CallSite, env: &BodyEnvironme
         return false;
     }
 
-    let module_tail = &receiver.module.segments[receiver.module.crate_root_len..];
-    let explicitly_standard = module_tail
-        .first()
-        .is_some_and(|segment| matches!(segment.as_str(), "std" | "alloc"));
-    let prelude_vec = receiver.name == "Vec" && receiver.module == *env.module;
-    if !explicitly_standard && !prelude_vec {
+    if !matches!(
+        receiver.module.crate_key.as_str(),
+        "external:std" | "external:alloc"
+    ) {
         return false;
     }
 
@@ -3025,6 +3031,14 @@ fn is_harmless_standard_collection_dispatch(call: &CallSite, env: &BodyEnvironme
         ),
         ("Vec", Some("push")) | ("HashSet", Some("contains"))
     )
+}
+
+fn is_standard_to_string_trait(identity: &TypeIdentity) -> bool {
+    identity.name == "ToString"
+        && matches!(
+            identity.module.crate_key.as_str(),
+            "external:std" | "external:alloc"
+        )
 }
 
 fn origin_for_type(
@@ -3289,6 +3303,11 @@ fn resolve_type_path(
         Some("self") => segments = &segments[1..],
         Some("super") => {
             module.pop_module();
+            segments = &segments[1..];
+        }
+        Some(external @ ("std" | "alloc" | "core")) => {
+            module =
+                ModuleIdentity::new(format!("external:{external}"), vec![external.to_string()]);
             segments = &segments[1..];
         }
         _ => module.reset_to_crate_root(),
