@@ -2609,6 +2609,191 @@ mod tests {
         app.ui.widget(cx, ids!(document_header)).area().rect(cx)
     }
 
+    fn mounted_production_shell() -> (Cx, App) {
+        let mut cx = Cx::new(Box::new(|_, _| {}));
+        let app = cx.with_vm(|vm| {
+            let value = <App as AppMain>::script_mod(vm);
+            let mut app = <App as ScriptNew>::script_from_value(vm, value);
+            <App as AppMain>::after_new_from_script(vm, &mut app);
+            app
+        });
+        (cx, app)
+    }
+
+    #[derive(Debug)]
+    struct DockAreas {
+        body: Rect,
+        left_slot: Rect,
+        right_slot: Rect,
+        header: Rect,
+        center: Rect,
+        inspector: Rect,
+    }
+
+    fn draw_mounted_dock(cx: &mut Cx, app: &App, size: DVec2) -> DockAreas {
+        let draw_event = DrawEvent {
+            redraw_all: true,
+            ..DrawEvent::default()
+        };
+        let pass = DrawPass::new_with_name(cx, "mounted-dock-test");
+        let mut draw_list = DrawList2d::new(cx);
+        let mut draw_cx = CxDraw::new(cx, &draw_event);
+        draw_cx.begin_pass(&pass, None);
+        draw_list.begin_always(&mut draw_cx);
+        {
+            let mut cx_2d = Cx2d::new(&mut draw_cx);
+            cx_2d.begin_root_turtle(size, Layout::default());
+            app.ui.widget(&cx_2d, ids!(dock_body)).draw_walk_all(
+                &mut cx_2d,
+                &mut Scope::empty(),
+                Walk::fill(),
+            );
+            cx_2d.end_turtle();
+            draw_list.end(&mut cx_2d);
+        }
+        draw_cx.end_pass(&pass);
+        drop(draw_cx);
+
+        let rect = |id_path| app.ui.widget(cx, id_path).area().rect(cx);
+        DockAreas {
+            body: rect(ids!(dock_body)),
+            left_slot: rect(ids!(left_slot)),
+            right_slot: rect(ids!(right_slot)),
+            header: rect(ids!(document_header)),
+            center: rect(ids!(center_stack)),
+            inspector: rect(ids!(inspector_host)),
+        }
+    }
+
+    fn configure_mounted_dock(
+        cx: &mut Cx,
+        app: &mut App,
+        size: DVec2,
+        tree: DockState,
+        inspector: DockState,
+        header_visible: bool,
+    ) {
+        let window_id = app
+            .ui
+            .window(cx, ids!(main_window))
+            .window_id()
+            .expect("production shell mounts main_window");
+        cx.windows[window_id].window_geom.inner_size = size;
+        cx.windows[window_id].window_geom.outer_size = size;
+        app.apply_dock_states(cx, tree, inspector);
+        let header_widget = app.ui.widget(cx, ids!(document_header));
+        let mut header = header_widget
+            .borrow_mut::<crate::document_header::DocumentHeader>()
+            .expect("production shell mounts document_header");
+        if header_visible {
+            header.set_segments(
+                cx,
+                vec![BreadcrumbSegment {
+                    title: "Order".into(),
+                    target: NavigationTarget::Document {
+                        concept_id: "sales/order".into(),
+                        fragment: None,
+                    },
+                }],
+            );
+            header.set_right_dock(cx, Some(Icon::SlidersHorizontal));
+        } else {
+            header.set_segments(cx, Vec::new());
+            header.set_right_dock(cx, None);
+        }
+        drop(header);
+        app.sync_dock_slots(cx);
+    }
+
+    fn assert_near(actual: f64, expected: f64) {
+        assert!(
+            (actual - expected).abs() <= 0.5,
+            "expected {actual} to be within 0.5px of {expected}"
+        );
+    }
+
+    fn drawn_header_right_dock_active(cx: &mut Cx, app: &App) -> bool {
+        let header = app.ui.widget(cx, ids!(document_header));
+        let active = header
+            .borrow::<crate::document_header::DocumentHeader>()
+            .expect("production shell mounts document_header")
+            .test_right_dock_active(cx)
+            .expect("production shell draws the visible right button");
+        active
+    }
+
+    #[test]
+    fn mounted_dock_areas_follow_wide_and_narrow_production_layout() {
+        let wide_size = dvec2(1_200.0, 700.0);
+        let (mut cx, mut app) = mounted_production_shell();
+        configure_mounted_dock(
+            &mut cx,
+            &mut app,
+            wide_size,
+            DockState::Pinned,
+            DockState::Pinned,
+            true,
+        );
+        let wide = draw_mounted_dock(&mut cx, &app, wide_size);
+        assert_near(wide.body.size.x, wide_size.x);
+        assert_near(wide.left_slot.size.x, crate::tree_panel::PROJECT_TREE_W);
+        assert_near(wide.right_slot.size.x, crate::inspector_panel::INSPECTOR_W);
+        assert_near(
+            wide.header.pos.x,
+            wide.left_slot.pos.x + wide.left_slot.size.x,
+        );
+        assert_near(
+            wide.header.pos.x + wide.header.size.x,
+            wide.right_slot.pos.x,
+        );
+        assert!(drawn_header_right_dock_active(&mut cx, &app));
+
+        let narrow_size = dvec2(560.0, 700.0);
+        let (mut cx, mut app) = mounted_production_shell();
+        configure_mounted_dock(
+            &mut cx,
+            &mut app,
+            narrow_size,
+            DockState::Flag,
+            DockState::Pinned,
+            true,
+        );
+        let narrow_visible = draw_mounted_dock(&mut cx, &app, narrow_size);
+        assert_near(
+            narrow_visible.header.size.y,
+            crate::document_header::DOCUMENT_HEADER_H,
+        );
+        assert!(
+            narrow_visible.inspector.pos.y
+                >= narrow_visible.header.pos.y + narrow_visible.header.size.y
+        );
+
+        let (mut cx, mut app) = mounted_production_shell();
+        configure_mounted_dock(
+            &mut cx,
+            &mut app,
+            narrow_size,
+            DockState::Flag,
+            DockState::Pinned,
+            false,
+        );
+        let narrow_absent = draw_mounted_dock(&mut cx, &app, narrow_size);
+        assert_near(narrow_absent.inspector.pos.y, narrow_absent.body.pos.y);
+        assert_near(narrow_absent.center.pos.y, narrow_absent.body.pos.y);
+
+        let (mut cx, mut app) = mounted_production_shell();
+        configure_mounted_dock(
+            &mut cx,
+            &mut app,
+            narrow_size,
+            DockState::Flag,
+            DockState::Flag,
+            true,
+        );
+        draw_mounted_dock(&mut cx, &app, narrow_size);
+        assert!(!drawn_header_right_dock_active(&mut cx, &app));
+    }
+
     fn project_tree_folder_is_open(cx: &mut Cx, app: &App, address: &str) -> bool {
         let project_tree = app.ui.widget(cx, ids!(project_tree));
         let file_tree = project_tree.file_tree(cx, ids!(file_tree));
@@ -2761,10 +2946,39 @@ mod tests {
         }
     }
 
-    #[test]
-    fn navigation_document_ingresses_share_target_and_preview_command() {
+    fn navigation_app_with_active_order() -> (Cx, App) {
         let (mut cx, mut app) = navigation_app();
         mount_markdown_surface(&mut cx, &mut app);
+        let order = crate::okf_documents::open(app.session.okf(), "sales/order")
+            .expect("order document exists");
+        app.documents.transition(
+            &mut cx,
+            &app.ui,
+            &app.session,
+            DocumentCommand::Open {
+                document: order,
+                persistent: false,
+            },
+        );
+        app.sync_document_shell(&mut cx);
+        assert_eq!(
+            app.documents
+                .active_tab()
+                .map(|tab| (tab.concept_id.as_str(), tab.preview)),
+            Some(("sales/order", true))
+        );
+        assert!(
+            app.ui
+                .widget(&cx, ids!(markdown_surface.md))
+                .text()
+                .contains("# Order"),
+            "the mounted Markdown ingress belongs to the active order document"
+        );
+        (cx, app)
+    }
+
+    #[test]
+    fn navigation_document_ingresses_share_target_and_preview_command() {
         let target = NavigationTarget::Document {
             concept_id: "sales/customer".into(),
             fragment: None,
@@ -2773,28 +2987,33 @@ mod tests {
             target: target.clone(),
             disposition: OpenDisposition::Preview,
         };
-        let breadcrumb_target = crate::navigation::breadcrumb_for(
-            app.session.okf(),
-            app.session.uml_projection(),
-            "sales/customer",
-        )
-        .expect("customer has a canonical breadcrumb")
-        .into_iter()
-        .last()
-        .expect("breadcrumb ends at the document")
-        .target;
-        let breadcrumb_intent = NavigationIntent::Resolved {
-            target: breadcrumb_target,
-            disposition: OpenDisposition::Preview,
-        };
-        let markdown_resolved_intent = NavigationIntent::Resolved {
-            target: crate::navigation::resolve_link(
-                app.session.okf(),
-                "sales/order",
-                "./customer.md",
+        let (breadcrumb_intent, markdown_resolved_intent) = {
+            let (_cx, fixture_app) = navigation_app();
+            let breadcrumb_target = crate::navigation::breadcrumb_for(
+                fixture_app.session.okf(),
+                fixture_app.session.uml_projection(),
+                "sales/customer",
             )
-            .expect("relative customer link resolves"),
-            disposition: OpenDisposition::Preview,
+            .expect("customer has a canonical breadcrumb")
+            .into_iter()
+            .last()
+            .expect("breadcrumb ends at the document")
+            .target;
+            (
+                NavigationIntent::Resolved {
+                    target: breadcrumb_target,
+                    disposition: OpenDisposition::Preview,
+                },
+                NavigationIntent::Resolved {
+                    target: crate::navigation::resolve_link(
+                        fixture_app.session.okf(),
+                        "sales/order",
+                        "./customer.md",
+                    )
+                    .expect("relative customer link resolves"),
+                    disposition: OpenDisposition::Preview,
+                },
+            )
         };
 
         assert_eq!(
@@ -2812,6 +3031,8 @@ mod tests {
             Markdown,
         }
         for ingress in [Ingress::Tree, Ingress::Header, Ingress::Markdown] {
+            let (mut cx, mut app) = navigation_app_with_active_order();
+            let order_id = app.documents.active_id();
             let action = match ingress {
                 Ingress::Tree => widget_action(
                     app.ui.widget(&cx, ids!(project_tree)).widget_uid(),
@@ -2828,6 +3049,7 @@ mod tests {
             };
 
             app.handle_action_batch(&mut cx, &[action]);
+            assert_ne!(app.documents.active_id(), order_id);
             assert_eq!(
                 app.documents
                     .active_tab()
@@ -2839,8 +3061,16 @@ mod tests {
                 app.documents.tabs()[0].preview,
                 "all ordinary navigation ingresses must use preview disposition"
             );
+            assert!(
+                app.ui
+                    .widget(&cx, ids!(markdown_surface.md))
+                    .text()
+                    .contains("# Customer"),
+                "each ingress must update the mounted Preview body"
+            );
         }
 
+        let (mut cx, mut app) = navigation_app_with_active_order();
         let persistent_tree = NavigationIntent::Resolved {
             target,
             disposition: OpenDisposition::Persistent,
@@ -3372,12 +3602,6 @@ mod tests {
         );
         assert_eq!(mounted_inspector_state(&cx, &app), DockState::Pinned);
         app.sync_dock_slots(&mut cx);
-        assert!(app
-            .ui
-            .widget(&cx, ids!(document_header))
-            .borrow::<crate::document_header::DocumentHeader>()
-            .expect("test document header is mounted")
-            .test_right_dock_active());
 
         let generic = crate::okf_documents::open(app.session.okf(), "sales/order")
             .expect("generic document exists");
@@ -3400,23 +3624,11 @@ mod tests {
         );
         assert_eq!(mounted_inspector_state(&cx, &app), DockState::Flag);
         app.sync_dock_slots(&mut cx);
-        assert!(!app
-            .ui
-            .widget(&cx, ids!(document_header))
-            .borrow::<crate::document_header::DocumentHeader>()
-            .expect("test document header is mounted")
-            .test_right_dock_active());
 
         app.show_start_screen(&mut cx);
         assert_mounted_header(&cx, &app, &[], None, 0.0);
         assert_eq!(mounted_inspector_state(&cx, &app), DockState::Flag);
         app.sync_dock_slots(&mut cx);
-        assert!(!app
-            .ui
-            .widget(&cx, ids!(document_header))
-            .borrow::<crate::document_header::DocumentHeader>()
-            .expect("test document header is mounted")
-            .test_right_dock_active());
 
         let source = crate::okf_documents::open_source(app.session.okf(), "sales/order")
             .expect("source document still exists");
@@ -3439,12 +3651,6 @@ mod tests {
         );
         assert_eq!(mounted_inspector_state(&cx, &app), DockState::Flag);
         app.sync_dock_slots(&mut cx);
-        assert!(!app
-            .ui
-            .widget(&cx, ids!(document_header))
-            .borrow::<crate::document_header::DocumentHeader>()
-            .expect("test document header is mounted")
-            .test_right_dock_active());
     }
 
     #[test]

@@ -148,8 +148,6 @@ struct DocumentHeaderState {
     segments: Vec<BreadcrumbSegment>,
     right_dock: Option<Icon>,
     segment_rects: Vec<(usize, Rect)>,
-    #[cfg(test)]
-    right_dock_active: bool,
 }
 
 impl DocumentHeaderState {
@@ -163,7 +161,6 @@ impl DocumentHeaderState {
             segments,
             right_dock,
             segment_rects,
-            right_dock_active: false,
         }
     }
 
@@ -334,10 +331,6 @@ impl DocumentHeader {
     }
 
     pub fn set_right_dock_active(&mut self, cx: &mut Cx, active: bool) {
-        #[cfg(test)]
-        {
-            self.state.right_dock_active = active;
-        }
         self.view
             .widget(cx, ids!(right_button))
             .as_icon_button()
@@ -359,8 +352,25 @@ impl DocumentHeader {
     }
 
     #[cfg(test)]
-    pub(crate) fn test_right_dock_active(&self) -> bool {
-        self.state.right_dock_active
+    pub(crate) fn test_right_dock_active(&self, cx: &mut Cx) -> Option<bool> {
+        let button = self.view.widget(cx, ids!(right_button)).as_icon_button();
+        let rect = button.rect(cx);
+        if rect.size.x <= 0.0 || rect.size.y <= 0.0 {
+            return None;
+        }
+
+        // `IconButton::set_active` redraws only when its real state changes.
+        // Probe `true`, observe that idempotence, then restore `false` when the
+        // probe changed it. Preserve the draw event that was pending before this
+        // test-only query so observation itself has no externally visible effect.
+        let pending = std::mem::take(&mut cx.new_draw_event);
+        button.set_active(cx, true);
+        let was_active = !cx.new_draw_event.will_redraw();
+        if !was_active {
+            button.set_active(cx, false);
+        }
+        cx.new_draw_event = pending;
+        Some(was_active)
     }
 
     pub fn action(&self, actions: &Actions) -> Option<DocumentHeaderAction> {
