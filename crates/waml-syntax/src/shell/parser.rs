@@ -8,13 +8,22 @@ use crate::{
 
 pub(super) fn parse(text: SourceText, dialect: MarkdownDialect) -> Result<ShellParse, ParseError> {
     let structure = Arc::new(crate::markdown::map(&text, dialect)?);
+    parse_with_structure(text, dialect, structure)
+}
+
+pub(super) fn parse_with_structure(
+    text: SourceText,
+    dialect: MarkdownDialect,
+    structure: Arc<crate::MarkdownStructureMap>,
+) -> Result<ShellParse, ParseError> {
     let factory = GreenFactory::<OkfMarkdownLanguage>::new();
     let source = text.shared();
     let mut children = Vec::new();
     let mut diagnostics = Vec::new();
     let mut at = 0;
 
-    if let Some((node, end)) = frontmatter(&factory, &text, source, &structure, &mut diagnostics)? {
+    if let Some(class) = classify_frontmatter(&text, &structure)? {
+        let (node, end) = frontmatter(&factory, &text, source, class, &mut diagnostics)?;
         children.push(GreenElement::Node(node));
         at = end;
     }
@@ -52,13 +61,27 @@ pub(super) fn parse(text: SourceText, dialect: MarkdownDialect) -> Result<ShellP
     })
 }
 
-fn frontmatter(
-    factory: &GreenFactory<OkfMarkdownLanguage>,
+#[derive(Clone, Copy)]
+struct FrontmatterClass {
+    range: TextRange,
+    open: Line,
+    close: Option<Line>,
+    entries_end: usize,
+    recovered: bool,
+}
+
+pub(super) fn frontmatter_range(
     text: &SourceText,
-    source: &str,
     structure: &crate::MarkdownStructureMap,
-    diagnostics: &mut Vec<TreeDiagnostic<OkfSyntaxDiagnosticCode>>,
-) -> Result<Option<(crate::GreenNode<OkfMarkdownLanguage>, usize)>, ParseError> {
+) -> Result<Option<TextRange>, ParseError> {
+    Ok(classify_frontmatter(text, structure)?.map(|class| class.range))
+}
+
+fn classify_frontmatter(
+    text: &SourceText,
+    structure: &crate::MarkdownStructureMap,
+) -> Result<Option<FrontmatterClass>, ParseError> {
+    let source = text.shared();
     let bom = usize::from(source.starts_with('\u{feff}')) * 3;
     let open = line_at(source, 0, source.len());
     if open.start != 0 || source[bom..open.significant_end] != *"---" {
@@ -79,6 +102,42 @@ fn frontmatter(
     if recovered && !plausible_unclosed_frontmatter(source, open.end, entries_end) {
         return Ok(None);
     }
+    let end = close.map_or_else(
+        || {
+            lines(source, open.end, entries_end)
+                .map(|(start, end)| structured_end(line_at(source, start, end)))
+                .last()
+                .unwrap_or(open.end)
+        },
+        structured_end,
+    );
+    Ok(Some(FrontmatterClass {
+        range: TextRange::new(size(open.start)?, size(end)?).map_err(|_| {
+            ParseError::StructuralInvariant {
+                reason: "frontmatter classifier produced a reversed range".into(),
+            }
+        })?,
+        open,
+        close,
+        entries_end,
+        recovered,
+    }))
+}
+
+fn frontmatter(
+    factory: &GreenFactory<OkfMarkdownLanguage>,
+    text: &SourceText,
+    source: &str,
+    class: FrontmatterClass,
+    diagnostics: &mut Vec<TreeDiagnostic<OkfSyntaxDiagnosticCode>>,
+) -> Result<(crate::GreenNode<OkfMarkdownLanguage>, usize), ParseError> {
+    let FrontmatterClass {
+        open,
+        close,
+        entries_end,
+        recovered,
+        range,
+    } = class;
 
     let mut children = line_tokens(
         factory,
@@ -104,7 +163,7 @@ fn frontmatter(
         }
         children.push(GreenElement::Node(entry));
     }
-    let end = if let Some(close) = close {
+    if let Some(close) = close {
         children.extend(line_tokens(
             factory,
             text,
@@ -112,7 +171,6 @@ fn frontmatter(
             close,
             OkfMarkdownSyntaxKind::FrontmatterCloseFence,
         )?);
-        structured_end(close)
     } else {
         children.push(GreenElement::Token(
             factory.missing_token(OkfMarkdownSyntaxKind::FrontmatterCloseFence),
@@ -123,8 +181,7 @@ fn frontmatter(
             entries_consumed_end,
             "missing frontmatter close fence",
         ));
-        entries_consumed_end
-    };
+    }
     if !clean {
         diagnostics.push(diagnostic(
             OkfSyntaxDiagnosticCode::FrontmatterNotClean,
@@ -133,12 +190,102 @@ fn frontmatter(
             "frontmatter required recovery",
         ));
     }
-    Ok(Some((
+    Ok((
         factory
             .node(OkfMarkdownSyntaxKind::Frontmatter, children)
             .map_err(|_| ParseError::WidthOverflow)?,
-        end,
-    )))
+        range.end().to_usize(),
+    ))
+}
+
+pub(super) fn parse_window(
+    text: &SourceText,
+    structure: &crate::MarkdownStructureMap,
+    window: ShellWindow,
+) -> Result<ParsedShellWindow, ParseError> {
+    let source = text.shared();
+    let start = window.range.start().to_usize();
+    let end = window.range.end().to_usize();
+    if start > end || end > source.len() {
+        return Err(ParseError::InvalidRange {
+            range: window.range,
+        });
+    }
+    let factory = GreenFactory::<OkfMarkdownLanguage>::new();
+    let mut diagnostics = Vec::new();
+    let elements = match window.kind {
+        ShellWindowKind::Frontmatter => {
+            let Some(class) = classify_frontmatter(text, structure)? else {
+                return Err(window_not_consumed());
+            };
+            if class.range != window.range {
+                return Err(window_not_consumed());
+            }
+            let (node, _) = frontmatter(&factory, text, source, class, &mut diagnostics)?;
+            vec![GreenElement::Node(node)]
+        }
+        ShellWindowKind::Heading => {
+            let mut candidates = structure
+                .headings
+                .iter()
+                .filter(|heading| heading.range == window.range);
+            let Some(_) = candidates.next() else {
+                return Err(window_not_consumed());
+            };
+            if candidates.next().is_some() {
+                return Err(window_not_consumed());
+            }
+            let line = line_at(source, start, end);
+            vec![GreenElement::Node(heading_node(
+                &factory, text, source, line,
+            )?)]
+        }
+        ShellWindowKind::MarkdownRegion => vec![raw(&factory, text, start, end)?],
+        ShellWindowKind::Tail => {
+            if end != source.len() {
+                return Err(window_not_consumed());
+            }
+            let eof_trivia_start = trailing_eof_whitespace_start(source, start);
+            let mut elements = Vec::new();
+            if start < eof_trivia_start {
+                elements.push(raw(&factory, text, start, eof_trivia_start)?);
+            }
+            let eof_leading = trivia(&factory, text, eof_trivia_start, source.len())?;
+            elements.push(GreenElement::Token(
+                factory
+                    .missing_token_with_leading(OkfMarkdownSyntaxKind::EndOfFileToken, eof_leading)
+                    .map_err(|_| ParseError::WidthOverflow)?,
+            ));
+            elements
+        }
+    };
+    let consumed = elements
+        .iter()
+        .map(element_width)
+        .try_fold(size(0)?, |sum, width| {
+            sum.checked_add(width)
+                .map_err(|_| ParseError::WidthOverflow)
+        })?;
+    if consumed != window.range.len() {
+        return Err(window_not_consumed());
+    }
+    Ok(ParsedShellWindow {
+        elements: elements.into(),
+        diagnostics: diagnostics.into(),
+    })
+}
+
+fn element_width(element: &GreenElement<OkfMarkdownLanguage>) -> TextSize {
+    match element {
+        GreenElement::Node(node) => node.width(),
+        GreenElement::Token(token) => token.width(),
+    }
+}
+
+fn window_not_consumed() -> ParseError {
+    ParseError::StructuralInvariant {
+        reason: "shell window parser did not consume the selected range".into(),
+    }
 }
 
 fn plausible_unclosed_frontmatter(source: &str, from: usize, to: usize) -> bool {
@@ -522,5 +669,96 @@ fn diagnostic(
         severity: SyntaxSeverity::Error,
         message: message.into(),
         range: TextRange::new(size(start).unwrap(), size(end).unwrap()).unwrap(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn source(value: &str) -> SourceText {
+        SourceText::from_shared(Arc::new(value.into())).unwrap()
+    }
+
+    fn size(value: usize) -> TextSize {
+        super::size(value).unwrap()
+    }
+
+    fn range(start: usize, end: usize) -> TextRange {
+        TextRange::new(size(start), size(end)).unwrap()
+    }
+
+    fn element_width(element: &GreenElement<OkfMarkdownLanguage>) -> TextSize {
+        match element {
+            GreenElement::Node(node) => node.width(),
+            GreenElement::Token(token) => token.width(),
+        }
+    }
+
+    #[test]
+    fn supplied_structure_arc_is_installed_without_recomputation() {
+        let text = source("# Class\n");
+        let structure =
+            Arc::new(crate::markdown::map(&text, MarkdownDialect::CommonMarkCurrent).unwrap());
+        let parsed =
+            parse_with_structure(text, MarkdownDialect::CommonMarkCurrent, structure.clone())
+                .unwrap();
+
+        assert!(Arc::ptr_eq(&parsed.structure, &structure));
+    }
+
+    #[test]
+    fn frontmatter_classifier_drives_full_and_window_consumption() {
+        let text = source("---\ntype: uml.Class\n---\n# Class\n");
+        let structure =
+            Arc::new(crate::markdown::map(&text, MarkdownDialect::CommonMarkCurrent).unwrap());
+        let frontmatter = frontmatter_range(&text, &structure).unwrap().unwrap();
+        let full = parse_with_structure(
+            text.clone(),
+            MarkdownDialect::CommonMarkCurrent,
+            structure.clone(),
+        )
+        .unwrap();
+        let parsed = parse_window(
+            &text,
+            &structure,
+            ShellWindow {
+                kind: ShellWindowKind::Frontmatter,
+                range: frontmatter,
+            },
+        )
+        .unwrap();
+
+        assert_eq!(full.tree.write_to_string(), text.shared().as_str());
+        assert_eq!(parsed.elements.len(), 1);
+        assert_eq!(element_width(&parsed.elements[0]), frontmatter.len());
+    }
+
+    #[test]
+    fn tail_window_reclassifies_raw_text_and_source_backed_eof_trivia_together() {
+        let text = source("body   ");
+        let structure =
+            Arc::new(crate::markdown::map(&text, MarkdownDialect::CommonMarkCurrent).unwrap());
+        let parsed = parse_window(
+            &text,
+            &structure,
+            ShellWindow {
+                kind: ShellWindowKind::Tail,
+                range: range(0, text.shared().len()),
+            },
+        )
+        .unwrap();
+
+        let width = parsed
+            .elements
+            .iter()
+            .map(element_width)
+            .try_fold(size(0), |sum, width| sum.checked_add(width))
+            .unwrap();
+        assert_eq!(width, size(text.shared().len()));
+        assert!(matches!(
+            parsed.elements.last(),
+            Some(GreenElement::Token(token)) if token.kind() == OkfMarkdownSyntaxKind::EndOfFileToken
+        ));
     }
 }
