@@ -66,9 +66,11 @@ jobs:
       # cargo-makepad mirrors every crate's entire resources/ tree next to the
       # wasm, which for waml-editor means 148 font files (~52 MB) when the app
       # names 8. Prune to what the source actually references: 67 MB -> 17 MB.
+      # Only needed to run the dependency-free scripts/*.mjs below; there is no
+      # root package.json (the VS Code extension owns its own in editors/vscode).
       - uses: actions/setup-node@v4
         with:
-          node-version-file: .node-version
+          node-version: 22
 
       - name: Prune unreferenced fonts
         run: node scripts/prune-web-fonts.mjs target/makepad-wasm-app/release/waml-editor

@@ -1,7 +1,7 @@
 export const meta = {
   name: 'implement-plan',
   description:
-    'Implement ONE approved implementation plan (a single top-level docs/superpowers/plans/*.md, handed by exact path) in its own isolated git worktree, using a single BATCHED, self-rotating implementer that pushes each green unit straight to origin/main. Each generation reads progress MECHANICALLY from git "Plan-Tasks" commit trailers, burns small committable green UNITS (implement -> full gate: cargo test --workspace && pnpm -r test && pnpm lint && pnpm build -> commit with a Plan-Tasks trailer -> rebase onto origin/main, re-gate, and fast-forward-push HEAD:main), and self-rotates near its quality zone (~100k context tokens); a fresh generation then resumes from the trailers, until every plan task has landed on main. Then ONE deep end-review of the cumulative diff fix-forwards the critical/high/medium defects THIS change introduced (pushing each fix), and the plan file is archived to completed/ on main. The LOCAL main checkout is left untouched — pull after.',
+    'Implement ONE approved implementation plan (a single top-level docs/superpowers/plans/*.md, handed by exact path) in its own isolated git worktree, using a single BATCHED, self-rotating implementer that pushes each green unit straight to origin/main. Each generation reads progress MECHANICALLY from git "Plan-Tasks" commit trailers, burns small committable green UNITS (implement -> full gate: cargo test --workspace && the editors/vscode test/lint/build -> commit with a Plan-Tasks trailer -> rebase onto origin/main, re-gate, and fast-forward-push HEAD:main), and self-rotates near its quality zone (~100k context tokens); a fresh generation then resumes from the trailers, until every plan task has landed on main. Then ONE deep end-review of the cumulative diff fix-forwards the critical/high/medium defects THIS change introduced (pushing each fix), and the plan file is archived to completed/ on main. The LOCAL main checkout is left untouched — pull after.',
   whenToUse:
     'Run when ONE written implementation plan is ready to implement. Pass {plan:"docs/superpowers/plans/<file>.md"} — the exact top-level plan path (NOT drafts/, NOT completed/, NOT a deeper subdirectory) — OR a plan DIRECTORY {plan:"docs/superpowers/plans/<dir>/"} that holds a README.md (task index) plus task-N-*.md files (one task each). Pass {mode:"dry-run"} to implement + gate + commit per unit WITHOUT pushing, fix-forwarding, or archiving (an informational review only). Pass {local:true} (or {mode:"local"}) for a fully-LOCAL run: implement against the LOCAL main as the trunk on the plan branch with NO fetch/rebase/push and NO origin-sync — review + archive commit onto the branch, main is left untouched, and you land the branch yourself afterward. Optionally pass {planReviewConcerns:["..."]} — a deduped checklist of prior plan-review concerns, used purely as the deep end-review\'s focusing checklist.',
   phases: [
@@ -352,10 +352,10 @@ function preflightPrompt() {
     '2. Working tree is clean of TRACKED changes  (git status --porcelain shows no staged/modified tracked files;',
     '   untracked files are fine — e.g. new docs).',
     ...step3,
-    '4. The toolchain is present: "pnpm --version" succeeds, "node --version" reports >= 20, and "cargo --version" succeeds',
-    '   (the green-gate runs "cargo test --workspace", so a missing Rust toolchain must fail preflight).',
-    '5. Dependencies are installed: node_modules exists at the repo root (if "pnpm -r exec true" fails with a missing-',
-    '   module/ELIFECYCLE error, run "pnpm install" once and re-check). Do NOT upgrade or change any dependency.',
+    '4. The toolchain is present: "cargo --version" succeeds, and if the plan touches editors/** also "pnpm --version"',
+    '   and "node --version" (>= 20). The green-gate runs "cargo test --workspace", so a missing Rust toolchain must fail.',
+    '5. Dependencies are installed ONLY if the plan touches editors/**: editors/vscode/node_modules must exist (if',
+    '   missing, run "pnpm -C editors/vscode install" once and re-check). Do NOT upgrade or change any dependency.',
     ...step6,
     tail,
   ].join('\n')
