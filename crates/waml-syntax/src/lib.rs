@@ -3,6 +3,7 @@
 mod annotation;
 mod ast;
 mod green;
+mod incremental;
 mod markdown;
 mod red;
 mod shell;
@@ -13,6 +14,9 @@ pub use ast::{AstNode, AstSlots, SyntaxRewriter, SyntaxVisitor};
 pub use green::{
     write_green_to, GreenElement, GreenError, GreenFactory, GreenNode, GreenNodeData, GreenText,
     GreenToken, GreenTokenData, GreenTrivia, TokenFlags, TriviaKind,
+};
+pub use incremental::{
+    reparse_okf_markdown, ChangeMap, ChangeSegment, FullReparseReason, ReparseOutcome, TextChange,
 };
 pub use markdown::{ConfirmedHeading, MarkdownStructureMap};
 pub use red::{
