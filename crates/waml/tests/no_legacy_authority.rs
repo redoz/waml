@@ -467,6 +467,51 @@ fn real_syntax_tree_authority_signatures_and_builders_are_rejected() {
                     *slot = replacement;
                     let _ = raw;
                 }
+
+                fn parse_destructured_assignment(&mut self, raw: &str) {
+                    let replacement = self.tree.clone();
+                    let slot;
+                    (slot,) = (&mut self.tree,);
+                    *slot = replacement;
+                    let _ = raw;
+                }
+
+                fn parse_shadowed_alias(&mut self, raw: &str) {
+                    let replacement = self.tree.clone();
+                    let slot = &mut self.tree;
+                    {
+                        let mut value = 0_u32;
+                        let slot: &mut u32 = &mut value;
+                        let _ = slot;
+                    }
+                    *slot = replacement;
+                    let _ = raw;
+                }
+
+                fn parse_for_bound(&mut self, raw: &str) {
+                    for slot in [&mut self.tree] {
+                        *slot = external_factory(raw);
+                    }
+                }
+
+                fn parse_match_bound(&mut self, raw: &str) {
+                    match &mut self.tree {
+                        slot => *slot = external_factory(raw),
+                    }
+                }
+
+                fn parse_if_let_bound(&mut self, raw: &str) {
+                    if let Some(slot) = Some(&mut self.tree) {
+                        *slot = external_factory(raw);
+                    }
+                }
+            }
+
+            fn parse_destructured_parameter(
+                (slot,): (&mut Arc<SyntaxTree<UmlLanguage>>,),
+                raw: &str,
+            ) {
+                *slot = external_factory(raw);
             }
 
             fn parse_sibling(slot: &mut crate::types::sibling_types::Slot, raw: &str) {
@@ -589,6 +634,12 @@ fn real_syntax_tree_authority_signatures_and_builders_are_rejected() {
         "parse_wrapped",
         "parse_looped",
         "parse_late_alias",
+        "parse_destructured_assignment",
+        "parse_shadowed_alias",
+        "parse_for_bound",
+        "parse_match_bound",
+        "parse_if_let_bound",
+        "parse_destructured_parameter",
         "parse_sibling",
         "parse_sibling_selected",
         "parse_indexed",

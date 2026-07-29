@@ -270,6 +270,15 @@ struct BodyEnvironment<'env> {
     method_returns: &'env MethodReturns,
 }
 
+#[derive(Clone)]
+struct BindingState {
+    receiver_type: Option<TypeIdentity>,
+    receiver_type_uses: Option<Vec<TypeUse>>,
+    callable_path: Option<Vec<String>>,
+    bound: bool,
+    origin: Option<ValueOrigin>,
+}
+
 struct BodyFacts<'env> {
     env: BodyEnvironment<'env>,
     calls: Vec<CallSite>,
@@ -280,6 +289,7 @@ struct BodyFacts<'env> {
     callable_paths: BTreeMap<String, Vec<String>>,
     bindings: BTreeSet<String>,
     origins: BTreeMap<String, ValueOrigin>,
+    binding_scopes: Vec<BTreeMap<String, BindingState>>,
     body_paths: Vec<Vec<String>>,
     body_type_uses: Vec<TypeUse>,
     opaque_authority_macros: BTreeSet<String>,
@@ -287,6 +297,12 @@ struct BodyFacts<'env> {
 }
 
 impl<'ast, 'env> Visit<'ast> for BodyFacts<'env> {
+    fn visit_block(&mut self, block: &'ast syn::Block) {
+        self.push_binding_scope();
+        visit::visit_block(self, block);
+        self.pop_binding_scope();
+    }
+
     fn visit_expr_call(&mut self, node: &'ast ExprCall) {
         let (mut segments, mut indirect) = match unwrap_expression(&node.func) {
             syn::Expr::Path(ExprPath { path, .. }) => {
@@ -352,6 +368,14 @@ impl<'ast, 'env> Visit<'ast> for BodyFacts<'env> {
             syn::Pat::Type(pattern) => type_paths(&pattern.ty),
             _ => Vec::new(),
         };
+        for binding in &bindings {
+            self.record_binding_declaration(binding);
+            self.receiver_types.remove(binding);
+            self.receiver_type_uses.remove(binding);
+            self.callable_paths.remove(binding);
+            self.origins.remove(binding);
+            self.bindings.insert(binding.clone());
+        }
         self.body_paths.extend(explicit_paths.iter().cloned());
         let explicit_type_uses = if explicit_paths.is_empty() {
             Vec::new()
@@ -408,7 +432,6 @@ impl<'ast, 'env> Visit<'ast> for BodyFacts<'env> {
                 });
             self.local.serialize |= origin == ValueOrigin::ModelText;
             for binding in &bindings {
-                self.bindings.insert(binding.clone());
                 self.origins.insert(binding.clone(), origin);
             }
         }
@@ -434,26 +457,84 @@ impl<'ast, 'env> Visit<'ast> for BodyFacts<'env> {
 
     fn visit_expr_assign(&mut self, assignment: &'ast syn::ExprAssign) {
         self.record_assignment_place_type(&assignment.left);
-        if let syn::Expr::Path(path) = unwrap_expression(&assignment.left) {
-            if path.path.segments.len() == 1 {
-                let binding = path.path.segments[0].ident.to_string();
-                if self.bindings.contains(&binding) {
-                    let type_uses = self.expression_type_uses(&assignment.right);
-                    if !type_uses.is_empty() {
-                        self.receiver_type_uses
-                            .entry(binding.clone())
-                            .or_default()
-                            .extend(type_uses);
-                    }
-                    if let Some(identity) = self.expression_type_identity(&assignment.right) {
-                        self.receiver_types.insert(binding.clone(), identity);
-                    }
-                    let origin = self.expression_origin(&assignment.right);
-                    self.origins.insert(binding, origin);
-                }
+        let assigned_bindings = assignment_local_binding_names(&assignment.left, &self.bindings);
+        let type_uses = self.expression_type_uses(&assignment.right);
+        let identity = self.expression_type_identity(&assignment.right);
+        let origin = self.expression_origin(&assignment.right);
+        for binding in assigned_bindings {
+            if !type_uses.is_empty() {
+                self.receiver_type_uses
+                    .entry(binding.clone())
+                    .or_default()
+                    .extend(type_uses.iter().cloned());
             }
+            if let Some(identity) = &identity {
+                self.receiver_types
+                    .insert(binding.clone(), identity.clone());
+            }
+            self.origins.insert(binding, origin);
         }
         visit::visit_expr_assign(self, assignment);
+    }
+
+    fn visit_expr_for_loop(&mut self, expression: &'ast syn::ExprForLoop) {
+        for attribute in &expression.attrs {
+            self.visit_attribute(attribute);
+        }
+        self.visit_expr(&expression.expr);
+        self.push_binding_scope();
+        self.bind_pattern_from_expression(&expression.pat, &expression.expr);
+        self.visit_block(&expression.body);
+        self.pop_binding_scope();
+    }
+
+    fn visit_expr_match(&mut self, expression: &'ast syn::ExprMatch) {
+        for attribute in &expression.attrs {
+            self.visit_attribute(attribute);
+        }
+        self.visit_expr(&expression.expr);
+        for arm in &expression.arms {
+            self.push_binding_scope();
+            self.bind_pattern_from_expression(&arm.pat, &expression.expr);
+            if let Some((_, guard)) = &arm.guard {
+                self.visit_expr(guard);
+            }
+            self.visit_expr(&arm.body);
+            self.pop_binding_scope();
+        }
+    }
+
+    fn visit_expr_if(&mut self, expression: &'ast syn::ExprIf) {
+        let syn::Expr::Let(condition) = unwrap_expression(&expression.cond) else {
+            visit::visit_expr_if(self, expression);
+            return;
+        };
+        for attribute in &expression.attrs {
+            self.visit_attribute(attribute);
+        }
+        self.visit_expr(&condition.expr);
+        self.push_binding_scope();
+        self.bind_pattern_from_expression(&condition.pat, &condition.expr);
+        self.visit_block(&expression.then_branch);
+        self.pop_binding_scope();
+        if let Some((_, alternative)) = &expression.else_branch {
+            self.visit_expr(alternative);
+        }
+    }
+
+    fn visit_expr_while(&mut self, expression: &'ast syn::ExprWhile) {
+        let syn::Expr::Let(condition) = unwrap_expression(&expression.cond) else {
+            visit::visit_expr_while(self, expression);
+            return;
+        };
+        for attribute in &expression.attrs {
+            self.visit_attribute(attribute);
+        }
+        self.visit_expr(&condition.expr);
+        self.push_binding_scope();
+        self.bind_pattern_from_expression(&condition.pat, &condition.expr);
+        self.visit_block(&expression.body);
+        self.pop_binding_scope();
     }
 
     fn visit_macro(&mut self, item_macro: &'ast syn::Macro) {
@@ -485,7 +566,44 @@ impl<'ast, 'env> Visit<'ast> for BodyFacts<'env> {
             self.env.aliases,
             self.env.imports,
         );
+        self.push_binding_scope();
+        for input in &closure.inputs {
+            let bindings = pattern_binding_names(input);
+            let paths = match input {
+                syn::Pat::Type(pattern) => type_paths(&pattern.ty),
+                _ => Vec::new(),
+            };
+            let type_uses = (!paths.is_empty()).then(|| {
+                vec![TypeUse {
+                    module: self.env.module.clone(),
+                    paths: paths.clone(),
+                }]
+            });
+            let identity =
+                receiver_type_identity(self.env.module, &paths, self.env.aliases, self.env.imports);
+            let origin =
+                origin_for_type(self.env.module, &paths, self.env.aliases, self.env.imports);
+            for binding in bindings {
+                self.record_binding_declaration(&binding);
+                self.bindings.insert(binding.clone());
+                self.callable_paths.remove(&binding);
+                if let Some(identity) = &identity {
+                    self.receiver_types
+                        .insert(binding.clone(), identity.clone());
+                } else {
+                    self.receiver_types.remove(&binding);
+                }
+                if let Some(type_uses) = &type_uses {
+                    self.receiver_type_uses
+                        .insert(binding.clone(), type_uses.clone());
+                } else {
+                    self.receiver_type_uses.remove(&binding);
+                }
+                self.origins.insert(binding, origin);
+            }
+        }
         visit::visit_expr_closure(self, closure);
+        self.pop_binding_scope();
     }
 }
 
@@ -507,6 +625,46 @@ fn pattern_binding_names(pattern: &syn::Pat) -> Vec<String> {
     bindings.names.into_iter().collect()
 }
 
+fn assignment_local_binding_names(
+    expression: &syn::Expr,
+    known_bindings: &BTreeSet<String>,
+) -> Vec<String> {
+    fn collect(
+        expression: &syn::Expr,
+        known_bindings: &BTreeSet<String>,
+        names: &mut BTreeSet<String>,
+    ) {
+        match unwrap_expression(expression) {
+            syn::Expr::Path(path) if path.path.segments.len() == 1 => {
+                let name = path.path.segments[0].ident.to_string();
+                if known_bindings.contains(&name) {
+                    names.insert(name);
+                }
+            }
+            syn::Expr::Tuple(tuple) => {
+                for element in &tuple.elems {
+                    collect(element, known_bindings, names);
+                }
+            }
+            syn::Expr::Array(array) => {
+                for element in &array.elems {
+                    collect(element, known_bindings, names);
+                }
+            }
+            syn::Expr::Struct(structure) => {
+                for field in &structure.fields {
+                    collect(&field.expr, known_bindings, names);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    let mut names = BTreeSet::new();
+    collect(expression, known_bindings, &mut names);
+    names.into_iter().collect()
+}
+
 impl<'env> BodyFacts<'env> {
     fn new(env: BodyEnvironment<'env>) -> Self {
         Self {
@@ -519,10 +677,99 @@ impl<'env> BodyFacts<'env> {
             callable_paths: BTreeMap::new(),
             bindings: BTreeSet::new(),
             origins: BTreeMap::new(),
+            binding_scopes: Vec::new(),
             body_paths: Vec::new(),
             body_type_uses: Vec::new(),
             opaque_authority_macros: BTreeSet::new(),
             raw_authority_closure: false,
+        }
+    }
+
+    fn push_binding_scope(&mut self) {
+        self.binding_scopes.push(BTreeMap::new());
+    }
+
+    fn record_binding_declaration(&mut self, binding: &str) {
+        let state = BindingState {
+            receiver_type: self.receiver_types.get(binding).cloned(),
+            receiver_type_uses: self.receiver_type_uses.get(binding).cloned(),
+            callable_path: self.callable_paths.get(binding).cloned(),
+            bound: self.bindings.contains(binding),
+            origin: self.origins.get(binding).copied(),
+        };
+        if let Some(scope) = self.binding_scopes.last_mut() {
+            scope.entry(binding.to_owned()).or_insert(state);
+        }
+    }
+
+    fn pop_binding_scope(&mut self) {
+        let scope = self
+            .binding_scopes
+            .pop()
+            .expect("binding scope is balanced");
+        for (binding, state) in scope {
+            match state.receiver_type {
+                Some(value) => {
+                    self.receiver_types.insert(binding.clone(), value);
+                }
+                None => {
+                    self.receiver_types.remove(&binding);
+                }
+            }
+            match state.receiver_type_uses {
+                Some(value) => {
+                    self.receiver_type_uses.insert(binding.clone(), value);
+                }
+                None => {
+                    self.receiver_type_uses.remove(&binding);
+                }
+            }
+            match state.callable_path {
+                Some(value) => {
+                    self.callable_paths.insert(binding.clone(), value);
+                }
+                None => {
+                    self.callable_paths.remove(&binding);
+                }
+            }
+            if state.bound {
+                self.bindings.insert(binding.clone());
+            } else {
+                self.bindings.remove(&binding);
+            }
+            match state.origin {
+                Some(value) => {
+                    self.origins.insert(binding, value);
+                }
+                None => {
+                    self.origins.remove(&binding);
+                }
+            }
+        }
+    }
+
+    fn bind_pattern_from_expression(&mut self, pattern: &syn::Pat, expression: &syn::Expr) {
+        let bindings = pattern_binding_names(pattern);
+        let type_uses = self.expression_type_uses(expression);
+        let identity = self.expression_type_identity(expression);
+        let origin = self.expression_origin(expression);
+        for binding in bindings {
+            self.record_binding_declaration(&binding);
+            self.bindings.insert(binding.clone());
+            self.callable_paths.remove(&binding);
+            if let Some(identity) = &identity {
+                self.receiver_types
+                    .insert(binding.clone(), identity.clone());
+            } else {
+                self.receiver_types.remove(&binding);
+            }
+            if type_uses.is_empty() {
+                self.receiver_type_uses.remove(&binding);
+            } else {
+                self.receiver_type_uses
+                    .insert(binding.clone(), type_uses.clone());
+            }
+            self.origins.insert(binding, origin);
         }
     }
 
@@ -2181,24 +2428,27 @@ fn summarize_function(
                 }
             }
             FnArg::Typed(argument) => {
-                if let syn::Pat::Ident(pattern) = &*argument.pat {
-                    let binding = pattern.ident.to_string();
+                let bindings = pattern_binding_names(&argument.pat);
+                if !bindings.is_empty() {
                     let paths = type_paths(&argument.ty);
-                    if let Some(identity) = receiver_type_identity(module, &paths, aliases, imports)
-                    {
-                        facts.receiver_types.insert(binding.clone(), identity);
+                    let identity = receiver_type_identity(module, &paths, aliases, imports);
+                    let type_uses = vec![TypeUse {
+                        module: module.clone(),
+                        paths: paths.clone(),
+                    }];
+                    let origin = origin_for_type(module, &paths, aliases, imports);
+                    for binding in bindings {
+                        if let Some(identity) = &identity {
+                            facts
+                                .receiver_types
+                                .insert(binding.clone(), identity.clone());
+                        }
+                        facts
+                            .receiver_type_uses
+                            .insert(binding.clone(), type_uses.clone());
+                        facts.bindings.insert(binding.clone());
+                        facts.origins.insert(binding, origin);
                     }
-                    facts.receiver_type_uses.insert(
-                        binding.clone(),
-                        vec![TypeUse {
-                            module: module.clone(),
-                            paths: paths.clone(),
-                        }],
-                    );
-                    facts.bindings.insert(binding.clone());
-                    facts
-                        .origins
-                        .insert(binding, origin_for_type(module, &paths, aliases, imports));
                 }
             }
         }
