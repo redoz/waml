@@ -1188,6 +1188,38 @@ fn unwrap_expression(mut expression: &syn::Expr) -> &syn::Expr {
     }
 }
 
+fn block_unconditionally_returns(block: &syn::Block) -> bool {
+    block.stmts.iter().any(|statement| match statement {
+        syn::Stmt::Expr(expression, _) => expression_unconditionally_returns(expression),
+        _ => false,
+    })
+}
+
+fn expression_unconditionally_returns(expression: &syn::Expr) -> bool {
+    match unwrap_expression(expression) {
+        syn::Expr::Return(_) => true,
+        syn::Expr::Block(expression) => block_unconditionally_returns(&expression.block),
+        syn::Expr::Unsafe(expression) => block_unconditionally_returns(&expression.block),
+        syn::Expr::Const(expression) => block_unconditionally_returns(&expression.block),
+        syn::Expr::TryBlock(expression) => block_unconditionally_returns(&expression.block),
+        syn::Expr::If(expression) => {
+            block_unconditionally_returns(&expression.then_branch)
+                && expression
+                    .else_branch
+                    .as_ref()
+                    .is_some_and(|(_, alternative)| expression_unconditionally_returns(alternative))
+        }
+        syn::Expr::Match(expression) => {
+            !expression.arms.is_empty()
+                && expression
+                    .arms
+                    .iter()
+                    .all(|arm| expression_unconditionally_returns(&arm.body))
+        }
+        _ => false,
+    }
+}
+
 fn merge_origins(origins: impl IntoIterator<Item = ValueOrigin>) -> ValueOrigin {
     let mut result = ValueOrigin::Other;
     for origin in origins {
@@ -2843,6 +2875,7 @@ struct ReturnTaintFacts<'env> {
     unresolved_model_dispatch: bool,
 }
 
+#[derive(Clone)]
 struct TaintEnvironment {
     receiver_types: BTreeMap<String, TypeIdentity>,
     callable_paths: BTreeMap<String, Vec<String>>,
@@ -2868,7 +2901,9 @@ enum BreakTargetKind {
 struct BreakOriginState {
     kind: BreakTargetKind,
     label: Option<String>,
+    binding_scope_depth: usize,
     origins: Vec<ValueOrigin>,
+    environments: Vec<TaintEnvironment>,
 }
 
 impl<'env> ReturnTaintFacts<'env> {
@@ -2950,6 +2985,89 @@ impl<'env> ReturnTaintFacts<'env> {
         self.callable_origins = environment.callable_origins;
         self.bindings = environment.bindings;
         self.origins = environment.origins;
+    }
+
+    fn snapshot_environment_at_scope_depth(&self, scope_depth: usize) -> TaintEnvironment {
+        let mut environment = self.snapshot_environment();
+        for scope in self.binding_scopes[scope_depth..].iter().rev() {
+            for (binding, state) in scope {
+                match &state.receiver_type {
+                    Some(value) => {
+                        environment
+                            .receiver_types
+                            .insert(binding.clone(), value.clone());
+                    }
+                    None => {
+                        environment.receiver_types.remove(binding);
+                    }
+                }
+                match &state.callable_path {
+                    Some(value) => {
+                        environment
+                            .callable_paths
+                            .insert(binding.clone(), value.clone());
+                    }
+                    None => {
+                        environment.callable_paths.remove(binding);
+                    }
+                }
+                match state.callable_origin {
+                    Some(value) => {
+                        environment.callable_origins.insert(binding.clone(), value);
+                    }
+                    None => {
+                        environment.callable_origins.remove(binding);
+                    }
+                }
+                if state.bound {
+                    environment.bindings.insert(binding.clone());
+                } else {
+                    environment.bindings.remove(binding);
+                }
+                match state.origin {
+                    Some(value) => {
+                        environment.origins.insert(binding.clone(), value);
+                    }
+                    None => {
+                        environment.origins.remove(binding);
+                    }
+                }
+            }
+        }
+        environment
+    }
+
+    fn join_environments(environments: Vec<TaintEnvironment>) -> TaintEnvironment {
+        let mut environments = environments.into_iter();
+        let mut joined = environments
+            .next()
+            .expect("environment join has at least one path");
+        for environment in environments {
+            joined.receiver_types.retain(|binding, identity| {
+                environment.receiver_types.get(binding) == Some(identity)
+            });
+            joined
+                .callable_paths
+                .retain(|binding, path| environment.callable_paths.get(binding) == Some(path));
+            joined
+                .bindings
+                .retain(|binding| environment.bindings.contains(binding));
+            for (binding, origin) in environment.callable_origins {
+                joined
+                    .callable_origins
+                    .entry(binding)
+                    .and_modify(|current| *current = merge_origins([*current, origin]))
+                    .or_insert(origin);
+            }
+            for (binding, origin) in environment.origins {
+                joined
+                    .origins
+                    .entry(binding)
+                    .and_modify(|current| *current = merge_origins([*current, origin]))
+                    .or_insert(origin);
+            }
+        }
+        joined
     }
 
     fn push_binding_scope(&mut self) {
@@ -3257,8 +3375,8 @@ impl<'env> ReturnTaintFacts<'env> {
             syn::Expr::TryBlock(expression) => self.cached_expression_origin(expression),
             syn::Expr::Unsafe(expression) => self.cached_expression_origin(expression),
             syn::Expr::Await(expression) => self.expression_origin(&expression.base),
-            syn::Expr::Index(expression) => self.expression_origin(&expression.expr),
-            syn::Expr::Repeat(expression) => self.expression_origin(&expression.expr),
+            syn::Expr::Index(expression) => self.cached_expression_origin(expression),
+            syn::Expr::Repeat(expression) => self.cached_expression_origin(expression),
             syn::Expr::Try(expression) => self.expression_origin(&expression.expr),
             syn::Expr::Unary(expression) => self.expression_origin(&expression.expr),
             syn::Expr::Macro(expression) => {
@@ -3273,28 +3391,10 @@ impl<'env> ReturnTaintFacts<'env> {
                     ValueOrigin::Other
                 }
             }
-            syn::Expr::Binary(expression) => merge_origins([
-                self.expression_origin(&expression.left),
-                self.expression_origin(&expression.right),
-            ]),
-            syn::Expr::Array(expression) => merge_origins(
-                expression
-                    .elems
-                    .iter()
-                    .map(|item| self.expression_origin(item)),
-            ),
-            syn::Expr::Tuple(expression) => merge_origins(
-                expression
-                    .elems
-                    .iter()
-                    .map(|item| self.expression_origin(item)),
-            ),
-            syn::Expr::Struct(expression) => merge_origins(
-                expression
-                    .fields
-                    .iter()
-                    .map(|field| self.expression_origin(&field.expr)),
-            ),
+            syn::Expr::Binary(expression) => self.cached_expression_origin(expression),
+            syn::Expr::Array(expression) => self.cached_expression_origin(expression),
+            syn::Expr::Tuple(expression) => self.cached_expression_origin(expression),
+            syn::Expr::Struct(expression) => self.cached_expression_origin(expression),
             _ => ValueOrigin::Other,
         }
     }
@@ -3303,6 +3403,99 @@ impl<'env> ReturnTaintFacts<'env> {
 impl<'ast> Visit<'ast> for ReturnTaintFacts<'_> {
     fn visit_block(&mut self, block: &'ast syn::Block) {
         self.visit_scoped_block(block);
+    }
+
+    fn visit_expr_binary(&mut self, expression: &'ast syn::ExprBinary) {
+        for attribute in &expression.attrs {
+            self.visit_attribute(attribute);
+        }
+        self.visit_expr(&expression.left);
+        let left_origin = self.expression_origin(&expression.left);
+        let skipped_right_environment =
+            matches!(&expression.op, syn::BinOp::And(_) | syn::BinOp::Or(_))
+                .then(|| self.snapshot_environment());
+        self.visit_expr(&expression.right);
+        let right_origin = self.expression_origin(&expression.right);
+        if let Some(skipped_right_environment) = skipped_right_environment {
+            if expression_unconditionally_returns(&expression.right) {
+                self.restore_environment(skipped_right_environment);
+            } else {
+                let evaluated_right_environment = self.snapshot_environment();
+                self.restore_environment(Self::join_environments(vec![
+                    skipped_right_environment,
+                    evaluated_right_environment,
+                ]));
+            }
+        }
+        self.cache_expression_origin(expression, merge_origins([left_origin, right_origin]));
+    }
+
+    fn visit_expr_array(&mut self, expression: &'ast syn::ExprArray) {
+        for attribute in &expression.attrs {
+            self.visit_attribute(attribute);
+        }
+        let mut origins = Vec::with_capacity(expression.elems.len());
+        for element in &expression.elems {
+            self.visit_expr(element);
+            origins.push(self.expression_origin(element));
+        }
+        self.cache_expression_origin(expression, merge_origins(origins));
+    }
+
+    fn visit_expr_tuple(&mut self, expression: &'ast syn::ExprTuple) {
+        for attribute in &expression.attrs {
+            self.visit_attribute(attribute);
+        }
+        let mut origins = Vec::with_capacity(expression.elems.len());
+        for element in &expression.elems {
+            self.visit_expr(element);
+            origins.push(self.expression_origin(element));
+        }
+        self.cache_expression_origin(expression, merge_origins(origins));
+    }
+
+    fn visit_expr_struct(&mut self, expression: &'ast syn::ExprStruct) {
+        for attribute in &expression.attrs {
+            self.visit_attribute(attribute);
+        }
+        if let Some(qself) = &expression.qself {
+            self.visit_qself(qself);
+        }
+        self.visit_path(&expression.path);
+        let mut origins =
+            Vec::with_capacity(expression.fields.len() + usize::from(expression.rest.is_some()));
+        for field in &expression.fields {
+            for attribute in &field.attrs {
+                self.visit_attribute(attribute);
+            }
+            self.visit_expr(&field.expr);
+            origins.push(self.expression_origin(&field.expr));
+        }
+        if let Some(rest) = &expression.rest {
+            self.visit_expr(rest);
+            origins.push(self.expression_origin(rest));
+        }
+        self.cache_expression_origin(expression, merge_origins(origins));
+    }
+
+    fn visit_expr_index(&mut self, expression: &'ast syn::ExprIndex) {
+        for attribute in &expression.attrs {
+            self.visit_attribute(attribute);
+        }
+        self.visit_expr(&expression.expr);
+        let origin = self.expression_origin(&expression.expr);
+        self.visit_expr(&expression.index);
+        self.cache_expression_origin(expression, origin);
+    }
+
+    fn visit_expr_repeat(&mut self, expression: &'ast syn::ExprRepeat) {
+        for attribute in &expression.attrs {
+            self.visit_attribute(attribute);
+        }
+        self.visit_expr(&expression.expr);
+        let origin = self.expression_origin(&expression.expr);
+        self.visit_expr(&expression.len);
+        self.cache_expression_origin(expression, origin);
     }
 
     fn visit_expr_block(&mut self, expression: &'ast syn::ExprBlock) {
@@ -3320,16 +3513,22 @@ impl<'ast> Visit<'ast> for ReturnTaintFacts<'_> {
             self.break_origins.push(BreakOriginState {
                 kind: BreakTargetKind::Block,
                 label,
+                binding_scope_depth: self.binding_scopes.len(),
                 origins: Vec::new(),
+                environments: Vec::new(),
             });
         }
         let mut origin = self.visit_scoped_block(&expression.block);
         if expression.label.is_some() {
+            let tail_environment = self.snapshot_environment();
             let breaks = self
                 .break_origins
                 .pop()
                 .expect("labeled block break origin is balanced");
             origin = merge_origins(std::iter::once(origin).chain(breaks.origins));
+            let mut continuing_environments = vec![tail_environment];
+            continuing_environments.extend(breaks.environments);
+            self.restore_environment(Self::join_environments(continuing_environments));
         }
         self.cache_expression_origin(expression, origin);
     }
@@ -3376,34 +3575,48 @@ impl<'ast> Visit<'ast> for ReturnTaintFacts<'_> {
         self.break_origins.push(BreakOriginState {
             kind: BreakTargetKind::Loop,
             label,
+            binding_scope_depth: self.binding_scopes.len(),
             origins: Vec::new(),
+            environments: Vec::new(),
         });
+        let entry_environment = self.snapshot_environment();
         self.visit_scoped_block(&expression.body);
         let breaks = self
             .break_origins
             .pop()
             .expect("loop break origin is balanced");
+        if breaks.environments.is_empty() {
+            self.restore_environment(entry_environment);
+        } else {
+            self.restore_environment(Self::join_environments(breaks.environments));
+        }
         self.cache_expression_origin(expression, merge_origins(breaks.origins));
     }
 
     fn visit_expr_break(&mut self, expression: &'ast syn::ExprBreak) {
         visit::visit_expr_break(self, expression);
-        let Some(value) = &expression.expr else {
-            return;
-        };
-        let origin = self.expression_origin(value);
-        let target = if let Some(label) = &expression.label {
+        let origin = expression
+            .expr
+            .as_ref()
+            .map(|value| self.expression_origin(value))
+            .unwrap_or(ValueOrigin::Other);
+        let target_index = if let Some(label) = &expression.label {
             let label = label.ident.to_string();
             self.break_origins
-                .iter_mut()
-                .rfind(|target| target.label.as_deref() == Some(label.as_str()))
+                .iter()
+                .rposition(|target| target.label.as_deref() == Some(label.as_str()))
         } else {
             self.break_origins
-                .iter_mut()
-                .rfind(|target| target.kind == BreakTargetKind::Loop)
+                .iter()
+                .rposition(|target| target.kind == BreakTargetKind::Loop)
         };
-        if let Some(target) = target {
+        if let Some(target_index) = target_index {
+            let environment = self.snapshot_environment_at_scope_depth(
+                self.break_origins[target_index].binding_scope_depth,
+            );
+            let target = &mut self.break_origins[target_index];
             target.origins.push(origin);
+            target.environments.push(environment);
         }
     }
 
@@ -3423,10 +3636,20 @@ impl<'ast> Visit<'ast> for ReturnTaintFacts<'_> {
             self.visit_attribute(attribute);
         }
         self.visit_expr(&expression.expr);
+        let skipped_body_environment = self.snapshot_environment();
         self.push_binding_scope();
         self.bind_pattern_from_expression(&expression.pat, &expression.expr);
         self.visit_block(&expression.body);
         self.pop_binding_scope();
+        if block_unconditionally_returns(&expression.body) {
+            self.restore_environment(skipped_body_environment);
+        } else {
+            let evaluated_body_environment = self.snapshot_environment();
+            self.restore_environment(Self::join_environments(vec![
+                skipped_body_environment,
+                evaluated_body_environment,
+            ]));
+        }
     }
 
     fn visit_expr_match(&mut self, expression: &'ast syn::ExprMatch) {
@@ -3434,8 +3657,17 @@ impl<'ast> Visit<'ast> for ReturnTaintFacts<'_> {
             self.visit_attribute(attribute);
         }
         self.visit_expr(&expression.expr);
+        let post_scrutinee_environment = self.snapshot_environment();
         let mut origins = Vec::with_capacity(expression.arms.len());
+        let mut continuing_environments = expression
+            .arms
+            .iter()
+            .any(|arm| arm.guard.is_some())
+            .then(|| post_scrutinee_environment.clone())
+            .into_iter()
+            .collect::<Vec<_>>();
         for arm in &expression.arms {
+            self.restore_environment(post_scrutinee_environment.clone());
             self.push_binding_scope();
             self.bind_pattern_from_expression(&arm.pat, &expression.expr);
             if let Some((_, guard)) = &arm.guard {
@@ -3444,7 +3676,14 @@ impl<'ast> Visit<'ast> for ReturnTaintFacts<'_> {
             self.visit_expr(&arm.body);
             origins.push(self.expression_origin(&arm.body));
             self.pop_binding_scope();
+            if !expression_unconditionally_returns(&arm.body) {
+                continuing_environments.push(self.snapshot_environment());
+            }
         }
+        if continuing_environments.is_empty() {
+            continuing_environments.push(post_scrutinee_environment);
+        }
+        self.restore_environment(Self::join_environments(continuing_environments));
         self.cache_expression_origin(expression, merge_origins(origins));
     }
 
@@ -3452,39 +3691,89 @@ impl<'ast> Visit<'ast> for ReturnTaintFacts<'_> {
         for attribute in &expression.attrs {
             self.visit_attribute(attribute);
         }
-        let then_origin = if let syn::Expr::Let(condition) = unwrap_expression(&expression.cond) {
+        let let_condition = match unwrap_expression(&expression.cond) {
+            syn::Expr::Let(condition) => Some(condition),
+            _ => None,
+        };
+        if let Some(condition) = let_condition {
             self.visit_expr(&condition.expr);
+        } else {
+            self.visit_expr(&expression.cond);
+        }
+        let post_condition_environment = self.snapshot_environment();
+
+        self.restore_environment(post_condition_environment.clone());
+        let then_origin = if let Some(condition) = let_condition {
             self.push_binding_scope();
             self.bind_pattern_from_expression(&condition.pat, &condition.expr);
             let origin = self.visit_scoped_block(&expression.then_branch);
             self.pop_binding_scope();
             origin
         } else {
-            self.visit_expr(&expression.cond);
             self.visit_scoped_block(&expression.then_branch)
         };
-        let origin = if let Some((_, alternative)) = &expression.else_branch {
-            self.visit_expr(alternative);
-            merge_origins([then_origin, self.expression_origin(alternative)])
-        } else {
-            ValueOrigin::Other
+        let then_environment = self.snapshot_environment();
+
+        self.restore_environment(post_condition_environment.clone());
+        let (alternative_origin, alternative_environment) =
+            if let Some((_, alternative)) = &expression.else_branch {
+                self.visit_expr(alternative);
+                (
+                    self.expression_origin(alternative),
+                    self.snapshot_environment(),
+                )
+            } else {
+                (ValueOrigin::Other, self.snapshot_environment())
+            };
+        let mut continuing_environments = Vec::with_capacity(2);
+        if !block_unconditionally_returns(&expression.then_branch) {
+            continuing_environments.push(then_environment);
+        }
+        let alternative_continues = match &expression.else_branch {
+            Some((_, alternative)) => !expression_unconditionally_returns(alternative),
+            None => true,
         };
-        self.cache_expression_origin(expression, origin);
+        if alternative_continues {
+            continuing_environments.push(alternative_environment);
+        }
+        if continuing_environments.is_empty() {
+            continuing_environments.push(post_condition_environment);
+        }
+        self.restore_environment(Self::join_environments(continuing_environments));
+        self.cache_expression_origin(expression, merge_origins([then_origin, alternative_origin]));
     }
 
     fn visit_expr_while(&mut self, expression: &'ast syn::ExprWhile) {
-        let syn::Expr::Let(condition) = unwrap_expression(&expression.cond) else {
-            visit::visit_expr_while(self, expression);
-            return;
-        };
         for attribute in &expression.attrs {
             self.visit_attribute(attribute);
         }
-        self.visit_expr(&condition.expr);
-        self.push_binding_scope();
-        self.bind_pattern_from_expression(&condition.pat, &condition.expr);
+        let let_condition = match unwrap_expression(&expression.cond) {
+            syn::Expr::Let(condition) => Some(condition),
+            _ => None,
+        };
+        if let Some(condition) = let_condition {
+            self.visit_expr(&condition.expr);
+        } else {
+            self.visit_expr(&expression.cond);
+        }
+        let skipped_body_environment = self.snapshot_environment();
+        if let Some(condition) = let_condition {
+            self.push_binding_scope();
+            self.bind_pattern_from_expression(&condition.pat, &condition.expr);
+        }
         self.visit_block(&expression.body);
-        self.pop_binding_scope();
+        if let_condition.is_some() {
+            self.pop_binding_scope();
+        }
+        if block_unconditionally_returns(&expression.body) {
+            self.restore_environment(skipped_body_environment);
+        } else {
+            let evaluated_body_environment = self.snapshot_environment();
+            self.restore_environment(Self::join_environments(vec![
+                skipped_body_environment,
+                evaluated_body_environment,
+            ]));
+        }
     }
 
     fn visit_expr_closure(&mut self, closure: &'ast syn::ExprClosure) {
@@ -3623,9 +3912,15 @@ impl<'ast> Visit<'ast> for ReturnTaintFacts<'_> {
         };
 
         // Initializer and `let-else` names resolve against the previous scope.
-        // Visit them first so stateful initializers also update that scope
-        // before the declaration's inferred evidence is derived.
-        visit::visit_local(self, local);
+        // Only the successful pattern path continues past the declaration, so
+        // analyze the diverging branch for violations but restore the
+        // post-initializer environment before installing the new bindings.
+        for attribute in &local.attrs {
+            self.visit_attribute(attribute);
+        }
+        if let Some(init) = &local.init {
+            self.visit_expr(&init.expr);
+        }
 
         let explicit = receiver_type_identity(
             self.env.module,
@@ -3674,6 +3969,13 @@ impl<'ast> Visit<'ast> for ReturnTaintFacts<'_> {
         } else {
             ValueOrigin::Other
         };
+        if let Some(init) = &local.init {
+            if let Some((_, diverge)) = &init.diverge {
+                let continuing_environment = self.snapshot_environment();
+                self.visit_expr(diverge);
+                self.restore_environment(continuing_environment);
+            }
+        }
 
         for binding in &bindings {
             self.record_binding_declaration(binding);

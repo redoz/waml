@@ -1151,6 +1151,173 @@ fn call_edges_propagate_reparse_through_resolved_and_unresolved_dispatch() {
             })
         }
 
+        fn conditional_cleanup_pointer(
+            model: &Model,
+            callable: Parser,
+            choose: bool,
+        ) -> Analysis {
+            let mut rendered = model.to_string();
+            if choose {
+                rendered = String::new();
+            }
+            callable(rendered)
+        }
+
+        fn match_cleanup_pointer(model: &Model, callable: Parser, choose: bool) -> Analysis {
+            let mut rendered = model.to_string();
+            match choose {
+                true => rendered = String::new(),
+                false => {}
+            }
+            callable(rendered)
+        }
+
+        fn while_cleanup_pointer(model: &Model, callable: Parser, choose: bool) -> Analysis {
+            let mut rendered = model.to_string();
+            while choose {
+                rendered = String::new();
+                break;
+            }
+            callable(rendered)
+        }
+
+        fn for_cleanup_pointer(model: &Model, callable: Parser) -> Analysis {
+            let mut rendered = model.to_string();
+            for _ in [(); 0] {
+                rendered = String::new();
+            }
+            callable(rendered)
+        }
+
+        fn short_circuit_cleanup_pointer(
+            model: &Model,
+            callable: Parser,
+            choose: bool,
+        ) -> Analysis {
+            let mut rendered = model.to_string();
+            choose && {
+                rendered = String::new();
+                true
+            };
+            callable(rendered)
+        }
+
+        fn let_else_cleanup_pointer(model: &Model, callable: Parser) -> Analysis {
+            let mut rendered = model.to_string();
+            let Some(()) = Some(()) else {
+                rendered = String::new();
+                return Analysis;
+            };
+            callable(rendered)
+        }
+
+        fn binary_operand_pointer(model: &Model, callable: Parser) -> Analysis {
+            let mut rendered = model.to_string();
+            callable(rendered + {
+                rendered = String::new();
+                ""
+            })
+        }
+
+        fn array_operand_pointer(
+            model: &Model,
+            callable: fn([String; 2]) -> Analysis,
+        ) -> Analysis {
+            let mut rendered = model.to_string();
+            callable([
+                rendered,
+                {
+                    rendered = String::new();
+                    String::new()
+                },
+            ])
+        }
+
+        fn tuple_operand_pointer(
+            model: &Model,
+            callable: fn((String, String)) -> Analysis,
+        ) -> Analysis {
+            let mut rendered = model.to_string();
+            callable((
+                rendered,
+                {
+                    rendered = String::new();
+                    String::new()
+                },
+            ))
+        }
+
+        struct Pair {
+            first: String,
+            second: String,
+        }
+
+        fn struct_operand_pointer(model: &Model, callable: fn(Pair) -> Analysis) -> Analysis {
+            let mut rendered = model.to_string();
+            callable(Pair {
+                first: rendered,
+                second: {
+                    rendered = String::new();
+                    String::new()
+                },
+            })
+        }
+
+        fn binary_operand_control(model: &Model, callable: Parser) -> Analysis {
+            let mut label = String::new();
+            callable(label + {
+                label = model.to_string();
+                ""
+            })
+        }
+
+        fn let_else_diverging_control(model: &Model, callable: Parser) -> Analysis {
+            let mut label = String::new();
+            let Some(()) = Some(()) else {
+                label = model.to_string();
+                return Analysis;
+            };
+            callable(label)
+        }
+
+        fn conditional_return_control(
+            model: &Model,
+            callable: Parser,
+            choose: bool,
+        ) -> Analysis {
+            let mut label = String::new();
+            if choose {
+                label = model.to_string();
+                return Analysis;
+            }
+            callable(label)
+        }
+
+        fn match_return_control(model: &Model, callable: Parser, choose: bool) -> Analysis {
+            let mut label = String::new();
+            match choose {
+                true => {
+                    label = model.to_string();
+                    return Analysis;
+                }
+                false => {}
+            }
+            callable(label)
+        }
+
+        fn short_circuit_return_control(
+            model: &Model,
+            callable: Parser,
+            choose: bool,
+        ) -> Analysis {
+            let mut label = String::new();
+            choose && {
+                label = model.to_string();
+                return Analysis;
+            };
+            callable(label)
+        }
+
         struct Vec;
         impl Vec {
             fn push(&self, raw: String) -> Analysis {
@@ -1252,6 +1419,16 @@ fn call_edges_propagate_reparse_through_resolved_and_unresolved_dispatch() {
         "explicit_async_return_pointer",
         "later_argument_mutation_pointer",
         "later_method_argument_mutation",
+        "conditional_cleanup_pointer",
+        "match_cleanup_pointer",
+        "while_cleanup_pointer",
+        "for_cleanup_pointer",
+        "short_circuit_cleanup_pointer",
+        "let_else_cleanup_pointer",
+        "binary_operand_pointer",
+        "array_operand_pointer",
+        "tuple_operand_pointer",
+        "struct_operand_pointer",
     ] {
         assert!(
             violations.iter().any(|reason| {
@@ -1280,6 +1457,11 @@ fn call_edges_propagate_reparse_through_resolved_and_unresolved_dispatch() {
         "dropped_closure_control",
         "dropped_async_control",
         "later_argument_control",
+        "binary_operand_control",
+        "let_else_diverging_control",
+        "conditional_return_control",
+        "match_return_control",
+        "short_circuit_return_control",
     ] {
         assert!(
             violations.iter().all(|reason| !reason.contains(control)),
