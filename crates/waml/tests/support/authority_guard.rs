@@ -3343,7 +3343,11 @@ impl<'ast> Visit<'ast> for ReturnTaintFacts<'_> {
     }
 
     fn visit_expr_call(&mut self, call: &'ast ExprCall) {
+        // Resolve the callable before arguments can mutate alias state, but
+        // populate their cached block/if/match origins before reading taint.
         let site = self.call_site(call);
+        visit::visit_expr_call(self, call);
+
         let protected_model_flow = call
             .args
             .iter()
@@ -3361,11 +3365,14 @@ impl<'ast> Visit<'ast> for ReturnTaintFacts<'_> {
         {
             self.unresolved_model_dispatch = true;
         }
-        visit::visit_expr_call(self, call);
     }
 
     fn visit_expr_method_call(&mut self, call: &'ast ExprMethodCall) {
+        // As with free calls, preserve the pre-argument receiver identity and
+        // query argument taint only after recursive origin caches are ready.
         let site = self.method_call_site(call);
+        visit::visit_expr_method_call(self, call);
+
         let protected_model_flow = call
             .args
             .iter()
@@ -3387,7 +3394,6 @@ impl<'ast> Visit<'ast> for ReturnTaintFacts<'_> {
         {
             self.unresolved_model_dispatch = true;
         }
-        visit::visit_expr_method_call(self, call);
     }
 
     fn visit_local(&mut self, local: &'ast Local) {

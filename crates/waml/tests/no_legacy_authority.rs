@@ -1022,6 +1022,28 @@ fn call_edges_propagate_reparse_through_resolved_and_unresolved_dispatch() {
             callable(rendered)
         }
 
+        fn block_argument_pointer(model: &Model, callable: Parser) -> Analysis {
+            callable({
+                let rendered = model.to_string();
+                rendered
+            })
+        }
+
+        fn if_argument_pointer(model: &Model, callable: Parser, choose: bool) -> Analysis {
+            callable(if choose {
+                model.to_string()
+            } else {
+                model.to_string()
+            })
+        }
+
+        fn match_argument_pointer(model: &Model, callable: Parser, choose: bool) -> Analysis {
+            callable(match choose {
+                true => model.to_string(),
+                false => model.to_string(),
+            })
+        }
+
         struct Vec;
         impl Vec {
             fn push(&self, raw: String) -> Analysis {
@@ -1042,6 +1064,13 @@ fn call_edges_propagate_reparse_through_resolved_and_unresolved_dispatch() {
             fn unresolved_vec_push(sink: &Vec, model: &Model) {
                 let rendered = model.to_string();
                 sink.push(rendered);
+            }
+
+            fn block_argument_vec_push(sink: &Vec, model: &Model) {
+                sink.push({
+                    let rendered = model.to_string();
+                    rendered
+                });
             }
         }
 
@@ -1101,6 +1130,9 @@ fn call_edges_propagate_reparse_through_resolved_and_unresolved_dispatch() {
         "match_bound_pointer",
         "if_let_bound_pointer",
         "closure_shadow_pointer",
+        "block_argument_pointer",
+        "if_argument_pointer",
+        "match_argument_pointer",
     ] {
         assert!(
             violations.iter().any(|reason| {
@@ -1115,13 +1147,14 @@ fn call_edges_propagate_reparse_through_resolved_and_unresolved_dispatch() {
         }),
         "user-defined `Vec::push` was mistaken for a harmless standard collection call: {violations:#?}"
     );
-    assert!(
-        violations.iter().any(|reason| {
-            reason.contains("unresolved_vec_push")
-                && reason.contains("unresolved callable dispatch")
-        }),
-        "unresolved enum `Vec::push` was mistaken for a harmless standard collection call: {violations:#?}"
-    );
+    for expected in ["unresolved_vec_push", "block_argument_vec_push"] {
+        assert!(
+            violations.iter().any(|reason| {
+                reason.contains(expected) && reason.contains("unresolved callable dispatch")
+            }),
+            "unresolved enum `Vec::push` escaped in `{expected}`: {violations:#?}"
+        );
+    }
     for control in ["unrelated_callable", "unrelated_domain_helper"] {
         assert!(
             violations.iter().all(|reason| !reason.contains(control)),
