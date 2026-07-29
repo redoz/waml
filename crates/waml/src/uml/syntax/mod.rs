@@ -1,6 +1,6 @@
 mod ast;
 mod kind;
-pub mod parser;
+pub(in crate::uml) mod parser;
 pub use ast::{
     AnchoredSyntax, AttributeSyntax, AxisSyntax, DiagramMembersSyntax, DirectionClauseSyntax,
     EdgeSyntax, FlagSyntax, FlowBlockSyntax, FlowInternalSyntax, FlowNodeSyntax,

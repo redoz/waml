@@ -1,7 +1,10 @@
 #[path = "support/authority_guard.rs"]
 mod authority_guard;
 
-use std::path::PathBuf;
+use std::fs;
+use std::path::{Path, PathBuf};
+use std::process::Command;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use authority_guard::{analyze_sources, analyze_workspace};
 
@@ -10,6 +13,51 @@ fn reasons(source: &str) -> Vec<String> {
         .into_iter()
         .map(|violation| violation.reason)
         .collect()
+}
+
+fn fixture_workspace(name: &str) -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests")
+        .join("fixtures")
+        .join("authority-guard")
+        .join(name)
+}
+
+fn compile_external(source: &str) -> std::process::Output {
+    let nonce = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("clock after Unix epoch")
+        .as_nanos();
+    let root =
+        std::env::temp_dir().join(format!("waml-authority-api-{}-{nonce}", std::process::id()));
+    let src = root.join("src");
+    fs::create_dir_all(&src).expect("create external compile fixture");
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .to_string_lossy()
+        .replace('\\', "/");
+    fs::write(
+        root.join("Cargo.toml"),
+        format!(
+            "[package]\nname = \"authority-api-fixture\"\nversion = \"0.0.0\"\nedition = \"2021\"\n\n[dependencies]\nwaml = {{ path = \"{manifest_dir}\" }}\n"
+        ),
+    )
+    .expect("write external fixture manifest");
+    fs::write(src.join("main.rs"), source).expect("write external fixture source");
+
+    Command::new(env!("CARGO"))
+        .args(["check", "--quiet", "--offline", "--manifest-path"])
+        .arg(root.join("Cargo.toml"))
+        .env(
+            "CARGO_TARGET_DIR",
+            Path::new(env!("CARGO_MANIFEST_DIR"))
+                .parent()
+                .and_then(Path::parent)
+                .expect("workspace root")
+                .join("target")
+                .join("authority-api-fixtures"),
+        )
+        .output()
+        .expect("run external cargo check")
 }
 
 #[test]
@@ -29,6 +77,65 @@ fn production_sources_have_one_parser_and_serializer_authority() {
             .map(ToString::to_string)
             .collect::<Vec<_>>()
             .join("\n")
+    );
+}
+
+#[test]
+fn cargo_metadata_and_module_graph_cover_every_production_source_shape() {
+    let violations =
+        analyze_workspace(&fixture_workspace("workspace")).expect("analyze fixture workspace");
+    let paths = violations
+        .iter()
+        .map(|violation| violation.path.as_str())
+        .collect::<Vec<_>>();
+
+    for expected in [
+        "packages/core/source/nested.rs",
+        "packages/core/shared/path_module.rs",
+        "packages/core/shared/included.rs",
+        "packages/core/targets/custom_example.rs",
+        "packages/core/tools/custom_build.rs",
+        "../outside-member/custom/lib_entry.rs",
+    ] {
+        assert!(
+            paths.iter().any(|path| path.ends_with(expected)),
+            "Cargo/module discovery missed {expected}: {violations:#?}"
+        );
+    }
+    assert!(
+        violations
+            .iter()
+            .any(|violation| violation.reason.contains("generated Rust include")),
+        "dynamic/generated include policy was not enforced: {violations:#?}"
+    );
+    assert!(
+        violations.iter().any(|violation| {
+            violation
+                .reason
+                .contains("forbidden workspace dependency direction")
+        }),
+        "workspace dependency direction was not enforced: {violations:#?}"
+    );
+}
+
+#[test]
+fn raw_authority_entry_is_not_an_external_api() {
+    let output = compile_external(
+        r#"
+        fn main() {
+            let _raw_parser = waml::uml::syntax::parser::parse;
+        }
+        "#,
+    );
+
+    assert!(
+        !output.status.success(),
+        "raw syntax parser unexpectedly remained public"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("private") || stderr.contains("E0603"),
+        "expected a visibility failure, got:\n{stderr}"
     );
 }
 
@@ -112,6 +219,95 @@ fn closure_and_call_indirection_are_rejected() {
         violations
             .iter()
             .any(|reason| reason.contains("route_through_helper")),
+        "{violations:#?}"
+    );
+}
+
+#[test]
+fn structural_call_bypasses_are_rejected_conservatively() {
+    let violations = reasons(
+        r#"
+        fn assemble(raw: &str) -> LayoutStatement {
+            let _ = raw;
+            LayoutStatement { parts: Vec::new() }
+        }
+
+        fn decode(raw: &str) -> LayoutStatement {
+            let _parts = raw.split_whitespace().collect::<Vec<_>>();
+            unimplemented!()
+        }
+
+        fn callable_local(raw: &str) -> LayoutStatement {
+            let callable: fn(&str) -> LayoutStatement = decode;
+            callable(raw)
+        }
+
+        trait Decoder {
+            fn dispatch(&self, raw: &str) -> LayoutStatement;
+        }
+
+        struct Holder;
+        impl Decoder for Holder {
+            fn dispatch(&self, raw: &str) -> LayoutStatement {
+                decode(raw)
+            }
+        }
+
+        struct Services {
+            decoder: Holder,
+        }
+
+        fn field_receiver(services: &Services, raw: &str) -> LayoutStatement {
+            services.decoder.dispatch(raw)
+        }
+
+        fn trait_receiver(decoder: &dyn Decoder, raw: &str) -> LayoutStatement {
+            decoder.dispatch(raw)
+        }
+
+        fn qualified_reparse(model: &Model, structure: &MarkdownStructureMap) -> Analysis {
+            let rendered = model.to_string();
+            let text = SourceText::from(rendered);
+            crate::uml::syntax::parser::parse(text, structure);
+            unimplemented!()
+        }
+        "#,
+    );
+
+    for expected in [
+        "assemble",
+        "callable_local",
+        "field_receiver",
+        "trait_receiver",
+        "qualified_reparse",
+    ] {
+        assert!(
+            violations.iter().any(|reason| reason.contains(expected)),
+            "missing structural bypass {expected}: {violations:#?}"
+        );
+    }
+}
+
+#[test]
+fn macro_generated_shadow_authority_is_rejected() {
+    let violations = reasons(
+        r#"
+        macro_rules! shadow_authority {
+            () => {
+                fn generated(raw: &str) -> LayoutStatement {
+                    let _parts = raw.split_whitespace().collect::<Vec<_>>();
+                    unimplemented!()
+                }
+            };
+        }
+        shadow_authority!();
+        "#,
+    );
+
+    assert!(
+        violations
+            .iter()
+            .any(|reason| reason.contains("opaque macro")),
         "{violations:#?}"
     );
 }
@@ -267,6 +463,32 @@ fn split_model_serialization_and_reparse_capabilities_are_propagated() {
 }
 
 #[test]
+fn visible_model_to_source_capability_is_rejected_but_private_rendering_is_allowed() {
+    let visible = reasons(
+        r#"
+        pub(super) fn export_model(model: &Model) -> String {
+            model.to_string()
+        }
+        "#,
+    );
+    let private = reasons(
+        r#"
+        fn render_label(model: &Model) -> String {
+            model.to_string()
+        }
+        "#,
+    );
+
+    assert!(
+        visible
+            .iter()
+            .any(|reason| reason.contains("visible model-to-source capability")),
+        "{visible:#?}"
+    );
+    assert!(private.is_empty(), "{private:#?}");
+}
+
+#[test]
 fn imported_and_qualified_arbitrary_aliases_are_rejected() {
     let violations = analyze_sources([
         ("crates/waml/src/types.rs", "type Tree = LayoutStatement;"),
@@ -341,6 +563,46 @@ fn legitimate_raw_text_helper_is_accepted() {
         r#"
         fn render_label(label: &str) -> String {
             label.trim().to_uppercase()
+        }
+        "#,
+    );
+
+    assert!(violations.is_empty(), "{violations:#?}");
+}
+
+#[test]
+fn legitimate_domain_and_text_helpers_are_not_name_false_positives() {
+    let violations = reasons(
+        r#"
+        struct Label(String);
+        struct Analysis;
+        struct Model;
+
+        impl ToString for Model {
+            fn to_string(&self) -> String {
+                String::new()
+            }
+        }
+
+        fn label(input: &str) -> Label {
+            Label(input.trim().to_owned())
+        }
+
+        fn render(model: &Model) -> String {
+            model.to_string()
+        }
+
+        fn analyze(input: &str) -> Analysis {
+            let _trimmed = input.trim();
+            Analysis
+        }
+
+        fn trim(input: &str) -> String {
+            input.trim().to_owned()
+        }
+
+        fn to_string(input: &str) -> String {
+            input.to_string()
         }
         "#,
     );

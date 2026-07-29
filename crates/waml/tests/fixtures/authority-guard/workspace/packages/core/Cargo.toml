@@ -1,0 +1,15 @@
+[package]
+name = "waml"
+version = "0.0.0"
+edition = "2021"
+build = "tools/custom_build.rs"
+
+[lib]
+path = "source/root.rs"
+
+[[example]]
+name = "custom-example"
+path = "targets/custom_example.rs"
+
+[dependencies]
+waml-syntax = { path = "../syntax" }

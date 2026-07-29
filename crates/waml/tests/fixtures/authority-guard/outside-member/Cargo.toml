@@ -1,0 +1,8 @@
+[package]
+name = "outside-member"
+version = "0.0.0"
+edition = "2021"
+workspace = "../workspace"
+
+[lib]
+path = "custom/lib_entry.rs"

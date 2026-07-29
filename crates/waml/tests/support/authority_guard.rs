@@ -1,13 +1,25 @@
+//! Task 21's architecture test is structural first:
+//! Cargo metadata selects workspace packages and production targets, Rust module
+//! declarations select source files, and crate/module visibility seals the raw
+//! parser. The AST pass is deliberately residual. It rejects raw-to-grammar
+//! signatures, visible model-to-text surfaces, and model-to-authority-reparse
+//! reachability; it does not pretend to be rustc type inference or macro
+//! expansion. Literal `include!` files are followed. Dynamic/generated includes
+//! and local macros that mention protected grammar types are rejected
+//! conservatively because their expanded call graph cannot be audited here.
+
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
+use std::process::Command;
 
+use serde_json::Value;
 use syn::visit::{self, Visit};
 use syn::{
-    Attribute, ExprCall, ExprMethodCall, ExprPath, ExprStruct, FnArg, ImplItem, Item, ItemImpl,
-    ItemMod, ItemUse, Local, ReturnType, Signature, Type, UseTree,
+    Attribute, ExprCall, ExprMethodCall, ExprPath, FnArg, ImplItem, Item, ItemImpl, ItemMacro,
+    ItemMod, ItemUse, Lit, Local, Meta, ReturnType, Signature, Type, UseTree,
 };
 
 const DELETED_ROOT_MODULES: &[&str] = &["grammar", "parse", "serialize", "syntax"];
@@ -27,45 +39,6 @@ const MODEL_TYPES: &[&str] = &[
     "Model",
     "Projection",
     "UmlModel",
-];
-const GRAMMAR_TYPE_MARKERS: &[&str] = &[
-    "Anchored",
-    "Layout",
-    "Operand",
-    "ParsedAttribute",
-    "ParsedMember",
-    "ParsedRelationship",
-];
-const LEXICAL_METHODS: &[&str] = &[
-    "chars",
-    "find",
-    "lines",
-    "match_indices",
-    "split",
-    "split_ascii_whitespace",
-    "split_once",
-    "split_terminator",
-    "split_whitespace",
-    "strip_prefix",
-    "strip_suffix",
-    "trim",
-    "trim_end",
-    "trim_matches",
-    "trim_start",
-];
-const SERIALIZATION_CALLS: &[&str] = &[
-    "render",
-    "serialize",
-    "to_markdown",
-    "to_source",
-    "to_string",
-];
-const REPARSE_CALLS: &[&str] = &[
-    "analyze",
-    "from_source",
-    "parse",
-    "parse_document",
-    "prepare_candidate",
 ];
 const RETIRED_CALLS: &[&str] = &[
     "build_model",
@@ -117,19 +90,15 @@ struct CallSite {
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 struct Capabilities {
-    lexical: bool,
     serialize: bool,
     reparse: bool,
-    grammar_construct: bool,
 }
 
 impl Capabilities {
     fn include(&mut self, other: Capabilities) -> bool {
         let before = *self;
-        self.lexical |= other.lexical;
         self.serialize |= other.serialize;
         self.reparse |= other.reparse;
-        self.grammar_construct |= other.grammar_construct;
         *self != before
     }
 }
@@ -145,6 +114,7 @@ struct FunctionSummary {
     output_paths: Vec<Vec<String>>,
     retired_calls: BTreeSet<String>,
     allowlisted_leaf_codec: bool,
+    visible_model_text: bool,
 }
 
 #[derive(Default)]
@@ -153,20 +123,24 @@ struct BodyFacts {
     local: Capabilities,
     retired_calls: BTreeSet<String>,
     receiver_types: BTreeMap<String, String>,
+    callable_paths: BTreeMap<String, Vec<String>>,
+    saw_method_call: bool,
 }
 
 impl<'ast> Visit<'ast> for BodyFacts {
     fn visit_expr_call(&mut self, node: &'ast ExprCall) {
         if let syn::Expr::Path(ExprPath { path, .. }) = &*node.func {
-            let segments = path
+            let mut segments = path
                 .segments
                 .iter()
                 .map(|segment| segment.ident.to_string())
                 .collect::<Vec<_>>();
-            if let Some(name) = segments.last() {
-                let free_reparse = segments.len() == 1 || name != "parse";
-                self.record_capability(name, false, free_reparse);
+            if segments.len() == 1 {
+                if let Some(target) = self.callable_paths.get(&segments[0]) {
+                    segments = target.clone();
+                }
             }
+            self.record_capability(&segments);
             self.calls.push(CallSite {
                 segments,
                 method: false,
@@ -178,7 +152,6 @@ impl<'ast> Visit<'ast> for BodyFacts {
 
     fn visit_expr_method_call(&mut self, node: &'ast ExprMethodCall) {
         let name = node.method.to_string();
-        self.record_capability(&name, true, false);
         let receiver_type = match &*node.receiver {
             syn::Expr::Path(path) => path
                 .path
@@ -188,21 +161,16 @@ impl<'ast> Visit<'ast> for BodyFacts {
                 .cloned(),
             _ => None,
         };
+        self.saw_method_call = true;
+        self.local.serialize |= receiver_type
+            .as_ref()
+            .is_some_and(|receiver| MODEL_TYPES.contains(&receiver.as_str()));
         self.calls.push(CallSite {
             segments: vec![name],
             method: true,
             receiver_type,
         });
         visit::visit_expr_method_call(self, node);
-    }
-
-    fn visit_expr_struct(&mut self, node: &'ast ExprStruct) {
-        if node.path.segments.last().is_some_and(|segment| {
-            HIGH_LEVEL_GRAMMAR_TYPES.contains(&segment.ident.to_string().as_str())
-        }) {
-            self.local.grammar_construct = true;
-        }
-        visit::visit_expr_struct(self, node);
     }
 
     fn visit_local(&mut self, node: &'ast Local) {
@@ -221,83 +189,470 @@ impl<'ast> Visit<'ast> for BodyFacts {
             .init
             .as_ref()
             .and_then(|init| expression_type_name(&init.expr));
-        if let (Some(binding), Some(ty)) = (binding, explicit.or(inferred)) {
-            self.receiver_types.insert(binding, ty);
+        if let (Some(binding), Some(ty)) = (binding.as_ref(), explicit.or(inferred)) {
+            self.receiver_types.insert(binding.clone(), ty);
+        }
+        if let (Some(binding), Some(init)) = (binding, &node.init) {
+            if let syn::Expr::Path(path) = &*init.expr {
+                self.callable_paths.insert(
+                    binding,
+                    path.path
+                        .segments
+                        .iter()
+                        .map(|segment| segment.ident.to_string())
+                        .collect(),
+                );
+            }
         }
         visit::visit_local(self, node);
     }
 }
 
 impl BodyFacts {
-    fn record_capability(&mut self, name: &str, method: bool, free_reparse: bool) {
-        self.local.lexical |= LEXICAL_METHODS.contains(&name);
-        self.local.serialize |= SERIALIZATION_CALLS.contains(&name);
-        self.local.reparse |= !method && free_reparse && REPARSE_CALLS.contains(&name);
-        if RETIRED_CALLS.contains(&name) {
-            self.retired_calls.insert(name.to_owned());
+    fn record_capability(&mut self, segments: &[String]) {
+        self.local.reparse |= is_reparse_path(segments);
+        if let Some(name) = segments.last() {
+            if RETIRED_CALLS.contains(&name.as_str()) {
+                self.retired_calls.insert(name.to_owned());
+            }
         }
     }
 }
 
-pub fn analyze_workspace(workspace: &Path) -> io::Result<Vec<Violation>> {
-    let crates = workspace.join("crates");
-    let mut paths = Vec::new();
-    for entry in fs::read_dir(&crates)? {
-        let crate_root = entry?.path();
-        if !crate_root.is_dir() {
+fn cargo_metadata(workspace: &Path) -> io::Result<Value> {
+    let cargo = std::env::var_os("CARGO").unwrap_or_else(|| "cargo".into());
+    let output = Command::new(cargo)
+        .args([
+            "metadata",
+            "--format-version",
+            "1",
+            "--no-deps",
+            "--manifest-path",
+        ])
+        .arg(workspace.join("Cargo.toml"))
+        .output()?;
+    if !output.status.success() {
+        return Err(io::Error::other(format!(
+            "cargo metadata failed for {}: {}",
+            workspace.display(),
+            String::from_utf8_lossy(&output.stderr)
+        )));
+    }
+    serde_json::from_slice(&output.stdout)
+        .map_err(|error| io::Error::other(format!("invalid cargo metadata JSON: {error}")))
+}
+
+fn dependency_violations(metadata: &Value, workspace: &Path) -> Vec<Violation> {
+    let members = metadata
+        .get("workspace_members")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .collect::<BTreeSet<_>>();
+    let workspace_names = metadata
+        .get("packages")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter(|package| {
+            package
+                .get("id")
+                .and_then(Value::as_str)
+                .is_some_and(|id| members.contains(id))
+        })
+        .filter_map(|package| package.get("name").and_then(Value::as_str))
+        .collect::<BTreeSet<_>>();
+    let mut violations = Vec::new();
+
+    for package in metadata
+        .get("packages")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+    {
+        let Some(id) = package.get("id").and_then(Value::as_str) else {
+            continue;
+        };
+        if !members.contains(id) {
             continue;
         }
-        for production_dir in ["src", "examples"] {
-            let root = crate_root.join(production_dir);
-            if root.is_dir() {
-                rust_sources(&root, &mut paths)?;
+        let name = package
+            .get("name")
+            .and_then(Value::as_str)
+            .unwrap_or("<unknown>");
+        let manifest = package
+            .get("manifest_path")
+            .and_then(Value::as_str)
+            .map(PathBuf::from)
+            .unwrap_or_else(|| workspace.join("Cargo.toml"));
+        let path = workspace_relative(workspace, &manifest);
+        for dependency in package
+            .get("dependencies")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+        {
+            if dependency.get("kind").and_then(Value::as_str) == Some("dev") {
+                continue;
+            }
+            let Some(dependency_name) = dependency.get("name").and_then(Value::as_str) else {
+                continue;
+            };
+            if !workspace_names.contains(dependency_name) {
+                continue;
+            }
+            let permitted = match name {
+                "waml-syntax" => false,
+                "waml" => dependency_name == "waml-syntax",
+                "waml-ops-dto" => dependency_name == "waml",
+                "waml-cli" => matches!(dependency_name, "waml" | "waml-ops-dto"),
+                "waml-editor" => dependency_name == "waml",
+                _ => dependency_name != "waml-syntax",
+            };
+            if !permitted {
+                violations.push(Violation {
+                    path: path.clone(),
+                    reason: format!(
+                        "forbidden workspace dependency direction `{name} -> {dependency_name}`"
+                    ),
+                });
             }
         }
-        let build = crate_root.join("build.rs");
-        if build.is_file() {
-            paths.push(build);
+    }
+    violations
+}
+
+fn is_production_target(target: &Value) -> bool {
+    target
+        .get("kind")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .any(|kind| {
+            matches!(
+                kind,
+                "lib"
+                    | "bin"
+                    | "example"
+                    | "custom-build"
+                    | "proc-macro"
+                    | "staticlib"
+                    | "cdylib"
+                    | "dylib"
+            )
+        })
+}
+
+#[allow(clippy::too_many_arguments)]
+fn collect_module_source(
+    workspace: &Path,
+    source_path: &Path,
+    module: Vec<String>,
+    module_dir: PathBuf,
+    units: &mut Vec<SourceUnit>,
+    seen: &mut BTreeSet<(PathBuf, Vec<String>)>,
+    violations: &mut Vec<Violation>,
+) -> io::Result<()> {
+    let canonical = fs::canonicalize(source_path)?;
+    if !seen.insert((canonical, module.clone())) {
+        return Ok(());
+    }
+    let source = fs::read_to_string(source_path)?;
+    let path = workspace_relative(workspace, source_path);
+    let parsed = match syn::parse_file(&source) {
+        Ok(parsed) => parsed,
+        Err(error) => {
+            units.push(SourceUnit {
+                path,
+                source,
+                module,
+            });
+            violations.push(Violation {
+                path: workspace_relative(workspace, source_path),
+                reason: format!("production Rust source failed AST parsing: {error}"),
+            });
+            return Ok(());
+        }
+    };
+    units.push(SourceUnit {
+        path,
+        source,
+        module: module.clone(),
+    });
+    collect_item_sources(
+        workspace,
+        source_path,
+        &parsed.items,
+        &module,
+        &module_dir,
+        units,
+        seen,
+        violations,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn collect_item_sources(
+    workspace: &Path,
+    containing_source: &Path,
+    items: &[Item],
+    module: &[String],
+    module_dir: &Path,
+    units: &mut Vec<SourceUnit>,
+    seen: &mut BTreeSet<(PathBuf, Vec<String>)>,
+    violations: &mut Vec<Violation>,
+) -> io::Result<()> {
+    for item in items {
+        match item {
+            Item::Mod(item_mod) if !is_test_only(&item_mod.attrs) => {
+                let mut nested_module = module.to_vec();
+                nested_module.push(item_mod.ident.to_string());
+                if let Some((_, nested)) = &item_mod.content {
+                    collect_item_sources(
+                        workspace,
+                        containing_source,
+                        nested,
+                        &nested_module,
+                        &module_dir.join(item_mod.ident.to_string()),
+                        units,
+                        seen,
+                        violations,
+                    )?;
+                } else {
+                    let resolved = module_source_path(containing_source, module_dir, item_mod);
+                    match resolved {
+                        Some(path) => {
+                            let parent = path.parent().unwrap_or(module_dir);
+                            let next_dir = if path.file_name().is_some_and(|name| name == "mod.rs")
+                            {
+                                parent.to_path_buf()
+                            } else {
+                                parent.join(item_mod.ident.to_string())
+                            };
+                            collect_module_source(
+                                workspace,
+                                &path,
+                                nested_module,
+                                next_dir,
+                                units,
+                                seen,
+                                violations,
+                            )?;
+                        }
+                        None => violations.push(Violation {
+                            path: workspace_relative(workspace, containing_source),
+                            reason: format!(
+                                "declared production module `{}` has no auditable source",
+                                item_mod.ident
+                            ),
+                        }),
+                    }
+                }
+            }
+            Item::Macro(item_macro)
+                if item_macro.mac.path.is_ident("include") && !is_test_only(&item_macro.attrs) =>
+            {
+                let literal = syn::parse2::<syn::LitStr>(item_macro.mac.tokens.clone()).ok();
+                if let Some(literal) = literal {
+                    let path = containing_source
+                        .parent()
+                        .unwrap_or(workspace)
+                        .join(literal.value());
+                    collect_module_source(
+                        workspace,
+                        &path,
+                        module.to_vec(),
+                        module_dir.to_path_buf(),
+                        units,
+                        seen,
+                        violations,
+                    )?;
+                } else {
+                    violations.push(Violation {
+                        path: workspace_relative(workspace, containing_source),
+                        reason: "generated Rust include is not statically auditable; use a literal include! path or keep generated code outside production authority boundaries".into(),
+                    });
+                }
+            }
+            _ => {}
         }
     }
-    paths.sort();
+    Ok(())
+}
 
-    let sources = paths
+fn module_source_path(
+    containing_source: &Path,
+    module_dir: &Path,
+    item_mod: &ItemMod,
+) -> Option<PathBuf> {
+    for attribute in &item_mod.attrs {
+        if !attribute.path().is_ident("path") {
+            continue;
+        }
+        if let Meta::NameValue(value) = &attribute.meta {
+            if let syn::Expr::Lit(expression) = &value.value {
+                if let Lit::Str(path) = &expression.lit {
+                    return Some(
+                        containing_source
+                            .parent()
+                            .unwrap_or(module_dir)
+                            .join(path.value()),
+                    );
+                }
+            }
+        }
+    }
+    let name = item_mod.ident.to_string();
+    let flat = module_dir.join(format!("{name}.rs"));
+    if flat.is_file() {
+        return Some(flat);
+    }
+    let nested = module_dir.join(name).join("mod.rs");
+    nested.is_file().then_some(nested)
+}
+
+fn workspace_relative(workspace: &Path, path: &Path) -> String {
+    let normalized_workspace = fs::canonicalize(workspace).unwrap_or_else(|_| workspace.to_owned());
+    let normalized_path = fs::canonicalize(path).unwrap_or_else(|_| path.to_owned());
+    if let Ok(relative) = normalized_path.strip_prefix(&normalized_workspace) {
+        return slash_path(relative);
+    }
+    if let Some(parent) = normalized_workspace.parent() {
+        if let Ok(relative) = normalized_path.strip_prefix(parent) {
+            return format!("../{}", slash_path(relative));
+        }
+    }
+    slash_path(&normalized_path)
+}
+
+pub fn analyze_workspace(workspace: &Path) -> io::Result<Vec<Violation>> {
+    let metadata = cargo_metadata(workspace)?;
+    let mut violations = dependency_violations(&metadata, workspace);
+    let mut units = Vec::new();
+    let mut seen = BTreeSet::new();
+
+    let members = metadata
+        .get("workspace_members")
+        .and_then(Value::as_array)
         .into_iter()
-        .map(|path| {
-            let relative = slash_path(path.strip_prefix(workspace).unwrap_or(&path));
-            fs::read_to_string(path).map(|source| (relative, source))
-        })
-        .collect::<io::Result<Vec<_>>>()?;
-    Ok(analyze_sources(
-        sources
-            .iter()
-            .map(|(path, source)| (path.as_str(), source.as_str())),
-    ))
+        .flatten()
+        .filter_map(Value::as_str)
+        .collect::<BTreeSet<_>>();
+    for package in metadata
+        .get("packages")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+    {
+        let Some(package_id) = package.get("id").and_then(Value::as_str) else {
+            continue;
+        };
+        if !members.contains(package_id) {
+            continue;
+        }
+        let crate_name = package
+            .get("name")
+            .and_then(Value::as_str)
+            .unwrap_or("fixture")
+            .replace('-', "_");
+        for target in package
+            .get("targets")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+        {
+            if !is_production_target(target) {
+                continue;
+            }
+            let Some(source) = target.get("src_path").and_then(Value::as_str) else {
+                continue;
+            };
+            let source = PathBuf::from(source);
+            let mut module = vec![crate_name.clone()];
+            let target_name = target
+                .get("name")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .replace('-', "_");
+            let kinds = target
+                .get("kind")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .filter_map(Value::as_str)
+                .collect::<Vec<_>>();
+            if !kinds
+                .iter()
+                .any(|kind| matches!(*kind, "lib" | "proc-macro"))
+            {
+                module.push(target_name);
+            }
+            collect_module_source(
+                workspace,
+                &source,
+                module,
+                source.parent().unwrap_or(workspace).to_path_buf(),
+                &mut units,
+                &mut seen,
+                &mut violations,
+            )?;
+        }
+    }
+
+    violations.extend(analyze_source_units(&units));
+    violations.sort_by(|left, right| {
+        left.path
+            .cmp(&right.path)
+            .then_with(|| left.reason.cmp(&right.reason))
+    });
+    violations.dedup();
+    Ok(violations)
 }
 
 pub fn analyze_sources<'a>(
     sources: impl IntoIterator<Item = (&'a str, &'a str)>,
 ) -> Vec<Violation> {
+    let units = sources
+        .into_iter()
+        .map(|(path, source)| SourceUnit {
+            path: path.to_owned(),
+            source: source.to_owned(),
+            module: module_for_file(path),
+        })
+        .collect::<Vec<_>>();
+    analyze_source_units(&units)
+}
+
+#[derive(Clone, Debug)]
+struct SourceUnit {
+    path: String,
+    source: String,
+    module: Vec<String>,
+}
+
+fn analyze_source_units(units: &[SourceUnit]) -> Vec<Violation> {
     let mut violations = Vec::new();
     let mut summaries = Vec::new();
     let mut imports = BTreeMap::new();
     let mut aliases = BTreeMap::new();
 
-    for (path, source) in sources {
-        let parsed = match syn::parse_file(source) {
+    for unit in units {
+        let parsed = match syn::parse_file(&unit.source) {
             Ok(parsed) => parsed,
             Err(error) => {
                 violations.push(Violation {
-                    path: path.to_owned(),
+                    path: unit.path.clone(),
                     reason: format!("production Rust source failed AST parsing: {error}"),
                 });
                 continue;
             }
         };
-        let module = module_for_file(path);
         analyze_items(
-            path,
+            &unit.path,
             &parsed.items,
-            &module,
+            &unit.module,
             &mut summaries,
             &mut imports,
             &mut aliases,
@@ -330,7 +685,6 @@ pub fn analyze_sources<'a>(
             !summary.allowlisted_leaf_codec
                 && summary.raw_input
                 && is_domain_output(summary, &aliases, &imports)
-                && capabilities[*index].lexical
         })
         .map(|(index, _)| index)
         .collect::<BTreeSet<_>>();
@@ -348,10 +702,17 @@ pub fn analyze_sources<'a>(
         .filter(|(_, summary)| !summary.retired_calls.is_empty())
         .map(|(index, _)| index)
         .collect::<BTreeSet<_>>();
+    let visible_model_text = summaries
+        .iter()
+        .enumerate()
+        .filter(|(_, summary)| summary.visible_model_text)
+        .map(|(index, _)| index)
+        .collect::<BTreeSet<_>>();
     let seeds = direct_shadow
         .union(&model_reparse)
         .copied()
         .chain(retired.iter().copied())
+        .chain(visible_model_text.iter().copied())
         .collect::<BTreeSet<_>>();
     let reaches_shadow = reverse_reachable(&edges, &seeds);
 
@@ -370,6 +731,15 @@ pub fn analyze_sources<'a>(
                 path: summary.path.clone(),
                 reason: format!(
                     "`{}` performs a model-to-source reparse",
+                    summary.id.display()
+                ),
+            });
+        }
+        if visible_model_text.contains(&index) {
+            violations.push(Violation {
+                path: summary.path.clone(),
+                reason: format!(
+                    "`{}` exposes a visible model-to-source capability",
                     summary.id.display()
                 ),
             });
@@ -456,11 +826,45 @@ fn analyze_items(
                 None,
                 &item_fn.sig,
                 &item_fn.block,
+                !matches!(item_fn.vis, syn::Visibility::Inherited),
                 authoritative,
                 summaries,
             ),
             Item::Impl(item_impl) if !is_test_only(&item_impl.attrs) => {
                 summarize_impl(path, module, item_impl, authoritative, summaries)
+            }
+            Item::Trait(item_trait) if !is_test_only(&item_trait.attrs) && !authoritative => {
+                for trait_item in &item_trait.items {
+                    if let syn::TraitItem::Fn(method) = trait_item {
+                        if signature_is_raw_grammar_entry(&method.sig) {
+                            violations.push(Violation {
+                                path: path.to_owned(),
+                                reason: format!(
+                                    "`{}::{}::{}` declares raw-text grammar outside the syntax authority",
+                                    module.join("::"),
+                                    item_trait.ident,
+                                    method.sig.ident
+                                ),
+                            });
+                        }
+                        if !matches!(item_trait.vis, syn::Visibility::Inherited)
+                            && signature_is_model_to_text(&method.sig)
+                        {
+                            violations.push(Violation {
+                                path: path.to_owned(),
+                                reason: format!(
+                                    "`{}::{}::{}` exposes a visible model-to-source capability",
+                                    module.join("::"),
+                                    item_trait.ident,
+                                    method.sig.ident
+                                ),
+                            });
+                        }
+                    }
+                }
+            }
+            Item::Macro(item_macro) if !authoritative && !is_test_only(&item_macro.attrs) => {
+                inspect_opaque_macro(path, item_macro, violations);
             }
             _ => {}
         }
@@ -489,6 +893,7 @@ fn summarize_impl(
                 Some(owner.clone()),
                 &method.sig,
                 &method.block,
+                !matches!(method.vis, syn::Visibility::Inherited),
                 authoritative,
                 summaries,
             );
@@ -502,6 +907,7 @@ fn summarize_function(
     owner: Option<String>,
     signature: &Signature,
     block: &syn::Block,
+    visible: bool,
     authoritative: bool,
     summaries: &mut Vec<FunctionSummary>,
 ) {
@@ -537,10 +943,13 @@ fn summarize_function(
         FnArg::Receiver(_) => false,
         FnArg::Typed(argument) => type_contains_any(&argument.ty, MODEL_TYPES),
     });
+    facts.local.serialize |=
+        signature_is_model_to_text(signature) || (model_input && facts.saw_method_call);
     let output_paths = match &signature.output {
         ReturnType::Default => Vec::new(),
         ReturnType::Type(_, output) => type_paths(output),
     };
+    let visible_model_text = visible && signature_is_model_to_text(signature);
     let name = signature.ident.to_string();
     let id = FunctionId {
         module: module.to_vec(),
@@ -558,6 +967,7 @@ fn summarize_function(
         output_paths,
         retired_calls: facts.retired_calls,
         allowlisted_leaf_codec: is_allowlisted_leaf_codec(&id),
+        visible_model_text,
     });
 }
 
@@ -789,6 +1199,93 @@ fn collect_use_bindings(
     }
 }
 
+fn signature_is_raw_grammar_entry(signature: &Signature) -> bool {
+    let raw_input = signature.inputs.iter().any(|argument| match argument {
+        FnArg::Receiver(_) => false,
+        FnArg::Typed(argument) => type_contains_any(&argument.ty, &["str", "String"]),
+    });
+    let grammar_output = match &signature.output {
+        ReturnType::Default => false,
+        ReturnType::Type(_, output) => type_paths(output).iter().any(|path| {
+            path.last()
+                .is_some_and(|name| HIGH_LEVEL_GRAMMAR_TYPES.contains(&name.as_str()))
+        }),
+    };
+    raw_input && grammar_output
+}
+
+fn signature_is_model_to_text(signature: &Signature) -> bool {
+    let model_input = signature.inputs.iter().any(|argument| match argument {
+        FnArg::Receiver(_) => false,
+        FnArg::Typed(argument) => type_contains_any(&argument.ty, MODEL_TYPES),
+    });
+    let text_output = match &signature.output {
+        ReturnType::Default => false,
+        ReturnType::Type(_, output) => type_is_text_result(output),
+    };
+    model_input && text_output
+}
+
+fn type_is_text_result(ty: &Type) -> bool {
+    match ty {
+        Type::Group(group) => type_is_text_result(&group.elem),
+        Type::Paren(paren) => type_is_text_result(&paren.elem),
+        Type::Reference(reference) => type_is_text_result(&reference.elem),
+        Type::Path(path) => {
+            let Some(last) = path.path.segments.last() else {
+                return false;
+            };
+            let name = last.ident.to_string();
+            if matches!(name.as_str(), "str" | "String") {
+                return true;
+            }
+            if !matches!(name.as_str(), "Arc" | "Box" | "Cow" | "Option" | "Result") {
+                return false;
+            }
+            let syn::PathArguments::AngleBracketed(arguments) = &last.arguments else {
+                return false;
+            };
+            arguments.args.iter().any(|argument| {
+                matches!(argument, syn::GenericArgument::Type(inner) if type_is_text_result(inner))
+            })
+        }
+        _ => false,
+    }
+}
+
+fn is_reparse_path(segments: &[String]) -> bool {
+    segments.last().is_some_and(|name| name == "parse_document")
+        || segments.ends_with(&[
+            "uml".to_owned(),
+            "syntax".to_owned(),
+            "parser".to_owned(),
+            "parse".to_owned(),
+        ])
+        || segments.ends_with(&["syntax".to_owned(), "parser".to_owned(), "parse".to_owned()])
+        || segments.ends_with(&["analysis".to_owned(), "prepare_candidate".to_owned()])
+        || segments.ends_with(&["okf".to_owned(), "Bundle".to_owned(), "parse".to_owned()])
+}
+
+fn inspect_opaque_macro(path: &str, item_macro: &ItemMacro, violations: &mut Vec<Violation>) {
+    if item_macro.mac.path.is_ident("include") {
+        return;
+    }
+    let tokens = item_macro.mac.tokens.to_string();
+    let grammar_type = HIGH_LEVEL_GRAMMAR_TYPES.iter().find(|name| {
+        tokens
+            .split(|character: char| !character.is_alphanumeric() && character != '_')
+            .any(|token| token == **name)
+    });
+    if let Some(grammar_type) = grammar_type {
+        violations.push(Violation {
+            path: path.to_owned(),
+            reason: format!(
+                "opaque macro source references grammar type `{grammar_type}` outside the syntax authority"
+            ),
+        });
+    }
+}
+
 fn is_domain_output(
     summary: &FunctionSummary,
     aliases: &BTreeMap<(Vec<String>, String), Vec<Vec<String>>>,
@@ -805,11 +1302,7 @@ fn is_domain_output(
         let Some(name) = path.last().cloned() else {
             continue;
         };
-        if HIGH_LEVEL_GRAMMAR_TYPES.contains(&name.as_str())
-            || GRAMMAR_TYPE_MARKERS
-                .iter()
-                .any(|marker| name.contains(marker))
-        {
+        if HIGH_LEVEL_GRAMMAR_TYPES.contains(&name.as_str()) {
             return true;
         }
         let (module, alias) = resolve_type_path(&context, &path, imports);
@@ -1074,18 +1567,6 @@ fn is_allowlisted_leaf_codec(id: &FunctionId) -> bool {
                 ([crate_name, module], "placement_candidate" | "placement_preview")
                     if crate_name == "waml-editor" && module == "scene"
             )
-}
-
-fn rust_sources(root: &Path, out: &mut Vec<PathBuf>) -> io::Result<()> {
-    for entry in fs::read_dir(root)? {
-        let path = entry?.path();
-        if path.is_dir() {
-            rust_sources(&path, out)?;
-        } else if path.extension().is_some_and(|extension| extension == "rs") {
-            out.push(path);
-        }
-    }
-    Ok(())
 }
 
 fn slash_path(path: &Path) -> String {
