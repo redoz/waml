@@ -631,6 +631,71 @@ fn added_or_removed_container_is_named() {
 }
 
 #[test]
+fn deleting_invalidated_container_range_falls_back_without_panicking() {
+    let previous = "- first\n- second\n";
+    let next = "- firstcond\n";
+    let outcome = exact_oracle(
+        previous,
+        &next,
+        &[TextChange {
+            old_range: range(7, 12),
+            replacement: Arc::from(""),
+        }],
+    );
+
+    assert!(matches!(
+        outcome,
+        ReparseOutcome::Full {
+            reason: FullReparseReason::MarkdownContainerBoundaryChanged,
+            ..
+        }
+    ));
+}
+
+#[test]
+fn property_sequence_falls_back_when_selected_window_cannot_be_consumed() {
+    let initial = "- type: uml.Class\n  name: Example\n=";
+    let replacement = "\u{1d456}0\u{ab09}  \u{ae}a  \u{1cf00}\u{a1}a \u{1f860}\u{ad0}0 \u{fb40}\u{c0e}A 0";
+    let first = format!("{replacement}xample\n=");
+    let second = &first[4..];
+
+    let first_tree = match exact_oracle(
+        initial,
+        &first,
+        &[TextChange {
+            old_range: range(0, 27),
+            replacement: Arc::from(replacement),
+        }],
+    ) {
+        ReparseOutcome::Incremental { tree, .. } | ReparseOutcome::Full { tree, .. } => tree,
+    };
+    let full = parse_okf_markdown(text(second), MarkdownDialect::CommonMarkCurrent).unwrap();
+    let outcome = reparse_okf_markdown(
+        &first_tree,
+        text(second),
+        &[TextChange {
+            old_range: range(0, 4),
+            replacement: Arc::from(""),
+        }],
+    )
+    .unwrap();
+    let tree = match outcome {
+        ReparseOutcome::Full {
+            tree,
+            reason: FullReparseReason::UnsafeSynchronization,
+        } => tree,
+        ReparseOutcome::Full { reason, .. } => {
+            panic!("expected unsafe-synchronization fallback, got {reason:?}")
+        }
+        ReparseOutcome::Incremental { .. } => {
+            panic!("selected window must conservatively fall back")
+        }
+    };
+    assert_eq!(tree.write_to_string(), full.tree.write_to_string());
+    assert_eq!(diagnostic_fingerprint(&tree), diagnostic_fingerprint(&full.tree));
+}
+
+#[test]
 fn safe_edit_matrix_matches_full_oracle() {
     for (old, new, changes) in [
         (

@@ -661,14 +661,22 @@ pub fn reparse_okf_markdown_with_structure(
     let Some(new_range) = expanded_window_range(window.range, &map) else {
         return full(FullReparseReason::UnsafeSynchronization);
     };
-    let parsed_window = crate::shell::parse_window(
+    let parsed_window = match crate::shell::parse_window(
         &new_text,
         &new_structure,
         crate::shell::ShellWindow {
             kind: window.kind,
             range: new_range,
         },
-    )?;
+    ) {
+        Ok(parsed_window) => parsed_window,
+        Err(ParseError::StructuralInvariant { reason })
+            if reason.as_ref() == "shell window parser did not consume the selected range" =>
+        {
+            return full(FullReparseReason::UnsafeSynchronization);
+        }
+        Err(error) => return Err(error),
+    };
     let mut children = Vec::new();
     for (index, child) in previous.root_green().children().iter().enumerate() {
         if index == window.first {
@@ -1019,17 +1027,18 @@ fn frontmatter_fences(
     Some((open, close))
 }
 fn same_ranges(old: &[TextRange], new: &[TextRange], map: &ChangeMap) -> bool {
-    let mut old: Option<Vec<_>> = old
+    let Some(mut old): Option<Vec<_>> = old
         .iter()
         .copied()
         .map(|range| map_range(range, map))
-        .collect();
+        .collect()
+    else {
+        return false;
+    };
     let mut new = new.to_vec();
-    old.as_mut()
-        .unwrap()
-        .sort_by_key(|range| (range.start(), range.end()));
+    old.sort_by_key(|range| (range.start(), range.end()));
     new.sort_by_key(|range| (range.start(), range.end()));
-    old.unwrap() == new
+    old == new
 }
 fn same_headings(old: &MarkdownStructureMap, new: &MarkdownStructureMap, map: &ChangeMap) -> bool {
     let old = old
