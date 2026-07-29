@@ -597,4 +597,63 @@ mod tests {
         ));
         std::mem::forget(deep_root);
     }
+
+    #[test]
+    fn source_recovery_complete_hostile_matrix_including_valid_empty() {
+        fn token(source: &SourceText, start: usize, end: usize) -> GreenElement<UmlLanguage> {
+            GreenElement::Token(
+                GreenFactory::new()
+                    .token(
+                        UmlSyntaxKind::IdentifierToken,
+                        GreenText::SourceSlice {
+                            source: source.clone(),
+                            range: TextRange::new(
+                                TextSize::try_from_usize(start).unwrap(),
+                                TextSize::try_from_usize(end).unwrap(),
+                            )
+                            .unwrap(),
+                        },
+                        [],
+                        [],
+                    )
+                    .unwrap(),
+            )
+        }
+        let empty_source = SourceText::from_shared(Arc::new(String::new())).unwrap();
+        let source = SourceText::from_shared(Arc::new("ab".to_owned())).unwrap();
+        let factory = GreenFactory::new();
+        let empty = factory
+            .node(UmlSyntaxKind::Root, [token(&empty_source, 0, 0)])
+            .unwrap();
+        assert!(Arc::ptr_eq(
+            recover_exact_source(&empty).unwrap().shared(),
+            empty_source.shared()
+        ));
+        let overlap = factory
+            .node(
+                UmlSyntaxKind::Root,
+                [token(&source, 0, 1), token(&source, 0, 2)],
+            )
+            .unwrap();
+        assert!(recover_exact_source(&overlap).is_none());
+        let owned = factory
+            .node(
+                UmlSyntaxKind::Root,
+                [
+                    token(&source, 0, 1),
+                    GreenElement::Token(
+                        factory
+                            .token(
+                                UmlSyntaxKind::IdentifierToken,
+                                GreenText::Owned(Arc::from("x")),
+                                [],
+                                [],
+                            )
+                            .unwrap(),
+                    ),
+                ],
+            )
+            .unwrap();
+        assert!(recover_exact_source(&owned).is_none());
+    }
 }

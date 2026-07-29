@@ -1296,6 +1296,49 @@ mod source_recovery_tests {
             .unwrap();
         assert!(recover_exact_source(&owned).is_none());
     }
+
+    #[test]
+    fn exact_source_recovery_complete_hostile_matrix_including_valid_empty() {
+        let empty_source = SourceText::from_shared(Arc::new(String::new())).unwrap();
+        let source = SourceText::from_shared(Arc::new("ab".to_owned())).unwrap();
+        let factory = GreenFactory::new();
+        let empty = factory
+            .node(
+                OkfMarkdownSyntaxKind::Root,
+                [source_token(&empty_source, 0, 0)],
+            )
+            .unwrap();
+        assert!(Arc::ptr_eq(
+            recover_exact_source(&empty).unwrap().shared(),
+            empty_source.shared()
+        ));
+        let overlap = factory
+            .node(
+                OkfMarkdownSyntaxKind::Root,
+                [source_token(&source, 0, 1), source_token(&source, 0, 2)],
+            )
+            .unwrap();
+        assert!(recover_exact_source(&overlap).is_none());
+        let static_mismatch = factory
+            .node(
+                OkfMarkdownSyntaxKind::Root,
+                [
+                    source_token(&source, 0, 1),
+                    GreenElement::Token(
+                        factory
+                            .token(
+                                OkfMarkdownSyntaxKind::RawTextToken,
+                                GreenText::Static("x"),
+                                [],
+                                [],
+                            )
+                            .unwrap(),
+                    ),
+                ],
+            )
+            .unwrap();
+        assert!(recover_exact_source(&static_mismatch).is_none());
+    }
 }
 fn same_containers(
     old: &MarkdownStructureMap,
