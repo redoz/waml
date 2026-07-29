@@ -368,14 +368,6 @@ impl<'ast, 'env> Visit<'ast> for BodyFacts<'env> {
             syn::Pat::Type(pattern) => type_paths(&pattern.ty),
             _ => Vec::new(),
         };
-        for binding in &bindings {
-            self.record_binding_declaration(binding);
-            self.receiver_types.remove(binding);
-            self.receiver_type_uses.remove(binding);
-            self.callable_paths.remove(binding);
-            self.origins.remove(binding);
-            self.bindings.insert(binding.clone());
-        }
         self.body_paths.extend(explicit_paths.iter().cloned());
         let explicit_type_uses = if explicit_paths.is_empty() {
             Vec::new()
@@ -400,25 +392,14 @@ impl<'ast, 'env> Visit<'ast> for BodyFacts<'env> {
             .init
             .as_ref()
             .and_then(|init| self.expression_type_identity(&init.expr));
-        if let Some(ty) = explicit.or(inferred) {
-            for binding in &bindings {
-                self.receiver_types.insert(binding.clone(), ty.clone());
-            }
-        }
+        let receiver_type = explicit.or(inferred);
         let type_uses = if explicit_type_uses.is_empty() {
             inferred_type_uses
         } else {
             explicit_type_uses
         };
-        if !type_uses.is_empty() {
-            for binding in &bindings {
-                self.receiver_type_uses
-                    .insert(binding.clone(), type_uses.clone());
-            }
-        }
-        if !bindings.is_empty() {
-            let origin = node
-                .init
+        let origin = (!bindings.is_empty()).then(|| {
+            node.init
                 .as_ref()
                 .map(|init| self.expression_origin(&init.expr))
                 .filter(|origin| *origin != ValueOrigin::Other)
@@ -429,25 +410,58 @@ impl<'ast, 'env> Visit<'ast> for BodyFacts<'env> {
                         self.env.aliases,
                         self.env.imports,
                     )
-                });
-            self.local.serialize |= origin == ValueOrigin::ModelText;
-            for binding in &bindings {
-                self.origins.insert(binding.clone(), origin);
-            }
-        }
-        if let ([binding], Some(init)) = (bindings.as_slice(), &node.init) {
+                })
+        });
+        let callable_path = if let ([binding], Some(init)) = (bindings.as_slice(), &node.init) {
             if let syn::Expr::Path(path) = &*init.expr {
-                self.callable_paths.insert(
+                Some((
                     binding.clone(),
                     path.path
                         .segments
                         .iter()
                         .map(|segment| segment.ident.to_string())
                         .collect(),
-                );
+                ))
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
+        // A Rust `let` binding is not in scope in its initializer or in the
+        // diverging branch of `let-else`; traverse both before shadowing any
+        // previous binding with the declaration.
+        visit::visit_local(self, node);
+
+        for binding in &bindings {
+            self.record_binding_declaration(binding);
+            self.receiver_types.remove(binding);
+            self.receiver_type_uses.remove(binding);
+            self.callable_paths.remove(binding);
+            self.origins.remove(binding);
+            self.bindings.insert(binding.clone());
+        }
+        if let Some(ty) = receiver_type {
+            for binding in &bindings {
+                self.receiver_types.insert(binding.clone(), ty.clone());
             }
         }
-        visit::visit_local(self, node);
+        if !type_uses.is_empty() {
+            for binding in &bindings {
+                self.receiver_type_uses
+                    .insert(binding.clone(), type_uses.clone());
+            }
+        }
+        if let Some(origin) = origin {
+            self.local.serialize |= origin == ValueOrigin::ModelText;
+            for binding in &bindings {
+                self.origins.insert(binding.clone(), origin);
+            }
+        }
+        if let Some((binding, path)) = callable_path {
+            self.callable_paths.insert(binding, path);
+        }
     }
 
     fn visit_expr_cast(&mut self, expression: &'ast syn::ExprCast) {
