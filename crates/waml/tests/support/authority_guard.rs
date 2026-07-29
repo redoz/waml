@@ -275,6 +275,7 @@ struct BodyFacts<'env> {
     local: Capabilities,
     retired_calls: BTreeSet<String>,
     receiver_types: BTreeMap<String, TypeIdentity>,
+    receiver_type_uses: BTreeMap<String, TypeUse>,
     callable_paths: BTreeMap<String, Vec<String>>,
     bindings: BTreeSet<String>,
     origins: BTreeMap<String, ValueOrigin>,
@@ -356,6 +357,14 @@ impl<'ast, 'env> Visit<'ast> for BodyFacts<'env> {
             _ => (None, Vec::new()),
         };
         self.body_paths.extend(explicit_paths.iter().cloned());
+        let explicit_type_use = (!explicit_paths.is_empty()).then(|| TypeUse {
+            module: self.env.module.clone(),
+            paths: explicit_paths.clone(),
+        });
+        let inferred_type_use = node
+            .init
+            .as_ref()
+            .and_then(|init| self.expression_type_use(&init.expr));
         let explicit = receiver_type_identity(
             self.env.module,
             &explicit_paths,
@@ -368,6 +377,11 @@ impl<'ast, 'env> Visit<'ast> for BodyFacts<'env> {
             .and_then(|init| self.expression_type_identity(&init.expr));
         if let (Some(binding), Some(ty)) = (binding.as_ref(), explicit.or(inferred)) {
             self.receiver_types.insert(binding.clone(), ty);
+        }
+        if let (Some(binding), Some(ty)) =
+            (binding.as_ref(), explicit_type_use.or(inferred_type_use))
+        {
+            self.receiver_type_uses.insert(binding.clone(), ty);
         }
         if let Some(binding) = &binding {
             self.bindings.insert(binding.clone());
@@ -453,6 +467,7 @@ impl<'env> BodyFacts<'env> {
             local: Capabilities::default(),
             retired_calls: BTreeSet::new(),
             receiver_types: BTreeMap::new(),
+            receiver_type_uses: BTreeMap::new(),
             callable_paths: BTreeMap::new(),
             bindings: BTreeSet::new(),
             origins: BTreeMap::new(),
@@ -472,29 +487,82 @@ impl<'env> BodyFacts<'env> {
     }
 
     fn record_assignment_place_type(&mut self, expression: &syn::Expr) {
+        if let Some(ty) = self.expression_type_use(expression) {
+            self.body_paths.extend(ty.paths);
+            return;
+        }
+
         match unwrap_expression(expression) {
-            syn::Expr::Field(field) => {
-                let Some(owner) = self.expression_type_identity(&field.base) else {
-                    return;
-                };
-                let name = match &field.member {
-                    syn::Member::Named(name) => name.to_string(),
-                    syn::Member::Unnamed(index) => index.index.to_string(),
-                };
-                let paths = self
-                    .env
-                    .struct_fields
-                    .get(&owner)
-                    .and_then(|fields| fields.get(&name))
-                    .map(|field_type| field_type.paths.clone())
-                    .unwrap_or_default();
-                self.body_paths.extend(paths);
-            }
+            syn::Expr::Field(field) => self.record_assignment_place_type(&field.base),
             syn::Expr::Index(index) => self.record_assignment_place_type(&index.expr),
+            syn::Expr::MethodCall(call) => self.record_assignment_place_type(&call.receiver),
             syn::Expr::Unary(unary) if matches!(unary.op, syn::UnOp::Deref(_)) => {
                 self.record_assignment_place_type(&unary.expr);
             }
             _ => {}
+        }
+    }
+
+    fn expression_type_use(&self, expression: &syn::Expr) -> Option<TypeUse> {
+        match unwrap_expression(expression) {
+            syn::Expr::Path(expression) => {
+                if expression.path.segments.len() == 1 {
+                    let name = expression.path.segments[0].ident.to_string();
+                    if let Some(ty) = self.receiver_type_uses.get(&name) {
+                        return Some(ty.clone());
+                    }
+                }
+                Some(TypeUse {
+                    module: self.env.module.clone(),
+                    paths: paths_in_path(&expression.path),
+                })
+            }
+            syn::Expr::Field(expression) => {
+                let owner = self.expression_type_identity(&expression.base)?;
+                let field = match &expression.member {
+                    syn::Member::Named(name) => name.to_string(),
+                    syn::Member::Unnamed(index) => index.index.to_string(),
+                };
+                self.env.struct_fields.get(&owner)?.get(&field).cloned()
+            }
+            syn::Expr::MethodCall(expression) => {
+                let owner = self.expression_type_identity(&expression.receiver)?;
+                self.env
+                    .method_returns
+                    .get(&(owner, expression.method.to_string()))
+                    .cloned()
+            }
+            syn::Expr::Struct(expression) => Some(TypeUse {
+                module: self.env.module.clone(),
+                paths: paths_in_path(&expression.path),
+            }),
+            syn::Expr::Call(expression) => match unwrap_expression(&expression.func) {
+                syn::Expr::Path(function) => {
+                    let mut segments = function
+                        .path
+                        .segments
+                        .iter()
+                        .map(|segment| segment.ident.to_string())
+                        .collect::<Vec<_>>();
+                    if segments.len() >= 2
+                        && segments.last().is_some_and(|method| {
+                            method.chars().next().is_some_and(char::is_lowercase)
+                        })
+                    {
+                        segments.pop();
+                    }
+                    Some(TypeUse {
+                        module: self.env.module.clone(),
+                        paths: vec![segments],
+                    })
+                }
+                _ => None,
+            },
+            syn::Expr::Index(expression) => self.expression_type_use(&expression.expr),
+            syn::Expr::Unary(expression) if matches!(expression.op, syn::UnOp::Deref(_)) => {
+                self.expression_type_use(&expression.expr)
+            }
+            _ => None,
         }
     }
 
@@ -1925,6 +1993,13 @@ fn summarize_function(
             FnArg::Receiver(_) => {
                 if let Some(owner) = &owner {
                     facts.receiver_types.insert("self".into(), owner.clone());
+                    facts.receiver_type_uses.insert(
+                        "self".into(),
+                        TypeUse {
+                            module: module.clone(),
+                            paths: owner_paths.clone(),
+                        },
+                    );
                     facts.bindings.insert("self".into());
                     let owner_names = resolved_type_names(module, &owner_paths, aliases, imports);
                     facts.origins.insert(
@@ -1948,6 +2023,13 @@ fn summarize_function(
                     {
                         facts.receiver_types.insert(binding.clone(), identity);
                     }
+                    facts.receiver_type_uses.insert(
+                        binding.clone(),
+                        TypeUse {
+                            module: module.clone(),
+                            paths: paths.clone(),
+                        },
+                    );
                     facts.bindings.insert(binding.clone());
                     facts
                         .origins
@@ -2915,45 +2997,320 @@ fn summary_is_raw_grammar_entry(
 }
 
 fn cached_tree_body_is_verified(summary: &FunctionSummary) -> bool {
-    const KNOWN_METHODS: &[&str] = &[
-        "clone",
-        "cloned",
-        "contains_key",
-        "expect",
-        "get",
-        "ok_or_else",
-        "path",
-        "reparse",
-    ];
+    struct CacheTreeCalls {
+        valid: bool,
+        saw_reparse: bool,
+        saw_contains_key: bool,
+        saw_get: bool,
+    }
 
-    let mut saw_reparse = false;
-    let mut saw_contains_key = false;
-    let mut saw_get = false;
-    for call in &summary.calls {
-        if call.method {
-            let Some(name) = call.segments.last().map(String::as_str) else {
-                return false;
+    impl<'ast> Visit<'ast> for CacheTreeCalls {
+        fn visit_expr_method_call(&mut self, call: &'ast ExprMethodCall) {
+            let name = call.method.to_string();
+            let valid = match name.as_str() {
+                "path" => {
+                    cache_tree_is_binding(&call.receiver, "self")
+                        && cache_tree_args_are(&call.args, &["target"])
+                }
+                "cloned" => call.args.is_empty() && cache_tree_is_path_lookup(&call.receiver),
+                "ok_or_else" => {
+                    call.args.len() == 1
+                        && cache_tree_is_cloned_lookup(&call.receiver)
+                        && matches!(
+                            call.args.first().map(unwrap_expression),
+                            Some(syn::Expr::Closure(_))
+                        )
+                }
+                "contains_key" => {
+                    cache_tree_is_touched_islands(&call.receiver)
+                        && cache_tree_args_are(&call.args, &["path"])
+                }
+                "reparse" => {
+                    cache_tree_is_binding(&call.receiver, "self")
+                        && cache_tree_args_are(&call.args, &["candidate", "path", "op"])
+                }
+                "get" => {
+                    cache_tree_is_touched_islands(&call.receiver)
+                        && cache_tree_args_are(&call.args, &["path"])
+                }
+                "expect" => {
+                    call.args.len() == 1
+                        && cache_tree_is_get_lookup(&call.receiver)
+                        && call.args.first().is_some_and(cache_tree_is_string_literal)
+                }
+                "clone" => {
+                    call.args.is_empty()
+                        && (cache_tree_is_binding(&call.receiver, "path")
+                            || cache_tree_is_expect_lookup(&call.receiver))
+                }
+                _ => false,
             };
-            if !KNOWN_METHODS.contains(&name) {
-                return false;
-            }
-            saw_reparse |= name == "reparse";
-            saw_contains_key |= name == "contains_key";
-            saw_get |= name == "get";
-        } else if !matches!(
-            call.segments.as_slice(),
-            [name] if name == "Ok"
-        ) && !call.segments.ends_with(&["EditError".into(), "at".into()])
-        {
-            return false;
+            self.valid &= valid;
+            self.saw_reparse |= valid && name == "reparse";
+            self.saw_contains_key |= valid && name == "contains_key";
+            self.saw_get |= valid && name == "get";
+            visit::visit_expr_method_call(self, call);
+        }
+
+        fn visit_expr_call(&mut self, call: &'ast ExprCall) {
+            self.valid &= cache_tree_function_call_is_verified(call);
+            visit::visit_expr_call(self, call);
         }
     }
 
-    saw_reparse
-        && saw_contains_key
-        && saw_get
+    let mut calls = CacheTreeCalls {
+        valid: true,
+        saw_reparse: false,
+        saw_contains_key: false,
+        saw_get: false,
+    };
+    calls.visit_block(&summary.block);
+
+    calls.valid
+        && calls.saw_reparse
+        && calls.saw_contains_key
+        && calls.saw_get
+        && cache_tree_body_has_expected_shape(&summary.block)
         && cache_tree_tail_reads_touched_islands(&summary.block)
         && cache_tree_body_uses_only_format_macro(&summary.block)
+}
+
+fn cache_tree_body_has_expected_shape(block: &syn::Block) -> bool {
+    let [syn::Stmt::Local(path), syn::Stmt::Expr(reparse, None), syn::Stmt::Expr(result, None)] =
+        block.stmts.as_slice()
+    else {
+        return false;
+    };
+    cache_tree_path_binding_is_verified(path)
+        && cache_tree_reparse_branch_is_verified(reparse)
+        && cache_tree_ok_result_is_verified(result)
+}
+
+fn cache_tree_path_binding_is_verified(local: &syn::Local) -> bool {
+    let syn::Pat::Ident(pattern) = &local.pat else {
+        return false;
+    };
+    if pattern.ident != "path"
+        || pattern.by_ref.is_some()
+        || pattern.mutability.is_some()
+        || pattern.subpat.is_some()
+    {
+        return false;
+    }
+    let Some(init) = &local.init else {
+        return false;
+    };
+    if init.diverge.is_some() {
+        return false;
+    }
+    let syn::Expr::Try(try_expression) = unwrap_expression(&init.expr) else {
+        return false;
+    };
+    let Some(ok_or_else) = cache_tree_method_call(&try_expression.expr, "ok_or_else") else {
+        return false;
+    };
+    let Some(closure) = ok_or_else.args.first().and_then(|argument| {
+        let syn::Expr::Closure(closure) = unwrap_expression(argument) else {
+            return None;
+        };
+        Some(closure)
+    }) else {
+        return false;
+    };
+    ok_or_else.args.len() == 1
+        && cache_tree_is_cloned_lookup(&ok_or_else.receiver)
+        && closure.inputs.is_empty()
+        && cache_tree_error_call_is_verified(&closure.body)
+}
+
+fn cache_tree_error_call_is_verified(expression: &syn::Expr) -> bool {
+    let syn::Expr::Call(call) = unwrap_expression(expression) else {
+        return false;
+    };
+    cache_tree_call_path_is(call, &["EditError", "at"])
+        && cache_tree_function_call_is_verified(call)
+}
+
+fn cache_tree_reparse_branch_is_verified(expression: &syn::Expr) -> bool {
+    let syn::Expr::If(branch) = unwrap_expression(expression) else {
+        return false;
+    };
+    if branch.else_branch.is_some() {
+        return false;
+    }
+    let syn::Expr::Unary(condition) = unwrap_expression(&branch.cond) else {
+        return false;
+    };
+    if !matches!(condition.op, syn::UnOp::Not(_)) {
+        return false;
+    }
+    let Some(contains_key) = cache_tree_method_call(&condition.expr, "contains_key") else {
+        return false;
+    };
+    let [syn::Stmt::Expr(reparse, Some(_))] = branch.then_branch.stmts.as_slice() else {
+        return false;
+    };
+    let syn::Expr::Try(try_expression) = unwrap_expression(reparse) else {
+        return false;
+    };
+    let Some(reparse) = cache_tree_method_call(&try_expression.expr, "reparse") else {
+        return false;
+    };
+    cache_tree_is_touched_islands(&contains_key.receiver)
+        && cache_tree_args_are(&contains_key.args, &["path"])
+        && cache_tree_is_binding(&reparse.receiver, "self")
+        && cache_tree_args_are(&reparse.args, &["candidate", "path", "op"])
+}
+
+fn cache_tree_ok_result_is_verified(expression: &syn::Expr) -> bool {
+    let syn::Expr::Call(call) = unwrap_expression(expression) else {
+        return false;
+    };
+    cache_tree_call_path_is(call, &["Ok"]) && cache_tree_function_call_is_verified(call)
+}
+
+fn cache_tree_call_path_is(call: &ExprCall, expected: &[&str]) -> bool {
+    let syn::Expr::Path(function) = unwrap_expression(&call.func) else {
+        return false;
+    };
+    function.path.segments.len() == expected.len()
+        && function
+            .path
+            .segments
+            .iter()
+            .zip(expected)
+            .all(|(segment, expected)| segment.ident == expected)
+}
+
+fn cache_tree_is_binding(expression: &syn::Expr, expected: &str) -> bool {
+    let syn::Expr::Path(path) = unwrap_expression(expression) else {
+        return false;
+    };
+    path.path.segments.len() == 1 && path.path.segments[0].ident == expected
+}
+
+fn cache_tree_args_are(
+    arguments: &syn::punctuated::Punctuated<syn::Expr, syn::token::Comma>,
+    expected: &[&str],
+) -> bool {
+    arguments.len() == expected.len()
+        && arguments
+            .iter()
+            .zip(expected)
+            .all(|(argument, expected)| cache_tree_is_binding(argument, expected))
+}
+
+fn cache_tree_is_touched_islands(expression: &syn::Expr) -> bool {
+    let syn::Expr::Field(field) = unwrap_expression(expression) else {
+        return false;
+    };
+    matches!(&field.member, syn::Member::Named(name) if name == "touched_islands")
+        && cache_tree_is_binding(&field.base, "self")
+}
+
+fn cache_tree_method_call<'ast>(
+    expression: &'ast syn::Expr,
+    expected: &str,
+) -> Option<&'ast ExprMethodCall> {
+    let syn::Expr::MethodCall(call) = unwrap_expression(expression) else {
+        return None;
+    };
+    (call.method == expected).then_some(call)
+}
+
+fn cache_tree_is_path_lookup(expression: &syn::Expr) -> bool {
+    let Some(call) = cache_tree_method_call(expression, "path") else {
+        return false;
+    };
+    cache_tree_is_binding(&call.receiver, "self") && cache_tree_args_are(&call.args, &["target"])
+}
+
+fn cache_tree_is_cloned_lookup(expression: &syn::Expr) -> bool {
+    let Some(call) = cache_tree_method_call(expression, "cloned") else {
+        return false;
+    };
+    call.args.is_empty() && cache_tree_is_path_lookup(&call.receiver)
+}
+
+fn cache_tree_is_get_lookup(expression: &syn::Expr) -> bool {
+    let Some(call) = cache_tree_method_call(expression, "get") else {
+        return false;
+    };
+    cache_tree_is_touched_islands(&call.receiver) && cache_tree_args_are(&call.args, &["path"])
+}
+
+fn cache_tree_is_expect_lookup(expression: &syn::Expr) -> bool {
+    let Some(call) = cache_tree_method_call(expression, "expect") else {
+        return false;
+    };
+    call.args.len() == 1
+        && cache_tree_is_get_lookup(&call.receiver)
+        && call.args.first().is_some_and(cache_tree_is_string_literal)
+}
+
+fn cache_tree_is_string_literal(expression: &syn::Expr) -> bool {
+    matches!(
+        unwrap_expression(expression),
+        syn::Expr::Lit(syn::ExprLit {
+            lit: syn::Lit::Str(_),
+            ..
+        })
+    )
+}
+
+fn cache_tree_function_call_is_verified(call: &ExprCall) -> bool {
+    let syn::Expr::Path(function) = unwrap_expression(&call.func) else {
+        return false;
+    };
+    let segments = function
+        .path
+        .segments
+        .iter()
+        .map(|segment| segment.ident.to_string())
+        .collect::<Vec<_>>();
+    match segments.as_slice() {
+        [ok] if ok == "Ok" => {
+            let Some(argument) = call.args.first() else {
+                return false;
+            };
+            let syn::Expr::Tuple(tuple) = unwrap_expression(argument) else {
+                return false;
+            };
+            call.args.len() == 1
+                && tuple.elems.len() == 2
+                && tuple.elems.first().is_some_and(|path| {
+                    cache_tree_method_call(path, "clone").is_some_and(|clone| {
+                        clone.args.is_empty() && cache_tree_is_binding(&clone.receiver, "path")
+                    })
+                })
+                && tuple.elems.get(1).is_some_and(|tree| {
+                    cache_tree_method_call(tree, "clone").is_some_and(|clone| {
+                        clone.args.is_empty() && cache_tree_is_expect_lookup(&clone.receiver)
+                    })
+                })
+        }
+        [error, at] if error == "EditError" && at == "at" => {
+            call.args.len() == 2
+                && call
+                    .args
+                    .first()
+                    .is_some_and(|op| cache_tree_is_binding(op, "op"))
+                && call.args.get(1).is_some_and(|message| {
+                    matches!(
+                        unwrap_expression(message),
+                        syn::Expr::Macro(expression)
+                            if {
+                                let name = macro_path(&expression.mac);
+                                (name == "format" || name.ends_with("::format"))
+                                    && syn::parse2::<syn::LitStr>(
+                                        expression.mac.tokens.clone()
+                                    ).is_ok()
+                            }
+                    )
+                })
+        }
+        _ => false,
+    }
 }
 
 fn cache_tree_tail_reads_touched_islands(block: &syn::Block) -> bool {

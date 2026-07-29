@@ -365,6 +365,11 @@ fn real_syntax_tree_authority_signatures_and_builders_are_rejected() {
                 fn parse_into(&mut self, raw: &str) {
                     self.tree = external_factory(raw);
                 }
+
+                fn parse_alias(&mut self, raw: &str) {
+                    let slot = &mut self.tree;
+                    *slot = external_factory(raw);
+                }
             }
 
             struct TreeSlots {
@@ -395,16 +400,35 @@ fn real_syntax_tree_authority_signatures_and_builders_are_rejected() {
         (
             "crates/waml/src/uml/lower.rs",
             r#"
-            struct UmlLoweringState;
+            trait Reparse {
+                fn reparse(&mut self, raw: &str);
+            }
+
+            struct UmlLoweringState {
+                touched_islands: BTreeMap<BundlePath, Arc<SyntaxTree<UmlLanguage>>>,
+            }
             impl UmlLoweringState {
                 fn tree(
                     &mut self,
                     candidate: &SourceBundle,
                     target: &str,
                     op: &str,
+                    parser: &mut dyn Reparse,
                 ) -> Result<(BundlePath, Arc<SyntaxTree<UmlLanguage>>), EditError> {
-                    let _ = (candidate, op);
-                    Ok((BundlePath::default(), external_factory(target)))
+                    let path = self
+                        .path(target)
+                        .cloned()
+                        .ok_or_else(|| EditError::at(op, format!("missing '{target}'")))?;
+                    if !self.touched_islands.contains_key(&path) {
+                        parser.reparse(target);
+                    }
+                    Ok((
+                        path.clone(),
+                        self.touched_islands
+                            .get(&path)
+                            .expect("cached tree")
+                            .clone(),
+                    ))
                 }
             }
 
@@ -438,6 +462,7 @@ fn real_syntax_tree_authority_signatures_and_builders_are_rejected() {
         "cast_local",
         "cached_tree_near_match",
         "parse_into",
+        "parse_alias",
         "parse_indexed",
         "parse_dereferenced",
         "trait_entry",
