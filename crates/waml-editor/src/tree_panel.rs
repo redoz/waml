@@ -548,6 +548,7 @@ fn reconcile_open_directories(
     addresses: &HashSet<String>,
     planned_open: &HashSet<String>,
     reset: bool,
+    seed_planned: bool,
 ) -> HashSet<String> {
     if reset {
         return planned_open.intersection(addresses).cloned().collect();
@@ -557,6 +558,10 @@ fn reconcile_open_directories(
         .intersection(addresses)
         .cloned()
         .collect::<HashSet<_>>();
+    if seed_planned {
+        open.extend(planned_open.intersection(addresses).cloned());
+        return open;
+    }
     for address in addresses.difference(previous_addresses) {
         if planned_open.contains(address) {
             open.insert(address.clone());
@@ -1076,12 +1081,15 @@ impl ProjectTree {
         let planned_open = folders_to_open(tag, &tree)
             .into_iter()
             .collect::<HashSet<_>>();
+        let entering_search = matches!(tag, NavStateTag::Results | NavStateTag::Elsewhere)
+            && !matches!(self.nav_tag, NavStateTag::Results | NavStateTag::Elsewhere);
         let open_directories = reconcile_open_directories(
             &self.directory_addresses,
             &self.open_directories,
             &directory_addresses,
             &planned_open,
             reset_folds,
+            entering_search,
         );
         let file_tree = self.view.file_tree(cx, ids!(file_tree));
         // Open package folders so the panel isn't collapsed. Browse expands only
@@ -1307,6 +1315,27 @@ mod tests {
         drop(file_tree);
         cx_2d.end_turtle();
         is_open
+    }
+
+    fn nested_search_tree() -> ProjectTreeData {
+        ProjectTreeData {
+            roots: vec![node(
+                "/sales",
+                "Sales",
+                TreeKind::Directory,
+                vec![node(
+                    "/sales/archive",
+                    "Archive",
+                    TreeKind::Directory,
+                    vec![node(
+                        "/sales/archive/order",
+                        "Order",
+                        TreeKind::Class,
+                        vec![],
+                    )],
+                )],
+            )],
+        }
     }
 
     #[test]
@@ -1630,6 +1659,69 @@ mod tests {
             &file_tree,
             "/sales/archive"
         ));
+    }
+
+    #[test]
+    fn entering_results_or_elsewhere_from_browse_reopens_every_planned_ancestor() {
+        for search_tag in [NavStateTag::Results, NavStateTag::Elsewhere] {
+            let (mut cx, mut panel, file_tree) = mounted_project_tree_test_context();
+            panel.set_view(&mut cx, NavView::Browse(nested_search_tree()));
+            assert!(panel.toggle_directory(&mut cx, "/sales/archive"));
+            assert!(panel.toggle_directory(&mut cx, "/sales/archive"));
+            assert_eq!(panel.open_directories, HashSet::from(["/sales".to_owned()]));
+            assert!(!file_tree_folder_is_open(
+                &mut cx,
+                &file_tree,
+                "/sales/archive"
+            ));
+
+            let search_view = match search_tag {
+                NavStateTag::Results => NavView::Results(nested_search_tree()),
+                NavStateTag::Elsewhere => NavView::Elsewhere(nested_search_tree()),
+                _ => unreachable!(),
+            };
+            panel.set_view(&mut cx, search_view);
+
+            assert_eq!(
+                panel.open_directories,
+                HashSet::from(["/sales".to_owned(), "/sales/archive".to_owned()])
+            );
+            assert!(file_tree_folder_is_open(&mut cx, &file_tree, "/sales"));
+            assert!(file_tree_folder_is_open(
+                &mut cx,
+                &file_tree,
+                "/sales/archive"
+            ));
+        }
+    }
+
+    #[test]
+    fn same_search_presentation_refresh_preserves_subsequent_user_fold_state() {
+        for search_tag in [NavStateTag::Results, NavStateTag::Elsewhere] {
+            let (mut cx, mut panel, file_tree) = mounted_project_tree_test_context();
+            let initial_view = match search_tag {
+                NavStateTag::Results => NavView::Results(nested_search_tree()),
+                NavStateTag::Elsewhere => NavView::Elsewhere(nested_search_tree()),
+                _ => unreachable!(),
+            };
+            panel.set_view_with_fold_reset(&mut cx, initial_view, true);
+            assert!(panel.toggle_directory(&mut cx, "/sales/archive"));
+
+            let refreshed_view = match search_tag {
+                NavStateTag::Results => NavView::Results(nested_search_tree()),
+                NavStateTag::Elsewhere => NavView::Elsewhere(nested_search_tree()),
+                _ => unreachable!(),
+            };
+            panel.set_view(&mut cx, refreshed_view);
+
+            assert_eq!(panel.open_directories, HashSet::from(["/sales".to_owned()]));
+            assert!(file_tree_folder_is_open(&mut cx, &file_tree, "/sales"));
+            assert!(!file_tree_folder_is_open(
+                &mut cx,
+                &file_tree,
+                "/sales/archive"
+            ));
+        }
     }
 
     #[test]
