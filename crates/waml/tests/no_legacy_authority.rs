@@ -137,7 +137,7 @@ fn retired_legacy_files_and_public_surface_are_absent() {
 }
 
 #[test]
-fn only_waml_directly_depends_on_waml_syntax() {
+fn only_waml_non_dev_depends_on_waml_syntax() {
     let output = Command::new(env!("CARGO"))
         .args(["metadata", "--format-version", "1", "--no-deps"])
         .current_dir(workspace_root())
@@ -173,7 +173,7 @@ fn only_waml_directly_depends_on_waml_syntax() {
                     dependency["name"].as_str() == Some("waml-syntax")
                         && matches!(
                             dependency["kind"].as_str(),
-                            None | Some("dev") | Some("build")
+                            None | Some("build")
                         )
                 })
         })
@@ -188,7 +188,7 @@ fn only_waml_directly_depends_on_waml_syntax() {
     assert_eq!(
         direct_users,
         BTreeSet::from(["waml".to_owned()]),
-        "workspace packages with a direct waml-syntax dependency changed"
+        "workspace packages with a direct non-dev waml-syntax dependency changed"
     );
 }
 
