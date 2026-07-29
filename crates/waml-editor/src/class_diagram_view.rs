@@ -188,6 +188,7 @@ impl ClassDiagramView {
         }
         if close {
             self.mode.deactivate();
+            outcome.break_merge_group = true;
         }
         outcome
     }
@@ -1197,6 +1198,85 @@ mod tests {
     }
 
     #[test]
+    fn properties_close_separates_aged_production_typing_sessions() {
+        let mut view = ClassDiagramView::new("orders".into());
+        let location = crate::view_history::ViewLocation {
+            document: crate::view_history::DocumentLocator::primary("orders"),
+            anchor: ViewAnchor::None,
+        };
+        let mut history = crate::editor_history::EditorHistory::default();
+
+        let baseline = view
+            .properties_actions_outcome([DiagramPropertiesAction::DescriptionChanged(Some(
+                "Baseline".into(),
+            ))])
+            .edit
+            .unwrap();
+        history.record_edit(
+            baseline.edit,
+            baseline.label,
+            None,
+            location.clone(),
+            location.clone(),
+        );
+
+        let before_close = view
+            .properties_actions_outcome([DiagramPropertiesAction::DescriptionChanged(Some(
+                "First session".into(),
+            ))])
+            .edit
+            .unwrap();
+        history.record_edit(
+            before_close.edit,
+            before_close.label,
+            before_close.merge_key,
+            location.clone(),
+            location.clone(),
+        );
+
+        let close = view.properties_actions_outcome([DiagramPropertiesAction::Close]);
+        assert!(close.break_merge_group);
+        history.break_merge_group();
+        view.mode = ClassDiagramMode::Properties;
+
+        let after_reopen = view
+            .properties_actions_outcome([DiagramPropertiesAction::DescriptionChanged(Some(
+                "Second session".into(),
+            ))])
+            .edit
+            .unwrap();
+        history.record_edit(
+            after_reopen.edit,
+            after_reopen.label,
+            after_reopen.merge_key,
+            location.clone(),
+            location.clone(),
+        );
+
+        for index in 0..(crate::editor_history::ATOMIC_TAIL + 1) {
+            let intent = view
+                .properties_actions_outcome([DiagramPropertiesAction::DescriptionChanged(Some(
+                    format!("Unmergeable {index}"),
+                ))])
+                .edit
+                .unwrap();
+            history.record_edit(
+                intent.edit,
+                intent.label,
+                None,
+                location.clone(),
+                location.clone(),
+            );
+        }
+
+        assert_eq!(
+            history.undo_len(),
+            crate::editor_history::ATOMIC_TAIL + 4,
+            "typing on opposite sides of close/reopen remains distinct after aging",
+        );
+    }
+
+    #[test]
     fn model_change_selects_the_camera_preserving_refresh() {
         assert_eq!(
             refresh_for(crate::editor_session::SessionChange {
@@ -1245,6 +1325,7 @@ mod tests {
             DiagramPropertiesAction::Close,
             DiagramPropertiesAction::DisplayChanged(display.clone()),
         ]);
+        assert!(outcome.break_merge_group);
         assert!(outcome.edit.as_ref().unwrap().merge_key.is_none());
 
         let text = apply_outcome(outcome);

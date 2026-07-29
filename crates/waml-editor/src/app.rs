@@ -2626,6 +2626,7 @@ impl AppMain for App {
         // to the canvas, including while one of the property fields has focus.
         if matches!(event, Event::KeyDown(ke) if ke.key_code == KeyCode::Escape) {
             self.documents.on_active_escape(cx, &self.ui);
+            self.session.break_edit_merge_group();
         }
 
         // Debounced save: the document has sat unchanged for a beat, so persist
