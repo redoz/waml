@@ -73,16 +73,36 @@ instruction; every lever they turn was already pinned by decisions 1–7.
 ```rust
 pub struct FlowConfig { /* row gap, lane padding, glyph metrics, min sizes */ }
 
+/// Off-page connector stub for a cross-document edge (§2.1).
+pub struct OffPageStub {
+    pub edge_key: String,
+    pub points: Vec<(f64, f64)>,
+    pub target_title: String,
+}
+
+pub struct FlowSolution {
+    pub solved: Solved,
+    pub diagnostics: Vec<Diagnostic>,
+    /// Edge keys reversed for ranking; the renderer still draws the arrowhead at
+    /// the TRUE target (§2.3).
+    pub reversed: std::collections::BTreeSet<String>,
+    pub off_page: Vec<OffPageStub>,
+}
+
 pub fn solve_flow(
     doc: &FlowDoc,
     nodes: &[ActivityNode],
     edges: &[FlowEdge],
     sizes: &SizeMap,
     cfg: &FlowConfig,
-) -> (Solved, Vec<Diagnostic>);
+) -> FlowSolution;
 ```
 
-Reuses the existing `Solved` (`solve/mod.rs:74`) verbatim: `nodes` maps flow-node pool key
+One entry point, not two. `Solved` alone cannot carry the reversed-edge set or the off-page
+stubs that the renderer needs, and a bare `(Solved, Vec<Diagnostic>)` tuple would force a
+second parallel entry point for the same computation.
+
+The `solved` field reuses the existing `Solved` (`solve/mod.rs:74`) verbatim: `nodes` maps flow-node pool key
 → `Rect`, `groups` carries partition lane bands as `SolvedGroup`, `routes` carries
 orthogonal flow-edge polylines.
 
