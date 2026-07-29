@@ -1276,10 +1276,24 @@ fn loop_flow(body: &syn::Block, label: Option<String>, can_skip: bool) -> BTreeS
 
 fn expression_flow(expression: &syn::Expr) -> BTreeSet<FlowOutcome> {
     match unwrap_expression(expression) {
-        syn::Expr::Return(_) => [FlowOutcome::Return].into_iter().collect(),
-        syn::Expr::Break(expression) => [FlowOutcome::Break(label_name(&expression.label))]
-            .into_iter()
-            .collect(),
+        syn::Expr::Return(expression) => sequence_flow(
+            expression
+                .expr
+                .as_deref()
+                .map(expression_flow)
+                .unwrap_or_else(fallthrough_flow),
+            [FlowOutcome::Return].into_iter().collect(),
+        ),
+        syn::Expr::Break(expression) => sequence_flow(
+            expression
+                .expr
+                .as_deref()
+                .map(expression_flow)
+                .unwrap_or_else(fallthrough_flow),
+            [FlowOutcome::Break(label_name(&expression.label))]
+                .into_iter()
+                .collect(),
+        ),
         syn::Expr::Continue(expression) => [FlowOutcome::Continue(label_name(&expression.label))]
             .into_iter()
             .collect(),
@@ -3060,7 +3074,7 @@ struct ReturnTaintFacts<'env> {
     unresolved_model_dispatch: bool,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Eq, PartialEq)]
 struct TaintEnvironment {
     receiver_types: BTreeMap<String, TypeIdentity>,
     callable_paths: BTreeMap<String, Vec<String>>,
@@ -3791,26 +3805,47 @@ impl<'ast> Visit<'ast> for ReturnTaintFacts<'_> {
         if let Some(label) = &expression.label {
             self.visit_label(label);
         }
-        self.break_origins.push(BreakOriginState {
-            kind: BreakTargetKind::Loop,
-            label,
-            binding_scope_depth: self.binding_scopes.len(),
-            origins: Vec::new(),
-            environments: Vec::new(),
-            continue_environments: Vec::new(),
-        });
         let entry_environment = self.snapshot_environment();
-        self.visit_scoped_block(&expression.body);
-        let breaks = self
-            .break_origins
-            .pop()
-            .expect("loop break origin is balanced");
-        if breaks.environments.is_empty() {
+        let mut carried_environment = entry_environment.clone();
+        let mut break_environments = Vec::new();
+        let mut break_origins = Vec::new();
+        loop {
+            self.restore_environment(carried_environment.clone());
+            self.break_origins.push(BreakOriginState {
+                kind: BreakTargetKind::Loop,
+                label: label.clone(),
+                binding_scope_depth: self.binding_scopes.len(),
+                origins: Vec::new(),
+                environments: Vec::new(),
+                continue_environments: Vec::new(),
+            });
+            self.visit_scoped_block(&expression.body);
+            let fallthrough_environment = self.snapshot_environment();
+            let target = self
+                .break_origins
+                .pop()
+                .expect("loop break origin is balanced");
+            break_environments.extend(target.environments);
+            break_origins.extend(target.origins);
+
+            let mut next_environments =
+                vec![entry_environment.clone(), carried_environment.clone()];
+            if block_may_fall_through(&expression.body) {
+                next_environments.push(fallthrough_environment);
+            }
+            next_environments.extend(target.continue_environments);
+            let next_environment = Self::join_environments(next_environments);
+            if next_environment == carried_environment {
+                break;
+            }
+            carried_environment = next_environment;
+        }
+        if break_environments.is_empty() {
             self.restore_environment(entry_environment);
         } else {
-            self.restore_environment(Self::join_environments(breaks.environments));
+            self.restore_environment(Self::join_environments(break_environments));
         }
-        self.cache_expression_origin(expression, merge_origins(breaks.origins));
+        self.cache_expression_origin(expression, merge_origins(break_origins));
     }
 
     fn visit_expr_break(&mut self, expression: &'ast syn::ExprBreak) {

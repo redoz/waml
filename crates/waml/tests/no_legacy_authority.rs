@@ -1399,6 +1399,35 @@ fn call_edges_propagate_reparse_through_resolved_and_unresolved_dispatch() {
             callable(rendered)
         }
 
+        fn loop_carried_pointer(model: &Model, callable: Parser) -> Analysis {
+            let mut rendered = String::new();
+            let mut first = true;
+            callable(loop {
+                if first {
+                    first = false;
+                    rendered = model.to_string();
+                    continue;
+                }
+                break rendered;
+            })
+        }
+
+        fn control_operand_break_pointer(
+            model: &Model,
+            callable: Parser,
+            choose: bool,
+        ) -> Analysis {
+            let mut rendered = model.to_string();
+            if choose {
+                'skip: {
+                    return { break 'skip; };
+                }
+            } else {
+                rendered = String::new();
+            }
+            callable(rendered)
+        }
+
         fn nested_loop_target_control(
             model: &Model,
             callable: Parser,
@@ -1549,6 +1578,8 @@ fn call_edges_propagate_reparse_through_resolved_and_unresolved_dispatch() {
         "for_continue_pointer",
         "labeled_block_break_pointer",
         "match_guard_pointer",
+        "control_operand_break_pointer",
+        "loop_carried_pointer",
     ] {
         assert!(
             violations.iter().any(|reason| {
