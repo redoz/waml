@@ -83,3 +83,51 @@ fn diagram_display_uses_legacy_attribute_fields_when_newer_fields_are_absent() {
     assert_eq!(display.show_attribute_multiplicity, Some(false));
     assert_eq!(display.show_cardinality, None);
 }
+
+#[test]
+fn diagram_display_preserves_absent_empty_and_zero_frontmatter_states() {
+    let source = SourceBundle::try_from_pairs([
+        (
+            "absent.md",
+            "---\n\
+             type: Diagram\n\
+             title: Absent\n\
+             profile: uml-domain\n\
+             ---\n\
+             # Absent\n",
+        ),
+        (
+            "empty.md",
+            "---\n\
+             type: Diagram\n\
+             title: Empty\n\
+             profile: uml-domain\n\
+             stereotypeFilter: []\n\
+             maxAttributes: 0\n\
+             ---\n\
+             # Empty\n",
+        ),
+    ])
+    .unwrap();
+
+    let projection = prepare_candidate(source, None, 0)
+        .unwrap()
+        .uml()
+        .projection
+        .clone();
+    let absent = projection
+        .diagrams
+        .iter()
+        .find(|diagram| diagram.key == "absent")
+        .unwrap();
+    let empty = projection
+        .diagrams
+        .iter()
+        .find(|diagram| diagram.key == "empty")
+        .unwrap();
+
+    assert_eq!(absent.display.stereotype_filter, None);
+    assert_eq!(absent.display.max_attributes, None);
+    assert_eq!(empty.display.stereotype_filter, Some(vec![]));
+    assert_eq!(empty.display.max_attributes, None);
+}

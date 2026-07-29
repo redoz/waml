@@ -673,9 +673,18 @@ fn scalar(value: &str) -> String {
         || value.starts_with('"')
         || value.contains('"')
         || value.contains('\\')
-        || value.contains('\n');
+        || value.contains('\n')
+        || value.contains('\r');
     if needs_quote {
-        format!("\"{}\"", value.replace('\\', "\\\\").replace('"', "\\\""))
+        format!(
+            "\"{}\"",
+            value
+                .replace("\r\n", "\n")
+                .replace('\r', "\n")
+                .replace('\\', "\\\\")
+                .replace('"', "\\\"")
+                .replace('\n', "\\n")
+        )
     } else {
         value.to_owned()
     }
@@ -1394,14 +1403,6 @@ pub(crate) fn op_diagram_set(
     clear_description: bool,
     display: &Option<DiagramDisplaySet>,
 ) -> Result<(), EditError> {
-    if description
-        .as_deref()
-        .is_some_and(|value| value.contains('\n') || value.contains('\r'))
-    {
-        return Err(
-            EditError::at("diagram.set", "description must be one line").with_sel(key.to_owned())
-        );
-    }
     let (path, _) = state.tree(work, key, "diagram.set")?;
     let mut source = work
         .document(&path)

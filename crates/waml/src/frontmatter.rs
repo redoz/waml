@@ -396,11 +396,8 @@ mod tests {
         let rendered = render_frontmatter(&fm);
 
         assert_eq!(rendered, r#"description: "First\nSecond\nThird\nFourth""#);
-        let (parsed, _) = parse_frontmatter(&format!("---\n{rendered}\n---\n"));
-        assert_eq!(
-            parsed.get_str("description"),
-            Some("First\nSecond\nThird\nFourth")
-        );
+        let parsed = parse_value(rendered.strip_prefix("description: ").unwrap());
+        assert_eq!(parsed, FmValue::Str("First\nSecond\nThird\nFourth".into()));
     }
 
     #[test]
@@ -410,8 +407,8 @@ mod tests {
         };
 
         let rendered = render_frontmatter(&fm);
-        let (parsed, _) = parse_frontmatter(&format!("---\n{rendered}\n---\n"));
+        let parsed = parse_value(rendered.strip_prefix("description: ").unwrap());
 
-        assert_eq!(parsed, fm);
+        assert_eq!(parsed, fm.entries[0].1);
     }
 }
