@@ -397,10 +397,20 @@ fn compare_prior(current: &Observation, source: &str) -> Result<String, String> 
     Ok(comparison_report(current, &prior))
 }
 
-fn compare_if_present(prior: &Path, current: &Path) -> Result<String, String> {
+fn compare_if_present(
+    prior: &Path,
+    current: &Path,
+    expected_corpus_identity: &str,
+) -> Result<String, String> {
     let current_source = fs::read_to_string(current)
         .map_err(|error| format!("read current observation {}: {error}", current.display()))?;
     let current = Observation::parse(&current_source)?;
+    if current.corpus_identity != expected_corpus_identity {
+        return Err(format!(
+            "current corpus identity mismatch: method={expected_corpus_identity} current={}",
+            current.corpus_identity
+        ));
+    }
     let prior_source = match fs::read_to_string(prior) {
         Ok(source) => source,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
@@ -534,7 +544,10 @@ fn run() -> Result<(), String> {
             args.get(index + 2)
                 .ok_or_else(|| "missing --compare-if-present PRIOR CURRENT".to_string())?,
         );
-        println!("{}", compare_if_present(prior, current)?);
+        println!(
+            "{}",
+            compare_if_present(prior, current, &method.expected_corpus_identity)?
+        );
     } else if let Some(index) = args.iter().position(|arg| arg == "--compare") {
         let path = args
             .get(index + 1)
@@ -558,6 +571,8 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    const TEST_CORPUS_IDENTITY: &str = "0123456789abcdef";
 
     const METHOD: &str = include_str!(concat!(
         env!("CARGO_MANIFEST_DIR"),
@@ -671,7 +686,7 @@ mod tests {
         .unwrap();
 
         assert_eq!(
-            compare_if_present(&prior, &current).unwrap(),
+            compare_if_present(&prior, &current, TEST_CORPUS_IDENTITY).unwrap(),
             "LATENCY_SKIPPED_BASELINE_ABSENT"
         );
         fs::remove_file(current).unwrap();
@@ -694,7 +709,7 @@ mod tests {
         .unwrap();
 
         assert!(
-            compare_if_present(&prior, &current)
+            compare_if_present(&prior, &current, TEST_CORPUS_IDENTITY)
                 .unwrap()
                 .contains("LATENCY_REPORT_ONLY")
         );
@@ -721,7 +736,7 @@ mod tests {
         .unwrap();
 
         assert_eq!(
-            compare_if_present(&prior, &current).unwrap(),
+            compare_if_present(&prior, &current, TEST_CORPUS_IDENTITY).unwrap(),
             "LATENCY_SKIPPED_HARDWARE_MISMATCH"
         );
         fs::remove_file(prior).unwrap();
@@ -732,10 +747,14 @@ mod tests {
     fn parser_platform_baseline_compare_if_present_rejects_missing_or_malformed_evidence() {
         let prior = comparison_file("malformed-prior");
         let current = comparison_file("missing-current");
-        assert!(compare_if_present(&prior, &current).unwrap_err().contains("read current observation"));
+        assert!(compare_if_present(&prior, &current, TEST_CORPUS_IDENTITY)
+            .unwrap_err()
+            .contains("read current observation"));
 
         fs::write(&current, "not-json").unwrap();
-        assert!(compare_if_present(&prior, &current).unwrap_err().contains("invalid observation JSON"));
+        assert!(compare_if_present(&prior, &current, TEST_CORPUS_IDENTITY)
+            .unwrap_err()
+            .contains("invalid observation JSON"));
 
         fs::write(&prior, "not-json").unwrap();
         fs::write(
@@ -744,7 +763,53 @@ mod tests {
                 .json(),
         )
         .unwrap();
-        assert!(compare_if_present(&prior, &current).unwrap_err().contains("invalid observation JSON"));
+        assert!(compare_if_present(&prior, &current, TEST_CORPUS_IDENTITY)
+            .unwrap_err()
+            .contains("invalid observation JSON"));
+        fs::remove_file(prior).unwrap();
+        fs::remove_file(current).unwrap();
+    }
+
+    #[test]
+    fn parser_platform_baseline_compare_if_present_rejects_wrong_current_corpus_with_absent_prior() {
+        let prior = comparison_file("wrong-corpus-absent-prior");
+        let current = comparison_file("wrong-corpus-current");
+        let mut observation = Observation::test_sample(
+            Hardware::current().unwrap(),
+            120,
+            150,
+            10,
+            500,
+            1000,
+            20,
+        );
+        observation.corpus_identity = "fedcba9876543210".into();
+        fs::write(&current, observation.json()).unwrap();
+
+        assert!(compare_if_present(&prior, &current, TEST_CORPUS_IDENTITY)
+            .unwrap_err()
+            .contains("current corpus identity mismatch"));
+        fs::remove_file(current).unwrap();
+    }
+
+    #[test]
+    fn parser_platform_baseline_compare_if_present_rejects_wrong_current_corpus_with_present_prior() {
+        let prior = comparison_file("wrong-corpus-present-prior");
+        let current = comparison_file("wrong-corpus-present-current");
+        let hardware = Hardware::current().unwrap();
+        fs::write(
+            &prior,
+            Observation::test_sample(hardware.clone(), 100, 140, 8, 450, 900, 18).json(),
+        )
+        .unwrap();
+        let mut observation =
+            Observation::test_sample(hardware, 120, 150, 10, 500, 1000, 20);
+        observation.corpus_identity = "fedcba9876543210".into();
+        fs::write(&current, observation.json()).unwrap();
+
+        assert!(compare_if_present(&prior, &current, TEST_CORPUS_IDENTITY)
+            .unwrap_err()
+            .contains("current corpus identity mismatch"));
         fs::remove_file(prior).unwrap();
         fs::remove_file(current).unwrap();
     }
