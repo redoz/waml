@@ -183,11 +183,18 @@ impl EditorSession {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::Arc;
-    use waml::action::{ActionBasis, CodeAction, SyntaxChangeBatch};
+    use std::{num::NonZeroU64, sync::Arc};
+    use waml::action::{
+        ActionBasis, CodeAction, SyntaxChangeBatch, TextEdit, VersionedDocumentChange,
+    };
     use waml::analysis::AnalysisStage;
     use waml::layout::Direction;
+    use waml::source::BundlePath;
     use waml::uml::Op;
+    use waml_syntax::{
+        annotate_occurrence, find_annotation, GreenElement, GreenText, MarkdownDialect,
+        RewriteError, SyntaxAnnotation, SyntaxTree,
+    };
 
     fn source(pairs: Vec<(String, String)>) -> SourceBundle {
         SourceBundle::try_from_pairs(pairs).unwrap()
@@ -200,6 +207,223 @@ mod tests {
                 "---\ntype: Diagram\ntitle: D\nprofile: uml-domain\n---\n# D\n\n## Layout\n{layout}"
             ),
         )])
+    }
+
+    fn token_content_range<L: waml_syntax::SyntaxLanguage>(
+        token: &waml_syntax::SyntaxToken<L>,
+    ) -> waml_syntax::TextRange {
+        let zero = waml_syntax::TextSize::try_from(0usize).unwrap();
+        let leading = token
+            .leading_trivia()
+            .iter()
+            .try_fold(zero, |sum, trivia| {
+                let width = waml_syntax::TextSize::try_from(trivia.text.write_to_string().len())
+                    .unwrap();
+                sum.checked_add(width)
+            })
+            .unwrap();
+        let content =
+            waml_syntax::TextSize::try_from(token.text().write_to_string().len()).unwrap();
+        let trailing = token
+            .trailing_trivia()
+            .iter()
+            .try_fold(zero, |sum, trivia| {
+                let width = waml_syntax::TextSize::try_from(trivia.text.write_to_string().len())
+                    .unwrap();
+                sum.checked_add(width)
+            })
+            .unwrap();
+        let start = token.range().start().checked_add(leading).unwrap();
+        let end = start.checked_add(content).unwrap();
+        assert_eq!(
+            end.checked_add(trailing).unwrap(),
+            token.range().end(),
+            "content plus both trivia sides must cover the token",
+        );
+        waml_syntax::TextRange::new(start, end).unwrap()
+    }
+
+    fn unique_token_content_range<L: waml_syntax::SyntaxLanguage>(
+        tree: &waml_syntax::SyntaxTree<L>,
+        spelling: &str,
+    ) -> waml_syntax::TextRange {
+        fn visit<L: waml_syntax::SyntaxLanguage>(
+            node: &waml_syntax::SyntaxNode<L>,
+            spelling: &str,
+            matches: &mut Vec<waml_syntax::TextRange>,
+        ) {
+            for child in node.children() {
+                match child {
+                    waml_syntax::SyntaxElement::Node(node) => visit(&node, spelling, matches),
+                    waml_syntax::SyntaxElement::Token(token)
+                        if token.text().write_to_string() == spelling =>
+                    {
+                        matches.push(token_content_range(&token));
+                    }
+                    waml_syntax::SyntaxElement::Token(_) => {}
+                }
+            }
+        }
+
+        let mut matches = Vec::new();
+        visit(&tree.root(), spelling, &mut matches);
+        assert_eq!(matches.len(), 1, "test token spelling must be unique");
+        matches[0]
+    }
+
+    fn assert_all_source_slices_match(
+        element: &GreenElement<waml::uml::syntax::UmlLanguage>,
+        current: &waml_syntax::SourceText,
+    ) {
+        fn text_matches(text: &GreenText, current: &waml_syntax::SourceText) {
+            if let GreenText::SourceSlice { source, .. } = text {
+                assert!(Arc::ptr_eq(source.shared(), current.shared()));
+            }
+        }
+        match element {
+            GreenElement::Node(node) => node
+                .children()
+                .iter()
+                .for_each(|child| assert_all_source_slices_match(child, current)),
+            GreenElement::Token(token) => {
+                text_matches(token.text(), current);
+                token
+                    .leading_trivia()
+                    .iter()
+                    .for_each(|trivia| text_matches(&trivia.text, current));
+                token
+                    .trailing_trivia()
+                    .iter()
+                    .for_each(|trivia| text_matches(&trivia.text, current));
+            }
+        }
+    }
+
+    #[test]
+    fn repeated_atomic_edits_bound_sources_and_preserve_mapped_annotation() {
+        fn first_attribute(
+            node: waml_syntax::SyntaxNode<waml::uml::syntax::UmlLanguage>,
+        ) -> waml_syntax::SyntaxNode<waml::uml::syntax::UmlLanguage> {
+            fn find(
+                node: waml_syntax::SyntaxNode<waml::uml::syntax::UmlLanguage>,
+            ) -> Option<waml_syntax::SyntaxNode<waml::uml::syntax::UmlLanguage>> {
+                if node.kind() == waml::uml::syntax::UmlSyntaxKind::Attribute {
+                    return Some(node);
+                }
+                node.children()
+                    .find_map(|child| child.into_node().and_then(find))
+            }
+
+            find(node)
+                .expect("fixture must contain an attribute node")
+        }
+
+        let mut session = EditorSession::default();
+        session
+            .replace(source(vec![
+                (
+                    "class.md".into(),
+                    "---\ntype: uml.Class\n---\n# Class\n\n## Attributes\n- name: String\n\n## Layout\n-left of Class\n"
+                        .into(),
+                ),
+                ("notes.md".into(), "# Notes\nUntouched\n".into()),
+            ]))
+            .unwrap();
+        let document_id = session
+            .uml
+            .syntax
+            .catalog()
+            .id_for_path(&BundlePath::parse("class.md").unwrap())
+            .unwrap();
+        let old_tree = session.uml.syntax.document(document_id).unwrap().syntax();
+        let old_attribute = first_attribute(old_tree.root());
+        let old_locator = old_attribute.locator();
+        let annotation = SyntaxAnnotation::new(
+            NonZeroU64::new(22).unwrap(),
+            "selection",
+            None,
+        );
+        let annotation_id = annotation.id();
+        let annotated_tree = Arc::new(SyntaxTree::new(
+            annotate_occurrence(old_tree, &old_locator, annotation).unwrap(),
+            Arc::from(old_tree.diagnostics()),
+            MarkdownDialect::CommonMarkCurrent,
+        ));
+        let replacement_syntax =
+            waml::uml::analysis::test_support::syntax_with_replaced_tree(
+                &session.uml,
+                document_id,
+                annotated_tree.clone(),
+            )
+            .unwrap();
+        session.uml.syntax = replacement_syntax;
+        let baseline_current = session.source().clone();
+        let baseline_persisted = session.persisted_bundle().clone();
+
+        for iteration in 0..32 {
+            let snapshot = session.uml.syntax.document(document_id).unwrap();
+            let current_document = snapshot.document();
+            let authored = current_document.text().shared();
+            let (needle, replacement) = if authored.contains("left") {
+                ("left", "right")
+            } else {
+                ("right", "left")
+            };
+            let edit = TextEdit {
+                range: unique_token_content_range(snapshot.syntax(), needle),
+                replacement: Arc::from(replacement),
+            };
+            let action = CodeAction {
+                title: format!("toggle layout direction {iteration}"),
+                basis: ActionBasis::Document {
+                    document: document_id,
+                    document_revision: current_document.revision(),
+                    session_revision: session.revision(),
+                },
+                changes: Arc::from([VersionedDocumentChange {
+                    document: document_id,
+                    base_document_revision: current_document.revision(),
+                    edits: Arc::from([edit]),
+                }]),
+            };
+            let batch = SyntaxChangeBatch::new(action).unwrap();
+            session.apply(batch).unwrap();
+        }
+
+        assert!(session.is_dirty());
+        assert!(!session
+            .source()
+            .shares_text_with(session.persisted_bundle(), "class.md"));
+        assert!(session
+            .source()
+            .shares_text_with(session.persisted_bundle(), "notes.md"));
+        assert!(session.source().shares_text_with(&baseline_current, "notes.md"));
+        assert!(session
+            .persisted_bundle()
+            .shares_text_with(&baseline_persisted, "class.md"));
+
+        let final_snapshot = session.uml.syntax.document(document_id).unwrap();
+        let final_tree = final_snapshot.syntax();
+        let final_attribute = first_attribute(final_tree.root());
+        assert_eq!(find_annotation(final_tree, annotation_id).len(), 1);
+        assert!(matches!(
+            final_tree.resolve(&old_locator),
+            Err(RewriteError::WrongTree { .. })
+        ));
+        assert!(!old_attribute.same_green(&final_attribute));
+        assert_all_source_slices_match(
+            &GreenElement::Node(final_tree.root_green().clone()),
+            final_snapshot.document().text(),
+        );
+
+        session.mark_saved(session.revision());
+        assert!(!session.is_dirty());
+        assert!(session
+            .source()
+            .shares_text_with(session.persisted_bundle(), "class.md"));
+        assert!(session
+            .source()
+            .shares_text_with(session.persisted_bundle(), "notes.md"));
     }
 
     fn place_set() -> Op {

@@ -14,7 +14,8 @@ use std::{
     sync::Arc,
 };
 use waml_syntax::{
-    AstNode, MarkdownStructureMap, SyntaxElement, SyntaxNode, SyntaxToken, TextRange, TextSize,
+    AstNode, MarkdownStructureMap, SyntaxElement, SyntaxNode, SyntaxToken, SyntaxTree, TextRange,
+    TextSize,
 };
 pub struct Analysis {
     pub claims: ClaimSet,
@@ -24,6 +25,40 @@ pub struct Analysis {
     pub diagnostics: Arc<[Diagnostic]>,
     pub structures: Arc<BTreeMap<crate::analysis::DocumentId, Arc<MarkdownStructureMap>>>,
     session_revision: u64,
+}
+
+#[cfg(feature = "test-support")]
+#[doc(hidden)]
+pub mod test_support {
+    use super::*;
+
+    pub fn syntax_with_replaced_tree(
+        analysis: &Analysis,
+        document: crate::analysis::DocumentId,
+        syntax: Arc<SyntaxTree<UmlLanguage>>,
+    ) -> Result<SyntaxSet<UmlLanguage>, AnalysisError> {
+        let snapshot = analysis.syntax.document(document).ok_or_else(|| {
+            AnalysisError::Specialization {
+                name: "uml",
+                reason: "test UML syntax replacement document is missing".into(),
+            }
+        })?;
+        if syntax.write_to_string() != snapshot.document().text().shared().as_str() {
+            return Err(AnalysisError::Specialization {
+                name: "uml",
+                reason: "test UML syntax replacement does not match document text".into(),
+            });
+        }
+        let mut documents = analysis.syntax.documents().clone();
+        documents.insert(
+            document,
+            Arc::new(SyntaxSnapshot::new(snapshot.document().clone(), syntax)),
+        );
+        Ok(SyntaxSet::from_snapshots(
+            analysis.syntax.catalog().clone(),
+            documents,
+        ))
+    }
 }
 impl Analysis {
     pub fn session_revision(&self) -> u64 {
