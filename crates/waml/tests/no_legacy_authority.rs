@@ -508,6 +508,17 @@ fn real_syntax_tree_authority_signatures_and_builders_are_rejected() {
                     let _ = (slot, raw);
                 }
 
+                fn parse_initializer_updates_alias(&mut self, raw: &str) {
+                    let replacement = self.tree.clone();
+                    let slot;
+                    let alias = {
+                        slot = &mut self.tree;
+                        slot
+                    };
+                    *alias = replacement;
+                    let _ = raw;
+                }
+
                 fn parse_for_bound(&mut self, raw: &str) {
                     for slot in [&mut self.tree] {
                         *slot = external_factory(raw);
@@ -658,6 +669,7 @@ fn real_syntax_tree_authority_signatures_and_builders_are_rejected() {
         "parse_shadowed_alias",
         "parse_shadowed_initializer",
         "parse_let_else_shadow",
+        "parse_initializer_updates_alias",
         "parse_for_bound",
         "parse_match_bound",
         "parse_if_let_bound",

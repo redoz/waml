@@ -369,6 +369,12 @@ impl<'ast, 'env> Visit<'ast> for BodyFacts<'env> {
             _ => Vec::new(),
         };
         self.body_paths.extend(explicit_paths.iter().cloned());
+
+        // A Rust `let` binding is not in scope in its initializer or in the
+        // diverging branch of `let-else`; traverse both before deriving the
+        // initializer's evidence or shadowing any previous binding.
+        visit::visit_local(self, node);
+
         let explicit_type_uses = if explicit_paths.is_empty() {
             Vec::new()
         } else {
@@ -428,11 +434,6 @@ impl<'ast, 'env> Visit<'ast> for BodyFacts<'env> {
         } else {
             None
         };
-
-        // A Rust `let` binding is not in scope in its initializer or in the
-        // diverging branch of `let-else`; traverse both before shadowing any
-        // previous binding with the declaration.
-        visit::visit_local(self, node);
 
         for binding in &bindings {
             self.record_binding_declaration(binding);
