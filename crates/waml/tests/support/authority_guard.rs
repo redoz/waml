@@ -1188,34 +1188,219 @@ fn unwrap_expression(mut expression: &syn::Expr) -> &syn::Expr {
     }
 }
 
-fn block_unconditionally_returns(block: &syn::Block) -> bool {
-    block.stmts.iter().any(|statement| match statement {
-        syn::Stmt::Expr(expression, _) => expression_unconditionally_returns(expression),
-        _ => false,
-    })
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+enum FlowOutcome {
+    Fallthrough,
+    Return,
+    Break(Option<String>),
+    Continue(Option<String>),
+    Diverge,
 }
 
-fn expression_unconditionally_returns(expression: &syn::Expr) -> bool {
+fn fallthrough_flow() -> BTreeSet<FlowOutcome> {
+    [FlowOutcome::Fallthrough].into_iter().collect()
+}
+
+fn sequence_flow(
+    first: BTreeSet<FlowOutcome>,
+    second: BTreeSet<FlowOutcome>,
+) -> BTreeSet<FlowOutcome> {
+    let mut outcomes = first
+        .iter()
+        .filter(|outcome| **outcome != FlowOutcome::Fallthrough)
+        .cloned()
+        .collect::<BTreeSet<_>>();
+    if first.contains(&FlowOutcome::Fallthrough) {
+        outcomes.extend(second);
+    }
+    outcomes
+}
+
+fn sequence_expression_flow<'a>(
+    expressions: impl IntoIterator<Item = &'a syn::Expr>,
+) -> BTreeSet<FlowOutcome> {
+    expressions
+        .into_iter()
+        .fold(fallthrough_flow(), |flow, expression| {
+            sequence_flow(flow, expression_flow(expression))
+        })
+}
+
+fn block_flow(block: &syn::Block) -> BTreeSet<FlowOutcome> {
+    block
+        .stmts
+        .iter()
+        .fold(fallthrough_flow(), |flow, statement| {
+            let statement_flow = match statement {
+                syn::Stmt::Expr(expression, _) => expression_flow(expression),
+                _ => fallthrough_flow(),
+            };
+            sequence_flow(flow, statement_flow)
+        })
+}
+
+fn label_name(label: &Option<syn::Lifetime>) -> Option<String> {
+    label.as_ref().map(|label| label.ident.to_string())
+}
+
+fn loop_flow(body: &syn::Block, label: Option<String>, can_skip: bool) -> BTreeSet<FlowOutcome> {
+    let mut outcomes = can_skip
+        .then(fallthrough_flow)
+        .unwrap_or_else(BTreeSet::new);
+    for outcome in block_flow(body) {
+        match outcome {
+            FlowOutcome::Break(target) if target.is_none() || target == label => {
+                outcomes.insert(FlowOutcome::Fallthrough);
+            }
+            FlowOutcome::Continue(target) if target.is_none() || target == label => {
+                outcomes.insert(if can_skip {
+                    FlowOutcome::Fallthrough
+                } else {
+                    FlowOutcome::Diverge
+                });
+            }
+            FlowOutcome::Fallthrough => {
+                outcomes.insert(if can_skip {
+                    FlowOutcome::Fallthrough
+                } else {
+                    FlowOutcome::Diverge
+                });
+            }
+            outcome => {
+                outcomes.insert(outcome);
+            }
+        }
+    }
+    outcomes
+}
+
+fn expression_flow(expression: &syn::Expr) -> BTreeSet<FlowOutcome> {
     match unwrap_expression(expression) {
-        syn::Expr::Return(_) => true,
-        syn::Expr::Block(expression) => block_unconditionally_returns(&expression.block),
-        syn::Expr::Unsafe(expression) => block_unconditionally_returns(&expression.block),
-        syn::Expr::Const(expression) => block_unconditionally_returns(&expression.block),
-        syn::Expr::TryBlock(expression) => block_unconditionally_returns(&expression.block),
+        syn::Expr::Return(_) => [FlowOutcome::Return].into_iter().collect(),
+        syn::Expr::Break(expression) => [FlowOutcome::Break(label_name(&expression.label))]
+            .into_iter()
+            .collect(),
+        syn::Expr::Continue(expression) => [FlowOutcome::Continue(label_name(&expression.label))]
+            .into_iter()
+            .collect(),
+        syn::Expr::Block(expression) => {
+            let flow = block_flow(&expression.block);
+            let Some(label) = &expression.label else {
+                return flow;
+            };
+            let label = label.name.ident.to_string();
+            flow.into_iter()
+                .map(|outcome| match outcome {
+                    FlowOutcome::Break(Some(target)) if target == label => FlowOutcome::Fallthrough,
+                    outcome => outcome,
+                })
+                .collect()
+        }
+        syn::Expr::Unsafe(expression) => block_flow(&expression.block),
+        syn::Expr::Const(expression) => block_flow(&expression.block),
+        syn::Expr::TryBlock(expression) => block_flow(&expression.block),
         syn::Expr::If(expression) => {
-            block_unconditionally_returns(&expression.then_branch)
-                && expression
+            let mut branches = block_flow(&expression.then_branch);
+            branches.extend(
+                expression
                     .else_branch
                     .as_ref()
-                    .is_some_and(|(_, alternative)| expression_unconditionally_returns(alternative))
+                    .map(|(_, alternative)| expression_flow(alternative))
+                    .unwrap_or_else(fallthrough_flow),
+            );
+            sequence_flow(expression_flow(&expression.cond), branches)
         }
         syn::Expr::Match(expression) => {
-            !expression.arms.is_empty()
-                && expression
-                    .arms
-                    .iter()
-                    .all(|arm| expression_unconditionally_returns(&arm.body))
+            let mut arms = BTreeSet::new();
+            for arm in &expression.arms {
+                arms.extend(expression_flow(&arm.body));
+            }
+            sequence_flow(expression_flow(&expression.expr), arms)
         }
+        syn::Expr::Loop(expression) => loop_flow(
+            &expression.body,
+            expression
+                .label
+                .as_ref()
+                .map(|label| label.name.ident.to_string()),
+            false,
+        ),
+        syn::Expr::While(expression) => loop_flow(
+            &expression.body,
+            expression
+                .label
+                .as_ref()
+                .map(|label| label.name.ident.to_string()),
+            true,
+        ),
+        syn::Expr::ForLoop(expression) => loop_flow(
+            &expression.body,
+            expression
+                .label
+                .as_ref()
+                .map(|label| label.name.ident.to_string()),
+            true,
+        ),
+        syn::Expr::Binary(expression) => {
+            let mut flow = sequence_flow(
+                expression_flow(&expression.left),
+                expression_flow(&expression.right),
+            );
+            if matches!(&expression.op, syn::BinOp::And(_) | syn::BinOp::Or(_)) {
+                flow.insert(FlowOutcome::Fallthrough);
+            }
+            flow
+        }
+        syn::Expr::Array(expression) => sequence_expression_flow(&expression.elems),
+        syn::Expr::Tuple(expression) => sequence_expression_flow(&expression.elems),
+        syn::Expr::Struct(expression) => sequence_expression_flow(
+            expression
+                .fields
+                .iter()
+                .map(|field| &field.expr)
+                .chain(expression.rest.as_deref()),
+        ),
+        syn::Expr::Call(expression) => sequence_expression_flow(
+            std::iter::once(&*expression.func).chain(expression.args.iter()),
+        ),
+        syn::Expr::MethodCall(expression) => sequence_expression_flow(
+            std::iter::once(&*expression.receiver).chain(expression.args.iter()),
+        ),
+        syn::Expr::Index(expression) => {
+            sequence_expression_flow([&*expression.expr, &*expression.index])
+        }
+        syn::Expr::Repeat(expression) => {
+            sequence_expression_flow([&*expression.expr, &*expression.len])
+        }
+        syn::Expr::Assign(expression) => {
+            sequence_expression_flow([&*expression.left, &*expression.right])
+        }
+        syn::Expr::Field(expression) => expression_flow(&expression.base),
+        syn::Expr::Await(expression) => expression_flow(&expression.base),
+        syn::Expr::Try(expression) => expression_flow(&expression.expr),
+        syn::Expr::Unary(expression) => expression_flow(&expression.expr),
+        syn::Expr::Async(_) | syn::Expr::Closure(_) => fallthrough_flow(),
+        _ => fallthrough_flow(),
+    }
+}
+
+fn block_may_fall_through(block: &syn::Block) -> bool {
+    block_flow(block).contains(&FlowOutcome::Fallthrough)
+}
+
+fn expression_may_fall_through(expression: &syn::Expr) -> bool {
+    expression_flow(expression).contains(&FlowOutcome::Fallthrough)
+}
+
+fn pattern_is_obviously_irrefutable(pattern: &syn::Pat) -> bool {
+    match pattern {
+        syn::Pat::Wild(_) => true,
+        syn::Pat::Ident(pattern) => pattern.subpat.is_none(),
+        syn::Pat::Type(pattern) => pattern_is_obviously_irrefutable(&pattern.pat),
+        syn::Pat::Reference(pattern) => pattern_is_obviously_irrefutable(&pattern.pat),
+        syn::Pat::Paren(pattern) => pattern_is_obviously_irrefutable(&pattern.pat),
+        syn::Pat::Tuple(pattern) => pattern.elems.iter().all(pattern_is_obviously_irrefutable),
+        syn::Pat::Or(pattern) => pattern.cases.iter().any(pattern_is_obviously_irrefutable),
         _ => false,
     }
 }
@@ -2895,7 +3080,15 @@ struct TaintBindingState {
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum BreakTargetKind {
     Loop,
+    While,
+    For,
     Block,
+}
+
+impl BreakTargetKind {
+    fn is_loop(self) -> bool {
+        matches!(self, Self::Loop | Self::While | Self::For)
+    }
 }
 
 struct BreakOriginState {
@@ -2904,6 +3097,7 @@ struct BreakOriginState {
     binding_scope_depth: usize,
     origins: Vec<ValueOrigin>,
     environments: Vec<TaintEnvironment>,
+    continue_environments: Vec<TaintEnvironment>,
 }
 
 impl<'env> ReturnTaintFacts<'env> {
@@ -2988,7 +3182,14 @@ impl<'env> ReturnTaintFacts<'env> {
     }
 
     fn snapshot_environment_at_scope_depth(&self, scope_depth: usize) -> TaintEnvironment {
-        let mut environment = self.snapshot_environment();
+        self.environment_at_scope_depth(self.snapshot_environment(), scope_depth)
+    }
+
+    fn environment_at_scope_depth(
+        &self,
+        mut environment: TaintEnvironment,
+        scope_depth: usize,
+    ) -> TaintEnvironment {
         for scope in self.binding_scopes[scope_depth..].iter().rev() {
             for (binding, state) in scope {
                 match &state.receiver_type {
@@ -3179,10 +3380,20 @@ impl<'env> ReturnTaintFacts<'env> {
     }
 
     fn bind_pattern_from_expression(&mut self, pattern: &syn::Pat, expression: &syn::Expr) {
-        let bindings = pattern_binding_names(pattern);
         let identity = self.expression_type_identity(expression);
         let origin = self.expression_origin(expression);
         let callable_origin = self.callable_result_origin(expression);
+        self.bind_pattern_with_evidence(pattern, identity, origin, callable_origin);
+    }
+
+    fn bind_pattern_with_evidence(
+        &mut self,
+        pattern: &syn::Pat,
+        identity: Option<TypeIdentity>,
+        origin: ValueOrigin,
+        callable_origin: ValueOrigin,
+    ) {
+        let bindings = pattern_binding_names(pattern);
         for binding in bindings {
             self.record_binding_declaration(&binding);
             self.bindings.insert(binding.clone());
@@ -3417,7 +3628,7 @@ impl<'ast> Visit<'ast> for ReturnTaintFacts<'_> {
         self.visit_expr(&expression.right);
         let right_origin = self.expression_origin(&expression.right);
         if let Some(skipped_right_environment) = skipped_right_environment {
-            if expression_unconditionally_returns(&expression.right) {
+            if !expression_may_fall_through(&expression.right) {
                 self.restore_environment(skipped_right_environment);
             } else {
                 let evaluated_right_environment = self.snapshot_environment();
@@ -3516,8 +3727,10 @@ impl<'ast> Visit<'ast> for ReturnTaintFacts<'_> {
                 binding_scope_depth: self.binding_scopes.len(),
                 origins: Vec::new(),
                 environments: Vec::new(),
+                continue_environments: Vec::new(),
             });
         }
+        let entry_environment = self.snapshot_environment();
         let mut origin = self.visit_scoped_block(&expression.block);
         if expression.label.is_some() {
             let tail_environment = self.snapshot_environment();
@@ -3526,8 +3739,14 @@ impl<'ast> Visit<'ast> for ReturnTaintFacts<'_> {
                 .pop()
                 .expect("labeled block break origin is balanced");
             origin = merge_origins(std::iter::once(origin).chain(breaks.origins));
-            let mut continuing_environments = vec![tail_environment];
+            let mut continuing_environments = Vec::new();
+            if block_may_fall_through(&expression.block) {
+                continuing_environments.push(tail_environment);
+            }
             continuing_environments.extend(breaks.environments);
+            if continuing_environments.is_empty() {
+                continuing_environments.push(entry_environment);
+            }
             self.restore_environment(Self::join_environments(continuing_environments));
         }
         self.cache_expression_origin(expression, origin);
@@ -3578,6 +3797,7 @@ impl<'ast> Visit<'ast> for ReturnTaintFacts<'_> {
             binding_scope_depth: self.binding_scopes.len(),
             origins: Vec::new(),
             environments: Vec::new(),
+            continue_environments: Vec::new(),
         });
         let entry_environment = self.snapshot_environment();
         self.visit_scoped_block(&expression.body);
@@ -3608,7 +3828,7 @@ impl<'ast> Visit<'ast> for ReturnTaintFacts<'_> {
         } else {
             self.break_origins
                 .iter()
-                .rposition(|target| target.kind == BreakTargetKind::Loop)
+                .rposition(|target| target.kind.is_loop())
         };
         if let Some(target_index) = target_index {
             let environment = self.snapshot_environment_at_scope_depth(
@@ -3617,6 +3837,28 @@ impl<'ast> Visit<'ast> for ReturnTaintFacts<'_> {
             let target = &mut self.break_origins[target_index];
             target.origins.push(origin);
             target.environments.push(environment);
+        }
+    }
+
+    fn visit_expr_continue(&mut self, expression: &'ast syn::ExprContinue) {
+        visit::visit_expr_continue(self, expression);
+        let target_index = if let Some(label) = &expression.label {
+            let label = label.ident.to_string();
+            self.break_origins.iter().rposition(|target| {
+                target.kind.is_loop() && target.label.as_deref() == Some(label.as_str())
+            })
+        } else {
+            self.break_origins
+                .iter()
+                .rposition(|target| target.kind.is_loop())
+        };
+        if let Some(target_index) = target_index {
+            let environment = self.snapshot_environment_at_scope_depth(
+                self.break_origins[target_index].binding_scope_depth,
+            );
+            self.break_origins[target_index]
+                .continue_environments
+                .push(environment);
         }
     }
 
@@ -3635,21 +3877,39 @@ impl<'ast> Visit<'ast> for ReturnTaintFacts<'_> {
         for attribute in &expression.attrs {
             self.visit_attribute(attribute);
         }
+        let label = expression
+            .label
+            .as_ref()
+            .map(|label| label.name.ident.to_string());
+        if let Some(label) = &expression.label {
+            self.visit_label(label);
+        }
         self.visit_expr(&expression.expr);
         let skipped_body_environment = self.snapshot_environment();
+        self.break_origins.push(BreakOriginState {
+            kind: BreakTargetKind::For,
+            label,
+            binding_scope_depth: self.binding_scopes.len(),
+            origins: Vec::new(),
+            environments: Vec::new(),
+            continue_environments: Vec::new(),
+        });
         self.push_binding_scope();
         self.bind_pattern_from_expression(&expression.pat, &expression.expr);
         self.visit_block(&expression.body);
         self.pop_binding_scope();
-        if block_unconditionally_returns(&expression.body) {
-            self.restore_environment(skipped_body_environment);
-        } else {
-            let evaluated_body_environment = self.snapshot_environment();
-            self.restore_environment(Self::join_environments(vec![
-                skipped_body_environment,
-                evaluated_body_environment,
-            ]));
+        let evaluated_body_environment = self.snapshot_environment();
+        let target = self
+            .break_origins
+            .pop()
+            .expect("for-loop control target is balanced");
+        let mut continuing_environments = vec![skipped_body_environment];
+        if block_may_fall_through(&expression.body) {
+            continuing_environments.push(evaluated_body_environment);
         }
+        continuing_environments.extend(target.environments);
+        continuing_environments.extend(target.continue_environments);
+        self.restore_environment(Self::join_environments(continuing_environments));
     }
 
     fn visit_expr_match(&mut self, expression: &'ast syn::ExprMatch) {
@@ -3657,29 +3917,65 @@ impl<'ast> Visit<'ast> for ReturnTaintFacts<'_> {
             self.visit_attribute(attribute);
         }
         self.visit_expr(&expression.expr);
+        let scrutinee_identity = self.expression_type_identity(&expression.expr);
+        let scrutinee_origin = self.expression_origin(&expression.expr);
+        let scrutinee_callable_origin = self.callable_result_origin(&expression.expr);
         let post_scrutinee_environment = self.snapshot_environment();
         let mut origins = Vec::with_capacity(expression.arms.len());
-        let mut continuing_environments = expression
-            .arms
-            .iter()
-            .any(|arm| arm.guard.is_some())
-            .then(|| post_scrutinee_environment.clone())
-            .into_iter()
-            .collect::<Vec<_>>();
+        let mut continuing_environments = Vec::new();
+        let mut remaining_environment = Some(post_scrutinee_environment.clone());
         for arm in &expression.arms {
-            self.restore_environment(post_scrutinee_environment.clone());
+            let Some(arm_entry_environment) = remaining_environment.take() else {
+                break;
+            };
+            self.restore_environment(arm_entry_environment.clone());
+            let pattern_scope_depth = self.binding_scopes.len();
             self.push_binding_scope();
-            self.bind_pattern_from_expression(&arm.pat, &expression.expr);
-            if let Some((_, guard)) = &arm.guard {
-                self.visit_expr(guard);
+            self.bind_pattern_with_evidence(
+                &arm.pat,
+                scrutinee_identity.clone(),
+                scrutinee_origin,
+                scrutinee_callable_origin,
+            );
+            let guard_environment =
+                if let Some((_, guard)) = &arm.guard {
+                    self.visit_expr(guard);
+                    Some(self.environment_at_scope_depth(
+                        self.snapshot_environment(),
+                        pattern_scope_depth,
+                    ))
+                } else {
+                    None
+                };
+            let guard_continues = match &arm.guard {
+                Some((_, guard)) => expression_may_fall_through(guard),
+                None => true,
+            };
+            if guard_continues {
+                self.visit_expr(&arm.body);
+                origins.push(self.expression_origin(&arm.body));
+            } else {
+                origins.push(ValueOrigin::Other);
             }
-            self.visit_expr(&arm.body);
-            origins.push(self.expression_origin(&arm.body));
             self.pop_binding_scope();
-            if !expression_unconditionally_returns(&arm.body) {
+            if guard_continues && expression_may_fall_through(&arm.body) {
                 continuing_environments.push(self.snapshot_environment());
             }
+            let pattern_may_miss = !pattern_is_obviously_irrefutable(&arm.pat);
+            let mut next_arm_environments = pattern_may_miss
+                .then_some(arm_entry_environment)
+                .into_iter()
+                .collect::<Vec<_>>();
+            if guard_continues {
+                if let Some(guard_environment) = guard_environment {
+                    next_arm_environments.push(guard_environment);
+                }
+            }
+            if !next_arm_environments.is_empty() {
+                remaining_environment = Some(Self::join_environments(next_arm_environments));
+            }
         }
+        continuing_environments.extend(remaining_environment);
         if continuing_environments.is_empty() {
             continuing_environments.push(post_scrutinee_environment);
         }
@@ -3726,11 +4022,11 @@ impl<'ast> Visit<'ast> for ReturnTaintFacts<'_> {
                 (ValueOrigin::Other, self.snapshot_environment())
             };
         let mut continuing_environments = Vec::with_capacity(2);
-        if !block_unconditionally_returns(&expression.then_branch) {
+        if block_may_fall_through(&expression.then_branch) {
             continuing_environments.push(then_environment);
         }
         let alternative_continues = match &expression.else_branch {
-            Some((_, alternative)) => !expression_unconditionally_returns(alternative),
+            Some((_, alternative)) => expression_may_fall_through(alternative),
             None => true,
         };
         if alternative_continues {
@@ -3747,6 +4043,13 @@ impl<'ast> Visit<'ast> for ReturnTaintFacts<'_> {
         for attribute in &expression.attrs {
             self.visit_attribute(attribute);
         }
+        let label = expression
+            .label
+            .as_ref()
+            .map(|label| label.name.ident.to_string());
+        if let Some(label) = &expression.label {
+            self.visit_label(label);
+        }
         let let_condition = match unwrap_expression(&expression.cond) {
             syn::Expr::Let(condition) => Some(condition),
             _ => None,
@@ -3757,6 +4060,14 @@ impl<'ast> Visit<'ast> for ReturnTaintFacts<'_> {
             self.visit_expr(&expression.cond);
         }
         let skipped_body_environment = self.snapshot_environment();
+        self.break_origins.push(BreakOriginState {
+            kind: BreakTargetKind::While,
+            label,
+            binding_scope_depth: self.binding_scopes.len(),
+            origins: Vec::new(),
+            environments: Vec::new(),
+            continue_environments: Vec::new(),
+        });
         if let Some(condition) = let_condition {
             self.push_binding_scope();
             self.bind_pattern_from_expression(&condition.pat, &condition.expr);
@@ -3765,15 +4076,18 @@ impl<'ast> Visit<'ast> for ReturnTaintFacts<'_> {
         if let_condition.is_some() {
             self.pop_binding_scope();
         }
-        if block_unconditionally_returns(&expression.body) {
-            self.restore_environment(skipped_body_environment);
-        } else {
-            let evaluated_body_environment = self.snapshot_environment();
-            self.restore_environment(Self::join_environments(vec![
-                skipped_body_environment,
-                evaluated_body_environment,
-            ]));
+        let evaluated_body_environment = self.snapshot_environment();
+        let target = self
+            .break_origins
+            .pop()
+            .expect("while-loop control target is balanced");
+        let mut continuing_environments = vec![skipped_body_environment];
+        if block_may_fall_through(&expression.body) {
+            continuing_environments.push(evaluated_body_environment);
         }
+        continuing_environments.extend(target.environments);
+        continuing_environments.extend(target.continue_environments);
+        self.restore_environment(Self::join_environments(continuing_environments));
     }
 
     fn visit_expr_closure(&mut self, closure: &'ast syn::ExprClosure) {

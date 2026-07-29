@@ -1318,6 +1318,120 @@ fn call_edges_propagate_reparse_through_resolved_and_unresolved_dispatch() {
             callable(label)
         }
 
+        fn while_break_pointer(
+            model: &Model,
+            callable: Parser,
+            run: bool,
+            escape: bool,
+        ) -> Analysis {
+            let mut rendered = String::new();
+            while run {
+                rendered = model.to_string();
+                if escape {
+                    break;
+                }
+                return Analysis;
+            }
+            callable(rendered)
+        }
+
+        fn for_break_pointer(model: &Model, callable: Parser, escape: bool) -> Analysis {
+            let mut rendered = String::new();
+            for _ in [()] {
+                rendered = model.to_string();
+                if escape {
+                    break;
+                }
+                return Analysis;
+            }
+            callable(rendered)
+        }
+
+        fn while_continue_pointer(model: &Model, callable: Parser) -> Analysis {
+            let mut rendered = String::new();
+            let mut run = true;
+            while run {
+                rendered = model.to_string();
+                run = false;
+                continue;
+            }
+            callable(rendered)
+        }
+
+        fn for_continue_pointer(model: &Model, callable: Parser) -> Analysis {
+            let mut rendered = String::new();
+            for _ in [()] {
+                rendered = model.to_string();
+                continue;
+            }
+            callable(rendered)
+        }
+
+        fn labeled_block_break_pointer(
+            model: &Model,
+            callable: Parser,
+            escape: bool,
+        ) -> Analysis {
+            let mut rendered = String::new();
+            'rendered: {
+                rendered = model.to_string();
+                if escape {
+                    break 'rendered;
+                }
+                return Analysis;
+            }
+            callable(rendered)
+        }
+
+        fn match_guard_pointer(
+            model: &Model,
+            callable: Parser,
+            choose: bool,
+        ) -> Analysis {
+            let mut rendered = String::new();
+            match () {
+                _ if {
+                    rendered = model.to_string();
+                    choose
+                } => return Analysis,
+                _ => {}
+            }
+            callable(rendered)
+        }
+
+        fn nested_loop_target_control(
+            model: &Model,
+            callable: Parser,
+            run: bool,
+        ) -> Analysis {
+            let mut label = String::new();
+            loop {
+                while run {
+                    label = model.to_string();
+                    break;
+                }
+                label = String::new();
+                break;
+            }
+            callable(label)
+        }
+
+        fn match_guard_cleanup_control(
+            model: &Model,
+            callable: Parser,
+            choose: bool,
+        ) -> Analysis {
+            let mut rendered = model.to_string();
+            match () {
+                _ if {
+                    rendered = String::new();
+                    choose
+                } => return Analysis,
+                _ => {}
+            }
+            callable(rendered)
+        }
+
         struct Vec;
         impl Vec {
             fn push(&self, raw: String) -> Analysis {
@@ -1429,6 +1543,12 @@ fn call_edges_propagate_reparse_through_resolved_and_unresolved_dispatch() {
         "array_operand_pointer",
         "tuple_operand_pointer",
         "struct_operand_pointer",
+        "while_break_pointer",
+        "for_break_pointer",
+        "while_continue_pointer",
+        "for_continue_pointer",
+        "labeled_block_break_pointer",
+        "match_guard_pointer",
     ] {
         assert!(
             violations.iter().any(|reason| {
@@ -1462,6 +1582,8 @@ fn call_edges_propagate_reparse_through_resolved_and_unresolved_dispatch() {
         "conditional_return_control",
         "match_return_control",
         "short_circuit_return_control",
+        "nested_loop_target_control",
+        "match_guard_cleanup_control",
     ] {
         assert!(
             violations.iter().all(|reason| !reason.contains(control)),
