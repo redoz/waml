@@ -151,6 +151,11 @@ impl SourceDocument {
     }
 }
 
+#[cfg(test)]
+pub(crate) fn source_text_weak(document: &SourceDocument) -> std::sync::Weak<String> {
+    Arc::downgrade(&document.text)
+}
+
 #[derive(Clone, Debug)]
 pub struct SourceSlice {
     source: Arc<String>,
@@ -470,6 +475,16 @@ mod tests {
         assert_eq!(body.as_str(), "Body");
         assert!(doc.slice(5..6).is_err());
         assert!(Arc::ptr_eq(doc.text_arc(), body.source_arc()));
+    }
+
+    #[test]
+    fn test_weak_source_handle_tracks_document_allocation() {
+        let document =
+            SourceDocument::new(BundlePath::parse("notes.md").unwrap(), "# Notes".into());
+        let weak = source_text_weak(&document);
+        assert!(weak.upgrade().is_some());
+        drop(document);
+        assert!(weak.upgrade().is_none());
     }
 
     #[test]

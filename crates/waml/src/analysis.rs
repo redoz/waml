@@ -5,8 +5,9 @@ use std::{
 };
 
 use waml_syntax::{
-    parse_okf_markdown, LineIndex, MarkdownDialect, MarkdownStructureMap, OkfMarkdownLanguage,
-    ParseError, SourceText, SyntaxLanguage, SyntaxTree,
+    parse_okf_markdown, reparse_okf_markdown_with_structure, LineIndex, MarkdownDialect,
+    MarkdownStructureMap, OkfMarkdownLanguage, ParseError, ReparseOutcome, SourceText,
+    SyntaxLanguage, SyntaxTree, TextChange, TextRange, TextSize,
 };
 
 use crate::{
@@ -494,15 +495,33 @@ fn analyze_okf_inner(
                 }
             }
         }
-        let parsed =
-            parse_okf_markdown(document.text().clone(), MarkdownDialect::CommonMarkCurrent)
+        let (syntax, structure) = match previous_snapshot(previous, document.id()) {
+            Some(previous_snapshot) => {
+                let (outcome, structure) = reparse_okf_markdown_with_structure(
+                    previous_snapshot.syntax(),
+                    document.text().clone(),
+                    &single_text_change(previous_snapshot.document().text(), document.text()),
+                )
                 .map_err(|source| shell_error(document.path().clone(), source))?;
-        structures.insert(document.id(), parsed.structure);
+                let syntax = match outcome {
+                    ReparseOutcome::Incremental { tree, .. }
+                    | ReparseOutcome::Full { tree, .. } => tree,
+                };
+                (syntax, structure)
+            }
+            None => {
+                let parsed =
+                    parse_okf_markdown(document.text().clone(), MarkdownDialect::CommonMarkCurrent)
+                        .map_err(|source| shell_error(document.path().clone(), source))?;
+                (parsed.tree, parsed.structure)
+            }
+        };
+        structures.insert(document.id(), structure);
         shell_documents.insert(
             document.id(),
             Arc::new(SyntaxSnapshot {
                 document: document.clone(),
-                syntax: parsed.tree,
+                syntax,
             }),
         );
     }
@@ -519,6 +538,69 @@ fn analyze_okf_inner(
         structures,
         bundle,
     })
+}
+
+fn previous_snapshot<'a>(
+    previous: Option<&'a OkfAnalysis>,
+    id: DocumentId,
+) -> Option<&'a Arc<SyntaxSnapshot<OkfMarkdownLanguage>>> {
+    previous.and_then(|analysis| analysis.shell.document(id))
+}
+
+pub(crate) fn single_text_change(old: &SourceText, new: &SourceText) -> Vec<TextChange> {
+    if Arc::ptr_eq(old.shared(), new.shared()) || old.shared().as_str() == new.shared().as_str() {
+        return Vec::new();
+    }
+
+    let old_source = old.shared();
+    let new_source = new.shared();
+    let mut prefix = 0;
+    for ((old_at, old_char), (new_at, new_char)) in
+        old_source.char_indices().zip(new_source.char_indices())
+    {
+        if old_char != new_char {
+            break;
+        }
+        debug_assert_eq!(old_at, new_at);
+        prefix = old_at + old_char.len_utf8();
+    }
+    while !old_source.is_char_boundary(prefix) || !new_source.is_char_boundary(prefix) {
+        prefix -= 1;
+    }
+
+    let mut old_end = old_source.len();
+    let mut new_end = new_source.len();
+    while old_end > prefix && new_end > prefix {
+        let old_char = old_source
+            .get(..old_end)
+            .and_then(|source| source.chars().next_back());
+        let new_char = new_source
+            .get(..new_end)
+            .and_then(|source| source.chars().next_back());
+        if old_char != new_char {
+            break;
+        }
+        let Some(character) = old_char else {
+            break;
+        };
+        old_end -= character.len_utf8();
+        new_end -= character.len_utf8();
+    }
+
+    let old_range = TextRange::new(
+        TextSize::try_from_usize(prefix).expect("SourceText widths fit TextSize"),
+        TextSize::try_from_usize(old_end).expect("SourceText widths fit TextSize"),
+    )
+    .expect("common prefix cannot exceed old text");
+    let replacement = Arc::from(
+        new_source
+            .get(prefix..new_end)
+            .expect("common prefix and suffix are UTF-8 boundaries"),
+    );
+    vec![TextChange {
+        old_range,
+        replacement,
+    }]
 }
 
 fn version(
@@ -554,6 +636,7 @@ fn shell_error(path: BundlePath, source: ParseError) -> AnalysisError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::source::source_text_weak;
 
     #[derive(Clone, Copy)]
     enum FailAt {
@@ -646,6 +729,86 @@ mod tests {
                 ..
             }
         ));
+    }
+
+    #[test]
+    fn repeated_candidates_retain_only_baseline_current_and_one_untouched_allocation() {
+        let touched_path = BundlePath::parse("touched.md").unwrap();
+        let untouched_path = BundlePath::parse("untouched.md").unwrap();
+        let mut baseline = SourceBundle::try_from_pairs([
+            ("touched.md", "# A\nbody\n"),
+            ("untouched.md", "# Untouched\nbody\n"),
+        ])
+        .unwrap();
+        let mut touched_weaks = vec![source_text_weak(baseline.document(&touched_path).unwrap())];
+        let untouched_weak = source_text_weak(baseline.document(&untouched_path).unwrap());
+        let mut current = prepare_candidate(baseline.clone(), None, 1).unwrap();
+
+        for edit in 0..1_000 {
+            let mut candidate_source = current.source().clone();
+            candidate_source
+                .document_mut(&touched_path)
+                .unwrap()
+                .text_mut()
+                .replace_range(2..3, if edit % 2 == 0 { "B" } else { "A" });
+            let next = prepare_candidate(
+                candidate_source,
+                Some(PreviousAnalyses {
+                    okf: current.okf(),
+                    uml: current.uml(),
+                }),
+                edit + 2,
+            )
+            .unwrap();
+            touched_weaks.push(source_text_weak(
+                next.source().document(&touched_path).unwrap(),
+            ));
+            current = next;
+        }
+
+        assert_eq!(
+            touched_weaks
+                .iter()
+                .filter(|weak| weak.upgrade().is_some())
+                .count(),
+            2
+        );
+        assert!(current.source().shares_text_with(&baseline, "untouched.md"));
+        assert!(untouched_weak.upgrade().is_some());
+
+        baseline.clone_from(current.source());
+
+        assert_eq!(
+            touched_weaks
+                .iter()
+                .filter(|weak| weak.upgrade().is_some())
+                .count(),
+            1
+        );
+        assert!(current.source().shares_text_with(&baseline, "touched.md"));
+        assert!(current.source().shares_text_with(&baseline, "untouched.md"));
+    }
+
+    #[test]
+    fn single_text_change_is_minimal_and_utf8_boundary_safe() {
+        let shared = Arc::new("prefix café suffix".to_owned());
+        let same_arc = SourceText::from_shared(shared.clone()).unwrap();
+        assert!(single_text_change(&same_arc, &same_arc).is_empty());
+        let same_bytes = SourceText::from_shared(Arc::new((*shared).clone())).unwrap();
+        assert!(single_text_change(&same_arc, &same_bytes).is_empty());
+
+        let changed = SourceText::from_shared(Arc::new("prefix кафé suffix".to_owned())).unwrap();
+        let changes = single_text_change(&same_arc, &changed);
+        assert_eq!(changes.len(), 1);
+        let change = &changes[0];
+        assert!(same_arc
+            .shared()
+            .is_char_boundary(change.old_range.start().to_usize()));
+        assert!(same_arc
+            .shared()
+            .is_char_boundary(change.old_range.end().to_usize()));
+        assert_eq!(same_arc.slice(change.old_range).unwrap(), "caf");
+        assert_eq!(&*change.replacement, "каф");
     }
 
     #[test]
