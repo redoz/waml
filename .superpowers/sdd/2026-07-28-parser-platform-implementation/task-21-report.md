@@ -19,7 +19,14 @@
   referring document, and authored editor scratch placement links with `okf::relative_href`.
 - Restored the retired semantic validation matrix with exact severity, path, line, span, and
   revision-scoped range provenance.
+- Hardened the residual `syn` authority guard through successive adversarial reviews: qualified
+  trust roots, binding identities and lexical scopes, destructured and assigned aliases,
+  cached/wrapped value evidence, evaluation order, branch/control joins, and loop-carried state
+  now fail closed when protected model text can reach a parser-like dispatch.
+- Kept the production missing-target edit error as the static literal `"no claimed concept"` in
+  `uml::lower`; the guard work did not introduce a second parser or model-to-source authority.
 - Did not implement or modify Task 22 incremental reparsing.
+- Preserved the unrelated dirty Task 7 report without staging or modifying it.
 
 ## Architecture and semantic contracts
 
@@ -31,17 +38,25 @@
 - Package dependency checks enforce `waml-syntax <- waml <- retained hosts`, with DTO composition
   explicit and direct host-to-syntax dependencies rejected. The raw UML parser module is visible
   only inside `crate::uml`; an external Cargo compile-fail fixture proves it is not a public API.
-- Seventeen adversarial architecture fixtures cover compatibility modules, arbitrary function
-  names, private/`pub(super)` entries, closures, function pointers/callable locals, duplicate
-  names, cross-file, chained/field receiver and trait dispatch, imported/qualified aliases,
-  direct grammar construction, split serialization/reparse helpers, qualified syntax reparsing,
-  macro/include/generated policy, qualified allowlists, visible model-to-source surfaces, and
-  legitimate label/render/analyze/trim/to-string helpers.
+- The 28-test authority suite covers compatibility modules, arbitrary function names,
+  private/`pub(super)` entries, closures and async blocks, function pointers/callable locals,
+  duplicate names, cross-file, chained/field receiver and trait dispatch, imported/qualified and
+  destructured aliases, assignment and shadowing, direct grammar construction, split
+  serialization/reparse helpers, qualified syntax reparsing, macro/include/generated policy,
+  qualified allowlists, visible model-to-source surfaces, evaluation order, branch and loop
+  control flow, and legitimate label/render/analyze/trim/to-string helpers.
+- The harmless standard-collection exemption is identity-based: only a proven prelude `Vec`,
+  `std::vec::Vec`, or `alloc::vec::Vec` receiver is trusted. User-defined `Vec` types and
+  unresolved or ambiguous `Vec` imports remain conservative reparse sinks.
 - The AST pass is residual rather than a substitute for rustc. It checks raw-to-protected-grammar
   signatures, exact qualified type aliases, visible model-to-text surfaces, and conservative
   model-to-authority-reparse reachability. It does not claim general type inference or external
   macro expansion. Literal Rust includes are followed; dynamic/generated includes fail closed;
   local opaque macros that mention protected grammar types fail closed.
+- Residual control flow is explicit: `Fallthrough`, `Return`, `Break`, `Continue`, and `Diverge`
+  outcomes sequence value operands before their terminal effect, branches join only reachable
+  environments, and value loops compute a monotone fixed point over entry, body-fallthrough, and
+  continue environments before deriving break values and exit state.
 - Layout syntax coverage includes the complete valid matrix, malformed/missing slots, bounded
   recovery, following-row progress, CRLF, UTF-8, exact write-back, exact occurrence ranges, and
   declared valid/incomplete/invalid state.
@@ -106,6 +121,19 @@
   - `no_legacy_authority`: `17 passed`, including Cargo-aware target/module discovery, dependency
     direction, compile-fail visibility, every reviewer bypass, and legitimate-name controls;
   - full Task 21 API/architecture/semantic matrix: `38 passed` across 4 suites.
+- Formal guard-review RED rounds exposed qualified-identity spoofing, incomplete alias/cache/type
+  evidence, destructuring and assignment gaps, initializer/scope leakage, ambiguous `Vec` trust,
+  deferred closure and async execution, argument/composite evaluation order, unreachable branch
+  joins, and incomplete break/continue/return modeling.
+- The final two RED probes independently demonstrated:
+  - a `continue` path tainting `rendered` on one iteration before `break rendered` on the next;
+  - a `break 'skip` nested inside a `return` operand, where the operand exits before the return and
+    keeps the tainted branch reachable.
+- Formal guard-review GREEN:
+  - both exact probes now reach the conservative unresolved-dispatch finding;
+  - `no_legacy_authority`: `28 passed`;
+  - independent staff review of `f2d60e8` against `1f375e04` returned **READY**, with no remaining
+    blocking finding.
 
 ## Task 21 commit chain
 
@@ -126,31 +154,52 @@
 - `81388e1d` `fix(parser): pin layout provenance`
 - `014f145` `fix(parser): harden authority graph`
 - `e797e86` `fix(parser)!: seal raw authority boundary`
+- `a9f024ad` `docs(parser): record authority redesign`
+- `1f375e04` `docs(parser): correct lint evidence`
+- `0dfde6b6` `fix(parser): close authority guard bypasses`
+- `69d86f52` `fix(parser): close residual guard escapes`
+- `e52959d3` `fix(parser): reject guard identity spoofing`
+- `5f2cc7a6` `fix(parser): qualify guard trust roots`
+- `eb83ae09` `fix(parser): prove guard trust boundaries`
+- `a464133a` `fix(parser): prove alias and cache shapes`
+- `7d657582` `fix(parser): close control-flow guard gaps`
+- `1c836b51` `fix(parser): retain guard type modules`
+- `81d2cd16` `chore(parser): keep guard lint-clean`
+- `78337cc7` `fix(parser): track destructured guard aliases`
+- `c94f303b` `fix(parser): preserve wrapped type evidence`
+- `2b1b7294` `fix(parser): update assigned alias types`
+- `d3e3cf60` `fix(parser): scope guard binding identities`
+- `65bd2989` `fix(parser): respect let initializer scope`
+- `022ad97d` `fix(parser): derive aliases after initialization`
+- `7a5f004a` `fix(parser): close scoped taint escapes`
+- `85d6118c` `fix(parser): reject ambiguous Vec imports`
+- `c10cd870` `fix(parser): evaluate cached call taint`
+- `e50a55a0` `fix(parser): retain value-wrapper taint`
+- `6a4ac4c2` `fix(parser): preserve taint execution order`
+- `4fe1c81a` `fix(parser): join guard execution paths`
+- `ed3379b2` `fix(parser): model guard control exits`
+- `f2d60e88` `fix(parser): converge loop taint flow`
 
 ## Verification
 
-- Focused round-four API/architecture/semantic matrix: `38 passed` across 4 suites.
-- Raw authority external compile-fail and Cargo/module/dependency fixtures: `17 passed` in the
-  architecture suite.
-- Complete editor scene suite: `64 passed`.
+- Final Task 21 API/architecture/semantic matrix: `49 passed` across 4 suites.
+- Final authority suite: `28 passed`, including raw-authority compile-fail,
+  Cargo/module/dependency, adversarial call-edge, control-flow, and legitimate-control fixtures.
+- Dedicated Cargo metadata custom-target and outside-workspace-member filter: `3 passed`.
 - Complete `waml-editor` package gate: `737 passed` across 5 target-expanded suites.
-- `rtk cargo test -p waml --all-features`: `427 passed` across 26 suites.
-- `rtk cargo test --workspace --all-features`: `1,280 passed` across 41 suites.
+- `rtk cargo test -p waml --all-features`: `444 passed` across 26 suites.
+- `rtk cargo test --workspace --all-features`: `1,291 passed` across 41 suites.
 - `rtk cargo check --workspace --all-features`: PASS, 0 errors; four existing warning groups.
 - `rtk cargo fmt --all -- --check`: PASS.
 - `rtk git diff --check`: PASS.
 - `rtk cargo clippy --workspace --all-features`: PASS, 0 errors; 20 existing warnings.
-- Strict focused Clippy with `-D warnings` stops at 14 pre-existing production lints, including
-  `too_many_arguments`, `incompatible_msrv`, `len_without_is_empty`, and `clone_on_copy`; none is
-  in the round-four guard or fixture changes. The required non-denying workspace Clippy gate
-  passes with 0 errors and 20 existing warnings.
-- Independent completion review found no remaining Critical or Important issues after three
-  adversarial guard-hardening passes.
+- `rtk cargo clippy --workspace --all-targets --all-features`: PASS, 0 errors; 29 existing
+  warnings.
+- Independent completion review found both final control-flow blockers resolved and returned
+  **READY**.
 
 ## Metrics
 
-- TokenSave code-graph context saved approximately 30,481 tokens in the main thread across the
-  three formal review rounds, plus approximately 38,900 tokens reported by the independent
-  round-three reviewer.
-- TokenSave saved approximately 10,922 additional tokens during the round-four architecture
-  redesign.
+- TokenSave code-graph context saved approximately 215,000 tokens in the main implementation
+  thread across the architecture redesign and formal fix rounds.
+- Independent review rounds reported approximately 67,000 additional tokens saved.
