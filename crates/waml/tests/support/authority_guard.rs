@@ -227,6 +227,7 @@ struct FunctionSummary {
     output_type: Option<Type>,
     output_paths: Vec<Vec<String>>,
     body_paths: Vec<Vec<String>>,
+    body_type_uses: Vec<TypeUse>,
     local_standard_roots: BTreeSet<String>,
     retired_calls: BTreeSet<String>,
     opaque_authority_macros: BTreeSet<String>,
@@ -275,11 +276,12 @@ struct BodyFacts<'env> {
     local: Capabilities,
     retired_calls: BTreeSet<String>,
     receiver_types: BTreeMap<String, TypeIdentity>,
-    receiver_type_uses: BTreeMap<String, TypeUse>,
+    receiver_type_uses: BTreeMap<String, Vec<TypeUse>>,
     callable_paths: BTreeMap<String, Vec<String>>,
     bindings: BTreeSet<String>,
     origins: BTreeMap<String, ValueOrigin>,
     body_paths: Vec<Vec<String>>,
+    body_type_uses: Vec<TypeUse>,
     opaque_authority_macros: BTreeSet<String>,
     raw_authority_closure: bool,
 }
@@ -357,14 +359,19 @@ impl<'ast, 'env> Visit<'ast> for BodyFacts<'env> {
             _ => (None, Vec::new()),
         };
         self.body_paths.extend(explicit_paths.iter().cloned());
-        let explicit_type_use = (!explicit_paths.is_empty()).then(|| TypeUse {
-            module: self.env.module.clone(),
-            paths: explicit_paths.clone(),
-        });
-        let inferred_type_use = node
+        let explicit_type_uses = (!explicit_paths.is_empty())
+            .then(|| {
+                vec![TypeUse {
+                    module: self.env.module.clone(),
+                    paths: explicit_paths.clone(),
+                }]
+            })
+            .unwrap_or_default();
+        let inferred_type_uses = node
             .init
             .as_ref()
-            .and_then(|init| self.expression_type_use(&init.expr));
+            .map(|init| self.expression_type_uses(&init.expr))
+            .unwrap_or_default();
         let explicit = receiver_type_identity(
             self.env.module,
             &explicit_paths,
@@ -378,10 +385,13 @@ impl<'ast, 'env> Visit<'ast> for BodyFacts<'env> {
         if let (Some(binding), Some(ty)) = (binding.as_ref(), explicit.or(inferred)) {
             self.receiver_types.insert(binding.clone(), ty);
         }
-        if let (Some(binding), Some(ty)) =
-            (binding.as_ref(), explicit_type_use.or(inferred_type_use))
-        {
-            self.receiver_type_uses.insert(binding.clone(), ty);
+        let type_uses = if explicit_type_uses.is_empty() {
+            inferred_type_uses
+        } else {
+            explicit_type_uses
+        };
+        if let Some(binding) = binding.as_ref().filter(|_| !type_uses.is_empty()) {
+            self.receiver_type_uses.insert(binding.clone(), type_uses);
         }
         if let Some(binding) = &binding {
             self.bindings.insert(binding.clone());
@@ -472,6 +482,7 @@ impl<'env> BodyFacts<'env> {
             bindings: BTreeSet::new(),
             origins: BTreeMap::new(),
             body_paths: Vec::new(),
+            body_type_uses: Vec::new(),
             opaque_authority_macros: BTreeSet::new(),
             raw_authority_closure: false,
         }
@@ -487,8 +498,9 @@ impl<'env> BodyFacts<'env> {
     }
 
     fn record_assignment_place_type(&mut self, expression: &syn::Expr) {
-        if let Some(ty) = self.expression_type_use(expression) {
-            self.body_paths.extend(ty.paths);
+        let type_uses = self.expression_type_uses(expression);
+        if !type_uses.is_empty() {
+            self.body_type_uses.extend(type_uses);
             return;
         }
 
@@ -503,39 +515,51 @@ impl<'env> BodyFacts<'env> {
         }
     }
 
-    fn expression_type_use(&self, expression: &syn::Expr) -> Option<TypeUse> {
+    fn expression_type_uses(&self, expression: &syn::Expr) -> Vec<TypeUse> {
         match unwrap_expression(expression) {
             syn::Expr::Path(expression) => {
                 if expression.path.segments.len() == 1 {
                     let name = expression.path.segments[0].ident.to_string();
-                    if let Some(ty) = self.receiver_type_uses.get(&name) {
-                        return Some(ty.clone());
+                    if let Some(types) = self.receiver_type_uses.get(&name) {
+                        return types.clone();
                     }
                 }
-                Some(TypeUse {
+                vec![TypeUse {
                     module: self.env.module.clone(),
                     paths: paths_in_path(&expression.path),
-                })
+                }]
             }
             syn::Expr::Field(expression) => {
-                let owner = self.expression_type_identity(&expression.base)?;
+                let Some(owner) = self.expression_type_identity(&expression.base) else {
+                    return Vec::new();
+                };
                 let field = match &expression.member {
                     syn::Member::Named(name) => name.to_string(),
                     syn::Member::Unnamed(index) => index.index.to_string(),
                 };
-                self.env.struct_fields.get(&owner)?.get(&field).cloned()
+                self.env
+                    .struct_fields
+                    .get(&owner)
+                    .and_then(|fields| fields.get(&field))
+                    .cloned()
+                    .into_iter()
+                    .collect()
             }
             syn::Expr::MethodCall(expression) => {
-                let owner = self.expression_type_identity(&expression.receiver)?;
+                let Some(owner) = self.expression_type_identity(&expression.receiver) else {
+                    return Vec::new();
+                };
                 self.env
                     .method_returns
                     .get(&(owner, expression.method.to_string()))
                     .cloned()
+                    .into_iter()
+                    .collect()
             }
-            syn::Expr::Struct(expression) => Some(TypeUse {
+            syn::Expr::Struct(expression) => vec![TypeUse {
                 module: self.env.module.clone(),
                 paths: paths_in_path(&expression.path),
-            }),
+            }],
             syn::Expr::Call(expression) => match unwrap_expression(&expression.func) {
                 syn::Expr::Path(function) => {
                     let mut segments = function
@@ -551,60 +575,40 @@ impl<'env> BodyFacts<'env> {
                     {
                         segments.pop();
                     }
-                    Some(TypeUse {
+                    vec![TypeUse {
                         module: self.env.module.clone(),
                         paths: vec![segments],
-                    })
+                    }]
                 }
-                _ => None,
+                _ => Vec::new(),
             },
-            syn::Expr::Index(expression) => self.expression_type_use(&expression.expr),
+            syn::Expr::Index(expression) => self.expression_type_uses(&expression.expr),
             syn::Expr::Unary(expression) if matches!(expression.op, syn::UnOp::Deref(_)) => {
-                self.expression_type_use(&expression.expr)
+                self.expression_type_uses(&expression.expr)
             }
-            syn::Expr::Block(expression) => self.block_type_use(&expression.block),
+            syn::Expr::Block(expression) => self.block_type_uses(&expression.block),
             syn::Expr::If(expression) => {
-                let mut branches = Vec::new();
-                if let Some(ty) = self.block_type_use(&expression.then_branch) {
-                    branches.push(ty);
-                }
+                let mut branches = self.block_type_uses(&expression.then_branch);
                 if let Some((_, alternative)) = &expression.else_branch {
-                    if let Some(ty) = self.expression_type_use(alternative) {
-                        branches.push(ty);
-                    }
+                    branches.extend(self.expression_type_uses(alternative));
                 }
-                self.merge_type_uses(branches)
+                branches
             }
-            syn::Expr::Match(expression) => self.merge_type_uses(
-                expression
-                    .arms
-                    .iter()
-                    .filter_map(|arm| self.expression_type_use(&arm.body)),
-            ),
-            syn::Expr::Try(expression) => self.expression_type_use(&expression.expr),
-            _ => None,
+            syn::Expr::Match(expression) => expression
+                .arms
+                .iter()
+                .flat_map(|arm| self.expression_type_uses(&arm.body))
+                .collect(),
+            syn::Expr::Try(expression) => self.expression_type_uses(&expression.expr),
+            _ => Vec::new(),
         }
     }
 
-    fn block_type_use(&self, block: &syn::Block) -> Option<TypeUse> {
-        let syn::Stmt::Expr(expression, None) = block.stmts.last()? else {
-            return None;
+    fn block_type_uses(&self, block: &syn::Block) -> Vec<TypeUse> {
+        let Some(syn::Stmt::Expr(expression, None)) = block.stmts.last() else {
+            return Vec::new();
         };
-        self.expression_type_use(expression)
-    }
-
-    fn merge_type_uses(&self, types: impl IntoIterator<Item = TypeUse>) -> Option<TypeUse> {
-        let mut types = types.into_iter();
-        let mut merged = types.next()?;
-        for ty in types {
-            if merged.module != ty.module {
-                merged.module = self.env.module.clone();
-            }
-            merged.paths.extend(ty.paths);
-        }
-        merged.paths.sort();
-        merged.paths.dedup();
-        Some(merged)
+        self.expression_type_uses(expression)
     }
 
     fn expression_type_identity(&self, expression: &syn::Expr) -> Option<TypeIdentity> {
@@ -2036,10 +2040,10 @@ fn summarize_function(
                     facts.receiver_types.insert("self".into(), owner.clone());
                     facts.receiver_type_uses.insert(
                         "self".into(),
-                        TypeUse {
+                        vec![TypeUse {
                             module: module.clone(),
                             paths: owner_paths.clone(),
-                        },
+                        }],
                     );
                     facts.bindings.insert("self".into());
                     let owner_names = resolved_type_names(module, &owner_paths, aliases, imports);
@@ -2066,10 +2070,10 @@ fn summarize_function(
                     }
                     facts.receiver_type_uses.insert(
                         binding.clone(),
-                        TypeUse {
+                        vec![TypeUse {
                             module: module.clone(),
                             paths: paths.clone(),
-                        },
+                        }],
                     );
                     facts.bindings.insert(binding.clone());
                     facts
@@ -2138,6 +2142,7 @@ fn summarize_function(
         output_type,
         output_paths,
         body_paths: facts.body_paths,
+        body_type_uses: facts.body_type_uses,
         local_standard_roots: block_local_standard_roots(block),
         retired_calls: facts.retired_calls,
         opaque_authority_macros: facts.opaque_authority_macros,
@@ -2876,7 +2881,7 @@ fn signature_is_resolved_raw_grammar_entry(
         ReturnType::Default => Vec::new(),
         ReturnType::Type(_, output) => type_paths(output),
     };
-    resolved_raw_grammar_shape(module, &inputs, &output_paths, &[], aliases, imports)
+    resolved_raw_grammar_shape(module, &inputs, &output_paths, &[], &[], aliases, imports)
 }
 
 fn parameter_summaries(
@@ -2907,6 +2912,7 @@ fn resolved_raw_grammar_shape(
     inputs: &[ParameterSummary],
     output_paths: &[Vec<String>],
     body_paths: &[Vec<String>],
+    body_type_uses: &[TypeUse],
     aliases: &Aliases,
     imports: &Imports,
 ) -> bool {
@@ -2934,11 +2940,25 @@ fn resolved_raw_grammar_shape(
         (input.mutable || named_output)
             && (is_typed_uml_tree(&names) || is_typed_uml_tree_builder(&names))
     });
-    let body_names = resolved_type_names(module, body_paths, aliases, imports);
+    let body_names = resolved_body_type_names(module, body_paths, body_type_uses, aliases, imports);
     let constructs_protected =
         is_typed_uml_tree(&body_names) || is_typed_uml_tree_builder(&body_names);
 
     grammar_output || is_typed_uml_tree(&output_names) || output_parameter || constructs_protected
+}
+
+fn resolved_body_type_names(
+    module: &ModuleIdentity,
+    body_paths: &[Vec<String>],
+    body_type_uses: &[TypeUse],
+    aliases: &Aliases,
+    imports: &Imports,
+) -> BTreeSet<String> {
+    let mut names = resolved_type_names(module, body_paths, aliases, imports);
+    for ty in body_type_uses {
+        names.extend(resolved_type_names(&ty.module, &ty.paths, aliases, imports));
+    }
+    names
 }
 
 fn closure_is_raw_grammar_entry(
@@ -2991,6 +3011,7 @@ fn closure_is_raw_grammar_entry(
         &inputs,
         &output_paths,
         &body.paths,
+        &[],
         aliases,
         imports,
     )
@@ -3008,7 +3029,13 @@ fn summary_is_raw_grammar_entry(
         .collect::<BTreeSet<_>>();
     let output_names =
         resolved_type_names(&summary.id.module, &summary.output_paths, aliases, imports);
-    let body_names = resolved_type_names(&summary.id.module, &summary.body_paths, aliases, imports);
+    let body_names = resolved_body_type_names(
+        &summary.id.module,
+        &summary.body_paths,
+        &summary.body_type_uses,
+        aliases,
+        imports,
+    );
     let exact_cached_tree_owner = summary.owner_type.as_ref().is_some_and(|owner| {
         owner.name == "UmlLoweringState"
             && owner.module == summary.id.module
@@ -3032,6 +3059,7 @@ fn summary_is_raw_grammar_entry(
         &summary.input_types,
         &summary.output_paths,
         &summary.body_paths,
+        &summary.body_type_uses,
         aliases,
         imports,
     )

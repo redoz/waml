@@ -295,6 +295,30 @@ fn real_syntax_tree_authority_signatures_and_builders_are_rejected() {
             type WrappedTree = Result<Box<ProtectedTree>, Error>;
             type TreeSink = Option<ProtectedTree>;
             struct TreeBuilder<L>(core::marker::PhantomData<L>);
+
+            mod sibling_types {
+                pub type Tree = Arc<SyntaxTree<UmlLanguage>>;
+
+                pub struct Slot {
+                    pub tree: Tree,
+                }
+            }
+
+            mod left_types {
+                pub type Tree = Arc<SyntaxTree<UmlLanguage>>;
+
+                pub struct Slot {
+                    pub tree: Tree,
+                }
+            }
+
+            mod right_types {
+                pub type Tree = Arc<SyntaxTree<UmlLanguage>>;
+
+                pub struct Slot {
+                    pub tree: Tree,
+                }
+            }
             "#,
         ),
         (
@@ -394,6 +418,24 @@ fn real_syntax_tree_authority_signatures_and_builders_are_rejected() {
                 }
             }
 
+            fn parse_sibling(slot: &mut crate::types::sibling_types::Slot, raw: &str) {
+                slot.tree = external_factory(raw);
+            }
+
+            fn parse_sibling_selected(
+                left: &mut crate::types::left_types::Slot,
+                right: &mut crate::types::right_types::Slot,
+                raw: &str,
+                choose: bool,
+            ) {
+                let slot = if choose {
+                    &mut left.tree
+                } else {
+                    &mut right.tree
+                };
+                *slot = external_factory(raw);
+            }
+
             struct TreeSlots {
                 trees: Vec<Arc<SyntaxTree<UmlLanguage>>>,
             }
@@ -488,6 +530,8 @@ fn real_syntax_tree_authority_signatures_and_builders_are_rejected() {
         "parse_selected",
         "parse_matched",
         "parse_blocked",
+        "parse_sibling",
+        "parse_sibling_selected",
         "parse_indexed",
         "parse_dereferenced",
         "trait_entry",
