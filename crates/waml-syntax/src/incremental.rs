@@ -1,4 +1,8 @@
-use std::{collections::HashMap, hash::Hash, sync::Arc};
+use std::{
+    collections::{HashMap, HashSet},
+    hash::Hash,
+    sync::Arc,
+};
 
 use crate::{
     GreenElement, GreenError, GreenFactory, GreenNode, GreenText, GreenTrivia, MarkdownDialect,
@@ -659,7 +663,6 @@ pub fn reparse_okf_markdown_with_structure(
         },
     )?;
     let mut children = Vec::new();
-    let mut shared = 0;
     for (index, child) in previous.root_green().children().iter().enumerate() {
         if index == window.first {
             children.extend(parsed_window.elements.iter().cloned());
@@ -672,7 +675,6 @@ pub fn reparse_okf_markdown_with_structure(
         else {
             return full(FullReparseReason::UnsafeSynchronization);
         };
-        shared += rebased.shared_source_independent_green;
         children.push(rebased.element);
     }
     let root = GreenFactory::new()
@@ -682,9 +684,8 @@ pub fn reparse_okf_markdown_with_structure(
         .diagnostics()
         .iter()
         .filter_map(|diagnostic| {
-            ((diagnostic.range.end() <= window.range.start()
-                || diagnostic.range.start() >= window.range.end())
-            .then(|| map.translate_unchanged(diagnostic.range))?)
+            (diagnostic_outside_window(diagnostic.range, window.range)
+                .then(|| map.translate_unchanged(diagnostic.range))?)
             .map(|range| TreeDiagnostic {
                 code: diagnostic.code,
                 severity: diagnostic.severity,
@@ -701,6 +702,8 @@ pub fn reparse_okf_markdown_with_structure(
     } else {
         candidate.root_green().clone()
     };
+    let shared_source_independent_green =
+        count_shared_source_independent_greens(previous.root_green(), &root);
     Ok((
         ReparseOutcome::Incremental {
             tree: Arc::new(SyntaxTree::new(
@@ -708,11 +711,19 @@ pub fn reparse_okf_markdown_with_structure(
                 Arc::from(candidate.diagnostics()),
                 MarkdownDialect::CommonMarkCurrent,
             )),
-            shared_source_independent_green: shared,
+            shared_source_independent_green,
             reparsed_range: new_range,
         },
         new_structure,
     ))
+}
+
+fn diagnostic_outside_window(diagnostic: TextRange, window: TextRange) -> bool {
+    if diagnostic.start() == diagnostic.end() {
+        diagnostic.start() < window.start() || diagnostic.start() > window.end()
+    } else {
+        diagnostic.end() <= window.start() || diagnostic.start() >= window.end()
+    }
 }
 
 fn green_uses_source(node: &GreenNode<OkfMarkdownLanguage>, source: &SourceText) -> bool {
@@ -746,6 +757,62 @@ fn count_source_independent_greens(element: &GreenElement<OkfMarkdownLanguage>) 
             .map(count_source_independent_greens)
             .sum(),
     }
+}
+
+fn count_shared_source_independent_greens<L: SyntaxLanguage>(
+    previous: &GreenNode<L>,
+    current: &GreenNode<L>,
+) -> usize {
+    fn collect<L: SyntaxLanguage>(
+        element: &GreenElement<L>,
+        nodes: &mut HashSet<usize>,
+        tokens: &mut HashSet<usize>,
+    ) {
+        match element {
+            GreenElement::Node(node) => {
+                if node.is_source_independent() {
+                    nodes.insert(Arc::as_ptr(node) as usize);
+                }
+                for child in node.children() {
+                    collect(child, nodes, tokens);
+                }
+            }
+            GreenElement::Token(token) => {
+                if token.is_source_independent() {
+                    tokens.insert(Arc::as_ptr(token) as usize);
+                }
+            }
+        }
+    }
+    fn count<L: SyntaxLanguage>(
+        element: &GreenElement<L>,
+        nodes: &HashSet<usize>,
+        tokens: &HashSet<usize>,
+    ) -> usize {
+        match element {
+            GreenElement::Node(node) => {
+                usize::from(
+                    node.is_source_independent() && nodes.contains(&(Arc::as_ptr(node) as usize)),
+                ) + node
+                    .children()
+                    .iter()
+                    .map(|child| count(child, nodes, tokens))
+                    .sum::<usize>()
+            }
+            GreenElement::Token(token) => usize::from(
+                token.is_source_independent() && tokens.contains(&(Arc::as_ptr(token) as usize)),
+            ),
+        }
+    }
+
+    let mut nodes = HashSet::new();
+    let mut tokens = HashSet::new();
+    collect(
+        &GreenElement::Node(previous.clone()),
+        &mut nodes,
+        &mut tokens,
+    );
+    count(&GreenElement::Node(current.clone()), &nodes, &tokens)
 }
 
 #[derive(Clone, Copy)]
