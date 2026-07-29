@@ -434,6 +434,25 @@ impl<'ast, 'env> Visit<'ast> for BodyFacts<'env> {
 
     fn visit_expr_assign(&mut self, assignment: &'ast syn::ExprAssign) {
         self.record_assignment_place_type(&assignment.left);
+        if let syn::Expr::Path(path) = unwrap_expression(&assignment.left) {
+            if path.path.segments.len() == 1 {
+                let binding = path.path.segments[0].ident.to_string();
+                if self.bindings.contains(&binding) {
+                    let type_uses = self.expression_type_uses(&assignment.right);
+                    if !type_uses.is_empty() {
+                        self.receiver_type_uses
+                            .entry(binding.clone())
+                            .or_default()
+                            .extend(type_uses);
+                    }
+                    if let Some(identity) = self.expression_type_identity(&assignment.right) {
+                        self.receiver_types.insert(binding.clone(), identity);
+                    }
+                    let origin = self.expression_origin(&assignment.right);
+                    self.origins.insert(binding, origin);
+                }
+            }
+        }
         visit::visit_expr_assign(self, assignment);
     }
 

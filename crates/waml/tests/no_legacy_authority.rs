@@ -459,6 +459,14 @@ fn real_syntax_tree_authority_signatures_and_builders_are_rejected() {
                     };
                     *slot = external_factory(raw);
                 }
+
+                fn parse_late_alias(&mut self, raw: &str) {
+                    let replacement = self.tree.clone();
+                    let slot;
+                    slot = &mut self.tree;
+                    *slot = replacement;
+                    let _ = raw;
+                }
             }
 
             fn parse_sibling(slot: &mut crate::types::sibling_types::Slot, raw: &str) {
@@ -580,6 +588,7 @@ fn real_syntax_tree_authority_signatures_and_builders_are_rejected() {
         "parse_projected",
         "parse_wrapped",
         "parse_looped",
+        "parse_late_alias",
         "parse_sibling",
         "parse_sibling_selected",
         "parse_indexed",
