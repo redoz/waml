@@ -85,11 +85,13 @@ fn flow_edge_label(edge: &FlowEdge) -> Option<String> {
 /// and edges, or `Empty` when the document has no flow nodes to draw.
 fn build_flow_scene(model: &waml::model::Model, doc: &FlowDoc) -> (BehaviorScene, Vec<Diagnostic>) {
     let cfg = FlowConfig::default();
-    let (rf, mut diagnostics) = resolve_flow(doc, &model.activity_nodes, &model.flow_edges);
-    if rf.nodes.is_empty() {
-        let message = empty_message(diagnostics.len());
-        return (BehaviorScene::Empty { message }, diagnostics);
-    }
+    // `resolve_flow` runs only to MEASURE; its diagnostics are deliberately
+    // dropped, because `solve_flow` re-resolves the same document and returns
+    // that same set -- keeping both would double-count every resolve-stage
+    // diagnostic in the empty-state message and the status bar. An empty
+    // document is NOT short-circuited here either: `solve_flow` is what emits
+    // the `EmptyFlowDocument` diagnostic that case exists for (spec §5.3).
+    let (rf, _) = resolve_flow(doc, &model.activity_nodes, &model.flow_edges);
     let sizes = measure_flow(&rf.nodes, doc.flavor, &cfg);
     // Off-page stubs label themselves with the TARGET document's title.
     let titles = |key: &str| {
@@ -115,7 +117,7 @@ fn build_flow_scene(model: &waml::model::Model, doc: &FlowDoc) -> (BehaviorScene
         &cfg,
         &titles,
     );
-    diagnostics.extend(solution.diagnostics.iter().cloned());
+    let diagnostics = solution.diagnostics.clone();
     if solution.solved.nodes.is_empty() {
         let message = empty_message(diagnostics.len());
         return (BehaviorScene::Empty { message }, diagnostics);
@@ -399,17 +401,6 @@ fn subject_for_target(
         .into_iter()
         .find(|subject| crate::inspector::build_view(model, subject).is_some())
         .unwrap_or(Subject::None)
-}
-
-/// The concept key a `Subject` resolves to (spec §5.2).
-#[allow(dead_code)]
-fn subject_key(subject: &Subject) -> Option<String> {
-    match subject {
-        Subject::Diagram(k) | Subject::Classifier(k) | Subject::Group(k) | Subject::Edge(k) => {
-            Some(k.clone())
-        }
-        Subject::None => None,
-    }
 }
 
 pub struct BehaviorDocView {
@@ -814,6 +805,80 @@ mod tests {
                 "edge {key} must appear exactly once in the scene"
             );
         }
+    }
+
+    /// `build_flow_scene` resolves once for measurement and once inside
+    /// `solve_flow`; a resolve-stage diagnostic must still be reported ONCE.
+    #[test]
+    fn a_resolve_diagnostic_is_reported_exactly_once() {
+        let mut model = waml::model::Model::default();
+        model.activity_nodes.push(waml::model::ActivityNode {
+            key: "flow#Start".into(),
+            id: "Start".into(),
+            behavior: "flow".into(),
+            kind: waml::model::FlowNodeKind::Initial,
+            object_ref: None,
+            partition: None,
+            entry: None,
+            do_: None,
+            exit: None,
+            refines: None,
+            notes: vec![],
+        });
+        model.flow_edges.push(FlowEdge {
+            key: "flow#e0".into(),
+            kind: waml::model::FlowEdgeKind::ControlFlow,
+            behavior: "flow".into(),
+            from: "flow#Start".into(),
+            // No such local node, and no `to_ref`: one `UnknownFlowTarget`.
+            to: "flow#Nope".into(),
+            to_ref: None,
+            trigger: None,
+            guard: None,
+            is_else: false,
+            effect: None,
+            carries: None,
+        });
+        model.flows.push(FlowDoc {
+            key: "flow".into(),
+            title: "Fulfil".into(),
+            flavor: FlowFlavor::Activity,
+            describes: None,
+            nodes: vec!["flow#Start".into()],
+            edges: vec!["flow#e0".into()],
+        });
+        let doc = flow_doc(&model);
+        let (_, diagnostics) = build_flow_scene(&model, doc);
+        let unknown: Vec<&Diagnostic> = diagnostics
+            .iter()
+            .filter(|d| d.code == waml::diagnostic::DiagCode::UnknownFlowTarget)
+            .collect();
+        assert_eq!(unknown.len(), 1, "{diagnostics:?}");
+    }
+
+    /// An empty flow document is exactly what `EmptyFlowDocument` exists for,
+    /// so the surface must carry it (spec §5.3) rather than short-circuit
+    /// before the solver produces it.
+    #[test]
+    fn an_empty_flow_document_carries_its_diagnostic() {
+        let source = waml::source::SourceBundle::try_from_pairs([(
+            "flow.md",
+            "---\ntype: uml.Activity\ntitle: Fulfil\n---\n# Fulfil\n",
+        )])
+        .unwrap();
+        let prepared = waml::analysis::prepare_candidate(source, None, 1).unwrap();
+        let (_, _, analysis, _) = prepared.into_parts();
+        let model = &analysis.projection;
+        let doc = flow_doc(model);
+        let (scene, diagnostics) = build_flow_scene(model, doc);
+        assert!(diagnostics
+            .iter()
+            .any(|d| d.code == waml::diagnostic::DiagCode::EmptyFlowDocument));
+        let BehaviorScene::Empty { message } = scene else {
+            panic!("an empty document renders the empty state");
+        };
+        assert_eq!(message, empty_message(diagnostics.len()));
+        assert!(diagnostics_status(&diagnostics).is_some());
     }
 
     #[test]

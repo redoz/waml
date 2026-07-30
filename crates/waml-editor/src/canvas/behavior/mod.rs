@@ -12,7 +12,7 @@ use crate::canvas::viewport::{
 };
 use hit::BehaviorTarget;
 use makepad_widgets::*;
-use render::BehaviorDrawResources;
+use render::{BehaviorDrawResources, BehaviorPalette};
 use scene::BehaviorScene;
 
 script_mod! {
@@ -176,6 +176,13 @@ script_mod! {
         draw_frame_border: mod.draw.InteractionFrameBorder{ color: atlas.text_dim }
         draw_pentagon: mod.draw.InteractionPentagon{ color: atlas.field_bg }
         draw_fill +: { color: atlas.text_dim }
+        // Route/stem/frame resting stroke plus the two call-out colours, as
+        // atlas roles: hover darkens to full-strength text, selection takes
+        // the theme's interaction accent (the same language the rest of the
+        // chrome speaks), so both track light/dark.
+        line_color: atlas.bucket_slate
+        hover_color: atlas.text
+        select_color: atlas.accent
         draw_text +: {
             color: atlas.text_dim
             text_style: fonts.text_body
@@ -234,6 +241,14 @@ pub struct BehaviorSurface {
     #[redraw]
     #[live]
     draw_pentagon: DrawColor,
+
+    /// Theme roles the renderers stroke with (`render::BehaviorPalette`).
+    #[live]
+    line_color: Vec4,
+    #[live]
+    hover_color: Vec4,
+    #[live]
+    select_color: Vec4,
 
     #[rust]
     scene: BehaviorScene,
@@ -381,6 +396,11 @@ impl Widget for BehaviorSurface {
         self.viewport.apply_initial_fit();
         let accent = crate::accent::tree_kind_color(crate::tree::TreeKind::Behavior)
             .unwrap_or(self.draw_text.color);
+        let palette = BehaviorPalette {
+            line: self.line_color,
+            hovered: self.hover_color,
+            selected: self.select_color,
+        };
         let mut draws = BehaviorDrawResources {
             bg: &mut self.draw_bg,
             text: &mut self.draw_text,
@@ -395,6 +415,7 @@ impl Widget for BehaviorSurface {
             frame_border: &mut self.draw_frame_border,
             pentagon: &mut self.draw_pentagon,
             accent,
+            palette,
         };
         render::draw(
             cx,
@@ -428,12 +449,6 @@ impl BehaviorSurface {
     pub(crate) fn set_scene(&mut self, cx: &mut Cx, scene: BehaviorScene) {
         self.scene = scene;
         self.draw_bg.redraw(cx);
-    }
-
-    /// The current persistent selection, if any (spec §5.2).
-    #[allow(dead_code)]
-    pub(crate) fn selected(&self) -> Option<&BehaviorTarget> {
-        self.selected.as_ref()
     }
 
     /// `Esc` clears the selection (spec §5.2).

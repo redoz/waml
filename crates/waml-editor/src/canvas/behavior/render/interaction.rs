@@ -5,7 +5,7 @@
 
 use super::super::hit::BehaviorTarget;
 use super::super::scene::{ActivationGeo, FragmentGeo, LifelineGeo, MessageGeo};
-use super::Emphasis;
+use super::{BehaviorPalette, Emphasis};
 use crate::accent;
 use crate::canvas::primitives::{edge_point_to_screen, fill_rect, world_rect_to_screen};
 use crate::canvas::viewport::ViewportSnapshot;
@@ -16,12 +16,6 @@ use waml::model::MessageVerb;
 const HEAD_ALPHA: f32 = 0.16;
 const ACTIVATION_ALPHA: f32 = 0.55;
 const ACTIVATION_UNCLOSED_ALPHA: f32 = 0.3;
-const STEM_COLOR: Vec4 = Vec4 {
-    x: 0.42,
-    y: 0.47,
-    z: 0.54,
-    w: 1.0,
-};
 const DASH_LEN: f64 = 5.0;
 const DASH_GAP: f64 = 4.0;
 
@@ -35,6 +29,7 @@ pub(in crate::canvas::behavior) struct InteractionDrawResources<'a> {
     pub(super) pentagon: &'a mut DrawColor,
     pub(super) text: &'a mut DrawText,
     pub(super) text_heading: &'a mut DrawText,
+    pub(super) palette: BehaviorPalette,
 }
 
 fn accent_with_alpha(accent: Vec4, alpha: f32) -> Vec4 {
@@ -194,7 +189,7 @@ fn draw_stem(
     let camera = viewport.camera;
     let rect_pos = viewport.view_rect.pos;
     let thickness = emphasis.thickness(1.4) * camera.zoom.max(0.3);
-    draws.fill.color = emphasis.stroke(STEM_COLOR);
+    draws.fill.color = emphasis.stroke(draws.palette.line, draws.palette);
     let top = (lifeline.stem_x, lifeline.stem_top);
     let bottom = (lifeline.stem_x, lifeline.stem_bottom);
     draw_dashed_segment(cx, &camera, rect_pos, draws.fill, top, bottom, thickness);
@@ -206,7 +201,7 @@ fn draw_stem(
             pos: dvec2(center.x - size * 0.5, center.y - size * 0.5),
             size: dvec2(size, size),
         };
-        draws.x_mark.color = STEM_COLOR;
+        draws.x_mark.color = draws.palette.line;
         draws.x_mark.draw_abs(cx, screen);
     }
 }
@@ -261,7 +256,7 @@ fn draw_message(
     let camera = viewport.camera;
     let rect_pos = viewport.view_rect.pos;
     let thickness = emphasis.thickness(2.0) * camera.zoom.max(0.3);
-    draws.fill.color = emphasis.stroke(STEM_COLOR);
+    draws.fill.color = emphasis.stroke(draws.palette.line, draws.palette);
     let dashed = matches!(message.verb, MessageVerb::Replies | MessageVerb::Creates);
 
     let (from, to, tip_from) = match message.self_loop {
@@ -403,7 +398,7 @@ fn draw_fragment(
     draws: &mut InteractionDrawResources<'_>,
 ) {
     let screen = world_rect_to_screen(viewport, fragment.rect);
-    draws.frame_border.color = emphasis.stroke(STEM_COLOR);
+    draws.frame_border.color = emphasis.stroke(draws.palette.line, draws.palette);
     draws
         .frame_border
         .set_uniform(cx, live_id!(stroke_w), &[emphasis.thickness(1.2) as f32]);
@@ -425,7 +420,7 @@ fn draw_fragment(
 
     let camera = viewport.camera;
     let rect_pos = viewport.view_rect.pos;
-    draws.fill.color = STEM_COLOR;
+    draws.fill.color = draws.palette.line;
     for operand in &fragment.operands {
         if let Some(y) = operand.divider_y {
             let left = (fragment.rect.x, y);

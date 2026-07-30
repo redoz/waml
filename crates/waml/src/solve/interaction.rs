@@ -257,8 +257,12 @@ impl<'a> WalkState<'a> {
                     .and_then(|s| s.pop());
                 match popped {
                     Some(bar) => {
+                        // The bar STRADDLES the stem it belongs to (design spec
+                        // §3.3): its centre, not its left edge, sits on the
+                        // lifeline (offset right by the nesting step).
                         let x = self.lifeline_x[edge.from.as_str()]
-                            + bar.depth as f64 * self.cfg.nesting_step;
+                            + bar.depth as f64 * self.cfg.nesting_step
+                            - self.cfg.bar_width * 0.5;
                         self.activations.push(SolvedActivation {
                             lifeline: edge.from.clone(),
                             rect: Rect {
@@ -537,7 +541,9 @@ pub fn solve_interaction(
     // flagged unclosed (design spec §3.3).
     for (lifeline, stack) in state.stacks.iter() {
         for bar in stack {
-            let x = lifeline_x[lifeline.as_str()] + bar.depth as f64 * cfg.nesting_step;
+            // Centred on the stem, exactly as a closed bar is.
+            let x = lifeline_x[lifeline.as_str()] + bar.depth as f64 * cfg.nesting_step
+                - cfg.bar_width * 0.5;
             state.activations.push(SolvedActivation {
                 lifeline: lifeline.clone(),
                 rect: Rect {

@@ -155,12 +155,32 @@ pub fn measure_flow(nodes: &[&ActivityNode], flavor: FlowFlavor, cfg: &FlowConfi
                 h: cfg.bar_thickness,
             },
             FlowNodeKind::Object | FlowNodeKind::Plain => {
-                let text_w = sizing::text_width(label_for(node), cfg.font_size, Font::Sans);
+                // The box has to hold EVERY line the renderer draws inside it,
+                // not just the title: the state-machine `entry:`/`do:`/`exit:`
+                // behavior lines and an object node's `:Type` line all sit in
+                // this same glyph, so the widest of them sets the width.
+                let mut text_w = sizing::text_width(label_for(node), cfg.font_size, Font::Sans);
                 let mut lines = 1.0;
                 if flavor == FlowFlavor::StateMachine {
-                    lines += node.entry.is_some() as u8 as f64
-                        + node.do_.is_some() as u8 as f64
-                        + node.exit.is_some() as u8 as f64;
+                    for (keyword, body) in [
+                        ("entry", &node.entry),
+                        ("do", &node.do_),
+                        ("exit", &node.exit),
+                    ] {
+                        if let Some(body) = body {
+                            let line = format!("{keyword}: {body}");
+                            text_w =
+                                text_w.max(sizing::text_width(&line, cfg.font_size, Font::Sans));
+                            lines += 1.0;
+                        }
+                    }
+                }
+                if let Some(object_ref) = &node.object_ref {
+                    // The renderer draws the RESOLVED classifier title here;
+                    // this pure pass only has the pool key, which is the same
+                    // text modulo case, so it is the right-length stand-in.
+                    let line = format!(":{object_ref}");
+                    text_w = text_w.max(sizing::text_width(&line, cfg.font_size, Font::Sans));
                 }
                 Size {
                     w: (text_w + cfg.pad_x * 2.0).max(cfg.diamond_min * 2.0),

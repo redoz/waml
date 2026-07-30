@@ -473,3 +473,29 @@ fn absurdly_deep_fragment_nesting_diagnoses_instead_of_recursing() {
         "expected a nesting-too-deep diagnostic, got {diagnostics:?}"
     );
 }
+
+/// An activation bar STRADDLES the lifeline stem it belongs to: its centre,
+/// offset right by the nesting step per depth, sits ON the stem (design spec
+/// §3.3). A bar whose left edge sat on the stem would hang entirely to the
+/// right of it, and its hit rect with it.
+#[test]
+fn activation_bars_straddle_their_lifeline_stem() {
+    let (solved, _) = solve();
+    let cfg = InteractionConfig::default();
+    assert!(!solved.activations.is_empty());
+    for bar in &solved.activations {
+        let lifeline = solved
+            .lifelines
+            .iter()
+            .find(|l| l.id == bar.lifeline)
+            .expect("activation on an unknown lifeline");
+        let expected = lifeline.stem_x + bar.depth as f64 * cfg.nesting_step;
+        let centre = bar.rect.x + bar.rect.w * 0.5;
+        assert!(
+            (centre - expected).abs() < 0.001,
+            "bar on {} depth {} centred at {centre} not {expected}",
+            bar.lifeline,
+            bar.depth
+        );
+    }
+}

@@ -4,7 +4,7 @@
 
 use super::super::hit::BehaviorTarget;
 use super::super::scene::{FlowEdgeGeo, FlowNodeGeo, FlowOffPageGeo};
-use super::Emphasis;
+use super::{BehaviorPalette, Emphasis};
 use crate::canvas::primitives::{edge_point_to_screen, fill_rect, world_rect_to_screen};
 use crate::canvas::viewport::ViewportSnapshot;
 use makepad_widgets::*;
@@ -16,12 +16,6 @@ const NODE_ALPHA: f32 = 0.16;
 const GROUP_ALPHA: f32 = 0.06;
 /// Resting route stroke, in lpx at zoom 1.
 const ROUTE_THICKNESS: f64 = 2.0;
-const ROUTE_COLOR: Vec4 = Vec4 {
-    x: 0.42,
-    y: 0.47,
-    z: 0.54,
-    w: 1.0,
-};
 
 pub(in crate::canvas::behavior) struct FlowDrawResources<'a> {
     pub(super) node_box: &'a mut DrawColor,
@@ -31,6 +25,7 @@ pub(in crate::canvas::behavior) struct FlowDrawResources<'a> {
     pub(super) fill: &'a mut DrawColor,
     pub(super) text_heading: &'a mut DrawText,
     pub(super) text_body: &'a mut DrawText,
+    pub(super) palette: BehaviorPalette,
 }
 
 fn node_emphasis(
@@ -55,6 +50,14 @@ fn edge_emphasis(
 
 fn accent_with_alpha(accent: Vec4, alpha: f32) -> Vec4 {
     vec4(accent.x, accent.y, accent.z, alpha)
+}
+
+/// Fill for a SOLID glyph (`Initial`, `Final`, `Fork`, `Join`) at `emphasis`.
+/// These four have no low-alpha wash to boost, so the emphasis has to move the
+/// fill itself -- otherwise hovering or selecting them is invisible (spec
+/// §5.2).
+fn glyph_fill(accent: Vec4, emphasis: Emphasis, palette: BehaviorPalette) -> Vec4 {
+    emphasis.stroke(accent, palette)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -141,7 +144,7 @@ fn draw_route(
         .map(|p| edge_point_to_screen(&camera, rect_pos, *p))
         .collect();
     let thickness = (emphasis.thickness(ROUTE_THICKNESS) * camera.zoom).max(1.4);
-    draws.fill.color = emphasis.stroke(ROUTE_COLOR);
+    draws.fill.color = emphasis.stroke(draws.palette.line, draws.palette);
     for pair in screen.windows(2) {
         let (a, b) = (pair[0], pair[1]);
         let quad = if (a.x - b.x).abs() >= (a.y - b.y).abs() {
@@ -221,16 +224,17 @@ fn draw_node(
     let screen = world_rect_to_screen(viewport, node.rect);
     let zoom = viewport.camera.zoom;
     let wash = accent_with_alpha(accent, NODE_ALPHA + emphasis.wash_boost());
+    let solid = glyph_fill(accent, emphasis, draws.palette);
 
     match node.kind {
         FlowNodeKind::Initial => {
             draws.circle.set_uniform(cx, live_id!(bullseye), &[0.0]);
-            draws.circle.color = accent;
+            draws.circle.color = solid;
             draws.circle.draw_abs(cx, screen);
         }
         FlowNodeKind::Final => {
             draws.circle.set_uniform(cx, live_id!(bullseye), &[1.0]);
-            draws.circle.color = accent;
+            draws.circle.color = solid;
             draws.circle.draw_abs(cx, screen);
         }
         FlowNodeKind::Decision | FlowNodeKind::Merge => {
@@ -239,7 +243,7 @@ fn draw_node(
             draw_title(cx, screen, zoom, &node.title, draws);
         }
         FlowNodeKind::Fork | FlowNodeKind::Join => {
-            draws.fill.color = accent;
+            draws.fill.color = solid;
             draws.fill.draw_abs(cx, screen);
         }
         FlowNodeKind::Object => {
@@ -333,9 +337,25 @@ mod tests {
             Emphasis::Selected.thickness(ROUTE_THICKNESS)
                 > Emphasis::Hovered.thickness(ROUTE_THICKNESS)
         );
+        let palette = BehaviorPalette {
+            line: vec4(0.4, 0.4, 0.4, 1.0),
+            hovered: vec4(0.1, 0.2, 0.3, 1.0),
+            selected: vec4(0.9, 0.8, 0.7, 1.0),
+        };
         assert_ne!(
-            Emphasis::Selected.stroke(ROUTE_COLOR),
-            Emphasis::Hovered.stroke(ROUTE_COLOR)
+            Emphasis::Selected.stroke(palette.line, palette),
+            Emphasis::Hovered.stroke(palette.line, palette)
         );
+
+        // A solid glyph (`Initial`/`Final`/`Fork`/`Join`) has no wash to
+        // boost, so its FILL must move with the emphasis instead.
+        let accent = vec4(0.0, 0.6, 0.9, 1.0);
+        let resting = glyph_fill(accent, Emphasis::None, palette);
+        let hovered = glyph_fill(accent, Emphasis::Hovered, palette);
+        let chosen = glyph_fill(accent, Emphasis::Selected, palette);
+        assert_eq!(resting, accent);
+        assert_ne!(resting, hovered);
+        assert_ne!(resting, chosen);
+        assert_ne!(hovered, chosen);
     }
 }

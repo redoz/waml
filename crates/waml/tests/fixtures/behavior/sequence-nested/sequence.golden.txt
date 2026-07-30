@@ -2,10 +2,10 @@ lifeline a head @ 0,0 53x38 stem x=27 38..736
 lifeline b head @ 101,0 54x38 stem x=129 38..736
 lifeline c head @ 204,0 53x38 stem x=230 38..736
 lifeline d head @ 304,256 55x38 stem x=332 294..696 destroyed
-activation c d0 @ 230,96 12x40
-activation b d0 @ 129,56 12x120
-activation d d0 @ 332,376 12x120
-activation b d0 @ 129,616 12x120 unclosed
+activation c d0 @ 224,96 12x40
+activation b d0 @ 123,56 12x120
+activation d d0 @ 326,376 12x120
+activation b d0 @ 123,616 12x120 unclosed
 message m0 calls 27->129 y=56
 message m1 calls 129->230 y=96
 message m2 replies 230->129 y=136

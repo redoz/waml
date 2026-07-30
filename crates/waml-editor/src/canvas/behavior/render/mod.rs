@@ -29,6 +29,20 @@ pub(super) fn apply_text_zoom(text: &mut DrawText, zoom: f64) {
     text.font_scale = target / font_size;
 }
 
+/// The theme colours the behavior renderers stroke with. Every value is an
+/// `atlas` role read off `BehaviorSurface`'s live fields, never a literal, so
+/// the behavior canvas follows light/dark exactly as the rest of the chrome
+/// does.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(super) struct BehaviorPalette {
+    /// Resting stroke for a route, lifeline stem, or fragment frame.
+    pub(super) line: Vec4,
+    /// Transient hover call-out.
+    pub(super) hovered: Vec4,
+    /// Persistent selection call-out.
+    pub(super) selected: Vec4,
+}
+
 /// How strongly one element is called out. A click's persistent selection
 /// reads stronger than a transient hover (spec §5.2).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -60,11 +74,11 @@ impl Emphasis {
     }
 
     /// Stroke colour for a line/route/stem at this emphasis.
-    pub(super) fn stroke(self, resting: Vec4) -> Vec4 {
+    pub(super) fn stroke(self, resting: Vec4, palette: BehaviorPalette) -> Vec4 {
         match self {
             Emphasis::None => resting,
-            Emphasis::Hovered => vec4(0.85, 0.27, 0.47, 1.0),
-            Emphasis::Selected => vec4(0.98, 0.45, 0.62, 1.0),
+            Emphasis::Hovered => palette.hovered,
+            Emphasis::Selected => palette.selected,
         }
     }
 
@@ -92,6 +106,7 @@ pub(super) struct BehaviorDrawResources<'a> {
     pub(super) frame_border: &'a mut DrawColor,
     pub(super) pentagon: &'a mut DrawColor,
     pub(super) accent: Vec4,
+    pub(super) palette: BehaviorPalette,
 }
 
 pub(super) fn draw(
@@ -126,6 +141,7 @@ pub(super) fn draw(
                 fill: &mut *draws.fill,
                 text_heading: &mut *draws.text_heading,
                 text_body: &mut *draws.text,
+                palette: draws.palette,
             };
             flow::draw(
                 cx,
@@ -156,6 +172,7 @@ pub(super) fn draw(
                 pentagon: &mut *draws.pentagon,
                 text: &mut *draws.text,
                 text_heading: &mut *draws.text_heading,
+                palette: draws.palette,
             };
             interaction::draw(
                 cx,

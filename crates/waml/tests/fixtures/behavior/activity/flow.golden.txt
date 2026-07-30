@@ -3,7 +3,7 @@ node flow#Check @ 40,168 76x76
 node flow#End @ 423,832 22x22
 node flow#Merge @ 262,582 80x6
 node flow#Notify @ 268,488 75x38
-node flow#Order @ 397,738 73x38
+node flow#Order @ 396,738 75x38
 node flow#Pack @ 164,488 72x38
 node flow#Retry @ 34,394 72x38
 node flow#Review @ 28,300 84x38

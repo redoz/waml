@@ -758,3 +758,38 @@ fn parallel_edges_between_one_pair_each_carry_their_own_route_key() {
         .collect();
     assert_eq!(keys, vec!["fan#e0".to_string(), "fan#e1".to_string()]);
 }
+
+/// A state's box must be wide enough for the `entry:`/`do:`/`exit:` behavior
+/// lines the renderer draws inside it, not merely for its title.
+#[test]
+fn a_state_box_fits_its_entry_do_exit_lines() {
+    use waml::solve::sizing::{self, Font};
+
+    let (doc, nodes, edges) = load("state-machine");
+    let cfg = FlowConfig::default();
+    let (rf, _) = resolve_flow(&doc, &nodes, &edges);
+    let sizes = measure_flow(&rf.nodes, FlowFlavor::StateMachine, &cfg);
+    let mut checked = 0;
+    for node in &nodes {
+        let Some(size) = sizes.get(&node.key) else {
+            continue;
+        };
+        for (keyword, body) in [
+            ("entry", &node.entry),
+            ("do", &node.do_),
+            ("exit", &node.exit),
+        ] {
+            let Some(body) = body else { continue };
+            let line = format!("{keyword}: {body}");
+            let width = sizing::text_width(&line, cfg.font_size, Font::Sans);
+            assert!(
+                size.w >= width,
+                "state {} box {:.1}px cannot hold {line:?} ({width:.1}px)",
+                node.id,
+                size.w
+            );
+            checked += 1;
+        }
+    }
+    assert!(checked > 0, "fixture has no behavior lines to check");
+}
