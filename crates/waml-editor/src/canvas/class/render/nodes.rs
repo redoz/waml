@@ -1,7 +1,6 @@
 use super::{
-    primitives::ClassDrawResources,
-    relations::relations_for_visibility,
-    LineworkMetrics, RenderSnapshot,
+    primitives::ClassDrawResources, relations::relations_for_visibility, LineworkMetrics,
+    RenderSnapshot,
 };
 use crate::canvas::primitives::{font_raster_size, world_rect_to_screen};
 use crate::frame::SurfaceExt;
