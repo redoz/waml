@@ -140,9 +140,9 @@ script_mod! {
     mod.widgets.ConflictList = set_type_default() do mod.widgets.ConflictListBase{
         width: Fill
         height: Fill
-        // Card surface: the shared Atlas `AccentFrame` -- same material as
+        // Card surface: the shared Atlas panel preset -- same material as
         // `MenuPopup`'s card.
-        draw_frame: mod.draw.AccentFrame{ color: atlas.field_bg }
+        draw_frame: mod.draw.PanelSurface{ color: atlas.field_bg }
         // Trash-glyph tint holders, mirroring `MenuPopup`'s row-icon tokens:
         // idle rests in `text`, a hovered row lights to `accent`, the armed
         // (about-to-delete) trash glyph goes `danger`.
@@ -270,7 +270,7 @@ impl ConflictList {
             return;
         }
         // Card surface: source-bright Atlas frame + field-bg fill (see
-        // `AccentFrame` in `frame.rs`), same thin hairline weight as the menu.
+        // `PanelSurface` in `frame.rs`), same thin hairline weight as the menu.
         self.draw_frame.set_uniform(cx, live_id!(zoom), &[0.6]);
         self.draw_frame.draw_surface_abs(cx, self.placed);
 

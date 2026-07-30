@@ -1,5 +1,5 @@
 //! `SelectFlyout` — the combo/select-box open list, a third `PopupRoot` surface
-//! beside `MenuPopup` and `RadialPopup`. Same Atlas HUD material (`AccentFrame
+//! beside `MenuPopup` and `RadialPopup`. Same Atlas HUD material (`PanelSurface
 //! {field_bg}` card + `IconSet` glyph rows), driven by the shared `MarkingCore`
 //! in popup mode. Unlike `MenuPopup` it is at least as wide as the control that
 //! opened it (`min_width`), marks the current selection, and renders each row's
@@ -102,7 +102,7 @@ script_mod! {
         height: Fill
         // Same source-bright Atlas frame + field-bg fill as MenuPopup, so the
         // flyout reads as one HUD material with the control it drops from.
-        draw_frame: mod.draw.AccentFrame{ color: atlas.field_bg }
+        draw_frame: mod.draw.PanelSurface{ color: atlas.field_bg }
         // Transient hover wash (matches MenuPopup) and the subtle *persistent*
         // fill on the currently-selected row (a fainter accent so it reads as a
         // marked value, not a hover).

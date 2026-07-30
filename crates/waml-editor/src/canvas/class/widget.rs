@@ -230,14 +230,8 @@ script_mod! {
         // Colour-only holder (never drawn): the dim ink copied onto `draw_text`
         // for a hidden group's title, so no RGBA crosses Rust.
         draw_group_title_dim +: { color: atlas.text_dim }
-        // Node card: a near-white glass panel carrying the Atlas
-        // "source-bright" frame -- the reusable `AccentFrame` primitive (see
-        // `frame.rs`): a thin accent stroke fading along a 150deg diagonal,
-        // bright top-left (`frame_hi`) to dim bottom-right (`frame_lo`). Only
-        // the fill differs from the frame defaults, so we override just `color`.
-        // Depth knobs are the svelte `--node` preset (8px / 22px / .14), so a
-        // card sits ON the canvas ground rather than being flush with it.
-        draw_node: mod.draw.AccentFrame{ color: atlas.field_bg depth_y: 8.0 depth_blur: 22.0 depth_a: 0.14 }
+        // Node card: the shared node material preset. Only its fill differs.
+        draw_node: mod.draw.NodeSurface{ color: atlas.field_bg }
         draw_edge_down: mod.draw.EdgeLine{ color: atlas.text_dim }
         // Rounded-corner pen; shares the edge line color so a fillet reads as part
         // of the same stroke.

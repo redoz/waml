@@ -338,13 +338,9 @@ script_mod! {
     mod.widgets.MenuPopup = set_type_default() do mod.widgets.MenuPopupBase{
         width: Fill
         height: Fill
-        // Card surface: the shared Atlas `AccentFrame` (see `frame.rs`) -- the
-        // same source-bright stroke + field-bg fill that canvas nodes carry, so
-        // the drop-down reads as one HUD material with the rest of the editor.
+        // Card surface: the shared Atlas panel material (see `frame.rs`).
         // `zoom` defaults to 1.0 (screen-space hairline; no per-frame uniform).
-        // Depth knobs are the svelte `.hud-surface` panel preset (12px / 30px /
-        // .20) -- a menu floats furthest off its ground of any surface here.
-        draw_frame: mod.draw.AccentFrame{ color: atlas.field_bg depth_y: 12.0 depth_blur: 30.0 depth_a: 0.20 }
+        draw_frame: mod.draw.PanelSurface{ color: atlas.field_bg }
         draw_hover: mod.draw.DrawColor{ color: atlas.selection }
         draw_scrollbar: mod.draw.DrawColor{ color: atlas.accent }
         // Row glyphs come from the shared project-tree SDF set (`IconSet`, the
@@ -516,7 +512,7 @@ impl MenuPopup {
 
         let panel = self.geom.panel_rect();
         // Card surface: source-bright Atlas frame + field-bg fill in one SDF
-        // pass (see `AccentFrame` in `frame.rs`). `zoom` scales the frame's
+        // pass (see `PanelSurface` in `frame.rs`). `zoom` scales the frame's
         // inset + stroke; a menu wants a thin hairline (canvas nodes ride at
         // 1.0), so drive it below 1 -- a full-weight ring reads too heavy and
         // detaches the card from the wordmark it drops from.

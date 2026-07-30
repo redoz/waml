@@ -83,6 +83,12 @@ pub fn surface_lift(base: f64, selected_value: f64, selected: f64) -> f64 {
     base + (selected_value - base) * selected.clamp(0.0, 1.0)
 }
 
+/// Whether a surface rectangle can safely carry padded material geometry.
+#[allow(dead_code)]
+pub fn surface_rect_has_area(width: f64, height: f64) -> bool {
+    width > 0.0 && height > 0.0
+}
+
 /// Pixels of padding a surface needs on every side for its shadow and bloom to
 /// fall outside the frame without clipping.
 ///
@@ -111,6 +117,11 @@ pub trait SurfaceExt {
 
 impl SurfaceExt for DrawColor {
     fn draw_surface_abs(&mut self, cx: &mut Cx2d, rect: Rect) {
+        if !surface_rect_has_area(rect.size.x, rect.size.y) {
+            self.set_uniform(cx, live_id!(bleed), &[0.0]);
+            self.draw_abs(cx, rect);
+            return;
+        }
         let read = |pen: &Self, cx: &mut Cx2d, id: LiveId| -> f64 {
             let mut slot = [0.0f32];
             pen.get_uniform(cx, id, &mut slot);
@@ -210,6 +221,10 @@ script_mod! {
             // its antialias ramp away from the crisp border samples.
             let sw = (bw_dev * 0.5 + 0.5) / dpi
             let sdf = Sdf2d.viewport(self.pos * self.rect_size)
+            // One grey-aware accent drives bloom, frost tint, and stroke.
+            let a = self.accent_col.rgb
+            let alum = a.x * 0.299 + a.y * 0.587 + a.z * 0.114
+            let accent = mix(a, vec3(alum, alum, alum), self.grey)
 
             // Outside layers use raw zoom, never stroke_scale. Linework stays
             // screen-space while material remains attached to the surface.
@@ -237,7 +252,7 @@ script_mod! {
             let bd = sqrt(ox * ox + boy * boy) + min(max(qx, bqy), 0.0)
             let bblur = max(1.0, bpx * z)
             let balpha = ba * (1.0 - smoothstep(-bblur, bblur, bd))
-            let orgb = self.accent_col.rgb * balpha + self.shadow_col.rgb * salpha * (1.0 - balpha)
+            let orgb = accent * balpha + self.shadow_col.rgb * salpha * (1.0 - balpha)
             let oa = balpha + salpha * (1.0 - balpha)
             sdf.clear(vec4(orgb / max(oa, 0.0001), oa))
 
@@ -249,15 +264,13 @@ script_mod! {
             let span = 1.3660254
             let ux = (p.x - self.bleed) / max(1.0, self.rect_size.x - self.bleed * 2.0)
             let uy = (p.y - self.bleed) / max(1.0, self.rect_size.y - self.bleed * 2.0)
-            let ghost = mix(self.ground_col, self.accent_col, self.frost_tint)
+            let ghost = mix(self.ground_col, vec4(accent, self.accent_col.a), self.frost_tint)
             let frost = mix(self.frost_top, self.frost_bot, uy)
             sdf.fill_keep(mix(ghost, self.color, frost))
             let t = clamp((ux * dir.x + uy * dir.y) / span, 0.0, 1.0)
             let col = mix(self.border_hi, self.border_lo, t)
             let k = clamp((1.0 - self.zoom) * 2.0, 0.0, 0.85)
-            let g = col.rgb
-            let lum = g.x * 0.299 + g.y * 0.587 + g.z * 0.114
-            let scol = mix(col.rgb, vec3(lum, lum, lum), self.grey)
+            let scol = mix(col.rgb, accent, self.grey)
             sdf.stroke(vec4(scol, mix(col.a, 1.0, k)), sw)
             return sdf.result
         }
@@ -321,6 +334,15 @@ mod tests {
     }
 
     #[test]
+    fn only_positive_dimensions_have_surface_area() {
+        assert!(surface_rect_has_area(10.0, 20.0));
+        assert!(!surface_rect_has_area(0.0, 20.0));
+        assert!(!surface_rect_has_area(10.0, 0.0));
+        assert!(!surface_rect_has_area(-1.0, 20.0));
+        assert!(!surface_rect_has_area(10.0, -1.0));
+    }
+
+    #[test]
     fn selection_lifts_each_knob_to_the_reference_value() {
         approx(surface_lift(12.0, SURFACE_SEL_DEPTH_Y, 0.0), 12.0);
         approx(surface_lift(12.0, SURFACE_SEL_DEPTH_Y, 1.0), 8.0);
@@ -352,25 +374,47 @@ mod tests {
     #[test]
     fn shader_constants_match_the_padding_contract() {
         let src = include_str!("frame.rs");
-        assert!(src.contains(&format!("let glow = {SURFACE_GLOW:.1}")));
-        assert!(src.contains(&format!(
+        let frame = src
+            .split_once("mod.draw.AccentFrame = mod.draw.DrawColor{")
+            .expect("AccentFrame shader")
+            .1;
+        let pixel = frame
+            .split_once("pixel: fn() {")
+            .and_then(|(_, body)| body.split_once("\n        }\n    }\n\n    mod.draw.PanelSurface"))
+            .map(|(body, _)| body)
+            .expect("AccentFrame pixel block");
+        let code = pixel
+            .lines()
+            .map(|line| line.split_once("//").map_or(line, |(code, _)| code))
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        assert!(code.contains(&format!("let glow = {SURFACE_GLOW:.1}")));
+        assert!(code.contains(&format!(
             "let bpx = mix({SURFACE_BLOOM_PX:.1} * glow, {SURFACE_SEL_BLOOM_PX:.1}, self.selected)"
         )));
-        assert!(src.contains(&format!(
+        assert!(code.contains(&format!(
             "let dy = mix(self.depth_y, {SURFACE_SEL_DEPTH_Y:.1}, self.selected)"
         )));
-        assert!(src.contains(&format!(
+        assert!(code.contains(&format!(
             "let dblur = mix(self.depth_blur, {SURFACE_SEL_DEPTH_BLUR:.1}, self.selected)"
         )));
-        assert!(src.contains(&format!(
+        assert!(code.contains(&format!(
             "let da = mix(self.depth_a, {SURFACE_SEL_DEPTH_A:.2}, self.selected)"
         )));
-        assert!(src.contains(&format!(
+        assert!(code.contains(&format!(
             "let ba = mix(self.bloom * glow, {SURFACE_SEL_BLOOM_A:.2}, self.selected)"
         )));
-        assert!(src.contains(&format!(
+        assert!(code.contains(&format!(
             "let bw_dev = max(1.0, floor({SURFACE_BORDER_PX} * self.zoom * self.stroke_scale * mix(1.0, 1.5, self.selected) * dpi + 0.5))"
         )));
+        assert!(code.contains("let sw = (bw_dev * 0.5 + 0.5) / dpi"));
+        assert!(code.contains("let accent = mix(a, vec3(alum, alum, alum), self.grey)"));
+        assert!(code.contains("let orgb = accent * balpha"));
+        assert!(code.contains(
+            "let ghost = mix(self.ground_col, vec4(accent, self.accent_col.a), self.frost_tint)"
+        ));
+        assert!(code.contains("let scol = mix(col.rgb, accent, self.grey)"));
     }
 
     #[test]

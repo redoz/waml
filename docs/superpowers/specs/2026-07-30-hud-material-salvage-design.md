@@ -41,6 +41,10 @@ eligible for a follow-up if native rendering proves the committed zero-valued
 computes the effective shadow/bloom extent, snaps the true surface and padding
 to the device grid, pushes `bleed`, and draws the inflated quad.
 
+Canvas nodes derive `NodeSurface`. Menus, select flyouts, conflict lists, and
+the selection toolbar derive `PanelSurface`. `ButtonSurface` stays available
+without a consumer until a button adopts it explicitly.
+
 The shader composites depth shadow and accent bloom beneath the surface,
 applies the theme-aware frost ramp to the fill, and draws a snapped gradient
 border. Selection lifts the shadow and bloom knobs toward the reference canvas
