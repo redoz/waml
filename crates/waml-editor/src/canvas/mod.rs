@@ -1,9 +1,13 @@
+use makepad_widgets::*;
+
+mod behavior;
 mod class;
 mod geometry;
 pub(crate) mod primitives;
 mod viewport;
 
-pub(crate) use class::script_mod;
+pub(crate) use behavior::scene::BehaviorScene;
+pub(crate) use behavior::BehaviorSurface;
 pub(crate) use class::{
     zone_arrow, zone_id, zone_of_id, zone_placed, ClassDiagramSurface, ClassDiagramSurfaceAction,
     ConstraintVisibility, COMPASS_ZONES, DIAL_ZONES,
@@ -13,3 +17,10 @@ pub(crate) use class::{
 #[allow(unused_imports)]
 pub(crate) use class::{DialPlacement, Placed, Zone};
 pub(crate) use viewport::ZOOM_STEP;
+
+/// Registers every canvas-family widget's `script_mod` before the app DSL
+/// evaluates (spec: registration order matters -- see `App::script_mod`).
+pub(crate) fn script_mod(vm: &mut ScriptVm) {
+    class::script_mod(vm);
+    behavior::script_mod(vm);
+}

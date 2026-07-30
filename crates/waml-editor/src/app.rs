@@ -87,6 +87,7 @@ script_mod! {
     use mod.atlas
     use mod.fonts
     use mod.widgets.ClassDiagramSurface
+    use mod.widgets.BehaviorSurface
     use mod.widgets.ProjectTree
     use mod.widgets.Inspector
     use mod.widgets.DocTabs
@@ -359,6 +360,20 @@ script_mod! {
                                     height: Fill
                                     flow: Overlay
                                     canvas := ClassDiagramSurface{
+                                        width: Fill
+                                        height: Fill
+                                    }
+                                }
+                                // Sibling surface for activity/state-machine/sequence tabs
+                                // (spec §1.2-1.3): kind-agnostic, so one widget covers all
+                                // three. `BehaviorDocView` toggles this and `canvas_wrap`
+                                // mutually exclusively.
+                                behavior_canvas_wrap := View{
+                                    width: Fill
+                                    height: Fill
+                                    flow: Overlay
+                                    visible: false
+                                    behavior_canvas := BehaviorSurface{
                                         width: Fill
                                         height: Fill
                                     }

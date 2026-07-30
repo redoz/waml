@@ -7,6 +7,7 @@ mod action_link;
 mod agent_mark;
 mod app;
 mod attr_row;
+mod behavior_doc_view;
 mod canvas;
 mod card;
 mod class_diagram_view;

@@ -24,6 +24,7 @@ use crate::view_history::ViewAnchor;
 pub struct BodyWidgets {
     ui: WidgetRef,
     canvas: WidgetRef,
+    behavior_canvas: WidgetRef,
     markdown: MarkdownRef,
 }
 
@@ -32,6 +33,7 @@ impl BodyWidgets {
         BodyWidgets {
             ui: ui.clone(),
             canvas: ui.widget(_cx, ids!(canvas)),
+            behavior_canvas: ui.widget(_cx, ids!(behavior_canvas)),
             markdown: ui.widget(_cx, ids!(markdown_surface.md)).as_markdown(),
         }
     }
@@ -43,6 +45,36 @@ impl BodyWidgets {
 
     pub fn canvas_ref(&self) -> &WidgetRef {
         &self.canvas
+    }
+
+    pub fn behavior_canvas(&self, cx: &mut Cx) -> WidgetRef {
+        let _ = cx;
+        self.behavior_canvas.clone()
+    }
+
+    /// Show/hide the behavior canvas wrapper (`behavior_canvas_wrap`), the
+    /// sibling of `canvas_wrap` for activity/state-machine/sequence tabs.
+    /// Swap the shared center surface between the class-diagram canvas and
+    /// the behavior canvas (activity/state-machine/sequence tabs). Unlike
+    /// `show_canvas`/`show_markdown`, both wrappers are canvases, so each
+    /// side's own interaction is toggled independently rather than through
+    /// `set_canvas_interaction_enabled` (which drives both at once for the
+    /// diagram-vs-properties/source seam).
+    pub fn set_behavior_canvas_visible(&self, cx: &mut Cx, visible: bool) {
+        crate::markdown_surface::hide(&self.ui, cx);
+        self.ui
+            .widget(cx, ids!(canvas_wrap))
+            .set_visible(cx, !visible);
+        if let Some(mut canvas) = self
+            .canvas(cx)
+            .borrow_mut::<crate::canvas::ClassDiagramSurface>()
+        {
+            canvas.set_interaction_enabled(cx, !visible);
+        }
+        self.ui
+            .widget(cx, ids!(behavior_canvas_wrap))
+            .set_visible(cx, visible);
+        self.set_behavior_canvas_interaction_enabled(cx, visible);
     }
     pub fn inspector(&self, cx: &mut Cx) -> WidgetRef {
         self.ui.widget(cx, ids!(inspector))
@@ -77,6 +109,21 @@ impl BodyWidgets {
         if let Some(mut canvas) = self
             .canvas(cx)
             .borrow_mut::<crate::canvas::ClassDiagramSurface>()
+        {
+            canvas.set_interaction_enabled(cx, enabled);
+        }
+        if let Some(mut canvas) = self
+            .behavior_canvas(cx)
+            .borrow_mut::<crate::canvas::BehaviorSurface>()
+        {
+            canvas.set_interaction_enabled(cx, enabled);
+        }
+    }
+
+    fn set_behavior_canvas_interaction_enabled(&self, cx: &mut Cx, enabled: bool) {
+        if let Some(mut canvas) = self
+            .behavior_canvas(cx)
+            .borrow_mut::<crate::canvas::BehaviorSurface>()
         {
             canvas.set_interaction_enabled(cx, enabled);
         }

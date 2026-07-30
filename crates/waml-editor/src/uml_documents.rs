@@ -96,15 +96,20 @@ pub fn open(
             .unwrap_or(concept_id)
             .to_string()
     });
-    let view: Box<dyn crate::doc_view::DocView> = if presentation.category == NavCategory::Diagram {
-        Box::new(crate::class_diagram_view::ClassDiagramView::new(
+    let view: Box<dyn crate::doc_view::DocView> = match presentation.category {
+        NavCategory::Diagram => Box::new(crate::class_diagram_view::ClassDiagramView::new(
             concept_id.to_string(),
-        ))
-    } else {
-        Box::new(crate::classifier_preview_view::ClassifierPreviewView::new(
+        )),
+        NavCategory::Behavior => Box::new(crate::behavior_doc_view::BehaviorDocView::flow(
+            concept_id.to_string(),
+        )),
+        NavCategory::Sequence => Box::new(crate::behavior_doc_view::BehaviorDocView::interaction(
+            concept_id.to_string(),
+        )),
+        _ => Box::new(crate::classifier_preview_view::ClassifierPreviewView::new(
             concept_id.to_string(),
             presentation.category,
-        ))
+        )),
     };
     Some(OpenDocument {
         tab_id: uml_document_tab_id(concept_id),
@@ -135,5 +140,23 @@ mod tests {
         assert_eq!(package.presentation.category, NavCategory::Directory);
         assert!(!package.capabilities.can_edit_classifier);
         assert!(open(prepared.okf(), prepared.uml(), "runbook").is_none());
+    }
+
+    #[test]
+    fn behavior_and_sequence_open_as_behavior_views() {
+        let source = SourceBundle::try_from_pairs([
+            ("checkout.md", "---\ntype: uml.Activity\n---\n# Checkout\n"),
+            ("ordering.md", "---\ntype: uml.Sequence\n---\n# Ordering\n"),
+        ])
+        .unwrap();
+        let prepared = waml::analysis::prepare_candidate(source, None, 1).unwrap();
+        let doc = open(prepared.okf(), prepared.uml(), "checkout").unwrap();
+        assert_eq!(doc.presentation.category, NavCategory::Behavior);
+        // Downcast-free check: BehaviorDocView reports view_bar-only chrome,
+        // unlike ClassifierPreviewView (view_bar: false).
+        assert!(doc.view.chrome().view_bar);
+        let seq = open(prepared.okf(), prepared.uml(), "ordering").unwrap();
+        assert_eq!(seq.presentation.category, NavCategory::Sequence);
+        assert!(seq.view.chrome().view_bar);
     }
 }
