@@ -24,13 +24,92 @@ script_mod! {
 
     mod.widgets.BehaviorSurfaceBase = #(BehaviorSurface::register_widget(vm))
 
+    // Flow node pen: rounded rect (`Plain`, radius pushed to a real value) or
+    // sharp rect (`Object`, radius pushed to 0) -- one shader covers both
+    // since a box with radius 0 IS a sharp rect (spec §4.1).
+    mod.draw.FlowBox = mod.draw.DrawColor{
+        radius: uniform(6.0)
+        pixel: fn() {
+            let sdf = Sdf2d.viewport(self.pos * self.rect_size)
+            sdf.box(0.0, 0.0, self.rect_size.x, self.rect_size.y, self.radius)
+            sdf.fill(self.color)
+            return sdf.result
+        }
+    }
+
+    // `Decision`/`Merge` diamond: an explicit 4-point SDF path, never a
+    // zero-radius box (spec §4.1).
+    mod.draw.FlowDiamond = mod.draw.DrawColor{
+        pixel: fn() {
+            let sdf = Sdf2d.viewport(self.pos * self.rect_size)
+            let w = self.rect_size.x
+            let h = self.rect_size.y
+            sdf.move_to(w * 0.5, 0.0)
+            sdf.line_to(w, h * 0.5)
+            sdf.line_to(w * 0.5, h)
+            sdf.line_to(0.0, h * 0.5)
+            sdf.close_path()
+            sdf.fill(self.color)
+            return sdf.result
+        }
+    }
+
+    // `Initial`/`Final` disc pen: `bullseye` 0 -> a single filled circle;
+    // `bullseye` 1 -> outer disc minus a 72%-radius annulus hole (the same
+    // circle-subtract-circle technique `EdgeElbow`'s fillet band uses) UNION
+    // a 40%-radius center dot, giving the ring-plus-dot glyph in one draw
+    // rather than three separately-composited instances of this pen (which
+    // do not visually layer -- each `draw_abs` call is its own instanced
+    // quad, not a persistent framebuffer the next call paints over).
+    mod.draw.FlowCircle = mod.draw.DrawColor{
+        bullseye: uniform(0.0)
+        pixel: fn() {
+            let sdf = Sdf2d.viewport(self.pos * self.rect_size)
+            let cx_ = self.rect_size.x * 0.5
+            let cy_ = self.rect_size.y * 0.5
+            let r = min(self.rect_size.x, self.rect_size.y) * 0.5
+            sdf.circle(cx_, cy_, r)
+            sdf.circle(cx_, cy_, r * 0.72 * self.bullseye)
+            sdf.subtract()
+            sdf.circle(cx_, cy_, r * 0.4 * self.bullseye)
+            sdf.fill(self.color)
+            return sdf.result
+        }
+    }
+
+    // Route arrowhead pen: an explicit 3-point SDF path in quad-local pixels
+    // (mirrors `EdgeMarker`'s `v01`/`v23` convention, one vertex pair short).
+    mod.draw.FlowTriangle = mod.draw.DrawColor{
+        v0: uniform(vec2(0.0, 0.0))
+        v1: uniform(vec2(0.0, 0.0))
+        v2: uniform(vec2(0.0, 0.0))
+        pixel: fn() {
+            let sdf = Sdf2d.viewport(self.pos * self.rect_size)
+            sdf.move_to(self.v0.x, self.v0.y)
+            sdf.line_to(self.v1.x, self.v1.y)
+            sdf.line_to(self.v2.x, self.v2.y)
+            sdf.close_path()
+            sdf.fill(self.color)
+            return sdf.result
+        }
+    }
+
     mod.widgets.BehaviorSurface = set_type_default() do mod.widgets.BehaviorSurfaceBase{
         width: Fill
         height: Fill
         draw_bg +: { color: atlas.canvas_ground }
+        draw_node_box: mod.draw.FlowBox{ color: atlas.field_bg }
+        draw_diamond: mod.draw.FlowDiamond{ color: atlas.field_bg }
+        draw_circle: mod.draw.FlowCircle{ color: atlas.text }
+        draw_triangle: mod.draw.FlowTriangle{ color: atlas.text_dim }
+        draw_fill +: { color: atlas.text_dim }
         draw_text +: {
             color: atlas.text_dim
             text_style: fonts.text_body
+        }
+        draw_text_heading +: {
+            color: atlas.text
+            text_style: fonts.text_heading
         }
     }
 }
@@ -52,6 +131,24 @@ pub struct BehaviorSurface {
     #[redraw]
     #[live]
     draw_text: DrawText,
+    #[redraw]
+    #[live]
+    draw_text_heading: DrawText,
+    #[redraw]
+    #[live]
+    draw_node_box: DrawColor,
+    #[redraw]
+    #[live]
+    draw_diamond: DrawColor,
+    #[redraw]
+    #[live]
+    draw_circle: DrawColor,
+    #[redraw]
+    #[live]
+    draw_triangle: DrawColor,
+    #[redraw]
+    #[live]
+    draw_fill: DrawColor,
 
     #[rust]
     scene: BehaviorScene,
@@ -61,6 +158,8 @@ pub struct BehaviorSurface {
     cam_timer: Timer,
     #[rust]
     pointer_down_abs: Option<DVec2>,
+    #[rust]
+    hovered: Option<BehaviorTarget>,
     #[live(true)]
     interaction_enabled: bool,
 }
@@ -101,6 +200,25 @@ impl Widget for BehaviorSurface {
         if let Some(te) = self.cam_timer.is_event(event) {
             let effects = self.viewport.tick_camera(te.time.unwrap_or(0.0));
             self.apply_viewport_effects(cx, effects);
+        }
+        // Hover tracks the raw `MouseMove`, not `Hit::FingerHoverIn` -- this
+        // widget has no children now, but a containment check off the raw
+        // event is the same idiom the scrim hover fix settled on, and it
+        // costs nothing here (mirrors the aligned-parent hit-rect trap: the
+        // event carries absolute coords, so translate before hit-testing).
+        if let Event::MouseMove(me) = event {
+            if self.pointer_down_abs.is_none() {
+                let view_rect = self.viewport.snapshot().view_rect;
+                let (wx, wy) = self
+                    .viewport
+                    .camera()
+                    .local_to_world(me.abs.x - view_rect.pos.x, me.abs.y - view_rect.pos.y);
+                let target = hit::hit_test(&self.scene, (wx, wy));
+                if target != self.hovered {
+                    self.hovered = target;
+                    self.draw_bg.redraw(cx);
+                }
+            }
         }
         match event.hits_with_capture_overload(cx, self.draw_bg.area(), false) {
             Hit::FingerDown(fe) if fe.is_primary_hit() => {
@@ -159,14 +277,26 @@ impl Widget for BehaviorSurface {
         let rect = cx.walk_turtle(walk);
         self.viewport.set_view_rect(rect);
         self.viewport.apply_initial_fit();
-        let message = match &self.scene {
-            BehaviorScene::Empty { message } => message.clone(),
-        };
+        let accent = crate::accent::tree_kind_color(crate::tree::TreeKind::Behavior)
+            .unwrap_or(self.draw_text.color);
         let mut draws = BehaviorDrawResources {
             bg: &mut self.draw_bg,
             text: &mut self.draw_text,
+            node_box: &mut self.draw_node_box,
+            diamond: &mut self.draw_diamond,
+            circle: &mut self.draw_circle,
+            triangle: &mut self.draw_triangle,
+            fill: &mut self.draw_fill,
+            text_heading: &mut self.draw_text_heading,
+            accent,
         };
-        render::draw(cx, self.viewport.snapshot(), &message, &mut draws);
+        render::draw(
+            cx,
+            self.viewport.snapshot(),
+            &self.scene,
+            self.hovered.as_ref(),
+            &mut draws,
+        );
         DrawStep::done()
     }
 }

@@ -70,6 +70,19 @@ pub fn edge_end_labels(edge: &SceneEdge, display: &ResolvedDiagramDisplay) -> Ve
     labels
 }
 
+/// Mid-route label anchor for a plain polyline (kind-agnostic; the class path
+/// keeps its `SceneEdge`-typed entry points above). Used by the flow renderer
+/// (spec §2.6) for guard/effect/carried-type text, without duplicating the
+/// arc-length midpoint math.
+pub fn mid_route_label(points: &[(f64, f64)], text: String) -> Option<EdgeLabel> {
+    let (x, y) = polyline_midpoint(points)?;
+    Some(EdgeLabel {
+        text,
+        anchor: (x, y),
+        align: LabelAlign::Above,
+    })
+}
+
 fn relationship_name(name: &AssocName) -> Option<&str> {
     match name {
         AssocName::Label(name) => Some(name),
@@ -227,6 +240,14 @@ mod tests {
 
         assert_eq!(labels.len(), 1);
         assert_eq!(labels[0].anchor, (50.0, -TERMINAL_OFFSET));
+    }
+
+    #[test]
+    fn mid_route_label_anchors_at_the_route_midpoint() {
+        let label = mid_route_label(&[(0.0, 0.0), (100.0, 0.0)], "guard".into()).unwrap();
+        assert_eq!(label.text, "guard");
+        assert_eq!(label.anchor, (50.0, 0.0));
+        assert_eq!(label.align, LabelAlign::Above);
     }
 
     #[test]
