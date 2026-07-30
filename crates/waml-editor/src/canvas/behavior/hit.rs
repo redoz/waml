@@ -1,16 +1,23 @@
 //! Behavior-canvas hit-testing (spec §5.1). `Empty` scenes hit nothing;
 //! `Flow` scenes check nodes topmost-first, then routed edges within a
-//! tolerance band. `Interaction` targets land in Task 8.
+//! tolerance band. `Interaction` scenes check, in priority order: messages,
+//! then activation bars (resolving to their lifeline), then lifeline
+//! heads/stems within a tolerance band, then fragment frame borders.
 
 use super::scene::BehaviorScene;
 
 /// World-space distance from `p` to segment `a`-`b`.
 const EDGE_TOLERANCE: f64 = 6.0;
+const LIFELINE_TOLERANCE: f64 = 6.0;
+const FRAGMENT_BORDER_TOLERANCE: f64 = 6.0;
 
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) enum BehaviorTarget {
     FlowNode(String),
     FlowEdge(String),
+    Lifeline(String),
+    Message(String),
+    Fragment(String),
 }
 
 fn point_in_rect(p: (f64, f64), rect: waml::solve::Rect) -> bool {
@@ -35,6 +42,20 @@ fn distance_to_polyline(p: (f64, f64), points: &[(f64, f64)]) -> f64 {
         .fold(f64::INFINITY, f64::min)
 }
 
+/// World-space distance from `p` to the rectangle's boundary (its four sides,
+/// walked as a closed polyline) -- true near the border, large in the
+/// interior, unlike `point_in_rect`.
+fn distance_to_rect_border(p: (f64, f64), rect: waml::solve::Rect) -> f64 {
+    let corners = [
+        (rect.x, rect.y),
+        (rect.x + rect.w, rect.y),
+        (rect.x + rect.w, rect.y + rect.h),
+        (rect.x, rect.y + rect.h),
+        (rect.x, rect.y),
+    ];
+    distance_to_polyline(p, &corners)
+}
+
 pub(crate) fn hit_test(scene: &BehaviorScene, world: (f64, f64)) -> Option<BehaviorTarget> {
     match scene {
         BehaviorScene::Empty { .. } => None,
@@ -48,6 +69,54 @@ pub(crate) fn hit_test(scene: &BehaviorScene, world: (f64, f64)) -> Option<Behav
                 .iter()
                 .find(|edge| distance_to_polyline(world, &edge.points) <= EDGE_TOLERANCE)
                 .map(|edge| BehaviorTarget::FlowEdge(edge.key.clone()))
+        }
+        BehaviorScene::Interaction {
+            lifelines,
+            activations,
+            messages,
+            fragments,
+        } => {
+            for message in messages {
+                let hit = match message.self_loop {
+                    Some(rect) => distance_to_rect_border(world, rect) <= EDGE_TOLERANCE,
+                    None => {
+                        distance_to_segment(
+                            world,
+                            (message.from_x, message.y),
+                            (message.to_x, message.y),
+                        ) <= EDGE_TOLERANCE
+                    }
+                } || message
+                    .label_rect
+                    .is_some_and(|rect| point_in_rect(world, rect));
+                if hit {
+                    return Some(BehaviorTarget::Message(message.id.clone()));
+                }
+            }
+            for activation in activations {
+                if point_in_rect(world, activation.rect) {
+                    return Some(BehaviorTarget::Lifeline(activation.lifeline.clone()));
+                }
+            }
+            for lifeline in lifelines {
+                let on_head = point_in_rect(world, lifeline.head);
+                let on_stem = distance_to_segment(
+                    world,
+                    (lifeline.stem_x, lifeline.stem_top),
+                    (lifeline.stem_x, lifeline.stem_bottom),
+                ) <= LIFELINE_TOLERANCE;
+                if on_head || on_stem {
+                    return Some(BehaviorTarget::Lifeline(lifeline.id.clone()));
+                }
+            }
+            // Innermost-first (`solve::interaction` pushes each fragment only
+            // after walking its children), so the topmost-drawn frame wins.
+            fragments
+                .iter()
+                .find(|fragment| {
+                    distance_to_rect_border(world, fragment.rect) <= FRAGMENT_BORDER_TOLERANCE
+                })
+                .map(|fragment| BehaviorTarget::Fragment(fragment.id.clone()))
         }
     }
 }
@@ -128,5 +197,119 @@ mod tests {
             Some(BehaviorTarget::FlowEdge("e1".into()))
         );
         assert_eq!(hit_test(&scene, (50.0, 20.0)), None);
+    }
+
+    use super::super::scene::{ActivationGeo, FragmentGeo, LifelineGeo, MessageGeo};
+    use crate::node_style::AccentBucket;
+    use waml::model::{FragmentKind, MessageVerb};
+
+    fn lifeline(id: &str, stem_x: f64) -> LifelineGeo {
+        LifelineGeo {
+            id: id.into(),
+            head: Rect {
+                x: stem_x - 20.0,
+                y: 0.0,
+                w: 40.0,
+                h: 20.0,
+            },
+            stem_x,
+            stem_top: 20.0,
+            stem_bottom: 200.0,
+            destroyed: false,
+            label: id.into(),
+            bucket: AccentBucket::None,
+        }
+    }
+
+    fn fragment(id: &str, rect: Rect) -> FragmentGeo {
+        FragmentGeo {
+            id: id.into(),
+            kind: FragmentKind::Alt,
+            rect,
+            depth: 0,
+            operands: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn message_beats_enclosing_fragment() {
+        let scene = BehaviorScene::Interaction {
+            lifelines: vec![lifeline("a", 0.0), lifeline("b", 100.0)],
+            activations: Vec::new(),
+            messages: vec![MessageGeo {
+                id: "m0".into(),
+                verb: MessageVerb::Calls,
+                from_x: 0.0,
+                to_x: 100.0,
+                y: 50.0,
+                self_loop: None,
+                label: None,
+                label_rect: None,
+            }],
+            fragments: vec![fragment(
+                "f0",
+                Rect {
+                    x: -10.0,
+                    y: 10.0,
+                    w: 120.0,
+                    h: 80.0,
+                },
+            )],
+        };
+        // (50, 50) sits on the message line AND well inside the fragment's
+        // interior (far from its border) -- message wins.
+        assert_eq!(
+            hit_test(&scene, (50.0, 50.0)),
+            Some(BehaviorTarget::Message("m0".into()))
+        );
+    }
+
+    #[test]
+    fn activation_bar_resolves_to_its_lifeline() {
+        let scene = BehaviorScene::Interaction {
+            lifelines: vec![lifeline("a", 0.0)],
+            activations: vec![ActivationGeo {
+                lifeline: "a".into(),
+                rect: Rect {
+                    x: -6.0,
+                    y: 40.0,
+                    w: 12.0,
+                    h: 60.0,
+                },
+                depth: 0,
+                unclosed: false,
+            }],
+            messages: Vec::new(),
+            fragments: Vec::new(),
+        };
+        assert_eq!(
+            hit_test(&scene, (0.0, 60.0)),
+            Some(BehaviorTarget::Lifeline("a".into()))
+        );
+    }
+
+    #[test]
+    fn fragment_border_hits_fragment_but_interior_empty_space_does_not() {
+        let scene = BehaviorScene::Interaction {
+            lifelines: Vec::new(),
+            activations: Vec::new(),
+            messages: Vec::new(),
+            fragments: vec![fragment(
+                "f0",
+                Rect {
+                    x: 0.0,
+                    y: 0.0,
+                    w: 100.0,
+                    h: 100.0,
+                },
+            )],
+        };
+        // On the top border.
+        assert_eq!(
+            hit_test(&scene, (50.0, 0.0)),
+            Some(BehaviorTarget::Fragment("f0".into()))
+        );
+        // Deep in the empty interior, far from every side.
+        assert_eq!(hit_test(&scene, (50.0, 50.0)), None);
     }
 }

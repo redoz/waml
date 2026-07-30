@@ -6,7 +6,10 @@ mod geometry;
 pub(crate) mod primitives;
 mod viewport;
 
-pub(crate) use behavior::scene::{BehaviorScene, FlowEdgeGeo, FlowNodeGeo, FlowOffPageGeo};
+pub(crate) use behavior::scene::{
+    ActivationGeo, BehaviorScene, FlowEdgeGeo, FlowNodeGeo, FlowOffPageGeo, FragmentGeo,
+    LifelineGeo, MessageGeo, OperandGeo,
+};
 pub(crate) use behavior::BehaviorSurface;
 pub(crate) use class::{
     zone_arrow, zone_id, zone_of_id, zone_placed, ClassDiagramSurface, ClassDiagramSurfaceAction,

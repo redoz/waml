@@ -1,17 +1,22 @@
 //! `BehaviorDocView` — the kind-agnostic doc tab for activity, state-machine,
-//! and sequence documents (spec §1.2-1.3). `Flow`'s solve-driven `sync` lands
-//! in this task; `Interaction` lands in Task 8.
+//! and sequence documents (spec §1.2-1.3). `Flow`'s solve-driven `sync` landed
+//! in Task 7; `Interaction`'s lands here.
 
 use makepad_widgets::*;
 use std::collections::BTreeMap;
 
-use crate::canvas::{BehaviorScene, FlowEdgeGeo, FlowNodeGeo, FlowOffPageGeo};
+use crate::canvas::{
+    ActivationGeo, BehaviorScene, FlowEdgeGeo, FlowNodeGeo, FlowOffPageGeo, FragmentGeo,
+    LifelineGeo, MessageGeo, OperandGeo,
+};
 use crate::doc_view::{
     BodyChrome, BodyWidgets, DocView, DocumentHeaderChrome, ViewData, ViewOutcome,
 };
 use crate::icons::Icon;
-use waml::model::{FlowDoc, FlowEdge, FlowFlavor};
+use crate::node_style::AccentBucket;
+use waml::model::{FlowDoc, FlowEdge, FlowFlavor, SequenceDoc};
 use waml::solve::flow::{measure_flow, resolve_flow, solve_flow, FlowConfig};
+use waml::solve::interaction::{measure_interaction, solve_interaction, InteractionConfig};
 
 const NO_RENDERABLE_ELEMENTS: &str = "No renderable elements";
 
@@ -144,6 +149,122 @@ fn build_flow_scene(model: &waml::model::Model, doc: &FlowDoc) -> BehaviorScene 
     }
 }
 
+/// Solve `doc` into a `BehaviorScene::Interaction`, or `Empty` when it has no
+/// lifelines to draw (spec §4.2). Lifeline accent buckets resolve the `ref_`
+/// classifier through the model's `TreeKind` mapping (the same one the tree
+/// panel/doc tabs use), falling back to the scene's default behavior accent
+/// when `ref_` is absent or unresolved (spec interfaces, Task 8).
+fn build_interaction_scene(model: &waml::model::Model, doc: &SequenceDoc) -> BehaviorScene {
+    let cfg = InteractionConfig::default();
+    let sizes = measure_interaction(doc, &cfg);
+    let (solved, _diagnostics) = solve_interaction(doc, &sizes, &cfg);
+    if solved.lifelines.is_empty() {
+        return BehaviorScene::Empty {
+            message: NO_RENDERABLE_ELEMENTS.to_string(),
+        };
+    }
+
+    let lifeline_nodes: BTreeMap<&str, (&str, Option<&str>)> = doc
+        .nodes
+        .iter()
+        .filter_map(|n| match n {
+            waml::model::SeqNode::Lifeline {
+                id, title, ref_, ..
+            } => Some((id.as_str(), (title.as_str(), ref_.as_deref()))),
+            _ => None,
+        })
+        .collect();
+
+    let lifelines: Vec<LifelineGeo> = solved
+        .lifelines
+        .iter()
+        .map(|l| {
+            let (title, ref_) = lifeline_nodes
+                .get(l.id.as_str())
+                .copied()
+                .unwrap_or((l.id.as_str(), None));
+            let label = match ref_ {
+                Some(r) => format!("{title}:{r}"),
+                None => title.to_string(),
+            };
+            let bucket = ref_
+                .and_then(|r| model.node(r))
+                .map(|n| crate::accent::tree_kind_bucket(crate::tree::kind_of(&n.ty)))
+                .unwrap_or(AccentBucket::Unknown);
+            LifelineGeo {
+                id: l.id.clone(),
+                head: l.head,
+                stem_x: l.stem_x,
+                stem_top: l.stem_top,
+                stem_bottom: l.stem_bottom,
+                destroyed: l.destroyed,
+                label,
+                bucket,
+            }
+        })
+        .collect();
+
+    let activations: Vec<ActivationGeo> = solved
+        .activations
+        .iter()
+        .map(|a| ActivationGeo {
+            lifeline: a.lifeline.clone(),
+            rect: a.rect,
+            depth: a.depth,
+            unclosed: a.unclosed,
+        })
+        .collect();
+
+    let edges_by_id: BTreeMap<&str, &waml::model::SeqEdge> =
+        doc.edges.iter().map(|e| (e.id.as_str(), e)).collect();
+    let messages: Vec<MessageGeo> = solved
+        .messages
+        .iter()
+        .map(|m| {
+            let label = edges_by_id
+                .get(m.id.as_str())
+                .and_then(|e| e.signature.clone());
+            MessageGeo {
+                id: m.id.clone(),
+                verb: m.verb,
+                from_x: m.from_x,
+                to_x: m.to_x,
+                y: m.y,
+                self_loop: m.self_loop,
+                label,
+                label_rect: m.label,
+            }
+        })
+        .collect();
+
+    let fragments: Vec<FragmentGeo> = solved
+        .fragments
+        .iter()
+        .map(|f| FragmentGeo {
+            id: f.id.clone(),
+            kind: f.kind,
+            rect: f.rect,
+            depth: f.depth,
+            operands: f
+                .operands
+                .iter()
+                .map(|op| OperandGeo {
+                    divider_y: op.divider_y,
+                    guard_text: op.guard.clone().unwrap_or_else(|| "else".to_string()),
+                    guard_rect: op.guard_rect,
+                })
+                .collect(),
+        })
+        .collect();
+
+    BehaviorScene::Interaction {
+        lifelines,
+        activations,
+        messages,
+        fragments,
+    }
+}
+
 /// Which behavior family this tab renders. Both kinds share one widget/view
 /// (spec §1.2: the surface is kind-agnostic); the kind only picks the solver
 /// this doc's `sync` will call in Tasks 7-8.
@@ -188,9 +309,14 @@ impl DocView for BehaviorDocView {
                 .unwrap_or_else(|| BehaviorScene::Empty {
                     message: NO_RENDERABLE_ELEMENTS.to_string(),
                 }),
-            BehaviorKind::Interaction => BehaviorScene::Empty {
-                message: NO_RENDERABLE_ELEMENTS.to_string(),
-            },
+            BehaviorKind::Interaction => model
+                .interactions
+                .iter()
+                .find(|doc| doc.key == self.key)
+                .map(|doc| build_interaction_scene(model, doc))
+                .unwrap_or_else(|| BehaviorScene::Empty {
+                    message: NO_RENDERABLE_ELEMENTS.to_string(),
+                }),
         };
         if let Some(mut canvas) = body
             .behavior_canvas(cx)

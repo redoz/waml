@@ -1,8 +1,9 @@
 //! `BehaviorSurface` render passes: `Empty` draws the Atlas background and a
-//! centered message; `Flow` draws the solved flow scene (Task 7).
-//! `Interaction` passes land in Task 8.
+//! centered message; `Flow` draws the solved flow scene (Task 7);
+//! `Interaction` draws the solved sequence scene (Task 8).
 
 mod flow;
+mod interaction;
 
 use super::hit::BehaviorTarget;
 use super::scene::BehaviorScene;
@@ -10,6 +11,7 @@ use crate::canvas::viewport::ViewportSnapshot;
 use makepad_widgets::*;
 
 pub(super) use flow::FlowDrawResources;
+pub(super) use interaction::InteractionDrawResources;
 
 pub(super) struct BehaviorDrawResources<'a> {
     pub(super) bg: &'a mut DrawColor,
@@ -20,6 +22,10 @@ pub(super) struct BehaviorDrawResources<'a> {
     pub(super) triangle: &'a mut DrawColor,
     pub(super) fill: &'a mut DrawColor,
     pub(super) text_heading: &'a mut DrawText,
+    pub(super) open_head: &'a mut DrawColor,
+    pub(super) x_mark: &'a mut DrawColor,
+    pub(super) frame_border: &'a mut DrawColor,
+    pub(super) pentagon: &'a mut DrawColor,
     pub(super) accent: Vec4,
 }
 
@@ -59,6 +65,35 @@ pub(super) fn draw(
                 groups,
                 hovered,
                 &mut flow_draws,
+            )
+        }
+        BehaviorScene::Interaction {
+            lifelines,
+            activations,
+            messages,
+            fragments,
+        } => {
+            let mut interaction_draws = InteractionDrawResources {
+                node_box: &mut *draws.node_box,
+                fill: &mut *draws.fill,
+                triangle: &mut *draws.triangle,
+                open_head: &mut *draws.open_head,
+                x_mark: &mut *draws.x_mark,
+                frame_border: &mut *draws.frame_border,
+                pentagon: &mut *draws.pentagon,
+                text: &mut *draws.text,
+                text_heading: &mut *draws.text_heading,
+            };
+            interaction::draw(
+                cx,
+                viewport,
+                draws.accent,
+                lifelines,
+                activations,
+                messages,
+                fragments,
+                hovered,
+                &mut interaction_draws,
             )
         }
     }

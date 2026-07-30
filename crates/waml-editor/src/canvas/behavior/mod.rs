@@ -94,6 +94,75 @@ script_mod! {
         }
     }
 
+    // Open message-head pen (`sends`/`replies`, spec §4.2): two open strokes
+    // from the apex `v0` out to wing tips `v1`/`v2` -- no closing base, no
+    // fill, so it reads as a caret rather than `FlowTriangle`'s solid head.
+    mod.draw.InteractionOpenHead = mod.draw.DrawColor{
+        v0: uniform(vec2(0.0, 0.0))
+        v1: uniform(vec2(0.0, 0.0))
+        v2: uniform(vec2(0.0, 0.0))
+        stroke_w: uniform(1.4)
+        pixel: fn() {
+            let sdf = Sdf2d.viewport(self.pos * self.rect_size)
+            sdf.move_to(self.v1.x, self.v1.y)
+            sdf.line_to(self.v0.x, self.v0.y)
+            sdf.line_to(self.v2.x, self.v2.y)
+            sdf.stroke(self.color, self.stroke_w)
+            return sdf.result
+        }
+    }
+
+    // Destroyed-lifeline X pen (spec §4.2): two crossing SDF strokes, built as
+    // ONE draw (per the Task 7 handoff gotcha -- layering separate draw_abs
+    // calls on one shader does not visually composite).
+    mod.draw.InteractionXMark = mod.draw.DrawColor{
+        stroke_w: uniform(1.6)
+        pixel: fn() {
+            let sdf = Sdf2d.viewport(self.pos * self.rect_size)
+            let w = self.rect_size.x
+            let h = self.rect_size.y
+            sdf.move_to(0.0, 0.0)
+            sdf.line_to(w, h)
+            sdf.stroke(self.color, self.stroke_w)
+            sdf.move_to(w, 0.0)
+            sdf.line_to(0.0, h)
+            sdf.stroke(self.color, self.stroke_w)
+            return sdf.result
+        }
+    }
+
+    // Combined-fragment frame border (spec §4.2): a stroked outline, no fill,
+    // so nested frames and messages inside remain visible.
+    mod.draw.InteractionFrameBorder = mod.draw.DrawColor{
+        stroke_w: uniform(1.2)
+        pixel: fn() {
+            let sdf = Sdf2d.viewport(self.pos * self.rect_size)
+            let inset = self.stroke_w * 0.5
+            sdf.rect(inset, inset, self.rect_size.x - inset * 2.0, self.rect_size.y - inset * 2.0)
+            sdf.stroke(self.color, self.stroke_w)
+            return sdf.result
+        }
+    }
+
+    // Fragment-tab pentagon pen (spec §4.2): the "house" 5-point path carrying
+    // the kind keyword (`alt`/`opt`/`loop`), notched on the right edge.
+    mod.draw.InteractionPentagon = mod.draw.DrawColor{
+        pixel: fn() {
+            let sdf = Sdf2d.viewport(self.pos * self.rect_size)
+            let w = self.rect_size.x
+            let h = self.rect_size.y
+            let notch = min(w * 0.25, h * 0.5)
+            sdf.move_to(0.0, 0.0)
+            sdf.line_to(w - notch, 0.0)
+            sdf.line_to(w, h * 0.5)
+            sdf.line_to(w - notch, h)
+            sdf.line_to(0.0, h)
+            sdf.close_path()
+            sdf.fill(self.color)
+            return sdf.result
+        }
+    }
+
     mod.widgets.BehaviorSurface = set_type_default() do mod.widgets.BehaviorSurfaceBase{
         width: Fill
         height: Fill
@@ -102,6 +171,10 @@ script_mod! {
         draw_diamond: mod.draw.FlowDiamond{ color: atlas.field_bg }
         draw_circle: mod.draw.FlowCircle{ color: atlas.text }
         draw_triangle: mod.draw.FlowTriangle{ color: atlas.text_dim }
+        draw_open_head: mod.draw.InteractionOpenHead{ color: atlas.text_dim }
+        draw_x_mark: mod.draw.InteractionXMark{ color: atlas.text_dim }
+        draw_frame_border: mod.draw.InteractionFrameBorder{ color: atlas.text_dim }
+        draw_pentagon: mod.draw.InteractionPentagon{ color: atlas.field_bg }
         draw_fill +: { color: atlas.text_dim }
         draw_text +: {
             color: atlas.text_dim
@@ -149,6 +222,18 @@ pub struct BehaviorSurface {
     #[redraw]
     #[live]
     draw_fill: DrawColor,
+    #[redraw]
+    #[live]
+    draw_open_head: DrawColor,
+    #[redraw]
+    #[live]
+    draw_x_mark: DrawColor,
+    #[redraw]
+    #[live]
+    draw_frame_border: DrawColor,
+    #[redraw]
+    #[live]
+    draw_pentagon: DrawColor,
 
     #[rust]
     scene: BehaviorScene,
@@ -288,6 +373,10 @@ impl Widget for BehaviorSurface {
             triangle: &mut self.draw_triangle,
             fill: &mut self.draw_fill,
             text_heading: &mut self.draw_text_heading,
+            open_head: &mut self.draw_open_head,
+            x_mark: &mut self.draw_x_mark,
+            frame_border: &mut self.draw_frame_border,
+            pentagon: &mut self.draw_pentagon,
             accent,
         };
         render::draw(
