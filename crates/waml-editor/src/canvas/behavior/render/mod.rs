@@ -13,17 +13,20 @@ use makepad_widgets::*;
 pub(super) use flow::FlowDrawResources;
 pub(super) use interaction::InteractionDrawResources;
 
-/// Base body/heading text size, in lpx at zoom 1 -- the same 13pt the two
-/// solvers measure with (`FlowConfig`/`InteractionConfig::font_size`), so the
-/// drawn glyphs match the boxes the solver sized around them.
-const BASE_TEXT_LPX: f32 = 13.0 * (96.0 / 72.0);
+/// Base body/heading text size at zoom 1, in POINTS -- the unit
+/// `TextStyle::font_size` is in, which makepad itself rasterizes at
+/// `pts * 96/72` lpx. The two solvers measure the same 13pt in LPX
+/// (`FlowConfig`/`InteractionConfig::font_size` is `13.0 * PT_TO_LPX`), so this
+/// must stay in points: converting here as well applied `96/72` twice and drew
+/// every glyph a third wider than the box the solver sized around it.
+const BASE_TEXT_PT: f32 = 13.0;
 
 /// Point a text pen at `zoom`: pick the nearest raster rung for the zoomed
 /// target size and carry the remainder in `font_scale`, exactly as every class
 /// renderer does. Without this the glyph geometry stays at the DSL size while
 /// the boxes scale, so text detaches from its box at any zoom != 1.
 pub(super) fn apply_text_zoom(text: &mut DrawText, zoom: f64) {
-    let target = (BASE_TEXT_LPX * zoom as f32).max(4.0);
+    let target = (BASE_TEXT_PT * zoom as f32).max(4.0);
     let font_size = crate::canvas::primitives::font_raster_size(target);
     text.text_style.font_size = font_size;
     text.font_scale = target / font_size;
