@@ -426,6 +426,15 @@ mod tests {
         on_activate: usize,
         on_deactivate: usize,
         chrome: usize,
+        visible_body: Option<(Rc<Cell<&'static str>>, &'static str)>,
+    }
+
+    impl ProbeLifecycle {
+        fn mark_visible_body(&self) {
+            if let Some((visible_body, marker)) = &self.visible_body {
+                visible_body.set(marker);
+            }
+        }
     }
 
     struct ProbeView {
@@ -440,7 +449,9 @@ mod tests {
         }
 
         fn sync(&mut self, _: &mut Cx, _: &BodyWidgets, _: ViewData<'_>) {
-            self.lifecycle.borrow_mut().sync += 1;
+            let mut lifecycle = self.lifecycle.borrow_mut();
+            lifecycle.sync += 1;
+            lifecycle.mark_visible_body();
         }
 
         fn handle(
@@ -460,7 +471,9 @@ mod tests {
             _: ViewData<'_>,
             _: SessionChange,
         ) {
-            self.lifecycle.borrow_mut().after_session_change += 1;
+            let mut lifecycle = self.lifecycle.borrow_mut();
+            lifecycle.after_session_change += 1;
+            lifecycle.mark_visible_body();
         }
 
         fn chrome(&self) -> BodyChrome {
@@ -478,11 +491,15 @@ mod tests {
         }
 
         fn on_activate(&mut self, _: &mut Cx, _: &BodyWidgets) {
-            self.lifecycle.borrow_mut().on_activate += 1;
+            let mut lifecycle = self.lifecycle.borrow_mut();
+            lifecycle.on_activate += 1;
+            lifecycle.mark_visible_body();
         }
 
         fn on_deactivate(&mut self, _: &mut Cx, _: &BodyWidgets) {
-            self.lifecycle.borrow_mut().on_deactivate += 1;
+            let mut lifecycle = self.lifecycle.borrow_mut();
+            lifecycle.on_deactivate += 1;
+            lifecycle.mark_visible_body();
         }
     }
 
@@ -771,6 +788,78 @@ mod tests {
         assert_eq!(new_lifecycle.borrow().on_activate, 1);
         assert_eq!(new_lifecycle.borrow().sync, 1);
         assert_eq!(new_lifecycle.borrow().after_session_change, 0);
+    }
+
+    #[test]
+    fn incompatible_inactive_replacement_keeps_active_surface_untouched() {
+        let visible_body = Rc::new(Cell::new("active"));
+        let old_lifecycle = Rc::new(RefCell::new(ProbeLifecycle {
+            visible_body: Some((visible_body.clone(), "inactive-old")),
+            ..ProbeLifecycle::default()
+        }));
+        let new_lifecycle = Rc::new(RefCell::new(ProbeLifecycle {
+            visible_body: Some((visible_body.clone(), "inactive-new")),
+            ..ProbeLifecycle::default()
+        }));
+        let mut host = DocumentHost::default();
+        let inactive = prepared_with_identity(
+            "inactive",
+            NavCategory::Class,
+            DocViewIdentity::ClassifierPreview(NavCategory::Class),
+            Rc::new(Cell::new(0)),
+            old_lifecycle.clone(),
+        );
+        let inactive_id = inactive.tab_id;
+        host.apply_command(DocumentCommand::Open {
+            document: inactive,
+            persistent: true,
+        });
+        host.apply_command(DocumentCommand::Open {
+            document: prepared("active", NavCategory::Diagram, Rc::new(Cell::new(0))),
+            persistent: true,
+        });
+        let active_id = host.active_id();
+        let mut replacement = prepared_with_identity(
+            "inactive",
+            NavCategory::OkfDocument,
+            DocViewIdentity::GenericOkf,
+            Rc::new(Cell::new(0)),
+            new_lifecycle.clone(),
+        );
+        replacement.tab_id = inactive_id;
+
+        let mut cx = Cx::new(Box::new(|_, _| {}));
+        host.after_session_change(
+            &mut cx,
+            &WidgetRef::empty(),
+            &EditorSession::default(),
+            SessionChange {
+                revision: 1,
+                source_changed: false,
+                okf_changed: false,
+                uml_changed: true,
+                navigation_changed: false,
+                conflicts_changed: false,
+            },
+            vec![Some(replacement), None],
+        );
+
+        assert_eq!(host.active_id(), active_id);
+        assert_eq!(visible_body.get(), "active");
+        assert_eq!(
+            host.views.get(&inactive_id).unwrap().identity(),
+            DocViewIdentity::GenericOkf,
+        );
+        let old_lifecycle = old_lifecycle.borrow();
+        assert_eq!(old_lifecycle.on_deactivate, 0);
+        assert_eq!(old_lifecycle.on_activate, 0);
+        assert_eq!(old_lifecycle.sync, 0);
+        assert_eq!(old_lifecycle.after_session_change, 0);
+        let new_lifecycle = new_lifecycle.borrow();
+        assert_eq!(new_lifecycle.on_deactivate, 0);
+        assert_eq!(new_lifecycle.on_activate, 0);
+        assert_eq!(new_lifecycle.sync, 0);
+        assert_eq!(new_lifecycle.after_session_change, 0);
     }
 
     #[test]
